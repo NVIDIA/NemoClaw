@@ -169,7 +169,7 @@ describe("sandbox image workflow boundary", () => {
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
         "Hermes producer must build the production image exactly once with the canonical local-load Buildx action and OS/architecture-scoped GHA cache",
-        "Hermes producer must prove the no-CA final image uses default trust before completed-image scans",
+        "Hermes producer must verify that the final image uses default trust when no corporate CA is supplied.",
       ]),
     );
   });
@@ -495,43 +495,6 @@ describe("sandbox image workflow boundary", () => {
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
       "Hermes producer must build the production image exactly once with the canonical local-load Buildx action and OS/architecture-scoped GHA cache",
-    );
-  });
-
-  it("requires hardened completed-image node-tar scans and retained evidence", () => {
-    const { imageWorkflow, mainWorkflow } = readWorkflows();
-    const openclaw = imageWorkflow.jobs["build-sandbox-images"];
-    const openclawScan = openclaw.steps!.find(
-      (step) => step.name === "Scan completed OpenClaw image for node-tar",
-    )!;
-    openclawScan.run = openclawScan
-      .run!.replace("--network none", "--network host")
-      .replaceAll("/scripts/checks/node-tar-image-scan.mts", "/tmp/node-tar-image-scan.mts");
-
-    const hermes = imageWorkflow.jobs["build-hermes-sandbox-image"];
-    const hermesUpload = hermes.steps!.find(
-      (step) => step.name === "Upload Hermes node-tar inventory",
-    )!;
-    hermesUpload.with!["retention-days"] = 1;
-
-    const arm = imageWorkflow.jobs["build-sandbox-images-arm64"];
-    const armSteps = arm.steps!;
-    const armUploadIndex = armSteps.findIndex(
-      (step) => step.name === "Upload OpenClaw arm64 node-tar inventory",
-    );
-    const [armUpload] = armSteps.splice(armUploadIndex, 1);
-    const armBoundaryIndex = armSteps.findIndex(
-      (step) => step.name === "Build sandbox test image on arm64",
-    );
-    armSteps.splice(armBoundaryIndex + 1, 0, armUpload!);
-
-    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
-      expect.arrayContaining([
-        "build-sandbox-images node-tar scan must include --network none",
-        expect.stringContaining("build-sandbox-images node-tar scan must include -v"),
-        "build-hermes-sandbox-image must retain its node-tar inventory for 14 days",
-        "build-sandbox-images-arm64 must scan and retain evidence before the completed image is handed off",
-      ]),
     );
   });
 

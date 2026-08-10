@@ -23,7 +23,7 @@ import {
   trackSandboxCleanup,
 } from "./phase6-messaging-helpers.ts";
 
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-telegram-injection";
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-tg-injection";
 const LIVE_TIMEOUT_MS = 35 * 60_000;
 
 function openshellStdinCommand(payload: string, remoteShell: string): string {
@@ -47,7 +47,7 @@ function openshellSshStdinCommand(payload: string, remoteShell: string): string 
       "-o UserKnownHostsFile=/dev/null",
       "-o ConnectTimeout=10",
       "-o LogLevel=ERROR",
-      shellQuote(`openshell-${SANDBOX_NAME}`),
+      shellQuote(`openshell-${SANDBOX_NAME}.default`),
       shellQuote(remoteShell),
     ].join(" "),
   ].join("; ");
@@ -130,7 +130,7 @@ async function assertSshParameterPayloadStaysLiteral(
       "-o UserKnownHostsFile=/dev/null",
       "-o ConnectTimeout=10",
       "-o LogLevel=ERROR",
-      shellQuote(`openshell-${SANDBOX_NAME}`),
+      shellQuote(`openshell-${SANDBOX_NAME}.default`),
       shellQuote('MSG=$(cat) && echo "$MSG"'),
       '> "$out_file" 2>&1',
     ].join(" "),

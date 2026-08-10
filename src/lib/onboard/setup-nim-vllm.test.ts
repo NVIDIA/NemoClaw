@@ -92,13 +92,15 @@ describe("setupNim vLLM route containment", () => {
       ok: true,
       api: "openai-completions",
     }));
+    const selection = state(null);
     const handler = createSetupNimVllmHandler(
       deps({
         runCapture,
-        getLocalProviderBaseUrl: () => "http://10.40.0.1:8000/v1",
+        getLocalProviderBaseUrl: () => "http://host.openshell.internal:8000/v1",
         getLocalProviderValidationBaseUrl: () => "http://10.40.0.1:8000/v1",
         getManagedVllmProviderBinding: () => ({
-          baseUrl: "http://10.40.0.1:8000/v1",
+          baseUrl: "http://host.openshell.internal:8000/v1",
+          validationBaseUrl: "http://10.40.0.1:8000/v1",
           apiKey,
         }),
         queryVllmModels,
@@ -106,7 +108,8 @@ describe("setupNim vLLM route containment", () => {
       }),
     );
 
-    await expect(handler(state(null))).resolves.toBe("selected");
+    await expect(handler(selection)).resolves.toBe("selected");
+    expect(selection.endpointUrl).toBe("http://host.openshell.internal:8000/v1");
     expect(runCapture).not.toHaveBeenCalled();
     expect(queryVllmModels).toHaveBeenCalledWith("http://10.40.0.1:8000/v1", apiKey);
     expect(validateOpenAiLikeSelection).toHaveBeenCalledWith(

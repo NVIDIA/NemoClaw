@@ -4,17 +4,24 @@
 import * as agentRuntime from "../../../agent/runtime";
 import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock";
 import { connectSandbox } from "../connect";
-import { recoverHermesCronRestore } from "../rebuild-hermes-post-restore";
+import {
+  prepareHermesCronRestoreRecovery,
+  recoverHermesCronRestore,
+} from "../rebuild-hermes-post-restore";
 
 const RECOVERY_LOCK_TIMEOUT_MS = 30_000;
 
-/** Repair the gateway first, then validate and release any stranded Hermes cron restore gate. */
+/** Re-establish a Hermes gate before gateway repair, then validate and release it. */
 export async function recoverSandboxWithHermesCronRestore(sandboxName: string): Promise<void> {
   await withMcpLifecycleLock(
     sandboxName,
     async () => {
+      const agent = agentRuntime.getSessionAgent(sandboxName);
+      if (agent?.name === "hermes") {
+        prepareHermesCronRestoreRecovery(sandboxName);
+      }
       await connectSandbox(sandboxName, { probeOnly: true });
-      if (agentRuntime.getSessionAgent(sandboxName)?.name !== "hermes") return;
+      if (agent?.name !== "hermes") return;
 
       const outcome = recoverHermesCronRestore(sandboxName);
       switch (outcome) {

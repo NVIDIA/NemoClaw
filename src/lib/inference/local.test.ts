@@ -298,7 +298,7 @@ describe("local inference helpers", () => {
     const result = validateLocalProvider("ollama-local", mockCapture, mockSleep);
     expect(result.ok).toBe(false);
     expect(result.diagnostic).toMatch(/HTTP 502/);
-    expect(result.diagnostic).toMatch(/host-gateway resolved to/);
+    expect(result.diagnostic).toMatch(/host\.openshell\.internal resolved to/);
     expect(sleepCalls).toEqual([2, 2]);
   });
 

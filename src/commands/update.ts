@@ -16,20 +16,25 @@ export default class UpdateCommand extends NemoClawCommand {
   static summary = `Run the maintained ${CLI_DISPLAY_NAME} installer update flow`;
   static description =
     `Check for a ${CLI_DISPLAY_NAME} CLI update and run the maintained installer flow.`;
-  static usage = ["update [--check] [--fresh] [--yes|-y]"];
+  static usage = ["update [--check] [--fresh] [--allow-downgrade] [--yes|-y]"];
   static examples = [
     "<%= config.bin %> update --check",
     "<%= config.bin %> update",
     "<%= config.bin %> update --fresh",
+    "<%= config.bin %> update --fresh --allow-downgrade",
     "<%= config.bin %> update --yes",
   ];
   static flags = {
+    "allow-downgrade": Flags.boolean({
+      description:
+        "Allow --fresh to reinstall the maintained build even when it is older than, or cannot be ordered against, the installed version (--yes alone does not accept a downgrade)",
+    }),
     check: Flags.boolean({
       description: "Check update availability without running the installer",
     }),
     fresh: Flags.boolean({
       description:
-        "Reinstall the maintained build even when already up to date (clean re-clone; useful to repair a broken install)",
+        "Reinstall the maintained build for a clean re-clone (useful to repair a broken install); refuses when the maintained build is older than the installed version",
     }),
     yes: yesFlag(),
   };
@@ -38,6 +43,7 @@ export default class UpdateCommand extends NemoClawCommand {
     const { flags } = await this.parse(UpdateCommand);
     const result = await runUpdateAction(
       {
+        allowDowngrade: flags["allow-downgrade"] === true,
         check: flags.check === true,
         fresh: flags.fresh === true,
         yes: flags.yes === true,

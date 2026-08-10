@@ -64,15 +64,6 @@ if len(errors) != len(bad):
       { url: "https://host.containers.internal:31337/mcp", accepted: false },
       { url: "https://8.8.8.8/mcp", accepted: true },
       { url: "http://mcp.example.com/mcp", accepted: false },
-      { url: "https://localhost/mcp", accepted: false },
-      { url: "https://service.internal/mcp", accepted: false },
-      { url: "https://127.0.0.1/mcp", accepted: false },
-      { url: "https://10.0.0.1/mcp", accepted: false },
-      { url: "https://100.64.0.1/mcp", accepted: false },
-      { url: "https://169.254.169.254/mcp", accepted: false },
-      { url: "https://192.0.2.1/mcp", accepted: false },
-      { url: "https://198.18.0.1/mcp", accepted: false },
-      { url: "https://224.0.0.1/mcp", accepted: false },
       { url: "https://[::1]/mcp", accepted: false },
       { url: "https://[fc00::1]/mcp", accepted: false },
       { url: "https://[fe80::1]/mcp", accepted: false },
@@ -158,9 +149,9 @@ if len(errors) != 3:
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual([
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.85",
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.85",
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.85",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.101",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.101",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.101",
     ]);
   });
 

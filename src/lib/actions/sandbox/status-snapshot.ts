@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   detectOpenShellStateRpcResultIssue,
   type OpenShellStateRpcIssue,
@@ -62,6 +63,10 @@ type ProbeProviderHealth = (
   options?: ProviderHealthProbeOptions,
 ) => ProviderHealthStatus | null;
 type ProbeSandboxInferenceGatewayHealth = typeof probeSandboxInferenceGatewayHealth;
+type DelayInferenceRecoveryProbe = (delayMs: number) => Promise<void>;
+
+const RECOVERED_INFERENCE_PROBE_ATTEMPTS = 3;
+const RECOVERED_INFERENCE_PROBE_DELAY_MS = 2_000;
 
 /**
  * Honest serving-process state while the self-report response and probe
@@ -301,6 +306,7 @@ interface CollectSandboxStatusSnapshotDeps {
   captureOpenshellForStatusImpl?: typeof captureOpenshellForStatus;
   probeProviderHealthImpl?: ProbeProviderHealth;
   probeSandboxInferenceGatewayHealthImpl?: ProbeSandboxInferenceGatewayHealth;
+  delayInferenceRecoveryProbe?: DelayInferenceRecoveryProbe;
   reportInferenceProbeError?: (message: string) => void;
   probeTerminalRuntimeHealth?: ProbeTerminalRuntimeHealth;
   recoverSandboxProcesses?: RecoverSandboxProcesses;
@@ -434,6 +440,7 @@ export async function collectSandboxStatusSnapshot(
     (sb.agent ?? "openclaw") === "openclaw" &&
     parseSandboxPhase(lookup.output || "") === "Ready" &&
     !opts.preflight?.failure;
+  let recoveredManagedGateway = false;
   if (
     lookup.state === "present" &&
     (lookup.recoveredSandbox || managedOpenClawDeliveryMustBeProven)
@@ -450,6 +457,8 @@ export async function collectSandboxStatusSnapshot(
         },
       );
       failure = processRecoveryFailure(recovery);
+      recoveredManagedGateway =
+        failure === null && recovery.wasRunning === false && recovery.recovered === true;
     } catch (error) {
       failure = {
         layer: "recovery-error",
@@ -571,9 +580,14 @@ export async function collectSandboxStatusSnapshot(
   if (!suppressInferenceProbe && lookup.state === "present") {
     let gatewayChain: Awaited<ReturnType<ProbeSandboxInferenceGatewayHealth>> = null;
     try {
-      gatewayChain = await (
-        opts.deps?.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth
-      )(sandboxName);
+      const probe =
+        opts.deps?.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth;
+      const attempts = recoveredManagedGateway ? RECOVERED_INFERENCE_PROBE_ATTEMPTS : 1;
+      for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        gatewayChain = await probe(sandboxName);
+        if (gatewayChain?.ok || attempt === attempts) break;
+        await (opts.deps?.delayInferenceRecoveryProbe ?? sleep)(RECOVERED_INFERENCE_PROBE_DELAY_MS);
+      }
     } catch (error) {
       // This is a permanent fail-closed runtime boundary, but unexpected
       // OpenShell/transport exceptions must remain observable for diagnosis.

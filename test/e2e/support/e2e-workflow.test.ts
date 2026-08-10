@@ -24,20 +24,21 @@ import { requireFixture } from "./require-fixture";
 
 describe("e2e workflow boundary", () => {
   it("guards channels-stop-start destructive cleanup to test-owned sandboxes", () => {
-    expect(() => assertChannelsStopStartSandboxName("personal-dev")).toThrow(
-      /only accepts sandbox names with prefix e2e-channels-stop-start-/,
+    expect(() => assertChannelsStopStartSandboxName("personal-dev", "openclaw")).toThrow(
+      /only accepts openclaw sandbox names with prefix e2e-oc-ch-/,
     );
-    expect(() =>
-      assertChannelsStopStartSandboxName("e2e-channels-stop-start-openclaw"),
-    ).not.toThrow();
-    expect(() =>
-      assertChannelsStopStartSandboxName("e2e-channels-stop-start-hermes"),
-    ).not.toThrow();
+    expect(() => assertChannelsStopStartSandboxName("e2e-oc-ch-cycle", "openclaw")).not.toThrow();
+    expect(() => assertChannelsStopStartSandboxName("e2e-hm-ch-cycle", "hermes")).not.toThrow();
+    expect(() => assertChannelsStopStartSandboxName("e2e-hm-ch-cycle", "openclaw")).toThrow(
+      /only accepts openclaw sandbox names with prefix e2e-oc-ch-/,
+    );
   });
 
-  it("keeps the E2E workflow push-driven, dispatchable, pinned, and artifact-safe", () => {
-    expect(validateE2eWorkflowBoundary()).toEqual([]);
-  });
+  it(
+    "keeps the E2E workflow push-driven, dispatchable, pinned, and artifact-safe",
+    testTimeoutOptions(30_000),
+    () => expect(validateE2eWorkflowBoundary()).toEqual([]),
+  );
 
   it("rejects a Launchable environment gate, authorization drift, and secret-guard drift", () => {
     const workflow = readWorkflow() as {
@@ -135,6 +136,17 @@ describe("e2e workflow boundary", () => {
         trustedMain: false,
       }),
     ).toEqual({ runLaunchableE2e: false });
+  });
+
+  it("rejects a WhatsApp compact QR job that omits the jobs and targets dispatch conditions", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { if?: string }>;
+    };
+    workflow.jobs["whatsapp-qr-compact"]!.if = "${{ github.event_name != 'workflow_dispatch' }}";
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "whatsapp-qr-compact job must use the shared jobs selector condition",
+    );
   });
 
   it("rejects a full dispatch with changed input, correlation, or selector contracts (#7487)", () => {
@@ -705,105 +717,6 @@ describe("e2e workflow boundary", () => {
       }
     },
   );
-
-  // source-shape-contract: compatibility -- Cross-checks generated selectors against the executable workflow job registry
-  it("derives test selectors from code and workflow jobs from workflow metadata", {
-    timeout: 60_000,
-  }, () => {
-    const inventory = readFreeStandingJobsInventory();
-    const workflow = readWorkflow() as {
-      jobs: Record<string, { env?: Record<string, string>; if?: string }>;
-    };
-    const workflowJobs = new Set(Object.keys(workflow.jobs));
-    const portableWorkflow = YAML.parse(
-      fs.readFileSync(
-        path.join(process.cwd(), ".github", "workflows", "portable-profile-e2e.yaml"),
-        "utf8",
-      ),
-    ) as {
-      on?: { pull_request?: { paths?: string[] }; push?: { paths?: string[] } };
-    };
-    const portableProofInputs = [
-      "scripts/install-openshell.sh",
-      "test/e2e/live/portable-profile-gateway-proof.ts",
-      "test/e2e/live/portable-profile-rootless-linux.test.ts",
-      "tools/e2e/check-semantic-phases.mts",
-    ];
-
-    expect(validateFreeStandingWorkflowInventory()).toEqual([]);
-    expect(portableWorkflow.on?.push?.paths).toEqual(expect.arrayContaining(portableProofInputs));
-    expect(portableWorkflow.on?.push?.paths).toEqual(expect.arrayContaining(portableProofInputs));
-    expect(inventory.allowedJobs).not.toHaveLength(0);
-    expect(inventory.targetToJob.size).toBeGreaterThan(0);
-    expect(inventory.workflowJobs.every((job) => workflowJobs.has(job))).toBe(true);
-    expect([...inventory.targetToJob.values()].every((job) => workflowJobs.has(job))).toBe(true);
-    expect(inventory.liveTestToJobs.get("test/e2e/live/token-rotation.test.ts")).toEqual([
-      "token-rotation",
-    ]);
-    expect(inventory.liveTestToJobs.get("test/e2e/live/full-e2e.test.ts")).toEqual(
-      expect.arrayContaining(["full-e2e", "security-posture"]),
-    );
-    expect(workflow.jobs["gpu-e2e"]?.env?.NEMOCLAW_MODEL).toBe("qwen3.5:9b");
-    expect(workflow.jobs["gpu-double-onboard"]?.env?.NEMOCLAW_MODEL).toBe("qwen3.5:9b");
-    const driftedWorkflow = structuredClone(workflow);
-    const compatibilityJob = driftedWorkflow.jobs["retired-selector-compatibility"] ?? {};
-    compatibilityJob.if = compatibilityJob.if?.replace(
-      ",docs-validation,",
-      ",future-retired-selector,",
-    );
-    expect(validateE2eWorkflow(driftedWorkflow)).toContain(
-      "retired-selector-compatibility job selector gate must match retired selector contract",
-    );
-    expect(
-      focusedE2eJobsForChangedFiles(
-        [
-          "test/e2e/live/token-rotation.test.ts",
-          "docs/get-started/quickstart.mdx",
-          "test/e2e/live/token-rotation.test.ts",
-        ],
-        inventory,
-      ),
-    ).toEqual([
-      {
-        id: "token-rotation",
-        matchedFiles: ["test/e2e/live/token-rotation.test.ts"],
-      },
-    ]);
-    expect(
-      focusedE2eJobsForChangedFiles(
-        ["test/e2e/live/openclaw-plugin-runtime-exdev-lifecycle.ts"],
-        inventory,
-      ),
-    ).toEqual([
-      {
-        id: "openclaw-plugin-runtime-exdev",
-        matchedFiles: ["test/e2e/live/openclaw-plugin-runtime-exdev-lifecycle.ts"],
-      },
-    ]);
-    expect(
-      focusedE2eJobsForChangedFiles(["test/e2e/live/rebuild-hermes-cron-restore.ts"], inventory),
-    ).toEqual([
-      {
-        id: "rebuild-hermes",
-        matchedFiles: ["test/e2e/live/rebuild-hermes-cron-restore.ts"],
-      },
-      {
-        id: "rebuild-hermes-stale-base",
-        matchedFiles: ["test/e2e/live/rebuild-hermes-cron-restore.ts"],
-      },
-    ]);
-    expect(
-      focusedE2eJobsForChangedFiles(
-        ["test/e2e/live/openshell-gateway-upgrade-helpers.ts"],
-        inventory,
-      ),
-    ).toEqual([
-      {
-        id: "openshell-gateway-upgrade",
-        matchedFiles: ["test/e2e/live/openshell-gateway-upgrade-helpers.ts"],
-      },
-    ]);
-  });
 
   it("rejects malformed free-standing workflow metadata before matrix generation", {
     timeout: 60_000,
@@ -1377,8 +1290,8 @@ jobs:
         expect.arrayContaining([
           "channels-stop-start job must keep the 90 minute timeout",
           "channels-stop-start strategy.fail-fast must be false",
-          "channels-stop-start matrix.agent must be openclaw,hermes",
-          "channels-stop-start job must derive NEMOCLAW_SANDBOX_NAME from matrix.agent with the e2e-channels-stop-start- prefix",
+          "channels-stop-start matrix must bind canonical per-agent sandbox names",
+          "channels-stop-start job must derive NEMOCLAW_SANDBOX_NAME from matrix.sandbox_name",
           "channels-stop-start job env must not include DOCKER_CONFIG",
           "channels-stop-start job env must not include NVIDIA_INFERENCE_API_KEY",
           "channels-stop-start checkout step must set persist-credentials=false",

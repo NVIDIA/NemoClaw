@@ -6,6 +6,8 @@ kind: ServerImageBuild
 
 metadata:
   id: llama-cpp-server.v1
+  annotations:
+    nemoclaw.nvidia.com/request-guard-state: dormant
 
 spec:
   repository: ghcr.io/nvidia/nemoclaw/llama-cpp-server
@@ -41,6 +43,7 @@ spec:
     qualification:
       required: true
       execution: enabled
+      requestGuard: required
       profile: dgx-spark-gb10-single
       recipeRef: llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1
       platform: linux/arm64
@@ -57,6 +60,9 @@ spec:
       probes:
         - health
         - models
+        - properties
+        - metrics
+        - disabled-surfaces
         - synchronous-chat
         - streaming-chat
         - usage
@@ -68,6 +74,7 @@ spec:
         - malformed-request
         - cancellation
         - client-timeout
+        - log-redaction
       probeBounds:
         cancellationMaxTokens: 4096
         clientTimeoutMilliseconds: 250
@@ -111,6 +118,7 @@ spec:
       curl: 8.5.0-2ubuntu10.11
       g++-14: 14.2.0-4ubuntu2~24.04.1
       gcc-14: 14.2.0-4ubuntu2~24.04.1
+      golang-go: 2:1.22~2build1
       libcurl4-openssl-dev: 8.5.0-2ubuntu10.11
       libssl-dev: 3.0.13-0ubuntu3.12
     cmake:
@@ -138,6 +146,8 @@ spec:
     requiredPaths:
       - /opt/llama.cpp/lib/libggml-cuda.so
       - /usr/local/bin/llama-server
+      - /usr/local/bin/nemoclaw-llama-cpp-request-guard
+      - /usr/local/share/licenses/go/copyright
       - /usr/local/share/licenses/llama.cpp/AUTHORS
       - /usr/local/share/licenses/llama.cpp/LICENSE
     forbiddenPaths:

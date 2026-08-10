@@ -28,6 +28,7 @@ import {
 } from "../openshell-sandbox-list";
 import { parseLiveSandboxEntries, parseReadySandboxNames } from "../runtime-recovery";
 import * as sandboxVersion from "../sandbox/version";
+import { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } from "../sandbox-name-contract";
 import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 
@@ -237,6 +238,19 @@ function resolveCheckGatewayName(
   return recorded.size === 1 ? [...recorded][0] : fallbackGatewayName;
 }
 
+function printIncompatibleRegisteredSandboxNames(names: readonly string[]): void {
+  console.error(
+    `\n  ${YW}Registered sandbox names cannot be recreated by this NemoClaw version:${R}`,
+  );
+  for (const name of names) {
+    console.error(`    ${diagnosticPreview(name)}`);
+  }
+  console.error(`\n  Registered sandbox names must use: ${NAME_ALLOWED_FORMAT}.`);
+  console.error(
+    `  For each listed sandbox, create a replacement with a valid name and transfer its state before rerunning \`${CLI_NAME} upgrade-sandboxes\`.`,
+  );
+}
+
 export async function upgradeSandboxes(
   options: string[] | UpgradeSandboxesOptions = {},
 ): Promise<void> {
@@ -250,6 +264,20 @@ export async function upgradeSandboxes(
   if (sandboxes.length === 0) {
     console.log("  No sandboxes found in the registry.");
     return;
+  }
+
+  // OpenShell can no longer recreate legacy registry identities that fall
+  // outside the canonical sandbox-name contract. Detect every such identity
+  // before resolving or querying a gateway so check mode remains read-only and
+  // the mutating path cannot cross the rebuild boundary with an invalid name.
+  const incompatibleSandboxNames = sandboxes
+    .map((sandbox) => sandbox.name)
+    .filter((name) => !isValidName(name))
+    .sort();
+  if (incompatibleSandboxNames.length > 0) {
+    printIncompatibleRegisteredSandboxNames(incompatibleSandboxNames);
+    if (checkOnly) return;
+    process.exit(1);
   }
 
   // Resolve the configured gateway once and pin every observation to it. The

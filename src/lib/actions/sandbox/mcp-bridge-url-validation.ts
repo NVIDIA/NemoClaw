@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isIP } from "node:net";
+
 import { resolveHostAddresses } from "../../adapters/dns/resolve";
 import { isLoopbackHostname } from "../../private-networks";
 import {
@@ -10,8 +12,8 @@ import {
 } from "../../security/mcp-url-target";
 import { TOKEN_PREFIX_PATTERNS } from "../../security/secret-patterns";
 import {
+  assertTrustedPrivateEndpointCapability,
   assertEndpointResolvesPublic,
-  isTrustedPrivateEndpointCapability,
   normalizeTrustedPrivateHost,
   type TrustedPrivateEndpointCapability,
 } from "../../security/trusted-private-endpoint";
@@ -49,12 +51,12 @@ function rejectUnsupportedOpenShellMcpHostAlias(hostname: string): void {
   // invalidState: a host alias is accepted without an attested gateway address,
   // forcing broad private-range policy instead of an exact destination pin.
   // sourceBoundary: the pinned OpenShell release owns gateway-address discovery.
-  // whyNotSourceFix: v0.0.85 exposes no attested driver gateway address.
+  // whyNotSourceFix: v0.0.101 exposes no attested driver gateway address.
   // regressionTest: URL validation and all three live adapters reject aliases.
   // removalCondition: remove only after a reviewed OpenShell capability exposes
   // an attested address; a future version number alone is not that capability.
   throw new McpBridgeError(
-    `Authenticated MCP OpenShell host alias '${hostname}' is unavailable with OpenShell v0.0.85 because that release does not expose an attested driver gateway address for exact policy pinning. Use a normal HTTPS DNS endpoint with public address records.`,
+    `Authenticated MCP OpenShell host alias '${hostname}' is unavailable with OpenShell v0.0.101 because that release does not expose an attested driver gateway address for exact policy pinning. Use a normal HTTPS DNS endpoint with public address records.`,
     2,
   );
 }
@@ -64,7 +66,7 @@ function rejectUnsupportedOpenShellMcpIpv6Literal(hostname: string): void {
   // invalidState: an IPv6 literal reaches an OpenShell parser that cannot
   // represent and enforce its exact proxy target safely.
   // sourceBoundary: the pinned OpenShell proxy parser owns literal support.
-  // whyNotSourceFix: v0.0.85 does not support this target form.
+  // whyNotSourceFix: v0.0.101 does not support this target form.
   // regressionTest: URL normalization and resolved-target preflight both reject
   // private and public IPv6 literals with this capability-specific result.
   // removalCondition: remove only with reviewed parser support and parity proof;
@@ -221,10 +223,14 @@ export async function preflightMcpServerUrlResolvedTarget(
 ): Promise<McpBridgeTargetValidation> {
   // invalidState: a hostname is public at add time but later rebinds to an
   // unpinned address. sourceBoundary: NemoClaw pins the add-time public answers;
-  // OpenShell v0.0.85 resolves, validates every answer against allowed_ips, and
-  // connects with that same SocketAddr list. whyNotSourceFix: duplicating DNS
-  // resolution here before each remote connection would create a second,
-  // non-authoritative TOCTOU boundary outside OpenShell's data plane.
+  // With its operator-controlled proxy_connect_by_hostname option disabled,
+  // OpenShell v0.0.101 resolves, validates every answer against allowed_ips, and
+  // connects with that same SocketAddr list. This URL validator cannot observe
+  // gateway configuration; the documented guarantee and residual risk are
+  // therefore explicitly conditional on that option remaining disabled.
+  // whyNotSourceFix: duplicating DNS resolution here before each remote
+  // connection would create a second, non-authoritative TOCTOU boundary outside
+  // OpenShell's data plane.
   // regressionTest: e2e/support/mcp-bridge-sandbox.test.ts pins the exact
   // upstream source contract, and live/mcp-bridge.test.ts remaps DNS and proves
   // a 403 plus zero upstream requests for all three adapters.
@@ -277,29 +283,24 @@ export async function preflightMcpServerUrlResolvedTarget(
   const normalizedHostname = normalizeTrustedPrivateHost(parsed.hostname);
   const explicitTrust = normalizedTrustedHosts.includes(normalizedHostname);
   if (result.trustedPrivateEndpoint) {
-    if (!isTrustedPrivateEndpointCapability(result.trustedPrivateCapability)) {
+    try {
+      const authority = assertTrustedPrivateEndpointCapability(
+        normalizedHostname,
+        addresses,
+        result.trustedPrivateCapability,
+        { requireAllPrivate: true },
+      );
+      return {
+        addresses: [...authority.addresses],
+        trustedPrivateCapability: authority.trustedPrivateCapability,
+        trustedPrivateHost: authority.host,
+      };
+    } catch {
       throw new McpBridgeError(
-        `MCP server URL host '${normalizedHostname}' did not return a provenance-checked trusted-private capability.`,
+        `MCP server URL host '${normalizedHostname}' did not return exact routed-private authority. Trusted-private MCP endpoints must resolve only to supported routed private addresses, and every pin must match the host-bound capability.`,
         2,
       );
     }
-    const capabilityAddresses = [...result.trustedPrivateCapability.addresses]
-      .map((address) => address.toLowerCase())
-      .sort();
-    if (
-      capabilityAddresses.length !== addresses.length ||
-      capabilityAddresses.some((address, index) => address !== addresses[index])
-    ) {
-      throw new McpBridgeError(
-        `MCP server URL host '${normalizedHostname}' returned mixed public and private addresses. Trusted-private MCP endpoints must resolve only to supported routed private addresses.`,
-        2,
-      );
-    }
-    return {
-      addresses,
-      trustedPrivateCapability: result.trustedPrivateCapability,
-      trustedPrivateHost: normalizedHostname,
-    };
   }
   if (explicitTrust && options.requireTrustedPrivateEndpoint) {
     throw new McpBridgeError(
@@ -339,4 +340,76 @@ export async function inspectMcpRecordedTargetPins(
 
 export function parseMcpUrl(rawUrl: string): URL {
   return new URL(normalizeMcpServerUrl(rawUrl));
+}
+
+/**
+ * Revalidate URL syntax while preserving the exact destination authority
+ * issued by MCP target preflight or durable trusted-private replay.
+ */
+export function parseMcpUrlWithValidatedTarget(
+  rawUrl: string,
+  target: McpBridgeTargetValidation,
+): URL {
+  const addresses = [...target.addresses];
+  const sortedAddresses = [...addresses].sort();
+  if (
+    addresses.length === 0 ||
+    addresses.some(
+      (address) =>
+        typeof address !== "string" ||
+        isIP(address) === 0 ||
+        address !== address.toLowerCase() ||
+        address.includes("%"),
+    ) ||
+    new Set(addresses).size !== addresses.length ||
+    addresses.some((address, index) => address !== sortedAddresses[index])
+  ) {
+    throw new McpBridgeError(
+      "Validated MCP target must contain a non-empty canonical set of exact address pins.",
+      2,
+    );
+  }
+
+  const hasPrivateAuthority =
+    target.trustedPrivateCapability !== undefined || target.trustedPrivateHost !== undefined;
+  if (!hasPrivateAuthority) {
+    if (addresses.some((address) => isBlockedMcpUrlTargetHost(address))) {
+      throw new McpBridgeError(
+        "Validated public MCP target contains a private, local, or special-use address pin.",
+        2,
+      );
+    }
+    return new URL(normalizeMcpServerUrl(rawUrl));
+  }
+
+  if (!target.trustedPrivateHost || !target.trustedPrivateCapability) {
+    throw new McpBridgeError(
+      "Validated private MCP target has no provenance-checked endpoint capability.",
+      2,
+    );
+  }
+  let authority;
+  try {
+    authority = assertTrustedPrivateEndpointCapability(
+      target.trustedPrivateHost,
+      addresses,
+      target.trustedPrivateCapability,
+      { requireAllPrivate: true },
+    );
+  } catch {
+    throw new McpBridgeError(
+      "Validated private MCP target does not match its host-bound endpoint capability.",
+      2,
+    );
+  }
+  const trustedPrivateHost = authority.host;
+
+  const rawParsed = new URL(rawUrl);
+  if (normalizeTrustedPrivateHost(rawParsed.hostname) !== trustedPrivateHost) {
+    throw new McpBridgeError(
+      `Validated private MCP target host '${trustedPrivateHost}' does not match URL host '${rawParsed.hostname}'.`,
+      2,
+    );
+  }
+  return new URL(normalizeMcpServerUrl(rawUrl, { trustedPrivateHosts: [trustedPrivateHost] }));
 }

@@ -18,7 +18,11 @@ import { listPresets } from "../../../src/lib/policy/index.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
+import {
+  type SandboxClient,
+  trustedSandboxShellScript,
+  validateSandboxName,
+} from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -42,8 +46,9 @@ const PERMISSIVE_POLICY = path.join(
   "policies",
   "openclaw-sandbox-permissive.yaml",
 );
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-net-policy-${process.pid}`;
-const SUPPRESSION_SANDBOX_NAME = `${SANDBOX_NAME}-suppression`;
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-net-policy";
+const SUPPRESSION_SANDBOX_NAME =
+  process.env.NEMOCLAW_NETWORK_POLICY_SUPPRESSION_SANDBOX_NAME ?? "e2e-net-suppress";
 
 const TEST_TIMEOUT_MS = 65 * 60_000;
 const ONBOARD_TIMEOUT_MS = 15 * 60_000;
@@ -61,6 +66,8 @@ const ENCODED_SLASH_DENIED_REASON =
 type NemoEnv = NodeJS.ProcessEnv;
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
+validateSandboxName(SANDBOX_NAME);
+validateSandboxName(SUPPRESSION_SANDBOX_NAME);
 
 function text(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
@@ -526,7 +533,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
       "deny-by-default egress",
       "restricted tier begins with zero active presets",
       "package metadata is readable while package database writes remain denied (#8467)",
-      "OpenShell 0.0.85 preserves the full denied endpoint and policy disposition through nemoclaw logs --tail 50 (#4760)",
+      "OpenShell 0.0.101 preserves the full denied endpoint and policy disposition through nemoclaw logs --tail 50 (#4760)",
       "read-only preset allowlist behavior",
       "weather preset allows wttr.in GET and HEAD but denies POST and unrelated hosts",
       "live policy-add and dry-run behavior",
@@ -563,7 +570,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
     timeoutMs: 30_000,
   });
   expect(openshellVersion.exitCode, text(openshellVersion)).toBe(0);
-  expect(text(openshellVersion)).toContain("0.0.85");
+  expect(text(openshellVersion)).toContain("0.0.101");
 
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>

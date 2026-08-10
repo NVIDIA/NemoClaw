@@ -23,7 +23,7 @@ import {
 } from "../cua/onboard-runtime";
 import { getProviderSelectionConfig } from "../inference/config";
 import { normalizeInferenceSelection } from "../inference/selection";
-import { runSandboxConfigSync } from "../onboard/config-sync";
+import { runSandboxConfigSync, sandboxConfigSyncArgs } from "../onboard/config-sync";
 import { isValidForwardPort } from "../onboard/dashboard-runtime";
 import { redact, run } from "../runner";
 import type { SandboxEntry } from "../state/registry/types";
@@ -435,7 +435,7 @@ export async function handleAgentSetup(
         return cfg ? { ...cfg, agent: agent.name } : null;
       },
       runConnectScript: (name, scriptContent) => {
-        run([openshellBin, "sandbox", "connect", name], {
+        run([openshellBin, ...sandboxConfigSyncArgs(name)], {
           stdio: ["pipe", "ignore", "inherit"],
           input: scriptContent,
         });

@@ -158,9 +158,12 @@ RUN chown sandbox:sandbox /sandbox/.openclaw/openclaw.json \
     && sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
     && chown sandbox:sandbox /sandbox/.openclaw/.config-hash \
     && chmod 660 /sandbox/.openclaw/.config-hash
+
+USER sandbox
 ```
 
 The final stage inherits the stock runtime entrypoint, command, gateway health check, generated configuration, and file permissions.
+The final `USER sandbox` sets the non-root default user that OpenShell requires.
 It redeclares and promotes the tool-disclosure build argument because Docker build arguments are scoped to a stage and the appended plugin stage becomes the final image stage.
 
 The local install copies the staged plugin into OpenClaw's extensions tree, records the install, links it to the image's OpenClaw runtime, and leaves existing managed plugin load paths intact before the explicit enable and inspect steps.

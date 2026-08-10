@@ -168,26 +168,30 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     }
   });
 
-  it("pins the resolve-validate-connect source contract to OpenShell v0.0.85", () => {
-    const commit = "3dee5570a46076a57a3b056f35f35ebc0861ac85";
+  it("pins the resolve-validate-connect source contract to OpenShell v0.0.101", () => {
+    const commit = "8ddd98c3dff62619a3963f99ba1e055b67650e72";
     const sourcePath = "crates/openshell-supervisor-network/src/proxy.rs";
     const citations = [
-      `${sourcePath}:2648-2674`,
-      `${sourcePath}:2699-2739`,
-      `${sourcePath}:2794-2803`,
-      `${sourcePath}:1079-1081`,
-      `${sourcePath}:4093-4100`,
-      `${sourcePath}:4340-4342`,
+      `${sourcePath}:3030-3055`,
+      `${sourcePath}:3060-3115`,
+      `${sourcePath}:3179-3211`,
+      `${sourcePath}:3168-3200`,
+      `${sourcePath}:4650-4656`,
+      `${sourcePath}:4706-4711`,
     ];
 
-    for (const docsPath of [
-      "docs/deployment/set-up-mcp-bridge.mdx",
-      "docs/security/openshell-0.0.85-migration-review.md",
-    ]) {
-      const docs = fs.readFileSync(docsPath, "utf8");
-      expect(docs, docsPath).toContain(commit);
-      for (const citation of citations) expect(docs, docsPath).toContain(citation);
-    }
+    const docsPath = "docs/deployment/set-up-mcp-bridge.mdx";
+    const docs = fs.readFileSync(docsPath, "utf8");
+    expect(docs, docsPath).toContain(commit);
+    for (const citation of citations) expect(docs, docsPath).toContain(citation);
+    expect(docs).toContain("proxy_connect_by_hostname");
+    expect(docs).toContain("reopens proxy-side DNS resolution");
+
+    const migrationReview = fs.readFileSync(
+      "docs/security/openshell-0.0.101-migration-review.md",
+      "utf8",
+    );
+    expect(migrationReview).toContain(commit);
   });
 
   it("adds one raw MCP policy with an exact public IP pin and no adapter identity", () => {
