@@ -1538,25 +1538,6 @@ Starting an already-running sandbox skips the container start and still runs the
 A paused container is unpaused.
 If the container was removed entirely, `start` fails and points you to `$$nemoclaw <name> rebuild`.
 
-<AgentOnly variant="openclaw,hermes">
-
-For a Docker-driver sandbox, `start` binds recovery to the immutable identity of the existing container.
-It does not rebuild, replace, or destroy the container.
-
-`start` returns success only after these checks pass:
-
-- The authenticated managed gateway is healthy.
-- OpenShell reports the sandbox in the `Ready` phase.
-- Every required host forward is active.
-- A final authenticated managed-gateway check passes after inference-route and pairing reconciliation.
-
-If a check fails, the command exits nonzero, identifies the failed layer, and preserves the existing container.
-A failure after the Docker start can leave that container running but unready.
-Run the printed `$$nemoclaw <name> recover` command before you retry `start`.
-If an expired Shields auto-restore blocks startup access, run `$$nemoclaw <name> shields up`, then retry `$$nemoclaw <name> start`.
-
-</AgentOnly>
-
 ### `$$nemoclaw <name> status`
 
 Show sandbox-scoped status, health, and inference configuration for one registered sandbox.
@@ -3911,6 +3892,17 @@ Rerun `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw uninstall` with the gateway port 
 For an externally supervised authority, uninstall preserves the selected local gateway state in both full and gateway-scoped cleanup.
 It also preserves the gateway process, supervisor resources, marked Linux unit, Docker resources, OpenShell binaries, and the declared external state directory.
 A custom-port uninstall does not stop or remove the default gateway service or its environment file.
+Before scoped cleanup stops a Docker gateway process, including a managed default gateway service, NemoClaw requires two Docker namespace proofs.
+The selected Docker gateway configuration and any running gateway process must use the state-root-specific OpenShell sandbox namespace that NemoClaw generated.
+Because the supported OpenShell Podman schema does not expose `sandbox_namespace`, scoped Podman uninstall fails closed before signaling and preserves the gateway runtime evidence and local state.
+Full single-gateway Podman uninstall continues to use normal graceful teardown.
+For Docker, if either proof is absent, uninstall exits nonzero before it signals the host gateway.
+NemoClaw preserves the gateway runtime evidence and local state.
+Keep that state intact.
+Restore the selected Docker gateway through the supported install or onboarding recovery flow so it restarts with the generated configuration.
+Verify every gateway with `openshell gateway list`.
+Retry the scoped uninstall.
+Do not add `sandbox_namespace` manually to a live gateway configuration because the running process can still be using its previous namespace.
 
 ##### Uninstalling Every Gateway Port
 

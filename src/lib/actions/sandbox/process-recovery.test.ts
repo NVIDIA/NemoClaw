@@ -7,8 +7,6 @@ import { parseManagedGatewayControlCompletion } from "./gateway-restart";
 // Import source directly so this test cannot pass against a stale build.
 import {
   confirmRecoveredSandboxGatewayManaged,
-  pinnedManagedGatewayProbeFailure,
-  waitForManagedGatewaySupervisor,
   waitForRecoveredSandboxGateway,
   waitForRecreatedSandboxOpenShellReady,
 } from "./process-recovery";
@@ -70,125 +68,6 @@ describe("managed gateway control completion", () => {
     ["GATEWAY_PID=4242", ""],
   ])("rejects malformed or unstructured controller output (#7919)", (stdout, stderr) => {
     expect(parseManagedGatewayControlCompletion({ status: 0, stdout, stderr })).toBeNull();
-  });
-});
-
-describe("managed gateway supervisor startup barrier", () => {
-  it("pins the post-connect managed proof to the lifecycle container identity (#8662)", () => {
-    const expectedContainerId = "c".repeat(64);
-    const requestPinnedGatewaySupervisorActionImpl = vi.fn(() => ({
-      status: 0,
-      stdout: `v1 ${"d".repeat(64)} complete already-running 4242 4242\nGATEWAY_PID=4242`,
-      stderr: "",
-    }));
-    const waitForManagedGatewaySupervisorImpl = vi.fn<typeof waitForManagedGatewaySupervisor>(
-      (sandboxName, options = {}) => {
-        const result = options.requestGatewaySupervisorActionImpl?.(sandboxName, "probe", 1234);
-        return result?.status === 0;
-      },
-    );
-
-    expect(
-      pinnedManagedGatewayProbeFailure("restart-box", expectedContainerId, {
-        requestPinnedGatewaySupervisorActionImpl,
-        waitForManagedGatewaySupervisorImpl,
-      }),
-    ).toBeNull();
-
-    expect(waitForManagedGatewaySupervisorImpl).toHaveBeenCalledWith(
-      "restart-box",
-      expect.objectContaining({ acceptGatewayHealthPending: false }),
-    );
-    expect(requestPinnedGatewaySupervisorActionImpl).toHaveBeenCalledExactlyOnceWith(
-      "restart-box",
-      "probe",
-      1234,
-      expectedContainerId,
-    );
-    expect(
-      pinnedManagedGatewayProbeFailure("restart-box", expectedContainerId, {
-        requestPinnedGatewaySupervisorActionImpl: () => {
-          throw new Error("replacement identity and Bearer opaque-token");
-        },
-      }),
-    ).toEqual({
-      layer: "privileged control unavailable",
-      detail: "the pinned container identity changed during final managed verification",
-    });
-  });
-
-  it.each([
-    {
-      acceptHealthPending: true,
-      expected: true,
-      label: "admits the exact health-pending result",
-      stderr: ["GATEWAY_HEALTH_TIMEOUT"],
-      sleepArgs: [],
-    },
-    {
-      acceptHealthPending: false,
-      expected: false,
-      label: "keeps existing caller retry semantics",
-      stderr: ["GATEWAY_HEALTH_TIMEOUT", "GATEWAY_HEALTH_TIMEOUT"],
-      sleepArgs: [2],
-    },
-    {
-      acceptHealthPending: true,
-      expected: true,
-      label: "waits through exact supervisor startup states",
-      stderr: [
-        "SUPERVISOR_NOT_RUNNING\nNEMOCLAW_CONTROL_STAGE=discover-supervisor",
-        "PRIVILEGED_CONTROL_UNAVAILABLE",
-        "GATEWAY_HEALTH_TIMEOUT",
-      ],
-      sleepArgs: [3, 3],
-    },
-    {
-      acceptHealthPending: true,
-      expected: false,
-      label: "rejects a missing supervisor from another stage",
-      stderr: ["SUPERVISOR_NOT_RUNNING\nNEMOCLAW_CONTROL_STAGE=preflight"],
-      sleepArgs: [],
-    },
-    {
-      acceptHealthPending: true,
-      expected: false,
-      label: "rejects decorated health output",
-      stderr: ["GATEWAY_HEALTH_TIMEOUT\nunexpected controller diagnostic"],
-      sleepArgs: [],
-    },
-  ])("$label for stopped-container recovery (#8662)", ({
-    acceptHealthPending,
-    expected,
-    sleepArgs,
-    stderr,
-  }) => {
-    const results = stderr.map((value) => ({ status: 1, stdout: "", stderr: value }));
-    const requestGatewaySupervisorActionImpl = vi.fn();
-    results.forEach((result) => requestGatewaySupervisorActionImpl.mockReturnValueOnce(result));
-    const sleepImpl = vi.fn();
-    const onFailureResult = vi.fn();
-
-    expect(
-      waitForManagedGatewaySupervisor("restart-box", {
-        acceptGatewayHealthPending: acceptHealthPending,
-        intervalSeconds: sleepArgs[0] ?? 3,
-        maxAttempts: results.length,
-        onFailureResult,
-        requestGatewaySupervisorActionImpl,
-        sleepImpl,
-      }),
-    ).toBe(expected);
-
-    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(results.length);
-    expect(requestGatewaySupervisorActionImpl).toHaveBeenNthCalledWith(
-      1,
-      "restart-box",
-      "probe",
-      expect.any(Number),
-    );
-    expect(sleepImpl.mock.calls).toEqual(sleepArgs.map((seconds) => [seconds]));
-    expect(onFailureResult.mock.calls).toEqual(expected ? [] : [[results.at(-1)]]);
   });
 });
 

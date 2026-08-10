@@ -521,26 +521,6 @@ describe("connectSandbox flow", () => {
     );
   });
 
-  it("preserves the existing container during a lifecycle-owned final probe (#8662)", async () => {
-    const harness = createConnectHarness();
-    const processRecovery = requireDist("../../src/lib/actions/sandbox/process-recovery.js");
-    const pinnedProbe = vi
-      .spyOn(processRecovery, "pinnedManagedGatewayProbeFailure")
-      .mockReturnValue(null);
-
-    await expect(
-      harness.connectSandbox("alpha", {
-        expectedContainerId: "a".repeat(64),
-        probeOnly: true,
-      }),
-    ).resolves.toBeUndefined();
-
-    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
-    expect(pinnedProbe).toHaveBeenCalledTimes(2);
-    expect(pinnedProbe).toHaveBeenCalledWith("alpha", "a".repeat(64));
-    expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha");
-  });
-
   it("probe-only mode exits before reporting success when inference.local returns no trusted result (#8502)", async () => {
     const harness = createConnectHarness({
       registryEntry: {
@@ -600,32 +580,6 @@ describe("connectSandbox flow", () => {
     );
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
-
-  it("probe-only mode sanitizes an actionable pinned-health failure (#8662)", async () => {
-    const harness = createConnectHarness();
-    const processRecovery = requireDist("../../src/lib/actions/sandbox/process-recovery.js");
-    vi.spyOn(processRecovery, "pinnedManagedGatewayProbeFailure").mockReturnValue({
-      layer: "privileged control unavailable",
-      detail: "Authorization: Bearer opaque-final-probe-token",
-    });
-
-    await expect(
-      harness.connectSandbox("alpha", {
-        expectedContainerId: "a".repeat(64),
-        probeOnly: true,
-      }),
-    ).rejects.toThrow("process.exit(1)");
-
-    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(errorOutput).toContain("managed gateway health");
-    expect(errorOutput).toContain("existing sandbox was preserved");
-    expect(errorOutput).toContain("nemoclaw alpha recover");
-    expect(errorOutput).not.toContain("opaque-final-probe-token");
-    expect(errorOutput).toContain("<REDACTED>");
-    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
-
   it("probe-only mode reports the supported repair when relaunch is quarantined (#7801)", async () => {
     const harness = createConnectHarness({
       processCheck: { checked: true, wasRunning: false, recovered: false },

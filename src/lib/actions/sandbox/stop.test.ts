@@ -19,7 +19,6 @@ function sandbox(values: Partial<SandboxEntry> = {}): SandboxEntry {
 
 function container(name: string, running: boolean) {
   return {
-    containerId: "a".repeat(64),
     name,
     status: running ? "Up 5 minutes" : "Exited (0) 2 hours ago",
     running,
@@ -276,7 +275,6 @@ describe("stopSandbox", () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
       {
-        containerId: "a".repeat(64),
         name: "openshell-my-sandbox",
         status: "Restarting (137) 2 seconds ago",
         running: false,
@@ -296,7 +294,6 @@ describe("stopSandbox", () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
       {
-        containerId: "a".repeat(64),
         name: "openshell-my-sandbox",
         status: "Up 5 minutes (Paused)",
         running: true,
@@ -360,20 +357,6 @@ describe("stopSandbox", () => {
     expect(result.exitCode).toBe(1);
     expect(result.message).toContain("No Docker container");
     expect(result.message).toContain("rebuild");
-    expect(h.dockerStop).not.toHaveBeenCalled();
-  });
-
-  it("fails closed on malformed Docker metadata without stopping the container", () => {
-    const h = harness();
-    h.findLabeledSandboxContainers.mockImplementation(() => {
-      throw new Error("Docker returned malformed OpenShell sandbox container metadata.");
-    });
-
-    expect(stopSandbox("my-sandbox", h.deps)).toMatchObject({
-      exitCode: 1,
-      message: expect.stringContaining("preserved"),
-    });
-    expect(h.stopSandboxChannels).not.toHaveBeenCalled();
     expect(h.dockerStop).not.toHaveBeenCalled();
   });
 

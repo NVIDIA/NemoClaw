@@ -1106,19 +1106,6 @@ function isDurableContainmentFailure(error: unknown): boolean {
   );
 }
 
-export const SHIELDS_STARTUP_AUTO_RESTORE_REQUIRED = "NEMOCLAW_SHIELDS_AUTO_RESTORE_REQUIRED";
-
-class ShieldsStartupAutoRestoreRequiredError extends Error {
-  readonly code = SHIELDS_STARTUP_AUTO_RESTORE_REQUIRED;
-
-  constructor() {
-    super(
-      "Expired Shields auto-restore must complete before startup access can be repaired in the pinned container",
-    );
-    this.name = "ShieldsStartupAutoRestoreRequiredError";
-  }
-}
-
 function retryInlineAutoRestore(
   sandboxName: string,
   marker: TimerMarker & { processToken: string },
@@ -1176,29 +1163,11 @@ function withExpiredAutoRestoreDeadlineFence<T>(
   sandboxName: string,
   command: string,
   operation: (allowInlineRecovery: boolean) => T,
-  { allowInlineRecovery = true }: { allowInlineRecovery?: boolean } = {},
 ): T {
-  const runWithHostLock = (callback: () => T) =>
-    withTimerBoundShieldsMutationLock(sandboxName, command, callback);
-  if (!allowInlineRecovery) {
-    const assertNoExpiredAutoRestore = () => {
-      if (inspectExpiredAutoRestoreMarker(sandboxName)) {
-        throw new ShieldsStartupAutoRestoreRequiredError();
-      }
-    };
-    assertNoExpiredAutoRestore();
-    const runWithoutInlineRecovery = () =>
-      runWithHostLock(() => {
-        assertNoExpiredAutoRestore();
-        return operation(false);
-      });
-    if (isMcpLifecycleLockHeld(sandboxName, STATE_DIR)) return runWithoutInlineRecovery();
-    return withMcpLifecycleLockSync(sandboxName, runWithoutInlineRecovery, {
-      stateDir: STATE_DIR,
-    });
-  }
   const expiredMarker = inspectExpiredAutoRestoreMarker(sandboxName);
   const takeover = inspectExpiredAutoRestoreTakeover(sandboxName, expiredMarker);
+  const runWithHostLock = (callback: () => T) =>
+    withTimerBoundShieldsMutationLock(sandboxName, command, callback);
   const recoverThenRun = () =>
     withTimerBoundAutoRestoreLock(sandboxName, command, () => {
       if (takeover) retryInlineAutoRestore(sandboxName, takeover.marker);
@@ -1412,25 +1381,18 @@ function isShieldsState(value: unknown): value is ShieldsState {
 // file stays focused on shields state transitions.
 // ---------------------------------------------------------------------------
 
-function stateDirLockExec(sandboxName: string, expectedContainerId?: string) {
+function stateDirLockExec(sandboxName: string) {
   return {
     run: (cmd: string[], input?: string) => {
-      const argv =
-        expectedContainerId === undefined
-          ? privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined, true)
-          : privilegedSandboxExecArgv(
-              sandboxName,
-              cmd,
-              input !== undefined,
-              true,
-              expectedContainerId,
-            );
-      const result = dockerSpawnSync(argv, {
-        encoding: "utf-8",
-        input,
-        timeout: STATE_DIR_GUARD_TIMEOUT_MS,
-        maxBuffer: 16 * 1024 * 1024,
-      });
+      const result = dockerSpawnSync(
+        privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined, true),
+        {
+          encoding: "utf-8",
+          input,
+          timeout: STATE_DIR_GUARD_TIMEOUT_MS,
+          maxBuffer: 16 * 1024 * 1024,
+        },
+      );
       return {
         status: result.status,
         signal: result.signal,
@@ -2637,10 +2599,7 @@ function repairMutableConfigPerms(sandboxName: string): MutableConfigRepairResul
   );
 }
 
-function restoreLockedStateDirStartupAccess(
-  sandboxName: string,
-  expectedContainerId?: string,
-): void {
+function restoreLockedStateDirStartupAccess(sandboxName: string): void {
   validateName(sandboxName, "sandbox name");
   withExpiredAutoRestoreDeadlineFence(
     sandboxName,
@@ -2650,7 +2609,7 @@ function restoreLockedStateDirStartupAccess(
       if (!posture.locked) return;
       const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
       const issues = restoreStateDirStartupAccess(
-        stateDirLockExec(sandboxName, expectedContainerId),
+        stateDirLockExec(sandboxName),
         target.configDir,
         requireStateLockPlan(target),
       );
@@ -2658,9 +2617,6 @@ function restoreLockedStateDirStartupAccess(
         throw new Error(`Locked startup access could not be restored: ${issues.join(", ")}`);
       }
     },
-    // Lifecycle `start` owns and pins this container, so it must refuse an
-    // expired auto-restore instead of recovering through an unpinned path.
-    { allowInlineRecovery: expectedContainerId === undefined },
   );
 }
 

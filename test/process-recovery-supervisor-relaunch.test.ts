@@ -281,6 +281,62 @@ describe("waitForManagedGatewaySupervisor", () => {
 });
 
 describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
+  it("checks managed recovery and OpenShell readiness before starting host forwards (#8662)", () => {
+    mockOpenClawSandbox("stopped-box");
+    setImmediateRecoveryPolling();
+    const order: string[] = [];
+    const completion = {
+      status: 0,
+      stdout: `v1 ${"a".repeat(64)} complete ok 0 4242\nGATEWAY_PID=4242`,
+      stderr: "",
+    };
+    const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) => {
+      order.push(action);
+      return completion;
+    });
+    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(
+      (_name: string, options?: { beforeProbe?: (timeoutMs: number) => boolean | null }) => {
+        expect(options?.beforeProbe?.(5000)).toBe(true);
+        order.push("OpenShell readiness");
+        return true;
+      },
+    );
+    const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
+    let forwardStarted = false;
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => forwardStarted);
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(
+      (args) =>
+        ({
+          status: 0,
+          output:
+            args.join(" ") === "forward list" && forwardStarted
+              ? "SANDBOX  BIND  PORT  PID  STATUS\nstopped-box  127.0.0.1  18789  12345  running"
+              : "SANDBOX  BIND  PORT  PID  STATUS",
+        }) as never,
+    );
+    vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
+      if (args.join(" ") === "forward start --background 18789 stopped-box") {
+        order.push("host forward");
+        forwardStarted = true;
+      }
+      return { status: 0 } as never;
+    });
+
+    const result = checkAndRecoverSandboxProcesses("stopped-box", {
+      quiet: true,
+      isSandboxGatewayRunningImpl: () => false,
+      requestGatewaySupervisorAction,
+      relaunchManagedSupervisorSessionImpl,
+      waitForRecreatedSandboxOpenShellReadyImpl,
+    });
+
+    expect(result).toMatchObject({ checked: true, recovered: true, forwardRecovered: true });
+    expect(order).toContain("recover");
+    expect(order).toContain("probe");
+    expect(order.indexOf("OpenShell readiness")).toBeLessThan(order.indexOf("host forward"));
+    expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
+  });
+
   it("does not turn ambiguous supervisor unavailability into a container mutation", () => {
     mockOpenClawSandbox("ambiguous-box");
     setImmediateRecoveryPolling();
@@ -733,10 +789,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       recovered: true,
       forwardRecovered: true,
     });
-    expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(6);
-    expect(
-      requestPinnedGatewaySupervisorAction.mock.calls.map((call: unknown[]) => [call[1], call[3]]),
-    ).toEqual(Array(6).fill(["probe", "replacement-container-id"]));
+    expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(5);
     expect(captureOpenshell).toHaveBeenCalledWith(
       ["sandbox", "exec", "--name", "busy-recovered-box", "--", "true"],
       expect.objectContaining({ ignoreError: true }),

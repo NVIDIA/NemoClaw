@@ -84,27 +84,30 @@ import {
   executeSandboxExecCommand,
   type GatewayRestartFailureLayer,
   type ManagedGatewayControlCompletion,
-  type ManagedGatewayRecoveryFailure,
-  pinnedManagedGatewayProbeFailure,
-  recoverStartedSandboxProcesses,
   resolveSandboxDashboardPort,
-  type SandboxStartupProcessRecoveryOptions,
-  type SandboxStartupProcessRecoveryResult,
 } from "./process-recovery";
 import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
-export { pinnedManagedGatewayProbeFailure, runConnectAutoPairApprovalPass };
+export { runConnectAutoPairApprovalPass };
 
 export type SandboxConnectOptions = {
-  /** Immutable direct-container identity retained by lifecycle `start`. */
-  expectedContainerId?: string;
   probeOnly?: boolean;
 };
 
-export type SandboxStartupRecoveryOptions = SandboxStartupProcessRecoveryOptions;
-export type SandboxStartupRecoveryResult = SandboxStartupProcessRecoveryResult;
-export type SandboxStartupManagedGatewayRecoveryFailure = ManagedGatewayRecoveryFailure;
+export type SandboxStartupRecoveryResult = {
+  processCheck: ReturnType<typeof checkAndRecoverSandboxProcesses>;
+  recoveryFailureDetail: string | null;
+  recoveryFailureLayer: GatewayRestartFailureLayer | null;
+};
+
+export function sanitizeSandboxStartupRecoveryDetail(raw: string): string {
+  return redactFull(raw)
+    .replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 240);
+}
 
 type SpawnLikeResult = {
   status: number | null;
@@ -246,36 +249,7 @@ function exitOnForwardRecoveryFailure(
   process.exit(1);
 }
 
-function exitOnPreservedStartupRecoveryFailure(
-  sandboxName: string,
-  agentName: string,
-  layer: "managed gateway health" | "managed supervisor" | "OpenShell readiness",
-  detail: unknown,
-): never {
-  const sanitizedDetail = sanitizeSandboxStartupRecoveryDetail(
-    String(detail ?? "startup recovery failed"),
-  );
-  console.error(
-    `  Probe failed: ${agentName} startup recovery in '${sandboxName}' failed during ${layer}: ${sanitizedDetail}.`,
-  );
-  console.error(
-    `  The existing sandbox was preserved. Run \`${CLI_NAME} ${sandboxName} recover\` and retry \`${CLI_NAME} ${sandboxName} start\`.`,
-  );
-  process.exit(1);
-}
-
-export function sanitizeSandboxStartupRecoveryDetail(raw: string): string {
-  return redactFull(raw)
-    .replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim()
-    .slice(0, 240);
-}
-
-async function runSandboxConnectProbe(
-  sandboxName: string,
-  { expectedContainerId }: Pick<SandboxConnectOptions, "expectedContainerId"> = {},
-): Promise<void> {
+async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) {
@@ -287,29 +261,6 @@ async function runSandboxConnectProbe(
       ensureInferenceRoute: () => routeResult,
       sandboxName,
     });
-    return;
-  }
-
-  // `start` already completed exact-container recovery and forward checks.
-  // This branch is deliberately read-only until inference reconciliation, then
-  // re-proves the same authenticated container before reporting success.
-  if (expectedContainerId) {
-    const verifyPinned = () => {
-      const failure = pinnedManagedGatewayProbeFailure(sandboxName, expectedContainerId);
-      if (failure) {
-        exitOnPreservedStartupRecoveryFailure(
-          sandboxName,
-          agentName,
-          "managed gateway health",
-          `${failure.layer}: ${failure.detail}`,
-        );
-      }
-    };
-    verifyPinned();
-    await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
-    runConnectAutoPairApprovalPass(sandboxName);
-    verifyPinned();
-    console.log(`  Probe complete: ${agentName} gateway is running in '${sandboxName}'.`);
     return;
   }
 
@@ -988,11 +939,17 @@ function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
   }
 }
 
-export function restoreSandboxStartupState(
-  sandboxName: string,
-  options: SandboxStartupRecoveryOptions = {},
-): SandboxStartupRecoveryResult {
-  return recoverStartedSandboxProcesses(sandboxName, { ...options, quiet: true });
+export function restoreSandboxStartupState(sandboxName: string): SandboxStartupRecoveryResult {
+  let recoveryFailureDetail: string | null = null;
+  let recoveryFailureLayer: GatewayRestartFailureLayer | null = null;
+  const processCheck = checkAndRecoverSandboxProcesses(sandboxName, {
+    quiet: true,
+    onRecoveryFailureLayer: (layer, detail) => {
+      recoveryFailureLayer = layer;
+      recoveryFailureDetail = detail ?? null;
+    },
+  });
+  return { processCheck, recoveryFailureDetail, recoveryFailureLayer };
 }
 
 function restoreInteractiveTerminal(): void {
@@ -1293,7 +1250,7 @@ export async function prepareInteractiveSession(
 
 export async function connectSandbox(
   sandboxName: string,
-  { expectedContainerId, probeOnly = false }: SandboxConnectOptions = {},
+  { probeOnly = false }: SandboxConnectOptions = {},
 ): Promise<void> {
   if (probeOnly) {
     await runConnectEntryPreflight(sandboxName, { probeOnly: true });
@@ -1305,7 +1262,7 @@ export async function connectSandbox(
     // before any in-sandbox process or host-forward mutation. The readiness
     // polls are already owner-scoped; this also catches registry changes.
     await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
-    return await runSandboxConnectProbe(sandboxName, { expectedContainerId });
+    return await runSandboxConnectProbe(sandboxName);
   }
 
   const { agent, sb } = await prepareInteractiveSession(sandboxName);
