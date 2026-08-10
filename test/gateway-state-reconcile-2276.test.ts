@@ -20,6 +20,7 @@ import { testTimeout } from "./helpers/timeouts";
 
 const TIMEOUT_MS = testTimeout(60_000);
 const SANDBOX_NAME = "my-assistant";
+const OPENSHELL_FIXTURE_VERSION = "0.0.101";
 
 // Output fixtures that mirror real OpenShell CLI output.
 const GATEWAY_INFO_NEMOCLAW =
@@ -125,7 +126,7 @@ function emit(r) {
 }
 
 if (args[0] === "-V" || args[0] === "--version") {
-  process.stdout.write("openshell 0.0.101\\n");
+  process.stdout.write("openshell ${OPENSHELL_FIXTURE_VERSION}\\n");
   process.exit(0);
 }
 
@@ -181,7 +182,7 @@ process.exit(0);
       path.join(homeLocalBin, component),
       `#!${process.execPath}
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
-if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.101\\n");
+if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} ${OPENSHELL_FIXTURE_VERSION}\\n");
 process.exit(0);
 `,
       { mode: 0o755 },
@@ -391,6 +392,16 @@ describe("connect preserves the registry so rebuild can recover in scenario 14 (
       rebuildOut,
       /below minimum required version|Installing OpenShell/,
       `rebuild must use the fixture OpenShell binaries, got:\n${rebuildOut}`,
+    );
+    assert.doesNotMatch(
+      rebuildOut,
+      /below minimum.*upgrading|missing provider credential rewrite or MCP L7 policy support.*reinstalling/i,
+      `rebuild must not enter the OpenShell upgrade or repair path, got:\n${rebuildOut}`,
+    );
+    assert.doesNotMatch(
+      rebuildOut,
+      /Installing OpenShell from release/,
+      `rebuild must not enter the OpenShell install path, got:\n${rebuildOut}`,
     );
     assert.doesNotMatch(
       rebuildOut,
