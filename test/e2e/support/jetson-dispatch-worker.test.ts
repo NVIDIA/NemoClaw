@@ -9,6 +9,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { loadSshJetsonWorkerConfig } from "../../../tools/e2e/jetson-dispatch-worker.mts";
 
+const dispatcherRunbook = fs.readFileSync(
+  path.join(process.cwd(), "test/e2e/docs/jetson-colossus-dispatch.md"),
+  "utf8",
+);
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
@@ -40,6 +44,19 @@ function environment(files = deploymentFiles()): NodeJS.ProcessEnv {
 }
 
 describe("Colossus SSH worker deployment boundary", () => {
+  it("pins dispatcher deployment to one reviewed commit before service startup (#8142)", () => {
+    const verification = 'test "$(sudo git -C /opt/nemoclaw-jetson-dispatch rev-parse HEAD)" =';
+    expect(dispatcherRunbook).toContain(
+      'fetch --depth=1 --no-tags origin \\\n  "$REVIEWED_COMMIT_SHA"',
+    );
+    expect(dispatcherRunbook).toContain("checkout --detach FETCH_HEAD");
+    expect(dispatcherRunbook).toContain(verification);
+    expect(dispatcherRunbook.indexOf(verification)).toBeLessThan(
+      dispatcherRunbook.indexOf("## Configure the Dispatcher Service"),
+    );
+    expect(dispatcherRunbook).not.toContain("git clone --branch main");
+  });
+
   it("loads fixed SSH, host-key, timeout, and reset configuration (#8142)", () => {
     expect(loadSshJetsonWorkerConfig(environment())).toMatchObject({
       destination: "nvidia@192.168.55.1",

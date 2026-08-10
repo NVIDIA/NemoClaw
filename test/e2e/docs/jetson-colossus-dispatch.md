@@ -88,6 +88,7 @@ If a known-image restore and independent attestation cannot be automated, stop t
 Run these commands on Colossus.
 Replace the checkout path if the host uses a managed deployment location.
 The dispatcher requires `/usr/bin/node` 22.19.0 or later.
+Replace `REVIEWED_COMMIT_SHA` with the full 40-character SHA of the reviewed commit to deploy.
 
 ```bash
 /usr/bin/node --version
@@ -100,13 +101,21 @@ sudo useradd --system --create-home \
   --shell /usr/sbin/nologin nemoclaw-jetson-dispatch
 sudo install -d -o nemoclaw-jetson-dispatch -g nemoclaw-jetson-dispatch -m 0700 \
   /var/lib/nemoclaw-jetson-dispatch /etc/nemoclaw-jetson-dispatch
-sudo git clone --branch main --single-branch https://github.com/NVIDIA/NemoClaw.git \
-  /opt/nemoclaw-jetson-dispatch
-git -C /opt/nemoclaw-jetson-dispatch rev-parse HEAD
+REVIEWED_COMMIT_SHA=0000000000000000000000000000000000000000
+sudo install -d -o root -g root -m 0755 /opt/nemoclaw-jetson-dispatch
+sudo git -C /opt/nemoclaw-jetson-dispatch init
+sudo git -C /opt/nemoclaw-jetson-dispatch remote add origin \
+  https://github.com/NVIDIA/NemoClaw.git
+sudo git -C /opt/nemoclaw-jetson-dispatch fetch --depth=1 --no-tags origin \
+  "$REVIEWED_COMMIT_SHA"
+sudo git -C /opt/nemoclaw-jetson-dispatch checkout --detach FETCH_HEAD
+test "$(sudo git -C /opt/nemoclaw-jetson-dispatch rev-parse HEAD)" = \
+  "$REVIEWED_COMMIT_SHA"
+test -z "$(sudo git -C /opt/nemoclaw-jetson-dispatch status --short)"
 ```
 
-Deploy a reviewed commit and record its commit SHA.
-Do not automatically update this checkout.
+The two final checks must pass before the dispatcher service starts.
+Do not deploy a branch reference or automatically update this checkout.
 The service runs controller and dispatcher files from this trusted commit.
 It never checks candidate code out on Colossus.
 
