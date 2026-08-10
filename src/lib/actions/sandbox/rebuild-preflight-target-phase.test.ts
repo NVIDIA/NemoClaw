@@ -18,8 +18,9 @@ import {
 const originalGateway = process.env.OPENSHELL_GATEWAY;
 
 afterEach(() => {
-  if (originalGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
-  else process.env.OPENSHELL_GATEWAY = originalGateway;
+  originalGateway === undefined
+    ? Reflect.deleteProperty(process.env, "OPENSHELL_GATEWAY")
+    : (process.env.OPENSHELL_GATEWAY = originalGateway);
 });
 
 describe("rebuild readiness gateway pin", () => {

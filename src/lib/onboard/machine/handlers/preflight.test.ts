@@ -388,7 +388,8 @@ describe("handlePreflightState", () => {
       },
       assertOnboardHostReadiness: (_host, _gpu, options) => {
         const age = currentTime - Date.parse(options.observedAt ?? "");
-        if (age > 30_000) throw new Error("host observations are stale");
+        expect(age).toBeGreaterThan(30_000);
+        throw new Error("host observations are stale");
       },
       detectGpu,
       assertDockerBridgeAndContainerDnsHealthy: bridge,

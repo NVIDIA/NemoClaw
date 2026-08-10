@@ -287,10 +287,8 @@ describe("managed gateway port readiness (#7411)", () => {
     vi.stubEnv("GITHUB_TOKEN", "github-secret");
     vi.stubEnv("OPENSHELL_GATEWAY_AUTH_TOKEN", "gateway-secret");
     subprocess.spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
-      if (command === "sh" && args.includes('command -v "$1"')) {
-        return commandResult("/usr/bin/lsof\n", 0);
-      }
-      return commandResult();
+      const resolvesLsof = command === "sh" && args.includes('command -v "$1"');
+      return resolvesLsof ? commandResult("/usr/bin/lsof\n", 0) : commandResult();
     });
 
     const gatewayPort = 0;

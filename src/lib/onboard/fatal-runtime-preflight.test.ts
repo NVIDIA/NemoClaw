@@ -455,19 +455,18 @@ describe("readiness-gated runtime preflight", () => {
   it("runs the bounded WSL GPU proof only after host and gateway admission", async () => {
     const calls: string[] = [];
     const detectGpu = vi.fn((deps?: DetectGpuDeps): GpuDetection | null => {
-      if (deps?.proveArm64WslDockerDesktopGpu === null) {
-        calls.push("gpu-observation");
-        return null;
-      }
-      calls.push("gpu-runtime-proof");
-      return {
-        type: "nvidia",
-        count: 1,
-        totalMemoryMB: 32_768,
-        perGpuMB: 32_768,
-        nimCapable: true,
-        wslDockerDesktopGpuProofPassed: true,
-      };
+      const isObservation = deps?.proveArm64WslDockerDesktopGpu === null;
+      calls.push(isObservation ? "gpu-observation" : "gpu-runtime-proof");
+      return isObservation
+        ? null
+        : {
+            type: "nvidia",
+            count: 1,
+            totalMemoryMB: 32_768,
+            perGpuMB: 32_768,
+            nimCapable: true,
+            wslDockerDesktopGpuProofPassed: true,
+          };
     });
 
     const result = await runReadinessGatedRuntimePreflight(

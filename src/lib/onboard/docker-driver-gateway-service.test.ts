@@ -334,10 +334,12 @@ describe("docker-driver-gateway-service", () => {
     const formulaPrefix = "/opt/homebrew/opt/openshell";
     const gatewayBin = `${formulaPrefix}/bin/openshell-gateway`;
     const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
-      if (args[0] === "info") return officialFormulaInfo();
-      if (args[0] === "services") return officialRunningServiceInfo();
-      if (args[0] === "--prefix") return spawnResult(0, "", formulaPrefix);
-      return spawnResult();
+      const responses = {
+        info: officialFormulaInfo(),
+        services: officialRunningServiceInfo(),
+        "--prefix": spawnResult(0, "", formulaPrefix),
+      };
+      return responses[args[0] as keyof typeof responses] ?? spawnResult();
     });
 
     expect(

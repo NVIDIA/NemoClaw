@@ -145,10 +145,7 @@ describe("initial onboard flow phases", () => {
         getResumeSandboxGpuOverrides: () => ({ flag: null, device: null }),
         detectGpuForReadiness: () => gpu,
         detectGpu: () => gpu,
-        runPreflight: async () => {
-          if (preflightFailure) throw preflightFailure;
-          return gpu;
-        },
+        runPreflight: async () => (preflightFailure ? Promise.reject(preflightFailure) : gpu),
         assessHost: () => ({}),
         assertOnboardHostReadiness: vi.fn(),
         assertDockerBridgeAndContainerDnsHealthy: vi.fn(),

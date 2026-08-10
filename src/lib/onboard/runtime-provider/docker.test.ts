@@ -8,13 +8,15 @@ import { createDockerRuntimeProviderBundle } from "./docker";
 function inspectDockerHost(stdout: string, status = 0, stderr = "") {
   const captureHostCommand = vi.fn(() => ({ status, stdout, stderr }));
   const provider = createDockerRuntimeProviderBundle({ captureHostCommand });
-  if (!provider.preflightDoctor.supported) {
-    throw new Error("Docker preflight doctor surface must be supported");
-  }
+  expect(provider.preflightDoctor.supported).toBe(true);
+  const preflightDoctor = provider.preflightDoctor as Extract<
+    typeof provider.preflightDoctor,
+    { supported: true }
+  >;
 
   return {
     captureHostCommand,
-    check: provider.preflightDoctor.inspectHost(),
+    check: preflightDoctor.inspectHost(),
   };
 }
 
