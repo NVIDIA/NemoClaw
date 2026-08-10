@@ -484,7 +484,10 @@ export function buildReleaseE2eLedger(
       false,
       `${label}.dispatch.allowJetsonRunnerQueue`,
     );
-    if (dispatch.kind === "nemoclaw-e2e-dispatch-v2") {
+    if (
+      dispatch.kind === "nemoclaw-e2e-dispatch-v2" ||
+      Object.hasOwn(dispatch, "allowJetsonDispatch")
+    ) {
       requireEqual(
         booleanField(dispatch, "allowJetsonDispatch", `${label}.dispatch`),
         false,

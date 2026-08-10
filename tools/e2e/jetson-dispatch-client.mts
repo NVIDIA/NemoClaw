@@ -10,13 +10,19 @@ import {
   JETSON_DISPATCH_TARGET,
   parseJetsonDispatchRequest,
 } from "./jetson-dispatch-contract.mts";
-import type { JetsonDispatchArtifact, JetsonDispatchStatus } from "./jetson-dispatch-lifecycle.mts";
+import {
+  decodeJetsonArtifactArchive,
+  type JetsonDispatchArtifact,
+  type JetsonDispatchStatus,
+} from "./jetson-dispatch-lifecycle.mts";
 import { writePrivateRegularFile } from "./private-file.mts";
 
 const MAX_STATUS_BYTES = 64 * 1024;
 const MAX_ARTIFACT_BYTES = 5 * 1024 * 1024;
 const POLL_INTERVAL_MS = 10_000;
 const MAX_WAIT_MS = 54 * 60_000;
+const MAX_CONSECUTIVE_POLL_FAILURES = 3;
+const OIDC_TOKEN_CACHE_MS = 4 * 60_000;
 const JOB_ID_PATTERN = /^[a-f0-9]{64}$/u;
 
 function record(value: unknown, name: string): Record<string, unknown> {
@@ -43,28 +49,59 @@ function dispatcherBaseUrl(value: string | undefined): URL {
   return url;
 }
 
-async function githubOidcToken(env: NodeJS.ProcessEnv = process.env): Promise<string> {
-  const requestUrlValue = env.ACTIONS_ID_TOKEN_REQUEST_URL;
-  const requestToken = env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
-  if (!requestUrlValue || !requestToken) throw new Error("GitHub OIDC environment is unavailable");
-  const requestUrl = new URL(requestUrlValue);
-  if (requestUrl.protocol !== "https:") throw new Error("GitHub OIDC request URL must use HTTPS");
-  requestUrl.searchParams.set("audience", JETSON_DISPATCH_AUDIENCE);
-  const response = await fetch(requestUrl, {
-    headers: { Authorization: `Bearer ${requestToken}` },
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) throw new Error(`GitHub OIDC token request returned HTTP ${response.status}`);
-  const payload = record(await response.json(), "GitHub OIDC token response");
-  if (
-    typeof payload.value !== "string" ||
-    payload.value.length === 0 ||
-    payload.value.length > 16 * 1024
-  ) {
-    throw new Error("GitHub OIDC token response is invalid");
-  }
-  return payload.value;
+export function createGitHubOidcTokenProvider(
+  options: { fetchImpl?: typeof fetch; now?: () => number } = {},
+): (env?: NodeJS.ProcessEnv) => Promise<string> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const now = options.now ?? Date.now;
+  let cached:
+    | { expiresAtMs: number; requestToken: string; requestUrlValue: string; value: string }
+    | undefined;
+  return async (env: NodeJS.ProcessEnv = process.env): Promise<string> => {
+    const requestUrlValue = env.ACTIONS_ID_TOKEN_REQUEST_URL;
+    const requestToken = env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+    if (!requestUrlValue || !requestToken) {
+      throw new Error("GitHub OIDC environment is unavailable");
+    }
+    if (
+      cached &&
+      cached.requestUrlValue === requestUrlValue &&
+      cached.requestToken === requestToken &&
+      now() < cached.expiresAtMs
+    ) {
+      return cached.value;
+    }
+    const requestUrl = new URL(requestUrlValue);
+    if (requestUrl.protocol !== "https:") {
+      throw new Error("GitHub OIDC request URL must use HTTPS");
+    }
+    requestUrl.searchParams.set("audience", JETSON_DISPATCH_AUDIENCE);
+    const response = await fetchImpl(requestUrl, {
+      headers: { Authorization: `Bearer ${requestToken}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) {
+      throw new Error(`GitHub OIDC token request returned HTTP ${response.status}`);
+    }
+    const payload = record(await response.json(), "GitHub OIDC token response");
+    if (
+      typeof payload.value !== "string" ||
+      payload.value.length === 0 ||
+      payload.value.length > 16 * 1024
+    ) {
+      throw new Error("GitHub OIDC token response is invalid");
+    }
+    cached = {
+      expiresAtMs: now() + OIDC_TOKEN_CACHE_MS,
+      requestToken,
+      requestUrlValue,
+      value: payload.value,
+    };
+    return payload.value;
+  };
 }
+
+const githubOidcToken = createGitHubOidcTokenProvider();
 
 async function dispatcherRequest(options: {
   baseUrl: URL;
@@ -146,11 +183,72 @@ function validateArtifact(value: unknown, jobId: string): JetsonDispatchArtifact
   ) {
     throw new Error("Jetson dispatcher returned an invalid artifact");
   }
+  if (artifact.artifactArchiveBase64 !== undefined) {
+    decodeJetsonArtifactArchive(artifact.artifactArchiveBase64);
+  }
+  if (status.conclusion === "success" && artifact.artifactArchiveBase64 === undefined) {
+    throw new Error("Successful Jetson dispatch did not return its E2E artifact archive");
+  }
   return artifact as unknown as JetsonDispatchArtifact;
 }
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+export async function pollJetsonDispatch(options: {
+  baseUrl: URL;
+  deadlineMs: number;
+  initialStatus: JetsonDispatchStatus;
+  jobId: string;
+  now?: () => number;
+  request?: typeof dispatcherRequest;
+  stopping?: () => boolean;
+  wait?: typeof delay;
+}): Promise<JetsonDispatchStatus> {
+  const now = options.now ?? Date.now;
+  const request = options.request ?? dispatcherRequest;
+  const wait = options.wait ?? delay;
+  let consecutiveFailures = 0;
+  let status = options.initialStatus;
+  while (status.state !== "completed") {
+    if (options.stopping?.()) throw new Error("Jetson dispatch cancellation requested");
+    if (now() >= options.deadlineMs) {
+      await request({
+        baseUrl: options.baseUrl,
+        method: "DELETE",
+        path: `v1/jobs/${options.jobId}`,
+        maxBytes: MAX_STATUS_BYTES,
+      });
+      throw new Error("Jetson dispatcher did not complete before the controller deadline");
+    }
+    await wait(POLL_INTERVAL_MS);
+    try {
+      status = validateStatus(
+        await request({
+          baseUrl: options.baseUrl,
+          method: "GET",
+          path: `v1/jobs/${options.jobId}`,
+          maxBytes: MAX_STATUS_BYTES,
+        }),
+      );
+      consecutiveFailures = 0;
+      console.log(`Jetson dispatch state: ${status.state}`);
+    } catch (error) {
+      consecutiveFailures += 1;
+      if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+        await request({
+          baseUrl: options.baseUrl,
+          method: "DELETE",
+          path: `v1/jobs/${options.jobId}`,
+          maxBytes: MAX_STATUS_BYTES,
+        }).catch(() => undefined);
+        throw error;
+      }
+      console.warn("Jetson dispatch status request failed; retrying");
+    }
+  }
+  return status;
 }
 
 async function main(): Promise<void> {
@@ -200,29 +298,13 @@ async function main(): Promise<void> {
   jobId = dispatched.jobId;
   console.log(`Jetson dispatch accepted as ${jobId}`);
   const deadline = Date.now() + MAX_WAIT_MS;
-  let status = dispatched;
-  while (status.state !== "completed") {
-    if (stopping) throw new Error("Jetson dispatch cancellation requested");
-    if (Date.now() >= deadline) {
-      await dispatcherRequest({
-        baseUrl,
-        method: "DELETE",
-        path: `v1/jobs/${jobId}`,
-        maxBytes: MAX_STATUS_BYTES,
-      });
-      throw new Error("Jetson dispatcher did not complete before the controller deadline");
-    }
-    await delay(POLL_INTERVAL_MS);
-    status = validateStatus(
-      await dispatcherRequest({
-        baseUrl,
-        method: "GET",
-        path: `v1/jobs/${jobId}`,
-        maxBytes: MAX_STATUS_BYTES,
-      }),
-    );
-    console.log(`Jetson dispatch state: ${status.state}`);
-  }
+  const status = await pollJetsonDispatch({
+    baseUrl,
+    deadlineMs: deadline,
+    initialStatus: dispatched,
+    jobId,
+    stopping: () => stopping,
+  });
 
   const artifactValue = await dispatcherRequest({
     baseUrl,
@@ -231,10 +313,17 @@ async function main(): Promise<void> {
     maxBytes: MAX_ARTIFACT_BYTES,
   });
   const artifact = validateArtifact(artifactValue, jobId);
+  const { artifactArchiveBase64, ...artifactReceipt } = artifact;
   writePrivateRegularFile(
     path.join(artifactDirectory, "jetson-dispatch.json"),
-    `${JSON.stringify(artifact, null, 2)}\n`,
+    `${JSON.stringify(artifactReceipt, null, 2)}\n`,
   );
+  if (artifactArchiveBase64 !== undefined) {
+    writePrivateRegularFile(
+      path.join(artifactDirectory, "jetson-e2e-artifacts.tar.gz"),
+      decodeJetsonArtifactArchive(artifactArchiveBase64),
+    );
+  }
   console.log(`Jetson dispatch conclusion: ${artifact.status.conclusion}`);
   if (artifact.status.conclusion !== "success") process.exitCode = 1;
 }

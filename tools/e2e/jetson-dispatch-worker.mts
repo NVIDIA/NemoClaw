@@ -6,10 +6,12 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { JetsonDispatchRequest } from "./jetson-dispatch-contract.mts";
-import type {
+import {
+  decodeJetsonArtifactArchive,
   JetsonDeviceIdentity,
   JetsonDispatchWorker,
   JetsonWorkerResult,
+  MAX_JETSON_ARTIFACT_ARCHIVE_BYTES,
 } from "./jetson-dispatch-lifecycle.mts";
 
 const MAX_PROCESS_OUTPUT_BYTES = 4 * 1024 * 1024;
@@ -58,10 +60,6 @@ if [ -e "$workspace" ]; then
   exit 1
 fi
 install -d -m 0700 "$workspace"
-cleanup() {
-  rm -rf -- "$workspace"
-}
-trap cleanup EXIT
 
 git init --quiet "$workspace/repository"
 git -C "$workspace/repository" remote add origin https://github.com/NVIDIA/NemoClaw.git
@@ -94,6 +92,35 @@ export OPENSHELL_GATEWAY=nemoclaw
 timeout --foreground --signal=TERM --kill-after=30s "${"${timeout_seconds}"}s" \
   npx tsx tools/e2e/live-vitest-invocation.mts run \
   --test-path test/e2e/live/jetson-nvmap-gpu.test.ts
+`;
+
+const COLLECT_ARTIFACT_SCRIPT = String.raw`set -euo pipefail
+job_id="$1"
+[[ "$job_id" =~ ^[a-f0-9]{64}$ ]]
+workspace="/var/tmp/nemoclaw-jetson-e2e/$job_id"
+cleanup() {
+  rm -rf -- "$workspace"
+}
+trap cleanup EXIT
+
+artifact_directory="$workspace/e2e-artifacts/live/jetson-nvmap-gpu"
+if [ ! -d "$artifact_directory" ] || [ -L "$artifact_directory" ]; then
+  exit 0
+fi
+artifact_bytes="$(du --apparent-size --block-size=1 --summarize "$artifact_directory" | cut -f1)"
+[[ "$artifact_bytes" =~ ^[0-9]+$ ]]
+if (( artifact_bytes > ${MAX_JETSON_ARTIFACT_ARCHIVE_BYTES} )); then
+  echo "Jetson E2E artifacts exceed ${MAX_JETSON_ARTIFACT_ARCHIVE_BYTES} bytes" >&2
+  exit 1
+fi
+archive="$workspace/jetson-e2e-artifacts.tar.gz"
+tar --one-file-system --create --gzip --file "$archive" --directory "$artifact_directory" -- .
+archive_bytes="$(stat --format='%s' "$archive")"
+if (( archive_bytes > ${MAX_JETSON_ARTIFACT_ARCHIVE_BYTES} )); then
+  echo "Jetson E2E artifact archive exceeds ${MAX_JETSON_ARTIFACT_ARCHIVE_BYTES} bytes" >&2
+  exit 1
+fi
+base64 --wrap=0 "$archive"
 `;
 
 export interface SshJetsonWorkerConfig {
@@ -289,25 +316,28 @@ function parseDeviceIdentity(output: string): JetsonDeviceIdentity {
 
 export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
   readonly #config: SshJetsonWorkerConfig;
+  readonly #runProcess: typeof runProcess;
 
-  constructor(config: SshJetsonWorkerConfig) {
+  constructor(config: SshJetsonWorkerConfig, processRunner: typeof runProcess = runProcess) {
     this.#config = config;
+    this.#runProcess = processRunner;
   }
 
   async run(
     request: JetsonDispatchRequest,
     options: { jobId: string; signal: AbortSignal },
   ): Promise<JetsonWorkerResult> {
-    const identityResult = await runProcess({
+    const identityResult = await this.#runProcess({
       executable: "ssh",
       args: [...this.#sshArgs(), this.#config.destination, "bash", "-s"],
       input: DEVICE_IDENTITY_SCRIPT,
       signal: options.signal,
     });
     const device = parseDeviceIdentity(identityResult.stdout);
-    let testResult: ProcessResult;
+    let testResult: ProcessResult | undefined;
+    let testError: unknown;
     try {
-      testResult = await runProcess({
+      testResult = await this.#runProcess({
         executable: "ssh",
         args: [
           ...this.#sshArgs(),
@@ -323,22 +353,37 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
         signal: options.signal,
       });
     } catch (error) {
-      if (error instanceof ProcessFailure) {
-        const failure = new Error(error.message) as Error & { log: string };
-        failure.log = [
-          "=== Jetson identity ===",
-          identityResult.stdout.trimEnd(),
-          "=== Jetson E2E stdout ===",
-          error.result.stdout.trimEnd(),
-          "=== Jetson E2E stderr ===",
-          error.result.stderr.trimEnd(),
-          "",
-        ].join("\n");
-        throw failure;
+      testError = error;
+    }
+    const artifactArchiveBase64 = options.signal.aborted
+      ? undefined
+      : await this.#collectArtifact(options.jobId, options.signal);
+    if (testError instanceof ProcessFailure) {
+      const failure = new Error(testError.message) as Error & {
+        artifactArchiveBase64?: string;
+        log: string;
+      };
+      failure.log = [
+        "=== Jetson identity ===",
+        identityResult.stdout.trimEnd(),
+        "=== Jetson E2E stdout ===",
+        testError.result.stdout.trimEnd(),
+        "=== Jetson E2E stderr ===",
+        testError.result.stderr.trimEnd(),
+        "",
+      ].join("\n");
+      if (artifactArchiveBase64 !== undefined) {
+        failure.artifactArchiveBase64 = artifactArchiveBase64;
       }
-      throw error;
+      throw failure;
+    }
+    if (testError) throw testError;
+    if (!testResult) throw new Error("Jetson E2E did not return a process result");
+    if (artifactArchiveBase64 === undefined) {
+      throw new Error("Successful Jetson E2E did not produce a bounded artifact archive");
     }
     return {
+      artifactArchiveBase64,
       device,
       log: [
         "=== Jetson identity ===",
@@ -352,8 +397,20 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
     };
   }
 
+  async #collectArtifact(jobId: string, signal: AbortSignal): Promise<string | undefined> {
+    const result = await this.#runProcess({
+      executable: "ssh",
+      args: [...this.#sshArgs(), this.#config.destination, "bash", "-s", "--", jobId],
+      input: COLLECT_ARTIFACT_SCRIPT,
+      signal,
+    });
+    if (result.stdout.length === 0) return undefined;
+    decodeJetsonArtifactArchive(result.stdout);
+    return result.stdout;
+  }
+
   async reset(options: { signal: AbortSignal }): Promise<void> {
-    await runProcess({
+    await this.#runProcess({
       executable: this.#config.resetExecutable,
       args: [],
       signal: options.signal,

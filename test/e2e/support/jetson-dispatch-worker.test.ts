@@ -5,9 +5,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { loadSshJetsonWorkerConfig } from "../../../tools/e2e/jetson-dispatch-worker.mts";
+import {
+  loadSshJetsonWorkerConfig,
+  SshJetsonDispatchWorker,
+} from "../../../tools/e2e/jetson-dispatch-worker.mts";
 
 const dispatcherRunbook = fs.readFileSync(
   path.join(process.cwd(), "test/e2e/docs/jetson-colossus-dispatch.md"),
@@ -58,10 +61,51 @@ describe("Colossus SSH worker deployment boundary", () => {
   });
 
   it("loads fixed SSH, host-key, timeout, and reset configuration (#8142)", () => {
-    expect(loadSshJetsonWorkerConfig(environment())).toMatchObject({
+    const files = deploymentFiles();
+    expect(loadSshJetsonWorkerConfig(environment(files))).toEqual({
       destination: "nvidia@192.168.55.1",
+      identityFile: files.identityFile,
+      knownHostsFile: files.knownHostsFile,
+      resetExecutable: files.resetExecutable,
       testTimeoutSeconds: 2700,
     });
+  });
+
+  it("collects a bounded artifact archive before the remote workspace is removed (#8142)", async () => {
+    const files = deploymentFiles();
+    const artifactArchiveBase64 = Buffer.from("remote archive").toString("base64");
+    const processRunner = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout:
+          "model\tNVIDIA Jetson AGX Thor Developer Kit\njetpackVersion\t7.2.2\njetsonLinuxRelease\tR38\nkernel\t6.8.12-tegra\n",
+        stderr: "",
+      })
+      .mockResolvedValueOnce({ stdout: "test passed\n", stderr: "" })
+      .mockResolvedValueOnce({ stdout: artifactArchiveBase64, stderr: "" });
+    const worker = new SshJetsonDispatchWorker(
+      loadSshJetsonWorkerConfig(environment(files)),
+      processRunner,
+    );
+
+    await expect(
+      worker.run(
+        {
+          schemaVersion: 1,
+          target: "jetson-nvmap-gpu",
+          candidateSha: "a".repeat(40),
+          workflowRunId: "123",
+          workflowRunAttempt: 1,
+        },
+        { jobId: "b".repeat(64), signal: new AbortController().signal },
+      ),
+    ).resolves.toMatchObject({
+      artifactArchiveBase64,
+      log: expect.stringContaining("test passed"),
+    });
+    expect(processRunner.mock.calls[1]![0].input).not.toContain("trap cleanup EXIT");
+    expect(processRunner.mock.calls[2]![0].input).toContain("trap cleanup EXIT");
+    expect(processRunner.mock.calls[2]![0].input).toContain("base64 --wrap=0");
   });
 
   it.each([

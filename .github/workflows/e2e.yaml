@@ -4927,8 +4927,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    env:
-      E2E_ARTIFACT_DIR: ${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu
     steps:
       - name: Check out trusted Jetson controller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -4944,6 +4942,7 @@ jobs:
 
       - name: Dispatch exact commit to Jetson through Colossus
         env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu
           JETSON_DISPATCH_CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
           JETSON_DISPATCH_URL: ${{ vars.JETSON_DISPATCH_URL }}
         run: node --experimental-strip-types --no-warnings tools/e2e/jetson-dispatch-client.mts

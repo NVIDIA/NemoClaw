@@ -77,6 +77,29 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
     );
   });
 
+  it("keeps the runner temporary artifact path on the dispatch step (#8142)", () => {
+    const errors = validateWorkflowMutation((workflow) => {
+      const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {
+        env?: Record<string, string>;
+        steps?: Array<{ env?: Record<string, string>; name?: string }>;
+      };
+      job.env = {
+        E2E_ARTIFACT_DIR: "${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu",
+      };
+      const dispatch = job.steps!.find(
+        (step) => step.name === "Dispatch exact commit to Jetson through Colossus",
+      )!;
+      dispatch.env!.E2E_ARTIFACT_DIR = "${{ github.workspace }}/e2e-artifacts";
+    });
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "jetson-nvmap-gpu controller must not define a job-level environment",
+        "jetson-nvmap-gpu controller must dispatch only the exact candidate and configured URL",
+      ]),
+    );
+  });
+
   it("accepts the real workflow without Jetson dispatch errors (#8142)", () => {
     expect(validateJetsonDispatchBoundary(readWorkflow())).toEqual([]);
     expect(validateE2eWorkflowBoundary()).toEqual([]);

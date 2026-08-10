@@ -8,7 +8,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-
+import {
+  createGitHubOidcTokenProvider,
+  pollJetsonDispatch,
+} from "../../../tools/e2e/jetson-dispatch-client.mts";
 import {
   createGitHubJwksResolver,
   JETSON_DISPATCH_AUDIENCE,
@@ -21,6 +24,7 @@ import {
 import {
   JetsonDispatchBusyError,
   JetsonDispatchCoordinator,
+  JetsonDispatchNotFoundError,
   type JetsonDispatchStatus,
   type JetsonDispatchWorker,
 } from "../../../tools/e2e/jetson-dispatch-lifecycle.mts";
@@ -30,6 +34,7 @@ const NOW_SECONDS = 1_800_000_000;
 const REPOSITORY_ID = "987654321";
 const CANDIDATE_SHA = "a".repeat(40);
 const WORKFLOW_SHA = "b".repeat(40);
+const ARTIFACT_ARCHIVE_BASE64 = Buffer.from("bounded archive").toString("base64");
 const REQUEST = parseJetsonDispatchRequest({
   schemaVersion: 1,
   target: JETSON_DISPATCH_TARGET,
@@ -42,6 +47,7 @@ const temporaryDirectories: string[] = [];
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
   }
@@ -120,6 +126,7 @@ function worker(
     run:
       options.run ??
       (async () => ({
+        artifactArchiveBase64: ARTIFACT_ARCHIVE_BASE64,
         device: {
           model: "NVIDIA Jetson AGX Thor Developer Kit",
           jetpackVersion: "7.2.2",
@@ -175,6 +182,24 @@ describe("Jetson dispatch request and OIDC boundary", () => {
     });
 
     expect(verified).toEqual(identity());
+  });
+
+  it("reuses each GitHub OIDC token for a bounded polling interval (#8142)", async () => {
+    let nowMs = 1_000;
+    const fetchImpl = vi.fn(async () => Response.json({ value: `token-${nowMs}` }));
+    const token = createGitHubOidcTokenProvider({ fetchImpl, now: () => nowMs });
+    const env = {
+      ACTIONS_ID_TOKEN_REQUEST_TOKEN: "request-token",
+      ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.actions.test/id-token",
+    };
+
+    await expect(token(env)).resolves.toBe("token-1000");
+    nowMs += 60_000;
+    await expect(token(env)).resolves.toBe("token-1000");
+    nowMs += 4 * 60_000;
+    await expect(token(env)).resolves.toBe("token-301000");
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -259,7 +284,10 @@ describe("Jetson single-device lifecycle", () => {
       device: { model: "NVIDIA Jetson AGX Thor Developer Kit" },
     });
     expect(reset).toHaveBeenCalledOnce();
-    expect(dispatch.artifact(accepted.jobId).log).toBe("passed\n");
+    expect(dispatch.artifact(accepted.jobId)).toMatchObject({
+      artifactArchiveBase64: ARTIFACT_ARCHIVE_BASE64,
+      log: "passed\n",
+    });
   });
 
   it("rejects a second job while the Jetson lock is held (#8142)", async () => {
@@ -314,10 +342,45 @@ describe("Jetson single-device lifecycle", () => {
     await dispatch.initialize();
     const accepted = dispatch.dispatch(REQUEST, identity());
     await vi.advanceTimersByTimeAsync(60_000);
-    const completed = dispatch.status(accepted.jobId);
+    const completed = await waitForCompletion(dispatch, accepted.jobId);
 
     expect(completed).toMatchObject({ conclusion: "timed-out", reset: "succeeded" });
     expect(reset).toHaveBeenCalledOnce();
+  });
+
+  it("keeps reset evidence accurate when lock removal fails (#8142)", async () => {
+    const reset = vi.fn(async () => {});
+    vi.spyOn(fs, "unlinkSync").mockImplementationOnce(() => {
+      throw new Error("lock filesystem unavailable");
+    });
+    const dispatch = coordinator(temporaryDirectory(), worker({ reset }));
+    await dispatch.initialize();
+    const accepted = dispatch.dispatch(REQUEST, identity());
+    const completed = await waitForCompletion(dispatch, accepted.jobId);
+
+    expect(completed).toMatchObject({
+      conclusion: "reset-failed",
+      error: "Jetson lock removal failed: lock filesystem unavailable",
+      reset: "succeeded",
+    });
+  });
+
+  it("bounds retained in-memory job status while preserving private evidence (#8142)", async () => {
+    const stateDirectory = temporaryDirectory();
+    const dispatch = coordinator(stateDirectory, worker());
+    await dispatch.initialize();
+    let firstJobId = "";
+    for (let index = 0; index < 129; index += 1) {
+      const accepted = dispatch.dispatch(
+        { ...REQUEST, candidateSha: index.toString(16).padStart(40, "0") },
+        identity(),
+      );
+      firstJobId ||= accepted.jobId;
+      await waitForCompletion(dispatch, accepted.jobId);
+    }
+
+    expect(() => dispatch.status(firstJobId)).toThrow(JetsonDispatchNotFoundError);
+    expect(fs.existsSync(path.join(stateDirectory, `${firstJobId}.json`))).toBe(true);
   });
 
   it("keeps the device locked when reset fails (#8142)", async () => {
@@ -353,6 +416,60 @@ describe("Jetson single-device lifecycle", () => {
 });
 
 describe("Jetson dispatch HTTP boundary", () => {
+  it("retries transient status failures and cancels after the bounded limit (#8142)", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const jobId = "d".repeat(64);
+    const initialStatus: JetsonDispatchStatus = {
+      schemaVersion: 1,
+      jobId,
+      request: REQUEST,
+      state: "queued",
+      createdAt: new Date(0).toISOString(),
+      reset: "pending",
+    };
+    const completed = {
+      job: {
+        ...initialStatus,
+        state: "completed",
+        conclusion: "success",
+        reset: "succeeded",
+      },
+    };
+    const recoveredRequest = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("tunnel reset"))
+      .mockRejectedValueOnce(new Error("tunnel reset"))
+      .mockResolvedValueOnce(completed);
+
+    await expect(
+      pollJetsonDispatch({
+        baseUrl: new URL("https://dispatch.test/"),
+        deadlineMs: 10_000,
+        initialStatus,
+        jobId,
+        now: () => 0,
+        request: recoveredRequest,
+        wait: async () => {},
+      }),
+    ).resolves.toMatchObject({ state: "completed" });
+
+    const failedRequest = vi.fn().mockRejectedValue(new Error("tunnel unavailable"));
+    await expect(
+      pollJetsonDispatch({
+        baseUrl: new URL("https://dispatch.test/"),
+        deadlineMs: 10_000,
+        initialStatus,
+        jobId,
+        now: () => 0,
+        request: failedRequest,
+        wait: async () => {},
+      }),
+    ).rejects.toThrow("tunnel unavailable");
+    expect(failedRequest).toHaveBeenLastCalledWith(
+      expect.objectContaining({ method: "DELETE", path: `v1/jobs/${jobId}` }),
+    );
+  });
+
   it("denies anonymous requests and returns authenticated result evidence (#8142)", async () => {
     const keys = signingKeys();
     const now = Math.floor(Date.now() / 1_000);
@@ -396,6 +513,17 @@ describe("Jetson dispatch HTTP boundary", () => {
       expect(accepted.status).toBe(202);
       const acceptedBody = (await accepted.json()) as { job: { jobId: string } };
       await waitForCompletion(dispatch, acceptedBody.job.jobId);
+
+      const anonymousExisting = await fetch(`${url}/${acceptedBody.job.jobId}`);
+      const anonymousUnknown = await fetch(`${url}/${"f".repeat(64)}`);
+      const authenticatedUnknown = await fetch(`${url}/${"f".repeat(64)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect([
+        anonymousExisting.status,
+        anonymousUnknown.status,
+        authenticatedUnknown.status,
+      ]).toEqual([401, 401, 401]);
 
       const artifact = await fetch(`${url}/${acceptedBody.job.jobId}/artifact`, {
         headers: { Authorization: `Bearer ${token}` },

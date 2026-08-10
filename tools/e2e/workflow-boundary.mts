@@ -4000,12 +4000,8 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
   if (!isDeepStrictEqual(asRecord(job.permissions), { contents: "read", "id-token": "write" })) {
     errors.push("jetson-nvmap-gpu controller must grant only contents:read and id-token:write");
   }
-  if (
-    !isDeepStrictEqual(asRecord(job.env), {
-      E2E_ARTIFACT_DIR: "${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu",
-    })
-  ) {
-    errors.push("jetson-nvmap-gpu controller environment must contain only its artifact directory");
+  if (Object.keys(asRecord(job.env)).length !== 0) {
+    errors.push("jetson-nvmap-gpu controller must not define a job-level environment");
   }
 
   const steps = asSteps(job.steps);
@@ -4040,6 +4036,7 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
     dispatch?.run !==
       "node --experimental-strip-types --no-warnings tools/e2e/jetson-dispatch-client.mts" ||
     !isDeepStrictEqual(asRecord(dispatch?.env), {
+      E2E_ARTIFACT_DIR: "${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu",
       JETSON_DISPATCH_CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
       JETSON_DISPATCH_URL: "${{ vars.JETSON_DISPATCH_URL }}",
     })

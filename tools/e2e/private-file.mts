@@ -76,7 +76,7 @@ export function readPrivateRegularFile(
   }
 }
 
-export function writePrivateRegularFile(file: string, contents: string): void {
+export function writePrivateRegularFile(file: string, contents: string | Uint8Array): void {
   const descriptor = openPrivateFileForWrite(file);
   try {
     const stat = fs.fstatSync(descriptor);
@@ -85,7 +85,10 @@ export function writePrivateRegularFile(file: string, contents: string): void {
     }
     fs.fchmodSync(descriptor, 0o600);
     fs.ftruncateSync(descriptor, 0);
-    fs.writeFileSync(descriptor, contents, "utf8");
+    fs.writeFileSync(
+      descriptor,
+      typeof contents === "string" ? Buffer.from(contents, "utf8") : contents,
+    );
     fs.fsyncSync(descriptor);
   } finally {
     fs.closeSync(descriptor);

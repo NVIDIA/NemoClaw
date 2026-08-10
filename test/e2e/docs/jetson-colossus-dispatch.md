@@ -118,7 +118,7 @@ The two final checks must pass before the dispatcher service starts.
 Do not deploy a branch reference or automatically update this checkout.
 The Colossus service runs the dispatcher files from this trusted commit.
 The GitHub-hosted controller runs the client from the trusted workflow commit.
-It never checks candidate code out on Colossus.
+The Colossus service never checks out candidate code.
 
 Create a dedicated SSH key owned by the service account:
 
@@ -371,6 +371,9 @@ The uploaded `e2e-jetson-nvmap-gpu` artifact must contain `jetson-dispatch.json`
 - The Jetson model, JetPack package version or `unavailable`, Jetson Linux release, and kernel.
 - The test conclusion and bounded log.
 - `reset: "succeeded"` before `conclusion: "success"`.
+
+It must also contain `jetson-e2e-artifacts.tar.gz`.
+The dispatcher creates that archive from the remote E2E artifact directory before it removes the candidate workspace and rejects archives larger than 1 MiB.
 
 After the workflow completes, independently rerun the baseline checks.
 Then run one controlled failing candidate and confirm that its artifact records the same reset evidence.

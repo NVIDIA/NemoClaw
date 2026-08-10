@@ -83,11 +83,11 @@ export function createJetsonDispatchServer(options: {
   resolveSigningKey: SigningKeyResolver;
 }): Server {
   async function authenticate(
-    incoming: IncomingMessage,
+    token: string,
     dispatchRequest: ReturnType<JetsonDispatchCoordinator["request"]>,
   ): Promise<GitHubOidcIdentity> {
     return verifyGitHubOidcToken({
-      token: bearerToken(incoming),
+      token,
       request: dispatchRequest,
       policy: { repositoryId: options.repositoryId },
       resolveSigningKey: options.resolveSigningKey,
@@ -100,8 +100,24 @@ export function createJetsonDispatchServer(options: {
         sendJson(response, 404, { error: "not found" });
         return;
       }
-      if (request.method === "POST" && request.url === "/v1/jobs") {
-        let dispatchRequest;
+      let token: string;
+      try {
+        token = bearerToken(request);
+      } catch {
+        sendJson(response, 401, { error: "request authentication failed" });
+        return;
+      }
+      const createJob = request.method === "POST" && request.url === "/v1/jobs";
+      const match = JOB_PATH_PATTERN.exec(request.url);
+      if (!createJob && (!match || !["DELETE", "GET"].includes(request.method ?? ""))) {
+        sendJson(response, 404, { error: "not found" });
+        return;
+      }
+
+      let dispatchRequest;
+      let jobId: string | undefined;
+      let artifact = false;
+      if (createJob) {
         try {
           dispatchRequest = parseJetsonDispatchRequest(await readJsonBody(request));
         } catch (error) {
@@ -110,43 +126,44 @@ export function createJetsonDispatchServer(options: {
           });
           return;
         }
-        let identity;
+      } else {
+        jobId = match![1]!;
+        artifact = match![2] === "artifact";
         try {
-          identity = await authenticate(request, dispatchRequest);
+          dispatchRequest = options.coordinator.request(jobId);
         } catch {
           sendJson(response, 401, { error: "request authentication failed" });
           return;
         }
-        sendJson(response, 202, { job: options.coordinator.dispatch(dispatchRequest, identity) });
-        return;
       }
 
-      const match = JOB_PATH_PATTERN.exec(request.url);
-      if (!match || !["DELETE", "GET"].includes(request.method ?? "")) {
-        sendJson(response, 404, { error: "not found" });
-        return;
-      }
-      const jobId = match[1]!;
-      const artifact = match[2] === "artifact";
-      const dispatchRequest = options.coordinator.request(jobId);
+      let identity;
       try {
-        await authenticate(request, dispatchRequest);
+        identity = await authenticate(token, dispatchRequest);
       } catch {
         sendJson(response, 401, { error: "request authentication failed" });
         return;
       }
+      if (createJob) {
+        sendJson(response, 202, { job: options.coordinator.dispatch(dispatchRequest, identity) });
+        return;
+      }
+
+      const existingJobId = jobId!;
       if (request.method === "DELETE") {
         if (artifact) {
           sendJson(response, 405, { error: "method not allowed" });
           return;
         }
-        sendJson(response, 202, { job: options.coordinator.cancel(jobId) });
+        sendJson(response, 202, { job: options.coordinator.cancel(existingJobId) });
         return;
       }
       sendJson(
         response,
         200,
-        artifact ? options.coordinator.artifact(jobId) : { job: options.coordinator.status(jobId) },
+        artifact
+          ? options.coordinator.artifact(existingJobId)
+          : { job: options.coordinator.status(existingJobId) },
       );
     })().catch((error) => {
       if (response.headersSent) {
@@ -161,7 +178,7 @@ export function createJetsonDispatchServer(options: {
         sendJson(response, 404, { error: error.message });
         return;
       }
-      console.error(error instanceof Error ? error.message : "Jetson dispatch service failed");
+      console.error("Jetson dispatch service failed");
       sendJson(response, 500, { error: "Jetson dispatch service failed" });
     });
   });

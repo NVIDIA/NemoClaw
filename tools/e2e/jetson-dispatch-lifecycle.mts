@@ -12,6 +12,10 @@ import {
 } from "./private-file.mts";
 
 const MAX_LOG_BYTES = 4 * 1024 * 1024;
+const MAX_RETAINED_JOB_STATUSES = 128;
+export const MAX_JETSON_ARTIFACT_ARCHIVE_BYTES = 1024 * 1024;
+const MAX_JETSON_ARTIFACT_ARCHIVE_BASE64_CHARACTERS =
+  Math.ceil(MAX_JETSON_ARTIFACT_ARCHIVE_BYTES / 3) * 4;
 
 export type JetsonDispatchConclusion =
   | "cancelled"
@@ -30,6 +34,7 @@ export interface JetsonDeviceIdentity {
 export interface JetsonWorkerResult {
   device: JetsonDeviceIdentity;
   log: string;
+  artifactArchiveBase64?: string;
 }
 
 export interface JetsonDispatchWorker {
@@ -57,6 +62,7 @@ export interface JetsonDispatchStatus {
 export interface JetsonDispatchArtifact {
   status: JetsonDispatchStatus;
   log: string;
+  artifactArchiveBase64?: string;
 }
 
 export class JetsonDispatchBusyError extends Error {}
@@ -73,6 +79,35 @@ function workerErrorLog(error: unknown): string | undefined {
   const log = (error as { log?: unknown }).log;
   if (typeof log !== "string" || Buffer.byteLength(log) > MAX_LOG_BYTES) return undefined;
   return log;
+}
+
+export function decodeJetsonArtifactArchive(value: unknown): Buffer {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_JETSON_ARTIFACT_ARCHIVE_BASE64_CHARACTERS ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)
+  ) {
+    throw new Error("Jetson artifact archive must be bounded canonical base64");
+  }
+  const decoded = Buffer.from(value, "base64");
+  if (decoded.length > MAX_JETSON_ARTIFACT_ARCHIVE_BYTES || decoded.toString("base64") !== value) {
+    throw new Error("Jetson artifact archive must be bounded canonical base64");
+  }
+  return decoded;
+}
+
+function workerErrorArtifactArchive(error: unknown): string | undefined {
+  if (!error || typeof error !== "object" || !("artifactArchiveBase64" in error)) {
+    return undefined;
+  }
+  const value = (error as { artifactArchiveBase64?: unknown }).artifactArchiveBase64;
+  try {
+    decodeJetsonArtifactArchive(value);
+    return value as string;
+  } catch {
+    return undefined;
+  }
 }
 
 function ensurePrivateDirectory(directory: string): void {
@@ -178,6 +213,7 @@ export class JetsonDispatchCoordinator {
     if (this.#activeJobId) {
       throw new JetsonDispatchBusyError("Jetson device is already running another job");
     }
+    this.#evictOldestCompletedJob();
 
     try {
       createPrivateRegularFile(this.#lockPath, `${jobId}\n`);
@@ -246,7 +282,16 @@ export class JetsonDispatchCoordinator {
     if (status.state !== "completed")
       throw new JetsonDispatchBusyError("Jetson job is not complete");
     const log = readPrivateRegularFile(this.#logPath(jobId), { maxBytes: MAX_LOG_BYTES }) ?? "";
-    return { status, log };
+    const artifactArchiveBase64 = readPrivateRegularFile(this.#artifactPath(jobId), {
+      allowMissing: true,
+      maxBytes: MAX_JETSON_ARTIFACT_ARCHIVE_BASE64_CHARACTERS,
+    });
+    if (artifactArchiveBase64 !== null) decodeJetsonArtifactArchive(artifactArchiveBase64);
+    return {
+      status,
+      log,
+      ...(artifactArchiveBase64 === null ? {} : { artifactArchiveBase64 }),
+    };
   }
 
   async #run(status: JetsonDispatchStatus): Promise<void> {
@@ -273,6 +318,10 @@ export class JetsonDispatchCoordinator {
         throw new Error(`Jetson log exceeds ${MAX_LOG_BYTES} bytes`);
       }
       writePrivateRegularFile(this.#logPath(status.jobId), result.log);
+      if (result.artifactArchiveBase64 !== undefined) {
+        decodeJetsonArtifactArchive(result.artifactArchiveBase64);
+        writePrivateRegularFile(this.#artifactPath(status.jobId), result.artifactArchiveBase64);
+      }
       status.device = result.device;
       conclusion = "success";
     } catch (error) {
@@ -280,6 +329,10 @@ export class JetsonDispatchCoordinator {
       conclusion = timedOut ? "timed-out" : this.#cancelRequested ? "cancelled" : "failure";
       try {
         writePrivateRegularFile(this.#logPath(status.jobId), workerErrorLog(error) ?? "");
+        const artifactArchiveBase64 = workerErrorArtifactArchive(error);
+        if (artifactArchiveBase64 !== undefined) {
+          writePrivateRegularFile(this.#artifactPath(status.jobId), artifactArchiveBase64);
+        }
       } catch (logError) {
         status.error = `${status.error}; log persistence failed: ${safeError(logError)}`.slice(
           0,
@@ -291,11 +344,18 @@ export class JetsonDispatchCoordinator {
       try {
         await withTimeout(this.#resetTimeoutMs, (signal) => this.#worker.reset({ signal }));
         status.reset = "succeeded";
-        fs.unlinkSync(this.#lockPath);
       } catch (error) {
         status.reset = "failed";
         status.error = `Jetson reset failed: ${safeError(error)}`;
         conclusion = "reset-failed";
+      }
+      if (status.reset === "succeeded") {
+        try {
+          fs.unlinkSync(this.#lockPath);
+        } catch (error) {
+          status.error = `Jetson lock removal failed: ${safeError(error)}`;
+          conclusion = "reset-failed";
+        }
       }
       status.conclusion = conclusion;
       status.state = "completed";
@@ -324,6 +384,20 @@ export class JetsonDispatchCoordinator {
 
   #logPath(jobId: string): string {
     return path.join(this.#stateDirectory, `${jobId}.log`);
+  }
+
+  #artifactPath(jobId: string): string {
+    return path.join(this.#stateDirectory, `${jobId}.artifacts.tar.gz.b64`);
+  }
+
+  #evictOldestCompletedJob(): void {
+    if (this.#jobs.size < MAX_RETAINED_JOB_STATUSES) return;
+    for (const [jobId, status] of this.#jobs) {
+      if (status.state === "completed") {
+        this.#jobs.delete(jobId);
+        return;
+      }
+    }
   }
 
   #requireInitialized(): void {
