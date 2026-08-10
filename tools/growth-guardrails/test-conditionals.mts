@@ -19,6 +19,11 @@ import {
 
 const TEST_FILE_RE = /^(test|src|nemoclaw\/src)\/.*\.(test|spec)\.(?:[cm]?[jt]s)$/;
 
+
+export function isTestFilePath(file: string): boolean {
+  return TEST_FILE_RE.test(file);
+}
+
 /** Count `if` statements in test source using the shared TypeScript AST scanner. */
 export function countIfStatements(file: string, text: string): number {
   return scanTextForTestConditionals(file, text).length;

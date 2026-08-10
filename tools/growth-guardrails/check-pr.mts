@@ -1,20 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Trusted pull-request adapter for the codebase growth policies. This file runs
-// from the base checkout and treats pull-request files and blobs as data only.
+// Trusted pull-request adapter for codebase growth policies. The workflow runs
+// this base-revision code and treats pull-request files and blobs as data only.
 
-import {
-  CODEBASE_GROWTH_BUDGET_FILE,
-  evaluateCodebaseBudgetMonotonicity,
-  ONBOARD_ENTRYPOINT,
-  parseCodebaseGrowthBudget,
-} from "./codebase-contract.mts";
 import { createPrBlobClient, type PrBlobClient, type PullRequestFile } from "./pr-blob-client.mts";
 import { runTestConditionals, type ConditionalEnv } from "./test-conditionals.mts";
 import { runTestSizeBudget, type BudgetEnv } from "./test-size-budget.mts";
 
 const JAVASCRIPT_FILE_RE = /\.(?:js|cjs|mjs)$/;
+const ONBOARD_ENTRYPOINT = "src/lib/onboard.ts";
 
 export type GrowthGuardrailEnv = ConditionalEnv & BudgetEnv & { readonly GH_TOKEN: string };
 
@@ -42,56 +37,12 @@ export function evaluateOnboardGrowth(files: readonly PullRequestFile[]): string
     : [];
 }
 
-async function evaluateBudgetChange(
-  client: PrBlobClient,
-  env: GrowthGuardrailEnv,
-  files: readonly PullRequestFile[],
-): Promise<string[]> {
-  const budgetChanged = files.some(
-    ({ filename, previous_filename }) =>
-      filename === CODEBASE_GROWTH_BUDGET_FILE || previous_filename === CODEBASE_GROWTH_BUDGET_FILE,
-  );
-  const budgetAdded = files.some(
-    ({ filename, status }) => filename === CODEBASE_GROWTH_BUDGET_FILE && status === "added",
-  );
-  const baseBlobs = await client.fetchBlobs(env.REPO, env.BASE_SHA, [CODEBASE_GROWTH_BUDGET_FILE]);
-  const baseText = baseBlobs.get(CODEBASE_GROWTH_BUDGET_FILE);
-  if (!budgetChanged) {
-    if (baseText == null)
-      throw new Error(`${CODEBASE_GROWTH_BUDGET_FILE} is missing at the base revision`);
-    return [];
-  }
-  const headBlobs = await client.fetchBlobs(env.HEAD_REPO, env.HEAD_SHA, [
-    CODEBASE_GROWTH_BUDGET_FILE,
-  ]);
-  const headText = headBlobs.get(CODEBASE_GROWTH_BUDGET_FILE);
-  if (headText == null)
-    throw new Error(`${CODEBASE_GROWTH_BUDGET_FILE} must remain present at the latest PR commit`);
-  const headBudget = parseCodebaseGrowthBudget(headText, "latest PR commit codebase growth budget");
-  if (baseText == null) {
-    if (!budgetAdded)
-      throw new Error(`${CODEBASE_GROWTH_BUDGET_FILE} is missing at the base revision`);
-    return [];
-  }
-  const baseBudget = parseCodebaseGrowthBudget(baseText, "base codebase growth budget");
-  const renames = new Map<string, string>();
-  for (const { filename, previous_filename } of files) {
-    if (previous_filename && previous_filename !== filename)
-      renames.set(filename, previous_filename);
-  }
-  return evaluateCodebaseBudgetMonotonicity(baseBudget, headBudget, renames);
-}
-
 export async function runGrowthGuardrails(
   client: PrBlobClient,
   env: GrowthGuardrailEnv,
 ): Promise<readonly string[]> {
   const files = await client.getPullFiles(env.REPO, env.PR_NUMBER);
-  const violations = [
-    ...evaluateAddedJavaScriptFiles(files),
-    ...evaluateOnboardGrowth(files),
-    ...(await evaluateBudgetChange(client, env, files)),
-  ];
+  const violations = [...evaluateAddedJavaScriptFiles(files), ...evaluateOnboardGrowth(files)];
   const size = await runTestSizeBudget(client, env, files);
   violations.push(...size.violations);
   const conditionals = await runTestConditionals(client, env, files);
@@ -114,15 +65,12 @@ async function main(): Promise<void> {
   const client = createPrBlobClient({ token: env.GH_TOKEN });
   const violations = await runGrowthGuardrails(client, env);
   if (violations.length > 0) {
-    console.error("FAIL: codebase growth contract rejected this PR.");
+    console.error("FAIL: codebase growth policies rejected this PR.");
     for (const violation of violations) console.error(`- ${violation}`);
-    console.error(
-      "Run affected tests and the local codebase growth contract test: npm run test:changed",
-    );
-    console.error("The trusted PR check also compares the base and latest PR commits.");
+    console.error("Run locally: npm run test:changed");
     process.exit(1);
   }
-  console.log("PASS: this PR preserves the codebase growth contract.");
+  console.log("PASS: this PR preserves the codebase growth policies.");
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

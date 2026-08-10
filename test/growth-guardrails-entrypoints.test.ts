@@ -18,11 +18,6 @@ const ENTRYPOINT_ENV = {
   PR_NUMBER: "1",
   REPO: "NVIDIA/NemoClaw",
 } as const;
-const CODEBASE_BUDGET = JSON.stringify({
-  onboardMaxLines: 4566,
-  javascriptFiles: [],
-  testIfCounts: {},
-});
 const CLEAN_TEST_BUDGET = '{"defaultMaxLines":1500,"legacyMaxLines":{}}';
 
 const FETCH_PRELOAD = `
@@ -72,41 +67,17 @@ function runEntrypoint(responses: readonly unknown[]): ReturnType<typeof spawnSy
 
 describe("codebase growth trusted assertion", () => {
   it("prints the consolidated PASS diagnostic", () => {
-    const result = runEntrypoint([
-      [],
-      blobPayload(CODEBASE_BUDGET),
-      blobPayload(CLEAN_TEST_BUDGET),
-    ]);
+    const result = runEntrypoint([[], blobPayload(CLEAN_TEST_BUDGET)]);
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("PASS: this PR preserves the codebase growth contract.");
+    expect(result.stdout).toContain("PASS: this PR preserves the codebase growth policies.");
   });
 
-  it("accepts the initial codebase growth budget migration", () => {
-    const result = runEntrypoint([
-      [
-        {
-          filename: "ci/codebase-growth-budget.json",
-          status: "added",
-          additions: 1,
-          deletions: 0,
-        },
-      ],
-      blobPayload(null),
-      blobPayload(CODEBASE_BUDGET),
-      blobPayload(CLEAN_TEST_BUDGET),
-    ]);
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("PASS: this PR preserves the codebase growth contract.");
-  });
-
-  it("prints a conditional increase in the consolidated failure", () => {
+  it("prints an increased test-file if-statement count in the consolidated failure", () => {
     const baseSource = "it('a', () => { expect(1).toBe(1); });";
     const headSource = "it('a', () => { if (condition) expect(1).toBe(1); });";
     const result = runEntrypoint([
       [{ filename: "test/a.test.ts", status: "modified", additions: 1, deletions: 0 }],
-      blobPayload(CODEBASE_BUDGET),
       blobPayload(CLEAN_TEST_BUDGET),
       blobPayload(headSource),
       blobPayload(baseSource),
@@ -114,14 +85,13 @@ describe("codebase growth trusted assertion", () => {
     ]);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("FAIL: codebase growth contract rejected this PR.");
+    expect(result.stderr).toContain("FAIL: codebase growth policies rejected this PR.");
     expect(result.stderr).toContain("test/a.test.ts: 1 if statement(s), up from 0");
   });
 
-  it("prints a weakened test-size budget in the consolidated failure", () => {
+  it("reports an increased default test-file line budget in the consolidated failure", () => {
     const result = runEntrypoint([
       [{ filename: "ci/test-file-size-budget.json", status: "added", additions: 1, deletions: 0 }],
-      blobPayload(CODEBASE_BUDGET),
       blobPayload(null),
       blobPayload('{"defaultMaxLines":2000,"legacyMaxLines":{}}'),
     ]);
@@ -133,11 +103,27 @@ describe("codebase growth trusted assertion", () => {
   it("prints a new JavaScript file in the consolidated failure", () => {
     const result = runEntrypoint([
       [{ filename: "scripts/new.js", status: "added", additions: 1, deletions: 0 }],
-      blobPayload(CODEBASE_BUDGET),
       blobPayload(CLEAN_TEST_BUDGET),
     ]);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("scripts/new.js: new JavaScript files must use TypeScript");
+  });
+
+  it("prints net onboard growth in the consolidated failure", () => {
+    const result = runEntrypoint([
+      [
+        {
+          filename: "src/lib/onboard.ts",
+          status: "modified",
+          additions: 3,
+          deletions: 1,
+        },
+      ],
+      blobPayload(CLEAN_TEST_BUDGET),
+    ]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/lib/onboard.ts: grew by 2 line(s) (+3/-1)");
   });
 });

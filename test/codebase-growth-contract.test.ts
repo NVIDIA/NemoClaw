@@ -14,7 +14,7 @@ function expectNoViolations(violations: readonly unknown[]): void {
   expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
 }
 
-it("keeps JavaScript files within the existing-file allowance", () => {
+it("does not add JavaScript files", () => {
   expectNoViolations(evaluateCurrentJavaScriptContract());
 });
 

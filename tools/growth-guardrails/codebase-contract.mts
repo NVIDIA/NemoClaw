@@ -7,182 +7,99 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { countLines } from "../../scripts/check-test-file-size-budget.mts";
-import { collectTestConditionals } from "../../scripts/find-test-conditionals.mts";
-
-export const CODEBASE_GROWTH_BUDGET_FILE = "ci/codebase-growth-budget.json";
-export const ONBOARD_ENTRYPOINT = "src/lib/onboard.ts";
+import { evaluateAddedJavaScriptFiles } from "./check-pr.mts";
+import type { PullRequestFile } from "./pr-blob-client.mts";
+import {
+  evaluateConditionalViolations,
+  isTestFilePath,
+  type ConditionalChange,
+} from "./test-conditionals.mts";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const JAVASCRIPT_FILE_RE = /\.(?:js|cjs|mjs)$/;
+const ONBOARD_ENTRYPOINT = "src/lib/onboard.ts";
 
-export type CodebaseGrowthBudget = {
-  readonly onboardMaxLines: number;
-  readonly javascriptFiles: readonly string[];
-  readonly testIfCounts: Readonly<Record<string, number>>;
-};
+type LocalChange = PullRequestFile & { readonly status: string };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function git(args: readonly string[]): string {
+  return execFileSync("git", [...args], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 }
 
-function positiveInteger(value: unknown, label: string): number {
-  if (!Number.isInteger(value) || Number(value) <= 0) {
-    throw new Error(`${label} must be a positive integer`);
+function mergeBase(): string {
+  return git(["merge-base", "origin/main", "HEAD"]).trim();
+}
+
+function collectChanges(): LocalChange[] {
+  const tokens = git(["diff", "--name-status", "-z", "--find-renames", mergeBase(), "--"])
+    .split("\0")
+    .filter(Boolean);
+  const changes: LocalChange[] = [];
+  for (let index = 0; index < tokens.length; ) {
+    const code = tokens[index++];
+    const renamed = code.startsWith("R") || code.startsWith("C");
+    const previous = renamed ? tokens[index++] : null;
+    const filename = tokens[index++];
+    changes.push({
+      filename,
+      previous_filename: previous,
+      status: code.startsWith("A")
+        ? "added"
+        : code.startsWith("D")
+          ? "removed"
+          : renamed
+            ? "renamed"
+            : "modified",
+    });
   }
-  return Number(value);
+  const known = new Set(changes.map(({ filename }) => filename));
+  const untracked = git(["ls-files", "--others", "--exclude-standard", "-z"])
+    .split("\0")
+    .filter((file) => file && !known.has(file));
+  return [...changes, ...untracked.map((filename) => ({ filename, status: "added" }))];
 }
 
-function sortedUniqueStrings(value: unknown, label: string): string[] {
-  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || entry === "")) {
-    throw new Error(`${label} must be an array of non-empty strings`);
+function readBaseFile(base: string, file: string): string | null {
+  try {
+    return git(["show", `${base}:${file}`]);
+  } catch {
+    return null;
   }
-  const entries = value as string[];
-  const canonical = [...new Set(entries)].sort((left, right) => left.localeCompare(right));
-  if (
-    canonical.length !== entries.length ||
-    canonical.some((entry, index) => entry !== entries[index])
-  ) {
-    throw new Error(`${label} must contain sorted unique paths`);
-  }
-  return entries;
 }
 
-export function parseCodebaseGrowthBudget(
-  sourceText: string,
-  label = CODEBASE_GROWTH_BUDGET_FILE,
-): CodebaseGrowthBudget {
-  const parsed = JSON.parse(sourceText) as unknown;
-  if (!isRecord(parsed)) throw new Error(`${label} must contain an object`);
-  const javascriptFiles = sortedUniqueStrings(parsed.javascriptFiles, `${label}.javascriptFiles`);
-  if (!isRecord(parsed.testIfCounts))
-    throw new Error(`${label}.testIfCounts must contain an object`);
-  const entries = Object.entries(parsed.testIfCounts);
-  const sorted = [...entries].sort(([left], [right]) => left.localeCompare(right));
-  if (entries.some(([file], index) => file !== sorted[index]?.[0])) {
-    throw new Error(`${label}.testIfCounts must use sorted paths`);
-  }
-  const testIfCounts = Object.fromEntries(
-    entries.map(([file, count]) => [file, positiveInteger(count, `${label}.testIfCounts.${file}`)]),
-  );
-  return {
-    onboardMaxLines: positiveInteger(parsed.onboardMaxLines, `${label}.onboardMaxLines`),
-    javascriptFiles,
-    testIfCounts,
-  };
-}
-
-export function loadCodebaseGrowthBudget(): CodebaseGrowthBudget {
-  return parseCodebaseGrowthBudget(
-    readFileSync(path.join(REPO_ROOT, CODEBASE_GROWTH_BUDGET_FILE), "utf8"),
-  );
-}
-
-export function collectRepositoryJavaScriptFiles(): string[] {
-  const output = execFileSync(
-    "git",
-    ["ls-files", "--cached", "--others", "--exclude-standard", "--", "*.js", "*.cjs", "*.mjs"],
-    { cwd: REPO_ROOT, encoding: "utf8" },
-  );
-  return output
-    .split("\n")
-    .filter((file) => JAVASCRIPT_FILE_RE.test(file) && existsSync(path.join(REPO_ROOT, file)))
-    .sort((left, right) => left.localeCompare(right));
-}
-
-function compareExactPathBudgets(
-  current: Readonly<Record<string, number>>,
-  budget: Readonly<Record<string, number>>,
-  noun: string,
-): string[] {
-  const violations: string[] = [];
-  for (const [file, count] of Object.entries(current)) {
-    const allowed = budget[file];
-    if (allowed === undefined) violations.push(`${file}: ${noun} count ${count} has no budget`);
-    else if (count > allowed)
-      violations.push(`${file}: ${noun} count ${count} exceeds budget ${allowed}`);
-    else if (count < allowed)
-      violations.push(`${file}: ${noun} count ${count} is below stale budget ${allowed}`);
-  }
-  for (const [file, allowed] of Object.entries(budget)) {
-    if (current[file] === undefined)
-      violations.push(`${file}: stale ${noun} budget ${allowed} has no matching count`);
-  }
-  return violations;
-}
-
-export function evaluateJavaScriptFileContract(
-  currentFiles: readonly string[],
-  allowedFiles: readonly string[],
-): string[] {
-  const current = new Set(currentFiles);
-  const allowed = new Set(allowedFiles);
-  return [
-    ...currentFiles
-      .filter((file) => !allowed.has(file))
-      .map((file) => `${file}: JavaScript file is not allowed`),
-    ...allowedFiles
-      .filter((file) => !current.has(file))
-      .map((file) => `${file}: stale JavaScript allowance`),
-  ];
-}
-
-export function evaluateOnboardLineContract(currentLines: number, maxLines: number): string[] {
-  if (currentLines > maxLines)
-    return [`${ONBOARD_ENTRYPOINT}: ${currentLines} lines exceeds budget ${maxLines}`];
-  if (currentLines < maxLines)
-    return [`${ONBOARD_ENTRYPOINT}: ${currentLines} lines is below stale budget ${maxLines}`];
-  return [];
-}
-
-export function evaluateTestConditionalContract(
-  currentCounts: Readonly<Record<string, number>>,
-  budgetCounts: Readonly<Record<string, number>>,
-): string[] {
-  return compareExactPathBudgets(currentCounts, budgetCounts, "if statement");
+function readCurrentFile(file: string): string | null {
+  const absolute = path.join(REPO_ROOT, file);
+  return existsSync(absolute) ? readFileSync(absolute, "utf8") : null;
 }
 
 export function evaluateCurrentJavaScriptContract(): string[] {
-  const budget = loadCodebaseGrowthBudget();
-  return evaluateJavaScriptFileContract(collectRepositoryJavaScriptFiles(), budget.javascriptFiles);
+  return evaluateAddedJavaScriptFiles(collectChanges());
 }
 
 export function evaluateCurrentOnboardContract(): string[] {
-  const budget = loadCodebaseGrowthBudget();
-  const source = readFileSync(path.join(REPO_ROOT, ONBOARD_ENTRYPOINT), "utf8");
-  return evaluateOnboardLineContract(countLines(source), budget.onboardMaxLines);
+  const base = readBaseFile(mergeBase(), ONBOARD_ENTRYPOINT) ?? "";
+  const current = readCurrentFile(ONBOARD_ENTRYPOINT) ?? "";
+  const growth = countLines(current) - countLines(base);
+  return growth > 0 ? [`${ONBOARD_ENTRYPOINT}: grew by ${growth} line(s)`] : [];
 }
 
 export function evaluateCurrentTestConditionalContract(): string[] {
-  const budget = loadCodebaseGrowthBudget();
-  const currentCounts = Object.fromEntries(
-    collectTestConditionals().files.map((entry) => [entry.file, entry.count]),
-  );
-  return evaluateTestConditionalContract(currentCounts, budget.testIfCounts);
-}
-
-export function evaluateCodebaseBudgetMonotonicity(
-  base: CodebaseGrowthBudget,
-  head: CodebaseGrowthBudget,
-  renames: ReadonlyMap<string, string>,
-): string[] {
-  const violations: string[] = [];
-  if (head.onboardMaxLines > base.onboardMaxLines) {
-    violations.push(
-      `onboardMaxLines increased from ${base.onboardMaxLines} to ${head.onboardMaxLines}`,
-    );
+  const base = mergeBase();
+  const changes: ConditionalChange[] = [];
+  const baseBlobs = new Map<string, string | null>();
+  const headBlobs = new Map<string, string | null>();
+  for (const file of collectChanges()) {
+    if (!isTestFilePath(file.filename) && !isTestFilePath(file.previous_filename ?? "")) continue;
+    const basePath = isTestFilePath(file.previous_filename ?? "")
+      ? (file.previous_filename as string)
+      : file.filename;
+    const headPath =
+      file.status === "removed" || !isTestFilePath(file.filename) ? null : file.filename;
+    changes.push({ basePath, headPath, displayName: file.filename });
+    baseBlobs.set(basePath, readBaseFile(base, basePath));
+    if (headPath !== null) headBlobs.set(headPath, readCurrentFile(headPath));
   }
-  const baseJavaScript = new Set(base.javascriptFiles);
-  for (const file of head.javascriptFiles) {
-    const basePath = renames.get(file) ?? file;
-    if (!baseJavaScript.has(basePath)) violations.push(`${file}: adds a JavaScript allowance`);
-  }
-  for (const [file, count] of Object.entries(head.testIfCounts)) {
-    const basePath = renames.get(file) ?? file;
-    const baseCount = base.testIfCounts[basePath];
-    if (baseCount === undefined)
-      violations.push(`${file}: adds an if-statement budget of ${count}`);
-    else if (count > baseCount)
-      violations.push(`${file}: if-statement budget increased from ${baseCount} to ${count}`);
-  }
-  return violations;
+  return evaluateConditionalViolations(changes, baseBlobs, headBlobs).details;
 }
