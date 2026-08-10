@@ -309,6 +309,17 @@ describe("managed gateway port readiness (#7411)", () => {
     expect(classifyManagedGatewayPortConflict(false, listener, "healthy", false, "unknown")).toBe(
       "unknown",
     );
+    expect(
+      classifyManagedGatewayPortConflict(false, listener, "healthy", false, "mismatch", true),
+    ).toBe("owner-mismatch");
+  });
+
+  it("accepts a target-bound listener when managed endpoint text is unavailable (#8755)", () => {
+    const listener = { pids: [41], unverifiedPids: [], complete: true };
+
+    expect(
+      classifyManagedGatewayPortConflict(false, listener, "healthy", false, "unknown", true),
+    ).toBe("none");
   });
 
   it("accepts one legacy Docker proxy only when the exact cluster endpoint owns the port", () => {
