@@ -319,7 +319,11 @@ exec /usr/bin/sha256sum "$@"`,
   );
 }
 
-function runVersionPinTarget(options: { ghDownloadMode: GhDownloadMode }): void {
+function runVersionPinTarget(options: {
+  expectedDecision: RegExp;
+  ghDownloadMode: GhDownloadMode;
+  installedVersion: string;
+}): void {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-version-pin-"));
   try {
     const fakeBin = path.join(tmp, "bin");
@@ -328,7 +332,7 @@ function runVersionPinTarget(options: { ghDownloadMode: GhDownloadMode }): void 
     fs.writeFileSync(downloadLog, "");
 
     createFakeUname(fakeBin);
-    createFakeStickyOpenshell(fakeBin, "0.0.102");
+    createFakeStickyOpenshell(fakeBin, options.installedVersion);
     createFakeHelperBinaries(fakeBin);
     createFakeGh(fakeBin, downloadLog, options.ghDownloadMode);
     createFakeCurl(fakeBin, downloadLog);
@@ -347,18 +351,19 @@ function runVersionPinTarget(options: { ghDownloadMode: GhDownloadMode }): void 
       timeout: 60_000,
     });
 
-    // Assertion 1: installer-exits-zero — the happy path completes (no
-    // "above the maximum" hard-fail before download).
+    // Assertion 1: installer-exits-zero — the selected replacement path
+    // completes instead of stopping before the download.
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toMatch(options.expectedDecision);
 
     // Assertion 2: download-log-contains-v0.0.101 — pinned release tag was
     // requested from the release host.
     const downloads = fs.readFileSync(downloadLog, "utf-8");
     expect(downloads).toContain("v0.0.101");
 
-    // Assertion 3: download-log-excludes-v0.0.102 — the too-new sticky version
-    // is never re-fetched.
-    expect(downloads).not.toContain("v0.0.102");
+    // Assertion 3: download-log-excludes-installed-version — the existing
+    // release is never re-fetched in place of the pinned replacement.
+    expect(downloads).not.toContain(`v${options.installedVersion}`);
 
     if (options.ghDownloadMode === "fail") {
       // Assertion 3b: curl-fallback-observed — the installer must recover from
@@ -380,7 +385,7 @@ function runVersionPinTarget(options: { ghDownloadMode: GhDownloadMode }): void 
     });
     expect(replacedVersion.status).toBe(0);
     expect(replacedVersion.stdout).toContain("0.0.101");
-    expect(replacedVersion.stdout).not.toContain("0.0.102");
+    expect(replacedVersion.stdout).not.toContain(options.installedVersion);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -389,11 +394,29 @@ function runVersionPinTarget(options: { ghDownloadMode: GhDownloadMode }): void 
 test("replaces an installed OpenShell version above the supported maximum (#3474)", {
   timeout: TEST_TIMEOUT_MS,
 }, () => {
-  runVersionPinTarget({ ghDownloadMode: "success" });
+  runVersionPinTarget({
+    expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.0\.101/u,
+    ghDownloadMode: "success",
+    installedVersion: "0.0.102",
+  });
 });
 
 test("falls back to curl when GitHub release download fails (#3474)", {
   timeout: TEST_TIMEOUT_MS,
 }, () => {
-  runVersionPinTarget({ ghDownloadMode: "fail" });
+  runVersionPinTarget({
+    expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.0\.101/u,
+    ghDownloadMode: "fail",
+    installedVersion: "0.0.102",
+  });
+});
+
+test("replaces an installed OpenShell 0.0.99 with the pinned 0.0.101 release (#8606)", {
+  timeout: TEST_TIMEOUT_MS,
+}, () => {
+  runVersionPinTarget({
+    expectedDecision: /below minimum 0\.0\.101.*upgrading/u,
+    ghDownloadMode: "success",
+    installedVersion: "0.0.99",
+  });
 });

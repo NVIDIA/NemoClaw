@@ -168,7 +168,7 @@ const fs = require("fs");
 const a = process.argv.slice(2);
 const hermesProviderStatePath = ${JSON.stringify(hermesProviderStatePath)};
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
-if (a[0] === "-V" || a[0] === "--version") { process.stdout.write("openshell 0.0.99\\n"); process.exit(0); }
+if (a[0] === "-V" || a[0] === "--version") { process.stdout.write("openshell 0.0.101\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "list") { process.stdout.write("${sandboxName} Ready\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "get") {
@@ -240,7 +240,7 @@ process.exit(0);
       path.join(tmpDir, component),
       `#!/usr/bin/env node
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
-if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.99\\n");
+if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.101\\n");
 process.exit(0);
 `,
       { mode: 0o755 },
