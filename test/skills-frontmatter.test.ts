@@ -113,7 +113,7 @@ describe("repo skill markdown files", () => {
     expect(discovery).not.toContain("Follow imports and call sites");
   });
 
-  it("keeps root-cause and sensitive-workflow state checks in one stage-neutral owner", () => {
+  it("keeps root-cause and sensitive-workflow state checks in one stage-neutral owner (#8555)", () => {
     const checks = fs.readFileSync(
       path.join(skillsRoot, "_shared", "root-cause-and-state-checks.md"),
       "utf8",
@@ -140,7 +140,9 @@ describe("repo skill markdown files", () => {
     expect(checks).toContain("Assume a possible write and re-read external state");
     expect(checks).toContain("owns the authentication and authorization category");
     expect(checks).toContain("security-rubric.md");
-    expect(checks).not.toMatch(/\bsrc\/|\btest\/|npm run|\.github\/workflows/u);
+    expect(checks).not.toMatch(
+      /\b(?:npm\s+(?:run|test)|pnpm\s+test|npx\s+vitest)\b|\bsrc\/|\btest\/|\.github\/workflows/iu,
+    );
 
     for (const consumer of consumers) {
       expect(consumer).toContain("root-cause-and-state-checks.md");
@@ -151,7 +153,9 @@ describe("repo skill markdown files", () => {
 
     for (const report of [planIssue, implementIssue]) {
       expect(report).toContain("each credential location, access, lifetime, and removal");
-      expect(report).toContain("separate result and action");
+      expect(report).toContain(
+        "each applicable failure cell with a separate result and required action",
+      );
     }
   });
 

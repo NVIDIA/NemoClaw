@@ -140,7 +140,7 @@ the planning result reliably:
 - Unresolved product decisions: <decision or "none found">
 - Operation and failure class: <operation and failure class the work belongs to>
 - Sibling paths checked: <path and whether it needs the same change>
-- Sensitive-workflow states: <applicable phases with separate result and action, each credential location, access, lifetime, and removal, or "not applicable" with the reason>
+- Sensitive-workflow states: <each applicable failure cell with a separate result and required action, plus each credential location, access, lifetime, and removal, or "not applicable" with the reason>
 - Security boundaries: <applicable risks, controls, and required negative evidence>
 
 ## Observable acceptance examples
