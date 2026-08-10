@@ -427,6 +427,53 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
+  it("splices one loopback mapping directly before the qualification image reference (#8667)", () => {
+    const content = Buffer.from("qualification publish fixture\n", "utf8");
+    const testPlan = qualificationPlanForModel(content);
+    const modelRoot = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-qualification-publish-")),
+    );
+    const modelHostPath = path.join(modelRoot, testPlan.recipe.model.file.path);
+    fs.writeFileSync(modelHostPath, content);
+    const servePort = String(testPlan.recipe.serve.port);
+    const imageReference = `localhost:5000/repo@sha256:${"d".repeat(64)}`;
+    try {
+      const bindings = {
+        apiKeyHostPath: "/work/tmp/api-key",
+        containerName: "qualified-server",
+        imageReference,
+        model: hashModelFile(modelHostPath, testPlan),
+        networkName: "qualified-internal",
+        registryOwner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
+        runtimeGid: 1001,
+        runtimeUid: 1001,
+      };
+      for (const [argv, expectedMapping] of [
+        [buildServerContainerArgv(testPlan, bindings), `127.0.0.1::${servePort}`],
+        [
+          buildServerContainerArgv(testPlan, {
+            ...bindings,
+            hostPort: testPlan.recipe.serve.port,
+          }),
+          `127.0.0.1:${servePort}:${servePort}`,
+        ],
+        [
+          buildServerContainerArgv(testPlan, { ...bindings, hostPort: 18_081 }),
+          `127.0.0.1:18081:${servePort}`,
+        ],
+      ] as const) {
+        const imageIndex = argv.indexOf(imageReference);
+        expect(imageIndex).toBeGreaterThan(0);
+        expect(argv.slice(imageIndex - 2, imageIndex)).toEqual(["--publish", expectedMapping]);
+        expect(argv.filter((argument) => argument === "--publish")).toHaveLength(1);
+        const [publishedHost, , publishedContainerPort] = expectedMapping.split(":");
+        expect([publishedHost, publishedContainerPort]).toEqual(["127.0.0.1", servePort]);
+      }
+    } finally {
+      fs.rmSync(modelRoot, { force: true, recursive: true });
+    }
+  });
+
   it("accepts only the exact NVIDIA OpenClaw ARM64 managed-image labels", () => {
     const labels = {
       "io.nvidia.nemoclaw.agent": "openclaw",
