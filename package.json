@@ -65,6 +65,8 @@
     "type-safety:hotspots": "tsx scripts/type-safety-hotspots.mts",
     "source-shape:scan": "tsx scripts/find-source-shape-tests.mts --metrics",
     "source-shape:check": "tsx scripts/find-source-shape-tests.mts --check",
+
+    "test-size:check": "vitest run --project integration test/codebase-growth-contract.test.ts",
     "bump:version": "tsx scripts/bump-version.mts",
     "release:plan": "tsx scripts/release-plan.mts",
     "release:e2e-evidence": "node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-cut-release-tag/scripts/release-e2e-evidence.mts",
