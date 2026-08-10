@@ -162,9 +162,7 @@ describe("runner comparison E2E workflow boundary (#7140)", () => {
     ];
     const expectedInitializeError = REBUILD_JOBS.includes(jobId as (typeof REBUILD_JOBS)[number])
       ? `${jobId} must establish rebuild swap before initializing runner comparison telemetry`
-      : jobId === "security-posture"
-        ? `${jobId} must initialize runner comparison telemetry immediately after workspace preparation`
-        : `${jobId} must initialize runner comparison telemetry immediately after CLI artifact restore`;
+      : `${jobId} must initialize runner comparison telemetry immediately after CLI artifact restore`;
     expect(validateRunnerComparisonWorkflow(lateInitialize)).toContain(expectedInitializeError);
 
     const afterPublication = loadWorkflow();

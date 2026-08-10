@@ -54,20 +54,16 @@ const APPROVED_STEP_SHAPES = [
     sha256: "4ec2659f39a08af0cb6abf60ab63a6732ab2375f538fc5b80601d566fdbcbc5a",
   },
   {
-    name: "Detect guardrail tools on the base revision",
-    sha256: "f10b24b97320e991cc060be9f5e98bda2705abd8d0814da123cfd5ca8672a442",
-  },
-  {
     name: "Install trusted dependencies",
-    sha256: "bf5757db70862f1e068748855d97ab5ae6a4a43ebd7ed812baa9f45269bdf6c3",
+    sha256: "2388fa3f5694ed0db8df96bf5f2bbcc3f377d5fe66e433b32d0ef71e88d0f362",
   },
   {
     name: "Require changed test files to stay within size budget",
-    sha256: "eec9020e81cf9d972592cc3129f6656ec0d46618623fb368674e8e823d8c1457",
+    sha256: "5d631c12f457e947bd7bd83447ab2a294cbe4d8430dbed4e92d09d7f7594dd3b",
   },
   {
     name: "Require changed test files not to add if statements",
-    sha256: "9aa363162eb2dc6740d9a27c52e6171b2a5587017eb039773a0f4ee0b32f8cde",
+    sha256: "991a7036d27aeb45fde2f3178936fba6ac87b90200b79c933015f9d63525d3cf",
   },
 ] as const;
 

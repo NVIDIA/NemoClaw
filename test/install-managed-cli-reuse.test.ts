@@ -244,7 +244,7 @@ describe("installer-managed CLI reuse", () => {
     expect(npmLog.match(/\|run --if-present build:cli$/gm)).toHaveLength(1);
     expect(npmLog.match(/\|ci --ignore-scripts$/gm)).toHaveLength(1);
     expect(npmLog.match(/\|run build$/gm)).toHaveLength(1);
-    expect(npmLog.match(/\|link$/gm)).toHaveLength(1);
+    expect(npmLog.match(/\|link --ignore-scripts$/gm)).toHaveLength(1);
   });
 
   it("reuses the managed checkout on a later installer run after its own dependency install (#8305)", () => {
@@ -258,7 +258,7 @@ describe("installer-managed CLI reuse", () => {
     expect(lockfile).toBe(COMMITTED_LOCKFILE);
     expect(gitLog.match(/^init\b/gm)).toHaveLength(1);
     expect(npmLog.match(/\|install --ignore-scripts$/gm)).toHaveLength(1);
-    expect(npmLog.match(/\|link$/gm)).toHaveLength(1);
+    expect(npmLog.match(/\|link --ignore-scripts$/gm)).toHaveLength(1);
   });
 
   it("warns and completes when the managed lockfile cannot be restored (#8305)", () => {
@@ -291,6 +291,6 @@ describe("installer-managed CLI reuse", () => {
     expect(npmLog.match(/\|run --if-present build:cli$/gm)).toHaveLength(1);
     expect(npmLog.match(/\|ci --ignore-scripts$/gm)).toHaveLength(1);
     expect(npmLog.match(/\|run build$/gm)).toHaveLength(1);
-    expect(npmLog.match(/\|link$/gm)).toHaveLength(1);
+    expect(npmLog.match(/\|link --ignore-scripts$/gm)).toHaveLength(1);
   });
 });

@@ -330,6 +330,11 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
     recoverUnfinished.mockClear();
     createLifecycle.mockClear();
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 23,
+      output: "Created sandbox: alpha",
+      sawProgress: true,
+    });
 
     const result = await runSandboxGpuCreateFlow(input, deps);
 
@@ -353,9 +358,11 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     expect(mocks.queryOpenShellDockerSandboxContainers).not.toHaveBeenCalled();
     expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
-    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenLastCalledWith(
-      expect.objectContaining({ stableReadyPolls: 2 }),
-    );
+    expect(
+      mocks.waitForCreatedSandboxReadyWithTrace.mock.calls.map(
+        ([options]) => options.stableReadyPolls,
+      ),
+    ).toEqual([2, 2]);
 
     expect(vi.mocked(console.warn).mock.calls.flat().join("\n")).toContain(
       "unrelated sandbox 'bravo'",
@@ -673,14 +680,24 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
 
   it("configures the portable lifecycle after sandbox creation succeeds (#8441)", async () => {
     const input = createInput();
+    input.lifecycleGeneration = "current-generation";
     const deps = createDeps();
-    deps.installPortableDemoLifecycle = vi.fn();
+    deps.installPortableDemoLifecycle = vi.fn(
+      (_sandboxName, _startupCommand, _env, options) => options.registryGeneration ?? null,
+    );
 
-    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "native" });
+    const result = await runSandboxGpuCreateFlow(input, deps);
+
+    expect(result.route).toBe("native");
+    expect(result.lifecycleRegistrationFields).toEqual({
+      lifecycleGeneration: "current-generation",
+    });
 
     expect(deps.installPortableDemoLifecycle).toHaveBeenCalledWith(
       input.sandboxName,
       input.sandboxStartupCommand,
+      process.env,
+      { registryGeneration: "current-generation" },
     );
   });
 

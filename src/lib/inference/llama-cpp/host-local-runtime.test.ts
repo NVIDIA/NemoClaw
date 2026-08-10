@@ -18,6 +18,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { LLAMA_CPP_PORT } from "./contract";
 import {
   buildLlamaCppHostLocalDockerArgv,
+  buildLlamaCppRequestGuardDockerArgv,
+  LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
+  LLAMA_CPP_HOST_LOCAL_SERVER_PATH,
   type LlamaCppHostLocalLaunchContract,
   type LlamaCppHostLocalRuntimeBindings,
 } from "./host-local-runtime";
@@ -83,8 +86,13 @@ function contract(): LlamaCppHostLocalLaunchContract {
       idleSleepSeconds: -1,
       kvCache: { key: "f16", value: "f16" },
       limits: {
+        maxRequestBodyBytes: 1_048_576,
+        maxRequestHeaderBytes: 32_768,
+        maxOutputTokens: 4_096,
         requestTimeoutSeconds: 900,
+        shutdownTimeoutSeconds: 25,
       },
+      requestGuard: { upstreamPort: 8_082 },
       microBatchSize: 512,
       port: 8_081,
       protocol: "openai-completions",
@@ -135,7 +143,7 @@ describe("llama.cpp host-local runtime materializer", () => {
       `type=bind,source=${runtime.model.hostPath},target=/models/${input.model.file.path},readonly`,
       `type=bind,source=${runtime.apiKeyHostPath},target=/run/secrets/llama-cpp-api-key,readonly`,
     ]);
-    expect(valuesAfter(argv, "--publish")).toEqual(["127.0.0.1::8081"]);
+    expect(valuesAfter(argv, "--publish")).toEqual([]);
     expect(valuesAfter(argv, "--gpus")).toEqual(["driver=nvidia,count=1"]);
     expect(valuesAfter(argv, "--gpu-layers")).toEqual(["all"]);
     expect(valuesAfter(argv, "--ctx-size")).toEqual([String(input.serve.contextSize)]);
@@ -144,6 +152,7 @@ describe("llama.cpp host-local runtime materializer", () => {
     expect(valuesAfter(argv, "--timeout")).toEqual([
       String(input.serve.limits.requestTimeoutSeconds),
     ]);
+    expect(argv).not.toContain("--n-predict");
     expect(argv).toEqual(
       expect.arrayContaining([
         "--read-only",
@@ -160,13 +169,13 @@ describe("llama.cpp host-local runtime materializer", () => {
     expect(argv.join("\n")).not.toContain("huggingface.co");
   });
 
-  it("publishes the fixed loopback host port when the bindings pin one", () => {
+  it("leaves fixed host-port bridging to the Docker lifecycle provider", () => {
     const argv = buildLlamaCppHostLocalDockerArgv(contract(), {
       ...bindings(),
       hostPort: LLAMA_CPP_PORT,
     });
 
-    expect(valuesAfter(argv, "--publish")).toEqual([`127.0.0.1:${String(LLAMA_CPP_PORT)}:8081`]);
+    expect(valuesAfter(argv, "--publish")).toEqual([]);
   });
 
   it("takes launch settings from the declared contract instead of code defaults (#8144)", () => {
@@ -206,8 +215,6 @@ describe("llama.cpp host-local runtime materializer", () => {
       "unless-stopped",
       "--user",
       "1001:1001",
-      "--publish",
-      "127.0.0.1::8081",
       "--read-only",
       "--cap-drop",
       "ALL",
@@ -264,6 +271,59 @@ describe("llama.cpp host-local runtime materializer", () => {
       "--no-mmproj",
       "--no-agent",
     ]);
+  });
+
+  it("activates the owned-image request guard from the declared recipe values (#8144)", () => {
+    const input = contract();
+    const runtime = bindings();
+    const argv = buildLlamaCppRequestGuardDockerArgv(input, runtime);
+    const separator = argv.indexOf("--");
+
+    expect(valuesAfter(argv, "--entrypoint")).toEqual([LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH]);
+    expect(valuesAfter(argv, "--listen-port")).toEqual([String(input.serve.port)]);
+    expect(valuesAfter(argv, "--upstream-port")).toEqual([
+      String(input.serve.requestGuard.upstreamPort),
+    ]);
+    expect(valuesAfter(argv, "--max-request-body-bytes")).toEqual([
+      String(input.serve.limits.maxRequestBodyBytes),
+    ]);
+    expect(valuesAfter(argv, "--max-request-header-bytes")).toEqual([
+      String(input.serve.limits.maxRequestHeaderBytes),
+    ]);
+    expect(valuesAfter(argv, "--max-output-tokens")).toEqual([
+      String(input.serve.limits.maxOutputTokens),
+    ]);
+    expect(valuesAfter(argv, "--request-timeout-seconds")).toEqual([
+      String(input.serve.limits.requestTimeoutSeconds),
+    ]);
+    expect(valuesAfter(argv, "--shutdown-timeout-seconds")).toEqual([
+      String(input.serve.limits.shutdownTimeoutSeconds),
+    ]);
+    expect(argv.slice(separator + 1, separator + 8)).toEqual([
+      LLAMA_CPP_HOST_LOCAL_SERVER_PATH,
+      "--model",
+      `/models/${input.model.file.path}`,
+      "--alias",
+      input.model.servedName,
+      "--host",
+      "127.0.0.1",
+    ]);
+    expect(valuesAfter(argv.slice(separator), "--port")).toEqual([
+      String(input.serve.requestGuard.upstreamPort),
+    ]);
+    expect(valuesAfter(argv.slice(separator), "--n-predict")).toEqual([
+      String(input.serve.limits.maxOutputTokens),
+    ]);
+  });
+
+  it("keeps the upstream-image launch on the llama-server entrypoint (#8144)", () => {
+    const argv = buildLlamaCppHostLocalDockerArgv(contract(), bindings());
+
+    expect(argv).not.toContain("--entrypoint");
+    expect(argv).not.toContain(LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH);
+    expect(argv).not.toContain("--n-predict");
+    expect(valuesAfter(argv, "--host")).toEqual(["0.0.0.0"]);
+    expect(valuesAfter(argv, "--port")).toEqual(["8081"]);
   });
 
   it("rejects an artifact that does not match the declared GGUF identity (#8144)", () => {

@@ -20,8 +20,9 @@ Use it only for evaluation until the required physical validation is complete.
 
 ## Understand Profile Selection
 
-DGX Spark Express attempts automatic profile selection only after it selects the managed vLLM provider.
-A provider other than `install-vllm`, an existing local inference route, `NEMOCLAW_VLLM_MODEL`, or `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` remains authoritative.
+DGX Spark Express attempts automatic profile selection only after you keep option 1, the default managed-vLLM path.
+Option 2 selects the fixed single-host catalog profile and does not attempt distributed selection.
+A provider other than `install-vllm`, an existing local inference route, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, or `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` remains authoritative.
 Without explicit inference intent, the detector derives one exact counterpart from each qualified private `/30` rail.
 It does not scan a subnet, add SSH host keys, add authorized keys, or change SSH configuration.
 
@@ -133,7 +134,7 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
   bash
 ```
 
-Accept the usage notice and the **Run express install with these settings?** prompt.
+Keep option 1, **Managed vLLM with automatic serving-profile selection**, then accept the **Run express install with these settings?** prompt.
 DGX Spark Express prints the selected topology, immutable image, pinned model revision, cache paths, and worker-first launch order before image, model, or container mutation.
 
 For optional authenticated model downloads, follow [Authenticate Hugging Face Downloads](set-up-vllm#authenticate-hugging-face-downloads) before you start the installer.

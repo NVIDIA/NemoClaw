@@ -50,7 +50,10 @@ import {
   type RecoveredManagedClusterVllmEndpoint,
   recoverInstalledManagedClusterVllmEndpoint,
 } from "./serving/managed-cluster-runtime-receipt";
-import { recoverHostLocalManagedVllmEndpoint } from "./serving/vllm-host-local-lifecycle";
+import {
+  recoverHostLocalManagedVllmEndpoint,
+  resolveManagedVllmBridgeHost,
+} from "./serving/vllm-host-local-lifecycle";
 import { loadManagedVllmApiKey } from "./vllm-api-key";
 import { applyVllmRuntimeContextWindow as applyVllmRuntimeContextWindowFromModels } from "./vllm-runtime-context";
 import { getDualStationManagedVllmBaseUrl } from "./vllm-station-cluster-lifecycle";
@@ -430,17 +433,14 @@ function configuredLocalInferenceHostUrl(hostUrl?: string | null): string | null
   );
 }
 
-type RecoveredManagedVllmBaseUrl =
-  | { readonly kind: "available"; readonly baseUrl: string | null }
+type RecoveredManagedVllmBinding =
+  | { readonly kind: "available"; readonly binding: ManagedVllmProviderBinding | null }
   | { readonly kind: "unavailable" };
 
-function recoveredManagedVllmBaseUrl(): RecoveredManagedVllmBaseUrl {
-  if (configuredLocalInferenceHostUrl()) return { kind: "available", baseUrl: null };
+function recoveredManagedVllmBinding(): RecoveredManagedVllmBinding {
+  if (configuredLocalInferenceHostUrl()) return { kind: "available", binding: null };
   try {
-    return {
-      kind: "available",
-      baseUrl: getManagedVllmProviderBinding()?.baseUrl.replace(/\/v1\/?$/, "") ?? null,
-    };
+    return { kind: "available", binding: getManagedVllmProviderBinding() };
   } catch {
     return { kind: "unavailable" };
   }
@@ -448,6 +448,7 @@ function recoveredManagedVllmBaseUrl(): RecoveredManagedVllmBaseUrl {
 
 export interface ManagedVllmProviderBinding {
   baseUrl: string;
+  validationBaseUrl?: string;
   apiKey: string;
 }
 
@@ -578,7 +579,8 @@ export function getManagedVllmProviderState(
   if (hostLocalEndpoint) {
     return {
       kind: "ready",
-      baseUrl: `${hostLocalEndpoint.baseUrl.replace(/\/+$/, "")}/v1`,
+      baseUrl: `${HOST_GATEWAY_URL}:${String(VLLM_PORT)}/v1`,
+      validationBaseUrl: `${hostLocalEndpoint.baseUrl.replace(/\/+$/, "")}/v1`,
       apiKey: hostLocalEndpoint.apiKey,
     };
   }
@@ -601,7 +603,11 @@ export function getManagedVllmProviderBinding(
     }
     throw new Error("Managed vLLM authentication is missing.");
   }
-  return { baseUrl: state.baseUrl, apiKey: state.apiKey };
+  return {
+    baseUrl: state.baseUrl,
+    ...(state.validationBaseUrl ? { validationBaseUrl: state.validationBaseUrl } : {}),
+    apiKey: state.apiKey,
+  };
 }
 
 export function getLocalProviderBaseUrl(
@@ -613,9 +619,9 @@ export function getLocalProviderBaseUrl(
   switch (provider) {
     case "vllm-local": {
       if (!configuredHostUrl) {
-        const managed = recoveredManagedVllmBaseUrl();
+        const managed = recoveredManagedVllmBinding();
         if (managed.kind === "unavailable") return null;
-        if (managed.baseUrl) return `${managed.baseUrl}/v1`;
+        if (managed.binding) return managed.binding.baseUrl;
       }
       return `${hostUrl}:${VLLM_PORT}/v1`;
     }
@@ -630,9 +636,11 @@ export function getLocalProviderBaseUrl(
 export function getLocalProviderValidationBaseUrl(provider: string): string | null {
   switch (provider) {
     case "vllm-local": {
-      const managed = recoveredManagedVllmBaseUrl();
+      const managed = recoveredManagedVllmBinding();
       if (managed.kind === "unavailable") return null;
-      return managed.baseUrl ? `${managed.baseUrl}/v1` : `http://127.0.0.1:${VLLM_PORT}/v1`;
+      return managed.binding
+        ? (managed.binding.validationBaseUrl ?? managed.binding.baseUrl)
+        : `http://127.0.0.1:${VLLM_PORT}/v1`;
     }
     case "ollama-local":
       return `http://${getResolvedOllamaHost()}:${OLLAMA_PORT}/v1`;
@@ -644,10 +652,13 @@ export function getLocalProviderValidationBaseUrl(provider: string): string | nu
 export function getLocalProviderHealthEndpoint(provider: string): string | null {
   switch (provider) {
     case "vllm-local": {
-      const managed = recoveredManagedVllmBaseUrl();
+      const managed = recoveredManagedVllmBinding();
       if (managed.kind === "unavailable") return null;
-      return managed.baseUrl
-        ? `${managed.baseUrl}/v1/models`
+      const managedBaseUrl = managed.binding
+        ? (managed.binding.validationBaseUrl ?? managed.binding.baseUrl)
+        : null;
+      return managedBaseUrl
+        ? `${managedBaseUrl}/models`
         : `http://127.0.0.1:${VLLM_PORT}/v1/models`;
     }
     case "ollama-local":
@@ -660,9 +671,15 @@ export function getLocalProviderHealthEndpoint(provider: string): string | null 
 /** Lightweight endpoint used only to prove that the local service is reachable. */
 export function getLocalProviderAvailabilityEndpoint(provider: string): string | null {
   if (provider === "vllm-local") {
-    const managed = recoveredManagedVllmBaseUrl();
+    const managed = recoveredManagedVllmBinding();
     if (managed.kind === "unavailable") return null;
-    if (managed.baseUrl) return `${managed.baseUrl}/health`;
+    if (managed.binding) {
+      const validationRoot = (managed.binding.validationBaseUrl ?? managed.binding.baseUrl).replace(
+        /\/v1\/?$/,
+        "",
+      );
+      return `${validationRoot}/health`;
+    }
     return `http://127.0.0.1:${VLLM_PORT}/v1/models`;
   }
   return getLocalProviderHealthEndpoint(provider);
@@ -888,8 +905,11 @@ export function probeLocalProviderHealth(
     };
   }
   const managedBinding = managedState.kind === "ready" ? managedState : null;
-  const endpoint = managedBinding
-    ? `${managedBinding.baseUrl}/models`
+  const managedValidationBaseUrl = managedBinding
+    ? (managedBinding.validationBaseUrl ?? managedBinding.baseUrl)
+    : null;
+  const endpoint = managedValidationBaseUrl
+    ? `${managedValidationBaseUrl}/models`
     : provider === "vllm-local"
       ? `http://127.0.0.1:${VLLM_PORT}/v1/models`
       : getLocalProviderHealthEndpoint(provider);
@@ -898,7 +918,9 @@ export function probeLocalProviderHealth(
   const runCurlProbeImpl = options.runCurlProbeImpl ?? runLocalCurlProbe;
   let result: CurlProbeResult;
   if (managedBinding) {
-    result = probeVllmModels(managedBinding.baseUrl, managedBinding.apiKey, { runCurlProbeImpl });
+    result = probeVllmModels(managedValidationBaseUrl!, managedBinding.apiKey, {
+      runCurlProbeImpl,
+    });
   } else {
     result = runCurlProbeImpl(["-sS", "--connect-timeout", "3", "--max-time", "5", endpoint]);
   }
@@ -1002,15 +1024,18 @@ export function probeLocalProviderHealth(
 export function getLocalProviderContainerReachabilityCheck(provider: string): string[] | null {
   switch (provider) {
     case "vllm-local": {
-      const managed = recoveredManagedVllmBaseUrl();
+      const managed = recoveredManagedVllmBinding();
       if (managed.kind === "unavailable") return null;
-      const managedBaseUrl = managed.baseUrl;
+      const managedBaseUrl = managed.binding?.baseUrl.replace(/\/v1\/?$/, "") ?? null;
+      const hostAlias = managed.binding?.validationBaseUrl
+        ? `host.openshell.internal:${resolveManagedVllmBridgeHost()}`
+        : "host.openshell.internal:host-gateway";
       return [
         ...(managedBaseUrl ? ["docker", "--context", "default"] : ["docker"]),
         "run",
         "--rm",
         "--add-host",
-        "host.openshell.internal:host-gateway",
+        hostAlias,
         CONTAINER_REACHABILITY_IMAGE,
         "--connect-timeout",
         "5",
@@ -1126,7 +1151,7 @@ export function validateLocalProvider(
   }
 
   // All retries exhausted — collect diagnostics
-  const diagnostic = collectContainerDiagnostic(provider, capture);
+  const diagnostic = collectContainerDiagnostic(containerCommand, capture);
 
   switch (provider) {
     case "vllm-local":
@@ -1153,10 +1178,11 @@ export function validateLocalProvider(
 function getContainerCheckUrl(provider: string): string | null {
   switch (provider) {
     case "vllm-local": {
-      const managed = recoveredManagedVllmBaseUrl();
+      const managed = recoveredManagedVllmBinding();
       if (managed.kind === "unavailable") return null;
-      return managed.baseUrl
-        ? `${managed.baseUrl}/health`
+      const managedBaseUrl = managed.binding?.baseUrl.replace(/\/v1\/?$/, "") ?? null;
+      return managedBaseUrl
+        ? `${managedBaseUrl}/health`
         : `http://host.openshell.internal:${VLLM_PORT}/v1/models`;
     }
     case "ollama-local":
@@ -1166,22 +1192,24 @@ function getContainerCheckUrl(provider: string): string | null {
   }
 }
 
-function collectContainerDiagnostic(provider: string, capture: RunCaptureFn): string {
-  const url = getContainerCheckUrl(provider);
-  if (!url) return "Managed vLLM state could not be inspected safely.";
-  const dockerCommand =
-    provider === "vllm-local" && url.endsWith("/health")
-      ? ["docker", "--context", "default"]
-      : ["docker"];
+function collectContainerDiagnostic(containerCommand: string[], capture: RunCaptureFn): string {
+  const url = containerCommand.at(-1);
+  const dockerRunIndex = containerCommand.indexOf("run");
+  const addHostIndex = containerCommand.indexOf("--add-host");
+  const hostAlias = containerCommand[addHostIndex + 1];
+  if (!url || dockerRunIndex < 1 || addHostIndex < 0 || !hostAlias) {
+    return `Docker command failed (invalid reachability command). Retried ${CONTAINER_CHECK_MAX_ATTEMPTS} times.`;
+  }
+  const dockerCommand = containerCommand.slice(0, dockerRunIndex);
   try {
-    // Get HTTP status code
+    // Reuse the exact Docker context, host mapping, and URL from the failed check.
     const httpStatus = capture(
       [
         ...dockerCommand,
         "run",
         "--rm",
         "--add-host",
-        "host.openshell.internal:host-gateway",
+        hostAlias,
         CONTAINER_REACHABILITY_IMAGE,
         "-s",
         "-o",
@@ -1197,14 +1225,14 @@ function collectContainerDiagnostic(provider: string, capture: RunCaptureFn): st
       { ignoreError: true },
     );
 
-    // Get /etc/hosts to see host-gateway resolution
+    // Confirm that Docker applied the same host mapping used by the failed check.
     const hostsOutput = capture(
       [
         ...dockerCommand,
         "run",
         "--rm",
         "--add-host",
-        "host.openshell.internal:host-gateway",
+        hostAlias,
         CONTAINER_REACHABILITY_IMAGE,
         "cat",
         "/etc/hosts",
@@ -1225,7 +1253,7 @@ function collectContainerDiagnostic(provider: string, capture: RunCaptureFn): st
         .split(/\r?\n/)
         .find((l: string) => l.includes("host.openshell.internal"));
       if (gwLine) {
-        parts.push(`host-gateway resolved to: ${gwLine.trim().split(/\s+/)[0]}`);
+        parts.push(`host.openshell.internal resolved to: ${gwLine.trim().split(/\s+/)[0]}`);
       }
     }
     parts.push(

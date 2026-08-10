@@ -24,6 +24,10 @@ Use a host firewall with default-deny inbound rules.
 Allow TCP port `8000` only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
 Do not expose the port to your LAN or the internet.
 
+An authenticated fixed profile publishes Docker port `8000` on exactly two host addresses: `127.0.0.1` and the exact private IPv4 gateway of the `openshell-docker` bridge.
+It never publishes that host port on `0.0.0.0` or `::`.
+The provider route remains `https://inference.local` inside the sandbox, and OpenShell reaches the server through the private bridge binding.
+
 The qualified two-DGX Spark and two-DGX Station paths use bearer-protected `/v1` routes and Docker host networking on both runtime containers; network isolation remains required for other endpoints and distributed traffic.
 Follow [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) or [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for their isolation requirements.
 </Warning>
@@ -74,6 +78,8 @@ vllm serve /models/Hermes-3-Llama-3.1-8B \
 
 Use the parser required by your selected model instead of copying `hermes` for another model family.
 Without both `--enable-auto-tool-choice` and a matching parser, tool calls can appear as raw assistant text instead of structured `tool_calls`.
+The `--host` value in this operator-run example controls the listener inside that server process.
+For the authenticated fixed profile, evaluate host exposure from its published Docker port bindings as described in [Install a Fixed vLLM Profile](choose-local-inference-server#install-a-fixed-vllm-profile).
 
 ## Install or Start Managed vLLM
 
@@ -232,6 +238,7 @@ An inconclusive Docker image-storage check retains its existing automatic-contin
 <Note>
 The model-cache guard applies when the selected registered recipe declares a pinned snapshot size.
 NemoClaw creates `~/.cache/huggingface` as the host user and runs the one-shot download container with the host UID and GID, avoiding root-owned cache paths.
+The long-lived vLLM container mounts only the Hugging Face hub cache read-only and uses offline mode, so it cannot change host-cache ownership.
 Hugging Face credentials are forwarded only to that temporary downloader, not retained by the long-lived vLLM container.
 
 A legacy root-owned or otherwise unwritable required model-cache path stops before the image pull and prints a scoped ownership-repair command; NemoClaw never changes its ownership automatically.
@@ -257,8 +264,14 @@ On DGX Station, accepting the installer express prompt selects `NEMOCLAW_VLLM_MO
 Express uses the single-Station Ultra recipe unless a trusted reciprocal pair qualifies for distributed serving.
 Refer to [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for pair qualification, lifecycle receipts, runtime topology, and network controls.
 
-On DGX Spark, Express selects the pinned two-node profile when exactly one pretrusted reciprocal pair qualifies and no inference intent or related runtime conflicts.
-Refer to [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) for automatic and explicit selection, profile requirements, and cleanup behavior.
+On DGX Spark, Express keeps automatic managed-vLLM serving-profile selection as option 1, the default.
+It offers the fixed local vLLM profile as option 2.
+When you select option 2, the serving catalog supplies the pinned model, runtime image, port, and serve arguments.
+The installer rejects provider and model overrides for that fixed profile, and the dedicated onboarder rejects vLLM model, port, and serve-argument overrides before it starts the managed container.
+Explicit `NEMOCLAW_MODEL` or `NEMOCLAW_VLLM_MODEL` intent retains the customizable managed-vLLM path and skips the fixed-profile choice.
+If onboarding stops after you select option 2, `$$nemoclaw onboard --resume` reuses the recorded fixed profile instead of returning to automatic serving-profile selection.
+Refer to [Choose a Local Inference Server](choose-local-inference-server#install-a-fixed-vllm-profile) for fixed-profile installation and verification.
+Refer to [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) for automatic and explicit distributed-profile selection, profile requirements, and cleanup behavior.
 
 To select the existing `deepseek-v4-flash` recipe while retaining the same one-confirmation express flow, run:
 

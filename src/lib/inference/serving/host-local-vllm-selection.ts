@@ -79,7 +79,7 @@ function dockerRunArguments(recipe: HostLocalInferenceServingRecipe): string[] {
     "--ipc",
     recipe.spec.runtime.ipcMode,
     "--mount",
-    `type=bind,source=${path.join(os.homedir(), ".cache", "huggingface")},target=${recipe.spec.runtime.modelCache.target}`,
+    `type=bind,source=${path.join(os.homedir(), ".cache", "huggingface", "hub")},target=${recipe.spec.runtime.modelCache.target}/hub,readonly`,
     "--shm-size",
     `${String(sharedMemoryBytes)}b`,
     "--ulimit",
@@ -123,7 +123,12 @@ export function materializeHostLocalVllmSelection(
   ) {
     throw new Error("host-local vLLM recipe is missing required runtime or model fields");
   }
-  const serveEnvironment = { ...runtime.environment };
+  const serveEnvironment = {
+    ...runtime.environment,
+    HF_HOME: runtime.modelCache.target,
+    HF_HUB_OFFLINE: "1",
+    TRANSFORMERS_OFFLINE: "1",
+  };
   const model: VllmModelDef = {
     id: recipe.spec.model.id,
     label: recipe.metadata.displayName ?? recipe.metadata.id,

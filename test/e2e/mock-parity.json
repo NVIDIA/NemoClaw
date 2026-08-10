@@ -23,6 +23,15 @@
       ]
     },
     {
+      "live": "test/e2e/live/llama-cpp-generic-gpu.test.ts",
+      "fast": [
+        "src/lib/inference/llama-cpp/managed-selection.test.ts",
+        "src/lib/inference/llama-cpp/managed-installer.test.ts",
+        "src/lib/onboard/setup-nim-flow.test.ts",
+        "test/e2e/support/e2e-workflow.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/managed-image-multiarch-startup.test.ts",
       "fast": [
         "test/e2e/support/base-image-publication.test.ts",
@@ -94,6 +103,7 @@
       "live": "test/e2e/live/full-e2e.test.ts",
       "fast": [
         "test/e2e/support/full-e2e-inference-probe.test.ts",
+        "test/e2e/support/launch-agent-turn.test.ts",
         "test/e2e/support/onboard-performance.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -500,6 +510,20 @@
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/spark-express-vllm.test.ts",
+      "fast": [
+        "src/lib/inference/serving/catalog.test.ts",
+        "src/lib/inference/serving/host-local-vllm-selection.test.ts",
+        "src/lib/inference/vllm-models.test.ts",
+        "src/lib/onboard/local-model-profile/onboarder.test.ts",
+        "src/lib/onboard/local-model-profile/plan.test.ts",
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/install-express-prompt.test.ts",
+        "test/install-local-model-profile.test.ts"
       ]
     },
     {
