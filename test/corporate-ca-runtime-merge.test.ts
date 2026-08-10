@@ -79,6 +79,43 @@ describe("corporate proxy CA trust-anchor rejection (#8650)", () => {
     expect(diagnostic).not.toContain("PLANTED-NOT-A-CERTIFICATE");
     expect(existsSync(merged)).toBe(false);
   });
+
+  it.each([
+    { agent: "OpenClaw", script: OPENCLAW_START, end: OPENCLAW_END },
+    { agent: "Hermes", script: HERMES_START, end: HERMES_END },
+  ])("rejects a corporate CA swapped to a symlink after the path check for $agent (#8650)", ({
+    script,
+    end,
+  }) => {
+    const dir = tmpDir("nemoclaw-corp-swap-");
+    const openshell = join(dir, "openshell-ca.pem");
+    const corp = join(dir, "corporate-ca.pem");
+    const merged = join(dir, "merged-ca.pem");
+    const planted = join(dir, "not-a-certificate");
+    writeFileSync(openshell, OPENSHELL_PEM);
+    writeFileSync(planted, "PLANTED-NOT-A-CERTIFICATE\n");
+    writeFileSync(corp, CORPORATE_PEM);
+
+    // Stand in for a process that replaces the path between the `-L` check and
+    // the read. Swapping the file for a symlink right after the check means
+    // only the O_NOFOLLOW read can still reject it.
+    const swap = [
+      `rm -f ${JSON.stringify(corp)}`,
+      `ln -s ${JSON.stringify(planted)} ${JSON.stringify(corp)}`,
+    ].join("\n");
+    const raced = mergeBlock(script, end, corp, merged).replace(
+      `[ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0`,
+      `[ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0\n${swap}`,
+    );
+
+    const diagnostic = mergeDiagnostic(dir, raced, [
+      `export SSL_CERT_FILE=${JSON.stringify(openshell)}`,
+    ]);
+
+    expect(diagnostic).toContain("corporate CA");
+    expect(diagnostic).not.toContain("PLANTED-NOT-A-CERTIFICATE");
+    expect(existsSync(merged)).toBe(false);
+  });
 });
 
 describe("corporate proxy CA runtime merge (#6210)", () => {
