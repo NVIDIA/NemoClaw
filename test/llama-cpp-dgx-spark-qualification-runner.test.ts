@@ -283,7 +283,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
-  it("publishes the YAML-bound guard on loopback without putting the key on argv (#8667)", () => {
+  it("publishes the recipe-selected request guard on the loopback address without putting the API key in Docker arguments (#8667)", () => {
     const content = Buffer.from("qualification model fixture\n", "utf8");
     const testPlan = qualificationPlanForModel(content);
     const modelRoot = fs.realpathSync(
@@ -443,7 +443,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
-  it("inserts one loopback publish option before exactly one image reference and rejects an existing publish option (#8667)", () => {
+  it("rejects Docker publish aliases before inserting one loopback mapping at the image boundary (#8667)", () => {
     const imageReference = `localhost:5000/repo@sha256:${"d".repeat(64)}`;
     const containerPort = 9_081;
     const options = { containerPort, imageReference };
