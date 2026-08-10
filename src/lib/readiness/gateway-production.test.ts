@@ -391,12 +391,12 @@ describe("managed gateway port readiness (#7411)", () => {
     ].join("\n");
     subprocess.spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
       const resolvesOpenshell = command === "sh" && args.includes('command -v "$1"');
-      if (resolvesOpenshell) return commandResult("/usr/local/bin/openshell\n", 0);
-      if (command === "/usr/local/bin/openshell") {
-        const stderr = args[0] === "status" ? statusConnectionRefused : infoConnectionRefused;
-        return commandResult("", 1, stderr);
-      }
-      return commandResult();
+      const stderr = args[0] === "status" ? statusConnectionRefused : infoConnectionRefused;
+      return resolvesOpenshell
+        ? commandResult("/usr/local/bin/openshell\n", 0)
+        : command === "/usr/local/bin/openshell"
+          ? commandResult("", 1, stderr)
+          : commandResult();
     });
 
     const gatewayPort = 0;
