@@ -413,6 +413,9 @@ export function registerOpenShellHostMockFirewall(
       return { ...topology, changed: false, manualCommand: command, reason: "preexisting" };
     }
 
+    if (closed) {
+      throw new Error("host mock firewall setup was interrupted before applying the UFW rule");
+    }
     mutationStarted = true;
     applyInFlight = options.host.command(
       "sudo",

@@ -90,8 +90,11 @@ class FakeHost {
   ): Promise<ShellProbeResult> {
     const call = { args, command, options };
     this.calls.push(call);
-    expect(this.responses, `unexpected command: ${command} ${args.join(" ")}`).not.toHaveLength(0);
-    const response = this.responses.shift() as CommandResponse;
+    const response =
+      this.responses.shift() ??
+      ((_call: CommandCall): never => {
+        throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
+      });
     return typeof response === "function" ? response(call) : response;
   }
 
@@ -316,6 +319,28 @@ describe("OpenShell live E2E host mock firewall", () => {
       failures: [],
       passed: [`restore UFW state after host mock port ${PORT}`],
     });
+    host.expectNoPendingResponses();
+  });
+
+  it("does not apply a rule when cleanup starts during baseline inspection (#8696)", async () => {
+    const cleanup = new CleanupRegistry();
+    const host = new FakeHost([
+      shellResult(networkInspect()),
+      shellResult(bridgeAddresses()),
+      shellResult("Status: active\n"),
+      async () => {
+        await expect(cleanup.runAll()).resolves.toEqual({
+          failures: [],
+          passed: [`restore UFW state after host mock port ${PORT}`],
+        });
+        return shellResult(BASELINE_RULES);
+      },
+    ]);
+
+    await expect(registration(host, cleanup)).rejects.toThrow(
+      "host mock firewall setup was interrupted before applying the UFW rule",
+    );
+    expect(host.calls).toHaveLength(4);
     host.expectNoPendingResponses();
   });
 
