@@ -65,6 +65,14 @@ export function generateTransportTraceId(): string {
   return randomBytes(16).toString("hex");
 }
 
+const TRACE_ID_SHAPE = /^[A-Za-z0-9-]{8,64}$/;
+
+/** Keeps a well-formed supplied trace id and replaces anything else with a generated one. */
+function safeSuppliedTraceId(supplied: string | undefined): string {
+  if (supplied !== undefined && TRACE_ID_SHAPE.test(supplied)) return supplied;
+  return generateTransportTraceId();
+}
+
 /** Strips credentials, query string, and fragment from a URL-shaped value, keeping host:port/path. */
 export function safeTargetRef(value: string): string {
   if (/^https?:\/\//i.test(value)) {
@@ -81,6 +89,18 @@ export function safeTargetRef(value: string): string {
 }
 
 const MAX_CAUSE_DEPTH = 8;
+const MAX_CAUSE_TOKEN = 64;
+const CAUSE_TOKEN_SHAPE = /^[A-Za-z0-9_.-]+$/;
+
+/**
+ * Constrains one copied error identifier: error names, codes, and syscalls
+ * are short identifier tokens, so anything longer or carrying other
+ * characters is replaced rather than propagated into a serializable event.
+ */
+function safeCauseToken(value: string): string {
+  const bounded = value.slice(0, MAX_CAUSE_TOKEN);
+  return CAUSE_TOKEN_SHAPE.test(bounded) ? bounded : "<invalid>";
+}
 
 /**
  * Walks an error's cause chain and keeps only fields that cannot carry
@@ -96,10 +116,10 @@ export function safeCauseChain(error: unknown): SafeTransportCause[] {
     if (chain.length >= MAX_CAUSE_DEPTH) break;
     const record = current as Record<string, unknown>;
     const entry: SafeTransportCause = {};
-    if (typeof record.name === "string") entry.name = record.name;
-    if (typeof record.code === "string") entry.code = record.code;
+    if (typeof record.name === "string") entry.name = safeCauseToken(record.name);
+    if (typeof record.code === "string") entry.code = safeCauseToken(record.code);
     if (typeof record.errno === "number") entry.errno = record.errno;
-    if (typeof record.syscall === "string") entry.syscall = record.syscall;
+    if (typeof record.syscall === "string") entry.syscall = safeCauseToken(record.syscall);
     if (typeof record.port === "number") entry.port = record.port;
     if (Object.keys(entry).length > 0) chain.push(entry);
     current = record.cause;
@@ -219,7 +239,7 @@ export function buildManagedTransportFailure(
     operation: redactField(input.operation),
     route: redactField(input.route),
     phase: input.phase,
-    traceId: input.traceId ?? generateTransportTraceId(),
+    traceId: safeSuppliedTraceId(input.traceId),
     elapsedMs: Math.max(0, Math.round(input.elapsedMs)),
     ...(input.proxy === undefined ? {} : { proxy: redactField(safeTargetRef(input.proxy)) }),
     ...(input.target === undefined ? {} : { target: redactField(safeTargetRef(input.target)) }),

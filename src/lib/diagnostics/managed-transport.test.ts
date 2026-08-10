@@ -165,6 +165,46 @@ describe("buildManagedTransportFailure", () => {
     expect(event.xRequestId).not.toContain(token);
   });
 
+  it("constrains cause metadata and supplied trace ids in the built object", () => {
+    const token = "sk-abcdef0123456789abcdef0123456789";
+    const event = buildManagedTransportFailure({
+      consumer: "mcp",
+      operation: "tools/list",
+      route: "direct",
+      phase: "request",
+      elapsedMs: 10,
+      traceId: `Bearer ${token}\nphase=policy`,
+      error: Object.assign(new Error("x"), {
+        name: `Leaky ${token}`,
+        code: "ECONNRESET extra=1",
+        syscall: "read\nwrite",
+      }),
+    });
+
+    const serialized = JSON.stringify(event);
+    expect(serialized).not.toContain(token);
+    expect(serialized).not.toContain("extra=1");
+    expect(serialized).not.toContain("\\n");
+    expect(event.traceId).toMatch(/^[0-9a-f]{32}$/);
+    expect(event.causeChain[0]).toEqual({
+      name: "<invalid>",
+      code: "<invalid>",
+      syscall: "<invalid>",
+    });
+  });
+
+  it("keeps a well-formed supplied trace id", () => {
+    const event = buildManagedTransportFailure({
+      consumer: "mcp",
+      operation: "tools/list",
+      route: "direct",
+      phase: "request",
+      elapsedMs: 10,
+      traceId: "trace-0123456789",
+    });
+    expect(event.traceId).toBe("trace-0123456789");
+  });
+
   it("surfaces a nested transport cause code at the top level", () => {
     const event = buildManagedTransportFailure({
       consumer: "mcp",
