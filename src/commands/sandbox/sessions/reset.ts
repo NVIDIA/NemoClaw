@@ -32,8 +32,8 @@ export default class SandboxSessionsResetCommand extends NemoClawCommand {
   static usage = ["<name> <key> [--agent <id>] [--reason new|reset] [--json] [--verbose]"];
   static examples = [
     "<%= config.bin %> sandbox sessions reset alpha main",
-    "<%= config.bin %> sandbox sessions reset alpha agent:work:telegram:t-1",
-    "<%= config.bin %> sandbox sessions reset alpha telegram:t-1 --agent work --reason new",
+    "<%= config.bin %> sandbox sessions reset alpha agent:main:telegram:t-1",
+    "<%= config.bin %> sandbox sessions reset alpha telegram:t-1 --agent main --reason new",
     "<%= config.bin %> sandbox sessions reset alpha agent:main:main --json",
   ];
   static args = {
