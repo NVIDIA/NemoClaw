@@ -46,7 +46,8 @@ import {
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   expectedLegacyRegistryMetadata,
-  legacyGatewayUpgradeDockerNetwork,
+  GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
+  legacyGatewayUpgradeHostFirewallOptions,
   oldGatewayUpgradeInstallerArgs,
   throwGatewayUpgradeSetupFailures,
   upgradeGatewayCleanupScript,
@@ -103,7 +104,6 @@ const OPENCLAW_MAIN_AGENT_DB = "/sandbox/.openclaw/agents/main/agent/openclaw-ag
 const LEGACY_UPDATE_CHECK_PATH = "/sandbox/.openclaw/update-check.json";
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const TEST_TIMEOUT_MS = 65 * 60_000;
-const INSTALL_TIMEOUT_MS = 35 * 60_000;
 const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
 
 validateSandboxName(SURVIVOR_SANDBOX);
@@ -685,7 +685,7 @@ ${installerInvocation}`,
       env,
       hiddenOpenShellDir: options.hiddenOpenShellDir,
       redactionValues,
-      timeoutMs: INSTALL_TIMEOUT_MS,
+      timeoutMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
     },
   );
   const tail = await bash(host, `tail -160 ${shellQuote(logFile)} 2>/dev/null || true`, {
@@ -1195,8 +1195,8 @@ runLinuxOpenShellGatewayUpgrade(
       firewallSetup = registerOpenShellHostMockFirewall({
         cleanup,
         host,
-        networkName: legacyGatewayUpgradeDockerNetwork(OLD_NEMOCLAW_REF),
         port: Number(new URL(fake.baseUrl).port),
+        ...legacyGatewayUpgradeHostFirewallOptions(OLD_NEMOCLAW_REF),
       });
     } catch (error) {
       await fake.close();
