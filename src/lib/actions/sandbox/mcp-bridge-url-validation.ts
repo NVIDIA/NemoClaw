@@ -128,7 +128,13 @@ export function normalizeMcpServerUrl(
   try {
     parsed = new URL(rawUrl);
   } catch {
-    throw new McpBridgeError(`Invalid MCP server URL '${rawUrl}'.`, 2);
+    // Never interpolate rawUrl here: an unparseable URL still carries userinfo,
+    // and the textual redactor skips scheme-less and whitespace-bearing forms
+    // that reach this branch, so echoing the value leaks credentials (#8698).
+    throw new McpBridgeError(
+      "MCP server URL must be an absolute https:// URL with a literal hostname. NemoClaw does not echo the rejected value because a malformed URL can embed credentials. Use --env KEY so OpenShell resolves host-only credentials.",
+      2,
+    );
   }
   if (parsed.protocol !== "https:") {
     throw new McpBridgeError(
