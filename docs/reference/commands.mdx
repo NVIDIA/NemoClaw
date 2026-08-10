@@ -775,8 +775,8 @@ If passwordless sudo, UFW, or active UFW is unavailable, NemoClaw falls back to 
 For the portable experimental profile, the helper maps `host.openshell.internal` to the OpenShell Podman host gateway instead of the inspected network gateway.
 This path does not use Docker bridge UFW remediation.
 If the probe fails, onboarding prints user-scoped Podman restart commands and a rerun command that preserves `--experimental-profile portable`.
-Tune the wait via `NEMOCLAW_REUSE_HEALTH_POLL_COUNT` (default `6`) and `NEMOCLAW_REUSE_HEALTH_POLL_INTERVAL` (default `5` seconds).
-The poll count is clamped to a minimum of `1` so the probe always runs at least once, and the interval is clamped to a minimum of `0` (no sleep between attempts).
+To tune the existing-gateway HTTP health poll, use `NEMOCLAW_REUSE_HEALTH_POLL_COUNT` (default `6`) and `NEMOCLAW_REUSE_HEALTH_POLL_INTERVAL` (default `5` seconds).
+The poll count is clamped to a minimum of `1` so the health probe always runs at least once, and the interval is clamped to a minimum of `0` (no sleep between attempts).
 
 #### `--from <Dockerfile>`
 

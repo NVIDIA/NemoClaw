@@ -3066,15 +3066,17 @@ Portable onboarding reports output like this:
   The probe mapped host.openshell.internal to the OpenShell Podman host gateway.
 ```
 
-Restart the user-scoped Podman service and enable its socket:
+If `podman.service` is active, restart it.
+Then enable and start the user-scoped Podman socket:
 
 ```bash
 systemctl --user try-restart podman.service
 systemctl --user enable --now podman.socket
 ```
 
-These commands restart the current user's Podman service and keep its API socket active.
-They do not change system services or credentials.
+The first command does not start an inactive service.
+The second command enables and starts the current user's Podman API socket.
+These commands do not change system services or credentials.
 
 Verify that the socket is active:
 
