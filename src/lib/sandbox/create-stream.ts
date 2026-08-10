@@ -37,6 +37,10 @@ export interface StreamSandboxCreateOptions {
   // alone cannot detach the create stream until at least one streamed output
   // line matches a configured pattern.
   readyCheckOutputPatterns?: readonly RegExp[];
+  // When Ready is used to cancel a long-lived create client, wait for that
+  // client to exit before returning so a following ownership cutover cannot
+  // overlap the still-active OpenShell create operation.
+  waitForReadyTermination?: boolean;
   // Initial progress phase:
   //   build  — docker-building the sandbox image
   //   upload — pushing the built image into the gateway registry
@@ -70,6 +74,7 @@ export interface StreamableChildProcess {
 
 const CLASSIC_DOCKER_STEP_RE = /^\s*Step (\d+)\/(\d+) : (.+)$/;
 const BUILDKIT_STEP_RE = /^#(\d+)\s+(.+)$/;
+const READY_TERMINATION_TIMEOUT_MS = 5_000;
 
 /**
  * @deprecated Prefer the argv overload `streamSandboxCreate(command, args, env, options)` for
@@ -129,6 +134,8 @@ export function streamSandboxCreate(
   let printedReadyCheckOutputWait = false;
   let settled = false;
   let polling = false;
+  let waitingForReadyTermination = false;
+  let readyTerminationTimer: ReturnType<typeof setTimeout> | null = null;
   const pollIntervalMs = options.pollIntervalMs || 2000;
   const heartbeatIntervalMs = options.heartbeatIntervalMs || 5000;
   const silentPhaseMs = options.silentPhaseMs || 15000;
@@ -377,6 +384,7 @@ export function streamSandboxCreate(
       finishBuildTiming(status === 0 ? "completed" : "stopped");
     }
     if (readyTimer) clearInterval(readyTimer);
+    if (readyTerminationTimer) clearTimeout(readyTerminationTimer);
     clearInterval(heartbeatTimer);
     resolvePromise({
       status,
@@ -401,7 +409,7 @@ export function streamSandboxCreate(
 
   const readyTimer = options.readyCheck
     ? setInterval(() => {
-        if (settled || polling) return;
+        if (settled || polling || waitingForReadyTermination) return;
         polling = true;
         try {
           let ready = false;
@@ -425,10 +433,23 @@ export function streamSandboxCreate(
               }
               return;
             }
-            const detail = "Sandbox reported Ready before create stream exited; continuing.";
+            const detail = options.waitForReadyTermination
+              ? "Sandbox reported Ready; waiting for the create ownership handoff to finish."
+              : "Sandbox reported Ready before create stream exited; continuing.";
             lines.push(detail);
             printProgressLine(`  ${detail}`);
             terminateChild("SIGTERM");
+            if (options.waitForReadyTermination) {
+              waitingForReadyTermination = true;
+              readyTerminationTimer = setTimeout(() => {
+                lines.push("OpenShell create client did not exit after Ready; aborting cutover.");
+                terminateChild("SIGKILL");
+                finish(1);
+              }, READY_TERMINATION_TIMEOUT_MS);
+              readyTerminationTimer.unref?.();
+              sawProgress = true;
+              return;
+            }
             detachChild();
             sawProgress = true;
             finish(0, { forcedReady: true });
@@ -504,6 +525,10 @@ export function streamSandboxCreate(
       // One last ready-check: the sandbox may have become Ready between the
       // last poll tick and the stream exit (e.g. SSH 255 after "Created sandbox:").
       flushPendingLines();
+      if (waitingForReadyTermination) {
+        finish(0, { forcedReady: true });
+        return;
+      }
       if (code && code !== 0 && options.readyCheck) {
         try {
           if (options.readyCheck() && readyCheckOutputMatched) {
