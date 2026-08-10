@@ -7,7 +7,12 @@ const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.
 
 export function printRemediationActions(
   actions:
-    | Array<{ id: string; title: string; reason: string; commands?: string[] }>
+    | readonly {
+        id: string;
+        title: string;
+        reason: string;
+        commands?: readonly string[];
+      }[]
     | null
     | undefined,
 ): void {

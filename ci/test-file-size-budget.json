@@ -4,9 +4,9 @@
   "legacyMaxLines": {
     "nemoclaw/src/commands/migration-state.test.ts": 1301,
     "src/lib/inference/nim.test.ts": 2068,
-    "src/lib/onboard/preflight.test.ts": 1904,
+    "src/lib/onboard/preflight.test.ts": 1875,
     "test/generate-openclaw-config.test.ts": 1915,
-    "test/install-preflight.test.ts": 3908,
+    "test/install-preflight.test.ts": 3906,
     "test/nemoclaw-start.test.ts": 4791,
     "test/onboard-messaging.test.ts": 2036,
     "test/onboard-selection.test.ts": 4767

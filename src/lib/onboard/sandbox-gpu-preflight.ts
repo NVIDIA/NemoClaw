@@ -5,7 +5,11 @@ import { dockerInfoFormat } from "../adapters/docker";
 import { failLine, warnLine } from "../cli/terminal-style";
 import type { GpuDetection } from "../inference/nim";
 import type { SandboxGpuProofResult } from "../state/registry";
-import { findReadableNvidiaCdiSpecFiles, getDockerCdiSpecDirs } from "./docker-cdi";
+import {
+  DEFAULT_DOCKER_CDI_SPEC_DIRS,
+  findReadableNvidiaCdiSpecFiles,
+  getDockerCdiSpecDirs,
+} from "./docker-cdi";
 import type { SandboxGpuConfig, SandboxGpuFlag } from "./sandbox-gpu-mode";
 import {
   detectWslDockerDesktopStatus,
@@ -22,8 +26,6 @@ const SANDBOX_GPU_PREFLIGHT_TIMEOUT_MS = 30_000;
 // CDISpecDirs (daemon unreachable from this process, or an engine that omits
 // the field) even though CDI works, so the preflight falls back to these
 // before declaring CDI unsupported (#7330).
-const FALLBACK_DOCKER_CDI_SPEC_DIRS = ["/etc/cdi", "/var/run/cdi"];
-
 export type SandboxGpuPreflightDeps = WslDockerDesktopDetectionDeps & {
   getDockerCdiSpecDirs?: () => string[];
   findReadableNvidiaCdiSpecFiles?: (dirs: string[]) => string[];
@@ -133,20 +135,22 @@ export function dockerNvidiaRuntimeAvailable(deps: SandboxGpuPreflightDeps = {})
   }
 }
 
+export function printJetsonNvidiaRuntimeUnavailableError(): void {
+  console.error("");
+  console.error(failLine("Docker NVIDIA runtime was not detected for Jetson/Tegra sandbox GPU."));
+  console.error("    Jetson sandbox GPU uses NVIDIA Container Runtime semantics, not CDI.");
+  console.error("    Install/configure NVIDIA Container Toolkit for Docker, then restart Docker:");
+  console.error("      sudo nvidia-ctk runtime configure --runtime=docker");
+  console.error("      sudo systemctl restart docker");
+  console.error("    Or force CPU sandbox behavior with NEMOCLAW_SANDBOX_GPU=0.");
+}
+
 function validateJetsonSandboxGpuPreflight(
   deps: SandboxGpuPreflightDeps,
   exitProcess: (code: number) => never,
 ): void {
   if (!dockerNvidiaRuntimeAvailable(deps)) {
-    console.error("");
-    console.error(failLine("Docker NVIDIA runtime was not detected for Jetson/Tegra sandbox GPU."));
-    console.error("    Jetson sandbox GPU uses NVIDIA Container Runtime semantics, not CDI.");
-    console.error(
-      "    Install/configure NVIDIA Container Toolkit for Docker, then restart Docker:",
-    );
-    console.error("      sudo nvidia-ctk runtime configure --runtime=docker");
-    console.error("      sudo systemctl restart docker");
-    console.error("    Or force CPU sandbox behavior with NEMOCLAW_SANDBOX_GPU=0.");
+    printJetsonNvidiaRuntimeUnavailableError();
     exitProcess(1);
   }
   console.log("  ✓ Docker NVIDIA runtime detected for Jetson/Tegra sandbox GPU");
@@ -376,7 +380,7 @@ export function validateSandboxGpuPreflight(
 
   const reportedCdiSpecDirs = (deps.getDockerCdiSpecDirs ?? getDockerCdiSpecDirs)();
   const cdiSpecDirs =
-    reportedCdiSpecDirs.length > 0 ? reportedCdiSpecDirs : FALLBACK_DOCKER_CDI_SPEC_DIRS;
+    reportedCdiSpecDirs.length > 0 ? reportedCdiSpecDirs : [...DEFAULT_DOCKER_CDI_SPEC_DIRS];
   const cdiSpecFiles = (deps.findReadableNvidiaCdiSpecFiles ?? findReadableNvidiaCdiSpecFiles)(
     cdiSpecDirs,
   );

@@ -4,6 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { assessHost } from "../onboard/preflight";
 import { createHostReadinessReport } from "./host";
+import { getSystemReadinessReferenceErrors } from "./references";
+import { createSystemReadinessReport } from "./system";
 
 const NOW = new Date("2026-06-01T12:00:00Z");
 const SOURCE_REVISION = "21e60ae287e8c2a184f71406ac8b418f046330d1";
@@ -83,6 +85,7 @@ describe("readiness process effects (#7412)", () => {
 
     expect(first).toEqual(second);
     expect(first.mutated).toBe(false);
+    expect(getSystemReadinessReferenceErrors(first)).toEqual([]);
     expect(assess).toHaveBeenCalledTimes(2);
     expect(commands.length).toBeGreaterThan(0);
     expect(commands.every((command) => Object.hasOwn(COMMAND_OUTPUTS, command.join(" ")))).toBe(
@@ -129,5 +132,69 @@ describe("readiness process effects (#7412)", () => {
       ),
     ).toBe(true);
     expect(directories.every((path) => path === "/etc/cdi" || path === "/var/run/cdi")).toBe(true);
+  });
+
+  it("repeats the composite probe without invoking gateway lifecycle effects (#7411)", async () => {
+    const resolveOwner = vi.fn(() => ({
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      mode: "nemoclaw-managed" as const,
+      source: "standalone" as const,
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }));
+    const observeManagedGateway = vi.fn(async () => ({
+      reuseState: "missing" as const,
+      driftState: "not-detected" as const,
+      portConflictState: "none" as const,
+    }));
+    const assess = vi.fn(() =>
+      assessHost({
+        gpuProbeImpl: () => false,
+        platform: "linux",
+        readFileImpl: (path) => FILE_CONTENTS[path] ?? "",
+        readdirImpl: () => [],
+        runCaptureImpl: (command) => COMMAND_OUTPUTS[command.join(" ")] ?? "",
+      }),
+    );
+    const reportOptions = {
+      nemoclawVersion: "0.1.0",
+      sourceRevision: SOURCE_REVISION,
+      now: () => NOW,
+    };
+    const collectionOptions = {
+      gateway: {
+        resolveOwner,
+        probeAttachment: vi.fn(async () => {
+          throw new Error("managed gateway attachment must not run");
+        }),
+        observeManagedGateway,
+      },
+      host: {
+        assess,
+        collectPlatformIdentity: () => ({
+          productName: null,
+          nvidiaPlatform: null,
+          stationProfile: null,
+          stationGb300PciGpu: null,
+        }),
+      },
+    };
+    const beforeEnv = { ...process.env };
+
+    const first = await createSystemReadinessReport(reportOptions, collectionOptions);
+    const second = await createSystemReadinessReport(reportOptions, collectionOptions);
+
+    expect(first).toEqual(second);
+    expect(first.mutated).toBe(false);
+    expect(getSystemReadinessReferenceErrors(first)).toEqual([]);
+    expect(first.observations).toContainEqual(
+      expect.objectContaining({ id: "gateway.reuse", value: "missing" }),
+    );
+    expect(resolveOwner).toHaveBeenCalledTimes(2);
+    expect(observeManagedGateway).toHaveBeenCalledTimes(2);
+    expect(process.env).toEqual(beforeEnv);
   });
 });

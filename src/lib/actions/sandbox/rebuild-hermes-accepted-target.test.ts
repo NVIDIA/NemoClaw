@@ -14,6 +14,17 @@ const phaseMocks = vi.hoisted(() => ({
   runShields: vi.fn(),
 }));
 
+const gatewayAuthority = {
+  gatewayName: "nemoclaw",
+  gatewayPort: 8080,
+  mode: "nemoclaw-managed",
+  source: "standalone",
+  endpoint: null,
+  stateDir: null,
+  supervisor: null,
+  requiredCapabilities: [],
+} as const;
+
 vi.mock("./rebuild-recreate-journal", () => ({
   fingerprintRebuildRecreateTargetIntent: () => "intent-1",
   openRebuildRecreateJournal: phaseMocks.openRecreateJournal,
@@ -82,6 +93,7 @@ describe("Hermes accepted replacement recovery", () => {
         observabilityEnabled: false,
         targetGatewayName: "nemoclaw",
         targetGatewayPort: 8080,
+        rebuildGatewayAuthority: gatewayAuthority,
       },
       messagingPlan: null,
       baseImagePreflight: null,
@@ -116,6 +128,7 @@ describe("Hermes accepted replacement recovery", () => {
       id: "journal-1",
       acceptedTarget: true,
       sourceConfirmedAbsent: true,
+      gatewayAuthority,
       targetGeneration: "generation-1",
       targetIntentFingerprint: "intent-1",
       completeAcceptedTarget,

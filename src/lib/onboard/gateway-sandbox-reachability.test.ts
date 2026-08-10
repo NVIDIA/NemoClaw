@@ -89,6 +89,29 @@ describe("isSandboxBridgeGatewayReachable", () => {
     expect(seen.args.join(" ")).toContain("nc -zw7 host.openshell.internal 9090");
   });
 
+  it("routes probes for the portable experimental profile through the OpenShell Podman host gateway", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const seen: { args: readonly string[] } = { args: [] };
+
+    const result = await isSandboxBridgeGatewayReachable({
+      inspectNetworkImpl: () => ({ subnet: "10.89.0.0/24", gatewayIp: "10.89.0.1" }),
+      usesHostGatewayRouteImpl: () => false,
+      runImpl: (args) => {
+        seen.args = args;
+        return { status: 0 };
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      gatewayIp: "169.254.1.2",
+      routeKind: "portable_host_gateway",
+    });
+
+    expect(seen.args).toContain("host.openshell.internal:169.254.1.2");
+    expect(seen.args).not.toContain("host.openshell.internal:10.89.0.1");
+  });
+
   it("does not call a missing Docker network a firewall failure", async () => {
     const result = await isSandboxBridgeGatewayReachable({
       inspectNetworkImpl: () => undefined,
@@ -98,6 +121,28 @@ describe("isSandboxBridgeGatewayReachable", () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("probe_unavailable");
     expect(result.detail).toContain("not found");
+  });
+
+  it("classifies an unavailable portable daemon before route inspection completes", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const runtimeProbeImpl = vi.fn(() => ({
+      status: 1,
+      stderr: "Cannot connect to Podman. Verify the user service and socket.",
+    }));
+
+    const result = await isSandboxBridgeGatewayReachable({
+      inspectNetworkImpl: () => undefined,
+      runtimeProbeImpl,
+      usesHostGatewayRouteImpl: () => false,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "docker_daemon_unreachable",
+      networkName: "openshell-docker",
+    });
+    expect(result.detail).toContain("Cannot connect to Podman");
+    expect(runtimeProbeImpl).toHaveBeenCalledOnce();
   });
 
   it("does not call helper DNS failures firewall failures", async () => {
@@ -467,6 +512,37 @@ describe("formatSandboxBridgeUnreachableMessage", () => {
     expect(msg).toContain("host-gateway");
     expect(msg).not.toContain("ufw allow");
   });
+
+  it("reports Podman recovery for portable host-gateway failures", () => {
+    const msg = formatSandboxBridgeUnreachableMessage({
+      ok: false,
+      reason: "tcp_failed",
+      routeKind: "portable_host_gateway",
+      networkName: "openshell-docker",
+      subnet: "10.89.0.0/24",
+      gatewayIp: "169.254.1.2",
+    });
+    expect(msg).toContain("OpenShell Podman host gateway");
+    expect(msg).toContain("systemctl --user try-restart podman.service");
+    expect(msg).toContain("systemctl --user enable --now podman.socket");
+    expect(msg).toContain("nemoclaw onboard --experimental-profile portable");
+    expect(msg).not.toContain("Restart Docker");
+    expect(msg).not.toContain("ufw allow");
+  });
+
+  it("reports Podman recovery when the portable profile cannot reach its daemon", () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const msg = formatSandboxBridgeUnreachableMessage({
+      ok: false,
+      reason: "docker_daemon_unreachable",
+      detail: "Cannot connect to the container runtime",
+    });
+    expect(msg).toContain("Podman service is not reachable");
+    expect(msg).toContain("systemctl --user try-restart podman.service");
+    expect(msg).toContain("systemctl --user enable --now podman.socket");
+    expect(msg).toContain("nemoclaw onboard --experimental-profile portable");
+    expect(msg).not.toContain("Restart the Docker daemon");
+  });
 });
 
 describe("tryAutoApplyUfwRule (#4265)", () => {
@@ -645,6 +721,31 @@ describe("verifySandboxBridgeGatewayReachableOrExit host-gateway retry", () => {
     }
   });
 
+  it("retries a transient portable host-gateway TCP failure", async () => {
+    const portableFailure = {
+      ...hostGatewayTcpFailure,
+      routeKind: "portable_host_gateway" as const,
+      gatewayIp: "169.254.1.2",
+    };
+    const reachabilityImpl = vi
+      .fn()
+      .mockResolvedValueOnce(portableFailure)
+      .mockResolvedValueOnce({ ...portableFailure, ok: true as const, reason: "ok" as const });
+    const sleepMsImpl = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await verifySandboxBridgeGatewayReachableOrExit(true, {
+      reachabilityImpl,
+      retryAttempts: 3,
+      retryDelayMs: 25,
+      sleepMsImpl,
+    });
+
+    expect(reachabilityImpl).toHaveBeenCalledTimes(2);
+    expect(sleepMsImpl).toHaveBeenCalledOnce();
+    expect(sleepMsImpl).toHaveBeenCalledWith(25);
+  });
+
   it("fails after exhausting persistent host-gateway tcp failures", async () => {
     const reachabilityImpl = vi.fn().mockResolvedValue(hostGatewayTcpFailure);
     const sleepMsImpl = vi.fn().mockResolvedValue(undefined);
@@ -658,7 +759,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit host-gateway retry", () => {
           retryDelayMs: 25,
           sleepMsImpl,
         }),
-      ).rejects.toThrow("sandbox-bridge unreachable");
+      ).rejects.toThrow("cannot reach the OpenShell gateway");
       expect(reachabilityImpl).toHaveBeenCalledTimes(3);
       expect(sleepMsImpl).toHaveBeenCalledTimes(2);
       expect(sleepMsImpl).toHaveBeenNthCalledWith(1, 25);
@@ -689,7 +790,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit host-gateway retry", () => {
           reachabilityImpl,
           sleepMsImpl,
         }),
-      ).rejects.toThrow("sandbox-bridge unreachable");
+      ).rejects.toThrow("cannot reach the OpenShell gateway");
       expect(reachabilityImpl).toHaveBeenCalledTimes(10);
       expect(sleepMsImpl).toHaveBeenCalledTimes(9);
       expect(sleepMsImpl).toHaveBeenCalledWith(1000);
@@ -721,7 +822,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit host-gateway retry", () => {
           retryDelayMs: 25,
           sleepMsImpl,
         }),
-      ).rejects.toThrow("sandbox-bridge unreachable");
+      ).rejects.toThrow("cannot reach the OpenShell gateway");
       expect(reachabilityImpl).toHaveBeenCalledTimes(1);
       expect(sleepMsImpl).not.toHaveBeenCalled();
       expect(error).toHaveBeenCalledWith(expect.stringContaining("ufw allow"));
@@ -787,7 +888,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit UFW auto-apply (#4265)", () 
         autoApplyOptedInImpl: () => true,
         reachabilityImpl,
       }),
-    ).rejects.toThrow("sandbox-bridge unreachable");
+    ).rejects.toThrow("cannot reach the OpenShell gateway");
     expect(reachabilityImpl).toHaveBeenCalledTimes(2);
     expect(error).toHaveBeenCalledWith(expect.stringContaining("ufw allow"));
     log.mockRestore();
@@ -803,7 +904,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit UFW auto-apply (#4265)", () 
         autoApplyOptedInImpl: () => true,
         reachabilityImpl: () => tcpFailure,
       }),
-    ).rejects.toThrow("sandbox-bridge unreachable");
+    ).rejects.toThrow("cannot reach the OpenShell gateway");
     expect(warn).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("ufw allow"));
     warn.mockRestore();

@@ -136,7 +136,7 @@ export function printDockerBridgeContainerStartFailure(
  * Docker/DNS state, and the original attempt that wrote the cache may
  * have aborted later at sandbox build with exactly the #3508/#3630
  * failure modes. Resuming without re-checking would walk into the same
- * wall (mirroring the [[assertCdiNvidiaGpuSpecPresent]] resume backstop
+ * wall (mirroring the host-readiness resume backstop
  * pattern at #3152).
  */
 export function assertDockerBridgeAndContainerDnsHealthy(

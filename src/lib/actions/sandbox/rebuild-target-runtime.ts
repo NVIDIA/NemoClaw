@@ -280,13 +280,14 @@ export async function preflightAuthoritativeOnboardRuntime(
   options: { deferInferenceRouteUntilOnboard?: true } = {},
 ): Promise<boolean> {
   try {
-    await rebuildOnboardDependencies.preflightAuthoritativeRebuildTarget({
+    const gatewayAuthority = await rebuildOnboardDependencies.preflightAuthoritativeRebuildTarget({
       ...recreateOptions,
       ...options,
       model: resumeConfig.model,
       provider: resumeConfig.provider,
       sandboxName,
     });
+    recreateOptions.rebuildGatewayAuthority = gatewayAuthority;
     return true;
   } catch (err) {
     printRebuildPreflightFailure(

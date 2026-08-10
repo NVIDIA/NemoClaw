@@ -9,16 +9,21 @@ import systemReadinessSchema from "../../../schemas/system-readiness.schema.json
 import type { SystemReadinessReport } from "../../lib/readiness/types";
 
 const mocks = vi.hoisted(() => ({
-  createHostReadinessReport: vi.fn(),
+  createProductionGatewayReadinessDependencies: vi.fn(),
   createPublicReadinessReport: vi.fn(),
+  createSystemReadinessReport: vi.fn(),
   getBuildIdentity: vi.fn(),
   renderReadinessReport: vi.fn(),
 }));
 
 vi.mock("../../lib/readiness/index", () => ({
-  createHostReadinessReport: mocks.createHostReadinessReport,
   createPublicReadinessReport: mocks.createPublicReadinessReport,
+  createSystemReadinessReport: mocks.createSystemReadinessReport,
   renderReadinessReport: mocks.renderReadinessReport,
+}));
+
+vi.mock("../../lib/readiness/gateway-production", () => ({
+  createProductionGatewayReadinessDependencies: mocks.createProductionGatewayReadinessDependencies,
 }));
 
 vi.mock("../../lib/core/version", () => ({
@@ -68,13 +73,20 @@ function report(outcome: ReadinessOutcome): SystemReadinessReport {
 }
 
 describe("host probe command (#7412)", () => {
+  const gatewayDependencies = {
+    resolveOwner: vi.fn(),
+    probeAttachment: vi.fn(),
+    observeManagedGateway: vi.fn(),
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getBuildIdentity.mockReturnValue({
       nemoclawVersion: "0.0.96-35-g8bfff4526",
       sourceRevision: `8bfff4526${"a".repeat(31)}`,
     });
-    mocks.createHostReadinessReport.mockReturnValue(report(READINESS_OUTCOMES[0]));
+    mocks.createProductionGatewayReadinessDependencies.mockReturnValue(gatewayDependencies);
+    mocks.createSystemReadinessReport.mockResolvedValue(report(READINESS_OUTCOMES[0]));
     mocks.createPublicReadinessReport.mockImplementation((value) => value);
     mocks.renderReadinessReport.mockReturnValue("System readiness: supported");
   });
@@ -86,7 +98,7 @@ describe("host probe command (#7412)", () => {
   it.each(READINESS_OUTCOMES)("returns the deterministic $status exit code", async (outcome) => {
     const previousExitCode = process.exitCode;
     process.exitCode = undefined;
-    mocks.createHostReadinessReport.mockReturnValueOnce(report(outcome));
+    mocks.createSystemReadinessReport.mockResolvedValueOnce(report(outcome));
 
     try {
       await HostProbeCommand.run([], process.cwd());
@@ -98,7 +110,7 @@ describe("host probe command (#7412)", () => {
 
   it.each(READINESS_OUTCOMES)("emits schema-valid JSON for $status hosts", async (outcome) => {
     const expectedReport = report(outcome);
-    mocks.createHostReadinessReport.mockReturnValueOnce(expectedReport);
+    mocks.createSystemReadinessReport.mockResolvedValueOnce(expectedReport);
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const previousExitCode = process.exitCode;
     process.exitCode = undefined;
@@ -123,12 +135,16 @@ describe("host probe command (#7412)", () => {
 
     await HostProbeCommand.run([], process.cwd());
 
-    expect(mocks.createHostReadinessReport).toHaveBeenCalledWith({
-      nemoclawVersion: "0.0.96-35-g8bfff4526",
-      sourceRevision: `8bfff4526${"a".repeat(31)}`,
-    });
+    expect(mocks.createSystemReadinessReport).toHaveBeenCalledWith(
+      {
+        nemoclawVersion: "0.0.96-35-g8bfff4526",
+        sourceRevision: `8bfff4526${"a".repeat(31)}`,
+      },
+      { gateway: gatewayDependencies },
+    );
+    expect(mocks.createProductionGatewayReadinessDependencies).toHaveBeenCalledOnce();
     expect(mocks.createPublicReadinessReport).toHaveBeenCalledWith(
-      mocks.createHostReadinessReport.mock.results[0]?.value,
+      await mocks.createSystemReadinessReport.mock.results[0]?.value,
     );
     expect(mocks.renderReadinessReport).toHaveBeenCalledWith(publicReport);
     expect(log).toHaveBeenCalledWith("System readiness: supported");
@@ -140,7 +156,8 @@ describe("host probe command (#7412)", () => {
     await HostProbeCommand.run([], process.cwd());
     await HostProbeCommand.run(["--json"], process.cwd());
 
-    expect(mocks.createHostReadinessReport).toHaveBeenCalledTimes(2);
+    expect(mocks.createSystemReadinessReport).toHaveBeenCalledTimes(2);
+    expect(mocks.createProductionGatewayReadinessDependencies).toHaveBeenCalledTimes(2);
     expect(mocks.createPublicReadinessReport).toHaveBeenCalledTimes(2);
     expect(mocks.renderReadinessReport).toHaveBeenCalledTimes(1);
   });
