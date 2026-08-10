@@ -403,7 +403,7 @@ test("DGX Spark Express option 2 materializes the fixed vLLM profile and routes 
   const denied = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(
-      "curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://example.com/",
+      "status=0; code=$(curl -sS -o /dev/null -w '%{http_connect}' --max-time 20 https://example.com/) || status=$?; printf '%s %s' \"$status\" \"$code\"",
     ),
     {
       artifactName: "spark-express-unrelated-egress-denied",
@@ -412,5 +412,5 @@ test("DGX Spark Express option 2 materializes the fixed vLLM profile and routes 
     },
   );
   expect(denied.exitCode, resultText(denied)).toBe(0);
-  expect(denied.stdout.trim()).toBe("403");
+  expect(denied.stdout.trim()).toBe("56 403");
 });
