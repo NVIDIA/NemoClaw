@@ -13,6 +13,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "vitest";
@@ -23,11 +24,11 @@ const SANDBOX_NAME = "my-assistant";
 const OPENSHELL_FIXTURE_VERSION = "0.0.101";
 
 // Output fixtures that mirror real OpenShell CLI output.
-const GATEWAY_INFO_NEMOCLAW =
-  "Gateway Info\n\nGateway: nemoclaw\nGateway endpoint: https://127.0.0.1:8080/\n";
+const gatewayInfoNemoclaw = (gatewayName: string, port: number) =>
+  `Gateway Info\n\nGateway: ${gatewayName}\nGateway endpoint: https://127.0.0.1:${port}/\n`;
 
-const STATUS_CONNECTED_NEMOCLAW =
-  "Server Status\n\nGateway: nemoclaw\nServer: https://127.0.0.1:8080/\nStatus: Connected\n";
+const statusConnectedNemoclaw = (gatewayName: string, port: number) =>
+  `Server Status\n\nGateway: ${gatewayName}\nServer: https://127.0.0.1:${port}/\nStatus: Connected\n`;
 const SANDBOX_GET_NOT_FOUND = "Error: sandbox my-assistant not found";
 
 interface ScenarioScript {
@@ -61,8 +62,10 @@ let openshellPath: string;
 let stateFile: string;
 let scriptFile: string;
 let installerInvocationsFile: string;
+let dockerInvocationsFile: string;
+let gatewayListener: ReturnType<typeof createServer> | null;
 
-function writeDefaultRegistry() {
+function writeDefaultRegistry(gatewayName: string, gatewayPort: number) {
   fs.writeFileSync(
     path.join(registryDir, "sandboxes.json"),
     JSON.stringify({
@@ -74,8 +77,8 @@ function writeDefaultRegistry() {
           provider: "nvidia-prod",
           gpuEnabled: false,
           sandboxGpuMode: "0",
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
+          gatewayName,
+          gatewayPort,
           dashboardPort: 28790,
           fromDockerfile: null,
           policies: [],
@@ -86,13 +89,14 @@ function writeDefaultRegistry() {
   );
 }
 
-function writeDefaultSession() {
+function writeDefaultSession(gatewayName: string) {
   fs.writeFileSync(
     path.join(registryDir, "onboard-session.json"),
     JSON.stringify({
       version: 1,
       sandboxName: SANDBOX_NAME,
       provider: "nvidia-prod",
+      metadata: { gatewayName, fromDockerfile: null },
     }),
     { mode: 0o600 },
   );
@@ -192,6 +196,7 @@ process.exit(0);
 
 function runCli(action: string, extraEnv: Record<string, string | undefined> = {}): HarnessResult {
   const repoRoot = path.join(import.meta.dirname, "..");
+  const nodeBinDir = path.dirname(process.execPath);
   const result = spawnSync(
     process.execPath,
     [path.join(repoRoot, "bin", "nemoclaw.js"), SANDBOX_NAME, action],
@@ -202,7 +207,7 @@ function runCli(action: string, extraEnv: Record<string, string | undefined> = {
       env: {
         ...process.env,
         HOME: tmpDir,
-        PATH: `${homeLocalBin}:/usr/bin:/bin`,
+        PATH: `${homeLocalBin}:${nodeBinDir}:/usr/bin:/bin`,
         // Keep output deterministic.
         NO_COLOR: "1",
         ...extraEnv,
@@ -243,38 +248,7 @@ function registrySandboxPresent(r: HarnessResult): boolean {
   );
 }
 
-beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2276-"));
-  homeLocalBin = path.join(tmpDir, ".local", "bin");
-  registryDir = path.join(tmpDir, ".nemoclaw");
-  openshellPath = path.join(homeLocalBin, "openshell");
-  stateFile = path.join(tmpDir, "state.json");
-  scriptFile = path.join(tmpDir, "script.json");
-  installerInvocationsFile = path.join(tmpDir, "installer-invocations.log");
-
-  fs.mkdirSync(homeLocalBin, { recursive: true });
-  fs.mkdirSync(registryDir, { recursive: true });
-  fs.writeFileSync(installerInvocationsFile, "");
-  fs.writeFileSync(
-    path.join(homeLocalBin, "bash"),
-    `#!${process.execPath}
-const { spawnSync } = require("node:child_process");
-const fs = require("node:fs");
-const args = process.argv.slice(2);
-if (args[0] === ${JSON.stringify(
-      path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh"),
-    )}) {
-  fs.appendFileSync(${JSON.stringify(installerInvocationsFile)}, "install\\n");
-  process.exit(0);
-}
-const result = spawnSync("/bin/bash", args, { env: process.env, stdio: "inherit" });
-if (result.error) throw result.error;
-process.exit(result.status ?? 1);
-`,
-    { mode: 0o755 },
-  );
-  writeDefaultRegistry();
-  writeDefaultSession();
+function writeDockerStub(gatewayName: string, gatewayPort: number) {
   fs.writeFileSync(
     path.join(homeLocalBin, "docker"),
     `#!${process.execPath}
@@ -282,8 +256,25 @@ const a = process.argv.slice(2);
 const { isOpenClawSecurityInventoryProbe } = require(${JSON.stringify(
       path.join(import.meta.dirname, "helpers", "onboard-script-mocks.cjs"),
     )});
+const invocationLog = ${JSON.stringify(dockerInvocationsFile)};
+require("fs").appendFileSync(invocationLog, JSON.stringify(a) + "\\n");
 if (a[0] === "info") {
-  process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"Docker Engine", NCPU:8, MemTotal:17179869184}) + "\\n");
+  process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"Docker Desktop", NCPU:8, MemTotal:17179869184}) + "\\n");
+  process.exit(0);
+}
+if (a[0] === "inspect") {
+  const expectedTarget = ${JSON.stringify(`openshell-cluster-${gatewayName}`)};
+  const target = a.at(-1);
+  const formatIndex = a.indexOf("--format");
+  const format = formatIndex >= 0 ? a[formatIndex + 1] : "";
+  const gatewayPort = ${JSON.stringify(String(gatewayPort))};
+  const responses = new Map([
+    ["{{.State.Running}}", "true\\n"],
+    ["{{json .NetworkSettings.Ports}}", JSON.stringify({[gatewayPort + "/tcp"]:[{HostPort:gatewayPort}]}) + "\\n"],
+    ["{{.Config.Image}}", "nvcr.io/nvidia/openshell/cluster:0.0.101\\n"],
+  ]);
+  if (target !== expectedTarget || !responses.has(format)) process.exit(64);
+  process.stdout.write(responses.get(format));
   process.exit(0);
 }
 if (a[0] === "build") process.exit(0);
@@ -305,9 +296,48 @@ process.exit(0);
 `,
     { mode: 0o755 },
   );
+}
+
+beforeEach(() => {
+  gatewayListener = null;
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2276-"));
+  homeLocalBin = path.join(tmpDir, ".local", "bin");
+  registryDir = path.join(tmpDir, ".nemoclaw");
+  openshellPath = path.join(homeLocalBin, "openshell");
+  stateFile = path.join(tmpDir, "state.json");
+  scriptFile = path.join(tmpDir, "script.json");
+  installerInvocationsFile = path.join(tmpDir, "installer-invocations.log");
+  dockerInvocationsFile = path.join(tmpDir, "docker-invocations.log");
+
+  fs.mkdirSync(homeLocalBin, { recursive: true });
+  fs.mkdirSync(registryDir, { recursive: true });
+  fs.writeFileSync(installerInvocationsFile, "");
+  fs.writeFileSync(dockerInvocationsFile, "");
+  fs.writeFileSync(
+    path.join(homeLocalBin, "bash"),
+    `#!${process.execPath}
+const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args[0] === ${JSON.stringify(
+      path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh"),
+    )}) {
+  fs.appendFileSync(${JSON.stringify(installerInvocationsFile)}, "install\\n");
+  process.exit(0);
+}
+const result = spawnSync("/bin/bash", args, { env: process.env, stdio: "inherit" });
+if (result.error) throw result.error;
+process.exit(result.status ?? 1);
+`,
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(path.join(homeLocalBin, "lsof"), "#!/usr/bin/env bash\nexit 1\n", {
+    mode: 0o755,
+  });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await new Promise<void>((resolve) => gatewayListener?.close(() => resolve()) ?? resolve());
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -326,11 +356,23 @@ afterEach(() => {
 describe("connect preserves the registry so rebuild can recover in scenario 14 (#4497)", () => {
   it("after a non-destructive connect, `rebuild --yes` recovers the stale sandbox", {
     timeout: TIMEOUT_MS,
-  }, () => {
+  }, async () => {
+    gatewayListener = createServer();
+    await new Promise<void>((resolve, reject) => {
+      gatewayListener?.once("error", reject);
+      gatewayListener?.listen(0, "127.0.0.1", resolve);
+    });
+    const gatewayAddress = gatewayListener.address();
+    assert.ok(gatewayAddress && typeof gatewayAddress !== "string");
+    const gatewayPort = gatewayAddress.port;
+    const gatewayName = `nemoclaw-${gatewayPort}`;
+    writeDefaultRegistry(gatewayName, gatewayPort);
+    writeDefaultSession(gatewayName);
+    writeDockerStub(gatewayName, gatewayPort);
     writeStubOpenshell({
       sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
-      status: [{ output: STATUS_CONNECTED_NEMOCLAW, exit: 0 }],
-      gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
+      status: [{ output: statusConnectedNemoclaw(gatewayName, gatewayPort), exit: 0 }],
+      gatewayInfo: [{ output: gatewayInfoNemoclaw(gatewayName, gatewayPort), exit: 0 }],
       gatewaySelect: { output: "", exit: 0 },
       selectFlipsActive: false,
       sandboxList: "",
@@ -353,6 +395,7 @@ describe("connect preserves the registry so rebuild can recover in scenario 14 (
     // impossible backup (instead of dead-ending at "Cannot back up state"),
     // and proceeds to recreate from the preserved metadata.
     const repoRoot = path.join(import.meta.dirname, "..");
+    const nodeBinDir = path.dirname(process.execPath);
     const rebuild = spawnSync(
       process.execPath,
       [path.join(repoRoot, "bin", "nemoclaw.js"), SANDBOX_NAME, "rebuild", "--yes"],
@@ -363,7 +406,7 @@ describe("connect preserves the registry so rebuild can recover in scenario 14 (
         env: {
           ...process.env,
           HOME: tmpDir,
-          PATH: `${homeLocalBin}:/usr/bin:/bin`,
+          PATH: `${homeLocalBin}:${nodeBinDir}:/usr/bin:/bin`,
           NO_COLOR: "1",
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
           NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT: "1",
@@ -380,6 +423,10 @@ describe("connect preserves the registry so rebuild can recover in scenario 14 (
     const rebuildOut = `${rebuild.stdout || ""}\n${rebuild.stderr || ""}`;
     const installerInvocations = fs
       .readFileSync(installerInvocationsFile, "utf8")
+      .split("\n")
+      .filter(Boolean);
+    const dockerInvocations = fs
+      .readFileSync(dockerInvocationsFile, "utf8")
       .split("\n")
       .filter(Boolean);
 
@@ -423,7 +470,7 @@ describe("connect preserves the registry so rebuild can recover in scenario 14 (
     assert.match(
       rebuildOut,
       /absent from the live OpenShell gateway/,
-      `rebuild must report the stale-recovery state (#4497), got:\n${rebuildOut}`,
+      `rebuild must report the stale-recovery state (#4497), got:\n${rebuildOut}\nDocker invocations:\n${dockerInvocations.join("\n")}`,
     );
     assert.match(
       rebuildOut,

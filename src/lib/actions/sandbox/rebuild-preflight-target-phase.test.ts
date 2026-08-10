@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
   ProviderRecoveryReceipt,
@@ -9,9 +9,71 @@ import type {
 } from "../../onboard/rebuild-route-handoff";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import {
+  pinRebuildTargetGatewayForReadiness,
+  runRebuildGatewayRecoveryAfterReadiness,
   stageRebuildBaseImageResolutionHandoff,
   stageRegistryProviderRecoveryReceipt,
 } from "./rebuild-preflight-target-phase";
+
+const originalGateway = process.env.OPENSHELL_GATEWAY;
+
+afterEach(() => {
+  originalGateway === undefined
+    ? Reflect.deleteProperty(process.env, "OPENSHELL_GATEWAY")
+    : (process.env.OPENSHELL_GATEWAY = originalGateway);
+});
+
+describe("rebuild readiness gateway pin", () => {
+  it("pins the recorded target without selecting or recovering a gateway (#7411)", () => {
+    const log = vi.fn();
+
+    expect(
+      pinRebuildTargetGatewayForReadiness(
+        "alpha",
+        { gatewayName: "nemoclaw-9443", gatewayPort: 9443 } as never,
+        log,
+      ),
+    ).toBe("nemoclaw-9443");
+    expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-9443");
+    expect(log).toHaveBeenCalledWith(
+      "Pinned rebuild readiness probes for 'alpha' to target gateway 'nemoclaw-9443'",
+    );
+  });
+
+  it("does not select or recover the gateway when readiness rejects (#7411)", async () => {
+    const afterReadiness = vi.fn();
+    const recoverGateway = vi.fn(async () => true);
+
+    await expect(
+      runRebuildGatewayRecoveryAfterReadiness({
+        assertReadiness: async () => false,
+        afterReadiness,
+        recoverGateway,
+      }),
+    ).resolves.toBe(false);
+    expect(afterReadiness).not.toHaveBeenCalled();
+    expect(recoverGateway).not.toHaveBeenCalled();
+  });
+
+  it("recovers the gateway only after readiness and post-admission staging (#7411)", async () => {
+    const calls: string[] = [];
+
+    await expect(
+      runRebuildGatewayRecoveryAfterReadiness({
+        assertReadiness: async () => {
+          calls.push("readiness");
+          return true;
+        },
+        afterReadiness: () => calls.push("stage-receipt"),
+        recoverGateway: async () => {
+          calls.push("recover-gateway");
+          return true;
+        },
+      }),
+    ).resolves.toBe(true);
+    expect(calls).toEqual(["readiness", "stage-receipt", "recover-gateway"]);
+  });
+});
 
 const target = {
   sandboxName: "alpha",

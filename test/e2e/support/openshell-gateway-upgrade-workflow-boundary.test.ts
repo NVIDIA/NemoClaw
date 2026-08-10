@@ -18,6 +18,8 @@ import {
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   expectedLegacyRegistryMetadata,
+  GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
+  legacyGatewayUpgradeHostFirewallOptions,
   oldGatewayUpgradeInstallerArgs,
   throwGatewayUpgradeSetupFailures,
   upgradeGatewayCleanupScript,
@@ -100,6 +102,22 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
       currentNemoclawUpgradeRef({ NEMOCLAW_E2E_EXPECTED_SHA: "", GITHUB_SHA: "workflow-sha" }),
     ).toBe("workflow-sha");
     expect(currentNemoclawUpgradeRef({})).toBe("HEAD");
+  });
+
+  it("waits through the historical install for each gateway network", () => {
+    expect(legacyGatewayUpgradeHostFirewallOptions("v0.0.36")).toEqual({
+      networkName: "openshell-cluster-nemoclaw",
+      waitForNetworkMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
+    });
+    for (const nemoclawRef of ["v0.0.55", "v0.0.74", "v0.0.89"]) {
+      expect(legacyGatewayUpgradeHostFirewallOptions(nemoclawRef)).toEqual({
+        networkName: undefined,
+        waitForNetworkMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
+      });
+    }
+    expect(() => legacyGatewayUpgradeHostFirewallOptions("v0.0.90")).toThrow(
+      /Unsupported gateway-upgrade network fixture/,
+    );
   });
 
   it("accepts successful legacy install and firewall setup results (#8696)", () => {

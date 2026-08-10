@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import { createSession, normalizeSession } from "../state/onboard-session";
 import {
+  adoptPackagedGatewayAuthorityAfterTrustedInstall,
   bindGatewayAuthorityToCheckpoint,
   checkpointGatewayAuthority,
 } from "./gateway-authority-checkpoint";
@@ -40,6 +41,15 @@ function managedOwner() {
     gatewayPort: 8080,
     declaration: null,
     hasPackagedService: false,
+  });
+}
+
+function packagedManagedOwner() {
+  return resolveGatewayOwner({
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    declaration: null,
+    hasPackagedService: true,
   });
 }
 
@@ -90,5 +100,29 @@ describe("durable gateway lifecycle authority", () => {
     expect(() => bindGatewayAuthorityToCheckpoint(resumed!, otherPort)).toThrow(
       /authority changed since this onboarding attempt was checkpointed/,
     );
+  });
+
+  it("persists a trusted packaged-service install across process resume (#7411)", () => {
+    const firstProcess = createSession({ sessionId: "authority-session" });
+    bindGatewayAuthorityToCheckpoint(firstProcess, managedOwner());
+
+    adoptPackagedGatewayAuthorityAfterTrustedInstall(firstProcess, packagedManagedOwner());
+    const resumed = normalizeSession(JSON.parse(JSON.stringify(firstProcess)) as never);
+
+    expect(resumed).not.toBeNull();
+    expect(bindGatewayAuthorityToCheckpoint(resumed!, packagedManagedOwner())).toEqual(
+      packagedManagedOwner(),
+    );
+  });
+
+  it("leaves the checkpoint unchanged when trusted install sees declaration drift (#7411)", () => {
+    const session = createSession({ sessionId: "authority-session" });
+    bindGatewayAuthorityToCheckpoint(session, managedOwner());
+    const before = structuredClone(session.checkpoint);
+
+    expect(() =>
+      adoptPackagedGatewayAuthorityAfterTrustedInstall(session, externalOwner()),
+    ).toThrow(/changed during trusted OpenShell installation/);
+    expect(session.checkpoint).toEqual(before);
   });
 });

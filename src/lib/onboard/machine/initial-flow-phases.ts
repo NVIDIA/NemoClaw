@@ -3,8 +3,10 @@
 
 import { spawnSync } from "node:child_process";
 import type { GatewayReuseState } from "../../state/gateway";
+import { type GatewayOwner, isExternallySupervised } from "../gateway-ownership";
 import { formatSandboxGpuPassthroughNote } from "../sandbox-gpu-notes";
 import type { OnboardFlowContext } from "./flow-context";
+import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 import { runInitialOnboardFlowSequence } from "./flow-slices";
 import { type GatewayStateOptions, handleGatewayState } from "./handlers/gateway";
 import {
@@ -13,7 +15,6 @@ import {
   type PreflightSandboxGpuFlag,
   type PreflightStateOptions,
 } from "./handlers/preflight";
-import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 import {
   type OnboardPrerequisiteRepairEventRecorder,
   runOnboardPrerequisiteRepair,
@@ -33,6 +34,13 @@ export type InitialOnboardFlowContext<
 
 type SpawnSync = typeof spawnSync;
 
+export function getInitialGatewayReuseStateForOwner(
+  owner: GatewayOwner,
+  getManagedReuseState: () => GatewayReuseState,
+): GatewayReuseState {
+  return isExternallySupervised(owner) ? "missing" : getManagedReuseState();
+}
+
 export interface InitialOnboardFlowPhaseOptions<
   Context extends InitialOnboardFlowContext<Agent, Gpu, Config>,
   Agent,
@@ -48,9 +56,15 @@ export interface InitialOnboardFlowPhaseOptions<
   env: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   recordedGpuPassthroughBeforePreflight: boolean;
+  /** Commit any provider lifecycle transition only after preflight admission. */
+  commitSelectedAgentTransition?(): Promise<import("../../state/onboard-session").Session>;
   ensureResumePreflightDashboardPortAvailable(): void;
-  preflightDeps: PreflightStateOptions<Gpu, SandboxEntry, Host, Config>["deps"];
+  preflightDeps: Omit<
+    PreflightStateOptions<Gpu, SandboxEntry, Host, Config>["deps"],
+    "assertGatewayReadiness"
+  >;
   getInitialGatewayReuseState(): GatewayReuseState;
+  assertGatewayReadiness(): Promise<void>;
   gatewayName: string;
   recreateSandbox(): boolean;
   gatewayDeps: GatewayStateOptions<Gpu>["deps"];
@@ -130,9 +144,15 @@ export function createInitialOnboardFlowPhases<
         gpuRequested: options.gpuRequested,
         noGpu: options.noGpu,
         env: options.env,
-        deps: options.preflightDeps,
+        deps: {
+          ...options.preflightDeps,
+          assertGatewayReadiness: options.assertGatewayReadiness,
+        },
       });
       if (context.resume) options.ensureResumePreflightDashboardPortAvailable();
+      const transitionedSession = options.commitSelectedAgentTransition
+        ? await options.commitSelectedAgentTransition()
+        : preflightResult.session;
 
       const preflightGpu = preflightResult.gpu ?? null;
       emitPreflightGpuNote({
@@ -150,7 +170,7 @@ export function createInitialOnboardFlowPhases<
       return {
         context: {
           ...context,
-          session: preflightResult.session,
+          session: transitionedSession,
           gpu: preflightGpu,
           sandboxGpuConfig: preflightResult.sandboxGpuConfig,
           gpuPassthrough: preflightResult.gpuPassthrough,
@@ -165,10 +185,18 @@ export function createInitialOnboardFlowPhases<
   const gatewayPhase: OnboardSequencePhase<Context> = {
     state: "gateway",
     async run(context) {
+      // Resolve authority before the managed-only reuse helper can select a
+      // gateway or mutate OPENSHELL_GATEWAY. External attachment revalidates
+      // the same owner again at the effect edge.
+      const owner = options.gatewayDeps.resolveGatewayOwner();
+      await options.assertGatewayReadiness();
       const gatewayResult = await handleGatewayState({
         resume: context.resume,
         session: context.session,
-        initialGatewayReuseState: options.getInitialGatewayReuseState(),
+        initialGatewayReuseState: getInitialGatewayReuseStateForOwner(
+          owner,
+          options.getInitialGatewayReuseState,
+        ),
         gpu: context.gpu as Gpu,
         gpuPassthrough: context.gpuPassthrough,
         gatewayName: options.gatewayName,

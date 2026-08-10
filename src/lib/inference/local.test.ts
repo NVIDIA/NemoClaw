@@ -110,6 +110,17 @@ describe("local inference helpers", () => {
     });
   });
 
+  it("enables retries for missing structured tool calls only when Ollama tool calls are required (#8714)", () => {
+    expect(buildOllamaProbeOptions(false)).toMatchObject({
+      requireChatCompletionsToolCalling: true,
+      retryChatCompletionsToolReadiness: true,
+    });
+    expect(buildOllamaProbeOptions(true)).toMatchObject({
+      requireChatCompletionsToolCalling: false,
+      retryChatCompletionsToolReadiness: false,
+    });
+  });
+
   it("builds a credential-free Docker Desktop probe for Windows-host Ollama (#8127)", () => {
     expect(getWindowsHostOllamaDockerReachabilityArgs()).toEqual([
       "run",

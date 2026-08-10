@@ -29,6 +29,7 @@ import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
 import type { ManagedWorkloadRebuildHandoff } from "../../onboard/workload/rebuild";
 import { getTier } from "../../policy/tiers";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
+import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
 import type { PreservedEnvFile } from "../../state/preserved-env";
 import { type ToolDisclosure, toolDisclosureOrDefault } from "../../tool-disclosure";
 
@@ -124,6 +125,8 @@ export type RebuildRecreateOnboardOpts = {
   rebuildRegistryInferenceRoute?: RebuildRouteHandoff;
   rebuildProviderReconfigure?: RebuildProviderReconfigureHandoff;
   providerRecoveryReceipt?: ProviderRecoveryReceipt;
+  /** Target-scoped authority admitted by the authoritative rebuild preflight. */
+  rebuildGatewayAuthority?: CheckpointGatewayAuthority;
   preparedImageRebuild?: PreparedImageRebuildHandoff;
   managedWorkloadRebuild?: ManagedWorkloadRebuildHandoff;
   rebuildPreservedEnv?: readonly PreservedEnvFile[];

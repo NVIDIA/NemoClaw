@@ -22,7 +22,9 @@ describe("defineAdvisoryRegistry", () => {
 
     expect(registry.map((entry) => entry.id)).toEqual(["first", "second"]);
     expect(Object.isFrozen(registry)).toBe(true);
-    expect(ADVISORY_CHECKS).toEqual([]);
+    expect(ADVISORY_CHECKS.length).toBeGreaterThan(0);
+    expect(ADVISORY_CHECKS.every((entry) => entry.phase === "preflight.host")).toBe(true);
+    expect(new Set(ADVISORY_CHECKS.map((entry) => entry.id)).size).toBe(ADVISORY_CHECKS.length);
   });
 
   it("rejects duplicate stable IDs", () => {

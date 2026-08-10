@@ -78,7 +78,11 @@ If the installed OpenShell release cannot retire its gateway through a supported
 
 After the host CLI and OpenShell update, the installer runs `$$nemoclaw upgrade-sandboxes --auto` to reconcile the existing sandboxes.
 
-If an existing sandbox is not Ready, the automatic path requires a validated latest backup whose sandbox and agent identity match the registry and positive evidence that NemoClaw managed the image.
+During installer-driven recovery, each stale or non-Ready sandbox requires a validated latest backup.
+The backup's sandbox and agent identities must match the registry.
+The registry must also contain positive evidence that NemoClaw managed the sandbox image.
+If the replacement gateway reports a stale sandbox as Ready or Running, the installer reuses the validated pre-upgrade backup.
+It does not attempt another backup from the replaced legacy runtime.
 
 <AgentOnly variant="openclaw,hermes">
 For a listed pre-fingerprint OpenClaw or Hermes registry entry, you can provide that evidence through the installer's explicit managed-image confirmation.

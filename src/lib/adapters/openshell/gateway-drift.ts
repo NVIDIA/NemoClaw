@@ -16,12 +16,27 @@ import {
   resolveDockerDriverGatewayStateDir,
 } from "../../onboard/host-gateway-process";
 import { isOpenShellProtobufSchemaMismatch } from "../../runtime-recovery";
-import { isGatewayHealthy } from "../../state/gateway";
+import {
+  type GatewayReuseState,
+  getGatewayReuseState,
+  isGatewayHealthy,
+} from "../../state/gateway";
 import { dockerContainerInspectFormat } from "../docker";
 import { parseVersionFromText, stripAnsi } from "./client";
 import { resolveOpenshell } from "./resolve";
 import { captureOpenshell, getInstalledOpenshellVersionOrNull } from "./runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
+
+export type { GatewayReuseState };
+// Gateway observation consumers use the established drift adapter as their
+// OpenShell parsing and state boundary.
+export {
+  getGatewayReuseState,
+  isGatewayHealthy,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+  parseVersionFromText,
+  stripAnsi,
+};
 
 const DEFAULT_GATEWAY_NAME = "nemoclaw";
 
@@ -62,7 +77,7 @@ export type OpenShellStateRpcIssue =
       output: string;
     };
 
-type GatewayDriftDeps = {
+export type GatewayDriftDeps = {
   getInstalledOpenshellVersion?: () => string | null;
   getGatewayClusterImageRef?: (gatewayName: string) => string | null;
   isGatewayClusterActive?: (gatewayName: string) => boolean;
@@ -75,10 +90,17 @@ export function isHostProcessGatewayDrift(
   return !!drift && "gatewayBin" in drift;
 }
 
-type GatewayDriftOptions = {
+export type GatewayDriftOptions = {
   gatewayName?: string;
   deps?: GatewayDriftDeps;
   timeoutMs?: number;
+};
+
+export type GatewayVersionCompatibility = "compatible" | "drift" | "unknown";
+export type GatewayVersionSource = "host-process" | "legacy-cluster";
+
+export type GatewayVersionCompatibilityOptions = GatewayDriftOptions & {
+  source: GatewayVersionSource;
 };
 
 type StateRpcResult = {
@@ -185,7 +207,10 @@ function getGatewayClusterPublishedHostPorts(
 
 export function isGatewayClusterActiveForGateway(
   gatewayName = DEFAULT_GATEWAY_NAME,
-  { timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS }: { timeoutMs?: number } = {},
+  {
+    expectedGatewayPort,
+    timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
+  }: { expectedGatewayPort?: number; timeoutMs?: number } = {},
 ): boolean {
   const status = captureOpenshell(["status"], {
     ignoreError: true,
@@ -207,6 +232,9 @@ export function isGatewayClusterActiveForGateway(
     parseGatewayEndpointPort(activeGatewayInfo.output) ??
     parseGatewayEndpointPort(gatewayInfo.output);
   if (!endpointPort) return false;
+  if (expectedGatewayPort !== undefined && endpointPort !== String(expectedGatewayPort)) {
+    return false;
+  }
 
   const containerName = getGatewayClusterContainerName(gatewayName);
   const running = dockerContainerInspectFormat("{{.State.Running}}", containerName, {
@@ -227,8 +255,9 @@ export function getGatewayClusterImageDrift({
     return null;
   }
   const expectedVersion =
-    deps.getInstalledOpenshellVersion?.() ??
-    getInstalledOpenshellVersionOrNull({ timeout: timeoutMs });
+    typeof deps.getInstalledOpenshellVersion === "function"
+      ? deps.getInstalledOpenshellVersion()
+      : getInstalledOpenshellVersionOrNull({ timeout: timeoutMs });
   const clusterActive =
     deps.isGatewayClusterActive?.(gatewayName) ??
     (typeof deps.getGatewayClusterImageRef === "function"
@@ -408,7 +437,9 @@ export function getGatewayHostProcessDrift({
     return null;
   }
   const runtime =
-    deps.getHostProcessGatewayRuntime?.() ?? getHostProcessGatewayRuntimeOrNull({ timeoutMs });
+    typeof deps.getHostProcessGatewayRuntime === "function"
+      ? deps.getHostProcessGatewayRuntime()
+      : getHostProcessGatewayRuntimeOrNull({ timeoutMs });
   if (!runtime || !runtime.runningVersion || runtime.runningVersion === expectedVersion) {
     return null;
   }
@@ -417,6 +448,50 @@ export function getGatewayHostProcessDrift({
     currentVersion: runtime.runningVersion,
     expectedVersion,
   };
+}
+
+/**
+ * Observe managed gateway version compatibility without conflating a missing
+ * version with a proven match. Drift-only helpers return `null` for both cases;
+ * readiness needs this three-state result so it can fail closed when either
+ * side of the comparison is unavailable.
+ */
+export function observeOpenShellGatewayVersionCompatibility({
+  source,
+  gatewayName = DEFAULT_GATEWAY_NAME,
+  deps = {},
+  timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
+}: GatewayVersionCompatibilityOptions): GatewayVersionCompatibility {
+  if (isGatewayDriftPreflightDisabled(deps)) return "unknown";
+  const expectedVersion =
+    typeof deps.getInstalledOpenshellVersion === "function"
+      ? deps.getInstalledOpenshellVersion()
+      : getInstalledOpenshellVersionOrNull({ timeout: timeoutMs });
+  if (!expectedVersion) return "unknown";
+
+  if (source === "legacy-cluster") {
+    const clusterActive =
+      deps.isGatewayClusterActive?.(gatewayName) ??
+      isGatewayClusterActiveForGateway(gatewayName, { timeoutMs });
+    if (!clusterActive) return "unknown";
+    const clusterImage =
+      typeof deps.getGatewayClusterImageRef === "function"
+        ? deps.getGatewayClusterImageRef(gatewayName)
+        : getGatewayClusterImageRef(gatewayName, { timeoutMs });
+    const currentVersion = parseGatewayClusterImageVersion(clusterImage);
+    if (!currentVersion) return "unknown";
+    return currentVersion === expectedVersion ? "compatible" : "drift";
+  }
+
+  // The caller must first bind this source to a positively identified live
+  // host-process listener. Do not inspect a legacy cluster or fall between
+  // runtime authorities here: missing host-process evidence stays unknown.
+  const runtime =
+    typeof deps.getHostProcessGatewayRuntime === "function"
+      ? deps.getHostProcessGatewayRuntime()
+      : getHostProcessGatewayRuntimeOrNull({ timeoutMs });
+  if (!runtime?.runningVersion) return "unknown";
+  return runtime.runningVersion === expectedVersion ? "compatible" : "drift";
 }
 
 export function detectOpenShellStateRpcPreflightIssue({
