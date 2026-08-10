@@ -171,6 +171,34 @@ describe("sandbox-create-stream", () => {
     expect(child.unref).toHaveBeenCalled();
   });
 
+  it("aborts when the Ready ownership handoff does not terminate (#8720)", async () => {
+    vi.useFakeTimers();
+
+    const child = new FakeChild();
+    const promise = streamSandboxCreate("echo create", dockerEnv, {
+      spawnImpl: () => child,
+      readyCheck: () => true,
+      waitForReadyTermination: true,
+      pollIntervalMs: 5,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+      logLine: vi.fn(),
+    });
+
+    child.stdout.emit("data", Buffer.from("Created sandbox: demo\n"));
+    await vi.advanceTimersByTimeAsync(6);
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+
+    await vi.advanceTimersByTimeAsync(5_001);
+    await expect(promise).resolves.toMatchObject({
+      status: 1,
+      output: expect.stringContaining("did not exit after Ready; aborting cutover"),
+    });
+    expect((await promise).forcedReady).toBeUndefined();
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(child.unref).not.toHaveBeenCalled();
+  });
+
   it("traces ready-check errors and keeps polling without forcing ready", async () => {
     vi.useFakeTimers();
 

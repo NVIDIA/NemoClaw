@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -1202,7 +1202,7 @@ const { createSandbox } = require(${onboardPath});
     );
     assert.ok(result.stdout.includes("not ready"), "should mention sandbox is not ready");
   });
-  it("continues once the sandbox is Ready even if the create stream never closes", {
+  it("waits for the create stream to close after the sandbox is Ready", {
     timeout: 20000,
   }, async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
@@ -1282,6 +1282,8 @@ const realProcessKill = process.kill.bind(process);
 process.kill = (pid, signal) => {
   if (pid < 0) {
     groupKillCalls.push({ pid, signal });
+    const createCommand = commands.find((entry) => entry.command.includes("sandbox create"));
+    process.nextTick(() => createCommand.child.emit("close", signal === "SIGTERM" ? 0 : 1));
     return true;
   }
   return realProcessKill(pid, signal);
@@ -1362,8 +1364,8 @@ const { createSandbox } = require(${onboardPath});
     assert.ok(payload.sandboxListCalls >= 2);
     assert.deepEqual(payload.groupKillCalls, [{ pid: -4242, signal: "SIGTERM" }]);
     assert.deepEqual(payload.killCalls, []);
-    assert.equal(payload.unrefCalls, 1);
-    assert.equal(payload.stdoutDestroyCalls, 1);
-    assert.equal(payload.stderrDestroyCalls, 1);
+    assert.equal(payload.unrefCalls, 0);
+    assert.equal(payload.stdoutDestroyCalls, 0);
+    assert.equal(payload.stderrDestroyCalls, 0);
   });
 });

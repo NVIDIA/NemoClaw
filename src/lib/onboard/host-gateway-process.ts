@@ -7,11 +7,23 @@ import os from "node:os";
 import path from "node:path";
 
 import { waitUntil } from "../core/wait";
-import { clearDockerDriverGatewayRuntimeMarker } from "./docker-driver-gateway-runtime-marker";
 import {
+  gatewayIdForStateDir,
+  hasStateScopedSandboxNamespace,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
+} from "./docker-driver-gateway-config";
+import {
+  clearDockerDriverGatewayRuntimeMarker,
+  getDockerDriverGatewayRuntimeMarkerPath,
+  parseDockerDriverGatewayRuntimeMarker,
+} from "./docker-driver-gateway-runtime-marker";
+import {
+  canonicalGatewayTargetMatches,
   type OpenShellGatewayProcessTarget,
   hostGatewayCmdlineMatches as sharedHostGatewayCmdlineMatches,
 } from "./gateway-process-identity";
+
+export { hasStateScopedSandboxNamespace } from "./docker-driver-gateway-config";
 
 export interface RunResult {
   status: number | null;
@@ -24,7 +36,9 @@ export interface HostGatewayProcessDeps {
   kill: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   env: NodeJS.ProcessEnv;
   commandExists?: (command: string) => boolean;
+  isPortFree?: (port: number) => boolean;
   log?: (message: string) => void;
+  readProcessEnvironment?: (pid: number) => Record<string, string> | null;
   warn?: (message: string) => void;
 }
 
@@ -41,6 +55,8 @@ export interface StopHostGatewayOptions {
   pollIntervalMs?: number;
   /** Keep PID/runtime evidence when a PID-file process does not match the cleanup target. */
   preserveRuntimeFilesOnNonMatching?: boolean;
+  /** Restrict cleanup to one fully proven PID-file gateway. */
+  scopedGatewayStop?: boolean;
   stateDir?: string;
   termWaitMs?: number;
   /** Whether to read and act on the resolved pid file. */
@@ -52,6 +68,7 @@ export interface StopHostGatewayResult {
   failed: number[];
   /** Whether a requested pgrep fallback completed with a usable result. */
   orphanScanComplete?: boolean;
+  ownershipFailures?: string[];
   skippedDeadPids: number[];
   skippedNonMatchingPids: number[];
   stopped: number[];
@@ -125,7 +142,9 @@ function defaultDeps(overrides: Partial<HostGatewayProcessDeps> = {}): HostGatew
     kill: overrides.kill ?? defaultKill,
     env,
     commandExists: overrides.commandExists ?? ((cmd) => defaultCommandExists(cmd, env)),
+    isPortFree: overrides.isPortFree ?? ((port) => isHostPortFree(port)),
     log: overrides.log,
+    readProcessEnvironment: overrides.readProcessEnvironment,
     warn: overrides.warn,
   };
 }
@@ -171,12 +190,108 @@ function pidOwner(pid: number, deps: HostGatewayProcessDeps): string | null {
   return result.stdout.trim() || null;
 }
 
+function readOwnedRuntimeFile(filePath: string, uid: number): string | null {
+  if (typeof fs.constants.O_NOFOLLOW !== "number") return null;
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== uid || stat.size > 64 * 1024)
+      return null;
+    return fs.readFileSync(descriptor, "utf-8");
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
+export function processUsesStateScopedSandboxNamespace(
+  pid: number,
+  stateDir: string,
+  deps: Pick<HostGatewayProcessDeps, "env" | "readProcessEnvironment" | "run">,
+): boolean {
+  const uid = typeof process.getuid === "function" ? process.getuid() : -1;
+  const owner = deps.run("ps", ["-p", String(pid), "-o", "uid="], { env: deps.env });
+  if (owner.status !== 0 || Number(owner.stdout.trim()) !== uid) return false;
+  let environment = deps.readProcessEnvironment?.(pid) ?? null;
+  if (!environment) {
+    try {
+      environment = Object.fromEntries(
+        fs
+          .readFileSync(`/proc/${String(pid)}/environ`, "utf-8")
+          .split("\0")
+          .filter(Boolean)
+          .map((entry) => [
+            entry.slice(0, entry.indexOf("=")),
+            entry.slice(entry.indexOf("=") + 1),
+          ]),
+      );
+    } catch {
+      const command = deps.run("ps", ["eww", "-p", String(pid), "-o", "command="], {
+        env: deps.env,
+      });
+      const prefix = `${NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV}=`;
+      const value = command.stdout.split(/\s+/).find((token) => token.startsWith(prefix));
+      environment = value
+        ? { [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: value.slice(prefix.length) }
+        : null;
+    }
+  }
+  return environment?.[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV] === gatewayIdForStateDir(stateDir);
+}
+
 export function hostGatewayCmdlineMatches(
   cmdline: string,
   gatewayBin: string | null | undefined,
   expectedOpenShellGateway?: OpenShellGatewayProcessTarget,
+  opts: { requireExpectedFlags?: boolean } = {},
 ): boolean {
-  return sharedHostGatewayCmdlineMatches(cmdline, gatewayBin, expectedOpenShellGateway);
+  return sharedHostGatewayCmdlineMatches(cmdline, gatewayBin, expectedOpenShellGateway, opts);
+}
+
+function scopedGatewayOwnershipFailure(
+  pid: number,
+  deps: HostGatewayProcessDeps,
+  options: StopHostGatewayOptions,
+  stateDir: string,
+  pidFile: string,
+  target: { name: string; port: number },
+): string | null {
+  if (!hasStateScopedSandboxNamespace(stateDir)) {
+    return "gateway config does not prove an isolated sandbox namespace";
+  }
+  const uid = typeof process.getuid === "function" ? process.getuid() : -1;
+  const pidText = readOwnedRuntimeFile(pidFile, uid);
+  const markerText = readOwnedRuntimeFile(getDockerDriverGatewayRuntimeMarkerPath(stateDir), uid);
+  const marker = markerText ? parseDockerDriverGatewayRuntimeMarker(markerText) : null;
+  if (Number(pidText?.trim()) !== pid || marker?.pid !== pid) {
+    return "PID file and runtime marker do not identify the same process";
+  }
+  let markerPort = 0;
+  try {
+    markerPort = Number(new URL(marker.endpoint).port);
+  } catch {
+    return "runtime marker endpoint is invalid";
+  }
+  if (
+    markerPort !== target.port ||
+    marker.platform !== process.platform ||
+    marker.arch !== process.arch
+  ) {
+    return "runtime marker does not identify the selected gateway";
+  }
+  if (!processUsesStateScopedSandboxNamespace(pid, stateDir, deps)) {
+    return "gateway process owner and loaded sandbox namespace cannot be proven";
+  }
+  if (
+    !hostGatewayCmdlineMatches(processArgs(pid, deps), options.gatewayBin, target, {
+      requireExpectedFlags: true,
+    })
+  ) {
+    return "process command line does not identify the selected gateway name and port";
+  }
+  return null;
 }
 
 function waitForExit(
@@ -258,13 +373,16 @@ function tryStopPid(
   pid: number,
   deps: HostGatewayProcessDeps,
   options: Required<Pick<StopHostGatewayOptions, "killWaitMs" | "pollIntervalMs" | "termWaitMs">>,
-): "stopped" | "failed" {
+  canSignal?: () => boolean,
+): "stopped" | "failed" | "identity-changed" {
   const log = deps.log ?? ((message: string) => console.log(message));
+  if (canSignal && !canSignal()) return "identity-changed";
   deps.kill(pid, "SIGTERM");
   if (waitForExit(pid, deps, options.termWaitMs, options.pollIntervalMs)) {
     log(`Stopped host openshell-gateway process ${pid}`);
     return "stopped";
   }
+  if (canSignal && !canSignal()) return "identity-changed";
   deps.kill(pid, "SIGKILL");
   if (waitForExit(pid, deps, options.killWaitMs, options.pollIntervalMs)) {
     log(`Stopped host openshell-gateway process ${pid} (after SIGKILL)`);
@@ -286,24 +404,56 @@ export function stopHostGatewayProcesses(
   const result: StopHostGatewayResult = {
     failed: [],
     orphanScanComplete: true,
+    ownershipFailures: [],
     skippedDeadPids: [],
     skippedNonMatchingPids: [],
     stopped: [],
     sudoRemediationPids: [],
   };
 
+  const explicitPids = Array.from(options.pids ?? []).filter(
+    (pid): pid is number => Number.isInteger(pid) && pid > 0,
+  );
+  const scopedPort = Number(options.openShellGatewayPort);
+  const scopedName = options.openShellGatewayName?.trim() ?? "";
+  const rejectScoped = (reason: string, pid?: number): StopHostGatewayResult => {
+    if (pid) result.skippedNonMatchingPids.push(pid);
+    (result.ownershipFailures ??= []).push(pid ? `PID ${String(pid)}: ${reason}` : reason);
+    return result;
+  };
+  if (
+    options.scopedGatewayStop &&
+    (!Number.isInteger(scopedPort) ||
+      scopedPort < 1 ||
+      scopedPort > 65_535 ||
+      !canonicalGatewayTargetMatches(scopedName, scopedPort) ||
+      options.usePidFile === false ||
+      options.usePgrepFallback === true ||
+      explicitPids.length > 0)
+  ) {
+    return rejectScoped("scoped cleanup requires one canonical name, port, and PID file");
+  }
+
   if (options.usePidFile ?? true) {
     const pidFromFile = readPidFile(pidFile);
     if (pidFromFile !== null) {
       addPid(candidates, pidFromFile, "pid-file");
+    } else if (options.scopedGatewayStop) {
+      if (
+        fs.existsSync(pidFile) ||
+        fs.existsSync(getDockerDriverGatewayRuntimeMarkerPath(stateDir)) ||
+        deps.isPortFree?.(scopedPort) !== true
+      ) {
+        return rejectScoped("selected gateway has incomplete ownership evidence");
+      }
+      if (options.logNoProcesses)
+        (deps.log ?? console.log)("No host openshell-gateway processes found");
+      return result;
     } else if (clearRuntimeState && fs.existsSync(pidFile)) {
       clearHostGatewayRuntimeFiles(stateDir, pidFile);
     }
   }
 
-  const explicitPids = Array.from(options.pids ?? []).filter(
-    (pid): pid is number => Number.isInteger(pid) && pid > 0,
-  );
   for (const pid of explicitPids) addPid(candidates, pid, "explicit");
 
   // When a caller passes explicit PIDs (e.g. drift-restart targeting one
@@ -311,7 +461,9 @@ export function stopHostGatewayProcesses(
   // host. Otherwise an onboard drift could terminate an unrelated worktree's
   // gateway. Sweeping callers (uninstall, sandbox destroy of the last sandbox)
   // omit `pids` and so still get the pgrep fallback by default.
-  const useFallback = options.usePgrepFallback ?? explicitPids.length === 0;
+  const useFallback = options.scopedGatewayStop
+    ? false
+    : (options.usePgrepFallback ?? explicitPids.length === 0);
   let pgrepRan = false;
   if (useFallback) {
     const sweep = pgrepHostGatewayPids(deps);
@@ -336,13 +488,24 @@ export function stopHostGatewayProcesses(
   for (const [pid, sources] of candidates) {
     if (!pidExists(pid, deps)) {
       result.skippedDeadPids.push(pid);
+      if (options.scopedGatewayStop && deps.isPortFree?.(scopedPort) !== true) {
+        return rejectScoped("recorded process is dead but its selected port remains occupied");
+      }
       if (clearRuntimeState && sources.has("pid-file") && !clearedRuntimeFiles) {
         clearHostGatewayRuntimeFiles(stateDir, pidFile);
         clearedRuntimeFiles = true;
       }
       continue;
     }
+    if (options.scopedGatewayStop) {
+      const reason = scopedGatewayOwnershipFailure(pid, deps, options, stateDir, pidFile, {
+        name: scopedName,
+        port: scopedPort,
+      });
+      if (reason) return rejectScoped(reason, pid);
+    }
     if (
+      !options.scopedGatewayStop &&
       !hostGatewayCmdlineMatches(
         processArgs(pid, deps),
         options.gatewayBin,
@@ -362,8 +525,26 @@ export function stopHostGatewayProcesses(
       continue;
     }
 
-    if (tryStopPid(pid, deps, waitOptions) === "stopped") {
+    const stopResult = tryStopPid(
+      pid,
+      deps,
+      waitOptions,
+      options.scopedGatewayStop
+        ? () =>
+            scopedGatewayOwnershipFailure(pid, deps, options, stateDir, pidFile, {
+              name: scopedName,
+              port: scopedPort,
+            }) === null
+        : undefined,
+    );
+    if (stopResult === "identity-changed") {
+      return rejectScoped("process ownership changed immediately before signaling", pid);
+    }
+    if (stopResult === "stopped") {
       result.stopped.push(pid);
+      if (options.scopedGatewayStop && deps.isPortFree?.(scopedPort) !== true) {
+        return rejectScoped("selected gateway port remains occupied after its process stopped");
+      }
       if (clearRuntimeState && !clearedRuntimeFiles) {
         clearHostGatewayRuntimeFiles(stateDir, pidFile);
         clearedRuntimeFiles = true;
