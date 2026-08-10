@@ -5,8 +5,6 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { testTimeout } from "../../../test/helpers/timeouts";
 
-import { testTimeout } from "../../../test/helpers/timeouts";
-
 import {
   hasManagedMcpPolicyClaims,
   inspectProvableManagedMcpPoliciesForDeadline,
