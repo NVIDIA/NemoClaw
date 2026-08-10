@@ -88,6 +88,16 @@ describe("portable runtime inference descriptor", () => {
       /ISO 8601 UTC timestamp/,
     ],
     ["an extra field", descriptor({ region: "us-test-1" }), /exactly these fields/],
+    ["a surrounding-space API key", descriptor({ apiKey: " secret" }), /apiKey.*format/],
+    ["a newline-bearing API key", descriptor({ apiKey: "secret\nheader" }), /apiKey.*format/],
+    ["a carriage-return API key", descriptor({ apiKey: "secret\rheader" }), /apiKey.*format/],
+    ["a NUL-bearing API key", descriptor({ apiKey: "secret\0tail" }), /apiKey.*format/],
+    ["an oversized API key", descriptor({ apiKey: "a".repeat(16 * 1024 + 1) }), /apiKey.*format/],
+    [
+      "a control character in the model",
+      descriptor({ model: "vendor/model\u0001" }),
+      /model.*format/,
+    ],
     [
       "a query-bearing endpoint",
       descriptor({ baseUrl: "https://example.test/v1?target=x" }),
@@ -108,6 +118,17 @@ describe("portable runtime inference descriptor", () => {
         resolveEndpointHost: publicResolver,
       }),
     ).rejects.toThrow(expected);
+    expect(fs.existsSync(filePath)).toBe(false);
+  });
+
+  it("deletes an admitted descriptor that exceeds the file-size limit", async () => {
+    const directory = createDirectory();
+    const filePath = path.join(directory, "portable-inference.json");
+    fs.writeFileSync(filePath, "x".repeat(64 * 1024 + 1), { mode: 0o600 });
+
+    await expect(loadPortableInferenceDescriptor({ filePath, now: () => NOW })).rejects.toThrow(
+      /65536-byte limit/,
+    );
     expect(fs.existsSync(filePath)).toBe(false);
   });
 

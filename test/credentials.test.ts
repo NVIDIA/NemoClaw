@@ -136,31 +136,46 @@ describe("host-side credential staging", () => {
 
   it("scopes a runtime credential without exporting or enumerating it", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
-    const credentials = await importCredentialsModule(home);
+    try {
+      const credentials = await importCredentialsModule(home);
 
-    await credentials.withCredentialOverrides(
-      { COMPATIBLE_API_KEY: "runtime-only-secret" },
-      async () => {
-        await Promise.resolve();
-        expect(credentials.getCredential("COMPATIBLE_API_KEY")).toBe("runtime-only-secret");
-        expect(credentials.resolveProviderCredential("COMPATIBLE_API_KEY")).toBe(
-          "runtime-only-secret",
-        );
-        expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
-        expect(credentials.loadCredentials()).not.toHaveProperty("COMPATIBLE_API_KEY");
-        expect(credentials.listCredentialKeys()).not.toContain("COMPATIBLE_API_KEY");
+      await credentials.withCredentialOverrides(
+        { COMPATIBLE_API_KEY: "runtime-only-secret" },
+        async () => {
+          await Promise.resolve();
+          expect(credentials.getCredential("COMPATIBLE_API_KEY")).toBe("runtime-only-secret");
+          expect(credentials.resolveProviderCredential("COMPATIBLE_API_KEY")).toBe(
+            "runtime-only-secret",
+          );
+          expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+          expect(credentials.loadCredentials()).not.toHaveProperty("COMPATIBLE_API_KEY");
+          expect(credentials.listCredentialKeys()).not.toContain("COMPATIBLE_API_KEY");
 
-        const child = spawnSync(
-          process.execPath,
-          ["-e", "process.stdout.write(process.env.COMPATIBLE_API_KEY || '')"],
-          { encoding: "utf8" },
-        );
-        expect(child.status).toBe(0);
-        expect(child.stdout).toBe("");
-      },
-    );
+          const child = spawnSync(
+            process.execPath,
+            ["-e", "process.stdout.write(process.env.COMPATIBLE_API_KEY || '')"],
+            { encoding: "utf8" },
+          );
+          expect(child.status).toBe(0);
+          expect(child.stdout).toBe("");
+        },
+      );
 
-    expect(credentials.getCredential("COMPATIBLE_API_KEY")).toBeNull();
+      expect(credentials.getCredential("COMPATIBLE_API_KEY")).toBeNull();
+      await credentials.withCredentialOverrides(
+        { COMPATIBLE_API_KEY: " runtime-only-secret " },
+        async () => {
+          expect(credentials.getCredential("COMPATIBLE_API_KEY")).toBe(" runtime-only-secret ");
+        },
+      );
+      for (const value of ["secret\nheader", "secret\rheader", "secret\0tail"]) {
+        await expect(
+          credentials.withCredentialOverrides({ COMPATIBLE_API_KEY: value }, async () => {}),
+        ).rejects.toThrow(/must not contain NUL, CR, or LF/);
+      }
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("returns null for missing or blank credential values", async () => {

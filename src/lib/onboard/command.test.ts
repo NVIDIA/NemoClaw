@@ -492,7 +492,7 @@ describe("onboard command options", () => {
     expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
   });
 
-  it("prepares and scopes portable profile defaults around onboarding", async () => {
+  it("keeps local portable defaults when no descriptor is present", async () => {
     const env: NodeJS.ProcessEnv = {
       NEMOCLAW_EXPERIMENTAL_PROFILE: "previous-profile",
       NEMOCLAW_PROVIDER: "previous-provider",
@@ -506,6 +506,7 @@ describe("onboard command options", () => {
     await runOnboardCommand({
       flags: { "experimental-profile": "portable" },
       env,
+      loadPortableInferenceDescriptor: async () => null,
       runOnboard: async () => {
         for (const key of [
           "NEMOCLAW_EXPERIMENTAL_PROFILE",

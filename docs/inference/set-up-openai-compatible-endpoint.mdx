@@ -104,7 +104,7 @@ Each field has one required purpose:
 |---|---|
 | `schemaVersion` | Use the integer `1`. |
 | `apiKey` | Supply the short-lived API key for the compatible endpoint. |
-| `baseUrl` | Supply an HTTPS compatible endpoint base URL without credentials, a query, or a fragment. NemoClaw applies its existing endpoint and server-side request forgery (SSRF) policy. |
+| `baseUrl` | Supply a compatible endpoint base URL that uses HTTPS, without credentials, a query, or a fragment. NemoClaw applies its existing endpoint and server-side request forgery (SSRF) policy. |
 | `model` | Supply the provider model ID. |
 | `expiresAt` | Supply a future ISO 8601 UTC timestamp that matches the API key lifetime. |
 
@@ -137,14 +137,20 @@ The portable profile handles the descriptor as follows:
 | Descriptor state | Onboarding result |
 |---|---|
 | Absent | NemoClaw keeps the existing portable behavior. The local Podman `qwen3-vl:4b` model remains the active inference route. |
-| Directory and file metadata meet the requirements above, and the descriptor is valid | NemoClaw makes the compatible endpoint model the active inference route. If the local Podman `qwen3-vl:4b` runner already exists, NemoClaw leaves it installed as standby. |
+| Directory and file metadata meet the requirements above, the descriptor is valid, and the authenticated onboarding checks pass | NemoClaw makes the compatible endpoint model the active inference route. If the local Podman `qwen3-vl:4b` runner already exists, NemoClaw leaves it installed as standby. |
 | File passes the metadata checks but contains malformed JSON, an invalid schema, an expired credential, or a rejected endpoint | NemoClaw deletes the descriptor and exits before it changes gateway, provider, sandbox, or onboarding state. |
-| Directory or file metadata does not meet the requirements above | NemoClaw does not read or delete the filesystem entry. It exits before onboarding changes state. The activation component or operator must atomically replace the entry. |
+| Descriptor is valid, but the endpoint, selected model, or configured route fails an authenticated onboarding check | NemoClaw deletes the descriptor and exits without reporting onboarding success. The compatible route may already be configured. NemoClaw does not activate an existing local runner automatically. |
+| Descriptor entry is present, but directory or file metadata does not meet the requirements above | NemoClaw does not read or delete the filesystem entry. It exits before onboarding changes state. The activation component or operator must atomically replace the entry. |
 
 OpenShell keeps one active inference route.
 The local runner is standby only when it already exists.
 OpenShell does not automatically switch to that runner when the compatible endpoint is unavailable.
 Use [Switch Inference Providers](../manage-inference/switch-providers) when you need to change the active route.
+
+Endpoint validation is a point-in-time onboarding check, not continuous health monitoring.
+During onboarding, NemoClaw sends an authenticated Chat Completions request for the selected model.
+After route setup, applicable flows also verify that the sandbox receives non-empty assistant content through `inference.local`.
+These checks do not provide continuous availability monitoring or automatic failover.
 
 NemoClaw consumes and deletes a descriptor only after its file metadata passes these checks.
 It deletes an admitted descriptor whether it accepts or rejects the descriptor content.

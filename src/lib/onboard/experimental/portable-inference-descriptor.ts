@@ -102,7 +102,8 @@ function openDescriptor(filePath: string): number | null {
     return fs.openSync(filePath, fs.constants.O_RDONLY | noFollow | nonBlocking | closeOnExec);
   } catch (error) {
     if (isErrnoException(error) && error.code === "ENOENT") return null;
-    throw descriptorError(`cannot open ${filePath} without following links or blocking.`);
+    const code = isErrnoException(error) && error.code ? ` (${error.code})` : "";
+    throw descriptorError(`cannot open ${filePath} without following links or blocking${code}.`);
   }
 }
 
@@ -247,7 +248,9 @@ function parseDescriptor(bytes: Buffer): PortableInferenceDescriptor {
     throw descriptorError("baseUrl must use HTTPS and must not contain a query or fragment.");
   }
   if (parsedUrl.username || parsedUrl.password || record.baseUrl.length > ENDPOINT_MAX_LENGTH) {
-    throw descriptorError("baseUrl must not contain credentials or exceed 2048 bytes.");
+    throw descriptorError(
+      "baseUrl must not contain credentials or exceed the 2048-character limit.",
+    );
   }
   const endpointSuffixes = ["/responses", "/chat/completions", "/completions", "/models"];
   let pathname = parsedUrl.pathname.replace(/\/+$/, "");
