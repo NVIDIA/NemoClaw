@@ -21,6 +21,7 @@ vi.mock("node:child_process", async (importOriginal) => ({
 
 afterEach(() => {
   resetTraceForTests();
+  subprocess.spawnSync.mockReset();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
@@ -37,8 +38,8 @@ import {
   parseDarwinLsofExecutable,
 } from "./gateway-production";
 
-function commandResult(stdout = "", status = 1) {
-  return { status, stdout, stderr: "", signal: null, pid: 1, output: [] };
+function commandResult(stdout = "", status = 1, stderr = "") {
+  return { status, stdout, stderr, signal: null, pid: 1, output: [] };
 }
 
 function managedOwner(gatewayPort: number): GatewayOwner {
@@ -290,14 +291,27 @@ describe("managed gateway port readiness (#7411)", () => {
   });
 
   it.each([
-    ["https://127.0.0.1:8080", 8080, "match"],
-    ["http://localhost:8080", 8080, "match"],
-    ["https://127.0.0.1:9090", 8080, "mismatch"],
-    ["https://gateway.example:8080", 8080, "mismatch"],
-  ] as const)("binds managed endpoint %s to port %s as %s", (endpoint, port, expected) => {
-    expect(classifyManagedGatewayEndpointBinding([`Gateway endpoint: ${endpoint}`], port)).toBe(
-      expected,
-    );
+    ["Gateway endpoint: https://127.0.0.1:8080", 8080, "match"],
+    ["Gateway endpoint: http://localhost:8080", 8080, "match"],
+    ["Server: https://127.0.0.1:8080", 8080, "match"],
+    ["Server: https://127.0.0.1:9090", 8080, "mismatch"],
+    ["Server: https://gateway.example:8080", 8080, "mismatch"],
+    ["Server: ftp://127.0.0.1:8080", 8080, "mismatch"],
+    ["Server: not-a-url", 8080, "mismatch"],
+    ["Gateway endpoint:", 8080, "mismatch"],
+    ["Server: https://127.0.0.1:8080 trailing-data", 8080, "mismatch"],
+    ["DNS Server: https://127.0.0.1:8080", 8080, "unknown"],
+  ] as const)("classifies managed endpoint output %s for port %s as %s", (output, port, expected) => {
+    expect(classifyManagedGatewayEndpointBinding([output], port)).toBe(expected);
+  });
+
+  it("rejects conflicting managed endpoint output across OpenShell probes", () => {
+    expect(
+      classifyManagedGatewayEndpointBinding(
+        ["Gateway endpoint: https://127.0.0.1:8080", "Server: https://127.0.0.1:9090"],
+        8080,
+      ),
+    ).toBe("mismatch");
   });
 
   it("rejects healthy managed metadata bound to another endpoint", () => {
@@ -363,6 +377,68 @@ describe("managed gateway port readiness (#7411)", () => {
   ] as const)("maps portAvailable=%s, reuse=%s, version=%s to %s", (portAvailable, reuseState, compatibility, expected) => {
     expect(classifyManagedGatewayVersionDrift(portAvailable, reuseState, compatibility)).toBe(
       expected,
+    );
+  });
+
+  it("preserves scoped stale gateway state from OpenShell connection errors", async () => {
+    const statusConnectionRefused = [
+      "Error:   × client error (Connect)",
+      "  ├─▶ tcp connect error",
+      "  ╰─▶ Connection refused (os error 111)",
+    ].join("\n");
+    const infoConnectionRefused = [
+      "Error:   × transport error",
+      "  ╰─▶ Connection refused (os error 111)",
+    ].join("\n");
+    const resultByInvocation = new Map([
+      [
+        ["sh", "-c", 'command -v "$1"', "--", "openshell"].join("\0"),
+        commandResult("/usr/local/bin/openshell\n", 0),
+      ],
+      [
+        ["/usr/local/bin/openshell", "status", "-g", "nemoclaw-readiness-test"].join("\0"),
+        commandResult("", 1, statusConnectionRefused),
+      ],
+      [
+        ["/usr/local/bin/openshell", "gateway", "info", "-g", "nemoclaw-readiness-test"].join("\0"),
+        commandResult("", 1, infoConnectionRefused),
+      ],
+      [
+        ["/usr/local/bin/openshell", "gateway", "info"].join("\0"),
+        commandResult("", 1, infoConnectionRefused),
+      ],
+    ]);
+    subprocess.spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+      return resultByInvocation.get([command, ...args].join("\0")) ?? commandResult();
+    });
+
+    const gatewayPort = 0;
+    const deps = createProductionGatewayReadinessDependencies({
+      gatewayName: () => "nemoclaw-readiness-test",
+      gatewayPort: () => gatewayPort,
+    });
+
+    await expect(deps.observeManagedGateway(managedOwner(gatewayPort))).resolves.toMatchObject({
+      reuseState: "stale",
+      driftState: "not-detected",
+      portConflictState: "none",
+    });
+    expect(subprocess.spawnSync).toHaveBeenCalledWith(
+      "/usr/local/bin/openshell",
+      ["status", "-g", "nemoclaw-readiness-test"],
+      expect.objectContaining({
+        env: expect.objectContaining({ OPENSHELL_GATEWAY: "nemoclaw-readiness-test" }),
+      }),
+    );
+    expect(subprocess.spawnSync).toHaveBeenCalledWith(
+      "/usr/local/bin/openshell",
+      ["gateway", "info", "-g", "nemoclaw-readiness-test"],
+      expect.any(Object),
+    );
+    expect(subprocess.spawnSync).toHaveBeenCalledWith(
+      "/usr/local/bin/openshell",
+      ["gateway", "info"],
+      expect.any(Object),
     );
   });
 
