@@ -224,6 +224,8 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
       ["Bearer abcdefghij", "<REDACTED>"],
       ["Basic abcdefghij", "<REDACTED>"],
       ["OPENAI_API_KEY=abcdefghij", "OPENAI_API_KEY=<REDACTED>"],
+      ["TOKEN=x", "TOKEN=<REDACTED>"],
+      ["PASSWORD=y", "PASSWORD=<REDACTED>"],
       ["accessToken=abcdefghij", "accessToken=<REDACTED>"],
       ["KEY=abcdefghij", "KEY=<REDACTED>"],
     ]) {
