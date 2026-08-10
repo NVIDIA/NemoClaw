@@ -44,7 +44,7 @@ const EXPECTED_PASS_MARKERS = [
   "[PASS] strict validation succeeds with structured tool_calls",
   "[PASS] Local Ollama onboarding caller enforces strict Chat Completions validation",
   "[PASS] strict validation retries a transient 502 and keeps bounded payloads",
-  "[PASS] strict validation fails closed when no structured tool_call is returned",
+  "[PASS] strict validation retries three times and stops after four responses omit structured tool calls",
 ];
 
 describe("strict Chat Completions tool-call probe (#4537)", () => {

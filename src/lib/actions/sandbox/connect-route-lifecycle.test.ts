@@ -84,6 +84,27 @@ describe("connectSandbox route lifecycle", () => {
     );
   });
 
+  it("repairs a WSL Ollama route without requiring an auth proxy token", async () => {
+    vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
+    const harness = createConnectHarness({
+      inferenceGetOutput: "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3:0.6b\n",
+      inferenceProbeResponses: ["BROKEN 503", "BROKEN 503", "OK 200", "OK 200"],
+      registryEntry: {
+        model: "qwen3:0.6b",
+        provider: "ollama-local",
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.findReachableOllamaHostSpy).toHaveBeenCalled();
+    expect(harness.probeLocalProviderHealthSpy).toHaveBeenCalledWith("ollama-local", {
+      skipOllamaAuthProxySubprobe: true,
+    });
+    expect(harness.probeOllamaAuthProxyHealthSpy).not.toHaveBeenCalled();
+    expect(harness.runSetupDnsProxySpy).toHaveBeenCalled();
+  });
+
   it("shell-quotes hostile route values in drift recovery commands (#3726)", async () => {
     const sandboxName = "alpha's-box";
     const harness = createConnectHarness({
