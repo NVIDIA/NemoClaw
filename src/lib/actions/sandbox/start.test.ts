@@ -58,6 +58,9 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
   const restoreStartupState = vi.fn<NonNullable<SandboxStartDeps["restoreStartupState"]>>(
     () => SUCCESSFUL_RECOVERY,
   );
+  const waitForManagedGatewaySupervisor = vi.fn<
+    NonNullable<SandboxStartDeps["waitForManagedGatewaySupervisor"]>
+  >(() => false);
   const log = vi.fn<(message: string) => void>();
   const runtimeProviders = createRuntimeProviderBundleRegistry([
     [
@@ -76,6 +79,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     getSandbox,
     runtimeProviders,
     restoreStartupState,
+    waitForManagedGatewaySupervisor,
     verifyGateway,
     log,
     ...overrides,
@@ -90,6 +94,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     printDockerRuntimeDownGuidance,
     recoverDockerDriverSandbox,
     restoreStartupState,
+    waitForManagedGatewaySupervisor,
     verifyGateway,
   };
 }
@@ -162,6 +167,125 @@ describe("startSandbox", () => {
     expect(h.restoreStartupState.mock.invocationCallOrder[1]).toBeLessThan(
       h.verifyGateway.mock.invocationCallOrder[0],
     );
+  });
+
+  it("waits for a transient managed supervisor before repeating full startup recovery (#8726)", async () => {
+    const h = harness();
+    h.restoreStartupState
+      .mockReturnValueOnce({
+        ...FAILED_RECOVERY,
+        recoveryFailureLayer: "supervisor not running",
+        recoveryFailureDetail: "SUPERVISOR_NOT_RUNNING",
+      })
+      .mockReturnValueOnce(SUCCESSFUL_RECOVERY);
+    h.waitForManagedGatewaySupervisor.mockReturnValue(true);
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(h.restoreStartupState).toHaveBeenCalledTimes(2);
+    expect(h.waitForManagedGatewaySupervisor).toHaveBeenCalledOnce();
+    expect(h.waitForManagedGatewaySupervisor).toHaveBeenCalledWith("my-sandbox");
+    expect(h.verifyGateway).toHaveBeenCalledOnce();
+    expect(h.restoreStartupState.mock.invocationCallOrder[0]).toBeLessThan(
+      h.waitForManagedGatewaySupervisor.mock.invocationCallOrder[0],
+    );
+    expect(h.waitForManagedGatewaySupervisor.mock.invocationCallOrder[0]).toBeLessThan(
+      h.restoreStartupState.mock.invocationCallOrder[1],
+    );
+    expect(h.restoreStartupState.mock.invocationCallOrder[1]).toBeLessThan(
+      h.verifyGateway.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("preserves the first recovery failure when the managed supervisor remains absent (#8726)", async () => {
+    const h = harness();
+    h.restoreStartupState.mockReturnValue({
+      ...FAILED_RECOVERY,
+      recoveryFailureLayer: "supervisor not running",
+      recoveryFailureDetail: "SUPERVISOR_NOT_RUNNING",
+    });
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
+      "supervisor not running: SUPERVISOR_NOT_RUNNING",
+    );
+    expect(h.restoreStartupState).toHaveBeenCalledOnce();
+    expect(h.waitForManagedGatewaySupervisor).toHaveBeenCalledOnce();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
+  it("preserves the first recovery failure when the managed supervisor wait throws (#8726)", async () => {
+    const h = harness();
+    h.restoreStartupState.mockReturnValue({
+      ...FAILED_RECOVERY,
+      recoveryFailureLayer: "supervisor not running",
+      recoveryFailureDetail: "SUPERVISOR_NOT_RUNNING",
+    });
+    h.waitForManagedGatewaySupervisor.mockImplementation(() => {
+      throw new Error("managed supervisor probe failed");
+    });
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
+      "supervisor not running: SUPERVISOR_NOT_RUNNING",
+    );
+    expect(h.restoreStartupState).toHaveBeenCalledOnce();
+    expect(h.waitForManagedGatewaySupervisor).toHaveBeenCalledOnce();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when recovery still fails after the managed supervisor appears (#8726)", async () => {
+    const h = harness();
+    const missingSupervisor = {
+      ...FAILED_RECOVERY,
+      recoveryFailureLayer: "supervisor not running" as const,
+      recoveryFailureDetail: "SUPERVISOR_NOT_RUNNING",
+    };
+    h.restoreStartupState.mockReturnValue(missingSupervisor);
+    h.waitForManagedGatewaySupervisor.mockReturnValue(true);
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
+      "supervisor not running: SUPERVISOR_NOT_RUNNING",
+    );
+    expect(h.restoreStartupState).toHaveBeenCalledTimes(2);
+    expect(h.waitForManagedGatewaySupervisor).toHaveBeenCalledOnce();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["definitive supervisor failure", "supervisor unavailable", "SUPERVISOR_UNAVAILABLE"],
+    [
+      "unclassified missing-supervisor output",
+      "supervisor not running",
+      "prefix SUPERVISOR_NOT_RUNNING suffix",
+    ],
+  ] as const)("does not wait after a %s (#8726)", async (_label, layer, detail) => {
+    const h = harness();
+    h.restoreStartupState.mockReturnValue({
+      ...FAILED_RECOVERY,
+      recoveryFailureLayer: layer,
+      recoveryFailureDetail: detail,
+    });
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(detail);
+    expect(h.restoreStartupState).toHaveBeenCalledOnce();
+    expect(h.waitForManagedGatewaySupervisor).not.toHaveBeenCalled();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
+  it("keeps successful legacy supervisor relaunch recovery free of a settling wait (#8726)", async () => {
+    const h = harness();
+    h.restoreStartupState.mockReturnValue({
+      ...SUCCESSFUL_RECOVERY,
+      wasRunning: false,
+      recovered: true,
+    });
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(h.restoreStartupState).toHaveBeenCalledOnce();
+    expect(h.waitForManagedGatewaySupervisor).not.toHaveBeenCalled();
+    expect(h.verifyGateway).toHaveBeenCalledOnce();
   });
 
   it.each([

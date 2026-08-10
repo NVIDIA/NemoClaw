@@ -85,11 +85,12 @@ import {
   type GatewayRestartFailureLayer,
   type ManagedGatewayControlCompletion,
   resolveSandboxDashboardPort,
+  waitForManagedGatewaySupervisor,
 } from "./process-recovery";
 import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
-export { runConnectAutoPairApprovalPass };
+export { runConnectAutoPairApprovalPass, waitForManagedGatewaySupervisor };
 
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
