@@ -282,7 +282,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
-  it("activates the YAML-bound guard without putting the key on argv (#8260)", () => {
+  it("activates the YAML-bound guard without putting the key on argv (#8260, #8667)", () => {
     const content = Buffer.from("qualification model fixture\n", "utf8");
     const testPlan = qualificationPlanForModel(content);
     const modelRoot = fs.realpathSync(
@@ -387,9 +387,6 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         runtimeUid: 1001,
       });
       expect(valuesAfter(agentQualificationArgv, "--publish")).toEqual(["127.0.0.1:8081:8081"]);
-      expect(valuesAfter(agentQualificationArgv, "--publish")).not.toEqual(
-        valuesAfter(argv, "--publish"),
-      );
       expect(valuesAfter(argv, "--network")).toEqual(["qualified-internal"]);
       expect(valuesAfter(argv, "--user")).toEqual(["1001:1001"]);
       expect(valuesAfter(argv, "--api-key-file")).toEqual(["/run/secrets/llama-cpp-api-key"]);

@@ -321,7 +321,9 @@ export function buildCandidateImageArgv(
 /**
  * The qualification runner launches the container directly instead of through
  * the Docker lifecycle provider, so it owns its loopback bridge. The shared
- * host-local materializer deliberately publishes nothing (#8615).
+ * host-local materializer deliberately publishes nothing (#8615). An absent
+ * `hostPort` yields an ephemeral loopback mapping; a present one yields the
+ * fixed loopback port that agent qualification requires.
  */
 function withQualificationLoopbackPublish(
   argv: string[],
@@ -337,12 +339,7 @@ function withQualificationLoopbackPublish(
     hostPort === undefined
       ? `127.0.0.1::${String(containerPort)}`
       : `127.0.0.1:${String(hostPort)}:${String(containerPort)}`;
-  return [
-    ...argv.slice(0, imageIndex),
-    "--publish",
-    mapping,
-    ...argv.slice(imageIndex),
-  ];
+  return [...argv.slice(0, imageIndex), "--publish", mapping, ...argv.slice(imageIndex)];
 }
 
 export function buildServerContainerArgv(
@@ -865,7 +862,7 @@ function resolveLoopbackPort(containerName: string, containerPort: number): numb
     .toString("utf8")
     .trim();
   const match = /^127\.0\.0\.1:([1-9][0-9]{3,4})$/u.exec(value);
-  if (!match) throw new Error("model server did not receive one loopback-only ephemeral port");
+  if (!match) throw new Error("model server did not receive one loopback-only port");
   return requiredInteger(Number.parseInt(match[1] ?? "0", 10), "loopback port", 1024, 65_535);
 }
 
