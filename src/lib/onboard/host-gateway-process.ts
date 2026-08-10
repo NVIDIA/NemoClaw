@@ -328,11 +328,11 @@ function dockerCompatContainerIdentity(
   dockerHost: string,
   deps: HostGatewayProcessDeps,
 ): DockerCompatContainerIdentity | null {
-  const dockerEnv = { ...deps.env };
-  for (const key of ["DOCKER_CERT_PATH", "DOCKER_CONFIG", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY"]) {
-    delete dockerEnv[key];
-  }
-  dockerEnv.DOCKER_HOST = dockerHost;
+  // Docker adapters apply the repository subprocess allowlist before spawning.
+  // Pass only the daemon identity we proved instead of treating the complete
+  // parent environment as an explicit override, which would reintroduce
+  // unrelated credentials that the adapter intentionally filters out.
+  const dockerEnv = { DOCKER_HOST: dockerHost };
   const result = deps.dockerInspect(["--type", "container", containerName], {
     encoding: "utf-8",
     env: dockerEnv,

@@ -181,6 +181,7 @@ function scopedGatewayFixture(options: ScopedGatewayFixtureOptions = {}) {
     ...compatibilityResponses,
   ]);
   const { calls, run } = makeRun(responses);
+  const dockerAdapterCalls: Array<{ env: NodeJS.ProcessEnv | undefined; operation: string }> = [];
   let startIdentityRead = 0;
   const signalHandlers = new Map<NodeJS.Signals | number | undefined, (pid: number) => void>([
     ["SIGKILL", (pid) => void exited.add(pid)],
@@ -196,8 +197,14 @@ function scopedGatewayFixture(options: ScopedGatewayFixtureOptions = {}) {
       kill,
       env: { USER: "tester" },
       commandExists: () => true,
-      dockerForceRm: (containerId) => run("docker", ["rm", "-f", containerId]),
-      dockerInspect: (args) => run("docker", ["inspect", ...args]),
+      dockerForceRm: (containerId, adapterOptions) => {
+        dockerAdapterCalls.push({ env: adapterOptions?.env, operation: "force-rm" });
+        return run("docker", ["rm", "-f", containerId]);
+      },
+      dockerInspect: (args, adapterOptions) => {
+        dockerAdapterCalls.push({ env: adapterOptions?.env, operation: "inspect" });
+        return run("docker", ["inspect", ...args]);
+      },
       isPortFree: () => options.portFree ?? true,
       log: vi.fn(),
       readProcessExecutable: () =>
@@ -229,6 +236,7 @@ function scopedGatewayFixture(options: ScopedGatewayFixtureOptions = {}) {
       fs.rmSync(siblingStateDir, { recursive: true, force: true });
     },
     kill,
+    dockerAdapterCalls,
     recordedPid,
     result,
     selectedPid,
@@ -649,6 +657,11 @@ describe("scoped host gateway stop isolation (#8663)", () => {
         args: ["rm", "-f", fixture.selectedCompatContainerId],
         command: "docker",
       });
+      expect(fixture.dockerAdapterCalls).toEqual([
+        { env: { DOCKER_HOST: "unix:///var/run/docker.sock" }, operation: "inspect" },
+        { env: { DOCKER_HOST: "unix:///var/run/docker.sock" }, operation: "inspect" },
+        { env: { DOCKER_HOST: "unix:///var/run/docker.sock" }, operation: "force-rm" },
+      ]);
       expect(
         dockerCalls.some(({ args }) => args.includes(fixture.siblingCompatContainerName)),
       ).toBe(false);
