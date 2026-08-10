@@ -132,10 +132,8 @@ describe("OpenAI-compatible scoped credential registration", () => {
     const harness = createHarness();
     harness.deps.hydrateCredentialEnv.mockImplementation((name: string) => {
       const value = hydrateCredentialEnv(name);
-      if (!value) {
-        throw new Error(`Missing scoped credential '${name}'.`);
-      }
-      return value;
+      expect(value).toBe("runtime-only-secret");
+      return value ?? "";
     });
 
     await withCredentialOverrides({ COMPATIBLE_API_KEY: "runtime-only-secret" }, async () => {
