@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { shouldRetryMcpMutationAfterConcurrencyConflict } from "../live/mcp-bridge-cleanup.ts";
 import {
   type FakeMcpHttpsServer,
@@ -12,6 +17,7 @@ import {
 } from "../live/mcp-bridge-servers.ts";
 import {
   assertAuthenticatedMcpDiscoveryWithOneRestart,
+  assertAuthenticatedMcpToolDiscovery,
   hasSuccessfulAuthenticatedMcpDiscovery,
   shouldRetryMcpDiscoveryAfterRestart,
   shouldRetryMcpToolDiscoveryTransportFailure,
@@ -21,6 +27,7 @@ const EXPECTED_SECRET = "expected-secret";
 const EXPECTED_RESULT_TOKEN = "expected-result";
 const SESSION_ID = "fake-session-1";
 const PROTOCOL_VERSION = "2025-03-26";
+const STATUS_SECRET = "unregistered-sensitive-status-value";
 
 function request(rpcMethod: string, overrides: Partial<FakeMcpRequest> = {}): FakeMcpRequest {
   return {
@@ -68,10 +75,14 @@ const BRIDGE_TOOLS = ["tool_search", "tool_describe", "tool_call"].map((name) =>
 }));
 
 let compatibleMock: StartedHttpServer | undefined;
+const artifactRoots: string[] = [];
 
 afterEach(async () => {
   await compatibleMock?.close();
   compatibleMock = undefined;
+  await Promise.all(
+    artifactRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })),
+  );
 });
 
 async function startDeferredCompatibleMock(): Promise<StartedHttpServer> {
@@ -185,6 +196,99 @@ describe("authenticated MCP rediscovery evidence", () => {
 });
 
 describe("authenticated MCP tool discovery transport retry", () => {
+  it("writes redacted boundary diagnostics before a discovery failure (#8746)", async () => {
+    const statusJson = {
+      provider: {
+        registryPresent: true,
+        gatewayPresent: true,
+        attached: true,
+        credentialReady: true,
+        credentialResolution: { detail: STATUS_SECRET },
+        token: STATUS_SECRET,
+      },
+      policy: { registryPresent: true, gatewayPresent: true, token: STATUS_SECRET },
+      adapter: { registered: true, detail: STATUS_SECRET, sessionId: STATUS_SECRET },
+      trustedPrivateTarget: {
+        state: "match" as const,
+        host: STATUS_SECRET,
+        recordedPins: [STATUS_SECRET],
+        detail: STATUS_SECRET,
+      },
+      toolDiscovery: {
+        ok: false,
+        count: 0,
+        tools: [],
+        truncated: false,
+        detail: "MCP tool discovery request failed",
+        credential: STATUS_SECRET,
+      },
+    };
+    const fakeMcp = { requests: [] } as unknown as FakeMcpHttpsServer;
+    const host = {
+      nemoclaw: vi.fn(async () => {
+        fakeMcp.requests.push(successfulInitialize());
+        return { exitCode: 0, stdout: JSON.stringify(statusJson), stderr: "" };
+      }),
+    } as unknown as Parameters<typeof assertAuthenticatedMcpToolDiscovery>[0];
+    const artifactRoot = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-mcp-diagnostics-"));
+    artifactRoots.push(artifactRoot);
+    const artifacts = new ArtifactSink(artifactRoot);
+
+    await expect(
+      assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
+        artifacts,
+        sandboxName: "sandbox",
+        artifactPrefix: "openclaw-trusted-private",
+        hostSecret: EXPECTED_SECRET,
+        progress: { event: vi.fn() },
+      }),
+    ).rejects.toThrow();
+
+    const artifactPath = path.join(
+      artifactRoot,
+      "openclaw-trusted-private-mcp-tool-discovery-diagnostics.json",
+    );
+    const diagnostics = await fs.readFile(artifactPath, "utf8");
+    expect(JSON.parse(diagnostics)).toEqual({
+      provider: {
+        registryPresent: true,
+        gatewayPresent: true,
+        attached: true,
+        credentialReady: true,
+        credentialResolutionPresent: true,
+      },
+      policy: { registryPresent: true, gatewayPresent: true },
+      adapter: { registered: true, detailPresent: true },
+      trustedPrivateTarget: { state: "match", detailPresent: true },
+      toolDiscovery: {
+        ok: false,
+        count: 0,
+        tools: [],
+        truncated: false,
+        detail: "MCP tool discovery request failed",
+      },
+      requests: [
+        {
+          httpMethod: "POST",
+          rpcMethod: "initialize",
+          responseStatus: 200,
+          responseHasResult: true,
+          sessionMetadataPresent: {
+            sessionId: false,
+            protocolVersion: false,
+            negotiatedSessionId: true,
+            negotiatedProtocolVersion: true,
+          },
+          credentialRewriteMatched: true,
+        },
+      ],
+    });
+    expect(diagnostics).not.toContain(STATUS_SECRET);
+    expect(diagnostics).not.toContain(EXPECTED_SECRET);
+    expect(diagnostics).not.toContain(SESSION_ID);
+    expect(diagnostics).not.toContain(PROTOCOL_VERSION);
+  });
+
   it("retries one generic transport failure before any request reaches the fixture", () => {
     expect(
       shouldRetryMcpToolDiscoveryTransportFailure(

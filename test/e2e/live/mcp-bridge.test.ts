@@ -779,6 +779,7 @@ test("mcp-bridge", {
     artifactPrefix: "openclaw",
   });
   await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
+    artifacts,
     sandboxName: OPENCLAW_SANDBOX_NAME,
     artifactPrefix: "openclaw",
     hostSecret: HOST_SECRET,
@@ -848,6 +849,7 @@ test("mcp-bridge", {
 
   await assertTrustedPrivateMcpRebindingDenied(host, sandbox, cleanup, {
     adapter: "mcporter",
+    artifacts,
     artifactPrefix: "openclaw",
     assertSecretAbsent: assertSecretAbsentFromSandbox,
     cleanupBridge: cleanupMcpBridge,
@@ -1096,6 +1098,7 @@ mcpBridgeShardTest("hermes")(
       },
     });
     await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
+      artifacts,
       sandboxName: HERMES_SANDBOX_NAME,
       artifactPrefix: "hermes",
       hostSecret: HOST_SECRET,
@@ -1134,6 +1137,7 @@ mcpBridgeShardTest("hermes")(
     };
     await assertTrustedPrivateMcpRebindingDenied(host, sandbox, cleanup, {
       adapter: "hermes-config",
+      artifacts,
       artifactPrefix: "hermes",
       assertSecretAbsent: assertSecretAbsentFromSandbox,
       cleanupBridge: cleanupMcpBridge,
@@ -1321,6 +1325,7 @@ mcpBridgeShardTest("deepagents")(
       artifactPrefix: "deepagents",
     });
     await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
+      artifacts,
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       artifactPrefix: "deepagents",
       hostSecret: HOST_SECRET,
@@ -1336,6 +1341,7 @@ mcpBridgeShardTest("deepagents")(
     await assertSecretAbsentFromSandbox(sandbox, DEEPAGENTS_SANDBOX_NAME, ["/sandbox/.deepagents"]);
     await assertTrustedPrivateMcpRebindingDenied(host, sandbox, cleanup, {
       adapter: "deepagents-config",
+      artifacts,
       artifactPrefix: "deepagents",
       assertSecretAbsent: assertSecretAbsentFromSandbox,
       cleanupBridge: cleanupMcpBridge,
