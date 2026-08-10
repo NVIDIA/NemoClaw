@@ -12,6 +12,7 @@ import {
 } from "../live/mcp-bridge-servers.ts";
 import {
   assertAuthenticatedMcpDiscoveryWithOneRestart,
+  assertAuthenticatedMcpToolDiscovery,
   hasSuccessfulAuthenticatedMcpDiscovery,
   shouldRetryMcpDiscoveryAfterRestart,
   shouldRetryMcpToolDiscoveryTransportFailure,
@@ -185,6 +186,66 @@ describe("authenticated MCP rediscovery evidence", () => {
 });
 
 describe("authenticated MCP tool discovery transport retry", () => {
+  it("writes redacted boundary diagnostics before a discovery failure (#8746)", async () => {
+    const statusJson = {
+      provider: { attached: true, credentialReady: true },
+      policy: { gatewayPresent: true },
+      adapter: { registered: true },
+      trustedPrivateTarget: { state: "match" },
+      toolDiscovery: {
+        ok: false,
+        count: 0,
+        tools: [],
+        truncated: false,
+        detail: "MCP tool discovery request failed",
+      },
+    };
+    const fakeMcp = { requests: [] } as unknown as FakeMcpHttpsServer;
+    const host = {
+      nemoclaw: vi.fn(async () => {
+        fakeMcp.requests.push(successfulInitialize());
+        return { exitCode: 0, stdout: JSON.stringify(statusJson), stderr: "" };
+      }),
+    } as unknown as Parameters<typeof assertAuthenticatedMcpToolDiscovery>[0];
+    const artifacts = { writeJson: vi.fn().mockResolvedValue("diagnostics.json") };
+
+    await expect(
+      assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
+        artifacts,
+        sandboxName: "sandbox",
+        artifactPrefix: "openclaw-trusted-private",
+        hostSecret: EXPECTED_SECRET,
+        progress: { event: vi.fn() },
+      }),
+    ).rejects.toThrow();
+
+    expect(artifacts.writeJson).toHaveBeenCalledWith(
+      "openclaw-trusted-private-mcp-tool-discovery-diagnostics.json",
+      {
+        ...statusJson,
+        requests: [
+          {
+            httpMethod: "POST",
+            rpcMethod: "initialize",
+            responseStatus: 200,
+            responseHasResult: true,
+            sessionMetadataPresent: {
+              sessionId: false,
+              protocolVersion: false,
+              negotiatedSessionId: true,
+              negotiatedProtocolVersion: true,
+            },
+            credentialRewriteMatched: true,
+          },
+        ],
+      },
+    );
+    const diagnostics = JSON.stringify(artifacts.writeJson.mock.calls[0]?.[1]);
+    expect(diagnostics).not.toContain(EXPECTED_SECRET);
+    expect(diagnostics).not.toContain(SESSION_ID);
+    expect(diagnostics).not.toContain(PROTOCOL_VERSION);
+  });
+
   it("retries one generic transport failure before any request reaches the fixture", () => {
     expect(
       shouldRetryMcpToolDiscoveryTransportFailure(
