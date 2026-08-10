@@ -29,6 +29,7 @@ import {
 import {
   assertHermesMcpHttpResponse,
   buildHermesMcpChatProbeScript,
+  buildHermesMcpRuntimeDiagnosticsScript,
   HERMES_MCP_FAILURE_CAPTURE_BYTES,
 } from "./mcp-bridge-hermes-http.ts";
 import {
@@ -592,6 +593,29 @@ async function assertRealAdapterToolCall(
   expect(calls.at(-1)?.auth).not.toContain("openshell:resolve:env");
 }
 
+async function captureHermesGatewayIdentity(
+  sandbox: SandboxClient,
+  artifactName: string,
+): Promise<void> {
+  const result = await sandbox.execShell(
+    HERMES_SANDBOX_NAME,
+    trustedSandboxShellScript(
+      [
+        "set -eu",
+        "/usr/bin/python3 -I -S - <<'PY'",
+        "import json, pathlib",
+        "record = json.loads(pathlib.Path('/sandbox/.hermes/runtime/gateway.pid').read_text())",
+        "pid = record if isinstance(record, int) else record['pid']",
+        "fields = pathlib.Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()",
+        "print(json.dumps({'pid': pid, 'start_time': int(fields[19])}, sort_keys=True))",
+        "PY",
+      ].join("\n"),
+    ),
+    { artifactName, env: buildAvailabilityProbeEnv(), timeoutMs: 60_000 },
+  );
+  expectExitZero(result, artifactName);
+}
+
 async function rotateBridgeCredential(
   host: HostCliClient,
   sandboxName: string,
@@ -1139,7 +1163,49 @@ mcpBridgeShardTest("hermes")(
       "hermes-assert-secrets-absent-after-rotation",
     );
     const rebuildDiscoveryOffset = fakeMcp.requests.length;
+    await captureHermesGatewayIdentity(sandbox, "hermes-gateway-identity-before-rebuild");
     await rebuildWithoutMcpHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
+    await captureHermesGatewayIdentity(sandbox, "hermes-gateway-identity-after-mcp-restore");
+    cleanup.add("lower Hermes Shields before teardown", async () => {
+      const result = await host.nemoclaw(
+        [HERMES_SANDBOX_NAME, "shields", "down", "--timeout", "5m", "--reason", "E2E cleanup"],
+        {
+          artifactName: "cleanup-hermes-shields-down",
+          env: buildAvailabilityProbeEnv(),
+          timeoutMs: 3 * 60_000,
+        },
+      );
+      const sandboxMissing = /not found|does not exist/iu.test(resultText(result));
+      expect(result.exitCode === 0 || sandboxMissing).toBe(true);
+    });
+    cleanup.add("capture Hermes post-rebuild MCP evidence", async () => {
+      await artifacts.writeJson(
+        "hermes-post-rebuild-mcp-requests.json",
+        fakeMcp.requests.slice(rebuildDiscoveryOffset).map((request) => ({
+          authenticated: request.auth === `Bearer ${ROTATED_HOST_SECRET}`,
+          path: request.path,
+          responseHasResult: request.responseHasResult,
+          responseStatus: request.responseStatus,
+          rpcMethod: request.rpcMethod,
+        })),
+      );
+      await host.nemoclaw([HERMES_SANDBOX_NAME, "shields", "status"], {
+        artifactName: "hermes-post-rebuild-shields-status",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 60_000,
+      });
+      await sandbox.execShell(
+        HERMES_SANDBOX_NAME,
+        trustedSandboxShellScript(buildHermesMcpRuntimeDiagnosticsScript()),
+        {
+          artifactName: "hermes-post-rebuild-runtime-diagnostics",
+          captureLimitBytes: 32_768,
+          env: buildAvailabilityProbeEnv(),
+          redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET, COMPATIBLE_KEY, TOOL_CHALLENGE],
+          timeoutMs: 60_000,
+        },
+      );
+    });
     await assertAuthenticatedMcpDiscovery(fakeMcp, {
       requestOffset: rebuildDiscoveryOffset,
       expectedSecret: ROTATED_HOST_SECRET,
