@@ -507,8 +507,10 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
 });
 
 describe("runSandboxGpuCreateFlow native failure and readiness", () => {
-  it("threads restart-safe startup resource limits on the no-GPU Docker route", async () => {
+  it("defers restart-safe no-GPU recreation until the create process exits (#8720)", async () => {
     const input = createInput();
+    const patch = createPatch();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce(patch);
     input.sandboxGpuConfig = {
       ...input.sandboxGpuConfig,
       mode: "0",
@@ -534,6 +536,17 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
         requiredUlimits: input.requiredUlimits,
       }),
     );
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "create"],
+      input.sandboxEnv,
+      expect.objectContaining({ waitForReadyTermination: true }),
+    );
+    const onPoll = mocks.streamSandboxCreate.mock.calls[0]?.[3]?.onPoll;
+    expect(onPoll).toBeTypeOf("function");
+    onPoll();
+    expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
+    expect(patch.ensureApplied).toHaveBeenCalledOnce();
   });
 
   it("does not replace a native GPU container solely to persist its startup command", async () => {
