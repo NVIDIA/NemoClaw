@@ -3454,7 +3454,11 @@ function getSetupNimDeps(): SetupNimDeps {
     handleRunningOllamaSelection,
     handleWindowsHostOllamaSelection,
     handleInstallOllamaSelection,
-    installVllm: vllmInference.installVllm,
+    // Supply the serving-port probe here so vllm.ts does not depend on the
+    // preflight layer. Without it the install reaches `docker run` and reports
+    // a bare exit 125 when the port is taken (#8685).
+    installVllm: (profile, options) =>
+      vllmInference.installVllm(profile, { ...options, checkServingPort: checkPortAvailable }),
     handleVllmSelection,
     handleRoutedSelection,
     coerceAgentInferenceApi: inferenceConfig.coerceAgentInferenceApi,
