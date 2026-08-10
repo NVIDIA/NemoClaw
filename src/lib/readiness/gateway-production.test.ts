@@ -390,28 +390,26 @@ describe("managed gateway port readiness (#7411)", () => {
       "Error:   × transport error",
       "  ╰─▶ Connection refused (os error 111)",
     ].join("\n");
+    const resultByInvocation = new Map([
+      [
+        ["sh", "-c", 'command -v "$1"', "--", "openshell"].join("\0"),
+        commandResult("/usr/local/bin/openshell\n", 0),
+      ],
+      [
+        ["/usr/local/bin/openshell", "status", "-g", "nemoclaw-readiness-test"].join("\0"),
+        commandResult("", 1, statusConnectionRefused),
+      ],
+      [
+        ["/usr/local/bin/openshell", "gateway", "info", "-g", "nemoclaw-readiness-test"].join("\0"),
+        commandResult("", 1, infoConnectionRefused),
+      ],
+      [
+        ["/usr/local/bin/openshell", "gateway", "info"].join("\0"),
+        commandResult("", 1, infoConnectionRefused),
+      ],
+    ]);
     subprocess.spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
-      const resolvesOpenshell =
-        command === "sh" &&
-        args.length === 4 &&
-        args[0] === "-c" &&
-        args[1] === 'command -v "$1"' &&
-        args[2] === "--" &&
-        args[3] === "openshell";
-      if (resolvesOpenshell) return commandResult("/usr/local/bin/openshell\n", 0);
-      if (command === "/usr/local/bin/openshell") {
-        const commandLine = args.join("\0");
-        if (commandLine === ["status", "-g", "nemoclaw-readiness-test"].join("\0")) {
-          return commandResult("", 1, statusConnectionRefused);
-        }
-        if (
-          commandLine === ["gateway", "info", "-g", "nemoclaw-readiness-test"].join("\0") ||
-          commandLine === ["gateway", "info"].join("\0")
-        ) {
-          return commandResult("", 1, infoConnectionRefused);
-        }
-      }
-      return commandResult();
+      return resultByInvocation.get([command, ...args].join("\0")) ?? commandResult();
     });
 
     const gatewayPort = 0;
