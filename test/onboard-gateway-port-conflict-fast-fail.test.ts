@@ -80,6 +80,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await new Promise<void>((resolve) => gatewayServer.close(() => resolve()));
     workspace.remove();
   });
