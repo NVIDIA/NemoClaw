@@ -6,6 +6,7 @@ import { reviewedOldInstallerProfile } from "./openshell-gateway-upgrade-old-ins
 
 const NON_INTERACTIVE_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
 const GATEWAY_VOLUME_PREFIX = "openshell-cluster-nemoclaw";
+const LEGACY_GATEWAY_DOCKER_NETWORK = "openshell-cluster-nemoclaw";
 
 export interface LegacyGatewayUpgradeFixture {
   nemoclawRef: string;
@@ -68,6 +69,21 @@ export function currentNemoclawUpgradeRef(env: NodeJS.ProcessEnv): string {
     if (candidate?.trim()) return candidate.trim();
   }
   return "HEAD";
+}
+
+export function legacyGatewayUpgradeDockerNetwork(nemoclawRef: string): string | undefined {
+  switch (nemoclawRef) {
+    case "v0.0.36":
+      // This cluster-era gateway names its bridge after the gateway; newer
+      // Docker gateways use the host fixture's openshell-docker default.
+      return LEGACY_GATEWAY_DOCKER_NETWORK;
+    case "v0.0.55":
+    case "v0.0.74":
+    case "v0.0.89":
+      return undefined;
+    default:
+      throw new Error(`Unsupported gateway-upgrade network fixture: ${nemoclawRef}`);
+  }
 }
 
 export function throwGatewayUpgradeSetupFailures(

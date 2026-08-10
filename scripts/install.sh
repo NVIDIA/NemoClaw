@@ -2848,6 +2848,9 @@ preinstall_backup_and_retire_legacy_gateway() {
     fi
     error "Pre-upgrade backup stopped the installer. Resolve every reported sandbox backup failure or skipped sandbox using the CLI output above, then rerun the installer."
   fi
+  # The replacement gateway may report legacy rows as Ready even when their
+  # state is no longer inspectable. Reuse this validated backup for every stale
+  # or non-Ready recreate instead of attempting a second live backup.
   export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
 
   # Retire a backed-up gateway before install-openshell replaces an out-of-range
