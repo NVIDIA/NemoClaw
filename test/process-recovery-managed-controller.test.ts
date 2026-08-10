@@ -62,8 +62,15 @@ describe("managed gateway recovery controller", () => {
     forwardRecovered: false,
   };
   const controllerNonce = "a".repeat(64);
+  const restartingContainerId = "b".repeat(64);
   const successfulControl = { status: 0, stdout: "GATEWAY_PID=123\n", stderr: "" };
   const successfulProbe = { status: 0, stdout: "ALREADY_RUNNING\n", stderr: "" };
+  const restartingContainer = {
+    status: 1,
+    stdout: "",
+    stderr: `Error response from daemon: Container ${restartingContainerId} is restarting, wait until the container is running`,
+    managedControlRestartingContainerId: restartingContainerId,
+  } as const;
 
   it.each([
     {
@@ -185,6 +192,13 @@ describe("managed gateway recovery controller", () => {
       settleSeconds: "0",
     },
     {
+      label: "persistent controller contention",
+      recoverResults: [{ status: 1, stdout: "", stderr: "SUPERVISOR_BUSY" }],
+      expectedResult: unrecoveredGateway,
+      expectedActions: ["recover", "recover", "recover"],
+      settleSeconds: "0",
+    },
+    {
       label: "status 137 with no output followed by authenticated recovery",
       recoverResults: [
         { status: 137, stdout: "", stderr: "" },
@@ -209,7 +223,49 @@ describe("managed gateway recovery controller", () => {
       label: "persistent status 137 with no output",
       recoverResults: [{ status: 137, stdout: "", stderr: "" }],
       expectedResult: unrecoveredGateway,
+      expectedActions: Array.from({ length: 11 }, () => "recover"),
+      settleSeconds: "0",
+    },
+    {
+      label: "status 137 and Docker restart transitions followed by authenticated recovery",
+      recoverResults: [
+        { status: 137, stdout: "", stderr: "" },
+        restartingContainer,
+        {
+          status: 0,
+          stdout: `v1 ${controllerNonce} complete already-running 123 456\nGATEWAY_PID=456`,
+          stderr: "",
+        },
+      ],
+      expectedResult: {
+        ...recoveredGateway,
+        managedControlCompletion: {
+          disposition: "already-running",
+          oldPid: 123,
+          newPid: 456,
+        },
+      },
       expectedActions: ["recover", "recover", "recover"],
+      settleSeconds: "0",
+    },
+    {
+      label: "persistent Docker restart response",
+      recoverResults: [restartingContainer],
+      expectedResult: unrecoveredGateway,
+      expectedActions: Array.from({ length: 11 }, () => "recover"),
+      settleSeconds: "0",
+    },
+    {
+      label: "unbound Docker restart diagnostic",
+      recoverResults: [
+        {
+          status: 1,
+          stdout: "",
+          stderr: restartingContainer.stderr,
+        },
+      ],
+      expectedResult: unrecoveredGateway,
+      expectedActions: ["recover"],
       settleSeconds: "0",
     },
     {

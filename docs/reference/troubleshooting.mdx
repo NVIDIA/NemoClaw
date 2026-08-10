@@ -1296,10 +1296,19 @@ On a direct-container deployment, first confirm that the sandbox is running:
 $$nemoclaw <name> status
 ```
 
-When `recover` repairs a stopped built-in gateway, NemoClaw repeats the recovery action only for an exit status of `1` with blank stdout and a sole nonblank stderr line equal to `SUPERVISOR_BUSY`, with at most three controller attempts.
-The same result is inconclusive during managed settle confirmation and can be probed again only within the configured settle window.
+When `recover` repairs a stopped built-in gateway, NemoClaw repeats the recovery action only for these exact transient results:
+
+- Status `1` with blank stdout and exactly one stderr line, `SUPERVISOR_BUSY`.
+- Status `137` with blank stdout and stderr.
+- Status `1` with blank stdout and exactly one stderr line, `Error response from daemon: Container <id> is restarting, wait until the container is running`.
+
+For the Docker result, `<id>` must be a 64-character lowercase hexadecimal ID that matches the selected registry-owned container.
+Recovery accepts at most 3 `SUPERVISOR_BUSY` results.
+Status `137` and the Docker restart result share the 11-attempt managed-control budget.
+Managed settle confirmation treats only exact `SUPERVISOR_BUSY` as inconclusive within its configured window.
+The managed supervisor startup waiter accepts the two container-transition results within its separate 11-attempt bound.
+Unbound container IDs, reformatted Docker errors, status `137` with nonblank output, and other diagnostic results stop immediately.
 NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because it can report unreadable or untrusted supervisor state, ambiguous discovery, or a process-identity change.
-It does not retry other status or output combinations.
 `SUPERVISOR_NOT_RUNNING` is a separate result that requires two zero-supervisor scans with a stable PID 1 and does not enter that retry loop.
 On a supported local Docker-driver sandbox with the legacy keepalive startup, it can authorize a container-identity-pinned recreation that commits only after managed health and settle checks pass.
 To bypass that trusted recreation while troubleshooting, run `NEMOCLAW_DISABLE_SUPERVISOR_RELAUNCH=1 $$nemoclaw <name> recover`; NemoClaw leaves the container unchanged and returns rebuild or re-onboard guidance.
