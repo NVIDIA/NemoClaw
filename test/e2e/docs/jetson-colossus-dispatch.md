@@ -746,7 +746,13 @@ jq -e --slurpfile dispatch "$DISPATCH_JSON" '
 It must also contain `jetson-e2e-artifacts.tar.gz`.
 The dispatcher creates that archive from the remote E2E artifact directory before it removes the candidate workspace.
 It rejects an artifact directory or compressed archive larger than 1 MiB.
-Before a restarted dispatcher replays the same deterministic job ID, it removes the earlier log and archive so evidence cannot cross executions.
+During initialization, the dispatcher validates the schema, request, job ID, and state in every private file whose basename matches `^[a-f0-9]{64}\.json$`.
+For a completed record, it also validates the terminal fields.
+It ignores valid queued or running records and restores only the 128 newest completed statuses to memory.
+An invalid matching file fails initialization before the dispatcher accepts work, and the error names its exact `<jobId>.json` basename.
+Status and artifact requests both restore an evicted completed status from its private file.
+Only an artifact request returns the persisted log and archive.
+A repeated deterministic dispatch returns the persisted completed status without rerunning candidate code or clearing its evidence.
 
 After the workflow completes, independently verify every allowlisted resource is absent.
 Require the private `<jobId>.cleanup.json` file and verify every recorded volume and process ID is absent.
@@ -783,6 +789,47 @@ Stop that retry loop before investigation or repair:
 
 ```bash
 sudo systemctl stop nemoclaw-jetson-dispatch.service
+```
+
+An invalid matching `<jobId>.json` file also fails startup and enters the same retry loop.
+Set `JOB_ID` from the exact basename in the startup error.
+For this failure, preserve and inspect the named private file under the approved incident-retention policy; treat its JSON as private candidate output.
+The following command validates the exact basename, stops the retry loop, requires `ActiveState=inactive`, and proves `device.lock` absent before quarantine.
+It rejects a symbolic link or non-directory quarantine parent and verifies `root:root` mode `0700` without following links.
+It then moves the exact object without overwriting retained evidence and restarts the service.
+After it returns, repeat the loopback-bind and anonymous HTTP `401` checks under [Configure the Dispatcher Service](#configure-the-dispatcher-service) before accepting work.
+
+```bash
+set -euo pipefail
+JOB_ID=0000000000000000000000000000000000000000000000000000000000000000
+[[ "$JOB_ID" =~ ^[a-f0-9]{64}$ ]]
+state=/var/lib/nemoclaw-jetson-dispatch/state
+status_file="$state/$JOB_ID.json"
+quarantine=/var/lib/nemoclaw-jetson-status-quarantine
+quarantine_file="$quarantine/$JOB_ID.json.invalid"
+sudo systemctl stop nemoclaw-jetson-dispatch.service
+test "$(sudo systemctl show --property=ActiveState --value \
+  nemoclaw-jetson-dispatch.service)" = inactive
+sudo stat -- "$status_file"
+sudo test ! -e "$state/device.lock"
+sudo test ! -L "$state/device.lock"
+sudo test ! -L "$quarantine"
+if sudo test -e "$quarantine"; then
+  test "$(sudo stat --format='%F:%u:%g:%a' -- "$quarantine")" = \
+    directory:0:0:700
+else
+  sudo install -d -o root -g root -m 0700 "$quarantine"
+fi
+test "$(sudo stat --format='%F:%u:%g:%a' -- "$quarantine")" = \
+  directory:0:0:700
+sudo test ! -e "$quarantine_file"
+sudo test ! -L "$quarantine_file"
+sudo mv -- "$status_file" "$quarantine_file"
+sudo test ! -e "$status_file"
+sudo test ! -L "$status_file"
+sudo systemctl start nemoclaw-jetson-dispatch.service
+test "$(sudo systemctl show --property=ActiveState --value \
+  nemoclaw-jetson-dispatch.service)" = active
 ```
 
 Do not delete `device.lock` to bypass recovery.
@@ -1095,13 +1142,17 @@ sudo rm -- \
   /etc/nemoclaw-jetson-dispatch/environment \
   /etc/systemd/system/nemoclaw-jetson-dispatch.service \
   /usr/local/sbin/nemoclaw-colossus-jetson-dispatch-deploy
-sudo rm -rf -- /opt/nemoclaw-jetson-dispatch
+sudo rm -rf -- \
+  /opt/nemoclaw-jetson-dispatch \
+  /var/lib/nemoclaw-jetson-status-quarantine
 sudo systemctl daemon-reload
 sudo test ! -e /etc/nemoclaw-jetson-dispatch/environment
 sudo test ! -e /etc/systemd/system/nemoclaw-jetson-dispatch.service
 sudo test ! -e /usr/local/sbin/nemoclaw-colossus-jetson-dispatch-deploy
 sudo test ! -e /opt/nemoclaw-jetson-dispatch
 sudo test ! -L /opt/nemoclaw-jetson-dispatch
+sudo test ! -e /var/lib/nemoclaw-jetson-status-quarantine
+sudo test ! -L /var/lib/nemoclaw-jetson-status-quarantine
 test "$(systemctl show --property=LoadState --value \
   nemoclaw-jetson-dispatch.service)" = not-found
 ```

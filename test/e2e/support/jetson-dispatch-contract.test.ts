@@ -440,30 +440,58 @@ describe("Jetson single-device lifecycle", () => {
     expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(false);
   });
 
-  it("does not return an archive from an earlier replay after restart (#8142)", async () => {
+  it("restores completed evidence without replaying the job after restart (#8142)", async () => {
     const stateDirectory = temporaryDirectory();
     const first = coordinator(stateDirectory, worker());
     await first.initialize();
     const firstAccepted = first.dispatch(REQUEST, identity());
-    await waitForCompletion(first, firstAccepted.jobId);
+    const firstCompleted = await waitForCompletion(first, firstAccepted.jobId);
     expect(first.artifact(firstAccepted.jobId).artifactArchiveBase64).toBe(ARTIFACT_ARCHIVE_BASE64);
 
-    const replay = coordinator(
-      stateDirectory,
-      worker({ run: async () => Promise.reject(new Error("replayed candidate failed")) }),
-    );
-    await replay.initialize();
-    const replayAccepted = replay.dispatch(REQUEST, identity());
-    const replayCompleted = await waitForCompletion(replay, replayAccepted.jobId);
-    const replayArtifact = replay.artifact(replayAccepted.jobId);
+    const replayRun = vi.fn(worker().run);
+    const restarted = coordinator(stateDirectory, worker({ run: replayRun }));
+    await restarted.initialize();
+    const restoredStatus = restarted.status(firstAccepted.jobId);
+    const restoredArtifact = restarted.artifact(firstAccepted.jobId);
+    const replayAccepted = restarted.dispatch(REQUEST, identity());
 
     expect(replayAccepted.jobId).toBe(firstAccepted.jobId);
-    expect(replayCompleted).toMatchObject({ conclusion: "failure", cleanup: "succeeded" });
-    expect(replayArtifact.log).toBe("");
-    expect(replayArtifact).not.toHaveProperty("artifactArchiveBase64");
+    expect(replayAccepted).toEqual(firstCompleted);
+    expect(restoredStatus).toEqual(firstCompleted);
+    expect(restoredArtifact).toMatchObject({
+      artifactArchiveBase64: ARTIFACT_ARCHIVE_BASE64,
+      log: "passed\n",
+      status: firstCompleted,
+    });
+    expect(replayRun).not.toHaveBeenCalled();
   });
 
-  it("bounds retained in-memory job status while preserving private evidence (#8142)", async () => {
+  it("rejects initialization when a completed status record is invalid (#8142)", async () => {
+    const stateDirectory = temporaryDirectory();
+    const first = coordinator(stateDirectory, worker());
+    await first.initialize();
+    const accepted = first.dispatch(REQUEST, identity());
+    await waitForCompletion(first, accepted.jobId);
+    const statusPath = path.join(stateDirectory, `${accepted.jobId}.json`);
+    const persisted = JSON.parse(fs.readFileSync(statusPath, "utf8"));
+    const invalidRecords = [
+      {
+        contents: `${JSON.stringify({ ...persisted, jobId: "f".repeat(64) })}\n`,
+        error: "persisted Jetson dispatch status does not match its job ID",
+      },
+      { contents: "{", error: "persisted Jetson dispatch status is not valid JSON" },
+      { contents: " ".repeat(16 * 1024 + 1), error: "exceeds 16384 bytes" },
+    ];
+
+    for (const record of invalidRecords) {
+      fs.writeFileSync(statusPath, record.contents);
+      await expect(coordinator(stateDirectory, worker()).initialize()).rejects.toThrow(
+        new RegExp(`Jetson dispatch status ${accepted.jobId}\\.json is invalid: .*${record.error}`),
+      );
+    }
+  });
+
+  it("restores private completed status after in-memory eviction (#8142)", async () => {
     const stateDirectory = temporaryDirectory();
     const dispatch = coordinator(stateDirectory, worker());
     await dispatch.initialize();
@@ -477,8 +505,12 @@ describe("Jetson single-device lifecycle", () => {
       await waitForCompletion(dispatch, accepted.jobId);
     }
 
-    expect(() => dispatch.status(firstJobId)).toThrow(JetsonDispatchNotFoundError);
+    expect(dispatch.status(firstJobId)).toMatchObject({ state: "completed" });
     expect(fs.existsSync(path.join(stateDirectory, `${firstJobId}.json`))).toBe(true);
+    fs.writeFileSync(path.join(stateDirectory, `${firstJobId}.json`), "{");
+    await expect(coordinator(stateDirectory, worker()).initialize()).rejects.toThrow(
+      `Jetson dispatch status ${firstJobId}.json is invalid`,
+    );
   });
 
   it("keeps the device locked when cleanup fails (#8142)", async () => {

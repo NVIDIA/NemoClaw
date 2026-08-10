@@ -4,7 +4,11 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { GitHubOidcIdentity, JetsonDispatchRequest } from "./jetson-dispatch-contract.mts";
+import {
+  type GitHubOidcIdentity,
+  type JetsonDispatchRequest,
+  parseJetsonDispatchRequest,
+} from "./jetson-dispatch-contract.mts";
 import {
   createPrivateRegularFile,
   readPrivateRegularFile,
@@ -13,6 +17,9 @@ import {
 
 export const MAX_JETSON_DISPATCH_LOG_BYTES = 4 * 1024 * 1024;
 const MAX_RETAINED_JOB_STATUSES = 128;
+const MAX_JETSON_DISPATCH_STATUS_BYTES = 16 * 1024;
+const JOB_ID_PATTERN = /^[a-f0-9]{64}$/u;
+const STATUS_FILE_PATTERN = /^([a-f0-9]{64})\.json$/u;
 export const MAX_JETSON_ARTIFACT_ARCHIVE_BYTES = 1024 * 1024;
 const MAX_JETSON_ARTIFACT_ARCHIVE_BASE64_CHARACTERS =
   Math.ceil(MAX_JETSON_ARTIFACT_ARCHIVE_BYTES / 3) * 4;
@@ -139,6 +146,90 @@ function dispatchJobId(request: JetsonDispatchRequest): string {
     .digest("hex");
 }
 
+function parseTimestamp(value: unknown, name: string): string {
+  if (
+    typeof value !== "string" ||
+    value.length !== 24 ||
+    Number.isNaN(Date.parse(value)) ||
+    new Date(value).toISOString() !== value
+  ) {
+    throw new Error(`${name} must be an ISO timestamp`);
+  }
+  return value;
+}
+
+function parseDeviceIdentity(value: unknown): JetsonDeviceIdentity | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("device must be an object");
+  }
+  const device = value as Record<string, unknown>;
+  const fields = ["jetpackVersion", "jetsonLinuxRelease", "kernel", "model"];
+  if (fields.some((field) => typeof device[field] !== "string")) {
+    throw new Error("device fields are invalid");
+  }
+  return {
+    model: device.model as string,
+    jetpackVersion: device.jetpackVersion as string,
+    jetsonLinuxRelease: device.jetsonLinuxRelease as string,
+    kernel: device.kernel as string,
+  };
+}
+
+function parsePersistedCompletedStatus(
+  contents: string,
+  expectedJobId: string,
+): JetsonDispatchStatus | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(contents);
+  } catch {
+    throw new Error("persisted Jetson dispatch status is not valid JSON");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("persisted Jetson dispatch status must be an object");
+  }
+  const status = value as Record<string, unknown>;
+  const request = parseJetsonDispatchRequest(status.request);
+  if (
+    status.schemaVersion !== 1 ||
+    status.jobId !== expectedJobId ||
+    dispatchJobId(request) !== expectedJobId
+  ) {
+    throw new Error("persisted Jetson dispatch status does not match its job ID");
+  }
+  if (status.state === "queued" || status.state === "running") return null;
+  if (status.state !== "completed") {
+    throw new Error("persisted Jetson dispatch status has an invalid state");
+  }
+  if (
+    !["cancelled", "cleanup-failed", "failure", "success", "timed-out"].includes(
+      status.conclusion as string,
+    ) ||
+    !["failed", "succeeded"].includes(status.cleanup as string) ||
+    (status.error !== undefined && typeof status.error !== "string")
+  ) {
+    throw new Error("persisted Jetson dispatch result fields are invalid");
+  }
+  const createdAt = parseTimestamp(status.createdAt, "createdAt");
+  const startedAt = parseTimestamp(status.startedAt, "startedAt");
+  const completedAt = parseTimestamp(status.completedAt, "completedAt");
+  const device = parseDeviceIdentity(status.device);
+  return {
+    schemaVersion: 1,
+    jobId: expectedJobId,
+    request,
+    state: "completed",
+    conclusion: status.conclusion as JetsonDispatchConclusion,
+    createdAt,
+    startedAt,
+    completedAt,
+    ...(device === undefined ? {} : { device }),
+    cleanup: status.cleanup as "failed" | "succeeded",
+    ...(status.error === undefined ? {} : { error: status.error as string }),
+  };
+}
+
 function withTimeout<T>(
   timeoutMs: number,
   operation: (signal: AbortSignal) => Promise<T>,
@@ -209,6 +300,7 @@ export class JetsonDispatchCoordinator {
       );
       fs.unlinkSync(this.#lockPath);
     }
+    this.#restoreCompletedStatuses();
     this.#initialized = true;
   }
 
@@ -221,7 +313,7 @@ export class JetsonDispatchCoordinator {
       throw new Error("dispatch identity does not match the workflow run");
     }
     const jobId = dispatchJobId(request);
-    const existing = this.#jobs.get(jobId);
+    const existing = this.#findStatus(jobId);
     if (existing) return structuredClone(existing);
     if (this.#activeJobId) {
       throw new JetsonDispatchBusyError("Jetson device is already running another job");
@@ -259,7 +351,7 @@ export class JetsonDispatchCoordinator {
 
   status(jobId: string): JetsonDispatchStatus {
     this.#requireInitialized();
-    const status = this.#jobs.get(jobId);
+    const status = this.#findStatus(jobId);
     if (!status) throw new JetsonDispatchNotFoundError("Jetson dispatch job was not found");
     return structuredClone(status);
   }
@@ -269,7 +361,8 @@ export class JetsonDispatchCoordinator {
   }
 
   cancel(jobId: string): JetsonDispatchStatus {
-    const status = this.#jobs.get(jobId);
+    this.#requireInitialized();
+    const status = this.#findStatus(jobId);
     if (!status) throw new JetsonDispatchNotFoundError("Jetson dispatch job was not found");
     if (status.state !== "completed" && this.#activeJobId === jobId) {
       this.#cancelRequested = true;
@@ -415,6 +508,43 @@ export class JetsonDispatchCoordinator {
   #clearPriorResultFiles(jobId: string): void {
     fs.rmSync(this.#logPath(jobId), { force: true });
     fs.rmSync(this.#artifactPath(jobId), { force: true });
+  }
+
+  #findStatus(jobId: string): JetsonDispatchStatus | undefined {
+    const existing = this.#jobs.get(jobId);
+    if (existing || !JOB_ID_PATTERN.test(jobId)) return existing;
+    const restored = this.#readCompletedStatus(jobId);
+    if (restored) {
+      this.#evictOldestCompletedJob();
+      this.#jobs.set(jobId, restored);
+    }
+    return restored ?? undefined;
+  }
+
+  #readCompletedStatus(jobId: string): JetsonDispatchStatus | null {
+    try {
+      const contents = readPrivateRegularFile(this.#statusPath(jobId), {
+        allowMissing: true,
+        maxBytes: MAX_JETSON_DISPATCH_STATUS_BYTES,
+      });
+      return contents === null ? null : parsePersistedCompletedStatus(contents, jobId);
+    } catch (error) {
+      throw new Error(`Jetson dispatch status ${jobId}.json is invalid: ${safeError(error)}`);
+    }
+  }
+
+  #restoreCompletedStatuses(): void {
+    const completed = fs
+      .readdirSync(this.#stateDirectory)
+      .flatMap((name) => {
+        const match = STATUS_FILE_PATTERN.exec(name);
+        if (!match) return [];
+        const status = this.#readCompletedStatus(match[1]!);
+        return status === null ? [] : [status];
+      })
+      .sort((left, right) => left.completedAt!.localeCompare(right.completedAt!))
+      .slice(-MAX_RETAINED_JOB_STATUSES);
+    for (const status of completed) this.#jobs.set(status.jobId, status);
   }
 
   #evictOldestCompletedJob(): void {
