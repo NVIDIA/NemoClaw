@@ -460,12 +460,30 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     expect(() =>
       insertQualificationLoopbackPublishArgv(["run", imageReference, imageReference], options),
     ).toThrow(/exactly one Docker image reference/u);
-    expect(() =>
-      insertQualificationLoopbackPublishArgv(
-        ["run", "--publish", "127.0.0.1::8081", imageReference],
-        options,
-      ),
-    ).toThrow(/must not publish/u);
+    for (const publishArgv of [
+      ["--publish", "0.0.0.0:8081:8081"],
+      ["--publish=0.0.0.0:8081:8081"],
+      ["-p", "0.0.0.0:8081:8081"],
+      ["-p0.0.0.0:8081:8081"],
+      ["--publish-all"],
+      ["--publish-all=true"],
+      ["-P"],
+      ["-P=true"],
+    ]) {
+      expect(() =>
+        insertQualificationLoopbackPublishArgv(["run", ...publishArgv, imageReference], options),
+      ).toThrow(/must not publish/u);
+    }
+    expect(
+      insertQualificationLoopbackPublishArgv(["run", imageReference, "-p", "guard-value"], options),
+    ).toEqual([
+      "run",
+      "--publish",
+      `127.0.0.1::${String(containerPort)}`,
+      imageReference,
+      "-p",
+      "guard-value",
+    ]);
   });
 
   it("accepts only the exact NVIDIA OpenClaw ARM64 managed-image labels", () => {

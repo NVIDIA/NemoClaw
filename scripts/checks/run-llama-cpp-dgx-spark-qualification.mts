@@ -326,14 +326,27 @@ export function insertQualificationLoopbackPublishArgv(
     imageReference: string;
   },
 ): string[] {
-  if (argv.includes("--publish")) {
-    throw new Error("llama.cpp qualification materializer must not publish a Docker port");
-  }
   const imageIndex = argv.indexOf(options.imageReference);
   if (imageIndex < 0 || imageIndex !== argv.lastIndexOf(options.imageReference)) {
     throw new Error(
       "llama.cpp qualification requires exactly one Docker image reference in the materialized argument vector",
     );
+  }
+  const materializedDockerOptions = argv.slice(0, imageIndex);
+  if (
+    materializedDockerOptions.some(
+      (argument) =>
+        argument === "--publish" ||
+        argument.startsWith("--publish=") ||
+        argument === "--publish-all" ||
+        argument.startsWith("--publish-all=") ||
+        argument === "-p" ||
+        (argument.startsWith("-p") && argument.length > 2) ||
+        argument === "-P" ||
+        argument.startsWith("-P="),
+    )
+  ) {
+    throw new Error("llama.cpp qualification materializer must not publish a Docker port");
   }
   const containerPort = requiredInteger(
     options.containerPort,
