@@ -416,14 +416,11 @@ describe("Jetson single-device lifecycle", () => {
     const stateDirectory = temporaryDirectory();
     const cleanup = vi.fn(async () => {});
     const unlinkSync = fs.unlinkSync.bind(fs);
-    let rejectLockRemoval = true;
-    vi.spyOn(fs, "unlinkSync").mockImplementation((file) => {
-      if (rejectLockRemoval) {
-        rejectLockRemoval = false;
+    vi.spyOn(fs, "unlinkSync")
+      .mockImplementationOnce(() => {
         throw new Error("lock filesystem unavailable");
-      }
-      return unlinkSync(file);
-    });
+      })
+      .mockImplementation(unlinkSync);
     const dispatch = coordinator(stateDirectory, worker({ cleanup }));
     await dispatch.initialize();
     const accepted = dispatch.dispatch(REQUEST, identity());
