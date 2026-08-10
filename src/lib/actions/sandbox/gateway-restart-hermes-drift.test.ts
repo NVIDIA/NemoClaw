@@ -164,6 +164,8 @@ it("sanitizes an injected Hermes reconciliation refusal before post-restart muta
       ok: false,
       failureLayer: "MCP reconciliation refusal",
       detail: "Hermes config hash does not match persisted inputs FORGED SUCCESS <REDACTED>",
+      restarted: true,
+      healthPassed: true,
     });
     expect(postReconciliationMutations[0]).not.toHaveBeenCalled();
     expect(postReconciliationMutations[1]).not.toHaveBeenCalled();
