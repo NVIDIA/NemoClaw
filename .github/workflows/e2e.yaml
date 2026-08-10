@@ -179,7 +179,7 @@ jobs:
               matrix='[{"id":"ubuntu-policy-custom-missing-presets-negative","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-openclaw","runner":"ubuntu-latest"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest"}]'
               test_matrix='[{"id":"onboard-managed-image-buildless-e2e","file":"test/onboard-managed-image-buildless-e2e.test.ts","project":"integration"},{"id":"vllm-docker-storage","file":"test/vllm-docker-storage.test.ts","project":"integration"}]'
               ;;
-            managed-image-protected-runtime:)
+            inference-routing: | managed-image-protected-runtime:)
               matrix='[]'
               ;;
             :ubuntu-repo-cloud-langchain-deepagents-code)
@@ -269,9 +269,9 @@ jobs:
           }
           [[ "$RUN_ATTEMPT" == "1" ]] || { echo "::error::Manual PR E2E cannot be rerun" >&2; exit 1; }
           case "${JOBS}:${TARGETS}:${INCLUDE_LAUNCHABLE}" in
-            ::false | managed-image-protected-runtime::false) ;;
+            ::false | inference-routing::false | managed-image-protected-runtime::false) ;;
             *)
-              echo "::error::Manual PR E2E accepts only empty selectors or managed-image-protected-runtime without target or Launchable selectors" >&2
+              echo "::error::Manual PR E2E accepts only empty selectors, inference-routing, or managed-image-protected-runtime without target or Launchable selectors" >&2
               exit 1
               ;;
           esac

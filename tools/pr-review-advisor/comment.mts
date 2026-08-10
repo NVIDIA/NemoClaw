@@ -13,6 +13,7 @@ import {
 } from "../advisors/e2e-recommendations.mts";
 import { deleteBotOwnedStickyComments, upsertStickyComment } from "../advisors/github.mts";
 import { parseArgs, readIfExists, readJsonIfExists } from "../advisors/io.mts";
+import { isPrE2ePlanningJob } from "../advisors/risk-plan.mts";
 
 const MARKER = "<!-- nemoclaw-pr-review-advisor -->";
 const COMMENT_TITLE = "PR Review Advisor";
@@ -683,6 +684,8 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
     changedCredentialFreeJobIds,
   );
   const requiredE2e = uniqueE2eIds([...requiredTargets, ...requiredCoverage]);
+  const exactRevisionE2e = requiredE2e.filter(isPrE2ePlanningJob);
+  const manualOnlyE2e = requiredE2e.filter((id) => !isPrE2ePlanningJob(id));
   const optionalE2e = uniqueE2eIds([...optionalTargets, ...optionalCoverage]);
   const lines = [
     "",
@@ -691,9 +694,21 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
     "",
   ];
 
-  const hiddenRequiredCount = requiredE2e.length - E2E_RENDER_LIMIT;
+  const hiddenRequiredCount = exactRevisionE2e.length - E2E_RENDER_LIMIT;
   const hiddenRequiredText = hiddenRequiredCount > 0 ? ` (+${hiddenRequiredCount} more)` : "";
-  lines.push(`**Recommended E2E:** ${renderE2eIds(requiredE2e) || "_None_"}${hiddenRequiredText}`);
+  lines.push(
+    `**Recommended E2E:** ${renderE2eIds(exactRevisionE2e) || "_None_"}${hiddenRequiredText}`,
+  );
+
+  if (manualOnlyE2e.length > 0) {
+    const hiddenManualCount = manualOnlyE2e.length - E2E_RENDER_LIMIT;
+    const hiddenManualText = hiddenManualCount > 0 ? ` (+${hiddenManualCount} more)` : "";
+    lines.push(
+      "",
+      `**Manual-only E2E:** ${renderE2eIds(manualOnlyE2e) || "_None_"}${hiddenManualText}`,
+      "_These lanes do not have a credential-safe exact-PR dispatch path. Run them only from their reviewed trusted-main boundary._",
+    );
+  }
 
   if (optionalE2e.length > 0) {
     lines.push(
@@ -719,7 +734,11 @@ function trustedCoverageIds(
   items: unknown,
   inventory: TrustedE2eRecommendationInventory,
 ): string[] {
-  const allowedIds = new Set([...inventory.allowedJobIds, ...inventory.liveSupportedTargetIds]);
+  const allowedIds = new Set([
+    ...inventory.allowedJobIds,
+    ...inventory.manualOnlyJobIds,
+    ...inventory.liveSupportedTargetIds,
+  ]);
   const seen = new Set<string>();
   const entries = Array.isArray(items) ? items : [];
   return entries.flatMap((item) => {

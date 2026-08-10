@@ -29,7 +29,7 @@ export const PR_E2E_TYPED_TARGET_IDS = [
 ] as const;
 
 const PR_E2E_TYPED_TARGET_ID_SET = new Set<string>(PR_E2E_TYPED_TARGET_IDS);
-const PR_E2E_PLANNING_OMITTED_JOB_IDS = new Set(["jetson-nvmap-gpu"]);
+const PR_E2E_PLANNING_OMITTED_JOB_IDS = new Set(["jetson-nvmap-gpu", "network-policy"]);
 const DEEPAGENTS_HEADLESS_INFERENCE_CHECK =
   "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh";
 const DEEPAGENTS_CODE_RUNTIME_ROOT = "agents/langchain-deepagents-code/";
@@ -237,8 +237,9 @@ export function isPrE2eTypedTargetId(value: string): boolean {
 }
 
 export function isPrE2ePlanningJob(value: string): boolean {
-  // Automatic PR planning cannot confirm an online self-hosted Jetson runner.
-  // Remove this exclusion after the Colossus-backed runner path can make that confirmation.
+  // Automatic PR planning cannot confirm an online self-hosted Jetson runner and must not
+  // expose the secret-backed network-policy lane to fork-controlled candidate code.
+  // Remove an exclusion only after the corresponding exact-revision trust boundary exists.
   return !PR_E2E_PLANNING_OMITTED_JOB_IDS.has(value);
 }
 

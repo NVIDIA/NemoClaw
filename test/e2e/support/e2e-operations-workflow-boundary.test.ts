@@ -228,25 +228,37 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("limits manual PR runs to empty selectors or protected managed-runtime qualification", () => {
+  it("limits manual PR runs to credential-safe exact-revision selectors", () => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
     )!;
     authentication.run = authentication.run!.replace(
-      "Manual PR E2E accepts only empty selectors or managed-image-protected-runtime",
+      "Manual PR E2E accepts only empty selectors, inference-routing, or managed-image-protected-runtime",
       "Manual PR E2E accepts arbitrary selectors",
     );
 
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "Manual PR authentication must retain Manual PR E2E accepts only empty selectors or managed-image-protected-runtime",
+      "Manual PR authentication must retain Manual PR E2E accepts only empty selectors, inference-routing, or managed-image-protected-runtime",
     );
   });
 
   it.each([
     ["maintain", "", 0, ""],
+    ["maintain", "inference-routing", 0, ""],
     ["maintain", "managed-image-protected-runtime", 0, ""],
-    ["maintain", "gpu-e2e", 1, "accepts only empty selectors or managed-image-protected-runtime"],
+    [
+      "maintain",
+      "network-policy",
+      1,
+      "accepts only empty selectors, inference-routing, or managed-image-protected-runtime",
+    ],
+    [
+      "maintain",
+      "gpu-e2e",
+      1,
+      "accepts only empty selectors, inference-routing, or managed-image-protected-runtime",
+    ],
     ["write", "", 1, "requires a repository maintainer or administrator"],
   ])("requires a maintainer role and bounded selector before manual PR E2E for %s with %s", (role, jobs, expectedStatus, expectedStderr) => {
     const workflow = readE2eOperationsWorkflow();

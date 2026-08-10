@@ -111,6 +111,7 @@ export type TrustedE2eRecommendationInventory = {
   fanoutId: "e2e-all";
   selectorTypes: E2eSelectorType[];
   allowedJobIds: string[];
+  manualOnlyJobIds: string[];
   liveSupportedTargetIds: string[];
 };
 
@@ -123,11 +124,13 @@ type E2eTargetNormalizationContext = {
 };
 
 export function trustedE2eRecommendationInventory(): TrustedE2eRecommendationInventory {
+  const allJobIds = trustedAllJobIds();
   return {
     workflow: E2E_WORKFLOW,
     fanoutId: E2E_ALL_ID,
     selectorTypes: ["all", "target", "job"],
-    allowedJobIds: trustedAllowedJobIds(),
+    allowedJobIds: allJobIds.filter(isPrE2ePlanningJob),
+    manualOnlyJobIds: allJobIds.filter((id) => !isPrE2ePlanningJob(id)),
     liveSupportedTargetIds: listTargets()
       .filter((target) => liveTargetSupport(target).supported)
       .map((target) => target.id)
@@ -137,7 +140,11 @@ export function trustedE2eRecommendationInventory(): TrustedE2eRecommendationInv
 
 function trustedCoverageIds(): Set<string> {
   const inventory = trustedE2eRecommendationInventory();
-  return new Set([...inventory.allowedJobIds, ...inventory.liveSupportedTargetIds]);
+  return new Set([
+    ...inventory.allowedJobIds,
+    ...inventory.manualOnlyJobIds,
+    ...inventory.liveSupportedTargetIds,
+  ]);
 }
 
 export function normalizeE2eCoverageResult(
@@ -191,13 +198,12 @@ export function normalizeE2eCoverageResult(
 }
 
 function deterministicCoverageTests(changedFiles: string[], riskPlan: RiskPlan): E2eCoverageTest[] {
-  const tests: E2eCoverageTest[] = [
-    ...riskPlan.requiredJobs.filter((job) => isPrE2ePlanningJob(job.id)),
-    ...riskPlan.requiredTargets,
-  ].map((selection) => ({
-    id: selection.id,
-    reason: selection.reasons.join(" "),
-  }));
+  const tests: E2eCoverageTest[] = [...riskPlan.requiredJobs, ...riskPlan.requiredTargets].map(
+    (selection) => ({
+      id: selection.id,
+      reason: selection.reasons.join(" "),
+    }),
+  );
   if (requiresCloudOnboardE2e(changedFiles) && !tests.some((test) => test.id === "cloud-onboard")) {
     tests.push({
       id: "cloud-onboard",
@@ -453,11 +459,15 @@ function discoverTrustedCredentialFreeTests(): E2eChangedCredentialFreeTest[] {
   return rows.sort((left, right) => left.id.localeCompare(right.id));
 }
 
-function trustedAllowedJobIds(): string[] {
+function trustedAllJobIds(): string[] {
   return extractAllowedE2eJobIds(
     readTrustedE2eWorkflowText(),
     discoverTrustedCredentialFreeTests(),
-  ).filter(isPrE2ePlanningJob);
+  );
+}
+
+function trustedAllowedJobIds(): string[] {
+  return trustedAllJobIds().filter(isPrE2ePlanningJob);
 }
 
 function extractAllowedE2eJobIds(
