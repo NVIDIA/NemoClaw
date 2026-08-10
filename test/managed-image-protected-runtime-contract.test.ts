@@ -23,6 +23,7 @@ import {
   managedImageOpenShellProbe,
   parseManagedImageOpenShellE2eInputs,
   removeManagedImageGatewayStateIfSafe,
+  resolveManagedImageOnboardModule,
 } from "../scripts/checks/run-managed-image-openshell-e2e.ts";
 
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
@@ -30,14 +31,7 @@ const VALID_SANDBOX = "managed-openclaw";
 
 describe("protected managed-image runtime contract", () => {
   it("loads every OpenShell operation required before protected image launch (#7744)", async () => {
-    const onboardImport = (await import("../src/lib/onboard.ts")) as unknown as Record<
-      string,
-      unknown
-    >;
-    const onboard = ("default" in onboardImport ? onboardImport.default : onboardImport) as Record<
-      string,
-      unknown
-    >;
+    const onboard = resolveManagedImageOnboardModule(await import("../src/lib/onboard.ts"));
 
     for (const operation of [
       "openshellArgv",
@@ -45,9 +39,22 @@ describe("protected managed-image runtime contract", () => {
       "runCaptureOpenshell",
       "sleepSeconds",
       "startGatewayForRecovery",
-    ]) {
+    ] as const) {
       expect(onboard[operation], operation).toBeTypeOf("function");
     }
+  });
+
+  it("rejects a missing protected OpenShell operation with a precise contract error (#8759)", () => {
+    expect(() =>
+      resolveManagedImageOnboardModule({
+        default: {
+          openshellArgv: () => [],
+          runCaptureOpenshell: () => "",
+          sleepSeconds: () => undefined,
+          startGatewayForRecovery: async () => undefined,
+        },
+      }),
+    ).toThrow("managed-image onboard module is missing required operation(s): runOpenshell");
   });
 
   it.each([

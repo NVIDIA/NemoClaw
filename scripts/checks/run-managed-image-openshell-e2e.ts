@@ -143,6 +143,36 @@ type OnboardModule = {
   startGatewayForRecovery(options: { gatewayName: string; gatewayPort: number }): Promise<void>;
 };
 
+const REQUIRED_ONBOARD_OPERATIONS = [
+  "openshellArgv",
+  "runOpenshell",
+  "runCaptureOpenshell",
+  "sleepSeconds",
+  "startGatewayForRecovery",
+] as const satisfies readonly (keyof OnboardModule)[];
+
+export function resolveManagedImageOnboardModule(onboardImport: unknown): OnboardModule {
+  const importRecord =
+    typeof onboardImport === "object" && onboardImport !== null
+      ? (onboardImport as Record<string, unknown>)
+      : null;
+  const candidate =
+    importRecord && "default" in importRecord ? importRecord.default : onboardImport;
+  const candidateRecord =
+    typeof candidate === "object" && candidate !== null
+      ? (candidate as Record<string, unknown>)
+      : null;
+  const missing = REQUIRED_ONBOARD_OPERATIONS.filter(
+    (operation) => typeof candidateRecord?.[operation] !== "function",
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `managed-image onboard module is missing required operation(s): ${missing.join(", ")}`,
+    );
+  }
+  return candidate as OnboardModule;
+}
+
 function requiredValue(argv: readonly string[], flag: string): string {
   const index = argv.indexOf(flag);
   const value = index >= 0 ? argv[index + 1] : undefined;
@@ -717,10 +747,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
     const image = parseImmutableManifestReference(input.image);
     resolveLocalImageContentId(input.image, process.env);
 
-    const onboardImport = (await import("../../src/lib/onboard.ts")) as unknown as
-      | OnboardModule
-      | { default: OnboardModule };
-    onboard = "default" in onboardImport ? onboardImport.default : onboardImport;
+    onboard = resolveManagedImageOnboardModule(await import("../../src/lib/onboard.ts"));
     await onboard.startGatewayForRecovery({
       gatewayName: "nemoclaw",
       gatewayPort: GATEWAY_PORT,
