@@ -318,6 +318,54 @@ export function buildCandidateImageArgv(
   ];
 }
 
+export function insertQualificationLoopbackPublishArgv(
+  argv: readonly string[],
+  options: {
+    containerPort: number;
+    hostPort?: number;
+    imageReference: string;
+  },
+): string[] {
+  const imageIndex = argv.indexOf(options.imageReference);
+  if (imageIndex < 0 || imageIndex !== argv.lastIndexOf(options.imageReference)) {
+    throw new Error(
+      "llama.cpp qualification requires exactly one Docker image reference in the materialized argument vector",
+    );
+  }
+  const materializedDockerOptions = argv.slice(0, imageIndex);
+  if (
+    materializedDockerOptions.some(
+      (argument) =>
+        argument === "--publish" ||
+        argument.startsWith("--publish=") ||
+        argument === "--publish-all" ||
+        argument.startsWith("--publish-all=") ||
+        argument === "-p" ||
+        (argument.startsWith("-p") && argument.length > 2) ||
+        argument === "-P" ||
+        argument.startsWith("-P="),
+    )
+  ) {
+    throw new Error("llama.cpp qualification materializer must not publish a Docker port");
+  }
+  const containerPort = requiredInteger(
+    options.containerPort,
+    "qualification container port",
+    1,
+    65_535,
+  );
+  const hostPort =
+    options.hostPort === undefined
+      ? ""
+      : String(requiredInteger(options.hostPort, "qualification host port", 1, 65_535));
+  return [
+    ...argv.slice(0, imageIndex),
+    "--publish",
+    `127.0.0.1:${hostPort}:${String(containerPort)}`,
+    ...argv.slice(imageIndex),
+  ];
+}
+
 export function buildServerContainerArgv(
   plan: QualificationPlan,
   options: {
@@ -346,14 +394,11 @@ export function buildServerContainerArgv(
     runtimeGid: options.runtimeGid,
     runtimeUid: options.runtimeUid,
   });
-  const entrypointIndex = argv.indexOf("--entrypoint");
-  const hostPort = options.hostPort === undefined ? "" : String(options.hostPort);
-  return [
-    ...argv.slice(0, entrypointIndex),
-    "--publish",
-    `127.0.0.1:${hostPort}:${String(plan.recipe.serve.port)}`,
-    ...argv.slice(entrypointIndex),
-  ];
+  return insertQualificationLoopbackPublishArgv(argv, {
+    containerPort: plan.recipe.serve.port,
+    ...(options.hostPort === undefined ? {} : { hostPort: options.hostPort }),
+    imageReference: options.imageReference,
+  });
 }
 
 export function validateOpenClawQualificationImageLabels(
