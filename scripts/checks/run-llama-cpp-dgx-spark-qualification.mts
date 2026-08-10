@@ -343,21 +343,29 @@ export function buildServerContainerArgv(
   if (plan.qualification.requestGuard !== "required") {
     throw new Error("llama.cpp qualification requires the declarative request guard");
   }
-  return buildLlamaCppRequestGuardDockerArgv(
-    plan.recipe,
-    {
-      apiKeyHostPath: options.apiKeyHostPath,
-      containerName: options.containerName,
-      imageReference: options.imageReference,
-      ...(options.hostPort === undefined ? {} : { hostPort: options.hostPort }),
-      model: options.model,
-      network: { isolation: "docker-internal", name: options.networkName },
-      ownerLabel: { name: registryOwnerLabel, value: options.registryOwner },
-      runtimeGid: options.runtimeGid,
-      runtimeUid: options.runtimeUid,
-    },
-    options.loopbackPublishAuthority,
-  );
+  const argv = buildLlamaCppRequestGuardDockerArgv(plan.recipe, {
+    apiKeyHostPath: options.apiKeyHostPath,
+    containerName: options.containerName,
+    imageReference: options.imageReference,
+    ...(options.hostPort === undefined ? {} : { hostPort: options.hostPort }),
+    model: options.model,
+    network: { isolation: "docker-internal", name: options.networkName },
+    ownerLabel: { name: registryOwnerLabel, value: options.registryOwner },
+    runtimeGid: options.runtimeGid,
+    runtimeUid: options.runtimeUid,
+  });
+  const entrypointIndex = argv.indexOf("--entrypoint");
+  if (entrypointIndex < 0) {
+    throw new Error("llama.cpp qualification request guard entrypoint is missing");
+  }
+  const hostPort = options.hostPort === undefined ? "" : String(options.hostPort);
+  consumeDockerLoopbackPublishAuthority(options.loopbackPublishAuthority);
+  return [
+    ...argv.slice(0, entrypointIndex),
+    "--publish",
+    `127.0.0.1:${hostPort}:${String(plan.recipe.serve.port)}`,
+    ...argv.slice(entrypointIndex),
+  ];
 }
 
 export function validateOpenClawQualificationImageLabels(

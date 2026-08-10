@@ -370,20 +370,16 @@ export function consumeDockerLoopbackPublishAuthority(
   consumedDockerLoopbackPublishAuthorities.add(authority);
 }
 
-/** Activate the request guard only with live, patched Docker loopback-publish authority. */
+/** Activate the request guard only for an image that declares the owned guard artifact. */
 export function buildLlamaCppRequestGuardDockerArgv(
   contract: LlamaCppHostLocalLaunchContract,
   bindings: LlamaCppHostLocalRuntimeBindings,
-  loopbackPublishAuthority: DockerLoopbackPublishAuthority,
 ): string[] {
-  consumeDockerLoopbackPublishAuthority(loopbackPublishAuthority);
   validateContract(contract);
   validateBindings(contract, bindings);
   const { limits } = contract.serve;
   return [
     ...buildLlamaCppHostLocalDockerRunArgv(contract, bindings),
-    "--publish",
-    `127.0.0.1:${bindings.hostPort === undefined ? "" : String(bindings.hostPort)}:${String(contract.serve.port)}`,
     "--entrypoint",
     LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
     bindings.imageReference,
@@ -445,6 +441,7 @@ function buildLlamaCppHostLocalDockerRunArgv(
     "ALL",
     "--security-opt",
     "no-new-privileges=true",
+    "--no-healthcheck",
     "--memory",
     `${String(resources.memoryBytes)}b`,
     "--memory-swap",

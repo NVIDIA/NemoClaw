@@ -19,12 +19,10 @@ import { LLAMA_CPP_PORT } from "./contract";
 import {
   buildLlamaCppHostLocalDockerArgv,
   buildLlamaCppRequestGuardDockerArgv,
-  type DockerLoopbackPublishAuthority,
   LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
   LLAMA_CPP_HOST_LOCAL_SERVER_PATH,
   type LlamaCppHostLocalLaunchContract,
   type LlamaCppHostLocalRuntimeBindings,
-  qualifyDockerLoopbackPublishAuthority,
 } from "./host-local-runtime";
 
 const MODEL_DIGEST = `sha256:${"a".repeat(64)}`;
@@ -222,6 +220,7 @@ describe("llama.cpp host-local runtime materializer", () => {
       "ALL",
       "--security-opt",
       "no-new-privileges=true",
+      "--no-healthcheck",
       "--memory",
       "51539607552b",
       "--memory-swap",
@@ -278,13 +277,11 @@ describe("llama.cpp host-local runtime materializer", () => {
   it("activates the owned-image request guard from the declared recipe values (#8144)", () => {
     const input = contract();
     const runtime = bindings();
-    const argv = buildLlamaCppRequestGuardDockerArgv(
-      input,
-      runtime,
-      qualifyDockerLoopbackPublishAuthority("28.3.3"),
-    );
+    const argv = buildLlamaCppRequestGuardDockerArgv(input, runtime);
     const separator = argv.indexOf("--");
 
+    expect(valuesAfter(argv, "--publish")).toEqual([]);
+    expect(argv).toContain("--no-healthcheck");
     expect(valuesAfter(argv, "--entrypoint")).toEqual([LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH]);
     expect(valuesAfter(argv, "--listen-port")).toEqual([String(input.serve.port)]);
     expect(valuesAfter(argv, "--upstream-port")).toEqual([
@@ -320,14 +317,6 @@ describe("llama.cpp host-local runtime materializer", () => {
     expect(valuesAfter(argv.slice(separator), "--n-predict")).toEqual([
       String(input.serve.limits.maxOutputTokens),
     ]);
-  });
-
-  it("rejects unqualified Docker loopback-publication input (#8144)", () => {
-    expect(() =>
-      buildLlamaCppRequestGuardDockerArgv(contract(), bindings(), {
-        serverVersion: "29.0.0",
-      } as DockerLoopbackPublishAuthority),
-    ).toThrow("Docker loopback publishing authority is invalid");
   });
 
   it("keeps the upstream-image launch on the llama-server entrypoint (#8144)", () => {

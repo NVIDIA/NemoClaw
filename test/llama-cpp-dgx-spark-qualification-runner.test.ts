@@ -30,7 +30,10 @@ import {
   validateRuntimeLogRedaction,
   validateStartupLog,
 } from "../scripts/checks/run-llama-cpp-dgx-spark-qualification.mts";
-import { consumeDockerLoopbackPublishAuthority } from "../src/lib/inference/llama-cpp/host-local-runtime";
+import {
+  consumeDockerLoopbackPublishAuthority,
+  type DockerLoopbackPublishAuthority,
+} from "../src/lib/inference/llama-cpp/host-local-runtime";
 
 const BASE_SHA = "b".repeat(40);
 const HEAD_SHA = "a".repeat(40);
@@ -144,6 +147,11 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     expect(() => consumeDockerLoopbackPublishAuthority(singleUseAuthority)).toThrow(
       /already consumed/u,
     );
+    expect(() =>
+      consumeDockerLoopbackPublishAuthority({
+        serverVersion: "29.0.0",
+      } as DockerLoopbackPublishAuthority),
+    ).toThrow(/authority is invalid/u);
   });
 
   it("accepts only the canonical digest-bound declarative execution plan (#8260)", () => {

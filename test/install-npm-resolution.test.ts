@@ -171,6 +171,27 @@ function runVerifyNemoclaw(
 }
 
 describe("installer npm resolution", () => {
+  it("keeps an existing user-local npm PATH stable when fixing permissions", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-npm-path-"));
+    const fakeBin = path.join(tmp, "bin");
+    const npmBin = path.join(tmp, ".npm-global", "bin");
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.mkdirSync(npmBin, { recursive: true });
+    writeExecutable(path.join(fakeBin, "uname"), "#!/usr/bin/env bash\nprintf 'Linux\\n'\n");
+    writeExecutable(
+      path.join(fakeBin, "npm"),
+      '#!/usr/bin/env bash\nif [[ "$*" == "config get prefix" ]]; then printf \'/System/nemoclaw\\n\'; fi\n',
+    );
+    const initialPath = [npmBin, fakeBin, TEST_SYSTEM_PATH].join(path.delimiter);
+    const result = runInstallerFunction('fix_npm_permissions; printf "%s\\n" "$PATH"', fakeBin, {
+      HOME: tmp,
+      PATH: initialPath,
+    });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout.trim().split("\n").at(-1)).toBe(initialPath);
+  });
+
   it("creates user-local shims for every packaged CLI alias during the default install path", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-package-shims-"));
     const fakeBin = path.join(tmp, "bin");
