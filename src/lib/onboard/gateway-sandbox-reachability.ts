@@ -568,14 +568,12 @@ export async function verifySandboxBridgeGatewayReachableOrExit(
     attempt += 1
   ) {
     console.log(
-      `  Docker-driver sandbox bridge probe attempt ${attempt - 1}/${retryAttempts} failed (${reach.reason}); retrying in ${retryDelayMs} ms...`,
+      `  OpenShell gateway reachability probe attempt ${attempt - 1}/${retryAttempts} failed (${reach.reason}); retrying in ${retryDelayMs} ms...`,
     );
     await sleep(retryDelayMs);
     reach = await reachability({ port });
     if (reach.ok) {
-      console.log(
-        `  ✓ Docker-driver sandbox bridge reachable on attempt ${attempt}/${retryAttempts}`,
-      );
+      console.log(`  ✓ OpenShell gateway reachable on attempt ${attempt}/${retryAttempts}`);
       return;
     }
   }
@@ -613,7 +611,7 @@ export async function verifySandboxBridgeGatewayReachableOrExit(
   if (exitOnFailure) {
     process.exit(1);
   }
-  throw new Error(`Docker-driver sandbox-bridge unreachable (${reach.reason})`);
+  throw new Error(`Sandbox containers cannot reach the OpenShell gateway (${reach.reason})`);
 }
 
 export const __test = {

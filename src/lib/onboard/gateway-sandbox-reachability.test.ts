@@ -698,7 +698,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit host-gateway retry", () => {
           retryDelayMs: 25,
           sleepMsImpl,
         }),
-      ).rejects.toThrow("sandbox-bridge unreachable");
+      ).rejects.toThrow("cannot reach the OpenShell gateway");
       expect(reachabilityImpl).toHaveBeenCalledTimes(3);
       expect(sleepMsImpl).toHaveBeenCalledTimes(2);
       expect(sleepMsImpl).toHaveBeenNthCalledWith(1, 25);
@@ -729,7 +729,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit host-gateway retry", () => {
           reachabilityImpl,
           sleepMsImpl,
         }),
-      ).rejects.toThrow("sandbox-bridge unreachable");
+      ).rejects.toThrow("cannot reach the OpenShell gateway");
       expect(reachabilityImpl).toHaveBeenCalledTimes(10);
       expect(sleepMsImpl).toHaveBeenCalledTimes(9);
       expect(sleepMsImpl).toHaveBeenCalledWith(1000);
@@ -761,7 +761,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit host-gateway retry", () => {
           retryDelayMs: 25,
           sleepMsImpl,
         }),
-      ).rejects.toThrow("sandbox-bridge unreachable");
+      ).rejects.toThrow("cannot reach the OpenShell gateway");
       expect(reachabilityImpl).toHaveBeenCalledTimes(1);
       expect(sleepMsImpl).not.toHaveBeenCalled();
       expect(error).toHaveBeenCalledWith(expect.stringContaining("ufw allow"));
@@ -827,7 +827,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit UFW auto-apply (#4265)", () 
         autoApplyOptedInImpl: () => true,
         reachabilityImpl,
       }),
-    ).rejects.toThrow("sandbox-bridge unreachable");
+    ).rejects.toThrow("cannot reach the OpenShell gateway");
     expect(reachabilityImpl).toHaveBeenCalledTimes(2);
     expect(error).toHaveBeenCalledWith(expect.stringContaining("ufw allow"));
     log.mockRestore();
@@ -843,7 +843,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit UFW auto-apply (#4265)", () 
         autoApplyOptedInImpl: () => true,
         reachabilityImpl: () => tcpFailure,
       }),
-    ).rejects.toThrow("sandbox-bridge unreachable");
+    ).rejects.toThrow("cannot reach the OpenShell gateway");
     expect(warn).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("ufw allow"));
     warn.mockRestore();

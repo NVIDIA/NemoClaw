@@ -3076,7 +3076,8 @@ systemctl --user enable --now podman.socket
 
 The first command does not start an inactive service.
 The second command enables and starts the current user's Podman API socket.
-These commands do not change system services or credentials.
+These commands affect only the current user's Podman units.
+They do not read or write credentials.
 
 Verify that the socket is active:
 
