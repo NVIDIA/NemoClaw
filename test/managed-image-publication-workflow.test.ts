@@ -488,9 +488,25 @@ describe("complete managed-image publication workflow", () => {
     expect(contractSource).toContain("-type d ! -perm 0555");
     expect(contractSource).toContain("-type f ! -perm 0444");
     expect(contractSource).toContain('node "$discovery_runtime/mcp-tool-discovery.mjs"');
-    expect(contractSource).toContain(
-      '{"protocol":1,"ok":false,"detail":"tool discovery received invalid runtime arguments"}',
+    expect(contractSource).toContain('result = JSON.parse(require("node:fs").readFileSync(0');
+    expect(contractSource).toContain("record.protocol !== expected.protocol");
+    expect(contractSource).toContain("record.ok !== expected.ok");
+    expect(contractSource).toContain("record.detail !== expected.detail");
+    expect(contractSource).not.toContain(
+      '[ "$actual_discovery_contract" != "$expected_discovery_contract" ]',
     );
+    const contractValidatorPrefix = "if ! node -e '";
+    const contractValidatorMarker = contractSource.indexOf(contractValidatorPrefix);
+    expect(contractValidatorMarker).toBeGreaterThan(-1);
+    const contractValidatorStart = contractValidatorMarker + contractValidatorPrefix.length;
+    const contractValidatorEnd = contractSource.indexOf(
+      `' <<< "$actual_discovery_contract"`,
+      contractValidatorStart,
+    );
+    expect(contractValidatorEnd).toBeGreaterThan(contractValidatorStart);
+    const contractValidator = contractSource
+      .slice(contractValidatorStart, contractValidatorEnd)
+      .trim();
 
     const permissionDriftSource = required(
       permissionDrift.run,
@@ -537,6 +553,35 @@ describe("complete managed-image publication workflow", () => {
       expect(drifted.stderr).toBe("");
       for (const artifact of reviewedArtifacts) {
         expect(fs.statSync(path.join(reviewedRoot, artifact)).mode & 0o777).toBe(0o664);
+      }
+
+      const executableBundle = path.join(permissionFixture, "mcp-tool-discovery.mjs");
+      fs.copyFileSync(path.join(reviewedRoot, "mcp-tool-discovery.bundle"), executableBundle);
+      const bundleResult = spawnSync(process.execPath, [executableBundle], { encoding: "utf8" });
+      expect(bundleResult.status, bundleResult.stderr).toBe(0);
+      expect(JSON.parse(bundleResult.stdout)).toMatchObject({
+        protocol: 1,
+        ok: false,
+        count: 0,
+        tools: [],
+        truncated: false,
+        detail: "tool discovery received invalid runtime arguments",
+      });
+      const acceptedContract = spawnSync(process.execPath, ["-e", contractValidator], {
+        encoding: "utf8",
+        input: bundleResult.stdout,
+      });
+      expect(acceptedContract.status, acceptedContract.stderr).toBe(0);
+      for (const rejectedOutput of [
+        '{"protocol":1,"ok":false,"detail":"wrong"}\n',
+        '{"protocol":1,"ok":false,"detail":"tool discovery received invalid runtime arguments","extra":NaN}\n',
+        '\uFEFF{"protocol":1,"ok":false,"detail":"tool discovery received invalid runtime arguments"}\n',
+      ]) {
+        const rejectedContract = spawnSync(process.execPath, ["-e", contractValidator], {
+          encoding: "utf8",
+          input: rejectedOutput,
+        });
+        expect(rejectedContract.status).not.toBe(0);
       }
 
       const linkedArtifact = path.join(reviewedRoot, reviewedArtifacts[0]);

@@ -260,7 +260,6 @@ jobs:
           fi
 
           discovery_runtime="/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime"
-          expected_discovery_contract='{"protocol":1,"ok":false,"detail":"tool discovery received invalid runtime arguments"}'
           if ! actual_discovery_contract="$(
             docker run --rm --platform "$PLATFORM" --entrypoint /bin/sh "$image_id" -c '
               set -eu
@@ -304,7 +303,31 @@ jobs:
             echo "ERROR: final PR managed image discovery contract probe failed." >&2
             exit 1
           fi
-          if [ "$actual_discovery_contract" != "$expected_discovery_contract" ]; then
+          if ! node -e '
+            const expected = {
+              protocol: 1,
+              ok: false,
+              detail: "tool discovery received invalid runtime arguments",
+            };
+            let result;
+            try {
+              result = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+            } catch {
+              process.exit(1);
+            }
+            const record =
+              result !== null && typeof result === "object" && !Array.isArray(result)
+                ? result
+                : undefined;
+            if (
+              !record ||
+              record.protocol !== expected.protocol ||
+              record.ok !== expected.ok ||
+              record.detail !== expected.detail
+            ) {
+              process.exit(1);
+            }
+          ' <<< "$actual_discovery_contract" >/dev/null; then
             echo "ERROR: final PR managed image discovery bundle contract mismatch." >&2
             exit 1
           fi
