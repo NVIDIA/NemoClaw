@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { shouldRetryMcpMutationAfterConcurrencyConflict } from "../live/mcp-bridge-cleanup.ts";
 import {
   type FakeMcpHttpsServer,
@@ -22,6 +27,7 @@ const EXPECTED_SECRET = "expected-secret";
 const EXPECTED_RESULT_TOKEN = "expected-result";
 const SESSION_ID = "fake-session-1";
 const PROTOCOL_VERSION = "2025-03-26";
+const STATUS_SECRET = "unregistered-sensitive-status-value";
 
 function request(rpcMethod: string, overrides: Partial<FakeMcpRequest> = {}): FakeMcpRequest {
   return {
@@ -69,10 +75,13 @@ const BRIDGE_TOOLS = ["tool_search", "tool_describe", "tool_call"].map((name) =>
 }));
 
 let compatibleMock: StartedHttpServer | undefined;
+let artifactRoot: string | undefined;
 
 afterEach(async () => {
   await compatibleMock?.close();
   compatibleMock = undefined;
+  if (artifactRoot) await fs.rm(artifactRoot, { recursive: true, force: true });
+  artifactRoot = undefined;
 });
 
 async function startDeferredCompatibleMock(): Promise<StartedHttpServer> {
@@ -188,16 +197,29 @@ describe("authenticated MCP rediscovery evidence", () => {
 describe("authenticated MCP tool discovery transport retry", () => {
   it("writes redacted boundary diagnostics before a discovery failure (#8746)", async () => {
     const statusJson = {
-      provider: { attached: true, credentialReady: true },
-      policy: { gatewayPresent: true },
-      adapter: { registered: true },
-      trustedPrivateTarget: { state: "match" },
+      provider: {
+        registryPresent: true,
+        gatewayPresent: true,
+        attached: true,
+        credentialReady: true,
+        credentialResolution: { detail: STATUS_SECRET },
+        token: STATUS_SECRET,
+      },
+      policy: { registryPresent: true, gatewayPresent: true, token: STATUS_SECRET },
+      adapter: { registered: true, detail: STATUS_SECRET, sessionId: STATUS_SECRET },
+      trustedPrivateTarget: {
+        state: "match" as const,
+        host: STATUS_SECRET,
+        recordedPins: [STATUS_SECRET],
+        detail: STATUS_SECRET,
+      },
       toolDiscovery: {
         ok: false,
         count: 0,
         tools: [],
         truncated: false,
         detail: "MCP tool discovery request failed",
+        credential: STATUS_SECRET,
       },
     };
     const fakeMcp = { requests: [] } as unknown as FakeMcpHttpsServer;
@@ -207,7 +229,8 @@ describe("authenticated MCP tool discovery transport retry", () => {
         return { exitCode: 0, stdout: JSON.stringify(statusJson), stderr: "" };
       }),
     } as unknown as Parameters<typeof assertAuthenticatedMcpToolDiscovery>[0];
-    const artifacts = { writeJson: vi.fn().mockResolvedValue("diagnostics.json") };
+    artifactRoot = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-mcp-diagnostics-"));
+    const artifacts = new ArtifactSink(artifactRoot);
 
     await expect(
       assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
@@ -219,28 +242,46 @@ describe("authenticated MCP tool discovery transport retry", () => {
       }),
     ).rejects.toThrow();
 
-    expect(artifacts.writeJson).toHaveBeenCalledWith(
+    const artifactPath = path.join(
+      artifactRoot,
       "openclaw-trusted-private-mcp-tool-discovery-diagnostics.json",
-      {
-        ...statusJson,
-        requests: [
-          {
-            httpMethod: "POST",
-            rpcMethod: "initialize",
-            responseStatus: 200,
-            responseHasResult: true,
-            sessionMetadataPresent: {
-              sessionId: false,
-              protocolVersion: false,
-              negotiatedSessionId: true,
-              negotiatedProtocolVersion: true,
-            },
-            credentialRewriteMatched: true,
-          },
-        ],
-      },
     );
-    const diagnostics = JSON.stringify(artifacts.writeJson.mock.calls[0]?.[1]);
+    const diagnostics = await fs.readFile(artifactPath, "utf8");
+    expect(JSON.parse(diagnostics)).toEqual({
+      provider: {
+        registryPresent: true,
+        gatewayPresent: true,
+        attached: true,
+        credentialReady: true,
+        credentialResolutionPresent: true,
+      },
+      policy: { registryPresent: true, gatewayPresent: true },
+      adapter: { registered: true, detailPresent: true },
+      trustedPrivateTarget: { state: "match", detailPresent: true },
+      toolDiscovery: {
+        ok: false,
+        count: 0,
+        tools: [],
+        truncated: false,
+        detail: "MCP tool discovery request failed",
+      },
+      requests: [
+        {
+          httpMethod: "POST",
+          rpcMethod: "initialize",
+          responseStatus: 200,
+          responseHasResult: true,
+          sessionMetadataPresent: {
+            sessionId: false,
+            protocolVersion: false,
+            negotiatedSessionId: true,
+            negotiatedProtocolVersion: true,
+          },
+          credentialRewriteMatched: true,
+        },
+      ],
+    });
+    expect(diagnostics).not.toContain(STATUS_SECRET);
     expect(diagnostics).not.toContain(EXPECTED_SECRET);
     expect(diagnostics).not.toContain(SESSION_ID);
     expect(diagnostics).not.toContain(PROTOCOL_VERSION);

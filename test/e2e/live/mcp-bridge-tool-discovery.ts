@@ -40,11 +40,26 @@ export function shouldRetryMcpDiscoveryAfterRestart(
 }
 
 type McpToolDiscoveryStatusJson = {
-  provider: Record<string, unknown> & { credentialResolution?: unknown };
-  policy?: unknown;
-  adapter?: unknown;
-  trustedPrivateTarget?: unknown;
-  toolDiscovery: {
+  provider: Record<string, unknown> & {
+    registryPresent: boolean;
+    gatewayPresent: boolean | null;
+    attached: boolean | null;
+    credentialReady: boolean | null;
+    credentialResolution?: unknown;
+  };
+  policy: Record<string, unknown> & {
+    registryPresent: boolean;
+    gatewayPresent: boolean | null;
+  };
+  adapter: Record<string, unknown> & {
+    registered: boolean | null;
+    detail?: unknown;
+  };
+  trustedPrivateTarget?: Record<string, unknown> & {
+    state: "match" | "drift" | "unresolved";
+    detail?: unknown;
+  };
+  toolDiscovery: Record<string, unknown> & {
     ok: boolean;
     count: number;
     tools: string[];
@@ -59,11 +74,34 @@ function buildMcpToolDiscoveryDiagnostics(
   expectedSecret: string,
 ): Record<string, unknown> {
   return {
-    provider: status.provider,
-    policy: status.policy,
-    adapter: status.adapter,
-    trustedPrivateTarget: status.trustedPrivateTarget,
-    toolDiscovery: status.toolDiscovery,
+    provider: {
+      registryPresent: status.provider.registryPresent,
+      gatewayPresent: status.provider.gatewayPresent,
+      attached: status.provider.attached,
+      credentialReady: status.provider.credentialReady,
+      credentialResolutionPresent: status.provider.credentialResolution !== undefined,
+    },
+    policy: {
+      registryPresent: status.policy.registryPresent,
+      gatewayPresent: status.policy.gatewayPresent,
+    },
+    adapter: {
+      registered: status.adapter.registered,
+      detailPresent: status.adapter.detail !== undefined,
+    },
+    trustedPrivateTarget: status.trustedPrivateTarget
+      ? {
+          state: status.trustedPrivateTarget.state,
+          detailPresent: status.trustedPrivateTarget.detail !== undefined,
+        }
+      : null,
+    toolDiscovery: {
+      ok: status.toolDiscovery.ok,
+      count: status.toolDiscovery.count,
+      tools: [...status.toolDiscovery.tools],
+      truncated: status.toolDiscovery.truncated,
+      ...(status.toolDiscovery.detail !== undefined ? { detail: status.toolDiscovery.detail } : {}),
+    },
     requests: requests.map((request) => ({
       httpMethod: request.method,
       rpcMethod: request.rpcMethod ?? null,
