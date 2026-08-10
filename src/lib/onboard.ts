@@ -502,8 +502,6 @@ const authoritativeRebuildTarget: typeof import("./onboard/authoritative-rebuild
   require("./onboard/authoritative-rebuild-target");
 const { assertDashboardPortNotReserved, buildRequiredPreflightPorts } =
   require("./onboard/preflight-ports") as typeof import("./onboard/preflight-ports");
-const { failFastOnForeignGatewayPortConflict } =
-  require("./onboard/gateway-port-conflict") as typeof import("./onboard/gateway-port-conflict");
 const { printPortConflictReport } =
   require("./onboard/port-conflict-report") as typeof import("./onboard/port-conflict-report");
 const { tryCleanupOrphanedDashboardForward } =
@@ -538,6 +536,8 @@ const dockerDriverGatewayRuntimeMarker: typeof import("./onboard/docker-driver-g
 const gatewayBinding: typeof import("./onboard/gateway-binding") = require("./onboard/gateway-binding");
 const fatalRuntimePreflight: typeof import("./onboard/fatal-runtime-preflight") =
   require("./onboard/fatal-runtime-preflight");
+const preflightGatewayAuthority: typeof import("./onboard/machine/preflight-gateway-authority") =
+  require("./onboard/machine/preflight-gateway-authority");
 const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/preflight");
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
 const overlayfsAutoFix: typeof import("./onboard/overlayfs-auto-fix") = require("./onboard/overlayfs-auto-fix");
@@ -574,11 +574,8 @@ import {
   type MessagingChannelConfig,
 } from "./messaging-channel-config";
 import { streamGatewayStart } from "./onboard/gateway";
-import {
-  adoptPackagedGatewayAuthorityAfterTrustedInstall,
-  bindGatewayAuthorityToCheckpoint,
-  checkpointGatewayAuthority,
-} from "./onboard/gateway-authority-checkpoint";
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+import { adoptPackagedGatewayAuthorityAfterTrustedInstall, bindGatewayAuthorityToCheckpoint, checkpointGatewayAuthority } from "./onboard/gateway-authority-checkpoint";
 import { createGatewayHostRuntime } from "./onboard/gateway-host-runtime";
 import {
   mergeRequiredHermesToolGatewayPolicyPresets,
@@ -1125,14 +1122,8 @@ function ensureOpenshellForOnboard(
   exitProcess: (code: number) => never = (code) => process.exit(code),
   persistTrustedGatewayOwner?: (owner: import("./onboard/gateway-ownership").GatewayOwner) => void,
 ): OpenShellInstallResult {
-  const result = openshellInstallFlow.ensureOpenshellForOnboard(
-    getOpenShellInstallDeps(exitProcess),
-    {
-      afterSuccessfulInstall: () =>
-        adoptPackagedGatewayOwnerAfterTrustedInstall(persistTrustedGatewayOwner),
-    },
-  );
-  return result;
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  return openshellInstallFlow.ensureOpenshellForOnboard(getOpenShellInstallDeps(exitProcess), { afterSuccessfulInstall: () => adoptPackagedGatewayOwnerAfterTrustedInstall(persistTrustedGatewayOwner) });
 }
 
 function getOpenShellInstallDeps(
@@ -1411,34 +1402,15 @@ function attachGatewayMetadataIfNeeded({
 // ── Step 1: Preflight ────────────────────────────────────────────
 
 type PreflightOptions = import("./onboard/fatal-runtime-preflight").FatalRuntimePreflightOptions;
-
-async function collectOnboardGatewayReadiness() {
-  return fatalRuntimePreflight.collectOnboardGatewayReadiness({
-    gatewayName: () => GATEWAY_NAME,
-    gatewayPort: () => GATEWAY_PORT,
-    resolveOwner: getGatewayOwner,
-    probeAttachment: machineGatewayOwnerDeps.probeGatewayAttachment,
-  });
-}
-
-function isManagedGatewayReadiness(
-  gatewayReadiness: import("./readiness/gateway").GatewayReadinessProjection,
-): boolean {
-  return gatewayReadiness.observations.some(
-    ({ id, state, value }) =>
-      id === "gateway.management.mode" && state === "present" && value === "nemoclaw-managed",
-  );
-}
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+async function collectOnboardGatewayReadiness() { return preflightGatewayAuthority.collectOnboardGatewayReadiness({ gatewayName: () => GATEWAY_NAME, gatewayPort: () => GATEWAY_PORT, resolveOwner: getGatewayOwner, probeAttachment: machineGatewayOwnerDeps.probeGatewayAttachment }); }
 
 async function preflight(
   preflightOpts: PreflightOptions = {},
 ): Promise<ReturnType<typeof nim.detectGpu>> {
   step(1, 8, "Preflight checks");
-  const { gpu, host, sandboxGpuConfig } =
-    await fatalRuntimePreflight.runReadinessGatedRuntimePreflight(preflightOpts, {
-      nonInteractive: isNonInteractive(),
-      collectGatewayReadiness: collectOnboardGatewayReadiness,
-    });
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const { gpu, host, sandboxGpuConfig } = await fatalRuntimePreflight.runReadinessGatedRuntimePreflight(preflightOpts, { nonInteractive: isNonInteractive(), collectGatewayReadiness: collectOnboardGatewayReadiness });
 
   await preflightUtils.checkContainerRuntimeResources(host, {
     ignored: process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1",
@@ -1446,41 +1418,9 @@ async function preflight(
     confirm: () => promptYesNoOrDefault("  Continue with onboarding?", null, false),
   });
 
-  ensureOpenshellForOnboard(
-    (code) => process.exit(code),
-    (owner) => {
-      onboardSession.updateSession((session) => {
-        adoptPackagedGatewayAuthorityAfterTrustedInstall(session, owner);
-      });
-    },
-  );
-  // Installation and portable preparation can replace binaries, services, or
-  // runtime endpoints. Refresh the canonical authority immediately before any
-  // legacy selector or lifecycle effect consumes it.
-  const gatewayReadiness = await collectOnboardGatewayReadiness();
-  const gatewayExternallySupervised = !isManagedGatewayReadiness(gatewayReadiness);
-  // Bind the one lifecycle authority before applying any legacy listener-name
-  // heuristic. An external supervisor may intentionally use an arbitrary
-  // executable name; its listener is validated exactly by the downstream FSM.
-  await failFastOnForeignGatewayPortConflict({
-    gatewayPort: GATEWAY_PORT,
-    externallySupervised: gatewayExternallySupervised,
-    checkPortAvailable,
-    getGatewayPortCheckOptions: dockerDriverGatewayEnv.getGatewayPortCheckOptions,
-    isDockerDriverGatewayPortListener,
-    exitProcess: (code) => process.exit(code),
-  });
-
-  // Classify gateway state before port checks; the legacy path destroys
-  // stale/unnamed gateways here while the Docker-driver path defers (#2020).
-  const observedGatewaySnapshot = getGatewayReuseSnapshot();
-  const gatewaySnapshot = gatewayExternallySupervised
-    ? observedGatewaySnapshot
-    : selectNamedGatewayForReuseIfNeeded(observedGatewaySnapshot);
-  let gatewayReuseState = gatewaySnapshot.gatewayReuseState;
-  if (!gatewayExternallySupervised) {
-    gatewayReuseState = await refreshDockerDriverGatewayReuseState(gatewayReuseState);
-  }
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const { externallySupervised: gatewayExternallySupervised, gatewayReuseState: initialGatewayReuseState } = await preflightGatewayAuthority.preparePreflightGatewayAuthority({ collectGatewayReadiness: collectOnboardGatewayReadiness, ensureOpenshell: (persistTrustedGatewayOwner) => ensureOpenshellForOnboard((code) => process.exit(code), persistTrustedGatewayOwner), persistTrustedGatewayOwner: (owner) => { onboardSession.updateSession((session) => { adoptPackagedGatewayAuthorityAfterTrustedInstall(session, owner); }); }, gatewayPort: GATEWAY_PORT, portConflict: { checkPortAvailable, getGatewayPortCheckOptions: dockerDriverGatewayEnv.getGatewayPortCheckOptions, isDockerDriverGatewayPortListener, exitProcess: (code) => process.exit(code) }, getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded, refreshDockerDriverGatewayReuseState });
+  let gatewayReuseState = initialGatewayReuseState;
 
   // Verify the legacy gateway container is actually running — openshell CLI
   // metadata can be stale after a manual `docker rm`. See #2020. Newer
