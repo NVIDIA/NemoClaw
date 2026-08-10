@@ -106,12 +106,11 @@ async function waitForCompletion(
   coordinator: JetsonDispatchCoordinator,
   jobId: string,
 ): Promise<JetsonDispatchStatus> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const status = coordinator.status(jobId);
-    if (status.state === "completed") return status;
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-  throw new Error("Jetson dispatch did not complete in the test deadline");
+  await vi.waitFor(() => expect(coordinator.status(jobId).state).toBe("completed"), {
+    interval: 1,
+    timeout: 1_000,
+  });
+  return coordinator.status(jobId);
 }
 
 function worker(
