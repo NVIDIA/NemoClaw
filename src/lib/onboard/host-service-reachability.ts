@@ -18,6 +18,7 @@
  */
 
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
+import { cliName } from "./branding";
 
 export const DEFAULT_PROBE_NETWORK = "openshell-docker";
 const HOST_INTERNAL_NAME = "host.openshell.internal";
@@ -252,7 +253,7 @@ export function formatHostServiceUnreachableMessage(
     "    A host firewall may be blocking traffic from the OpenShell Docker bridge.",
     "    To allow it:",
     allowCmd,
-    "    Then re-run `nemoclaw onboard`.",
+    `    Then rerun \`${cliName()} onboard\`.`,
   ].join("\n");
 }
 

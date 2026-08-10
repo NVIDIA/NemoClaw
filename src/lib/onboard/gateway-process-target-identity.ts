@@ -45,15 +45,22 @@ export function gatewayTargetMatches(
   return true;
 }
 
+export function canonicalGatewayTargetMatches(name: string, port: number): boolean {
+  return resolveGatewayName(port) === name && resolveGatewayPortFromName(name) === port;
+}
+
 function cliFlagValue(tokens: string[], names: string[]): string | null {
+  const values: string[] = [];
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
     for (const name of names) {
-      if (token === name) return tokens[index + 1] ?? null;
-      if (token.startsWith(`${name}=`)) return token.slice(name.length + 1);
+      if (token === name && tokens[index + 1]) values.push(tokens[index + 1]);
+      else if (token.startsWith(`${name}=`) && token.length > name.length + 1) {
+        values.push(token.slice(name.length + 1));
+      }
     }
   }
-  return null;
+  return values.length === 1 ? values[0] : null;
 }
 
 export function openShellGatewayMatchesTarget(

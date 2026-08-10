@@ -985,7 +985,12 @@ function connectivityCheck(
   }
   if (!isRecordArray(routeValue) || routeValue.length !== 1) return failed("route");
   const route = routeValue[0]!;
-  const routeSource = route.prefsrc ?? route.src;
+  // `ip -j route get <peer> from <src> oif <dev>` echoes the source back as the
+  // `from` field on iproute2 6.1.0 (DGX Spark / DGX OS 7.5.0) instead of
+  // `prefsrc`/`src`, so the source must be read from `from` too or the route
+  // check fails on every healthy cluster (#8684; same field-shape class as the
+  // neighbor `dev`-omission fix in #8519/#8527).
+  const routeSource = route.prefsrc ?? route.src ?? route.from;
   if (
     route.dev !== request.netdev ||
     routeSource !== request.sourceAddress ||

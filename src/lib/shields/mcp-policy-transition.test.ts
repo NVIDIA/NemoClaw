@@ -418,6 +418,34 @@ describe("managed MCP Shields policy transitions (#7952)", () => {
     ]);
   });
 
+  it("reconciles 257 current managed policies without losing entries (#7952)", () => {
+    const policies = Array.from({ length: 257 }, (_, index) =>
+      registeredPolicy(`server${index}`, "8.8.8.8"),
+    );
+    const current = inspectExactManagedMcpPolicies(
+      sandboxWithPolicies(policies),
+      livePolicy(
+        policies.map((policy, index) => ({
+          content: policy.content,
+          server: `server${index}`,
+        })),
+      ),
+    );
+    const snapshot = YAML.stringify({
+      version: 1,
+      network_policies: { restrictive_baseline: {} },
+    });
+
+    const restored = YAML.parse(composeManagedMcpPolicies(snapshot, current));
+
+    expect(Object.keys(restored.network_policies).sort()).toEqual(
+      ["restrictive_baseline", ...current.map(({ key }) => key)].sort(),
+    );
+    expect(restored.network_policies.mcp_bridge_server256).toEqual(
+      current.find(({ key }) => key === "mcp_bridge_server256")?.networkPolicy,
+    );
+  });
+
   it("does not restore a managed MCP policy removed during the shields-down window", () => {
     const alpha = registeredPolicy("alpha", "8.8.8.8");
     const snapshot = YAML.stringify({

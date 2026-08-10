@@ -190,6 +190,44 @@ export async function assertHermesManagedAddSurvivesLockedGatewayRestartAndState
 }
 
 /**
+ * Rebuild can outlive the inherited Shields-down timer and correctly return
+ * with lockdown restored. Normalize the posture first so an already-down
+ * sandbox cannot retain an almost-expired timer, then open a fresh window for
+ * the final managed MCP mutation.
+ */
+export async function reopenHermesMcpMaintenanceWindow(
+  host: HostCliClient,
+  sandboxName: string,
+): Promise<void> {
+  const shieldsUp = await host.nemoclaw([sandboxName, "shields", "up"], {
+    artifactName: "hermes-mcp-shields-up-before-post-rebuild-remove",
+    env: buildAvailabilityProbeEnv(),
+    redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
+    timeoutMs: 3 * 60_000,
+  });
+  expectExitZero(shieldsUp, "normalize Hermes shields before post-rebuild MCP removal");
+
+  const shieldsDown = await host.nemoclaw(
+    [
+      sandboxName,
+      "shields",
+      "down",
+      "--timeout",
+      "15m",
+      "--reason",
+      "Post-rebuild MCP removal E2E",
+    ],
+    {
+      artifactName: "hermes-mcp-shields-down-before-post-rebuild-remove",
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
+      timeoutMs: 3 * 60_000,
+    },
+  );
+  expectExitZero(shieldsDown, "open a fresh Hermes MCP maintenance window after rebuild");
+}
+
+/**
  * Inject a first-reload failure around the packaged transaction helper, then
  * require its real rollback reload to restore the prior config, both integrity
  * anchors, and a healthy managed gateway in the live sandbox.
