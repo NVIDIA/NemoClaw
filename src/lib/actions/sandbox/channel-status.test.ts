@@ -361,6 +361,7 @@ function slackWaitHarness(
   options: {
     paused?: boolean;
     agentName?: "openclaw" | "hermes";
+    gatewayPolicyDurationMs?: number;
     probeDurationsMs?: readonly number[];
     configDurationMs?: number;
   } = {},
@@ -383,8 +384,14 @@ function slackWaitHarness(
     clock += Math.min(options.configDurationMs ?? 0, timeoutMs);
     return { status: 0, stdout: "{}", stderr: "" };
   });
+  const gatewayPolicy = vi.fn((_sandboxName: string, timeoutMs?: number) => {
+    const durationMs = options.gatewayPolicyDurationMs ?? 0;
+    const effectiveTimeoutMs = timeoutMs ?? durationMs;
+    clock += Math.min(durationMs, effectiveTimeoutMs);
+    return durationMs > effectiveTimeoutMs ? null : ["slack"];
+  });
   const agentName = options.agentName ?? "openclaw";
-  const { deps } = makeDeps({
+  const { deps: baseDeps } = makeDeps({
     agentName,
     sandbox: entry(["slack"], options.paused ? ["slack"] : [], {}, agentName),
     appliedPresets: ["slack"],
@@ -394,7 +401,8 @@ function slackWaitHarness(
     nowMs: () => clock,
     sleep,
   });
-  return { deps, probe, configRead, sleep };
+  const deps = { ...baseDeps, getGatewayPresets: gatewayPolicy };
+  return { deps, gatewayPolicy, probe, configRead, sleep };
 }
 
 function waitForSlack(
@@ -453,10 +461,14 @@ describe("showSandboxChannelStatus Slack readiness wait", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("bounds every sandbox command by one wait deadline (#7383)", async () => {
-    const { deps, probe, configRead, sleep } = slackWaitHarness(
+  it("bounds every readiness dependency by one wait deadline (#7383)", async () => {
+    const { deps, gatewayPolicy, probe, configRead, sleep } = slackWaitHarness(
       [{ connected: false }, { connected: false }],
-      { probeDurationsMs: [400, 800], configDurationMs: 300 },
+      {
+        gatewayPolicyDurationMs: 450,
+        probeDurationsMs: [400, 800],
+        configDurationMs: 300,
+      },
     );
 
     const result = await waitForSlack(deps, 2, 500);
@@ -470,11 +482,12 @@ describe("showSandboxChannelStatus Slack readiness wait", () => {
       elapsedMs: 2_000,
       lastObserved: {
         category: "network",
-        reason: "socket_mode_connecting",
+        reason: "policy_status_unavailable",
       },
     });
-    expect(probe.mock.calls.map(([timeoutMs]) => timeoutMs)).toEqual([2_000, 800]);
-    expect(configRead.mock.calls.map(([timeoutMs]) => timeoutMs)).toEqual([1_600]);
+    expect(gatewayPolicy.mock.calls.map(([, timeoutMs]) => timeoutMs)).toEqual([2_000, 350]);
+    expect(probe.mock.calls.map(([timeoutMs]) => timeoutMs)).toEqual([1_550]);
+    expect(configRead.mock.calls.map(([timeoutMs]) => timeoutMs)).toEqual([1_150]);
     expect(sleep).toHaveBeenCalledWith(500);
   });
 });

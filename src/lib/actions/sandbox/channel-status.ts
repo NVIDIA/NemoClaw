@@ -63,7 +63,7 @@ type StatusDeps = {
   loadAgent?: (name: string) => AgentDefinition;
   getSandbox?: typeof registry.getSandbox;
   getAppliedPresets?: (sandboxName: string) => string[];
-  getGatewayPresets?: (sandboxName: string) => string[] | null;
+  getGatewayPresets?: (sandboxName: string, timeoutMs?: number) => string[] | null;
   execSandbox?: ExecRunner;
   now?: () => Date;
   nowMs?: () => number;
@@ -473,7 +473,7 @@ function collectChannelReport(
   hasHealthHook: boolean,
   deadlineMs?: number,
 ): ChannelStatusSingleReport {
-  const collectionDeps = deadlineMs === undefined ? deps : withExecDeadline(deps, deadlineMs);
+  const collectionDeps = deadlineMs === undefined ? deps : withStatusDeadline(deps, deadlineMs);
   const probeTimeoutMs =
     deadlineMs === undefined
       ? undefined
@@ -513,17 +513,21 @@ function collectChannelReport(
   };
 }
 
-function withExecDeadline(deps: Required<StatusDeps>, deadlineMs: number): Required<StatusDeps> {
+function withStatusDeadline(deps: Required<StatusDeps>, deadlineMs: number): Required<StatusDeps> {
+  const boundedTimeoutMs = (requestedTimeoutMs?: number): number | null => {
+    const remainingMs = deadlineMs - deps.nowMs();
+    if (remainingMs <= 0) return null;
+    return Math.min(requestedTimeoutMs ?? remainingMs, remainingMs);
+  };
   return {
     ...deps,
+    getGatewayPresets: (sandboxName, requestedTimeoutMs) => {
+      const timeoutMs = boundedTimeoutMs(requestedTimeoutMs);
+      return timeoutMs === null ? null : deps.getGatewayPresets(sandboxName, timeoutMs);
+    },
     execSandbox: (sandboxName, command, requestedTimeoutMs) => {
-      const remainingMs = deadlineMs - deps.nowMs();
-      if (remainingMs <= 0) return null;
-      return deps.execSandbox(
-        sandboxName,
-        command,
-        Math.min(requestedTimeoutMs ?? remainingMs, remainingMs),
-      );
+      const timeoutMs = boundedTimeoutMs(requestedTimeoutMs);
+      return timeoutMs === null ? null : deps.execSandbox(sandboxName, command, timeoutMs);
     },
   };
 }
