@@ -18,102 +18,72 @@ import { stripAnsi } from "./json-envelope.ts";
 type RestartAgent = "hermes" | "openclaw";
 type ShieldsPosture = "DOWN" | "UP";
 
-type ContainerState = {
-  readonly created: string;
-  readonly exitCode: number;
-  readonly finishedAt: string;
-  readonly health: string;
-  readonly id: string;
-  readonly image: string;
-  readonly name: string;
-  readonly pid: number;
-  readonly restarting: boolean;
-  readonly running: boolean;
-  readonly startedAt: string;
-  readonly status: string;
-};
+type ContainerState = Readonly<
+  Record<
+    "created" | "finishedAt" | "health" | "id" | "image" | "name" | "startedAt" | "status",
+    string
+  > &
+    Record<"exitCode" | "pid", number> &
+    Record<"restarting" | "running", boolean>
+>;
 
-type FileEvidence = {
-  readonly exists: boolean;
-  readonly gid?: number;
-  readonly kind?: "directory" | "other" | "regular" | "symlink";
-  readonly mode?: string;
-  readonly nlink?: number;
-  readonly path: string;
-  readonly sha256?: string;
-  readonly uid?: number;
-};
+type FileEvidence = Readonly<
+  { exists: boolean; path: string } & Partial<
+    Record<"gid" | "nlink" | "uid", number> &
+      Record<"mode" | "sha256", string> & { kind: "directory" | "other" | "regular" | "symlink" }
+  >
+>;
 
-type ProcessIdentity = {
-  readonly exists: boolean;
-  readonly namespaceInode?: number;
-  readonly parentPid?: number;
-  readonly pid: number;
-  readonly startTime?: string;
-  readonly state?: string;
-  readonly uids?: readonly number[];
-};
+type ProcessIdentity = Readonly<
+  { exists: boolean; pid: number } & Partial<
+    Record<"namespaceInode" | "parentPid", number> &
+      Record<"startTime" | "state", string> & { uids: readonly number[] }
+  >
+>;
 
 type ReadinessMarker = FileEvidence & {
-  readonly identity?: {
-    readonly namespaceInode: number;
-    readonly pid: number;
-    readonly startTime: string;
-    readonly version: number;
-  };
+  readonly identity?: Readonly<
+    Record<"namespaceInode" | "pid" | "version", number> & { startTime: string }
+  >;
   readonly valid: boolean;
 };
 
-type ManagedControlEvidence = {
-  readonly disposition: "already-running";
-  readonly exitCode: number;
-  readonly newPid: number;
-  readonly nonceSha256: string;
-  readonly oldPid: number;
-  readonly phase: "complete";
-  readonly valid: true;
-  readonly version: "v1";
-};
+type ManagedControlEvidence = Readonly<{
+  authenticated: true;
+  disposition: "already-running";
+  nonceSha256: string;
+  pid: number;
+}>;
 
-type ManagedProcessChainEvidence = {
-  readonly gateway: ProcessIdentity;
-  readonly supervisor: ProcessIdentity;
-};
+type ManagedProcessChainEvidence = Readonly<Record<"gateway" | "supervisor", ProcessIdentity>>;
 
 type RuntimeEvidence = {
   readonly files: readonly FileEvidence[];
+  readonly managedProcessChain: ManagedProcessChainEvidence | null;
   readonly pid1: ProcessIdentity;
   readonly readiness: readonly ReadinessMarker[];
   readonly runDirectory: FileEvidence;
 };
 
-type HostStateEvidence = {
-  readonly configurationSealHash: string;
-  readonly exists: true;
-  readonly fileHashes: Record<string, string>;
-  readonly gid: number;
-  readonly mode: string;
-  readonly policySnapshotHash: string | null;
-  readonly shieldsDown: boolean;
-  readonly stateFileHash: string;
-  readonly uid: number;
-};
+type HostStateEvidence = Readonly<
+  Record<"configurationSealHash" | "mode" | "stateFileHash", string> &
+    Record<"gid" | "uid", number> & {
+      fileHashes: Record<string, string>;
+      policySnapshotHash: string | null;
+      shieldsDown: boolean;
+    }
+>;
 
-type RegistryEvidence = {
-  readonly agent: unknown;
-  readonly entryHash: string;
-  readonly inferenceHash: string;
-  readonly model: unknown;
-  readonly preferredInferenceApi: unknown;
-  readonly provider: unknown;
-};
+type RegistryEvidence = Readonly<
+  Record<"entryHash" | "inferenceHash", string> &
+    Record<"agent" | "model" | "preferredInferenceApi" | "provider", unknown>
+>;
 
 type StageEvidence = {
   readonly container: ContainerState;
   readonly forwardList: string;
   readonly openshellExitCode: number | null;
   readonly openshellPhase: string | null;
-  readonly openshellSandbox: string;
   readonly registry: RegistryEvidence;
   readonly runtime: RuntimeEvidence | null;
   readonly shields: HostStateEvidence;
@@ -140,42 +110,26 @@ export type ShieldsRestartRecoveryOptions = {
 };
 
 const RUNTIME_EVIDENCE_SCRIPT = String.raw`
-import hashlib
-import json
-import os
-import re
-import stat
-import sys
+import hashlib, json, os, re, stat, sys
 
-agent = sys.argv[1]
-workspace_marker = sys.argv[2]
-config_paths = json.loads(sys.argv[3])
-posture_paths = json.loads(sys.argv[4])
+agent, workspace_marker, config_json, posture_json, gateway_pid_text = sys.argv[1:]
+config_paths, posture_paths = map(json.loads, (config_json, posture_json))
+gateway_pid = int(gateway_pid_text, 10)
 max_file_bytes = 64 * 1024 * 1024
 
 def kind(mode):
-    if stat.S_ISREG(mode):
-        return "regular"
-    if stat.S_ISDIR(mode):
-        return "directory"
-    if stat.S_ISLNK(mode):
-        return "symlink"
-    return "other"
+    return next((label for check, label in (
+        (stat.S_ISREG, "regular"), (stat.S_ISDIR, "directory"), (stat.S_ISLNK, "symlink")
+    ) if check(mode)), "other")
 
 def metadata(path):
     try:
         current = os.lstat(path)
     except FileNotFoundError:
         return {"path": path, "exists": False}
-    return {
-        "path": path,
-        "exists": True,
-        "kind": kind(current.st_mode),
-        "mode": format(stat.S_IMODE(current.st_mode), "04o"),
-        "uid": current.st_uid,
-        "gid": current.st_gid,
-        "nlink": current.st_nlink,
-    }
+    return {"path": path, "exists": True, "kind": kind(current.st_mode),
+            "mode": format(stat.S_IMODE(current.st_mode), "04o"),
+            "uid": current.st_uid, "gid": current.st_gid, "nlink": current.st_nlink}
 
 def read_regular(path, limit=max_file_bytes):
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -195,12 +149,8 @@ def read_regular(path, limit=max_file_bytes):
             if total > limit:
                 raise RuntimeError(f"evidence file exceeds limit: {path}")
         after = os.fstat(descriptor)
-        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
-            after.st_dev,
-            after.st_ino,
-            after.st_size,
-            after.st_mtime_ns,
-        ):
+        stable_identity = lambda item: (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns)
+        if stable_identity(before) != stable_identity(after):
             raise RuntimeError(f"evidence file changed while reading: {path}")
         return b"".join(chunks), before
     finally:
@@ -211,13 +161,9 @@ def file_evidence(path):
     if not record["exists"] or record.get("kind") != "regular":
         return record
     raw, current = read_regular(path)
-    record.update({
-        "mode": format(stat.S_IMODE(current.st_mode), "04o"),
-        "uid": current.st_uid,
-        "gid": current.st_gid,
-        "nlink": current.st_nlink,
-        "sha256": hashlib.sha256(raw).hexdigest(),
-    })
+    record.update({"mode": format(stat.S_IMODE(current.st_mode), "04o"),
+                   "uid": current.st_uid, "gid": current.st_gid, "nlink": current.st_nlink,
+                   "sha256": hashlib.sha256(raw).hexdigest()})
     return record
 
 def proc_identity(pid):
@@ -228,15 +174,9 @@ def proc_identity(pid):
         status = open(f"{base}/status", "r", encoding="ascii").read().splitlines()
         uid_line = next(line for line in status if line.startswith("Uid:"))
         uids = [int(value) for value in uid_line.split()[1:5]]
-        return {
-            "pid": pid,
-            "exists": True,
-            "parentPid": int(suffix[1]),
-            "state": suffix[0],
-            "startTime": suffix[19],
-            "namespaceInode": os.stat(f"{base}/ns/pid").st_ino,
-            "uids": uids,
-        }
+        return {"pid": pid, "exists": True, "parentPid": int(suffix[1]), "state": suffix[0],
+                "startTime": suffix[19], "namespaceInode": os.stat(f"{base}/ns/pid").st_ino,
+                "uids": uids}
     except (FileNotFoundError, IndexError, StopIteration, ValueError):
         return {"pid": pid, "exists": False}
 
@@ -253,22 +193,16 @@ def marker(path):
     try:
         if agent == "openclaw":
             payload = json.loads(raw.decode("ascii"))
-            identity = {
-                "version": payload.get("version"),
-                "pid": payload.get("pid"),
-                "startTime": str(payload.get("pidStartTime", "")),
-                "namespaceInode": payload.get("pidNamespaceInode"),
-            }
+            identity = {"version": payload.get("version"), "pid": payload.get("pid"),
+                        "startTime": str(payload.get("pidStartTime", "")),
+                        "namespaceInode": payload.get("pidNamespaceInode")}
         else:
             match = re.fullmatch(rb"v2 ([0-9]+) ([0-9]+)\n", raw)
             if match is None:
                 return record
-            identity = {
-                "version": 2,
-                "pid": 1,
-                "startTime": match.group(1).decode("ascii"),
-                "namespaceInode": int(match.group(2), 10),
-            }
+            identity = {"version": 2, "pid": 1,
+                        "startTime": match.group(1).decode("ascii"),
+                        "namespaceInode": int(match.group(2), 10)}
     except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
         return record
     record["identity"] = identity
@@ -277,59 +211,25 @@ def marker(path):
         and record.get("uid") == 0
         and record.get("gid") == 0
         and record.get("nlink") == 1
-        and identity == {
-            "version": 2,
-            "pid": 1,
-            "startTime": pid1["startTime"],
-            "namespaceInode": pid1["namespaceInode"],
-        }
+        and identity == {"version": 2, "pid": 1, "startTime": pid1["startTime"],
+                         "namespaceInode": pid1["namespaceInode"]}
     )
     return record
 
-marker_paths = (
-    [
-        "/run/nemoclaw/openclaw-config-ready-v1.capability.json",
-        "/run/nemoclaw/openclaw-config-ready.json",
-    ]
-    if agent == "openclaw"
-    else ["/run/nemoclaw/hermes-startup-ready"]
-)
+marker_paths = (["/run/nemoclaw/openclaw-config-ready-v1.capability.json",
+                 "/run/nemoclaw/openclaw-config-ready.json"] if agent == "openclaw"
+                else ["/run/nemoclaw/hermes-startup-ready"])
 all_paths = list(dict.fromkeys(config_paths + posture_paths + [workspace_marker]))
-print(json.dumps({
-    "pid1": pid1,
-    "runDirectory": metadata("/run/nemoclaw"),
-    "readiness": [marker(item) for item in marker_paths],
-    "files": [file_evidence(item) for item in all_paths],
-}, sort_keys=True, separators=(",", ":")))
-`;
-
-const MANAGED_PROCESS_CHAIN_SCRIPT = String.raw`
-import json
-import os
-import sys
-
-def proc_identity(pid):
-    base = f"/proc/{pid}"
-    try:
-        raw_stat = open(f"{base}/stat", "r", encoding="ascii").read().strip()
-        suffix = raw_stat.rsplit(") ", 1)[1].split()
-        status = open(f"{base}/status", "r", encoding="ascii").read().splitlines()
-        uid_line = next(line for line in status if line.startswith("Uid:"))
-        return {
-            "pid": pid,
-            "exists": True,
-            "parentPid": int(suffix[1]),
-            "state": suffix[0],
-            "startTime": suffix[19],
-            "namespaceInode": os.stat(f"{base}/ns/pid").st_ino,
-            "uids": [int(value) for value in uid_line.split()[1:5]],
-        }
-    except (FileNotFoundError, IndexError, StopIteration, ValueError):
-        return {"pid": pid, "exists": False}
-
-gateway = proc_identity(int(sys.argv[1], 10))
-supervisor = proc_identity(gateway.get("parentPid", 0))
-print(json.dumps({"gateway": gateway, "supervisor": supervisor}, sort_keys=True, separators=(",", ":")))
+managed_process_chain = None
+if gateway_pid > 0:
+    gateway = proc_identity(gateway_pid)
+    managed_process_chain = {"gateway": gateway,
+                             "supervisor": proc_identity(gateway.get("parentPid", 0))}
+print(json.dumps({"pid1": pid1, "runDirectory": metadata("/run/nemoclaw"),
+                  "readiness": [marker(item) for item in marker_paths],
+                  "files": [file_evidence(item) for item in all_paths],
+                  "managedProcessChain": managed_process_chain},
+                 sort_keys=True, separators=(",", ":")))
 `;
 
 const RESTART_DIAGNOSTICS_SCRIPT = String.raw`
@@ -345,42 +245,27 @@ redact_stream() {
     -e 's/([[:alnum:]_]*(KEY|TOKEN|SECRET|PASSWORD)=)[^[:space:]]+/\1<redacted>/gI'
 }
 
-printf '%s\n' '== OpenShell sandbox state =='
-openshell sandbox get "$sandbox_name" 2>&1 | redact_stream
-printf '%s\n' '== OpenShell phase history checkpoint: forwards =='
-openshell forward list 2>&1 | redact_stream
-printf '%s\n' '== OpenShell gateway service =='
-systemctl --user status nemoclaw-openshell-gateway --no-pager -l 2>&1 | redact_stream
-printf '%s\n' '== OpenShell gateway journal =='
-journalctl --user -u nemoclaw-openshell-gateway -n 120 --no-pager 2>&1 | redact_stream
+printf '%s\n' '== OpenShell sandbox state =='; openshell sandbox get "$sandbox_name" 2>&1 | redact_stream
+printf '%s\n' '== OpenShell phase history checkpoint: forwards =='; openshell forward list 2>&1 | redact_stream
+printf '%s\n' '== OpenShell gateway service =='; systemctl --user status nemoclaw-openshell-gateway --no-pager -l 2>&1 | redact_stream
+printf '%s\n' '== OpenShell gateway journal =='; journalctl --user -u nemoclaw-openshell-gateway -n 120 --no-pager 2>&1 | redact_stream
 
-container_ids="$(docker ps -aq --no-trunc \
-  --filter label=openshell.ai/managed-by=openshell \
-  --filter "label=openshell.ai/sandbox-name=$sandbox_name" \
-  --filter label=openshell.ai/sandbox-workspace=default)"
+container_ids="$(docker ps -aq --no-trunc --filter label=openshell.ai/managed-by=openshell \
+  --filter "label=openshell.ai/sandbox-name=$sandbox_name" --filter label=openshell.ai/sandbox-workspace=default)"
 printf '%s\n' '== matching containers =='
-if [ -z "$container_ids" ]; then
-  printf '%s\n' 'none'
-fi
+[ -n "$container_ids" ] || printf '%s\n' 'none'
 for container_id in $container_ids; do
   docker inspect --format '{{.Id}} {{.Name}} {{.Created}} {{.Image}} {{.State.Status}} {{.State.Running}} {{.State.Restarting}} {{.State.Pid}} {{.State.ExitCode}} {{.State.StartedAt}} {{.State.FinishedAt}}' "$container_id" 2>&1
-  printf '%s\n' "== container $container_id process tree =="
-  docker top "$container_id" -eo pid,ppid,user,stat,comm 2>&1
+  printf '%s\n' "== container $container_id process tree =="; docker top "$container_id" -eo pid,ppid,user,stat,comm 2>&1
   printf '%s\n' "== container $container_id runtime logs =="
   docker exec --user 0 "$container_id" sh -lc '
-    printf "%s\n" "== PID 1 =="
-    ps -o user=,pid=,ppid=,stat=,comm= -p 1 2>&1 || true
-    printf "%s\n" "== startup readiness leases =="
-    stat -c "%n %F %a %u:%g %h" /run/nemoclaw/*ready* 2>&1 || true
-    printf "%s\n" "== startup log =="
-    tail -n 240 /tmp/nemoclaw-start.log 2>&1 || true
-    printf "%s\n" "== gateway log =="
-    tail -n 240 /tmp/gateway.log 2>&1 || true
-    printf "%s\n" "== Hermes dashboard log =="
-    tail -n 120 /tmp/dashboard.log 2>&1 || true
+    printf "%s\n" "== PID 1 =="; ps -o user=,pid=,ppid=,stat=,comm= -p 1 2>&1 || true
+    printf "%s\n" "== startup readiness leases =="; stat -c "%n %F %a %u:%g %h" /run/nemoclaw/*ready* 2>&1 || true
+    printf "%s\n" "== startup log =="; tail -n 240 /tmp/nemoclaw-start.log 2>&1 || true
+    printf "%s\n" "== gateway log =="; tail -n 240 /tmp/gateway.log 2>&1 || true
+    printf "%s\n" "== Hermes dashboard log =="; tail -n 120 /tmp/dashboard.log 2>&1 || true
   ' 2>&1 | redact_stream
-  printf '%s\n' "== container $container_id Docker logs =="
-  docker logs --tail 240 "$container_id" 2>&1 | redact_stream
+  printf '%s\n' "== container $container_id Docker logs =="; docker logs --tail 240 "$container_id" 2>&1 | redact_stream
 done
 `;
 
@@ -462,7 +347,6 @@ function readShieldsEvidence(sandboxName: string): HostStateEvidence {
   const state = JSON.parse(raw.toString("utf8")) as {
     fileHashes?: Record<string, string>;
     shieldsDown?: boolean;
-    shieldsDownPolicy?: string | null;
     shieldsPolicySnapshotPath?: string | null;
   };
   const fileHashes = Object.fromEntries(
@@ -470,7 +354,6 @@ function readShieldsEvidence(sandboxName: string): HostStateEvidence {
   );
   return {
     configurationSealHash: sha256(stableJson(fileHashes)),
-    exists: true,
     fileHashes,
     gid: Number(pathMetadata.gid),
     mode: fileMode(Number(pathMetadata.mode)),
@@ -492,14 +375,24 @@ function openshellPhase(value: string): string | null {
   );
 }
 
+function evidenceCommandOptions(
+  options: ShieldsRestartRecoveryOptions,
+  artifactName: string,
+  timeoutMs = 60_000,
+) {
+  return {
+    artifactName,
+    env: options.env,
+    redactionValues: [...options.redactionValues],
+    timeoutMs,
+  };
+}
+
 async function containerState(
-  host: HostCliClient,
-  sandboxName: string,
+  options: ShieldsRestartRecoveryOptions,
   artifactPrefix: string,
-  env: NodeJS.ProcessEnv,
-  redactionValues: readonly string[],
 ): Promise<ContainerState> {
-  const list = await host.command(
+  const list = await options.host.command(
     "docker",
     [
       "ps",
@@ -508,21 +401,16 @@ async function containerState(
       "--filter",
       "label=openshell.ai/managed-by=openshell",
       "--filter",
-      `label=openshell.ai/sandbox-name=${sandboxName}`,
+      `label=openshell.ai/sandbox-name=${options.sandboxName}`,
       "--filter",
       "label=openshell.ai/sandbox-workspace=default",
     ],
-    {
-      artifactName: `${artifactPrefix}-docker-containers`,
-      env,
-      redactionValues: [...redactionValues],
-      timeoutMs: 30_000,
-    },
+    evidenceCommandOptions(options, `${artifactPrefix}-docker-containers`, 30_000),
   );
   expect(list.exitCode, resultText(list)).toBe(0);
   const ids = list.stdout.trim().split(/\s+/).filter(Boolean);
-  expect(ids, `expected exactly one Docker container for ${sandboxName}`).toHaveLength(1);
-  const inspect = await host.command(
+  expect(ids, `expected exactly one Docker container for ${options.sandboxName}`).toHaveLength(1);
+  const inspect = await options.host.command(
     "docker",
     [
       "inspect",
@@ -530,12 +418,7 @@ async function containerState(
       "{{.Id}}\t{{.Name}}\t{{.Created}}\t{{.Image}}\t{{.State.Status}}\t{{.State.Running}}\t{{.State.Restarting}}\t{{.State.Pid}}\t{{.State.ExitCode}}\t{{.State.StartedAt}}\t{{.State.FinishedAt}}\t{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
       ids[0]!,
     ],
-    {
-      artifactName: `${artifactPrefix}-docker-inspect`,
-      env,
-      redactionValues: [...redactionValues],
-      timeoutMs: 30_000,
-    },
+    evidenceCommandOptions(options, `${artifactPrefix}-docker-inspect`, 30_000),
   );
   expect(inspect.exitCode, resultText(inspect)).toBe(0);
   const fields = inspect.stdout.trim().split("\t");
@@ -557,12 +440,12 @@ async function containerState(
 }
 
 async function runtimeEvidence(
-  host: HostCliClient,
   options: ShieldsRestartRecoveryOptions,
   containerId: string,
   artifactPrefix: string,
+  gatewayPid = 0,
 ): Promise<RuntimeEvidence> {
-  const result = await host.command(
+  const result = await options.host.command(
     "docker",
     [
       "exec",
@@ -577,13 +460,9 @@ async function runtimeEvidence(
       options.workspaceMarkerPath,
       JSON.stringify(options.configPaths),
       JSON.stringify(options.posturePaths),
+      String(gatewayPid),
     ],
-    {
-      artifactName: `${artifactPrefix}-runtime-security-evidence`,
-      env: options.env,
-      redactionValues: [...options.redactionValues],
-      timeoutMs: 60_000,
-    },
+    evidenceCommandOptions(options, `${artifactPrefix}-runtime-security-evidence`),
   );
   expect(result.exitCode, resultText(result)).toBe(0);
   return JSON.parse(result.stdout.trim()) as RuntimeEvidence;
@@ -594,6 +473,9 @@ async function postStartManagedControlProbe(
   expectedContainerId: string,
 ): Promise<ManagedControlEvidence> {
   const nonce = randomBytes(32).toString("hex");
+  // The nonce is a single-use challenge, not a credential, and must remain
+  // visible until the response is authenticated; fixture redaction still
+  // covers credential values before command output is returned.
   const result = await options.host.command(
     "docker",
     privilegedSandboxExecArgv(
@@ -604,32 +486,25 @@ async function postStartManagedControlProbe(
       expectedContainerId,
     ),
     {
-      artifactName: `${options.artifactPrefix}-post-start-managed-control`,
+      ...evidenceCommandOptions(
+        options,
+        `${options.artifactPrefix}-post-start-managed-control`,
+        210_000,
+      ),
       env: buildAvailabilityProbeEnv(options.env),
-      // ShellProbe redacts before returning output. The random nonce is a
-      // single-use challenge, not a credential, and must remain visible long
-      // enough to authenticate the controller response. Credential values
-      // still pass through the canonical fixture redaction boundary.
-      redactionValues: [...options.redactionValues],
-      timeoutMs: 210_000,
     },
   );
-  const match = result
-    ? new RegExp(
-        `^v1 ${nonce} complete already-running ([1-9][0-9]*) ([1-9][0-9]*)\\nGATEWAY_PID=([1-9][0-9]*)$`,
-      ).exec(result.stdout.trim())
-    : null;
-  const oldPid = Number.parseInt(match?.[1] ?? "0", 10);
-  const newPid = Number.parseInt(match?.[2] ?? "0", 10);
-  const gatewayPid = Number.parseInt(match?.[3] ?? "0", 10);
+  const match = new RegExp(
+    `^v1 ${nonce} complete already-running ([1-9][0-9]*) ([1-9][0-9]*)\\nGATEWAY_PID=([1-9][0-9]*)$`,
+  ).exec(result.stdout.trim());
+  const pids = match?.slice(1).map((value) => Number.parseInt(value, 10)) ?? [];
   if (
     result.exitCode !== 0 ||
     result.stderr.trim() !== "" ||
     match === null ||
-    !Number.isSafeInteger(oldPid) ||
-    !Number.isSafeInteger(newPid) ||
-    oldPid !== newPid ||
-    newPid !== gatewayPid
+    pids.length !== 3 ||
+    pids.some((pid) => !Number.isSafeInteger(pid)) ||
+    new Set(pids).size !== 1
   ) {
     throw new Error(
       `post-start managed-control authentication failed with exit code ${result.exitCode}; ` +
@@ -637,49 +512,16 @@ async function postStartManagedControlProbe(
     );
   }
   const evidence: ManagedControlEvidence = {
+    authenticated: true,
     disposition: "already-running",
-    exitCode: 0,
-    newPid,
     nonceSha256: sha256(nonce),
-    oldPid,
-    phase: "complete",
-    valid: true,
-    version: "v1",
+    pid: pids[0]!,
   };
   await options.artifacts.writeJson(
     `${options.artifactPrefix}-post-start-managed-control.json`,
     evidence,
   );
   return evidence;
-}
-
-async function managedProcessChainEvidence(
-  options: ShieldsRestartRecoveryOptions,
-  containerId: string,
-  gatewayPid: number,
-): Promise<ManagedProcessChainEvidence> {
-  const result = await options.host.command(
-    "docker",
-    [
-      "exec",
-      "--user",
-      "0",
-      containerId,
-      "python3",
-      "-I",
-      "-c",
-      MANAGED_PROCESS_CHAIN_SCRIPT,
-      String(gatewayPid),
-    ],
-    {
-      artifactName: `${options.artifactPrefix}-post-start-managed-process-chain`,
-      env: options.env,
-      redactionValues: [...options.redactionValues],
-      timeoutMs: 30_000,
-    },
-  );
-  expect(result.exitCode, resultText(result)).toBe(0);
-  return JSON.parse(result.stdout.trim()) as ManagedProcessChainEvidence;
 }
 
 async function captureStage(
@@ -691,40 +533,25 @@ async function captureStage(
   const sandboxState = await options.host.command(
     "openshell",
     ["sandbox", "get", options.sandboxName],
-    {
-      artifactName: `${prefix}-openshell-sandbox`,
-      env: options.env,
-      redactionValues: [...options.redactionValues],
-      timeoutMs: 60_000,
-    },
+    evidenceCommandOptions(options, `${prefix}-openshell-sandbox`),
   );
   if (stage !== "stopped") {
     expect(sandboxState.exitCode, resultText(sandboxState)).toBe(0);
   }
-  const forwards = await options.host.command("openshell", ["forward", "list"], {
-    artifactName: `${prefix}-openshell-forwards`,
-    env: options.env,
-    redactionValues: [...options.redactionValues],
-    timeoutMs: 60_000,
-  });
-  expect(forwards.exitCode, resultText(forwards)).toBe(0);
-  const container = await containerState(
-    options.host,
-    options.sandboxName,
-    prefix,
-    options.env,
-    options.redactionValues,
+  const forwards = await options.host.command(
+    "openshell",
+    ["forward", "list"],
+    evidenceCommandOptions(options, `${prefix}-openshell-forwards`),
   );
+  expect(forwards.exitCode, resultText(forwards)).toBe(0);
+  const container = await containerState(options, prefix);
   const evidence: StageEvidence = {
     container,
     forwardList: stripAnsi(forwards.stdout),
     openshellExitCode: sandboxState.exitCode,
     openshellPhase: openshellPhase(resultText(sandboxState)),
-    openshellSandbox: stripAnsi(resultText(sandboxState)),
     registry: readRegistryEvidence(options.sandboxName),
-    runtime: includeRuntime
-      ? await runtimeEvidence(options.host, options, container.id, prefix)
-      : null,
+    runtime: includeRuntime ? await runtimeEvidence(options, container.id, prefix) : null,
     shields: readShieldsEvidence(options.sandboxName),
     stage,
   };
@@ -745,11 +572,8 @@ async function captureDiagnostics(
       options.sandboxName,
     ],
     {
-      artifactName: `${options.artifactPrefix}-${stage}-diagnostics`,
+      ...evidenceCommandOptions(options, `${options.artifactPrefix}-${stage}-diagnostics`, 90_000),
       captureLimitBytes: 512 * 1024,
-      env: options.env,
-      redactionValues: [...options.redactionValues],
-      timeoutMs: 90_000,
     },
   );
 }
@@ -846,16 +670,8 @@ function assertManagedControlReady(
   processChain: ManagedProcessChainEvidence,
   pid1: ProcessIdentity,
 ): void {
-  expect(control.valid, "the post-start managed-control probe was not authenticated").toBe(true);
-  expect(control).toMatchObject({
-    disposition: "already-running",
-    exitCode: 0,
-    phase: "complete",
-    version: "v1",
-  });
   expect(control.nonceSha256).toMatch(/^[0-9a-f]{64}$/);
-  expect(control.newPid).toBe(control.oldPid);
-  expect(processChain.gateway).toMatchObject({ exists: true, pid: control.newPid });
+  expect(processChain.gateway).toMatchObject({ exists: true, pid: control.pid });
   expect(processChain.gateway.parentPid).toBeGreaterThan(1);
   expect(processChain.gateway.state).not.toBe("Z");
   expect(processChain.gateway.namespaceInode).toBe(pid1.namespaceInode);
@@ -902,62 +718,19 @@ async function assertForwardHealth(
   const health = await options.host.command(
     "curl",
     [
-      "-q",
-      "--noproxy",
-      "*",
-      "-sS",
-      "-o",
-      "/dev/null",
-      "-w",
-      "%{http_code}",
-      "--connect-timeout",
-      "3",
-      "--max-time",
-      "10",
+      ..."-q --noproxy * -sS -o /dev/null -w %{http_code} --connect-timeout 3 --max-time 10".split(
+        " ",
+      ),
       `http://127.0.0.1:${port}${healthPath}`,
     ],
-    {
-      artifactName: `${options.artifactPrefix}-after-forward-${port}-health`,
-      env: options.env,
-      redactionValues: [...options.redactionValues],
-      timeoutMs: 30_000,
-    },
+    evidenceCommandOptions(
+      options,
+      `${options.artifactPrefix}-after-forward-${port}-health`,
+      30_000,
+    ),
   );
   expect(health.exitCode, resultText(health)).toBe(0);
   expect(health.stdout.trim(), resultText(health)).toMatch(/^(200|401)$/);
-}
-
-async function captureStartReturnBarrier(options: ShieldsRestartRecoveryOptions): Promise<{
-  forwardList: string;
-  openshellPhase: string | null;
-}> {
-  const sandboxState = await options.host.command(
-    "openshell",
-    ["sandbox", "get", options.sandboxName],
-    {
-      artifactName: `${options.artifactPrefix}-return-barrier-openshell-sandbox`,
-      env: options.env,
-      redactionValues: [...options.redactionValues],
-      timeoutMs: 60_000,
-    },
-  );
-  expect(sandboxState.exitCode, resultText(sandboxState)).toBe(0);
-  const phase = openshellPhase(resultText(sandboxState));
-  expect(phase, "public start returned before OpenShell reported Ready").toMatch(/^Ready$/i);
-
-  const forwards = await options.host.command("openshell", ["forward", "list"], {
-    artifactName: `${options.artifactPrefix}-return-barrier-openshell-forwards`,
-    env: options.env,
-    redactionValues: [...options.redactionValues],
-    timeoutMs: 60_000,
-  });
-  expect(forwards.exitCode, resultText(forwards)).toBe(0);
-  const forwardList = stripAnsi(forwards.stdout);
-  for (const required of options.requiredForwards) {
-    assertRequiredForward(forwardList, options.sandboxName, required.port);
-    await assertForwardHealth(options, required.port, required.path);
-  }
-  return { forwardList, openshellPhase: phase };
 }
 
 function leaseIdentity(runtime: RuntimeEvidence): string {
@@ -1024,24 +797,37 @@ export async function expectProtectedStopStartRecovery(
   }
   expect(start.exitCode, resultText(start)).toBe(0);
 
-  let returnBarrier: Awaited<ReturnType<typeof captureStartReturnBarrier>>;
   let after: StageEvidence;
+  let managedControl: ManagedControlEvidence;
   try {
-    returnBarrier = await captureStartReturnBarrier(options);
-    after = await captureStage(options, "after", true);
+    after = await captureStage(options, "after", false);
+    expect(after.openshellPhase, "public start returned before OpenShell reported Ready").toMatch(
+      /^Ready$/i,
+    );
+    for (const required of options.requiredForwards) {
+      assertRequiredForward(after.forwardList, options.sandboxName, required.port);
+      await assertForwardHealth(options, required.port, required.path);
+    }
+
+    managedControl = await postStartManagedControlProbe(options, before.container.id);
+    const runtime = await runtimeEvidence(
+      options,
+      before.container.id,
+      `${options.artifactPrefix}-after`,
+      managedControl.pid,
+    );
+    after = { ...after, runtime };
+    await options.artifacts.writeJson(
+      `${options.artifactPrefix}-after-restart-evidence.json`,
+      after,
+    );
+    expect(runtime.managedProcessChain, "managed process-chain evidence is missing").not.toBeNull();
+    assertManagedControlReady(managedControl, runtime.managedProcessChain!, runtime.pid1);
   } catch (error) {
     await captureDiagnostics(options, "after-start-evidence-failed");
     throw error;
   }
 
-  const status = await options.host.nemoclaw([options.sandboxName, "status"], {
-    artifactName: `${options.artifactPrefix}-status`,
-    env: options.env,
-    redactionValues: [...options.redactionValues],
-    timeoutMs: 5 * 60_000,
-  });
-  expect(status.exitCode, resultText(status)).toBe(0);
-  expect(stripAnsi(resultText(status))).toMatch(/Phase:\s*Ready/i);
   const shields = await options.readShieldsStatus(`${options.artifactPrefix}-shields-status`);
   expect(shields.exitCode, resultText(shields)).toBe(0);
   expect(resultText(shields)).toContain(`Shields: ${options.posture}`);
@@ -1051,7 +837,6 @@ export async function expectProtectedStopStartRecovery(
   expect(after.container.restarting, "public start left the container restarting").toBe(false);
   expect(after.container.pid).toBeGreaterThan(1);
   expect(after.container.startedAt).not.toBe(before.container.startedAt);
-  expect(after.openshellPhase).toMatch(/^Ready$/i);
   expect(after.registry).toEqual(before.registry);
   expect(after.shields).toEqual(before.shields);
   assertRestartFileInvariants(before.runtime!, after.runtime!, options);
@@ -1064,24 +849,6 @@ export async function expectProtectedStopStartRecovery(
     leaseIdentity(before.runtime!),
   );
 
-  for (const required of options.requiredForwards) {
-    assertRequiredForward(after.forwardList, options.sandboxName, required.port);
-  }
-
-  let managedControl: ManagedControlEvidence;
-  let processChain: ManagedProcessChainEvidence;
-  try {
-    managedControl = await postStartManagedControlProbe(options, before.container.id);
-    processChain = await managedProcessChainEvidence(
-      options,
-      after.container.id,
-      managedControl.newPid,
-    );
-    assertManagedControlReady(managedControl, processChain, after.runtime!.pid1);
-  } catch (error) {
-    await captureDiagnostics(options, "post-start-managed-control-failed");
-    throw error;
-  }
   await captureDiagnostics(options, "after-start");
 
   await options.artifacts.writeJson(`${options.artifactPrefix}-restart-recovery-summary.json`, {
@@ -1089,34 +856,19 @@ export async function expectProtectedStopStartRecovery(
     configurationSealHash: after.shields.configurationSealHash,
     containerId: after.container.id,
     publicStartRecoveryGatePassed: true,
-    postStartManagedControlProbe: {
-      disposition: managedControl.disposition,
-      newPid: managedControl.newPid,
-      nonceSha256: managedControl.nonceSha256,
-      oldPid: managedControl.oldPid,
-    },
-    openshellPhaseHistory: [
-      {
-        exitCode: before.openshellExitCode,
-        phase: before.openshellPhase,
-        stage: before.stage,
-      },
-      {
-        exitCode: stopped.openshellExitCode,
-        phase: stopped.openshellPhase,
-        stage: stopped.stage,
-      },
-      {
-        exitCode: after.openshellExitCode,
-        phase: after.openshellPhase,
-        stage: after.stage,
-      },
-    ],
+    postStartManagedControlProbe: managedControl,
+    openshellPhaseHistory: [before, stopped, after].map(
+      ({ openshellExitCode: exitCode, openshellPhase: phase, stage }) => ({
+        exitCode,
+        phase,
+        stage,
+      }),
+    ),
     posture: options.posture,
     readinessLeaseRecreated: true,
     returnBarrier: {
-      forwardListHash: sha256(returnBarrier.forwardList),
-      openshellPhase: returnBarrier.openshellPhase,
+      forwardListHash: sha256(after.forwardList),
+      openshellPhase: after.openshellPhase,
     },
     registryEntryHash: after.registry.entryHash,
     registryInferenceHash: after.registry.inferenceHash,

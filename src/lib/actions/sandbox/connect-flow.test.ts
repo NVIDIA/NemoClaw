@@ -508,7 +508,7 @@ describe("connectSandbox flow", () => {
 
     expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith(
       "alpha",
-      expect.objectContaining({ preserveContainer: false, quiet: true }),
+      expect.objectContaining({ quiet: true }),
     );
     expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha");
     expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
@@ -523,23 +523,21 @@ describe("connectSandbox flow", () => {
 
   it("preserves the existing container during a lifecycle-owned final probe (#8662)", async () => {
     const harness = createConnectHarness();
+    const processRecovery = requireDist("../../src/lib/actions/sandbox/process-recovery.js");
+    const pinnedProbe = vi
+      .spyOn(processRecovery, "pinnedManagedGatewayProbeFailure")
+      .mockReturnValue(null);
 
     await expect(
       harness.connectSandbox("alpha", {
         expectedContainerId: "a".repeat(64),
-        preserveContainer: true,
         probeOnly: true,
       }),
     ).resolves.toBeUndefined();
 
-    expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({
-        expectedContainerId: "a".repeat(64),
-        preserveContainer: true,
-        quiet: true,
-      }),
-    );
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(pinnedProbe).toHaveBeenCalledTimes(2);
+    expect(pinnedProbe).toHaveBeenCalledWith("alpha", "a".repeat(64));
     expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha");
   });
 
@@ -603,49 +601,28 @@ describe("connectSandbox flow", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  it.each([
-    {
-      expectedLayer: "managed supervisor",
-      processCheck: {
-        checked: false,
-        forwardRecovered: false,
-        managedSupervisorFailureDetail:
-          "supervisor unavailable: Authorization: Bearer opaque-final-probe-token",
-        managedSupervisorUnavailable: true,
-        recovered: false,
-        wasRunning: false,
-      },
-    },
-    {
-      expectedLayer: "OpenShell readiness",
-      processCheck: {
-        checked: true,
-        forwardRecovered: false,
-        openshellReadinessFailed: true,
-        openshellReadinessFailureDetail:
-          "the sandbox did not become ready in OpenShell, so its host forward was not started",
-        recovered: false,
-        wasRunning: false,
-      },
-    },
-  ])("probe-only mode preserves the actionable $expectedLayer failure (#8662)", async ({
-    expectedLayer,
-    processCheck,
-  }) => {
-    const harness = createConnectHarness({ processCheck });
+  it("probe-only mode sanitizes an actionable pinned-health failure (#8662)", async () => {
+    const harness = createConnectHarness();
+    const processRecovery = requireDist("../../src/lib/actions/sandbox/process-recovery.js");
+    vi.spyOn(processRecovery, "pinnedManagedGatewayProbeFailure").mockReturnValue({
+      layer: "privileged control unavailable",
+      detail: "Authorization: Bearer opaque-final-probe-token",
+    });
 
     await expect(
-      harness.connectSandbox("alpha", { preserveContainer: true, probeOnly: true }),
+      harness.connectSandbox("alpha", {
+        expectedContainerId: "a".repeat(64),
+        probeOnly: true,
+      }),
     ).rejects.toThrow("process.exit(1)");
 
     const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(errorOutput).toContain(expectedLayer);
+    expect(errorOutput).toContain("managed gateway health");
     expect(errorOutput).toContain("existing sandbox was preserved");
     expect(errorOutput).toContain("nemoclaw alpha recover");
     expect(errorOutput).not.toContain("opaque-final-probe-token");
-    if (expectedLayer === "managed supervisor") {
-      expect(errorOutput).toContain("<REDACTED>");
-    }
+    expect(errorOutput).toContain("<REDACTED>");
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 

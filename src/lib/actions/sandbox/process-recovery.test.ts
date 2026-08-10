@@ -105,140 +105,90 @@ describe("managed gateway supervisor startup barrier", () => {
       1234,
       expectedContainerId,
     );
+    expect(
+      pinnedManagedGatewayProbeFailure("restart-box", expectedContainerId, {
+        requestPinnedGatewaySupervisorActionImpl: () => {
+          throw new Error("replacement identity and Bearer opaque-token");
+        },
+      }),
+    ).toEqual({
+      layer: "privileged control unavailable",
+      detail: "the pinned container identity changed during final managed verification",
+    });
   });
 
-  it("admits only the exact health-pending result for stopped-container recovery (#8662)", () => {
-    const requestGatewaySupervisorActionImpl = vi.fn(() => ({
-      status: 1,
-      stdout: "",
-      stderr: "GATEWAY_HEALTH_TIMEOUT",
-    }));
+  it.each([
+    {
+      acceptHealthPending: true,
+      expected: true,
+      label: "admits the exact health-pending result",
+      stderr: ["GATEWAY_HEALTH_TIMEOUT"],
+      sleepArgs: [],
+    },
+    {
+      acceptHealthPending: false,
+      expected: false,
+      label: "keeps existing caller retry semantics",
+      stderr: ["GATEWAY_HEALTH_TIMEOUT", "GATEWAY_HEALTH_TIMEOUT"],
+      sleepArgs: [2],
+    },
+    {
+      acceptHealthPending: true,
+      expected: true,
+      label: "waits through exact supervisor startup states",
+      stderr: [
+        "SUPERVISOR_NOT_RUNNING\nNEMOCLAW_CONTROL_STAGE=discover-supervisor",
+        "PRIVILEGED_CONTROL_UNAVAILABLE",
+        "GATEWAY_HEALTH_TIMEOUT",
+      ],
+      sleepArgs: [3, 3],
+    },
+    {
+      acceptHealthPending: true,
+      expected: false,
+      label: "rejects a missing supervisor from another stage",
+      stderr: ["SUPERVISOR_NOT_RUNNING\nNEMOCLAW_CONTROL_STAGE=preflight"],
+      sleepArgs: [],
+    },
+    {
+      acceptHealthPending: true,
+      expected: false,
+      label: "rejects decorated health output",
+      stderr: ["GATEWAY_HEALTH_TIMEOUT\nunexpected controller diagnostic"],
+      sleepArgs: [],
+    },
+  ])("$label for stopped-container recovery (#8662)", ({
+    acceptHealthPending,
+    expected,
+    sleepArgs,
+    stderr,
+  }) => {
+    const results = stderr.map((value) => ({ status: 1, stdout: "", stderr: value }));
+    const requestGatewaySupervisorActionImpl = vi.fn();
+    results.forEach((result) => requestGatewaySupervisorActionImpl.mockReturnValueOnce(result));
     const sleepImpl = vi.fn();
     const onFailureResult = vi.fn();
 
     expect(
       waitForManagedGatewaySupervisor("restart-box", {
-        acceptGatewayHealthPending: true,
+        acceptGatewayHealthPending: acceptHealthPending,
+        intervalSeconds: sleepArgs[0] ?? 3,
+        maxAttempts: results.length,
         onFailureResult,
         requestGatewaySupervisorActionImpl,
         sleepImpl,
       }),
-    ).toBe(true);
+    ).toBe(expected);
 
-    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(1);
-    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledWith(
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(results.length);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenNthCalledWith(
+      1,
       "restart-box",
       "probe",
       expect.any(Number),
     );
-    expect(sleepImpl).not.toHaveBeenCalled();
-    expect(onFailureResult).not.toHaveBeenCalled();
-  });
-
-  it("keeps health-pending retry semantics unchanged for existing callers (#8662)", () => {
-    const result = {
-      status: 1,
-      stdout: "",
-      stderr: "GATEWAY_HEALTH_TIMEOUT",
-    };
-    const requestGatewaySupervisorActionImpl = vi.fn(() => result);
-    const sleepImpl = vi.fn();
-    const onFailureResult = vi.fn();
-
-    expect(
-      waitForManagedGatewaySupervisor("restart-box", {
-        intervalSeconds: 2,
-        maxAttempts: 2,
-        onFailureResult,
-        requestGatewaySupervisorActionImpl,
-        sleepImpl,
-      }),
-    ).toBe(false);
-
-    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(2);
-    expect(sleepImpl).toHaveBeenCalledOnce();
-    expect(sleepImpl).toHaveBeenCalledWith(2);
-    expect(onFailureResult).toHaveBeenCalledWith(result);
-  });
-
-  it("waits through exact supervisor startup states before admitting health-pending (#8662)", () => {
-    const requestGatewaySupervisorActionImpl = vi
-      .fn()
-      .mockReturnValueOnce({
-        status: 1,
-        stdout: "",
-        stderr: "SUPERVISOR_NOT_RUNNING\nNEMOCLAW_CONTROL_STAGE=discover-supervisor",
-      })
-      .mockReturnValueOnce({
-        status: 1,
-        stdout: "",
-        stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
-      })
-      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "GATEWAY_HEALTH_TIMEOUT" });
-    const sleepImpl = vi.fn();
-
-    expect(
-      waitForManagedGatewaySupervisor("restart-box", {
-        acceptGatewayHealthPending: true,
-        intervalSeconds: 3,
-        maxAttempts: 3,
-        requestGatewaySupervisorActionImpl,
-        sleepImpl,
-      }),
-    ).toBe(true);
-
-    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(3);
-    expect(sleepImpl).toHaveBeenCalledTimes(2);
-    expect(sleepImpl).toHaveBeenNthCalledWith(1, 3);
-    expect(sleepImpl).toHaveBeenNthCalledWith(2, 3);
-  });
-
-  it("rejects a missing-supervisor result from any other control stage (#8662)", () => {
-    const result = {
-      status: 1,
-      stdout: "",
-      stderr: "SUPERVISOR_NOT_RUNNING\nNEMOCLAW_CONTROL_STAGE=preflight",
-    };
-    const requestGatewaySupervisorActionImpl = vi.fn(() => result);
-    const sleepImpl = vi.fn();
-    const onFailureResult = vi.fn();
-
-    expect(
-      waitForManagedGatewaySupervisor("restart-box", {
-        acceptGatewayHealthPending: true,
-        onFailureResult,
-        requestGatewaySupervisorActionImpl,
-        sleepImpl,
-      }),
-    ).toBe(false);
-
-    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(1);
-    expect(sleepImpl).not.toHaveBeenCalled();
-    expect(onFailureResult).toHaveBeenCalledWith(result);
-  });
-
-  it("rejects decorated health output without retrying or hiding its result (#8662)", () => {
-    const result = {
-      status: 1,
-      stdout: "",
-      stderr: "GATEWAY_HEALTH_TIMEOUT\nunexpected controller diagnostic",
-    };
-    const requestGatewaySupervisorActionImpl = vi.fn(() => result);
-    const sleepImpl = vi.fn();
-    const onFailureResult = vi.fn();
-
-    expect(
-      waitForManagedGatewaySupervisor("restart-box", {
-        acceptGatewayHealthPending: true,
-        onFailureResult,
-        requestGatewaySupervisorActionImpl,
-        sleepImpl,
-      }),
-    ).toBe(false);
-
-    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(1);
-    expect(sleepImpl).not.toHaveBeenCalled();
-    expect(onFailureResult).toHaveBeenCalledWith(result);
+    expect(sleepImpl.mock.calls).toEqual(sleepArgs.map((seconds) => [seconds]));
+    expect(onFailureResult.mock.calls).toEqual(expected ? [] : [[results.at(-1)]]);
   });
 });
 

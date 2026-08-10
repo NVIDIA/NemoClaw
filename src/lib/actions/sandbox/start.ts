@@ -13,12 +13,8 @@ import {
   type SandboxLifecycleResult,
 } from "./runtime/lifecycle-runtime";
 
-const SHIELDS_STARTUP_AUTO_RESTORE_REQUIRED = "NEMOCLAW_SHIELDS_AUTO_RESTORE_REQUIRED";
-
 export type SandboxStartGatewayVerificationOptions = {
   expectedContainerId?: string;
-  preserveContainer?: boolean;
-  requirePinnedManagedGatewayProof?: boolean;
 };
 
 export const sandboxStartDependencies = {
@@ -32,156 +28,30 @@ export const sandboxStartDependencies = {
 
 async function verifyGateway(
   sandboxName: string,
-  {
-    expectedContainerId,
-    preserveContainer = false,
-    requirePinnedManagedGatewayProof = false,
-  }: SandboxStartGatewayVerificationOptions = {},
+  { expectedContainerId }: SandboxStartGatewayVerificationOptions = {},
 ): Promise<void> {
-  const { connectSandbox, pinnedManagedGatewayProbeFailure } =
-    sandboxStartDependencies.loadConnect();
-  await connectSandbox(sandboxName, {
+  await sandboxStartDependencies.loadConnect().connectSandbox(sandboxName, {
     expectedContainerId,
-    preserveContainer,
     probeOnly: true,
   });
-  if (!requirePinnedManagedGatewayProof || !expectedContainerId) return;
-  const failure = pinnedManagedGatewayProbeFailure(sandboxName, expectedContainerId);
-  if (!failure) return;
-  throw new Error(
-    `Sandbox '${sandboxName}' startup verification failed during final managed gateway health: ` +
-      `${sanitizedRecoveryDetail(`${failure.layer}: ${failure.detail}`)}. ` +
-      `The existing sandbox was preserved. Run \`${cliName()} ${sandboxName} recover\` and retry \`${cliName()} ${sandboxName} start\`.`,
-  );
 }
 
 type SandboxProcessRecoveryResult = import("./connect").SandboxStartupRecoveryResult;
 type SandboxStartupRecoveryOptions = import("./connect").SandboxStartupRecoveryOptions;
-type ManagedGatewayRecoveryFailure =
-  import("./connect").SandboxStartupManagedGatewayRecoveryFailure;
-
-type SandboxProcessRecoveryFailure = {
-  layer:
-    | "inspection"
-    | "managed gateway health"
-    | "managed supervisor"
-    | "OpenShell readiness"
-    | "secret boundary"
-    | "MCP reconciliation"
-    | "managed gateway recovery"
-    | "host-forward recovery";
-  detail: string;
-};
 
 function sanitizedRecoveryDetail(value: unknown): string {
   const raw = value instanceof Error && value.message ? value.message : String(value ?? "");
   return sandboxStartDependencies.loadConnect().sanitizeSandboxStartupRecoveryDetail(raw);
 }
 
-function startupRecoveryFailure(
-  result: SandboxProcessRecoveryResult,
-  managedRecoveryFailure: ManagedGatewayRecoveryFailure | null = null,
-): SandboxProcessRecoveryFailure | null {
-  if ("managedSupervisorUnavailable" in result && result.managedSupervisorUnavailable) {
-    return {
-      layer: "managed supervisor",
-      detail: sanitizedRecoveryDetail(
-        "managedSupervisorFailureDetail" in result
-          ? result.managedSupervisorFailureDetail
-          : "the authenticated supervisor did not become available in the existing container",
-      ),
-    };
-  }
-  if ("managedGatewayProbeFailed" in result && result.managedGatewayProbeFailed) {
-    return {
-      layer: "managed gateway health",
-      detail: sanitizedRecoveryDetail(
-        "managedGatewayProbeFailureDetail" in result
-          ? result.managedGatewayProbeFailureDetail
-          : "the authenticated managed gateway probe did not pass",
-      ),
-    };
-  }
-  if (!result.checked) {
-    return {
-      layer: "inspection",
-      detail: "the managed agent gateway could not be inspected after the container started",
-    };
-  }
-  if ("secretBoundaryRefused" in result && result.secretBoundaryRefused) {
-    return {
-      layer: "secret boundary",
-      detail: sanitizedRecoveryDetail(
-        "secretBoundaryReason" in result
-          ? result.secretBoundaryReason
-          : "the agent secret boundary refused recovery",
-      ),
-    };
-  }
-  if ("mcpReconciliationRefused" in result && result.mcpReconciliationRefused) {
-    return {
-      layer: "MCP reconciliation",
-      detail: sanitizedRecoveryDetail(
-        "mcpReconciliationReason" in result
-          ? result.mcpReconciliationReason
-          : "MCP reconciliation refused recovery",
-      ),
-    };
-  }
-  if ("openshellReadinessFailed" in result && result.openshellReadinessFailed) {
-    return {
-      layer: "OpenShell readiness",
-      detail: sanitizedRecoveryDetail(
-        "openshellReadinessFailureDetail" in result
-          ? result.openshellReadinessFailureDetail
-          : "the existing sandbox did not become ready in OpenShell",
-      ),
-    };
-  }
-  if ("forwardRecoveryFailed" in result && result.forwardRecoveryFailed) {
-    return {
-      layer: "host-forward recovery",
-      detail: sanitizedRecoveryDetail(
-        "forwardRecoveryFailureDetail" in result
-          ? result.forwardRecoveryFailureDetail
-          : "a required host forward could not be restored",
-      ),
-    };
-  }
-  if (result.wasRunning === false && result.recovered && !result.forwardRecovered) {
-    return {
-      layer: "host-forward recovery",
-      detail: "the primary dashboard/API host forward was not proven after gateway recovery",
-    };
-  }
-  if (result.wasRunning === false && !result.recovered) {
-    return {
-      layer: "managed gateway recovery",
-      detail: sanitizedRecoveryDetail(
-        managedRecoveryFailure
-          ? `${managedRecoveryFailure.layer}: ${managedRecoveryFailure.detail}`
-          : "the managed agent gateway could not be restarted",
-      ),
-    };
-  }
-  if (result.wasRunning === null && (!("runtime" in result) || result.runtime !== "terminal")) {
-    return {
-      layer: "inspection",
-      detail: "the managed agent gateway recovery result was inconclusive",
-    };
-  }
-  return null;
-}
-
 function assertStartupRecoverySucceeded(
   sandboxName: string,
   result: SandboxProcessRecoveryResult,
-  managedRecoveryFailure: ManagedGatewayRecoveryFailure | null = null,
 ): void {
-  const failure = startupRecoveryFailure(result, managedRecoveryFailure);
+  const failure = result.startupFailure;
   if (!failure) return;
   throw new Error(
-    `Sandbox '${sandboxName}' started, but startup recovery failed during ${failure.layer}: ${failure.detail}. ` +
+    `Sandbox '${sandboxName}' started, but startup recovery failed during ${failure.layer}: ${sanitizedRecoveryDetail(failure.detail)}. ` +
       `The existing sandbox was preserved. Run \`${cliName()} ${sandboxName} recover\` and retry \`${cliName()} ${sandboxName} start\`.`,
   );
 }
@@ -277,29 +147,24 @@ export async function startSandbox(
       exitCode: 1,
       message:
         `  Sandbox '${sandboxName}' is running, but the Docker lifecycle provider did not ` +
-        "return its immutable container identity. The existing container was preserved; " +
+        "return its immutable container identity. Refusing unpinned startup recovery; " +
+        "the existing container was preserved. " +
         `run '${cliName()} ${sandboxName} recover' before retrying start.`,
     };
   }
 
   await resolved.lifecycle.verifyStarted(input, async (name) => {
     log("  Restoring sandbox startup state…");
-    const recoveryFailureState: { current: ManagedGatewayRecoveryFailure | null } = {
-      current: null,
-    };
-    const callerRecoveryFailure = deps.startupRecovery?.onRecoveryFailure;
-    const processRecovery: SandboxStartupRecoveryOptions = {
-      ...deps.startupRecovery,
-      expectedContainerId,
-      onRecoveryFailure: (failure) => {
-        recoveryFailureState.current = failure;
-        callerRecoveryFailure?.(failure);
-      },
-    };
+    const processRecovery =
+      expectedContainerId === undefined
+        ? deps.startupRecovery
+        : { ...deps.startupRecovery, expectedContainerId };
     let recovery: SandboxProcessRecoveryResult;
     try {
       recovery = deps.restoreStartupState
-        ? deps.restoreStartupState(name, processRecovery)
+        ? processRecovery === undefined
+          ? deps.restoreStartupState(name)
+          : deps.restoreStartupState(name, processRecovery)
         : restoreStoppedSandboxStartupState(name, {
             agent: resolved.sandbox.agent,
             processRecovery,
@@ -309,7 +174,7 @@ export async function startSandbox(
         error &&
         typeof error === "object" &&
         "code" in error &&
-        error.code === SHIELDS_STARTUP_AUTO_RESTORE_REQUIRED
+        error.code === sandboxStartDependencies.loadShields().SHIELDS_STARTUP_AUTO_RESTORE_REQUIRED
       ) {
         throw new Error(
           `Sandbox '${name}' started, but its expired Shields auto-restore must finish before startup recovery. ` +
@@ -321,16 +186,12 @@ export async function startSandbox(
           `The existing sandbox was preserved. Run \`${cliName()} ${name} recover\` and retry \`${cliName()} ${name} start\`.`,
       );
     }
-    assertStartupRecoverySucceeded(name, recovery, recoveryFailureState.current);
+    assertStartupRecoverySucceeded(name, recovery);
     log("  Checking gateway health and host forwards…");
-    await (deps.verifyGateway ?? verifyGateway)(name, {
-      expectedContainerId,
-      preserveContainer: true,
-      requirePinnedManagedGatewayProof:
-        !resolved.sandbox.agent ||
-        resolved.sandbox.agent === "openclaw" ||
-        resolved.sandbox.agent === "hermes",
-    });
+    const verify = deps.verifyGateway ?? verifyGateway;
+    await (expectedContainerId === undefined
+      ? verify(name)
+      : verify(name, { expectedContainerId }));
   });
   return { exitCode: 0 };
 }

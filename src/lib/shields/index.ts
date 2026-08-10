@@ -1106,7 +1106,7 @@ function isDurableContainmentFailure(error: unknown): boolean {
   );
 }
 
-const SHIELDS_STARTUP_AUTO_RESTORE_REQUIRED = "NEMOCLAW_SHIELDS_AUTO_RESTORE_REQUIRED";
+export const SHIELDS_STARTUP_AUTO_RESTORE_REQUIRED = "NEMOCLAW_SHIELDS_AUTO_RESTORE_REQUIRED";
 
 class ShieldsStartupAutoRestoreRequiredError extends Error {
   readonly code = SHIELDS_STARTUP_AUTO_RESTORE_REQUIRED;
@@ -1415,15 +1415,22 @@ function isShieldsState(value: unknown): value is ShieldsState {
 function stateDirLockExec(sandboxName: string, expectedContainerId?: string) {
   return {
     run: (cmd: string[], input?: string) => {
-      const result = dockerSpawnSync(
-        privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined, true, expectedContainerId),
-        {
-          encoding: "utf-8",
-          input,
-          timeout: STATE_DIR_GUARD_TIMEOUT_MS,
-          maxBuffer: 16 * 1024 * 1024,
-        },
-      );
+      const argv =
+        expectedContainerId === undefined
+          ? privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined, true)
+          : privilegedSandboxExecArgv(
+              sandboxName,
+              cmd,
+              input !== undefined,
+              true,
+              expectedContainerId,
+            );
+      const result = dockerSpawnSync(argv, {
+        encoding: "utf-8",
+        input,
+        timeout: STATE_DIR_GUARD_TIMEOUT_MS,
+        maxBuffer: 16 * 1024 * 1024,
+      });
       return {
         status: result.status,
         signal: result.signal,
@@ -2651,6 +2658,8 @@ function restoreLockedStateDirStartupAccess(
         throw new Error(`Locked startup access could not be restored: ${issues.join(", ")}`);
       }
     },
+    // Lifecycle `start` owns and pins this container, so it must refuse an
+    // expired auto-restore instead of recovering through an unpinned path.
     { allowInlineRecovery: expectedContainerId === undefined },
   );
 }

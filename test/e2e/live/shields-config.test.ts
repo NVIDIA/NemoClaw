@@ -627,6 +627,29 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
     { artifactName: "phase-2-seed-restart-workspace-marker" },
   );
   expect(restartWorkspaceMarker.exitCode, resultText(restartWorkspaceMarker)).toBe(0);
+  const protectedRestart = {
+    agent: "openclaw" as const,
+    artifacts,
+    configPaths: [CONFIG_PATH, CONFIG_HASH_PATH, STATE_LOCK_PLAN_PATH],
+    env: commandEnv(),
+    host,
+    posturePaths: [
+      "/sandbox",
+      CONFIG_DIR,
+      CONFIG_PATH,
+      CONFIG_HASH_PATH,
+      `${CONFIG_DIR}/workspace`,
+      `${CONFIG_DIR}/credentials`,
+    ],
+    readShieldsStatus: (artifactName: string) =>
+      runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], { artifactName }),
+    redactionValues: [apiKey],
+    requiredForwards: [{ path: "/health", port: 18789 }],
+    sandboxName: SANDBOX_NAME,
+    workspaceMarkerPath: RESTART_WORKSPACE_MARKER,
+  };
+  const expectProtectedRestart = (posture: "DOWN" | "UP", artifactPrefix: string) =>
+    expectProtectedStopStartRecovery({ ...protectedRestart, artifactPrefix, posture });
 
   progress.phase("lock config and workspace and inspect redaction");
   const shieldsUp = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
@@ -697,29 +720,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   expect(statusUp.stdout).toContain("Shields: UP");
 
   progress.phase("restart OpenClaw with shields up");
-  await expectProtectedStopStartRecovery({
-    agent: "openclaw",
-    artifactPrefix: "phase-5a-shields-up-start-recovery",
-    artifacts,
-    configPaths: [CONFIG_PATH, CONFIG_HASH_PATH, STATE_LOCK_PLAN_PATH],
-    env: commandEnv(),
-    host,
-    posture: "UP",
-    posturePaths: [
-      "/sandbox",
-      CONFIG_DIR,
-      CONFIG_PATH,
-      CONFIG_HASH_PATH,
-      `${CONFIG_DIR}/workspace`,
-      `${CONFIG_DIR}/credentials`,
-    ],
-    readShieldsStatus: (artifactName) =>
-      runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], { artifactName }),
-    redactionValues: [apiKey],
-    requiredForwards: [{ path: "/health", port: 18789 }],
-    sandboxName: SANDBOX_NAME,
-    workspaceMarkerPath: RESTART_WORKSPACE_MARKER,
-  });
+  await expectProtectedRestart("UP", "phase-5a-shields-up-start-recovery");
   const configAfterLockedRestart = await statPath(
     sandbox,
     CONFIG_PATH,
@@ -877,29 +878,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   expect(statusDown.stdout).toMatch(/Auto-lockdown in:|remaining/i);
 
   progress.phase("restart OpenClaw with shields down");
-  await expectProtectedStopStartRecovery({
-    agent: "openclaw",
-    artifactPrefix: "phase-7a-shields-down-start-recovery",
-    artifacts,
-    configPaths: [CONFIG_PATH, CONFIG_HASH_PATH, STATE_LOCK_PLAN_PATH],
-    env: commandEnv(),
-    host,
-    posture: "DOWN",
-    posturePaths: [
-      "/sandbox",
-      CONFIG_DIR,
-      CONFIG_PATH,
-      CONFIG_HASH_PATH,
-      `${CONFIG_DIR}/workspace`,
-      `${CONFIG_DIR}/credentials`,
-    ],
-    readShieldsStatus: (artifactName) =>
-      runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], { artifactName }),
-    redactionValues: [apiKey],
-    requiredForwards: [{ path: "/health", port: 18789 }],
-    sandboxName: SANDBOX_NAME,
-    workspaceMarkerPath: RESTART_WORKSPACE_MARKER,
-  });
+  await expectProtectedRestart("DOWN", "phase-7a-shields-down-start-recovery");
   const configAfterMutableRestart = await statPath(
     sandbox,
     CONFIG_PATH,

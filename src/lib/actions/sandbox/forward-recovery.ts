@@ -387,7 +387,9 @@ export function ensureHermesDashboardPortForwardIfEnabled(
   return ensureHermesDashboardPortForward(sandboxName, {
     isPortForwardHealthy: (name, port) => {
       const health = isSandboxPortForwardHealthy(name, port);
-      return health === true && options.afterSuccess && !options.afterSuccess() ? null : health;
+      return health === true && options.afterSuccess && !options.afterSuccess()
+        ? "occupied"
+        : health;
     },
     ensurePortForward: (name, port) =>
       ensureSandboxPortForwardForPort(name, port, {

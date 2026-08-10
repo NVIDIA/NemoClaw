@@ -363,6 +363,20 @@ describe("stopSandbox", () => {
     expect(h.dockerStop).not.toHaveBeenCalled();
   });
 
+  it("fails closed on malformed Docker metadata without stopping the container", () => {
+    const h = harness();
+    h.findLabeledSandboxContainers.mockImplementation(() => {
+      throw new Error("Docker returned malformed OpenShell sandbox container metadata.");
+    });
+
+    expect(stopSandbox("my-sandbox", h.deps)).toMatchObject({
+      exitCode: 1,
+      message: expect.stringContaining("preserved"),
+    });
+    expect(h.stopSandboxChannels).not.toHaveBeenCalled();
+    expect(h.dockerStop).not.toHaveBeenCalled();
+  });
+
   it("refuses an unregistered sandbox (#6026)", () => {
     const h = harness();
     h.getSandbox.mockReturnValue(null);

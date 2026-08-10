@@ -1540,8 +1540,8 @@ If the container was removed entirely, `start` fails and points you to `$$nemocl
 
 <AgentOnly variant="openclaw,hermes">
 
-`start` binds recovery and verification to the immutable identity of the existing container.
-It does not rebuild, replace, or destroy that container.
+For a Docker-driver sandbox, `start` binds recovery to the immutable identity of the existing container.
+It does not rebuild, replace, or destroy the container.
 
 `start` returns success only after these checks pass:
 
@@ -1552,7 +1552,7 @@ It does not rebuild, replace, or destroy that container.
 
 If a check fails, the command exits nonzero, identifies the failed layer, and preserves the existing container.
 A failure after the Docker start can leave that container running but unready.
-For most recovery failures, run the printed `$$nemoclaw <name> recover` command before you retry `start`.
+Run the printed `$$nemoclaw <name> recover` command before you retry `start`.
 If an expired Shields auto-restore blocks startup access, run `$$nemoclaw <name> shields up`, then retry `$$nemoclaw <name> start`.
 
 </AgentOnly>

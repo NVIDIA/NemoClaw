@@ -147,10 +147,13 @@ describe("dormant Podman runtime provider", () => {
     const runtime = providerHarness(agent);
     const verifyGateway = vi.fn(async () => undefined);
     const restoreStartupState = vi.fn(() => ({
-      checked: true as const,
-      wasRunning: true,
-      recovered: false,
-      forwardRecovered: false,
+      processCheck: {
+        checked: true as const,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+      },
+      startupFailure: null,
     }));
     const stopSandboxChannels = vi.fn();
 
@@ -194,10 +197,13 @@ describe("dormant Podman runtime provider", () => {
         getSandbox: () => runtime.entry,
         runtimeProviders: runtime.providers,
         restoreStartupState: vi.fn(() => ({
-          checked: true as const,
-          wasRunning: true,
-          recovered: false,
-          forwardRecovered: false,
+          processCheck: {
+            checked: true as const,
+            wasRunning: true,
+            recovered: false,
+            forwardRecovered: false,
+          },
+          startupFailure: null,
         })),
         verifyGateway,
         log: vi.fn(),

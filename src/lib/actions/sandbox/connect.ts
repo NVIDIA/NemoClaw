@@ -86,8 +86,10 @@ import {
   type ManagedGatewayControlCompletion,
   type ManagedGatewayRecoveryFailure,
   pinnedManagedGatewayProbeFailure,
+  recoverStartedSandboxProcesses,
   resolveSandboxDashboardPort,
-  type SandboxProcessRecoveryOptions,
+  type SandboxStartupProcessRecoveryOptions,
+  type SandboxStartupProcessRecoveryResult,
 } from "./process-recovery";
 import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
@@ -98,15 +100,10 @@ export type SandboxConnectOptions = {
   /** Immutable direct-container identity retained by lifecycle `start`. */
   expectedContainerId?: string;
   probeOnly?: boolean;
-  /** Internal recovery guard used by `start`; this is not a CLI flag. */
-  preserveContainer?: boolean;
 };
 
-export type SandboxStartupRecoveryOptions = Omit<
-  SandboxProcessRecoveryOptions,
-  "preserveContainer" | "quiet"
->;
-export type SandboxStartupRecoveryResult = ReturnType<typeof checkAndRecoverSandboxProcesses>;
+export type SandboxStartupRecoveryOptions = SandboxStartupProcessRecoveryOptions;
+export type SandboxStartupRecoveryResult = SandboxStartupProcessRecoveryResult;
 export type SandboxStartupManagedGatewayRecoveryFailure = ManagedGatewayRecoveryFailure;
 
 type SpawnLikeResult = {
@@ -277,10 +274,7 @@ export function sanitizeSandboxStartupRecoveryDetail(raw: string): string {
 
 async function runSandboxConnectProbe(
   sandboxName: string,
-  {
-    expectedContainerId,
-    preserveContainer = false,
-  }: Pick<SandboxConnectOptions, "expectedContainerId" | "preserveContainer"> = {},
+  { expectedContainerId }: Pick<SandboxConnectOptions, "expectedContainerId"> = {},
 ): Promise<void> {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
@@ -296,48 +290,39 @@ async function runSandboxConnectProbe(
     return;
   }
 
+  // `start` already completed exact-container recovery and forward checks.
+  // This branch is deliberately read-only until inference reconciliation, then
+  // re-proves the same authenticated container before reporting success.
+  if (expectedContainerId) {
+    const verifyPinned = () => {
+      const failure = pinnedManagedGatewayProbeFailure(sandboxName, expectedContainerId);
+      if (failure) {
+        exitOnPreservedStartupRecoveryFailure(
+          sandboxName,
+          agentName,
+          "managed gateway health",
+          `${failure.layer}: ${failure.detail}`,
+        );
+      }
+    };
+    verifyPinned();
+    await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
+    runConnectAutoPairApprovalPass(sandboxName);
+    verifyPinned();
+    console.log(`  Probe complete: ${agentName} gateway is running in '${sandboxName}'.`);
+    return;
+  }
+
   // Managed recovery runs quiet here, so its classified failure layer is the
   // only way this path can tell a retryable wedge apart from a deterministic
   // integrity refusal that no restart, recover, or connect can clear (#7801).
   let recoveryFailureLayer: GatewayRestartFailureLayer | null = null;
   const processCheck = checkAndRecoverSandboxProcesses(sandboxName, {
     quiet: true,
-    expectedContainerId,
-    preserveContainer,
     onRecoveryFailureLayer: (layer) => {
       recoveryFailureLayer = layer;
     },
   });
-  if ("managedSupervisorUnavailable" in processCheck && processCheck.managedSupervisorUnavailable) {
-    exitOnPreservedStartupRecoveryFailure(
-      sandboxName,
-      agentName,
-      "managed supervisor",
-      "managedSupervisorFailureDetail" in processCheck
-        ? processCheck.managedSupervisorFailureDetail
-        : "the managed supervisor did not become available",
-    );
-  }
-  if ("managedGatewayProbeFailed" in processCheck && processCheck.managedGatewayProbeFailed) {
-    exitOnPreservedStartupRecoveryFailure(
-      sandboxName,
-      agentName,
-      "managed gateway health",
-      "managedGatewayProbeFailureDetail" in processCheck
-        ? processCheck.managedGatewayProbeFailureDetail
-        : "the authenticated managed gateway health probe did not pass",
-    );
-  }
-  if ("openshellReadinessFailed" in processCheck && processCheck.openshellReadinessFailed) {
-    exitOnPreservedStartupRecoveryFailure(
-      sandboxName,
-      agentName,
-      "OpenShell readiness",
-      "openshellReadinessFailureDetail" in processCheck
-        ? processCheck.openshellReadinessFailureDetail
-        : "the sandbox did not become ready in OpenShell",
-    );
-  }
   if (!processCheck.checked) {
     console.error(
       `  Probe failed: could not inspect the ${agentName} gateway inside sandbox '${sandboxName}'.`,
@@ -1007,11 +992,7 @@ export function restoreSandboxStartupState(
   sandboxName: string,
   options: SandboxStartupRecoveryOptions = {},
 ): SandboxStartupRecoveryResult {
-  return checkAndRecoverSandboxProcesses(sandboxName, {
-    ...options,
-    preserveContainer: true,
-    quiet: true,
-  });
+  return recoverStartedSandboxProcesses(sandboxName, { ...options, quiet: true });
 }
 
 function restoreInteractiveTerminal(): void {
@@ -1312,7 +1293,7 @@ export async function prepareInteractiveSession(
 
 export async function connectSandbox(
   sandboxName: string,
-  { expectedContainerId, probeOnly = false, preserveContainer = false }: SandboxConnectOptions = {},
+  { expectedContainerId, probeOnly = false }: SandboxConnectOptions = {},
 ): Promise<void> {
   if (probeOnly) {
     await runConnectEntryPreflight(sandboxName, { probeOnly: true });
@@ -1324,10 +1305,7 @@ export async function connectSandbox(
     // before any in-sandbox process or host-forward mutation. The readiness
     // polls are already owner-scoped; this also catches registry changes.
     await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
-    return await runSandboxConnectProbe(sandboxName, {
-      expectedContainerId,
-      preserveContainer,
-    });
+    return await runSandboxConnectProbe(sandboxName, { expectedContainerId });
   }
 
   const { agent, sb } = await prepareInteractiveSession(sandboxName);

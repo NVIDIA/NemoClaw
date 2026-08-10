@@ -139,6 +139,27 @@ function isAtRestStatus(status: string): boolean {
   return AT_REST_STATUS_PREFIXES.some((prefix) => status.startsWith(prefix));
 }
 
+function withVerifiedDockerMetadata(
+  action: "start" | "stop",
+  input: RuntimeProviderLifecycleInput,
+  operation: () => RuntimeProviderLifecycleStopOutcome,
+): RuntimeProviderLifecycleStopOutcome {
+  try {
+    return operation();
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      error.message !== "Docker returned malformed OpenShell sandbox container metadata."
+    ) {
+      throw error;
+    }
+    return {
+      exitCode: 1,
+      message: `  Could not ${action} sandbox '${input.sandboxName}': ${error.message} The existing container was preserved.`,
+    };
+  }
+}
+
 function startDockerSandbox(
   input: RuntimeProviderLifecycleInput,
   deps: DockerRuntimeProviderDependencies,
@@ -357,9 +378,11 @@ export function createDockerRuntimeProviderBundle(
       providerId,
       supported: true,
       channelStopTransport: "docker-kubectl-first",
-      start: (input) => startDockerSandbox(input, deps),
+      start: (input) =>
+        withVerifiedDockerMetadata("start", input, () => startDockerSandbox(input, deps)),
       verifyStarted: (input, verifyGateway) => verifyGateway(input.sandboxName),
-      stop: (input, hooks) => stopDockerSandbox(input, hooks, deps),
+      stop: (input, hooks) =>
+        withVerifiedDockerMetadata("stop", input, () => stopDockerSandbox(input, hooks, deps)),
     },
     mutationAuthority: {
       providerId,
