@@ -733,6 +733,21 @@ describe("agents/hermes/start.sh sandbox init bootstrap", () => {
     expect(dirnameCalled).toBe(false);
     expect(sourcePath).toBe("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
   });
+
+  it("removes its temporary fixture when the prelude markers are absent", () => {
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-missing-prelude-"));
+    const invalidStartScript = path.join(fixtureDir, "start.sh");
+    fs.writeFileSync(invalidStartScript, "#!/usr/bin/env bash\n");
+
+    try {
+      expect(() =>
+        runHermesSandboxInitPreludeWithFakePath(invalidStartScript, ENV_WRAPPER, fixtureDir),
+      ).toThrow("Hermes start.sh prelude markers not found");
+      expect(fs.readdirSync(fixtureDir)).toEqual(["start.sh"]);
+    } finally {
+      fs.rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("agents/hermes/start.sh runtime shell env", () => {
