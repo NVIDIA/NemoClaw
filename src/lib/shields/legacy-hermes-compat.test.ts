@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
+import { testTimeout } from "../../../test/helpers/timeouts";
+
 const requireSource = createRequire(import.meta.url);
 const INDEX_MODULE = "./index.js";
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
@@ -159,7 +161,7 @@ describe("legacy Hermes shields compatibility", () => {
     );
 
     shields = requireSource(INDEX_MODULE);
-  }, SETUP_TIMEOUT_MS);
+  }, testTimeout(SETUP_TIMEOUT_MS));
 
   afterEach(() => {
     for (const spy of spies) spy.mockRestore();
