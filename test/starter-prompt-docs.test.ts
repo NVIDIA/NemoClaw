@@ -30,7 +30,7 @@ const repoRoot = path.resolve(__dirname, "..");
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
 // CI resolves this Git commit and byte-compares its prompt-asset blobs with
 // the local files. The digests independently assert those same immutable bytes.
-const promptAssetRevision = "bf46e62f901825f19e570c17f8c870a0eae04fbc";
+const promptAssetRevision = "4394858b3bae38b04768619f99b9614161f1b565";
 
 type PromptAsset = {
   path: string;
@@ -49,7 +49,7 @@ function definePromptAsset(assetPath: string, pinnedSha256: string): PromptAsset
 const promptAssets = {
   dgxSpark: definePromptAsset(
     "docs/resources/prompt-assets/dgx-spark.md",
-    "806e87f2ae7e4a4be731c7ce3b1ecde9ff8be170563d4338a5f79f76ce25e034", // gitleaks:allow -- pinned prompt-asset SHA-256
+    "b0192f72e9a55349a7ca9c5ec3da639bd81a2c74b676f997b3e5193bc10053e1", // gitleaks:allow -- pinned prompt-asset SHA-256
   ),
   dgxStation: definePromptAsset(
     "docs/resources/prompt-assets/dgx-station.md",
@@ -815,7 +815,15 @@ describe("starter prompt docs CTA", () => {
     );
 
     expect(sparkSource).toContain("nvidia/Qwen3.6-35B-A3B-NVFP4");
-    expect(sparkSource).toContain("Leave `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_MODEL` unset");
+    expect(sparkSource).toContain(
+      "Managed vLLM with automatic serving-profile selection. This is the default",
+    );
+    expect(sparkSource).toContain(
+      "`nvidia/Qwen3.6-35B-A3B-NVFP4` with the fixed catalog-backed vLLM profile",
+    );
+    expect(sparkSource).toContain(
+      "Leave `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_VLLM_PORT`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` unset",
+    );
     expect(stationSource).toContain("`nemotron-3-ultra-550b-a55b`");
     expect(stationSource).toContain("`nemotron-ultra`");
     expect(stationSource).toContain("`deepseek-v4-flash`");

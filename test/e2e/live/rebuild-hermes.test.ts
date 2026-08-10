@@ -55,6 +55,7 @@ import {
   type RebuildHermesRegistryImageState,
   rebuildHermesRegistryImageState,
   requireRebuildHermesInitialImageTag,
+  requireRebuildHermesReplacementLifecycleReceipt,
 } from "./rebuild-hermes-image-state.ts";
 import {
   REBUILD_HERMES_OLD_BASE_FIXTURE,
@@ -1268,6 +1269,10 @@ test(STALE_BASE_REBUILD
     resultText(oldImageInspect),
   ).toBe(true);
   expect(resultText(oldImageInspect)).toMatch(/No such (?:image|object)(?::|\s)/iu);
+  await artifacts.writeJson(
+    "phase-6-replacement-registry-lifecycle-receipt.json",
+    requireRebuildHermesReplacementLifecycleReceipt(rebuiltRegistry),
+  );
 
   progress.phase("validate upgraded state inference and backup hygiene");
   const restoredMarker = await host.command(

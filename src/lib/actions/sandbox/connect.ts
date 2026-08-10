@@ -38,7 +38,7 @@ import {
 import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
-import { redact } from "../../security/redact";
+import { redact, redactFull } from "../../security/redact";
 import {
   isSandboxReady,
   isTerminalSandboxPhase,
@@ -94,6 +94,19 @@ export { runConnectAutoPairApprovalPass };
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
 };
+
+export type SandboxStartupRecoveryResult = ReturnType<typeof checkAndRecoverSandboxProcesses> & {
+  recoveryFailureDetail?: string | null;
+  recoveryFailureLayer?: GatewayRestartFailureLayer | null;
+};
+
+export function sanitizeSandboxStartupRecoveryDetail(raw: string): string {
+  return redactFull(raw)
+    .replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 240);
+}
 
 type SpawnLikeResult = {
   status: number | null;
@@ -925,8 +938,17 @@ function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
   }
 }
 
-export function restoreSandboxStartupState(sandboxName: string): void {
-  checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+export function restoreSandboxStartupState(sandboxName: string): SandboxStartupRecoveryResult {
+  let recoveryFailureDetail: string | null = null;
+  let recoveryFailureLayer: GatewayRestartFailureLayer | null = null;
+  const processCheck = checkAndRecoverSandboxProcesses(sandboxName, {
+    quiet: true,
+    onRecoveryFailureLayer: (layer, detail) => {
+      recoveryFailureLayer = layer;
+      recoveryFailureDetail = detail ?? null;
+    },
+  });
+  return { ...processCheck, recoveryFailureDetail, recoveryFailureLayer };
 }
 
 function restoreInteractiveTerminal(): void {

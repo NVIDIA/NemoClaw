@@ -513,6 +513,20 @@
       ]
     },
     {
+      "live": "test/e2e/live/spark-express-vllm.test.ts",
+      "fast": [
+        "src/lib/inference/serving/catalog.test.ts",
+        "src/lib/inference/serving/host-local-vllm-selection.test.ts",
+        "src/lib/inference/vllm-models.test.ts",
+        "src/lib/onboard/local-model-profile/onboarder.test.ts",
+        "src/lib/onboard/local-model-profile/plan.test.ts",
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/install-express-prompt.test.ts",
+        "test/install-local-model-profile.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/spark-install.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",

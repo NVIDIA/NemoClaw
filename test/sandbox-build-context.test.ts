@@ -39,6 +39,8 @@ function resolveBuildxCommand(): BuildxCommand | null {
 }
 
 const SUPPORTED_BUILDX_HOST = process.platform === "linux" && !isWsl();
+const REVIEWED_RUNTIME_LICENSE_COPY =
+  "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt /opt/mcp-tool-discovery-runtime/dist/";
 const BUILDX_COMMAND = SUPPORTED_BUILDX_HOST ? resolveBuildxCommand() : null;
 const DOCKER_CAPABLE_LINUX_CI = process.env.CI === "true" && SUPPORTED_BUILDX_HOST;
 
@@ -63,6 +65,22 @@ function buildTarget(
   return buildx.command === "docker"
     ? dockerSpawnSync(args, options)
     : spawnSync(buildx.command, args, options);
+}
+
+function writeReviewedRuntimeBuildTarget(stagedDockerfile: string): string {
+  const boundaryDockerfile = stagedDockerfile + ".reviewed-runtime";
+  fs.writeFileSync(
+    boundaryDockerfile,
+    [
+      fs.readFileSync(stagedDockerfile, "utf8").trimEnd(),
+      "",
+      "FROM scratch AS reviewed-runtime-artifacts",
+      "COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /opt/mcp-tool-discovery-runtime/dist/",
+      "COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /out/managed-startup-image-runtime.cjs",
+      "",
+    ].join("\n"),
+  );
+  return boundaryDockerfile;
 }
 
 describe("sandbox build context staging", () => {
@@ -798,6 +816,28 @@ describe("sandbox build context staging", () => {
           path.join(
             buildCtx,
             "nemoclaw-blueprint",
+            "openclaw-plugins",
+            "gemini-inference-compat",
+            "openclaw.plugin.json",
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(
+            buildCtx,
+            "nemoclaw-blueprint",
+            "openclaw-plugins",
+            "gemini-inference-compat",
+            "index.ts",
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(
+            buildCtx,
+            "nemoclaw-blueprint",
             "model-specific-setup",
             "openclaw",
             "kimi-k2.6-managed-inference.json",
@@ -920,7 +960,7 @@ describe("sandbox build context staging", () => {
   });
 
   it.skipIf(!SUPPORTED_BUILDX_HOST || BUILDX_COMMAND === null)(
-    "generated build contexts import reviewed runtime artifacts through BuildKit",
+    "BuildKit imports reviewed runtime artifacts from each generated build context (#8669)",
     {
       timeout: 120_000,
     },
@@ -948,15 +988,18 @@ describe("sandbox build context staging", () => {
           ["hermes", hermesBuild],
         ] as const) {
           const { buildCtx, stagedDockerfile } = staged;
-          const mcpOutput = path.join(tmpDir, `${name}-mcp-output`);
-          const mcpBuild = buildTarget(
-            buildx,
-            stagedDockerfile,
-            buildCtx,
-            "mcp-tool-discovery-runtime",
-            mcpOutput,
+          expect(fs.readFileSync(stagedDockerfile, "utf8")).toContain(
+            REVIEWED_RUNTIME_LICENSE_COPY,
           );
-          expect(mcpBuild.status, `${mcpBuild.stdout}\n${mcpBuild.stderr}`).toBe(0);
+          const output = path.join(tmpDir, name + "-reviewed-runtime-output");
+          const build = buildTarget(
+            buildx,
+            writeReviewedRuntimeBuildTarget(stagedDockerfile),
+            buildCtx,
+            "reviewed-runtime-artifacts",
+            output,
+          );
+          expect(build.status, [build.stdout, build.stderr].join("\n")).toBe(0);
 
           for (const [sourceRelativePath, outputRelativePath] of [
             [
@@ -971,49 +1014,16 @@ describe("sandbox build context staging", () => {
               path.join("mcp-tool-discovery", "mcp-tool-discovery.bundle"),
               path.join("opt", "mcp-tool-discovery-runtime", "dist", "mcp-tool-discovery.mjs"),
             ],
+            [
+              "managed-startup-image-runtime.bundle",
+              path.join("out", "managed-startup-image-runtime.cjs"),
+            ],
           ] as const) {
-            expect(fs.readFileSync(path.join(mcpOutput, outputRelativePath))).toEqual(
+            expect(fs.readFileSync(path.join(output, outputRelativePath))).toEqual(
               fs.readFileSync(path.join(reviewedRuntimeSource, sourceRelativePath)),
             );
           }
-
-          const startupOutput = path.join(tmpDir, `${name}-startup-output`);
-          const startupBuild = buildTarget(
-            buildx,
-            stagedDockerfile,
-            buildCtx,
-            "managed-startup-runtime-builder",
-            startupOutput,
-          );
-          expect(startupBuild.status, `${startupBuild.stdout}\n${startupBuild.stderr}`).toBe(0);
-          expect(
-            fs.readFileSync(path.join(startupOutput, "out", "managed-startup-image-runtime.cjs")),
-          ).toEqual(
-            fs.readFileSync(
-              path.join(reviewedRuntimeSource, "managed-startup-image-runtime.bundle"),
-            ),
-          );
         }
-
-        const incomplete = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
-        fs.rmSync(
-          path.join(
-            incomplete.buildCtx,
-            "tools",
-            "mcp-tool-discovery-runtime",
-            "reviewed-runtime-bundle",
-            "mcp-tool-discovery",
-            "THIRD_PARTY_LICENSES.txt",
-          ),
-        );
-        const incompleteBuild = buildTarget(
-          buildx,
-          incomplete.stagedDockerfile,
-          incomplete.buildCtx,
-          "mcp-tool-discovery-runtime",
-          path.join(tmpDir, "incomplete-output"),
-        );
-        expect(incompleteBuild.status).not.toBe(0);
       } finally {
         fs.rmSync(hermesBuild.buildCtx, { recursive: true, force: true });
         fs.rmSync(tmpDir, { recursive: true, force: true });

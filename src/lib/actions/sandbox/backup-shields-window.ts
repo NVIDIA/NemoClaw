@@ -3,6 +3,7 @@
 
 import { RD as _RD, G, R, YW } from "../../cli/terminal-style";
 import * as shields from "../../shields";
+import { isShieldsTimerDeadlineExpired } from "../../state/mcp-lifecycle-lock/shields-timer-authority";
 
 export interface BackupShieldsWindow {
   relocked: boolean;
@@ -58,7 +59,10 @@ export function relockBackupShieldsWindow(
   sandboxStillExists: boolean,
   options: BackupShieldsWindowOptions,
 ): boolean {
-  if (!window.wasLocked || window.relocked) return true;
+  if (window.relocked) return true;
+  // A deferred timer can expire while rebuild owns the lifecycle lock; settle it before success.
+  if (!window.wasLocked && !options.deferAutoRestoreWhileOwnerAlive) return true;
+  if (!window.wasLocked && !isShieldsTimerDeadlineExpired(sandboxName)) return true;
   if (!sandboxStillExists) {
     console.warn("");
     console.warn(`  ${YW}⚠${R} Cannot re-apply shields lockdown — sandbox no longer exists.`);

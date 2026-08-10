@@ -32,6 +32,11 @@ import {
 } from "./docker-driver-platform";
 import { GatewayManagementDeclarationError } from "./gateway-management";
 import { GatewayAuthorityError, gatewayAuthorityFailureLines } from "./gateway-teardown-authority";
+import {
+  LOCAL_MODEL_PROFILE_ENABLED_ENV,
+  LOCAL_MODEL_PROFILE_RUNTIME_ENV,
+  resolveLocalModelProfilePlan,
+} from "./local-model-profile/plan";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
@@ -224,13 +229,48 @@ function resolveServingProfile(
   return servingProfileProvenance(catalog, selectedProfileId);
 }
 
+function resolveInstallerServingProfile(
+  deps: ResolveOnboardOptionsDeps,
+): ServingProfileProvenance | null {
+  const hasInstallerProfileIntent =
+    String(deps.env[LOCAL_MODEL_PROFILE_ENABLED_ENV] ?? "").trim() !== "" ||
+    String(deps.env[LOCAL_MODEL_PROFILE_RUNTIME_ENV] ?? "").trim() !== "";
+  if (!hasInstallerProfileIntent) return null;
+  try {
+    const catalog = (deps.loadServingCatalog ?? loadServingCatalog)();
+    const plan = resolveLocalModelProfilePlan(catalog, deps.env);
+    if (!plan) return null;
+    validateServingProfileConflicts(plan.preset.metadata.id, deps);
+    return servingProfileProvenance(catalog, plan.preset.metadata.id);
+  } catch (error) {
+    fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 function resolveServingProfileLifecycle(
   flags: OnboardFlags,
   deps: ResolveOnboardOptionsDeps,
 ): ServingProfileProvenance | null {
-  const requested = resolveServingProfile(flags.profile, deps);
+  const explicit = resolveServingProfile(flags.profile, deps);
+  const installerProfile = resolveInstallerServingProfile(deps);
+  if (
+    explicit &&
+    installerProfile &&
+    JSON.stringify(explicit) !== JSON.stringify(installerProfile)
+  ) {
+    fail(
+      deps,
+      `  --profile ${explicit.preset.id} conflicts with installer local model profile ${installerProfile.preset.id}.`,
+    );
+  }
+  const requested = explicit ?? installerProfile;
   if (flags.resume !== true) return requested;
   return resolveResumedServingProfile(requested, deps);
+}
+
+function activeServingProfileId(provenance: ServingProfileProvenance | null): string | null {
+  if (!provenance || provenance.preset.supportState === "disabled") return null;
+  return provenance.preset.id;
 }
 
 function resolveResumedServingProfile(
@@ -326,7 +366,7 @@ export function resolveOnboardOptions(
     autoYes: withPortableDefault(flags.yes, experimentalProfile),
     noOllamaAutostart: withPortableDefault(flags["no-ollama-autostart"], experimentalProfile),
     experimentalProfile,
-    servingProfile: servingProfileProvenance?.preset.id ?? null,
+    servingProfile: activeServingProfileId(servingProfileProvenance),
     servingProfileProvenance,
   };
 }
