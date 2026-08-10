@@ -68,7 +68,9 @@ async function main(): Promise<void> {
     console.error("FAIL: codebase growth policies rejected this PR.");
     for (const violation of violations) console.error(`- ${violation}`);
     console.error("Run current-file checks locally: npm run test:changed");
-    console.error("The local contract does not detect budget-file monotonicity failures.");
+    console.error(
+      "The local check validates the current budget file but does not compare its limits with the base commit.",
+    );
     process.exit(1);
   }
   console.log("PASS: this PR preserves the codebase growth policies.");
