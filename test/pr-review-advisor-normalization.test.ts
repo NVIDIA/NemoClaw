@@ -233,6 +233,10 @@ describe("PR review advisor", () => {
     const comment = buildComment({ summary: "Trusted E2E classification.", result });
     expect(comment).toContain("**Recommended E2E:** <code>inference-routing</code>");
     expect(comment).toContain("**Manual-only E2E:** <code>network-policy</code>");
+    const recommendedLine = comment
+      .split("\n")
+      .find((line) => line.startsWith("**Recommended E2E:**"));
+    expect(recommendedLine).not.toContain("<code>network-policy</code>");
     expect(comment).toContain(
       "The manual PR workflow cannot grant the required credential or runner access to the commit under review.",
     );
