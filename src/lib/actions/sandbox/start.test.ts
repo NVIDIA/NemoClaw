@@ -214,6 +214,25 @@ describe("startSandbox", () => {
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
+  it("preserves the first recovery failure when the managed supervisor wait throws (#8726)", async () => {
+    const h = harness();
+    h.restoreStartupState.mockReturnValue({
+      ...FAILED_RECOVERY,
+      recoveryFailureLayer: "supervisor not running",
+      recoveryFailureDetail: "SUPERVISOR_NOT_RUNNING",
+    });
+    h.waitForManagedGatewaySupervisor.mockImplementation(() => {
+      throw new Error("managed supervisor probe failed");
+    });
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
+      "supervisor not running: SUPERVISOR_NOT_RUNNING",
+    );
+    expect(h.restoreStartupState).toHaveBeenCalledOnce();
+    expect(h.waitForManagedGatewaySupervisor).toHaveBeenCalledOnce();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
   it("fails closed when recovery still fails after the managed supervisor appears (#8726)", async () => {
     const h = harness();
     const missingSupervisor = {
