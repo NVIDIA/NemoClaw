@@ -280,7 +280,9 @@ for attempt in $(seq 1 300); do
     printf 'managed-image-vllm-ready attempts=%s\n' "$attempt"
     exit 0
   fi
-  docker container inspect "${VLLM_CONTAINER}" --format '{{.State.Running}}' | grep -Fx true >/dev/null
+  if ! docker container inspect "${VLLM_CONTAINER}" --format '{{.State.Running}}' | grep -Fx true >/dev/null; then
+    break
+  fi
   sleep 2
 done
 docker logs --tail 200 "${VLLM_CONTAINER}" >&2 || true

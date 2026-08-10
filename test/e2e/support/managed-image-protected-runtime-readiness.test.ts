@@ -16,6 +16,8 @@ import {
   protectedVllmReadinessCommand,
 } from "../live/managed-image-protected-runtime-helpers.ts";
 
+// Vitest hoists these module-scope mocks before the statically imported live-E2E command builders
+// are evaluated, keeping their unavailable runtime dependencies outside this support-test boundary.
 vi.mock("../../../src/lib/inference/nim.ts", () => ({
   adoptServedModelId: () => "",
   dockerLoginNgc: () => false,
@@ -262,5 +264,33 @@ exit 42`,
     expect(result.stderr).toContain("[REDACTED]");
     expect(result.stderr).not.toContain(sensitiveValue);
     expect(Buffer.byteLength(stderrArtifact)).toBeLessThanOrEqual(command.captureLimitBytes + 256);
+  });
+
+  it("reports vLLM diagnostics when the container stops during readiness", async () => {
+    const fixture = createReadinessFixture();
+    const command = protectedVllmReadinessCommand();
+    writeCommand(fixture.binDir, "curl", "exit 1");
+    writeCommand(fixture.binDir, "seq", "printf '1\\n'");
+    writeCommand(fixture.binDir, "sleep", "exit 99");
+    writeCommand(
+      fixture.binDir,
+      "docker",
+      `if [ "$1" = "container" ]; then
+  printf 'false\\n'
+  exit 0
+fi
+printf 'vllm-stopped-diagnostic\\n'`,
+    );
+
+    const result = await fixture.host.command(command.command, command.args, {
+      artifactName: "vllm-readiness-stopped-container",
+      captureLimitBytes: command.captureLimitBytes,
+      env: fixture.env,
+      timeoutMs: 5_000,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("vllm-stopped-diagnostic");
+    expect(result.stderr).toContain("managed-image-vllm-not-ready attempts=1");
   });
 });
