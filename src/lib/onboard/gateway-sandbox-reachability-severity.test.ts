@@ -74,7 +74,7 @@ describe("sandbox bridge reachability severity (#6004)", () => {
               gatewayIp: "172.18.0.1",
             }),
           }),
-        ).rejects.toThrow("sandbox-bridge unreachable");
+        ).rejects.toThrow("cannot reach the OpenShell gateway");
         expect(warn.mock.calls[0]?.[0]).toMatch(
           /^  \x1b\[33m⚠ NEMOCLAW_AUTO_FIX_FIREWALL=1 set but could not auto-apply UFW rule/,
         );
