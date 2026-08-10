@@ -445,7 +445,7 @@ function recoverSandboxProcesses(
     requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
     requestPinnedGatewaySupervisorAction?: RequestPinnedGatewaySupervisorAction;
     relaunchManagedSupervisorSessionImpl?: typeof relaunchManagedSupervisorSession;
-    onFailureLayer?: (layer: GatewayRestartFailureLayer) => void;
+    onFailureLayer?: (layer: GatewayRestartFailureLayer, detail: string) => void;
   } = {},
 ): SandboxProcessRecovery | null {
   const agent = agentRuntime.getSessionAgent(sandboxName);
@@ -483,7 +483,7 @@ function recoverSandboxProcesses(
       sleepSeconds(retryIntervalSeconds);
     }
     const failure = classifyGatewayRestartFailure(execResult);
-    onFailureLayer?.(failure.layer);
+    onFailureLayer?.(failure.layer, failure.detail);
     if (
       failure.layer === "supervisor not running" &&
       isExactlyMissingManagedSupervisor(execResult)
@@ -1078,7 +1078,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
     isWsl?: boolean;
-    onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null) => void;
+    onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null, detail?: string) => void;
   } = {},
 ) {
   const recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
@@ -1252,13 +1252,15 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
   }
 
   let managedRecoveryFailureLayer: GatewayRestartFailureLayer | null = null;
+  let managedRecoveryFailureDetail: string | null = null;
   const recovery = recoverSandboxProcesses(sandboxName, {
     quiet,
     requestGatewaySupervisorAction,
     requestPinnedGatewaySupervisorAction,
     relaunchManagedSupervisorSessionImpl,
-    onFailureLayer: (layer) => {
+    onFailureLayer: (layer, detail) => {
       managedRecoveryFailureLayer = layer;
+      managedRecoveryFailureDetail = detail;
     },
   });
   if (recovery !== null) {
@@ -1353,7 +1355,10 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           managedRecoveryFailureLayer,
         );
       }
-      onRecoveryFailureLayer?.(managedRecoveryFailureLayer);
+      onRecoveryFailureLayer?.(
+        managedRecoveryFailureLayer,
+        managedRecoveryFailureDetail ?? undefined,
+      );
       if (relaunchedManagedHealthFailureDetail) {
         return {
           checked: true,
@@ -1366,14 +1371,16 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       }
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
     }
-    // State restore crosses the OpenShell SSH boundary. Prove the replacement
-    // is both identity-pinned and registered before asking finalize(true) to
-    // mutate it; otherwise a slow control-plane handoff can make a healthy
-    // replacement look like a failed restore and trigger rollback.
-    const readinessFailureDetail = relaunch
+    // Host-forward recovery requires an OpenShell-ready sandbox. Managed
+    // recovery has already passed its authenticated control and health gates;
+    // a replacement also rechecks its pinned identity before readiness.
+    const recoveryRequiresReadiness = recovery.kind === "managed" || relaunch;
+    const readinessFailureDetail = recoveryRequiresReadiness
       ? (() => {
           const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
-            beforeProbe: (timeoutMs) => confirmRelaunchedManagedHealth?.(timeoutMs) ?? null,
+            beforeProbe: relaunch
+              ? (timeoutMs) => confirmRelaunchedManagedHealth?.(timeoutMs) ?? null
+              : undefined,
           };
           const readiness =
             waitForRecreatedSandboxOpenShellReadyImpl === waitForRecreatedSandboxOpenShellReady
@@ -1528,7 +1535,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     printHostManagedGatewayRecoveryHints(sandboxName, recoveryAgent, managedRecoveryFailureLayer);
   }
 
-  onRecoveryFailureLayer?.(managedRecoveryFailureLayer);
+  onRecoveryFailureLayer?.(managedRecoveryFailureLayer, managedRecoveryFailureDetail ?? undefined);
   return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
 }
 
@@ -1542,7 +1549,7 @@ export function checkAndRecoverSandboxProcesses(
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
     isWsl?: boolean;
-    onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null) => void;
+    onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null, detail?: string) => void;
   } = {},
 ) {
   return withTimerBoundShieldsMutationLock(sandboxName, "gateway process recovery", () =>
