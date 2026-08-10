@@ -45,15 +45,31 @@ export function gatewayTargetMatches(
   return true;
 }
 
+export function canonicalGatewayTargetMatches(name: string, port: number): boolean {
+  return resolveGatewayName(port) === name;
+}
+
+export function gatewayCompatContainerNameForPort(port: number): string {
+  return resolveGatewayCompatContainerName(port);
+}
+
 function cliFlagValue(tokens: string[], names: string[]): string | null {
+  const values: string[] = [];
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
     for (const name of names) {
-      if (token === name) return tokens[index + 1] ?? null;
-      if (token.startsWith(`${name}=`)) return token.slice(name.length + 1);
+      if (token === name) {
+        const value = tokens[index + 1];
+        if (!value) return null;
+        values.push(value);
+      } else if (token.startsWith(`${name}=`)) {
+        const value = token.slice(name.length + 1);
+        if (!value) return null;
+        values.push(value);
+      }
     }
   }
-  return null;
+  return values.length === 1 ? values[0] : null;
 }
 
 export function openShellGatewayMatchesTarget(
@@ -99,5 +115,5 @@ export function dockerCompatGatewayMatchesTarget(
   const port = Number(target.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) return false;
   if (target.name && target.name !== resolveGatewayName(port)) return false;
-  return cliFlagValue(tokens, ["--name"]) === resolveGatewayCompatContainerName(port);
+  return cliFlagValue(tokens, ["--name"]) === gatewayCompatContainerNameForPort(port);
 }

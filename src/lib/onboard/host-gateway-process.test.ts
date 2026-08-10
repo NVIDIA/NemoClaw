@@ -8,6 +8,10 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  getDockerDriverGatewayRuntimeMarkerPath,
+  writeDockerDriverGatewayRuntimeMarkerForStateDir,
+} from "./docker-driver-gateway-runtime-marker";
+import {
   clearHostGatewayRuntimeFiles,
   HOST_GATEWAY_PGREP_PATTERN,
   type HostGatewayProcessDeps,
@@ -66,6 +70,155 @@ function psResponses(
       ok(opts.cmdline ?? `/home/test/.local/bin/openshell-gateway --port 8080\n`),
     ],
   ];
+}
+
+const CURRENT_UID = typeof process.getuid === "function" ? process.getuid() : 1_000;
+
+type ScopedGatewayFixtureOptions = {
+  cmdline?: string;
+  compatContainerPid?: number;
+  listenerPids?: readonly number[];
+  markerPid?: number;
+  markerPort?: number;
+  omitMarker?: boolean;
+  pidFilePid?: number;
+  processUid?: number;
+  startIdentities?: readonly string[];
+  usePgrepFallback?: boolean;
+};
+
+function scopedGatewayFixture(options: ScopedGatewayFixtureOptions = {}) {
+  const selectedPid = 9_991_880;
+  const siblingPid = 9_990_808;
+  const selectedPort = 18_080;
+  const selectedName = "nemoclaw-18080";
+  const directGatewayBin = "/opt/openshell/openshell";
+  const selectedCompatContainerName = "nemoclaw-openshell-gateway-18080";
+  const selectedCompatContainerId = "a".repeat(64);
+  const siblingCompatContainerName = "nemoclaw-openshell-gateway";
+  const selectedStateDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "nemoclaw-host-gateway-scoped-selected-"),
+  );
+  const siblingStateDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "nemoclaw-host-gateway-scoped-sibling-"),
+  );
+  const selectedPidFile = path.join(selectedStateDir, "openshell-gateway.pid");
+  const siblingPidFile = path.join(siblingStateDir, "openshell-gateway.pid");
+  const selectedCmdline =
+    options.cmdline ??
+    `${directGatewayBin} gateway start --name ${selectedName} --port ${String(selectedPort)}\n`;
+  const compatibilityMode = selectedCmdline.includes("/opt/nemoclaw/openshell-gateway");
+  fs.writeFileSync(selectedPidFile, `${String(options.pidFilePid ?? selectedPid)}\n`);
+  fs.writeFileSync(siblingPidFile, `${String(siblingPid)}\n`);
+  if (!options.omitMarker) {
+    writeDockerDriverGatewayRuntimeMarkerForStateDir(selectedStateDir, {
+      desiredEnv: {},
+      dockerHost: null,
+      endpoint: `https://127.0.0.1:${String(options.markerPort ?? selectedPort)}`,
+      gatewayBin: compatibilityMode ? null : directGatewayBin,
+      pid: options.markerPid ?? selectedPid,
+    });
+  }
+  writeDockerDriverGatewayRuntimeMarkerForStateDir(siblingStateDir, {
+    desiredEnv: {},
+    endpoint: "https://127.0.0.1:8080",
+    pid: siblingPid,
+  });
+
+  const recordedPid = options.pidFilePid ?? selectedPid;
+  const exited = new Set<number>();
+  const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
+    // A host-wide fallback would discover both gateways. Scoped teardown must
+    // never execute this response.
+    [PGREP_KEY, ok(`${String(siblingPid)}\n${String(selectedPid)}\n`)],
+    [
+      `ps -p ${String(recordedPid)} -o pid=`,
+      () => (exited.has(recordedPid) ? notFound() : ok(`${String(recordedPid)}\n`)),
+    ],
+    [`ps -p ${String(recordedPid)} -o uid=`, ok(`${String(options.processUid ?? CURRENT_UID)}\n`)],
+    [`ps -p ${String(recordedPid)} -o args=`, ok(selectedCmdline)],
+    [
+      `lsof -ti :${String(selectedPort)} -sTCP:LISTEN`,
+      ok((options.listenerPids ?? [recordedPid]).map(String).join("\n") + "\n"),
+    ],
+  ]);
+  if (options.compatContainerPid !== undefined) {
+    responses.set(
+      `docker inspect --type container ${selectedCompatContainerName}`,
+      ok(
+        `${JSON.stringify([
+          {
+            Args: [],
+            HostConfig: { NetworkMode: "host" },
+            Id: selectedCompatContainerId,
+            Name: `/${selectedCompatContainerName}`,
+            Path: "/opt/nemoclaw/openshell-gateway",
+            State: { Pid: options.compatContainerPid, Running: true },
+          },
+        ])}\n`,
+      ),
+    );
+    responses.set(`docker rm -f ${selectedCompatContainerId}`, () => {
+      exited.add(recordedPid);
+      return ok(`${selectedCompatContainerName}\n`);
+    });
+  }
+  const { calls, run } = makeRun(responses);
+  let startIdentityRead = 0;
+  const kill = vi.fn<HostGatewayProcessDeps["kill"]>((pid, signal) => {
+    if (signal === "SIGKILL") exited.add(pid);
+    return true;
+  });
+
+  const result = stopHostGatewayProcesses(
+    {
+      run,
+      kill,
+      env: { USER: "tester" },
+      commandExists: () => true,
+      isPortFree: () => true,
+      log: vi.fn(),
+      readProcessExecutable: () => directGatewayBin,
+      readProcessEnvironment: () => ({}),
+      readProcessStartIdentity: (pid) => {
+        if (exited.has(pid)) return null;
+        const identities = options.startIdentities ?? ["fixture-start-identity"];
+        const identity = identities[Math.min(startIdentityRead, identities.length - 1)] ?? null;
+        startIdentityRead += 1;
+        return identity;
+      },
+    },
+    {
+      killWaitMs: 0,
+      gatewayBin: directGatewayBin,
+      openShellGatewayName: selectedName,
+      openShellGatewayPort: selectedPort,
+      pollIntervalMs: 0,
+      scopedGatewayStop: true,
+      stateDir: selectedStateDir,
+      usePgrepFallback: options.usePgrepFallback,
+    },
+  );
+
+  return {
+    calls,
+    cleanup: () => {
+      fs.rmSync(selectedStateDir, { recursive: true, force: true });
+      fs.rmSync(siblingStateDir, { recursive: true, force: true });
+    },
+    kill,
+    recordedPid,
+    result,
+    selectedPid,
+    selectedPidFile,
+    selectedCompatContainerName,
+    selectedCompatContainerId,
+    selectedRuntimeMarker: getDockerDriverGatewayRuntimeMarkerPath(selectedStateDir),
+    siblingCompatContainerName,
+    siblingPid,
+    siblingPidFile,
+    siblingRuntimeMarker: getDockerDriverGatewayRuntimeMarkerPath(siblingStateDir),
+  };
 }
 
 describe("host gateway cleanup boundaries", () => {
@@ -422,5 +575,194 @@ describe("stopHostGatewayProcesses", () => {
     expect(result.skippedDeadPids).toEqual([9999123]);
     expect(result.stopped).toEqual([9999456]);
     expect(fs.existsSync(pidFile)).toBe(false);
+  });
+});
+
+describe("scoped host gateway stop isolation (#8663)", () => {
+  it("stops only the selected gateway after proving its PID, marker, owner, command line, and listener", () => {
+    const fixture = scopedGatewayFixture();
+    try {
+      expect(fixture.result).toMatchObject({
+        failed: [],
+        ownershipFailures: [],
+        skippedNonMatchingPids: [],
+        stopped: [fixture.selectedPid],
+      });
+      expect(fixture.kill.mock.calls).toEqual([[fixture.selectedPid, "SIGKILL"]]);
+      expect(fixture.kill).not.toHaveBeenCalledWith(fixture.siblingPid, expect.anything());
+      expect(fixture.calls.filter(({ command }) => command === "pgrep")).toEqual([]);
+      expect(fs.existsSync(fixture.selectedPidFile)).toBe(false);
+      expect(fs.existsSync(fixture.selectedRuntimeMarker)).toBe(false);
+      expect(fs.readFileSync(fixture.siblingPidFile, "utf-8")).toBe(
+        `${String(fixture.siblingPid)}\n`,
+      );
+      expect(fs.existsSync(fixture.siblingRuntimeMarker)).toBe(true);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("removes only the selected per-port Docker compatibility container after correlating its listener", () => {
+    const compatContainerPid = 7_771_880;
+    const fixture = scopedGatewayFixture({
+      cmdline:
+        "/usr/local/bin/docker run --rm --name nemoclaw-openshell-gateway-18080 --network host ubuntu:24.04 /opt/nemoclaw/openshell-gateway\n",
+      compatContainerPid,
+      listenerPids: [compatContainerPid],
+    });
+    try {
+      expect(fixture.result).toMatchObject({
+        failed: [],
+        ownershipFailures: [],
+        skippedNonMatchingPids: [],
+        stopped: [fixture.selectedPid],
+      });
+      expect(fixture.kill).not.toHaveBeenCalled();
+      const dockerCalls = fixture.calls.filter(({ command }) => command === "docker");
+      expect(dockerCalls).toContainEqual({
+        args: ["inspect", "--type", "container", fixture.selectedCompatContainerName],
+        command: "docker",
+      });
+      expect(dockerCalls).toContainEqual({
+        args: ["rm", "-f", fixture.selectedCompatContainerId],
+        command: "docker",
+      });
+      expect(
+        dockerCalls.some(({ args }) => args.includes(fixture.siblingCompatContainerName)),
+      ).toBe(false);
+      expect(fs.existsSync(fixture.selectedPidFile)).toBe(false);
+      expect(fs.existsSync(fixture.selectedRuntimeMarker)).toBe(false);
+      expect(fs.existsSync(fixture.siblingPidFile)).toBe(true);
+      expect(fs.existsSync(fixture.siblingRuntimeMarker)).toBe(true);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("preserves selected state when the Docker compatibility container does not own the selected listener", () => {
+    const compatContainerPid = 7_771_880;
+    const siblingContainerPid = 7_770_808;
+    const fixture = scopedGatewayFixture({
+      cmdline:
+        "/usr/local/bin/docker run --rm --name nemoclaw-openshell-gateway-18080 --network host ubuntu:24.04 /opt/nemoclaw/openshell-gateway\n",
+      compatContainerPid,
+      listenerPids: [siblingContainerPid],
+    });
+    try {
+      expect(fixture.result.stopped).toEqual([]);
+      expect(fixture.result.skippedNonMatchingPids).toEqual([fixture.selectedPid]);
+      expect(fixture.result.ownershipFailures).toEqual([
+        `PID ${String(fixture.selectedPid)}: compatibility container '${fixture.selectedCompatContainerName}' does not solely own the listener on port 18080`,
+      ]);
+      expect(fixture.kill).not.toHaveBeenCalled();
+      const dockerCalls = fixture.calls.filter(({ command }) => command === "docker");
+      expect(dockerCalls).toContainEqual({
+        args: ["inspect", "--type", "container", fixture.selectedCompatContainerName],
+        command: "docker",
+      });
+      expect(dockerCalls.some(({ args }) => args[0] === "rm")).toBe(false);
+      expect(
+        dockerCalls.some(({ args }) => args.includes(fixture.siblingCompatContainerName)),
+      ).toBe(false);
+      expect(fs.existsSync(fixture.selectedPidFile)).toBe(true);
+      expect(fs.existsSync(fixture.selectedRuntimeMarker)).toBe(true);
+      expect(fs.existsSync(fixture.siblingPidFile)).toBe(true);
+      expect(fs.existsSync(fixture.siblingRuntimeMarker)).toBe(true);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it.each([
+    {
+      label: "the selected PID file points at the sibling PID",
+      options: { pidFilePid: 9_990_808 },
+      reason: "runtime marker PID 9991880 does not match PID file 9990808",
+    },
+    {
+      label: "the process command line names the sibling gateway",
+      options: {
+        cmdline: "/opt/openshell/openshell gateway start --name nemoclaw --port 18080\n",
+      },
+      reason: "process command line does not prove gateway 'nemoclaw-18080' on port 18080",
+    },
+    {
+      label: "the process command line names the selected gateway on the sibling port",
+      options: {
+        cmdline: "/opt/openshell/openshell gateway start --name nemoclaw-18080 --port 8080\n",
+      },
+      reason: "process command line does not prove gateway 'nemoclaw-18080' on port 18080",
+    },
+    {
+      label: "the runtime marker identifies the sibling port",
+      options: { markerPort: 8_080 },
+      reason: "runtime marker endpoint does not identify port 18080",
+    },
+    {
+      label: "the runtime marker is missing",
+      options: { omitMarker: true },
+      reason: "runtime marker is missing or not a regular file",
+    },
+    {
+      label: "the process owner differs from the runtime evidence owner",
+      options: { processUid: CURRENT_UID + 1 },
+      reason: "gateway process owner does not match the scoped runtime evidence owner",
+    },
+    {
+      label: "the selected port listener belongs to the sibling PID",
+      options: { listenerPids: [9_990_808] },
+      reason: "PID 9991880 is not the sole listener owner for port 18080",
+    },
+  ] as const)("fails closed and preserves evidence when $label", ({ options, reason }) => {
+    const fixture = scopedGatewayFixture(options);
+    try {
+      expect(fixture.result.stopped).toEqual([]);
+      expect(fixture.result.failed).toEqual([]);
+      expect(fixture.result.skippedNonMatchingPids).toEqual([fixture.recordedPid]);
+      expect(fixture.result.ownershipFailures).toEqual([
+        `PID ${String(fixture.recordedPid)}: ${reason}`,
+      ]);
+      expect(fixture.kill).not.toHaveBeenCalled();
+      expect(fixture.calls.filter(({ command }) => command === "pgrep")).toEqual([]);
+      expect(fs.existsSync(fixture.selectedPidFile)).toBe(true);
+      expect(fs.existsSync(fixture.selectedRuntimeMarker)).toBe(!options.omitMarker);
+      expect(fs.existsSync(fixture.siblingPidFile)).toBe(true);
+      expect(fs.existsSync(fixture.siblingRuntimeMarker)).toBe(true);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("rejects a requested host-wide fallback without scanning or signaling", () => {
+    const fixture = scopedGatewayFixture({ usePgrepFallback: true });
+    try {
+      expect(fixture.result.ownershipFailures).toEqual([
+        "scoped gateway stop forbids host-wide process discovery",
+      ]);
+      expect(fixture.calls.filter(({ command }) => command === "pgrep")).toEqual([]);
+      expect(fixture.kill).not.toHaveBeenCalled();
+      expect(fs.existsSync(fixture.selectedPidFile)).toBe(true);
+      expect(fs.existsSync(fixture.selectedRuntimeMarker)).toBe(true);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("fails closed when the selected process identity changes immediately before signaling", () => {
+    const fixture = scopedGatewayFixture({ startIdentities: ["original", "replacement"] });
+    try {
+      expect(fixture.result.stopped).toEqual([]);
+      expect(fixture.result.skippedNonMatchingPids).toEqual([fixture.selectedPid]);
+      expect(fixture.result.ownershipFailures).toEqual([
+        `PID ${String(fixture.selectedPid)}: gateway process identity changed immediately before signaling`,
+      ]);
+      expect(fixture.kill).not.toHaveBeenCalled();
+      expect(fs.existsSync(fixture.selectedPidFile)).toBe(true);
+      expect(fs.existsSync(fixture.selectedRuntimeMarker)).toBe(true);
+      expect(fs.existsSync(fixture.siblingPidFile)).toBe(true);
+      expect(fs.existsSync(fixture.siblingRuntimeMarker)).toBe(true);
+    } finally {
+      fixture.cleanup();
+    }
   });
 });

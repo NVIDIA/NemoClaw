@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   HOST_GATEWAY_PGREP_PATTERN,
   type HostGatewayProcessDeps,
+  hostGatewayCmdlineMatches,
   type RunResult,
   stopHostGatewayProcesses,
 } from "./host-gateway-process";
@@ -180,5 +181,42 @@ describe("stopHostGatewayProcesses target filtering", () => {
     expect(result.skippedNonMatchingPids).toEqual([9999558]);
     expect(kill).not.toHaveBeenCalled();
     expect(fs.existsSync(pidFile)).toBe(false);
+  });
+});
+
+describe("exact OpenShell gateway command-line identity (#8663)", () => {
+  const target = { name: "nemoclaw-18080", port: 18_080 };
+
+  it("accepts one exact gateway name and port", () => {
+    expect(
+      hostGatewayCmdlineMatches(
+        "/opt/openshell/openshell gateway start --name nemoclaw-18080 --port 18080",
+        null,
+        target,
+        { requireExpectedFlags: true },
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["missing gateway name", "/opt/openshell/openshell gateway start --port 18080"],
+    ["missing gateway port", "/opt/openshell/openshell gateway start --name nemoclaw-18080"],
+    ["sibling gateway name", "/opt/openshell/openshell gateway start --name nemoclaw --port 18080"],
+    [
+      "sibling gateway port",
+      "/opt/openshell/openshell gateway start --name nemoclaw-18080 --port 8080",
+    ],
+    [
+      "duplicate gateway names",
+      "/opt/openshell/openshell gateway start --name nemoclaw-18080 --name nemoclaw --port 18080",
+    ],
+    [
+      "duplicate gateway ports",
+      "/opt/openshell/openshell gateway start --name nemoclaw-18080 --port 18080 --port 8080",
+    ],
+  ])("rejects %s", (_case, cmdline) => {
+    expect(hostGatewayCmdlineMatches(cmdline, null, target, { requireExpectedFlags: true })).toBe(
+      false,
+    );
   });
 });

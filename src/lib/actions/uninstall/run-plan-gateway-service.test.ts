@@ -27,6 +27,7 @@ interface Fixture {
 }
 
 const tempRoots: string[] = [];
+const CURRENT_UID = typeof process.getuid === "function" ? process.getuid() : 0;
 
 afterEach(() => {
   for (const root of tempRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
@@ -97,19 +98,51 @@ function writeGatewayState(test: Fixture): string {
   return configPath;
 }
 
+function managedSystemdShow(
+  test: Fixture,
+  options: {
+    active: boolean;
+    effectiveScopedStop?: boolean;
+    execStartPath?: string;
+    fragmentPath?: string;
+    mainPid: number;
+  },
+): string {
+  const gatewayBin = options.execStartPath ?? `${test.home}/.local/bin/openshell-gateway`;
+  const servicePath =
+    options.fragmentPath ?? getNemoclawOpenShellGatewayUserServicePath(test.home, test.env);
+  return [
+    `FragmentPath=${servicePath}`,
+    `ExecStart={ path=${gatewayBin} ; argv[]=${gatewayBin} ; }`,
+    "ExecStop=",
+    "ExecStopPost=",
+    `ActiveState=${options.active ? "active" : "inactive"}`,
+    `MainPID=${String(options.active ? options.mainPid : 0)}`,
+    `Restart=${options.effectiveScopedStop ? "no" : "on-failure"}`,
+    `KillSignal=${options.effectiveScopedStop ? "SIGKILL" : "SIGTERM"}`,
+    "KillMode=control-group",
+  ].join("\n");
+}
+
 function uninstall(
   test: Fixture,
   keepOpenShell: boolean,
   deps: Partial<UninstallRunDeps> = {},
   gateways: { name: string }[] = [{ name: "nemoclaw" }],
 ) {
-  const { commandExists = () => false, run = () => ok(), ...overrides } = deps;
+  const {
+    commandExists = () => false,
+    isPortFree = () => true,
+    run = () => ok(),
+    ...overrides
+  } = deps;
   return runUninstallPlan(
     { assumeYes: true, deleteModels: false, keepOpenShell },
     {
       env: test.env,
       existsSync: (target) => String(target).startsWith(test.root) && fs.existsSync(target),
       isTty: false,
+      isPortFree,
       platform: "linux",
       resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
         gatewayName,
@@ -124,11 +157,39 @@ function uninstall(
       rmSync: fs.rmSync,
       runDocker: () => ok(),
       ...overrides,
-      commandExists: (command) => command === "openshell" || commandExists(command),
-      run: (command, args, options) =>
-        command === "openshell" && args[0] === "gateway" && args[1] === "list"
-          ? ok(JSON.stringify(gateways))
-          : run(command, args, options),
+      // A scoped uninstall with no PID evidence may only conclude that the
+      // gateway is absent after a complete empty listener observation.
+      commandExists: (command) =>
+        command === "openshell" || command === "lsof" || commandExists(command),
+      run: (command, args, options) => {
+        if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
+          return ok(JSON.stringify(gateways));
+        }
+        const response = run(command, args, options);
+        if (
+          command === "systemctl" &&
+          args.includes("show") &&
+          response.status === 0 &&
+          response.stdout === ""
+        ) {
+          const servicePath = getNemoclawOpenShellGatewayUserServicePath(test.home, test.env);
+          const gatewayBin = `${test.home}/.local/bin/openshell-gateway`;
+          return ok(
+            [
+              `FragmentPath=${servicePath}`,
+              `ExecStart={ path=${gatewayBin} ; argv[]=${gatewayBin} ; }`,
+              "ExecStop=",
+              "ExecStopPost=",
+              "ActiveState=inactive",
+              "MainPID=0",
+              "Restart=on-failure",
+              "KillSignal=15",
+              "KillMode=control-group",
+            ].join("\n"),
+          );
+        }
+        return response;
+      },
     },
   );
 }
@@ -215,8 +276,8 @@ describe("uninstall OpenShell gateway user service", () => {
         run: (command, args) => {
           calls.push([command, ...args]);
           gatewayStopped ||= command === "systemctl" && args.includes("disable");
-          // `systemctl disable --now` also stops the OpenShell gateway service,
-          // so every scoped `openshell` call fails once the unit is disabled.
+          // Scoped cleanup must finish its OpenShell calls before disabling
+          // the unit. The disable intentionally omits --now.
           return command === "openshell" && gatewayStopped
             ? { status: 1, stdout: "", stderr: "gateway unreachable" }
             : ok();
@@ -241,8 +302,325 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(result.exitCode).toBe(0);
     expect(deletedAt).toBeGreaterThanOrEqual(0);
     expect(disabledAt).toBeGreaterThan(deletedAt);
+    expect(calls[disabledAt]).toEqual([
+      "systemctl",
+      "--user",
+      "disable",
+      NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
+    ]);
+    expect(calls[disabledAt]).not.toContain("--now");
     expect(dockerCalls).toContainEqual(["rm", "-f", "sandbox-id"]);
     expect(fs.existsSync(servicePath)).toBe(false);
+  });
+
+  it("proves and SIGKILL-stops only the active managed service after scoped sandbox cleanup (#8663)", () => {
+    const test = fixture(true);
+    test.env.LOGNAME = "gateway-owner";
+    const servicePath = writeManagedService(test);
+    writeSelectedSandboxRegistry(test, "my-assistant");
+    const gatewayBin = `${test.home}/.local/bin/openshell-gateway`;
+    const mainPid = 41_101;
+    const calls: string[][] = [];
+    const events: string[] = [];
+    let scopedOverrideLoaded = false;
+    let serviceStopped = false;
+    const isPortFree = vi.fn(() => serviceStopped);
+    const kill = vi.fn(() => true);
+    const readProcessExecutable = vi.fn(() => gatewayBin);
+    const readProcessStartIdentity = vi.fn(() => "boot-identity:12345");
+
+    const result = uninstall(
+      test,
+      false,
+      {
+        commandExists: (command) => command === "systemctl",
+        isPortFree,
+        kill,
+        readProcessExecutable,
+        readProcessStartIdentity,
+        run: (command, args) => {
+          calls.push([command, ...args]);
+          if (command === "openshell" && args[0] === "sandbox" && args[1] === "delete") {
+            events.push("sandbox-delete");
+            return ok();
+          }
+          if (command === "systemctl" && args.includes("show")) {
+            return ok(
+              managedSystemdShow(test, {
+                active: !serviceStopped,
+                effectiveScopedStop: scopedOverrideLoaded,
+                mainPid,
+              }),
+            );
+          }
+          if (command === "systemctl" && args.includes("daemon-reload")) {
+            events.push("daemon-reload");
+            if (!serviceStopped) {
+              const dropInPath = path.join(`${servicePath}.d`, "99-nemoclaw-scoped-uninstall.conf");
+              expect(fs.readFileSync(dropInPath, "utf-8")).toBe(
+                "[Service]\nRestart=no\nKillSignal=SIGKILL\nKillMode=control-group\n",
+              );
+              scopedOverrideLoaded = true;
+            }
+            return ok();
+          }
+          if (command === "systemctl" && args.includes("disable")) {
+            events.push("disable-now");
+            expect(scopedOverrideLoaded).toBe(true);
+            serviceStopped = true;
+            return ok();
+          }
+          if (command === "ps" && args.at(-1) === "uid=") return ok(`${String(CURRENT_UID)}\n`);
+          if (command === "ps" && args.at(-1) === "pid=") {
+            return serviceStopped ? { status: 1, stdout: "", stderr: "" } : ok(`${mainPid}\n`);
+          }
+          if (command === "lsof" && args.includes(":8080")) {
+            return serviceStopped ? ok() : ok(`${mainPid}\n`);
+          }
+          return ok();
+        },
+      },
+      [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(events.slice(0, 3)).toEqual(["sandbox-delete", "daemon-reload", "disable-now"]);
+    expect(calls).toContainEqual([
+      "systemctl",
+      "--user",
+      "disable",
+      "--now",
+      NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
+    ]);
+    expect(readProcessExecutable).toHaveBeenCalledTimes(2);
+    expect(readProcessExecutable).toHaveBeenNthCalledWith(1, mainPid);
+    expect(readProcessExecutable).toHaveBeenNthCalledWith(2, mainPid);
+    expect(readProcessStartIdentity).toHaveBeenCalledTimes(2);
+    expect(readProcessStartIdentity).toHaveBeenNthCalledWith(1, mainPid);
+    expect(readProcessStartIdentity).toHaveBeenNthCalledWith(2, mainPid);
+    expect(serviceStopped).toBe(true);
+    expect(isPortFree).toHaveBeenCalledWith(8080);
+    expect(
+      calls.some(
+        (call) =>
+          call[0] === "ps" &&
+          call[1] === "-p" &&
+          call[2] === String(mainPid) &&
+          call.at(-1) === "pid=",
+      ),
+    ).toBe(true);
+    expect(fs.existsSync(servicePath)).toBe(false);
+    expect(fs.existsSync(`${servicePath}.d`)).toBe(false);
+    expect(kill).not.toHaveBeenCalled();
+    expect(calls.some((call) => call[0] === "pgrep")).toBe(false);
+  });
+
+  it("SIGKILL-stops but preserves a trusted package-owned gateway service (#8663)", () => {
+    const test = fixture(true);
+    test.env.LOGNAME = "gateway-owner";
+    writeSelectedSandboxRegistry(test, "my-assistant");
+    const servicePath = "/usr/lib/systemd/user/openshell-gateway.service";
+    const gatewayBin = "/usr/bin/openshell-gateway";
+    const mainPid = 41_301;
+    const dropInPath = path.join(
+      getOpenShellUserConfigHome(test.home, test.env),
+      "systemd",
+      "user",
+      "openshell-gateway.service.d",
+      "99-nemoclaw-scoped-uninstall.conf",
+    );
+    const calls: string[][] = [];
+    let scopedOverrideLoaded = false;
+    let serviceStopped = false;
+
+    const result = uninstall(
+      test,
+      false,
+      {
+        commandExists: (command) => command === "systemctl",
+        existsSync: (target) =>
+          target === servicePath ||
+          (String(target).startsWith(test.root) && fs.existsSync(String(target))),
+        isPortFree: () => serviceStopped,
+        readProcessExecutable: () => gatewayBin,
+        readProcessStartIdentity: () => "boot-identity:package-service",
+        run: (command, args) => {
+          calls.push([command, ...args]);
+          if (command === "systemctl" && args.includes("show")) {
+            return ok(
+              managedSystemdShow(test, {
+                active: !serviceStopped,
+                effectiveScopedStop: scopedOverrideLoaded,
+                execStartPath: gatewayBin,
+                fragmentPath: servicePath,
+                mainPid,
+              }),
+            );
+          }
+          if (command === "systemctl" && args.includes("daemon-reload")) {
+            scopedOverrideLoaded = fs.existsSync(dropInPath);
+            return ok();
+          }
+          if (command === "systemctl" && args.includes("stop")) {
+            expect(scopedOverrideLoaded).toBe(true);
+            serviceStopped = true;
+            return ok();
+          }
+          if (command === "ps" && args.at(-1) === "uid=") return ok(`${String(CURRENT_UID)}\n`);
+          if (command === "ps" && args.at(-1) === "pid=") {
+            return serviceStopped ? { status: 1, stdout: "", stderr: "" } : ok(`${mainPid}\n`);
+          }
+          if (command === "lsof" && args.includes(":8080")) {
+            return serviceStopped ? ok() : ok(`${mainPid}\n`);
+          }
+          return ok();
+        },
+      },
+      [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(calls).toContainEqual(["systemctl", "--user", "stop", "openshell-gateway"]);
+    expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
+    expect(calls.some((call) => call[0] === "pgrep")).toBe(false);
+    expect(serviceStopped).toBe(true);
+    expect(fs.existsSync(dropInPath)).toBe(false);
+  });
+
+  it("removes an owned scoped-stop override when retrying inactive service cleanup (#8663)", () => {
+    const test = fixture(true);
+    test.env.LOGNAME = "gateway-owner";
+    const servicePath = writeManagedService(test);
+    writeSelectedSandboxRegistry(test, "my-assistant");
+    const gatewayBin = `${test.home}/.local/bin/openshell-gateway`;
+    const mainPid = 41_302;
+    const dropInPath = path.join(`${servicePath}.d`, "99-nemoclaw-scoped-uninstall.conf");
+    let failFirstDropInRemoval = true;
+    let scopedOverrideLoaded = false;
+    let serviceStopped = false;
+    const run = (command: string, args: string[]) => {
+      if (command === "systemctl" && args.includes("show")) {
+        return ok(
+          managedSystemdShow(test, {
+            active: !serviceStopped,
+            effectiveScopedStop: scopedOverrideLoaded,
+            mainPid,
+          }),
+        );
+      }
+      if (command === "systemctl" && args.includes("daemon-reload")) {
+        scopedOverrideLoaded = fs.existsSync(dropInPath);
+        return ok();
+      }
+      if (command === "systemctl" && args.includes("disable")) {
+        serviceStopped = true;
+        return ok();
+      }
+      if (command === "ps" && args.at(-1) === "uid=") return ok(`${String(CURRENT_UID)}\n`);
+      if (command === "ps" && args.at(-1) === "pid=") {
+        return serviceStopped ? { status: 1, stdout: "", stderr: "" } : ok(`${mainPid}\n`);
+      }
+      if (command === "lsof" && args.includes(":8080")) {
+        return serviceStopped ? ok() : ok(`${mainPid}\n`);
+      }
+      return ok();
+    };
+    const deps: Partial<UninstallRunDeps> = {
+      commandExists: (command) => command === "systemctl",
+      isPortFree: () => serviceStopped,
+      readProcessExecutable: () => gatewayBin,
+      readProcessStartIdentity: () => "boot-identity:retry",
+      rmSync: (target, options) => {
+        if (String(target) === dropInPath && failFirstDropInRemoval) {
+          failFirstDropInRemoval = false;
+          throw new Error("injected drop-in removal failure");
+        }
+        fs.rmSync(target, options);
+      },
+      run,
+    };
+
+    const first = uninstall(test, false, deps, [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }]);
+
+    expect(first.exitCode).toBe(1);
+    expect(serviceStopped).toBe(true);
+    expect(fs.existsSync(servicePath)).toBe(true);
+    expect(fs.existsSync(dropInPath)).toBe(true);
+
+    const retry = uninstall(test, false, deps, [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }]);
+
+    expect(retry.exitCode).toBe(0);
+    expect(fs.existsSync(servicePath)).toBe(false);
+    expect(fs.existsSync(dropInPath)).toBe(false);
+  });
+
+  it.each([
+    {
+      label: "the port-8080 listener belongs to a sibling MainPID",
+      listenerPid: 41_202,
+    },
+    {
+      fragmentPath: "/tmp/foreign-openshell-gateway.service",
+      label: "the loaded unit fragment is ambiguous",
+      listenerPid: 41_201,
+    },
+    {
+      label: "the managed process owner differs from the current user",
+      listenerPid: 41_201,
+      processUid: CURRENT_UID + 1,
+    },
+  ])("fails closed and preserves the active managed unit when $label (#8663)", (identity) => {
+    const test = fixture(true);
+    test.env.LOGNAME = "gateway-owner";
+    const servicePath = writeManagedService(test);
+    writeSelectedSandboxRegistry(test, "my-assistant");
+    const gatewayBin = `${test.home}/.local/bin/openshell-gateway`;
+    const mainPid = 41_201;
+    const calls: string[][] = [];
+    const kill = vi.fn(() => true);
+
+    const result = uninstall(
+      test,
+      false,
+      {
+        commandExists: (command) => command === "systemctl",
+        isPortFree: () => false,
+        kill,
+        readProcessExecutable: () => gatewayBin,
+        readProcessStartIdentity: () => "boot-identity:12345",
+        run: (command, args) => {
+          calls.push([command, ...args]);
+          if (command === "systemctl" && args.includes("show")) {
+            return ok(
+              managedSystemdShow(test, {
+                active: true,
+                fragmentPath: identity.fragmentPath,
+                mainPid,
+              }),
+            );
+          }
+          if (command === "ps" && args.at(-1) === "uid=") {
+            return ok(`${String(identity.processUid ?? CURRENT_UID)}\n`);
+          }
+          if (command === "lsof" && args.includes(":8080")) {
+            return ok(`${identity.listenerPid}\n`);
+          }
+          return ok();
+        },
+      },
+      [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(calls).toContainEqual(["openshell", "sandbox", "delete", "my-assistant"]);
+    expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
+    expect(calls.some((call) => call[0] === "systemctl" && call.includes("daemon-reload"))).toBe(
+      false,
+    );
+    expect(fs.existsSync(servicePath)).toBe(true);
+    expect(fs.existsSync(`${servicePath}.d`)).toBe(false);
+    expect(kill).not.toHaveBeenCalled();
+    expect(calls.some((call) => call[0] === "pgrep")).toBe(false);
   });
 
   it("preserves the marked Linux unit when scoped sandbox deletion fails (#8220)", () => {

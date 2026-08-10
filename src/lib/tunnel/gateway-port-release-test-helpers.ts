@@ -16,6 +16,7 @@ export function emptyStopResult(
 ): StopHostGatewayResult {
   return {
     failed: [],
+    ownershipFailures: [],
     skippedDeadPids: [],
     skippedNonMatchingPids: [],
     stopped: [],
