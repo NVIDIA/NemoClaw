@@ -30,6 +30,7 @@ export interface FullE2eEvidenceSummary {
   };
   dispatch: {
     allowDgxSparkRunnerQueue: false;
+    allowJetsonDispatch: false;
     allowJetsonRunnerQueue: false;
     emptySelectors: true;
     includeStagingBrevLaunchable: true;
@@ -166,6 +167,9 @@ export function validateFullE2eEvidence(input: FullE2eEvidenceInput): FullE2eEvi
     "dispatch.includeStagingBrevLaunchable",
   );
   requireEqual(dispatch.allowJetsonRunnerQueue, false, "dispatch.allowJetsonRunnerQueue");
+  if (dispatch.kind === "nemoclaw-e2e-dispatch-v2" || Object.hasOwn(dispatch, "allowJetsonDispatch")) {
+    requireEqual(dispatch.allowJetsonDispatch, false, "dispatch.allowJetsonDispatch");
+  }
   requireEqual(dispatch.allowDgxSparkRunnerQueue, false, "dispatch.allowDgxSparkRunnerQueue");
   requireEqual(dispatch.emptySelectors, true, "dispatch.emptySelectors");
 
@@ -233,6 +237,7 @@ export function validateFullE2eEvidence(input: FullE2eEvidenceInput): FullE2eEvi
     },
     dispatch: {
       allowDgxSparkRunnerQueue: false,
+      allowJetsonDispatch: false,
       allowJetsonRunnerQueue: false,
       emptySelectors: true,
       includeStagingBrevLaunchable: true,

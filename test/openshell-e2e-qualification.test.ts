@@ -41,6 +41,7 @@ function prFile(filename: string, status = "modified") {
 function validReceipt(overrides: Record<string, unknown> = {}) {
   return {
     allowDgxSparkRunnerQueue: false,
+    allowJetsonDispatch: false,
     allowJetsonRunnerQueue: false,
     baseSha: BASE_SHA,
     candidateRepository: REPOSITORY,

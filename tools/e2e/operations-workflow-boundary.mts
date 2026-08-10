@@ -368,6 +368,11 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Checkout trusted llama.cpp qualification" &&
         step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
+      const trustedJetsonControllerCheckout =
+        jobName === "jetson-nvmap-gpu" &&
+        step.name === "Check out trusted Jetson controller" &&
+        step.with?.repository === "NVIDIA/NemoClaw" &&
+        step.with?.ref === "${{ github.workflow_sha }}";
       const trustedCheckout =
         trustedHermesFixtureCheckout ||
         trustedReportHelperCheckout ||
@@ -375,7 +380,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         trustedPublicationCheckout ||
         trustedManagedImageRuntimeCheckout ||
         trustedLlamaCppPlanCheckout ||
-        trustedLlamaCppQualificationCheckout;
+        trustedLlamaCppQualificationCheckout ||
+        trustedJetsonControllerCheckout;
       if (
         step.uses?.startsWith("actions/checkout@") &&
         step.with?.ref !== "${{ inputs.checkout_sha || github.sha }}" &&

@@ -179,6 +179,7 @@ export type PullRequestIdentity = {
 
 export type E2EDispatchReceipt = {
   allowDgxSparkRunnerQueue: boolean;
+  allowJetsonDispatch: boolean;
   allowJetsonRunnerQueue: boolean;
   baseSha: string;
   candidateRepository: string;
@@ -199,6 +200,7 @@ export type E2EDispatchReceipt = {
 type E2EDispatchReceiptEnvelope = Omit<
   E2EDispatchReceipt,
   | "allowDgxSparkRunnerQueue"
+  | "allowJetsonDispatch"
   | "allowJetsonRunnerQueue"
   | "emptySelectors"
   | "includeStagingBrevLaunchable"
@@ -206,6 +208,7 @@ type E2EDispatchReceiptEnvelope = Omit<
   | "targets"
 > & {
   allowDgxSparkRunnerQueue: boolean;
+  allowJetsonDispatch: boolean;
   allowJetsonRunnerQueue: boolean;
   emptySelectors: boolean;
   includeStagingBrevLaunchable: boolean;
@@ -728,6 +731,7 @@ export function validateDispatchReceipt(
     receipt.targets !== "" ||
     receipt.emptySelectors !== true ||
     receipt.allowDgxSparkRunnerQueue !== false ||
+    receipt.allowJetsonDispatch !== false ||
     receipt.allowJetsonRunnerQueue !== false ||
     receipt.includeStagingBrevLaunchable !== false
   ) {
@@ -745,6 +749,7 @@ function validateDispatchReceiptEnvelope(
     value,
     [
       "allowDgxSparkRunnerQueue",
+      "allowJetsonDispatch",
       "allowJetsonRunnerQueue",
       "baseSha",
       "candidateRepository",
@@ -780,6 +785,7 @@ function validateDispatchReceiptEnvelope(
     typeof value.emptySelectors !== "boolean" ||
     value.emptySelectors !== (value.jobs === "" && value.targets === "") ||
     typeof value.allowDgxSparkRunnerQueue !== "boolean" ||
+    typeof value.allowJetsonDispatch !== "boolean" ||
     typeof value.allowJetsonRunnerQueue !== "boolean" ||
     typeof value.includeStagingBrevLaunchable !== "boolean"
   ) {
@@ -987,6 +993,7 @@ async function selectQualifiedRun(options: {
         receipt.targets !== "" ||
         !receipt.emptySelectors ||
         receipt.allowDgxSparkRunnerQueue ||
+        receipt.allowJetsonDispatch ||
         receipt.allowJetsonRunnerQueue ||
         receipt.includeStagingBrevLaunchable
       ) {

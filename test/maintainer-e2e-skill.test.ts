@@ -20,6 +20,7 @@ function validEvidence() {
     },
     dispatch: {
       allowDgxSparkRunnerQueue: false,
+      allowJetsonDispatch: false,
       allowJetsonRunnerQueue: false,
       candidateSha,
       emptySelectors: true,
@@ -119,6 +120,7 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
       },
       dispatch: {
         allowDgxSparkRunnerQueue: false,
+        allowJetsonDispatch: false,
         allowJetsonRunnerQueue: false,
         emptySelectors: true,
         includeStagingBrevLaunchable: true,
@@ -220,7 +222,14 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
       "dispatch.jobs",
     ],
     [
-      "a full dispatch that opts into the Jetson runner queue",
+      "a full dispatch that opts into Colossus Jetson execution",
+      (evidence: ReturnType<typeof validEvidence>) => {
+        evidence.dispatch.allowJetsonDispatch = true;
+      },
+      "dispatch.allowJetsonDispatch",
+    ],
+    [
+      "a full dispatch that enables the retired Jetson runner receipt field",
       (evidence: ReturnType<typeof validEvidence>) => {
         evidence.dispatch.allowJetsonRunnerQueue = true;
       },

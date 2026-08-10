@@ -45,6 +45,7 @@ function runEvidence(
   return {
     dispatch: {
       allowDgxSparkRunnerQueue: false,
+      allowJetsonDispatch: false,
       allowJetsonRunnerQueue: false,
       ...(receiptVersion === 2
         ? {
@@ -274,11 +275,20 @@ describe("release E2E evidence", () => {
   });
 
   it.each([
-    ["allowJetsonRunnerQueue", "runs[0].dispatch.allowJetsonRunnerQueue must equal false"],
-    ["allowDgxSparkRunnerQueue", "runs[0].dispatch.allowDgxSparkRunnerQueue must equal false"],
-  ])("rejects release evidence that opts into %s", (field, message) => {
+    ["allowJetsonDispatch", "runs[0].dispatch.allowJetsonDispatch must equal false", 2 as const],
+    [
+      "allowJetsonRunnerQueue",
+      "runs[0].dispatch.allowJetsonRunnerQueue must equal false",
+      1 as const,
+    ],
+    [
+      "allowDgxSparkRunnerQueue",
+      "runs[0].dispatch.allowDgxSparkRunnerQueue must equal false",
+      1 as const,
+    ],
+  ])("rejects release evidence that opts into %s", (field, message, receiptVersion) => {
     const plan = preflight();
-    const evidence = runEvidence(plan, "default");
+    const evidence = runEvidence(plan, "default", { receiptVersion });
     (evidence.dispatch as Record<string, unknown>)[field] = true;
 
     expect(() => buildReleaseE2eLedger(plan, [evidence])).toThrow(message);
