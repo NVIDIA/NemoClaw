@@ -224,9 +224,7 @@ const PHASE_FILES = ["prepared", "mutation-authorized", "fence-established", "co
 const EXECUTION_LEASE_FILE = "mutation-execution.json";
 const EXECUTION_RECOVERY_FILE = ".mutation-execution-recovery";
 const RUNTIME_TARGET_CLAIM_DIRECTORY = "runtime-target-claims";
-const CURRENT_PROCESS_START_IDENTITY =
-  readMcpLockProcessIdentity(process.pid, true) ??
-  `unverified-self:${String(process.pid)}:${randomUUID()}`;
+let currentProcessStartIdentityValue: string | undefined;
 const TRANSACTION_PUBLISH_TARGETS = [
   ...PHASE_FILES.map((phase) => `${phase}.json`),
   PERSISTED_ENGINE_STATE_MUTATION_INTENT_FILE,
@@ -645,7 +643,9 @@ function processIsAlive(pid: number): boolean {
 }
 
 function currentProcessStartIdentity(): string {
-  return CURRENT_PROCESS_START_IDENTITY;
+  return (currentProcessStartIdentityValue ??=
+    readMcpLockProcessIdentity(process.pid, true) ??
+    `unverified-self:${String(process.pid)}:${randomUUID()}`);
 }
 
 function exactExecutionOwnerIsAlive(lease: PersistedEngineLifecycleExecutionLease): boolean {
@@ -653,7 +653,7 @@ function exactExecutionOwnerIsAlive(lease: PersistedEngineLifecycleExecutionLeas
   const currentIdentity = readMcpLockProcessIdentity(lease.ownerPid, true);
   if (currentIdentity !== null) return currentIdentity === lease.ownerStartIdentity;
   return (
-    lease.ownerPid !== process.pid || lease.ownerStartIdentity === CURRENT_PROCESS_START_IDENTITY
+    lease.ownerPid !== process.pid || lease.ownerStartIdentity === currentProcessStartIdentity()
   );
 }
 
