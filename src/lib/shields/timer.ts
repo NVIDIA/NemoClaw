@@ -190,6 +190,17 @@ function readTimerMarker(markerPath: string): ShieldsTimerMarker | null {
   return readShieldsTimerMarkerFile(markerPath);
 }
 
+let cachedCurrentProcessStartIdentity: string | undefined;
+
+function currentProcessStartIdentity(): string | null {
+  if (cachedCurrentProcessStartIdentity !== undefined) {
+    return cachedCurrentProcessStartIdentity;
+  }
+  const identity = readProcessStartIdentity(process.pid);
+  if (identity !== null) cachedCurrentProcessStartIdentity = identity;
+  return identity;
+}
+
 function markerRecordMatchesCurrentTimer(
   marker: ShieldsTimerMarker | null,
   args: TimerArgs,
@@ -202,7 +213,7 @@ function markerRecordMatchesCurrentTimer(
     marker.restoreAt === args.restoreAtIso &&
     marker.processToken === args.processToken &&
     (marker.timerProcessStartIdentity === undefined ||
-      marker.timerProcessStartIdentity === readProcessStartIdentity(process.pid)) &&
+      marker.timerProcessStartIdentity === currentProcessStartIdentity()) &&
     (marker.allowLegacyHermesProtocol === true) === args.allowLegacyHermesProtocol &&
     marker.leaseOwnerPid === args.leaseOwnerPid &&
     marker.leaseOwnerStartIdentity === args.leaseOwnerStartIdentity &&

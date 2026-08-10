@@ -89,7 +89,7 @@ def _canonical(value: object) -> bytes:
             "utf-8", "strict"
         )
     except (TypeError, ValueError, UnicodeEncodeError):
-        _fail("publisher-json-invalid")
+        return _fail("publisher-json-invalid")
 
 
 def _pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -112,7 +112,7 @@ def _parse_json(raw: bytes, maximum: int, code: str) -> object:
             parse_float=lambda _value: _fail(code),
         )
     except (UnicodeDecodeError, json.JSONDecodeError, PublisherError):
-        _fail(code)
+        return _fail(code)
 
 
 def _exact_record(value: object, keys: tuple[str, ...], code: str) -> dict[str, object]:
@@ -476,6 +476,7 @@ def _atomic_write(directory_fd: int, name: str, value: object) -> None:
         try:
             os.unlink(temporary, dir_fd=directory_fd)
         except FileNotFoundError:
+            # A successful replace consumes the temporary name; cleanup is best-effort.
             pass
 
 
@@ -601,7 +602,7 @@ def _acquire_lock(directory_fd: int) -> int:
         fcntl.flock(fd, fcntl.LOCK_EX)
         return fd
     except OSError:
-        _fail("publisher-lock-invalid")
+        return _fail("publisher-lock-invalid")
 
 
 def _trusted_executable(path: str) -> None:
@@ -655,7 +656,7 @@ def _run_guard(action: str, arguments: list[str]) -> str:
     try:
         return result.stdout.decode("ascii", "strict")
     except UnicodeDecodeError:
-        _fail("publisher-guard-failed")
+        return _fail("publisher-guard-failed")
 
 
 def _guard_state_path() -> str:
@@ -998,7 +999,7 @@ def _continue_forward(
         if _load_guard_state(directory_fd) is not None:
             _finish_guard(token)
         return _complete(directory_fd, journal, normalized)
-    _fail("publisher-journal-invalid")
+    return _fail("publisher-journal-invalid")
 
 
 def _continue_abort(
@@ -1038,7 +1039,7 @@ def _continue_abort(
         if _load_guard_state(directory_fd) is not None:
             _abort_guard(token)
         return _complete(directory_fd, journal, normalized)
-    _fail("publisher-journal-invalid")
+    return _fail("publisher-journal-invalid")
 
 
 def apply_plan_posture(marker: dict[str, object], posture: str) -> dict[str, object]:

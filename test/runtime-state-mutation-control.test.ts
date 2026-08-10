@@ -928,7 +928,14 @@ with tempfile.TemporaryDirectory() as root:
         time.sleep(0.15)
         after = os.path.getsize(mutation_path)
         results["guardian_blocks_mutation"] = before == after
-        selected, status = os.waitpid(writer_pid, os.WUNTRACED | os.WNOHANG)
+        selected = 0
+        status = 0
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            selected, status = os.waitpid(writer_pid, os.WUNTRACED | os.WNOHANG)
+            if selected == writer_pid and os.WIFSTOPPED(status):
+                break
+            time.sleep(0.01)
         results["guardian_writer_stopped"] = selected == writer_pid and os.WIFSTOPPED(status)
     finally:
         os.close(ready_read)

@@ -105,7 +105,7 @@ def _canonical(value: object) -> bytes:
             "utf-8", "strict"
         )
     except (TypeError, ValueError, UnicodeEncodeError):
-        _fail("invalid-json")
+        return _fail("invalid-json")
 
 
 def _parse(raw: bytes, code: str) -> object:
@@ -152,7 +152,7 @@ def _open_absolute_directory(path: str, *, readable_final: bool = False) -> int:
         return current
     except OSError:
         os.close(current)
-        _fail("unsafe-directory")
+        return _fail("unsafe-directory")
 
 
 def _stable_stat(value: os.stat_result) -> tuple[object, ...]:
@@ -309,7 +309,7 @@ def _parse_uids(raw: bytes) -> tuple[int, int, int, int]:
         fields = line.split()[1:]
         if len(fields) == 4 and all(DECIMAL.fullmatch(field) for field in fields):
             return tuple(int(field, 10) for field in fields)  # type: ignore[return-value]
-    _fail("start-process-unavailable")
+    return _fail("start-process-unavailable")
 
 
 def _capture_parent() -> dict[str, object]:
