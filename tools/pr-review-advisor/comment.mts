@@ -684,20 +684,20 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
     changedCredentialFreeJobIds,
   );
   const requiredE2e = uniqueE2eIds([...requiredTargets, ...requiredCoverage]);
-  const exactRevisionE2e = requiredE2e.filter(isPrE2ePlanningJob);
+  const commitUnderReviewE2e = requiredE2e.filter(isPrE2ePlanningJob);
   const manualOnlyE2e = requiredE2e.filter((id) => !isPrE2ePlanningJob(id));
   const optionalE2e = uniqueE2eIds([...optionalTargets, ...optionalCoverage]);
   const lines = [
     "",
     "### E2E guidance",
-    "_Advisory only. A maintainer can dispatch the default E2E suite against this exact revision._",
+    "_Advisory only. A maintainer can dispatch the default E2E suite for the commit under review._",
     "",
   ];
 
-  const hiddenRequiredCount = exactRevisionE2e.length - E2E_RENDER_LIMIT;
+  const hiddenRequiredCount = commitUnderReviewE2e.length - E2E_RENDER_LIMIT;
   const hiddenRequiredText = hiddenRequiredCount > 0 ? ` (+${hiddenRequiredCount} more)` : "";
   lines.push(
-    `**Recommended E2E:** ${renderE2eIds(exactRevisionE2e) || "_None_"}${hiddenRequiredText}`,
+    `**Recommended E2E:** ${renderE2eIds(commitUnderReviewE2e) || "_None_"}${hiddenRequiredText}`,
   );
 
   if (manualOnlyE2e.length > 0) {
@@ -706,7 +706,7 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
     lines.push(
       "",
       `**Manual-only E2E:** ${renderE2eIds(manualOnlyE2e) || "_None_"}${hiddenManualText}`,
-      "_These lanes do not have a credential-safe exact-PR dispatch path. Run them only from their reviewed trusted-main boundary._",
+      "_The manual PR workflow cannot grant the required credential or runner access to the commit under review. Run these jobs from reviewed code on `main`._",
     );
   }
 

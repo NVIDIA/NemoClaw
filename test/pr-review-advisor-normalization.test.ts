@@ -126,7 +126,7 @@ describe("PR review advisor", () => {
     const comment = buildComment({ summary: renderSummary(result), result });
     expect(comment).toContain("### E2E guidance");
     expect(comment).toContain(
-      "Advisory only. A maintainer can dispatch the default E2E suite against this exact revision.",
+      "Advisory only. A maintainer can dispatch the default E2E suite for the commit under review.",
     );
     expect(comment).toContain("<code>rebuild-openclaw</code>");
     expect(comment).toContain("**Recommended E2E:**");
@@ -213,13 +213,16 @@ describe("PR review advisor", () => {
     expect(noE2eComment).not.toContain("Why no");
   });
 
-  it("separates exact-revision E2E from secret-backed manual-only coverage", () => {
+  it("separates E2E for the commit under review from secret-backed manual-only coverage", () => {
     const result = {
       headSha: "abc123def456",
       e2e: {
         coverage: {
           requiredTests: [
-            { id: "inference-routing", reason: "Credential-free exact-revision coverage." },
+            {
+              id: "inference-routing",
+              reason: "Credential-free coverage for the commit under review.",
+            },
             { id: "network-policy", reason: "Secret-backed trusted-main coverage." },
           ],
           optionalTests: [],
@@ -230,7 +233,9 @@ describe("PR review advisor", () => {
     const comment = buildComment({ summary: "Trusted E2E classification.", result });
     expect(comment).toContain("**Recommended E2E:** <code>inference-routing</code>");
     expect(comment).toContain("**Manual-only E2E:** <code>network-policy</code>");
-    expect(comment).toContain("credential-safe exact-PR dispatch path");
+    expect(comment).toContain(
+      "The manual PR workflow cannot grant the required credential or runner access to the commit under review.",
+    );
   });
 
   it("sanitizes malformed enum values and preserves deterministic fallback gates", () => {
