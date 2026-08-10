@@ -8,6 +8,7 @@ import {
   buildManagedTransportFailure,
   classifyTransportPhase,
   emitManagedTransportFailure,
+  encodeLogField,
   generateTransportTraceId,
   MANAGED_TRANSPORT_FAILURE_EVENT,
   pickSafeResponseHeaders,
@@ -192,6 +193,50 @@ describe("emitManagedTransportFailure", () => {
       ].join(" "),
     );
     expect(lines[1]).toContain("cause_chain=Error/UND_ERR_SOCKET/read");
+  });
+
+  it("neutralizes delimiter- and credential-bearing values in every emitted field", () => {
+    const lines: string[] = [];
+    emitManagedTransportFailure(
+      buildManagedTransportFailure({
+        consumer: "mcp",
+        operation: "tools/list\nmanaged_transport_failure phase=policy",
+        route: "trusted_env_proxy",
+        phase: "response_headers",
+        elapsedMs: 10,
+        traceId: "trace-1",
+        httpStatus: 503,
+        responseHeaders: [
+          ["server", "envoy value=forged"],
+          ["x-request-id", "id\r\ninjected=1"],
+          ["via", "Bearer sk-abcdef0123456789abcdef0123456789"],
+        ],
+      }),
+      (line) => lines.push(line),
+    );
+
+    // One record: no injected line break reached the physical output.
+    expect(lines).toHaveLength(1);
+    const line = lines[0];
+    expect(line).not.toContain("\n");
+    expect(line).not.toContain("\r");
+    // The genuine phase field is intact and appears once as a real top-level field.
+    expect(line).toContain("phase=response_headers");
+    // Delimiter-bearing values are JSON-quoted, so their `key=value` fragments
+    // live inside a quoted token rather than as forged fields.
+    expect(line).toContain('operation="tools/list\\nmanaged_transport_failure phase=policy"');
+    expect(line).toContain('x_request_id="id\\r\\ninjected=1"');
+    // A credential-shaped header value is redacted, not disclosed.
+    expect(line).not.toContain("sk-abcdef0123456789abcdef0123456789");
+  });
+});
+
+describe("encodeLogField", () => {
+  it("quotes delimiter-bearing values and passes plain tokens through", () => {
+    expect(encodeLogField("tools/list")).toBe("tools/list");
+    expect(encodeLogField("1.1 proxy")).toBe('"1.1 proxy"');
+    expect(encodeLogField("a\nb")).toBe('"a\\nb"');
+    expect(encodeLogField(503)).toBe("503");
   });
 });
 

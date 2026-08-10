@@ -223,9 +223,28 @@ export function buildManagedTransportFailure(
   };
 }
 
+const MAX_LOG_FIELD = 256;
+
 /**
- * Formats the event as stable key=value lines under the shared event name
- * and hands it to write; stderr by default. Consumers call this on failure
+ * Encodes one value for a single-record key=value log line. Every string is
+ * redacted through the shared trace sanitizer, then length-bounded, and any
+ * value carrying a control character, whitespace, quote, or `=` is JSON
+ * quoted so it cannot inject a line break or forge a second field. Even an
+ * allowlisted upstream header reaches the line only through this policy.
+ */
+export function encodeLogField(value: string | number | boolean): string {
+  if (typeof value !== "string") return String(value);
+  const redacted = sanitizeTraceAttributes({ value }).value;
+  const text = (typeof redacted === "string" ? redacted : value).slice(0, MAX_LOG_FIELD);
+  if (/[\s="\\]|[\u0000-\u001f\u007f]/.test(text)) return JSON.stringify(text);
+  return text;
+}
+
+/**
+ * Formats the event as stable single-record key=value lines under the shared
+ * event name and hands each to write; stderr by default. Every emitted string
+ * passes through encodeLogField, so a delimiter- or credential-bearing
+ * upstream value cannot forge records or leak. Consumers call this on failure
  * only.
  */
 export function emitManagedTransportFailure(
@@ -234,7 +253,7 @@ export function emitManagedTransportFailure(
 ): void {
   const pairs: string[] = [MANAGED_TRANSPORT_FAILURE_EVENT];
   const push = (key: string, value: string | number | boolean | undefined) => {
-    if (value !== undefined) pairs.push(`${key}=${value}`);
+    if (value !== undefined) pairs.push(`${key}=${encodeLogField(value)}`);
   };
   push("consumer", event.consumer);
   push("operation", event.operation);
@@ -253,18 +272,22 @@ export function emitManagedTransportFailure(
   push("trace_id", event.traceId);
   write(pairs.join(" "));
   if (event.causeChain.length > 0) {
-    const chain = event.causeChain
-      .map((cause) =>
-        [cause.name, cause.code, cause.syscall, cause.errno, cause.port]
-          .filter((part) => part !== undefined)
-          .join("/"),
-      )
-      .join(" -> ");
-    write(`${MANAGED_TRANSPORT_FAILURE_EVENT} trace_id=${event.traceId} cause_chain=${chain}`);
+    const chain = encodeLogField(
+      event.causeChain
+        .map((cause) =>
+          [cause.name, cause.code, cause.syscall, cause.errno, cause.port]
+            .filter((part) => part !== undefined)
+            .join("/"),
+        )
+        .join(" -> "),
+    );
+    write(
+      `${MANAGED_TRANSPORT_FAILURE_EVENT} trace_id=${encodeLogField(event.traceId)} cause_chain=${chain}`,
+    );
   }
   if (event.errorBodySnippet !== undefined) {
     write(
-      `${MANAGED_TRANSPORT_FAILURE_EVENT} trace_id=${event.traceId} error_body=${JSON.stringify(event.errorBodySnippet)}`,
+      `${MANAGED_TRANSPORT_FAILURE_EVENT} trace_id=${encodeLogField(event.traceId)} error_body=${JSON.stringify(event.errorBodySnippet)}`,
     );
   }
 }
