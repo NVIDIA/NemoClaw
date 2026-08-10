@@ -510,7 +510,18 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
   it("defers restart-safe no-GPU recreation until the create process exits (#8720)", async () => {
     const input = createInput();
     const patch = createPatch();
+    const createHandoff: string[] = [];
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce(patch);
+    mocks.streamSandboxCreate.mockImplementationOnce(async (...args) => {
+      const options = args[3];
+      createHandoff.push("poll");
+      options.onPoll();
+      createHandoff.push("create-complete");
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    patch.ensureApplied.mockImplementationOnce(() => {
+      createHandoff.push("ensure-applied");
+    });
     input.sandboxGpuConfig = {
       ...input.sandboxGpuConfig,
       mode: "0",
@@ -542,11 +553,8 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       input.sandboxEnv,
       expect.objectContaining({ waitForReadyTermination: true }),
     );
-    const onPoll = mocks.streamSandboxCreate.mock.calls[0]?.[3]?.onPoll;
-    expect(onPoll).toBeTypeOf("function");
-    onPoll();
     expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
-    expect(patch.ensureApplied).toHaveBeenCalledOnce();
+    expect(createHandoff).toEqual(["poll", "create-complete", "ensure-applied"]);
   });
 
   it("does not replace a native GPU container solely to persist its startup command", async () => {
