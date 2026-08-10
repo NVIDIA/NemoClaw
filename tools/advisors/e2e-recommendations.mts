@@ -466,10 +466,6 @@ function trustedAllJobIds(): string[] {
   );
 }
 
-function trustedAllowedJobIds(): string[] {
-  return trustedAllJobIds().filter(isPrE2ePlanningJob);
-}
-
 function extractAllowedE2eJobIds(
   workflowText: string,
   credentialFreeTests: readonly E2eChangedCredentialFreeTest[],

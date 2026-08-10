@@ -407,7 +407,10 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     }
   });
 
-  it("selects no shared targets for protected managed-runtime qualification", () => {
+  it.each([
+    "inference-routing",
+    "managed-image-protected-runtime",
+  ])("selects no shared targets for the %s job selector", (jobSelector) => {
     const workflow = readE2eOperationsWorkflow();
     const controller = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Build trusted controller target matrix",
@@ -415,7 +418,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     const planner = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Generate E2E target matrix",
     )!;
-    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-protected-matrix-"));
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-job-selector-matrix-"));
     const output = join(directory, "output");
     const summary = join(directory, "summary");
 
@@ -430,7 +433,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
           env: {
             ...process.env,
             GITHUB_OUTPUT: output,
-            JOBS: "managed-image-protected-runtime",
+            JOBS: jobSelector,
             TARGETS: "",
           },
         },
@@ -453,7 +456,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             GITHUB_OUTPUT: output,
             GITHUB_STEP_SUMMARY: summary,
             INFERENCE_MODE: "mock",
-            JOBS: "managed-image-protected-runtime",
+            JOBS: jobSelector,
             TARGETS: "",
           },
         },
