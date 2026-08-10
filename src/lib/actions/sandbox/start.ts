@@ -58,36 +58,32 @@ export interface SandboxStartDeps {
   log?: (message: string) => void;
 }
 
-function displayRecoveryDetail(value: unknown): string {
-  const detail = value instanceof Error && value.message ? value.message : String(value);
-  const { sanitizeSandboxStartupRecoveryDetail } =
-    require("./connect") as typeof import("./connect");
-  return sanitizeSandboxStartupRecoveryDetail(detail);
-}
-
-function startupRecoveryFailure(result: SandboxStartupRecoveryResult): string | null {
-  const check = result.processCheck;
+function startupRecoveryFailure(check: SandboxStartupRecoveryResult): string | null {
   if (!check.checked) return "managed agent gateway inspection did not complete";
   if ("runtime" in check && check.runtime === "terminal") return null;
   if ("secretBoundaryRefused" in check && check.secretBoundaryRefused) {
-    return `secret-boundary refusal: ${displayRecoveryDetail(check.secretBoundaryReason)}`;
+    return `secret-boundary refusal: ${String(check.secretBoundaryReason)}`;
   }
   if ("mcpReconciliationRefused" in check && check.mcpReconciliationRefused) {
-    return `MCP reconciliation refusal: ${displayRecoveryDetail(check.mcpReconciliationReason)}`;
+    return `MCP reconciliation refusal: ${String(check.mcpReconciliationReason)}`;
   }
   if ("forwardRecoveryFailed" in check && check.forwardRecoveryFailed) {
-    return displayRecoveryDetail(check.forwardRecoveryFailureDetail);
+    return String(check.forwardRecoveryFailureDetail);
   }
   if (check.wasRunning || check.recovered) return null;
-  const layer = result.recoveryFailureLayer ?? "managed agent gateway recovery";
-  return result.recoveryFailureDetail
-    ? `${layer}: ${displayRecoveryDetail(result.recoveryFailureDetail)}`
+  const layer = check.recoveryFailureLayer ?? "managed agent gateway recovery";
+  return check.recoveryFailureDetail
+    ? `${layer}: ${check.recoveryFailureDetail}`
     : `${layer}: the agent gateway did not recover`;
 }
 
 function preservedSandboxRecoveryError(sandboxName: string, detail: unknown): Error {
+  const { sanitizeSandboxStartupRecoveryDetail } =
+    require("./connect") as typeof import("./connect");
+  const rawDetail = detail instanceof Error && detail.message ? detail.message : String(detail);
+  const safeDetail = sanitizeSandboxStartupRecoveryDetail(rawDetail);
   return new Error(
-    `Sandbox '${sandboxName}' started, but startup recovery failed: ${displayRecoveryDetail(detail)}. ` +
+    `Sandbox '${sandboxName}' started, but startup recovery failed: ${safeDetail}. ` +
       `The existing sandbox was preserved. Run \`${cliName()} ${sandboxName} recover\`, then retry \`${cliName()} ${sandboxName} start\`.`,
   );
 }

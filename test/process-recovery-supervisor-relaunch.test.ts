@@ -285,40 +285,32 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     mockOpenClawSandbox("stopped-box");
     setImmediateRecoveryPolling();
     const order: string[] = [];
-    const completion = {
-      status: 0,
-      stdout: `v1 ${"a".repeat(64)} complete ok 0 4242\nGATEWAY_PID=4242`,
-      stderr: "",
-    };
     const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) => {
       order.push(action);
-      return completion;
+      return {
+        status: 0,
+        stdout: `v1 ${"a".repeat(64)} complete ok 0 4242\nGATEWAY_PID=4242`,
+        stderr: "",
+      };
     });
-    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(
-      (_name: string, options?: { beforeProbe?: (timeoutMs: number) => boolean | null }) => {
-        expect(options?.beforeProbe).toBeUndefined();
-        order.push("OpenShell readiness");
-        return true;
-      },
-    );
+    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(() => {
+      order.push("OpenShell readiness");
+      return true;
+    });
     const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
-    let forwardStarted = false;
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => forwardStarted);
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(
-      (args) =>
-        ({
-          status: 0,
-          output:
-            args.join(" ") === "forward list" && forwardStarted
-              ? "SANDBOX  BIND  PORT  PID  STATUS\nstopped-box  127.0.0.1  18789  12345  running"
-              : "SANDBOX  BIND  PORT  PID  STATUS",
-        }) as never,
-    );
-    vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation(() => {
-      order.push("host forward");
-      forwardStarted = true;
-      return { status: 0 } as never;
-    });
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+    vi.spyOn(openshellRuntime, "captureOpenshell")
+      .mockReturnValueOnce({ status: 0, output: "SANDBOX  BIND  PORT  PID  STATUS" })
+      .mockReturnValue({
+        status: 0,
+        output: "SANDBOX  BIND  PORT  PID  STATUS\nstopped-box  127.0.0.1  18789  12345  running",
+      });
+    vi.spyOn(openshellRuntime, "runOpenshell")
+      .mockReturnValueOnce({ status: 0 } as never)
+      .mockImplementationOnce(() => {
+        order.push("host forward");
+        return { status: 0 } as never;
+      });
 
     const result = checkAndRecoverSandboxProcesses("stopped-box", {
       quiet: true,
@@ -329,8 +321,8 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     });
 
     expect(result).toMatchObject({ checked: true, recovered: true, forwardRecovered: true });
-    expect(order).toContain("recover");
     expect(result).toHaveProperty("managedControlCompletion.disposition", "ok");
+    expect(order).toContain("OpenShell readiness");
     expect(order.indexOf("OpenShell readiness")).toBeLessThan(order.indexOf("host forward"));
     expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
   });

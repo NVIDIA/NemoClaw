@@ -95,10 +95,9 @@ export type SandboxConnectOptions = {
   probeOnly?: boolean;
 };
 
-export type SandboxStartupRecoveryResult = {
-  processCheck: ReturnType<typeof checkAndRecoverSandboxProcesses>;
-  recoveryFailureDetail: string | null;
-  recoveryFailureLayer: GatewayRestartFailureLayer | null;
+export type SandboxStartupRecoveryResult = ReturnType<typeof checkAndRecoverSandboxProcesses> & {
+  recoveryFailureDetail?: string | null;
+  recoveryFailureLayer?: GatewayRestartFailureLayer | null;
 };
 
 export function sanitizeSandboxStartupRecoveryDetail(raw: string): string {
@@ -949,7 +948,7 @@ export function restoreSandboxStartupState(sandboxName: string): SandboxStartupR
       recoveryFailureDetail = detail ?? null;
     },
   });
-  return { processCheck, recoveryFailureDetail, recoveryFailureLayer };
+  return { ...processCheck, recoveryFailureDetail, recoveryFailureLayer };
 }
 
 function restoreInteractiveTerminal(): void {

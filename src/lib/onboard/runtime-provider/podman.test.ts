@@ -26,6 +26,12 @@ import {
 const AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 const CONTAINER_ID = "a".repeat(64);
 const AUTHORITY_ID = "test:podman-socket";
+const SUCCESSFUL_RECOVERY = {
+  checked: true,
+  wasRunning: true,
+  recovered: false,
+  forwardRecovered: false,
+} as const;
 
 function hostDoctorEngine(authorityId = AUTHORITY_ID): ContainerEngine {
   return {
@@ -146,11 +152,7 @@ describe("dormant Podman runtime provider", () => {
   )("runs basic CPU start and stop for %s through an injected bundle", async (agent) => {
     const runtime = providerHarness(agent);
     const verifyGateway = vi.fn(async () => undefined);
-    const restoreStartupState = vi.fn(() => ({
-      processCheck: { checked: true, wasRunning: true, recovered: false, forwardRecovered: false },
-      recoveryFailureDetail: null,
-      recoveryFailureLayer: null,
-    }));
+    const restoreStartupState = vi.fn(() => SUCCESSFUL_RECOVERY);
     const stopSandboxChannels = vi.fn();
 
     await expect(
@@ -192,16 +194,7 @@ describe("dormant Podman runtime provider", () => {
       startSandbox(runtime.sandboxName, {
         getSandbox: () => runtime.entry,
         runtimeProviders: runtime.providers,
-        restoreStartupState: vi.fn(() => ({
-          processCheck: {
-            checked: true,
-            wasRunning: true,
-            recovered: false,
-            forwardRecovered: false,
-          },
-          recoveryFailureDetail: null,
-          recoveryFailureLayer: null,
-        })),
+        restoreStartupState: vi.fn(() => SUCCESSFUL_RECOVERY),
         verifyGateway,
         log: vi.fn(),
       }),

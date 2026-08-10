@@ -17,18 +17,14 @@ function sandbox(values: Partial<SandboxEntry> = {}): SandboxEntry {
   return { name: "my-sandbox", ...values };
 }
 
-function startupRecovery(
-  processCheck: SandboxStartupRecoveryResult["processCheck"] = {
-    checked: true,
-    wasRunning: true,
-    recovered: false,
-    forwardRecovered: false,
-  },
-  recoveryFailureLayer: SandboxStartupRecoveryResult["recoveryFailureLayer"] = null,
-  recoveryFailureDetail: string | null = null,
-): SandboxStartupRecoveryResult {
-  return { processCheck, recoveryFailureDetail, recoveryFailureLayer };
-}
+const SUCCESSFUL_RECOVERY = {
+  checked: true,
+  wasRunning: true,
+  recovered: false,
+  forwardRecovered: false,
+} as const satisfies SandboxStartupRecoveryResult;
+const FAILED_RECOVERY = { ...SUCCESSFUL_RECOVERY, wasRunning: false } as const;
+const REDACTED_TOKEN = "opaque-token-8662";
 
 function harness(overrides: Partial<SandboxStartDeps> = {}) {
   const getSandbox = vi.fn<NonNullable<SandboxStartDeps["getSandbox"]>>(() => sandbox());
@@ -59,8 +55,8 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
   const verifyGateway = vi.fn<NonNullable<SandboxStartDeps["verifyGateway"]>>(() =>
     Promise.resolve(),
   );
-  const restoreStartupState = vi.fn<NonNullable<SandboxStartDeps["restoreStartupState"]>>(() =>
-    startupRecovery(),
+  const restoreStartupState = vi.fn<NonNullable<SandboxStartDeps["restoreStartupState"]>>(
+    () => SUCCESSFUL_RECOVERY,
   );
   const log = vi.fn<(message: string) => void>();
   const runtimeProviders = createRuntimeProviderBundleRegistry([
@@ -101,7 +97,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
 describe("startSandbox", () => {
   it("restores sealed access before recovering sandbox processes (#8112)", () => {
     const restoreAccess = vi.fn();
-    const recovery = startupRecovery();
+    const recovery = SUCCESSFUL_RECOVERY;
     const restoreProcesses = vi.fn(() => recovery);
 
     const result = restoreStoppedSandboxStartupState("my-sandbox", {
@@ -120,10 +116,9 @@ describe("startSandbox", () => {
 
   it("keeps Hermes sealed state untouched while recovering sandbox processes (#8112)", () => {
     const restoreAccess = vi.fn();
-    const recovery = startupRecovery();
-    const restoreProcesses = vi.fn(() => recovery);
+    const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
 
-    const result = restoreStoppedSandboxStartupState("my-sandbox", {
+    restoreStoppedSandboxStartupState("my-sandbox", {
       agent: "hermes",
       restoreLockedStartupAccess: restoreAccess,
       restoreProcessState: restoreProcesses,
@@ -131,7 +126,6 @@ describe("startSandbox", () => {
 
     expect(restoreAccess).not.toHaveBeenCalled();
     expect(restoreProcesses).toHaveBeenCalledWith("my-sandbox");
-    expect(result).toBe(recovery);
   });
 
   it("restores startup state before probing readiness after a stopped container starts (#8112)", async () => {
@@ -153,13 +147,11 @@ describe("startSandbox", () => {
     );
   });
 
-  it("attempts startup restoration again when start is rerun after a failure (#8112)", async () => {
+  it("retries startup after a structured recovery failure (#8662)", async () => {
     const h = harness();
-    h.restoreStartupState.mockImplementationOnce(() => {
-      throw new Error("restore failed");
-    });
+    h.restoreStartupState.mockReturnValueOnce(FAILED_RECOVERY);
 
-    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow("restore failed");
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow("gateway did not recover");
     expect(h.verifyGateway).not.toHaveBeenCalled();
 
     const result = await startSandbox("my-sandbox", h.deps);
@@ -176,29 +168,24 @@ describe("startSandbox", () => {
     [
       "openclaw",
       "managed gateway recovery",
-      startupRecovery(
-        { checked: true, wasRunning: false, recovered: false, forwardRecovered: false },
-        "supervisor unavailable",
-        "SUPERVISOR_UNAVAILABLE Authorization: Bearer opaque-token-8662",
-      ),
+      {
+        ...FAILED_RECOVERY,
+        recoveryFailureLayer: "supervisor unavailable",
+        recoveryFailureDetail: `SUPERVISOR_UNAVAILABLE Authorization: Bearer ${REDACTED_TOKEN}`,
+      },
       /supervisor unavailable/iu,
-      "opaque-token-8662",
     ],
     [
       "hermes",
       "OpenShell readiness",
-      startupRecovery({
-        checked: true,
-        wasRunning: false,
-        recovered: false,
-        forwardRecovered: false,
+      {
+        ...FAILED_RECOVERY,
         forwardRecoveryFailed: true,
-        forwardRecoveryFailureDetail: "the sandbox did not become ready in OpenShell",
-      }),
+        forwardRecoveryFailureDetail: `the sandbox did not become ready in OpenShell: token=${REDACTED_TOKEN}`,
+      },
       /did not become ready in OpenShell/iu,
-      "opaque-token-8662",
     ],
-  ] as const)("propagates an actionable %s %s failure (#8662)", async (agent, _layer, recovery, expected, secret) => {
+  ] as const)("propagates an actionable %s %s failure (#8662)", async (agent, _layer, recovery, expected) => {
     const h = harness();
     h.getSandbox.mockReturnValue(sandbox({ agent }));
     h.restoreStartupState.mockReturnValue(recovery);
@@ -206,7 +193,7 @@ describe("startSandbox", () => {
     const failure = await startSandbox("my-sandbox", h.deps).catch((error) => String(error));
     expect(failure).toMatch(expected);
     expect(failure).toMatch(/nemoclaw my-sandbox recover/iu);
-    expect(failure).not.toContain(secret);
+    expect(failure).not.toContain(REDACTED_TOKEN);
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 

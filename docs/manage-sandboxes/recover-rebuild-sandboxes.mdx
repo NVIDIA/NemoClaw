@@ -26,7 +26,7 @@ If the container is paused, follow the printed `docker unpause` guidance instead
 If the container is missing or OpenShell reports another terminal phase such as `Failed`, follow the printed `rebuild --yes` guidance so NemoClaw can recreate the sandbox from its recorded metadata.
 
 <AgentOnly variant="openclaw,hermes">
-The `start` command returns success only after it authenticates the recovered agent runtime, OpenShell reports the sandbox ready, and required host forwards pass their checks.
+The `start` command returns success only after it authenticates the recovered agent runtime, OpenShell reports the sandbox ready, and host-side port forwards pass their checks.
 If any check fails, the command keeps the existing container, exits nonzero, identifies the failure, and tells you to run `recover` before retrying `start`.
 </AgentOnly>
 
