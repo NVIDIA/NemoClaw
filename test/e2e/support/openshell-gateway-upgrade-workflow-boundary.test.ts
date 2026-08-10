@@ -18,7 +18,8 @@ import {
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   expectedLegacyRegistryMetadata,
-  legacyGatewayUpgradeDockerNetwork,
+  GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
+  legacyGatewayUpgradeHostFirewallOptions,
   oldGatewayUpgradeInstallerArgs,
   throwGatewayUpgradeSetupFailures,
   upgradeGatewayCleanupScript,
@@ -103,12 +104,18 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
     expect(currentNemoclawUpgradeRef({})).toBe("HEAD");
   });
 
-  it("targets the Docker network created by each historical gateway fixture", () => {
-    expect(legacyGatewayUpgradeDockerNetwork("v0.0.36")).toBe("openshell-cluster-nemoclaw");
+  it("waits through the historical install for each gateway network", () => {
+    expect(legacyGatewayUpgradeHostFirewallOptions("v0.0.36")).toEqual({
+      networkName: "openshell-cluster-nemoclaw",
+      waitForNetworkMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
+    });
     for (const nemoclawRef of ["v0.0.55", "v0.0.74", "v0.0.89"]) {
-      expect(legacyGatewayUpgradeDockerNetwork(nemoclawRef)).toBeUndefined();
+      expect(legacyGatewayUpgradeHostFirewallOptions(nemoclawRef)).toEqual({
+        networkName: undefined,
+        waitForNetworkMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
+      });
     }
-    expect(() => legacyGatewayUpgradeDockerNetwork("v0.0.90")).toThrow(
+    expect(() => legacyGatewayUpgradeHostFirewallOptions("v0.0.90")).toThrow(
       /Unsupported gateway-upgrade network fixture/,
     );
   });

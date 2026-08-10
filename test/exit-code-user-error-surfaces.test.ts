@@ -264,6 +264,8 @@ describe("onboard dashboard-port exhaustion exits non-zero (#5974)", () => {
         [
           "#!/usr/bin/env bash",
           "# openshell capabilities: request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods",
+          'if [ "${1:-}" = status ]; then printf "No active gateway\\n"; exit 1; fi',
+          'if [ "${1:-}" = gateway ] && [ "${2:-}" = info ]; then printf "No gateway metadata found\\n"; exit 1; fi',
           'case "${1:-}" in',
           '  -V|--version) printf "%s 0.0.101\\n" "${0##*/}"; exit 0;;',
           "esac",
@@ -279,7 +281,7 @@ describe("onboard dashboard-port exhaustion exits non-zero (#5974)", () => {
       path.join(binDir, "docker"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = info ]; then echo "Server Version: 24.0.0"; exit 0; fi',
+        `if [ "$1" = info ]; then printf '%s\\n' '${JSON.stringify({ ServerVersion: "24.0.0", OperatingSystem: "Docker Desktop", NCPU: 8, MemTotal: 17_179_869_184 })}'; exit 0; fi`,
         'if [ "$1" = ps ]; then exit 0; fi',
         "exit 0",
       ].join("\n"),

@@ -3,7 +3,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import { getDockerDriverGatewayTargetIdentityDrift } from "./docker-driver-gateway-process-identity";
+import {
+  getDockerDriverGatewayTargetIdentityDrift,
+  hasDockerDriverGatewayEnvironment,
+  isDockerDriverGatewayProcessIdentity,
+} from "./docker-driver-gateway-process-identity";
 
 const normalizeGatewayExecutablePath = (value: string | null | undefined) => value ?? null;
 
@@ -28,5 +32,43 @@ describe("Docker-driver gateway target identity", () => {
         normalizeGatewayExecutablePath,
       }),
     ).toBeNull();
+  });
+
+  it("requires both gateway executable identity and Linux Docker-driver environment proof", () => {
+    const input = {
+      pid: 999_999,
+      gatewayBin: "/opt/openshell/openshell-gateway",
+      captureProcessArgs: () => "/opt/openshell/openshell-gateway --name nemoclaw --port 8080",
+      processIdentityMatchesGatewayBinary: () => true,
+      requireDockerDriverEnv: true,
+      hasDockerDriverGatewayEnv: () => false,
+    };
+
+    expect(isDockerDriverGatewayProcessIdentity(input)).toBe(false);
+    expect(
+      isDockerDriverGatewayProcessIdentity({
+        ...input,
+        hasDockerDriverGatewayEnv: () => true,
+      }),
+    ).toBe(true);
+    expect(
+      isDockerDriverGatewayProcessIdentity({
+        ...input,
+        processIdentityMatchesGatewayBinary: () => false,
+        hasDockerDriverGatewayEnv: () => true,
+      }),
+    ).toBe(false);
+  });
+
+  it("recognizes only documented Docker-driver environment markers", () => {
+    expect(hasDockerDriverGatewayEnvironment({ OPENSHELL_DRIVERS: "docker" }, "tcp://x")).toBe(
+      true,
+    );
+    expect(
+      hasDockerDriverGatewayEnvironment({ OPENSHELL_GRPC_ENDPOINT: "tcp://x" }, "tcp://x"),
+    ).toBe(true);
+    expect(
+      hasDockerDriverGatewayEnvironment({ OPENSHELL_GRPC_ENDPOINT: "tcp://other" }, "tcp://x"),
+    ).toBe(false);
   });
 });

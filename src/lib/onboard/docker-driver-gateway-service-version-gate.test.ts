@@ -148,6 +148,24 @@ describe("package-managed gateway version gate (#8094)", () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
+  it("lets observation-only callers decline the package unit without consuming the warning", () => {
+    const suppressedWarn = vi.fn();
+    const laterWarn = vi.fn();
+
+    expect(
+      hasOpenShellGatewayUserService(
+        resolveOptions("0.0.91", {
+          suppressUnsupportedVersionWarning: true,
+          warn: suppressedWarn,
+        }),
+      ),
+    ).toBe(false);
+    expect(suppressedWarn).not.toHaveBeenCalled();
+
+    hasOpenShellGatewayUserService(resolveOptions("0.0.91", { warn: laterWarn }));
+    expect(laterWarn).toHaveBeenCalledOnce();
+  });
+
   it("probes every documented package binary location", () => {
     const localBinary = "/usr/local/bin/openshell-gateway";
     expect(checkUpstreamGatewayVersion(localBinary, resolveOptions("0.0.91"))).toMatchObject({

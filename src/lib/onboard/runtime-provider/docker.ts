@@ -6,6 +6,7 @@ import {
   isDockerRuntimeDown,
   printDockerRuntimeDownGuidance,
 } from "../../actions/sandbox/gateway-failure-classifier";
+import { parseDockerDaemonObservation } from "../../domain/docker-host";
 import { cliName } from "../branding";
 import {
   findLabeledSandboxContainers,
@@ -103,21 +104,17 @@ function oneLine(value = ""): string {
 }
 
 function inspectDockerHost(deps: DockerRuntimeProviderDependencies): RuntimeProviderDoctorCheck {
-  const result = deps.captureHostCommand(
-    "docker",
-    ["info", "--format", "{{.ServerVersion}}"],
-    8000,
-  );
+  const result = deps.captureHostCommand("docker", ["info", "--format", "{{json .}}"], 8000);
+  const observation = parseDockerDaemonObservation(result.stdout);
+  const reachable = result.status === 0 && observation.reachable;
   return {
     group: "Host",
     label: "Docker daemon",
-    status: result.status === 0 ? "ok" : "fail",
-    detail:
-      result.status === 0
-        ? `server ${result.stdout.trim() || "unknown"}`
-        : oneLine(result.stderr || result.error?.message || "docker info failed"),
-    hint:
-      result.status === 0 ? undefined : "start Docker and verify your user can access the daemon",
+    status: reachable ? "ok" : "fail",
+    detail: reachable
+      ? `server ${observation.serverVersion ?? "unknown"}`
+      : oneLine(result.stderr || result.error?.message || "docker info failed"),
+    hint: reachable ? undefined : "start Docker and verify your user can access the daemon",
   };
 }
 

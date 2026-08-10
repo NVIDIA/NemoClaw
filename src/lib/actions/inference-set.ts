@@ -127,6 +127,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   getSandbox: (name: string) => SandboxEntry | null;
   listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox: string | null };
   updateSandbox: (name: string, updates: Partial<SandboxEntry>) => boolean;
+  updateSandboxInferenceRoute?: (name: string, updates: Partial<SandboxEntry>) => boolean;
   getRequestedAgent: () => string | null | undefined;
   loadSession: () => onboardSession.Session | null;
   updateSession: (
@@ -243,6 +244,7 @@ function defaultDeps(): InferenceSetDeps {
     getSandbox: registry.getSandbox,
     listSandboxes: registry.listSandboxes,
     updateSandbox: registry.updateSandbox,
+    updateSandboxInferenceRoute: registry.updateSandboxInferenceRoute,
     getRequestedAgent: () => process.env.NEMOCLAW_AGENT,
     loadSession: onboardSession.loadSession,
     updateSession: onboardSession.updateSession,
@@ -1130,7 +1132,7 @@ async function runInferenceSetWithoutHostLock(
         nimContainer: registryMetadata.nimContainer ?? null,
       });
     if (
-      !deps.updateSandbox(
+      !(deps.updateSandboxInferenceRoute ?? deps.updateSandbox)(
         sandboxName,
         registryFields(
           resolveAgentInferenceApi(
@@ -1164,7 +1166,12 @@ async function runInferenceSetWithoutHostLock(
     // Refresh the registry with config-derived API-family metadata before the
     // crash-prone in-sandbox sync (#3725/#3726). Explicit operator-supplied
     // metadata remains authoritative when present.
-    if (!deps.updateSandbox(sandboxName, registryFields(preferredInferenceApi))) {
+    if (
+      !(deps.updateSandboxInferenceRoute ?? deps.updateSandbox)(
+        sandboxName,
+        registryFields(preferredInferenceApi),
+      )
+    ) {
       throw new InferenceSetError(
         `Failed to update NemoClaw registry for sandbox '${sandboxName}'.`,
       );

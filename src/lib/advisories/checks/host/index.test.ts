@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { HostAssessment } from "../../../onboard/preflight";
-import { planHostAdvisories, planHostRemediation } from "../../../onboard/preflight";
+import { planHostAdvisories } from "../../../onboard/preflight";
 import { HOST_ADVISORY_CHECKS } from ".";
 
 function host(overrides: Partial<HostAssessment> = {}): HostAssessment {
@@ -48,7 +48,6 @@ describe("host advisory registry (#3213)", () => {
       "docker_group_permission",
       "start_docker",
       "container_runtime_under_provisioned",
-      "unsupported_runtime_warning",
       "install_nodejs",
       "install_openshell",
       "headless_remote_hint",
@@ -74,17 +73,15 @@ describe("host advisory registry (#3213)", () => {
 
     expect(planHostAdvisories(assessment).map((advisory) => advisory.id)).toEqual([
       "container_runtime_under_provisioned",
-      "unsupported_runtime_warning",
       "install_nodejs",
       "install_openshell",
       "generate_nvidia_cdi_spec",
     ]);
-    expect(planHostRemediation(assessment).map(({ id, blocking }) => ({ id, blocking }))).toEqual([
-      { id: "container_runtime_under_provisioned", blocking: false },
-      { id: "unsupported_runtime_warning", blocking: false },
-      { id: "install_nodejs", blocking: false },
-      { id: "install_openshell", blocking: false },
-      { id: "generate_nvidia_cdi_spec", blocking: true },
+    expect(planHostAdvisories(assessment).map(({ id, severity }) => ({ id, severity }))).toEqual([
+      { id: "container_runtime_under_provisioned", severity: "warning" },
+      { id: "install_nodejs", severity: "warning" },
+      { id: "install_openshell", severity: "warning" },
+      { id: "generate_nvidia_cdi_spec", severity: "blocking" },
     ]);
   });
 
@@ -97,7 +94,7 @@ describe("host advisory registry (#3213)", () => {
       cdiNvidiaGpuSpecMissing: true,
     });
 
-    expect(planHostRemediation(assessment).map((action) => action.id)).toEqual([
+    expect(planHostAdvisories(assessment).map((action) => action.id)).toEqual([
       "enable_docker_desktop_wsl_integration",
     ]);
   });
