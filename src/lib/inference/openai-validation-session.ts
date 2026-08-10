@@ -27,6 +27,8 @@ export interface OpenAiValidationOptions {
   extraHeaders?: readonly string[];
   requireResponsesToolCalling?: boolean;
   requireChatCompletionsToolCalling?: boolean;
+  retryChatCompletionsToolReadiness?: boolean;
+
   skipResponsesProbe?: boolean;
   probeStreaming?: boolean;
   isWsl?: boolean;

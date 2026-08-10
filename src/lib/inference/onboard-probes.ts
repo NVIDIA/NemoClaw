@@ -464,6 +464,8 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
       curlStatus: result.curlStatus,
       body: result.body,
       stderr: result.stderr,
+      diagnosticCodes: ["openai-chat-missing-structured-tool-call"],
+
       message: `HTTP ${result.httpStatus}: Chat Completions did not return a tool call`,
       ...(reasoningRetryAttempted ? { reasoningRetryAttempted: true } : {}),
     };
@@ -820,6 +822,15 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     const chatCompletionsProbe = {
       name: "Chat Completions API",
       api: "openai-completions",
+      retryReason: (result) =>
+        options.retryChatCompletionsToolReadiness === true &&
+        result.reasoningRetryAttempted !== true &&
+        result.curlStatus === 0 &&
+        result.httpStatus === 200 &&
+        result.diagnosticCodes?.includes("openai-chat-missing-structured-tool-call")
+          ? "did not return a structured tool call"
+          : null,
+
       execute: () =>
         options.requireChatCompletionsToolCalling === true
           ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
@@ -952,6 +963,8 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
         curlStatus: result.curlStatus,
         message: result.message,
         body: result.body,
+        diagnosticCodes: result.diagnosticCodes,
+
         reasoningRetryAttempted: result.reasoningRetryAttempted === true,
       });
     }
