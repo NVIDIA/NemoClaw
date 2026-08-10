@@ -175,6 +175,15 @@ function run(
 }
 
 describe("Hermes runtime-provider state mutation consumer", () => {
+  it("resolves the current Docker provider when the caller does not inject a registry", () => {
+    expect(
+      supportsHermesRuntimeProviderStateMutation(sandbox, {
+        content: HERMES_RUNTIME_STATE_MUTATION_CAPABILITY,
+        metadata: HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_METADATA,
+      }),
+    ).toBe(true);
+  });
+
   it("selects only an exact current managed Hermes Docker image capability", () => {
     const capability = {
       content: HERMES_RUNTIME_STATE_MUTATION_CAPABILITY,

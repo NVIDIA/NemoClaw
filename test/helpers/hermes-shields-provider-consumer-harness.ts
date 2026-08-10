@@ -255,7 +255,7 @@ export function createHermesShieldsProviderConsumerHarness(
   const privilegedExec = loadSource("../sandbox/privileged-exec.js");
   const dockerExec = loadSource("../adapters/docker/exec.js");
   const transition = loadSource("./hermes-runtime-state-mutation.js");
-  const runtimeProvider = loadSource("../onboard/runtime-provider/access.js");
+  const runtimeProvider = loadSource("../onboard/runtime-provider/persisted-engine-lifecycle.js");
   const verifyLock = loadSource("./verify-lock.js");
   const relockReconfirm = loadSource("./relock-reconfirm.js");
   const audit = loadSource("./audit.js");

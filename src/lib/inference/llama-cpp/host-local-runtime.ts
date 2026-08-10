@@ -309,16 +309,75 @@ export function buildLlamaCppHostLocalDockerArgv(
   ];
 }
 
-/** Activate the request guard only for an image that declares the owned guard artifact. */
+const dockerLoopbackPublishAuthorityBrand = Symbol("DockerLoopbackPublishAuthority");
+const MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION = [28, 3, 3] as const;
+
+export interface DockerLoopbackPublishAuthority {
+  readonly serverVersion: string;
+  readonly [dockerLoopbackPublishAuthorityBrand]: true;
+}
+
+/**
+ * Admit Docker loopback publishing only after querying the live server through the launch endpoint.
+ * The trusted qualification host must retain Docker's default protected NAT and firewall behavior.
+ */
+export function qualifyDockerLoopbackPublishAuthority(
+  serverVersionOutput: string,
+): DockerLoopbackPublishAuthority {
+  const serverVersion = serverVersionOutput.trim();
+  const match = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z.-]+)?$/u.exec(
+    serverVersion,
+  );
+  const version = match?.slice(1, 4).map(Number);
+  const meetsMinimum =
+    version !== undefined &&
+    (version[0]! > MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION[0] ||
+      (version[0] === MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION[0] &&
+        (version[1]! > MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION[1] ||
+          (version[1] === MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION[1] &&
+            version[2]! >= MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION[2]))));
+  if (
+    !version ||
+    version.length !== 3 ||
+    version.some((part) => !Number.isSafeInteger(part)) ||
+    !meetsMinimum
+  ) {
+    throw new Error(
+      "llama.cpp qualification requires Docker Engine 28.3.3 or newer for loopback publishing.",
+    );
+  }
+  return Object.freeze({
+    serverVersion,
+    [dockerLoopbackPublishAuthorityBrand]: true as const,
+  });
+}
+
+export function assertDockerLoopbackPublishAuthority(
+  authority: DockerLoopbackPublishAuthority,
+): void {
+  if (
+    typeof authority !== "object" ||
+    authority === null ||
+    authority[dockerLoopbackPublishAuthorityBrand] !== true
+  ) {
+    throw new Error("llama.cpp Docker loopback publishing authority is invalid.");
+  }
+}
+
+/** Activate the request guard only with live, patched Docker loopback-publish authority. */
 export function buildLlamaCppRequestGuardDockerArgv(
   contract: LlamaCppHostLocalLaunchContract,
   bindings: LlamaCppHostLocalRuntimeBindings,
+  loopbackPublishAuthority: DockerLoopbackPublishAuthority,
 ): string[] {
+  assertDockerLoopbackPublishAuthority(loopbackPublishAuthority);
   validateContract(contract);
   validateBindings(contract, bindings);
   const { limits } = contract.serve;
   return [
     ...buildLlamaCppHostLocalDockerRunArgv(contract, bindings),
+    "--publish",
+    `127.0.0.1:${bindings.hostPort === undefined ? "" : String(bindings.hostPort)}:${String(contract.serve.port)}`,
     "--entrypoint",
     LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
     bindings.imageReference,

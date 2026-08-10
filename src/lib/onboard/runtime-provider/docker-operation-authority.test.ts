@@ -20,15 +20,23 @@ import {
 
 const roots: string[] = [];
 
+function fakeExecutableRoot(): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-authority-"));
+  roots.push(root);
+  return root;
+}
+
+function writeFakeExecutable(root: string, name: string, script: string): void {
+  fs.writeFileSync(path.join(root, name), `#!/bin/sh\n${script}\n`, { mode: 0o700 });
+}
+
 function fakeDocker(output: string): string {
   return fakeDockerScript(`printf '%s\\n' '${output}'`);
 }
 
 function fakeDockerScript(script: string): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-authority-"));
-  roots.push(root);
-  const executable = path.join(root, "docker");
-  fs.writeFileSync(executable, `#!/bin/sh\n${script}\n`, { mode: 0o700 });
+  const root = fakeExecutableRoot();
+  writeFakeExecutable(root, "docker", script);
   return root;
 }
 
@@ -96,6 +104,110 @@ describe("Docker operation authority", () => {
     );
   });
 
+  it("keeps non-pulling endpoint authority stable across irrelevant PATH additions", () => {
+    const executableRoot = fakeDocker("qualified");
+    const emptyRoot = fakeExecutableRoot();
+    const first = createDockerOperationAuthority("sandbox-lifecycle", {
+      HOME: "/tmp/nemoclaw-home",
+      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+      PATH: executableRoot,
+    });
+    const second = createDockerOperationAuthority("sandbox-lifecycle", {
+      HOME: "/tmp/nemoclaw-home",
+      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+      PATH: `${emptyRoot}${path.delimiter}${executableRoot}`,
+    });
+
+    expect(second.engine.authorityId).toBe(first.engine.authorityId);
+  });
+
+  it("binds the full delegated-command PATH for host-local inference pulls", () => {
+    const executableRoot = fakeDocker("qualified");
+    const emptyRoot = fakeExecutableRoot();
+    const first = createDockerOperationAuthority("host-local-inference", {
+      HOME: "/tmp/nemoclaw-home",
+      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+      PATH: executableRoot,
+    });
+    const second = createDockerOperationAuthority("host-local-inference", {
+      HOME: "/tmp/nemoclaw-home",
+      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+      PATH: `${emptyRoot}${path.delimiter}${executableRoot}`,
+    });
+
+    expect(second.engine.authorityId).not.toBe(first.engine.authorityId);
+  });
+
+  it("fails closed when an earlier Docker credential helper appears", () => {
+    const executableRoot = fakeDocker("qualified");
+    const prefixRoot = fakeExecutableRoot();
+    const commandPath = `${prefixRoot}${path.delimiter}${executableRoot}`;
+    const authority = createDockerOperationAuthority("host-local-inference", {
+      HOME: "/tmp/nemoclaw-home",
+      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+      PATH: commandPath,
+    });
+
+    writeFakeExecutable(
+      prefixRoot,
+      "docker-credential-registry+alternate",
+      "printf 'credential\\n'",
+    );
+    const replacement = createDockerOperationAuthority("host-local-inference", {
+      HOME: "/tmp/nemoclaw-home",
+      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+      PATH: commandPath,
+    });
+
+    expect(replacement.engine.authorityId).not.toBe(authority.engine.authorityId);
+    expect(() => authority.engine.capture(["version"])).toThrow(
+      "Docker operation delegated command set changed after qualification",
+    );
+  });
+
+  it("binds and revalidates the effective SSH helper for SSH endpoints", () => {
+    const executableRoot = fakeDocker("qualified");
+    writeFakeExecutable(executableRoot, "ssh", "printf 'first-ssh\\n'");
+    const environment = {
+      HOME: "/tmp/nemoclaw-home",
+      DOCKER_HOST: "ssh://nvidia@spark.example.test",
+      PATH: executableRoot,
+    };
+    const authority = createDockerOperationAuthority("host-local-inference", environment);
+
+    writeFakeExecutable(executableRoot, "ssh", "printf 'second-ssh\\n'");
+    const replacement = createDockerOperationAuthority("host-local-inference", environment);
+
+    expect(replacement.engine.authorityId).not.toBe(authority.engine.authorityId);
+    expect(() => authority.engine.capture(["version"])).toThrow(
+      "Docker operation delegated command set changed after qualification",
+    );
+  });
+
+  it("rejects relative PATH entries and env-based delegated interpreters", () => {
+    const executableRoot = fakeDocker("qualified");
+    expect(() =>
+      createDockerOperationAuthority("host-local-inference", {
+        HOME: "/tmp/nemoclaw-home",
+        DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+        PATH: `${executableRoot}${path.delimiter}relative-bin`,
+      }),
+    ).toThrow("PATH must contain only absolute directories");
+
+    fs.writeFileSync(
+      path.join(executableRoot, "docker-credential-registry"),
+      "#!/usr/bin/env sh\nprintf 'credential\\n'\n",
+      { mode: 0o700 },
+    );
+    expect(() =>
+      createDockerOperationAuthority("host-local-inference", {
+        HOME: "/tmp/nemoclaw-home",
+        DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+        PATH: executableRoot,
+      }),
+    ).toThrow("cannot delegate through env");
+  });
+
   it("invokes one absolute qualified executable after process PATH drift", () => {
     const first = fakeDocker("first");
     const second = fakeDocker("second");
@@ -135,6 +247,7 @@ describe("Docker operation authority", () => {
     const executableRoot = fakeDockerScript(
       `printf '%s\\n' "\${HF_TOKEN-unset}" "\${SSH_AUTH_SOCK-unset}" "\${PATH-unset}"`,
     );
+    writeFakeExecutable(executableRoot, "ssh", "printf 'ssh\\n'");
     const authority = createDockerOperationAuthority("host-local-inference", {
       PATH: executableRoot,
       HOME: "/tmp/nemoclaw-home",

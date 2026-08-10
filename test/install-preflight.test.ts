@@ -6,13 +6,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { writeNpmStub } from "./helpers/installer-run-fixture";
 import {
   INSTALLER_PAYLOAD,
   readShellConstant,
   TEST_SYSTEM_PATH,
   writeExecutable,
 } from "./helpers/installer-sourced-env";
-import { writeNpmStub } from "./helpers/installer-run-fixture";
 
 const INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
@@ -2712,18 +2712,18 @@ exit 1
     const openshell = path.join(localBin, "openshell");
     fs.mkdirSync(localBin, { recursive: true });
     writeExecutable(openshell, "#!/usr/bin/env bash\nexit 0\n");
-
     const r = callInstallerPayloadFn(
-      'prefer_user_local_openshell; printf "%s\\n%s\\n" "$NEMOCLAW_OPENSHELL_BIN" "$PATH"',
+      'prefer_user_local_openshell; initial="$PATH"; prefer_user_local_openshell; printf "%s\\n%s\\n%s\\n" "$NEMOCLAW_OPENSHELL_BIN" "$initial" "$PATH"',
       {
         HOME: tmp,
         PATH: "/opt/homebrew/bin:/usr/bin:/bin",
       },
     );
-    const [resolved, pathValue] = r.stdout.trim().split("\n");
+    const [resolved, initialPath, pathValue] = r.stdout.trim().split("\n");
     expect(r.status).toBe(0);
     expect(resolved).toBe(openshell);
     expect(pathValue.startsWith(`${localBin}:`)).toBe(true);
+    expect(pathValue).toBe(initialPath);
   });
 
   it("restore_onboard_forward_after_post_checks: restores Hermes forward from session", () => {

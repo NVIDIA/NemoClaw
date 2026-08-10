@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -48,6 +48,21 @@ afterEach(() => {
 });
 
 describe("privileged direct-execution exclusion", () => {
+  it.runIf(process.platform !== "win32")(
+    "does not follow a dangling release-marker symlink during child cleanup",
+    async () => {
+      const stateDir = temporaryStateDir();
+      const releasePath = path.join(stateDir, "ordinary.release");
+      const targetPath = path.join(stateDir, "symlink-target");
+      fs.symlinkSync(targetPath, releasePath);
+
+      await releaseAndStopChild({ exitCode: 0 } as ChildProcess, releasePath);
+
+      expect(fs.lstatSync(releasePath).isSymbolicLink()).toBe(true);
+      expect(fs.existsSync(targetPath)).toBe(false);
+    },
+  );
+
   it("drains an in-flight exec before provider fencing and rejects the next exec before spawn", async () => {
     const stateDir = temporaryStateDir();
     const readyPath = path.join(stateDir, "ordinary.ready");

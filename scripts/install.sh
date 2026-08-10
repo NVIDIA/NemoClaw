@@ -1310,7 +1310,9 @@ prefer_user_local_openshell() {
   local openshell_bin="${local_bin}/openshell"
   if [[ -x "$openshell_bin" ]]; then
     export NEMOCLAW_OPENSHELL_BIN="$openshell_bin"
-    export PATH="$local_bin:$PATH"
+    if [[ ":$PATH:" != *":$local_bin:"* ]]; then
+      export PATH="$local_bin:$PATH"
+    fi
   fi
 }
 

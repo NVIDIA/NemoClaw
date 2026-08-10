@@ -20,6 +20,7 @@ import {
   parseQualificationInvocation,
   type QualificationInvocation,
   type QualificationPlan,
+  qualifyDockerLoopbackPublishAuthority,
   sha256Text,
   validateCandidateDockerfile,
   validateChatCompletionResponse,
@@ -44,6 +45,7 @@ const config = loadLlamaCppImageConfig();
 const planSource = config.publication_qualification_plan;
 const planDigest = config.publication_qualification_plan_sha256;
 const plan = validateQualificationPlan(planSource, planDigest);
+const loopbackPublishAuthority = qualifyDockerLoopbackPublishAuthority("28.3.3");
 
 function trustedEnvironment(overrides: Record<string, string | undefined> = {}) {
   return {
@@ -122,6 +124,19 @@ function qualificationPlanForModel(content: Buffer): QualificationPlan {
 }
 
 describe("trusted llama.cpp DGX Spark qualification runner", () => {
+  it("requires a patched live Docker server before loopback publication (#8260)", () => {
+    for (const version of ["27.5.1", "28.0.0", "28.3.2", "28.3.3-rc.1", "", "client 29.0.0"]) {
+      expect(() => qualifyDockerLoopbackPublishAuthority(version)).toThrow(
+        /Docker Engine 28\.3\.3 or newer/u,
+      );
+    }
+    expect(qualifyDockerLoopbackPublishAuthority("28.3.3\n").serverVersion).toBe("28.3.3");
+    expect(qualifyDockerLoopbackPublishAuthority("28.3.3+ubuntu.1").serverVersion).toBe(
+      "28.3.3+ubuntu.1",
+    );
+    expect(qualifyDockerLoopbackPublishAuthority("29.0.0").serverVersion).toBe("29.0.0");
+  });
+
   it("accepts only the canonical digest-bound declarative execution plan (#8260)", () => {
     expect(plan.contractVersion).toBe(1);
     expect(plan.recipe.id).toBe("llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1");
@@ -309,6 +324,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         registryOwner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
         runtimeGid: 1001,
         runtimeUid: 1001,
+        loopbackPublishAuthority,
       });
       expect(argv).toEqual(
         expect.arrayContaining([
@@ -381,8 +397,9 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         registryOwner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
         runtimeGid: 1001,
         runtimeUid: 1001,
+        loopbackPublishAuthority,
       });
-      expect(valuesAfter(agentQualificationArgv, "--publish")).toEqual([]);
+      expect(valuesAfter(agentQualificationArgv, "--publish")).toEqual(["127.0.0.1:8081:8081"]);
       expect(valuesAfter(argv, "--network")).toEqual(["qualified-internal"]);
       expect(valuesAfter(argv, "--user")).toEqual(["1001:1001"]);
       expect(valuesAfter(argv, "--api-key-file")).toEqual(["/run/secrets/llama-cpp-api-key"]);
@@ -413,6 +430,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
           registryOwner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
           runtimeGid: 1001,
           runtimeUid: 0,
+          loopbackPublishAuthority,
         }),
       ).toThrow(/runtime uid/u);
     } finally {

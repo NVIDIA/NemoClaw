@@ -6,20 +6,21 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { AgentDefinition, AgentStateLockPlan } from "../agent/definition-types";
+import type {
+  RuntimeProviderBundleRegistry,
+  RuntimeProviderStateMutationActivationProof,
+  RuntimeProviderStateMutationContext,
+  RuntimeProviderStateMutationFence,
+  RuntimeProviderStateMutationProtectionPosture,
+  RuntimeProviderStateMutationSurface,
+} from "../onboard/runtime-provider/contract";
 import {
-  CURRENT_RUNTIME_PROVIDER_BUNDLES,
   createFilePersistedEngineLifecycleStore,
   hasActivePersistedEngineStateMutationTarget,
   PERSISTED_ENGINE_LIFECYCLE_DIRECTORY,
-  prepareAgentDefinitionProtectionTransitionPlan,
-  type RuntimeProviderBundleRegistry,
-  type RuntimeProviderStateMutationActivationProof,
-  type RuntimeProviderStateMutationContext,
-  type RuntimeProviderStateMutationFence,
-  type RuntimeProviderStateMutationProtectionPosture,
-  type RuntimeProviderStateMutationSurface,
-  requireRuntimeProviderBundleForSandbox,
-} from "../onboard/runtime-provider/access";
+} from "../onboard/runtime-provider/persisted-engine-lifecycle";
+import { requireRuntimeProviderBundleForSandbox } from "../onboard/runtime-provider/registry";
+import { prepareAgentDefinitionProtectionTransitionPlan } from "../onboard/runtime-provider/state-mutation";
 import { resolveCurrentAgentDefinition } from "../sandbox/agent-config";
 import type { SandboxEntry } from "../state/registry/types";
 
@@ -65,6 +66,12 @@ export interface HermesRuntimeStateMutationInput {
   readonly target: RuntimeProviderStateMutationProtectionPosture;
   readonly rollback: RuntimeProviderStateMutationProtectionPosture;
   readonly providers?: RuntimeProviderBundleRegistry;
+}
+
+function currentRuntimeProviderBundles(): RuntimeProviderBundleRegistry {
+  return (
+    require("../onboard/runtime-provider/current") as typeof import("../onboard/runtime-provider/current")
+  ).CURRENT_RUNTIME_PROVIDER_BUNDLES;
 }
 
 function errorMessage(value: unknown): string {
@@ -289,7 +296,7 @@ function releaseTarget(
 export function supportsHermesRuntimeProviderStateMutation(
   sandbox: SandboxEntry | null,
   capability: HermesRuntimeStateMutationCapabilityInspection | null,
-  providers: RuntimeProviderBundleRegistry = CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  providers: RuntimeProviderBundleRegistry = currentRuntimeProviderBundles(),
 ): boolean {
   if (
     sandbox?.agent !== "hermes" ||
@@ -312,7 +319,7 @@ export function runHermesRuntimeProviderStateMutation(
   const agent = resolveCurrentAgentDefinition("hermes");
   const provider = requireRuntimeProviderBundleForSandbox(
     input.sandbox,
-    input.providers ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,
+    input.providers ?? currentRuntimeProviderBundles(),
   );
   const surface = provider.stateMutation;
   if (provider.identity.id !== "docker" || surface.supported !== true) {

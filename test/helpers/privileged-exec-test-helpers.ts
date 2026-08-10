@@ -4,6 +4,14 @@
 import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 
+function createReleaseMarker(releasePath: string): void {
+  try {
+    fs.writeFileSync(releasePath, "release", { flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+}
+
 export async function waitForChildExit(child: ChildProcess): Promise<number | null> {
   if (child.exitCode !== null) return child.exitCode;
   return new Promise((resolve, reject) => {
@@ -24,7 +32,7 @@ export function createOrdinaryExecReleaseSleeper(
     sleep: (milliseconds) => {
       if (!released) {
         released = true;
-        fs.writeFileSync(releasePath, "release");
+        createReleaseMarker(releasePath);
       }
       Atomics.wait(waitBuffer, 0, 0, Math.min(milliseconds, 50));
     },
@@ -33,7 +41,7 @@ export function createOrdinaryExecReleaseSleeper(
 }
 
 export async function releaseAndStopChild(child: ChildProcess, releasePath: string): Promise<void> {
-  if (!fs.existsSync(releasePath)) fs.writeFileSync(releasePath, "release");
+  createReleaseMarker(releasePath);
   if (child.exitCode === null) child.kill("SIGKILL");
   await waitForChildExit(child).catch(() => null);
 }

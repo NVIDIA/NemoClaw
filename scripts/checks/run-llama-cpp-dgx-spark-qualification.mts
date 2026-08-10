@@ -9,7 +9,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  assertDockerLoopbackPublishAuthority,
   buildLlamaCppRequestGuardDockerArgv,
+  type DockerLoopbackPublishAuthority,
+  qualifyDockerLoopbackPublishAuthority,
   type VerifiedLocalModelArtifact,
 } from "../../src/lib/inference/llama-cpp/host-local-runtime.ts";
 import {
@@ -29,7 +32,11 @@ import { runLlamaCppOpenClawAgentQualification } from "./llama-cpp-openclaw-agen
 import { resolveManagedImageLocalInferenceRoute } from "./managed-image-protected-runtime-contract.ts";
 import { runManagedImageOpenShellE2e } from "./run-managed-image-openshell-e2e.ts";
 
-export { validateChatCompletionResponse, validateModelsResponse };
+export {
+  qualifyDockerLoopbackPublishAuthority,
+  validateChatCompletionResponse,
+  validateModelsResponse,
+};
 
 const sha256Pattern = /^sha256:[0-9a-f]{64}$/u;
 const gitShaPattern = /^[0-9a-f]{40}$/u;
@@ -329,23 +336,28 @@ export function buildServerContainerArgv(
     registryOwner: string;
     runtimeGid: number;
     runtimeUid: number;
+    loopbackPublishAuthority: DockerLoopbackPublishAuthority;
     hostPort?: number;
   },
 ): string[] {
   if (plan.qualification.requestGuard !== "required") {
     throw new Error("llama.cpp qualification requires the declarative request guard");
   }
-  return buildLlamaCppRequestGuardDockerArgv(plan.recipe, {
-    apiKeyHostPath: options.apiKeyHostPath,
-    containerName: options.containerName,
-    imageReference: options.imageReference,
-    ...(options.hostPort === undefined ? {} : { hostPort: options.hostPort }),
-    model: options.model,
-    network: { isolation: "docker-internal", name: options.networkName },
-    ownerLabel: { name: registryOwnerLabel, value: options.registryOwner },
-    runtimeGid: options.runtimeGid,
-    runtimeUid: options.runtimeUid,
-  });
+  return buildLlamaCppRequestGuardDockerArgv(
+    plan.recipe,
+    {
+      apiKeyHostPath: options.apiKeyHostPath,
+      containerName: options.containerName,
+      imageReference: options.imageReference,
+      ...(options.hostPort === undefined ? {} : { hostPort: options.hostPort }),
+      model: options.model,
+      network: { isolation: "docker-internal", name: options.networkName },
+      ownerLabel: { name: registryOwnerLabel, value: options.registryOwner },
+      runtimeGid: options.runtimeGid,
+      runtimeUid: options.runtimeUid,
+    },
+    options.loopbackPublishAuthority,
+  );
 }
 
 export function validateOpenClawQualificationImageLabels(
@@ -747,7 +759,11 @@ async function removeOwnedRegistry(names: RuntimeNames): Promise<void> {
   }
 }
 
-function startRegistry(names: RuntimeNames): void {
+function startRegistry(
+  names: RuntimeNames,
+  loopbackPublishAuthority: DockerLoopbackPublishAuthority,
+): void {
+  assertDockerLoopbackPublishAuthority(loopbackPublishAuthority);
   if (dockerContainerOwner(names.registryName) !== null) {
     throw new Error("isolated registry name is already in use");
   }
@@ -888,6 +904,9 @@ async function runQualification(
     if (!commandSucceeds(command, ["--version"]))
       throw new Error(`qualification requires ${command}`);
   }
+  const loopbackPublishAuthority = qualifyDockerLoopbackPublishAuthority(
+    runCommand("docker", ["version", "--format", "{{.Server.Version}}"]).toString("utf8"),
+  );
   validateCandidateCheckout(invocation);
   const planSource = readBoundedRegularFile(invocation.planFile, maximumPlanBytes);
   const plan = validateQualificationPlan(planSource, invocation.planSha256);
@@ -908,7 +927,7 @@ async function runQualification(
     ) {
       throw new Error("refusing to reuse the declarative llama.cpp agent qualification port");
     }
-    startRegistry(names);
+    startRegistry(names, loopbackPublishAuthority);
     await waitForRegistry();
     runCommand("docker", buildCandidateImageArgv(plan, invocation, metadataFile), {
       capture: false,
@@ -963,6 +982,7 @@ async function runQualification(
         registryOwner: names.registryOwner,
         runtimeGid,
         runtimeUid,
+        loopbackPublishAuthority,
         ...(plan.qualification.agentQualification.execution === "enabled"
           ? { hostPort: plan.recipe.serve.port }
           : {}),

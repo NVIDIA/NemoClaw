@@ -30,9 +30,18 @@ interface DockerExecutableBinding {
   readonly selectedPath: string;
   readonly identity: string;
   readonly commandEnvironment: Readonly<NodeJS.ProcessEnv>;
-  readonly commandEnvironmentSha256: string;
   readonly cwd: string;
   readonly guard: () => void;
+}
+
+interface DockerDelegatedCommandBinding {
+  readonly identitySha256: string;
+  readonly guard: () => void;
+}
+
+interface ResolvedDockerContextEndpoint {
+  readonly host: string;
+  readonly identity: string;
 }
 
 export interface DockerOperationAuthority {
@@ -46,8 +55,11 @@ export interface DockerOperationAuthority {
 
 const DOCKER_CONTEXT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u;
 const DOCKER_HOST_PATTERN = /^(?:npipe|ssh|tcp|unix):\/\/[^\s\u0000-\u001f\u007f]+$/u;
+const DOCKER_CREDENTIAL_HELPER_PREFIX = "docker-credential-";
 const DOCKER_ARGUMENT_MAX_BYTES = 16 * 1024;
 const DOCKER_CONTEXT_INSPECT_FORMAT = "{{json .}}";
+const EXECUTABLE_PREFIX_MAX_BYTES = 1024;
+const EXECUTABLE_INTERPRETER_MAX_DEPTH = 4;
 const bindings = new WeakMap<DockerOperationAuthority, DockerClientBinding>();
 const DOCKER_COMMAND_ENV_NAMES = new Set([
   "HOME",
@@ -153,6 +165,9 @@ function requireSecureDockerEndpoint(host: string, tlsVerificationEnabled: boole
 function fixedDockerCommandEnvironment(env: NodeJS.ProcessEnv): Readonly<NodeJS.ProcessEnv> {
   const searchPath = exactDockerValue(env.PATH ?? process.env.PATH, "PATH");
   if (!searchPath) throw new Error("Docker operation PATH is unavailable.");
+  if (searchPath.split(path.delimiter).some((directory) => !path.isAbsolute(directory))) {
+    throw new Error("Docker operation PATH must contain only absolute directories.");
+  }
   const source = { ...env, PATH: searchPath };
   const entries = Object.entries(source)
     .filter(
@@ -165,12 +180,63 @@ function fixedDockerCommandEnvironment(env: NodeJS.ProcessEnv): Readonly<NodeJS.
   return Object.freeze(Object.fromEntries(entries));
 }
 
-function dockerExecutableMetadata(selectedPath: string, executable: string): string {
+function executableInterpreter(executable: string, status: fs.BigIntStats): string | undefined {
+  const descriptor = fs.openSync(
+    executable,
+    fs.constants.O_RDONLY |
+      (typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0),
+  );
+  try {
+    const opened = fs.fstatSync(descriptor, { bigint: true });
+    if (opened.dev !== status.dev || opened.ino !== status.ino) {
+      throw new Error("Docker operation executable changed while it was inspected.");
+    }
+    const prefix = Buffer.alloc(EXECUTABLE_PREFIX_MAX_BYTES);
+    const bytesRead = fs.readSync(descriptor, prefix, 0, prefix.length, 0);
+    if (bytesRead < 2 || prefix[0] !== 0x23 || prefix[1] !== 0x21) return undefined;
+    const newline = prefix.subarray(0, bytesRead).indexOf(0x0a, 2);
+    if (newline < 0) {
+      throw new Error("Docker operation executable interpreter line is invalid.");
+    }
+    const line = prefix.subarray(2, newline).toString("utf8").trim();
+    const interpreter = line.split(/\s+/u)[0];
+    if (!interpreter || !path.isAbsolute(interpreter)) {
+      throw new Error("Docker operation executable interpreter must be absolute.");
+    }
+    const resolved = fs.realpathSync(interpreter);
+    if (path.basename(interpreter) === "env" || path.basename(resolved) === "env") {
+      throw new Error("Docker operation executable cannot delegate through env.");
+    }
+    return interpreter;
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function qualifiedExecutableMetadata(
+  selectedPath: string,
+  executable: string,
+  depth = 0,
+  ancestors: ReadonlySet<string> = new Set(),
+): Readonly<Record<string, unknown>> {
+  if (depth > EXECUTABLE_INTERPRETER_MAX_DEPTH || ancestors.has(executable)) {
+    throw new Error("Docker operation executable interpreter chain is invalid.");
+  }
   const selected = fs.lstatSync(selectedPath, { bigint: true });
   const target = fs.statSync(executable, { bigint: true });
   if (!target.isFile()) throw new Error("Docker operation executable is not one regular file.");
   fs.accessSync(executable, fs.constants.X_OK);
-  return JSON.stringify({
+  const interpreterPath = executableInterpreter(executable, target);
+  const interpreter =
+    interpreterPath === undefined
+      ? undefined
+      : qualifiedExecutableMetadata(
+          interpreterPath,
+          fs.realpathSync(interpreterPath),
+          depth + 1,
+          new Set([...ancestors, executable]),
+        );
+  return Object.freeze({
     selectedPath,
     executable,
     selectedDev: selected.dev.toString(),
@@ -187,7 +253,106 @@ function dockerExecutableMetadata(selectedPath: string, executable: string): str
     targetSize: target.size.toString(),
     targetMtimeNs: target.mtimeNs.toString(),
     targetCtimeNs: target.ctimeNs.toString(),
+    ...(interpreter === undefined ? {} : { interpreter }),
   });
+}
+
+function dockerExecutableMetadata(selectedPath: string, executable: string): string {
+  return JSON.stringify(qualifiedExecutableMetadata(selectedPath, executable));
+}
+
+function executableCandidate(candidate: string): boolean {
+  try {
+    fs.accessSync(candidate, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function dockerDelegatedCommandSnapshot(searchPath: string, requireSsh: boolean): string {
+  const selected = new Map<string, string>();
+  for (const directory of searchPath.split(path.delimiter)) {
+    if (requireSsh && !selected.has("ssh")) {
+      const candidate = path.join(directory, "ssh");
+      if (executableCandidate(candidate)) selected.set("ssh", candidate);
+    }
+    let names: readonly string[];
+    try {
+      names = fs.readdirSync(directory).sort((left, right) => left.localeCompare(right));
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") continue;
+      throw new Error("Docker operation could not inspect its delegated command path.");
+    }
+    for (const name of names) {
+      if (
+        !name.startsWith(DOCKER_CREDENTIAL_HELPER_PREFIX) ||
+        name.length === DOCKER_CREDENTIAL_HELPER_PREFIX.length ||
+        selected.has(name)
+      ) {
+        continue;
+      }
+      const candidate = path.join(directory, name);
+      if (executableCandidate(candidate)) selected.set(name, candidate);
+    }
+  }
+  if (requireSsh && !selected.has("ssh")) {
+    throw new Error("Docker operation could not resolve one absolute SSH executable.");
+  }
+  return JSON.stringify(
+    [...selected.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, selectedPath]) => ({
+        name,
+        metadata: qualifiedExecutableMetadata(selectedPath, fs.realpathSync(selectedPath)),
+      })),
+  );
+}
+
+function qualifyDockerDelegatedCommands(
+  commandEnvironment: Readonly<NodeJS.ProcessEnv>,
+  endpointHost: string,
+): DockerDelegatedCommandBinding {
+  const searchPath = commandEnvironment.PATH as string;
+  const requireSsh = endpointHost.startsWith("ssh://");
+  const snapshot = dockerDelegatedCommandSnapshot(searchPath, requireSsh);
+  return Object.freeze({
+    identitySha256: createHash("sha256").update(snapshot).digest("hex"),
+    guard: () => {
+      let current: string;
+      try {
+        current = dockerDelegatedCommandSnapshot(searchPath, requireSsh);
+      } catch {
+        throw new Error("Docker operation delegated command set changed after qualification.");
+      }
+      if (current !== snapshot) {
+        throw new Error("Docker operation delegated command set changed after qualification.");
+      }
+    },
+  });
+}
+
+function dockerCommandEnvironmentSha256(
+  operation: ContainerEngineOperationScope,
+  commandEnvironment: Readonly<NodeJS.ProcessEnv>,
+  endpointHost: string,
+  delegatedCommands: DockerDelegatedCommandBinding,
+): string {
+  const authorityEnvironment = Object.fromEntries(
+    Object.entries(commandEnvironment).filter(([name]) => name !== "PATH"),
+  );
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        authorityEnvironment,
+        delegatedCommandsSha256: delegatedCommands.identitySha256,
+        ...(operation === "host-local-inference" || endpointHost.startsWith("ssh://")
+          ? { delegatedCommandSearchPath: commandEnvironment.PATH }
+          : {}),
+      }),
+    )
+    .digest("hex");
 }
 
 function qualifyDockerExecutable(env: NodeJS.ProcessEnv): DockerExecutableBinding {
@@ -211,16 +376,12 @@ function qualifyDockerExecutable(env: NodeJS.ProcessEnv): DockerExecutableBindin
   const executable = fs.realpathSync(selectedPath);
   const metadata = dockerExecutableMetadata(selectedPath, executable);
   const identity = createHash("sha256").update(metadata).digest("hex");
-  const commandEnvironmentSha256 = createHash("sha256")
-    .update(JSON.stringify(commandEnvironment))
-    .digest("hex");
   const cwd = path.dirname(executable);
   return Object.freeze({
     executable,
     selectedPath,
     identity,
     commandEnvironment,
-    commandEnvironmentSha256,
     cwd,
     guard: () => {
       let currentExecutable: string;
@@ -323,7 +484,10 @@ function requireDockerProbeOutput(
   return output;
 }
 
-function resolvedDockerContextEndpoint(probe: ContainerEngine, context: string): string {
+function resolvedDockerContextEndpoint(
+  probe: ContainerEngine,
+  context: string,
+): ResolvedDockerContextEndpoint {
   const output = requireDockerProbeOutput(
     probe.capture(["context", "inspect", context, "--format", DOCKER_CONTEXT_INSPECT_FORMAT]),
     "qualify the Docker context endpoint",
@@ -358,10 +522,58 @@ function resolvedDockerContextEndpoint(probe: ContainerEngine, context: string):
   }
   const tlsFiles = [...tlsMaterial].sort();
   requireSecureDockerEndpoint(host, !dockerEndpoint.SkipTLSVerify && tlsFiles.includes("ca.pem"));
-  return JSON.stringify({
+  return Object.freeze({
     host,
-    skipTlsVerify: dockerEndpoint.SkipTLSVerify,
-    tlsMaterial: tlsFiles,
+    identity: JSON.stringify({
+      host,
+      skipTlsVerify: dockerEndpoint.SkipTLSVerify,
+      tlsMaterial: tlsFiles,
+    }),
+  });
+}
+
+function qualifiedDockerClientBinding(
+  operation: ContainerEngineOperationScope,
+  endpointArgs: readonly string[],
+  endpointHost: string,
+  endpointIdentity: string,
+  executable: DockerExecutableBinding,
+  endpointGuard?: () => void,
+): DockerClientBinding {
+  const delegatedCommands = qualifyDockerDelegatedCommands(
+    executable.commandEnvironment,
+    endpointHost,
+  );
+  const commandEnvironmentSha256 = dockerCommandEnvironmentSha256(
+    operation,
+    executable.commandEnvironment,
+    endpointHost,
+    delegatedCommands,
+  );
+  const identity = createHash("sha256")
+    .update(
+      JSON.stringify({
+        endpointArgs,
+        endpointIdentity,
+        executableIdentitySha256: executable.identity,
+        commandEnvironmentSha256,
+        cwd: executable.cwd,
+      }),
+    )
+    .digest("hex");
+  return Object.freeze({
+    endpointArgs,
+    executable: executable.executable,
+    executableIdentitySha256: executable.identity,
+    commandEnvironmentSha256,
+    commandEnvironment: executable.commandEnvironment,
+    cwd: executable.cwd,
+    identity,
+    guard: () => {
+      executable.guard();
+      delegatedCommands.guard();
+      endpointGuard?.();
+    },
   });
 }
 
@@ -379,25 +591,7 @@ function dockerClientBinding(
     const host = dockerHost(explicitHost);
     requireSecureDockerEndpoint(host, tls.verify);
     const endpointArgs = Object.freeze([...configArgs, "--host", host, ...tls.args]);
-    return {
-      endpointArgs,
-      executable: executable.executable,
-      executableIdentitySha256: executable.identity,
-      commandEnvironmentSha256: executable.commandEnvironmentSha256,
-      commandEnvironment: executable.commandEnvironment,
-      cwd: executable.cwd,
-      identity: createHash("sha256")
-        .update(
-          JSON.stringify({
-            endpointArgs,
-            executableIdentitySha256: executable.identity,
-            commandEnvironmentSha256: executable.commandEnvironmentSha256,
-            cwd: executable.cwd,
-          }),
-        )
-        .digest("hex"),
-      guard: executable.guard,
-    };
+    return qualifiedDockerClientBinding(operation, endpointArgs, host, host, executable);
   }
 
   let context: string;
@@ -421,34 +615,23 @@ function dockerClientBinding(
   const endpointArgs = Object.freeze([...configArgs, "--context", context, ...tls.args]);
   const endpointProbe = dockerBindingProbe(operation, endpointArgs, executable, capture);
   const qualifiedEndpoint = resolvedDockerContextEndpoint(endpointProbe, context);
-  const identity = createHash("sha256")
-    .update(
-      JSON.stringify({
-        endpointArgs,
-        qualifiedEndpoint,
-        executableIdentitySha256: executable.identity,
-        commandEnvironmentSha256: executable.commandEnvironmentSha256,
-        cwd: executable.cwd,
-      }),
-    )
-    .digest("hex");
-  return {
+  return qualifiedDockerClientBinding(
+    operation,
     endpointArgs,
-    executable: executable.executable,
-    executableIdentitySha256: executable.identity,
-    commandEnvironmentSha256: executable.commandEnvironmentSha256,
-    commandEnvironment: executable.commandEnvironment,
-    cwd: executable.cwd,
-    identity,
-    guard: () => {
-      executable.guard();
-      if (resolvedDockerContextEndpoint(endpointProbe, context) !== qualifiedEndpoint) {
+    qualifiedEndpoint.host,
+    qualifiedEndpoint.identity,
+    executable,
+    () => {
+      if (
+        resolvedDockerContextEndpoint(endpointProbe, context).identity !==
+        qualifiedEndpoint.identity
+      ) {
         throw new Error(
           "Docker context endpoint changed after qualification; retry the operation.",
         );
       }
     },
-  };
+  );
 }
 
 /** Bind one container-engine operation to fixed, qualified Docker client endpoint arguments. */
