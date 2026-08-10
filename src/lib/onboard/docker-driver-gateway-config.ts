@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -16,6 +16,7 @@ export { ensureDockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-
 // See docs/security/openshell-0.0.72-compatibility-review.mdx for the source-of-truth review.
 export const DOCKER_DRIVER_GATEWAY_CONFIG_NAME = "openshell-gateway.toml";
 export const DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS = 0;
+export const NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV = "NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE";
 
 function tomlString(value: string): string {
   return JSON.stringify(value);
@@ -55,9 +56,54 @@ function cleanupStaleAtomicFileTemps(dir: string, basename: string): void {
   }
 }
 
-function gatewayIdForStateDir(stateDir: string): string {
+export function gatewayIdForStateDir(stateDir: string): string {
   const leaf = path.basename(path.resolve(stateDir)).replace(/[^A-Za-z0-9_.-]/g, "-");
-  return leaf ? `nemoclaw-${leaf}` : "nemoclaw";
+  const scope = `${String(process.getuid?.() ?? "unknown")}\0${path.resolve(stateDir)}`;
+  const suffix = createHash("sha256").update(scope).digest("hex").slice(0, 12);
+  return `nemoclaw-${leaf || "gateway"}-${suffix}`;
+}
+
+/** Prove that a NemoClaw-owned Docker gateway config uses its state-scoped namespace. */
+export function hasStateScopedSandboxNamespace(stateDir: string): boolean {
+  if (typeof process.getuid !== "function" || typeof fs.constants.O_NOFOLLOW !== "number") {
+    return false;
+  }
+  const configPath = path.join(stateDir, DOCKER_DRIVER_GATEWAY_CONFIG_NAME);
+  let descriptor: number | undefined;
+  try {
+    const state = fs.lstatSync(stateDir);
+    descriptor = fs.openSync(configPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const config = fs.fstatSync(descriptor);
+    if (
+      !state.isDirectory() ||
+      state.isSymbolicLink() ||
+      !config.isFile() ||
+      config.nlink !== 1 ||
+      state.uid !== process.getuid() ||
+      config.uid !== state.uid ||
+      config.size > 64 * 1024
+    ) {
+      return false;
+    }
+    const expected = `sandbox_namespace = ${tomlString(gatewayIdForStateDir(stateDir))}`;
+    let inDriverTable = false;
+    const matches = fs
+      .readFileSync(descriptor, "utf-8")
+      .split(/\r?\n/)
+      .filter((line) => {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+          inDriverTable = trimmed === "[openshell.drivers.docker]";
+          return false;
+        }
+        return inDriverTable && trimmed.startsWith("sandbox_namespace =");
+      });
+    return matches.length === 1 && matches[0]?.trim() === expected;
+  } catch {
+    return false;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
 }
 
 function gatewayLocalTlsDir(gatewayEnv: Record<string, string>): string {
@@ -77,6 +123,7 @@ export function buildDockerDriverGatewayConfigToml(
   const driver = gatewayEnv.OPENSHELL_DRIVERS === "podman" ? "podman" : "docker";
   const localTlsDir = jwtBundle ? gatewayLocalTlsDir(gatewayEnv) : undefined;
   const dockerEntries: [string, string | undefined][] = [
+    ["sandbox_namespace", driver === "docker" ? gatewayId : undefined],
     ["grpc_endpoint", gatewayEnv.OPENSHELL_GRPC_ENDPOINT],
     ["host_gateway_ip", driver === "podman" ? PORTABLE_HOST_GATEWAY_IP : undefined],
     ["socket_path", driver === "podman" ? gatewayEnv.OPENSHELL_PODMAN_SOCKET : undefined],
@@ -169,5 +216,10 @@ export function prepareDockerDriverGatewayConfigEnv(
     gatewayEnv,
     sandboxBin,
   );
+  if (gatewayEnv.OPENSHELL_DRIVERS === "podman") {
+    delete gatewayEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV];
+  } else {
+    gatewayEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV] = gatewayIdForStateDir(stateDir);
+  }
   return gatewayEnv;
 }

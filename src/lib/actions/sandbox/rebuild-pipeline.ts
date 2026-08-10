@@ -19,6 +19,7 @@ import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import { disposeRebuildAgentBaseImagePreflight } from "./rebuild-flow-helpers";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import {
+  type HermesCronRestoreIdentity,
   HermesCronRestoreIncompleteError,
   printHermesCronRestoreRecoveryCommand,
   recoverHermesCronRestore,
@@ -477,14 +478,21 @@ async function rebuildSandboxUnlocked(
           reconcileManagedDcodeObservability: rebuildAgent === DCODE_AGENT_NAME,
           log,
         });
+      let hermesCronRestoreIdentity: HermesCronRestoreIdentity | undefined;
       const restored = hermesCronRestorePlan?.requiresDispatchGate
         ? (() => {
             try {
-              return runHermesCronRestoreTransaction(sandboxName, restore, (state, identity) => {
-                log(
-                  `Hermes cron restore gate ${state}: pid=${String(identity.pid)}, startTime=${String(identity.start_time)}`,
-                );
-              });
+              const transaction = runHermesCronRestoreTransaction(
+                sandboxName,
+                restore,
+                (state, identity) => {
+                  log(
+                    `Hermes cron restore gate ${state}: pid=${String(identity.pid)}, startTime=${String(identity.start_time)}`,
+                  );
+                },
+              );
+              hermesCronRestoreIdentity = transaction.identity;
+              return transaction.result;
             } catch (error) {
               console.error("");
               console.error(
@@ -506,6 +514,7 @@ async function rebuildSandboxUnlocked(
         backupManifest: backup.backupManifest,
         mcpEntries: mcpPreparation.entries,
         restoreSucceeded: restored.restoreSucceeded,
+        hermesCronRestoreIdentity,
         backupWasForceSkipped: backup.backupWasForceSkipped,
         failedPresets: restored.failedPresets,
         finalBuiltinPresets: restored.finalBuiltinPresets,

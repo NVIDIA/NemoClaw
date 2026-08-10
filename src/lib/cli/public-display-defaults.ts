@@ -598,7 +598,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Upgrade",
       order: 40,
-      flags: "(--check, --fresh, --yes|-y)",
+      flags: "(--check, --fresh, --allow-downgrade, --yes|-y)",
     },
   ],
   "upgrade-sandboxes": [

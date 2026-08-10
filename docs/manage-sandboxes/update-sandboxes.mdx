@@ -39,7 +39,7 @@ The `langchain-deepagents-code` agent manifest declares the expected Deep Agents
 </AgentOnly>
 
 <Warning>
-OpenShell 0.0.99 limits a routed sandbox name to 19 characters and rejects consecutive hyphens.
+OpenShell 0.0.101 limits a routed sandbox name to 19 characters and rejects consecutive hyphens.
 A NemoClaw sandbox name must contain 1 to 19 characters.
 It must start with a lowercase letter, use lowercase letters, numbers, and single internal hyphens, and end with a letter or number.
 Before the OpenShell upgrade, the installer checks registered sandboxes for the selected gateway.
@@ -48,7 +48,7 @@ If the installer finds incompatible names, it lists each name and exits before i
 - Prepare the NemoClaw CLI for the upgrade.
 - Start a backup of the registered sandboxes.
 - Retire the selected OpenShell gateway.
-- Install OpenShell 0.0.99.
+- Install OpenShell 0.0.101.
 - Recreate a sandbox.
 
 NemoClaw does not automatically truncate or change the sandbox name.
@@ -78,7 +78,11 @@ If the installed OpenShell release cannot retire its gateway through a supported
 
 After the host CLI and OpenShell update, the installer runs `$$nemoclaw upgrade-sandboxes --auto` to reconcile the existing sandboxes.
 
-If an existing sandbox is not Ready, the automatic path requires a validated latest backup whose sandbox and agent identity match the registry and positive evidence that NemoClaw managed the image.
+During installer-driven recovery, each stale or non-Ready sandbox requires a validated latest backup.
+The backup's sandbox and agent identities must match the registry.
+The registry must also contain positive evidence that NemoClaw managed the sandbox image.
+If the replacement gateway reports a stale sandbox as Ready or Running, the installer reuses the validated pre-upgrade backup.
+It does not attempt another backup from the replaced legacy runtime.
 
 <AgentOnly variant="openclaw,hermes">
 For a listed pre-fingerprint OpenClaw or Hermes registry entry, you can provide that evidence through the installer's explicit managed-image confirmation.

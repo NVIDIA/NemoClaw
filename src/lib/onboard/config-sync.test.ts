@@ -8,7 +8,11 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { buildSandboxConfigSyncScript, writeSandboxConfigSyncFile } from "./config-sync";
+import {
+  buildSandboxConfigSyncScript,
+  sandboxConfigSyncArgs,
+  writeSandboxConfigSyncFile,
+} from "./config-sync";
 
 const itUnix = process.platform === "win32" ? it.skip : it;
 
@@ -38,6 +42,19 @@ function modeBits(file: string): number {
 }
 
 describe("sandbox config sync helpers", () => {
+  it("uses noninteractive sandbox exec for stdin scripts", () => {
+    expect(sandboxConfigSyncArgs("spark-box")).toEqual([
+      "sandbox",
+      "exec",
+      "-n",
+      "spark-box",
+      "--no-tty",
+      "--",
+      "bash",
+      "-s",
+    ]);
+  });
+
   it("builds a sandbox sync script that records provider selection without rewriting OpenClaw config", () => {
     const script = buildSandboxConfigSyncScript({
       endpointType: "custom",

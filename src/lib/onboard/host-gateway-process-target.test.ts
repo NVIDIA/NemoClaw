@@ -8,6 +8,11 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  gatewayIdForStateDir,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
+} from "./docker-driver-gateway-config";
+import { writeDockerDriverGatewayRuntimeMarkerForStateDir } from "./docker-driver-gateway-runtime-marker";
+import {
   HOST_GATEWAY_PGREP_PATTERN,
   type HostGatewayProcessDeps,
   type RunResult,
@@ -42,15 +47,93 @@ function makeRun(responses: Map<string, RunResponse>): HostGatewayProcessDeps["r
 function psResponses(
   pid: number,
   opts: {
-    cmdline: string;
+    cmdline: string | (() => string);
     exited: Set<number>;
   },
 ): [string, RunResponse][] {
   return [
     [`ps -p ${pid} -o pid=`, () => (opts.exited.has(pid) ? notFound() : ok(`${pid}\n`))],
+    [`ps -p ${pid} -o uid=`, staticResponse(ok(`${String(process.getuid?.() ?? 501)}\n`))],
     [`ps -p ${pid} -o user=`, staticResponse(ok("tester\n"))],
-    [`ps -p ${pid} -o args=`, staticResponse(ok(opts.cmdline))],
+    [
+      `ps -p ${pid} -o args=`,
+      () => ok(typeof opts.cmdline === "function" ? opts.cmdline() : opts.cmdline),
+    ],
   ];
+}
+
+function stopScopedTarget(
+  overrides: {
+    cmdline?: string;
+    cmdlineAfterProof?: string;
+    markerPort?: number;
+    name?: string;
+    namespace?: string;
+    pidFilePid?: number;
+    port?: number;
+  } = {},
+) {
+  const selectedPid = 9_999_601;
+  const pid = overrides.pidFilePid ?? selectedPid;
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-scoped-target-"));
+  const pidFile = path.join(stateDir, "openshell-gateway.pid");
+  fs.writeFileSync(pidFile, `${String(pid)}\n`);
+  fs.writeFileSync(
+    path.join(stateDir, "openshell-gateway.toml"),
+    `[openshell.drivers.docker]\nsandbox_namespace = "${gatewayIdForStateDir(stateDir)}"\n`,
+  );
+  writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
+    desiredEnv: {},
+    endpoint: `https://127.0.0.1:${String(overrides.markerPort ?? 18080)}`,
+    pid: selectedPid,
+  });
+  const exited = new Set<number>();
+  let cmdlineReads = 0;
+  const cmdline = overrides.cmdline ?? "openshell-gateway[nemoclaw=nemoclaw-18080;port=18080]";
+  const run = vi.fn(
+    makeRun(
+      new Map([
+        ...psResponses(pid, {
+          cmdline: () => {
+            cmdlineReads += 1;
+            return cmdlineReads > 1 && overrides.cmdlineAfterProof
+              ? overrides.cmdlineAfterProof
+              : cmdline;
+          },
+          exited,
+        }),
+      ]),
+    ),
+  );
+  const kill = vi.fn<HostGatewayProcessDeps["kill"]>((killedPid, signal) => {
+    switch (signal) {
+      case "SIGTERM":
+        exited.add(killedPid);
+        break;
+    }
+    return true;
+  });
+  const result = stopHostGatewayProcesses(
+    {
+      run,
+      kill,
+      env: {},
+      isPortFree: () => true,
+      log: vi.fn(),
+      readProcessEnvironment: () => ({
+        [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]:
+          overrides.namespace ?? gatewayIdForStateDir(stateDir),
+      }),
+    },
+    {
+      openShellGatewayName: overrides.name ?? "nemoclaw-18080",
+      openShellGatewayPort: overrides.port ?? 18080,
+      scopedGatewayStop: true,
+      stateDir,
+      usePgrepFallback: false,
+    },
+  );
+  return { kill, pidFile, result, run };
 }
 
 function stopTargetedPid(pid: number, cmdline: string, targeted = true) {
@@ -89,6 +172,44 @@ function stopTargetedPid(pid: number, cmdline: string, targeted = true) {
 }
 
 describe("stopHostGatewayProcesses target filtering", () => {
+  it("stops only the fully proven scoped PID without running pgrep (#8663)", () => {
+    const { kill, pidFile, result, run } = stopScopedTarget();
+
+    expect(result.stopped).toEqual([9_999_601]);
+    expect(result.ownershipFailures).toEqual([]);
+    expect(kill).toHaveBeenCalledWith(9_999_601, "SIGTERM");
+    expect(run.mock.calls.some(([command]) => command === "pgrep")).toBe(false);
+    expect(fs.existsSync(pidFile)).toBe(false);
+  });
+
+  it.each([
+    ["PID file", { pidFilePid: 9_999_602 }],
+    ["command line", { cmdline: "openshell-gateway[nemoclaw=nemoclaw;port=8080]" }],
+    ["gateway name", { name: "nemoclaw", port: 18080 }],
+    ["gateway port", { name: "nemoclaw", port: 8080 }],
+    ["loaded namespace", { namespace: "default" }],
+  ])("fails closed when a sibling cross-matches by %s (#8663)", (_case, overrides) => {
+    const { kill, pidFile, result } = stopScopedTarget(overrides);
+
+    expect(result.stopped).toEqual([]);
+    expect(result.ownershipFailures?.length).toBe(1);
+    expect(kill).not.toHaveBeenCalled();
+    expect(fs.existsSync(pidFile)).toBe(true);
+  });
+
+  it("revalidates process ownership immediately before signaling (#8663)", () => {
+    const { kill, pidFile, result } = stopScopedTarget({
+      cmdlineAfterProof: "openshell-gateway[nemoclaw=nemoclaw;port=8080]",
+    });
+
+    expect(result.stopped).toEqual([]);
+    expect(result.ownershipFailures).toEqual([
+      "PID 9999601: process ownership changed immediately before signaling",
+    ]);
+    expect(kill).not.toHaveBeenCalled();
+    expect(fs.existsSync(pidFile)).toBe(true);
+  });
+
   it("accepts a matching OpenShell CLI gateway-start process for the cleanup target", () => {
     const { kill, pidFile, result } = stopTargetedPid(
       9999553,

@@ -338,9 +338,13 @@ export async function prepareSandboxCreateLaunchWithPrebuild(
   input: SandboxCreateLaunchWithPrebuildInput,
 ): Promise<SandboxCreateLaunchWithPrebuild> {
   const { prebuild: prebuildInput, ...launchInput } = input;
+  const requiresLocalBuildKit =
+    prebuildInput.origin === "generated" &&
+    (input.agent == null || input.agent.name === "openclaw" || input.agent.name === "hermes");
   const prebuild = await prebuildSandboxImageIfEligible({
     ...prebuildInput,
     createArgs: input.createArgs,
+    requiresLocalBuildKit,
     sandboxName: input.sandboxName,
   });
   return {

@@ -60,13 +60,13 @@ describe("protected managed-image runtime workflow boundary", () => {
     );
   });
 
-  it("binds protected candidate identity on ordinary main runs", () => {
+  it("does not activate protected PR risk reporting for ordinary main runs (#8664)", () => {
     const value = workflow();
     const jobEnv = runtimeJob(value).env as Record<string, unknown>;
-    jobEnv.NEMOCLAW_E2E_EXPECTED_SHA = "${{ inputs.checkout_sha }}";
+    jobEnv.NEMOCLAW_E2E_EXPECTED_SHA = "${{ inputs.checkout_sha || github.sha }}";
 
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
-      "managed-image-protected-runtime env must bind NEMOCLAW_E2E_EXPECTED_SHA to ${{ inputs.checkout_sha || github.sha }}",
+      "managed-image-protected-runtime env must bind NEMOCLAW_E2E_EXPECTED_SHA to ${{ inputs.checkout_sha }}",
     );
   });
 
