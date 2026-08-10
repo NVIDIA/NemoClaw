@@ -58,6 +58,7 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
   const discoverySource = logicalInstruction.slice(discoveryStart, managedRuntimeStart).trim();
 
   for (const fragment of [
+    "stat -L -c 'uid=%u gid=%g type=%F mode=%a' -- \"$nemoclaw_artifact_path\" 2>/dev/null",
     "stat -c 'uid=%u gid=%g type=%F mode=%a' -- \"$nemoclaw_artifact_path\" 2>/dev/null",
     "uid=unavailable gid=unavailable type=missing mode=unavailable",
     "printf 'ERROR: managed image assertion failed: %s path=%s %s symlink=%s\\n'",
@@ -70,7 +71,7 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
     `discovery_contract="$(node ${DISCOVERY_RUNTIME_PATH})" || managed_image_command_failed mcp-tool-discovery-bundle-execution "$?"`,
     "ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual=%s expected=%s",
     `discovery_unsafe="$(find -L ${DISCOVERY_RUNTIME_ROOT} \\( ! -user root -o -perm /022 \\) -print -quit)" || managed_image_command_failed mcp-tool-discovery-tree-find-execution "$?"`,
-    'test -z "$discovery_unsafe" || managed_runtime_assertion_failed mcp-tool-discovery-tree-safety "$discovery_unsafe"',
+    'test -z "$discovery_unsafe" || managed_runtime_assertion_failed mcp-tool-discovery-tree-safety "$discovery_unsafe" dereference',
     `test -f ${MANAGED_STARTUP_RUNTIME_PATH} || managed_runtime_assertion_failed regular-file ${MANAGED_STARTUP_RUNTIME_PATH}`,
     `test ! -L ${MANAGED_STARTUP_RUNTIME_PATH} || managed_runtime_assertion_failed non-symlink ${MANAGED_STARTUP_RUNTIME_PATH}`,
     `chown root:root ${MANAGED_STARTUP_RUNTIME_PATH} 2>/dev/null || managed_runtime_assertion_failed owner-root-root ${MANAGED_STARTUP_RUNTIME_PATH}`,
@@ -91,12 +92,14 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
     discoveryStatus = 0,
     findOutput = "",
     findStatus = 0,
+    dereferencedStatOutput = "uid=0 gid=0 type=regular file mode=444",
     statOutput = "uid=0 gid=0 type=regular file mode=444",
   }: {
     discoveryOutput?: string;
     discoveryStatus?: number;
     findOutput?: string;
     findStatus?: number;
+    dereferencedStatOutput?: string;
     statOutput?: string;
   } = {}) =>
     spawnSync(
@@ -115,7 +118,13 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
           "  printf '%s' \"$NEMOCLAW_TEST_FIND_OUTPUT\"",
           '  return "$NEMOCLAW_TEST_FIND_STATUS"',
           "}",
-          "stat() { printf '%s' \"$NEMOCLAW_TEST_STAT_OUTPUT\"; }",
+          "stat() {",
+          '  if [ "$1" = "-L" ]; then',
+          "    printf '%s' \"$NEMOCLAW_TEST_DEREFERENCED_STAT_OUTPUT\"",
+          "  else",
+          "    printf '%s' \"$NEMOCLAW_TEST_STAT_OUTPUT\"",
+          "  fi",
+          "}",
           functionSource,
           discoverySource,
           "printf 'discovery-ok\\n'",
@@ -128,6 +137,7 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
           NEMOCLAW_TEST_DISCOVERY_OUTPUT: discoveryOutput,
           NEMOCLAW_TEST_DISCOVERY_RUNTIME: DISCOVERY_RUNTIME_PATH,
           NEMOCLAW_TEST_DISCOVERY_STATUS: String(discoveryStatus),
+          NEMOCLAW_TEST_DEREFERENCED_STAT_OUTPUT: dereferencedStatOutput,
           NEMOCLAW_TEST_FIND_OUTPUT: findOutput,
           NEMOCLAW_TEST_FIND_STATUS: String(findStatus),
           NEMOCLAW_TEST_NODE: process.execPath,
@@ -168,21 +178,89 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
       "ERROR: managed image assertion failed: mcp-tool-discovery-bundle-execution exit-status=23\n",
     );
 
-    const credential = "gho_diagnosticSecretValue0123456789";
-    const contractFailure = runDiscoveryChecks({
+    const standaloneCredentials = [
+      "nvapi-abcdefghij",
+      "nvcf-abcdefghij",
+      "ghp_abcdefghij",
+      "gho_abcdefghij",
+      `github_pat_${"a".repeat(30)}`,
+      "sk-proj-abcdefghij",
+      "sk-ant-abcdefghij",
+      `sk-${"a".repeat(20)}`,
+      "xoxb-abcdefghij",
+      "xapp-abcdefghij",
+      "AKIA1234567890ABCDEF",
+      "ASIA1234567890ABCDEF",
+      "hf_abcdefghij",
+      "glpat-abcdefghij",
+      "gsk_abcdefghij",
+      "pypi-abcdefghij",
+      `bot12345678:${"a".repeat(35)}`,
+      `12345678:${"a".repeat(35)}`,
+      `${"a".repeat(24)}.${"b".repeat(6)}.${"c".repeat(27)}`,
+      "tvly-abcdefghij",
+      "lsv2_pt_abcdefghij_tail",
+      "lsv2_sk_abcdefghij",
+      `eyJabcde.${"b".repeat(2)}.${"c".repeat(10)}`,
+    ];
+    for (const credential of standaloneCredentials) {
+      const contractFailure = runDiscoveryChecks({
+        discoveryOutput: JSON.stringify({
+          protocol: 2,
+          ok: true,
+          detail: `wrong\n${credential}\tcontinued\u001b[31m`,
+        }),
+      });
+      expect(contractFailure.status).toBe(1);
+      expect(contractFailure.stdout).toBe("");
+      expect(contractFailure.stderr).toBe(
+        `ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual={"protocol":2,"ok":true,"detail":"wrong?<REDACTED>?continued?[31m"} expected=${DISCOVERY_EXPECTED_CONTRACT}\n`,
+      );
+      expect(contractFailure.stderr).not.toContain(credential);
+      expect(contractFailure.stderr).not.toContain("\u001b");
+    }
+
+    for (const [credential, sanitized] of [
+      ["Bearer abcdefghij", "<REDACTED>"],
+      ["Basic abcdefghij", "<REDACTED>"],
+      ["OPENAI_API_KEY=abcdefghij", "OPENAI_API_KEY=<REDACTED>"],
+      ["accessToken=abcdefghij", "accessToken=<REDACTED>"],
+      ["KEY=abcdefghij", "KEY=<REDACTED>"],
+    ]) {
+      const contractFailure = runDiscoveryChecks({
+        discoveryOutput: JSON.stringify({ protocol: 2, ok: true, detail: credential }),
+      });
+      expect(contractFailure.status).toBe(1);
+      expect(contractFailure.stdout).toBe("");
+      expect(contractFailure.stderr).toBe(
+        `ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual={"protocol":2,"ok":true,"detail":"${sanitized}"} expected=${DISCOVERY_EXPECTED_CONTRACT}\n`,
+      );
+      expect(contractFailure.stderr).not.toContain(credential);
+    }
+
+    const invalidJsonFailure = runDiscoveryChecks({
+      discoveryOutput: '{"detail":"nvcf-abcdefghij"',
+    });
+    expect(invalidJsonFailure.status).toBe(1);
+    expect(invalidJsonFailure.stdout).toBe("");
+    expect(invalidJsonFailure.stderr).toBe(
+      `ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual={"type":"invalid-json","preview":"{\\"detail\\":\\"<REDACTED>\\""} expected=${DISCOVERY_EXPECTED_CONTRACT}\n`,
+    );
+
+    const privateKeyLabel = `${"PRIVATE"} KEY`;
+    const privateKeyFailure = runDiscoveryChecks({
       discoveryOutput: JSON.stringify({
         protocol: 2,
         ok: true,
-        detail: `wrong\n${credential}\tcontinued\u001b[31m`,
+        detail: `wrong\n-----BEGIN ${privateKeyLabel}-----\nprivate-material\n-----END ${privateKeyLabel}-----`,
       }),
     });
-    expect(contractFailure.status).toBe(1);
-    expect(contractFailure.stdout).toBe("");
-    expect(contractFailure.stderr).toBe(
-      `ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual={"protocol":2,"ok":true,"detail":"wrong?<REDACTED>?continued?[31m"} expected=${DISCOVERY_EXPECTED_CONTRACT}\n`,
+    expect(privateKeyFailure.status).toBe(1);
+    expect(privateKeyFailure.stdout).toBe("");
+    expect(privateKeyFailure.stderr).toBe(
+      `ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual={"protocol":2,"ok":true,"detail":"wrong?<REDACTED>"} expected=${DISCOVERY_EXPECTED_CONTRACT}\n`,
     );
-    expect(contractFailure.stderr).not.toContain(credential);
-    expect(contractFailure.stderr).not.toContain("\u001b");
+    expect(privateKeyFailure.stderr).not.toContain("private-material");
 
     const findFailure = runDiscoveryChecks({ findOutput: linkPath, findStatus: 42 });
     expect(findFailure.status).toBe(1);
@@ -192,13 +270,14 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
     );
 
     const unsafePath = runDiscoveryChecks({
+      dereferencedStatOutput: "uid=123 gid=456 type=regular file mode=664",
       findOutput: linkPath,
-      statOutput: "uid=123 gid=456 type=symbolic link mode=777",
+      statOutput: "uid=0 gid=0 type=symbolic link mode=777",
     });
     expect(unsafePath.status).toBe(1);
     expect(unsafePath.stdout).toBe("");
     expect(unsafePath.stderr).toBe(
-      `ERROR: managed image assertion failed: mcp-tool-discovery-tree-safety path=${linkPath} uid=123 gid=456 type=symbolic link mode=777 symlink=yes\n`,
+      `ERROR: managed image assertion failed: mcp-tool-discovery-tree-safety path=${linkPath} uid=123 gid=456 type=regular file mode=664 symlink=yes\n`,
     );
 
     const success = runDiscoveryChecks({
