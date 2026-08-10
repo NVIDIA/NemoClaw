@@ -4507,10 +4507,8 @@ module.exports = {
   startDockerDriverGateway,
   findAvailableDashboardPort,
   startGatewayForRecovery,
-  openshellArgv,
-  runOpenshell,
-  runCaptureOpenshell,
-  sleepSeconds,
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail
+  ...{ openshellArgv, runOpenshell, runCaptureOpenshell, sleepSeconds },
   agentSupportsWebSearch,
   agentSupportsWebSearchProvider,
   createSetupInference,

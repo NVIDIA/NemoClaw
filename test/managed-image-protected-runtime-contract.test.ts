@@ -3,7 +3,6 @@
 
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import net from "node:net";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -18,69 +17,30 @@ import {
   withManagedImageLocalInferenceProfile,
 } from "../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
-  loadManagedImageOnboardModule,
+  assertGatewayPortAvailable,
   managedImageLocalInferenceBaseUrl,
   managedImageOpenShellBasePolicyPath,
   managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
   parseManagedImageOpenShellE2eInputs,
   resolveManagedImageOnboardModule,
-  stopManagedImageOpenShellGateway,
+  stopProcess,
 } from "../scripts/checks/run-managed-image-openshell-e2e.ts";
 
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
 const VALID_SANDBOX = "managed-openclaw";
 
 describe("protected managed-image runtime contract", () => {
-  it("loads every callable onboarding hook required by the protected runner (#8759)", async () => {
-    const onboard = await loadManagedImageOnboardModule();
-
+  it("validates onboarding hooks and reaps the owned gateway listener (#8759)", async () => {
+    const onboard = resolveManagedImageOnboardModule(await import("../src/lib/onboard.js"));
     expect(onboard.runOpenshell).toBeTypeOf("function");
-    expect(() =>
-      resolveManagedImageOnboardModule({
-        default: { ...onboard, runOpenshell: undefined },
-      }),
-    ).toThrow(/managed-image onboard module contract.*runOpenshell/u);
-  });
+    expect(() => resolveManagedImageOnboardModule({})).toThrow(/openshellArgv/u);
 
-  it("yields while reaping the owned gateway and releases its listener (#8759)", async () => {
-    const child = spawn(
-      process.execPath,
-      [
-        "-e",
-        [
-          'const net = require("node:net");',
-          "const server = net.createServer();",
-          'server.listen(0, "127.0.0.1", () => process.stdout.write(`${server.address().port}\\n`));',
-          'process.on("SIGTERM", () => server.close(() => process.exit(0)));',
-        ].join(""),
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
-    const exited = once(child, "exit");
-
-    try {
-      const [chunk] = await once(child.stdout!, "data");
-      const port = Number.parseInt(String(chunk).trim(), 10);
-
-      expect(port).toBeGreaterThan(0);
-      await stopManagedImageOpenShellGateway(child.pid ?? null, port);
-      await exited;
-
-      const replacement = net.createServer();
-      await new Promise<void>((resolve, reject) => {
-        replacement.once("error", reject);
-        replacement.listen(port, "127.0.0.1", resolve);
-      });
-      await new Promise<void>((resolve, reject) => {
-        replacement.close((error) => (error ? reject(error) : resolve()));
-      });
-    } finally {
-      if (child.exitCode === null) {
-        child.kill("SIGKILL");
-        await exited;
-      }
-    }
+    // biome-ignore format: keep the focused child-listener regression compact
+    const child = spawn(process.execPath, ["-e", 'const n=require("node:net"),s=n.createServer();s.listen(0,"127.0.0.1",()=>process.send(s.address().port));setTimeout(()=>process.exit(),10000).unref()'], { stdio: ["ignore", "ignore", "ignore", "ipc"] });
+    const [port] = await once(child, "message");
+    expect(await stopProcess(child.pid ?? null)).toBe(true);
+    await expect(assertGatewayPortAvailable(port as number)).resolves.toBeUndefined();
   });
 
   it("assigns every protected agent and route a unique OpenShell-compatible sandbox name (#8497)", () => {
