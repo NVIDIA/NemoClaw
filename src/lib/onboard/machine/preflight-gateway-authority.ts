@@ -42,15 +42,17 @@ export interface EarlyGatewayPortConflictDeps {
   portConflict: Omit<GatewayPortConflictDeps, "gatewayPort" | "externallySupervised">;
 }
 
-/** Preserve the foreign-port fast-fail before bounded OpenShell readiness probes. */
-export async function failFastOnEarlyGatewayPortConflict(
+/** Preserve the foreign-port fast-fail before continuing to bounded readiness probes. */
+export async function runAfterEarlyGatewayPortConflict<Result>(
   deps: EarlyGatewayPortConflictDeps,
-): Promise<void> {
+  continuePreflight: () => Promise<Result>,
+): Promise<Result> {
   await failFastOnForeignGatewayPortConflict({
     gatewayPort: deps.gatewayPort,
     externallySupervised: isExternallySupervised(deps.resolveOwner()),
     ...deps.portConflict,
   });
+  return continuePreflight();
 }
 
 export function collectOnboardGatewayReadiness(
