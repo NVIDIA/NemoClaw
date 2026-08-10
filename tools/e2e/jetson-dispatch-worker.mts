@@ -566,9 +566,15 @@ function parseCleanupCommandEvidence(output: string): JetsonCleanupEvidence {
   }
   const lines = output.replace(/\r/gu, "").split("\n");
   while (lines.at(-1) === "") lines.pop();
-  const endIndex = lines.lastIndexOf(CLEANUP_EVIDENCE_END);
-  const beginIndex = lines.lastIndexOf(CLEANUP_EVIDENCE_BEGIN, endIndex - 1);
-  if (beginIndex < 0 || endIndex !== lines.length - 1 || beginIndex >= endIndex) {
+  const beginIndex = lines.indexOf(CLEANUP_EVIDENCE_BEGIN);
+  const endIndex = lines.indexOf(CLEANUP_EVIDENCE_END);
+  if (
+    beginIndex < 0 ||
+    endIndex < 0 ||
+    beginIndex !== lines.lastIndexOf(CLEANUP_EVIDENCE_BEGIN) ||
+    endIndex !== lines.lastIndexOf(CLEANUP_EVIDENCE_END) ||
+    beginIndex >= endIndex
+  ) {
     throw new Error("Jetson cleanup did not return bounded resource evidence");
   }
   const volumes: string[] = [];
@@ -733,26 +739,20 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
   }
 
   async cleanup(options: { jobId: string; signal: AbortSignal }): Promise<void> {
-    const cleanupResult = await this.#runProcess({
-      executable: this.#config.cleanupExecutable,
-      args: [],
-      signal: options.signal,
-    });
-    const currentEvidence = parseCleanupCommandEvidence(cleanupResult.stdout);
-    const evidencePath = this.#cleanupEvidencePath(options.jobId);
-    const previousRaw = readPrivateRegularFile(evidencePath, {
-      allowMissing: true,
-      maxBytes: MAX_CLEANUP_EVIDENCE_BYTES,
-    });
-    const evidence = mergeCleanupEvidence(
-      previousRaw === null ? undefined : parseCleanupEvidenceJson(previousRaw),
-      currentEvidence,
-    );
-    const serializedEvidence = `${JSON.stringify(evidence)}\n`;
-    if (Buffer.byteLength(serializedEvidence) > MAX_CLEANUP_EVIDENCE_BYTES) {
-      throw new Error("Jetson cleanup evidence is too large");
+    let serializedEvidence: string;
+    try {
+      const cleanupResult = await this.#runProcess({
+        executable: this.#config.cleanupExecutable,
+        args: [],
+        signal: options.signal,
+      });
+      serializedEvidence = this.#recordCleanupEvidence(options.jobId, cleanupResult.stdout);
+    } catch (error) {
+      if (error instanceof ProcessFailure && error.result.stdout.includes(CLEANUP_EVIDENCE_BEGIN)) {
+        this.#recordCleanupEvidence(options.jobId, error.result.stdout);
+      }
+      throw error;
     }
-    writePrivateRegularFile(evidencePath, serializedEvidence);
     const expectedRaw = readPrivateRegularFile(this.#baselinePath(options.jobId), {
       allowMissing: true,
       maxBytes: MAX_BASELINE_BYTES,
@@ -777,6 +777,25 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
       throw new Error("Jetson protected tool or Ollama model baseline differs after cleanup");
     }
+  }
+
+  #recordCleanupEvidence(jobId: string, output: string): string {
+    const currentEvidence = parseCleanupCommandEvidence(output);
+    const evidencePath = this.#cleanupEvidencePath(jobId);
+    const previousRaw = readPrivateRegularFile(evidencePath, {
+      allowMissing: true,
+      maxBytes: MAX_CLEANUP_EVIDENCE_BYTES,
+    });
+    const evidence = mergeCleanupEvidence(
+      previousRaw === null ? undefined : parseCleanupEvidenceJson(previousRaw),
+      currentEvidence,
+    );
+    const serializedEvidence = `${JSON.stringify(evidence)}\n`;
+    if (Buffer.byteLength(serializedEvidence) > MAX_CLEANUP_EVIDENCE_BYTES) {
+      throw new Error("Jetson cleanup evidence is too large");
+    }
+    writePrivateRegularFile(evidencePath, serializedEvidence);
+    return serializedEvidence;
   }
 
   #baselinePath(jobId: string): string {

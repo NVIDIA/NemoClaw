@@ -138,7 +138,7 @@ auth_proxy_pid="$(read_recorded_pid "$job_home/.nemoclaw/ollama-auth-proxy.pid")
 gateway_pid="$(read_recorded_pid "$job_home/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.pid")"
 cloudflared_pid="$(read_recorded_pid "$service_directory/cloudflared.pid")"
 
-stop_recorded_pid() {
+validate_recorded_pid() {
   local pid="$1" marker="$2"
   [ -n "$pid" ] || return 0
   kill -0 "$pid" 2>/dev/null || return 0
@@ -157,6 +157,13 @@ stop_recorded_pid() {
     echo "Refusing to stop a process outside the job home" >&2
     exit 1
   fi
+}
+
+stop_recorded_pid() {
+  local pid="$1" marker="$2"
+  [ -n "$pid" ] || return 0
+  kill -0 "$pid" 2>/dev/null || return 0
+  validate_recorded_pid "$pid" "$marker"
   kill "$pid"
   for _attempt in 1 2 3 4 5 6 7 8 9 10; do
     kill -0 "$pid" 2>/dev/null || return 0
@@ -170,6 +177,21 @@ stop_recorded_pid() {
   echo "Recorded cleanup process $pid did not stop" >&2
   exit 1
 }
+
+validate_recorded_pid "$auth_proxy_pid" ollama-auth-proxy.
+validate_recorded_pid "$gateway_pid" openshell-gateway
+validate_recorded_pid "$cloudflared_pid" cloudflared
+
+printf '%s\n' nemoclaw-cleanup-evidence-v1-begin
+for volume in "${recorded_volumes[@]}"; do
+  printf 'volume\t%s\n' "$volume"
+done
+for pid in "$auth_proxy_pid" "$gateway_pid" "$cloudflared_pid"; do
+  if [ -n "$pid" ]; then
+    printf 'processId\t%s\n' "$pid"
+  fi
+done
+printf '%s\n' nemoclaw-cleanup-evidence-v1-end
 
 gateway_present=0
 if [ -d "$job_home" ]; then
@@ -275,15 +297,4 @@ for pid in "$auth_proxy_pid" "$gateway_pid" "$cloudflared_pid"; do
     exit 1
   fi
 done
-
-printf '%s\n' nemoclaw-cleanup-evidence-v1-begin
-for volume in "${recorded_volumes[@]}"; do
-  printf 'volume\t%s\n' "$volume"
-done
-for pid in "$auth_proxy_pid" "$gateway_pid" "$cloudflared_pid"; do
-  if [ -n "$pid" ]; then
-    printf 'processId\t%s\n' "$pid"
-  fi
-done
-printf '%s\n' nemoclaw-cleanup-evidence-v1-end
 JETSON_CLEANUP

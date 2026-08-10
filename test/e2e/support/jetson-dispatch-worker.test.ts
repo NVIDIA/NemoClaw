@@ -405,6 +405,45 @@ describe("Colossus SSH worker deployment boundary", () => {
     });
   });
 
+  it("retains a failed volume identity for startup cleanup recovery (#8142)", async () => {
+    const files = deploymentFiles();
+    const jobId = "b".repeat(64);
+    fs.writeFileSync(
+      path.join(files.stateDirectory, `${jobId}.baseline.json`),
+      `${JSON.stringify(BASELINE)}\n`,
+      { mode: 0o600 },
+    );
+    const processRunner = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ProcessFailure("volume removal failed", {
+          stdout: `${cleanupOutput({ volumes: ["sandbox-volume"] })}container removed\n`,
+          stderr: "volume is still in use\n",
+        }),
+      )
+      .mockResolvedValueOnce({ stdout: cleanupOutput(), stderr: "" })
+      .mockResolvedValueOnce({ stdout: BASELINE_OUTPUT, stderr: "" });
+    const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
+
+    await expect(worker.cleanup({ jobId, signal: new AbortController().signal })).rejects.toThrow(
+      "volume removal failed",
+    );
+    expect(
+      JSON.parse(fs.readFileSync(path.join(files.stateDirectory, `${jobId}.cleanup.json`), "utf8")),
+    ).toEqual({ schemaVersion: 1, volumes: ["sandbox-volume"], processIds: [] });
+
+    const restartedWorker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
+    await expect(
+      restartedWorker.cleanup({ jobId, signal: new AbortController().signal }),
+    ).resolves.toBeUndefined();
+    const encodedEvidence = processRunner.mock.calls[2]![0].args.at(-1);
+    expect(JSON.parse(Buffer.from(encodedEvidence!, "base64").toString("utf8"))).toEqual({
+      schemaVersion: 1,
+      volumes: ["sandbox-volume"],
+      processIds: [],
+    });
+  });
+
   it.each([
     "",
     "nemoclaw-cleanup-evidence-v1-begin\nvolume\t../unsafe\nnemoclaw-cleanup-evidence-v1-end\n",
@@ -437,6 +476,12 @@ describe("Colossus SSH worker deployment boundary", () => {
     expect(cleanupProgram).toContain("label=openshell.ai/sandbox-name=$sandbox_name");
     expect(cleanupProgram).toContain("nemoclaw-cleanup-evidence-v1-begin");
     expect(cleanupProgram).toContain("nemoclaw-cleanup-evidence-v1-end");
+    expect(cleanupProgram.indexOf("nemoclaw-cleanup-evidence-v1-begin")).toBeLessThan(
+      cleanupProgram.indexOf('docker container rm --force "$container"'),
+    );
+    expect(cleanupProgram.indexOf("nemoclaw-cleanup-evidence-v1-end")).toBeLessThan(
+      cleanupProgram.indexOf('docker volume rm "$volume"'),
+    );
     expect(cleanupProgram).not.toMatch(/pkill|pgrep|docker (?:system|container|volume) prune/u);
     expect(cleanupProgram).not.toContain('rm -rf -- "$workspace_root"');
     expect(cleanupProgram).not.toContain("ollama serve");

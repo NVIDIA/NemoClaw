@@ -221,8 +221,9 @@ It must exit nonzero when target ownership is ambiguous, cleanup fails, or absen
 It must not remove `/var/lib/nemoclaw-jetson-dispatch/state/device.lock`.
 The dispatcher removes that lock only after cleanup and absence verification succeed.
 
-After the fixed cleanup helper exits with status zero, the worker parses its bounded evidence block.
-The worker writes the validated identities to this private state file with mode `0600`:
+Before any destructive cleanup action, the helper validates every discovered Docker volume name and process ID.
+The helper then emits one bounded evidence block between its versioned sentinel lines.
+The worker writes these identities to this private state file with mode `0600`:
 
 ```text
 /var/lib/nemoclaw-jetson-dispatch/state/<jobId>.cleanup.json
@@ -240,10 +241,13 @@ The file has this exact schema:
 
 Either identity array can be empty.
 The worker merges new identities with the existing record instead of replacing earlier identities.
-This merge preserves identities when cleanup verification fails and the dispatcher retries cleanup for the same job.
+After the helper succeeds, the worker parses and merges the evidence block before independent verification.
+If a later helper action fails, the worker receives `ProcessFailure`.
+The worker parses and merges the emitted block before it rethrows that failure.
+The failure keeps the device lock for startup recovery.
 The dispatcher retains the cleanup record after it removes the device lock.
 
-After the helper exits, the worker independently verifies these conditions over pinned-host-key SSH:
+After the helper succeeds, the worker independently verifies these conditions over pinned-host-key SSH:
 
 - The validated job workspace is absent and is not a symbolic link.
 - No OpenShell-managed container has the `e2e-jetson-nvmap` sandbox label.
@@ -468,7 +472,8 @@ The uploaded `e2e-jetson-nvmap-gpu` artifact must contain `jetson-dispatch.json`
 - The requested candidate commit SHA and workflow run identity.
 - The Jetson model, JetPack package version or `unavailable`, Jetson Linux release, and kernel.
 - The test conclusion and bounded log.
-- `cleanup: "succeeded"` before `conclusion: "success"`.
+- `cleanup: "succeeded"`.
+- `conclusion: "success"` for the successful proof job.
 
 It must also contain `jetson-e2e-artifacts.tar.gz`.
 The dispatcher creates that archive from the remote E2E artifact directory before it removes the candidate workspace.
@@ -477,7 +482,10 @@ Before a restarted dispatcher replays the same deterministic job ID, it removes 
 
 After the workflow completes, independently verify every allowlisted resource is absent.
 Require the private `<jobId>.cleanup.json` file and verify every recorded volume and process ID is absent.
-Then run one controlled failing candidate and confirm that its artifact records the same cleanup evidence.
+The private cleanup record is Colossus state and is not part of the uploaded artifact.
+Then run one controlled failing candidate.
+Confirm that its `jetson-dispatch.json` artifact shows `cleanup: "succeeded"` and `conclusion: "failure"`.
+Require its private cleanup record and verify every recorded identity is absent.
 For a cancellation proof, cancel a controller after it logs the job ID.
 The controller can exit before it downloads an artifact.
 Inspect the private Colossus `<jobId>.json` status for `conclusion: "cancelled"` and `cleanup: "succeeded"`.
@@ -494,6 +502,10 @@ On startup, the dispatcher invokes the cleanup program before it removes that st
 If cleanup fails, startup fails or the completed job reports `conclusion: "cleanup-failed"` with `cleanup: "failed"`.
 If cleanup succeeds but lock removal fails, the completed job reports `conclusion: "cleanup-failed"` with `cleanup: "succeeded"`.
 The lock remains in either case.
+
+A helper failure after evidence emission leaves validated identities in the private cleanup record.
+On the next startup attempt, the worker merges new identities with every identity already in that record.
+After the helper succeeds, independent verification checks every retained and new identity before the dispatcher removes the lock.
 
 The unit uses `Restart=on-failure`, so a startup cleanup failure otherwise retries every five seconds.
 Stop that retry loop before investigation or repair:
