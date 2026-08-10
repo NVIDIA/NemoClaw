@@ -388,8 +388,26 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
       throw failure;
     }
     if (testError) throw testError;
-    if (artifactCollectionError) throw artifactCollectionError;
     if (!testResult) throw new Error("Jetson E2E did not return a process result");
+    if (artifactCollectionError) {
+      const collectionMessage =
+        artifactCollectionError instanceof Error
+          ? artifactCollectionError.message
+          : "artifact collection failed";
+      const failure = new Error(collectionMessage) as Error & { log: string };
+      failure.log = [
+        "=== Jetson identity ===",
+        identityResult.stdout.trimEnd(),
+        "=== Jetson E2E stdout ===",
+        testResult.stdout.trimEnd(),
+        "=== Jetson E2E stderr ===",
+        testResult.stderr.trimEnd(),
+        "=== Jetson artifact collection error ===",
+        collectionMessage,
+        "",
+      ].join("\n");
+      throw failure;
+    }
     if (artifactArchiveBase64 === undefined) {
       throw new Error("Successful Jetson E2E did not produce a bounded artifact archive");
     }

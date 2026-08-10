@@ -147,6 +147,39 @@ describe("Colossus SSH worker deployment boundary", () => {
     });
   });
 
+  it("preserves successful test logs when artifact collection fails (#8142)", async () => {
+    const files = deploymentFiles();
+    const processRunner = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout:
+          "model\tNVIDIA Jetson AGX Thor Developer Kit\njetpackVersion\t7.2.2\njetsonLinuxRelease\tR38\nkernel\t6.8.12-tegra\n",
+        stderr: "",
+      })
+      .mockResolvedValueOnce({ stdout: "successful test output\n", stderr: "" })
+      .mockRejectedValueOnce(new Error("artifact collection unavailable"));
+    const worker = new SshJetsonDispatchWorker(
+      loadSshJetsonWorkerConfig(environment(files)),
+      processRunner,
+    );
+
+    await expect(
+      worker.run(
+        {
+          schemaVersion: 1,
+          target: "jetson-nvmap-gpu",
+          candidateSha: "a".repeat(40),
+          workflowRunId: "123",
+          workflowRunAttempt: 1,
+        },
+        { jobId: "b".repeat(64), signal: new AbortController().signal },
+      ),
+    ).rejects.toMatchObject({
+      message: "artifact collection unavailable",
+      log: expect.stringContaining("successful test output"),
+    });
+  });
+
   it.each([
     "nvidia@192.168.55.1 -o StrictHostKeyChecking=no",
     "nvidia@host;uname",
