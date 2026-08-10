@@ -9,7 +9,7 @@ import {
   canonicalJsonSha256,
 } from "./shared-primitives";
 
-describe("CUA shared public-value primitives", () => {
+describe("CUA shared credential-free value primitives", () => {
   it("rejects IPv6 and arbitrary-domain host coordinates (#7755)", () => {
     expect(CUA_HOST_COORDINATE.test("2001:db8::1")).toBe(true);
     expect(CUA_DOMAIN_COORDINATE.test("provider.example.xyz")).toBe(true);

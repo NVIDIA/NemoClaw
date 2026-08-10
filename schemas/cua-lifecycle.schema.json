@@ -3,7 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/NVIDIA/NemoClaw/schemas/cua-lifecycle.schema.json",
   "title": "NemoClaw CUA candidate lifecycle contract",
-  "description": "Credential-free public readiness for the candidate-only CUA install slice.",
+  "description": "Credential-free serialized readiness for the private CUA candidate install-and-inspect slice.",
   "$ref": "#/$defs/runtimeReadiness",
   "$defs": {
     "digest": {

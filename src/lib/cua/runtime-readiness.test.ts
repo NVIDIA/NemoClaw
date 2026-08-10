@@ -204,7 +204,7 @@ describe("current CUA runtime readiness", () => {
     ).toThrow(/through 4096 bytes/);
   });
 
-  it("rejects live inference drift and credential-shaped public selectors (#7755)", () => {
+  it("rejects live inference drift and credential-shaped serialized selectors (#7755)", () => {
     const runtime = fixture();
     const env = { ...runtime.env, NEMOCLAW_CUA_QUALIFICATION: "1" };
     const readiness = buildCurrentCuaRuntimeReadiness({

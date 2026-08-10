@@ -54,7 +54,7 @@ function readiness(): CuaRuntimeReadiness {
 }
 
 describe("CUA candidate runtime contract", () => {
-  it("accepts candidate readiness through the public parser (#7755)", () => {
+  it("accepts candidate readiness through the serialized parser (#7755)", () => {
     expect(parseCuaRuntimeReadiness(readiness())).toEqual(readiness());
   });
 
@@ -103,7 +103,7 @@ describe("CUA candidate runtime contract", () => {
     );
   });
 
-  it("rejects unknown public fields (#7755)", () => {
+  it("rejects unknown serialized fields (#7755)", () => {
     expect(() =>
       parseCuaRuntimeReadiness({ ...readiness(), endpoint: "https://private.invalid" }),
     ).toThrow(/schema/);

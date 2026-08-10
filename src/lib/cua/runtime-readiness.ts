@@ -117,7 +117,7 @@ function canonicalEndpoint(value: string | null): string | null {
 }
 
 /**
- * Compute the public identity of every secret-free field that selects an inference route.
+ * Compute the serialized identity of every credential-free field that selects an inference route.
  * Credential values are never read; only the configured environment-variable name is bound.
  */
 export function getCuaInferenceRouteIdentity(input: CuaInferenceRouteInput): CuaInferenceIdentity {

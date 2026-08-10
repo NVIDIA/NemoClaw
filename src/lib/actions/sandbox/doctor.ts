@@ -505,7 +505,7 @@ export function collectCuaRuntimeDoctorChecks(
         label: "CUA runtime",
         status: "fail",
         detail: "candidate readiness is missing, invalid, stale, or unavailable",
-        hint: "re-run canonical onboarding with exact candidate qualification authority",
+        hint: "rerun canonical onboarding with exact candidate qualification authority",
       },
     ];
   }

@@ -3,7 +3,7 @@
   "$id": "https://github.com/NVIDIA/NemoClaw/schemas/cua-target-manifest.schema.json",
   "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
   "title": "NemoClaw CUA target manifest",
-  "description": "Secret-free immutable identities required before a host-side adapter may attach a disposable desktop target.",
+  "description": "Credential-free immutable identities in the private CUA candidate target bundle.",
   "type": "object",
   "additionalProperties": false,
   "required": [

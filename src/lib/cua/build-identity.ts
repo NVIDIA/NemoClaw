@@ -400,7 +400,7 @@ export interface ResolveCuaBuildIdentityOptions {
 }
 
 /**
- * Resolve an exact CUA build identity without changing the public NemoClaw version shape.
+ * Resolve an exact CUA build identity without changing the existing NemoClaw version shape.
  * A live Git checkout is re-observed; packaged installs use the build-time CUA-only stamp.
  */
 export function resolveCurrentCuaBuildIdentity(

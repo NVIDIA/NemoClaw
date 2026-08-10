@@ -160,7 +160,9 @@ function credentialPathErrors(value: unknown, path = "$"): string[] {
   for (const [key, child] of Object.entries(value)) {
     const childPath = `${path}.${key}`;
     if (isCredentialShapedName(key)) {
-      errors.push(`${childPath} is credential-shaped and cannot enter the public CUA contract`);
+      errors.push(
+        `${childPath} is credential-shaped and cannot enter the credential-free CUA contract`,
+      );
     }
     errors.push(...credentialPathErrors(child, childPath));
   }
