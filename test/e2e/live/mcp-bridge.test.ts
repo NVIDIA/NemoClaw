@@ -1175,9 +1175,8 @@ mcpBridgeShardTest("hermes")(
           timeoutMs: 3 * 60_000,
         },
       );
-      if (result.exitCode !== 0 && !/not found|does not exist/iu.test(resultText(result))) {
-        expectExitZero(result, "lower Hermes Shields before teardown");
-      }
+      const sandboxMissing = /not found|does not exist/iu.test(resultText(result));
+      expect(result.exitCode === 0 || sandboxMissing).toBe(true);
     });
     cleanup.add("capture Hermes post-rebuild MCP evidence", async () => {
       await artifacts.writeJson(
