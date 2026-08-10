@@ -31,6 +31,8 @@ const COMPILER_FLAGS = [
 
 const MANAGED_BOOTSTRAP_BUILDER_IMAGE =
   "node:22-trixie@sha256:a566dd560283ae5615c8bb86b58fa8a1b6f3c82b492473a061672416266625da";
+const DISCOVERY_RUNTIME_ROOT = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime";
+const DISCOVERY_RUNTIME_PATH = `${DISCOVERY_RUNTIME_ROOT}/mcp-tool-discovery.mjs`;
 const MANAGED_STARTUP_RUNTIME_PATH = "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs";
 
 function expectManagedRuntimeDiagnostic(dockerfile: string): void {
@@ -40,7 +42,9 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
       instruction.body.includes("managed_runtime_assertion_failed()"),
   );
   expect(instructions).toHaveLength(1);
-  const logicalInstruction = (instructions[0]?.body ?? "").replace(/\\\r?\n[ \t]*/gu, " ");
+  const logicalInstruction = (instructions[0]?.body ?? "")
+    .replace(/\\\r?\n[ \t]*/gu, " ")
+    .replace(/[ \t]+/gu, " ");
   const discoveryStart = logicalInstruction.indexOf("discovery_contract=");
   expect(discoveryStart).toBeGreaterThan(0);
   const functionSource = logicalInstruction.slice(0, discoveryStart).trim();
@@ -54,11 +58,16 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
   }
 
   for (const assertion of [
+    `discovery_contract="$(node ${DISCOVERY_RUNTIME_PATH})" || managed_runtime_assertion_failed discovery-exec ${DISCOVERY_RUNTIME_PATH}`,
+    `managed_runtime_assertion_failed discovery-contract ${DISCOVERY_RUNTIME_PATH}`,
+    `managed_runtime_assertion_failed discovery-tree-scan ${DISCOVERY_RUNTIME_ROOT}`,
+    'managed_runtime_assertion_failed discovery-tree-owner-mode "$discovery_unsafe"',
     `test -f ${MANAGED_STARTUP_RUNTIME_PATH} || managed_runtime_assertion_failed regular-file ${MANAGED_STARTUP_RUNTIME_PATH}`,
     `test ! -L ${MANAGED_STARTUP_RUNTIME_PATH} || managed_runtime_assertion_failed non-symlink ${MANAGED_STARTUP_RUNTIME_PATH}`,
     `chown root:root ${MANAGED_STARTUP_RUNTIME_PATH} 2>/dev/null || managed_runtime_assertion_failed owner-root-root ${MANAGED_STARTUP_RUNTIME_PATH}`,
     `chmod 0444 ${MANAGED_STARTUP_RUNTIME_PATH} 2>/dev/null || managed_runtime_assertion_failed mode-0444 ${MANAGED_STARTUP_RUNTIME_PATH}`,
     `test \"$(stat -c '%u:%g:%a' ${MANAGED_STARTUP_RUNTIME_PATH} 2>/dev/null)\" = '0:0:444' || managed_runtime_assertion_failed metadata-0:0:444 ${MANAGED_STARTUP_RUNTIME_PATH}`,
+    "install -d -o root -g root -m 0755 /run/nemoclaw || managed_runtime_assertion_failed runtime-directory-0:0:755 /run/nemoclaw",
   ]) {
     expect(logicalInstruction.split(assertion)).toHaveLength(2);
   }
@@ -108,6 +117,17 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
     expect(symlink.stdout).toBe("");
     expect(symlink.stderr).toBe(
       `ERROR: managed image assertion failed: non-symlink path=${linkPath} uid=0 gid=0 type=symbolic link mode=777 symlink=yes\n`,
+    );
+
+    const writable = runDiagnostic(
+      targetPath,
+      "discovery-tree-owner-mode",
+      "uid=0 gid=0 type=regular file mode=664",
+    );
+    expect(writable.status).toBe(1);
+    expect(writable.stdout).toBe("");
+    expect(writable.stderr).toBe(
+      `ERROR: managed image assertion failed: discovery-tree-owner-mode path=${targetPath} uid=0 gid=0 type=regular file mode=664 symlink=no\n`,
     );
   } finally {
     fs.rmSync(tmp, { force: true, recursive: true });

@@ -393,7 +393,7 @@ describe("Hermes final image layout", () => {
     );
     const managedRuntimeDirectory = indexOfRequired(
       finalStage,
-      "&& install -d -o root -g root -m 0755 /run/nemoclaw",
+      "install -d -o root -g root -m 0755 /run/nemoclaw",
     );
     const runtimeModeReplay = indexOfRequired(
       finalStage,
@@ -425,7 +425,7 @@ describe("Hermes final image layout", () => {
     expect(managedRuntimeDirectory).toBeLessThan(runtimeModeReplay);
     expect(finalStage).toContain("/usr/local/bin/nemoclaw-managed-bootstrap");
     expect(dockerfile).toContain(
-      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
+      "COPY --chown=0:0 --chmod=0444 tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
     );
     expect(dockerfile).not.toContain(
       "COPY src/lib/onboard/managed-bootstrap/ ./src/lib/onboard/managed-bootstrap/",
