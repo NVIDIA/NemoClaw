@@ -58,7 +58,7 @@ describe("native Podman CPU proof workflow", () => {
     expect(job["runs-on"]).toBe("ubuntu-26.04");
     expect(job["timeout-minutes"]).toBe(30);
     expect(job.env?.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
-    expect(job.env?.NEMOCLAW_OPENSHELL_PIN_VERSION).toBe("0.0.99");
+    expect(job.env?.NEMOCLAW_OPENSHELL_PIN_VERSION).toBe("0.0.101");
     expect(job.env?.PODMAN_APT_VERSION).toBe("5.7.0+ds2-3build1");
     expect(namedStep("Checkout").with).toMatchObject({
       ref: "${{ github.event.pull_request.head.sha }}",
