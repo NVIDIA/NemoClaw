@@ -80,6 +80,14 @@ describe("sandbox base runtime tools", () => {
     expect(source).not.toMatch(/\bgosu\b/u);
   });
 
+  it.each(
+    MANAGED_BASE_DOCKERFILES,
+  )("%s installs dos2unix under a version prefix pin that resolves on arm64 (#8691)", (dockerfile) => {
+    const source = fs.readFileSync(dockerfile, "utf-8");
+
+    expect(source).toContain('"dos2unix=7.5.2-1*"');
+  });
+
   it("installs the required process, filesystem, and SFTP tools", () => {
     const { calls, result } = runBaseAptLayer("nemoclaw-base-apt-");
 
