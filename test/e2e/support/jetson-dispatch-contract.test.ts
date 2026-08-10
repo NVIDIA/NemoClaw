@@ -24,7 +24,6 @@ import {
 import {
   JetsonDispatchBusyError,
   JetsonDispatchCoordinator,
-  JetsonDispatchNotFoundError,
   type JetsonDispatchStatus,
   type JetsonDispatchWorker,
   MAX_JETSON_ARTIFACT_ARCHIVE_BYTES,
