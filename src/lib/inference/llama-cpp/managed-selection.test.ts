@@ -83,10 +83,7 @@ function withSyntheticRecipe(
     presetId,
     catalog: {
       ...catalog,
-      recipes: [
-        ...catalog.recipes,
-        { ...recipe, metadata: { ...recipe.metadata, id: recipeId } },
-      ],
+      recipes: [...catalog.recipes, { ...recipe, metadata: { ...recipe.metadata, id: recipeId } }],
       presets: [
         ...catalog.presets,
         {

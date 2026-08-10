@@ -225,10 +225,7 @@ describe("llama.cpp host-local runtime materializer", () => {
   });
 
   it.each([
-    [
-      "a missing container template file",
-      { chatTemplate: "container-jinja-file" },
-    ],
+    ["a missing container template file", { chatTemplate: "container-jinja-file" }],
     [
       "a path outside the owned template directory",
       { chatTemplate: "container-jinja-file", chatTemplateFile: "/run/secrets/template.jinja" },

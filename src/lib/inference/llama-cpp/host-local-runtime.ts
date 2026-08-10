@@ -228,8 +228,7 @@ function validateContract(contract: LlamaCppHostLocalLaunchContract): void {
         !CONTAINER_CHAT_TEMPLATE_FILE.test(chatTemplateFile) ||
         path.posix.normalize(chatTemplateFile) !== chatTemplateFile)) ||
     (chatTemplate !== "nemotron-v3-embedded" && chatTemplate !== "container-jinja-file") ||
-    (reasoning !== undefined &&
-      (reasoning.format !== "deepseek" || reasoning.mode !== "auto"))
+    (reasoning !== undefined && (reasoning.format !== "deepseek" || reasoning.mode !== "auto"))
   ) {
     throw new Error("llama.cpp chat-template or reasoning contract is invalid");
   }

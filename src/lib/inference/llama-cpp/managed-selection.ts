@@ -81,8 +81,7 @@ export function listManagedLlamaCppSelectionChoices(
 ): readonly ManagedLlamaCppSelectionChoice[] {
   const choices = catalog.presets
     .filter(
-      ({ spec }) =>
-        spec.selection === "automatic" && spec.plan.backend === "install-llama-cpp",
+      ({ spec }) => spec.selection === "automatic" && spec.plan.backend === "install-llama-cpp",
     )
     .flatMap((preset) => {
       const resolution = resolveManagedInferenceServing(
@@ -94,10 +93,7 @@ export function listManagedLlamaCppSelectionChoices(
         catalog,
       );
       if (resolution.outcome !== "selected") {
-        if (
-          resolution.code === "invalid-readiness" ||
-          resolution.code === "invalid-topology"
-        ) {
+        if (resolution.code === "invalid-readiness" || resolution.code === "invalid-topology") {
           throw new Error(resolution.message);
         }
         return [];
