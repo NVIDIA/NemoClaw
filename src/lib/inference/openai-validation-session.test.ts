@@ -43,7 +43,7 @@ describe("OpenAI validation keepalive sequence", () => {
     expect(harness.legacyProbe).not.toHaveBeenCalled();
   });
 
-  it("retries native validation until a structured tool call appears (#8714)", async () => {
+  it("retries the validation session after HTTP 200 omits a structured tool call (#8714)", async () => {
     const observedBodies: Array<Record<string, unknown>> = [];
     const server = http.createServer((request, response) => {
       let body = "";
@@ -82,7 +82,7 @@ describe("OpenAI validation keepalive sequence", () => {
     expect(harness.legacyProbe).not.toHaveBeenCalled();
   });
 
-  it("stops native validation after structured tool calls remain missing (#8714)", async () => {
+  it("stops the validation session after four HTTP 200 responses omit structured tool calls (#8714)", async () => {
     const observedBodies: Array<Record<string, unknown>> = [];
     const server = http.createServer((request, response) => {
       let body = "";
