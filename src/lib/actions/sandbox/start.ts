@@ -261,11 +261,24 @@ export async function startSandbox(
   const result = resolved.lifecycle.start(input);
   if (result.exitCode !== 0) return result;
   const expectedContainerId = result.runtimeHandle;
-  const pinnedManagedStartupRecovery = shouldUseManagedStartupRecovery(
+  const managedStartupRecovery = shouldUseManagedStartupRecovery(
     resolved.sandbox.agent,
     agentRuntime.getSessionAgent(sandboxName),
-    Boolean(expectedContainerId),
+    true,
   );
+  const requiresManagedRuntimeHandle =
+    managedStartupRecovery && resolved.bundle.identity.id === "docker";
+  if (requiresManagedRuntimeHandle && !expectedContainerId) {
+    return {
+      exitCode: 1,
+      message:
+        `  Sandbox '${sandboxName}' started, but runtime provider '${resolved.bundle.identity.id}' ` +
+        "returned no immutable runtime identity. Refusing unpinned managed startup recovery; " +
+        `the existing sandbox was preserved. Run '${cliName()} doctor', then retry ` +
+        `'${cliName()} ${sandboxName} start'.`,
+    };
+  }
+  const pinnedManagedStartupRecovery = managedStartupRecovery && Boolean(expectedContainerId);
 
   await resolved.lifecycle.verifyStarted(input, async (name) => {
     log("  Restoring sandbox startup state…");

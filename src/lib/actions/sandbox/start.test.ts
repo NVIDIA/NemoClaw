@@ -492,6 +492,42 @@ describe("startSandbox", () => {
     expect(h.verifyGateway).toHaveBeenCalledExactlyOnceWith("my-sandbox");
   });
 
+  it("fails closed before verification when managed startup returns no runtime identity (#8662)", async () => {
+    const h = harness();
+    const docker = h.deps.runtimeProviders?.docker;
+    if (!docker || docker.lifecycle.supported !== true) {
+      throw new Error("test requires the Docker lifecycle provider");
+    }
+    const verifyStarted = vi.fn();
+    const runtimeProviders = createRuntimeProviderBundleRegistry([
+      [
+        "docker",
+        {
+          ...docker,
+          lifecycle: {
+            ...docker.lifecycle,
+            start: () => ({ exitCode: 0 }),
+            verifyStarted,
+          },
+        },
+      ],
+    ]);
+    h.getSandbox.mockReturnValue(sandbox({ agent: "openclaw", openshellDriver: "docker" }));
+
+    const result = await startSandbox("my-sandbox", { ...h.deps, runtimeProviders });
+
+    expect(result).toEqual({
+      exitCode: 1,
+      message:
+        "  Sandbox 'my-sandbox' started, but runtime provider 'docker' returned no immutable " +
+        "runtime identity. Refusing unpinned managed startup recovery; the existing sandbox was " +
+        "preserved. Run 'nemoclaw doctor', then retry 'nemoclaw my-sandbox start'.",
+    });
+    expect(verifyStarted).not.toHaveBeenCalled();
+    expect(h.restoreStartupState).not.toHaveBeenCalled();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
   it.each(
     (["openclaw", "hermes"] as const).flatMap((agent) => [
       {
