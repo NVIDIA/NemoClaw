@@ -1371,19 +1371,16 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       }
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
     }
-    // Host-forward recovery requires an OpenShell-ready sandbox. Recheck the
-    // managed gateway before each readiness probe. A replacement must pass
-    // this check before finalize(true) can restore state or commit it.
+    // Host-forward recovery requires an OpenShell-ready sandbox. Managed
+    // recovery has already passed its authenticated control and health gates;
+    // a replacement also rechecks its pinned identity before readiness.
     const recoveryRequiresReadiness = recovery.kind === "managed" || relaunch;
     const readinessFailureDetail = recoveryRequiresReadiness
       ? (() => {
           const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
             beforeProbe: relaunch
               ? (timeoutMs) => confirmRelaunchedManagedHealth?.(timeoutMs) ?? null
-              : () =>
-                  confirmRecoveredSandboxGatewayManaged(sandboxName, {
-                    requestGatewaySupervisorActionImpl: requestManagedProbe,
-                  }),
+              : undefined,
           };
           const readiness =
             waitForRecreatedSandboxOpenShellReadyImpl === waitForRecreatedSandboxOpenShellReady

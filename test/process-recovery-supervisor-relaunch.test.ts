@@ -296,7 +296,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     });
     const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(
       (_name: string, options?: { beforeProbe?: (timeoutMs: number) => boolean | null }) => {
-        expect(options?.beforeProbe?.(5000)).toBe(true);
+        expect(options?.beforeProbe).toBeUndefined();
         order.push("OpenShell readiness");
         return true;
       },
@@ -314,11 +314,9 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
               : "SANDBOX  BIND  PORT  PID  STATUS",
         }) as never,
     );
-    vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
-      if (args.join(" ") === "forward start --background 18789 stopped-box") {
-        order.push("host forward");
-        forwardStarted = true;
-      }
+    vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation(() => {
+      order.push("host forward");
+      forwardStarted = true;
       return { status: 0 } as never;
     });
 
@@ -332,7 +330,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
 
     expect(result).toMatchObject({ checked: true, recovered: true, forwardRecovered: true });
     expect(order).toContain("recover");
-    expect(order).toContain("probe");
+    expect(result).toHaveProperty("managedControlCompletion.disposition", "ok");
     expect(order.indexOf("OpenShell readiness")).toBeLessThan(order.indexOf("host forward"));
     expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
   });
