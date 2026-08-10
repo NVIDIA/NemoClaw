@@ -1417,8 +1417,8 @@ When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats
 - Status `1` with blank stdout and exactly one stderr line, `Error response from daemon: Container <id> is restarting, wait until the container is running`.
 
 For the Docker result, `<id>` must be a 64-character lowercase hexadecimal ID that matches the selected registry-owned container.
-Recovery accepts at most 3 `SUPERVISOR_BUSY` results.
-Status `137` and the Docker restart result share the 11-attempt managed-control budget.
+Recovery makes at most 11 controller attempts in total.
+It stops after 3 of those attempts return `SUPERVISOR_BUSY`.
 Managed settle confirmation treats exact `SUPERVISOR_BUSY` as inconclusive within its configured window.
 Status `137` and the Docker restart result remain terminal during that confirmation.
 The managed supervisor startup waiter accepts the two container-transition results within its separate 11-attempt bound.

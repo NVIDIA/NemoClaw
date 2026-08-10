@@ -381,8 +381,8 @@ function isExactlyRetryableManagedControlTransition(
   // The pinned Docker call records the canonical Docker error only after its
   // container ID matches the selected command target. Status 137 with no
   // output has no controller protocol result. Retry only those two results in
-  // bounded managed-control loops. Persistent transitions, unbound errors,
-  // and status 137 with output stay terminal.
+  // bounded managed-control loops. An exhausted transition bound, an unbound
+  // error, or status 137 with output is terminal.
   if (result === null || result.stdout.trim() !== "") return false;
   if (result.status === 137) return result.stderr.trim() === "";
   if (result.status !== 1 || result.managedControlRestartingContainerId === undefined) return false;
