@@ -240,7 +240,10 @@ export async function startProtectedOllama(host: HostCliClient): Promise<string>
     env: gpuEnv(),
     timeoutMs: PROTECTED_OLLAMA_START_TIMEOUT_MS,
   });
-  expect(start.exitCode, resultText(start)).toBe(0);
+  expect(
+    start.exitCode,
+    `protected Ollama startup failed; see the redacted artifact ${start.artifacts.result}`,
+  ).toBe(0);
   const pull = await host.command("ollama", ["pull", OLLAMA_MODEL], {
     artifactName: "pull-managed-image-ollama-model",
     env: gpuEnv(),
