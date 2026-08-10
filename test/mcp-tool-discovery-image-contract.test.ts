@@ -30,6 +30,27 @@ type ManagedImagesWorkflow = {
   jobs?: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
 };
 
+const invalidReviewedBundlePreparers: ReadonlyArray<
+  (fixture: string, invalidPath: string) => void
+> = [
+  () => undefined,
+  (_fixture, invalidPath) => fs.mkdirSync(invalidPath),
+  (fixture, invalidPath) => {
+    const targetPath = path.join(fixture, "symlink-target.bundle");
+    fs.writeFileSync(targetPath, "unreviewed target\n", { mode: 0o644 });
+    fs.symlinkSync(targetPath, invalidPath);
+  },
+];
+
+function required<T>(value: T | undefined, message: string): T {
+  return (
+    value ??
+    (() => {
+      throw new Error(message);
+    })()
+  );
+}
+
 function createReviewedRuntimeBundleFixture(): string {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-runtime-bundle-"));
   for (const bundleFile of reviewedRuntimeBundleFiles) {
@@ -135,8 +156,14 @@ describe("MCP tool discovery image contract", () => {
     const metadataSteps = steps.filter(
       (step) => step.name === "Make reviewed runtime bundle files group-writable",
     );
-    const metadataStep = metadataSteps[0];
-    const buildStep = steps.find((step) => step.name === "Build PR managed image locally");
+    const metadataStep = required(
+      metadataSteps[0],
+      "managed image workflow is missing the reviewed bundle step",
+    );
+    const buildStep = required(
+      steps.find((step) => step.name === "Build PR managed image locally"),
+      "managed image workflow is missing the build step",
+    );
     const expectedRun = [
       "set -euo pipefail",
       "runtime_bundle_files=(",
@@ -153,16 +180,13 @@ describe("MCP tool discovery image contract", () => {
     ].join("\n");
 
     expect(metadataSteps).toHaveLength(1);
-    expect(metadataStep?.run).toBe(expectedRun);
-    expect(buildStep).toBeDefined();
-    if (!metadataStep?.run || !buildStep) {
-      throw new Error("managed image workflow is missing the reviewed bundle or build step");
-    }
+    const metadataStepRun = required(metadataStep.run, "reviewed bundle step is missing run");
+    expect(metadataStepRun).toBe(expectedRun);
     expect(steps.indexOf(metadataStep)).toBeLessThan(steps.indexOf(buildStep));
 
     const validFixture = createReviewedRuntimeBundleFixture();
     try {
-      const valid = spawnSync("bash", ["-c", metadataStep.run], {
+      const valid = spawnSync("bash", ["-c", metadataStepRun], {
         cwd: validFixture,
         encoding: "utf8",
       });
@@ -175,21 +199,15 @@ describe("MCP tool discovery image contract", () => {
       fs.rmSync(validFixture, { force: true, recursive: true });
     }
 
-    for (const invalidType of ["missing", "directory", "symlink"] as const) {
+    for (const prepareInvalidBundle of invalidReviewedBundlePreparers) {
       const invalidFixture = createReviewedRuntimeBundleFixture();
-      const invalidBundleFile = reviewedRuntimeBundleFiles.at(-1)!;
+      const invalidBundleFile = reviewedRuntimeBundleFiles[3];
       const invalidPath = path.join(invalidFixture, invalidBundleFile);
       fs.unlinkSync(invalidPath);
-      if (invalidType === "directory") {
-        fs.mkdirSync(invalidPath);
-      } else if (invalidType === "symlink") {
-        const targetPath = path.join(invalidFixture, "symlink-target.bundle");
-        fs.writeFileSync(targetPath, "unreviewed target\n", { mode: 0o644 });
-        fs.symlinkSync(targetPath, invalidPath);
-      }
+      prepareInvalidBundle(invalidFixture, invalidPath);
 
       try {
-        const invalid = spawnSync("bash", ["-c", metadataStep.run], {
+        const invalid = spawnSync("bash", ["-c", metadataStepRun], {
           cwd: invalidFixture,
           encoding: "utf8",
         });
