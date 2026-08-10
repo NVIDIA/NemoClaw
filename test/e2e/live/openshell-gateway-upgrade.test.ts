@@ -39,6 +39,7 @@ import {
   type FakeOpenAiCompatibleServer,
   startFakeOpenAiCompatibleServer,
 } from "../fixtures/fake-openai-compatible.ts";
+import { registerOpenShellHostMockFirewall } from "../fixtures/host-mock-firewall.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -1187,6 +1188,17 @@ runLinuxOpenShellGatewayUpgrade(
       requireAuthModels: OPENCLAW_STATE_UPGRADE_PROOF,
       responseText: "ok",
     });
+    let firewallSetup: ReturnType<typeof registerOpenShellHostMockFirewall>;
+    try {
+      firewallSetup = registerOpenShellHostMockFirewall({
+        cleanup,
+        host,
+        port: Number(new URL(fake.baseUrl).port),
+      });
+    } catch (error) {
+      await fake.close();
+      throw error;
+    }
     cleanup.add("close compatible endpoint mock", async () => {
       await artifacts.writeJson("fake-openai-compatible-requests.json", fake.requests());
       await fake.close();
@@ -1196,7 +1208,20 @@ runLinuxOpenShellGatewayUpgrade(
     });
 
     progress.phase("install pinned legacy NemoClaw and its sandbox");
-    await installOldNemoclawAndClaw(host, artifacts, fake.baseUrl);
+    const [installResult, firewallResult] = await Promise.allSettled([
+      installOldNemoclawAndClaw(host, artifacts, fake.baseUrl),
+      firewallSetup,
+    ]);
+    if (firewallResult.status === "fulfilled") {
+      await artifacts.writeJson("host-mock-firewall.json", firewallResult.value);
+    }
+    const setupFailures = [installResult, firewallResult]
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => result.reason);
+    if (setupFailures.length === 1) throw setupFailures[0];
+    if (setupFailures.length > 1) {
+      throw new AggregateError(setupFailures, "legacy install and host mock firewall setup failed");
+    }
     const legacyStateContract = await captureOpenClawStateUpgradeProof(host, fake, artifacts);
     const hiddenOldOpenShellDir =
       OLD_NEMOCLAW_REF === "v0.0.55" ? await stageOldOpenShellInUserLocalBin(host) : undefined;
