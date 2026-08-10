@@ -46,7 +46,7 @@ describe("codebase growth repository contract", () => {
     expect(evaluateOnboardLineContract(lines, 100).join("\n")).toMatch(pattern);
   });
 
-  it("rejects increased and stale test conditional counts", () => {
+  it("rejects unbudgeted counts and stale test conditional budgets", () => {
     expect(
       evaluateTestConditionalContract(
         { "test/added.test.ts": 1, "test/shrunk.test.ts": 1 },

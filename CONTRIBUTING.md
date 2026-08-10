@@ -212,7 +212,7 @@ These are the primary npm scripts for day-to-day development:
 | `npm test` | Build package artifacts and run every non-live Vitest project for broad changes |
 | `npm run test:spec` | Run every non-live test with hierarchical behavior-oriented output |
 | `npm run test:fast` | Clean `dist/` and run source CLI, plugin, and E2E-support tests |
-| `npm run test:changed` | Run affected CLI, plugin, and E2E-support tests, then run the codebase growth contract test |
+| `npm run test:changed` | Run affected CLI, plugin, and E2E-support tests. After they pass, run the codebase growth contract test |
 | `npm run test:watch` | Watch the CLI, plugin, and E2E-support projects and rerun affected tests |
 | `npm run test:shuffle` | Shuffle test order in the focused source projects without collecting coverage |
 | `npm run test:diagnose:leaks` | Report async-resource leaks and diagnose a Vitest process that hangs during shutdown |
@@ -289,7 +289,7 @@ metrics list every accepted exception so these contracts remain visible during r
 
 Use `npm run test:changed` for staged, unstaged, and untracked changes in the current checkout.
 It selects affected tests from the source-backed `cli`, `plugin`, and `e2e-support` projects.
-It then runs the codebase growth contract test.
+After those tests pass, it runs the codebase growth contract test.
 Keep `npm run test:watch` running for source-test feedback while editing.
 Watch mode also maps the repository's current opaque YAML, Python, shell, generated, and workflow inputs to concrete contract tests outside Vitest's import graph.
 Add a narrow mapping in `test/helpers/vitest-watch-triggers.ts` when a new opaque input needs the same treatment.
