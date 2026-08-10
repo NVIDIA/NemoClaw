@@ -242,6 +242,11 @@ async function preclean(
     env,
     timeoutMs: 60_000,
   });
+  await host.cleanupGatewayRegistration(GATEWAY, {
+    artifactName: `pre-cleanup-gateway-${sandboxName}`,
+    env,
+    timeoutMs: 60_000,
+  });
 }
 
 async function verifyExactCleanup(
