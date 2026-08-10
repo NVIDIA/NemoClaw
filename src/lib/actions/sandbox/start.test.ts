@@ -495,17 +495,20 @@ describe("startSandbox", () => {
   it("fails closed before verification when managed startup returns no runtime identity (#8662)", async () => {
     const h = harness();
     const docker = h.deps.runtimeProviders?.docker;
-    if (!docker || docker.lifecycle.supported !== true) {
-      throw new Error("test requires the Docker lifecycle provider");
-    }
+    expect(docker?.lifecycle.supported).toBe(true);
+    const dockerProvider = docker as NonNullable<typeof docker>;
+    const dockerLifecycle = dockerProvider.lifecycle as Extract<
+      NonNullable<typeof docker>["lifecycle"],
+      { readonly supported: true }
+    >;
     const verifyStarted = vi.fn();
     const runtimeProviders = createRuntimeProviderBundleRegistry([
       [
         "docker",
         {
-          ...docker,
+          ...dockerProvider,
           lifecycle: {
-            ...docker.lifecycle,
+            ...dockerLifecycle,
             start: () => ({ exitCode: 0 }),
             verifyStarted,
           },
