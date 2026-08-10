@@ -483,6 +483,7 @@ describe("rebuild recreate shields state", () => {
       sandboxName: "alpha",
       observabilityEnabled: false,
     });
+    seedRecreateJournalCheckpoint(session);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(onboardSession, "loadSession").mockImplementation(() => session);

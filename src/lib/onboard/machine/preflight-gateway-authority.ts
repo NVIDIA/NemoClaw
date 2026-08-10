@@ -4,7 +4,7 @@
 import type { GatewayReadinessProjection } from "../../readiness/gateway";
 import type { GatewayReuseState } from "../../state/gateway";
 import * as fatalRuntimePreflight from "../fatal-runtime-preflight";
-import type { GatewayOwner } from "../gateway-ownership";
+import { type GatewayOwner, isExternallySupervised } from "../gateway-ownership";
 import {
   failFastOnForeignGatewayPortConflict,
   type GatewayPortConflictDeps,
@@ -34,6 +34,23 @@ export interface PreparePreflightGatewayAuthorityDeps {
 export interface PreflightGatewayAuthority {
   externallySupervised: boolean;
   gatewayReuseState: GatewayReuseState;
+}
+
+export interface EarlyGatewayPortConflictDeps {
+  resolveOwner(): GatewayOwner;
+  gatewayPort: number;
+  portConflict: Omit<GatewayPortConflictDeps, "gatewayPort" | "externallySupervised">;
+}
+
+/** Preserve the foreign-port fast-fail before bounded OpenShell readiness probes. */
+export async function failFastOnEarlyGatewayPortConflict(
+  deps: EarlyGatewayPortConflictDeps,
+): Promise<void> {
+  await failFastOnForeignGatewayPortConflict({
+    gatewayPort: deps.gatewayPort,
+    externallySupervised: isExternallySupervised(deps.resolveOwner()),
+    ...deps.portConflict,
+  });
 }
 
 export function collectOnboardGatewayReadiness(

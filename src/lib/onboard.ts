@@ -1409,6 +1409,10 @@ async function preflight(
   preflightOpts: PreflightOptions = {},
 ): Promise<ReturnType<typeof nim.detectGpu>> {
   step(1, 8, "Preflight checks");
+  // Preserve the detailed foreign-listener failure before bounded OpenShell
+  // status probes; readiness performs the same observation again after install.
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  await preflightGatewayAuthority.failFastOnEarlyGatewayPortConflict({ resolveOwner: getGatewayOwner, gatewayPort: GATEWAY_PORT, portConflict: { checkPortAvailable, getGatewayPortCheckOptions: dockerDriverGatewayEnv.getGatewayPortCheckOptions, isDockerDriverGatewayPortListener, exitProcess: (code) => process.exit(code) } });
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const { gpu, host, sandboxGpuConfig } = await fatalRuntimePreflight.runReadinessGatedRuntimePreflight(preflightOpts, { nonInteractive: isNonInteractive(), collectGatewayReadiness: collectOnboardGatewayReadiness });
 
