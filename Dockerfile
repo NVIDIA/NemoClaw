@@ -1533,7 +1533,13 @@ RUN managed_runtime_assertion_failed() { \
     test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh)" = '0:0:444' \
       || managed_runtime_assertion_failed managed-bootstrap-trampoline-metadata-0:0:444 /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh; \
     install -d -o root -g root -m 0755 /run/nemoclaw \
-      || managed_runtime_assertion_failed runtime-directory-0:0:755 /run/nemoclaw
+      || managed_runtime_assertion_failed runtime-directory-create /run/nemoclaw; \
+    test -d /run/nemoclaw \
+      || managed_runtime_assertion_failed runtime-directory /run/nemoclaw; \
+    test ! -L /run/nemoclaw \
+      || managed_runtime_assertion_failed runtime-directory-non-symlink /run/nemoclaw; \
+    test "$(stat -c '%u:%g:%a' /run/nemoclaw 2>/dev/null)" = '0:0:755' \
+      || managed_runtime_assertion_failed runtime-directory-metadata-0:0:755 /run/nemoclaw
 
 # Copy startup script and shared sandbox initialisation library.
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \

@@ -9,6 +9,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const managedImagesWorkflowPath = path.join(repoRoot, ".github/workflows/managed-images.yaml");
@@ -24,6 +25,21 @@ const reviewedRuntimeBundleFiles = [
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle",
 ] as const;
+
+type ManagedImagesWorkflow = {
+  jobs?: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
+};
+
+function createReviewedRuntimeBundleFixture(): string {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-runtime-bundle-"));
+  for (const bundleFile of reviewedRuntimeBundleFiles) {
+    const fixturePath = path.join(fixture, bundleFile);
+    fs.mkdirSync(path.dirname(fixturePath), { recursive: true });
+    fs.writeFileSync(fixturePath, "reviewed runtime fixture\n");
+    fs.chmodSync(fixturePath, 0o644);
+  }
+  return fixture;
+}
 
 function createCacheSeedFixture(): {
   cache: string;
@@ -112,17 +128,82 @@ function createCacheSeedFixture(): {
 describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- The PR image build must reproduce group-writable inputs before validating the immutable bundle boundary
   it("builds managed images when reviewed runtime bundle files are group-writable (#8665)", () => {
-    const workflow = fs.readFileSync(managedImagesWorkflowPath, "utf8");
-    const metadataStep = workflow.indexOf(
-      "- name: Make reviewed runtime bundle files group-writable",
+    const workflow = YAML.parse(
+      fs.readFileSync(managedImagesWorkflowPath, "utf8"),
+    ) as ManagedImagesWorkflow;
+    const steps = workflow.jobs?.["pr-build-and-entrypoint"]?.steps ?? [];
+    const metadataSteps = steps.filter(
+      (step) => step.name === "Make reviewed runtime bundle files group-writable",
     );
-    const buildStep = workflow.indexOf("- name: Build PR managed image locally");
+    const metadataStep = metadataSteps[0];
+    const buildStep = steps.find((step) => step.name === "Build PR managed image locally");
+    const expectedRun = [
+      "set -euo pipefail",
+      "runtime_bundle_files=(",
+      ...reviewedRuntimeBundleFiles.map((bundleFile) => `  ${bundleFile}`),
+      ")",
+      'for path in "${runtime_bundle_files[@]}"; do',
+      '  if [[ ! -f "$path" || -L "$path" ]]; then',
+      "    printf 'ERROR: reviewed runtime bundle input must be a regular non-symlink: %s\\n' \"$path\" >&2",
+      "    exit 1",
+      "  fi",
+      "done",
+      'chmod 0664 "${runtime_bundle_files[@]}"',
+      "",
+    ].join("\n");
 
-    expect(metadataStep).toBeGreaterThan(0);
-    expect(metadataStep).toBeLessThan(buildStep);
-    expect(workflow.slice(metadataStep, buildStep)).toContain("chmod 0664 \\");
-    for (const bundleFile of reviewedRuntimeBundleFiles) {
-      expect(workflow.slice(metadataStep, buildStep)).toContain(bundleFile);
+    expect(metadataSteps).toHaveLength(1);
+    expect(metadataStep?.run).toBe(expectedRun);
+    expect(buildStep).toBeDefined();
+    if (!metadataStep?.run || !buildStep) {
+      throw new Error("managed image workflow is missing the reviewed bundle or build step");
+    }
+    expect(steps.indexOf(metadataStep)).toBeLessThan(steps.indexOf(buildStep));
+
+    const validFixture = createReviewedRuntimeBundleFixture();
+    try {
+      const valid = spawnSync("bash", ["-c", metadataStep.run], {
+        cwd: validFixture,
+        encoding: "utf8",
+      });
+      expect(valid.status, valid.stderr).toBe(0);
+      expect(valid.stderr).toBe("");
+      for (const bundleFile of reviewedRuntimeBundleFiles) {
+        expect(fs.statSync(path.join(validFixture, bundleFile)).mode & 0o777).toBe(0o664);
+      }
+    } finally {
+      fs.rmSync(validFixture, { force: true, recursive: true });
+    }
+
+    for (const invalidType of ["missing", "directory", "symlink"] as const) {
+      const invalidFixture = createReviewedRuntimeBundleFixture();
+      const invalidBundleFile = reviewedRuntimeBundleFiles.at(-1)!;
+      const invalidPath = path.join(invalidFixture, invalidBundleFile);
+      fs.unlinkSync(invalidPath);
+      if (invalidType === "directory") {
+        fs.mkdirSync(invalidPath);
+      } else if (invalidType === "symlink") {
+        const targetPath = path.join(invalidFixture, "symlink-target.bundle");
+        fs.writeFileSync(targetPath, "unreviewed target\n", { mode: 0o644 });
+        fs.symlinkSync(targetPath, invalidPath);
+      }
+
+      try {
+        const invalid = spawnSync("bash", ["-c", metadataStep.run], {
+          cwd: invalidFixture,
+          encoding: "utf8",
+        });
+        expect(invalid.status).toBe(1);
+        expect(invalid.stdout).toBe("");
+        expect(invalid.stderr).toBe(
+          `ERROR: reviewed runtime bundle input must be a regular non-symlink: ${invalidBundleFile}\n`,
+        );
+        expect(
+          fs.statSync(path.join(invalidFixture, reviewedRuntimeBundleFiles[0])).mode & 0o777,
+        ).toBe(0o644);
+      } finally {
+        fs.rmSync(invalidFixture, { force: true, recursive: true });
+      }
     }
   });
 

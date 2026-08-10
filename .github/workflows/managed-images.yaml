@@ -98,11 +98,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          chmod 0664 \
-            tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle \
-            tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json \
-            tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt \
+          runtime_bundle_files=(
+            tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle
+            tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json
+            tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt
             tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle
+          )
+          for path in "${runtime_bundle_files[@]}"; do
+            if [[ ! -f "$path" || -L "$path" ]]; then
+              printf 'ERROR: reviewed runtime bundle input must be a regular non-symlink: %s\n' "$path" >&2
+              exit 1
+            fi
+          done
+          chmod 0664 "${runtime_bundle_files[@]}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0

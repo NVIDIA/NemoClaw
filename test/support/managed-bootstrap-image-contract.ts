@@ -67,7 +67,10 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
     `chown root:root ${MANAGED_STARTUP_RUNTIME_PATH} 2>/dev/null || managed_runtime_assertion_failed owner-root-root ${MANAGED_STARTUP_RUNTIME_PATH}`,
     `chmod 0444 ${MANAGED_STARTUP_RUNTIME_PATH} 2>/dev/null || managed_runtime_assertion_failed mode-0444 ${MANAGED_STARTUP_RUNTIME_PATH}`,
     `test \"$(stat -c '%u:%g:%a' ${MANAGED_STARTUP_RUNTIME_PATH} 2>/dev/null)\" = '0:0:444' || managed_runtime_assertion_failed metadata-0:0:444 ${MANAGED_STARTUP_RUNTIME_PATH}`,
-    "install -d -o root -g root -m 0755 /run/nemoclaw || managed_runtime_assertion_failed runtime-directory-0:0:755 /run/nemoclaw",
+    "install -d -o root -g root -m 0755 /run/nemoclaw || managed_runtime_assertion_failed runtime-directory-create /run/nemoclaw",
+    "test -d /run/nemoclaw || managed_runtime_assertion_failed runtime-directory /run/nemoclaw",
+    "test ! -L /run/nemoclaw || managed_runtime_assertion_failed runtime-directory-non-symlink /run/nemoclaw",
+    "test \"$(stat -c '%u:%g:%a' /run/nemoclaw 2>/dev/null)\" = '0:0:755' || managed_runtime_assertion_failed runtime-directory-metadata-0:0:755 /run/nemoclaw",
   ]) {
     expect(logicalInstruction.split(assertion)).toHaveLength(2);
   }
@@ -76,8 +79,12 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
   const missingPath = path.join(tmp, "missing-runtime.cjs");
   const targetPath = path.join(tmp, "runtime-target.cjs");
   const linkPath = path.join(tmp, "runtime-link.cjs");
+  const runtimeDirectoryTarget = path.join(tmp, "runtime-directory-target");
+  const runtimeDirectoryLink = path.join(tmp, "runtime-directory-link");
   fs.writeFileSync(targetPath, "fixture\n", { mode: 0o444 });
   fs.symlinkSync(targetPath, linkPath);
+  fs.mkdirSync(runtimeDirectoryTarget);
+  fs.symlinkSync(runtimeDirectoryTarget, runtimeDirectoryLink);
   const runDiagnostic = (artifactPath: string, invariant: string, statOutput: string) =>
     spawnSync(
       "sh",
@@ -117,6 +124,17 @@ function expectManagedRuntimeDiagnostic(dockerfile: string): void {
     expect(symlink.stdout).toBe("");
     expect(symlink.stderr).toBe(
       `ERROR: managed image assertion failed: non-symlink path=${linkPath} uid=0 gid=0 type=symbolic link mode=777 symlink=yes\n`,
+    );
+
+    const runtimeDirectorySymlink = runDiagnostic(
+      runtimeDirectoryLink,
+      "runtime-directory-non-symlink",
+      "uid=0 gid=0 type=symbolic link mode=777",
+    );
+    expect(runtimeDirectorySymlink.status).toBe(1);
+    expect(runtimeDirectorySymlink.stdout).toBe("");
+    expect(runtimeDirectorySymlink.stderr).toBe(
+      `ERROR: managed image assertion failed: runtime-directory-non-symlink path=${runtimeDirectoryLink} uid=0 gid=0 type=symbolic link mode=777 symlink=yes\n`,
     );
 
     const writable = runDiagnostic(
