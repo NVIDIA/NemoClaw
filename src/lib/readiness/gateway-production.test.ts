@@ -37,8 +37,8 @@ import {
   parseDarwinLsofExecutable,
 } from "./gateway-production";
 
-function commandResult(stdout = "", status = 1) {
-  return { status, stdout, stderr: "", signal: null, pid: 1, output: [] };
+function commandResult(stdout = "", status = 1, stderr = "") {
+  return { status, stdout, stderr, signal: null, pid: 1, output: [] };
 }
 
 function managedOwner(gatewayPort: number): GatewayOwner {
@@ -297,6 +297,8 @@ describe("managed gateway port readiness (#7411)", () => {
     ["Server: https://gateway.example:8080", 8080, "mismatch"],
     ["Server: ftp://127.0.0.1:8080", 8080, "mismatch"],
     ["Server: not-a-url", 8080, "mismatch"],
+    ["Gateway endpoint:", 8080, "mismatch"],
+    ["Server: https://127.0.0.1:8080 trailing-data", 8080, "mismatch"],
     ["DNS Server: https://127.0.0.1:8080", 8080, "unknown"],
   ] as const)("classifies managed endpoint output %s for port %s as %s", (output, port, expected) => {
     expect(classifyManagedGatewayEndpointBinding([output], port)).toBe(expected);
@@ -374,6 +376,46 @@ describe("managed gateway port readiness (#7411)", () => {
   ] as const)("maps portAvailable=%s, reuse=%s, version=%s to %s", (portAvailable, reuseState, compatibility, expected) => {
     expect(classifyManagedGatewayVersionDrift(portAvailable, reuseState, compatibility)).toBe(
       expected,
+    );
+  });
+
+  it("preserves scoped stale gateway state from OpenShell connection errors", async () => {
+    const statusConnectionRefused = [
+      "Error:   × client error (Connect)",
+      "  ├─▶ tcp connect error",
+      "  ╰─▶ Connection refused (os error 111)",
+    ].join("\n");
+    const infoConnectionRefused = [
+      "Error:   × transport error",
+      "  ╰─▶ Connection refused (os error 111)",
+    ].join("\n");
+    subprocess.spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+      const resolvesOpenshell = command === "sh" && args.includes('command -v "$1"');
+      if (resolvesOpenshell) return commandResult("/usr/local/bin/openshell\n", 0);
+      if (command === "/usr/local/bin/openshell") {
+        const stderr = args[0] === "status" ? statusConnectionRefused : infoConnectionRefused;
+        return commandResult("", 1, stderr);
+      }
+      return commandResult();
+    });
+
+    const gatewayPort = 0;
+    const deps = createProductionGatewayReadinessDependencies({
+      gatewayName: () => "nemoclaw-readiness-test",
+      gatewayPort: () => gatewayPort,
+    });
+
+    await expect(deps.observeManagedGateway(managedOwner(gatewayPort))).resolves.toMatchObject({
+      reuseState: "stale",
+      driftState: "not-detected",
+      portConflictState: "none",
+    });
+    expect(subprocess.spawnSync).toHaveBeenCalledWith(
+      "/usr/local/bin/openshell",
+      ["status", "-g", "nemoclaw-readiness-test"],
+      expect.objectContaining({
+        env: expect.objectContaining({ OPENSHELL_GATEWAY: "nemoclaw-readiness-test" }),
+      }),
     );
   });
 

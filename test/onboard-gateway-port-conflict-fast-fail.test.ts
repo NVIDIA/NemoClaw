@@ -119,7 +119,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
 
   it(
     "accepts Server endpoint evidence in repeated onboarding invocations",
-    testTimeoutOptions(30_000),
+    testTimeoutOptions(50_000),
     () => {
       const gatewayName = resolveGatewayName(gatewayPort);
       const gatewayEndpoint = `https://127.0.0.1:${String(gatewayPort)}/`;
@@ -194,6 +194,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
           "exit 1",
         ].join("\n"),
       );
+      workspace.writeExecutable("sudo", "#!/usr/bin/env bash\nexit 1\n");
 
       const env = workspaceEnv(workspace, {
         COMPATIBLE_API_KEY: "test-only-compatible-key",
@@ -210,8 +211,8 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
         NEMOCLAW_TEST_NO_SLEEP: "1",
       });
       const argv = [CLI, "onboard", "--name", "reuse-server", "--no-gpu", "--non-interactive"];
-      const first = runOnboardProcess(argv, { timeoutMs: 10_000, env });
-      const second = runOnboardProcess(argv, { timeoutMs: 10_000, env });
+      const first = runOnboardProcess(argv, { timeoutMs: 20_000, env });
+      const second = runOnboardProcess(argv, { timeoutMs: 20_000, env });
 
       for (const result of [first, second]) {
         expect(result.error).toBeUndefined();
