@@ -75,13 +75,14 @@ const BRIDGE_TOOLS = ["tool_search", "tool_describe", "tool_call"].map((name) =>
 }));
 
 let compatibleMock: StartedHttpServer | undefined;
-let artifactRoot: string | undefined;
+const artifactRoots: string[] = [];
 
 afterEach(async () => {
   await compatibleMock?.close();
   compatibleMock = undefined;
-  if (artifactRoot) await fs.rm(artifactRoot, { recursive: true, force: true });
-  artifactRoot = undefined;
+  await Promise.all(
+    artifactRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })),
+  );
 });
 
 async function startDeferredCompatibleMock(): Promise<StartedHttpServer> {
@@ -229,7 +230,8 @@ describe("authenticated MCP tool discovery transport retry", () => {
         return { exitCode: 0, stdout: JSON.stringify(statusJson), stderr: "" };
       }),
     } as unknown as Parameters<typeof assertAuthenticatedMcpToolDiscovery>[0];
-    artifactRoot = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-mcp-diagnostics-"));
+    const artifactRoot = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-mcp-diagnostics-"));
+    artifactRoots.push(artifactRoot);
     const artifacts = new ArtifactSink(artifactRoot);
 
     await expect(
