@@ -94,6 +94,10 @@ function stopScopedTarget(
     pid: selectedPid,
   });
   const exited = new Set<number>();
+  const markExited = (pid: number): true => {
+    exited.add(pid);
+    return true;
+  };
   let cmdlineReads = 0;
   const cmdline = overrides.cmdline ?? "openshell-gateway[nemoclaw=nemoclaw-18080;port=18080]";
   const run = vi.fn(
@@ -113,13 +117,11 @@ function stopScopedTarget(
     ),
   );
   const kill = vi.fn<HostGatewayProcessDeps["kill"]>((killedPid, signal) => {
-    if (overrides.signalDenied) return false;
     switch (signal) {
       case "SIGTERM":
-        exited.add(killedPid);
-        break;
+        return overrides.signalDenied ? false : markExited(killedPid);
     }
-    return true;
+    return overrides.signalDenied !== true;
   });
   const result = stopHostGatewayProcesses(
     {
