@@ -322,6 +322,42 @@ describe("GPU E2E helpers", () => {
     }
   });
 
+  it("starts a manual Ollama daemon when no service is available", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-start-manual-"));
+    try {
+      const bin = path.join(root, "bin");
+      const calls = path.join(root, "calls.log");
+      const logPath = path.join(root, "ollama.log");
+      mkdirSync(bin);
+      for (const [command, body] of [
+        ["id", 'printf "1000\\n"\n'],
+        ["sudo", "exit 1\n"],
+        ["systemctl", 'printf "systemctl %s\\n" "$*" >>"$FAKE_CALLS"\nexit 1\n'],
+        ["setsid", 'printf "setsid %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
+        [
+          "curl",
+          'for _ in $(seq 1 50); do\n  grep -q "^setsid " "$FAKE_CALLS" && exit 0\n  sleep 0.01\ndone\nexit 1\n',
+        ],
+      ] as const) {
+        const commandPath = path.join(bin, command);
+        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
+        chmodSync(commandPath, 0o755);
+      }
+
+      const stdout = execFileSync("bash", ["-c", protectedOllamaStartScript(logPath)], {
+        encoding: "utf8",
+        env: { ...process.env, FAKE_CALLS: calls, PATH: `${bin}:${process.env.PATH}` },
+      });
+      expect(stdout).toBe("restart_mode=manual\n");
+      const commandLog = readFileSync(calls, "utf8");
+      expect(commandLog).toContain("systemctl cat ollama.service");
+      expect(commandLog).toContain("systemctl --user restart ollama.service");
+      expect(commandLog).toContain("setsid -f env OLLAMA_HOST=127.0.0.1:11434 ollama serve");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("stops GPU setup when Ollama cleanup leaves a listener", async () => {
     const success = { exitCode: 0, stderr: "", stdout: "" };
     const host = {
