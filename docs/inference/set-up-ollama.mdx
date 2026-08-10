@@ -175,6 +175,8 @@ The wizard manages the proxy lifecycle:
 - It probes the sandbox Docker network path before saving the inference route.
 - It stops matching proxy processes during uninstall.
 - It reuses the persisted token after a host reboot and during re-onboarding for the committed local Ollama route.
+- It reuses that same token for every gateway port on the host, because one proxy serves them all.
+- Export the same `NEMOCLAW_OLLAMA_PROXY_PORT` for every gateway port on the host, because all of them manage that one proxy.
 
 All proxy endpoints require the token, including `GET /api/tags`.
 The host-side proxy liveness check treats any HTTP response, including `401`, as evidence that the proxy answered.
@@ -246,6 +248,10 @@ The following command uses `8990` as an example; choose another unused port when
 ```bash
 NEMOCLAW_GATEWAY_PORT=8990 NEMOCLAW_MODEL=qwen3.5:9b $$nemoclaw onboard
 ```
+
+Every gateway port on the host shares one authenticated proxy and one token.
+Onboarding another gateway port restarts that shared proxy with the token already stored on the host, so sandboxes on the gateway you onboarded first keep reaching Ollama after the restart.
+If the restart fails, onboarding reports the port owner or the startup error, and no sandbox on any gateway port can reach Ollama until you resolve it and rerun onboarding.
 
 Interactive onboarding filters installed registry-known tags that do not fit current GPU memory.
 If no installed known tag fits, NemoClaw displays starter choices and warns when even the smallest tag might not fit.

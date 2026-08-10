@@ -59,6 +59,7 @@ const {
   loadLocalAdapterPid,
   persistLocalAdapterPid,
   readLocalAdapterTextFile,
+  SHARED_LOCAL_ADAPTER_STATE_DIR,
   spawnDetachedNodeAdapter,
   writeLocalAdapterSecretFile,
 } = require("../local-adapter-lifecycle");
@@ -72,10 +73,20 @@ const {
 
 // ── State ────────────────────────────────────────────────────────
 
-const PROXY_STATE_DIR = DEFAULT_LOCAL_ADAPTER_STATE_DIR;
+const PROXY_STATE_DIR = SHARED_LOCAL_ADAPTER_STATE_DIR;
 const PROXY_TOKEN_PATH = path.join(PROXY_STATE_DIR, "ollama-proxy-token");
+const PROXY_BACKEND_PATH = path.join(PROXY_STATE_DIR, "ollama-backend");
 const PROXY_PID_PATH = path.join(PROXY_STATE_DIR, "ollama-auth-proxy.pid");
 const PROXY_STATUS_PATH = defaultProxyStatusPath(PROXY_STATE_DIR);
+const GATEWAY_SCOPED_PROXY_STATE_DIR = DEFAULT_LOCAL_ADAPTER_STATE_DIR;
+const GATEWAY_SCOPED_PROXY_TOKEN_PATH = path.join(
+  GATEWAY_SCOPED_PROXY_STATE_DIR,
+  "ollama-proxy-token",
+);
+const GATEWAY_SCOPED_PROXY_BACKEND_PATH = path.join(
+  GATEWAY_SCOPED_PROXY_STATE_DIR,
+  "ollama-backend",
+);
 
 let ollamaProxyToken: string | null = null;
 
@@ -86,7 +97,7 @@ function sleep(seconds: number): void {
 // ── Token persistence ────────────────────────────────────────────
 
 function persistProxyToken(token: string, backendUrl = `http://127.0.0.1:${OLLAMA_PORT}`): void {
-  writeLocalAdapterSecretFile(path.join(PROXY_STATE_DIR, "ollama-backend"), backendUrl);
+  writeLocalAdapterSecretFile(PROXY_BACKEND_PATH, backendUrl);
   writeLocalAdapterSecretFile(PROXY_TOKEN_PATH, token);
 }
 
@@ -105,7 +116,18 @@ async function persistAndProbeOllamaProxy(token: string): Promise<void> {
 }
 
 function loadPersistedProxyToken(): string | null {
-  return readLocalAdapterTextFile(PROXY_TOKEN_PATH);
+  return readLocalAdapterTextFile(PROXY_TOKEN_PATH) ?? adoptGatewayScopedProxyToken();
+}
+
+function adoptGatewayScopedProxyToken(): string | null {
+  if (GATEWAY_SCOPED_PROXY_TOKEN_PATH === PROXY_TOKEN_PATH) return null;
+  const token = readLocalAdapterTextFile(GATEWAY_SCOPED_PROXY_TOKEN_PATH);
+  if (!token) return null;
+  const backendUrl =
+    readLocalAdapterTextFile(GATEWAY_SCOPED_PROXY_BACKEND_PATH) ??
+    readLocalAdapterTextFile(PROXY_BACKEND_PATH);
+  persistProxyToken(token, backendUrl || undefined);
+  return token;
 }
 
 function curlAuthHeaderConfig(token: string): string {
@@ -168,7 +190,7 @@ function spawnOllamaAuthProxy(token: string, backendUrl?: string): number | null
   // Clear any stale status file so a read after this spawn observes the new
   // proxy's exit reason (or finds no file when the proxy starts cleanly).
   clearStaleProxyStatus(PROXY_STATUS_PATH);
-  const url = backendUrl || readLocalAdapterTextFile(path.join(PROXY_STATE_DIR, "ollama-backend"));
+  const url = backendUrl || readLocalAdapterTextFile(PROXY_BACKEND_PATH);
   const child = spawnDetachedNodeAdapter({
     scriptPath: path.join(SCRIPTS, "ollama-auth-proxy.mts"),
     env: {

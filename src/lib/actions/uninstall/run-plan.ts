@@ -282,6 +282,13 @@ const HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES: readonly string[] = [
   "https-pin-runtime-adapter.log",
 ];
 
+const OLLAMA_AUTH_PROXY_STATE_ENTRIES: readonly string[] = [
+  "ollama-proxy-token",
+  "ollama-backend",
+  "ollama-auth-proxy.pid",
+  "ollama-auth-proxy.status",
+];
+
 // These entries can exist in the shared root without representing a running
 // default-port environment. Any other shared-root entry is treated
 // conservatively as default-port state when uninstalling a non-default port.
@@ -295,6 +302,7 @@ const SHARED_HOST_STATE_ENTRIES = new Set([
   `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
   MANAGED_VLLM_API_KEY_FILE,
   ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
+  ...OLLAMA_AUTH_PROXY_STATE_ENTRIES,
 ]);
 
 function isSharedHostStateEntry(entry: string): boolean {
@@ -812,6 +820,11 @@ function stopOllamaAuthProxy(
   // never killed. See issue #2759.
   const stopped = new Set<number>();
 
+  if (!scanOrphans) {
+    runtime.log("Preserving the shared Ollama auth proxy for the remaining gateway ports");
+    return;
+  }
+
   // 1. Try the persisted PID file. The proxy stays bound across NemoClaw
   //    sessions; the PID file is the most reliable signal. The path mirrors
   //    `PROXY_PID_PATH` in `src/lib/onboard-ollama-proxy.ts` (`~/.nemoclaw`).
@@ -826,11 +839,6 @@ function stopOllamaAuthProxy(
     } catch {
       /* ignore — the State step deletes the file shortly anyway */
     }
-  }
-
-  if (!scanOrphans) {
-    if (stopped.size === 0) runtime.log("No selected-gateway Ollama auth proxy found");
-    return;
   }
 
   // 2. Fall back to the configured proxy port for orphans whose PID file is

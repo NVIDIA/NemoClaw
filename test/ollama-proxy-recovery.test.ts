@@ -734,3 +734,129 @@ console.log(JSON.stringify({
     assert.equal(payload.fileToken, "new-file-token");
   });
 });
+
+describe("ollama auth proxy state across gateway ports", () => {
+  function runSecondGatewayProxyStart(options: {
+    readonly prefix: string;
+    readonly sharedToken?: string;
+    readonly gatewayScopedToken?: string;
+  }): {
+    readonly spawnedTokens: string[];
+    readonly activeToken: string | null;
+    readonly sharedToken: string | null;
+    readonly gatewayScopedToken: string | null;
+  } {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), options.prefix));
+    const scriptPath = path.join(tmpDir, "second-gateway-check.js");
+    const proxyPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "inference", "ollama", "proxy.ts"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const waitPath = JSON.stringify(path.join(repoRoot, "src", "lib", "core", "wait.ts"));
+
+    const sharedDir = path.join(tmpDir, ".nemoclaw");
+    const gatewayScopedDir = path.join(sharedDir, "gateways", "8990");
+    fs.mkdirSync(gatewayScopedDir, { recursive: true });
+    if (options.sharedToken !== undefined) {
+      fs.writeFileSync(path.join(sharedDir, "ollama-proxy-token"), `${options.sharedToken}\n`, {
+        mode: 0o600,
+      });
+    }
+    if (options.gatewayScopedToken !== undefined) {
+      fs.writeFileSync(
+        path.join(gatewayScopedDir, "ollama-proxy-token"),
+        `${options.gatewayScopedToken}\n`,
+        { mode: 0o600 },
+      );
+    }
+
+    const script = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const childProcess = require("child_process");
+const runner = require(${runnerPath});
+const wait = require(${waitPath});
+
+wait.waitForPort = () => true;
+
+const spawnedTokens = [];
+childProcess.spawn = (_cmd, _args, opts = {}) => {
+  spawnedTokens.push(opts.env && opts.env.OLLAMA_PROXY_TOKEN);
+  return { pid: 4242, unref() {} };
+};
+runner.runCapture = (command) => {
+  const text = Array.isArray(command) ? command.join(" ") : command;
+  if (text.includes("ps -p 4242")) return "node /tmp/ollama-auth-proxy.js";
+  return "";
+};
+runner.run = () => ({ status: 0, stdout: "", stderr: "" });
+
+const origSpawnSync = childProcess.spawnSync;
+childProcess.spawnSync = (...args) => {
+  if (args[0] === "curl") {
+    const curlArgs = Array.isArray(args[1]) ? args[1] : [];
+    return { status: 0, stdout: curlArgs.includes("--config") ? "200" : "401", stderr: "" };
+  }
+  if (args[0] === "sleep") return { status: 0, stdout: "", stderr: "" };
+  return origSpawnSync(...args);
+};
+
+const proxy = require(${proxyPath});
+proxy.startOllamaAuthProxy();
+
+const readToken = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8").trim() : null);
+const sharedDir = path.join(process.env.HOME, ".nemoclaw");
+console.log(JSON.stringify({
+  spawnedTokens,
+  activeToken: proxy.getOllamaProxyToken(),
+  sharedToken: readToken(path.join(sharedDir, "ollama-proxy-token")),
+  gatewayScopedToken: readToken(
+    path.join(sharedDir, "gateways", "8990", "ollama-proxy-token"),
+  ),
+}));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir, NEMOCLAW_GATEWAY_PORT: "8990" },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    return parseStdoutJson(result.stdout);
+  }
+
+  it("reuses the persisted host token when onboarding a second gateway port (#8704)", () => {
+    const payload = runSecondGatewayProxyStart({
+      prefix: "nemoclaw-ollama-proxy-second-gateway-",
+      sharedToken: "first-gateway-token",
+    });
+
+    assert.deepEqual(payload.spawnedTokens, ["first-gateway-token"]);
+    assert.equal(payload.activeToken, "first-gateway-token");
+    assert.equal(payload.sharedToken, "first-gateway-token");
+    assert.equal(payload.gatewayScopedToken, null);
+  });
+
+  it("adopts a token an earlier gateway-scoped run left behind (#8704)", () => {
+    const payload = runSecondGatewayProxyStart({
+      prefix: "nemoclaw-ollama-proxy-adopt-scoped-",
+      gatewayScopedToken: "scoped-token",
+    });
+
+    assert.deepEqual(payload.spawnedTokens, ["scoped-token"]);
+    assert.equal(payload.sharedToken, "scoped-token");
+  });
+
+  it("mints a token when no gateway on the host has one (#8704)", () => {
+    const payload = runSecondGatewayProxyStart({
+      prefix: "nemoclaw-ollama-proxy-first-run-",
+    });
+
+    assert.equal(payload.spawnedTokens.length, 1);
+    assert.match(payload.spawnedTokens[0], /^[0-9a-f]{48}$/);
+    assert.equal(payload.activeToken, payload.spawnedTokens[0]);
+  });
+});
