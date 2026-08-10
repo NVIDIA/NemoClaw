@@ -21,6 +21,7 @@ vi.mock("node:child_process", async (importOriginal) => ({
 
 afterEach(() => {
   resetTraceForTests();
+  subprocess.spawnSync.mockReset();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
@@ -390,13 +391,27 @@ describe("managed gateway port readiness (#7411)", () => {
       "  ╰─▶ Connection refused (os error 111)",
     ].join("\n");
     subprocess.spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
-      const resolvesOpenshell = command === "sh" && args.includes('command -v "$1"');
-      const stderr = args[0] === "status" ? statusConnectionRefused : infoConnectionRefused;
-      return resolvesOpenshell
-        ? commandResult("/usr/local/bin/openshell\n", 0)
-        : command === "/usr/local/bin/openshell"
-          ? commandResult("", 1, stderr)
-          : commandResult();
+      const resolvesOpenshell =
+        command === "sh" &&
+        args.length === 4 &&
+        args[0] === "-c" &&
+        args[1] === 'command -v "$1"' &&
+        args[2] === "--" &&
+        args[3] === "openshell";
+      if (resolvesOpenshell) return commandResult("/usr/local/bin/openshell\n", 0);
+      if (command === "/usr/local/bin/openshell") {
+        const commandLine = args.join("\0");
+        if (commandLine === ["status", "-g", "nemoclaw-readiness-test"].join("\0")) {
+          return commandResult("", 1, statusConnectionRefused);
+        }
+        if (
+          commandLine === ["gateway", "info", "-g", "nemoclaw-readiness-test"].join("\0") ||
+          commandLine === ["gateway", "info"].join("\0")
+        ) {
+          return commandResult("", 1, infoConnectionRefused);
+        }
+      }
+      return commandResult();
     });
 
     const gatewayPort = 0;
@@ -416,6 +431,16 @@ describe("managed gateway port readiness (#7411)", () => {
       expect.objectContaining({
         env: expect.objectContaining({ OPENSHELL_GATEWAY: "nemoclaw-readiness-test" }),
       }),
+    );
+    expect(subprocess.spawnSync).toHaveBeenCalledWith(
+      "/usr/local/bin/openshell",
+      ["gateway", "info", "-g", "nemoclaw-readiness-test"],
+      expect.any(Object),
+    );
+    expect(subprocess.spawnSync).toHaveBeenCalledWith(
+      "/usr/local/bin/openshell",
+      ["gateway", "info"],
+      expect.any(Object),
     );
   });
 
