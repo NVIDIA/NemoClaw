@@ -10,7 +10,7 @@
  * preflight, and the CLI exit status.
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -19,9 +19,15 @@ import { execTimeout } from "./helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const NODE_BIN = path.dirname(process.execPath);
+const DOCKER_OPERATING_SYSTEM =
+  ({ darwin: "Docker Desktop" } as Partial<Record<NodeJS.Platform, string>>)[process.platform] ??
+  "Docker Engine";
 const tmpFixtures: string[] = [];
+const gatewayProcesses: ReturnType<typeof spawn>[] = [];
+let gatewayPortSequence = 0;
 
 afterEach(() => {
+  for (const child of gatewayProcesses.splice(0)) child.kill();
   for (const dir of tmpFixtures.splice(0)) {
     try {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -45,6 +51,8 @@ function createFixture(opts: {
     providerRegistered = true,
     inferenceProbeHttpStatus = null,
   } = opts;
+  const gatewayPort = 30_000 + ((process.pid + gatewayPortSequence++) % 10_000);
+  const gatewayName = `nemoclaw-${gatewayPort}`;
   const sandboxName = "my-assistant";
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
@@ -62,8 +70,8 @@ function createFixture(opts: {
           provider,
           gpuEnabled: false,
           sandboxGpuMode: "0",
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
+          gatewayName,
+          gatewayPort,
           dashboardPort: agent === "langchain-deepagents-code" ? 0 : 18789,
           fromDockerfile: null,
           policies: [],
@@ -106,7 +114,7 @@ function createFixture(opts: {
       webSearchConfig: null,
       policyPresets: [],
       messagingPlan: null,
-      metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+      metadata: { gatewayName, fromDockerfile: null },
       steps: {
         preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
         gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -175,8 +183,8 @@ if (a[0] === "sandbox" && a[1] === "exec") {
   }
   process.exit(0);
 }
-if (a[0] === "status") { process.stdout.write("Server Status\\n  Gateway: nemoclaw\\n  Status: Connected\\n"); process.exit(0); }
-if (a[0] === "gateway" && a[1] === "info") { process.stdout.write("Gateway Info\\n\\nGateway: nemoclaw\\n"); process.exit(0); }
+if (a[0] === "status") { process.stdout.write("Server Status\\n  Gateway: ${gatewayName}\\n  Status: Connected\\n"); process.exit(0); }
+if (a[0] === "gateway" && a[1] === "info") { process.stdout.write("Gateway Info\\n\\nGateway: ${gatewayName}\\nGateway endpoint: https://127.0.0.1:${gatewayPort}\\n"); process.exit(0); }
 if (a[0] === "gateway" && a[1] === "select") process.exit(0);
 if (a[0] === "inference" && a[1] === "get") { process.stdout.write("Gateway inference:\\n  Provider: ${provider}\\n  Model: meta/llama-3.3-70b-instruct\\n"); process.exit(0); }
 if (a[0] === "inference" && a[1] === "set") process.exit(0);
@@ -204,6 +212,36 @@ process.exit(0);
     );
   }
 
+  const gatewayReadyMarker = path.join(tmpDir, "gateway-ready");
+  const gatewayProcess = spawn(
+    process.execPath,
+    [
+      "-e",
+      `const fs = require("node:fs");
+const net = require("node:net");
+net.createServer((socket) => socket.end()).listen(${gatewayPort}, "127.0.0.1", () => fs.writeFileSync(${JSON.stringify(gatewayReadyMarker)}, "ready\\n"));`,
+    ],
+    { stdio: "ignore" },
+  );
+  gatewayProcesses.push(gatewayProcess);
+  const gatewayWait = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `const fs = require("node:fs");
+const marker = ${JSON.stringify(gatewayReadyMarker)};
+const deadline = Date.now() + 5_000;
+const wait = () => fs.existsSync(marker) ? process.exit(0) : Date.now() >= deadline ? process.exit(1) : setTimeout(wait, 10);
+wait();`,
+    ],
+    { stdio: "ignore", timeout: 6_000 },
+  );
+  expect(gatewayWait.status).toBe(0);
+
+  fs.writeFileSync(path.join(tmpDir, "lsof"), "#!/usr/bin/env node\nprocess.exit(1);\n", {
+    mode: 0o755,
+  });
+
   fs.writeFileSync(path.join(tmpDir, "ps"), "#!/usr/bin/env node\nprocess.exit(0);\n", {
     mode: 0o755,
   });
@@ -218,7 +256,7 @@ const { isOpenClawSecurityInventoryProbe } = require(${JSON.stringify(
     )});
 const provenancePath = ${JSON.stringify(path.join(tmpDir, "docker-base-provenance"))};
 const readProvenance = () => fs.existsSync(provenancePath) ? JSON.parse(fs.readFileSync(provenancePath, "utf8")) : {};
-if (a[0] === "info") { process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"Docker Engine", NCPU:8, MemTotal:17179869184}) + "\\n"); process.exit(0); }
+if (a[0] === "info") { process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"${DOCKER_OPERATING_SYSTEM}", NCPU:8, MemTotal:17179869184}) + "\\n"); process.exit(0); }
 if (a[0] === "build") {
   const labelIndex = a.indexOf("--label");
   const tagIndex = a.indexOf("-t");
@@ -257,7 +295,14 @@ if (a[0] === "run") {
   else process.stdout.write("nemoclaw-hermes-mcp-runtime-ok\\n");
   process.exit(0);
 }
-if (a[0] === "inspect") { process.stdout.write("true\\n"); process.exit(0); }
+if (a[0] === "inspect") {
+  const formatIndex = a.indexOf("--format");
+  const format = formatIndex >= 0 ? a[formatIndex + 1] : "";
+  if (format === "{{.State.Running}}") process.stdout.write("true\\n");
+  if (format === "{{json .NetworkSettings.Ports}}") process.stdout.write(JSON.stringify({"${gatewayPort}/tcp":[{HostPort:"${gatewayPort}"}]}) + "\\n");
+  if (format === "{{.Config.Image}}") process.stdout.write("nvcr.io/nvidia/openshell/cluster:0.0.101\\n");
+  process.exit(0);
+}
 if (a[0] === "ps") process.exit(0);
 process.stderr.write("unexpected docker call: " + a.join(" ") + "\\n");
 process.exit(1);
