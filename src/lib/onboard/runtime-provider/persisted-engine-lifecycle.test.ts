@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { createDurableReceiptUnlinkInterruption } from "../../../../test/helpers/docker-state-mutation-harness";
 
 import {
@@ -662,9 +662,10 @@ describe("persisted engine lifecycle", () => {
       runtime.input,
       (scope, receipt) => {
         expect(scope.record).toEqual(receipt);
-        return "released";
+        return Promise.resolve("released");
       },
     );
+    expectTypeOf(released.value).toEqualTypeOf<string | undefined>();
     expect(released).toMatchObject({ value: "released", record: { phase: "completed" } });
     expect(runtime.lifecycleStore.listUnfinished()).toEqual([]);
     expect(

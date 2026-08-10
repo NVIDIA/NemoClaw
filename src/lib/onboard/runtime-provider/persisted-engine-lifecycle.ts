@@ -2321,22 +2321,6 @@ export function releaseCompletedPersistedEngineStateMutation<T>(
   release: (
     scope: AuthorizedPersistedEngineLifecycle,
     completed: PersistedEngineLifecycleRecord,
-  ) => T,
-): PersistedEngineStateMutationResult<T | undefined>;
-export function releaseCompletedPersistedEngineStateMutation<T>(
-  input: PersistedEngineLifecycleExecutionInput,
-  release: (
-    scope: AuthorizedPersistedEngineLifecycle,
-    completed: PersistedEngineLifecycleRecord,
-  ) => Promise<T> | T,
-):
-  | PersistedEngineStateMutationResult<T | undefined>
-  | Promise<PersistedEngineStateMutationResult<T | undefined>>;
-export function releaseCompletedPersistedEngineStateMutation<T>(
-  input: PersistedEngineLifecycleExecutionInput,
-  release: (
-    scope: AuthorizedPersistedEngineLifecycle,
-    completed: PersistedEngineLifecycleRecord,
   ) => Promise<T> | T,
 ):
   | PersistedEngineStateMutationResult<T | undefined>
