@@ -181,13 +181,15 @@ async function collectStartFailureDockerLogs(
     },
   );
   const containerId = lookup.stdout.trim().split(/\s+/u).filter(Boolean)[0] ?? "";
-  if (lookup.exitCode !== 0 || !containerId) return resultText(lookup);
-  const logs = await docker(host, ["logs", "--tail", "200", containerId], {
-    artifactName: `${artifactPrefix}-failure-docker-logs`,
-    redactionValues,
-    timeoutMs: 30_000,
-  });
-  return resultText(logs);
+  const result =
+    lookup.exitCode !== 0 || !containerId
+      ? lookup
+      : await docker(host, ["logs", "--tail", "200", containerId], {
+          artifactName: `${artifactPrefix}-failure-docker-logs`,
+          redactionValues,
+          timeoutMs: 30_000,
+        });
+  return resultText(result);
 }
 
 async function expectStopStartRecovery(
@@ -245,17 +247,20 @@ async function expectStopStartRecovery(
   expect(runtimeIdentity.stdout).toContain("home=/sandbox\n");
   expect(runtimeIdentity.stdout).toContain("user=sandbox\n");
   expect(runtimeIdentity.stdout).toContain("group=sandbox\n");
+}
 
-  if (posture === "UP") {
-    const containerId = await findSandboxContainer(host);
-    const parent = await docker(
-      host,
-      ["exec", "--user", "0", containerId, "stat", "-c", "%a %U:%G", "/sandbox"],
-      { artifactName: `${artifactPrefix}-sandbox-parent` },
-    );
-    expect(parent.exitCode, resultText(parent)).toBe(0);
-    expect(parent.stdout.trim()).toBe("1775 root:sandbox");
-  }
+async function expectLockedSandboxParent(
+  host: HostCliClient,
+  artifactPrefix: string,
+): Promise<void> {
+  const containerId = await findSandboxContainer(host);
+  const parent = await docker(
+    host,
+    ["exec", "--user", "0", containerId, "stat", "-c", "%a %U:%G", "/sandbox"],
+    { artifactName: `${artifactPrefix}-sandbox-parent` },
+  );
+  expect(parent.exitCode, resultText(parent)).toBe(0);
+  expect(parent.stdout.trim()).toBe("1775 root:sandbox");
 }
 
 async function expectCredentialsTraversalBoundary(
@@ -761,6 +766,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   await expectStopStartRecovery(host, sandbox, "UP", "phase-5a-shields-up-start-recovery", [
     apiKey,
   ]);
+  await expectLockedSandboxParent(host, "phase-5a-shields-up-start-recovery");
   const configAfterLockedRestart = await statPath(
     sandbox,
     CONFIG_PATH,

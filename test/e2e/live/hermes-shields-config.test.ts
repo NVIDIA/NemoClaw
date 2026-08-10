@@ -128,14 +128,16 @@ async function collectStartFailureDockerLogs(
     },
   );
   const containerId = lookup.stdout.trim().split(/\s+/u).filter(Boolean)[0] ?? "";
-  if (lookup.exitCode !== 0 || !containerId) return resultText(lookup);
-  const logs = await host.command("docker", ["logs", "--tail", "200", containerId], {
-    artifactName: `${artifactPrefix}-failure-docker-logs`,
-    env: commandEnv(),
-    redactionValues: [COMPATIBLE_API_KEY],
-    timeoutMs: 30_000,
-  });
-  return resultText(logs);
+  const result =
+    lookup.exitCode !== 0 || !containerId
+      ? lookup
+      : await host.command("docker", ["logs", "--tail", "200", containerId], {
+          artifactName: `${artifactPrefix}-failure-docker-logs`,
+          env: commandEnv(),
+          redactionValues: [COMPATIBLE_API_KEY],
+          timeoutMs: 30_000,
+        });
+  return resultText(result);
 }
 
 async function expectStopStartRecovery(
