@@ -14,16 +14,6 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  createSession,
-  filterSafeUpdates,
-  MACHINE_SNAPSHOT_VERSION,
-  normalizeSession,
-  type OnboardMachineSnapshot,
-  type Session,
-  type SessionUpdates,
-  type StepState,
-} from "../../state/onboard-session";
 import type { OnboardMachineEvent } from "./events";
 import { handleSandboxState } from "./handlers/sandbox";
 import { baseOptions, bindJournaledRecreate, createDeps } from "./handlers/sandbox-test-fixtures";
@@ -31,12 +21,17 @@ import { advanceTo, branchTo, completeOnboardMachine, failOnboardMachine } from 
 import { type OnboardStateHandlers, runOnboardMachine } from "./runner";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 import type { OnboardMachineState } from "./types";
+import type { OnboardMachineSnapshot, StepState } from "../../state/onboard-session";
+import {
+  MACHINE_SNAPSHOT_VERSION,
+  type Session,
+  type SessionUpdates,
+  cloneSession,
+  createSession,
+  filterSafeUpdates,
+} from "../../../../test/helpers/onboard-machine-runtime-fixture";
 
 const NOW = "2026-07-04T00:00:00.000Z";
-
-function cloneSession(session: Session): Session {
-  return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
-}
 
 function machineAt(state: OnboardMachineState, revision = 0): OnboardMachineSnapshot {
   return { version: MACHINE_SNAPSHOT_VERSION, state, stateEnteredAt: NOW, revision };

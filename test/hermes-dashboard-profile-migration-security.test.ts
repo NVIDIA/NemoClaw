@@ -52,6 +52,56 @@ describe("Hermes dashboard profile migration security", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it("moves between anchored directories without replacing a peer", () => {
+    const sourceDir = path.join(tmpDir, "source");
+    const destinationDir = path.join(tmpDir, "destination");
+    fs.mkdirSync(sourceDir);
+    fs.mkdirSync(destinationDir);
+    fs.writeFileSync(path.join(sourceDir, "state"), "legacy\n");
+
+    const harness = `
+import errno
+import importlib.util
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("seed_dashboard_config", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+source_fd = module._open_directory_no_follow(sys.argv[2])
+destination_fd = module._open_directory_no_follow(sys.argv[3])
+try:
+    module._rename_no_replace_at(source_fd, "state", destination_fd)
+    source_state_fd = os.open(
+        "state", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=source_fd
+    )
+    try:
+        os.write(source_state_fd, b"retry\\n")
+    finally:
+        os.close(source_state_fd)
+    try:
+        module._rename_no_replace_at(source_fd, "state", destination_fd)
+    except OSError as exc:
+        if exc.errno != errno.EEXIST:
+            raise
+    else:
+        raise AssertionError("no-clobber rename replaced the destination")
+finally:
+    os.close(destination_fd)
+    os.close(source_fd)
+`;
+    const res = spawnSync("python3", ["-c", harness, SCRIPT_PATH, sourceDir, destinationDir], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 10_000,
+    });
+
+    expect(res.status, res.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(sourceDir, "state"), "utf-8")).toBe("retry\n");
+    expect(fs.readFileSync(path.join(destinationDir, "state"), "utf-8")).toBe("legacy\n");
+  });
+
   it("does not replace a destination recreated before the whole-profile move (#7200)", () => {
     const hermesHome = path.join(tmpDir, ".hermes");
     const legacyHome = path.join(hermesHome, "dashboard-home");

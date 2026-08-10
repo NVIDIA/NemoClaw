@@ -33,7 +33,7 @@ for arch in amd64 arm64; do
     arm64) source_digest="$source_arm64" ;;
   esac
   source_reference="$image@$source_digest"
-  source_json="$(docker buildx imagetools inspect "$source_reference" --raw)"
+  source_json="$(scripts/checks/retry-docker-imagetools-inspect.sh "$source_reference" --raw)"
 
   mapfile -t workload_digests < <(
     jq -r --arg arch "$arch" \
@@ -96,7 +96,7 @@ for arch in amd64 arm64; do
   )"
 done
 
-index_json="$(docker buildx imagetools inspect "$reference" --raw)"
+index_json="$(scripts/checks/retry-docker-imagetools-inspect.sh "$reference" --raw)"
 if ! jq -e \
   '
     .schemaVersion == 2

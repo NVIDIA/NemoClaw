@@ -107,7 +107,7 @@ describe("inference set provider binding", () => {
     expect(capture.mock.calls[1][0]).toContain("create");
   });
 
-  it("creates a provider after the OpenShell 0.0.85 generic lookup miss (#7725)", () => {
+  it("creates a provider after the OpenShell 0.0.99 generic lookup miss (#7725)", () => {
     const after = providerOutput({ resourceVersion: 1 });
     const capture = captureSequence([
       {

@@ -159,9 +159,11 @@ other literal identifiers.
 | `host-side` | Adjective | Runs or exists on the host, outside a sandbox. | local, external |
 | `in-sandbox` | Adjective | Runs or exists inside a sandbox. | internal, container-side |
 | `lifecycle authority` | Technical noun | The component that owns create, start, stop, update, and delete decisions for a resource. | owner without the lifecycle responsibility |
+| `locked npm cache seed` | Technical noun | The complete, integrity-verified set of registry archives reachable from one npm lockfile for a selected platform. | BuildKit cache, npm cache when the verified archive set is intended |
 | `OpenShell gateway` | Technical noun | The host service that owns credentials, coordinates sandbox lifecycle, and proxies approved traffic. | agent gateway, gateway when the type is unclear |
 | `port forward` | Technical noun or verb | A connection that maps a host port to a service inside a sandbox, or the act of creating that connection. | tunnel when no general tunnel exists |
 | `provider profile` | Technical noun | An OpenShell declaration of one service provider's credentials, endpoints, allowed binaries, and access policy. | inference profile, provider settings |
+| `runtime provider state mutation` | Technical noun | A bounded, provider-mediated protection transition or restore operation whose selected state, projection digest, active fence, and recovery contract are explicit. | state mutation without the runtime provider modifier, lifecycle mutation |
 | `runtime setting` | Technical noun | A value applied when a process or sandbox runs. | build-time setting, runtime config |
 | `sandbox image` | Technical noun | The built image used to create an agent sandbox. | base image, container |
 | `sandbox registry` | Technical noun | NemoClaw state that records managed sandboxes and their selected agent types. | image registry, container registry |
@@ -335,6 +337,7 @@ For a persistence claim, name the applicable `stop` and `start`, `restart`, `reb
 | `code-changing PR` | Technical noun | A PR that changes executable code, build inputs, policy, or behavior-affecting configuration. | code PR, feature PR |
 | `commit` | Technical noun or verb | A Git revision, or the act of recording one. | change when a specific revision is intended |
 | `commit SHA` | Technical noun | The immutable Git object identifier for a commit. | commit ID, hash when the object type matters |
+| `commit under review` | Technical noun | The commit whose diff and evidence the reviewer evaluates. | exact head, review head, reviewed head |
 | `contributor` | Technical noun | A person or agent that proposes or authors a repository change. | developer, submitter |
 | `docs build` | Technical noun | The repository command and result that validate and render the documentation source. | docs test, site build |
 | `documentation-only PR` | Technical noun | A PR whose diff changes explanatory documentation but no executable or behavior-affecting source. | docs PR when scope is not clear |
@@ -347,6 +350,7 @@ For a persistence claim, name the applicable `stop` and `start`, `restart`, `reb
 | `guide variant` | Technical noun | One agent-specific rendering of shared documentation source. | copy, flavor |
 | `integration test` | Technical noun | A test of behavior across two or more real project components with external services mocked or isolated as required. | unit test, E2E test |
 | `issue` | Technical noun | A tracked problem, request, or decision record in the repository. | ticket, bug when the issue type is not known |
+| `latest PR commit` | Technical noun | The commit to which the PR source branch currently points. | current head, latest head, head when the Git object is intended |
 | `live E2E` | Technical noun or adjective | An opt-in E2E test that changes real external state. | integration test, end-to-end test without the live qualifier |
 | `maintainer` | Technical noun | A person with repository authority to make the stated project decision or action. | owner unless ownership is established, admin |
 | `Markdown route` | Technical noun | A documentation URL that serves the page content in Markdown form for AI clients. | Markdown page, raw file URL |

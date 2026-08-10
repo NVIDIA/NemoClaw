@@ -5,8 +5,13 @@ import { createRequire } from "node:module";
 import path from "node:path";
 
 import { type MockInstance, vi } from "vitest";
+import type { GatewayRestartResult } from "../../src/lib/actions/sandbox/gateway-restart";
+import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import { snapshotEnv } from "./rebuild-flow-test-support";
 
 type RebuildSandbox = typeof import("../../src/lib/actions/sandbox/rebuild")["rebuildSandbox"];
+
+export { makePreparedRecoveryManifest, snapshotEnv };
 
 const requireDist = createRequire(
   path.join(process.cwd(), "src/lib/actions/sandbox/rebuild-flow-harness.ts"),
@@ -102,6 +107,7 @@ export type RebuildFlowOverrides = {
     secretBoundaryRefused?: boolean;
     mcpReconciliationRefused?: boolean;
   };
+  restartSandboxGateway?: () => GatewayRestartResult;
   onboard?: (session: RebuildFlowSession) => Promise<void> | void;
   repairMutableConfigPerms?: () =>
     | { applied: false; skipReason: "agent" | "locked" | "unreadable"; reason: string }
@@ -166,6 +172,7 @@ export type RebuildFlowHarness = {
   restoreTrustedAgentRemoteBaseImageOverrideSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
   checkAndRecoverSandboxProcessesSpy: MockInstance;
+  restartSandboxGatewaySpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   logSpy: MockInstance;
   finalizeIncompleteOnboardStepSpy: MockInstance;
@@ -193,25 +200,6 @@ export type RebuildFlowHarness = {
   preparedDcodeBuildContext: Record<string, unknown> & { cleanupBuildCtx: MockInstance };
   session: RebuildFlowSession;
 };
-
-// Snapshot the given env vars and return a restore fn that reinstates their
-// prior values exactly — vars that were unset stay unset, set ones are put back.
-// Branchless on purpose (filter, not conditional restore) so it both restores
-// worker state correctly and keeps the changed-test-file guardrail green.
-export function snapshotEnv(names: readonly string[]): () => void {
-  const saved = names.map((name) => [name, process.env[name]] as const);
-  return () => {
-    for (const [name] of saved) {
-      delete process.env[name];
-    }
-    Object.assign(
-      process.env,
-      Object.fromEntries(
-        saved.filter((entry): entry is [string, string] => entry[1] !== undefined),
-      ),
-    );
-  };
-}
 
 const restoreRebuildFlowEnv = snapshotEnv([
   "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
@@ -335,20 +323,30 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     dockerfileBasePath: "/tmp/Dockerfile.base",
     runtime: { kind: "terminal" },
   };
+  const resolveGatewayAuthority = ({
+    gatewayName,
+    gatewayPort,
+  }: {
+    gatewayName: string;
+    gatewayPort: number;
+  }) => ({
+    gatewayName,
+    gatewayPort,
+    mode: "nemoclaw-managed" as const,
+    source: "standalone" as const,
+    endpoint: null,
+    stateDir: null,
+    supervisor: null,
+    requiredCapabilities: [],
+  });
 
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
   vi.spyOn(gatewayTeardownAuthority, "resolveGatewayTeardownAuthority").mockImplementation(
-    ({ gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number }) => ({
-      gatewayName,
-      gatewayPort,
-      mode: "nemoclaw-managed",
-      source: "standalone",
-      endpoint: null,
-      stateDir: null,
-      supervisor: null,
-      requiredCapabilities: [],
-    }),
+    resolveGatewayAuthority,
+  );
+  vi.spyOn(gatewayTeardownAuthority, "resolveGatewayRebuildAuthority").mockImplementation(
+    resolveGatewayAuthority,
   );
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
     result: { status: 0, output: overrides.sandboxListOutput ?? "alpha Ready" },
@@ -686,9 +684,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const preflightAuthoritativeRebuildTargetSpy = vi
     .spyOn(rebuildOnboardDependencies, "preflightAuthoritativeRebuildTarget")
     .mockImplementation(async (options: unknown) => {
-      await overrides.preflightAuthoritativeRebuildTarget?.(
-        (options ?? {}) as Record<string, unknown>,
-      );
+      const preflightOptions = (options ?? {}) as Record<string, unknown>;
+      await overrides.preflightAuthoritativeRebuildTarget?.(preflightOptions);
+      return {
+        gatewayName: String(preflightOptions.targetGatewayName ?? "nemoclaw"),
+        gatewayPort: Number(preflightOptions.targetGatewayPort ?? 8080),
+        mode: "nemoclaw-managed",
+        source: "standalone",
+        endpoint: null,
+        stateDir: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      };
     });
   const livePolicyPresets = new Set(overrides.gatewayPresets ?? []);
   const managedObservabilityPreset = "observability-otlp-local";
@@ -777,6 +784,17 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           forwardRecovered: false,
         })),
     );
+  const restartSandboxGatewaySpy = vi
+    .spyOn(processRecovery, "restartSandboxGateway")
+    .mockImplementation(
+      overrides.restartSandboxGateway ??
+        (() => ({
+          ok: true,
+          restarted: true,
+          healthPassed: true,
+          forwardRecovered: false,
+        })),
+    );
   vi.spyOn(shields, "repairMutableConfigPerms").mockImplementation(
     overrides.repairMutableConfigPerms ?? (() => ({ applied: true, verified: true, errors: [] })),
   );
@@ -833,6 +851,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     restoreTrustedAgentRemoteBaseImageOverrideSpy,
     executeSandboxCommandSpy,
     checkAndRecoverSandboxProcessesSpy,
+    restartSandboxGatewaySpy,
     ensureMessagingHostForwardAfterRebuildSpy,
     logSpy,
     finalizeIncompleteOnboardStepSpy,
@@ -859,24 +878,5 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     warnUnpreservedUserManagedFilesSpy,
     preparedDcodeBuildContext,
     session,
-  };
-}
-
-export function makePreparedRecoveryManifest() {
-  return {
-    version: 1,
-    sandboxName: "alpha",
-    timestamp: "2026-07-01T06-50-42-044Z",
-    agentType: "openclaw",
-    agentVersion: "0.1.0",
-    expectedVersion: "0.2.0",
-    stateDirs: ["workspace"],
-    backedUpDirs: ["workspace"],
-    stateFiles: [],
-    dir: "/sandbox/.openclaw",
-    backupPath: "/tmp/rebuild-backups/alpha/2026-07-01T06-50-42-044Z",
-    blueprintDigest: null,
-    policyPresets: ["npm"],
-    customPolicies: [],
   };
 }

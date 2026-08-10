@@ -59,7 +59,7 @@ export interface ProviderInferenceSetupOptions {
   endpointPinnedAddresses?: readonly string[];
   /** Durable route provenance to preserve when reserving a refreshed route. */
   endpointSource?: InferenceEndpointSource | null;
-  /** Non-forgeable proof of the exact private subset admitted by the custom preflight. */
+  /** Non-forgeable proof of the exact host and complete pins admitted by the custom preflight. */
   endpointTrustedPrivateCapability?: TrustedPrivateEndpointCapability;
   /** One-shot host capability cache carried only through this onboarding run. */
   inferenceCapabilityCache?: OnboardInferenceCapabilityCache;

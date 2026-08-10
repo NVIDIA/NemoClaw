@@ -23,9 +23,14 @@ const MAX_RETRY_DELAY_MS = 10_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/-]+$/u;
 const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
+  [".github/actions/ci-reviewed-npm-audit/**", /^[.]github\/actions\/ci-reviewed-npm-audit\/.+$/u],
   [
-    ".github/actions/ci-reviewed-npm-audit/**",
-    /^[.]github\/actions\/ci-reviewed-npm-audit\/.+$/u,
+    ".github/actions/build-base-image-platform/**",
+    /^[.]github\/actions\/build-base-image-platform\/.+$/u,
+  ],
+  [
+    ".github/actions/publish-base-image-manifest/**",
+    /^[.]github\/actions\/publish-base-image-manifest\/.+$/u,
   ],
   ["agents/**", /^agents\/.+$/u],
   ["nemoclaw/**", /^nemoclaw\/.+$/u],
@@ -248,13 +253,11 @@ function defaultGit(args: string[]): string {
   }).trim();
 }
 
-export function expandBaseImagePushPaths(
-  expectedSha: string,
-  paths: readonly string[],
-): string[] {
+export function expandBaseImagePushPaths(expectedSha: string, paths: readonly string[]): string[] {
   sha(expectedSha, "expected SHA");
-  return [...new Set(paths.map((path) => (REVIEWED_PATH_GLOBS.has(path) ? `:(glob)${path}` : path)))]
-    .sort();
+  return [
+    ...new Set(paths.map((path) => (REVIEWED_PATH_GLOBS.has(path) ? `:(glob)${path}` : path))),
+  ].sort();
 }
 
 export function resolveFirstParentHistory(

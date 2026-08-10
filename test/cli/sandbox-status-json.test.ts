@@ -23,7 +23,7 @@ function createInferenceRouteStatusSetup(options: {
 }) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-route-"));
   const localBin = path.join(home, "bin");
-  const sandboxName = `route-${process.pid}-${Date.now()}`;
+  const sandboxName = `r-${process.pid.toString(36).slice(-3)}-${Date.now().toString(36).slice(-8)}`;
   fs.mkdirSync(localBin, { recursive: true });
   writeSandboxRegistry(home, sandboxName, {
     model: "nvidia/nemotron",
@@ -106,7 +106,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
   it("sandbox status --json emits structured per-sandbox report", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-"));
     const localBin = path.join(home, "bin");
-    const sandboxName = `alpha-${process.pid}-${Date.now()}`;
+    const sandboxName = `a-${process.pid.toString(36).slice(-3)}-${Date.now().toString(36).slice(-8)}`;
     fs.mkdirSync(localBin, { recursive: true });
     writeSandboxRegistry(home, sandboxName, {
       model: "configured-model",

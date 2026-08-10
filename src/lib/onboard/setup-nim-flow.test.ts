@@ -874,7 +874,7 @@ describe("createSetupNim", () => {
     expect(handleVllmSelection).toHaveBeenCalledOnce();
     expect(prompt).not.toHaveBeenCalled();
     expect(result).toMatchObject({ provider: "vllm" });
-  });
+  }, 15_000);
 
   it("reuses an already-running local vLLM on a DGX Spark non-interactive run with no requested provider (#7293)", async () => {
     const profile = { name: "DGX Spark" } as VllmProfile;

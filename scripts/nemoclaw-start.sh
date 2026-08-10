@@ -3188,6 +3188,17 @@ _nemoclaw_ca_merge_warn() {
   echo "[nemoclaw] WARNING: corporate proxy CA merge failed at ${1}; keeping OpenShell-only trust — external TLS through the corporate proxy may fail (#6210)" >&2
 }
 merge_corporate_proxy_ca() {
+  # Trust-anchor tampering (#8650): replacing the baked corporate CA file with a
+  # symlink makes the merge below read the link target instead, adding
+  # attacker-selected bytes to the trust bundle that curl, python, git, and node
+  # verify against. The image bakes this path as a root-owned 0444 regular file,
+  # so a symlink here is never a legitimate state. This is not the recoverable
+  # "merge failed" case below, which safely keeps OpenShell-only trust, so it
+  # fails closed instead of warning.
+  if [ -L "$_NEMOCLAW_CORPORATE_CA_FILE" ]; then
+    echo "[nemoclaw] refusing symlinked corporate CA at ${_NEMOCLAW_CORPORATE_CA_FILE}; expected a regular file (#8650)" >&2
+    exit 1
+  fi
   [ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0
   _base_bundle=""
   if [ -n "${SSL_CERT_FILE:-}" ] && [ -f "${SSL_CERT_FILE}" ]; then
@@ -3227,11 +3238,46 @@ merge_corporate_proxy_ca() {
       return 0
     }
   fi
-  cat "$_NEMOCLAW_CORPORATE_CA_FILE" >>"$_tmp" 2>/dev/null || {
+  # Append through a descriptor opened with O_NOFOLLOW and verified as a regular
+  # file (#8650). The check above rejects a planted symlink; this rejects one
+  # swapped in afterwards, because the type check and the read share one
+  # descriptor and no path is resolved twice. Status 2 means the source was
+  # rejected as a trust anchor; any other non-zero status is an ordinary read
+  # failure that keeps the existing warn-and-continue behavior.
+  _ca_append_status=0
+  python3 -I - "$_NEMOCLAW_CORPORATE_CA_FILE" "$_tmp" <<'PY_APPEND_CORPORATE_CA' || _ca_append_status=$?
+import errno
+import os
+import stat
+import sys
+
+source, target = sys.argv[1], sys.argv[2]
+try:
+    descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+except OSError as error:
+    raise SystemExit(2 if error.errno == errno.ELOOP else 3)
+try:
+    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        raise SystemExit(2)
+    with open(target, "ab") as merged:
+        while True:
+            chunk = os.read(descriptor, 65536)
+            if not chunk:
+                break
+            merged.write(chunk)
+finally:
+    os.close(descriptor)
+PY_APPEND_CORPORATE_CA
+  if [ "$_ca_append_status" -eq 2 ]; then
+    rm -f "$_tmp"
+    echo "[nemoclaw] refusing corporate CA at ${_NEMOCLAW_CORPORATE_CA_FILE}; expected a regular file, not a symlink (#8650)" >&2
+    exit 1
+  fi
+  if [ "$_ca_append_status" -ne 0 ]; then
     rm -f "$_tmp"
     _nemoclaw_ca_merge_warn "append corporate CA"
     return 0
-  }
+  fi
   chmod 0444 "$_tmp" 2>/dev/null || {
     rm -f "$_tmp"
     _nemoclaw_ca_merge_warn "set merged bundle permissions (${_merged})"
@@ -3454,7 +3500,7 @@ GATEWAYURLENVEOF
     # src/lib/onboard/sandbox-create-launch.ts) and is the only in-container
     # source of the name; capture it here for the renderer below.
     #
-    # Apply the same RFC-1123 allowlist the renderer uses (mirrors
+    # Apply the same canonical sandbox-name allowlist the renderer uses (mirrors
     # NAME_VALID_PATTERN in src/lib/name-validation.ts). Missing or invalid
     # values cannot reach a copyable command. An accepted value is limited to
     # [a-z0-9-] and needs no further escaping.
@@ -3467,9 +3513,9 @@ GATEWAYURLENVEOF
       _sandbox_label=""
       case "$_sandbox_label_src" in
         "" | 0 | 1 | true | TRUE | false | FALSE) ;;
-        [!a-z]* | *- | *[!a-z0-9-]*) ;;
+        [!a-z]* | *- | *--* | *[!a-z0-9-]*) ;;
         *)
-          if [ "${#_sandbox_label_src}" -le 63 ]; then
+          if [ "${#_sandbox_label_src}" -le 19 ]; then
             _sandbox_label="$_sandbox_label_src"
           fi
           ;;
@@ -3942,11 +3988,12 @@ _nemoclaw_valid_sandbox_label() {
   # The candidates are untrusted input interpolated into a copyable `nemoclaw …`
   # command, so allowlist rather than merely strip: only render a value that is
   # a valid sandbox name. This mirrors NAME_VALID_PATTERN in
-  # src/lib/name-validation.ts (/^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63): starts
-  # with a lowercase letter, then lowercase alphanumerics/hyphens, no trailing
-  # hyphen. Anything else (digit-leading labels, control characters, ANSI
-  # escapes, shell metacharacters, whitespace) is rejected, and the caller falls
-  # back to a placeholder the user resolves with `nemoclaw list`. Shell `case`
+  # src/lib/name-validation.ts (lowercase, max 19, no consecutive hyphens):
+  # starts with a lowercase letter, then lowercase alphanumerics/single internal
+  # hyphens, with no trailing hyphen. Anything else (digit-leading labels,
+  # control characters, ANSI escapes, shell metacharacters, whitespace) is
+  # rejected, and the caller falls back to a placeholder the user resolves with
+  # `nemoclaw list`. Shell `case`
   # globs match newlines as ordinary characters, so an embedded newline is
   # rejected by the metacharacter class. The boolean forms are OpenShell's older
   # "this is a sandbox" marker rather than a name.
@@ -3959,9 +4006,9 @@ _nemoclaw_valid_sandbox_label() {
   LC_ALL=C
   case "${1:-}" in
     "" | 0 | 1 | true | TRUE | false | FALSE) ;;
-    [!a-z]* | *- | *[!a-z0-9-]*) ;;
+    [!a-z]* | *- | *--* | *[!a-z0-9-]*) ;;
     *)
-      if [ "${#1}" -le 63 ]; then
+      if [ "${#1}" -le 19 ]; then
         printf '%s' "$1"
       fi
       ;;
@@ -5786,6 +5833,8 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # ── Root path (full privilege separation via setpriv) ──────────
+
+echo "[gateway] NEMOCLAW_ENTRYPOINT_MODE=root" >&2
 
 # Empty-config recovery runs before integrity check so a #3118 truncation
 # (openshell inference set inside the sandbox) is restored from baseline

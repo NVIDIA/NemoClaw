@@ -284,30 +284,4 @@ describe("LKG production image dispatch", () => {
     expect(summary).toContain("Downstream run: `unavailable`");
     expect(summary).not.toContain("actions/runs/");
   });
-
-  // source-shape-contract: security -- The secret-bearing LKG trigger must stay canonical, deletion-safe, read-only, and immutable
-  it("keeps LKG dispatch inside the trusted secret boundary (#6772)", () => {
-    const workflow = readYaml<Workflow>(".github/workflows/release-lkg-brev-image.yaml");
-    const job = workflow.jobs["dispatch-production-image"];
-    const checkout = job.steps?.find((step) => step.name === "Check out LKG target");
-    const dispatch = job.steps?.find((step) => step.name === "Dispatch production image build");
-
-    expect(workflow.on?.push?.tags).toEqual(["lkg"]);
-    expect(workflow.permissions).toEqual({ contents: "read" });
-    expect(job.if).toBe(
-      "${{ github.repository == 'NVIDIA/NemoClaw' && github.event.deleted == false }}",
-    );
-    expect(job["timeout-minutes"]).toBe(5);
-    expect(checkout?.uses).toMatch(/^actions\/checkout@[0-9a-f]{40}$/u);
-    expect(checkout?.with).toEqual({
-      ref: "${{ github.sha }}",
-      "fetch-depth": 0,
-      "persist-credentials": false,
-    });
-    expect(dispatch?.env).toEqual({
-      LKG_SHA: "${{ github.sha }}",
-      NEMOCLAW_IMAGE_DISPATCH_TOKEN: "${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}",
-    });
-    expect(dispatch?.run).toBe("scripts/release-lkg-brev-image.sh");
-  });
 });

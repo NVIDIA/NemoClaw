@@ -88,7 +88,7 @@ describe("docker-driver gateway runtime helpers", () => {
         },
         () => {
           const { helpers } = makeHelpers({
-            supportedOpenshellFallbackVersion: "0.0.99",
+            supportedOpenshellFallbackVersion: "0.0.101",
           });
 
           expect(helpers.getDockerDriverGatewayStateDir()).toBe(path.resolve(stateDir));
@@ -99,7 +99,7 @@ describe("docker-driver gateway runtime helpers", () => {
           expect(env.OPENSHELL_DOCKER_NETWORK_NAME).toBe("custom-openshell-docker");
           expect(env.OPENSHELL_DOCKER_SUPERVISOR_BIN).toBe(path.resolve(sandboxBin));
           expect(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBe(
-            "ghcr.io/nvidia/openshell/supervisor:0.0.99",
+            "ghcr.io/nvidia/openshell/supervisor@sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb",
           );
           expect(env.OPENSHELL_GATEWAY_CONFIG).toBe(
             path.join(path.resolve(stateDir), "openshell-gateway.toml"),
@@ -130,19 +130,58 @@ describe("docker-driver gateway runtime helpers", () => {
     ).toBe("ghcr.io/nvidia/openshell/supervisor:dev");
   });
 
-  it("pins the stable 0.0.85 supervisor default while preserving an explicit override", () => {
+  it("pins the stable 0.0.101 supervisor default while preserving an explicit override", () => {
     const image = (fallback: string) =>
       makeHelpers({
-        getBlueprintMaxOpenshellVersion: () => "0.0.85",
+        getBlueprintMaxOpenshellVersion: () => "0.0.101",
         supportedOpenshellFallbackVersion: fallback,
       }).helpers.getDockerDriverGatewayEnv(null, "linux").OPENSHELL_DOCKER_SUPERVISOR_IMAGE;
-    const stable = withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: undefined }, () => image("0.0.85"));
+    const stable = withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: undefined }, () =>
+      image("0.0.101"),
+    );
     expect(stable).toBe(
-      "ghcr.io/nvidia/openshell/supervisor@sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9",
+      "ghcr.io/nvidia/openshell/supervisor@sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb",
     );
     const override = "registry.example.test/supervisor@sha256:override";
-    expect(withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: override }, () => image("0.0.85"))).toBe(
+    expect(withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: override }, () => image("0.0.101"))).toBe(
       override,
+    );
+  });
+
+  it("pins the portable gateway config to the prepared rootless Podman socket", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-runtime-"));
+    try {
+      withEnv(
+        {
+          DOCKER_HOST: "unix:///run/user/1001/podman/podman.sock",
+          NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir,
+        },
+        () => {
+          const { helpers } = makeHelpers();
+          const env = helpers.getDockerDriverGatewayEnv(null, "linux");
+          expect(env.OPENSHELL_PODMAN_SOCKET).toBe("/run/user/1001/podman/podman.sock");
+          expect(fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8")).toContain(
+            'socket_path = "/run/user/1001/podman/podman.sock"',
+          );
+        },
+      );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a portable gateway without a prepared absolute Podman socket", () => {
+    withEnv(
+      {
+        DOCKER_HOST: undefined,
+        NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+      },
+      () => {
+        expect(() => makeHelpers().helpers.getDockerDriverGatewayEnv(null, "linux")).toThrow(
+          "requires the prepared absolute rootless Podman socket",
+        );
+      },
     );
   });
 

@@ -70,7 +70,7 @@ export function managedMcpPolicy(server: string, address = "8.8.8.8") {
     server,
     `https://${server}.example.com/mcp`,
     "hermes-config",
-    [address],
+    { addresses: [address] },
   );
   const entries = Object.entries(YAML.parse(content).network_policies as Record<string, unknown>);
   expect(entries, `rendered MCP policies for ${server}`).toHaveLength(1);

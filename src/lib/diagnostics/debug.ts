@@ -7,6 +7,7 @@ import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { dockerExecFileSync } from "../adapters/docker/exec";
+import { openshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host";
 import { DASHBOARD_PORT } from "../core/ports";
 import { listSandboxes } from "../state/registry";
 import { createTarball as createDiagnosticsTarball } from "./tarball";
@@ -399,7 +400,7 @@ function collectSandboxInternals(collectDir: string, sandboxName: string, quick:
     }
     writeFileSync(sshConfigPath, sshResult.stdout ?? "");
 
-    const sshHost = `openshell-${sandboxName}`;
+    const sshHost = openshellSandboxSshHost(sandboxName);
     const sshBase = [
       "-F",
       sshConfigPath,

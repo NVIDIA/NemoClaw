@@ -281,6 +281,52 @@ describe("waitForManagedGatewaySupervisor", () => {
 });
 
 describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
+  it("checks managed recovery and OpenShell readiness before starting host forwards (#8662)", () => {
+    mockOpenClawSandbox("stopped-box");
+    setImmediateRecoveryPolling();
+    const order: string[] = [];
+    const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) => {
+      order.push(action);
+      return {
+        status: 0,
+        stdout: `v1 ${"a".repeat(64)} complete ok 0 4242\nGATEWAY_PID=4242`,
+        stderr: "",
+      };
+    });
+    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(() => {
+      order.push("OpenShell readiness");
+      return true;
+    });
+    const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+    vi.spyOn(openshellRuntime, "captureOpenshell")
+      .mockReturnValueOnce({ status: 0, output: "SANDBOX  BIND  PORT  PID  STATUS" })
+      .mockReturnValue({
+        status: 0,
+        output: "SANDBOX  BIND  PORT  PID  STATUS\nstopped-box  127.0.0.1  18789  12345  running",
+      });
+    vi.spyOn(openshellRuntime, "runOpenshell")
+      .mockReturnValueOnce({ status: 0 } as never)
+      .mockImplementationOnce(() => {
+        order.push("host forward");
+        return { status: 0 } as never;
+      });
+
+    const result = checkAndRecoverSandboxProcesses("stopped-box", {
+      quiet: true,
+      isSandboxGatewayRunningImpl: () => false,
+      requestGatewaySupervisorAction,
+      relaunchManagedSupervisorSessionImpl,
+      waitForRecreatedSandboxOpenShellReadyImpl,
+    });
+
+    expect(result).toMatchObject({ checked: true, recovered: true, forwardRecovered: true });
+    expect(result).toHaveProperty("managedControlCompletion.disposition", "ok");
+    expect(order).toContain("OpenShell readiness");
+    expect(order.indexOf("OpenShell readiness")).toBeLessThan(order.indexOf("host forward"));
+    expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
+  });
+
   it("does not turn ambiguous supervisor unavailability into a container mutation", () => {
     mockOpenClawSandbox("ambiguous-box");
     setImmediateRecoveryPolling();
@@ -514,7 +560,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
   });
 
   it("rolls back when post-restore restart does not report an exact ok disposition", () => {
-    mockOpenClawSandbox("post-restore-failed-box");
+    mockOpenClawSandbox("post-restore-fail");
     setImmediateRecoveryPolling();
     const order: string[] = [];
     const { finalizeTransaction, relaunchManagedSupervisorSessionImpl } =
@@ -530,10 +576,10 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
       output:
-        "SANDBOX  BIND  PORT  PID  STATUS\npost-restore-failed-box  127.0.0.1  18789  12345  running",
+        "SANDBOX  BIND  PORT  PID  STATUS\npost-restore-fail  127.0.0.1  18789  12345  running",
     });
 
-    const result = checkAndRecoverSandboxProcesses("post-restore-failed-box", {
+    const result = checkAndRecoverSandboxProcesses("post-restore-fail", {
       quiet: true,
       isSandboxGatewayRunningImpl: () => false,
       requestGatewaySupervisorAction,
@@ -612,7 +658,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
   });
 
   it("prints generic recovery hints when state recovery and rollback both fail", () => {
-    mockOpenClawSandbox("restore-and-rollback-failed-box");
+    mockOpenClawSandbox("restore-rollback");
     setImmediateRecoveryPolling();
     const finalize = vi.fn(() => ({
       backupRemoved: false,
@@ -634,7 +680,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    const result = checkAndRecoverSandboxProcesses("restore-and-rollback-failed-box", {
+    const result = checkAndRecoverSandboxProcesses("restore-rollback", {
       quiet: false,
       isSandboxGatewayRunningImpl: () => false,
       requestGatewaySupervisorAction,

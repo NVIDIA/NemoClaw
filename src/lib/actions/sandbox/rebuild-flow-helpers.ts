@@ -28,6 +28,7 @@ import {
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { removeStaleRebuildDockerOrphan } from "../../onboard/openshell-docker-sandbox-containers";
 import {
   captureSandboxListWithGatewayRecovery,
   printSandboxListFailureWithRecoveryContext,
@@ -214,6 +215,14 @@ export async function resolveRebuildLiveState(
     // provisioning, so rebuild recovers from registry metadata instead of
     // treating the preserved local entry as corrupt. Keep until OpenShell exposes
     // an atomic recreate-from-registry recovery API.
+    try {
+      removeStaleRebuildDockerOrphan(sandboxName, sb.openshellDriver, log);
+    } catch (error) {
+      bail(
+        `Stale-recovery Docker orphan cleanup failed: ${error instanceof Error ? error.message : String(error)}.`,
+      );
+      return null;
+    }
     console.log("");
     console.log(
       `  ${YW}⚠${R} Sandbox '${sandboxName}' is registered locally but absent from the live OpenShell gateway.`,

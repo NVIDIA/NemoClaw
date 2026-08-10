@@ -69,7 +69,8 @@ const BEDROCK_MODEL =
 const COMPATIBLE_KEY =
   process.env.NEMOCLAW_BEDROCK_RUNTIME_FAKE_KEY ?? "fake-pasted-bedrock-runtime-key-e2e";
 const AGENT = process.env.NEMOCLAW_AGENT ?? "openclaw";
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-bedrock-${AGENT}`;
+const SANDBOX_NAME =
+  process.env.NEMOCLAW_SANDBOX_NAME ?? (AGENT === "hermes" ? "e2e-hm-bedrock" : "e2e-oc-bedrock");
 const ONBOARD_TIMEOUT_MS = 30 * 60_000;
 const TEST_TIMEOUT_MS = 60 * 60_000;
 const SANDBOX_TIMEOUT_MS = 180_000;

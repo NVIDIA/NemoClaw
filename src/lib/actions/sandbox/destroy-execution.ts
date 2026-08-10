@@ -3,6 +3,7 @@
 
 import { R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
+import { removePortableDemoSandboxLifecycleReceipt } from "../../onboard/experimental/portable-demo-lifecycle";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundle,
@@ -30,6 +31,10 @@ import { wipeSandboxState } from "./wipe-state";
 
 export function redactDestroyError(error: unknown): string {
   return redactFull(error instanceof Error ? error.message : String(error));
+}
+
+export function retirePortableLifecycleAuthority(sandboxName: string): void {
+  removePortableDemoSandboxLifecycleReceipt(sandboxName);
 }
 
 type SandboxDestroyExecutionInput = {

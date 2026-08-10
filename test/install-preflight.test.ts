@@ -6,6 +6,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { writeInstallerReadinessModuleStubs } from "./helpers/installer-readiness-stubs";
+import { writeNpmStub } from "./helpers/installer-run-fixture";
 import {
   INSTALLER_PAYLOAD,
   readShellConstant,
@@ -34,20 +36,6 @@ exit 99`,
 }
 
 /** Minimal npm stub with an injectable install/link/run handler. */
-function writeNpmStub(fakeBin: string, installSnippet: string = "exit 0") {
-  writeExecutable(
-    path.join(fakeBin, "npm"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-if [ "$1" = "--version" ]; then echo "10.9.2"; exit 0; fi
-if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then echo "$NPM_PREFIX"; exit 0; fi
-if [ "$1" = "ci" ] || [ "$1" = "install" ] || [ "$1" = "link" ] || [ "$1" = "uninstall" ] || [ "$1" = "pack" ] || [ "$1" = "run" ]; then
-  ${installSnippet}
-  if [ "$1" = "ci" ]; then exit 0; fi
-fi
-echo "unexpected npm invocation: $*" >&2; exit 98`,
-  );
-}
 
 function writeFailedOnboardSession(home: string) {
   fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
@@ -541,9 +529,8 @@ printf 'pip3 %s\\n' "$*" >> "$PYTHON_LOG_PATH"
 exit 89
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
+    writeNpmStub(fakeBin, {
+      installSnippet: `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
 if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
@@ -562,7 +549,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     fs.writeFileSync(
       path.join(tmp, "package.json"),
@@ -627,9 +615,8 @@ fi`,
 
     writeNodeStub(fakeBin);
     writeDockerOkStub(fakeBin);
-    writeNpmStub(
-      fakeBin,
-      `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
+    writeNpmStub(fakeBin, {
+      installSnippet: `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
 if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
@@ -648,7 +635,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     fs.writeFileSync(
       path.join(tmp, "package.json"),
@@ -713,9 +701,8 @@ if [ "$1" = "--version" ]; then echo "openshell 0.0.39"; exit 0; fi
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
+    writeNpmStub(fakeBin, {
+      installSnippet: `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
 if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
@@ -734,7 +721,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     fs.writeFileSync(
       path.join(tmp, "package.json"),
@@ -797,7 +785,7 @@ exit 0
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
-  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 26.04 LTS","CgroupVersion":"2"}'
+  echo '{"ServerVersion":"29.3.1","Name":"Docker Desktop","OperatingSystem":"Ubuntu 26.04 LTS","CgroupVersion":"2"}'
   exit 0
 fi
 exit 0
@@ -813,9 +801,8 @@ fi
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
   tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
@@ -833,7 +820,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     fs.writeFileSync(
       path.join(tmp, "package.json"),
@@ -899,7 +887,7 @@ fi`,
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
-  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  echo '{"ServerVersion":"29.3.1","Name":"Docker Desktop","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
   exit 0
 fi
 exit 0
@@ -915,9 +903,8 @@ fi
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
   tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
@@ -935,7 +922,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     fs.writeFileSync(
       path.join(tmp, "package.json"),
@@ -1006,7 +994,7 @@ fi`,
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
-  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  echo '{"ServerVersion":"29.3.1","Name":"Docker Desktop","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
   exit 0
 fi
 exit 0
@@ -1022,9 +1010,8 @@ fi
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
   tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
@@ -1042,7 +1029,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     fs.writeFileSync(
       path.join(tmp, "package.json"),
@@ -1127,9 +1115,8 @@ if [ "$1" = "is-enabled" ] && [ "$2" = "docker" ]; then echo "disabled"; exit 1;
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
   tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
@@ -1147,7 +1134,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     const result = spawnSync("bash", [INSTALLER], {
       cwd: path.join(import.meta.dirname, ".."),
@@ -1213,31 +1201,32 @@ exports.getNvidiaCdiSpecPath = (host) =>
   String(host.dockerCdiSpecDirs[0]).replace(/\\/+$/, "") + "/nvidia.yaml";
 exports.isWslDockerDesktopRuntime = (host) =>
   Boolean(host && host.isWsl && host.runtime === "docker-desktop");
-exports.planHostRemediation = (host) =>
+exports.planHostAdvisories = (host) =>
   host.cdiNvidiaGpuSpecMissing
     ? host.isWsl && host.runtime === "docker-desktop"
       ? [{
           title: "Use Docker Desktop WSL GPU compatibility path",
           reason: "missing nvidia.com/gpu CDI; using Docker --gpus",
           commands: ["verify Docker --gpus support from WSL"],
-          blocking: false,
+          severity: "info",
         }]
       : [{
           title: "Generate NVIDIA CDI device specs",
           reason: "missing nvidia.com/gpu",
           commands: ["sudo nvidia-ctk cdi generate --output=" + exports.getNvidiaCdiSpecPath(host)],
-          blocking: true,
+          severity: "blocking",
         }]
     : host.cdiNvidiaGpuSpecStale && !host.nvidiaContainerToolkitInstalled
       ? [{
           title: "Install NVIDIA Container Toolkit and refresh CDI device specs",
           reason: "nvidia-container-toolkit missing",
           commands: ["sudo apt-get install -y nvidia-container-toolkit"],
-          blocking: true,
+          severity: "blocking",
         }]
     : [];
 `,
     );
+    writeInstallerReadinessModuleStubs(path.join(sourceRoot, "dist", "lib", "readiness"));
     writeNodeStub(fakeBin);
     writeExecutable(
       path.join(fakeBin, "sudo"),
@@ -1457,7 +1446,7 @@ exit 0
     expect(sudoLog).toBe("");
   });
 
-  it("warns on Podman but still runs onboarding", () => {
+  it("rejects Podman through canonical installer admission (#7411)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-podman-warning-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
@@ -1476,9 +1465,8 @@ fi
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
   tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
@@ -1496,7 +1484,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
     writeExecutable(
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
@@ -1526,15 +1515,11 @@ exit 0
     });
 
     const output = `${result.stdout}${result.stderr}`;
-    expect(result.status).toBe(0);
-    expect(output).toMatch(/Host preflight found warnings\./);
+    expect(result.status).toBe(1);
+    expect(output).toMatch(/Host preflight found issues that will prevent onboarding right now\./);
     expect(output).toMatch(/Detected container runtime: podman/);
-    expect(output).toMatch(
-      /Podman may work in some environments, but it is not a supported runtime/,
-    );
-    expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(
-      /^onboard --non-interactive --yes-i-accept-third-party-software --yes$/m,
-    );
+    expect(output).toMatch(/Skipping onboarding until the host prerequisites above are fixed\./);
+    expect(fs.existsSync(onboardLog)).toBe(false);
   });
 
   it("requires explicit terms acceptance in non-interactive install mode", () => {
@@ -1550,7 +1535,7 @@ exit 0
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
-  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  echo '{"ServerVersion":"29.3.1","Name":"Docker Desktop","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
   exit 0
 fi
 exit 0
@@ -1566,9 +1551,8 @@ fi
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
   tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
@@ -1586,7 +1570,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     const result = spawnSync("bash", [INSTALLER, "--non-interactive"], {
       cwd: path.join(import.meta.dirname, ".."),
@@ -1621,7 +1606,7 @@ fi`,
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
-  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  echo '{"ServerVersion":"29.3.1","Name":"Docker Desktop","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
   exit 0
 fi
 exit 0
@@ -1637,9 +1622,8 @@ fi
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
   tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
@@ -1657,7 +1641,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     const result = spawnSync(
       "bash",
@@ -1705,9 +1690,8 @@ fi
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then
   echo "ENOTFOUND simulated network error" >&2
   exit 1
 fi
@@ -1715,7 +1699,8 @@ if [ "$1" = "ci" ] || [ "$1" = "install" ] || [ "$1" = "run" ] || [ "$1" = "link
   echo "ENOTFOUND simulated network error" >&2
   exit 1
 fi`,
-    );
+      handleCi: true,
+    });
 
     const result = spawnSync("bash", [INSTALLER], {
       cwd: tmp,
@@ -2018,7 +2003,7 @@ exit 0
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
-  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  echo '{"ServerVersion":"29.3.1","Name":"Docker Desktop","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
   exit 0
 fi
 exit 0
@@ -2034,9 +2019,8 @@ fi
 exit 0
 `,
     );
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then exit 1; fi
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then exit 1; fi
 if [ "$1" = "install" ] || [ "$1" = "run" ]; then exit 0; fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
@@ -2048,7 +2032,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     fs.writeFileSync(
       path.join(tmp, "package.json"),
@@ -2162,9 +2147,8 @@ exit 99`,
     writeNodeStub(fakeBin);
     writeDockerOkStub(fakeBin);
     writeOpenShellOkStub(fakeBin);
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then exit 1; fi
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then exit 1; fi
 if [ "$1" = "install" ] || [ "$1" = "run" ]; then exit 0; fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
@@ -2176,7 +2160,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     // curl stub that would fail — must NOT be called
     writeExecutable(
@@ -2271,9 +2256,8 @@ fi
 exit 0`,
     );
 
-    writeNpmStub(
-      fakeBin,
-      `if [ "$1" = "pack" ]; then exit 1; fi
+    writeNpmStub(fakeBin, {
+      installSnippet: `if [ "$1" = "pack" ]; then exit 1; fi
 if [ "$1" = "install" ] || [ "$1" = "run" ]; then exit 0; fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
@@ -2285,7 +2269,8 @@ EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
   exit 0
 fi`,
-    );
+      handleCi: true,
+    });
 
     const result = spawnSync("bash", [INSTALLER], {
       cwd: tmp,
@@ -3894,7 +3879,7 @@ function writeDockerOkStub(fakeBin: string) {
     path.join(fakeBin, "docker"),
     `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
-  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  echo '{"ServerVersion":"29.3.1","Name":"Docker Desktop","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
   exit 0
 fi
 exit 0

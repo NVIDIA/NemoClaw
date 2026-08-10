@@ -32,10 +32,7 @@ interface PendingRequest {
 }
 
 interface NativeChatEvent {
-  readonly sessionKey: string;
-  readonly runId: string;
-  readonly state: string;
-  readonly text: string;
+  readonly payload: Record<string, unknown>;
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -48,30 +45,23 @@ function nonemptyString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function textFromMessage(message: unknown): string {
+function textFromAssistantMessage(message: unknown): string | null {
   const value = record(message);
-  if (!value) return "";
-  if (typeof value.text === "string") return value.text;
-  if (typeof value.content === "string") return value.content;
-  if (!Array.isArray(value.content)) return "";
-  return value.content
-    .map((part) => {
-      const item = record(part);
-      return typeof item?.text === "string" ? item.text : "";
-    })
-    .filter(Boolean)
-    .join("\n");
+  if (value?.role !== "assistant" || !Array.isArray(value.content)) return null;
+  const text: string[] = [];
+  for (const part of value.content) {
+    const item = record(part);
+    if (item?.type !== "text") continue;
+    if (typeof item.text !== "string") return null;
+    text.push(item.text);
+  }
+  return text.length > 0 ? text.join("\n") : null;
 }
 
 function parseNativeChatEvent(frame: Record<string, unknown>): NativeChatEvent | null {
   if (frame.type !== "event" || frame.event !== "chat") return null;
   const payload = record(frame.payload);
-  if (!payload) return null;
-  const sessionKey = nonemptyString(payload.sessionKey);
-  const runId = nonemptyString(payload.runId);
-  const state = nonemptyString(payload.state);
-  if (!sessionKey || !runId || !state) return null;
-  return { sessionKey, runId, state, text: textFromMessage(payload.message) };
+  return payload ? { payload } : null;
 }
 
 function defaultWebSocketFactory(url: string): WebSocketLike {
@@ -131,7 +121,8 @@ export class OpenClawVoiceClient implements AgentTurnClient {
     const queuedChatEvents: NativeChatEvent[] = [];
     let requestCounter = 0;
     let activeRunId: string | null = null;
-    let previousText = "";
+    let lastSequence: number | null = null;
+    let projectedText = "";
     let terminal = false;
 
     const clearPending = () => {
@@ -169,26 +160,58 @@ export class OpenClawVoiceClient implements AgentTurnClient {
     };
     this.cancelCurrent = () => finish({ outcome: "failed", reason: "agent_gateway_unavailable" });
     const handleChat = (event: NativeChatEvent) => {
-      if (
-        terminal ||
-        activeRunId === null ||
-        event.sessionKey !== options.sessionKey ||
-        event.runId !== activeRunId
-      ) {
+      const payload = event.payload;
+      if (terminal || activeRunId === null) return;
+      if (payload.sessionKey !== options.sessionKey || payload.runId !== activeRunId) {
         return;
       }
-      if (event.text.length > 0) {
-        if (!event.text.startsWith(previousText)) {
+
+      const sequence = payload.seq;
+      if (
+        typeof sequence !== "number" ||
+        !Number.isInteger(sequence) ||
+        sequence < 0 ||
+        (lastSequence !== null && sequence <= lastSequence)
+      ) {
+        finish({ outcome: "failed", reason: "agent_protocol_error" });
+        return;
+      }
+      lastSequence = sequence;
+
+      const state = payload.state;
+      if (state === "delta") {
+        if (
+          typeof payload.deltaText !== "string" ||
+          (payload.replace !== undefined && typeof payload.replace !== "boolean")
+        ) {
           finish({ outcome: "failed", reason: "agent_protocol_error" });
           return;
         }
-        const delta = event.text.slice(previousText.length);
-        previousText = event.text;
-        if (delta.length > 0) options.onEvent({ type: "text", text: delta });
+        const deltaProjection =
+          payload.replace === true ? payload.deltaText : `${projectedText}${payload.deltaText}`;
+        const snapshot = textFromAssistantMessage(payload.message);
+        const nextProjection = snapshot ?? deltaProjection;
+        if (Buffer.byteLength(nextProjection) > VOICE_GATEWAY_MAX_RESPONSE_BYTES) {
+          finish({ outcome: "failed", reason: "response_too_large" });
+          return;
+        }
+        projectedText = nextProjection;
+        return;
       }
-      if (event.state === "final") finish({ outcome: "completed" });
-      else if (event.state === "error" || event.state === "aborted") {
+
+      if (state === "final") {
+        const snapshot = textFromAssistantMessage(payload.message);
+        if (snapshot !== null) projectedText = snapshot;
+        if (Buffer.byteLength(projectedText) > VOICE_GATEWAY_MAX_RESPONSE_BYTES) {
+          finish({ outcome: "failed", reason: "response_too_large" });
+          return;
+        }
+        if (projectedText.length > 0) options.onEvent({ type: "text", text: projectedText });
+        finish({ outcome: "completed" });
+      } else if (state === "error" || state === "aborted") {
         finish({ outcome: "failed", reason: "agent_failed" });
+      } else {
+        finish({ outcome: "failed", reason: "agent_protocol_error" });
       }
     };
 
@@ -218,6 +241,7 @@ export class OpenClawVoiceClient implements AgentTurnClient {
       const chat = parseNativeChatEvent(frame);
       if (!chat) return;
       if (activeRunId === null) {
+        if (chat.payload.sessionKey !== options.sessionKey) return;
         if (queuedChatEvents.length >= MAX_QUEUED_CHAT_EVENTS) {
           finish({ outcome: "failed", reason: "agent_protocol_error" });
           return;
@@ -257,11 +281,11 @@ export class OpenClawVoiceClient implements AgentTurnClient {
         minProtocol: OPENCLAW_PROTOCOL_VERSION,
         maxProtocol: OPENCLAW_PROTOCOL_VERSION,
         client: {
-          id: "openclaw-cli",
+          id: "gateway-client",
           displayName: "NemoClaw voice gateway",
           version: "1",
           platform: process.platform,
-          mode: "cli",
+          mode: "backend",
           instanceId: randomUUID(),
         },
         caps: [],

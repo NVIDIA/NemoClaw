@@ -104,6 +104,7 @@ function runPreinstallUpgradeGuard(
   options: {
     currentBackupSucceeds?: boolean;
     currentCliAvailable?: boolean;
+    currentMaxOpenshellVersion?: string;
     currentMinOpenshellVersion?: string;
     gatewayDestroySucceeds?: boolean;
     gatewayProcessStopSucceeds?: boolean;
@@ -132,7 +133,7 @@ function runPreinstallUpgradeGuard(
   fs.mkdirSync(bin, { recursive: true });
   fs.writeFileSync(
     path.join(currentSource, "nemoclaw-blueprint", "blueprint.yaml"),
-    `min_openshell_version: "${options.currentMinOpenshellVersion ?? "0.0.85"}"\nmax_openshell_version: "0.0.85"\n`,
+    `min_openshell_version: "${options.currentMinOpenshellVersion ?? "0.0.85"}"\nmax_openshell_version: "${options.currentMaxOpenshellVersion ?? "0.0.85"}"\n`,
   );
   fs.writeFileSync(registry, options.registryJson ?? '{"sandboxes":{"alpha":{"name":"alpha"}}}');
   const currentCliAvailable = options.currentCliAvailable === false ? "0" : "1";
@@ -858,6 +859,188 @@ require_reportable_openshell_version`,
     expect(result.stdout).toContain("RESTORE=");
     expect(cliLog).toBe("");
     expect(openshellLog).toBe("");
+  });
+
+  it("stops before upgrade mutations when a legacy sandbox name exceeds the OpenShell 0.0.99 limit (#8497)", () => {
+    const incompatibleName = "abcdefghijklmnopqrst";
+    const registryJson = JSON.stringify({
+      sandboxes: {
+        [incompatibleName]: {
+          name: incompatibleName,
+          nemoclawVersion: "0.0.89",
+          fromDockerfile: false,
+        },
+      },
+    });
+    const { result, cliLog, openshellLog, registry } = runPreinstallUpgradeGuard(
+      { NON_INTERACTIVE: "1" },
+      {
+        currentMaxOpenshellVersion: "0.0.99",
+        currentMinOpenshellVersion: "0.0.99",
+        hasOldCli: false,
+        openshellVersion: "0.0.85",
+        registryJson,
+      },
+    );
+
+    const output = result.stdout + result.stderr;
+    expect(result.status).not.toBe(0);
+    expect(output).toContain(JSON.stringify(incompatibleName));
+    expect(output).toContain("1-19");
+    expect(output).toContain("stopped before preparing the current CLI");
+    expect(output).toContain("replacement sandbox with a compatible name");
+    expect(cliLog).toBe("");
+    expect(openshellLog).toBe("");
+    expect(registry).toBe(registryJson);
+  });
+
+  it("continues the OpenShell 0.0.99 upgrade when an existing sandbox name is exactly 19 characters (#8497)", () => {
+    const compatibleName = "abcdefghij123456789";
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      { NON_INTERACTIVE: "1" },
+      {
+        currentMaxOpenshellVersion: "0.0.99",
+        currentMinOpenshellVersion: "0.0.99",
+        hasOldCli: false,
+        openshellVersion: "0.0.85",
+        registryJson: JSON.stringify({
+          sandboxes: {
+            [compatibleName]: {
+              name: compatibleName,
+              nemoclawVersion: "0.0.89",
+              fromDockerfile: false,
+            },
+          },
+        }),
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(openshellLog).toContain("gateway remove nemoclaw");
+  });
+
+  it("escapes an incompatible legacy sandbox name before printing the OpenShell upgrade diagnostic (#8497)", () => {
+    const incompatibleName = "bad\u202e::error::forged";
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      { NON_INTERACTIVE: "1" },
+      {
+        currentMaxOpenshellVersion: "0.0.99",
+        currentMinOpenshellVersion: "0.0.99",
+        hasOldCli: false,
+        openshellVersion: "0.0.85",
+        registryJson: JSON.stringify({
+          sandboxes: {
+            [incompatibleName]: {
+              name: incompatibleName,
+              nemoclawVersion: "0.0.89",
+              fromDockerfile: false,
+            },
+          },
+        }),
+      },
+    );
+
+    const output = result.stdout + result.stderr;
+    expect(result.status).not.toBe(0);
+    expect(output).toContain('"bad\\u202e::error::forged"');
+    expect(output).not.toContain(incompatibleName);
+    expect(cliLog).toBe("");
+    expect(openshellLog).toBe("");
+  });
+
+  it("stops before upgrade mutations when a legacy sandbox name contains OpenShell's reserved double hyphen (#8497)", () => {
+    const incompatibleName = "legacy--box";
+    const registryJson = JSON.stringify({
+      sandboxes: {
+        [incompatibleName]: {
+          name: incompatibleName,
+          nemoclawVersion: "0.0.89",
+          fromDockerfile: false,
+        },
+      },
+    });
+    const { result, cliLog, openshellLog, registry } = runPreinstallUpgradeGuard(
+      { NON_INTERACTIVE: "1" },
+      {
+        currentMaxOpenshellVersion: "0.0.99",
+        currentMinOpenshellVersion: "0.0.99",
+        hasOldCli: false,
+        openshellVersion: "0.0.85",
+        registryJson,
+      },
+    );
+
+    const output = result.stdout + result.stderr;
+    expect(result.status).not.toBe(0);
+    expect(output).toContain(JSON.stringify(incompatibleName));
+    expect(output).toContain("rejects consecutive");
+    expect(cliLog).toBe("");
+    expect(openshellLog).toBe("");
+    expect(registry).toBe(registryJson);
+  });
+
+  it("ignores an incompatible route-only reservation during the OpenShell name preflight (#8497)", () => {
+    const routeOnlyName = "route-only-reservation-name";
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      { NON_INTERACTIVE: "1" },
+      {
+        currentMaxOpenshellVersion: "0.0.99",
+        currentMinOpenshellVersion: "0.0.99",
+        openshellVersion: "0.0.85",
+        registryJson: JSON.stringify({
+          sandboxes: {
+            [routeOnlyName]: {
+              name: routeOnlyName,
+              pendingRouteReservation: true,
+            },
+          },
+        }),
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("RESTORE=");
+    expect(cliLog).toBe("");
+    expect(openshellLog).toBe("");
+  });
+
+  it("ignores an incompatible legacy name owned by a different gateway during the OpenShell preflight (#8497)", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      {
+        NEMOCLAW_GATEWAY_PORT: "9123",
+        NON_INTERACTIVE: "1",
+      },
+      {
+        currentMaxOpenshellVersion: "0.0.99",
+        currentMinOpenshellVersion: "0.0.99",
+        hasOldCli: false,
+        openshellVersion: "0.0.85",
+        registryJson: JSON.stringify({
+          sandboxes: {
+            selected: {
+              name: "selected",
+              gatewayPort: 9123,
+              gatewayName: "nemoclaw-9123",
+              nemoclawVersion: "0.0.89",
+              fromDockerfile: false,
+            },
+            "incompatible-sibling-name": {
+              name: "incompatible-sibling-name",
+              gatewayPort: 9124,
+              gatewayName: "nemoclaw-9124",
+              nemoclawVersion: "0.0.89",
+              fromDockerfile: false,
+            },
+          },
+        }),
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout + result.stderr).not.toContain("incompatible-sibling-name");
+    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(openshellLog).toContain("gateway remove nemoclaw-9123");
   });
 
   it("ignores a route-only reservation during pre-upgrade backup (#6500)", () => {

@@ -42,13 +42,31 @@ else
     "$NEMOCLAW_LAUNCH_COMMAND" launch "$NEMOCLAW_LAUNCH_SANDBOX"
 fi
 
-timeout --kill-after=5s 210s \
+timeout --kill-after=5s 250s \
   script --quiet --return --flush --command "$launch_command" "$capture" <"$input" &
 session_pid=$!
 exec 3>"$input"
 
-# Both TUIs accept buffered terminal input after their startup render settles.
-sleep 12
+if [[ -n "$NEMOCLAW_LAUNCH_READY_TEXT" ]]; then
+  ready_seen=0
+  for _ in {1..60}; do
+    if grep -Fq -- "$NEMOCLAW_LAUNCH_READY_TEXT" "$capture"; then
+      ready_seen=1
+      break
+    fi
+    if ! kill -0 "$session_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$ready_seen" != 1 ]]; then
+    echo "launch did not reach the expected TUI state" >&2
+    exit 1
+  fi
+else
+  # Hermes accepts buffered terminal input after its startup render settles.
+  sleep 12
+fi
 response_start="$(wc -c <"$capture")"
 printf '%s\r' "$NEMOCLAW_LAUNCH_PROMPT" >&3
 
@@ -65,18 +83,32 @@ for _ in {1..180}; do
   sleep 1
 done
 
-# The TUI may close the FIFO after the first interrupt. Ignore SIGPIPE while
-# sending interrupts so the driver can record a reply it already observed.
-trap '' PIPE
-printf '\003' >&3 2>/dev/null || true
-sleep 1
-printf '\003' >&3 2>/dev/null || true
-trap - PIPE
+if [[ -n "$NEMOCLAW_LAUNCH_EXIT_COMMAND" ]]; then
+  printf '%s\r' "$NEMOCLAW_LAUNCH_EXIT_COMMAND" >&3
+else
+  # Some TUIs have no exit command. They may close the FIFO after the first
+  # interrupt, so ignore SIGPIPE while sending the second one.
+  trap '' PIPE
+  printf '\003' >&3 2>/dev/null || true
+  sleep 1
+  printf '\003' >&3 2>/dev/null || true
+  trap - PIPE
+fi
 exec 3>&-
 
 if [[ "$reply_seen" != 1 ]]; then
   echo "launch did not produce the expected agent reply" >&2
   exit 1
+fi
+if wait "$session_pid"; then
+  launch_status=0
+else
+  launch_status=$?
+fi
+session_pid=""
+if [[ "$launch_status" != 0 ]]; then
+  echo "launch exited with status $launch_status" >&2
+  exit "$launch_status"
 fi
 printf '%s\n' "NEMOCLAW_LAUNCH_TURN_OK"
 `;
@@ -86,7 +118,9 @@ export interface LaunchAgentTurnOptions {
   cliCommand: string;
   cliEntrypoint?: string;
   env: NodeJS.ProcessEnv;
+  exitCommand?: string;
   host: HostCliClient;
+  readyText?: string;
   redactionValues: string[];
   sandboxName: string;
 }
@@ -103,13 +137,15 @@ export async function runLaunchAgentTurn(
       ...options.env,
       NEMOCLAW_LAUNCH_COMMAND: options.cliCommand,
       NEMOCLAW_LAUNCH_ENTRYPOINT: options.cliEntrypoint ?? "",
+      NEMOCLAW_LAUNCH_EXIT_COMMAND: options.exitCommand ?? "",
       NEMOCLAW_LAUNCH_EXPECTED_REPLY: EXPECTED_REPLY,
       NEMOCLAW_LAUNCH_PROMPT: PROMPT,
+      NEMOCLAW_LAUNCH_READY_TEXT: options.readyText ?? "",
       NEMOCLAW_LAUNCH_SANDBOX: options.sandboxName,
       TERM: "xterm-256color",
     },
     redactionValues: options.redactionValues,
-    timeoutMs: 240_000,
+    timeoutMs: 280_000,
   });
   if (result.exitCode !== 0 || !result.stdout.includes("NEMOCLAW_LAUNCH_TURN_OK")) {
     throw new Error(`launch agent turn failed: ${resultText(result)}`);

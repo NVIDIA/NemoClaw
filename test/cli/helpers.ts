@@ -445,12 +445,16 @@ export function createCloudflaredServiceDir(prefix: string): {
   sandboxName: string;
   serviceDir: string;
 } {
+  const compactPrefix = prefix
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 4);
   const suffix = [
-    process.pid.toString(36),
-    Date.now().toString(36),
-    Math.random().toString(36).slice(2, 10),
+    process.pid.toString(36).slice(-3),
+    Date.now().toString(36).slice(-6),
+    Math.random().toString(36).slice(2, 5),
   ].join("-");
-  const sandboxName = `${prefix}${suffix}`;
+  const sandboxName = `${compactPrefix || "test"}-${suffix}`;
   const serviceDir = path.join("/tmp", `nemoclaw-services-${sandboxName}`);
   fs.rmSync(serviceDir, { recursive: true, force: true });
   fs.mkdirSync(serviceDir, { recursive: true });

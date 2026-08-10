@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.85");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.101");
 
 type CrashBoundary =
   | "provider"
@@ -282,6 +282,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
 };
 
 policies.getPresetContentGatewayState = () => marked("policy") ? "match" : "absent";
+policies.getLiveSandboxPolicyEntryDigest = () => marked("policy") ? "present" : null;
 policies.removePreset = () => {
   fs.rmSync(marker("policy"), { force: true });
   return true;

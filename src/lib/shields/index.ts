@@ -70,7 +70,10 @@ const {
 }: typeof import("./permissive-runtime") = require("./permissive-runtime");
 const { cleanupTempDir } = require("../onboard/temp-files");
 const { verifyShieldsLockState }: typeof import("./verify-lock") = require("./verify-lock");
-const { relockAndReconfirm }: typeof import("./relock-reconfirm") = require("./relock-reconfirm");
+const {
+  relockAndReconfirm,
+  waitForHermesInferenceRouteConvergence,
+}: typeof import("./relock-reconfirm") = require("./relock-reconfirm");
 const {
   inspectAnyShieldsTransitionLockOwner,
   isShieldsTransitionLockUnavailable,
@@ -3975,6 +3978,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   //     OpenClaw uses sandbox:sandbox 0660/2770 here so the gateway UID, which
   //     is a member of the sandbox group, can mutate runtime config.
   console.log(`  Unlocking ${target.agentName} config (${target.configPath})...`);
+  let inferenceRouteConvergenceFailed = false;
   try {
     unlockAgentConfig(
       sandboxName,
@@ -3983,6 +3987,18 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       opts.allowLegacyHermesProtocol === true,
       protocol,
     );
+    if (target.agentName === "hermes") {
+      console.log("  Confirming Hermes inference route after policy transition...");
+      const convergence = waitForHermesInferenceRouteConvergence(sandboxName, { run });
+      if (!convergence.ok) {
+        inferenceRouteConvergenceFailed = true;
+        const status =
+          convergence.httpStatus > 0 ? `HTTP ${convergence.httpStatus}` : "unavailable";
+        throw new Error(
+          `Hermes inference route did not converge after policy transition (${status}; ${convergence.attempts} attempts)`,
+        );
+      }
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const rollback = rollbackShieldsDown(
@@ -4013,9 +4029,15 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
         `  Config rollback is incomplete.${timerAuthority} Manual intervention is required.`,
       );
     }
-    console.error(
-      `  Re-run \`nemoclaw ${sandboxName} shields down\` after correcting file ownership.`,
-    );
+    if (inferenceRouteConvergenceFailed) {
+      console.error(
+        `  Recover the Hermes inference route, then re-run \`nemoclaw ${sandboxName} shields down\`.`,
+      );
+    } else {
+      console.error(
+        `  Re-run \`nemoclaw ${sandboxName} shields down\` after correcting file ownership.`,
+      );
+    }
     return failShieldsCommand(message, opts.throwOnError);
   }
 

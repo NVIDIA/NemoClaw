@@ -175,6 +175,15 @@ A frozen uv `0.11.33` export of those five extras confirms 94 unique third-party
 In the unpatched upstream release transition from `v2026.7.1`, the selected graph changes only `slack-bolt` from `1.27.0` to `1.29.0` and `slack-sdk` from `3.40.1` to `3.43.0`; the downstream security selections are recorded below.
 Both changed packages remain MIT licensed.
 
+Managed capability-union images add a separate six-package Teams overlay to that reviewed base graph: `microsoft-teams-apps==2.0.13.4`; `microsoft-teams-api==2.0.15`; `microsoft-teams-cards==2.0.15`; `microsoft-teams-common==2.0.15`; `dependency-injector==4.49.1`; and `msal==1.37.0`.
+The existing base already supplies the requested `aiohttp==3.14.3`, so the union does not add a second aiohttp artifact.
+The Dockerfile binds seven exact PyPI wheels by SHA-256: five architecture-neutral wheels and one architecture-specific Dependency Injector wheel for each of amd64 and arm64.
+The four Microsoft Teams wheels and MSAL declare MIT; Dependency Injector ships the BSD 3-Clause license.
+For the union-enabled build, the selected wheel stage is mounted read-only and installed with BuildKit networking disabled plus `UV_OFFLINE=true` and `UV_FIND_LINKS` restricted to that mount.
+The union-disabled selector instead resolves an empty scratch stage, so an ordinary custom-plan build does not fetch or depend on the managed-image wheel graph.
+Exact amd64 and arm64 base-image probes installed the overlay offline and `uv pip check` reported all 95 resulting packages compatible on both architectures.
+An August 7, 2026 point-in-time OSV query reports no advisory for any of the six overlay package versions; this statement is scoped to that overlay and is not a claim that the complete image is vulnerability-free.
+
 The base image also replaces `python-multipart==0.0.27` with `0.0.32`.
 The reviewed artifacts are the source distribution at `be54b7f3fa167bb83e4fcd936b887b708f4e57fe75911c02aebf53efaf8d938e` and wheel at `ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23`.
 Their PyPI Trusted Publisher attestations bind Apache-2.0 artifacts to `Kludex/python-multipart`, `.github/workflows/publish.yml`, tag `0.0.32`, verified commit `238ead62a0bb6f6cdfe122708faa13812f59f9a6`, and successful run `26963211769`.

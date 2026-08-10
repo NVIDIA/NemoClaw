@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
+import { testTimeout } from "../../../test/helpers/timeouts";
 
 import {
   hasManagedMcpPolicyClaims,
@@ -15,6 +16,10 @@ import {
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,
 } from "../actions/sandbox/mcp-bridge-policy-render";
+import {
+  isOperatorTrustablePrivateIp,
+  replayTrustedPrivateEndpoint,
+} from "../security/trusted-private-endpoint";
 import type { SandboxEntry } from "../state/registry";
 import {
   assertLegacyMcpPolicyRestoreSafe,
@@ -28,11 +33,20 @@ function registeredPolicy(
   server: string,
   address: string,
 ): NonNullable<SandboxEntry["customPolicies"]>[number] {
+  const host = `${server}.example.com`;
+  const target = isOperatorTrustablePrivateIp(address)
+    ? (() => {
+        const replay = replayTrustedPrivateEndpoint(host, [address]);
+        return {
+          addresses: [...replay.addresses],
+          trustedPrivateCapability: replay.trustedPrivateCapability,
+          trustedPrivateHost: replay.host,
+        };
+      })()
+    : { addresses: [address] };
   return {
     name: buildMcpBridgePolicyName(server),
-    content: buildMcpBridgePolicyYaml(server, `https://${server}.example.com/mcp`, ADAPTER, [
-      address,
-    ]),
+    content: buildMcpBridgePolicyYaml(server, `https://${host}/mcp`, ADAPTER, target),
     sourcePath: MCP_BRIDGE_POLICY_SOURCE,
   };
 }
@@ -404,6 +418,38 @@ describe("managed MCP Shields policy transitions (#7952)", () => {
       "restrictive_baseline",
     ]);
   });
+
+  it(
+    "reconciles 257 current managed policies without losing entries (#7952)",
+    () => {
+      const policies = Array.from({ length: 257 }, (_, index) =>
+        registeredPolicy(`server${index}`, "8.8.8.8"),
+      );
+      const current = inspectExactManagedMcpPolicies(
+        sandboxWithPolicies(policies),
+        livePolicy(
+          policies.map((policy, index) => ({
+            content: policy.content,
+            server: `server${index}`,
+          })),
+        ),
+      );
+      const snapshot = YAML.stringify({
+        version: 1,
+        network_policies: { restrictive_baseline: {} },
+      });
+
+      const restored = YAML.parse(composeManagedMcpPolicies(snapshot, current));
+
+      expect(Object.keys(restored.network_policies).sort()).toEqual(
+        ["restrictive_baseline", ...current.map(({ key }) => key)].sort(),
+      );
+      expect(restored.network_policies.mcp_bridge_server256).toEqual(
+        current.find(({ key }) => key === "mcp_bridge_server256")?.networkPolicy,
+      );
+    },
+    testTimeout(15_000),
+  );
 
   it("does not restore a managed MCP policy removed during the shields-down window", () => {
     const alpha = registeredPolicy("alpha", "8.8.8.8");

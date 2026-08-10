@@ -20,6 +20,8 @@ Stop and request maintainer direction, or route an independent solution through 
 
 This repo ships agent skills under `.agents/skills/`.
 Use `nemoclaw-user-guide` for end-user documentation routing, `nemoclaw-contributor-*` for contributor workflows, and `nemoclaw-maintainer-*` for maintainer workflows.
+The contributor lifecycle has one owner for each stage: `nemoclaw-contributor-onboard` for checkout setup, `nemoclaw-contributor-plan-issue` for planning, `nemoclaw-contributor-implement-issue` for implementation and its tests, and `nemoclaw-contributor-create-pr` for publication and review follow-up.
+Component-specific guidance belongs in the `AGENTS.md` file of the package it describes, not in a skill.
 Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision guide mapping tasks to skills.
 Skills that write or review explanatory text must follow the shared [Documentation Writing and Review](.agents/skills/_shared/documentation-writing-review.md) contract.
 
@@ -199,8 +201,8 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 - Use existing repository vocabulary and name what a thing does.
 - Remove modifiers that do not distinguish a real current case.
 - Use one name for one concept across issues, code, workflows, checks, logs, tests, and docs.
-- Follow the [NemoClaw Writing Guide](WRITING.md) for changed comments, test titles, PR text, changelog entries, Announcements, and agent guidance.
-  The guide defines the review scope and the conditions that make a language finding blocking.
+- Follow the [NemoClaw Writing Guide](WRITING.md) for every agent response, progress update, tool-call label or description, text published on GitHub, and changed explanatory text.
+  An agent must correct its text before it sends a message, publishes GitHub text, or starts a tool call with a visible label or description. The guide's review policy defines which findings can block changes to existing text.
 - Use the [NemoClaw Controlled Word List](.agents/skills/_shared/controlled-words.md) for approved project terms and exact product names.
 - Do not turn one case into a system of categories or a new abstraction.
 - Do not add configuration, fallback, migration, compatibility, or extension layers without a current requirement. Name the current consumer and the test that protects the contract.

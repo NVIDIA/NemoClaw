@@ -46,7 +46,7 @@ export function baseGatewayEnv(stateDir: string): Record<string, string> {
     OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
     OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
     OPENSHELL_DOCKER_SUPERVISOR_IMAGE:
-      "ghcr.io/nvidia/openshell/supervisor@sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9",
+      "ghcr.io/nvidia/openshell/supervisor@sha256:ea3632b6e9528e2309103af5b6949606fcdc83ca1f69e8db81482a25bea84bb6",
   };
 }
 

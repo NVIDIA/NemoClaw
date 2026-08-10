@@ -10,7 +10,22 @@ import {
   inferDeployProvider,
   isBrevInstanceFailed,
   isBrevInstanceReady,
+  validateDeployInstanceName,
 } from "./index";
+
+describe("validateDeployInstanceName", () => {
+  it("preserves the Brev instance-name contract independently of sandbox limits (#8497)", () => {
+    const sixtyThreeCharacters = `a${"b".repeat(61)}z`;
+
+    expect(validateDeployInstanceName("brev--instance-name-that-exceeds-nineteen")).toBe(
+      "brev--instance-name-that-exceeds-nineteen",
+    );
+    expect(validateDeployInstanceName(sixtyThreeCharacters)).toBe(sixtyThreeCharacters);
+    expect(() => validateDeployInstanceName(`a${"b".repeat(63)}`)).toThrow(
+      /instance name too long \(max 63 chars\)/,
+    );
+  });
+});
 
 describe("inferDeployProvider", () => {
   it("prefers an explicit provider override", () => {
@@ -275,7 +290,7 @@ describe("executeDeploy", () => {
     expect(errorText).toContain('Invalid sandbox name: "bad name"');
     expect(errorText).toContain("Sandbox names cannot contain spaces.");
     expect(errorText).toContain(
-      "Allowed format: 1-63 characters, lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number.",
+      "Allowed format: 1-19 characters, lowercase, starts with a letter, letters/numbers/single internal hyphens only, ends with letter/number.",
     );
     expect(errorText).toContain(
       "Brev deploy is non-interactive and cannot prompt for a corrected sandbox name.",

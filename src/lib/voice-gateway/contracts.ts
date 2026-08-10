@@ -61,7 +61,11 @@ export interface AgentTurnClient {
     | { readonly outcome: "completed" }
     | {
         readonly outcome: "failed";
-        readonly reason: "agent_failed" | "agent_gateway_unavailable" | "agent_protocol_error";
+        readonly reason:
+          | "agent_failed"
+          | "agent_gateway_unavailable"
+          | "agent_protocol_error"
+          | "response_too_large";
       }
   >;
   close(): void;

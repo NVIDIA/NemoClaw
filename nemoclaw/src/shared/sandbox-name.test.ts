@@ -48,7 +48,7 @@ describe("sandbox and provider name canonical validators", () => {
       "a1",
       "my-sandbox-1",
       "a".repeat(NAME_MAX_LENGTH),
-    ])("accepts the RFC 1035 label '%s'", (name) => {
+    ])("accepts the OpenShell-compatible sandbox name '%s'", (name) => {
       expect(isValidName(name)).toBe(true);
     });
 
@@ -57,6 +57,7 @@ describe("sandbox and provider name canonical validators", () => {
       ["leading dash (flag injection)", "-x"],
       ["flag-like", "--help"],
       ["trailing dash", "foo-"],
+      ["consecutive hyphens", "foo--bar"],
       ["leading digit", "1box"],
       ["uppercase", "Foo"],
       ["underscore", "my_box"],
@@ -156,10 +157,11 @@ describe("sandbox and provider name canonical validators", () => {
             expect(isValidName(candidate)).toBe(false);
             return;
           }
-          // If it returned, the accepted value must be a safe RFC 1035 label.
+          // If it returned, the accepted value must satisfy the canonical contract.
           expect(returned).toBe(candidate);
           expect(NAME_VALID_PATTERN.test(returned)).toBe(true);
           expect(returned.startsWith("-")).toBe(false);
+          expect(returned.includes("--")).toBe(false);
           expect(/[^a-z0-9-]/.test(returned)).toBe(false);
         }),
       );

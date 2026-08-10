@@ -577,7 +577,7 @@ export function createRebuildHermesCronRestoreFixture({
       );
       expect(acquired, "rebuild output must report cron restore gate acquisition").not.toBeNull();
       expect(released, "rebuild output must report cron restore gate release").not.toBeNull();
-      expect(released?.slice(1)).toEqual(acquired?.slice(1));
+      expect(released?.slice(1)).not.toEqual(acquired?.slice(1));
       expect(rebuildOutput.indexOf(released?.[0] ?? "released")).toBeGreaterThan(
         rebuildOutput.indexOf(acquired?.[0] ?? "acquired"),
       );
@@ -602,7 +602,11 @@ export function createRebuildHermesCronRestoreFixture({
       expectExitZero(restoredScript, "read restored Hermes cron script");
       expect(restoredScript.stdout).toBe(seed.scriptContent);
       await assertControlMarker(false, "phase-7-verify-cron-restore-marker-released");
-      await waitForGatewayState("running", "phase-7-verify-gateway-running-after-cron-restore");
+      const liveGateway = await waitForGatewayState(
+        "running",
+        "phase-7-verify-gateway-running-after-cron-restore",
+      );
+      expect(released?.slice(1)).toEqual([String(liveGateway.pid), String(liveGateway.start_time)]);
       await assertExecutionMarkerAbsent(seed, "phase-7-verify-restored-cron-not-auto-executed");
 
       await runCronNow(seed, "phase-7-run-restored-hermes-cron-job");

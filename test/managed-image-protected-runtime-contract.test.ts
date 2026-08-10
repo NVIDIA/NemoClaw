@@ -8,7 +8,9 @@ import { describe, expect, it } from "vitest";
 import { managedStartupE2eProfile } from "../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import {
   MANAGED_IMAGE_LOCAL_INFERENCE_KINDS,
+  MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX,
   managedImageProtectedSandboxName,
+  PROTECTED_MANAGED_IMAGE_AGENTS,
   resolveManagedImageLocalInferenceRoute,
   withManagedImageLocalInferenceProfile,
 } from "../scripts/checks/managed-image-protected-runtime-contract.ts";
@@ -21,8 +23,64 @@ import {
 } from "../scripts/checks/run-managed-image-openshell-e2e.ts";
 
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
+const VALID_SANDBOX = "managed-openclaw";
 
 describe("protected managed-image runtime contract", () => {
+  it("assigns every protected agent and route a unique OpenShell-compatible sandbox name (#8497)", () => {
+    const routeKinds = [...MANAGED_IMAGE_LOCAL_INFERENCE_KINDS, "rollback"] as const;
+    const qualifications = PROTECTED_MANAGED_IMAGE_AGENTS.flatMap((agent) =>
+      routeKinds.map((routeKind) => ({
+        agent,
+        sandbox: managedImageProtectedSandboxName(agent, routeKind),
+      })),
+    );
+    const names = qualifications.map(({ sandbox }) => sandbox);
+
+    expect(names).toEqual([
+      "nmc-mi-oc-lc",
+      "nmc-mi-oc-ol",
+      "nmc-mi-oc-ni",
+      "nmc-mi-oc-vl",
+      "nmc-mi-oc-rb",
+      "nmc-mi-he-lc",
+      "nmc-mi-he-ol",
+      "nmc-mi-he-ni",
+      "nmc-mi-he-vl",
+      "nmc-mi-he-rb",
+      "nmc-mi-dc-lc",
+      "nmc-mi-dc-ol",
+      "nmc-mi-dc-ni",
+      "nmc-mi-dc-vl",
+      "nmc-mi-dc-rb",
+    ]);
+    expect(new Set(names).size).toBe(names.length);
+    for (const { agent, sandbox: name } of qualifications) {
+      expect(name.startsWith(MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX)).toBe(true);
+      expect(name.length).toBeLessThanOrEqual(19);
+      expect(name).not.toContain("--");
+      expect(
+        parseManagedImageOpenShellE2eInputs(["--agent", agent, "--image", IMAGE, "--sandbox", name])
+          .sandbox,
+      ).toBe(name);
+    }
+  });
+
+  it("enforces the canonical OpenShell sandbox-name length and delimiter contract (#8497)", () => {
+    const parseSandbox = (sandbox: string) =>
+      parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        "openclaw",
+        "--image",
+        IMAGE,
+        "--sandbox",
+        sandbox,
+      ]);
+
+    expect(parseSandbox(`a${"b".repeat(18)}`).sandbox).toHaveLength(19);
+    expect(() => parseSandbox(`a${"b".repeat(19)}`)).toThrow(/1-19 characters/u);
+    expect(() => parseSandbox("managed--openclaw")).toThrow(/single internal hyphens/u);
+  });
+
   it.each([
     ["llama-cpp", "llama-cpp-local", "NEMOCLAW_LLAMACPP_LOCAL_TOKEN", 8081],
     ["ollama", "ollama-local", "NEMOCLAW_OLLAMA_PROXY_TOKEN", 11435],
@@ -129,7 +187,7 @@ describe("protected managed-image runtime contract", () => {
         "--image",
         "localhost:5000/openclaw:latest",
         "--sandbox",
-        "managed-openclaw",
+        VALID_SANDBOX,
       ]),
     ).toThrow(/immutable repository@sha256/u);
     expect(() =>
@@ -139,7 +197,7 @@ describe("protected managed-image runtime contract", () => {
         "--image",
         IMAGE,
         "--sandbox",
-        "managed-openclaw",
+        VALID_SANDBOX,
         "--gpu",
       ]),
     ).toThrow(/--gpu requires/u);
@@ -153,7 +211,7 @@ describe("protected managed-image runtime contract", () => {
         "--image",
         IMAGE,
         "--sandbox",
-        "managed-openclaw-llama-cpp",
+        "managed-oc-llama",
         "--local-provider",
         "llama-cpp",
         "--model",
@@ -171,7 +229,7 @@ describe("protected managed-image runtime contract", () => {
         "--image",
         IMAGE,
         "--sandbox",
-        "managed-openclaw-vllm",
+        "managed-oc-vllm",
         "--local-provider",
         "vllm",
         "--model",
@@ -185,7 +243,7 @@ describe("protected managed-image runtime contract", () => {
         "--image",
         IMAGE,
         "--sandbox",
-        "managed-openclaw-llama-cpp",
+        "managed-oc-llama",
         "--local-provider",
         "llama-cpp",
         "--model",
@@ -200,7 +258,7 @@ describe("protected managed-image runtime contract", () => {
         "--image",
         IMAGE,
         "--sandbox",
-        "managed-openclaw-llama-cpp",
+        "managed-oc-llama",
         "--local-provider",
         "llama-cpp",
       ]),
@@ -212,7 +270,7 @@ describe("protected managed-image runtime contract", () => {
         "--image",
         IMAGE,
         "--sandbox",
-        "managed-openclaw-llama-cpp",
+        "managed-oc-llama",
         "--local-provider",
         "llama-cpp",
         "--model",
@@ -233,7 +291,7 @@ describe("protected managed-image runtime contract", () => {
         "--image",
         IMAGE,
         "--sandbox",
-        "managed-openclaw-rollback",
+        "managed-oc-rollback",
         "--inject-bootstrap-completion-failure",
       ]),
     ).toMatchObject({ failureInjection: "bootstrap-completion" });

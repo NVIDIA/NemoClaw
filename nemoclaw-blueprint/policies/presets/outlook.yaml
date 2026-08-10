@@ -13,6 +13,7 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        request_body_credential_rewrite: true
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -21,6 +22,7 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        request_body_credential_rewrite: true
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }

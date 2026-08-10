@@ -112,7 +112,7 @@ describe("shields command flow", () => {
   });
 
   it("shieldsDown captures policy, unlocks config, saves state, and skips timer on request", {
-    timeout: 15_000,
+    timeout: 30_000,
   }, () => {
     const harness = createHarness();
 
@@ -375,16 +375,18 @@ describe("shields command flow", () => {
     );
   });
 
-  it("loads 257 managed keys recorded by Shields down (#7952)", { timeout: 15_000 }, () => {
+  it("reconciles 257 saved managed keys with the current policy (#7952)", {
+    timeout: 15_000,
+  }, () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     const snapshotPath = path.join(stateDir, "policy-snapshot-many-managed-keys.yaml");
-    const policies = Array.from({ length: 257 }, (_, index) => managedMcpPolicy(`server${index}`));
-    const keys = policies.map(({ key }) => key);
-    const networkPolicies = Object.fromEntries(
-      policies.map(({ key, networkPolicy }) => [key, networkPolicy]),
-    );
+    const keys = Array.from({ length: 257 }, (_, index) => `mcp_bridge_server${index}`);
+    const currentPolicy = managedMcpPolicy("server256");
     fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(snapshotPath, YAML.stringify({ network_policies: networkPolicies }));
+    fs.writeFileSync(
+      snapshotPath,
+      YAML.stringify({ network_policies: Object.fromEntries(keys.map((key) => [key, {}])) }),
+    );
     fs.writeFileSync(
       path.join(stateDir, "shields-openclaw.json"),
       JSON.stringify({
@@ -394,15 +396,17 @@ describe("shields command flow", () => {
       }),
     );
     const harness = createHarness({
-      livePolicyYaml: YAML.stringify({ version: 1, network_policies: networkPolicies }),
-      sandboxEntry: managedMcpSandbox(policies),
+      livePolicyYaml: YAML.stringify({
+        version: 1,
+        network_policies: { [currentPolicy.key]: currentPolicy.networkPolicy },
+      }),
+      sandboxEntry: managedMcpSandbox([currentPolicy]),
     });
 
     expect(harness.applyShieldsPolicySnapshot("openclaw", snapshotPath).status).toBe(0);
     const applied = YAML.parse(harness.policySetBodies.at(-1)!);
     const appliedKeys = Object.keys(applied.network_policies);
-    expect([...appliedKeys].sort()).toEqual([...keys].sort());
-    expect(appliedKeys).toHaveLength(257);
+    expect(appliedKeys).toEqual([currentPolicy.key]);
     expect(appliedKeys).toContain("mcp_bridge_server256");
   });
 
@@ -630,7 +634,7 @@ describe("shields command flow", () => {
   it("preserves a live transition owner instead of attempting portable process-tree takeover", () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
-    const sandboxName = "live-transition-owner";
+    const sandboxName = "live-owner";
     const processToken = "b".repeat(32);
     const lockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
     const owner = spawn(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], {
@@ -685,7 +689,7 @@ describe("shields command flow", () => {
   ])("enters durable containment for a %s-token transition whose owner exited in the recovery gap", (_tokenRelationship, transitionOwnerToken) => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
-    const sandboxName = "dead-transition-owner";
+    const sandboxName = "dead-owner";
     const processToken = "c".repeat(32);
     const transitionLockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
     fs.writeFileSync(

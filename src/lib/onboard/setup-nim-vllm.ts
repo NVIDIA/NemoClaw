@@ -3,9 +3,11 @@
 
 import {
   assertEndpointResolvesPublic,
+  isTrustedPrivateEndpointCapability,
   type TrustedPrivateEndpointCapability,
 } from "../inference/endpoint-ssrf-preflight";
 import { VLLM_MODELS } from "../inference/vllm-models";
+import { isLoopbackHostname } from "../private-networks";
 import { cliName } from "./branding";
 import type { SetupNimSelectionResult, SetupNimSelectionState } from "./setup-nim-flow";
 
@@ -30,7 +32,11 @@ export interface SetupNimVllmDeps {
   runCapture(args: string[], options: { ignoreError: boolean }): string;
   getLocalProviderBaseUrl(provider: string): string | null;
   getLocalProviderValidationBaseUrl(provider: string): string | null;
-  getManagedVllmProviderBinding(): { baseUrl: string; apiKey: string } | null;
+  getManagedVllmProviderBinding(): {
+    baseUrl: string;
+    validationBaseUrl?: string;
+    apiKey: string;
+  } | null;
   queryVllmModels(baseUrl: string, apiKey: string): string;
   isSafeModelId(model: string): boolean;
   requireValue<T>(value: T | null | undefined, message: string): T;
@@ -77,7 +83,13 @@ async function managedVllmValidationOptions(baseUrl: string, apiKey: string) {
   const preflight = await assertEndpointResolvesPublic(baseUrl, undefined, {
     trustedPrivateHosts: [hostname],
   });
-  if (!preflight.ok || !preflight.trustedPrivateCapability) {
+  if (!preflight.ok) {
+    throw new Error("Managed vLLM endpoint authorization failed.");
+  }
+  if (
+    !isLoopbackHostname(hostname) &&
+    !isTrustedPrivateEndpointCapability(preflight.trustedPrivateCapability)
+  ) {
     throw new Error("Managed vLLM endpoint authorization failed.");
   }
   return {
@@ -250,7 +262,9 @@ export function createSetupNimVllmHandler(
     const requiredModel = typeof state.model === "string" ? state.model : null;
 
     const validationBaseUrl =
-      managedBinding?.baseUrl ?? deps.getLocalProviderValidationBaseUrl(state.provider);
+      managedBinding?.validationBaseUrl ??
+      managedBinding?.baseUrl ??
+      deps.getLocalProviderValidationBaseUrl(state.provider);
     if (!validationBaseUrl) {
       console.error("  Local vLLM validation URL could not be determined.");
       deps.exitProcess(1);
@@ -263,6 +277,16 @@ export function createSetupNimVllmHandler(
         ? "  ✓ Using managed vLLM endpoint"
         : `  ✓ Using existing vLLM on localhost:${deps.VLLM_PORT}`,
     );
+    let managedValidationOptions: Awaited<ReturnType<typeof managedVllmValidationOptions>> | null =
+      null;
+    if (apiKey) {
+      try {
+        managedValidationOptions = await managedVllmValidationOptions(validationBaseUrl, apiKey);
+      } catch {
+        console.error("  Managed vLLM endpoint authorization could not be verified.");
+        deps.exitProcess(1);
+      }
+    }
     const raw = apiKey
       ? deps.queryVllmModels(validationBaseUrl, apiKey)
       : deps.runCapture(["curl", "-sf", `${validationBaseUrl}/models`], {
@@ -330,16 +354,6 @@ export function createSetupNimVllmHandler(
     }
 
     const validationModel = deps.requireValue(state.model, "Expected a detected vLLM model");
-    let managedValidationOptions: Awaited<ReturnType<typeof managedVllmValidationOptions>> | null =
-      null;
-    if (apiKey) {
-      try {
-        managedValidationOptions = await managedVllmValidationOptions(validationBaseUrl, apiKey);
-      } catch {
-        console.error("  Managed vLLM endpoint authorization could not be verified.");
-        deps.exitProcess(1);
-      }
-    }
     const validation = apiKey
       ? await deps.validateOpenAiLikeSelection(
           "Local vLLM",

@@ -28,6 +28,7 @@ type LivePullRequest = {
     ref: string;
     repo: { full_name: string } | null;
   };
+  draft: boolean;
   state: string;
 };
 
@@ -58,6 +59,7 @@ export function validatePublicationState(
   mainRef: LiveRef,
 ): void {
   if (pullRequest.state !== "open") throw new ConflictFixerError("The pull request is not open");
+  if (pullRequest.draft) throw new ConflictFixerError("The pull request is a draft");
   if (pullRequest.base.ref !== "main") {
     throw new ConflictFixerError("The pull request no longer targets main");
   }

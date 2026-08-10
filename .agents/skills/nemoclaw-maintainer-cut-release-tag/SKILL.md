@@ -135,7 +135,9 @@ npm run release:e2e-evidence -- \
 ```
 
 The preflight derives every required execution from one empty-selector dispatch.
-The full run includes every workflow E2E and `Exact staging Brev Launchable`.
+The full run includes every default-selected workflow E2E plus `Exact staging Brev Launchable`.
+Accepted release evidence requires `allow_jetson_runner_queue=false` and `allow_dgx_spark_runner_queue=false`.
+The required denominator excludes `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification`.
 Each job that declares `RELEASE_E2E_ACTIVATION_PATH` requires that path at the candidate SHA.
 A missing activation path is a preflight failure.
 
@@ -146,7 +148,7 @@ Monitor the dispatched correlation ID with one bounded status query.
 Before accepting full-mode exact Brev evidence, require:
 
 - the workflow `head_sha` to equal the plan candidate SHA;
-- the trusted dispatch receipt to prove empty selectors and `include_staging_brev_launchable=true`;
+- the trusted dispatch receipt to prove empty selectors, `include_staging_brev_launchable=true`, `allowJetsonRunnerQueue: false`, and `allowDgxSparkRunnerQueue: false`;
 - the workflow conclusion to be `success`;
 - the `Exact staging Brev Launchable` job conclusion to be `success`;
 - the job URL and selected successful Launchable job attempt;

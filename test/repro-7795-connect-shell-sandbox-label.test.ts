@@ -211,6 +211,7 @@ describe("connect-shell sandbox label for host-side hints (#7795)", () => {
     ["digit leading", "9abc"],
     ["underscore", "qa_7795"],
     ["trailing hyphen", "qa-7795-"],
+    ["consecutive hyphens", "qa--7795"],
   ])("rejects an invalid injected sandbox name (%s) instead of interpolating it", (_label, value) => {
     withTmpDir((tmpDir) => {
       const envFile = generateConnectEnv(tmpDir, value);

@@ -8,32 +8,16 @@
 
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96
 ARG NEMOCLAW_CORPORATE_CA_B64=
+ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 
-FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS mcp-tool-discovery-runtime
-ARG NEMOCLAW_CORPORATE_CA_B64
-ENV NPM_CONFIG_AUDIT=false \
-    NPM_CONFIG_FUND=false \
-    NPM_CONFIG_UPDATE_NOTIFIER=false
-WORKDIR /opt/mcp-tool-discovery-runtime
-COPY tools/mcp-tool-discovery-runtime/package.json tools/mcp-tool-discovery-runtime/package-lock.json tools/mcp-tool-discovery-runtime/tsconfig.json tools/mcp-tool-discovery-runtime/install-reviewed-runtime.sh tools/mcp-tool-discovery-runtime/npm-ci-locked.sh tools/mcp-tool-discovery-runtime/*.ts ./
-RUN ./install-reviewed-runtime.sh \
-    && rm -f ./install-reviewed-runtime.sh ./npm-ci-locked.sh
-RUN chown -R root:root /opt/mcp-tool-discovery-runtime \
-    && chmod -R a=rX /opt/mcp-tool-discovery-runtime
+# The reviewed npm graph is audited in CI; image assembly copies only its
+# generated runtime artifacts and therefore needs neither npm nor network.
+FROM scratch AS mcp-tool-discovery-runtime
+COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt /opt/mcp-tool-discovery-runtime/dist/
+COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs
 
-FROM mcp-tool-discovery-runtime AS managed-startup-runtime-builder
-WORKDIR /opt/nemoclaw-managed-startup-build
-COPY src/lib/core/json-types.ts src/lib/core/ports.ts ./src/lib/core/
-COPY src/lib/messaging/ ./src/lib/messaging/
-COPY src/lib/onboard/managed-bootstrap/ ./src/lib/onboard/managed-bootstrap/
-COPY src/lib/onboard/managed-startup/ ./src/lib/onboard/managed-startup/
-COPY src/lib/security/credential-hash.ts ./src/lib/security/
-COPY src/lib/state/paths.ts src/lib/state/state-root.ts ./src/lib/state/
-RUN /opt/mcp-tool-discovery-runtime/node_modules/.bin/esbuild \
-        src/lib/onboard/managed-bootstrap/image-runtime.ts \
-        --bundle --platform=node --format=cjs --target=node22 \
-        --outfile=/out/managed-startup-image-runtime.cjs \
-    && chmod 0444 /out/managed-startup-image-runtime.cjs
+FROM scratch AS managed-startup-runtime-builder
+COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs
 
 # Compile the bootstrap boundary on the target platform. The output is a
 # freestanding static ELF; only its reviewed, non-executable Bash body remains
@@ -123,6 +107,7 @@ COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
 COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
 COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
 COPY agents/hermes/patch-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py
+COPY agents/hermes/patch-hermes-sqlite-temp-store.py /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py
 COPY agents/hermes/patch-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py
 COPY agents/hermes/patch-profile-policy-defaults.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py
 COPY agents/hermes/managed_policy.py /usr/local/lib/nemoclaw/managed_policy.py
@@ -133,7 +118,7 @@ COPY agents/hermes/finalize-tirith-marker.py /usr/local/lib/nemoclaw/finalize-ti
 COPY agents/hermes/build-mcp-digest.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py
 COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py
 COPY agents/hermes/cron-restore-control.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py
-COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.85.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json
+COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.101.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.101.json
 COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
 COPY agents/hermes/state-lock-plan.json /usr/local/share/nemoclaw/state-lock-plan.json
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
@@ -144,9 +129,35 @@ COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py
 COPY agents/hermes/validate-cli-adapter.py /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py
 COPY agents/hermes/hermes-cli-adapter-v1.json /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json
 
-FROM scratch AS hermes-scan-payload
 
-COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
+# Fetch the exact managed Teams capability wheels outside RUN instructions so
+# both the standard build and the protected --network none rebuild install the
+# reviewed union from immutable inputs rather than a reusable networked layer.
+FROM scratch AS hermes-managed-teams-common-wheels
+
+ADD --chmod=0444 --checksum=sha256:db16f714ec658b592929c6386a29792e90bb73840732f8ae65a198cda1fea96c https://files.pythonhosted.org/packages/3a/d4/3c4205258642035d160c09f598a302260776dcb6d5bdf659eea7c6066d5e/microsoft_teams_apps-2.0.13.4-py3-none-any.whl /microsoft_teams_apps-2.0.13.4-py3-none-any.whl
+ADD --chmod=0444 --checksum=sha256:0072ffe68863a4c62818a4e631a186f092a4f09dfda74d1d4713415bac5d202d https://files.pythonhosted.org/packages/f4/09/8efc1f9a7ee3ef87d2f394b39355d884e76f35d9871a72530d2a8deab325/microsoft_teams_api-2.0.15-py3-none-any.whl /microsoft_teams_api-2.0.15-py3-none-any.whl
+ADD --chmod=0444 --checksum=sha256:e2b0257d9b8782830df61eb6aa993a1ddc0349daddd845739da45d2a29a0c44b https://files.pythonhosted.org/packages/7d/b8/c4e5df0f6797363ff8a431bcee1a51a7d8b6fe2e5d4cac21a6bd58e9f50f/microsoft_teams_cards-2.0.15-py3-none-any.whl /microsoft_teams_cards-2.0.15-py3-none-any.whl
+ADD --chmod=0444 --checksum=sha256:c61057695b9f1a97de9b6f54f0c66206903f56c22427b0bca31e0fc34da49311 https://files.pythonhosted.org/packages/8d/91/01e6aeddd78639c74489c24785f2cec0f842ba16f3b594db202386bd721d/microsoft_teams_common-2.0.15-py3-none-any.whl /microsoft_teams_common-2.0.15-py3-none-any.whl
+ADD --chmod=0444 --checksum=sha256:dd17e95a7c71bce75e8108113438ba7c4a086b3bcad4f57a8c09b7af3d753c2d https://files.pythonhosted.org/packages/94/b0/d807279f4b55d16d1f120d5ac4344c6e39b56732e2a224d40bded7fd67ad/msal-1.37.0-py3-none-any.whl /msal-1.37.0-py3-none-any.whl
+
+FROM hermes-managed-teams-common-wheels AS hermes-managed-teams-amd64-wheels
+
+ADD --chmod=0444 --checksum=sha256:10e481880b307a6a438c1cc7b0a1fa8754247239ef5a2e8fe82bd8a1e76e7682 https://files.pythonhosted.org/packages/68/20/fc1812f20ec75af2d4b5e391e93f15621af3102da46142e26177eb506b32/dependency_injector-4.49.1-cp310-abi3-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl /dependency_injector-4.49.1-cp310-abi3-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl
+
+FROM hermes-managed-teams-common-wheels AS hermes-managed-teams-arm64-wheels
+
+ADD --chmod=0444 --checksum=sha256:e05da5bc73a3e026f962a223672002934c0f415064b6e2c3db0b255e46c7b521 https://files.pythonhosted.org/packages/32/ab/b1e1826aacc37d07ba0101230de7b5cbbb5ac6364b78ca3957f0a90d6a51/dependency_injector-4.49.1-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl /dependency_injector-4.49.1-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
+
+FROM scratch AS hermes-managed-teams-0-wheels
+
+# hadolint ignore=DL3006
+FROM hermes-managed-teams-${TARGETARCH}-wheels AS hermes-managed-teams-1-wheels
+
+# Select the empty stage for ordinary custom-plan builds so their dependency
+# graph never resolves the managed-image-only PyPI wheel sources above.
+# hadolint ignore=DL3006
+FROM hermes-managed-teams-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION}-wheels AS hermes-managed-teams-wheels
 
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
@@ -326,7 +337,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=61fec509d9c0229650f71d1fc53d103a39fd830976213dbdef0d222592981d03
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=89f530da6a8296c8bab449a2a324d8efedca1a90b04a5e0f57cf9203ed2011cd
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -337,10 +348,52 @@ COPY --from=hermes-runtime-payload / /
 
 # Keep the root-owned managed-startup handoff in this image-only layer. The
 # following permissions block is replayed on the host by regression tests.
-RUN discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \
-    && node -e 'const result = JSON.parse(process.argv[1]); if (result.protocol !== 1 || result.ok !== false || result.detail !== "tool discovery received invalid runtime arguments") process.exit(1);' "$discovery_contract" \
-    && discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
-    && test -z "$discovery_unsafe" \
+RUN managed_runtime_assertion_failed() { \
+      nemoclaw_assertion="$1"; \
+      nemoclaw_artifact_path="$2"; \
+      if [ -e "$nemoclaw_artifact_path" ] || [ -L "$nemoclaw_artifact_path" ]; then \
+        if [ "${3:-}" = dereference ] && [ -e "$nemoclaw_artifact_path" ]; then \
+          nemoclaw_metadata="$(stat -L -c 'uid=%u gid=%g type=%F mode=%a' -- "$nemoclaw_artifact_path" 2>/dev/null)" \
+            || nemoclaw_metadata='uid=unavailable gid=unavailable type=unavailable mode=unavailable'; \
+        else \
+          nemoclaw_metadata="$(stat -c 'uid=%u gid=%g type=%F mode=%a' -- "$nemoclaw_artifact_path" 2>/dev/null)" \
+            || nemoclaw_metadata='uid=unavailable gid=unavailable type=unavailable mode=unavailable'; \
+        fi; \
+        if [ -L "$nemoclaw_artifact_path" ]; then nemoclaw_symlink_state='yes'; else nemoclaw_symlink_state='no'; fi; \
+      else \
+        nemoclaw_metadata='uid=unavailable gid=unavailable type=missing mode=unavailable'; \
+        nemoclaw_symlink_state='no'; \
+      fi; \
+      printf 'ERROR: managed image assertion failed: %s path=%s %s symlink=%s\n' \
+        "$nemoclaw_assertion" "$nemoclaw_artifact_path" "$nemoclaw_metadata" "$nemoclaw_symlink_state" >&2; \
+      exit 1; \
+    }; \
+    managed_image_command_failed() { \
+      nemoclaw_command_assertion="$1"; \
+      nemoclaw_command_status="$2"; \
+      printf 'ERROR: managed image assertion failed: %s exit-status=%s\n' \
+        "$nemoclaw_command_assertion" "$nemoclaw_command_status" >&2; \
+      exit 1; \
+    }; \
+    if find -P /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime -exec chown -h root:root '{}' + \
+      && find -P /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime -type d -exec chmod 0555 '{}' + \
+      && find -P /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime -type f -exec chmod 0444 '{}' +; then \
+      :; \
+    else \
+      managed_image_command_failed mcp-tool-discovery-tree-permission-replay "$?"; \
+    fi; \
+    discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \
+      || managed_image_command_failed mcp-tool-discovery-bundle-execution "$?"; \
+    node -e 'const expected = { protocol: 1, ok: false, detail: "tool discovery received invalid runtime arguments" }; const standaloneSecretPatterns = [/(?:nvapi-|nvcf-|gh[pousr]_|sk-proj-|sk-ant-|hf_|glpat-|gsk_|pypi-|tvly-)[A-Za-z0-9_-]{10,}/gu, /github_pat_[A-Za-z0-9_]{30,}/gu, /sk-[A-Za-z0-9_-]{20,}/gu, /(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}/gu, /A(?:K|S)IA[A-Z0-9]{16}/gu, /\bbot\d{8,10}:[A-Za-z0-9_-]{35}\b/gu, /\b\d{8,10}:[A-Za-z0-9_-]{35}\b/gu, /\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b/gu, /lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*/gu, /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/gu, /\b[A-Za-z0-9_=-]{32,}\b/gu]; const redactContextSecrets = (value) => value.replace(/\b(?:Bearer|Basic)\s+\S+/giu, "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]{10,}/giu, (_match, prefix) => prefix + "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]{10,}/gu, (_match, prefix) => prefix + "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])KEY["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]{10,}/gu, (_match, prefix) => prefix + "<REDACTED>"); const sanitize = (value) => { if (value === undefined) return "<missing>"; if (value === null || typeof value === "boolean" || typeof value === "number") return value; if (typeof value !== "string") return "<" + (Array.isArray(value) ? "array" : typeof value) + ">"; let printable = value.replace(/-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*/gu, "<REDACTED>").replace(/[^\x20-\x7e]/gu, "?"); for (const pattern of standaloneSecretPatterns) printable = printable.replace(pattern, "<REDACTED>"); printable = redactContextSecrets(printable); return printable.length <= 240 ? printable : printable.slice(0, 237) + "..."; }; let result; let parsed = true; try { result = JSON.parse(process.argv[1]); } catch { parsed = false; } const record = parsed && result !== null && typeof result === "object" && !Array.isArray(result) ? result : undefined; if (record && record.protocol === expected.protocol && record.ok === expected.ok && record.detail === expected.detail) process.exit(0); const actual = record ? { protocol: sanitize(record.protocol), ok: sanitize(record.ok), detail: sanitize(record.detail) } : parsed ? { type: result === null ? "null" : Array.isArray(result) ? "array" : typeof result, value: sanitize(result) } : { type: "invalid-json", preview: sanitize(process.argv[1]) }; console.error("ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual=%s expected=%s", JSON.stringify(actual), JSON.stringify(expected)); process.exit(1);' "$discovery_contract" \
+      || exit 1; \
+    discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
+      || managed_image_command_failed mcp-tool-discovery-tree-find-execution "$?"; \
+    { test -z "$discovery_unsafe" || managed_runtime_assertion_failed mcp-tool-discovery-tree-safety "$discovery_unsafe" dereference; } \
+    && { test -f /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs || managed_runtime_assertion_failed regular-file /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs; } \
+    && { test ! -L /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs || managed_runtime_assertion_failed non-symlink /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs; } \
+    && { chown root:root /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs 2>/dev/null || managed_runtime_assertion_failed owner-root-root /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs; } \
+    && { chmod 0444 /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs 2>/dev/null || managed_runtime_assertion_failed mode-0444 /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs; } \
+    && { test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs 2>/dev/null)" = '0:0:444' || managed_runtime_assertion_failed metadata-0:0:444 /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs; } \
     && test -f /usr/local/bin/nemoclaw-managed-bootstrap \
     && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \
     && test "$(stat -c '%u:%g:%a' /usr/local/bin/nemoclaw-managed-bootstrap)" = '0:0:755' \
@@ -361,13 +414,13 @@ RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 # profile hook, bashrc hook, or root-owned helper mode. Remove it once the
 # minimum supported Hermes sandbox base tag guarantees those artifacts and
 # test/sandbox-rlimit-hooks.test.ts covers that base.
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
-    && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/share/nemoclaw/state-lock-plan.json /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json \
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
+    && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/share/nemoclaw/state-lock-plan.json /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.101.json \
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/hermes-cron-restore-control.py \
     && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py \
     && chmod 444 /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/share/nemoclaw/state-lock-plan.json /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/managed_policy.py \
     && chmod 444 /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
-    && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json \
+    && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.101.json \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then \
         chown -R 0:0 /usr/local/lib/nemoclaw/preloads \
         && find /usr/local/lib/nemoclaw/preloads -type f -exec chmod 444 {} + \
@@ -500,6 +553,27 @@ RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-session-list-previe
     && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py session-preview
 
+# Hermes v0.19.0 SessionDB does not set PRAGMA temp_store=MEMORY, so SQLite
+# falls back to file-based temp storage for FK constraint processing (for
+# example, the ON DELETE CASCADE on session_model_usage -> sessions). The
+# OpenShell sandbox execution context used by
+# `nemohermes <sandbox> sessions delete <id>` restricts the temp-file creation
+# syscalls that SQLite's FK engine relies on, causing every
+# `DELETE FROM sessions` with FK enforcement to raise
+# `sqlite3.OperationalError: unable to open database file` (#8301). Inserting
+# PRAGMA temp_store=MEMORY before PRAGMA foreign_keys=ON ensures FK processing
+# uses in-memory storage. Docker execution permits the file-based storage path.
+ARG NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256=2db46b6cd358f4d181999bbddbc0d35d035a67ee1092adb2e2c16a894c695e13
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py \
+    | sha256sum -c - \
+    || { echo "ERROR: patch-hermes-sqlite-temp-store.py hash mismatch (update NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256)" >&2; exit 1; }
+RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py \
+    && grep -q 'PRAGMA temp_store=MEMORY' /opt/hermes/hermes_state.py \
+    && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py session-delete
+
 # Hermes v0.19.0 forces the gateway-created Discord recovery ledger to 0600,
 # which prevents sandbox-owned online backup and makes a sandbox-restored
 # database unwritable by the gateway. The final layout uses a gateway:sandbox
@@ -547,7 +621,7 @@ ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=989edf54a8c09c6efb348600a8aa2f264c0b71408
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=db4046e79e513eab67b069a8eda20167b8b65529cf26842531d2ad673c670330
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=822c7e63d068c5d09f3291350771c1a42c9686f51bfa9bc9a1f41fbe15d163b1
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
-ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=a674de12d1c30d907491aa7c7b5d40711b077c5b2eca69ca58c5c36e8231e4c8
+ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=e8593cf1580bffa4663e91c079ba0ce31c3d26391f5b1718872701138ce250b0
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_VALIDATOR_SHA256" /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
@@ -698,15 +772,23 @@ RUN unset SSL_CERT_FILE REQUESTS_CA_BUNDLE; \
       export SSL_CERT_FILE=/usr/local/share/nemoclaw/corporate-ca.pem; \
       export REQUESTS_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
     fi; \
-    node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install \
-    && if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
+    node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install
+
+# Managed images have no serialized messaging plan. Install their complete
+# reviewed package union from the read-only wheel set with registry access
+# disabled so this layer is independently reproducible without imported cache.
+# hadolint ignore=DL3059
+RUN --network=none --mount=from=hermes-managed-teams-wheels,target=/opt/nemoclaw-hermes-teams-wheels,ro \
+    if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
+        UV_OFFLINE=true UV_FIND_LINKS=/opt/nemoclaw-hermes-teams-wheels \
         node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts \
             --agent hermes --phase managed-image-capability-union; \
-    fi \
-    && /opt/hermes/.venv/bin/python -I -c \
+    fi; \
+    /opt/hermes/.venv/bin/python -I -c \
         "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual"
 
 WORKDIR /sandbox
+RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:999:/sandbox"
 USER sandbox
 
 # Set up blueprint for local resolution
@@ -1113,9 +1195,6 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod a+rw /sandbox/.bashrc /sandbox/.profile; \
     fi
 
-# Gate the completed local filesystem too; CI repeats this scan in an isolated
-# container and retains evidence keyed to the final image ID.
-COPY --from=hermes-scan-payload / /
 
 # These executables are git-tracked 0755 but check out group-writable (0775)
 # under umask 002, and COPY carries that source mode into the image. Normalize
@@ -1124,7 +1203,6 @@ COPY --from=hermes-scan-payload / /
 RUN chmod 755 \
         /usr/local/lib/nemoclaw/hermes-wrapper.py \
         /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py \
-        /scripts/checks/node-tar-image-scan.mts \
     && chmod 444 /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json
 
 RUN check_metadata() { \
@@ -1148,6 +1226,7 @@ RUN check_metadata() { \
     && check_absent /sandbox/.cache \
     && check_absent /sandbox/.hermes/managed-policy.json \
     && check_absent /sandbox/.nemoclaw/hermes-cron-restore-drain.json \
+    && check_absent /sandbox/.nemoclaw/hermes-cron-restore-release-recovery.json \
     && check_metadata /sandbox/.nemoclaw 'root:root 1755' \
     && check_metadata /scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444' \
     && check_metadata /scripts/lib/patch-bundled-npm-ip-address.mts 'root:root 444' \
@@ -1168,13 +1247,7 @@ RUN check_metadata() { \
     && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444' \
     && check_metadata /usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755' \
     && check_metadata /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py 'root:root 755' \
-    && check_metadata /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json 'root:root 444' \
-    && check_metadata /scripts/checks/node-tar-image-scan.mts 'root:root 755' \
-    && install -d -m 0755 /usr/local/share/nemoclaw \
-    && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
-        --root / --image build:hermes \
-        > /usr/local/share/nemoclaw/node-tar-inventory.json \
-    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json
+    && check_metadata /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json 'root:root 444'
 
 # Verify the immutable security package inventory in the completed image.
 # hadolint ignore=DL4006

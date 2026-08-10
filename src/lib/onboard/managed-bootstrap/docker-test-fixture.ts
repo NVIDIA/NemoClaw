@@ -44,7 +44,7 @@ const CONFIG_ID = `sha256:${"4".repeat(64)}`;
 const MANIFEST = `sha256:${"5".repeat(64)}` as const;
 const REPOSITORY = "registry.example/nemoclaw/hermes";
 const IMAGE = `${REPOSITORY}@${MANIFEST}`;
-const SUPERVISOR = ["/opt/openshell/bin/openshell-sandbox", "supervise"] as const;
+const SUPERVISOR = ["/opt/openshell/bin/openshell-sandbox", "--workdir", "/sandbox"] as const;
 export const SUPPORTED_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 
 type FixtureCommandResult = {
@@ -201,6 +201,19 @@ function failFixture(message: string): never {
   throw new Error(message);
 }
 
+export function parseFixtureDockerUlimits(
+  args: readonly string[],
+  imageIndex: number,
+): NonNullable<DockerContainerInspect["HostConfig"]>["Ulimits"] {
+  return args.slice(0, imageIndex).flatMap((value, index) => {
+    const match =
+      value === "--ulimit"
+        ? /^([a-z][a-z0-9_]*)=(-?\d+):(-?\d+)$/u.exec(String(args[index + 1] ?? ""))
+        : null;
+    return match ? [{ Name: match[1], Soft: Number(match[2]), Hard: Number(match[3]) }] : [];
+  });
+}
+
 export function fixture(options: DockerFixtureOptions = {}) {
   let original: DockerContainerInspect | null = originalInspect(agentInputs(options.agent));
   if (options.dockerCliSerializationDefaults) {
@@ -343,16 +356,11 @@ export function fixture(options: DockerFixtureOptions = {}) {
           const name = String(args[args.indexOf("--name") + 1] ?? "");
           const entrypoint = String(args[args.indexOf("--entrypoint") + 1] ?? "");
           const imageIndex = args.indexOf(IMAGE);
-          const env = args.flatMap((value, index) =>
+          const dockerOptions = args.slice(0, imageIndex);
+          const env = dockerOptions.flatMap((value, index) =>
             value === "--env" ? [String(args[index + 1] ?? "")] : [],
           );
-          const ulimits = args.flatMap((value, index) => {
-            if (value !== "--ulimit") return [];
-            const match = /^([a-z][a-z0-9_]*)=(\d+):(\d+)$/u.exec(String(args[index + 1] ?? ""));
-            return match
-              ? [{ Name: match[1], Soft: Number(match[2]), Hard: Number(match[3]) }]
-              : [];
-          });
+          const ulimits = parseFixtureDockerUlimits(args, imageIndex);
           replacement = {
             ...structuredClone(source),
             Id: NEW_ID,

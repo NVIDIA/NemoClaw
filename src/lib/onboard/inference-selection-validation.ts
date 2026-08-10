@@ -50,7 +50,7 @@ export type EndpointValidationResult =
       retry?: undefined;
       /** Public addresses approved for this custom endpoint's host probes. */
       pinnedAddresses?: string[];
-      /** Non-forgeable proof of the exact private subset admitted by the operator allowlist. */
+      /** Non-forgeable proof of the exact host and complete pins admitted by the operator allowlist. */
       trustedPrivateCapability?: TrustedPrivateEndpointCapability;
     }
   | { ok: false; retry: "credential" | "selection" | "retry" | "model"; api?: undefined };
@@ -91,6 +91,8 @@ export interface InferenceSelectionValidationHelpers {
       extraHeaders?: readonly string[];
       requireResponsesToolCalling?: boolean;
       requireChatCompletionsToolCalling?: boolean;
+      retryChatCompletionsToolReadiness?: boolean;
+
       skipResponsesProbe?: boolean;
       probeStreaming?: boolean;
       allowHostDockerInternal?: boolean;
@@ -258,6 +260,8 @@ export function createInferenceSelectionValidationHelpers(
       extraHeaders?: readonly string[];
       requireResponsesToolCalling?: boolean;
       requireChatCompletionsToolCalling?: boolean;
+      retryChatCompletionsToolReadiness?: boolean;
+
       skipResponsesProbe?: boolean;
       probeStreaming?: boolean;
       allowHostDockerInternal?: boolean;

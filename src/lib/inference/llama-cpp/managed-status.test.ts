@@ -31,6 +31,7 @@ const RUNTIME_ID = "2".repeat(64);
 const SPEC_SHA256 = "3".repeat(64);
 const NETWORK_ID = "e".repeat(64);
 const RECIPE_ID = "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
+const GENERIC_PRESET_ID = "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b";
 const IMAGE = `ghcr.io/nvidia/llama-cpp@sha256:${"4".repeat(64)}`;
 const temporaryDirectories: string[] = [];
 
@@ -60,25 +61,34 @@ function engine(
   };
 }
 
-function publishState(homeDir: string, runtimeEngine: ContainerEngine): void {
+function reserveState(homeDir: string, presetId?: string, presetDigest?: string): void {
   const paths = managedLlamaCppStatePaths(homeDir);
   const catalog = loadManagedInferenceCatalog();
   const preset = catalog.presets.find(
-    ({ spec }) => spec.plan.backend === "install-llama-cpp" && spec.plan.recipeRef === RECIPE_ID,
+    ({ metadata, spec }) =>
+      spec.plan.backend === "install-llama-cpp" &&
+      spec.plan.recipeRef === RECIPE_ID &&
+      (presetId === undefined || metadata.id === presetId),
   )!;
   reserveManagedLlamaCppOwner(paths, {
     schemaVersion: 1,
     sandboxName: "spark-agent",
     catalogDigest: catalog.catalogDigest,
-    presetDigest: catalog.sources.find(
-      ({ kind, id }) => kind === "ServingPreset" && id === preset.metadata.id,
-    )!.digest,
+    presetDigest:
+      presetDigest ??
+      catalog.sources.find(({ kind, id }) => kind === "ServingPreset" && id === preset.metadata.id)!
+        .digest,
     recipeDigest: catalog.sources.find(
       ({ kind, id }) => kind === "ServingRecipe" && id === RECIPE_ID,
     )!.digest,
     recipeId: RECIPE_ID,
   });
   loadOrCreateManagedLlamaCppApiKey(paths);
+}
+
+function publishState(homeDir: string, runtimeEngine: ContainerEngine): void {
+  reserveState(homeDir);
+  const paths = managedLlamaCppStatePaths(homeDir);
   const engineAuthority = {
     schemaVersion: 1 as const,
     providerId: "docker",
@@ -143,6 +153,111 @@ function publishState(homeDir: string, runtimeEngine: ContainerEngine): void {
 }
 
 describe("managed llama.cpp status", () => {
+  it("reports reserved ownership without a receipt as preparing", () => {
+    const homeDir = temporaryHome();
+    reserveState(homeDir);
+
+    expect(inspectManagedLlamaCppStatus("spark-agent", { homeDir })).toEqual({
+      recipeId: RECIPE_ID,
+      modelDigest: null,
+      imageReference: null,
+      endpoint: "https://inference.local/v1",
+      state: "preparing",
+      detail: "ownership is reserved; no finalized runtime receipt is published",
+    });
+  });
+
+  it("revalidates the selected preset when multiple presets share one recipe (#8144)", () => {
+    const homeDir = temporaryHome();
+    reserveState(homeDir, GENERIC_PRESET_ID);
+
+    expect(inspectManagedLlamaCppStatus("spark-agent", { homeDir })).toEqual({
+      recipeId: RECIPE_ID,
+      modelDigest: null,
+      imageReference: null,
+      endpoint: "https://inference.local/v1",
+      state: "preparing",
+      detail: "ownership is reserved; no finalized runtime receipt is published",
+    });
+  });
+
+  it("rejects an unrecognized preset digest before Docker inspection (#8144)", () => {
+    const homeDir = temporaryHome();
+    reserveState(homeDir, GENERIC_PRESET_ID, `sha256:${"f".repeat(64)}`);
+    const capture = vi.fn();
+
+    expect(
+      inspectManagedLlamaCppStatus("spark-agent", { homeDir, engine: engine(capture) }),
+    ).toMatchObject({
+      state: "unknown",
+      detail: "Managed llama.cpp recipe authority changed; rerun onboarding.",
+    });
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("reports the exact receipt-bound container as absent without further inspection", () => {
+    const inspectExact = vi.fn();
+    const probe = vi.fn();
+    const runtimeEngine = engine(
+      vi.fn(() => ({
+        status: 1,
+        stdout: "",
+        stderr: `Error response from daemon: No such container: ${RUNTIME_ID}`,
+      })),
+    );
+    const homeDir = temporaryHome();
+    publishState(homeDir, runtimeEngine);
+
+    expect(
+      inspectManagedLlamaCppStatus("spark-agent", {
+        homeDir,
+        engine: runtimeEngine,
+        inspectExact,
+        probe,
+      }),
+    ).toMatchObject({ state: "absent", detail: "the exact managed container is absent" });
+    expect(inspectExact).not.toHaveBeenCalled();
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it("reports an exact stopped runtime without probing readiness", () => {
+    const inspectExact = vi.fn(() => ({ running: false, receipt: {} as never }));
+    const probe = vi.fn();
+    const runtimeEngine = engine(vi.fn(() => ({ status: 0, stdout: "[]", stderr: "" })));
+    const homeDir = temporaryHome();
+    publishState(homeDir, runtimeEngine);
+
+    expect(
+      inspectManagedLlamaCppStatus("spark-agent", {
+        homeDir,
+        engine: runtimeEngine,
+        inspectExact,
+        probe,
+      }),
+    ).toMatchObject({ state: "stopped", detail: "exact managed container is stopped" });
+    expect(inspectExact).toHaveBeenCalledOnce();
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it("does not classify a different missing container as the receipt-bound absence", () => {
+    const runtimeEngine = engine(
+      vi.fn(() => ({
+        status: 1,
+        stdout: "",
+        stderr: "Error response from daemon: No such container: foreign-runtime",
+      })),
+    );
+    const homeDir = temporaryHome();
+    publishState(homeDir, runtimeEngine);
+
+    expect(
+      inspectManagedLlamaCppStatus("spark-agent", { homeDir, engine: runtimeEngine }),
+    ).toMatchObject({
+      state: "unknown",
+      detail: "Docker inspection failed",
+    });
+  });
+
   it("reports exact secret-free runtime identity and running state", () => {
     const inspectExact = vi.fn<NonNullable<ManagedLlamaCppStatusOptions["inspectExact"]>>(() => ({
       running: true,

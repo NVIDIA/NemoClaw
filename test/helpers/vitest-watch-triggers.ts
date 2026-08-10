@@ -106,6 +106,15 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/validate-managed-base-index.test.ts"),
   },
   {
+    pattern: /(?:^|\/)scripts\/checks\/retry-docker-imagetools-inspect\.sh$/,
+    testsToRun: runTests(
+      "test/retry-docker-imagetools-inspect.test.ts",
+      "test/validate-managed-base-index.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+      "test/dcode-base-image-workflow.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)scripts\/e2e\/sanitize-trace-timing\.py$/,
     testsToRun: runTests(
       "test/e2e/support/e2e-scorecard.test.ts",
@@ -127,10 +136,6 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/code-scanning\.yaml$/,
     testsToRun: runTests("test/code-scanning-workflow.test.ts"),
-  },
-  {
-    pattern: /(?:^|\/)\.github\/workflows\/approve-maintainer-pr-workflow-runs\.yaml$/,
-    testsToRun: runTests("test/maintainer-pr-workflow-approval.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-merge-conflict-fixer\.yaml$/,

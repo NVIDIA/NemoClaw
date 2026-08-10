@@ -205,7 +205,7 @@ describe("OpenShell policy boundary package contract", () => {
           "--experimental-strip-types",
           "--no-warnings",
           "--eval",
-          `const contract = require(${JSON.stringify(controlContractPath)}); process.stdout.write(JSON.stringify([contract.isValidName("packaged-hermes-sandbox"), contract.isValidName("../packaged-hermes-sandbox")]));`,
+          `const contract = require(${JSON.stringify(controlContractPath)}); process.stdout.write(JSON.stringify([contract.isValidName("packaged-hermes"), contract.isValidName("../packaged-hermes")]));`,
         ],
         { cwd: repoRoot, encoding: "utf8" },
       ),

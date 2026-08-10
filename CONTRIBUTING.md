@@ -127,7 +127,8 @@ To drive the same workflow through a compatible coding agent, ask:
 
 > Set up this machine as a NemoClaw contributor and prepare it for a first PR.
 
-The `nemoclaw-contributor-onboard` skill invokes the setup script, pauses for user-controlled account or privileged changes, and explains the first-PR workflow.
+The `nemoclaw-contributor-onboard` skill invokes the setup script and pauses for user-controlled account or host changes.
+After the doctor passes, it routes planning, implementation, and PR publication to the owning contributor skills.
 Expose the development `nemoclaw` command only when you want an npm link or user-local shim:
 
 ```bash

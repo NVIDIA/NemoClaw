@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+interface:
+  display_name: "Publish a NemoClaw Pull Request"
+  short_description: "Publish a prepared branch with the repository template"
+  default_prompt: "Use $nemoclaw-contributor-create-pr to publish this branch with the repository template, the DCO declaration, verified commits, and CI and review follow-up."

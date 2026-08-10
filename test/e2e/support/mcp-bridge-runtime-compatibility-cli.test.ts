@@ -13,7 +13,6 @@ import { MCP_BRIDGE_RUNTIME_COMPATIBILITY_ARTIFACT } from "../../../tools/e2e/mc
 import { RISK_SIGNAL_FILE } from "../../../tools/e2e/risk-signal.ts";
 
 const COMPATIBILITY_TOOL = path.resolve("tools/e2e/mcp-bridge-runtime-compatibility.mts");
-const PLAN_HASH = "b".repeat(64);
 const CORRELATION_ID = "123e4567-e89b-42d3-a456-426614174000";
 
 function gatedEnvironment(): Record<string, string> {
@@ -26,7 +25,6 @@ function gatedEnvironment(): Record<string, string> {
     GITHUB_WORKSPACE: process.cwd(),
     NEMOCLAW_E2E_CORRELATION_ID: CORRELATION_ID,
     NEMOCLAW_E2E_EXPECTED_SHA: expectedSha,
-    NEMOCLAW_E2E_PLAN_HASH: PLAN_HASH,
     NEMOCLAW_E2E_SHARD: "openclaw",
   };
 }
@@ -153,7 +151,6 @@ describe.skipIf(process.platform === "win32")("MCP bridge compatibility CLI", ()
         shardId: "openclaw",
         expectedSha: gateEnv.NEMOCLAW_E2E_EXPECTED_SHA,
         testedSha: gateEnv.NEMOCLAW_E2E_EXPECTED_SHA,
-        planHash: PLAN_HASH,
         correlationId: CORRELATION_ID,
         passed: 1,
         failed: 0,

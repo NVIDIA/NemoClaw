@@ -3,14 +3,6 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  createSession,
-  filterSafeUpdates,
-  MACHINE_SNAPSHOT_VERSION,
-  normalizeSession,
-  type Session,
-  type SessionUpdates,
-} from "../../../state/onboard-session";
 import type { OnboardFlowContext } from "../flow-context";
 import { advanceTo, completeOnboardMachine } from "../result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "../runtime";
@@ -22,6 +14,18 @@ import {
   createPoliciesPhase,
   createPostVerifyPhase,
 } from "./agent-policy-finalization";
+import {
+  MACHINE_SNAPSHOT_VERSION,
+  type Session,
+  type SessionUpdates,
+  cloneSession,
+  createSession,
+  createTestRuntime,
+} from "../../../../../test/helpers/onboard-machine-runtime-fixture";
+
+function createRuntime(initialSession: Session = createSession()) {
+  return createTestRuntime(initialSession, { now: () => "2026-05-29T00:00:00.000Z" });
+}
 
 function context(): OnboardFlowContext<null, null, null> {
   return {
@@ -50,51 +54,6 @@ function context(): OnboardFlowContext<null, null, null> {
     sandboxGpuConfig: null,
     gpuPassthrough: false,
   };
-}
-
-function cloneSession(session: Session): Session {
-  return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
-}
-
-function createRuntime(initialSession: Session = createSession()) {
-  let session = cloneSession(initialSession);
-  const updateSession = (mutator: (value: Session) => Session | void): Session => {
-    session = cloneSession(mutator(cloneSession(session)) ?? session);
-    return cloneSession(session);
-  };
-  const deps: OnboardRuntimeDeps = {
-    loadSession: () => cloneSession(session),
-    createSession,
-    saveSession: (next) => {
-      session = cloneSession(next);
-      return cloneSession(session);
-    },
-    updateSession,
-    markStepStarted: () => cloneSession(session),
-    markStepComplete: (_stepName, updates: SessionUpdates = {}) =>
-      updateSession((current) => {
-        Object.assign(current, filterSafeUpdates(updates));
-        return current;
-      }),
-    markStepSkipped: () => cloneSession(session),
-    markStepFailed: (stepName, message) =>
-      updateSession((current) => {
-        current.steps[stepName].status = "failed";
-        current.steps[stepName].error = message ?? null;
-        return current;
-      }),
-    completeSession: (updates: SessionUpdates = {}) =>
-      updateSession((current) => {
-        Object.assign(current, filterSafeUpdates(updates));
-        current.status = "complete";
-        current.resumable = false;
-        return current;
-      }),
-    filterSafeUpdates,
-    emitEvent: () => undefined,
-    now: () => "2026-05-29T00:00:00.000Z",
-  };
-  return new OnboardRuntime(deps);
 }
 
 describe("agent/policy/finalization phases", () => {

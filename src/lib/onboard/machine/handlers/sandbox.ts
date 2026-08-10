@@ -119,6 +119,19 @@ import {
   type SandboxResumeDecision,
 } from "./sandbox-resume";
 
+type SandboxRecreateWorkloadSkipReason = Extract<
+  ReplacedSandboxWorkloadCleanupResult,
+  { readonly status: "skipped" }
+>["reason"];
+
+const SANDBOX_RECREATE_WORKLOAD_SKIP_DIAGNOSTIC = {
+  "replacement-unproven": "  Obsolete sandbox image retirement skipped: replacement-unproven",
+  "shared-image": "  Obsolete sandbox image retirement skipped: shared-image",
+  "authority-unproven": "  Obsolete sandbox image retirement skipped: authority-unproven",
+  "no-owned-image": "  Obsolete sandbox image retirement skipped: no-owned-image",
+  "image-reused": "  Obsolete sandbox image retirement skipped: image-reused",
+} as const satisfies Record<SandboxRecreateWorkloadSkipReason, string>;
+
 function isAdvisoryPeerRouteDifference(
   result: Exclude<GatewayRouteCompatibilityResult, { ok: true }>,
   sandboxName: string,
@@ -1623,6 +1636,8 @@ class SandboxStateFlow<
       this.deps.note(
         `  Warning: failed to remove obsolete ${retired.engineDisplayName} image ${retired.reference}; run '${this.deps.cliName()} gc' to clean up.`,
       );
+    } else if (retired.status === "skipped") {
+      this.deps.note(SANDBOX_RECREATE_WORKLOAD_SKIP_DIAGNOSTIC[retired.reason]);
     }
   }
 

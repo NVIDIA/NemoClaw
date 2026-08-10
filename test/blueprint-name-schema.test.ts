@@ -46,7 +46,8 @@ describe("blueprint name schema", () => {
     ["a command-substitution sandbox name", "$(id)"],
     ["an uppercase sandbox name", "TestSandbox"],
     ["a trailing-hyphen sandbox name", "sandbox-"],
-    ["an over-length sandbox name", "a".repeat(64)],
+    ["a 20-character sandbox name", "a".repeat(20)],
+    ["a double-hyphen sandbox name", "legacy--sandbox"],
   ])("rejects blueprint with %s", (_label, name) => {
     const blueprint = createBlueprint();
     blueprint.components.sandbox.name = name;
@@ -67,9 +68,9 @@ describe("blueprint name schema", () => {
     expect(validate(blueprint)).toBe(expected);
   });
 
-  it("accepts blueprint with a renamed RFC 1035 sandbox name", () => {
+  it("accepts blueprint with an exact 19-character sandbox name (#8497)", () => {
     const blueprint = createBlueprint();
-    blueprint.components.sandbox.name = "my-sandbox-1";
+    blueprint.components.sandbox.name = `a${"b".repeat(18)}`;
     expect(validate(blueprint), JSON.stringify(validate.errors)).toBe(true);
   });
 });

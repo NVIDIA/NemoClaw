@@ -289,23 +289,28 @@ test/e2e/
   used by PR Review Advisor. It maps changed runtime surfaces to invariant
   families and canonical `e2e.yaml` jobs; it does not dispatch E2E.
 
-- `.github/workflows/e2e.yaml` selects every workflow E2E on each push to `main`.
-  A selected job can remain queued until its configured runner is available.
-  The workflow inventory rejects any job excluded from `main`. Runner, credential, evidence,
-  and cleanup requirements remain job-specific.
+- `.github/workflows/e2e.yaml` selects the default workflow E2E jobs on each push
+  to `main`.
+  Push runs skip `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and
+  `llama-cpp-dgx-spark-qualification` because a push event cannot set their
+  required workflow dispatch flags.
+  Runner, credential, evidence, and cleanup requirements remain job-specific.
   A maintainer can also dispatch the trusted `main` workflow against the exact
   head of an open internal or fork PR. The manual path validates the actor, PR
   number, head repository, head SHA, base SHA, workflow SHA, review reason, and
-  selected mode before candidate checkout. For a PR revision run, leave `jobs` and
-  `targets` empty. The run selects every free-standing workflow E2E except `Exact
-  staging Brev Launchable`. It also selects all shared credential-free tests and
+  allowed jobs, targets, and Launchable combination before candidate checkout.
+  For a PR revision run, leave `jobs` and
+  `targets` empty. The run selects every default-selected free-standing workflow
+  E2E except `Exact staging Brev Launchable`. It also selects all shared credential-free tests and
   these controller-selected registry targets:
   `ubuntu-policy-custom-missing-presets-negative`,
   `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and
-  `ubuntu-repo-docker-post-reboot-recovery`. If GitHub pauses
-  `llama-cpp-dgx-spark-qualification` for the
-  `approve-dgx-spark-image-qualification` environment, an authorized environment
-  reviewer must approve it before qualification starts. The only accepted nonempty
+  `ubuntu-repo-docker-post-reboot-recovery`. Keep
+  `allow_jetson_runner_queue=false` and `allow_dgx_spark_runner_queue=false` for
+  this default selection. If the DGX Spark flag is `true`, GitHub can pause the
+  qualification job for the `approve-dgx-spark-image-qualification` environment.
+  An authorized environment reviewer must approve it before qualification starts.
+  The only accepted nonempty
   `jobs` value is `managed-image-protected-runtime`; `targets` must remain empty.
   Refer to [NemoClaw E2E CI](../README.md).
 
@@ -327,17 +332,19 @@ test/e2e/
   The Slack and GitHub scorecard timing comparison remains scoped to the
   dedicated `cloud-onboard` artifact.
   Manual PR runs attach `test/e2e/risk-signal-reporter.ts` to live Vitest
-  invocations and suppress PR reporting and scorecards. The workflow boundary
-  requires every selected job shard to upload its evidence artifact.
+  invocations and suppress PR reporting and scorecards. Each risk signal binds
+  its result counts to the expected and tested candidate SHA, correlation ID,
+  job ID, and shard ID. The workflow boundary requires every selected job shard
+  to upload its evidence artifact.
 - `.github/workflows/platform-vitest-main.yaml` runs the full Vitest suite in
   four independent shards on each of macOS and WSL, with `fail-fast` disabled.
   Each macOS shard installs the pinned OpenShell formula and has a 30-minute
   budget. Each WSL shard has a 90-minute budget, and WSL runs its additional
   root-required contracts on shard 1 only.
-  `macos-e2e.yaml`, `wsl-e2e.yaml`, and `regression-e2e.yaml` call focused E2E
-  targets directly for their platform coverage.
-  Repository-hosted targets, including `ollama-auth-proxy`, are selected
-  through `.github/workflows/e2e.yaml`.
+  `.github/workflows/macos-e2e.yaml`, `.github/workflows/wsl-e2e.yaml`, and
+  `.github/workflows/sandbox-images-and-e2e.yaml` call focused E2E targets
+  directly. `.github/workflows/e2e.yaml` selects free-standing jobs, including
+  `whatsapp-qr-compact` and `ollama-auth-proxy`.
 - The `staging-brev-launchable` job validates the exact baked candidate in
   preinstalled mode. Generic Brev VMs with source overlays are not a
   qualification boundary.

@@ -36,11 +36,13 @@ const EXPECTED_MANAGED_RECIPE_IDS = [
 ];
 const EXPECTED_MANAGED_PRESET_IDS = [
   "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b",
+  "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b",
   "local-model-profile.vllm.spark.v1",
   "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731",
 ];
 const EXPECTED_MANAGED_SOURCE_IDS = [
   "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b",
+  "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b",
   "local-model-profile.vllm.spark.v1",
   "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731",
   "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",

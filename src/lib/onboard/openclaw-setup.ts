@@ -3,6 +3,8 @@
 
 import fs from "node:fs";
 
+import { sandboxConfigSyncArgs } from "./config-sync";
+
 export interface OpenclawSetupDeps {
   step(n: number, total: number, msg: string): void;
   agentProductName(): string;
@@ -32,7 +34,7 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
       const scriptFile = deps.writeSandboxConfigSyncFile(script);
       try {
         const scriptContent = fs.readFileSync(scriptFile, "utf-8");
-        deps.run(deps.openshellArgv(["sandbox", "connect", sandboxName]), {
+        deps.run(deps.openshellArgv(sandboxConfigSyncArgs(sandboxName)), {
           stdio: ["pipe", "ignore", "inherit"],
           input: scriptContent,
         });

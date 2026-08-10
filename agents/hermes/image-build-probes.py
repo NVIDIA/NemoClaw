@@ -194,6 +194,20 @@ def verify_session_preview() -> None:
     assert rows[0]["preview"] == "NEMOCLAW_PREVIEW_LATEST", rows
 
 
+def verify_session_delete() -> None:
+    from hermes_state import SessionDB
+
+    db = SessionDB()
+    session_id = "nemoclaw-session-delete-smoke"
+    db.create_session(session_id, "cli")
+    db.append_message(session_id, "user", "probe message 1")
+    db.append_message(session_id, "assistant", "probe reply")
+    deleted = db.delete_session(session_id)
+    assert deleted, f"delete_session returned {deleted!r}"
+    rows = db.list_sessions_rich(limit=10)
+    assert not any(r["id"] == session_id for r in rows), "session still present after delete"
+
+
 def verify_discord_recovery_source() -> None:
     source = Path("/opt/hermes/plugins/platforms/discord/recovery.py").read_text(
         encoding="utf-8"
@@ -389,6 +403,7 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "langfuse-credentials": verify_langfuse_credentials,
     "neutral-platform-inertness": verify_neutral_platform_inertness,
     "profile-policy": verify_profile_policy,
+    "session-delete": verify_session_delete,
     "session-preview": verify_session_preview,
 }
 

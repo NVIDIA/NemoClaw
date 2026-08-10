@@ -5,8 +5,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
-import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+import { describe, expect, it, onTestFinished } from "vitest";
+import { runInstallerSourcedBody } from "./helpers/installer-run-fixture";
+import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 const STATION_PREPARE = path.join(
   path.resolve(import.meta.dirname, ".."),
@@ -14,23 +15,14 @@ const STATION_PREPARE = path.join(
   "prepare-dgx-station-host.sh",
 );
 
-function runInstallerSourced(body: string, existingHome?: string) {
-  const home = existingHome ?? fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-resume-"));
-  const result = spawnSync(
-    "bash",
-    ["--noprofile", "--norc", "-c", `source "$INSTALLER_UNDER_TEST" >/dev/null\n${body}`],
-    {
-      cwd: path.resolve(import.meta.dirname, ".."),
-      encoding: "utf-8",
-      env: {
-        HOME: home,
-        PATH: TEST_SYSTEM_PATH,
-        INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-      },
-    },
-  );
-  return { home, result, output: `${result.stdout}${result.stderr}` };
-}
+const runInstallerSourced = (body: string, existingHome?: string) => {
+  const run = runInstallerSourcedBody(body, {
+    homePrefix: "nemoclaw-vllm-resume-",
+    home: existingHome,
+  });
+  onTestFinished(run.remove);
+  return run;
+};
 
 function runStationPreparationSourced(body: string) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-guidance-"));

@@ -648,6 +648,32 @@ exit 0
     });
   });
 
+  it("explains how to enable vLLM tool parsing when the frontend disables it", () => {
+    const body = `if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"error":{"message":"tool parsing is disabled by frontend configuration"}}
+JSON
+fi
+printf '400'
+exit 0
+`;
+    withFakeCurlProbe(
+      { script: makeFakeCurlScript(body), dirPrefix: "nemoclaw-disabled-tool-parser-probe-" },
+      () => {
+        const result = probeOpenAiLikeEndpoint("http://127.0.0.1:8000/v1", "local-model", "dummy", {
+          skipResponsesProbe: true,
+          requireChatCompletionsToolCalling: true,
+        });
+
+        expect(result).toMatchObject({ ok: false });
+        expect(result.message).toContain("Chat Completions tool parsing is disabled");
+        expect(result.message).toContain("--enable-auto-tool-choice");
+        expect(result.message).toContain("--tool-call-parser");
+        expect(result.message).toContain("selected frontend registers");
+      },
+    );
+  });
+
   describe("private-address SSRF guard (#6293)", () => {
     it("rejects a non-loopback private LAN endpoint before issuing any probe (#6293)", () => {
       const result = probeOpenAiLikeEndpoint(
@@ -892,6 +918,100 @@ exit 0
           // with cleanup. PR #5975 review note PRA-9 / CodeRabbit "assert
           // --config has a path value".
           expect(observedConfigPaths.size).toBe(1);
+        },
+      );
+    });
+
+    it("retries Local Ollama validation when HTTP 200 omits a structured tool call (#8714)", () => {
+      const body = `n=$(cat "${HARNESS_COUNTER}")
+n=$((n + 1))
+echo "$n" > "${HARNESS_COUNTER}"
+if [ "$n" -eq 1 ]; then
+  printf '%s' '{"choices":[{"finish_reason":"stop","message":{"content":"OK"}}]}' > "$outfile"
+else
+  printf '%s' '{"choices":[{"finish_reason":"tool_calls","message":{"tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":{}}}]}}]}' > "$outfile"
+fi
+printf '200'
+`;
+      withFakeCurlProbe(
+        {
+          script: makeFakeCurlScript(body),
+          dirPrefix: "nemoclaw-ollama-tool-readiness-probe-",
+        },
+        ({ lines, counter }) => {
+          const result = probeOpenAiLikeEndpoint(
+            "http://127.0.0.1:11434/v1",
+            "nemotron-3-nano:30b",
+            "",
+            {
+              skipResponsesProbe: true,
+              requireChatCompletionsToolCalling: true,
+              retryChatCompletionsToolReadiness: true,
+            },
+          );
+
+          expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+          expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+          expect(lines).toContain(
+            "  Chat Completions API validation did not return a structured tool call; retrying in 5s...",
+          );
+        },
+      );
+    });
+
+    it("does not retry missing structured tool calls for generic endpoints (#8714)", () => {
+      const body = `n=$(cat "${HARNESS_COUNTER}")
+n=$((n + 1))
+echo "$n" > "${HARNESS_COUNTER}"
+printf '%s' '{"choices":[{"finish_reason":"stop","message":{"content":"OK"}}]}' > "$outfile"
+printf '200'
+`;
+      withFakeCurlProbe(
+        { script: makeFakeCurlScript(body), dirPrefix: "nemoclaw-generic-tool-probe-" },
+        ({ counter }) => {
+          const result = probeOpenAiLikeEndpoint(
+            "https://api.example.com/v1",
+            "tool-model",
+            "sk-test",
+            { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
+          );
+
+          expect(result).toMatchObject({ ok: false });
+          expect(fs.readFileSync(counter, "utf8").trim()).toBe("1");
+        },
+      );
+    });
+
+    it("stops retrying Local Ollama validation after the backoff schedule when structured tool calls remain missing (#8714)", () => {
+      const body = `n=$(cat "${HARNESS_COUNTER}")
+n=$((n + 1))
+echo "$n" > "${HARNESS_COUNTER}"
+printf '%s' '{"choices":[{"finish_reason":"stop","message":{"content":"OK"}}]}' > "$outfile"
+printf '200'
+`;
+      withFakeCurlProbe(
+        { script: makeFakeCurlScript(body), dirPrefix: "nemoclaw-ollama-tool-timeout-" },
+        ({ counter }) => {
+          const result = probeOpenAiLikeEndpoint(
+            "http://127.0.0.1:11434/v1",
+            "nemotron-3-nano:30b",
+            "",
+            {
+              skipResponsesProbe: true,
+              requireChatCompletionsToolCalling: true,
+              retryChatCompletionsToolReadiness: true,
+            },
+          );
+
+          expect(result).toMatchObject({
+            ok: false,
+            failures: [
+              expect.objectContaining({
+                diagnosticCodes: ["openai-chat-missing-structured-tool-call"],
+              }),
+            ],
+          });
+          expect(fs.readFileSync(counter, "utf8").trim()).toBe("4");
         },
       );
     });

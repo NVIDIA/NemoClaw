@@ -848,14 +848,14 @@ describe("agents/hermes/start.sh port validation", () => {
     expect(invalidOverride.stderr).toContain("Invalid NEMOCLAW_DASHBOARD_PORT");
   });
 
-  it("keeps the in-browser Hermes TUI opt-in", () => {
+  it("keeps the managed dashboard isolated and its in-browser Hermes TUI opt-in", () => {
     const defaultArgs = runHermesDashboardArgs();
     expect(defaultArgs.status).toBe(0);
     expect(defaultArgs.stdout.split("\n")).not.toContain("--tui");
 
     const optInArgs = runHermesDashboardArgs("1");
     expect(optInArgs.status).toBe(0);
-    expect(optInArgs.stdout.split("\n")).toContain("--tui");
+    expect(optInArgs.stdout.split("\n")).toEqual(expect.arrayContaining(["--isolated", "--tui"]));
   });
 
   it("rejects cross-collisions between API and dashboard ports", () => {

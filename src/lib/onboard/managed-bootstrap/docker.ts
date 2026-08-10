@@ -395,9 +395,13 @@ function assertImage(
   }
   const expectedReference = expectedImageReference(image.repository, image.manifestDigest);
   const configuredImage = String(inspect.Config?.Image ?? "").trim();
-  if (configuredImage !== expectedReference) {
+  // OpenShell's Docker driver creates the sandbox from the inspected immutable image ID, so
+  // Docker records that ID in Config.Image. NemoClaw-created replacements retain the exact
+  // repository@manifestDigest instead. Accept only those two immutable spellings; the image
+  // inspection below still proves that the reviewed manifest resolves to this runtime content.
+  if (configuredImage !== expectedReference && configuredImage !== runtimeContentId) {
     throw new Error(
-      "Managed bootstrap Docker configured image is not the exact repository@manifestDigest.",
+      "Managed bootstrap Docker configured image is neither the exact repository@manifestDigest nor its immutable runtime content ID.",
     );
   }
   const imageOutput = deps.dockerCapture(["image", "inspect", expectedReference], {

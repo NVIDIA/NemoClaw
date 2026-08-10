@@ -73,6 +73,16 @@ describe("Docker host advisories (#3213)", () => {
     expect(result.advisories.map((advisory) => advisory.id)).toEqual(["invalid_docker_host"]);
   });
 
+  it("reports an invalid DOCKER_HOST in WSL before runtime reachability guidance (#7411)", () => {
+    const result = runAdvisories(
+      DOCKER_HOST_ADVISORY_CHECKS,
+      host({ isWsl: true, dockerHostInvalid: true }),
+      { phase: "preflight.host" },
+    );
+
+    expect(result.advisories.map((advisory) => advisory.id)).toEqual(["invalid_docker_host"]);
+  });
+
   it("re-evaluates Docker state on resume", () => {
     const context = host({ dockerInstalled: false });
     const cachedResults = new Map([["install_docker", null]]);

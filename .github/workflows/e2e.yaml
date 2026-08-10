@@ -15,7 +15,7 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated E2E test IDs. On trusted main runs, empty jobs and targets select every workflow E2E except Exact staging Brev Launchable; set include_staging_brev_launchable to include it. PR revision runs use the trusted controller target matrix and exclude Launchable."
+        description: "Optional comma-separated E2E test IDs. Empty selectors choose the default suite. Set include_staging_brev_launchable for Launchable. Jetson and DGX Spark require their queue flags. PR revisions use the trusted controller matrix."
         required: false
         default: ""
         type: string
@@ -34,7 +34,12 @@ on:
           - internal-nvidia
           - public-nvidia
       allow_jetson_runner_queue:
-        description: "Repository administrators only: before setting true for jetson-nvmap-gpu, confirm an online Jetson runner in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory; queued jobs do not honor timeout-minutes before assignment."
+        description: "Before setting true for jetson-nvmap-gpu, obtain repository administrator confirmation of an online Jetson runner in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory; queued jobs do not honor timeout-minutes before assignment."
+        required: false
+        default: false
+        type: boolean
+      allow_dgx_spark_runner_queue:
+        description: "Before setting true for llama-cpp-dgx-spark-qualification, obtain repository administrator confirmation of an online DGX Spark runner in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory; queued jobs do not honor timeout-minutes before assignment."
         required: false
         default: false
         type: boolean
@@ -168,9 +173,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test_matrix='[]'
           case "${JOBS}:${TARGETS}" in
             :)
               matrix='[{"id":"ubuntu-policy-custom-missing-presets-negative","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-openclaw","runner":"ubuntu-latest"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest"}]'
+              test_matrix='[{"id":"onboard-managed-image-buildless-e2e","file":"test/onboard-managed-image-buildless-e2e.test.ts","project":"integration"},{"id":"vllm-docker-storage","file":"test/vllm-docker-storage.test.ts","project":"integration"}]'
               ;;
             managed-image-protected-runtime:)
               matrix='[]'
@@ -190,6 +197,7 @@ jobs:
               ;;
           esac
           printf 'matrix=%s\n' "${matrix}" >> "${GITHUB_OUTPUT}"
+          printf 'test_matrix=%s\n' "${test_matrix}" >> "${GITHUB_OUTPUT}"
 
       - id: runner_routing
         name: Build trusted larger-runner routing
@@ -291,6 +299,69 @@ jobs:
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR head repository" >&2; exit 1; }
           [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR head SHA" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base SHA" >&2; exit 1; }
+
+      - name: Record trusted E2E dispatch receipt
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          ALLOW_DGX_SPARK_RUNNER_QUEUE: ${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}
+          ALLOW_JETSON_RUNNER_QUEUE: ${{ inputs.allow_jetson_runner_queue && 'true' || 'false' }}
+          BASE_SHA: ${{ inputs.checkout_sha != '' && inputs.base_sha || github.sha }}
+          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          DISPATCH_JOBS: ${{ inputs.jobs }}
+          DISPATCH_RECEIPT_DIR: ${{ runner.temp }}/nemoclaw-e2e-dispatch
+          DISPATCH_TARGETS: ${{ inputs.targets }}
+          EVENT_NAME: ${{ github.event_name }}
+          INCLUDE_STAGING_BREV_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
+          PR_NUMBER: ${{ inputs.checkout_sha != '' && inputs.pr_number || '' }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$DISPATCH_RECEIPT_DIR"
+          jq -n \
+            --arg baseSha "$BASE_SHA" \
+            --arg candidateRepository "$CANDIDATE_REPOSITORY" \
+            --arg candidateSha "$CANDIDATE_SHA" \
+            --arg eventName "$EVENT_NAME" \
+            --arg jobs "$DISPATCH_JOBS" \
+            --arg prNumber "$PR_NUMBER" \
+            --arg repository "$REPOSITORY" \
+            --arg targets "$DISPATCH_TARGETS" \
+            --arg workflowRunId "$RUN_ID" \
+            --arg workflowSha "$WORKFLOW_SHA" \
+            --argjson allowDgxSparkRunnerQueue "$ALLOW_DGX_SPARK_RUNNER_QUEUE" \
+            --argjson allowJetsonRunnerQueue "$ALLOW_JETSON_RUNNER_QUEUE" \
+            --argjson includeStagingBrevLaunchable "$INCLUDE_STAGING_BREV_LAUNCHABLE" \
+            --argjson workflowRunAttempt "$RUN_ATTEMPT" \
+            '{
+              kind: "nemoclaw-e2e-dispatch-v2",
+              repository: $repository,
+              prNumber: (if $prNumber == "" then null else ($prNumber | tonumber) end),
+              candidateRepository: $candidateRepository,
+              candidateSha: $candidateSha,
+              baseSha: $baseSha,
+              workflowSha: $workflowSha,
+              workflowRunId: $workflowRunId,
+              workflowRunAttempt: $workflowRunAttempt,
+              eventName: $eventName,
+              jobs: $jobs,
+              targets: $targets,
+              allowDgxSparkRunnerQueue: $allowDgxSparkRunnerQueue,
+              allowJetsonRunnerQueue: $allowJetsonRunnerQueue,
+              includeStagingBrevLaunchable: $includeStagingBrevLaunchable,
+              emptySelectors: ($jobs == "" and $targets == "")
+            }' >"$DISPATCH_RECEIPT_DIR/dispatch.json"
+
+      - name: Upload trusted E2E dispatch receipt
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-dispatch-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nemoclaw-e2e-dispatch/dispatch.json
 
       - name: Authorize Launchable E2E maintainer dispatch
         if: ${{ github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}
@@ -543,6 +614,7 @@ jobs:
         env:
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
           CONTROLLER_MATRIX: ${{ steps.controller_matrix.outputs.matrix }}
+          CONTROLLER_TEST_MATRIX: ${{ steps.controller_matrix.outputs.test_matrix }}
           INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
           JOBS: ${{ inputs.jobs }}
           TARGETS: ${{ inputs.targets }}
@@ -553,56 +625,16 @@ jobs:
             matrix="$(sed -n 's/^matrix=//p' "${GITHUB_OUTPUT}")"
             expected_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${CONTROLLER_MATRIX}")"
             actual_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${matrix}")"
-            if [ "${actual_controller_matrix}" != "${expected_controller_matrix}" ]; then
+            test_matrix="$(sed -n 's/^test_matrix=//p' "${GITHUB_OUTPUT}")"
+            expected_controller_test_matrix="$(jq -c 'map({id, file, project}) | sort_by(.id)' <<< "${CONTROLLER_TEST_MATRIX}")"
+            actual_controller_test_matrix="$(jq -c 'map({id, file, project}) | sort_by(.id)' <<< "${test_matrix}")"
+            if [ "${actual_controller_matrix}" != "${expected_controller_matrix}" ] ||
+              [ "${actual_controller_test_matrix}" != "${expected_controller_test_matrix}" ]; then
               : > "${GITHUB_OUTPUT}"
-              echo "::error::E2E planner matrix does not match controller-selected targets" >&2
+              echo "::error::E2E planner matrix does not match controller-selected targets or shared tests" >&2
               exit 1
             fi
           fi
-
-      - name: Record trusted E2E dispatch receipt
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        env:
-          ALLOW_JETSON_RUNNER_QUEUE: ${{ inputs.allow_jetson_runner_queue && 'true' || 'false' }}
-          CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
-          DISPATCH_JOBS: ${{ inputs.jobs }}
-          DISPATCH_RECEIPT_DIR: ${{ runner.temp }}/nemoclaw-e2e-dispatch
-          DISPATCH_TARGETS: ${{ inputs.targets }}
-          EVENT_NAME: ${{ github.event_name }}
-          INCLUDE_STAGING_BREV_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          install -d -m 0700 "$DISPATCH_RECEIPT_DIR"
-          jq -n \
-            --arg candidateSha "$CANDIDATE_SHA" \
-            --arg eventName "$EVENT_NAME" \
-            --arg jobs "$DISPATCH_JOBS" \
-            --arg targets "$DISPATCH_TARGETS" \
-            --arg workflowRunId "$RUN_ID" \
-            --argjson allowJetsonRunnerQueue "$ALLOW_JETSON_RUNNER_QUEUE" \
-            --argjson includeStagingBrevLaunchable "$INCLUDE_STAGING_BREV_LAUNCHABLE" \
-            --argjson workflowRunAttempt "$RUN_ATTEMPT" \
-            '{
-              kind: "nemoclaw-e2e-dispatch-v1",
-              candidateSha: $candidateSha,
-              eventName: $eventName,
-              workflowRunId: $workflowRunId,
-              workflowRunAttempt: $workflowRunAttempt,
-              jobs: $jobs,
-              targets: $targets,
-              allowJetsonRunnerQueue: $allowJetsonRunnerQueue,
-              includeStagingBrevLaunchable: $includeStagingBrevLaunchable,
-              emptySelectors: ($jobs == "" and $targets == "")
-            }' >"$DISPATCH_RECEIPT_DIR/dispatch.json"
-
-      - name: Upload trusted E2E dispatch receipt
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-        with:
-          name: e2e-dispatch-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/nemoclaw-e2e-dispatch/dispatch.json
 
   retired-selector-compatibility:
     needs: generate-matrix
@@ -994,7 +1026,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.85"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.101"
       DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1079,7 +1111,7 @@ jobs:
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
@@ -1332,12 +1364,12 @@ jobs:
             jq -n '{
               schemaVersion: 1,
               sourceRepository: "NVIDIA/OpenShell",
-              releaseTag: "v0.0.85",
-              sourceSha: "3dee5570a46076a57a3b056f35f35ebc0861ac85",
+              releaseTag: "v0.0.101",
+              sourceSha: "8ddd98c3dff62619a3963f99ba1e055b67650e72",
               artifacts: {
-                cli: {binarySha256: "222d9d53a142691d7a7de2c692f38e52d24066f9f633d53746c5fef775861bc8"},
-                gateway: {binarySha256: "33bb479d936c3c1b17dd475df05747be9de74564fb67d69a4c33cdd01181d02f"},
-                standaloneSandbox: {binarySha256: "863ef21ab7ef623f5e7a8728c4e5532b46bfbae3ace3b800665a1c6353a1f7d2"}
+                cli: {binarySha256: "1ad48efd5e1de8f3f017a81b3a7177872f350343a1a8d8074c7e844bca4801e9"},
+                gateway: {binarySha256: "a6a5d754605a2144b148637b85a09291d2eeb77e08a4ee34b83685c6920448f5"},
+                standaloneSandbox: {binarySha256: "a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920"}
               }
             }' > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
           fi
@@ -1401,7 +1433,7 @@ jobs:
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1453,12 +1485,12 @@ jobs:
           jq -n '{
             schemaVersion: 1,
             sourceRepository: "NVIDIA/OpenShell",
-            releaseTag: "v0.0.85",
-            sourceSha: "3dee5570a46076a57a3b056f35f35ebc0861ac85",
+            releaseTag: "v0.0.101",
+            sourceSha: "8ddd98c3dff62619a3963f99ba1e055b67650e72",
             artifacts: {
-              cli: {binarySha256: "222d9d53a142691d7a7de2c692f38e52d24066f9f633d53746c5fef775861bc8"},
-              gateway: {binarySha256: "33bb479d936c3c1b17dd475df05747be9de74564fb67d69a4c33cdd01181d02f"},
-              standaloneSandbox: {binarySha256: "863ef21ab7ef623f5e7a8728c4e5532b46bfbae3ace3b800665a1c6353a1f7d2"}
+              cli: {binarySha256: "1ad48efd5e1de8f3f017a81b3a7177872f350343a1a8d8074c7e844bca4801e9"},
+              gateway: {binarySha256: "a6a5d754605a2144b148637b85a09291d2eeb77e08a4ee34b83685c6920448f5"},
+              standaloneSandbox: {binarySha256: "a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920"}
             }
           }' > "$E2E_ARTIFACT_DIR/openshell-credential-generation-window/openshell-exact-main-provenance.json"
 
@@ -1715,7 +1747,7 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-skill-cli"
+      NEMOCLAW_SANDBOX_NAME: "e2e-oc-skill-cli"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1891,6 +1923,7 @@ jobs:
       E2E_JOB: "1"
       E2E_TARGET_ID: "gpu-e2e"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/gpu-e2e
+      E2E_LLAMA_CPP_DEDICATED_LANE: "1"
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
@@ -1945,6 +1978,72 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
+  llama-cpp-generic-gpu:
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',llama-cpp-generic-gpu,') || contains(format(',{0},', inputs.targets), ',llama-cpp-generic-gpu,') }}
+    runs-on: linux-amd64-gpu-rtxpro6000-latest-1
+    timeout-minutes: 120
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: "llama-cpp-generic-gpu"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-generic-gpu
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
+      NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ inputs.checkout_sha || github.sha }}
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_PROVIDER: "install-llama-cpp"
+      NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-llamacpp-gpu"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
+      - name: Install OpenShell CLI
+        run: bash scripts/install-openshell.sh
+
+      - name: Run generic NVIDIA GPU llama.cpp live test
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          "$OPENSHELL_BIN" --version
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/llama-cpp-generic-gpu.test.ts
+
+      - name: Upload generic NVIDIA GPU llama.cpp artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   # Every main push runs this lane. Manual PR qualification also requires the
   # exact candidate activation contract.
   managed-image-multiarch-startup:
@@ -1971,6 +2070,7 @@ jobs:
       E2E_TARGET_ID: "managed-image-multiarch-startup"
       RELEASE_E2E_ACTIVATION_PATH: ci/protected-managed-image-multiarch-activation-v1.json
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_HEAD_SHA: ${{ inputs.checkout_sha || github.sha }}
       NEMOCLAW_E2E_SHARD: ${{ matrix.shard }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE: ${{ github.workspace }}/.protected-managed-image-build-cache/${{ matrix.shard }}
@@ -2292,7 +2392,7 @@ jobs:
   llama-cpp-dgx-spark-plan:
     name: Compile protected llama.cpp DGX Spark plan
     needs: generate-matrix
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,')) }}
+    if: ${{ inputs.allow_dgx_spark_runner_queue && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -2374,12 +2474,12 @@ jobs:
             scripts/checks/export-llama-cpp-dgx-spark-qualification-plan.mts \
             --source-root "$CANDIDATE_ROOT"
 
-  # Every main push evaluates the trusted llama.cpp plan. Qualification runs
-  # only when that plan reports execution=enabled.
+  # The opt-in flag prevents assignment to an unavailable DGX Spark runner.
+  # Qualification runs only when the trusted plan reports execution=enabled.
   llama-cpp-dgx-spark-qualification:
     name: Protected llama.cpp on NVIDIA DGX Spark
     needs: [generate-matrix, llama-cpp-dgx-spark-plan]
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,')) && needs.llama-cpp-dgx-spark-plan.outputs.execution == 'enabled' }}
+    if: ${{ inputs.allow_dgx_spark_runner_queue && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',llama-cpp-dgx-spark-qualification,') || contains(format(',{0},', inputs.targets), ',llama-cpp-dgx-spark-qualification,')) && needs.llama-cpp-dgx-spark-plan.outputs.execution == 'enabled' }}
     runs-on: ${{ needs.llama-cpp-dgx-spark-plan.outputs.runner }}
     environment:
       name: ${{ needs.llama-cpp-dgx-spark-plan.outputs.environment }}
@@ -2393,6 +2493,7 @@ jobs:
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
       NEMOCLAW_E2E_SHARD: linux-arm64-gpu-dgx-spark-gb10
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
+      NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ inputs.checkout_sha || github.sha }}
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_CANDIDATE_ROOT: ${{ github.workspace }}/.candidate-llama-cpp
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_EVIDENCE: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-dgx-spark-qualification/evidence.json
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN: ${{ github.workspace }}/.llama-cpp-qualification/plan.json
@@ -2546,21 +2647,25 @@ jobs:
   # Every main push runs this lane after managed-image startup succeeds. Manual
   # PR qualification requires the exact candidate activation contract. Its
   # hosted amd64 prerequisite exports the exact candidate build cache.
-  # exact candidate build cache; this GPU lane imports it and rebuilds with
-  # BuildKit networking disabled so a cache miss fails closed.
+  # This GPU lane imports the exact candidate build cache and its complete
+  # locked npm cache seed, then rebuilds with BuildKit networking disabled.
   # invalidState: Cold managed-image builds on the protected GPU runner can
   # stall in npm and terminate with "Exit handler never called!" before any
   # GPU, Ollama, NIM, or vLLM assertion executes.
-  # sourceBoundary: The hosted amd64 lane builds the same exact candidate and
-  # exports only BuildKit cache records; the GPU lane verifies that complete
-  # all-agent cache and rebuilds with network access disabled.
-  # whyNotSourceFix: The root cause is unverified. Protected run 31012875592
-  # failed twice during npm install before qualification while hosted builds of
-  # the same candidate passed; the protected runner infrastructure is not owned
-  # by this change. Evidence: https://github.com/NVIDIA/NemoClaw/actions/runs/31012875592
-  # regressionTest: The build-script behavior test proves required cache paths
-  # and metadata, symlink rejection, and exact --cache-from/--network none
-  # Docker arguments; workflow boundary tests pin the producer/consumer handoff.
+  # sourceBoundary: The hosted amd64 lane builds the exact candidate. It adds
+  # every reachable Linux x64 glibc registry archive from the candidate
+  # lockfile to the same-run cache artifact. The GPU lane verifies the manifest,
+  # lock digest, archive set, and
+  # each SHA-512 integrity before the candidate build can consume the seed.
+  # BuildKit records can accelerate the rebuild, while the seed makes a missing
+  # npm layer reproducible without weakening the fail-closed network boundary.
+  # whyNotBuildCacheOnly: Protected runs 31156103003, 31158136234, and
+  # 31159822518 proved that network-key drift and incomplete local cache exports
+  # can miss the npm layer before runtime qualification.
+  # regressionTest: The materializer and build-script behavior tests reject an
+  # incomplete, substituted, unexpected, or symlinked archive handoff and pin
+  # exact --cache-from/--network none arguments. Workflow boundary tests pin the
+  # same-run cache artifact.
   # lifecycleDecision: PR #8261 owns removal after three consecutive protected
   # GPU cold builds of all three images reach GPU, Ollama, NIM, and vLLM
   # assertions without the hosted cache.
@@ -2579,7 +2684,9 @@ jobs:
       E2E_WORKLOAD_SOURCE: "managed-image"
       RELEASE_E2E_ACTIVATION_PATH: ci/protected-managed-image-runtime-activation-v1.json
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
       NEMOCLAW_E2E_SHARD: linux-amd64-gpu
+      NEMOCLAW_E2E_TESTED_ROOT: ${{ github.workspace }}/.candidate-runtime
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE: ${{ github.workspace }}/.protected-managed-image-build-cache/linux-amd64
@@ -2781,7 +2888,7 @@ jobs:
             --cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" \
             --platform linux/amd64 \
             --source-root "$GITHUB_WORKSPACE/.candidate-runtime" \
-            --offline-cache "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE" \
+            --cache-from "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE" \
             --openclaw-base "$BASE_OPENCLAW" \
             --hermes-base "$BASE_HERMES" \
             --dcode-base "$BASE_DCODE"
@@ -2857,6 +2964,11 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       OPENSHELL_GATEWAY: "nemoclaw"
+      # Selects the shared E2E inference adapter's internal-nvidia mode
+      # (#5745) so this real-latency measurement always runs against a real
+      # hosted endpoint; the adapter defaults to hermetic `mock` otherwise,
+      # which the test now explicitly refuses to measure latency against.
+      NEMOCLAW_E2E_INFERENCE_MODE: "internal-nvidia"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_PROVIDER: custom
       NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
@@ -3003,7 +3115,7 @@ jobs:
       matrix:
         include:
           - mode: anthropic
-            sandbox_name: e2e-hermes-anthropic-inference-switch
+            sandbox_name: e2e-hm-inf-switch
             switch_provider: compatible-anthropic-endpoint
             switch_model: mock-anthropic-model
             switch_inference_api: anthropic-messages
@@ -3355,7 +3467,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-dashboard-remote-bind"
+      NEMOCLAW_SANDBOX_NAME: "e2e-dashboard-bind"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -3404,7 +3516,7 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-sessions-agents-cli"
+      NEMOCLAW_SANDBOX_NAME: "e2e-sessions-cli"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -3611,8 +3723,11 @@ jobs:
       matrix:
         include:
           - scenario: native
+            sandbox_name: e2e-hgpu-native
           - scenario: fallback
+            sandbox_name: e2e-hgpu-fallback
           - scenario: compatibility-only
+            sandbox_name: e2e-hgpu-compat
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-gpu-startup"
@@ -3626,7 +3741,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_SANDBOX_GPU: "1"
-      NEMOCLAW_SANDBOX_NAME: e2e-hermes-gpu-startup-${{ matrix.scenario }}
+      NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
       NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -3972,7 +4087,7 @@ jobs:
         include:
           - scenario: live-probes
             selector: "^network-policy:.+probes$"
-            sandbox: e2e-net-policy-live-probes
+            sandbox: e2e-net-policy
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "network-policy"
@@ -4516,7 +4631,7 @@ jobs:
       NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
       NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
       NEMOCLAW_PREFERRED_API: openai-completions
-      NEMOCLAW_SANDBOX_NAME: e2e-rebuild-hermes-base
+      NEMOCLAW_SANDBOX_NAME: e2e-rebuild-base
       OPENSHELL_GATEWAY: nemoclaw
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -4803,11 +4918,9 @@ jobs:
 
   jetson-nvmap-gpu:
     needs: generate-matrix
-    # Every main push queues the repository-owned Jetson runner. GitHub starts
-    # timeout-minutes only after runner assignment. Maintainers must keep the
-    # configured runner label online.
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}
-    runs-on: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '') || inputs.allow_jetson_runner_queue) && (vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1') || 'ubuntu-latest' }}
+    # The opt-in flag prevents assignment to an unavailable Jetson runner.
+    if: ${{ inputs.allow_jetson_runner_queue && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}
+    runs-on: ${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}
     timeout-minutes: 60
     env:
       E2E_JOB: "1"
@@ -4827,18 +4940,6 @@ jobs:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
-
-      - name: Guard Jetson runner dispatch
-        if: ${{ github.event_name == 'workflow_dispatch' && (inputs.jobs != '' || inputs.targets != '') && !inputs.allow_jetson_runner_queue }}
-        env:
-          JETSON_E2E_RUNNER_LABEL: ${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}
-        run: |
-          set -euo pipefail
-          echo "::error::jetson-nvmap-gpu was selected without allow_jetson_runner_queue=true."
-          echo "::error::GitHub Actions does not apply timeout-minutes while a self-hosted job is queued before runner assignment."
-          echo "::error::A repository administrator must confirm the runner is online in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory before enabling queueing."
-          echo "::error::Confirm an online runner with label ${JETSON_E2E_RUNNER_LABEL}, then re-run with allow_jetson_runner_queue=true."
-          exit 1
 
       - *dockerhub-auth
 
@@ -5081,10 +5182,10 @@ jobs:
       matrix:
         include:
           - agent: openclaw
-            sandbox_name: e2e-openclaw-security-posture
+            sandbox_name: e2e-oc-security
             test_file: test/e2e/live/full-e2e.test.ts
           - agent: hermes
-            sandbox_name: e2e-hermes-security-posture
+            sandbox_name: e2e-hm-security
             test_file: test/e2e/live/hermes-e2e.test.ts
     env:
       E2E_JOB: "1"
@@ -5095,9 +5196,7 @@ jobs:
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: ${{ matrix.agent }}
-      # Legacy-parity contract: enforce a non-root host user. PID 1 must stay
-      # root long enough to step down child processes, so its uid, bounding
-      # set, and NoNewPrivs remain evidence unless an opt-in expectation is set.
+      NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS: "1"
       NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1"
       NEMOCLAW_E2E_SECURITY_POSTURE: "1"
       NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
@@ -5139,6 +5238,11 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
@@ -5309,7 +5413,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_MODEL: "qwen3.5:9b"
-      NEMOCLAW_SANDBOX_NAME: "e2e-gpu-double-onboard"
+      NEMOCLAW_SANDBOX_NAME: "e2e-gpu-double"
       NEMOCLAW_PROVIDER: "ollama"
       NEMOCLAW_OLLAMA_PROXY_PORT: "11435"
     steps:
@@ -5660,7 +5764,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gateway-upgrade-survivor"
+      NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gw-survivor"
       NEMOCLAW_OLD_NEMOCLAW_REF: ${{ matrix.nemoclaw_ref }}
       NEMOCLAW_OLD_NEMOCLAW_COMMIT: ${{ matrix.nemoclaw_commit }}
       NEMOCLAW_OLD_INSTALLER_SHA256: ${{ matrix.installer_sha256 }}
@@ -6066,7 +6170,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-plugin-exdev-release"
+      NEMOCLAW_SANDBOX_NAME: "e2e-oc-exdev-rel"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -6138,7 +6242,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-plugin-exdev"
+      NEMOCLAW_SANDBOX_NAME: "e2e-oc-exdev"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -6373,7 +6477,7 @@ jobs:
       matrix:
         include:
           - mode: anthropic
-            sandbox_name: e2e-openclaw-anthropic-inference-switch
+            sandbox_name: e2e-oc-inf-switch
             switch_provider: compatible-anthropic-endpoint
             switch_model: mock-anthropic-model
             switch_inference_api: anthropic-messages
@@ -6442,7 +6546,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        agent: [openclaw, hermes]
+        include:
+          - agent: openclaw
+            sandbox_name: e2e-oc-bedrock
+          - agent: hermes
+            sandbox_name: e2e-hm-bedrock
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "bedrock-runtime-compatible-anthropic"
@@ -6454,7 +6562,7 @@ jobs:
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_AGENT: ${{ matrix.agent }}
       NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
-      NEMOCLAW_SANDBOX_NAME: e2e-bedrock-${{ matrix.agent }}
+      NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - id: trusted_hermes_swap
@@ -6592,7 +6700,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-channels-add-remove"
+      NEMOCLAW_SANDBOX_NAME: "e2e-ch-add-remove"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -6669,7 +6777,7 @@ jobs:
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-telegram-injection"
+      NEMOCLAW_SANDBOX_NAME: "e2e-tg-injection"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -6736,7 +6844,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        agent: [openclaw, hermes]
+        include:
+          - agent: openclaw
+            sandbox_name: e2e-oc-ch-cycle
+          - agent: hermes
+            sandbox_name: e2e-hm-ch-cycle
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "channels-stop-start"
@@ -6749,7 +6861,7 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: ${{ matrix.agent }}
       NEMOCLAW_CHANNELS_STOP_START_AGENT: ${{ matrix.agent }}
-      NEMOCLAW_SANDBOX_NAME: e2e-channels-stop-start-${{ matrix.agent }}
+      NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - id: trusted_hermes_swap
@@ -6862,7 +6974,7 @@ jobs:
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-slack-pairing"
+      NEMOCLAW_SANDBOX_NAME: "e2e-oc-slack-pair"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -6999,7 +7111,7 @@ jobs:
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-discord-pairing"
+      NEMOCLAW_SANDBOX_NAME: "e2e-oc-disc-pair"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -7071,7 +7183,7 @@ jobs:
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-tunnel-lifecycle"
+      NEMOCLAW_SANDBOX_NAME: "e2e-tunnel-life"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -7140,6 +7252,45 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
+  whatsapp-qr-compact:
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',whatsapp-qr-compact,') || contains(format(',{0},', inputs.targets), ',whatsapp-qr-compact,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: "whatsapp-qr-compact"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/whatsapp-qr-compact
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Run WhatsApp compact QR code E2E test
+        run: |-
+          set -euo pipefail
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/whatsapp-qr-compact.test.ts
+
+      - name: Upload WhatsApp compact QR code artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
+
   spark-install:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',spark-install,') || contains(format(',{0},', inputs.targets), ',spark-install,') }}
@@ -7155,7 +7306,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_FRESH: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-spark-install-ci"
+      NEMOCLAW_SANDBOX_NAME: "e2e-spark-install"
       NEMOCLAW_PROVIDER: "cloud"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
@@ -7220,6 +7371,7 @@ jobs:
         inference-routing,
         cloud-inference,
         gpu-e2e,
+        llama-cpp-generic-gpu,
         managed-image-multiarch-startup,
         llama-cpp-dgx-spark-plan,
         llama-cpp-dgx-spark-qualification,
@@ -7279,6 +7431,7 @@ jobs:
         openclaw-discord-pairing,
         openclaw-slack-pairing,
         channels-stop-start,
+        whatsapp-qr-compact,
         spark-install,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' }}

@@ -4,7 +4,10 @@
 import { describe, expect, it } from "vitest";
 
 import { loadLlamaCppImageConfig } from "../scripts/checks/export-llama-cpp-image-config.mts";
-import { parseLlamaCppDgxSparkExecutionPlan } from "../scripts/checks/llama-cpp-dgx-spark-qualification-contract.mts";
+import {
+  LLAMA_CPP_DGX_SPARK_OPENCLAW_SANDBOX,
+  parseLlamaCppDgxSparkExecutionPlan,
+} from "../scripts/checks/llama-cpp-dgx-spark-qualification-contract.mts";
 import { runLlamaCppOpenClawAgentQualification } from "../scripts/checks/llama-cpp-openclaw-agent-qualification.mts";
 import type { ManagedImageOpenShellE2eProbeContext } from "../scripts/checks/run-managed-image-openshell-e2e.ts";
 
@@ -31,7 +34,7 @@ function context(
       image: enabledConfig().image.reference,
       localProvider,
       model: "nvidia-nemotron-3-nano-30b-a3b",
-      sandbox: "nemoclaw-llama-cpp-openclaw",
+      sandbox: LLAMA_CPP_DGX_SPARK_OPENCLAW_SANDBOX,
     },
     runSandbox(argv) {
       invocations.push([...argv]);
