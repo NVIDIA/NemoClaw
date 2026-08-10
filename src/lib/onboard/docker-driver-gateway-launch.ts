@@ -12,6 +12,7 @@ import {
 } from "./docker-driver-gateway-compat";
 import {
   buildDockerDriverGatewayConfigToml,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   prepareDockerDriverGatewayConfigEnv,
 } from "./docker-driver-gateway-config";
 import {
@@ -114,6 +115,9 @@ function buildGatewayProcessEnv(
   if (!("OPENSHELL_DISABLE_GATEWAY_AUTH" in gatewayEnv)) {
     delete env.OPENSHELL_DISABLE_GATEWAY_AUTH;
   }
+  if (!(NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV in gatewayEnv)) {
+    delete env[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV];
+  }
   return env;
 }
 
@@ -177,6 +181,7 @@ export function buildDockerDriverGatewayRuntimeIdentity(
     ...Object.keys(options.gatewayEnv),
     "OPENSHELL_DOCKER_SUPERVISOR_BIN",
     "OPENSHELL_GATEWAY_CONFIG",
+    NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   ]);
   const desiredEnv = Object.fromEntries(
     Object.entries(launch.env).filter(

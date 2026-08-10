@@ -70,6 +70,18 @@ export function currentNemoclawUpgradeRef(env: NodeJS.ProcessEnv): string {
   return "HEAD";
 }
 
+export function throwGatewayUpgradeSetupFailures(
+  results: readonly PromiseSettledResult<unknown>[],
+): void {
+  const failures = results
+    .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+    .map((result) => result.reason);
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(failures, "legacy install and host mock firewall setup failed");
+  }
+}
+
 export function expectedLegacyRegistryMetadata(nemoclawRef: string): {
   nemoclawVersion: string | undefined;
   fromDockerfile: null | undefined;

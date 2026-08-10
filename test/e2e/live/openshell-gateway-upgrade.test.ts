@@ -39,6 +39,7 @@ import {
   type FakeOpenAiCompatibleServer,
   startFakeOpenAiCompatibleServer,
 } from "../fixtures/fake-openai-compatible.ts";
+import { registerOpenShellHostMockFirewall } from "../fixtures/host-mock-firewall.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -46,6 +47,7 @@ import {
   currentNemoclawUpgradeRef,
   expectedLegacyRegistryMetadata,
   oldGatewayUpgradeInstallerArgs,
+  throwGatewayUpgradeSetupFailures,
   upgradeGatewayCleanupScript,
   upgradeGatewayStateCleanupScript,
   validateLegacyGatewayUpgradeFixture,
@@ -71,7 +73,7 @@ const OLD_INSTALLER_SHA256 =
   process.env.NEMOCLAW_OLD_INSTALLER_SHA256 ??
   "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f";
 const OLD_OPENSHELL_VERSION = process.env.NEMOCLAW_OLD_OPENSHELL_VERSION ?? "0.0.36";
-const CURRENT_OPENSHELL_VERSION = process.env.NEMOCLAW_CURRENT_OPENSHELL_VERSION ?? "0.0.99";
+const CURRENT_OPENSHELL_VERSION = process.env.NEMOCLAW_CURRENT_OPENSHELL_VERSION ?? "0.0.101";
 const OLD_SANDBOX_BASE_IMAGE_REF =
   process.env.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF ??
   "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6";
@@ -1187,6 +1189,17 @@ runLinuxOpenShellGatewayUpgrade(
       requireAuthModels: OPENCLAW_STATE_UPGRADE_PROOF,
       responseText: "ok",
     });
+    let firewallSetup: ReturnType<typeof registerOpenShellHostMockFirewall>;
+    try {
+      firewallSetup = registerOpenShellHostMockFirewall({
+        cleanup,
+        host,
+        port: Number(new URL(fake.baseUrl).port),
+      });
+    } catch (error) {
+      await fake.close();
+      throw error;
+    }
     cleanup.add("close compatible endpoint mock", async () => {
       await artifacts.writeJson("fake-openai-compatible-requests.json", fake.requests());
       await fake.close();
@@ -1196,7 +1209,11 @@ runLinuxOpenShellGatewayUpgrade(
     });
 
     progress.phase("install pinned legacy NemoClaw and its sandbox");
-    await installOldNemoclawAndClaw(host, artifacts, fake.baseUrl);
+    const setupResults = await Promise.allSettled([
+      installOldNemoclawAndClaw(host, artifacts, fake.baseUrl),
+      firewallSetup.then((result) => artifacts.writeJson("host-mock-firewall.json", result)),
+    ]);
+    throwGatewayUpgradeSetupFailures(setupResults);
     const legacyStateContract = await captureOpenClawStateUpgradeProof(host, fake, artifacts);
     const hiddenOldOpenShellDir =
       OLD_NEMOCLAW_REF === "v0.0.55" ? await stageOldOpenShellInUserLocalBin(host) : undefined;

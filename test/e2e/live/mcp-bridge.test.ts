@@ -27,6 +27,11 @@ import {
   removeMcpBridgeWithOneConcurrencyRetry,
 } from "./mcp-bridge-cleanup.ts";
 import {
+  assertHermesMcpHttpResponse,
+  buildHermesMcpChatProbeScript,
+  HERMES_MCP_FAILURE_CAPTURE_BYTES,
+} from "./mcp-bridge-hermes-http.ts";
+import {
   assertHermesConfig,
   assertHermesInspectionRejectsUnmanagedFields,
   assertHermesManagedAddSurvivesLockedGatewayRestartAndStateLayout,
@@ -537,6 +542,17 @@ async function assertRealAdapterToolCall(
     messages: [{ role: "user", content: prompt }],
     max_tokens: 256,
   });
+  // ShellProbe redacts these values before it returns command output or writes
+  // artifacts. The HTTP assertion redacts them again before Vitest formats a
+  // bounded failure preview.
+  const hermesRedactionValues = [
+    HOST_SECRET,
+    ROTATED_HOST_SECRET,
+    COMPATIBLE_KEY,
+    TOOL_CHALLENGE,
+    prompt,
+    hermesPayload,
+  ];
   const command =
     options.agent === "openclaw"
       ? `nemoclaw-start mcporter call fake.fake_echo --args ${JSON.stringify(JSON.stringify({ challenge: TOOL_CHALLENGE }))} --output json`
@@ -545,7 +561,7 @@ async function assertRealAdapterToolCall(
             "set -a",
             "[ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env",
             "set +a",
-            `if [ -n "\${API_SERVER_KEY:-}" ]; then curl -fsS --max-time 180 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY}" --data-binary ${shellQuote(hermesPayload)}; else curl -fsS --max-time 180 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' --data-binary ${shellQuote(hermesPayload)}; fi`,
+            buildHermesMcpChatProbeScript(hermesPayload, options.resultToken),
           ].join("\n")
         : `nemoclaw-start dcode -n ${JSON.stringify(prompt)}`;
   const result = await sandbox.execShell(
@@ -554,11 +570,19 @@ async function assertRealAdapterToolCall(
     {
       artifactName: options.artifactName,
       env: buildAvailabilityProbeEnv(),
+      captureLimitBytes: options.agent === "hermes" ? HERMES_MCP_FAILURE_CAPTURE_BYTES : undefined,
+      redactionValues: options.agent === "hermes" ? hermesRedactionValues : [],
       timeoutMs: 5 * 60_000,
     },
   );
-  expectExitZero(result, `${options.agent} real MCP tool call`);
-  expect(resultText(result)).toContain(options.resultToken);
+  const assertResponse =
+    options.agent === "hermes"
+      ? () => assertHermesMcpHttpResponse(result, hermesRedactionValues)
+      : () => {
+          expectExitZero(result, `${options.agent} real MCP tool call`);
+          expect(resultText(result)).toContain(options.resultToken);
+        };
+  assertResponse();
   const calls = fakeMcp.requests.filter((request) => request.rpcMethod === "tools/call");
   expect(calls).toHaveLength(before + 1);
   expect(calls.at(-1)).toMatchObject({
