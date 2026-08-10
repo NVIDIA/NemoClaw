@@ -46,6 +46,7 @@ import {
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   expectedLegacyRegistryMetadata,
+  legacyGatewayUpgradeDockerNetwork,
   oldGatewayUpgradeInstallerArgs,
   throwGatewayUpgradeSetupFailures,
   upgradeGatewayCleanupScript,
@@ -1194,6 +1195,7 @@ runLinuxOpenShellGatewayUpgrade(
       firewallSetup = registerOpenShellHostMockFirewall({
         cleanup,
         host,
+        networkName: legacyGatewayUpgradeDockerNetwork(OLD_NEMOCLAW_REF),
         port: Number(new URL(fake.baseUrl).port),
       });
     } catch (error) {

@@ -7,7 +7,7 @@
  * Rebuild decision branches live in the direct rebuild-flow and focused source
  * suites. This file intentionally retains only behavior whose contract crosses
  * a process boundary: interactive stdin/exit, DCode liveness after a failed
- * preflight, child-environment secret handling, and the CLI exit status.
+ * preflight, and the CLI exit status.
  */
 
 import { spawnSync } from "node:child_process";
@@ -15,7 +15,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { execTimeout, testTimeout } from "./helpers/timeouts";
+import { execTimeout } from "./helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const NODE_BIN = path.dirname(process.execPath);
@@ -35,22 +35,14 @@ function createFixture(opts: {
   agent?: string | null;
   provider?: string;
   credentialEnv?: string;
-  savedCredential?: { key: string; value: string };
-  hermesAuthMethod?: string | null;
   providerRegistered?: boolean;
-  sandboxDeleteExitCode?: number;
-  activeSessionCount?: number | null;
   inferenceProbeHttpStatus?: number | null;
 }) {
   const {
     agent = null,
     provider = "nvidia-prod",
     credentialEnv = "NVIDIA_INFERENCE_API_KEY",
-    savedCredential,
-    hermesAuthMethod = null,
     providerRegistered = true,
-    sandboxDeleteExitCode = 0,
-    activeSessionCount = 0,
     inferenceProbeHttpStatus = null,
   } = opts;
   const sandboxName = "my-assistant";
@@ -76,7 +68,6 @@ function createFixture(opts: {
           fromDockerfile: null,
           policies: [],
           agent,
-          hermesAuthMethod,
           ...(agent === "langchain-deepagents-code"
             ? {
                 credentialEnv,
@@ -110,7 +101,6 @@ function createFixture(opts: {
       model: "meta/llama-3.3-70b-instruct",
       endpointUrl: null,
       credentialEnv,
-      hermesAuthMethod,
       preferredInferenceApi: null,
       nimContainer: null,
       webSearchConfig: null,
@@ -136,14 +126,6 @@ function createFixture(opts: {
     { mode: 0o600 },
   );
 
-  if (savedCredential) {
-    fs.writeFileSync(
-      path.join(nemoclawDir, "credentials.json"),
-      JSON.stringify({ [savedCredential.key]: savedCredential.value }),
-      { mode: 0o600 },
-    );
-  }
-
   const fakeRoot = path.join(tmpDir, "fake-sandbox-root");
   const workspaceDir = path.join(fakeRoot, "workspace");
   fs.mkdirSync(workspaceDir, { recursive: true });
@@ -160,13 +142,11 @@ function createFixture(opts: {
     "  StrictHostKeyChecking no",
     "  UserKnownHostsFile /dev/null",
   ].join("\\n");
-  const hermesProviderStatePath = path.join(tmpDir, "hermes-provider-credential-key");
   fs.writeFileSync(
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
 const fs = require("fs");
 const a = process.argv.slice(2);
-const hermesProviderStatePath = ${JSON.stringify(hermesProviderStatePath)};
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
 if (a[0] === "-V" || a[0] === "--version") { process.stdout.write("openshell 0.0.101\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "list") { process.stdout.write("${sandboxName} Ready\\n"); process.exit(0); }
@@ -179,12 +159,7 @@ if (a[0] === "sandbox" && a[1] === "get") {
   process.stdout.write("Sandbox: ${sandboxName}\\nPhase: Ready\\n");
   process.exit(0);
 }
-if (a[0] === "sandbox" && a[1] === "delete") { fs.writeFileSync(${JSON.stringify(deleteMarker)}, "deleted\\n"); process.exit(${sandboxDeleteExitCode}); }
-if (a[0] === "sandbox" && a[1] === "get") {
-  if (fs.existsSync(${JSON.stringify(deleteMarker)})) { process.stderr.write("sandbox ${sandboxName} not found\\n"); process.exit(1); }
-  process.stdout.write("${sandboxName} Ready\\n");
-  process.exit(0);
-}
+if (a[0] === "sandbox" && a[1] === "delete") { fs.writeFileSync(${JSON.stringify(deleteMarker)}, "deleted\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "exec") {
   const command = a.join(" ");
   if (command.includes("rebuild-atomicity-marker.txt")) {
@@ -206,25 +181,7 @@ if (a[0] === "gateway" && a[1] === "select") process.exit(0);
 if (a[0] === "inference" && a[1] === "get") { process.stdout.write("Gateway inference:\\n  Provider: ${provider}\\n  Model: meta/llama-3.3-70b-instruct\\n"); process.exit(0); }
 if (a[0] === "inference" && a[1] === "set") process.exit(0);
 if (a[0] === "provider" && a[1] === "get") {
-  const providerName = a[2];
-  const persistedHermes = providerName === "hermes-provider" && fs.existsSync(hermesProviderStatePath);
-  const exists = persistedHermes || ${providerRegistered ? "true" : "false"};
-  if (!exists) process.exit(1);
-  if (providerName === "hermes-provider") {
-    const credentialKey = persistedHermes
-      ? fs.readFileSync(hermesProviderStatePath, "utf8").trim()
-      : ${JSON.stringify(hermesAuthMethod === "api_key" ? "NOUS_API_KEY" : "OPENAI_API_KEY")};
-    process.stdout.write("Provider:\\n  Name: hermes-provider\\n  Credential keys: " + credentialKey + "\\n");
-  }
-  process.exit(0);
-}
-if (a[0] === "provider" && (a[1] === "create" || a[1] === "update")) {
-  const nameIndex = a.indexOf("--name");
-  const providerName = a[1] === "create" ? a[nameIndex + 1] : a[2];
-  const credentialIndex = a.indexOf("--credential");
-  if (providerName === "hermes-provider" && credentialIndex >= 0) {
-    fs.writeFileSync(hermesProviderStatePath, a[credentialIndex + 1]);
-  }
+  if (!${providerRegistered ? "true" : "false"}) process.exit(1);
   process.exit(0);
 }
 if (a[0] === "provider") process.exit(0);
@@ -247,19 +204,9 @@ process.exit(0);
     );
   }
 
-  const activeSessionLines = Array.from(
-    { length: activeSessionCount ?? 0 },
-    (_, index) => `${9000 + index} ssh openshell-${sandboxName}.default`,
-  ).join("\n");
-  fs.writeFileSync(
-    path.join(tmpDir, "ps"),
-    `#!/usr/bin/env node
-if (${activeSessionCount === null ? "true" : "false"}) process.exit(1);
-process.stdout.write(${JSON.stringify(activeSessionLines)} + (${JSON.stringify(activeSessionLines)} ? "\\n" : ""));
-process.exit(0);
-`,
-    { mode: 0o755 },
-  );
+  fs.writeFileSync(path.join(tmpDir, "ps"), "#!/usr/bin/env node\nprocess.exit(0);\n", {
+    mode: 0o755,
+  });
 
   fs.writeFileSync(
     path.join(tmpDir, "docker"),
@@ -393,45 +340,6 @@ describe("atomic rebuild process contracts (#2273)", () => {
     expect(registryHasSandbox(fixture)).toBe(true);
   });
 
-  it("accepts trimmed case-insensitive yes input before continuing into backup", {
-    timeout: testTimeout(60_000),
-  }, () => {
-    const fixture = createFixture({
-      savedCredential: {
-        key: "NVIDIA_INFERENCE_API_KEY",
-        value: "nvapi-test-key-for-rebuild",
-      },
-    });
-
-    const result = runRebuild(fixture, {}, { yes: false, input: " YES \n" });
-    const output = `${result.stderr || ""}${result.stdout || ""}`;
-
-    expect(output).toContain("Proceed? [y/N]:");
-    expect(output).not.toContain("Cancelled.");
-    expect(output).not.toContain("preflight failed");
-    expect(output).toContain("Backing up sandbox state");
-  });
-
-  it("prints an active SSH session warning before interactive confirmation and cancel", () => {
-    const fixture = createFixture({
-      activeSessionCount: 2,
-      savedCredential: {
-        key: "NVIDIA_INFERENCE_API_KEY",
-        value: "nvapi-test-key-for-rebuild",
-      },
-    });
-
-    const result = runRebuild(fixture, {}, { yes: false, input: "n\n" });
-    const output = `${result.stderr || ""}${result.stdout || ""}`;
-
-    expect(result.status, output).toBe(0);
-    expect(output).toContain("Active SSH sessions detected (2 connections)");
-    expect(output).toContain("terminate all active sessions with a Broken pipe error");
-    expect(output).toContain("Proceed? [y/N]:");
-    expect(output).toContain("Cancelled.");
-    expect(output).not.toContain("Backing up sandbox state");
-  });
-
   it("keeps a Ready DCode sandbox usable when its stored route returns 401 (#6195)", () => {
     const fixture = createFixture({
       agent: "langchain-deepagents-code",
@@ -464,39 +372,5 @@ describe("atomic rebuild process contracts (#2273)", () => {
     ]);
     expect(marker.status, marker.stderr).toBe(0);
     expect(marker.stdout).toContain("dcode-atomicity-marker");
-  });
-
-  it("registers an exported Hermes API key without exposing its name or value", {
-    timeout: testTimeout(60_000),
-  }, () => {
-    const fixture = createFixture({
-      agent: "hermes",
-      provider: "hermes-provider",
-      credentialEnv: "NOUS_API_KEY",
-      hermesAuthMethod: "api_key",
-      providerRegistered: false,
-      sandboxDeleteExitCode: 1,
-    });
-
-    const result = runRebuild(fixture, { NOUS_API_KEY: "nous-key-from-env" });
-    const output = `${result.stderr || ""}${result.stdout || ""}`;
-
-    expect(output).toContain(
-      "Hermes Provider is not registered in OpenShell; registering it from the configured exported API-key environment variable before rebuild.",
-    );
-    expect(output).not.toContain("NOUS_API_KEY");
-    expect(output).not.toContain("nous-key-from-env");
-    expect(output).toContain("Backing up sandbox state");
-    expect(output).toContain("State backed up");
-  });
-
-  it("returns a nonzero CLI status when credential preflight fails", () => {
-    const fixture = createFixture({ providerRegistered: false });
-
-    const result = runRebuild(fixture);
-
-    expect(result.status).not.toBe(0);
-    expect(fs.existsSync(fixture.deleteMarker)).toBe(false);
-    expect(registryHasSandbox(fixture)).toBe(true);
   });
 });

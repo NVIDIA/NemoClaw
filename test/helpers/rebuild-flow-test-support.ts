@@ -153,6 +153,7 @@ export type RebuildFlowHarness = {
     defaultSandbox: string | null;
     defaultSelectionRevision: number;
   };
+  registerHermesInferenceProviderSpy: MockInstance;
   releaseOnboardLockSpy: MockInstance;
   relockSpy: MockInstance;
   restoreSandboxStateSpy: MockInstance;
