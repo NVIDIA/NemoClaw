@@ -38,7 +38,23 @@ export type WaitForGatewayHttpReadyOpts = {
   sleeper?: (seconds: number) => void;
   maxAttempts?: number;
   intervalSeconds?: number;
+  /** Keep observation-only callers from initializing the onboard trace sink. */
+  recordTrace?: boolean;
 };
+
+export type GatewayHttpReadinessTraceOptions = {
+  /** Defaults to true so onboarding keeps its existing trace coverage. */
+  recordTrace?: boolean;
+};
+
+function withOptionalTraceSpan<T>(
+  options: GatewayHttpReadinessTraceOptions,
+  name: string,
+  attributes: Record<string, unknown>,
+  fn: () => T,
+): T {
+  return options.recordTrace === false ? fn() : withTraceSpan(name, attributes, fn);
+}
 
 /**
  * Resolve raw poll count and interval (seconds) for the reuse-time gateway
@@ -78,9 +94,13 @@ export function isGatewayHttpReady(
   url = `${getGatewayHttpEndpoint(GATEWAY_PORT)}/`,
   method: "GET" | "POST" = "GET",
   signal?: AbortSignal,
+  traceOptions: GatewayHttpReadinessTraceOptions = {},
 ): Promise<boolean> {
-  return withTraceSpan("nemoclaw.gateway.http_probe", { timeout_ms: timeoutMs, url, method }, () =>
-    isGatewayHttpReadyImpl(timeoutMs, url, method, signal),
+  return withOptionalTraceSpan(
+    traceOptions,
+    "nemoclaw.gateway.http_probe",
+    { timeout_ms: timeoutMs, url, method },
+    () => isGatewayHttpReadyImpl(timeoutMs, url, method, signal),
   );
 }
 
@@ -126,8 +146,10 @@ export function isDockerDriverGatewayHttpReady(
   timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
   url = `${getGatewayHttpsEndpoint(GATEWAY_PORT)}/openshell.v1.OpenShell/Health`,
   env: NodeJS.ProcessEnv = process.env,
+  traceOptions: GatewayHttpReadinessTraceOptions = {},
 ): Promise<boolean> {
-  return withTraceSpan(
+  return withOptionalTraceSpan(
+    traceOptions,
     "nemoclaw.gateway.docker_driver_http_probe",
     { timeout_ms: timeoutMs, url },
     () => isDockerDriverGatewayHttpReadyImpl(timeoutMs, url, env),
@@ -270,8 +292,14 @@ function dockerDriverGatewayHttp2ConnectOptions(
 export async function waitForGatewayHttpReady(
   opts: WaitForGatewayHttpReadyOpts = {},
 ): Promise<boolean> {
-  return withTraceSpan("nemoclaw.gateway.http_readiness_wait", {}, async () => {
-    const probe = opts.probe ?? (() => isGatewayHttpReady());
+  return withOptionalTraceSpan(opts, "nemoclaw.gateway.http_readiness_wait", {}, async () => {
+    const recordTrace = opts.recordTrace !== false;
+    const probe =
+      opts.probe ??
+      (() =>
+        isGatewayHttpReady(undefined, undefined, undefined, undefined, {
+          recordTrace,
+        }));
     const sleeper = opts.sleeper ?? sleepSeconds;
     const config = getGatewayReuseHealthWaitConfig();
     // Always probe at least once, even if the caller passed a non-positive
@@ -282,7 +310,12 @@ export async function waitForGatewayHttpReady(
     const maxAttempts = Number.isFinite(rawAttempts) ? Math.max(1, Math.round(rawAttempts)) : 1;
     const rawInterval = opts.intervalSeconds ?? config.interval;
     const intervalSeconds = Number.isFinite(rawInterval) ? Math.max(0, rawInterval) : 0;
-    addTraceEvent("wait_config", { max_attempts: maxAttempts, interval_seconds: intervalSeconds });
+    if (recordTrace) {
+      addTraceEvent("wait_config", {
+        max_attempts: maxAttempts,
+        interval_seconds: intervalSeconds,
+      });
+    }
 
     // The default probe (isGatewayHttpReady) never rejects, but injected probes
     // can. Treat a rejection as "not ready this attempt" so we exhaust the
@@ -300,7 +333,7 @@ export async function waitForGatewayHttpReady(
       async () => {
         attempt += 1;
         if (!(await safeProbe())) return false;
-        addTraceEvent("ready", { attempt });
+        if (recordTrace) addTraceEvent("ready", { attempt });
         return true;
       },
       {
@@ -314,7 +347,7 @@ export async function waitForGatewayHttpReady(
     if (ready) {
       return true;
     }
-    addTraceEvent("not_ready", { attempts: maxAttempts });
+    if (recordTrace) addTraceEvent("not_ready", { attempts: maxAttempts });
     return false;
   });
 }

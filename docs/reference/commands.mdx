@@ -212,7 +212,7 @@ If the gateway is not running, Kubernetes allocatable fields are omitted and hos
 
 ### `$$nemoclaw host probe`
 
-Inspect host readiness before onboarding without changing host, Docker, gateway, credential, policy, or sandbox state.
+Inspect host capabilities and gateway authority before onboarding without changing host, Docker, gateway, credential, policy, or sandbox state.
 Use `--json` for the schema-versioned report.
 The command exits with `0` for `supported`, `2` for `incompatible`, and `3` for `inconclusive`.
 
@@ -756,7 +756,7 @@ Kanban backup does not include named boards, attachments, worker logs, scratch w
 </AgentOnly>
 
 Before creating the gateway, the wizard runs preflight checks.
-It verifies that Docker is reachable, warns on untested runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
+It verifies that Docker is reachable, rejects unsupported runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
 The preflight also enforces the OpenShell version range declared in the blueprint (`min_openshell_version` and `max_openshell_version`).
 If the installed OpenShell version falls outside this range, onboarding exits with an actionable error and a link to compatible releases.
 For fresh OpenShell installs, NemoClaw queries published OpenShell releases and asks the installer to use a release that fits the blueprint range.
@@ -771,8 +771,15 @@ For Linux Docker-driver gateways, onboarding also checks that a helper container
 If a host firewall blocks that sandbox path, onboarding exits with a `sudo ufw allow from <subnet> to <gateway-ip> port <gateway-port> proto tcp` command before it reports the gateway healthy.
 Set `NEMOCLAW_AUTO_FIX_FIREWALL=1` to opt in to automatic UFW remediation for this specific failure: NemoClaw uses `sudo -n` only, validates the Docker bridge subnet/gateway/port, applies the narrow UFW rule only after a proven TCP reachability failure, and re-probes before continuing.
 If passwordless sudo, UFW, or active UFW is unavailable, NemoClaw falls back to the manual guidance path without prompting for a password.
-Tune the wait via `NEMOCLAW_REUSE_HEALTH_POLL_COUNT` (default `6`) and `NEMOCLAW_REUSE_HEALTH_POLL_INTERVAL` (default `5` seconds).
-The poll count is clamped to a minimum of `1` so the probe always runs at least once, and the interval is clamped to a minimum of `0` (no sleep between attempts).
+
+For the portable experimental profile, the helper maps `host.openshell.internal` to the OpenShell Podman host gateway instead of the inspected network gateway.
+This path does not use Docker bridge UFW remediation.
+After all portable TCP probe attempts fail, onboarding prints commands for the user-scoped Podman service and socket.
+
+Onboarding prints the same commands when the portable probe cannot reach the user-scoped Podman service.
+The printed rerun command keeps the portable experimental profile selected.
+To tune the existing-gateway HTTP health poll, use `NEMOCLAW_REUSE_HEALTH_POLL_COUNT` (default `6`) and `NEMOCLAW_REUSE_HEALTH_POLL_INTERVAL` (default `5` seconds).
+The poll count is clamped to a minimum of `1` so the health probe always runs at least once, and the interval is clamped to a minimum of `0` (no sleep between attempts).
 
 #### `--from <Dockerfile>`
 
@@ -4229,7 +4236,7 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_INSTALL_TAG` | release tag | For internal installer commands: the release tag to install when `NEMOCLAW_INSTALL_REF` is unset or empty. Defaults to the admin-promoted `lkg` tag when unset. Overridden by the `--install-tag` flag. |
 | `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE` | `1` to enable | Enables the fixed vLLM local model profile. Requires `NEMOCLAW_LOCAL_MODEL_RUNTIME=vllm`. Direct `$$nemoclaw onboard` use also requires `NEMOCLAW_NON_INTERACTIVE=1`. The hosted installer makes onboarding non-interactive, disables Express selection, and sets this value automatically when it receives `--local-model-runtime=vllm`. |
 | `NEMOCLAW_LOCAL_MODEL_RUNTIME` | `vllm` | Selects the fixed vLLM local model profile. Requires `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1`; direct onboarding also requires `NEMOCLAW_NON_INTERACTIVE=1`. The hosted installer sets this value from `--local-model-runtime=vllm`. |
-| `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model id | Selects the model the managed-vLLM install path serves and remains authoritative during DGX Station installer setup. Recognised slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `nemotron-3-nano-4b`, `deepseek-v4-flash`, `nemotron-3-ultra-550b-a55b`, `deepseek-r1-distill-70b`. Station Express selects `nemotron-3-ultra-550b-a55b`; a qualified reciprocal pair uses the distributed topology, while no qualifying pair retains the single-Station Ultra topology. Outside Station Express, unset uses the per-platform profile default. Gated models (e.g. `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
+| `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model ID | Selects the model the managed-vLLM install path serves and remains authoritative during DGX Station installer setup. Recognized slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `muse-glimmer-30b`, `nemotron-3-nano-4b`, `deepseek-v4-flash`, `nemotron-3-ultra-550b-a55b`, `deepseek-r1-distill-70b`. The `muse-glimmer-30b` profile remains Experimental until the upstream vLLM support is merged and NemoClaw qualifies a replacement runtime. NemoClaw does not enable or support DFlash speculative decoding for this profile. Station Express selects `nemotron-3-ultra-550b-a55b`; a qualified reciprocal pair uses the distributed topology, while no qualifying pair retains the single-Station Ultra topology. Outside Station Express, unset uses the per-platform profile default. Gated models (for example, `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
 | `NEMOCLAW_DGX_STATION_PEER` | SSH host or `user@host` | Selects one exact, already-trusted DGX Station peer for Nemotron 3 Ultra pair qualification. The peer must match the reciprocal private `/30` rail and hardware checks; an explicit peer failure stops setup instead of falling back. NemoClaw does not enroll SSH trust or accept a port or SSH option in this value. When unset, DGX Station installer discovery checks only the two deterministic `/30` counterpart addresses. A peer cannot be combined with an explicit non-Ultra model; conflicting explicit selections fail before pair preparation. |
 | `NEMOCLAW_DGX_STATION_SSH_BINDING` | opaque installer-managed token | Carries the qualified peer endpoint and host-key binding from DGX Station pair preparation into the current managed-vLLM install. The installer creates and clears this token; operators should not set or persist it. Missing, changed, or mismatched binding state fails before peer SSH or Docker work. |
 | `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` | JSON array of non-blank strings | Appends advanced operator-owned tokens to the managed `vllm serve` command after NemoClaw's registry defaults. Example: `["--max-num-seqs","2"]`. Malformed JSON, non-string tokens, or blank tokens fail before Docker work starts. |
