@@ -1139,14 +1139,15 @@ function writeRegistryAtomic(
   }
 }
 
-function pruneSelectedRowsFromSharedRegistry(
+function pruneSelectedRowsFromRegistry(
   paths: UninstallPaths,
   expectedSelectedNames: readonly string[],
   runtime: UninstallRuntime,
 ): boolean {
   const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
   const home = path.dirname(sharedRoot);
-  const registryFile = path.join(sharedRoot, "sandboxes.json");
+  const registryFile = path.join(paths.nemoclawStateDir, "sandboxes.json");
+  if (!pathEntryExists(registryFile, runtime) && expectedSelectedNames.length === 0) return true;
   const lock = `${registryFile}.lock`;
   let acquired = false;
   try {
@@ -1180,7 +1181,7 @@ function pruneSelectedRowsFromSharedRegistry(
       sandboxes: remainingSandboxes,
     });
     runtime.log(
-      `Removed ${String(selectedNames.length)} selected-gateway row(s) from the shared sandbox registry.`,
+      `Removed ${String(selectedNames.length)} selected-gateway row(s) from the sandbox registry.`,
     );
     return true;
   } catch (error) {
@@ -1190,11 +1191,28 @@ function pruneSelectedRowsFromSharedRegistry(
         : error instanceof Error
           ? error.message
           : String(error);
-    runtime.warn(`Could not safely update the shared sandbox registry: ${detail}`);
+    runtime.warn(`Could not safely update the sandbox registry: ${detail}`);
     return false;
   } finally {
     if (acquired) fs.rmSync(lock, { recursive: true, force: true });
   }
+}
+
+function finishScopedOpenShellCleanup(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  sandboxNames: readonly string[],
+  externallySupervised: boolean,
+): boolean {
+  // Removing selected rows checkpoints successful sandbox deletion, so a retry
+  // can skip gateway selection after gateway registration cleanup has started.
+  if (!pruneSelectedRowsFromRegistry(paths, sandboxNames, runtime)) return false;
+  return removeGatewayRegistration(
+    runtime,
+    options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+    !externallySupervised,
+  );
 }
 
 function removeOpenShellResources(
@@ -1210,28 +1228,23 @@ function removeOpenShellResources(
   }
   const gatewayLabel = options.gatewayName || resolveGatewayName(GATEWAY_PORT);
   if (scopedToSelectedGateway) {
-    const selected = runtime.run("openshell", ["gateway", "select", gatewayLabel], {
-      env: runtime.env,
-      stdio: "ignore",
-    });
-    if (selected.status !== 0) {
-      runtime.warn(
-        `Could not select gateway '${gatewayLabel}'; refusing sandbox deletion so sibling gateways remain untouched.`,
-      );
-      return false;
+    if (sandboxNames.length > 0) {
+      const selected = runtime.run("openshell", ["gateway", "select", gatewayLabel], {
+        env: runtime.env,
+        stdio: "ignore",
+      });
+      if (selected.status !== 0) {
+        runtime.warn(
+          `Could not select gateway '${gatewayLabel}'; refusing sandbox deletion so sibling gateways remain untouched.`,
+        );
+        return false;
+      }
     }
     let removedSelectedResources = true;
     for (const sandboxName of sandboxNames) {
       removedSelectedResources =
         deleteSelectedGatewaySandbox(runtime, sandboxName) && removedSelectedResources;
     }
-    if (!removedSelectedResources) {
-      runtime.warn("Selected gateway cleanup was incomplete; preserving its state for retry.");
-      return false;
-    }
-    removedSelectedResources =
-      removeGatewayRegistration(runtime, gatewayLabel, !externallySupervised) &&
-      removedSelectedResources;
     if (!removedSelectedResources) {
       runtime.warn("Selected gateway cleanup was incomplete; preserving its state for retry.");
       return false;
@@ -2079,9 +2092,15 @@ function executePlan(
       ) {
         return { ok: false };
       }
+      if (
+        scopedToSelectedGateway &&
+        !finishScopedOpenShellCleanup(paths, options, runtime, sandboxNames, externallySupervised)
+      ) {
+        return { ok: false };
+      }
       if (scopedToSelectedGateway && !options.keepOpenShell && !externallySupervised) {
         if (!removeManagedDefaultGatewayUserService(runtime, options, externallySupervised)) {
-          ok = false;
+          return { ok: false };
         }
         stopHostGatewayProcessesForUninstall(runtime, {
           gatewayBin: runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN,
@@ -2148,12 +2167,6 @@ function executePlan(
       const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
       const selectedIsDefault = path.resolve(paths.nemoclawStateDir) === path.resolve(sharedRoot);
       if (scopedToSelectedGateway && selectedIsDefault && sharedRegistryMustBePreserved) {
-        if (
-          !preserveUnderStateDir.includes("sandboxes.json") &&
-          !pruneSelectedRowsFromSharedRegistry(paths, sandboxNames, runtime)
-        ) {
-          return { ok: false };
-        }
         if (!options.keepOpenShell && !externallySupervised)
           removePath(paths.selectedGatewayLocalStateDir, runtime);
         else

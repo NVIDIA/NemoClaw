@@ -32,7 +32,11 @@ export interface SetupNimVllmDeps {
   runCapture(args: string[], options: { ignoreError: boolean }): string;
   getLocalProviderBaseUrl(provider: string): string | null;
   getLocalProviderValidationBaseUrl(provider: string): string | null;
-  getManagedVllmProviderBinding(): { baseUrl: string; apiKey: string } | null;
+  getManagedVllmProviderBinding(): {
+    baseUrl: string;
+    validationBaseUrl?: string;
+    apiKey: string;
+  } | null;
   queryVllmModels(baseUrl: string, apiKey: string): string;
   isSafeModelId(model: string): boolean;
   requireValue<T>(value: T | null | undefined, message: string): T;
@@ -258,7 +262,9 @@ export function createSetupNimVllmHandler(
     const requiredModel = typeof state.model === "string" ? state.model : null;
 
     const validationBaseUrl =
-      managedBinding?.baseUrl ?? deps.getLocalProviderValidationBaseUrl(state.provider);
+      managedBinding?.validationBaseUrl ??
+      managedBinding?.baseUrl ??
+      deps.getLocalProviderValidationBaseUrl(state.provider);
     if (!validationBaseUrl) {
       console.error("  Local vLLM validation URL could not be determined.");
       deps.exitProcess(1);

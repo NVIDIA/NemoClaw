@@ -161,6 +161,61 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
   expect(session.checkpoint?.sandboxRecreate).toBeNull();
 });
 
+it.each([
+  "replacement-unproven",
+  "shared-image",
+  "authority-unproven",
+  "no-owned-image",
+  "image-reused",
+] as const)("reports the bounded %s image-retirement skip after journaled recreation", async (reason) => {
+  const session = createSession({ sandboxName: "saved", agent: "openclaw" });
+  const journal = bindJournaledRecreate(session);
+  const sourceEntry: SandboxEntry = {
+    name: "saved",
+    provider: "provider",
+    model: "model",
+    endpointUrl: null,
+    preferredInferenceApi: "openai-completions",
+    webSearchEnabled: false,
+    toolDisclosure: "progressive",
+    fromDockerfile: null,
+    hermesAuthMethod: null,
+    imageTag: "openshell/sandbox-from:old",
+    workload: {
+      schemaVersion: 1,
+      kind: "legacy-dockerfile",
+      reference: "openshell/sandbox-from:old",
+      shared: false,
+    },
+  };
+  const retireReplacedSandboxWorkload = vi.fn(() => ({
+    status: "skipped" as const,
+    reason,
+  }));
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => "not_ready",
+      getSandboxRecreateObservation: journal.observe,
+      getSandboxRegistryEntry: () => sourceEntry,
+      createSandbox: journal.completeCreate,
+      retireReplacedSandboxWorkload,
+    },
+    session,
+  );
+
+  await handleSandboxState({
+    ...baseOptions(deps, session),
+    resume: true,
+    sandboxName: "saved",
+  });
+
+  const diagnostics = calls.note.mock.calls
+    .map(([message]) => message)
+    .filter((message) => message.startsWith("  Obsolete sandbox image retirement skipped:"));
+  expect(diagnostics).toEqual([`  Obsolete sandbox image retirement skipped: ${reason}`]);
+  expect(retireReplacedSandboxWorkload).toHaveBeenCalledOnce();
+});
+
 it("continues an outer rebuild journal after the outer rebuild deletes the source sandbox", async () => {
   const session = createSession({ sandboxName: "saved", agent: "openclaw" });
   session.steps.sandbox.status = "complete";

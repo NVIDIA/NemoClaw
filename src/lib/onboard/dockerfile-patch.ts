@@ -391,8 +391,8 @@ export function patchStagedDockerfile(
       `ARG NEMOCLAW_INFERENCE_INPUTS=${sanitizeDockerArg(inferenceInputs)}`,
     );
   }
-  // NEMOCLAW_AGENT_TIMEOUT — override agents.defaults.timeoutSeconds at build
-  // time. Lets users increase the per-request inference timeout without
+  // NEMOCLAW_AGENT_TIMEOUT overrides the agent-run and provider-request timeouts
+  // at build time. Users can increase the inference timeout without
   // editing the Dockerfile. Ref: issue #2281
   const agentTimeout = process.env.NEMOCLAW_AGENT_TIMEOUT;
   if (agentTimeout && POSITIVE_INT_RE.test(agentTimeout)) {

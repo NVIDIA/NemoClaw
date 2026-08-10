@@ -6,6 +6,7 @@ import {
   cleanupTrackedRebuildHermesImage,
   rebuildHermesRegistryImageState,
   requireRebuildHermesInitialImageTag,
+  requireRebuildHermesReplacementLifecycleReceipt,
 } from "../live/rebuild-hermes-image-state.ts";
 
 describe("Hermes rebuild fixture image ownership", () => {
@@ -39,6 +40,30 @@ describe("Hermes rebuild fixture image ownership", () => {
     ).toThrow("owned");
   });
 
+  it("requires the replacement registry row to carry its journaled live identity", () => {
+    const receipt = {
+      lifecycleGeneration: "5f63a0a3-e0f0-4e41-847b-8bc7c1f135ad",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+    };
+
+    expect(requireRebuildHermesReplacementLifecycleReceipt(receipt)).toEqual(receipt);
+    expect(() => requireRebuildHermesReplacementLifecycleReceipt({})).toThrow(
+      "lifecycle generation",
+    );
+    expect(() =>
+      requireRebuildHermesReplacementLifecycleReceipt({
+        ...receipt,
+        lifecycleGeneration: "5f63a0a3-e0f0-1e41-847b-8bc7c1f135ad",
+      }),
+    ).toThrow("lifecycle generation");
+    expect(() =>
+      requireRebuildHermesReplacementLifecycleReceipt({
+        ...receipt,
+        lifecycleLiveIdentityFingerprint: "unproven",
+      }),
+    ).toThrow("live lifecycle identity");
+  });
+
   it("retains the exact OpenShell-derived tag in managed rebuild state", () => {
     expect(
       rebuildHermesRegistryImageState(
@@ -48,8 +73,15 @@ describe("Hermes rebuild fixture image ownership", () => {
         ].join("\n"),
       ),
     ).toEqual({
+      openshellDriver: "docker",
       imageTag: "openshell/sandbox-from:1784010200",
       fromDockerfile: null,
+      workload: {
+        schemaVersion: 1,
+        kind: "legacy-dockerfile",
+        reference: "openshell/sandbox-from:1784010200",
+        shared: false,
+      },
     });
   });
 
