@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import net from "node:net";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -15,17 +18,71 @@ import {
   withManagedImageLocalInferenceProfile,
 } from "../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
+  loadManagedImageOnboardModule,
   managedImageLocalInferenceBaseUrl,
   managedImageOpenShellBasePolicyPath,
   managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
   parseManagedImageOpenShellE2eInputs,
+  resolveManagedImageOnboardModule,
+  stopManagedImageOpenShellGateway,
 } from "../scripts/checks/run-managed-image-openshell-e2e.ts";
 
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
 const VALID_SANDBOX = "managed-openclaw";
 
 describe("protected managed-image runtime contract", () => {
+  it("loads every callable onboarding hook required by the protected runner (#8759)", async () => {
+    const onboard = await loadManagedImageOnboardModule();
+
+    expect(onboard.runOpenshell).toBeTypeOf("function");
+    expect(() =>
+      resolveManagedImageOnboardModule({
+        default: { ...onboard, runOpenshell: undefined },
+      }),
+    ).toThrow(/managed-image onboard module contract.*runOpenshell/u);
+  });
+
+  it("yields while reaping the owned gateway and releases its listener (#8759)", async () => {
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        [
+          'const net = require("node:net");',
+          "const server = net.createServer();",
+          'server.listen(0, "127.0.0.1", () => process.stdout.write(`${server.address().port}\\n`));',
+          'process.on("SIGTERM", () => server.close(() => process.exit(0)));',
+        ].join(""),
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const exited = once(child, "exit");
+
+    try {
+      const [chunk] = await once(child.stdout!, "data");
+      const port = Number.parseInt(String(chunk).trim(), 10);
+
+      expect(port).toBeGreaterThan(0);
+      await stopManagedImageOpenShellGateway(child.pid ?? null, port);
+      await exited;
+
+      const replacement = net.createServer();
+      await new Promise<void>((resolve, reject) => {
+        replacement.once("error", reject);
+        replacement.listen(port, "127.0.0.1", resolve);
+      });
+      await new Promise<void>((resolve, reject) => {
+        replacement.close((error) => (error ? reject(error) : resolve()));
+      });
+    } finally {
+      if (child.exitCode === null) {
+        child.kill("SIGKILL");
+        await exited;
+      }
+    }
+  });
+
   it("assigns every protected agent and route a unique OpenShell-compatible sandbox name (#8497)", () => {
     const routeKinds = [...MANAGED_IMAGE_LOCAL_INFERENCE_KINDS, "rollback"] as const;
     const qualifications = PROTECTED_MANAGED_IMAGE_AGENTS.flatMap((agent) =>
