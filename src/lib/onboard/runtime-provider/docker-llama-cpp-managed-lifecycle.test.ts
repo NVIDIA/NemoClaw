@@ -539,6 +539,41 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(calls).not.toContainEqual(expect.arrayContaining(["network", "create"]));
   });
 
+  it("preserves receipt-bound resources after bridge refusal during resume (#8712)", () => {
+    const fixture = dockerFixture();
+    const store = journalStore();
+    const privateBridge = privateBridgeFixture();
+    const lifecycle = createLifecycle(options(fixture, store), {}, privateBridge);
+    const receipt = lifecycle.start(receiptWriter());
+    lifecycle.runtime.stopManaged(receipt);
+    fixture.capture.mockClear();
+    privateBridge.stopTransaction.mockClear();
+    fixture.failSandboxBridgeProbe({ status: 7, stderr: "curl: (7) failed to connect" });
+
+    let failure: Error | undefined;
+    try {
+      lifecycle.resume(receipt);
+    } catch (error) {
+      failure = error instanceof Error ? error : new Error(String(error));
+    }
+
+    expect(failure?.message).toContain(
+      "Managed llama.cpp host-loopback health check passed, but the OpenShell Docker bridge health check failed.",
+    );
+    expect(failure?.message).toContain(
+      "sudo ufw allow from 172.29.0.0/16 to 172.29.0.1 port 8081 proto tcp",
+    );
+    expect(privateBridge.stopTransaction).not.toHaveBeenCalled();
+    expect(store.load(TRANSACTION_ID)).toMatchObject({
+      phase: "finalized",
+      runtimeId: RUNTIME_ID,
+      networkId: NETWORK_ID,
+    });
+    expect(lifecycle.runtime.inspectManaged(receipt).running).toBe(true);
+    expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["rm", "--force"]);
+    expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["network", "rm"]);
+  });
+
   it("rejects a non-resumable exact runtime without lifecycle mutation (#8144)", () => {
     const fixture = dockerFixture();
     const lifecycle = controller(fixture);
