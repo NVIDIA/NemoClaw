@@ -44,6 +44,7 @@ import {
   gatewayProcessCmdlineMatches,
   OPENSHELL_GATEWAY_PROCESS_NAMES,
 } from "../onboard/gateway-process-identity";
+import { ownedHostGatewayTarget } from "../onboard/gateway-process-target-identity";
 import { resolveOpenshell } from "../onboard/openshell-cli";
 import { checkPortAvailable } from "../onboard/preflight";
 import type {
@@ -162,6 +163,21 @@ export function gatewayExecutableSamplesMatchTrustedBinary(
   );
 }
 
+/** Require one Linux process generation and the trusted executable across both samples. */
+export function gatewayProcessSamplesMatchTrustedBinary(
+  generationBefore: string | null,
+  generationAfter: string | null,
+  executableBefore: string | null,
+  executableAfter: string | null,
+  trustedBinary: string | null,
+): boolean {
+  return (
+    generationBefore !== null &&
+    generationAfter === generationBefore &&
+    gatewayExecutableSamplesMatchTrustedBinary(executableBefore, executableAfter, trustedBinary)
+  );
+}
+
 function resolveTrustedOpenshellBinary(env: NodeJS.ProcessEnv): string | null {
   const commandV = captureReadonly(["sh", "-c", 'command -v "$1"', "--", "openshell"], env);
   return resolveOpenshell({
@@ -187,7 +203,7 @@ function resolveTrustedGatewayBinary(openshell: string | null): string | null {
   return null;
 }
 
-/** Require the observed argv0 to resolve to the independently selected binary. */
+/** Require the trusted Linux executable plus a trusted path or owned target tag. */
 export function gatewayProcessIdentityMatchesTrustedBinary(
   identity: string,
   trustedGatewayBin: string | null,
@@ -201,11 +217,18 @@ export function gatewayProcessIdentityMatchesTrustedBinary(
   // untrusted and only the positively identified Homebrew service is eligible.
   if (!trustedGatewayBin || platform !== "linux") return false;
   const argv0 = cleanGatewayProcessToken(identity.trim().split(/\s+/, 1)[0] ?? "");
-  const actual = argv0 ? normalizeExecutablePath(argv0) : null;
   const expected = normalizeExecutablePath(trustedGatewayBin);
-  if (!actual || !expected || actual !== expected) return false;
-  if (!actualExecutablePath || normalizeExecutablePath(actualExecutablePath) !== expected) {
+  if (
+    !expected ||
+    !actualExecutablePath ||
+    normalizeExecutablePath(actualExecutablePath) !== expected
+  ) {
     return false;
+  }
+  const taggedTarget = ownedHostGatewayTarget(path.basename(argv0));
+  if (!taggedTarget) {
+    const actual = argv0 ? normalizeExecutablePath(argv0) : null;
+    if (!actual || !expected || actual !== expected) return false;
   }
   return gatewayProcessCmdlineMatches(identity, trustedGatewayBin, {
     expectedOpenShellGateway: { name: gatewayName, port: gatewayPort },
@@ -555,9 +578,9 @@ export function createProductionGatewayReadinessDependencies(
     const executableAfter = readLinuxProcessExecutable(pid);
     const generationAfter = readLinuxProcessStartTime(pid);
     return exactTrustedBinary &&
-      generationBefore !== null &&
-      generationAfter === generationBefore &&
-      gatewayExecutableSamplesMatchTrustedBinary(
+      gatewayProcessSamplesMatchTrustedBinary(
+        generationBefore,
+        generationAfter,
         executableBefore,
         executableAfter,
         trustedGatewayBin,
