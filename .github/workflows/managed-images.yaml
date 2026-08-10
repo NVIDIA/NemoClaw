@@ -163,7 +163,7 @@ jobs:
             -f agents/langchain-deepagents-code/Dockerfile \
             --build-arg BASE_IMAGE="$STAGING_QA_BASE_IMAGE" \
             --build-arg NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b \
-            --build-arg NEMOCLAW_PROVIDER_KEY=inference \
+            --build-arg NEMOCLAW_INFERENCE_PROVIDER_ID=inference \
             --build-arg NEMOCLAW_UPSTREAM_PROVIDER=nvidia-nim \
             --build-arg NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1 \
             --build-arg NEMOCLAW_INFERENCE_API=openai-completions \
@@ -188,7 +188,7 @@ jobs:
           set -euo pipefail
           base_layers="$(docker image inspect --format "{{json .RootFS.Layers}}" "$BASE_ID")"
           final_layers="$(docker image inspect --format "{{json .RootFS.Layers}}" "$FINAL_ID")"
-          if ! jq -e \
+          if ! jq -n -e \
             --argjson base "$base_layers" \
             --argjson final "$final_layers" '
               ($base | length) > 0 and

@@ -129,17 +129,10 @@ function step(job: Job, name: string): Step {
 }
 
 function inlineNodeStdinValidator(source: string): string {
-  const prefix = "if ! node -e '";
-  const marker = source.indexOf(prefix);
-  if (marker < 0) {
-    throw new Error("managed-image workflow is missing its inline Node validator");
-  }
-  const start = marker + prefix.length;
-  const end = source.indexOf(`' <<< "$actual_discovery_contract"`, start);
-  if (end <= start) {
-    throw new Error("managed-image workflow has an incomplete inline Node validator");
-  }
-  return source.slice(start, end).trim();
+  return required(
+    source.match(/if ! node -e '([\s\S]+?)' <<< "\$actual_discovery_contract"/u)?.[1],
+    "managed-image workflow is missing or has an incomplete inline Node validator",
+  ).trim();
 }
 
 function isStrictChildPath(root: string, candidate: string): boolean {
@@ -701,7 +694,8 @@ describe("complete managed-image publication workflow", () => {
     expect(finalSource).toContain("-f agents/langchain-deepagents-code/Dockerfile");
     expect(finalSource).toContain('--build-arg BASE_IMAGE="$STAGING_QA_BASE_IMAGE"');
     expect(finalSource).toContain("--build-arg NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b");
-    expect(finalSource).toContain("--build-arg NEMOCLAW_PROVIDER_KEY=inference");
+    expect(finalSource).toContain("--build-arg NEMOCLAW_INFERENCE_PROVIDER_ID=inference");
+    expect(finalSource).not.toContain("--build-arg NEMOCLAW_PROVIDER_KEY=");
     expect(finalSource).toContain("--build-arg NEMOCLAW_UPSTREAM_PROVIDER=nvidia-nim");
     expect(finalSource).toContain(
       "--build-arg NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
@@ -713,6 +707,9 @@ describe("complete managed-image publication workflow", () => {
     expect(finalSource).toMatch(/-t "\$final_reference"\s+\\\n\s+\./u);
 
     const contractSource = required(contract.run, "staging QA final contract is missing");
+    expect(contractSource).toMatch(
+      /if ! jq -n -e \\\n\s+--argjson base "\$base_layers" \\\n\s+--argjson final "\$final_layers"/u,
+    );
     expect(contractSource).toContain("$final[.] == $base[.]");
     expect(contractSource).toContain('find -P "$discovery_runtime" ! -user root');
     expect(contractSource).toContain("\\( ! -user root -o -perm /022 \\) -print -quit");
