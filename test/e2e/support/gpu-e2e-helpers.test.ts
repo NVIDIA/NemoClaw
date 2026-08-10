@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -36,7 +37,7 @@ const SYNC_E2E_CHILD_OPTIONS = { killSignal: "SIGKILL" as const, timeout: 5_000 
 
 function loopbackPort(server: ReturnType<typeof createServer>): number {
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("loopback server has no TCP port");
+  assert(address && typeof address !== "string", "loopback server has no TCP port");
   return address.port;
 }
 
@@ -474,17 +475,20 @@ describe("GPU E2E helpers", () => {
         options: { artifactName?: string } = {},
       ) => {
         artifacts.push(options.artifactName ?? "");
-        if (options.artifactName === "command-v-ollama") {
-          return { exitCode: 0, stderr: "", stdout: "/usr/local/bin/ollama\n" };
+        switch (options.artifactName) {
+          case "command-v-ollama":
+            return { exitCode: 0, stderr: "", stdout: "/usr/local/bin/ollama\n" };
+          case "pre-cleanup-managed-image-ollama":
+            return {
+              exitCode: 1,
+              stderr: "Ollama still listens on 127.0.0.1:11434",
+              stdout: "",
+            };
+          default:
+            throw new Error(
+              `unexpected command after failed cleanup: ${options.artifactName ?? ""}`,
+            );
         }
-        if (options.artifactName === "pre-cleanup-managed-image-ollama") {
-          return {
-            exitCode: 1,
-            stderr: "Ollama still listens on 127.0.0.1:11434",
-            stdout: "",
-          };
-        }
-        throw new Error(`unexpected command after failed cleanup: ${options.artifactName ?? ""}`);
       },
     } as unknown as HostCliClient;
 
