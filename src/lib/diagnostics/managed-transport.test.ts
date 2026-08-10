@@ -147,6 +147,39 @@ describe("buildManagedTransportFailure", () => {
     expect(serialized).not.toContain("debug=1");
   });
 
+  it("redacts untrusted fields in the built object before any formatting", () => {
+    const token = "sk-abcdef0123456789abcdef0123456789";
+    const event = buildManagedTransportFailure({
+      consumer: "mcp",
+      operation: `tools/list ${token}`,
+      route: "trusted_env_proxy",
+      phase: "response_headers",
+      elapsedMs: 10,
+      responseHeaders: [["x-request-id", `req ${token}`]],
+    });
+
+    // The event object itself is safe to serialize without the line formatter.
+    const serialized = JSON.stringify(event);
+    expect(serialized).not.toContain(token);
+    expect(event.operation).not.toContain(token);
+    expect(event.xRequestId).not.toContain(token);
+  });
+
+  it("surfaces a nested transport cause code at the top level", () => {
+    const event = buildManagedTransportFailure({
+      consumer: "mcp",
+      operation: "tools/list",
+      route: "direct",
+      phase: "app_connect",
+      elapsedMs: 10,
+      error: new Error("fetch failed", {
+        cause: Object.assign(new Error("connect refused"), { code: "ECONNREFUSED" }),
+      }),
+    });
+
+    expect(event.causeCode).toBe("ECONNREFUSED");
+  });
+
   it("generates a trace id when none is supplied", () => {
     const event = buildManagedTransportFailure({
       consumer: "mcp",

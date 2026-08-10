@@ -107,7 +107,18 @@ export function safeCauseChain(error: unknown): SafeTransportCause[] {
   return chain;
 }
 
-/** Picks the diagnostic response headers the contract allows, dropping everything else. */
+/**
+ * Redacts one untrusted string field through the shared trace sanitizer so a
+ * credential embedded by an upstream cannot survive into the built event.
+ * This runs at build time; the event object is safe to serialize or forward
+ * before it ever reaches the line formatter.
+ */
+export function redactField(value: string): string {
+  const redacted = sanitizeTraceAttributes({ value }).value;
+  return typeof redacted === "string" ? redacted : value;
+}
+
+/** Picks the diagnostic response headers the contract allows, redacting each kept value. */
 export function pickSafeResponseHeaders(
   headers: Iterable<[string, string]>,
 ): Pick<
@@ -117,10 +128,10 @@ export function pickSafeResponseHeaders(
   const picked: ReturnType<typeof pickSafeResponseHeaders> = {};
   for (const [rawName, value] of headers) {
     const name = rawName.toLowerCase();
-    if (name === "server") picked.responseServer = value;
-    else if (name === "via") picked.responseVia = value;
-    else if (name === "x-request-id") picked.xRequestId = value;
-    else if (name === "x-envoy-response-flags") picked.xEnvoyResponseFlags = value;
+    if (name === "server") picked.responseServer = redactField(value);
+    else if (name === "via") picked.responseVia = redactField(value);
+    else if (name === "x-request-id") picked.xRequestId = redactField(value);
+    else if (name === "x-envoy-response-flags") picked.xEnvoyResponseFlags = redactField(value);
   }
   return picked;
 }
@@ -189,25 +200,31 @@ export interface ManagedTransportFailureInput {
 }
 
 /**
- * Builds the redacted event from operational context. Only allowlisted
- * fields are copied; proxy and target lose credentials and query strings,
- * and the error contributes nothing beyond its safe cause chain.
+ * Builds the redacted event from operational context. Every untrusted string
+ * field is redacted here so the returned object is safe to serialize or
+ * forward without the line formatter: consumer, operation, route, endpoints,
+ * and allowlisted headers cannot carry a credential. proxy and target also
+ * lose credentials and query strings, and the error contributes nothing
+ * beyond its safe cause chain. The top-level causeCode is the first cause in
+ * the chain that carries a code, since wrapped errors keep the network code
+ * in a nested cause.
  */
 export function buildManagedTransportFailure(
   input: ManagedTransportFailureInput,
 ): ManagedTransportFailure {
   const causeChain = safeCauseChain(input.error);
+  const causeCode = causeChain.find((cause) => cause.code !== undefined)?.code;
   return {
-    consumer: input.consumer,
-    operation: input.operation,
-    route: input.route,
+    consumer: redactField(input.consumer),
+    operation: redactField(input.operation),
+    route: redactField(input.route),
     phase: input.phase,
     traceId: input.traceId ?? generateTransportTraceId(),
     elapsedMs: Math.max(0, Math.round(input.elapsedMs)),
-    ...(input.proxy === undefined ? {} : { proxy: safeTargetRef(input.proxy) }),
-    ...(input.target === undefined ? {} : { target: safeTargetRef(input.target) }),
+    ...(input.proxy === undefined ? {} : { proxy: redactField(safeTargetRef(input.proxy)) }),
+    ...(input.target === undefined ? {} : { target: redactField(safeTargetRef(input.target)) }),
     ...(input.httpStatus === undefined ? {} : { httpStatus: input.httpStatus }),
-    ...(causeChain[0]?.code === undefined ? {} : { causeCode: causeChain[0].code }),
+    ...(causeCode === undefined ? {} : { causeCode }),
     causeChain,
     ...(input.responseHeaders === undefined ? {} : pickSafeResponseHeaders(input.responseHeaders)),
     ...(input.sessionIdPresent === undefined ? {} : { sessionIdPresent: input.sessionIdPresent }),
@@ -226,11 +243,11 @@ export function buildManagedTransportFailure(
 const MAX_LOG_FIELD = 256;
 
 /**
- * Encodes one value for a single-record key=value log line. Every string is
- * redacted through the shared trace sanitizer, then length-bounded, and any
- * value carrying a control character, whitespace, quote, or `=` is JSON
- * quoted so it cannot inject a line break or forge a second field. Even an
- * allowlisted upstream header reaches the line only through this policy.
+ * Encodes one value for a single-record key=value log line. The value is
+ * redacted again (defense in depth on top of the build-time redaction),
+ * length-bounded, and any value carrying a control character, whitespace,
+ * quote, or `=` is JSON quoted so it cannot inject a line break or forge a
+ * second field.
  */
 export function encodeLogField(value: string | number | boolean): string {
   if (typeof value !== "string") return String(value);
