@@ -93,20 +93,30 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     expectedVersion: "0.2.0",
     policyAdditionsPath,
   };
+  const resolveGatewayAuthority = ({
+    gatewayName,
+    gatewayPort,
+  }: {
+    gatewayName: string;
+    gatewayPort: number;
+  }) => ({
+    gatewayName,
+    gatewayPort,
+    mode: "nemoclaw-managed" as const,
+    source: "standalone" as const,
+    endpoint: null,
+    stateDir: null,
+    supervisor: null,
+    requiredCapabilities: [],
+  });
 
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
   vi.spyOn(gatewayTeardownAuthority, "resolveGatewayTeardownAuthority").mockImplementation(
-    ({ gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number }) => ({
-      gatewayName,
-      gatewayPort,
-      mode: "nemoclaw-managed",
-      source: "standalone",
-      endpoint: null,
-      stateDir: null,
-      supervisor: null,
-      requiredCapabilities: [],
-    }),
+    resolveGatewayAuthority,
+  );
+  vi.spyOn(gatewayTeardownAuthority, "resolveGatewayRebuildAuthority").mockImplementation(
+    resolveGatewayAuthority,
   );
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
     result: {
@@ -549,6 +559,16 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         policies.resolveSandboxBaselinePolicy(String(preflightOptions.sandboxName ?? ""));
       }
       await overrides.preflightAuthoritativeRebuildTarget?.(preflightOptions);
+      return {
+        gatewayName: String(preflightOptions.targetGatewayName ?? "nemoclaw"),
+        gatewayPort: Number(preflightOptions.targetGatewayPort ?? 8080),
+        mode: "nemoclaw-managed",
+        source: "standalone",
+        endpoint: null,
+        stateDir: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      };
     },
   );
   const ensureValidatedBraveSearchCredentialSpy = vi

@@ -48,6 +48,30 @@ function makeDeps(overrides: Partial<OpenShellInstallDeps> = {}) {
 }
 
 describe("ensureOpenshellForOnboard", () => {
+  it("runs trusted post-install reconciliation only after a successful install", () => {
+    const afterSuccessfulInstall = vi.fn();
+    const deps = makeDeps({
+      isOpenshellInstalled: () => false,
+      installOpenshell: () => ({
+        installed: true,
+        localBin: "/tmp/openshell",
+        futureShellPathHint: null,
+      }),
+    });
+
+    ensureOpenshellForOnboard(deps, { afterSuccessfulInstall });
+
+    expect(afterSuccessfulInstall).toHaveBeenCalledOnce();
+  });
+
+  it("does not run post-install reconciliation when no install was needed", () => {
+    const afterSuccessfulInstall = vi.fn();
+
+    ensureOpenshellForOnboard(makeDeps(), { afterSuccessfulInstall });
+
+    expect(afterSuccessfulInstall).not.toHaveBeenCalled();
+  });
+
   it("reinstalls when the installed OpenShell lacks messaging rewrite or MCP L7 support", () => {
     const hasFeatures = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
     const deps = makeDeps({
