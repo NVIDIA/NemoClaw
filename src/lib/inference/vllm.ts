@@ -1788,6 +1788,18 @@ async function runVllmInstall(
     }
   }
 
+  // Reject a held serving port before anything durable happens: before the
+  // storage decisions can prompt, before the cache directory is created, and
+  // before the image pull. Otherwise the run reaches `docker run`, which cannot
+  // bind and reports a bare exit 125 (#8685). Port 25000 is not checked here:
+  // it belongs to the managed-cluster rendezvous contract and this single-node
+  // path never binds it.
+  const servingPort = await opts.checkServingPort?.(VLLM_PORT);
+  if (servingPort && !servingPort.ok) {
+    printServingPortConflict(servingPort);
+    return { ok: false };
+  }
+
   // Guard the host filesystem before an image pull or model-download
   // container can start. The cache path itself is created only after both
   // storage decisions pass, so Docker never creates it as root.
@@ -1799,17 +1811,6 @@ async function runVllmInstall(
   const cacheDir = ensureHfCacheDir(model);
   if (!cacheDir.ok) {
     console.error(`  vLLM install failed: ${cacheDir.reason}`);
-    return { ok: false };
-  }
-
-  // Stop before the image pull and before any container is created when a
-  // foreign process already holds the serving port. Without this the run
-  // reaches `docker run`, which fails to bind and reports a bare exit 125
-  // (#8685). Port 25000 is not checked here: it belongs to the managed-cluster
-  // rendezvous contract and this single-node path never binds it.
-  const servingPort = await opts.checkServingPort?.(VLLM_PORT);
-  if (servingPort && !servingPort.ok) {
-    printServingPortConflict(servingPort);
     return { ok: false };
   }
 

@@ -116,6 +116,26 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     expect(reported).not.toContain("exit 125");
   });
 
+  it("rejects the port before the storage decisions or the cache directory", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn<(q: string) => Promise<string>>(),
+      checkServingPort: async () => ({ ok: false, reason: "port 8000 is held" }),
+    });
+
+    // The storage probes are the first step that can prompt, and the cache
+    // directory is created immediately after them. Neither may run for a
+    // conflict the install is going to refuse.
+    expect(result).toEqual({ ok: false });
+    expect(mocks.probeHostStorage).not.toHaveBeenCalled();
+    expect(mocks.probeDockerStorage).not.toHaveBeenCalled();
+    expect(mocks.measureDirectorySizeBytes).not.toHaveBeenCalled();
+  });
+
   it("proceeds past the guard when the serving port is free", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     mockSuccessfulVllmInstall(mocks, profile.containerName);
@@ -133,16 +153,21 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     expect(errSpy.mock.calls.flat().join("\n")).not.toContain("already in use");
   });
 
-  it("leaves the install unguarded when no probe is supplied", async () => {
+  it("installs unguarded when no probe is supplied", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     mockSuccessfulVllmInstall(mocks, profile.containerName);
 
-    await installVllm(profile, {
+    const result = await installVllm(profile, {
       hasImage: true,
       nonInteractive: true,
       promptFn: vi.fn<(q: string) => Promise<string>>(),
     });
 
+    // Assert the install reaches the end, so an early return added ahead of the
+    // guard cannot pass this case by merely staying silent.
+    expect(result).toEqual({ ok: true });
+    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).toHaveBeenCalled();
     expect(errSpy.mock.calls.flat().join("\n")).not.toContain("already in use");
   });
 });
