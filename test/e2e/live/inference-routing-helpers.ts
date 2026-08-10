@@ -32,6 +32,7 @@ const ONBOARD_ARGS = [
   "--yes",
   "--yes-i-accept-third-party-software",
 ];
+const OPENAI_CHAT_PROBE_MAX_TOKENS = 1024;
 const STACK_TRACE_PATTERNS = [
   /^\s+at (Object\.|Module\.|node:internal|process\.)/m,
   /\bat node:internal/m,
@@ -375,7 +376,7 @@ async function expectOpenAiChatThroughSandbox(
   const payload = JSON.stringify({
     model,
     messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-    max_tokens: 50,
+    max_tokens: OPENAI_CHAT_PROBE_MAX_TOKENS,
   });
   const response = await sandbox.exec(
     sandboxName,

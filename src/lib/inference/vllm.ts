@@ -36,6 +36,7 @@ import {
 import { getGpuIndicesByName } from "./nim";
 import {
   buildLocalDualStationDockerEnv,
+  buildLocalManagedVllmDockerEnv,
   buildRemoteVllmDockerEnv,
   buildVllmDockerEnv,
   ensureDualStationVllmApiKey,
@@ -45,9 +46,11 @@ import {
   recoverHostLocalManagedVllmEndpoint,
   recoverInstalledManagedClusterVllmEndpoint,
   resolveHostLocalVllmSelection,
+  resolveManagedVllmBridgeHost,
   resolveVllmInstallModel,
   runtimeAuthFingerprint,
   tryInstallManagedClusterManagedVllm,
+  validateManagedVllmBridgeHost,
 } from "./serving/vllm-managed-support";
 import {
   assertGatedModelAccess,
@@ -515,6 +518,7 @@ export function buildVllmRunArgs(
   model: VllmModelDef,
   runFlags: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
+  managedBridgeHost?: string,
 ): string[] {
   assertVllmRegistryDigestRef(profile.image);
   const image = validateDockerArg(profile.image, "vLLM image");
@@ -524,6 +528,9 @@ export function buildVllmRunArgs(
   if (model.managedBearerAuth && !/^[a-f0-9]{64}$/.test(managedApiKey)) {
     throw new Error("Managed host-local vLLM requires a valid host-global API key");
   }
+  const managedPublishHost = model.managedBearerAuth
+    ? validateManagedVllmBridgeHost(managedBridgeHost ?? "")
+    : null;
   return [
     "--pull=never",
     "--init",
@@ -556,6 +563,7 @@ export function buildVllmRunArgs(
       : []),
     "-p",
     `${model.managedBearerAuth ? "127.0.0.1:" : ""}${String(VLLM_PORT)}:8000`,
+    ...(model.managedBearerAuth ? ["-p", `${managedPublishHost}:${String(VLLM_PORT)}:8000`] : []),
     "--name",
     containerName,
     "--entrypoint",
@@ -714,8 +722,11 @@ function inspectVllmContainerOwnership(containerName: string): VllmContainerOwne
 
 function vllmContainerReplacementTarget(
   containerName: string,
+  dockerEnv?: Record<string, string>,
 ): { ok: true; containerId?: string } | { ok: false; reason: string } {
-  const ownership = inspectVllmContainerOwnership(containerName);
+  const ownership = dockerEnv
+    ? inspectVllmContainerOwnershipInDockerEnv(containerName, dockerEnv)
+    : inspectVllmContainerOwnership(containerName);
   if (ownership.kind === "foreign") {
     return {
       ok: false,
@@ -840,6 +851,8 @@ function startContainer(
   profile: VllmProfile,
   model: VllmModelDef,
   dockerEnv: Record<string, string> = buildVllmDockerEnv(),
+  resolveBridgeHost: (dockerEnv: Record<string, string>) => string = (env) =>
+    resolveManagedVllmBridgeHost(dockerCapture, env),
 ): { ok: true; containerId: string } | { ok: false; reason: string } {
   emit(`Starting vLLM container (${profile.containerName})`);
   // The explicit download completed before this long-lived container starts,
@@ -849,13 +862,22 @@ function startContainer(
     const resolvedFlags = profile.buildDockerRunFlags
       ? profile.buildDockerRunFlags()
       : profile.dockerRunFlags;
-    runArgs = buildVllmRunArgs(profile, model, resolvedFlags, dockerEnv);
+    runArgs = buildVllmRunArgs(
+      profile,
+      model,
+      resolvedFlags,
+      dockerEnv,
+      model.managedBearerAuth ? resolveBridgeHost(dockerEnv) : undefined,
+    );
   } catch (err) {
     return { ok: false, reason: (err as Error).message };
   }
   // Re-check immediately before teardown. Removing the inspected container ID
   // avoids deleting an unrelated same-name container if the name changes hands.
-  const replacement = vllmContainerReplacementTarget(profile.containerName);
+  const replacement = vllmContainerReplacementTarget(
+    profile.containerName,
+    model.managedBearerAuth ? dockerEnv : undefined,
+  );
   if (!replacement.ok) return replacement;
   if (replacement.containerId) {
     dockerForceRm(replacement.containerId, {
@@ -1421,6 +1443,7 @@ interface InstallVllmOptions {
   nonInteractive: boolean;
   promptFn: (q: string) => Promise<string>;
   beforeInstall?: (modelId: string) => void;
+  resolveManagedBridgeHost?: (dockerEnv: Record<string, string>) => string;
 }
 
 export function imageIsCached(
@@ -1672,7 +1695,9 @@ async function runVllmInstall(
   }
   const localDockerEnv = dualStationPlan
     ? buildLocalDualStationDockerEnv()
-    : buildVllmDockerEnv(hostLocalApiKey ? { VLLM_API_KEY: hostLocalApiKey } : {});
+    : hostLocalApiKey
+      ? buildLocalManagedVllmDockerEnv({ VLLM_API_KEY: hostLocalApiKey })
+      : buildVllmDockerEnv();
   opts.beforeInstall?.(servedModelId);
 
   console.log("");
@@ -1729,7 +1754,10 @@ async function runVllmInstall(
       return { ok: false };
     }
   } else {
-    const replacement = vllmContainerReplacementTarget(runtimeProfile.containerName);
+    const replacement = vllmContainerReplacementTarget(
+      runtimeProfile.containerName,
+      model.managedBearerAuth ? localDockerEnv : undefined,
+    );
     if (!replacement.ok) {
       console.error(`  vLLM install failed: ${replacement.reason}`);
       return { ok: false };
@@ -1780,7 +1808,10 @@ async function runVllmInstall(
   // A cold image pull can consume the same host filesystem that backs the
   // Hugging Face cache. Re-probe the model destination after the pull before
   // `hf download` starts.
-  if (!hasImage && !(await managedStorageAccepted(runtimeProfile, model, true, opts))) {
+  if (
+    !hasImage &&
+    !(await managedStorageAccepted(runtimeProfile, model, true, opts, localDockerEnv))
+  ) {
     return { ok: false };
   }
 
@@ -1965,7 +1996,12 @@ async function runVllmInstall(
     }
   }
 
-  const start = startContainer(runtimeProfile, model, localDockerEnv);
+  const start = startContainer(
+    runtimeProfile,
+    model,
+    localDockerEnv,
+    opts.resolveManagedBridgeHost,
+  );
   if (!start.ok) {
     console.error(`  vLLM install failed: ${String(start.reason)}`);
     return { ok: false };
@@ -2011,7 +2047,7 @@ async function runVllmInstall(
   if (!ready.ok) {
     printContainerLogTail(runtimeProfile, localDockerEnv);
     dockerStop(runtimeProfile.containerName, {
-      env: buildVllmDockerEnv(),
+      env: localDockerEnv,
       ignoreError: true,
       suppressOutput: true,
     });

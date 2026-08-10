@@ -261,15 +261,15 @@ describe("OpenShell 0.0.85 migration review", () => {
           "lib",
           "actions",
           "sandbox",
-          "openshell-child-visible-credentials.v0.0.99.json",
+          "openshell-child-visible-credentials.v0.0.101.json",
         ),
         "utf8",
       ),
     ) as { openshellVersion: string };
 
-    expect(blueprint).toContain('min_openshell_version: "0.0.99"');
-    expect(blueprint).toContain('max_openshell_version: "0.0.99"');
-    expect(manifest.openshellVersion).toBe("0.0.99");
+    expect(blueprint).toContain('min_openshell_version: "0.0.101"');
+    expect(blueprint).toContain('max_openshell_version: "0.0.101"');
+    expect(manifest.openshellVersion).toBe("0.0.101");
     expect(review).toContain("binds NemoClaw's `0.0.85` selectors");
     expect(review).toContain("physical Docker 27 DGX Spark");
     expect(review).toContain("loopback first-byte test");

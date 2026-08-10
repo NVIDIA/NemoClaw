@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import credentialBoundaryManifest from "../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.99.json";
+import credentialBoundaryManifest from "../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.101.json";
 
 const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
 const CANDIDATE_RUNTIME = {
@@ -19,16 +19,16 @@ const CANDIDATE_RUNTIME = {
 };
 const CANDIDATE_RUNTIME_ENABLED = Object.values(CANDIDATE_RUNTIME).every(Boolean);
 const PINNED_OPEN_SHELL_SHA256 = {
-  cliDarwinArm64: "e31cac5360e2adf3c971d5742a516626c58acf2fd3db4dcb0e45804def3dc844",
-  cliLinuxArm64: "d00cbf0d8779c01ddea6453ead2ad4db3d89a1f14eb6f0785f7919f42813a279",
-  cliLinuxX64: "35725a358e42ef7f0f0393035536da317706b0febcc459a2011e0555f6c2b71c",
-  formula: "8dd34fc17ee9a30327664a18c9509c8a765cb010de38cda8e22841bddbe92713",
-  gatewayDarwinArm64: "4340619292ecb565f90eb2250db504baa37dd410361b366b42e174d34512cb6c",
-  gatewayLinuxArm64: "3a5d3092ae34356beb0ff2a920f9a87af4233c7a1086a53cd9429d48358f5c09",
-  gatewayLinuxX64: "640d204dc3c6bc28bffa1f3d870897fc23bbc5ec0151a6c642083e958455cb49",
-  sandboxLinuxArm64: "c758e7dc2b8c904baa01e2ccce0f08daf96ede0c648478b23346d8c4dd16f432",
-  sandboxLinuxX64: "84caed3dec4390e0938e89b38b1256d31e8970b4bfd85437bf92ed79f5b1ff05",
-  sandboxBinaryLinuxX64: "a4b0c38ed90a6dd4b4f312ad3727824a25ec478d88d4e65d22a82377b18e6214",
+  cliDarwinArm64: "9daaccdb9e30e220d56dd6d6bf4bd00ccca8ae4ad2845f5f0d9b9da3eb8ee881",
+  cliLinuxArm64: "b553d3bfc08e9354b990a10fb8abd976e039afeec2d3947f8a112018be40d296",
+  cliLinuxX64: "7d49ab2a5ff0b826bd2bdca5e0244010f832dfc6901c808ea8c8467004c26913",
+  formula: "87fadc7b0c854aa44f71d5b3a206865070117cd27825d59c61da252a99f402a2",
+  gatewayDarwinArm64: "0f9e195b7cde57f4c2080df95159c5e7e72b0248306abc242ae00a3bb6f07f14",
+  gatewayLinuxArm64: "ac842ccc2ab8b5682f7479d71532cc650839250a8a41dbfae2b871cbbdfd3279",
+  gatewayLinuxX64: "eaeb094ccf7dcb1fe00c7e926e6aa9aaaefb89ecbef8343720628b0fd2d84654",
+  sandboxLinuxArm64: "c39b7ba3cf212b88712a00d2a0e3d28e2c1e0e9f47a9a6ca818a8f06ed2140aa",
+  sandboxLinuxX64: "953b90eaa7d2fc1bb7bdf38eb0ada6fad7902b13f9f895ca20b89caeac483a9e",
+  sandboxBinaryLinuxX64: "a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920",
 };
 const ZERO_SHA256 = "0000000000000000000000000000000000000000000000000000000000000000";
 const REQUIRED_OPENSHELL_VERSION = credentialBoundaryManifest.openshellVersion;
@@ -813,7 +813,7 @@ exit 1`,
           NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
           NEMOCLAW_OPENSHELL_CHANNEL: "dev",
           NEMOCLAW_TEST_BREW_UNTRUST_HELP_STATUS: "1",
-          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.99-dev.8+g7bce1223d",
+          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.101-dev.8+g7bce1223d",
           PATH: `${fakeBin}:/usr/bin:/bin`,
         },
         encoding: "utf8",
@@ -842,7 +842,7 @@ exit 1`,
           NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
           NEMOCLAW_OPENSHELL_CHANNEL: "dev",
           NEMOCLAW_TEST_BREW_UNTRUST_STATUS: "1",
-          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.99-dev.8+g7bce1223d",
+          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.101-dev.8+g7bce1223d",
           PATH: `${fakeBin}:/usr/bin:/bin`,
         },
         encoding: "utf8",
@@ -872,7 +872,7 @@ exit 1`,
           NEMOCLAW_OPENSHELL_CHANNEL: "dev",
           NEMOCLAW_TEST_BREW_INSTALL_STATUS: "1",
           NEMOCLAW_TEST_BREW_UNTRUST_CLEANUP_STATUS: "1",
-          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.99-dev.8+g7bce1223d",
+          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.101-dev.8+g7bce1223d",
           PATH: `${fakeBin}:/usr/bin:/bin`,
         },
         encoding: "utf8",
@@ -908,7 +908,7 @@ exit 1`,
           NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
           NEMOCLAW_OPENSHELL_CHANNEL: "dev",
           NEMOCLAW_TEST_BREW_TRUST_STATUS: "1",
-          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.99-dev.8+g7bce1223d",
+          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.101-dev.8+g7bce1223d",
           PATH: `${fakeBin}:/usr/bin:/bin`,
         },
         encoding: "utf8",
@@ -1279,7 +1279,7 @@ exit 0`,
 
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
       expect(result.stderr).toContain(
-        "OpenShell release checksum for openshell-x86_64-unknown-linux-musl.tar.gz does not match NemoClaw-pinned v0.0.99 digest",
+        "OpenShell release checksum for openshell-x86_64-unknown-linux-musl.tar.gz does not match NemoClaw-pinned v0.0.101 digest",
       );
       expect(fs.existsSync(tarLog) ? fs.readFileSync(tarLog, "utf-8") : "").toBe("");
       expect(fs.existsSync(installLog) ? fs.readFileSync(installLog, "utf-8") : "").toBe("");
@@ -1314,7 +1314,7 @@ exit 0`,
   });
 
   it("reinstalls the pinned release when openshell is above MAX_VERSION", () => {
-    const result = runWithInstalledVersion("0.0.100");
+    const result = runWithInstalledVersion("0.0.102");
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain(
       `above the maximum (${REQUIRED_OPENSHELL_VERSION}) supported by this NemoClaw release`,
@@ -1340,7 +1340,7 @@ exit 0`,
   });
 
   it("accepts an installed OpenShell dev-channel Docker-driver build", () => {
-    const result = runWithInstalledVersion("0.0.99.dev84+g6b2180425", {
+    const result = runWithInstalledVersion("0.0.101.dev84+g6b2180425", {
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
     });
@@ -1350,7 +1350,7 @@ exit 0`,
   });
 
   it("fails closed for dev-channel installs without explicit risk acceptance", () => {
-    const result = runWithInstalledVersion("0.0.99.dev84+g6b2180425", {
+    const result = runWithInstalledVersion("0.0.101.dev84+g6b2180425", {
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
     });
     expect(result.status).toBe(1);
@@ -1361,12 +1361,12 @@ exit 0`,
 
   it("accepts coherent dev components with different git-prefix lengths", () => {
     const result = runWithInstalledVersion(
-      "0.0.99-dev.8+g7bce1223d",
+      "0.0.101-dev.8+g7bce1223d",
       {
         NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
         NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       },
-      { driverVersion: "0.0.99-dev.8+g7bce1223" },
+      { driverVersion: "0.0.101-dev.8+g7bce1223" },
     );
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toMatch(/dev channel/);
@@ -1401,7 +1401,7 @@ exit 0`,
 
   it("reuses a macOS dev build with its required Homebrew gateway service", () => {
     const result = runWithInstalledVersion(
-      "0.0.99-dev.8+g7bce1223d",
+      "0.0.101-dev.8+g7bce1223d",
       {
         NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
         NEMOCLAW_OPENSHELL_CHANNEL: "dev",
@@ -1413,7 +1413,7 @@ exit 0`,
   });
 
   it("refreshes an installed dev build when current main is required", () => {
-    const result = runWithInstalledVersion("0.0.99-dev.8+g7bce1223d", {
+    const result = runWithInstalledVersion("0.0.101-dev.8+g7bce1223d", {
       NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1",

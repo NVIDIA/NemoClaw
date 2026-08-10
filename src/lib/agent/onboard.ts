@@ -10,7 +10,7 @@ import { getAgentBranding } from "../cli/branding";
 import type { JsonObject as LooseObject } from "../core/json-types";
 import { sleepSeconds } from "../core/wait";
 import { getProviderSelectionConfig } from "../inference/config";
-import { runSandboxConfigSync } from "../onboard/config-sync";
+import { runSandboxConfigSync, sandboxConfigSyncArgs } from "../onboard/config-sync";
 import { isValidForwardPort } from "../onboard/dashboard-runtime";
 import { redact, run } from "../runner";
 import * as baseImage from "./base-image";
@@ -286,7 +286,7 @@ export async function handleAgentSetup(
         return cfg ? { ...cfg, agent: agent.name } : null;
       },
       runConnectScript: (name, scriptContent) => {
-        run([openshellBin, "sandbox", "connect", name], {
+        run([openshellBin, ...sandboxConfigSyncArgs(name)], {
           stdio: ["pipe", "ignore", "inherit"],
           input: scriptContent,
         });

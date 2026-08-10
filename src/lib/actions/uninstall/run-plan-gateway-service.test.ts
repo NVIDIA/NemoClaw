@@ -68,7 +68,7 @@ function writeGatewayEnv(test: Fixture, contents = "OPENSHELL_SERVER_PORT=8080\n
   return envPath;
 }
 
-function writeSelectedSandboxRegistry(test: Fixture, sandboxName: string): void {
+function writeSelectedSandboxRegistry(test: Fixture, sandboxName: string): string {
   const registryPath = path.join(test.home, ".nemoclaw", "sandboxes.json");
   fs.mkdirSync(path.dirname(registryPath), { recursive: true });
   fs.writeFileSync(
@@ -80,6 +80,7 @@ function writeSelectedSandboxRegistry(test: Fixture, sandboxName: string): void 
       },
     })}\n`,
   );
+  return registryPath;
 }
 
 function writeGatewayState(test: Fixture): string {
@@ -299,6 +300,60 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(result.exitCode).toBe(1);
     expect(fs.existsSync(servicePath)).toBe(true);
     expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
+  });
+
+  it("retries scoped cleanup after marked Linux unit cleanup fails (#8220)", () => {
+    const test = fixture(true);
+    const servicePath = writeManagedService(test);
+    const gatewayStatePath = writeGatewayState(test);
+    const registryPath = writeSelectedSandboxRegistry(test, "my-assistant");
+    const calls: string[][] = [];
+    const kill = vi.fn();
+    const runDocker = vi.fn(() => ok());
+    const disableService = vi
+      .fn<() => RunResult>()
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "service is busy" })
+      .mockReturnValue(ok());
+    const deps = {
+      commandExists: (command: string) =>
+        command === "systemctl" || command === "pgrep" || command === "docker",
+      kill,
+      runDocker,
+      run: (command: string, args: string[]) => {
+        calls.push([command, ...args]);
+        return command === "systemctl" && args.includes("disable") ? disableService() : ok();
+      },
+    };
+
+    const result = uninstall(test, false, deps, [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }]);
+
+    expect(result.exitCode).toBe(1);
+    expect(fs.existsSync(servicePath)).toBe(true);
+    expect(fs.existsSync(gatewayStatePath)).toBe(true);
+    expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(true);
+    expect(calls.some((call) => call[0] === "pgrep")).toBe(false);
+    expect(kill).not.toHaveBeenCalled();
+    expect(runDocker).not.toHaveBeenCalled();
+    expect(JSON.parse(fs.readFileSync(registryPath, "utf-8")).sandboxes).toEqual({});
+
+    const retry = uninstall(test, false, deps, [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }]);
+
+    expect(retry.exitCode).toBe(0);
+    expect(disableService).toHaveBeenCalledTimes(2);
+    expect(fs.existsSync(servicePath)).toBe(false);
+    expect(fs.existsSync(gatewayStatePath)).toBe(false);
+    expect(
+      calls.filter(
+        (call) => call[0] === "openshell" && call[1] === "gateway" && call[2] === "select",
+      ),
+    ).toHaveLength(1);
+    expect(
+      calls.filter(
+        (call) => call[0] === "openshell" && call[1] === "sandbox" && call[2] === "delete",
+      ),
+    ).toHaveLength(1);
+    expect(kill).not.toHaveBeenCalled();
+    expect(runDocker).toHaveBeenCalled();
   });
 
   it("removes only the marked Linux unit and managed env on full uninstall (#6903)", () => {

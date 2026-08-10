@@ -42,7 +42,7 @@ jobs:
       E2E_JOB: "1"
       E2E_TARGET_ID: podman-cpu-lifecycle
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.99"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.101"
       PODMAN_APT_VERSION: "5.7.0+ds2-3build1"
     steps:
       - name: Checkout

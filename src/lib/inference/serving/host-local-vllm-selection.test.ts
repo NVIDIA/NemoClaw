@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { VllmProfile } from "../vllm.js";
 import {
@@ -86,6 +90,18 @@ describe("host-local vLLM selection", () => {
         intent: { preset: selection.preset.metadata.id },
       }),
     );
+    assert(result.kind === "selected", "expected a selected host-local profile");
+    expect(result.model.runtime?.dockerRunArgs).toContain(
+      `type=bind,source=${path.join(os.homedir(), ".cache", "huggingface", "hub")},target=${selection.recipe.spec.runtime.modelCache.target}/hub,readonly`,
+    );
+    expect(result.model.runtime?.dockerRunArgs?.join("\n")).not.toContain(
+      `source=${path.join(os.homedir(), ".cache", "huggingface")},target=`,
+    );
+    expect(result.model.serveEnv).toMatchObject({
+      HF_HOME: selection.recipe.spec.runtime.modelCache.target,
+      HF_HUB_OFFLINE: "1",
+      TRANSFORMERS_OFFLINE: "1",
+    });
   });
 
   it.each([
