@@ -351,10 +351,14 @@ function isExactlyPendingManagedGatewayHealth(result: SandboxCommandResult | nul
   return lines.length === 1 && lines[0] === "GATEWAY_HEALTH_TIMEOUT";
 }
 
-function isExactlyInterruptedManagedSupervisorProbe(result: SandboxCommandResult | null): boolean {
-  // An empty 137 proves only that the read-only controller probe was killed.
-  // Keep it inconclusive inside this bounded waiter: authenticated supervisor
-  // proof is still required for success, and persistent interruptions fail.
+function isExactlyManagedControlExit137WithOnlyWhitespace(
+  result: SandboxCommandResult | null,
+): boolean {
+  // Status 137 with only whitespace in controller output has no protocol
+  // result to classify.
+  // Retry it only inside bounded managed-control loops. The controller
+  // serializes lifecycle changes and reconciles an already-running gateway.
+  // Persistent or output-bearing failures remain terminal.
   return (
     result !== null &&
     result.status === 137 &&
@@ -386,7 +390,7 @@ export function waitForManagedGatewaySupervisor(
       !isExactlyRetryableManagedRecoveryFailure(result) &&
       !isExactlyPendingManagedSupervisorControl(result) &&
       !isExactlyPendingManagedGatewayHealth(result) &&
-      !isExactlyInterruptedManagedSupervisorProbe(result)
+      !isExactlyManagedControlExit137WithOnlyWhitespace(result)
     ) {
       return false;
     }
@@ -492,7 +496,13 @@ function recoverSandboxProcesses(
       // PID 1 may replace the gateway between the host's stopped observation
       // and the controller's process-tree capture. Retry only exact transient
       // controller results; integrity/config/launch refusals are terminal.
-      if (!isExactlyRetryableManagedRecoveryFailure(execResult) || attempt === maxAttempts) break;
+      if (
+        (!isExactlyRetryableManagedRecoveryFailure(execResult) &&
+          !isExactlyManagedControlExit137WithOnlyWhitespace(execResult)) ||
+        attempt === maxAttempts
+      ) {
+        break;
+      }
       sleepSeconds(retryIntervalSeconds);
     }
     const failure = classifyGatewayRestartFailure(execResult);

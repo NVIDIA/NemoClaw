@@ -147,7 +147,7 @@ function scriptedPinnedGatewayRecovery(
 }
 
 describe("waitForManagedGatewaySupervisor", () => {
-  it("waits through an exact empty exit 137 from a settling controller probe (#8726)", () => {
+  it("retries a controller probe after status 137 with no output (#8726)", () => {
     const sleepImpl = vi.fn();
     const requestGatewaySupervisorActionImpl = vi
       .fn()
@@ -170,26 +170,28 @@ describe("waitForManagedGatewaySupervisor", () => {
     expect(sleepImpl).toHaveBeenCalledWith(3);
   });
 
-  it("fails after the bounded wait when empty exit 137 persists (#8726)", () => {
+  it("stops after two status 137 controller probes with no output (#8726)", () => {
     const sleepImpl = vi.fn();
+    const requestGatewaySupervisorActionImpl = vi.fn(() => ({
+      status: 137,
+      stdout: "",
+      stderr: "",
+    }));
 
     expect(
       waitForManagedGatewaySupervisor("new-clone", {
         intervalSeconds: 3,
         maxAttempts: 2,
-        requestGatewaySupervisorActionImpl: vi.fn(() => ({
-          status: 137,
-          stdout: "",
-          stderr: "",
-        })),
+        requestGatewaySupervisorActionImpl,
         sleepImpl,
       }),
     ).toBe(false);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(2);
     expect(sleepImpl).toHaveBeenCalledOnce();
     expect(sleepImpl).toHaveBeenCalledWith(3);
   });
 
-  it("does not wait through exit 137 with controller output (#8726)", () => {
+  it("does not retry a status 137 controller probe with diagnostic output (#8726)", () => {
     const sleepImpl = vi.fn();
 
     expect(

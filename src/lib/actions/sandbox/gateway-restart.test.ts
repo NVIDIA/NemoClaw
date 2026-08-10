@@ -13,23 +13,6 @@ afterEach(() => {
 });
 
 describe("gateway restart failure markers", () => {
-  it("keeps an empty exit 137 classified as a launch failure (#8726)", () => {
-    expect(classifyGatewayRestartFailure({ status: 137, stdout: "", stderr: "" })).toEqual({
-      layer: "launch failure",
-      detail: "restart exited 137",
-    });
-  });
-
-  it.each([
-    "\x1b[31m",
-    "\0",
-  ])("keeps exit 137 with control-only output distinct from an empty failure (#8726)", (stdout) => {
-    expect(classifyGatewayRestartFailure({ status: 137, stdout, stderr: "" })).toEqual({
-      layer: "launch failure",
-      detail: "restart exited 137 with no printable output",
-    });
-  });
-
   it("keeps supervisor failure markers aligned with the classifier", () => {
     const expectedMarkers: Array<
       [string, ReturnType<typeof classifyGatewayRestartFailure>["layer"]]

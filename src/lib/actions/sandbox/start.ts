@@ -59,19 +59,15 @@ export interface SandboxStartDeps {
   log?: (message: string) => void;
 }
 
-function isSettlingManagedSupervisorStartupFailure(
+function isMissingManagedSupervisorStartupFailure(
   check: SandboxStartupRecoveryResult,
   failure: string,
 ): boolean {
-  const missingSupervisor =
+  return (
     failure === "supervisor not running: SUPERVISOR_NOT_RUNNING" &&
     check.recoveryFailureLayer === "supervisor not running" &&
-    check.recoveryFailureDetail === "SUPERVISOR_NOT_RUNNING";
-  const interruptedController =
-    failure === "launch failure: restart exited 137" &&
-    check.recoveryFailureLayer === "launch failure" &&
-    check.recoveryFailureDetail === "restart exited 137";
-  return missingSupervisor || interruptedController;
+    check.recoveryFailureDetail === "SUPERVISOR_NOT_RUNNING"
+  );
 }
 
 function startupRecoveryFailure(check: SandboxStartupRecoveryResult): string | null {
@@ -149,7 +145,7 @@ export async function startSandbox(
       throw preservedSandboxRecoveryError(name, error);
     }
     let failure = startupRecoveryFailure(recovery);
-    if (failure && isSettlingManagedSupervisorStartupFailure(recovery, failure)) {
+    if (failure && isMissingManagedSupervisorStartupFailure(recovery, failure)) {
       let supervisorReady = false;
       try {
         const waitForSupervisor =
