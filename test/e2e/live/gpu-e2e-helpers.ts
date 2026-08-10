@@ -243,7 +243,10 @@ export async function cleanupOllama(
   });
 }
 
-export function ollamaCleanupScript(): string {
+export function ollamaCleanupScript(listenerPort = 11434): string {
+  if (!Number.isInteger(listenerPort) || listenerPort < 1 || listenerPort > 65_535) {
+    throw new Error(`invalid Ollama listener port: ${String(listenerPort)}`);
+  }
   return `set -euo pipefail
 if command -v systemctl >/dev/null 2>&1; then
   systemctl --user stop ollama.service >/dev/null 2>&1 || true
@@ -269,18 +272,8 @@ if pgrep -f '[o]llama serve' >/dev/null 2>&1; then
   pgrep -af '[o]llama serve' >&2 || true
   exit 1
 fi
-if node -e '
-  const net = require("node:net");
-  const socket = net.createConnection({ host: "127.0.0.1", port: 11434 });
-  const finish = (code) => {
-    socket.destroy();
-    process.exit(code);
-  };
-  socket.setTimeout(2_000, () => finish(1));
-  socket.once("connect", () => finish(0));
-  socket.once("error", () => finish(1));
-'; then
-  echo 'Ollama cleanup left a listener on 127.0.0.1:11434' >&2
+if (exec 3<>/dev/tcp/127.0.0.1/${listenerPort}) 2>/dev/null; then
+  echo 'Ollama cleanup left a listener on 127.0.0.1:${listenerPort}' >&2
   exit 1
 fi`;
 }

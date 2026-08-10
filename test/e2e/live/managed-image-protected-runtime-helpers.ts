@@ -126,11 +126,16 @@ async function qualifyEveryAgent(
   }
 }
 
+export const PROTECTED_OLLAMA_READY_ATTEMPTS = 20;
+export const PROTECTED_OLLAMA_CURL_MAX_SECONDS = 5;
+export const PROTECTED_OLLAMA_READY_SLEEP_SECONDS = 1;
+export const PROTECTED_OLLAMA_START_TIMEOUT_MS = 150_000;
+
 export function protectedOllamaStartScript(logPath: string): string {
   if (!path.isAbsolute(logPath) || /[\0\r\n]/u.test(logPath)) {
     throw new Error(`protected Ollama log path must be absolute: ${JSON.stringify(logPath)}`);
   }
-  const logPathLiteral = JSON.stringify(logPath);
+  const logPathLiteral = `'${logPath.replaceAll("'", "'\\''")}'`;
   return `set -euo pipefail
 log_path=${logPathLiteral}
 : >"$log_path"
@@ -175,8 +180,8 @@ else
   restart_mode=manual
 fi
 
-for _ in $(seq 1 120); do
-  if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+for _ in $(seq 1 ${PROTECTED_OLLAMA_READY_ATTEMPTS}); do
+  if curl -fsS --connect-timeout 2 --max-time ${PROTECTED_OLLAMA_CURL_MAX_SECONDS} http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
     printf 'restart_mode=%s\n' "$restart_mode"
     exit 0
   fi
@@ -186,7 +191,7 @@ for _ in $(seq 1 120); do
     diagnose_ollama
     exit 1
   fi
-  sleep 1
+  sleep ${PROTECTED_OLLAMA_READY_SLEEP_SECONDS}
 done
 
 echo 'Ollama did not become ready on 127.0.0.1:11434' >&2
@@ -209,7 +214,7 @@ export async function startProtectedOllama(host: HostCliClient): Promise<string>
     {
       artifactName: "start-managed-image-ollama",
       env: gpuEnv(),
-      timeoutMs: 150_000,
+      timeoutMs: PROTECTED_OLLAMA_START_TIMEOUT_MS,
     },
   );
   expect(start.exitCode, resultText(start)).toBe(0);
