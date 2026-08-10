@@ -28,8 +28,6 @@ export interface ShellProbeRunOptions {
   redactionValues?: string[];
   /** Retain at most the last N bytes from each output stream. */
   captureLimitBytes?: number;
-  /** After redaction, retain at most the first N UTF-8 bytes from each output stream. */
-  postRedactionCaptureLimitBytes?: number;
   /** Timestamp-only output observer; chunk contents never cross this boundary. */
   onOutput?: (event: ShellProbeOutputEvent) => void;
 }
@@ -100,12 +98,6 @@ interface TextCapture {
   };
 }
 
-function validateCaptureLimitBytes(value: number | undefined, optionName: string): void {
-  if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
-    throw new Error(`${optionName} must be a positive safe integer`);
-  }
-}
-
 function createTextCapture(limitBytes: number | undefined): TextCapture {
   if (limitBytes === undefined) {
     let text = "";
@@ -118,7 +110,9 @@ function createTextCapture(limitBytes: number | undefined): TextCapture {
       },
     };
   }
-  validateCaptureLimitBytes(limitBytes, "captureLimitBytes");
+  if (!Number.isSafeInteger(limitBytes) || limitBytes <= 0) {
+    throw new Error("captureLimitBytes must be a positive safe integer");
+  }
 
   let droppedBytes = 0;
   let tail = Buffer.alloc(0);
@@ -158,24 +152,6 @@ function redactTruncatedSecretPrefix(text: string, redactionValues: string[]): s
   return fragmentLength > 0 ? `[REDACTED]${text.slice(fragmentLength)}` : text;
 }
 
-function truncateRedactedUtf8Prefix(text: string, limitBytes: number | undefined): string {
-  if (limitBytes === undefined) return text;
-  const bytes = Buffer.from(text.replaceAll("\uFFFD", "?"), "utf8");
-  if (bytes.length <= limitBytes) return bytes.toString("utf8");
-  let end = limitBytes;
-  let sequenceStart = end - 1;
-  while (sequenceStart >= 0 && (bytes[sequenceStart]! & 0xc0) === 0x80) {
-    sequenceStart -= 1;
-  }
-  if (sequenceStart >= 0) {
-    const first = bytes[sequenceStart]!;
-    const sequenceLength =
-      (first & 0x80) === 0 ? 1 : (first & 0xe0) === 0xc0 ? 2 : (first & 0xf0) === 0xe0 ? 3 : 4;
-    if (sequenceStart + sequenceLength > end) end = sequenceStart;
-  }
-  return bytes.subarray(0, end).toString("utf8");
-}
-
 export class ShellProbe {
   private readonly artifacts: ArtifactSink;
   private readonly progress: ChildProcessProgress;
@@ -198,10 +174,6 @@ export class ShellProbe {
     const args = [...trustedCommand.args];
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
-    validateCaptureLimitBytes(
-      options.postRedactionCaptureLimitBytes,
-      "postRedactionCaptureLimitBytes",
-    );
     const redactionValues = options.redactionValues ?? [];
     const enforcedValues = [
       ...new Set(redactionValues.filter((value) => value && value.length > 0)),
@@ -220,11 +192,9 @@ export class ShellProbe {
       const boundarySafeText =
         droppedBytes > 0 ? redactTruncatedSecretPrefix(text, enforcedValues) : text;
       const redacted = redactProbeText(boundarySafeText);
-      const rendered =
-        droppedBytes > 0
-          ? `[shell-probe omitted ${droppedBytes} earlier bytes; showing up to the last ${limitBytes} bytes]\n${redacted}`
-          : redacted;
-      return truncateRedactedUtf8Prefix(rendered, options.postRedactionCaptureLimitBytes);
+      return droppedBytes > 0
+        ? `[shell-probe omitted ${droppedBytes} earlier bytes; showing up to the last ${limitBytes} bytes]\n${redacted}`
+        : redacted;
     };
     const redactedCommand = [command, ...args].map(redactProbeText);
     const activityName = safeArtifactBase(redactProbeText(options.artifactName ?? command));

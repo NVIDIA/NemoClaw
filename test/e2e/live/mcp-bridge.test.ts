@@ -27,7 +27,6 @@ import {
   removeMcpBridgeWithOneConcurrencyRetry,
 } from "./mcp-bridge-cleanup.ts";
 import {
-  assertAuthenticatedMcpToolCallOutcome,
   assertHermesMcpHttpResponse,
   buildHermesMcpChatProbeScript,
   HERMES_MCP_FAILURE_CAPTURE_BYTES,
@@ -571,23 +570,19 @@ async function assertRealAdapterToolCall(
     {
       artifactName: options.artifactName,
       env: buildAvailabilityProbeEnv(),
-      postRedactionCaptureLimitBytes:
-        options.agent === "hermes" ? HERMES_MCP_FAILURE_CAPTURE_BYTES : undefined,
+      captureLimitBytes: options.agent === "hermes" ? HERMES_MCP_FAILURE_CAPTURE_BYTES : undefined,
       redactionValues: options.agent === "hermes" ? hermesRedactionValues : [],
       timeoutMs: 5 * 60_000,
     },
   );
-  if (options.agent === "hermes") {
-    assertHermesMcpHttpResponse(result, hermesRedactionValues);
-    assertAuthenticatedMcpToolCallOutcome({
-      requests: fakeMcp.requests,
-      callsBefore: before,
-      expectedSecret: options.expectedSecret ?? HOST_SECRET,
-    });
-    return;
-  }
-  expectExitZero(result, `${options.agent} real MCP tool call`);
-  expect(resultText(result)).toContain(options.resultToken);
+  const assertResponse =
+    options.agent === "hermes"
+      ? () => assertHermesMcpHttpResponse(result, hermesRedactionValues)
+      : () => {
+          expectExitZero(result, `${options.agent} real MCP tool call`);
+          expect(resultText(result)).toContain(options.resultToken);
+        };
+  assertResponse();
   const calls = fakeMcp.requests.filter((request) => request.rpcMethod === "tools/call");
   expect(calls).toHaveLength(before + 1);
   expect(calls.at(-1)).toMatchObject({

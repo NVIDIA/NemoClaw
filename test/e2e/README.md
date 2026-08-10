@@ -739,19 +739,11 @@ Live modules import `fixtures/e2e-test.ts`; selected integration modules import
 It also follows shared E2E runtime helpers. Run child processes through
 `ShellProbe` or an existing audited progress-aware boundary; new direct async
 process boundaries fail the check. Synchronous calls require both a positive
-timeout shorter than the first heartbeat and `killSignal: "SIGKILL"`.
-Keep child contents in redacted artifacts.
-During command execution, report only timestamp-based output activity.
-Before a `ShellProbe` command runs, register every known scenario-specific
-sensitive value in `redactionValues`.
-A terminal failure assertion may include a bounded preview only after the
-fixture redacts the output.
-Pass the same explicit values to the assertion before it formats the preview.
-Cover the preview limit and redaction behavior with deterministic tests.
-Success paths must not emit response contents.
-Pass the fixture-provided frozen, canonical `progress` capability unchanged to
-an audited subprocess boundary.
-Do not replace it with a custom, copied, or no-op adapter.
+timeout shorter than the first heartbeat and `killSignal: "SIGKILL"`. Keep child
+contents in redacted artifacts and report only timestamp-based output activity
+to the console. Pass the fixture-provided frozen, canonical `progress`
+capability unchanged to an audited subprocess boundary; do not replace it with
+a custom, copied, or no-op adapter.
 
 ## Push and Manual PR E2E
 

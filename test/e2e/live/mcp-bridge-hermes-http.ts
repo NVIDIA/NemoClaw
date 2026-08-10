@@ -9,8 +9,6 @@ export const HERMES_MCP_RESULT_TOKEN_MARKER = "NEMOCLAW_HERMES_MCP_RESULT_TOKEN=
 export const HERMES_MCP_FAILURE_CAPTURE_BYTES = 4_096;
 export const HERMES_MCP_FAILURE_PREVIEW_CHARS = 1_024;
 export const HERMES_MCP_RESPONSE_FILE_BYTES = 65_536;
-export const HERMES_MCP_OVERSIZE_BODY_MARKER =
-  "<response body omitted: exceeds diagnostic response limit>";
 
 interface HermesMcpCommandResult {
   exitCode: number | null;
@@ -19,25 +17,12 @@ interface HermesMcpCommandResult {
   stderr: string;
 }
 
-interface McpRequestObservation {
-  rpcMethod?: string;
-  auth?: string;
-  path?: string;
-}
-
 const FAILURE_BODY_EMITTER = [
   "import os, pathlib, sys",
-  "path = pathlib.Path(sys.argv[1])",
-  "limit = int(sys.argv[2])",
-  `oversize = ${JSON.stringify(HERMES_MCP_OVERSIZE_BODY_MARKER)}.encode('utf-8')`,
+  "raw = pathlib.Path(sys.argv[1]).read_bytes()",
   "secret = os.environ.get('API_SERVER_KEY', '').encode('utf-8')",
-  "with path.open('rb') as stream:",
-  "    raw = stream.read(limit + 1)",
-  "if len(raw) > limit or len(secret) > limit:",
-  "    sys.stdout.buffer.write(oversize)",
-  "else:",
-  "    replacement = b'[REDACTED]' if len(secret) >= 10 else b'*' * len(secret)",
-  "    sys.stdout.buffer.write(raw.replace(secret, replacement) if secret else raw)",
+  "replacement = b'[REDACTED]' if len(secret) >= 10 else b'*' * len(secret)",
+  "sys.stdout.buffer.write(raw.replace(secret, replacement) if secret else raw)",
 ].join("\n");
 
 export function buildHermesMcpChatProbeScript(payload: string, resultToken: string): string {
@@ -48,7 +33,7 @@ export function buildHermesMcpChatProbeScript(payload: string, resultToken: stri
     "trap 'rm -f \"$response_file\"' EXIT",
     `set -- -sS --max-time 180 --max-filesize ${HERMES_MCP_RESPONSE_FILE_BYTES} -o "$response_file" -w '%{http_code}' http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json'`,
     'if [ -n "${API_SERVER_KEY:-}" ]; then set -- "$@" -H "Authorization: Bearer ${API_SERVER_KEY}"; fi',
-    `emit_failure_body() { /usr/bin/python3 -I -S -c ${shellQuote(FAILURE_BODY_EMITTER)} "$response_file" ${HERMES_MCP_RESPONSE_FILE_BYTES}; }`,
+    `emit_failure_body() { /usr/bin/python3 -I -S -c ${shellQuote(FAILURE_BODY_EMITTER)} "$response_file"; }`,
     "set +e",
     `status="$(curl "$@" --data-binary ${shellQuote(payload)})"`,
     "curl_rc=$?",
@@ -113,30 +98,5 @@ export function assertHermesMcpHttpResponse(
   }
   if (result.stdout !== "") {
     throw new Error("Hermes real MCP tool call success path emitted response contents");
-  }
-}
-
-export function assertAuthenticatedMcpToolCallOutcome(options: {
-  requests: readonly McpRequestObservation[];
-  callsBefore: number;
-  expectedSecret: string;
-}): void {
-  const calls = options.requests.filter((request) => request.rpcMethod === "tools/call");
-  if (calls.length !== options.callsBefore + 1) {
-    throw new Error(
-      `Hermes real MCP tool call must issue exactly one tools/call request (observed delta=${calls.length - options.callsBefore})`,
-    );
-  }
-  const call = calls.at(-1);
-  if (call?.path !== "/mcp") {
-    throw new Error("Hermes real MCP tool call did not reach the managed /mcp endpoint");
-  }
-  if (call.auth !== `Bearer ${options.expectedSecret}`) {
-    throw new Error(
-      "Hermes real MCP tool call did not use the expected resolved bearer credential",
-    );
-  }
-  if (call.auth.includes("openshell:resolve:env")) {
-    throw new Error("Hermes real MCP tool call forwarded an unresolved credential placeholder");
   }
 }
