@@ -91,6 +91,8 @@ import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./v
 
 export { runConnectAutoPairApprovalPass };
 
+export type SandboxStartupRecoveryResult = ReturnType<typeof checkAndRecoverSandboxProcesses>;
+
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
 };
@@ -925,8 +927,19 @@ function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
   }
 }
 
-export function restoreSandboxStartupState(sandboxName: string): void {
-  checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+export function restoreSandboxStartupState(
+  sandboxName: string,
+  { requireManagedRecovery = false }: { requireManagedRecovery?: boolean } = {},
+): SandboxStartupRecoveryResult {
+  return checkAndRecoverSandboxProcesses(sandboxName, {
+    quiet: true,
+    // `start` has already brought the existing container runtime back. For a
+    // built-in gateway, enter the authenticated managed recovery path even
+    // when the first sandbox-exec health probe is unavailable while OpenShell
+    // is still publishing the restarted container. The controller remains the
+    // authority for already-running, recovery, integrity, and refusal results.
+    ...(requireManagedRecovery ? { isSandboxGatewayRunningImpl: () => false } : {}),
+  });
 }
 
 function restoreInteractiveTerminal(): void {
