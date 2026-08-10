@@ -87,7 +87,11 @@ type StaleDockerOrphanCleanupDeps = {
   forceRemove?: (containerId: string) => { status?: number | null };
 };
 
-/** Remove one exact Docker-owned orphan before a registry-only recreate. */
+/**
+ * Remove one exact Docker-owned orphan when a registry row outlives its OpenShell sandbox.
+ * Docker labels are the remaining authority in this invalid state; see the focused #8720 tests.
+ * Remove this workaround once OpenShell upgrades clean up or expose these orphans natively.
+ */
 export function removeStaleRebuildDockerOrphan(
   sandboxName: string,
   openshellDriver: string | null | undefined,

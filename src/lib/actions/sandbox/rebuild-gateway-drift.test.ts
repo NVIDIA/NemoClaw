@@ -225,6 +225,22 @@ describe("rebuild gateway drift preflight", () => {
     expect(queryDockerContainersSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("preserves legacy stale recovery when Docker inspection is unavailable (#8720)", async () => {
+    const entry = makeSandboxEntry();
+    vi.mocked(registry.getSandbox).mockReturnValue(entry as never);
+    captureOpenshellSpy
+      .mockReturnValueOnce({ status: 0, output: "" })
+      .mockReturnValueOnce({ status: 1, output: "Error: sandbox not found" });
+    queryDockerContainersSpy.mockReturnValue({ ok: false, ids: [], error: "docker unavailable" });
+
+    await expect(resolveRebuildLiveState("alpha", entry, vi.fn(), bail)).resolves.toMatchObject({
+      staleRecovery: true,
+    });
+
+    expect(forceRemoveDockerContainerSpy).not.toHaveBeenCalled();
+    expect(registryPersistence.load).toHaveBeenCalledOnce();
+  });
+
   it("refuses ambiguous labeled Docker orphan cleanup without removing either container (#8720)", async () => {
     const entry = { ...makeSandboxEntry(), openshellDriver: "docker" };
     vi.mocked(registry.getSandbox).mockReturnValue(entry as never);
