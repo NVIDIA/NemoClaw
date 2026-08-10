@@ -170,6 +170,10 @@ describe("OpenClaw mcporter MCP adapter", () => {
         Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN",
         accept: "application/json, text/event-stream",
       };
+      const expectFileAbsent = (filePath: string) =>
+        expect(fs.readdirSync(path.dirname(filePath))).not.toContain(path.basename(filePath));
+      const expectFilePresent = (filePath: string) =>
+        expect(fs.readFileSync(filePath, "utf8")).not.toBe("");
 
       const register = run(buildOpenClawMcporterRegisterCommand(baseEntry));
       expect(register.status).toBe(0);
@@ -198,7 +202,7 @@ describe("OpenClaw mcporter MCP adapter", () => {
       const drifted = run(buildOpenClawMcporterRemoveCommand(baseEntry));
       expect(drifted.status).toBe(2);
       expect(drifted.stderr).toContain("Refusing to remove modified mcporter MCP server");
-      expect(fs.existsSync(removeMarker)).toBe(false);
+      expectFileAbsent(removeMarker);
 
       fs.writeFileSync(
         configState,
@@ -212,7 +216,7 @@ describe("OpenClaw mcporter MCP adapter", () => {
       const remove = run(buildOpenClawMcporterRemoveCommand(baseEntry));
       expect(remove.status).toBe(0);
       expect(fs.readFileSync(removeMarker, "utf8")).toBe("removed");
-      expect(fs.existsSync(configState)).toBe(false);
+      expectFileAbsent(configState);
 
       fs.mkdirSync(path.dirname(homeConfigState), { recursive: true });
       fs.writeFileSync(
@@ -225,13 +229,13 @@ describe("OpenClaw mcporter MCP adapter", () => {
         }),
       );
       expect(run(buildOpenClawMcporterRegisterCommand(baseEntry, true)).status).toBe(0);
-      expect(fs.existsSync(configState)).toBe(true);
-      expect(fs.existsSync(homeConfigState)).toBe(true);
+      expectFilePresent(configState);
+      expectFilePresent(homeConfigState);
 
       const layeredRemove = run(buildOpenClawMcporterRemoveCommand(baseEntry));
       expect(layeredRemove.status).toBe(0);
-      expect(fs.existsSync(configState)).toBe(false);
-      expect(fs.existsSync(homeConfigState)).toBe(false);
+      expectFileAbsent(configState);
+      expectFileAbsent(homeConfigState);
       expect(run(buildOpenClawMcporterInspectCommand(baseEntry, false)).stdout.trim()).toBe(
         "absent",
       );
@@ -249,8 +253,8 @@ describe("OpenClaw mcporter MCP adapter", () => {
       expect(runWithoutXdg(buildOpenClawMcporterRegisterCommand(baseEntry, true)).status).toBe(0);
       const defaultXdgRemove = runWithoutXdg(buildOpenClawMcporterRemoveCommand(baseEntry));
       expect(defaultXdgRemove.status).toBe(0);
-      expect(fs.existsSync(configState)).toBe(false);
-      expect(fs.existsSync(defaultXdgConfigState)).toBe(false);
+      expectFileAbsent(configState);
+      expectFileAbsent(defaultXdgConfigState);
       const defaultXdgInspect = runWithoutXdg(
         buildOpenClawMcporterInspectCommand(baseEntry, false),
       );
@@ -277,8 +281,8 @@ describe("OpenClaw mcporter MCP adapter", () => {
       );
       const driftedHome = run(buildOpenClawMcporterRemoveCommand(baseEntry));
       expect(driftedHome.status).toBe(2);
-      expect(fs.existsSync(configState)).toBe(true);
-      expect(fs.existsSync(homeConfigState)).toBe(true);
+      expectFilePresent(configState);
+      expectFilePresent(homeConfigState);
 
       const observedArgs = fs
         .readFileSync(argvLog, "utf8")
