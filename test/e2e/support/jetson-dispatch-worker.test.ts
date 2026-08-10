@@ -145,18 +145,27 @@ describe("Colossus SSH worker deployment boundary", () => {
 
   it.each([
     {
+      expectedContainmentDiagnostics: [],
       expectedLog: ["stop", "deploy", "start", "stop"],
       expectedState: "inactive\n",
       failContainmentStop: false,
       name: "stops public ingress when the public proof fails",
     },
     {
+      expectedContainmentDiagnostics: [
+        "PUBLIC INGRESS CONTAINMENT FAILED: tunnel stop status=5; ActiveState=active; inspection status=0",
+      ],
       expectedLog: ["stop", "deploy", "start", "stop-failed"],
       expectedState: "active\n",
       failContainmentStop: true,
       name: "reports when public-ingress containment fails",
     },
-  ])("$name (#8142)", ({ expectedLog, expectedState, failContainmentStop }) => {
+  ])("$name (#8142)", ({
+    expectedContainmentDiagnostics,
+    expectedLog,
+    expectedState,
+    failContainmentStop,
+  }) => {
     const section = dispatcherRunbook.slice(
       dispatcherRunbook.indexOf("## Deploy a Later Reviewed Commit"),
       dispatcherRunbook.indexOf("## Publish the Dispatcher With Cloudflare Tunnel"),
@@ -210,13 +219,11 @@ esac
     expect(result.status).not.toBe(0);
     expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual(expectedLog);
     expect(fs.readFileSync(state, "utf8")).toBe(expectedState);
-    if (failContainmentStop) {
-      expect(result.stderr).toContain(
-        "PUBLIC INGRESS CONTAINMENT FAILED: tunnel stop status=5; ActiveState=active",
-      );
-    } else {
-      expect(result.stderr).not.toContain("PUBLIC INGRESS CONTAINMENT FAILED");
-    }
+    expect(
+      result.stderr
+        .split("\n")
+        .filter((line) => line.startsWith("PUBLIC INGRESS CONTAINMENT FAILED:")),
+    ).toEqual(expectedContainmentDiagnostics);
   });
 
   it("loads fixed SSH, host-key, timeout, and cleanup configuration (#8142)", () => {
@@ -422,10 +429,14 @@ esac
     let selectedTarget = "/tmp/unmanaged-cleanup";
     let managedLinkStat = rootLinkStat;
     let managedTargetStat = secureTargetStat;
+    const lstatOverrides = new Map([
+      [cleanupExecutable, () => managedLinkStat],
+      [cleanupTarget, () => managedTargetStat],
+    ]);
     const lstat = vi.spyOn(fs, "lstatSync").mockImplementation((candidate, options) => {
-      if (String(candidate) === cleanupExecutable) return managedLinkStat;
-      if (String(candidate) === cleanupTarget) return managedTargetStat;
-      return realLstatSync(candidate, options as never);
+      return (
+        lstatOverrides.get(String(candidate))?.() ?? realLstatSync(candidate, options as never)
+      );
     });
     const readlink = vi
       .spyOn(fs, "readlinkSync")

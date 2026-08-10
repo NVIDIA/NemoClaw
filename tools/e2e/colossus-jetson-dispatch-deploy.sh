@@ -100,7 +100,9 @@ move_directory() {
 
 require_root_owned_directory() {
   local path="$1" expected_mode="$2" metadata
-  [ -d "$path" ] && [ ! -L "$path" ] || fail "$path must be a directory, not a symbolic link"
+  if [ ! -d "$path" ] || [ -L "$path" ]; then
+    fail "$path must be a directory, not a symbolic link"
+  fi
   metadata="$(/usr/bin/stat -c '%u:%g:%a' "$path")" || fail "could not inspect $path"
   if [ "$metadata" != "0:0:$expected_mode" ]; then
     fail "$path must be owned by root:root with mode $expected_mode"
@@ -109,7 +111,9 @@ require_root_owned_directory() {
 
 require_root_owned_file() {
   local path="$1" expected_mode="$2" metadata
-  [ -f "$path" ] && [ ! -L "$path" ] || fail "$path must be a regular file, not a symbolic link"
+  if [ ! -f "$path" ] || [ -L "$path" ]; then
+    fail "$path must be a regular file, not a symbolic link"
+  fi
   metadata="$(/usr/bin/stat -c '%u:%g:%a' "$path")" || fail "could not inspect $path"
   if [ "$metadata" != "0:0:$expected_mode" ]; then
     fail "$path must be owned by root:root with mode $expected_mode"
@@ -135,10 +139,10 @@ require_root() {
 }
 
 parse_commit() {
-  [ "$#" -eq 2 ] && [ "$1" = "--commit" ] && [[ "$2" =~ ^[a-f0-9]{40}$ ]] || {
+  if [ "$#" -ne 2 ] || [ "$1" != "--commit" ] || [[ ! "$2" =~ ^[a-f0-9]{40}$ ]]; then
     usage
     exit 2
-  }
+  fi
   printf '%s\n' "$2"
 }
 
@@ -291,7 +295,9 @@ atomic_install_cleanup_link() {
 atomic_select_release() {
   local release="$1"
   temporary_link="$deploy_root/.current.${release##*/}.$$"
-  [ ! -e "$temporary_link" ] && [ ! -L "$temporary_link" ] || return 1
+  if [ -e "$temporary_link" ] || [ -L "$temporary_link" ]; then
+    return 1
+  fi
   ln -s -- "$release" "$temporary_link" || {
     temporary_link=""
     return 1
