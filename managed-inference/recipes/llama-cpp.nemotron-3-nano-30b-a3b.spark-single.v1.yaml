@@ -86,7 +86,13 @@ spec:
       value: f16
     speculativeDecoding: disabled
     limits:
+      maxRequestBodyBytes: 1048576
+      maxRequestHeaderBytes: 32768
+      maxOutputTokens: 4096
       requestTimeoutSeconds: 900
+      shutdownTimeoutSeconds: 25
+    requestGuard:
+      upstreamPort: 8082
 
   readiness:
     contractRef: llama-cpp.server-readiness/v1
