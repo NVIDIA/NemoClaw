@@ -774,7 +774,7 @@ If passwordless sudo, UFW, or active UFW is unavailable, NemoClaw falls back to 
 
 For the portable experimental profile, the helper maps `host.openshell.internal` to the OpenShell Podman host gateway instead of the inspected network gateway.
 This path does not use Docker bridge UFW remediation.
-On a failed portable TCP probe, onboarding prints commands for the user-scoped Podman service and socket.
+After all portable TCP probe attempts fail, onboarding prints commands for the user-scoped Podman service and socket.
 The rerun command preserves `--experimental-profile portable`.
 To tune the existing-gateway HTTP health poll, use `NEMOCLAW_REUSE_HEALTH_POLL_COUNT` (default `6`) and `NEMOCLAW_REUSE_HEALTH_POLL_INTERVAL` (default `5` seconds).
 The poll count is clamped to a minimum of `1` so the health probe always runs at least once, and the interval is clamped to a minimum of `0` (no sleep between attempts).
