@@ -71,6 +71,17 @@ function createReadinessFixture(): ReadinessFixture {
   fs.mkdirSync(home);
   fs.mkdirSync(binDir);
   fs.writeFileSync(path.join(home, ".bash_logout"), "exit 41\n", "utf8");
+  writeCommand(binDir, "id", "printf '1000\\n'");
+  writeCommand(binDir, "sudo", "exit 1");
+  writeCommand(binDir, "systemctl", "exit 1");
+  writeCommand(
+    binDir,
+    "setsid",
+    `while [ "$#" -gt 0 ] && [ "$1" != "ollama" ]; do
+  shift
+done
+exec "$@"`,
+  );
 
   const artifacts = new ArtifactSink(path.join(root, "artifacts"));
   const progress = startTestProgress(
@@ -111,11 +122,11 @@ describe("protected managed-image readiness commands", () => {
     { kind: "NUL-containing", logPath: "/tmp/ollama\0other.log" },
   ])("rejects a $kind Ollama log path", ({ logPath }) => {
     expect(() => protectedOllamaReadinessCommand(logPath)).toThrow(
-      "protected Ollama log path must be an absolute single-line path",
+      "protected Ollama log path must be absolute",
     );
   });
 
-  it("ignores login-shell logout hooks and reports successful attempt counts", async () => {
+  it("ignores login-shell logout hooks and reports successful readiness", async () => {
     const fixture = createReadinessFixture();
     writeCommand(fixture.binDir, "ollama", "exit 0");
     writeCommand(fixture.binDir, "curl", "exit 0");
@@ -138,7 +149,7 @@ describe("protected managed-image readiness commands", () => {
 
     expect(ollama.command.slice(0, 2)).toEqual(["bash", "-c"]);
     expect(ollama.exitCode).toBe(0);
-    expect(ollama.stdout).toBe("managed-image-ollama-ready attempts=1\n");
+    expect(ollama.stdout).toBe("restart_mode=manual\nmanaged-image-ollama-ready\n");
     expect(vllm.command.slice(0, 2)).toEqual(["bash", "-c"]);
     expect(vllm.exitCode).toBe(0);
     expect(vllm.stdout).toBe("managed-image-vllm-ready attempts=1\n");
@@ -177,7 +188,7 @@ describe("protected managed-image readiness commands", () => {
     expect(result.command.slice(0, 2)).toEqual(["bash", "-c"]);
     expect(result.exitCode).toBe(1);
     expect(result.timedOut).toBe(false);
-    expect(result.stderr).toContain("managed-image-ollama-not-ready attempts=1");
+    expect(result.stderr).toContain("managed-image-ollama-not-ready status=1");
     expect(diagnosticLines).toHaveLength(200);
     expect(diagnosticLines[0]).toContain("runtime-log-line-061");
     expect(diagnosticLines.at(-1)).toContain("runtime-log-line-260");
@@ -219,7 +230,7 @@ describe("protected managed-image readiness commands", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("[shell-probe omitted ");
-    expect(result.stderr).toContain("managed-image-ollama-not-ready attempts=1");
+    expect(result.stderr).toContain("managed-image-ollama-not-ready status=1");
     expect(result.stderr).toContain("[REDACTED]");
     expect(result.stderr).not.toContain(sensitiveValue);
     expect(Buffer.byteLength(stderrArtifact)).toBeLessThanOrEqual(command.captureLimitBytes + 256);

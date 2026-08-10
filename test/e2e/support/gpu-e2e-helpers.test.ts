@@ -1,23 +1,56 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { once } from "node:events";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
   assertAgentExecutionSucceeded,
   buildLlamaCppCompatibilityTargetEnv,
+  cleanupGpu,
   env,
   hasExactReadyPhase,
+  ollamaCleanupScript,
   openClawModelConfigProjectionScript,
   shouldBootstrapLlamaCppGenericGpuTarget,
 } from "../live/gpu-e2e-helpers.ts";
+import {
+  PROTECTED_OLLAMA_CURL_MAX_SECONDS,
+  PROTECTED_OLLAMA_READY_ATTEMPTS,
+  PROTECTED_OLLAMA_READY_SLEEP_SECONDS,
+  PROTECTED_OLLAMA_START_TIMEOUT_MS,
+  protectedOllamaStartScript,
+  startProtectedOllama,
+} from "../live/managed-image-protected-runtime-helpers.ts";
 
 const GPU_MODEL = "qwen3.5:9b";
+const SYNC_E2E_CHILD_OPTIONS = { killSignal: "SIGKILL" as const, timeout: 5_000 };
+
+function loopbackPort(server: ReturnType<typeof createServer>): number {
+  const address = server.address();
+  assert(address && typeof address !== "string", "loopback server has no TCP port");
+  return address.port;
+}
+
+async function unusedLoopbackPort(): Promise<number> {
+  const server = createServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const port = loopbackPort(server);
+  const closed = once(server, "close");
+  server.close();
+  await closed;
+  return port;
+}
 
 interface AgentOutputOverrides {
   status?: string;
@@ -118,6 +151,367 @@ const invalidExecutionProofs: Array<{
 ];
 
 describe("GPU E2E helpers", () => {
+  it("stops the Ollama system service before cleanup completes", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-cleanup-"));
+    const listenerPort = await unusedLoopbackPort();
+    try {
+      const bin = path.join(root, "bin");
+      const calls = path.join(root, "calls.log");
+      mkdirSync(bin);
+      for (const [command, body] of [
+        ["id", 'printf "1000\\n"\n'],
+        ["sudo", 'printf "sudo %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
+        ["systemctl", 'printf "systemctl %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
+        ["pkill", "exit 1\n"],
+        ["pgrep", "exit 1\n"],
+      ] as const) {
+        const commandPath = path.join(bin, command);
+        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
+        chmodSync(commandPath, 0o755);
+      }
+
+      execFileSync("bash", ["-c", ollamaCleanupScript(listenerPort)], {
+        ...SYNC_E2E_CHILD_OPTIONS,
+        env: { ...process.env, FAKE_CALLS: calls, PATH: `${bin}:${process.env.PATH}` },
+      });
+      const commandLog = readFileSync(calls, "utf8");
+      expect(commandLog).toContain("systemctl --user stop ollama.service");
+      expect(commandLog).toContain("sudo -n systemctl stop ollama.service");
+      expect(commandLog).toContain("sudo -n pkill -f [o]llama serve");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects cleanup when an Ollama listener remains", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-stale-listener-"));
+    const server = createServer();
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const listenerPort = loopbackPort(server);
+    try {
+      const bin = path.join(root, "bin");
+      mkdirSync(bin);
+      for (const [command, body] of [
+        ["systemctl", "exit 1\n"],
+        ["pkill", "exit 1\n"],
+        ["pgrep", "exit 1\n"],
+      ] as const) {
+        const commandPath = path.join(bin, command);
+        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
+        chmodSync(commandPath, 0o755);
+      }
+
+      expect(() =>
+        execFileSync("bash", ["-c", ollamaCleanupScript(listenerPort)], {
+          ...SYNC_E2E_CHILD_OPTIONS,
+          env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+          stdio: "pipe",
+        }),
+      ).toThrow();
+    } finally {
+      const closed = once(server, "close");
+      server.close();
+      await closed;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("quotes protected Ollama log paths as shell data", () => {
+    const script = protectedOllamaStartScript("/tmp/$(touch injected)-$USER-`id`-'quoted.log");
+
+    expect(script).toContain("log_path='/tmp/$(touch injected)-$USER-`id`-'\\''quoted.log'");
+  });
+
+  it("keeps protected Ollama readiness inside the host command timeout", () => {
+    const maximumReadinessMs =
+      PROTECTED_OLLAMA_READY_ATTEMPTS *
+      (PROTECTED_OLLAMA_CURL_MAX_SECONDS + PROTECTED_OLLAMA_READY_SLEEP_SECONDS) *
+      1_000;
+
+    expect(PROTECTED_OLLAMA_START_TIMEOUT_MS).toBeGreaterThan(maximumReadinessMs);
+  });
+
+  it("restarts the protected Ollama daemon through its installed system service", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-start-"));
+    try {
+      const bin = path.join(root, "bin");
+      const calls = path.join(root, "calls.log");
+      const logPath = path.join(root, "ollama.log");
+      mkdirSync(bin);
+      const idPath = path.join(bin, "id");
+      writeFileSync(idPath, '#!/bin/sh\nprintf "1000\\n"\n');
+      chmodSync(idPath, 0o755);
+      const sudoPath = path.join(bin, "sudo");
+      writeFileSync(
+        sudoPath,
+        '#!/bin/sh\nprintf "sudo %s\\n" "$*" >>"$FAKE_CALLS"\ncase "$*" in\n  "-n systemctl is-failed --quiet ollama.service") exit 1 ;;\n  *) exit 0 ;;\nesac\n',
+      );
+      chmodSync(sudoPath, 0o755);
+      const curlPath = path.join(bin, "curl");
+      writeFileSync(curlPath, "#!/bin/sh\nexit 0\n");
+      chmodSync(curlPath, 0o755);
+      const systemctlPath = path.join(bin, "systemctl");
+      writeFileSync(systemctlPath, "#!/bin/sh\nexit 0\n");
+      chmodSync(systemctlPath, 0o755);
+
+      const stdout = execFileSync("bash", ["-c", protectedOllamaStartScript(logPath)], {
+        ...SYNC_E2E_CHILD_OPTIONS,
+        encoding: "utf8",
+        env: { ...process.env, FAKE_CALLS: calls, PATH: `${bin}:${process.env.PATH}` },
+      });
+      expect(stdout).toBe("restart_mode=system\n");
+      expect(readFileSync(calls, "utf8")).toContain("sudo -n systemctl restart ollama.service");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not fall back when the installed Ollama system service restart fails", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-start-failure-"));
+    try {
+      const bin = path.join(root, "bin");
+      const calls = path.join(root, "calls.log");
+      const logPath = path.join(root, "ollama.log");
+      mkdirSync(bin);
+      for (const [command, body] of [
+        ["id", 'printf "1000\\n"\n'],
+        [
+          "sudo",
+          'printf "sudo %s\\n" "$*" >>"$FAKE_CALLS"\ncase "$*" in\n  "-n systemctl restart ollama.service") exit 1 ;;\n  *) exit 0 ;;\nesac\n',
+        ],
+        ["systemctl", 'printf "systemctl %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
+        ["setsid", 'printf "setsid %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
+        ["curl", "exit 0\n"],
+      ] as const) {
+        const commandPath = path.join(bin, command);
+        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
+        chmodSync(commandPath, 0o755);
+      }
+
+      expect(() =>
+        execFileSync("bash", ["-c", protectedOllamaStartScript(logPath)], {
+          ...SYNC_E2E_CHILD_OPTIONS,
+          env: { ...process.env, FAKE_CALLS: calls, PATH: `${bin}:${process.env.PATH}` },
+          stdio: "pipe",
+        }),
+      ).toThrow();
+      const commandLog = readFileSync(calls, "utf8");
+      expect(commandLog).toContain("systemctl cat ollama.service");
+      expect(commandLog).toContain("sudo -n systemctl restart ollama.service");
+      expect(commandLog).not.toContain("systemctl --user restart ollama.service");
+      expect(commandLog).not.toContain("setsid");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("stops when the restarted Ollama system service enters the failed state", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-start-failed-state-"));
+    try {
+      const bin = path.join(root, "bin");
+      const calls = path.join(root, "calls.log");
+      const logPath = path.join(root, "ollama.log");
+      mkdirSync(bin);
+      for (const [command, body] of [
+        ["id", 'printf "1000\\n"\n'],
+        [
+          "sudo",
+          'printf "sudo %s\\n" "$*" >>"$FAKE_CALLS"\ncase "$*" in\n  "-n systemctl is-failed --quiet ollama.service") exit 0 ;;\n  *) exit 0 ;;\nesac\n',
+        ],
+        ["systemctl", 'printf "systemctl %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
+        ["setsid", 'printf "setsid %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
+        ["curl", "exit 1\n"],
+      ] as const) {
+        const commandPath = path.join(bin, command);
+        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
+        chmodSync(commandPath, 0o755);
+      }
+
+      expect(() =>
+        execFileSync("bash", ["-c", protectedOllamaStartScript(logPath)], {
+          ...SYNC_E2E_CHILD_OPTIONS,
+          env: { ...process.env, FAKE_CALLS: calls, PATH: `${bin}:${process.env.PATH}` },
+          stdio: "pipe",
+        }),
+      ).toThrow();
+      const commandLog = readFileSync(calls, "utf8");
+      expect(commandLog).toContain("sudo -n systemctl restart ollama.service");
+      expect(commandLog).toContain("sudo -n systemctl is-failed --quiet ollama.service");
+      expect(commandLog).not.toContain("systemctl --user restart ollama.service");
+      expect(commandLog).not.toContain("setsid");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an installed Ollama system service without restart permission", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-start-unprivileged-"));
+    try {
+      const bin = path.join(root, "bin");
+      const calls = path.join(root, "calls.log");
+      const logPath = path.join(root, "ollama.log");
+      mkdirSync(bin);
+      for (const [command, body] of [
+        ["id", 'printf "id %s\\n" "$*" >>"$FAKE_CALLS"\nprintf "1000\\n"\n'],
+        ["sudo", 'printf "sudo %s\\n" "$*" >>"$FAKE_CALLS"\nexit 1\n'],
+        [
+          "systemctl",
+          'printf "systemctl %s\\n" "$*" >>"$FAKE_CALLS"\ncase "$*" in\n  "cat ollama.service") exit 0 ;;\n  *) exit 1 ;;\nesac\n',
+        ],
+        ["setsid", 'printf "setsid %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
+        ["curl", "exit 0\n"],
+      ] as const) {
+        const commandPath = path.join(bin, command);
+        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
+        chmodSync(commandPath, 0o755);
+      }
+
+      expect(() =>
+        execFileSync("bash", ["-c", protectedOllamaStartScript(logPath)], {
+          ...SYNC_E2E_CHILD_OPTIONS,
+          env: { ...process.env, FAKE_CALLS: calls, PATH: `${bin}:${process.env.PATH}` },
+          stdio: "pipe",
+        }),
+      ).toThrow();
+      const commandLog = readFileSync(calls, "utf8");
+      expect(commandLog).toContain("systemctl cat ollama.service");
+      expect(commandLog).not.toContain("systemctl restart ollama.service");
+      expect(commandLog).not.toContain("systemctl --user restart ollama.service");
+      expect(commandLog).not.toContain("setsid");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("restarts an available Ollama user service without a manual daemon", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-start-user-service-"));
+    try {
+      const bin = path.join(root, "bin");
+      const calls = path.join(root, "calls.log");
+      const logPath = path.join(root, "ollama.log");
+      mkdirSync(bin);
+      for (const [command, body] of [
+        ["id", 'printf "1000\\n"\n'],
+        ["sudo", "exit 1\n"],
+        [
+          "systemctl",
+          'printf "systemctl %s\\n" "$*" >>"$FAKE_CALLS"\ncase "$*" in\n  "cat ollama.service") exit 1 ;;\n  "--user restart ollama.service") exit 0 ;;\n  *) exit 1 ;;\nesac\n',
+        ],
+        ["setsid", 'printf "setsid %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
+        ["curl", "exit 0\n"],
+      ] as const) {
+        const commandPath = path.join(bin, command);
+        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
+        chmodSync(commandPath, 0o755);
+      }
+
+      const stdout = execFileSync("bash", ["-c", protectedOllamaStartScript(logPath)], {
+        ...SYNC_E2E_CHILD_OPTIONS,
+        encoding: "utf8",
+        env: { ...process.env, FAKE_CALLS: calls, PATH: `${bin}:${process.env.PATH}` },
+      });
+      expect(stdout).toBe("restart_mode=user\n");
+      const commandLog = readFileSync(calls, "utf8");
+      expect(commandLog).toContain("systemctl cat ollama.service");
+      expect(commandLog).toContain("systemctl --user restart ollama.service");
+      expect(commandLog).not.toContain("setsid");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("starts a manual Ollama daemon when no service is available", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-start-manual-"));
+    try {
+      const bin = path.join(root, "bin");
+      const calls = path.join(root, "calls.log");
+      const logPath = path.join(root, "ollama.log");
+      const readyPath = path.join(root, "ollama-ready");
+      mkdirSync(bin);
+      for (const [command, body] of [
+        ["id", 'printf "1000\\n"\n'],
+        ["sudo", "exit 1\n"],
+        ["systemctl", 'printf "systemctl %s\\n" "$*" >>"$FAKE_CALLS"\nexit 1\n'],
+        ["setsid", 'printf "setsid %s\\n" "$*" >>"$FAKE_CALLS"\nshift\nexec "$@"\n'],
+        ["ollama", 'printf "ollama-executed %s\\n" "$*" >>"$FAKE_CALLS"\n: >"$FAKE_READY"\n'],
+        ["curl", 'printf "curl-probe %s\\n" "$*" >>"$FAKE_CALLS"\ntest -f "$FAKE_READY"\n'],
+      ] as const) {
+        const commandPath = path.join(bin, command);
+        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
+        chmodSync(commandPath, 0o755);
+      }
+
+      const stdout = execFileSync("bash", ["-c", protectedOllamaStartScript(logPath)], {
+        ...SYNC_E2E_CHILD_OPTIONS,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          FAKE_CALLS: calls,
+          FAKE_READY: readyPath,
+          PATH: `${bin}:${process.env.PATH}`,
+        },
+      });
+      expect(stdout).toBe("restart_mode=manual\n");
+      const commandLog = readFileSync(calls, "utf8");
+      expect(commandLog).toContain("systemctl cat ollama.service");
+      expect(commandLog).toContain("systemctl --user restart ollama.service");
+      expect(commandLog).toContain("setsid -f env OLLAMA_HOST=127.0.0.1:11434 ollama serve");
+      expect(commandLog).toContain("ollama-executed serve");
+      expect(commandLog).toContain(
+        "curl-probe -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:11434/api/tags",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a stale Ollama listener before protected startup", async () => {
+    const artifacts: string[] = [];
+    const host = {
+      command: async (
+        _command: string,
+        _args: string[],
+        options: { artifactName?: string } = {},
+      ) => {
+        artifacts.push(options.artifactName ?? "");
+        switch (options.artifactName) {
+          case "command-v-ollama":
+            return { exitCode: 0, stderr: "", stdout: "/usr/local/bin/ollama\n" };
+          case "pre-cleanup-managed-image-ollama":
+            return {
+              exitCode: 1,
+              stderr: "Ollama still listens on 127.0.0.1:11434",
+              stdout: "",
+            };
+          default:
+            throw new Error(
+              `unexpected command after failed cleanup: ${options.artifactName ?? ""}`,
+            );
+        }
+      },
+    } as unknown as HostCliClient;
+
+    await expect(startProtectedOllama(host)).rejects.toThrow(/still listens/u);
+    expect(artifacts).toEqual(["command-v-ollama", "pre-cleanup-managed-image-ollama"]);
+  });
+
+  it("stops GPU setup when Ollama cleanup leaves a listener", async () => {
+    const success = { exitCode: 0, stderr: "", stdout: "" };
+    const host = {
+      command: async (command: string) =>
+        command === "bash"
+          ? { exitCode: 1, stderr: "Ollama still listens on 127.0.0.1:11434", stdout: "" }
+          : success,
+    } as unknown as HostCliClient;
+    const sandbox = {
+      cleanupSandbox: async () => success,
+      openshell: async () => success,
+    } as unknown as SandboxClient;
+
+    await expect(cleanupGpu(host, sandbox)).rejects.toThrow(/still listens/u);
+  });
+
   it("bootstraps the new llama.cpp target through the trusted pre-merge GPU lane", () => {
     expect(
       shouldBootstrapLlamaCppGenericGpuTarget({
