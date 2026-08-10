@@ -474,7 +474,7 @@ export function formatSandboxBridgeUnreachableMessage(
       "    If active, restart the user-scoped Podman service, then enable and start its socket:",
       "      systemctl --user try-restart podman.service",
       "      systemctl --user enable --now podman.socket",
-      `    Then rerun \`${cliName()} onboard --experimental-profile portable\` to restart the OpenShell gateway.`,
+      `    Then rerun \`${cliName()} onboard --experimental-profile portable\`.`,
     ].join("\n");
   }
 
