@@ -262,6 +262,22 @@ artifact sink. Pass the auto fixture's frozen, canonical `progress` capability
 through unchanged; custom, copied, or no-op progress adapters are rejected at
 audited subprocess boundaries.
 
+### macOS Test Dependencies
+
+Some tests run GNU utilities that macOS does not ship. `src/lib/shields/state-dir-lock.test.ts` runs `timeout`.
+On a macOS host that does not provide `timeout`, the process spawn fails, the result has no `stdout`, and the test reports `TypeError: Cannot read properties of undefined (reading 'split')`.
+The error names neither the missing utility nor macOS.
+
+Install the GNU utilities before you run the test suite on macOS, then put their directories first on `PATH`:
+
+```bash
+brew install bash coreutils fd gawk ripgrep
+export PATH="$(brew --prefix coreutils)/libexec/gnubin:$(brew --prefix gawk)/libexec/gnubin:$PATH"
+```
+
+The `macos-vitest` job in [`.github/workflows/platform-vitest-main.yaml`](.github/workflows/platform-vitest-main.yaml) installs these utilities and owns the authoritative list.
+That job runs on a push to `main` and on manual dispatch, so a pull request does not report a macOS-only failure.
+
 ### Test Declarative Behavior
 
 Do not read a shipped YAML, JSON, manifest, workflow, or E2E runtime file only to assert its keys,
