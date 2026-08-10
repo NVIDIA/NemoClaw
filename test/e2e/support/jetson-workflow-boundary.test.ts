@@ -33,7 +33,7 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
       expect.arrayContaining([
         "workflow_dispatch allow_jetson_dispatch input must be boolean",
         "workflow_dispatch allow_jetson_dispatch input must default to false",
-        "workflow_dispatch allow_jetson_dispatch input must require the Colossus dispatcher, tunnel, reset helper, repository URL variable, and deployment checks",
+        "workflow_dispatch allow_jetson_dispatch input must require the Colossus dispatcher, tunnel, cleanup helper, repository URL variable, and deployment checks",
       ]),
     );
   });

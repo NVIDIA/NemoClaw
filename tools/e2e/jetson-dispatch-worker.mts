@@ -13,14 +13,15 @@ import {
   JetsonWorkerResult,
   MAX_JETSON_ARTIFACT_ARCHIVE_BYTES,
 } from "./jetson-dispatch-lifecycle.mts";
+import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.mts";
 
 const MAX_PROCESS_OUTPUT_BYTES = 4 * 1024 * 1024;
-const SSH_DESTINATION_PATTERN =
-  /^[a-z_][a-z0-9_-]{0,31}@[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/u;
+const JETSON_SSH_DESTINATION = "nvidia@192.168.55.1";
 const SAFE_PROCESS_ENV = {
   LANG: "C.UTF-8",
   PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 };
+const MAX_BASELINE_BYTES = 4 * 1024;
 
 const DEVICE_IDENTITY_SCRIPT = String.raw`set -eu
 clean_line() { tr -d '\000\r\n\t'; }
@@ -40,6 +41,52 @@ uname -r | clean_line
 printf '\n'
 `;
 
+const PRESERVED_BASELINE_SCRIPT = String.raw`set -euo pipefail
+export LC_ALL=C
+clean_line() { tr -d '\000\r\n\t'; }
+node_path="$(command -v node)"
+npm_path="$(command -v npm)"
+ollama_path="$(command -v ollama)"
+openshell_path="$(command -v openshell)"
+test -c /dev/nvmap
+docker_runtimes="$(docker info --format '{{json .Runtimes}}')"
+case "$docker_runtimes" in
+  *nvidia*) ;;
+  *) echo "Docker does not report the NVIDIA runtime" >&2; exit 1 ;;
+esac
+ollama_models_sha256="$(ollama list | awk 'NR > 1 && NF >= 2 { print $1 "\t" $2 }' | sort | sha256sum | cut -d ' ' -f 1)"
+printf 'nodePath\t'; printf '%s' "$node_path" | clean_line
+printf '\nnodeVersion\t'; node --version | clean_line
+printf '\nnpmPath\t'; printf '%s' "$npm_path" | clean_line
+printf '\nnpmVersion\t'; npm --version | clean_line
+printf '\nollamaPath\t'; printf '%s' "$ollama_path" | clean_line
+printf '\nollamaModelsSha256\t'; printf '%s' "$ollama_models_sha256" | clean_line
+printf '\nopenshellPath\t'; printf '%s' "$openshell_path" | clean_line
+printf '\n'
+`;
+
+const CLEANUP_VERIFICATION_SCRIPT =
+  String.raw`set -euo pipefail
+job_id="$1"
+[[ "$job_id" =~ ^[a-f0-9]{64}$ ]]
+workspace="/var/tmp/nemoclaw-jetson-e2e/$job_id"
+sandbox_name=e2e-jetson-nvmap
+gateway_name=nemoclaw
+test ! -e "$workspace"
+test ! -L "$workspace"
+test -z "$(docker ps -aq \
+  --filter label=openshell.ai/managed-by=openshell \
+  --filter "label=openshell.ai/sandbox-name=$sandbox_name")"
+if docker container inspect "openshell-cluster-$gateway_name" >/dev/null 2>&1; then
+  echo "The test-owned OpenShell gateway container remains" >&2
+  exit 1
+fi
+if docker volume inspect "openshell-cluster-$gateway_name" >/dev/null 2>&1; then
+  echo "The test-owned OpenShell gateway volume remains" >&2
+  exit 1
+fi
+` + PRESERVED_BASELINE_SCRIPT;
+
 const JETSON_TEST_SCRIPT = String.raw`set -euo pipefail
 candidate_sha="$1"
 job_id="$2"
@@ -56,10 +103,21 @@ fi
 install -d -m 0700 "$workspace_root"
 workspace="$workspace_root/$job_id"
 if [ -e "$workspace" ]; then
-  echo "Jetson E2E workspace already exists; reset recovery is required" >&2
+  echo "Jetson E2E workspace already exists; cleanup recovery is required" >&2
   exit 1
 fi
 install -d -m 0700 "$workspace"
+install -d -m 0700 "$workspace/home" "$workspace/npm-prefix" "$workspace/tmp"
+
+export HOME="$workspace/home"
+export TMPDIR="$workspace/tmp"
+export XDG_CACHE_HOME="$workspace/home/.cache"
+export XDG_CONFIG_HOME="$workspace/home/.config"
+export XDG_DATA_HOME="$workspace/home/.local/share"
+export XDG_STATE_HOME="$workspace/home/.local/state"
+export npm_config_prefix="$workspace/npm-prefix"
+export PATH="$workspace/npm-prefix/bin:$PATH"
+export NEMOCLAW_DEFER_OPENSHELL_INSTALL=1
 
 git init --quiet "$workspace/repository"
 git -C "$workspace/repository" remote add origin https://github.com/NVIDIA/NemoClaw.git
@@ -98,10 +156,6 @@ const COLLECT_ARTIFACT_SCRIPT = String.raw`set -euo pipefail
 job_id="$1"
 [[ "$job_id" =~ ^[a-f0-9]{64}$ ]]
 workspace="/var/tmp/nemoclaw-jetson-e2e/$job_id"
-cleanup() {
-  rm -rf -- "$workspace"
-}
-trap cleanup EXIT
 
 artifact_directory="$workspace/e2e-artifacts/live/jetson-nvmap-gpu"
 if [ ! -d "$artifact_directory" ] || [ -L "$artifact_directory" ]; then
@@ -124,10 +178,11 @@ base64 --wrap=0 "$archive"
 `;
 
 export interface SshJetsonWorkerConfig {
+  cleanupExecutable: string;
   destination: string;
   identityFile: string;
   knownHostsFile: string;
-  resetExecutable: string;
+  stateDirectory: string;
   testTimeoutSeconds: number;
 }
 
@@ -170,23 +225,28 @@ function positiveIntegerEnvironment(
 }
 
 export function loadSshJetsonWorkerConfig(
+  options: { stateDirectory: string },
   env: NodeJS.ProcessEnv = process.env,
 ): SshJetsonWorkerConfig {
+  if (!path.isAbsolute(options.stateDirectory)) {
+    throw new Error("Jetson dispatcher state directory must be absolute");
+  }
   const destination = env.JETSON_DISPATCH_SSH_DESTINATION ?? "";
-  if (!SSH_DESTINATION_PATTERN.test(destination)) {
-    throw new Error("JETSON_DISPATCH_SSH_DESTINATION must be a fixed user and host");
+  if (destination !== JETSON_SSH_DESTINATION) {
+    throw new Error(`JETSON_DISPATCH_SSH_DESTINATION must be ${JETSON_SSH_DESTINATION}`);
   }
   const identityFile = env.JETSON_DISPATCH_SSH_IDENTITY_FILE ?? "";
   const knownHostsFile = env.JETSON_DISPATCH_SSH_KNOWN_HOSTS_FILE ?? "";
-  const resetExecutable = env.JETSON_DISPATCH_RESET_EXECUTABLE ?? "";
+  const cleanupExecutable = env.JETSON_DISPATCH_CLEANUP_EXECUTABLE ?? "";
   requireSecureFile(identityFile, { private: true });
   requireSecureFile(knownHostsFile, {});
-  requireSecureFile(resetExecutable, { executable: true });
+  requireSecureFile(cleanupExecutable, { executable: true });
   return {
+    cleanupExecutable,
     destination,
     identityFile,
     knownHostsFile,
-    resetExecutable,
+    stateDirectory: options.stateDirectory,
     testTimeoutSeconds: positiveIntegerEnvironment(
       env.JETSON_DISPATCH_TEST_TIMEOUT_SECONDS,
       "JETSON_DISPATCH_TEST_TIMEOUT_SECONDS",
@@ -314,6 +374,90 @@ function parseDeviceIdentity(output: string): JetsonDeviceIdentity {
   };
 }
 
+interface JetsonPreservedBaseline {
+  nodePath: string;
+  nodeVersion: string;
+  npmPath: string;
+  npmVersion: string;
+  ollamaPath: string;
+  ollamaModelsSha256: string;
+  openshellPath: string;
+}
+
+function parsePreservedBaseline(output: string): JetsonPreservedBaseline {
+  if (Buffer.byteLength(output) > MAX_BASELINE_BYTES) {
+    throw new Error("Jetson protected-baseline output is too large");
+  }
+  const entries = new Map<string, string>();
+  for (const line of output.trimEnd().split("\n")) {
+    const separator = line.indexOf("\t");
+    if (separator < 1) throw new Error("Jetson protected-baseline output is malformed");
+    const key = line.slice(0, separator);
+    const value = line.slice(separator + 1);
+    if (entries.has(key) || value.length === 0 || /[\u0000-\u001f\u007f]/u.test(value)) {
+      throw new Error("Jetson protected-baseline output is malformed");
+    }
+    entries.set(key, value);
+  }
+  const expected = [
+    "nodePath",
+    "nodeVersion",
+    "npmPath",
+    "npmVersion",
+    "ollamaPath",
+    "ollamaModelsSha256",
+    "openshellPath",
+  ] as const;
+  if (entries.size !== expected.length || expected.some((key) => !entries.has(key))) {
+    throw new Error("Jetson protected-baseline output is incomplete");
+  }
+  const baseline: JetsonPreservedBaseline = {
+    nodePath: entries.get("nodePath")!,
+    nodeVersion: entries.get("nodeVersion")!,
+    npmPath: entries.get("npmPath")!,
+    npmVersion: entries.get("npmVersion")!,
+    ollamaPath: entries.get("ollamaPath")!,
+    ollamaModelsSha256: entries.get("ollamaModelsSha256")!,
+    openshellPath: entries.get("openshellPath")!,
+  };
+  if (!/^[a-f0-9]{64}$/u.test(baseline.ollamaModelsSha256)) {
+    throw new Error("Jetson protected-baseline Ollama model digest is malformed");
+  }
+  return baseline;
+}
+
+function parsePreservedBaselineJson(output: string): JetsonPreservedBaseline {
+  if (Buffer.byteLength(output) > MAX_BASELINE_BYTES) {
+    throw new Error("Jetson protected-baseline record is too large");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    throw new Error("Jetson protected-baseline record is malformed");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Jetson protected-baseline record is malformed");
+  }
+  const record = parsed as Record<string, unknown>;
+  const expected = [
+    "nodePath",
+    "nodeVersion",
+    "npmPath",
+    "npmVersion",
+    "ollamaPath",
+    "ollamaModelsSha256",
+    "openshellPath",
+  ];
+  if (
+    Object.keys(record).length !== expected.length ||
+    expected.some((key) => typeof record[key] !== "string")
+  ) {
+    throw new Error("Jetson protected-baseline record is incomplete");
+  }
+  return parsePreservedBaseline(expected.map((key) => `${key}\t${record[key]}`).join("\n"));
+}
+
 export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
   readonly #config: SshJetsonWorkerConfig;
   readonly #runProcess: typeof runProcess;
@@ -327,6 +471,14 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
     request: JetsonDispatchRequest,
     options: { jobId: string; signal: AbortSignal },
   ): Promise<JetsonWorkerResult> {
+    const baselineResult = await this.#runProcess({
+      executable: "ssh",
+      args: [...this.#sshArgs(), this.#config.destination, "bash", "-s"],
+      input: PRESERVED_BASELINE_SCRIPT,
+      signal: options.signal,
+    });
+    const baseline = parsePreservedBaseline(baselineResult.stdout);
+    writePrivateRegularFile(this.#baselinePath(options.jobId), `${JSON.stringify(baseline)}\n`);
     const identityResult = await this.#runProcess({
       executable: "ssh",
       args: [...this.#sshArgs(), this.#config.destination, "bash", "-s"],
@@ -438,12 +590,33 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
     return result.stdout;
   }
 
-  async reset(options: { signal: AbortSignal }): Promise<void> {
+  async cleanup(options: { jobId: string; signal: AbortSignal }): Promise<void> {
     await this.#runProcess({
-      executable: this.#config.resetExecutable,
+      executable: this.#config.cleanupExecutable,
       args: [],
       signal: options.signal,
     });
+    const expectedRaw = readPrivateRegularFile(this.#baselinePath(options.jobId), {
+      maxBytes: MAX_BASELINE_BYTES,
+    });
+    if (expectedRaw === null) throw new Error("Jetson protected-baseline record is missing");
+    const expected = parsePreservedBaselineJson(expectedRaw);
+    const verification = await this.#runProcess({
+      executable: "ssh",
+      args: [...this.#sshArgs(), this.#config.destination, "bash", "-s", "--", options.jobId],
+      input: CLEANUP_VERIFICATION_SCRIPT,
+      signal: options.signal,
+    });
+    const actual = parsePreservedBaseline(verification.stdout);
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      throw new Error("Jetson cleanup changed the protected tool or Ollama model baseline");
+    }
+    fs.unlinkSync(this.#baselinePath(options.jobId));
+  }
+
+  #baselinePath(jobId: string): string {
+    if (!/^[a-f0-9]{64}$/u.test(jobId)) throw new Error("Jetson job ID is invalid");
+    return path.join(this.#config.stateDirectory, `${jobId}.baseline.json`);
   }
 
   #sshArgs(): string[] {

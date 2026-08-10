@@ -3970,12 +3970,12 @@ function validateAllowJetsonDispatchInput(errors: string[], dispatchInputs: Work
   if (
     !description.includes("Colossus dispatcher") ||
     !description.includes("Cloudflare Tunnel") ||
-    !description.includes("reset helper") ||
+    !description.includes("cleanup helper") ||
     !description.includes("JETSON_DISPATCH_URL") ||
     !description.includes("test/e2e/docs/jetson-colossus-dispatch.md")
   ) {
     errors.push(
-      "workflow_dispatch allow_jetson_dispatch input must require the Colossus dispatcher, tunnel, reset helper, repository URL variable, and deployment checks",
+      "workflow_dispatch allow_jetson_dispatch input must require the Colossus dispatcher, tunnel, cleanup helper, repository URL variable, and deployment checks",
     );
   }
 }

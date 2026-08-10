@@ -123,7 +123,7 @@ async function waitForCompletion(
 }
 
 function worker(
-  options: { run?: JetsonDispatchWorker["run"]; reset?: JetsonDispatchWorker["reset"] } = {},
+  options: { cleanup?: JetsonDispatchWorker["cleanup"]; run?: JetsonDispatchWorker["run"] } = {},
 ): JetsonDispatchWorker {
   return {
     run:
@@ -138,7 +138,7 @@ function worker(
         },
         log: "passed\n",
       })),
-    reset: options.reset ?? (async () => {}),
+    cleanup: options.cleanup ?? (async () => {}),
   };
 }
 
@@ -147,7 +147,7 @@ function coordinator(stateDirectory: string, dispatchWorker: JetsonDispatchWorke
     stateDirectory,
     worker: dispatchWorker,
     executionTimeoutMs: 60_000,
-    resetTimeoutMs: 10_000,
+    cleanupTimeoutMs: 10_000,
   });
 }
 
@@ -285,7 +285,7 @@ describe("Jetson single-device lifecycle", () => {
         conclusion: "success",
         createdAt: new Date(0).toISOString(),
         completedAt: new Date(0).toISOString(),
-        reset: "succeeded",
+        cleanup: "succeeded",
       },
     };
 
@@ -294,9 +294,9 @@ describe("Jetson single-device lifecycle", () => {
     );
   });
 
-  it("records success only after reset succeeds (#8142)", async () => {
-    const reset = vi.fn(async () => {});
-    const dispatch = coordinator(temporaryDirectory(), worker({ reset }));
+  it("records success only after cleanup succeeds (#8142)", async () => {
+    const cleanup = vi.fn(async () => {});
+    const dispatch = coordinator(temporaryDirectory(), worker({ cleanup }));
     await dispatch.initialize();
     const accepted = dispatch.dispatch(REQUEST, identity());
     const completed = await waitForCompletion(dispatch, accepted.jobId);
@@ -304,14 +304,32 @@ describe("Jetson single-device lifecycle", () => {
     expect(completed).toMatchObject({
       state: "completed",
       conclusion: "success",
-      reset: "succeeded",
+      cleanup: "succeeded",
       device: { model: "NVIDIA Jetson AGX Thor Developer Kit" },
     });
-    expect(reset).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledOnce();
     expect(dispatch.artifact(accepted.jobId)).toMatchObject({
       artifactArchiveBase64: ARTIFACT_ARCHIVE_BASE64,
       log: "passed\n",
     });
+  });
+
+  it("records test failure after cleanup succeeds (#8142)", async () => {
+    const cleanup = vi.fn(async () => {});
+    const dispatch = coordinator(
+      temporaryDirectory(),
+      worker({ cleanup, run: async () => Promise.reject(new Error("test failed")) }),
+    );
+    await dispatch.initialize();
+    const accepted = dispatch.dispatch(REQUEST, identity());
+    const completed = await waitForCompletion(dispatch, accepted.jobId);
+
+    expect(completed).toMatchObject({
+      cleanup: "succeeded",
+      conclusion: "failure",
+      error: "test failed",
+    });
+    expect(cleanup).toHaveBeenCalledOnce();
   });
 
   it("returns completed evidence when its result log is missing (#8142)", async () => {
@@ -346,29 +364,36 @@ describe("Jetson single-device lifecycle", () => {
     await waitForCompletion(dispatch, accepted.jobId);
   });
 
-  it("cancels the worker and still resets the device (#8142)", async () => {
-    const reset = vi.fn(async () => {});
+  it("cancels the worker and still cleans the device with a fresh signal (#8142)", async () => {
+    let runSignal: AbortSignal | undefined;
+    let cleanupSignal: AbortSignal | undefined;
+    const cleanup = vi.fn(async (options: { jobId: string; signal: AbortSignal }) => {
+      cleanupSignal = options.signal;
+    });
     const run = vi.fn(
       (_request, options) =>
         new Promise<never>((_resolve, reject) => {
+          runSignal = options.signal;
           options.signal.addEventListener("abort", () => reject(new Error("cancelled")), {
             once: true,
           });
         }),
     );
-    const dispatch = coordinator(temporaryDirectory(), worker({ reset, run }));
+    const dispatch = coordinator(temporaryDirectory(), worker({ cleanup, run }));
     await dispatch.initialize();
     const accepted = dispatch.dispatch(REQUEST, identity());
     dispatch.cancel(accepted.jobId);
     const completed = await waitForCompletion(dispatch, accepted.jobId);
 
-    expect(completed).toMatchObject({ conclusion: "cancelled", reset: "succeeded" });
-    expect(reset).toHaveBeenCalledOnce();
+    expect(completed).toMatchObject({ cleanup: "succeeded", conclusion: "cancelled" });
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(cleanupSignal).not.toBe(runSignal);
+    expect(cleanupSignal?.aborted).toBe(false);
   });
 
-  it("times out the worker and still resets the device (#8142)", async () => {
+  it("times out the worker and still cleans the device (#8142)", async () => {
     vi.useFakeTimers();
-    const reset = vi.fn(async () => {});
+    const cleanup = vi.fn(async () => {});
     const run = vi.fn(
       (_request, options) =>
         new Promise<never>((_resolve, reject) => {
@@ -377,30 +402,30 @@ describe("Jetson single-device lifecycle", () => {
           });
         }),
     );
-    const dispatch = coordinator(temporaryDirectory(), worker({ reset, run }));
+    const dispatch = coordinator(temporaryDirectory(), worker({ cleanup, run }));
     await dispatch.initialize();
     const accepted = dispatch.dispatch(REQUEST, identity());
     await vi.advanceTimersByTimeAsync(60_000);
     const completed = await waitForCompletion(dispatch, accepted.jobId);
 
-    expect(completed).toMatchObject({ conclusion: "timed-out", reset: "succeeded" });
-    expect(reset).toHaveBeenCalledOnce();
+    expect(completed).toMatchObject({ cleanup: "succeeded", conclusion: "timed-out" });
+    expect(cleanup).toHaveBeenCalledOnce();
   });
 
-  it("keeps reset evidence accurate when lock removal fails (#8142)", async () => {
-    const reset = vi.fn(async () => {});
+  it("keeps cleanup evidence accurate when lock removal fails (#8142)", async () => {
+    const cleanup = vi.fn(async () => {});
     vi.spyOn(fs, "unlinkSync").mockImplementationOnce(() => {
       throw new Error("lock filesystem unavailable");
     });
-    const dispatch = coordinator(temporaryDirectory(), worker({ reset }));
+    const dispatch = coordinator(temporaryDirectory(), worker({ cleanup }));
     await dispatch.initialize();
     const accepted = dispatch.dispatch(REQUEST, identity());
     const completed = await waitForCompletion(dispatch, accepted.jobId);
 
     expect(completed).toMatchObject({
-      conclusion: "reset-failed",
+      conclusion: "cleanup-failed",
       error: "Jetson lock removal failed: lock filesystem unavailable",
-      reset: "succeeded",
+      cleanup: "succeeded",
     });
   });
 
@@ -422,35 +447,72 @@ describe("Jetson single-device lifecycle", () => {
     expect(fs.existsSync(path.join(stateDirectory, `${firstJobId}.json`))).toBe(true);
   });
 
-  it("keeps the device locked when reset fails (#8142)", async () => {
+  it("keeps the device locked when cleanup fails (#8142)", async () => {
     const stateDirectory = temporaryDirectory();
     const dispatch = coordinator(
       stateDirectory,
-      worker({ reset: async () => Promise.reject(new Error("reset helper failed")) }),
+      worker({ cleanup: async () => Promise.reject(new Error("cleanup helper failed")) }),
     );
     await dispatch.initialize();
     const accepted = dispatch.dispatch(REQUEST, identity());
     const completed = await waitForCompletion(dispatch, accepted.jobId);
 
-    expect(completed).toMatchObject({ conclusion: "reset-failed", reset: "failed" });
+    expect(completed).toMatchObject({ cleanup: "failed", conclusion: "cleanup-failed" });
     expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(true);
     expect(() =>
       dispatch.dispatch({ ...REQUEST, candidateSha: "c".repeat(40) }, identity()),
     ).toThrow("Jetson device lock requires recovery");
     await expect(dispatch.shutdown()).rejects.toThrow(
-      "Jetson device lock still requires reset recovery",
+      "Jetson device lock still requires cleanup recovery",
     );
   });
 
-  it("resets a stale lock before accepting work after restart (#8142)", async () => {
+  it("reports both candidate and cleanup failures while retaining the lock (#8142)", async () => {
     const stateDirectory = temporaryDirectory();
-    fs.writeFileSync(path.join(stateDirectory, "device.lock"), "stale-job\n", { mode: 0o600 });
-    const reset = vi.fn(async () => {});
-    const dispatch = coordinator(stateDirectory, worker({ reset }));
+    const dispatch = coordinator(
+      stateDirectory,
+      worker({
+        cleanup: async () => Promise.reject(new Error("cleanup verification failed")),
+        run: async () => Promise.reject(new Error("artifact collection failed")),
+      }),
+    );
+    await dispatch.initialize();
+    const accepted = dispatch.dispatch(REQUEST, identity());
+    const completed = await waitForCompletion(dispatch, accepted.jobId);
+
+    expect(completed).toMatchObject({
+      cleanup: "failed",
+      conclusion: "cleanup-failed",
+      error: "artifact collection failed; Jetson cleanup failed: cleanup verification failed",
+    });
+    expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(true);
+  });
+
+  it("cleans a stale lock before accepting work after restart (#8142)", async () => {
+    const stateDirectory = temporaryDirectory();
+    const staleJobId = "d".repeat(64);
+    fs.writeFileSync(path.join(stateDirectory, "device.lock"), `${staleJobId}\n`, { mode: 0o600 });
+    const cleanup = vi.fn(async () => {});
+    const dispatch = coordinator(stateDirectory, worker({ cleanup }));
     await dispatch.initialize();
 
-    expect(reset).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledWith({ jobId: staleJobId, signal: expect.any(AbortSignal) });
     expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(false);
+  });
+
+  it("rejects a stale lock that cannot identify one dispatcher job (#8142)", async () => {
+    const stateDirectory = temporaryDirectory();
+    fs.writeFileSync(path.join(stateDirectory, "device.lock"), "../../arbitrary-path\n", {
+      mode: 0o600,
+    });
+    const cleanup = vi.fn(async () => {});
+    const dispatch = coordinator(stateDirectory, worker({ cleanup }));
+
+    await expect(dispatch.initialize()).rejects.toThrow(
+      "Jetson device lock contains an invalid job ID",
+    );
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(true);
   });
 });
 
@@ -469,7 +531,7 @@ describe("Jetson dispatch HTTP boundary", () => {
           request: REQUEST,
           state: "queued",
           createdAt: new Date(0).toISOString(),
-          reset: "pending",
+          cleanup: "pending",
         },
         jobId,
         now: () => 10_000,
@@ -491,14 +553,14 @@ describe("Jetson dispatch HTTP boundary", () => {
       request: REQUEST,
       state: "queued",
       createdAt: new Date(0).toISOString(),
-      reset: "pending",
+      cleanup: "pending",
     };
     const completed = {
       job: {
         ...initialStatus,
         state: "completed",
         conclusion: "success",
-        reset: "succeeded",
+        cleanup: "succeeded",
       },
     };
     const recoveredRequest = vi
@@ -597,7 +659,7 @@ describe("Jetson dispatch HTTP boundary", () => {
       expect(artifact.status).toBe(200);
       await expect(artifact.json()).resolves.toMatchObject({
         log: "passed\n",
-        status: { conclusion: "success", reset: "succeeded" },
+        status: { cleanup: "succeeded", conclusion: "success" },
       });
     } finally {
       await new Promise<void>((resolve, reject) =>

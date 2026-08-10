@@ -199,13 +199,13 @@ async function main(): Promise<void> {
     120,
     55 * 60,
   );
-  const resetTimeoutSeconds = positiveIntegerEnvironment(
-    process.env.JETSON_DISPATCH_RESET_TIMEOUT_SECONDS,
-    "JETSON_DISPATCH_RESET_TIMEOUT_SECONDS",
+  const cleanupTimeoutSeconds = positiveIntegerEnvironment(
+    process.env.JETSON_DISPATCH_CLEANUP_TIMEOUT_SECONDS,
+    "JETSON_DISPATCH_CLEANUP_TIMEOUT_SECONDS",
     10,
     10 * 60,
   );
-  const workerConfig = loadSshJetsonWorkerConfig();
+  const workerConfig = loadSshJetsonWorkerConfig({ stateDirectory });
   if (executionTimeoutSeconds < workerConfig.testTimeoutSeconds + 30) {
     throw new Error("Jetson execution timeout must exceed the remote test timeout by 30 seconds");
   }
@@ -213,7 +213,7 @@ async function main(): Promise<void> {
     stateDirectory,
     worker: new SshJetsonDispatchWorker(workerConfig),
     executionTimeoutMs: executionTimeoutSeconds * 1_000,
-    resetTimeoutMs: resetTimeoutSeconds * 1_000,
+    cleanupTimeoutMs: cleanupTimeoutSeconds * 1_000,
   });
   await coordinator.initialize();
   const server = createJetsonDispatchServer({

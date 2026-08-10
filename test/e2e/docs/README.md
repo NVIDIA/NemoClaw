@@ -316,7 +316,8 @@ test/e2e/
 
 - [Jetson Dispatch Through Colossus](jetson-colossus-dispatch.md) defines how
   maintainers deploy and verify the temporary authenticated controller,
-  dispatcher, SSH, reset, and recovery path for `jetson-nvmap-gpu`.
+  dispatcher, SSH, bounded cleanup, and stale-lock recovery path for
+  `jetson-nvmap-gpu`.
 
 - `.github/workflows/e2e.yaml` runs selected or all supported
   live E2E targets and uploads an explicit artifact allowlist with

@@ -246,6 +246,9 @@ to add `jetson-nvmap-gpu` to an empty-selector manual run or enable its explicit
 selection. Set it only after every deployment check in
 [Jetson Dispatch Through Colossus](../../../test/e2e/docs/jetson-colossus-dispatch.md)
 passes.
+The Jetson lifecycle removes and verifies only its fixed job-owned cleanup
+allowlist. Do not treat `cleanup: "succeeded"` as evidence that every possible
+candidate host change was reversed.
 A permitted dispatcher may set `allow_dgx_spark_runner_queue=true` to add
 `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification` to an
 empty-selector manual run or enable explicit qualification selection. Set it

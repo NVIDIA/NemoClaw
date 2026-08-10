@@ -17,7 +17,29 @@ const dispatcherRunbook = fs.readFileSync(
   path.join(process.cwd(), "test/e2e/docs/jetson-colossus-dispatch.md"),
   "utf8",
 );
+const cleanupProgram = fs.readFileSync(
+  path.join(process.cwd(), "tools/e2e/jetson-dispatch-cleanup.sh"),
+  "utf8",
+);
 const temporaryDirectories: string[] = [];
+const BASELINE = {
+  nodePath: "/usr/bin/node",
+  nodeVersion: "v22.19.0",
+  npmPath: "/usr/bin/npm",
+  npmVersion: "10.9.3",
+  ollamaPath: "/usr/local/bin/ollama",
+  ollamaModelsSha256: "a".repeat(64),
+  openshellPath: "/usr/local/bin/openshell",
+};
+
+function baselineOutput(overrides: Partial<typeof BASELINE> = {}): string {
+  const baseline = { ...BASELINE, ...overrides };
+  return `${Object.entries(baseline)
+    .map(([key, value]) => `${key}\t${value}`)
+    .join("\n")}\n`;
+}
+
+const BASELINE_OUTPUT = baselineOutput();
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
@@ -30,11 +52,11 @@ function deploymentFiles() {
   temporaryDirectories.push(directory);
   const identityFile = path.join(directory, "id_ed25519");
   const knownHostsFile = path.join(directory, "known_hosts");
-  const resetExecutable = path.join(directory, "reset-jetson");
+  const cleanupExecutable = path.join(directory, "cleanup-jetson");
   fs.writeFileSync(identityFile, "test-key", { mode: 0o600 });
   fs.writeFileSync(knownHostsFile, "test-host-key", { mode: 0o600 });
-  fs.writeFileSync(resetExecutable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
-  return { identityFile, knownHostsFile, resetExecutable };
+  fs.writeFileSync(cleanupExecutable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  return { cleanupExecutable, identityFile, knownHostsFile, stateDirectory: directory };
 }
 
 function environment(files = deploymentFiles()): NodeJS.ProcessEnv {
@@ -42,9 +64,13 @@ function environment(files = deploymentFiles()): NodeJS.ProcessEnv {
     JETSON_DISPATCH_SSH_DESTINATION: "nvidia@192.168.55.1",
     JETSON_DISPATCH_SSH_IDENTITY_FILE: files.identityFile,
     JETSON_DISPATCH_SSH_KNOWN_HOSTS_FILE: files.knownHostsFile,
-    JETSON_DISPATCH_RESET_EXECUTABLE: files.resetExecutable,
+    JETSON_DISPATCH_CLEANUP_EXECUTABLE: files.cleanupExecutable,
     JETSON_DISPATCH_TEST_TIMEOUT_SECONDS: "2700",
   };
+}
+
+function loadConfig(files = deploymentFiles()) {
+  return loadSshJetsonWorkerConfig({ stateDirectory: files.stateDirectory }, environment(files));
 }
 
 describe("Colossus SSH worker deployment boundary", () => {
@@ -61,13 +87,14 @@ describe("Colossus SSH worker deployment boundary", () => {
     expect(dispatcherRunbook).not.toContain("git clone --branch main");
   });
 
-  it("loads fixed SSH, host-key, timeout, and reset configuration (#8142)", () => {
+  it("loads fixed SSH, host-key, timeout, and cleanup configuration (#8142)", () => {
     const files = deploymentFiles();
-    expect(loadSshJetsonWorkerConfig(environment(files))).toEqual({
+    expect(loadConfig(files)).toEqual({
+      cleanupExecutable: files.cleanupExecutable,
       destination: "nvidia@192.168.55.1",
       identityFile: files.identityFile,
       knownHostsFile: files.knownHostsFile,
-      resetExecutable: files.resetExecutable,
+      stateDirectory: files.stateDirectory,
       testTimeoutSeconds: 2700,
     });
   });
@@ -77,6 +104,7 @@ describe("Colossus SSH worker deployment boundary", () => {
     const artifactArchiveBase64 = Buffer.from("remote archive").toString("base64");
     const processRunner = vi
       .fn()
+      .mockResolvedValueOnce({ stdout: BASELINE_OUTPUT, stderr: "" })
       .mockResolvedValueOnce({
         stdout:
           "model\tNVIDIA Jetson AGX Thor Developer Kit\njetpackVersion\t7.2.2\njetsonLinuxRelease\tR38\nkernel\t6.8.12-tegra\n",
@@ -84,10 +112,7 @@ describe("Colossus SSH worker deployment boundary", () => {
       })
       .mockResolvedValueOnce({ stdout: "test passed\n", stderr: "" })
       .mockResolvedValueOnce({ stdout: artifactArchiveBase64, stderr: "" });
-    const worker = new SshJetsonDispatchWorker(
-      loadSshJetsonWorkerConfig(environment(files)),
-      processRunner,
-    );
+    const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
 
     await expect(
       worker.run(
@@ -104,15 +129,16 @@ describe("Colossus SSH worker deployment boundary", () => {
       artifactArchiveBase64,
       log: expect.stringContaining("test passed"),
     });
-    expect(processRunner.mock.calls[1]![0].input).not.toContain("trap cleanup EXIT");
-    expect(processRunner.mock.calls[2]![0].input).toContain("trap cleanup EXIT");
-    expect(processRunner.mock.calls[2]![0].input).toContain("base64 --wrap=0");
+    expect(processRunner.mock.calls[2]![0].input).not.toContain("trap cleanup EXIT");
+    expect(processRunner.mock.calls[3]![0].input).not.toContain("trap cleanup EXIT");
+    expect(processRunner.mock.calls[3]![0].input).toContain("base64 --wrap=0");
   });
 
   it("preserves test-failure logs when artifact collection fails (#8142)", async () => {
     const files = deploymentFiles();
     const processRunner = vi
       .fn()
+      .mockResolvedValueOnce({ stdout: BASELINE_OUTPUT, stderr: "" })
       .mockResolvedValueOnce({
         stdout:
           "model\tNVIDIA Jetson AGX Thor Developer Kit\njetpackVersion\t7.2.2\njetsonLinuxRelease\tR38\nkernel\t6.8.12-tegra\n",
@@ -125,10 +151,7 @@ describe("Colossus SSH worker deployment boundary", () => {
         }),
       )
       .mockRejectedValueOnce(new Error("artifact collection unavailable"));
-    const worker = new SshJetsonDispatchWorker(
-      loadSshJetsonWorkerConfig(environment(files)),
-      processRunner,
-    );
+    const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
 
     await expect(
       worker.run(
@@ -151,6 +174,7 @@ describe("Colossus SSH worker deployment boundary", () => {
     const files = deploymentFiles();
     const processRunner = vi
       .fn()
+      .mockResolvedValueOnce({ stdout: BASELINE_OUTPUT, stderr: "" })
       .mockResolvedValueOnce({
         stdout:
           "model\tNVIDIA Jetson AGX Thor Developer Kit\njetpackVersion\t7.2.2\njetsonLinuxRelease\tR38\nkernel\t6.8.12-tegra\n",
@@ -158,10 +182,7 @@ describe("Colossus SSH worker deployment boundary", () => {
       })
       .mockResolvedValueOnce({ stdout: "successful test output\n", stderr: "" })
       .mockRejectedValueOnce(new Error("artifact collection unavailable"));
-    const worker = new SshJetsonDispatchWorker(
-      loadSshJetsonWorkerConfig(environment(files)),
-      processRunner,
-    );
+    const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
 
     await expect(
       worker.run(
@@ -181,44 +202,126 @@ describe("Colossus SSH worker deployment boundary", () => {
   });
 
   it.each([
+    "nvidia@192.168.55.2",
     "nvidia@192.168.55.1 -o StrictHostKeyChecking=no",
     "nvidia@host;uname",
     "root@",
     "-oProxyCommand=unsafe",
-  ])("rejects an SSH destination that is not one fixed user and host: %s (#8142)", (destination) => {
+  ])("rejects an SSH destination that is not the fixed Jetson user and host: %s (#8142)", (destination) => {
+    const files = deploymentFiles();
     expect(() =>
-      loadSshJetsonWorkerConfig({
-        ...environment(),
-        JETSON_DISPATCH_SSH_DESTINATION: destination,
-      }),
-    ).toThrow("JETSON_DISPATCH_SSH_DESTINATION must be a fixed user and host");
+      loadSshJetsonWorkerConfig(
+        { stateDirectory: files.stateDirectory },
+        {
+          ...environment(files),
+          JETSON_DISPATCH_SSH_DESTINATION: destination,
+        },
+      ),
+    ).toThrow("JETSON_DISPATCH_SSH_DESTINATION must be nvidia@192.168.55.1");
   });
 
   it("rejects a writable SSH identity file (#8142)", () => {
     const files = deploymentFiles();
     fs.chmodSync(files.identityFile, 0o666);
-    expect(() => loadSshJetsonWorkerConfig(environment(files))).toThrow(
-      "must not be group- or world-writable",
-    );
+    expect(() => loadConfig(files)).toThrow("must not be group- or world-writable");
   });
 
   it("rejects a group-readable SSH identity file (#8142)", () => {
     const files = deploymentFiles();
     fs.chmodSync(files.identityFile, 0o640);
-    expect(() => loadSshJetsonWorkerConfig(environment(files))).toThrow(
-      "must be readable only by its owner",
+    expect(() => loadConfig(files)).toThrow("must be readable only by its owner");
+  });
+
+  it("rejects a symbolic-link cleanup executable (#8142)", () => {
+    const files = deploymentFiles();
+    const link = path.join(path.dirname(files.cleanupExecutable), "cleanup-link");
+    fs.symlinkSync(files.cleanupExecutable, link);
+    expect(() =>
+      loadSshJetsonWorkerConfig(
+        { stateDirectory: files.stateDirectory },
+        {
+          ...environment(files),
+          JETSON_DISPATCH_CLEANUP_EXECUTABLE: link,
+        },
+      ),
+    ).toThrow("must be a regular file");
+  });
+
+  it("invokes the fixed cleanup executable without request-controlled arguments (#8142)", async () => {
+    const files = deploymentFiles();
+    const jobId = "b".repeat(64);
+    fs.writeFileSync(
+      path.join(files.stateDirectory, `${jobId}.baseline.json`),
+      `${JSON.stringify(BASELINE)}\n`,
+      { mode: 0o600 },
+    );
+    const processRunner = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ stdout: BASELINE_OUTPUT, stderr: "" });
+    const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
+
+    await expect(
+      worker.cleanup({ jobId, signal: new AbortController().signal }),
+    ).resolves.toBeUndefined();
+
+    expect(processRunner.mock.calls[0]![0]).toMatchObject({
+      args: [],
+      executable: files.cleanupExecutable,
+    });
+    expect(processRunner.mock.calls[0]![0].input).toBeUndefined();
+    expect(processRunner.mock.calls[1]![0]).toMatchObject({
+      executable: "ssh",
+      input: expect.stringContaining('workspace="/var/tmp/nemoclaw-jetson-e2e/$job_id"'),
+    });
+    expect(processRunner.mock.calls[1]![0].input).toContain("docker info --format");
+    expect(processRunner.mock.calls[1]![0].input).toContain("test -c /dev/nvmap");
+    expect(processRunner.mock.calls[1]![0].input).toContain("ollama list");
+    expect(processRunner.mock.calls[1]![0].args).toEqual(
+      expect.arrayContaining(["nvidia@192.168.55.1", "--", jobId]),
     );
   });
 
-  it("rejects a symbolic-link reset executable (#8142)", () => {
+  it.each([
+    ["Node.js", { nodeVersion: "v22.20.0" }],
+    ["npm", { npmVersion: "11.0.0" }],
+    ["Ollama executable", { ollamaPath: "/tmp/ollama" }],
+    ["Ollama models", { ollamaModelsSha256: "c".repeat(64) }],
+    ["OpenShell executable", { openshellPath: "/tmp/openshell" }],
+  ])("rejects cleanup when the protected %s baseline changes (#8142)", async (_name, change) => {
     const files = deploymentFiles();
-    const link = path.join(path.dirname(files.resetExecutable), "reset-link");
-    fs.symlinkSync(files.resetExecutable, link);
-    expect(() =>
-      loadSshJetsonWorkerConfig({
-        ...environment(files),
-        JETSON_DISPATCH_RESET_EXECUTABLE: link,
-      }),
-    ).toThrow("must be a regular file");
+    const jobId = "b".repeat(64);
+    const baselinePath = path.join(files.stateDirectory, `${jobId}.baseline.json`);
+    fs.writeFileSync(baselinePath, `${JSON.stringify(BASELINE)}\n`, { mode: 0o600 });
+    const processRunner = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ stdout: baselineOutput(change), stderr: "" });
+    const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
+
+    await expect(worker.cleanup({ jobId, signal: new AbortController().signal })).rejects.toThrow(
+      "Jetson cleanup changed the protected tool or Ollama model baseline",
+    );
+    expect(fs.existsSync(baselinePath)).toBe(true);
+  });
+
+  it("keeps cleanup targets fixed and preserves the Jetson baseline (#8142)", () => {
+    expect(cleanupProgram).toContain("sandbox_name=e2e-jetson-nvmap");
+    expect(cleanupProgram).toContain("gateway_name=nemoclaw");
+    expect(cleanupProgram).toContain("destination=nvidia@192.168.55.1");
+    expect(cleanupProgram).toContain('if [ "$#" -ne 0 ]');
+    expect(cleanupProgram).toContain('IFS= read -r job_id <"$lock_file"');
+    expect(cleanupProgram).toContain('require_plain_directory_if_present "$service_directory"');
+    expect(cleanupProgram).toContain('rm -rf -- "$workspace"');
+    expect(cleanupProgram).toContain("ollama-auth-proxy.pid");
+    expect(cleanupProgram).toContain('process_uid="$(awk');
+    expect(cleanupProgram).toContain('grep -Fqx "HOME=$job_home"');
+    expect(cleanupProgram).toContain('kill "$pid"');
+    expect(cleanupProgram).toContain("label=openshell.ai/sandbox-name=$sandbox_name");
+    expect(cleanupProgram).not.toMatch(/pkill|pgrep|docker (?:system|container|volume) prune/u);
+    expect(cleanupProgram).not.toContain('rm -rf -- "$workspace_root"');
+    expect(cleanupProgram).not.toContain("ollama serve");
+    expect(cleanupProgram).not.toMatch(/apt(?:-get)?|boardctl|reboot|shutdown|nvidia-l4t/u);
+    expect(cleanupProgram).not.toMatch(/npm uninstall|uninstall\.sh|rm .*openshell|rm .*ollama/u);
   });
 });

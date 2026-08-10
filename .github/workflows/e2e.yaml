@@ -34,7 +34,7 @@ on:
           - internal-nvidia
           - public-nvidia
       allow_jetson_dispatch:
-        description: "Set true for jetson-nvmap-gpu only after the Colossus dispatcher, Cloudflare Tunnel, reset helper, and JETSON_DISPATCH_URL repository variable have passed the deployment checks in test/e2e/docs/jetson-colossus-dispatch.md."
+        description: "Set true for jetson-nvmap-gpu only after the Colossus dispatcher, Cloudflare Tunnel, cleanup helper, and JETSON_DISPATCH_URL repository variable have passed the deployment checks in test/e2e/docs/jetson-colossus-dispatch.md."
         required: false
         default: false
         type: boolean

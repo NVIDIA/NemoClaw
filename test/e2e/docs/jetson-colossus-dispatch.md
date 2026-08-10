@@ -5,7 +5,7 @@
 
 This temporary path runs the `jetson-nvmap-gpu` end-to-end (E2E) job on one Jetson behind a Colossus host.
 GitHub Actions controls the job through an authenticated HTTPS endpoint.
-Colossus retains the Cloudflare Tunnel credential, Jetson SSH key, SSH host key, device lock, and reset capability.
+Colossus retains the Cloudflare Tunnel credential, Jetson SSH key, SSH host key, device lock, and cleanup capability.
 Candidate code runs only on the Jetson.
 
 Do not set `allow_jetson_dispatch=true` until every deployment check on this page passes.
@@ -16,8 +16,8 @@ The deployment has these input and credential boundaries:
 
 | System | Receives | Must not receive |
 | --- | --- | --- |
-| GitHub-hosted controller | Candidate commit SHA, workflow run identity, public dispatch URL, and short-lived GitHub OpenID Connect (OIDC) token | Jetson SSH key, tunnel credential, and reset privilege |
-| Colossus dispatcher | Validated workflow identity, fixed target, and candidate commit SHA | Request-controlled command, SSH host, repository, path, or reset command |
+| GitHub-hosted controller | Candidate commit SHA, workflow run identity, public dispatch URL, and short-lived GitHub OpenID Connect (OIDC) token | Jetson SSH key, tunnel credential, and cleanup privilege |
+| Colossus dispatcher | Validated workflow identity, fixed target, and candidate commit SHA | Request-controlled command, SSH host, repository, path, or cleanup command |
 | Jetson | Candidate checkout and the fixed live E2E command | GitHub OIDC token, tunnel credential, and Colossus SSH private key |
 
 The dispatcher accepts only `NVIDIA/NemoClaw` and the trusted `main` E2E workflow.
@@ -38,11 +38,12 @@ The dispatcher rejects an OIDC token whose issued-to-expiry window exceeds 15 mi
 The GitHub repository variable contains only the public dispatch URL.
 Do not put a credential in `JETSON_DISPATCH_URL`.
 
-## Prepare a Known Jetson Baseline
+## Prepare the Dedicated Jetson
 
 Use a dedicated Jetson without production data or credentials.
 The E2E job gives candidate code Docker access, which can control the dedicated host.
-The reset procedure must restore a known image after every result.
+Cleanup removes only the fixed job-owned resources defined below.
+It does not attest that cleanup reversed every possible host change made by candidate code.
 
 Run these checks as the `nvidia` account that the dispatcher uses:
 
@@ -63,25 +64,51 @@ The architecture must be `aarch64`, and Node.js must have major version 22.
 Docker must expose the NVIDIA runtime required by the existing Jetson live E2E test.
 Preinstall Ollama so candidate code does not invoke its host installer.
 The `nvidia` account must not have passwordless `sudo` access.
+The worker gives each job its own `HOME`, `TMPDIR`, XDG directories, and npm prefix under the job workspace.
+The test installs the NemoClaw CLI and its state only in those job-owned paths, so workspace removal removes them without a host-wide uninstall.
+If a later reviewed cleanup path requires the NemoClaw uninstaller, it must use `--keep-openshell` and must retain the same resource allowlist.
 
-Define a reset procedure that restores the verified baseline.
-A reboot alone does not reset candidate changes.
-Candidate code can change the `nvidia` home directory, SSH configuration, packages, processes, and Docker state.
+Reserve these names and paths for this E2E target:
 
-The reset procedure must verify these conditions before it returns success:
+- The current dispatcher-created `/var/tmp/nemoclaw-jetson-e2e/<jobId>` workspace.
+- The `/tmp/nemoclaw-services-e2e-jetson-nvmap` helper-service directory.
+- The `e2e-jetson-nvmap` NemoClaw and OpenShell sandbox name.
+- The `nemoclaw` OpenShell gateway name and forwards for the named sandbox.
+- The recorded `ollama-auth-proxy`, OpenShell Docker gateway, and helper `cloudflared` processes.
+- OpenShell-managed Docker containers labeled for `e2e-jetson-nvmap`.
+- The volumes recorded from those labeled containers.
+- The `openshell-cluster-nemoclaw` gateway container, volume, and recorded attached volumes.
 
-- The expected Jetson model, Jetson Linux release, kernel, and storage layout are present.
-- SSH is reachable with the dispatcher's restricted key and pinned host key.
-- `/var/tmp/nemoclaw-jetson-e2e` is absent.
-- The `e2e-jetson-nvmap` sandbox, `nemoclaw` gateway, and test containers are absent.
-- `/dev/nvmap` and the NVIDIA Docker runtime are available.
-- No candidate-created process remains.
+Do not run unrelated work under these reserved names.
+The cleanup program must act only on this allowlist.
 
-Use a known-image reflash, immutable-root rollback, or equivalent reprovisioning procedure.
-Do not treat `boardctl reset` or another power cycle as baseline restoration.
-A reviewed Thor flash process can use `boardctl` only as one step in known-image restoration.
-The reset attestation must not rely only on commands that run through the candidate-controlled Jetson account.
-If a known-image restore and independent attestation cannot be automated, stop the deployment.
+Before candidate execution, the worker records this protected tool and model baseline:
+
+- The resolved Node.js path and version.
+- The resolved npm path and version.
+- The resolved Ollama path and a SHA-256 digest of the sorted Ollama model names and IDs.
+- The resolved OpenShell path.
+
+The dispatcher stores the recorded values in a private `<jobId>.baseline.json` state file.
+After cleanup, the worker repeats the probes and compares them with that record.
+Before and after candidate execution, the worker also requires `/dev/nvmap` and the Docker NVIDIA runtime to be available.
+The worker removes the record only after every comparison and cleanup absence check succeeds.
+
+These other host resources also remain outside the cleanup allowlist:
+
+- Node.js, npm, the OpenShell executable, and the Docker engine.
+- The Ollama binary, service, models, configuration, and unrelated `ollama serve` processes.
+- The NVIDIA container runtime and Docker images that the test does not own exclusively.
+- The `/dev/nvmap` character device and its permissions.
+- JetPack, Jetson Linux, CUDA, NVIDIA packages, other `apt` packages, SDK Manager, and downloaded flashing files.
+- User accounts, SSH keys, and user files outside the current job workspace and named NemoClaw resources.
+- Docker resources without the exact label or name association defined above.
+- Processes other than the recorded job-home helper processes defined above.
+- Colossus credentials, service configuration, and job evidence.
+
+The cleanup program must not change or remove any resource outside its allowlist.
+Review its command construction and target resolution before deployment.
+Do not use broad process termination, Docker pruning, wildcard paths, or host-wide package removal.
 
 ## Create the Colossus Dispatcher Account
 
@@ -145,36 +172,70 @@ sudo install -o nemoclaw-jetson-dispatch -g nemoclaw-jetson-dispatch -m 0600 \
 rm /tmp/jetson_known_hosts
 ```
 
-The known image must preserve the verified SSH host identity.
+Treat the verified SSH host identity as part of the protected baseline.
 Do not accept a changed host key without reconciling it through the serial console or another trusted channel.
 
-Install the reset program at an absolute path such as `/usr/local/libexec/nemoclaw-jetson-reset`.
-It must accept no arguments and must not be group- or world-writable.
-It must perform and attest the baseline restoration defined above.
-It must not remove `/var/lib/nemoclaw-jetson-dispatch/state/device.lock`.
-The dispatcher removes that lock only after the reset program exits with status zero.
+## Define the Cleanup Program
 
-Run the reset program as `nemoclaw-jetson-dispatch` when host permissions allow it.
-Use device rules to grant access to the exact USB devices that the reset program needs.
-If restoration requires root, use a reviewed privilege-separated service whose unprivileged,
-root-owned client accepts no arguments and returns only after restoration and attestation finish.
-The dispatcher service unit below prevents privilege elevation, so a reset client that invokes
-`sudo` or relies on a set-user-ID executable is incompatible with this deployment.
-Do not remove that protection or grant the dispatcher account passwordless `sudo` access.
-
-Test the SSH and reset paths as the service account:
-
-> Warning: The reset test replaces Jetson state with the known baseline.
-> Remove any data that the deployment must retain before this test.
+Install the bundled cleanup program from the trusted checkout:
 
 ```bash
+sudo install -d -o root -g root -m 0755 /usr/local/libexec
+sudo install -o root -g root -m 0755 \
+  /opt/nemoclaw-jetson-dispatch/tools/e2e/jetson-dispatch-cleanup.sh \
+  /usr/local/libexec/nemoclaw-jetson-cleanup
+```
+
+It must accept no arguments and must not be group- or world-writable.
+It must derive the lowercase 64-character job ID from the private dispatcher `device.lock`.
+It must reject a missing or malformed lock instead of selecting a broader target.
+The bundled program fixes the state directory, SSH files, SSH destination, and cleanup names listed on this page.
+Changing one of those values requires a corresponding reviewed source change.
+The dispatcher invokes it after success, failure, cancellation, and timeout.
+The dispatcher also invokes it during startup when `device.lock` remains from an interrupted service process.
+
+The cleanup program must perform these bounded actions:
+
+1. Stop and remove only the named sandbox, its forwards, and the named gateway.
+2. Stop only the recorded helper PIDs after verifying the process owner, command marker, and job `HOME`.
+3. Remove only the labeled sandbox containers, the exact gateway container, and their recorded volumes.
+4. Remove only the helper-service directory and `/var/tmp/nemoclaw-jetson-e2e/<validated-job-id>` workspace for the locked job.
+5. Verify that every allowlisted resource is absent.
+
+The cleanup program must be idempotent.
+It must treat an already absent allowlisted resource as success.
+It must exit nonzero when target ownership is ambiguous, cleanup fails, or absence verification is inconclusive.
+It must not remove `/var/lib/nemoclaw-jetson-dispatch/state/device.lock`.
+The dispatcher removes that lock only after cleanup and absence verification succeed.
+
+After the helper exits, the worker independently verifies these conditions over pinned-host-key SSH:
+
+- The validated job workspace is absent and is not a symbolic link.
+- No OpenShell-managed container has the `e2e-jetson-nvmap` sandbox label.
+- The `openshell-cluster-nemoclaw` gateway container and volume are absent.
+- Every recorded Node.js, npm, Ollama, Ollama model, and OpenShell baseline value matches.
+- `/dev/nvmap` exists, and Docker still reports the NVIDIA runtime.
+
+The worker reports cleanup failure when any helper or independent verification step fails.
+
+The dispatcher runs the cleanup program as `nemoclaw-jetson-dispatch`.
+The service unit below prevents privilege elevation.
+Do not remove that protection or grant the dispatcher account passwordless `sudo` access.
+
+Test cleanup-program access and the SSH path as the service account:
+
+```bash
+sudo -u nemoclaw-jetson-dispatch test -x \
+  /usr/local/libexec/nemoclaw-jetson-cleanup
 sudo -u nemoclaw-jetson-dispatch ssh -F /dev/null -o BatchMode=yes \
   -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
   -o UserKnownHostsFile=/var/lib/nemoclaw-jetson-dispatch/known_hosts \
   -i /var/lib/nemoclaw-jetson-dispatch/id_ed25519 \
   nvidia@192.168.55.1 'uname -m'
-sudo -u nemoclaw-jetson-dispatch /usr/local/libexec/nemoclaw-jetson-reset
 ```
+
+Do not invoke the cleanup program manually without the dispatcher-created device lock and baseline record.
+The proof-job procedure below exercises cleanup and verifies its result.
 
 ## Configure the Dispatcher Service
 
@@ -192,12 +253,12 @@ JETSON_DISPATCH_STATE_DIRECTORY=/var/lib/nemoclaw-jetson-dispatch/state
 JETSON_DISPATCH_GITHUB_REPOSITORY_ID=REPOSITORY_ID
 JETSON_DISPATCH_PORT=8787
 JETSON_DISPATCH_EXECUTION_TIMEOUT_SECONDS=3000
-JETSON_DISPATCH_RESET_TIMEOUT_SECONDS=300
+JETSON_DISPATCH_CLEANUP_TIMEOUT_SECONDS=300
 JETSON_DISPATCH_TEST_TIMEOUT_SECONDS=2700
 JETSON_DISPATCH_SSH_DESTINATION=nvidia@192.168.55.1
 JETSON_DISPATCH_SSH_IDENTITY_FILE=/var/lib/nemoclaw-jetson-dispatch/id_ed25519
 JETSON_DISPATCH_SSH_KNOWN_HOSTS_FILE=/var/lib/nemoclaw-jetson-dispatch/known_hosts
-JETSON_DISPATCH_RESET_EXECUTABLE=/usr/local/libexec/nemoclaw-jetson-reset
+JETSON_DISPATCH_CLEANUP_EXECUTABLE=/usr/local/libexec/nemoclaw-jetson-cleanup
 ```
 
 Install `/etc/systemd/system/nemoclaw-jetson-dispatch.service`:
@@ -228,7 +289,7 @@ ReadWritePaths=/var/lib/nemoclaw-jetson-dispatch
 WantedBy=multi-user.target
 ```
 
-Start the service and confirm that it listens only on loopback:
+Start the service and confirm that it listens only on the loopback address:
 
 ```bash
 sudo systemctl daemon-reload
@@ -370,32 +431,42 @@ The uploaded `e2e-jetson-nvmap-gpu` artifact must contain `jetson-dispatch.json`
 - The requested candidate commit SHA and workflow run identity.
 - The Jetson model, JetPack package version or `unavailable`, Jetson Linux release, and kernel.
 - The test conclusion and bounded log.
-- `reset: "succeeded"` before `conclusion: "success"`.
+- `cleanup: "succeeded"` before `conclusion: "success"`.
 
 It must also contain `jetson-e2e-artifacts.tar.gz`.
 The dispatcher creates that archive from the remote E2E artifact directory before it removes the candidate workspace.
 It rejects an artifact directory or compressed archive larger than 1 MiB.
 
-After the workflow completes, independently rerun the baseline checks.
-Then run one controlled failing candidate and confirm that its artifact records the same reset evidence.
+After the workflow completes, independently verify every allowlisted resource is absent.
+Then run one controlled failing candidate and confirm that its artifact records the same cleanup evidence.
 For a cancellation proof, cancel a controller after it logs the job ID.
-The controller can exit before it downloads an artifact, so inspect the private Colossus
-`<jobId>.json` status for `conclusion: "cancelled"` and `reset: "succeeded"` instead.
-Independently rerun the baseline checks after that cancellation.
+The controller can exit before it downloads an artifact.
+Inspect the private Colossus `<jobId>.json` status for `conclusion: "cancelled"` and `cleanup: "succeeded"`.
+Independently verify the cleanup allowlist after that cancellation.
+
+These checks establish bounded cleanup of the allowlisted resources.
+They do not attest that cleanup reversed every possible host change made by candidate code.
 
 ## Recover or Disable the Deployment
 
 The dispatcher permits one active job.
-A process crash leaves `device.lock` in the state directory.
-On restart, the dispatcher invokes the reset program before it removes that stale lock or accepts more work.
-If reset fails, startup fails or the completed job reports `conclusion: "reset-failed"` with `reset: "failed"`.
-If reset succeeds but lock removal fails, the completed job reports `conclusion: "reset-failed"` with `reset: "succeeded"`.
+A process interruption leaves `device.lock` in the state directory.
+On startup, the dispatcher invokes the cleanup program before it removes that stale lock or accepts more work.
+If cleanup fails, startup fails or the completed job reports `conclusion: "cleanup-failed"` with `cleanup: "failed"`.
+If cleanup succeeds but lock removal fails, the completed job reports `conclusion: "cleanup-failed"` with `cleanup: "succeeded"`.
 The lock remains in either case.
 
 Do not delete `device.lock` to bypass recovery.
-For `reset: "failed"`, repair the reset path.
-For `reset: "succeeded"` with a lock-removal error, repair the state-directory filesystem or permissions.
-Then restart the dispatcher; startup runs and verifies another reset before removing the stale lock.
+For `cleanup: "failed"`, repair the cleanup program or the allowlisted resource state.
+For `cleanup: "succeeded"` with a lock-removal error, repair the state-directory filesystem or permissions.
+Restart the dispatcher after the repair.
+Startup runs cleanup and absence verification again before it removes the stale lock.
+
+Do not dispatch another job when cleanup verification is inconclusive.
+Manual recovery must stay within the same cleanup allowlist.
+Escalate any suspected protected baseline change for separate host investigation.
+Cleanup evidence alone is not evidence that every candidate host change was reversed.
+
 Preserve the job JSON and log files for diagnosis.
 These private state files can contain candidate output, and the dispatcher does not prune them.
 Apply the host's approved retention policy after GitHub uploads the artifact and no device lock exists.
@@ -409,8 +480,8 @@ sudo systemctl disable --now nemoclaw-jetson-dispatch.service
 ```
 
 Reauthenticate with `cloudflared tunnel login` as a Cloudflare administrator.
-Delete the `jetson-e2e.example.com` DNS record from the Cloudflare zone, then delete the named
-tunnel with `cloudflared tunnel delete TUNNEL_UUID`.
+Delete the `jetson-e2e.example.com` DNS record from the Cloudflare zone.
+Delete the named tunnel with `cloudflared tunnel delete TUNNEL_UUID`.
 Confirm that `cloudflared tunnel list` no longer returns `TUNNEL_UUID`.
 Remove the new local account certificate after the administrative deletion.
 Remove the local tunnel credential, configuration, and service unit:
@@ -440,5 +511,4 @@ test -z "$(gh variable list --repo NVIDIA/NemoClaw --json name \
 
 Remove the dedicated Jetson public key and the Colossus SSH private key.
 After the required retention period, remove the private job state and logs.
-Remove the dispatcher environment, service unit, and trusted checkout when no investigation or
-rollback requirement remains.
+Remove the dispatcher environment, service unit, and trusted checkout when no investigation or rollback requirement remains.

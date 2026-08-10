@@ -459,6 +459,9 @@ full runs unless their independent opt-in flags are `true`.
 Set `allow_jetson_dispatch=true` to select `jetson-nvmap-gpu` only after every
 deployment check in
 [Jetson Dispatch Through Colossus](docs/jetson-colossus-dispatch.md) passes.
+The Colossus lifecycle removes and verifies only the fixed job-owned cleanup
+allowlist. Its cleanup evidence does not attest that every possible candidate
+host change was reversed.
 Set `allow_dgx_spark_runner_queue=true` to select both
 `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`.
 GitHub can pause the qualification job for the

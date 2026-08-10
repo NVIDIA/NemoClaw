@@ -24,8 +24,8 @@ export const MAX_JETSON_DISPATCH_ARTIFACT_RESPONSE_BYTES =
 
 export type JetsonDispatchConclusion =
   | "cancelled"
+  | "cleanup-failed"
   | "failure"
-  | "reset-failed"
   | "success"
   | "timed-out";
 
@@ -47,7 +47,7 @@ export interface JetsonDispatchWorker {
     request: JetsonDispatchRequest,
     options: { jobId: string; signal: AbortSignal },
   ): Promise<JetsonWorkerResult>;
-  reset(options: { signal: AbortSignal }): Promise<void>;
+  cleanup(options: { jobId: string; signal: AbortSignal }): Promise<void>;
 }
 
 export interface JetsonDispatchStatus {
@@ -60,7 +60,7 @@ export interface JetsonDispatchStatus {
   startedAt?: string;
   completedAt?: string;
   device?: JetsonDeviceIdentity;
-  reset: "pending" | "succeeded" | "failed";
+  cleanup: "pending" | "succeeded" | "failed";
   error?: string;
 }
 
@@ -154,7 +154,7 @@ export class JetsonDispatchCoordinator {
   readonly #lockPath: string;
   readonly #worker: JetsonDispatchWorker;
   readonly #executionTimeoutMs: number;
-  readonly #resetTimeoutMs: number;
+  readonly #cleanupTimeoutMs: number;
   readonly #jobs = new Map<string, JetsonDispatchStatus>();
   #activeJobId: string | undefined;
   #activeAbort: AbortController | undefined;
@@ -166,7 +166,7 @@ export class JetsonDispatchCoordinator {
     stateDirectory: string;
     worker: JetsonDispatchWorker;
     executionTimeoutMs: number;
-    resetTimeoutMs: number;
+    cleanupTimeoutMs: number;
   }) {
     if (!path.isAbsolute(options.stateDirectory)) {
       throw new Error("Jetson dispatcher state directory must be absolute");
@@ -179,17 +179,17 @@ export class JetsonDispatchCoordinator {
       throw new Error("Jetson execution timeout must be between 1 and 55 minutes");
     }
     if (
-      !Number.isSafeInteger(options.resetTimeoutMs) ||
-      options.resetTimeoutMs < 10_000 ||
-      options.resetTimeoutMs > 10 * 60_000
+      !Number.isSafeInteger(options.cleanupTimeoutMs) ||
+      options.cleanupTimeoutMs < 10_000 ||
+      options.cleanupTimeoutMs > 10 * 60_000
     ) {
-      throw new Error("Jetson reset timeout must be between 10 seconds and 10 minutes");
+      throw new Error("Jetson cleanup timeout must be between 10 seconds and 10 minutes");
     }
     this.#stateDirectory = options.stateDirectory;
     this.#lockPath = path.join(options.stateDirectory, "device.lock");
     this.#worker = options.worker;
     this.#executionTimeoutMs = options.executionTimeoutMs;
-    this.#resetTimeoutMs = options.resetTimeoutMs;
+    this.#cleanupTimeoutMs = options.cleanupTimeoutMs;
   }
 
   async initialize(): Promise<void> {
@@ -200,7 +200,13 @@ export class JetsonDispatchCoordinator {
       maxBytes: 1024,
     });
     if (staleLock !== null) {
-      await withTimeout(this.#resetTimeoutMs, (signal) => this.#worker.reset({ signal }));
+      const jobId = staleLock.trim();
+      if (!/^[a-f0-9]{64}$/u.test(jobId)) {
+        throw new Error("Jetson device lock contains an invalid job ID");
+      }
+      await withTimeout(this.#cleanupTimeoutMs, (signal) =>
+        this.#worker.cleanup({ jobId, signal }),
+      );
       fs.unlinkSync(this.#lockPath);
     }
     this.#initialized = true;
@@ -236,7 +242,7 @@ export class JetsonDispatchCoordinator {
       request: structuredClone(request),
       state: "queued",
       createdAt: new Date().toISOString(),
-      reset: "pending",
+      cleanup: "pending",
     };
     try {
       this.#persist(status);
@@ -280,7 +286,7 @@ export class JetsonDispatchCoordinator {
         maxBytes: 1024,
       }) !== null
     ) {
-      throw new Error("Jetson device lock still requires reset recovery");
+      throw new Error("Jetson device lock still requires cleanup recovery");
     }
   }
 
@@ -351,19 +357,25 @@ export class JetsonDispatchCoordinator {
     } finally {
       clearTimeout(timer);
       try {
-        await withTimeout(this.#resetTimeoutMs, (signal) => this.#worker.reset({ signal }));
-        status.reset = "succeeded";
+        await withTimeout(this.#cleanupTimeoutMs, (signal) =>
+          this.#worker.cleanup({ jobId: status.jobId, signal }),
+        );
+        status.cleanup = "succeeded";
       } catch (error) {
-        status.reset = "failed";
-        status.error = `Jetson reset failed: ${safeError(error)}`;
-        conclusion = "reset-failed";
+        status.cleanup = "failed";
+        const cleanupError = `Jetson cleanup failed: ${safeError(error)}`;
+        status.error = status.error
+          ? `${status.error}; ${cleanupError}`.slice(0, 500)
+          : cleanupError;
+        conclusion = "cleanup-failed";
       }
-      if (status.reset === "succeeded") {
+      if (status.cleanup === "succeeded") {
         try {
           fs.unlinkSync(this.#lockPath);
         } catch (error) {
-          status.error = `Jetson lock removal failed: ${safeError(error)}`;
-          conclusion = "reset-failed";
+          const lockError = `Jetson lock removal failed: ${safeError(error)}`;
+          status.error = status.error ? `${status.error}; ${lockError}`.slice(0, 500) : lockError;
+          conclusion = "cleanup-failed";
         }
       }
       status.conclusion = conclusion;
