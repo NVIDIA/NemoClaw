@@ -100,7 +100,7 @@ For Local Ollama strict tool-call validation, NemoClaw uses the missing-tool-cal
 - Ollama returns HTTP `200`.
 - The response contains no structured tool call.
 - The response contains no tool-call JSON in plain message text.
-- The response did not stop at the output token limit after producing only reasoning.
+- The response does not stop at the output token limit after producing only reasoning.
 
 If a response stops at the output token limit after producing only reasoning, NemoClaw retries once with a larger output token limit.
 NemoClaw waits 5, 15, and 30 seconds before the second, third, and fourth validation requests.
