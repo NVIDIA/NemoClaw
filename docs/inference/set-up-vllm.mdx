@@ -27,6 +27,7 @@ Do not expose the port to your LAN or the internet.
 An authenticated fixed profile publishes Docker port `8000` on exactly two host addresses: `127.0.0.1` and the exact private IPv4 gateway of the `openshell-docker` bridge.
 It never publishes that host port on `0.0.0.0` or `::`.
 The provider route remains `https://inference.local` inside the sandbox, and OpenShell reaches the server through the private bridge binding.
+The managed Muse Glimmer profile uses the same bearer-protected listener and two-address publication boundary.
 
 The qualified two-DGX Spark and two-DGX Station paths use bearer-protected `/v1` routes and Docker host networking on both runtime containers; network isolation remains required for other endpoints and distributed traffic.
 Follow [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) or [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for their isolation requirements.
@@ -131,6 +132,8 @@ If another vLLM server already occupies port `8000`, NemoClaw selects the existi
 Managed profiles and model-specific recipes use immutable image digests:
 
 - DGX Spark and DGX Station models without a model-specific runtime use the `linux/arm64` digest `sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2` with a compressed layer size of `9.60 GB` under `nvcr.io/nvidia/vllm:26.05.post1-py3`.
+- The DGX Spark Muse Glimmer recipe uses the `linux/arm64` digest `sha256:ab0f5fc3bb81b9257a9aee801abcb0eeb94bb0523b57b2bb79349dc61e7c1e25` with a compressed layer size of `10.51 GB` under `vllm/vllm-openai`.
+  It pins Hugging Face revision `d35cb79050f419c457611b1cee5c5d15b176f285` for the approximately `25.45 GB` model download.
 - The DGX Station Nemotron 3 Ultra express recipe uses the multi-platform index digest `sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416` under `vllm/vllm-openai:v0.22.0`; on DGX Station, that index selects a `linux/arm64` manifest with a compressed layer size of `10.67 GB`.
   It also pins Hugging Face revision `183968f87ae4cedce3039313cac1fd43d112c578` for the approximately `352.38 GB` model download.
 - Generic Linux `arm64` hosts use `sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4` with a compressed layer size of `9.28 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
@@ -260,6 +263,26 @@ When you start managed vLLM outside the installer express flow, NemoClaw uses th
 For the managed single-node DGX Spark `nvidia/Qwen3.6-35B-A3B-NVFP4` profile, NemoClaw enables async scheduling and does not enable multi-token prediction (MTP) speculative decoding.
 The profile retains `--gpu-memory-utilization 0.4`, a `262144`-token context window, `4` concurrent sequences, an `8192`-token batch limit, chunked prefill, prefix caching, and its registered parsers and acceleration backends.
 
+Muse Glimmer is an additional single-DGX Spark choice and does not change the Qwen default.
+Select `muse-glimmer-30b` to serve `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` with the `muse-glimmer` alias.
+The registered recipe configures a 32,768-token context window, 1 concurrent sequence, a 4,096-token batch limit, and 0.75 GPU-memory utilization.
+It uses `muse_glimmer` for reasoning and tool-call parsing and sets `--generation-config auto`.
+The pinned model and runtime were validated on one physical DGX Spark for a direct chat request, separated reasoning, a required structured tool call, and an OpenClaw TUI chat turn without fallback.
+Vision was not part of that validation.
+The registered defaults do not enable DFlash, pass `--quantization` or `--trust-remote-code`, or install `fastsafetensors`.
+Advanced operator arguments from `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` remain authoritative.
+
+<Warning title="Experimental Muse Glimmer vLLM Profile">
+This profile uses a candidate runtime image that contains Muse Glimmer changes not yet merged into upstream vLLM.
+Treat it as Experimental until the upstream vLLM support is merged and NemoClaw qualifies a replacement runtime.
+DFlash speculative decoding fails with the pinned runtime and is outside NemoClaw's validated scope, so the registered profile does not enable it.
+</Warning>
+
+NemoClaw creates or reuses the Muse Glimmer bearer key in the owner-only `~/.nemoclaw/dual-station-vllm-api-key` host file before confirmation.
+The managed vLLM container reads the key while it runs, and the sandbox receives only the managed inference route.
+The key remains for a retry after cancellation, interruption, or a later preflight failure.
+A full uninstall removes it only after exact managed-runtime cleanup succeeds and no sibling gateway remains; gateway-scoped cleanup can preserve the host-global runtime and key for another gateway.
+
 On DGX Station, accepting the installer express prompt selects `NEMOCLAW_VLLM_MODEL=nemotron-3-ultra-550b-a55b`.
 Express uses the single-Station Ultra recipe unless a trusted reciprocal pair qualifies for distributed serving.
 Refer to [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for pair qualification, lifecycle receipts, runtime topology, and network controls.
@@ -367,6 +390,7 @@ NemoClaw applies the registered `vllm serve` arguments, including the reasoning 
 |---|---|---|---|---|
 | `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | `8.9` | Supported override. |
 | `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | DGX Spark | `12.1` | DGX Spark default. |
+| `muse-glimmer-30b` | `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` | DGX Spark | `12.1` | Experimental single-DGX Spark choice for text, reasoning, and structured tool calls. NemoClaw does not enable or support DFlash for this profile. |
 | `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | `8.9` | Generic Linux NVIDIA GPU default. |
 | `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | DGX Station | `10.0` | DGX Station profile default outside express install. |
 | `nemotron-3-ultra-550b-a55b` | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` | DGX Station | `10.0` | DGX Station express-install selection with a pinned model revision and model-specific vLLM image. |

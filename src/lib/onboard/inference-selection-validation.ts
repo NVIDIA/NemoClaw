@@ -91,6 +91,8 @@ export interface InferenceSelectionValidationHelpers {
       extraHeaders?: readonly string[];
       requireResponsesToolCalling?: boolean;
       requireChatCompletionsToolCalling?: boolean;
+      retryChatCompletionsToolReadiness?: boolean;
+
       skipResponsesProbe?: boolean;
       probeStreaming?: boolean;
       allowHostDockerInternal?: boolean;
@@ -258,6 +260,8 @@ export function createInferenceSelectionValidationHelpers(
       extraHeaders?: readonly string[];
       requireResponsesToolCalling?: boolean;
       requireChatCompletionsToolCalling?: boolean;
+      retryChatCompletionsToolReadiness?: boolean;
+
       skipResponsesProbe?: boolean;
       probeStreaming?: boolean;
       allowHostDockerInternal?: boolean;

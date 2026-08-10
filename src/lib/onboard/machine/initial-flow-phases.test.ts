@@ -7,6 +7,7 @@ import { createSession, type Session } from "../../state/onboard-session";
 import { resolveGatewayOwner } from "../gateway-ownership";
 import {
   createInitialOnboardFlowPhases,
+  getInitialGatewayReuseStateForOwner,
   type InitialOnboardFlowContext,
   runInitialOnboardFlowSlice,
 } from "./initial-flow-phases";
@@ -100,9 +101,35 @@ function completeStep(): Session["steps"][string] {
 }
 
 describe("initial onboard flow phases", () => {
+  it("does not run managed gateway selection for an external owner (#7411)", () => {
+    const owner = resolveGatewayOwner({
+      gatewayName: "nemoclaw",
+      gatewayPort: 31818,
+      declaration: {
+        version: 1,
+        mode: "externally-supervised",
+        endpoint: "http://127.0.0.1:31818",
+        stateDir: "/var/lib/openshell/gateway",
+        supervisor: {
+          kind: "systemd-system",
+          serviceName: "openshell-gateway.service",
+          execPath: "/usr/local/bin/openshell-gateway",
+        },
+        requiredCapabilities: [],
+      },
+      hasPackagedService: false,
+    });
+    const getManagedReuseState = vi.fn(() => "healthy" as const);
+
+    expect(getInitialGatewayReuseStateForOwner(owner, getManagedReuseState)).toBe("missing");
+    expect(getManagedReuseState).not.toHaveBeenCalled();
+  });
+
   it("carries preflight GPU output into the gateway phase", async () => {
     const notes: string[] = [];
     const gpu: Gpu = { type: "nvidia", platform: "linux" };
+    let preflightFailure: Error | null = null;
+    const commitSelectedAgentTransition = vi.fn(async () => createSession());
     const phases = createInitialOnboardFlowPhases({
       explicitSandboxGpuFlag: null,
       sandboxGpuDevice: null,
@@ -111,15 +138,16 @@ describe("initial onboard flow phases", () => {
       env: {},
       platform: "darwin",
       recordedGpuPassthroughBeforePreflight: false,
+      commitSelectedAgentTransition,
       ensureResumePreflightDashboardPortAvailable: vi.fn(),
       preflightDeps: {
         getSandbox: () => null,
         getResumeSandboxGpuOverrides: () => ({ flag: null, device: null }),
+        detectGpuForReadiness: () => gpu,
         detectGpu: () => gpu,
-        runPreflight: async () => gpu,
+        runPreflight: async () => (preflightFailure ? Promise.reject(preflightFailure) : gpu),
         assessHost: () => ({}),
-        assertCdiNvidiaGpuSpecPresent: vi.fn(),
-        rejectUnsupportedContainerRuntime: vi.fn(),
+        assertOnboardHostReadiness: vi.fn(),
         assertDockerBridgeAndContainerDnsHealthy: vi.fn(),
         resolveSandboxGpuConfig: config,
         validateSandboxGpuPreflight: vi.fn(),
@@ -133,6 +161,7 @@ describe("initial onboard flow phases", () => {
         },
       },
       getInitialGatewayReuseState: () => "healthy",
+      assertGatewayReadiness: vi.fn(async () => undefined),
       gatewayName: "nemoclaw",
       recreateSandbox: () => false,
       gatewayDeps: {
@@ -209,6 +238,12 @@ describe("initial onboard flow phases", () => {
     expect(notes).toContain(
       "  GPU passthrough requested; passing --gpu to OpenShell gateway and sandbox creation.",
     );
+    expect(commitSelectedAgentTransition).toHaveBeenCalledOnce();
+
+    commitSelectedAgentTransition.mockClear();
+    preflightFailure = new Error("readiness blocked");
+    await expect(phases[0].run(context())).rejects.toThrow("readiness blocked");
+    expect(commitSelectedAgentTransition).not.toHaveBeenCalled();
   });
 
   it("repairs preflight before strict gateway entry", async () => {
@@ -336,6 +371,10 @@ describe("initial onboard flow phases", () => {
       env: {},
       platform: "darwin",
       recordedGpuPassthroughBeforePreflight: true,
+      commitSelectedAgentTransition: async () => {
+        calls.push("commit-agent-transition");
+        return session;
+      },
       ensureResumePreflightDashboardPortAvailable,
       preflightDeps: {
         getSandbox: vi.fn(() => {
@@ -345,6 +384,10 @@ describe("initial onboard flow phases", () => {
         getResumeSandboxGpuOverrides: vi.fn(() => {
           calls.push("resume-gpu-overrides");
           return { flag: "enable" as const, device: null };
+        }),
+        detectGpuForReadiness: vi.fn(() => {
+          calls.push("detect-gpu-readiness");
+          return gpu;
         }),
         detectGpu: vi.fn(() => {
           calls.push("detect-gpu");
@@ -357,11 +400,8 @@ describe("initial onboard flow phases", () => {
           calls.push("assess-host");
           return { docker: true };
         }),
-        assertCdiNvidiaGpuSpecPresent: vi.fn(() => {
-          calls.push("assert-cdi");
-        }),
-        rejectUnsupportedContainerRuntime: vi.fn(() => {
-          calls.push("reject-unsupported-runtime");
+        assertOnboardHostReadiness: vi.fn(() => {
+          calls.push("assert-host-readiness");
         }),
         assertDockerBridgeAndContainerDnsHealthy: vi.fn(() => {
           calls.push("assert-bridge-dns");
@@ -390,6 +430,9 @@ describe("initial onboard flow phases", () => {
         calls.push("initial-gateway-reuse-state");
         return "healthy";
       },
+      assertGatewayReadiness: vi.fn(async () => {
+        calls.push("assert-gateway-readiness");
+      }),
       gatewayName: "nemoclaw",
       recreateSandbox: () => false,
       gatewayDeps: {
@@ -484,15 +527,22 @@ describe("initial onboard flow phases", () => {
       "resume-gpu-overrides",
       "skip-preflight",
       "record-preflight-skipped",
-      "detect-gpu",
-      "resolve-gpu-config",
-      "validate-gpu-preflight",
       "assess-host",
-      "reject-unsupported-runtime",
-      "assert-cdi",
+      "detect-gpu-readiness",
+      "resolve-gpu-config",
+      "assert-gateway-readiness",
+      "assert-host-readiness",
+      "detect-gpu",
+      "assess-host",
+      "resolve-gpu-config",
+      "assert-gateway-readiness",
+      "assert-host-readiness",
+      "validate-gpu-preflight",
       "assert-bridge-dns",
       "resolve-gpu-config",
       "ensure-resume-preflight-port",
+      "commit-agent-transition",
+      "assert-gateway-readiness",
       "initial-gateway-reuse-state",
       "refresh-gateway-reuse",
       "gateway-lifecycle-support",

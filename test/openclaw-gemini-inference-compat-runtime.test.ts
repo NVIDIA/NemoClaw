@@ -12,34 +12,56 @@ import { dockerSpawnSync } from "../src/lib/adapters/docker/exec";
 const OPENCLAW_RUNTIME_IMAGE =
   "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:f3f0184b96c208c7d50e5a46171a59a6e371f726b06d41972412c36b427a78d4";
 const PLUGIN_INSTALL_PATH = "/usr/local/share/nemoclaw/openclaw-plugins/gemini-inference-compat";
+const PLUGIN_SOURCE_PATH = path.join(
+  import.meta.dirname,
+  "..",
+  "nemoclaw-blueprint",
+  "openclaw-plugins",
+  "gemini-inference-compat",
+);
+const CONFIG_INSTALL_PATH = "/fixture/openclaw.json";
 const ROUTING_PROBE = String.raw`
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
-function runOpenClaw(args) {
-  const result = spawnSync("openclaw", args, { encoding: "utf8" });
-  if (result.status !== 0) {
-    throw new Error(result.stderr || result.stdout || "OpenClaw command failed");
-  }
-  return result.stdout;
-}
-
-function parseJsonOutput(output) {
-  const jsonStart = output.indexOf("{");
-  if (jsonStart < 0) {
-    throw new Error("OpenClaw did not emit JSON: " + output);
-  }
-  return JSON.parse(output.slice(jsonStart));
-}
-
-runOpenClaw(["plugins", "registry", "--refresh"]);
-const inspected = parseJsonOutput(
-  runOpenClaw(["plugins", "inspect", "nemoclaw-gemini-inference-compat", "--json", "--runtime"]),
-);
-
 const distDir = "/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/dist";
+const config = JSON.parse(fs.readFileSync("/fixture/openclaw.json", "utf8"));
+const registryFile = fs.readdirSync(distDir).find(
+  (entry) =>
+    entry.startsWith("plugin-registry-") &&
+    entry.endsWith(".js") &&
+    fs.readFileSync(path.join(distDir, entry), "utf8").includes("function refreshPluginRegistry("),
+);
+if (!registryFile) {
+  throw new Error("OpenClaw plugin registry module was not found");
+}
+const registryModule = await import(pathToFileURL(path.join(distDir, registryFile)).href);
+const refreshPluginRegistry = Object.values(registryModule).find(
+  (value) => typeof value === "function" && value.name === "refreshPluginRegistry",
+);
+if (typeof refreshPluginRegistry !== "function") {
+  throw new Error("OpenClaw plugin registry refresh function was not found");
+}
+await refreshPluginRegistry({ config, reason: "manual" });
+
+const loader = await import(pathToFileURL(path.join(distDir, "plugins", "loader.js")).href);
+if (typeof loader.loadOpenClawPlugins !== "function") {
+  throw new Error("OpenClaw plugin loader was not found");
+}
+const pluginRegistry = loader.loadOpenClawPlugins({
+  config,
+  cache: false,
+  onlyPluginIds: ["nemoclaw-gemini-inference-compat"],
+  throwOnLoadError: true,
+});
+const inspected = pluginRegistry.plugins.find(
+  (plugin) => plugin.id === "nemoclaw-gemini-inference-compat",
+);
+if (!inspected) {
+  throw new Error("OpenClaw did not load the Gemini inference compatibility plugin");
+}
+
 const resolverFile = fs
   .readdirSync(distDir)
   .find((entry) => entry.startsWith("provider-attribution-") && entry.endsWith(".js"));
@@ -69,7 +91,6 @@ if (typeof buildCompletionsParams !== "function") {
   throw new Error("OpenClaw Chat Completions request builder was not found");
 }
 
-const config = JSON.parse(fs.readFileSync("/fixture/openclaw.json", "utf8"));
 const provider = config.models.providers.inference;
 const model = {
   ...provider.models[0],
@@ -124,7 +145,7 @@ if (!assistantRequest?.tool_calls?.[0] || !toolResultRequest) {
 
 process.stdout.write(
   JSON.stringify({
-    pluginStatus: inspected.plugin.status,
+    pluginStatus: inspected.status,
     routingSummary: describeRouting({
       provider: "inference",
       api: "openai-completions",
@@ -161,9 +182,9 @@ const dockerProbe = dockerSpawnSync(["info"], { stdio: "ignore", timeout: 15_000
 const suite = dockerProbe.status === 0 ? describe : describe.skip;
 
 let contextDir: string;
-let imageTag: string;
-let cleanupContext = () => {};
-let cleanupImage = () => {};
+let generatedConfigPath: string;
+let stagedPluginPath: string;
+let containerUser: string;
 
 function generateConfig(): string {
   const homeDir = path.join(contextDir, "home");
@@ -192,87 +213,88 @@ function generateConfig(): string {
   return path.join(homeDir, ".openclaw", "openclaw.json");
 }
 
+function runPinnedRuntime(entrypoint: string, args: readonly string[]) {
+  return dockerSpawnSync(
+    [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--read-only",
+      "--mount",
+      `type=bind,source=${stagedPluginPath},target=${PLUGIN_INSTALL_PATH},readonly`,
+      "--user",
+      containerUser,
+      "--mount",
+      `type=bind,source=${generatedConfigPath},target=${CONFIG_INSTALL_PATH},readonly`,
+      "--cap-drop",
+      "ALL",
+      "--security-opt",
+      "no-new-privileges",
+      "--pids-limit",
+      "64",
+      "--memory",
+      "512m",
+      "--memory-swap",
+      "512m",
+      "--cpus",
+      "1",
+      "--tmpfs",
+      "/tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777",
+      "--env",
+      "HOME=/tmp/home",
+      "--env",
+      `OPENCLAW_CONFIG_PATH=${CONFIG_INSTALL_PATH}`,
+      "--entrypoint",
+      entrypoint,
+      OPENCLAW_RUNTIME_IMAGE,
+      ...args,
+    ],
+    { encoding: "utf8", timeout: 60_000 },
+  );
+}
+
+function parseJsonOutput(output: string): unknown {
+  const jsonStart = output.indexOf("{");
+  expect(jsonStart, `OpenClaw did not emit JSON: ${output}`).toBeGreaterThanOrEqual(0);
+  return JSON.parse(output.slice(jsonStart));
+}
+
 suite("OpenClaw Gemini managed-route runtime compatibility", () => {
   beforeAll(() => {
     contextDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gemini-runtime-"));
-    cleanupContext = () => fs.rmSync(contextDir, { recursive: true, force: true });
-    imageTag = `nemoclaw-gemini-runtime-${process.pid}-${Date.now()}`;
-
-    fs.cpSync(
-      path.join(
-        import.meta.dirname,
-        "..",
-        "nemoclaw-blueprint",
-        "openclaw-plugins",
-        "gemini-inference-compat",
-      ),
-      path.join(contextDir, "plugin"),
-      { recursive: true },
-    );
-    fs.copyFileSync(generateConfig(), path.join(contextDir, "openclaw.json"));
-    fs.writeFileSync(
-      path.join(contextDir, "Dockerfile"),
-      [
-        `FROM ${OPENCLAW_RUNTIME_IMAGE}`,
-        `COPY plugin ${PLUGIN_INSTALL_PATH}`,
-        "COPY openclaw.json /fixture/openclaw.json",
-        "",
-      ].join("\n"),
-    );
-
-    const build = dockerSpawnSync(["build", "--network", "none", "--tag", imageTag, contextDir], {
-      encoding: "utf8",
-      timeout: 120_000,
-    });
-    expect(build.status, `${build.stdout}\n${build.stderr}`).toBe(0);
-    cleanupImage = () => {
-      dockerSpawnSync(["image", "rm", "--force", imageTag], {
-        stdio: "ignore",
-        timeout: 30_000,
-      });
-    };
-  }, 130_000);
-
-  afterAll(() => {
-    cleanupImage();
-    cleanupContext();
+    stagedPluginPath = path.join(contextDir, "plugin");
+    fs.cpSync(PLUGIN_SOURCE_PATH, stagedPluginPath, { recursive: true });
+    fs.chmodSync(stagedPluginPath, 0o755);
+    fs.chmodSync(path.join(stagedPluginPath, "index.ts"), 0o644);
+    fs.chmodSync(path.join(stagedPluginPath, "openclaw.plugin.json"), 0o644);
+    const pluginStat = fs.statSync(stagedPluginPath);
+    containerUser = `${pluginStat.uid}:${pluginStat.gid}`;
+    generatedConfigPath = generateConfig();
+    fs.chmodSync(generatedConfigPath, 0o444);
   });
 
-  it("loads the generated plugin and classifies managed inference as Google Generative AI (#8474)", () => {
-    const result = dockerSpawnSync(
-      [
-        "run",
-        "--rm",
-        "--network",
-        "none",
-        "--read-only",
-        "--cap-drop",
-        "ALL",
-        "--security-opt",
-        "no-new-privileges",
-        "--pids-limit",
-        "64",
-        "--memory",
-        "512m",
-        "--memory-swap",
-        "512m",
-        "--cpus",
-        "1",
-        "--tmpfs",
-        "/tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777",
-        "--env",
-        "HOME=/tmp/home",
-        "--env",
-        "OPENCLAW_CONFIG_PATH=/fixture/openclaw.json",
-        "--entrypoint",
-        "node",
-        imageTag,
-        "--input-type=module",
-        "-e",
-        ROUTING_PROBE,
-      ],
-      { encoding: "utf8", timeout: 60_000 },
-    );
+  afterAll(() => {
+    fs.rmSync(contextDir, { recursive: true, force: true });
+  });
+
+  it("loads the generated plugin through OpenClaw runtime inspection (#8474)", () => {
+    const result = runPinnedRuntime("openclaw", [
+      "plugins",
+      "inspect",
+      "nemoclaw-gemini-inference-compat",
+      "--json",
+      "--runtime",
+    ]);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(parseJsonOutput(String(result.stdout))).toMatchObject({
+      plugin: { status: "loaded" },
+    });
+  }, 70_000);
+
+  it("applies the generated plugin to managed Google routing and tool results (#8474)", () => {
+    const result = runPinnedRuntime("node", ["--input-type=module", "-e", ROUTING_PROBE]);
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(JSON.parse(String(result.stdout))).toEqual({

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import { isCuaQualificationEnabled } from "../cua/feature";
+import { parseCuaRuntimeReadiness } from "../cua/schema";
 import type { InferenceSelection } from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
@@ -16,7 +18,12 @@ import {
   readExtraProviders,
 } from "./extra-providers";
 import { withLock } from "./registry/lock";
-import { load, save } from "./registry/persistence";
+import {
+  discardOpaqueCuaRuntimeReadiness,
+  hasOpaqueCuaRuntimeReadiness,
+  load,
+  save,
+} from "./registry/persistence";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload";
 import { normalizeSandboxMcpState } from "./registry-mcp";
 import {
@@ -76,6 +83,8 @@ export type {
   SandboxWorkloadReceipt,
 } from "./registry/types";
 export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
+export { normalizeCustomPolicyEntries };
+
 export {
   getConfiguredMessagingChannelsFromEntry,
   getDisabledMessagingChannelsFromEntry,
@@ -83,13 +92,11 @@ export {
   getMessagingPlanFromEntry,
   type SandboxMessagingState,
 } from "./registry-messaging";
-export { normalizeCustomPolicyEntries };
 
 export type SandboxRemovalReceipt = reversibleRemoval.RegistryRemovalReceipt<SandboxEntry>;
 
 export function getSandbox(name: string): SandboxEntry | null {
-  const data = load();
-  return data.sandboxes[name] || null;
+  return load().sandboxes[name] || null;
 }
 
 export function getDefault(): string | null {
@@ -189,6 +196,9 @@ export function registerSandbox(entry: SandboxEntry): void {
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
     };
+    // Registration establishes a new sandbox lifecycle and may not inherit a
+    // deep-off readiness record carried from a previous same-named row.
+    discardOpaqueCuaRuntimeReadiness(data, entry.name);
     save(reversibleRemoval.claimInitialDefaultInRegistry(data, entry.name));
   });
 }
@@ -219,7 +229,7 @@ export function reserveSandboxInferenceRoute(
     const data = load();
     const existing = data.sandboxes[name];
     const normalized = normalizeInferenceSelection(route);
-    data.sandboxes[name] = {
+    const next: SandboxEntry = {
       ...(existing ?? { name, pendingRouteReservation: true as const }),
       pendingRouteReservation: true,
       reservationSessionId: route.reservationSessionId ?? existing?.reservationSessionId,
@@ -232,6 +242,11 @@ export function reserveSandboxInferenceRoute(
       gatewayName: route.gatewayName,
       gatewayPort: undefined,
     };
+    if (existing?.cuaRuntimeReadiness || hasOpaqueCuaRuntimeReadiness(data, name)) {
+      delete next.cuaRuntimeReadiness;
+      discardOpaqueCuaRuntimeReadiness(data, name);
+    }
+    data.sandboxes[name] = next;
     save(data);
     return true;
   });
@@ -265,11 +280,148 @@ export function isPendingReservationForSession(
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {
   return withLock(() => {
     const data = load();
-    if (!data.sandboxes[name]) return false;
+    const current = data.sandboxes[name];
+    if (!current) return false;
     if (Object.prototype.hasOwnProperty.call(updates, "name") && updates.name !== name) {
       return false;
     }
-    Object.assign(data.sandboxes[name], updates);
+    // Readiness is a whole-record authority write owned by canonical CUA
+    // onboarding. Ignore an optional undefined property carried by a broad
+    // metadata shape, but reject every generic attempt to establish or replace
+    // a readiness record.
+    if (
+      Object.prototype.hasOwnProperty.call(updates, "cuaRuntimeReadiness") &&
+      updates.cuaRuntimeReadiness !== undefined
+    ) {
+      return false;
+    }
+    const { cuaRuntimeReadiness: _ignoredReadiness, ...ordinaryUpdates } = updates;
+    const next = { ...current, ...ordinaryUpdates };
+    if (
+      cuaInferenceSelectionChanged(current, next, hasOpaqueCuaRuntimeReadiness(data, name)) ||
+      cuaPolicyAuthorityMutationRequested(ordinaryUpdates) ||
+      cuaRuntimeAuthorityChanged(current, next, ordinaryUpdates)
+    ) {
+      delete next.cuaRuntimeReadiness;
+      discardOpaqueCuaRuntimeReadiness(data, name);
+    }
+    data.sandboxes[name] = next;
+    save(data);
+    return true;
+  });
+}
+
+/** Inference-route writes share the readiness invalidation boundary. */
+export function updateSandboxInferenceRoute(name: string, updates: Partial<SandboxEntry>): boolean {
+  return updateSandbox(name, updates);
+}
+
+const CUA_POLICY_AUTHORITY_FIELDS = new Set<keyof SandboxEntry>([
+  "baselineExclusions",
+  "baselineExclusionTransition",
+  "customPolicies",
+  "policies",
+  "policyPresetsFinalized",
+  "policyTier",
+]);
+
+const CUA_RUNTIME_AUTHORITY_FIELDS = new Set<keyof SandboxEntry>([
+  "agent",
+  "agentVersion",
+  "fromDockerfile",
+  "gatewayName",
+  "gatewayPort",
+  "gpuEnabled",
+  "hostGpuDetected",
+  "imageTag",
+  "lifecycleGeneration",
+  "lifecycleLiveIdentityFingerprint",
+  "nemoclawVersion",
+  "openshellDriver",
+  "openshellVersion",
+  "pendingRouteReservation",
+  "reservationSessionId",
+  "sandboxGpuDevice",
+  "sandboxGpuEnabled",
+  "sandboxGpuMode",
+  "sandboxGpuProof",
+  "workload",
+]);
+
+function cuaPolicyAuthorityMutationRequested(updates: Partial<SandboxEntry>): boolean {
+  return [...CUA_POLICY_AUTHORITY_FIELDS].some((field) =>
+    Object.prototype.hasOwnProperty.call(updates, field),
+  );
+}
+
+function cuaRuntimeAuthorityChanged(
+  current: SandboxEntry,
+  next: SandboxEntry,
+  updates: Partial<SandboxEntry>,
+): boolean {
+  return [...CUA_RUNTIME_AUTHORITY_FIELDS].some(
+    (field) =>
+      Object.prototype.hasOwnProperty.call(updates, field) &&
+      !isDeepStrictEqual(current[field], next[field]),
+  );
+}
+
+/** Revoke normal and feature-off opaque CUA authority inside an existing transaction. */
+export function invalidateCuaRuntimeReadinessInRegistry(
+  data: ReturnType<typeof load>,
+  name: string,
+): void {
+  const sandbox = data.sandboxes[name];
+  if (sandbox) delete sandbox.cuaRuntimeReadiness;
+  discardOpaqueCuaRuntimeReadiness(data, name);
+}
+
+function cuaInferenceSelectionChanged(
+  current: SandboxEntry | null | undefined,
+  next: SandboxEntry,
+  hasOpaqueReadiness = false,
+): boolean {
+  if (!current?.cuaRuntimeReadiness && !hasOpaqueReadiness) return false;
+  const before = normalizeInferenceSelection(current);
+  const after = normalizeInferenceSelection(next);
+  return !isDeepStrictEqual(before, after);
+}
+
+/** Persist one complete, schema-valid readiness record without replacing unrelated row state. */
+export function recordCuaRuntimeReadiness(
+  name: string,
+  readiness: NonNullable<SandboxEntry["cuaRuntimeReadiness"]>,
+  expectedEntry: SandboxEntry,
+): boolean {
+  if (!isCuaQualificationEnabled()) return false;
+  const parsed = parseCuaRuntimeReadiness(readiness);
+  return withLock(() => {
+    const data = load();
+    const current = data.sandboxes[name];
+    if (
+      !current ||
+      current.agent !== "nemocua" ||
+      current.pendingRouteReservation === true ||
+      !isDeepStrictEqual(current, expectedEntry)
+    ) {
+      return false;
+    }
+    discardOpaqueCuaRuntimeReadiness(data, name);
+    data.sandboxes[name] = { ...current, cuaRuntimeReadiness: parsed };
+    save(data);
+    return true;
+  });
+}
+
+/** Remove readiness while preserving the rest of the sandbox row. */
+export function clearCuaRuntimeReadiness(name: string): boolean {
+  return withLock(() => {
+    const data = load();
+    const current = data.sandboxes[name];
+    if (!current) return false;
+    discardOpaqueCuaRuntimeReadiness(data, name);
+    const { cuaRuntimeReadiness: _cuaRuntimeReadiness, ...next } = current;
+    data.sandboxes[name] = next;
     save(data);
     return true;
   });
@@ -301,14 +453,29 @@ export function restoreSandboxEntry(
   } = {},
 ): void {
   withLock(() => {
-    save(reversibleRemoval.restoreSandboxEntryInRegistry(load(), entry, options.defaultTransition));
+    const data = load();
+    discardOpaqueCuaRuntimeReadiness(data, entry.name);
+    const { cuaRuntimeReadiness: _cuaRuntimeReadiness, ...restoredEntry } = entry;
+    save(
+      reversibleRemoval.restoreSandboxEntryInRegistry(
+        data,
+        restoredEntry,
+        options.defaultTransition,
+      ),
+    );
   });
 }
 
 /** Restore a removed entry unless a recreate already registered its replacement. */
 export function restoreSandboxEntryIfMissing(receipt: SandboxRemovalReceipt): boolean {
   return withLock(() => {
-    const result = reversibleRemoval.restoreSandboxIfMissingInRegistry(load(), receipt);
+    const data = load();
+    discardOpaqueCuaRuntimeReadiness(data, receipt.entry.name);
+    const { cuaRuntimeReadiness: _cuaRuntimeReadiness, ...entry } = receipt.entry;
+    const result = reversibleRemoval.restoreSandboxIfMissingInRegistry(data, {
+      ...receipt,
+      entry,
+    });
     if (!result.restored) return false;
     save(result.registry);
     return result.restored;
@@ -376,6 +543,7 @@ export function addCustomPolicy(name: string, entry: CustomPolicyEntry): boolean
     const list = (sandbox.customPolicies ?? []).filter((p) => p.name !== entry.name);
     list.push({ ...entry, appliedAt: entry.appliedAt ?? new Date().toISOString() });
     sandbox.customPolicies = list;
+    invalidateCuaRuntimeReadinessInRegistry(data, name);
     save(data);
     return true;
   });
@@ -391,6 +559,7 @@ export function removeCustomPolicyByName(name: string, presetName: string): bool
     const next = list.filter((p) => p.name !== presetName);
     if (next.length === list.length) return false;
     sandbox.customPolicies = next.length > 0 ? next : undefined;
+    invalidateCuaRuntimeReadinessInRegistry(data, name);
     save(data);
     return true;
   });
@@ -411,6 +580,7 @@ export function addBaselineExclusion(name: string, entry: BaselineExclusionEntry
     const list = (sandbox.baselineExclusions ?? []).filter((e) => e.key !== entry.key);
     list.push({ ...entry, acknowledgedAt: entry.acknowledgedAt ?? new Date().toISOString() });
     sandbox.baselineExclusions = list;
+    invalidateCuaRuntimeReadinessInRegistry(data, name);
     save(data);
     return true;
   });
@@ -426,6 +596,7 @@ export function removeBaselineExclusion(name: string, key: string): boolean {
     const next = list.filter((e) => e.key !== key);
     if (next.length === list.length) return false;
     sandbox.baselineExclusions = next.length > 0 ? next : undefined;
+    invalidateCuaRuntimeReadinessInRegistry(data, name);
     save(data);
     return true;
   });
@@ -450,6 +621,7 @@ export function beginBaselineExclusionTransition(
     const sandbox = data.sandboxes[name];
     if (!sandbox || sandbox.baselineExclusionTransition) return false;
     sandbox.baselineExclusionTransition = normalizeBaselineExclusionTransition(transition);
+    invalidateCuaRuntimeReadinessInRegistry(data, name);
     save(data);
     return true;
   });
@@ -484,6 +656,7 @@ export function commitBaselineExclusionTransition(name: string, id: string): boo
       sandbox.baselineExclusions = next.length > 0 ? next : undefined;
     }
     sandbox.baselineExclusionTransition = undefined;
+    invalidateCuaRuntimeReadinessInRegistry(data, name);
     save(data);
     return true;
   });
@@ -496,6 +669,7 @@ export function clearBaselineExclusionTransition(name: string, id: string): bool
     const sandbox = data.sandboxes[name];
     if (!sandbox || sandbox.baselineExclusionTransition?.id !== id) return false;
     sandbox.baselineExclusionTransition = undefined;
+    invalidateCuaRuntimeReadinessInRegistry(data, name);
     save(data);
     return true;
   });
