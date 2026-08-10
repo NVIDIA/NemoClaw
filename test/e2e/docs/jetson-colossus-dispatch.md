@@ -221,11 +221,34 @@ It must exit nonzero when target ownership is ambiguous, cleanup fails, or absen
 It must not remove `/var/lib/nemoclaw-jetson-dispatch/state/device.lock`.
 The dispatcher removes that lock only after cleanup and absence verification succeed.
 
+After the fixed cleanup helper exits with status zero, the worker parses its bounded evidence block.
+The worker writes the validated identities to this private state file with mode `0600`:
+
+```text
+/var/lib/nemoclaw-jetson-dispatch/state/<jobId>.cleanup.json
+```
+
+The file has this exact schema:
+
+```json
+{
+  "schemaVersion": 1,
+  "volumes": ["example-volume"],
+  "processIds": [1234]
+}
+```
+
+Either identity array can be empty.
+The worker merges new identities with the existing record instead of replacing earlier identities.
+This merge preserves identities when cleanup verification fails and the dispatcher retries cleanup for the same job.
+The dispatcher retains the cleanup record after it removes the device lock.
+
 After the helper exits, the worker independently verifies these conditions over pinned-host-key SSH:
 
 - The validated job workspace is absent and is not a symbolic link.
 - No OpenShell-managed container has the `e2e-jetson-nvmap` sandbox label.
 - The `openshell-cluster-nemoclaw` gateway container and volume are absent.
+- Every Docker volume and process ID in the merged cleanup record is absent.
 - Every recorded Node.js, npm, Ollama, Ollama model, and OpenShell baseline value matches.
 - `/dev/nvmap` exists, and Docker still reports the NVIDIA runtime.
 
@@ -453,6 +476,7 @@ It rejects an artifact directory or compressed archive larger than 1 MiB.
 Before a restarted dispatcher replays the same deterministic job ID, it removes the earlier log and archive so evidence cannot cross executions.
 
 After the workflow completes, independently verify every allowlisted resource is absent.
+Require the private `<jobId>.cleanup.json` file and verify every recorded volume and process ID is absent.
 Then run one controlled failing candidate and confirm that its artifact records the same cleanup evidence.
 For a cancellation proof, cancel a controller after it logs the job ID.
 The controller can exit before it downloads an artifact.
@@ -496,9 +520,10 @@ Manual recovery must stay within the same cleanup allowlist.
 Escalate any suspected protected baseline change for separate host investigation.
 Cleanup evidence alone is not evidence that every candidate host change was reversed.
 
-Preserve the job JSON, log, artifact, and protected-baseline files for diagnosis and stale-lock recovery.
+Retain every `<jobId>.cleanup.json` file until the temporary path teardown completes.
+Preserve the other private job state required for diagnosis and stale-lock recovery.
 These private state files can contain candidate output, and the dispatcher does not otherwise prune them.
-Apply the host's approved retention policy after GitHub uploads the artifact and no device lock exists.
+Apply the host's approved retention policy to other private state after GitHub uploads the artifact and no device lock exists.
 
 To disable the temporary path, first prevent another controller from reaching the dispatcher.
 Delete the repository variable and stop the public tunnel, but keep the dispatcher and its SSH credentials available while any accepted job finishes its bounded execution and cleanup:
@@ -509,20 +534,101 @@ sudo systemctl disable --now nemoclaw-jetson-tunnel.service
 ```
 
 Use the last accepted job ID from the controller log.
-Wait for the device lock to disappear, require that job's private status to report successful cleanup, and independently check the remaining allowlisted resources:
+Wait for the device lock to disappear and require that job's private status to report successful cleanup.
+Require the last job's cleanup record.
+Use Node.js `readdirSync` with the exact `^[a-f0-9]{64}\.cleanup\.json$` basename pattern.
+Validate and aggregate every retained cleanup record that matches this pattern.
+Independently verify every aggregated resource identity and the remaining fixed allowlist:
 
 ```bash
+set -euo pipefail
 LAST_JOB_ID=0000000000000000000000000000000000000000000000000000000000000000
 [[ "$LAST_JOB_ID" =~ ^[a-f0-9]{64}$ ]]
 state=/var/lib/nemoclaw-jetson-dispatch/state
-timeout 3600 bash -c 'while [ -e "$1" ]; do sleep 5; done' wait-lock \
+sudo -u nemoclaw-jetson-dispatch \
+  timeout 3600 bash -c 'while [ -e "$1" ]; do sleep 5; done' wait-lock \
   "$state/device.lock"
-test ! -e "$state/device.lock"
-/usr/bin/node -e '
+sudo -u nemoclaw-jetson-dispatch test ! -e "$state/device.lock"
+sudo -u nemoclaw-jetson-dispatch /usr/bin/node -e '
   const fs = require("node:fs");
   const status = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   if (status.state !== "completed" || status.cleanup !== "succeeded") process.exit(1);
 ' "$state/$LAST_JOB_ID.json"
+cleanup_identities="$(sudo -u nemoclaw-jetson-dispatch /usr/bin/node -e '
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const stateDirectory = process.argv[1];
+  const lastJobId = process.argv[2];
+  const cleanupName = /^[a-f0-9]{64}\.cleanup\.json$/;
+  const names = fs.readdirSync(stateDirectory).filter((name) => cleanupName.test(name)).sort();
+  if (!names.includes(`${lastJobId}.cleanup.json`)) process.exit(1);
+  const expectedKeys = ["processIds", "schemaVersion", "volumes"];
+  const validVolume = (value) =>
+    typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/.test(value);
+  const validProcessId = (value) => Number.isSafeInteger(value) && value > 0;
+  const volumes = new Set();
+  const processIds = new Set();
+  for (const name of names) {
+    const file = path.join(stateDirectory, name);
+    const metadata = fs.lstatSync(file);
+    if (!metadata.isFile() || (metadata.mode & 0o777) !== 0o600) process.exit(1);
+    const raw = fs.readFileSync(file, "utf8");
+    if (Buffer.byteLength(raw) > 64 * 1024) process.exit(1);
+    const record = JSON.parse(raw);
+    const keys = Object.keys(record).sort();
+    if (
+      JSON.stringify(keys) !== JSON.stringify(expectedKeys) ||
+      record.schemaVersion !== 1 ||
+      !Array.isArray(record.volumes) ||
+      !record.volumes.every(validVolume) ||
+      !Array.isArray(record.processIds) ||
+      !record.processIds.every(validProcessId)
+    ) process.exit(1);
+    for (const volume of record.volumes) volumes.add(volume);
+    for (const processId of record.processIds) processIds.add(processId);
+  }
+  for (const volume of [...volumes].sort()) console.log(`volume\t${volume}`);
+  for (const processId of [...processIds].sort((a, b) => a - b)) {
+    console.log(`processId\t${processId}`);
+  }
+' "$state" "$LAST_JOB_ID")"
+cleanup_volumes=()
+cleanup_process_ids=()
+while IFS=$'\t' read -r identity_kind identity; do
+  [ -n "$identity_kind" ] || continue
+  case "$identity_kind" in
+    volume) cleanup_volumes+=("$identity") ;;
+    processId) cleanup_process_ids+=("$identity") ;;
+    *) exit 1 ;;
+  esac
+done <<<"$cleanup_identities"
+for volume in "${cleanup_volumes[@]}"; do
+  sudo -u nemoclaw-jetson-dispatch ssh -F /dev/null -T \
+    -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+    -o UserKnownHostsFile=/var/lib/nemoclaw-jetson-dispatch/known_hosts \
+    -i /var/lib/nemoclaw-jetson-dispatch/id_ed25519 \
+    nvidia@192.168.55.1 bash -s -- "$volume" <<'VERIFY_RECORDED_VOLUME'
+set -euo pipefail
+docker info >/dev/null
+if docker volume inspect "$1" >/dev/null 2>&1; then
+  echo "A recorded job-owned Docker volume remains: $1" >&2
+  exit 1
+fi
+VERIFY_RECORDED_VOLUME
+done
+for process_id in "${cleanup_process_ids[@]}"; do
+  sudo -u nemoclaw-jetson-dispatch ssh -F /dev/null -T \
+    -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+    -o UserKnownHostsFile=/var/lib/nemoclaw-jetson-dispatch/known_hosts \
+    -i /var/lib/nemoclaw-jetson-dispatch/id_ed25519 \
+    nvidia@192.168.55.1 bash -s -- "$process_id" <<'VERIFY_RECORDED_PROCESS'
+set -euo pipefail
+if [ -e "/proc/$1" ]; then
+  echo "A recorded job-owned process ID remains: $1" >&2
+  exit 1
+fi
+VERIFY_RECORDED_PROCESS
+done
 sudo -u nemoclaw-jetson-dispatch ssh -F /dev/null -T \
   -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
   -o UserKnownHostsFile=/var/lib/nemoclaw-jetson-dispatch/known_hosts \
@@ -564,7 +670,9 @@ esac
 VERIFY_JETSON_IDLE
 ```
 
-If any check fails, keep the dispatcher and SSH credentials, then use the recovery procedure above.
+If the last cleanup record is missing, keep the dispatcher and SSH credentials.
+Keep them when any retained cleanup record is malformed or an absence check fails.
+Use the recovery procedure above before teardown.
 Only after every check passes should you stop the dispatcher:
 
 ```bash

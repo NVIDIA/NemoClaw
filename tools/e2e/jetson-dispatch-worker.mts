@@ -22,6 +22,15 @@ const SAFE_PROCESS_ENV = {
   PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 };
 const MAX_BASELINE_BYTES = 4 * 1024;
+const MAX_CLEANUP_EVIDENCE_BYTES = 64 * 1024;
+const CLEANUP_EVIDENCE_BEGIN = "nemoclaw-cleanup-evidence-v1-begin";
+const CLEANUP_EVIDENCE_END = "nemoclaw-cleanup-evidence-v1-end";
+
+interface JetsonCleanupEvidence {
+  schemaVersion: 1;
+  volumes: string[];
+  processIds: number[];
+}
 
 const DEVICE_IDENTITY_SCRIPT = String.raw`set -eu
 clean_line() { tr -d '\000\r\n\t'; }
@@ -76,10 +85,37 @@ printf '\n'
 const CLEANUP_VERIFICATION_SCRIPT =
   String.raw`set -euo pipefail
 job_id="$1"
+cleanup_evidence_base64="$2"
 [[ "$job_id" =~ ^[a-f0-9]{64}$ ]]
 workspace="/var/tmp/nemoclaw-jetson-e2e/$job_id"
 sandbox_name=e2e-jetson-nvmap
 gateway_name=nemoclaw
+recorded_volumes=()
+recorded_process_ids=()
+cleanup_rows="$(
+  printf '%s' "$cleanup_evidence_base64" | base64 --decode | node -e '
+    const fs = require("node:fs");
+    const value = JSON.parse(fs.readFileSync(0, "utf8"));
+    if (value.schemaVersion !== 1 || !Array.isArray(value.volumes) || !Array.isArray(value.processIds)) process.exit(1);
+    for (const volume of value.volumes) {
+      if (typeof volume !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/.test(volume)) process.exit(1);
+      process.stdout.write("volume\t" + volume + "\n");
+    }
+    for (const pid of value.processIds) {
+      if (!Number.isSafeInteger(pid) || pid < 1) process.exit(1);
+      process.stdout.write("processId\t" + pid + "\n");
+    }
+  '
+)"
+if [ -n "$cleanup_rows" ]; then
+  while IFS=$'\t' read -r kind identity; do
+    case "$kind" in
+      volume) recorded_volumes+=("$identity") ;;
+      processId) recorded_process_ids+=("$identity") ;;
+      *) echo "Cleanup evidence contains an invalid identity" >&2; exit 1 ;;
+    esac
+  done <<<"$cleanup_rows"
+fi
 test ! -e "$workspace"
 test ! -L "$workspace"
 test -z "$(docker ps -aq \
@@ -93,6 +129,18 @@ if docker volume inspect "openshell-cluster-$gateway_name" >/dev/null 2>&1; then
   echo "The test-owned OpenShell gateway volume remains" >&2
   exit 1
 fi
+for volume in "${"${recorded_volumes[@]}"}"; do
+  if docker volume inspect "$volume" >/dev/null 2>&1; then
+    echo "A recorded test-owned Docker volume remains" >&2
+    exit 1
+  fi
+done
+for pid in "${"${recorded_process_ids[@]}"}"; do
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "A recorded test-owned helper process remains" >&2
+    exit 1
+  fi
+done
 ` + PRESERVED_BASELINE_SCRIPT;
 
 const JETSON_TEST_SCRIPT = String.raw`set -euo pipefail
@@ -470,6 +518,87 @@ function parsePreservedBaselineJson(output: string): JetsonPreservedBaseline {
   return parsePreservedBaseline(expected.map((key) => `${key}\t${record[key]}`).join("\n"));
 }
 
+function validateCleanupEvidence(value: unknown): JetsonCleanupEvidence {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Jetson cleanup evidence is malformed");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).length !== 3 ||
+    record.schemaVersion !== 1 ||
+    !Array.isArray(record.volumes) ||
+    !Array.isArray(record.processIds)
+  ) {
+    throw new Error("Jetson cleanup evidence is malformed");
+  }
+  const volumes = record.volumes;
+  const processIds = record.processIds;
+  if (
+    volumes.some(
+      (volume) => typeof volume !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u.test(volume),
+    ) ||
+    processIds.some((pid) => typeof pid !== "number" || !Number.isSafeInteger(pid) || pid < 1)
+  ) {
+    throw new Error("Jetson cleanup evidence contains an invalid resource identity");
+  }
+  return {
+    schemaVersion: 1,
+    volumes: [...new Set(volumes as string[])].sort(),
+    processIds: [...new Set(processIds as number[])].sort((left, right) => left - right),
+  };
+}
+
+function parseCleanupEvidenceJson(output: string): JetsonCleanupEvidence {
+  if (Buffer.byteLength(output) > MAX_CLEANUP_EVIDENCE_BYTES) {
+    throw new Error("Jetson cleanup evidence is too large");
+  }
+  try {
+    return validateCleanupEvidence(JSON.parse(output));
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Jetson cleanup evidence")) throw error;
+    throw new Error("Jetson cleanup evidence is malformed");
+  }
+}
+
+function parseCleanupCommandEvidence(output: string): JetsonCleanupEvidence {
+  if (Buffer.byteLength(output) > MAX_PROCESS_OUTPUT_BYTES) {
+    throw new Error("Jetson cleanup output is too large");
+  }
+  const lines = output.replace(/\r/gu, "").split("\n");
+  while (lines.at(-1) === "") lines.pop();
+  const endIndex = lines.lastIndexOf(CLEANUP_EVIDENCE_END);
+  const beginIndex = lines.lastIndexOf(CLEANUP_EVIDENCE_BEGIN, endIndex - 1);
+  if (beginIndex < 0 || endIndex !== lines.length - 1 || beginIndex >= endIndex) {
+    throw new Error("Jetson cleanup did not return bounded resource evidence");
+  }
+  const volumes: string[] = [];
+  const processIds: number[] = [];
+  for (const line of lines.slice(beginIndex + 1, endIndex)) {
+    const fields = line.split("\t");
+    if (fields.length !== 2) throw new Error("Jetson cleanup evidence is malformed");
+    const [kind, identity] = fields;
+    if (kind === "volume") {
+      volumes.push(identity!);
+    } else if (kind === "processId" && /^[1-9][0-9]*$/u.test(identity!)) {
+      processIds.push(Number(identity));
+    } else {
+      throw new Error("Jetson cleanup evidence is malformed");
+    }
+  }
+  return validateCleanupEvidence({ schemaVersion: 1, volumes, processIds });
+}
+
+function mergeCleanupEvidence(
+  previous: JetsonCleanupEvidence | undefined,
+  current: JetsonCleanupEvidence,
+): JetsonCleanupEvidence {
+  return validateCleanupEvidence({
+    schemaVersion: 1,
+    volumes: [...(previous?.volumes ?? []), ...current.volumes],
+    processIds: [...(previous?.processIds ?? []), ...current.processIds],
+  });
+}
+
 export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
   readonly #config: SshJetsonWorkerConfig;
   readonly #runProcess: typeof runProcess;
@@ -604,18 +733,41 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
   }
 
   async cleanup(options: { jobId: string; signal: AbortSignal }): Promise<void> {
-    await this.#runProcess({
+    const cleanupResult = await this.#runProcess({
       executable: this.#config.cleanupExecutable,
       args: [],
       signal: options.signal,
     });
+    const currentEvidence = parseCleanupCommandEvidence(cleanupResult.stdout);
+    const evidencePath = this.#cleanupEvidencePath(options.jobId);
+    const previousRaw = readPrivateRegularFile(evidencePath, {
+      allowMissing: true,
+      maxBytes: MAX_CLEANUP_EVIDENCE_BYTES,
+    });
+    const evidence = mergeCleanupEvidence(
+      previousRaw === null ? undefined : parseCleanupEvidenceJson(previousRaw),
+      currentEvidence,
+    );
+    const serializedEvidence = `${JSON.stringify(evidence)}\n`;
+    if (Buffer.byteLength(serializedEvidence) > MAX_CLEANUP_EVIDENCE_BYTES) {
+      throw new Error("Jetson cleanup evidence is too large");
+    }
+    writePrivateRegularFile(evidencePath, serializedEvidence);
     const expectedRaw = readPrivateRegularFile(this.#baselinePath(options.jobId), {
       allowMissing: true,
       maxBytes: MAX_BASELINE_BYTES,
     });
     const verification = await this.#runProcess({
       executable: "ssh",
-      args: [...this.#sshArgs(), this.#config.destination, "bash", "-s", "--", options.jobId],
+      args: [
+        ...this.#sshArgs(),
+        this.#config.destination,
+        "bash",
+        "-s",
+        "--",
+        options.jobId,
+        Buffer.from(serializedEvidence).toString("base64"),
+      ],
       input: CLEANUP_VERIFICATION_SCRIPT,
       signal: options.signal,
     });
@@ -630,6 +782,11 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
   #baselinePath(jobId: string): string {
     if (!/^[a-f0-9]{64}$/u.test(jobId)) throw new Error("Jetson job ID is invalid");
     return path.join(this.#config.stateDirectory, `${jobId}.baseline.json`);
+  }
+
+  #cleanupEvidencePath(jobId: string): string {
+    if (!/^[a-f0-9]{64}$/u.test(jobId)) throw new Error("Jetson job ID is invalid");
+    return path.join(this.#config.stateDirectory, `${jobId}.cleanup.json`);
   }
 
   #sshArgs(): string[] {

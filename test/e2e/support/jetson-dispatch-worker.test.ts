@@ -41,6 +41,22 @@ function baselineOutput(overrides: Partial<typeof BASELINE> = {}): string {
 
 const BASELINE_OUTPUT = baselineOutput();
 
+function cleanupOutput({
+  volumes = [],
+  processIds = [],
+}: {
+  volumes?: string[];
+  processIds?: number[];
+} = {}): string {
+  return [
+    "nemoclaw-cleanup-evidence-v1-begin",
+    ...volumes.map((volume) => `volume\t${volume}`),
+    ...processIds.map((pid) => `processId\t${pid}`),
+    "nemoclaw-cleanup-evidence-v1-end",
+    "",
+  ].join("\n");
+}
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
@@ -268,7 +284,10 @@ describe("Colossus SSH worker deployment boundary", () => {
     fs.writeFileSync(baselinePath, `${JSON.stringify(BASELINE)}\n`, { mode: 0o600 });
     const processRunner = vi
       .fn()
-      .mockResolvedValueOnce({ stdout: "", stderr: "" })
+      .mockResolvedValueOnce({
+        stdout: cleanupOutput({ volumes: ["sandbox-volume"], processIds: [1234] }),
+        stderr: "",
+      })
       .mockResolvedValueOnce({ stdout: BASELINE_OUTPUT, stderr: "" });
     const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
 
@@ -288,10 +307,28 @@ describe("Colossus SSH worker deployment boundary", () => {
     expect(processRunner.mock.calls[1]![0].input).toContain("docker info --format");
     expect(processRunner.mock.calls[1]![0].input).toContain("test -c /dev/nvmap");
     expect(processRunner.mock.calls[1]![0].input).toContain("ollama list");
+    expect(processRunner.mock.calls[1]![0].input).toContain(
+      'for volume in "${recorded_volumes[@]}"',
+    );
+    expect(processRunner.mock.calls[1]![0].input).toContain(
+      'for pid in "${recorded_process_ids[@]}"',
+    );
     expect(processRunner.mock.calls[1]![0].args).toEqual(
       expect.arrayContaining(["nvidia@192.168.55.1", "--", jobId]),
     );
+    const encodedEvidence = processRunner.mock.calls[1]![0].args.at(-1);
+    expect(JSON.parse(Buffer.from(encodedEvidence!, "base64").toString("utf8"))).toEqual({
+      schemaVersion: 1,
+      volumes: ["sandbox-volume"],
+      processIds: [1234],
+    });
     expect(fs.existsSync(baselinePath)).toBe(true);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(files.stateDirectory, `${jobId}.cleanup.json`), "utf8")),
+    ).toEqual({ schemaVersion: 1, volumes: ["sandbox-volume"], processIds: [1234] });
+    expect(fs.statSync(path.join(files.stateDirectory, `${jobId}.cleanup.json`)).mode & 0o777).toBe(
+      0o600,
+    );
   });
 
   it("verifies cleanup after a pre-candidate failure without a baseline record (#8142)", async () => {
@@ -299,7 +336,7 @@ describe("Colossus SSH worker deployment boundary", () => {
     const jobId = "b".repeat(64);
     const processRunner = vi
       .fn()
-      .mockResolvedValueOnce({ stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ stdout: cleanupOutput(), stderr: "" })
       .mockResolvedValueOnce({ stdout: BASELINE_OUTPUT, stderr: "" });
     const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
 
@@ -324,7 +361,7 @@ describe("Colossus SSH worker deployment boundary", () => {
     fs.writeFileSync(baselinePath, `${JSON.stringify(BASELINE)}\n`, { mode: 0o600 });
     const processRunner = vi
       .fn()
-      .mockResolvedValueOnce({ stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ stdout: cleanupOutput(), stderr: "" })
       .mockResolvedValueOnce({ stdout: baselineOutput(change), stderr: "" });
     const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
 
@@ -332,6 +369,57 @@ describe("Colossus SSH worker deployment boundary", () => {
       "Jetson protected tool or Ollama model baseline differs after cleanup",
     );
     expect(fs.existsSync(baselinePath)).toBe(true);
+  });
+
+  it("retains every validated cleanup identity across stale-lock recovery (#8142)", async () => {
+    const files = deploymentFiles();
+    const jobId = "b".repeat(64);
+    fs.writeFileSync(
+      path.join(files.stateDirectory, `${jobId}.baseline.json`),
+      `${JSON.stringify(BASELINE)}\n`,
+      { mode: 0o600 },
+    );
+    const processRunner = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: cleanupOutput({ volumes: ["sandbox-volume"], processIds: [1234] }),
+        stderr: "",
+      })
+      .mockResolvedValueOnce({ stdout: BASELINE_OUTPUT, stderr: "" })
+      .mockResolvedValueOnce({
+        stdout: cleanupOutput({ volumes: ["gateway-volume"], processIds: [5678] }),
+        stderr: "",
+      })
+      .mockResolvedValueOnce({ stdout: BASELINE_OUTPUT, stderr: "" });
+    const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
+
+    await worker.cleanup({ jobId, signal: new AbortController().signal });
+    await worker.cleanup({ jobId, signal: new AbortController().signal });
+
+    expect(
+      JSON.parse(fs.readFileSync(path.join(files.stateDirectory, `${jobId}.cleanup.json`), "utf8")),
+    ).toEqual({
+      schemaVersion: 1,
+      volumes: ["gateway-volume", "sandbox-volume"],
+      processIds: [1234, 5678],
+    });
+  });
+
+  it.each([
+    "",
+    "nemoclaw-cleanup-evidence-v1-begin\nvolume\t../unsafe\nnemoclaw-cleanup-evidence-v1-end\n",
+    "nemoclaw-cleanup-evidence-v1-begin\nprocessId\t0\nnemoclaw-cleanup-evidence-v1-end\n",
+  ])("rejects missing or unsafe cleanup identity evidence (#8142)", async (stdout) => {
+    const files = deploymentFiles();
+    const jobId = "b".repeat(64);
+    const processRunner = vi.fn().mockResolvedValueOnce({ stdout, stderr: "" });
+    const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
+
+    await expect(worker.cleanup({ jobId, signal: new AbortController().signal })).rejects.toThrow(
+      /Jetson cleanup/u,
+    );
+    expect(processRunner).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(path.join(files.stateDirectory, `${jobId}.cleanup.json`))).toBe(false);
   });
 
   it("keeps cleanup targets fixed and preserves the Jetson baseline (#8142)", () => {
@@ -347,6 +435,8 @@ describe("Colossus SSH worker deployment boundary", () => {
     expect(cleanupProgram).toContain('grep -Fqx "HOME=$job_home"');
     expect(cleanupProgram).toContain('kill "$pid"');
     expect(cleanupProgram).toContain("label=openshell.ai/sandbox-name=$sandbox_name");
+    expect(cleanupProgram).toContain("nemoclaw-cleanup-evidence-v1-begin");
+    expect(cleanupProgram).toContain("nemoclaw-cleanup-evidence-v1-end");
     expect(cleanupProgram).not.toMatch(/pkill|pgrep|docker (?:system|container|volume) prune/u);
     expect(cleanupProgram).not.toContain('rm -rf -- "$workspace_root"');
     expect(cleanupProgram).not.toContain("ollama serve");
@@ -375,6 +465,11 @@ describe("Colossus SSH worker deployment boundary", () => {
     const verifyCleanup = dispatcherRunbook.indexOf(
       'if (status.state !== "completed" || status.cleanup !== "succeeded") process.exit(1)',
     );
+    const aggregateCleanupRecords = dispatcherRunbook.indexOf(
+      "const cleanupName = /^[a-f0-9]{64}\\.cleanup\\.json$/",
+    );
+    const verifyRecordedVolume = dispatcherRunbook.indexOf('docker volume inspect "$1"');
+    const verifyRecordedProcess = dispatcherRunbook.indexOf('if [ -e "/proc/$1" ]');
     const stopDispatcher = dispatcherRunbook.indexOf(
       "sudo systemctl disable --now nemoclaw-jetson-dispatch.service",
     );
@@ -386,7 +481,14 @@ describe("Colossus SSH worker deployment boundary", () => {
     expect(stopTunnel).toBeGreaterThan(-1);
     expect(waitForLock).toBeGreaterThan(stopTunnel);
     expect(verifyCleanup).toBeGreaterThan(waitForLock);
-    expect(stopDispatcher).toBeGreaterThan(verifyCleanup);
+    expect(dispatcherRunbook).toContain(
+      'const expectedKeys = ["processIds", "schemaVersion", "volumes"]',
+    );
+    expect(dispatcherRunbook).toContain("record.schemaVersion !== 1");
+    expect(aggregateCleanupRecords).toBeGreaterThan(verifyCleanup);
+    expect(verifyRecordedVolume).toBeGreaterThan(aggregateCleanupRecords);
+    expect(verifyRecordedProcess).toBeGreaterThan(verifyRecordedVolume);
+    expect(stopDispatcher).toBeGreaterThan(verifyRecordedProcess);
     expect(removeSshKey).toBeGreaterThan(stopDispatcher);
   });
 });

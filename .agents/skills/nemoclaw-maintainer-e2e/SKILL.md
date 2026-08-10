@@ -353,7 +353,9 @@ node --experimental-strip-types --no-warnings \
 The validator requires:
 
 - the workflow run to succeed for the selected SHA;
-- `dispatch.json` to bind the same run, empty selectors, `include_staging_brev_launchable=true`, `allowJetsonDispatch: false`, `allowJetsonRunnerQueue: false`, `allowDgxSparkRunnerQueue: false`, and the selected successful Launchable job attempt;
+- `dispatch.json` to bind the same run, empty selectors, `include_staging_brev_launchable=true`, `allowJetsonRunnerQueue: false`, `allowDgxSparkRunnerQueue: false`, and the selected successful Launchable job attempt;
+- `allowJetsonDispatch: false` in every v2 `dispatch.json` receipt;
+- `allowJetsonDispatch` to be absent or `false` in every v1 `dispatch.json` receipt;
 - `Exact staging Brev Launchable` to conclude `success` in the selected current or earlier attempt of the same workflow run;
 - `launchable-e2e.json` to identify the selected SHA in the repository and provision records;
 - the booted repository to be unmodified;
@@ -380,7 +382,10 @@ If the release candidate SHA changes, discard the earlier full run and dispatch 
 No release-note-only delta exception is currently defined.
 
 When `nemoclaw-maintainer-cut-release-tag` invokes this skill, return the validated fields for its pre-tag E2E evidence ledger.
-The trusted `dispatch.json` receipt proves that full mode used empty selectors, included `Exact staging Brev Launchable`, and disabled the optional Jetson dispatch and DGX Spark runner paths.
+The trusted `dispatch.json` receipt proves that full mode used empty selectors and included `Exact staging Brev Launchable`.
+For Jetson dispatch, a v2 receipt requires `allowJetsonDispatch: false`.
+A v1 receipt may omit `allowJetsonDispatch`, but it must be `false` when present.
+Both receipt versions require the optional DGX Spark runner path to be disabled.
 The release evidence ledger proves the result of each workflow E2E.
 Do not ask for the release confirmation phrase in this skill.
 

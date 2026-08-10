@@ -275,4 +275,15 @@ for pid in "$auth_proxy_pid" "$gateway_pid" "$cloudflared_pid"; do
     exit 1
   fi
 done
+
+printf '%s\n' nemoclaw-cleanup-evidence-v1-begin
+for volume in "${recorded_volumes[@]}"; do
+  printf 'volume\t%s\n' "$volume"
+done
+for pid in "$auth_proxy_pid" "$gateway_pid" "$cloudflared_pid"; do
+  if [ -n "$pid" ]; then
+    printf 'processId\t%s\n' "$pid"
+  fi
+done
+printf '%s\n' nemoclaw-cleanup-evidence-v1-end
 JETSON_CLEANUP
