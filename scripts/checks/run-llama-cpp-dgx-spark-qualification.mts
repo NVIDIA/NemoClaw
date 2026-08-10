@@ -318,6 +318,28 @@ export function buildCandidateImageArgv(
   ];
 }
 
+/**
+ * The qualification runner launches the container directly instead of through
+ * the Docker lifecycle provider, so it owns its loopback bridge. The shared
+ * host-local materializer deliberately publishes nothing (#8615).
+ */
+function withQualificationLoopbackPublish(
+  argv: string[],
+  imageReference: string,
+  containerPort: number,
+): string[] {
+  const imageIndex = argv.indexOf(imageReference);
+  if (imageIndex < 0) {
+    throw new Error("qualification container arguments are missing the candidate image reference");
+  }
+  return [
+    ...argv.slice(0, imageIndex),
+    "--publish",
+    `127.0.0.1::${String(containerPort)}`,
+    ...argv.slice(imageIndex),
+  ];
+}
+
 export function buildServerContainerArgv(
   plan: QualificationPlan,
   options: {
@@ -335,7 +357,7 @@ export function buildServerContainerArgv(
   if (plan.qualification.requestGuard !== "required") {
     throw new Error("llama.cpp qualification requires the declarative request guard");
   }
-  return buildLlamaCppRequestGuardDockerArgv(plan.recipe, {
+  const argv = buildLlamaCppRequestGuardDockerArgv(plan.recipe, {
     apiKeyHostPath: options.apiKeyHostPath,
     containerName: options.containerName,
     imageReference: options.imageReference,
@@ -346,6 +368,14 @@ export function buildServerContainerArgv(
     runtimeGid: options.runtimeGid,
     runtimeUid: options.runtimeUid,
   });
+  if (options.hostPort === undefined) {
+    return withQualificationLoopbackPublish(
+      argv,
+      options.imageReference,
+      plan.recipe.serve.port,
+    );
+  }
+  return argv;
 }
 
 export function validateOpenClawQualificationImageLabels(

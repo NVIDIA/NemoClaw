@@ -340,6 +340,10 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         ]),
       );
       expect(valuesAfter(argv, "--publish")).toEqual(["127.0.0.1::8081"]);
+      expect(argv.indexOf("--publish")).toBeLessThan(
+        argv.indexOf(`localhost:5000/repo@sha256:${"d".repeat(64)}`),
+      );
+      expect(argv.filter((argument) => argument === "--publish")).toHaveLength(1);
       expect(valuesAfter(argv, "--entrypoint")).toEqual([
         "/usr/local/bin/nemoclaw-llama-cpp-request-guard",
       ]);
