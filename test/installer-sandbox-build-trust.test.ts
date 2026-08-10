@@ -23,10 +23,6 @@ const BLUEPRINT_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "nemoclaw-blueprint/blueprint.yaml"),
   "utf8",
 );
-const V00101_SANDBOX_BUILD_DIGESTS = [
-  "a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920",
-  "88300e35f153123e4dc3021c537834dd6c0a09665a4a6d3974cd285d512345c4",
-] as const;
 const ARBITRARY_SANDBOX_BUILD_DIGESTS = ["a".repeat(64), "b".repeat(64)] as const;
 const tempDirs: string[] = [];
 
@@ -108,12 +104,8 @@ describe("standalone sandbox build trust", () => {
     expect(runParser().status).toBe(0);
   });
 
-  it("accepts the dormant reviewed v0.0.101 identities before selection", () => {
-    const result = runParser((source) =>
-      addSandboxBuildPins(source, "0.0.101", V00101_SANDBOX_BUILD_DIGESTS),
-    );
-
-    expect(result.status).toBe(0);
+  it("accepts the selected reviewed v0.0.101 identities", () => {
+    expect(runParser().status).toBe(0);
   });
 
   it("rejects an arbitrary structurally valid identity addition", () => {

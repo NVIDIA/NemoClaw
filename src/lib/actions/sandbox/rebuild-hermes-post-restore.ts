@@ -79,6 +79,11 @@ export type HermesPostRestoreGatewayState =
   | "recovered"
   | "unverified";
 
+export type HermesPostRestoreGatewayRestartState =
+  | "not-applicable"
+  | "restarted"
+  | "restart-failed";
+
 type GatewayRecoveryObservation = {
   checked: boolean;
   wasRunning: boolean | null;
@@ -116,20 +121,24 @@ export interface HermesPostRestoreGatewayVerification {
  * pre-restore result for the life of the process — the WhatsApp bridge reads
  * its paired session that way — so the gateway can be alive and healthy while
  * still serving the state the rebuild replaced. A liveness check cannot see
- * that difference, so restart first and let the check report on the process
- * that restart produced. `relaunchManagedSupervisorSession` already restarts
- * after its own restore for the same reason.
+ * that difference, so restart before runtime restoration and let the final
+ * check report on the process left by every intervening acknowledged reload.
+ * `relaunchManagedSupervisorSession` already restarts after its own restore
+ * for the same reason.
  *
- * A gated rebuild keeps the root-owned cron drain active while this function
- * replaces and verifies the gateway. The caller then completes the held
- * transaction against the replacement process before dispatch can resume.
+ * The split restart/verify exports let rebuild insert MCP restoration between
+ * those two steps. Hermes MCP restoration performs its own acknowledged
+ * gateway reload, so a later unconditional restart would discard the runtime
+ * identity whose MCP load just converged. A gated rebuild keeps the root-owned
+ * cron drain active across restart, MCP restoration, and final verification.
  */
 export function ensureHermesGatewayAfterStateRestore(
   sandboxName: string,
   agentName: string,
   deps: HermesPostRestoreGatewayDeps = {},
 ): HermesPostRestoreGatewayState {
-  return ensureHermesGatewayAfterStateRestoreImpl(sandboxName, agentName, deps).state;
+  const restartState = restartHermesGatewayAfterStateRestore(sandboxName, agentName, deps);
+  return verifyHermesGatewayAfterStateRestore(sandboxName, agentName, restartState, deps);
 }
 
 export function ensureHermesGatewayAfterStateRestoreForCronGate(
@@ -138,7 +147,49 @@ export function ensureHermesGatewayAfterStateRestoreForCronGate(
   originalIdentity: HermesCronRestoreIdentity,
   deps: HermesPostRestoreGatewayDeps = {},
 ): HermesPostRestoreGatewayVerification {
-  return ensureHermesGatewayAfterStateRestoreImpl(sandboxName, agentName, deps, originalIdentity);
+  const restartState = restartHermesGatewayAfterStateRestore(sandboxName, agentName, deps);
+  return verifyHermesGatewayAfterStateRestoreForCronGate(
+    sandboxName,
+    agentName,
+    restartState,
+    originalIdentity,
+    deps,
+  );
+}
+
+export function restartHermesGatewayAfterStateRestore(
+  sandboxName: string,
+  agentName: string,
+  deps: HermesPostRestoreGatewayDeps = {},
+): HermesPostRestoreGatewayRestartState {
+  if (agentName !== "hermes") return "not-applicable";
+  const restart = deps.restartSandboxGateway ?? processRecovery.restartSandboxGateway;
+  return restart(sandboxName, { quiet: true }).ok ? "restarted" : "restart-failed";
+}
+
+export function verifyHermesGatewayAfterStateRestore(
+  sandboxName: string,
+  agentName: string,
+  restartState: HermesPostRestoreGatewayRestartState,
+  deps: HermesPostRestoreGatewayDeps = {},
+): HermesPostRestoreGatewayState {
+  return verifyHermesGatewayAfterStateRestoreImpl(sandboxName, agentName, restartState, deps).state;
+}
+
+export function verifyHermesGatewayAfterStateRestoreForCronGate(
+  sandboxName: string,
+  agentName: string,
+  restartState: HermesPostRestoreGatewayRestartState,
+  originalIdentity: HermesCronRestoreIdentity,
+  deps: HermesPostRestoreGatewayDeps = {},
+): HermesPostRestoreGatewayVerification {
+  return verifyHermesGatewayAfterStateRestoreImpl(
+    sandboxName,
+    agentName,
+    restartState,
+    deps,
+    originalIdentity,
+  );
 }
 
 function sameGatewayIdentity(
@@ -148,15 +199,15 @@ function sameGatewayIdentity(
   return left.pid === right.pid && left.start_time === right.start_time;
 }
 
-function ensureHermesGatewayAfterStateRestoreImpl(
+function verifyHermesGatewayAfterStateRestoreImpl(
   sandboxName: string,
   agentName: string,
+  restartState: HermesPostRestoreGatewayRestartState,
   deps: HermesPostRestoreGatewayDeps,
   originalIdentity?: HermesCronRestoreIdentity,
 ): HermesPostRestoreGatewayVerification {
   if (agentName !== "hermes") return { state: "not-applicable" };
-  const restart = deps.restartSandboxGateway ?? processRecovery.restartSandboxGateway;
-  const restarted = restart(sandboxName, { quiet: true }).ok;
+  const restarted = restartState === "restarted";
   const checkAndRecover =
     deps.checkAndRecoverSandboxProcesses ?? processRecovery.checkAndRecoverSandboxProcesses;
   const observeReplacement = deps.observeHermesCronReplacement ?? observeHermesCronReplacement;
