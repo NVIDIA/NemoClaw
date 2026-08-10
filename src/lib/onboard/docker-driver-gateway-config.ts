@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -58,10 +58,12 @@ function cleanupStaleAtomicFileTemps(dir: string, basename: string): void {
 
 export function gatewayIdForStateDir(stateDir: string): string {
   const leaf = path.basename(path.resolve(stateDir)).replace(/[^A-Za-z0-9_.-]/g, "-");
-  return leaf ? `nemoclaw-${leaf}` : "nemoclaw";
+  const scope = `${String(process.getuid?.() ?? "unknown")}\0${path.resolve(stateDir)}`;
+  const suffix = createHash("sha256").update(scope).digest("hex").slice(0, 12);
+  return `nemoclaw-${leaf || "gateway"}-${suffix}`;
 }
 
-/** Prove that a NemoClaw-owned gateway config uses its state-scoped namespace. */
+/** Prove that a NemoClaw-owned Docker gateway config uses its state-scoped namespace. */
 export function hasStateScopedSandboxNamespace(stateDir: string): boolean {
   if (typeof process.getuid !== "function" || typeof fs.constants.O_NOFOLLOW !== "number") {
     return false;
@@ -91,7 +93,7 @@ export function hasStateScopedSandboxNamespace(stateDir: string): boolean {
       .filter((line) => {
         const trimmed = line.trim();
         if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-          inDriverTable = /^\[openshell\.drivers\.(?:docker|podman)\]$/.test(trimmed);
+          inDriverTable = trimmed === "[openshell.drivers.docker]";
           return false;
         }
         return inDriverTable && trimmed.startsWith("sandbox_namespace =");
@@ -121,7 +123,7 @@ export function buildDockerDriverGatewayConfigToml(
   const driver = gatewayEnv.OPENSHELL_DRIVERS === "podman" ? "podman" : "docker";
   const localTlsDir = jwtBundle ? gatewayLocalTlsDir(gatewayEnv) : undefined;
   const dockerEntries: [string, string | undefined][] = [
-    ["sandbox_namespace", gatewayId],
+    ["sandbox_namespace", driver === "docker" ? gatewayId : undefined],
     ["grpc_endpoint", gatewayEnv.OPENSHELL_GRPC_ENDPOINT],
     ["host_gateway_ip", driver === "podman" ? PORTABLE_HOST_GATEWAY_IP : undefined],
     ["socket_path", driver === "podman" ? gatewayEnv.OPENSHELL_PODMAN_SOCKET : undefined],
@@ -214,6 +216,10 @@ export function prepareDockerDriverGatewayConfigEnv(
     gatewayEnv,
     sandboxBin,
   );
-  gatewayEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV] = gatewayIdForStateDir(stateDir);
+  if (gatewayEnv.OPENSHELL_DRIVERS === "podman") {
+    delete gatewayEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV];
+  } else {
+    gatewayEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV] = gatewayIdForStateDir(stateDir);
+  }
   return gatewayEnv;
 }

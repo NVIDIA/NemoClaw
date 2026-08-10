@@ -114,9 +114,9 @@ describe("docker-driver-gateway-launch", () => {
     const defaultNamespace = gatewayIdForStateDir("/tmp/openshell-docker-gateway");
     const alternateNamespace = gatewayIdForStateDir("/tmp/openshell-docker-gateway-18080");
 
-    expect(defaultNamespace).toBe("nemoclaw-openshell-docker-gateway");
-    expect(alternateNamespace).toBe("nemoclaw-openshell-docker-gateway-18080");
+    expect(defaultNamespace).toMatch(/^nemoclaw-openshell-docker-gateway-[a-f0-9]{12}$/);
     expect(defaultNamespace).not.toBe(alternateNamespace);
+    expect(gatewayIdForStateDir("/tmp/a/gateway")).not.toBe(gatewayIdForStateDir("/tmp/b/gateway"));
   });
 
   it("writes the exact rootless socket only for the Podman driver", () => {
@@ -130,6 +130,7 @@ describe("docker-driver-gateway-launch", () => {
 
     expect(toml).toContain("[openshell.drivers.podman]");
     expect(toml).toContain('socket_path = "/run/user/1001/podman/podman.sock"');
+    expect(toml).not.toContain("sandbox_namespace");
   });
 
   it("rejects wildcard binds for direct host gateway launches", () => {
@@ -239,20 +240,24 @@ describe("docker-driver-gateway-launch", () => {
     });
   });
 
-  it("scrubs stale auth-disable env from direct host gateway launches", () => {
+  it("scrubs stale internal env from direct host gateway launches", () => {
     withTempBinaries(({ dir, gatewayBin }) => {
       const launch = buildDockerDriverGatewayLaunch({
         gatewayBin,
         stateDir: dir,
         platform: "linux",
-        env: { OPENSHELL_DISABLE_GATEWAY_AUTH: "true" },
+        env: {
+          OPENSHELL_DISABLE_GATEWAY_AUTH: "true",
+          [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: "stale",
+        },
         hostGlibcVersion: "2.39",
         requiredGlibcVersions: ["2.39"],
-        gatewayEnv: { OPENSHELL_DRIVERS: "docker" },
+        gatewayEnv: { OPENSHELL_DRIVERS: "podman" },
       });
 
       expect(launch.mode).toBe("host");
       expect(launch.env.OPENSHELL_DISABLE_GATEWAY_AUTH).toBeUndefined();
+      expect(launch.env[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]).toBeUndefined();
     });
   });
 });

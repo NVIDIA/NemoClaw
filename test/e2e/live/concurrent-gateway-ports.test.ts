@@ -92,11 +92,11 @@ async function command(
   });
 }
 
-function evidencePid(evidence: string, gateway: string): string | undefined {
+function gatewayProcessEvidence(evidence: string, gateway: string): string | undefined {
   return evidence
     .split(`gateway=${gateway}\n`)[1]
     ?.split("gateway=")[0]
-    ?.match(/^active_pid=(\d+)$/m)?.[1];
+    ?.match(/^active_pid=\d+\nexecutable=.*\n.*$/m)?.[0];
 }
 
 async function captureGatewayEvidence(
@@ -113,7 +113,7 @@ async function captureGatewayEvidence(
     '  test ! -r "$state/openshell-gateway.pid" || pid="$(tr -d "[:space:]" < "$state/openshell-gateway.pid")"',
     '  if test -z "$pid" && test "$port" = 8080 && command -v systemctl >/dev/null; then for service in openshell-gateway nemoclaw-openshell-gateway; do candidate="$(systemctl --user show "$service" --property=MainPID --value 2>/dev/null || true)"; test "${candidate:-0}" -le 0 || { pid="$candidate"; break; }; done; fi',
     '  printf "gateway=%s\\nport=%s\\npid_file=%s\\n" "$gateway" "$port" "${pid:-<missing>}"',
-    '  if test -n "$pid" && ps -p "$pid" >/dev/null 2>&1; then printf "active_pid=%s\\n" "$pid"; ps -p "$pid" -o pid=,ppid=,uid=,lstart=,args=; fi',
+    '  if test -n "$pid" && ps -p "$pid" >/dev/null 2>&1; then printf "active_pid=%s\\nexecutable=%s\\n" "$pid" "$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"; ps -p "$pid" -o pid=,ppid=,uid=,lstart=,args=; fi',
     '  printf "listeners=\\n"; ss -H -ltnp 2>&1 | grep -E "[:.]$port\\b" || true',
     '  printf "runtime=\\n"; test ! -r "$state/runtime.json" || cat "$state/runtime.json"',
     '  printf "namespace=\\n"; test ! -r "$state/openshell-gateway.toml" || grep "^sandbox_namespace" "$state/openshell-gateway.toml" || true',
@@ -529,11 +529,11 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
     gatewayPair,
     "phase-4-before-uninstall",
   );
-  const pidA = evidencePid(beforeEvidence, gatewayA);
-  const pidB = evidencePid(beforeEvidence, gatewayB);
-  expect(pidA).toMatch(/^\d+$/);
-  expect(pidB).toMatch(/^\d+$/);
-  expect(pidA).not.toBe(pidB);
+  const processA = gatewayProcessEvidence(beforeEvidence, gatewayA);
+  const processB = gatewayProcessEvidence(beforeEvidence, gatewayB);
+  expect(processA).toBeDefined();
+  expect(processB).toBeDefined();
+  expect(processA).not.toBe(processB);
 
   const uninstallB = await command(host, ["uninstall", "--yes", "--destroy-user-data"], {
     artifactName: "phase-4-uninstall-gateway-b",
@@ -548,8 +548,8 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
     gatewayPair,
     "phase-4-after-uninstall",
   );
-  expect(evidencePid(afterEvidence, gatewayA)).toBe(pidA);
-  expect(evidencePid(afterEvidence, gatewayB)).toBeUndefined();
+  expect(gatewayProcessEvidence(afterEvidence, gatewayA)).toBe(processA);
+  expect(gatewayProcessEvidence(afterEvidence, gatewayB)).toBeUndefined();
 
   const survivorPhases: string[] = [];
   for (let probe = 1; probe <= POST_UNINSTALL_HEALTH_PROBES; probe += 1) {

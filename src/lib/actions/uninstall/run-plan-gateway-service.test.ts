@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { gatewayIdForStateDir } from "../../onboard/docker-driver-gateway-config";
 import {
   getNemoclawOpenShellGatewayUserServicePath,
   getOpenShellUserConfigHome,
@@ -85,18 +86,12 @@ function writeSelectedSandboxRegistry(test: Fixture, sandboxName: string): strin
 }
 
 function writeGatewayState(test: Fixture): string {
-  const configPath = path.join(
-    test.home,
-    ".local",
-    "state",
-    "nemoclaw",
-    "openshell-docker-gateway",
-    "openshell-gateway.toml",
-  );
+  const stateDir = path.join(test.home, ".local", "state", "nemoclaw", "openshell-docker-gateway");
+  const configPath = path.join(stateDir, "openshell-gateway.toml");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(
     configPath,
-    '[openshell.drivers.docker]\nsandbox_namespace = "nemoclaw-openshell-docker-gateway"\n',
+    `[openshell.drivers.docker]\nsandbox_namespace = "${gatewayIdForStateDir(stateDir)}"\n`,
   );
   return configPath;
 }

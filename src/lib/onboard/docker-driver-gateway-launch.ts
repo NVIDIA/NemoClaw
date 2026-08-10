@@ -115,6 +115,9 @@ function buildGatewayProcessEnv(
   if (!("OPENSHELL_DISABLE_GATEWAY_AUTH" in gatewayEnv)) {
     delete env.OPENSHELL_DISABLE_GATEWAY_AUTH;
   }
+  if (!(NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV in gatewayEnv)) {
+    delete env[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV];
+  }
   return env;
 }
 
