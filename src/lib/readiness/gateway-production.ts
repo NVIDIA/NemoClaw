@@ -303,24 +303,32 @@ export function classifyManagedGatewayEndpointBinding(
   outputs: readonly string[],
   expectedGatewayPort: number,
 ): Exclude<ManagedGatewayEndpointBinding, "not-applicable"> {
+  let observedEndpoint = false;
   for (const output of outputs) {
-    const match = stripAnsi(output).match(/^\s*Gateway endpoint:\s+(\S+)\s*$/m);
-    if (!match?.[1]) continue;
-    try {
-      const endpoint = new URL(match[1]);
-      const localHost =
-        endpoint.hostname === "127.0.0.1" ||
-        endpoint.hostname === "localhost" ||
-        endpoint.hostname === "[::1]";
-      const endpointPort =
-        endpoint.port ||
-        (endpoint.protocol === "https:" ? "443" : endpoint.protocol === "http:" ? "80" : "");
-      return localHost && endpointPort === String(expectedGatewayPort) ? "match" : "mismatch";
-    } catch {
-      return "mismatch";
+    for (const match of stripAnsi(output).matchAll(
+      /^\s*(?:Gateway endpoint|Server):\s+(\S+)\s*$/gm,
+    )) {
+      if (!match[1]) continue;
+      observedEndpoint = true;
+      try {
+        const endpoint = new URL(match[1]);
+        const localProtocol = endpoint.protocol === "https:" || endpoint.protocol === "http:";
+        const localHost =
+          endpoint.hostname === "127.0.0.1" ||
+          endpoint.hostname === "localhost" ||
+          endpoint.hostname === "[::1]";
+        const endpointPort =
+          endpoint.port ||
+          (endpoint.protocol === "https:" ? "443" : endpoint.protocol === "http:" ? "80" : "");
+        if (!localProtocol || !localHost || endpointPort !== String(expectedGatewayPort)) {
+          return "mismatch";
+        }
+      } catch {
+        return "mismatch";
+      }
     }
   }
-  return "unknown";
+  return observedEndpoint ? "match" : "unknown";
 }
 
 function observeReuseState(

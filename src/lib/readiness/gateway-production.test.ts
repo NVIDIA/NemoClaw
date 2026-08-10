@@ -290,14 +290,25 @@ describe("managed gateway port readiness (#7411)", () => {
   });
 
   it.each([
-    ["https://127.0.0.1:8080", 8080, "match"],
-    ["http://localhost:8080", 8080, "match"],
-    ["https://127.0.0.1:9090", 8080, "mismatch"],
-    ["https://gateway.example:8080", 8080, "mismatch"],
-  ] as const)("binds managed endpoint %s to port %s as %s", (endpoint, port, expected) => {
-    expect(classifyManagedGatewayEndpointBinding([`Gateway endpoint: ${endpoint}`], port)).toBe(
-      expected,
-    );
+    ["Gateway endpoint: https://127.0.0.1:8080", 8080, "match"],
+    ["Gateway endpoint: http://localhost:8080", 8080, "match"],
+    ["Server: https://127.0.0.1:8080", 8080, "match"],
+    ["Server: https://127.0.0.1:9090", 8080, "mismatch"],
+    ["Server: https://gateway.example:8080", 8080, "mismatch"],
+    ["Server: ftp://127.0.0.1:8080", 8080, "mismatch"],
+    ["Server: not-a-url", 8080, "mismatch"],
+    ["DNS Server: https://127.0.0.1:8080", 8080, "unknown"],
+  ] as const)("classifies managed endpoint output %s for port %s as %s", (output, port, expected) => {
+    expect(classifyManagedGatewayEndpointBinding([output], port)).toBe(expected);
+  });
+
+  it("rejects conflicting managed endpoint output across OpenShell probes", () => {
+    expect(
+      classifyManagedGatewayEndpointBinding(
+        ["Gateway endpoint: https://127.0.0.1:8080", "Server: https://127.0.0.1:9090"],
+        8080,
+      ),
+    ).toBe("mismatch");
   });
 
   it("rejects healthy managed metadata bound to another endpoint", () => {
