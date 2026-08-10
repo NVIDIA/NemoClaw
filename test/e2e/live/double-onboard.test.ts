@@ -562,9 +562,15 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
   expect(gatewayStatus.exitCode, gatewayStatusText).toBe(0);
   const gatewayServerEndpoint = gatewayServerEndpointFromOutput(gatewayStatusText);
   expect(gatewayServerEndpoint, gatewayStatusText).toBeDefined();
-  expect(new URL(gatewayServerEndpoint as string).port).toBe(
-    process.env.NEMOCLAW_GATEWAY_PORT ?? "8080",
-  );
+  const parsedGatewayServerEndpoint = new URL(gatewayServerEndpoint as string);
+  const gatewayServerPort =
+    parsedGatewayServerEndpoint.port ||
+    (parsedGatewayServerEndpoint.protocol === "https:"
+      ? "443"
+      : parsedGatewayServerEndpoint.protocol === "http:"
+        ? "80"
+        : "");
+  expect(gatewayServerPort).toBe(process.env.NEMOCLAW_GATEWAY_PORT ?? "8080");
 
   const sandboxAAfterFirst = await sandbox.openshell(["sandbox", "get", SANDBOX_A], {
     artifactName: "phase-2-openshell-sandbox-a-get",

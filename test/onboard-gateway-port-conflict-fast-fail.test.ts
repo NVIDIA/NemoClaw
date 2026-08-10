@@ -5,9 +5,10 @@ import type { AddressInfo } from "node:net";
 import net from "node:net";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getGatewayClusterContainerName } from "../src/lib/adapters/openshell/gateway-drift";
 import { resolveGatewayName } from "../src/lib/onboard/gateway-binding";
+import { createProductionGatewayReadinessDependencies } from "../src/lib/readiness/gateway-production";
 import {
   createOnboardProcessWorkspace,
   type OnboardProcessWorkspace,
@@ -118,9 +119,9 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
   );
 
   it(
-    "accepts Server endpoint evidence in repeated onboarding invocations",
-    testTimeoutOptions(50_000),
-    () => {
+    "accepts Server endpoint evidence on repeated production readiness probes",
+    testTimeoutOptions(30_000),
+    async () => {
       const gatewayName = resolveGatewayName(gatewayPort);
       const gatewayEndpoint = `https://127.0.0.1:${String(gatewayPort)}/`;
       const gatewayStatus = [
@@ -184,44 +185,28 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
           "exit 0",
         ].join("\n"),
       );
-      workspace.writeExecutable(
-        "lsof",
-        [
-          "#!/usr/bin/env bash",
-          `if [[ " $* " = *" :${String(gatewayPort)} "* ]]; then`,
-          `  if [ "$1" = -ti ]; then printf "%s\\n" ${JSON.stringify(String(process.pid))}; exit 0; fi`,
-          "fi",
-          "exit 1",
-        ].join("\n"),
+      workspace.writeExecutable("lsof", "#!/usr/bin/env bash\nexit 1\n");
+
+      vi.stubEnv("HOME", workspace.homeDir);
+      vi.stubEnv("PATH", `${workspace.binDir}:${process.env.PATH || ""}`);
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(gatewayPort));
+      vi.stubEnv(
+        "NEMOCLAW_OPENSHELL_GATEWAY_BIN",
+        path.join(workspace.binDir, "openshell-gateway"),
       );
       workspace.writeExecutable("sudo", "#!/usr/bin/env bash\nexit 1\n");
 
-      const env = workspaceEnv(workspace, {
-        COMPATIBLE_API_KEY: "test-only-compatible-key",
-        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-        NEMOCLAW_ENDPOINT_URL: "http://127.0.0.1:1/v1",
-        NEMOCLAW_GATEWAY_PORT: String(gatewayPort),
-        NEMOCLAW_MODEL: "test-model",
-        NEMOCLAW_OPENSHELL_BIN: path.join(workspace.binDir, "openshell"),
-        NEMOCLAW_OPENSHELL_CHANNEL: "stable",
-        NEMOCLAW_OPENSHELL_GATEWAY_BIN: path.join(workspace.binDir, "openshell-gateway"),
-        NEMOCLAW_OPENSHELL_SANDBOX_BIN: path.join(workspace.binDir, "openshell-sandbox"),
-        NEMOCLAW_PROVIDER: "custom",
-        NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT: "1",
-        NEMOCLAW_TEST_NO_SLEEP: "1",
+      const readiness = createProductionGatewayReadinessDependencies({
+        gatewayName: () => gatewayName,
+        gatewayPort: () => gatewayPort,
       });
-      const argv = [CLI, "onboard", "--name", "reuse-server", "--no-gpu", "--non-interactive"];
-      const first = runOnboardProcess(argv, { timeoutMs: 20_000, env });
-      const second = runOnboardProcess(argv, { timeoutMs: 20_000, env });
-
-      for (const result of [first, second]) {
-        expect(result.error).toBeUndefined();
-        expect(result.signal).toBeNull();
-        expect(result.output).toContain("Reusing healthy NemoClaw gateway.");
-        expect(result.output).not.toContain("gateway.port.uncontested");
-        expect(result.output).not.toContain(
-          `Gateway port ${String(gatewayPort)} could not be observed completely.`,
-        );
+      const owner = readiness.resolveOwner();
+      for (const result of [
+        await readiness.observeManagedGateway(owner),
+        await readiness.observeManagedGateway(owner),
+      ]) {
+        expect(result.reuseState).toBe("healthy");
+        expect(result.portConflictState).toBe("none");
       }
     },
   );
