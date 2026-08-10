@@ -76,7 +76,8 @@ The command polls the manifest-defined Slack readiness check until all these con
 - Socket Mode is connected.
 - The OpenClaw account probe succeeds.
 
-Each poll for an active Slack channel runs the live OpenClaw account probe and can send traffic through the configured Slack policy.
+NemoClaw runs the live OpenClaw account probe only after Slack is registered and the `slack` preset is recorded and applied.
+Each live probe can send traffic through the configured Slack policy.
 The command does not change channel configuration or display Slack credentials.
 The default timeout is 180 seconds.
 The `--timeout` value is the total wait budget; NemoClaw limits live probes to the remaining budget and starts none at or after the deadline.

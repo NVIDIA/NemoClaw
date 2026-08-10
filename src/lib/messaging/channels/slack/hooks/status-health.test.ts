@@ -100,14 +100,23 @@ describe("slack.statusHealth hook", () => {
     expect(JSON.stringify(report)).not.toContain("socket mode connection timed out");
   });
 
+  it.each([
+    ["Slack is not registered", { channelEnabledInRegistry: false }, "channel_not_registered"],
+    ["the preset is not registered", { presetInRegistry: false }, "policy_missing"],
+    ["the preset is not applied", { presetOnGateway: false }, "policy_missing"],
+    ["gateway policy is unknown", { presetOnGateway: null }, "policy_status_unavailable"],
+  ] as const)("skips the live probe when %s (#7383)", (_condition, inputs, reason) => {
+    const { report, execute } = runProbe({}, inputs);
+
+    expect(report.readiness?.reason).toBe(reason);
+    expect(report.signals.map(({ label }) => label)).toEqual([
+      "Channel registration",
+      "Policy coverage",
+    ]);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   for (const [name, account, inputs, expected, signal] of [
-    [
-      "waits when effective policy coverage cannot be verified (#7383)",
-      {},
-      { presetOnGateway: null },
-      ["waiting", "network", "policy_status_unavailable", true],
-      { label: "Policy coverage", severity: "info" },
-    ],
     [
       "classifies unavailable Slack credentials as terminal (#7383)",
       {

@@ -29,6 +29,14 @@ const HINTS: Record<ChannelReadinessCategory, string> = {
 
 export type SlackStatusHealthHookOptions = ChannelStatusHealthHookOptions;
 
+function canRunSlackProbe(inputs: MessagingHookInputMap | undefined): boolean {
+  return (
+    inputs?.channelEnabledInRegistry === true &&
+    inputs.presetInRegistry === true &&
+    inputs.presetOnGateway === true
+  );
+}
+
 export function createSlackStatusHealthHook(
   options: SlackStatusHealthHookOptions = {},
 ): MessagingHookHandler {
@@ -44,7 +52,9 @@ export function createSlackStatusHealthHook(
       options.timeoutMs > 0
         ? options.timeoutMs
         : DEFAULT_CHANNEL_STATUS_HEALTH_TIMEOUT_MS;
-    const probe = runSlackStatusProbe(execute, sandboxName, timeoutMs);
+    const probe = canRunSlackProbe(context.inputs)
+      ? runSlackStatusProbe(execute, sandboxName, timeoutMs)
+      : UNREACHABLE_PROBE;
     const report = evaluateSlackReadiness(context.inputs, probe);
     return {
       outputs: {
@@ -121,6 +131,7 @@ function evaluateSlackReadiness(
   inputs: MessagingHookInputMap | undefined,
   probe: SlackStatusProbe,
 ): ChannelHealthReport & { readiness: ChannelReadiness } {
+  const canProbe = canRunSlackProbe(inputs);
   const accountProbe = readObject(probe.account?.probe);
   const input = {
     agent: normalizeString(inputs?.agent) ?? "openclaw",
@@ -227,6 +238,21 @@ function evaluateSlackReadiness(
 
   const readiness = classify();
   const policyMissing = !input.presetInRegistry || input.presetOnGateway === false;
+  const liveSignals = canProbe
+    ? [
+        runtimeSignal(),
+        signal(
+          "Socket Mode transport",
+          input.connected === true ? "ok" : input.connected === false ? "warn" : "info",
+          input.connected === true
+            ? "connected"
+            : input.connected === false
+              ? "not connected"
+              : "connection state not reported",
+        ),
+        probeSignal(),
+      ]
+    : [];
   return {
     schemaVersion: 1,
     channel: "slack",
@@ -258,17 +284,7 @@ function evaluateSlackReadiness(
               ? "slack preset applied"
               : "slack preset recorded; gateway policy could not be inspected",
       ),
-      runtimeSignal(),
-      signal(
-        "Socket Mode transport",
-        input.connected === true ? "ok" : input.connected === false ? "warn" : "info",
-        input.connected === true
-          ? "connected"
-          : input.connected === false
-            ? "not connected"
-            : "connection state not reported",
-      ),
-      probeSignal(),
+      ...liveSignals,
     ],
     hints: readiness.state === "ready" ? [] : [HINTS[readiness.category ?? "runtime"]],
     readiness,
