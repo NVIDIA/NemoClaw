@@ -351,6 +351,14 @@ describe("common config-prompt hook implementation", () => {
   });
 });
 
+// The manifest owns this hook, so resolve it once here. Failing at module load
+// rather than inside the helper keeps the helper free of a setup branch.
+const WHATSAPP_CONFIG_PROMPT_HOOK =
+  whatsappManifest.hooks.find((entry) => entry.id === "whatsapp-config-prompt") ??
+  (() => {
+    throw new Error("missing WhatsApp config-prompt hook");
+  })();
+
 describe("WhatsApp reply mode prompt", () => {
   function whatsappRun(options: {
     readonly env: NodeJS.ProcessEnv;
@@ -364,21 +372,17 @@ describe("WhatsApp reply mode prompt", () => {
         handler: createConfigPromptHook({
           env: options.env,
           log: (message) => options.logs?.push(message),
+          // A test that expects no prompt asserts on the recorded questions
+          // instead of throwing from here.
           prompt: async (question) => {
             options.questions?.push(question);
-            if (options.answer === undefined) {
-              throw new Error("WhatsApp config hook should not prompt");
-            }
-            return options.answer;
+            return options.answer ?? "";
           },
         }),
       },
     ]);
-    const hook = whatsappManifest.hooks.find((entry) => entry.id === "whatsapp-config-prompt");
 
-    if (!hook) throw new Error("missing WhatsApp config-prompt hook");
-
-    return runMessagingHook(hook, registry, { channelId: "whatsapp" });
+    return runMessagingHook(WHATSAPP_CONFIG_PROMPT_HOOK, registry, { channelId: "whatsapp" });
   }
 
   it("offers both modes and names the default it falls back to (#8312)", async () => {
@@ -429,9 +433,10 @@ describe("WhatsApp reply mode prompt", () => {
 
   it("accepts a mode supplied through the environment without prompting (#8312)", async () => {
     const env: NodeJS.ProcessEnv = { WHATSAPP_MODE: "bot" };
+    const questions: string[] = [];
     const logs: string[] = [];
 
-    await expect(whatsappRun({ env, logs })).resolves.toMatchObject({
+    await expect(whatsappRun({ env, questions, logs })).resolves.toMatchObject({
       outputs: {
         mode: {
           kind: "config",
@@ -439,6 +444,8 @@ describe("WhatsApp reply mode prompt", () => {
         },
       },
     });
+    // The documented non-interactive path must stay silent.
+    expect(questions).toEqual([]);
     expect(logs.join("\n")).toContain("WhatsApp reply mode already set: bot");
   });
 });

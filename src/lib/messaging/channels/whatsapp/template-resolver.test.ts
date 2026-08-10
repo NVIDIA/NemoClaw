@@ -19,20 +19,20 @@ function modeInputs(value: string | undefined): SandboxMessagingInputReference[]
   return [value === undefined ? base : { ...base, value }];
 }
 
-function policyInputs(mode: string, ids?: string): SandboxMessagingInputReference[] {
-  const inputs = modeInputs(mode);
-  if (ids === undefined) return inputs;
-  return [
-    ...inputs,
-    {
-      channelId: "whatsapp",
-      inputId: "allowedIds",
-      kind: "config",
-      required: false,
-      statePath: "allowedIds.whatsapp",
-      value: ids,
-    },
-  ];
+function policyInputs(mode: string, ids = ""): SandboxMessagingInputReference[] {
+  const allowlist: SandboxMessagingInputReference[] = ids
+    ? [
+        {
+          channelId: "whatsapp",
+          inputId: "allowedIds",
+          kind: "config",
+          required: false,
+          statePath: "allowedIds.whatsapp",
+          value: ids,
+        },
+      ]
+    : [];
+  return [...modeInputs(mode), ...allowlist];
 }
 
 describe("WhatsApp template resolver", () => {
