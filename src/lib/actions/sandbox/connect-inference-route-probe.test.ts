@@ -18,7 +18,7 @@ import {
 } from "./connect-inference-route-probe";
 
 describe("sandbox connect inference route probe argv", () => {
-  it("uses the managed DCode proxy boundary without a login shell (#6191)", () => {
+  it("uses the managed DCode proxy boundary without adding a login shell (#6191)", () => {
     const args = buildSandboxInferenceRouteProbeArgs("deep-code", {
       name: "langchain-deepagents-code",
     });

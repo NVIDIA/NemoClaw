@@ -12,7 +12,7 @@ function agent(name: string): AgentDefinition {
 }
 
 describe("terminal agent smoke command invocation", () => {
-  it("runs Deep Agents Code smoke commands without a login shell (#8624)", () => {
+  it("runs Deep Agents Code smoke commands without adding a login shell (#8624)", () => {
     const args = buildAgentSmokeArgs(
       "probe-box",
       agent("langchain-deepagents-code"),
@@ -35,7 +35,7 @@ describe("terminal agent smoke command invocation", () => {
     expect(args.at(-1)).toBe("hermes --version");
   });
 
-  it("never issues a Deep Agents Code smoke exec through a login shell (#8624)", () => {
+  it("does not add a login shell to Deep Agents Code smoke exec (#8624)", () => {
     const issued: string[][] = [];
     const result = runAgentSmokeCommands(
       "probe-box",
