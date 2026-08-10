@@ -31,8 +31,8 @@ export function createOrdinaryExecReleaseSleeper(
   return {
     sleep: (milliseconds) => {
       if (!released) {
-        released = true;
         createReleaseMarker(releasePath);
+        released = true;
       }
       Atomics.wait(waitBuffer, 0, 0, Math.min(milliseconds, 50));
     },
@@ -41,9 +41,12 @@ export function createOrdinaryExecReleaseSleeper(
 }
 
 export async function releaseAndStopChild(child: ChildProcess, releasePath: string): Promise<void> {
-  createReleaseMarker(releasePath);
-  if (child.exitCode === null) child.kill("SIGKILL");
-  await waitForChildExit(child).catch(() => null);
+  try {
+    createReleaseMarker(releasePath);
+  } finally {
+    if (child.exitCode === null) child.kill("SIGKILL");
+    await waitForChildExit(child).catch(() => null);
+  }
 }
 
 export function createPersistedLifecycleStoreOrThrow(

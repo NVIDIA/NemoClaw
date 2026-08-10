@@ -48,6 +48,38 @@ afterEach(() => {
 });
 
 describe("privileged direct-execution exclusion", () => {
+  it("retries release-marker creation after a transient write failure", () => {
+    const stateDir = temporaryStateDir();
+    const releaseDir = path.join(stateDir, "late-release-dir");
+    const releasePath = path.join(releaseDir, "ordinary.release");
+    const ordinaryExecRelease = createOrdinaryExecReleaseSleeper(releasePath, waitBuffer);
+
+    expect(() => ordinaryExecRelease.sleep(1)).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    expect(ordinaryExecRelease.wasReleased()).toBe(false);
+
+    fs.mkdirSync(releaseDir);
+    expect(() => ordinaryExecRelease.sleep(1)).not.toThrow();
+    expect(ordinaryExecRelease.wasReleased()).toBe(true);
+    expect(fs.readFileSync(releasePath, "utf8")).toBe("release");
+  });
+
+  it("stops the child even when release-marker creation fails", async () => {
+    const stateDir = temporaryStateDir();
+    const releasePath = path.join(stateDir, "missing", "ordinary.release");
+    const child = {
+      exitCode: null,
+      kill: vi.fn(),
+    } as unknown as ChildProcess;
+    vi.mocked(child.kill).mockImplementation(() => {
+      Object.defineProperty(child, "exitCode", { configurable: true, value: 137 });
+      return true;
+    });
+
+    await expect(releaseAndStopChild(child, releasePath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+  });
+
   it.runIf(process.platform !== "win32")(
     "does not follow a dangling release-marker symlink during child cleanup",
     async () => {
