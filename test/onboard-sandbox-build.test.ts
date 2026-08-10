@@ -18,6 +18,7 @@ import {
 
 beforeEach(() => {
   vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK", "1");
+  vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
 
 describe("onboard helpers", () => {
@@ -448,7 +449,7 @@ sandboxBaseImage.resolveSandboxBaseImage = (options) => {
   };
 };
 buildContext.stageOptimizedSandboxBuildContext = () => {
-  const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-build-"));
+  const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
   const stagedDockerfile = path.join(buildCtx, "Dockerfile");
   fs.writeFileSync(
     stagedDockerfile,

@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { checkpointGatewayAuthority } from "../../onboard/gateway-authority-checkpoint";
+import {
+  checkpointGatewayAuthority,
+  gatewayOwnerFromCheckpoint,
+} from "../../onboard/gateway-authority-checkpoint";
+import { describeGatewayOwnerForError, sameGatewayOwner } from "../../onboard/gateway-ownership";
 import {
   GatewayAuthorityError,
   gatewayAuthorityFailureLines,
@@ -23,7 +27,10 @@ import {
 } from "../../onboard/sandbox-recreate-transaction";
 import { decisionSelected } from "../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
-import type { CheckpointSandboxRecreatePhase } from "../../state/onboard-checkpoint-types";
+import type {
+  CheckpointGatewayAuthority,
+  CheckpointSandboxRecreatePhase,
+} from "../../state/onboard-checkpoint-types";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
@@ -38,6 +45,7 @@ export interface RebuildRecreateJournal {
   readonly id: string;
   readonly acceptedTarget: boolean;
   readonly sourceConfirmedAbsent: boolean;
+  readonly gatewayAuthority: CheckpointGatewayAuthority;
   readonly targetGeneration: string;
   readonly targetIntentFingerprint: string;
   markDeleting(): void;
@@ -90,6 +98,7 @@ export const observeRebuildSandbox = observeSandboxOnGateway;
 
 export interface OpenRebuildRecreateJournalInput {
   readonly target: RebuildRecreateJournalTarget;
+  readonly expectedGatewayAuthority: CheckpointGatewayAuthority;
   readonly agentName: string;
   readonly targetIntentFingerprint: string;
   readonly log: (message: string) => void;
@@ -116,11 +125,20 @@ export function openRebuildRecreateJournal(
       gatewayName: target.gatewayName,
       gatewayPort: target.gatewayPort,
     });
+    const expectedAuthority = gatewayOwnerFromCheckpoint(input.expectedGatewayAuthority);
+    if (!sameGatewayOwner(expectedAuthority, authority)) {
+      throw new GatewayAuthorityError(
+        "Gateway lifecycle authority changed after authoritative rebuild preflight " +
+          `(${describeGatewayOwnerForError(expectedAuthority)} -> ${describeGatewayOwnerForError(authority)}). ` +
+          "Retry the rebuild; the current run will not delete the source sandbox.",
+      );
+    }
   } catch (error) {
     if (!(error instanceof GatewayAuthorityError)) throw error;
     input.onAuthorityRefusal?.(gatewayAuthorityFailureLines(error, "sandbox rebuild"));
     throw error;
   }
+  const gatewayAuthority = checkpointGatewayAuthority(authority);
   const sourceEntry = registry.getSandbox(target.sandboxName);
   const observation = observe(target);
   const active = onboardSession.loadSession()?.checkpoint?.sandboxRecreate ?? null;
@@ -144,7 +162,7 @@ export function openRebuildRecreateJournal(
       machineState: current.machine.state,
       updatedAt: new Date().toISOString(),
       sandboxIdentity: decisionSelected({ name: target.sandboxName, agent: agentName }),
-      gatewayAuthority: decisionSelected(checkpointGatewayAuthority(authority)),
+      gatewayAuthority: decisionSelected(gatewayAuthority),
     };
     beginSandboxRecreateTransaction(current, {
       sandboxName: target.sandboxName,
@@ -179,6 +197,7 @@ export function openRebuildRecreateJournal(
     id: transaction.id,
     acceptedTarget,
     sourceConfirmedAbsent: recovery.action === "continue_create",
+    gatewayAuthority,
     targetGeneration: transaction.targetGeneration,
     targetIntentFingerprint: transaction.targetIntentFingerprint,
     markDeleting: () => {

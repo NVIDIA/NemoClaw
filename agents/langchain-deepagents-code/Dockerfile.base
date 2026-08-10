@@ -94,6 +94,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         util-linux=2.41-5 \
         procps=2:4.0.4-9 \
         e2fsprogs=1.47.2-3+b11 \
+        "dos2unix=7.5.2-1*" \
         openssh-sftp-server=1:10.0p1-7+deb13u4 \
         ripgrep=14.1.1-1+b4 \
     && if [ -n "${NEMOCLAW_CORPORATE_CA_B64:-}" ]; then \

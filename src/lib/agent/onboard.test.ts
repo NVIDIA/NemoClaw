@@ -2,6 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  run: vi.fn(),
+}));
+
+vi.mock("../runner", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../runner")>()),
+  run: mocks.run,
+}));
+
+import { sandboxConfigSyncArgs } from "../onboard/config-sync";
 import type { AgentDefinition } from "./defs";
 // Import source directly so tests cannot pass against a stale build.
 import {
@@ -305,6 +316,7 @@ describe("agent setup session boundaries", () => {
   }
 
   afterEach(() => {
+    mocks.run.mockReset();
     vi.restoreAllMocks();
   });
 
@@ -343,6 +355,28 @@ describe("agent setup session boundaries", () => {
       model: "model-x",
     });
     expect(context.recordStepFailed).not.toHaveBeenCalled();
+  });
+
+  it("writes non-default agent configuration through noninteractive sandbox exec", async () => {
+    const runCaptureOpenshell = vi.fn(() => "NEMOCLAW_AGENT_BINARY_CHECK:ok");
+    const { context } = createAgentSetupContext(runCaptureOpenshell);
+    const agent = makeAgent({
+      name: "hermes",
+      healthProbe: { url: "", port: 0, timeout_seconds: 0 },
+    });
+
+    await handleAgentSetup("sandbox-x", "meta-llama", "vllm-local", agent, false, null, context);
+
+    expect(mocks.run).toHaveBeenCalledTimes(1);
+    const [args, options] = mocks.run.mock.calls[0];
+    expect(args).toEqual(["/usr/bin/openshell", ...sandboxConfigSyncArgs("sandbox-x")]);
+    expect(options).toMatchObject({
+      input: expect.any(String),
+      stdio: ["pipe", "ignore", "inherit"],
+    });
+    expect(options.input).toContain('"provider": "vllm-local"');
+    expect(options.input).toContain('"model": "meta-llama"');
+    expect(options.input).toContain('"agent": "hermes"');
   });
 
   it("retries a configured gateway probe through the supplied scheduler", async () => {

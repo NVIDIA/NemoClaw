@@ -66,10 +66,7 @@ function exitForManagedBootstrapRecovery(error: ManagedBootstrapRecoveryBlockedE
 type RunOpenshell = NonNullable<DockerGpuPatchDeps["runOpenshell"]>;
 type RunCaptureOpenshell = NonNullable<DockerGpuPatchDeps["runCaptureOpenshell"]>;
 type Sleep = NonNullable<DockerGpuPatchDeps["sleep"]>;
-type LifecycleRegistrationFields = Pick<
-  SandboxEntry,
-  "lifecycleGeneration" | "lifecycleLiveIdentityFingerprint"
->;
+type LifecycleRegistrationFields = Pick<SandboxEntry, "lifecycleGeneration">;
 
 export interface SandboxGpuCreateFlowInput {
   sandboxName: string;
@@ -84,7 +81,7 @@ export interface SandboxGpuCreateFlowInput {
   createArgv: string[];
   sandboxEnv: NodeJS.ProcessEnv;
   sandboxStartupCommand: string[];
-  lifecycleRegistrationFields?: LifecycleRegistrationFields;
+  lifecycleGeneration?: SandboxEntry["lifecycleGeneration"];
   prebuild: SandboxPrebuildResult;
   restoreBackupPath: string | null;
   terminalAgent: boolean;
@@ -264,9 +261,7 @@ export async function runSandboxGpuCreateFlow(
         input.sandboxStartupCommand,
         process.env,
         {
-          ...(input.lifecycleRegistrationFields?.lifecycleGeneration
-            ? { registryGeneration: input.lifecycleRegistrationFields.lifecycleGeneration }
-            : {}),
+          ...(input.lifecycleGeneration ? { registryGeneration: input.lifecycleGeneration } : {}),
         },
       ) ?? null;
   } catch (error) {
@@ -281,7 +276,7 @@ export async function runSandboxGpuCreateFlow(
     registryImageRef,
     lifecycleRegistrationFields: {
       ...(portableLifecycleGeneration ? { lifecycleGeneration: portableLifecycleGeneration } : {}),
-      ...input.lifecycleRegistrationFields,
+      ...(input.lifecycleGeneration ? { lifecycleGeneration: input.lifecycleGeneration } : {}),
     },
   };
 }

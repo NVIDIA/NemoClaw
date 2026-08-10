@@ -482,13 +482,54 @@
             "limits": {
               "type": "object",
               "required": [
-                "requestTimeoutSeconds"
+                "maxRequestBodyBytes",
+                "maxRequestHeaderBytes",
+                "maxOutputTokens",
+                "requestTimeoutSeconds",
+                "shutdownTimeoutSeconds"
               ],
               "properties": {
+                "maxRequestBodyBytes": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 67108864
+                },
+                "maxRequestHeaderBytes": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1048576
+                },
+                "maxOutputTokens": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1048576
+                },
                 "requestTimeoutSeconds": {
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 86400
+                },
+                "shutdownTimeoutSeconds": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 86400
+                }
+              },
+              "additionalProperties": false
+            },
+            "requestGuard": {
+              "type": "object",
+              "required": [
+                "upstreamPort"
+              ],
+              "properties": {
+                "upstreamPort": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535,
+                  "not": {
+                    "const": 8081
+                  }
                 }
               },
               "additionalProperties": false
@@ -1239,7 +1280,8 @@
               "flashAttention",
               "kvCache",
               "speculativeDecoding",
-              "limits"
+              "limits",
+              "requestGuard"
             ],
             "properties": {
               "protocol": {},
@@ -1264,7 +1306,8 @@
               "flashAttention": {},
               "kvCache": {},
               "speculativeDecoding": {},
-              "limits": {}
+              "limits": {},
+              "requestGuard": {}
             },
             "propertyNames": {
               "not": {

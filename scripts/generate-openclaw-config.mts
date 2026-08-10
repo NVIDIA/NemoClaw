@@ -1409,6 +1409,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
       baseUrl: inferenceBaseUrl,
       apiKey: "unused",
       api: inferenceApi,
+      timeoutSeconds: agentTimeout,
       models: providerModels,
     },
   };
