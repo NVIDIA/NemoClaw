@@ -1467,7 +1467,7 @@ function printServingPortConflict(probe: ServingPortProbe): void {
     `  vLLM install failed: port ${String(VLLM_PORT)} is already in use by another process.`,
   );
   if (probe.reason) console.error(`    ${probe.reason}`);
-  console.error("  Stop that process or set NEMOCLAW_VLLM_PORT, then re-run onboarding.");
+  console.error("  Stop that process, then re-run onboarding.");
 }
 
 export function imageIsCached(

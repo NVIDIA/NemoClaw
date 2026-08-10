@@ -155,6 +155,7 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     expect(result).toEqual({ ok: false });
     expect(mocks.ensureDualStationVllmApiKey).not.toHaveBeenCalled();
     expect(beforeInstall).not.toHaveBeenCalled();
+    expect(errSpy.mock.calls.flat().join("\n")).not.toContain("NEMOCLAW_VLLM_PORT");
   });
 
   it("proceeds past the guard when the serving port is free", async () => {
