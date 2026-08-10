@@ -275,7 +275,7 @@ describe("startSandbox", () => {
         forwardRecovered: false,
       },
       "authenticated managed gateway recovery did not complete",
-      undefined,
+      PRIVATE_RECOVERY_DETAIL,
     ],
   ] as const)("fails closed on %s without exposing raw recovery details (#8662)", async (_label, recovery, expected, privateDetail) => {
     const h = harness();
@@ -289,9 +289,7 @@ describe("startSandbox", () => {
     }
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toContain(expected);
-    if (privateDetail) {
-      expect((failure as Error).message).not.toContain(privateDetail);
-    }
+    expect((failure as Error).message).not.toContain(privateDetail);
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
