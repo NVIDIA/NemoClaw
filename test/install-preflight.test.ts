@@ -23,6 +23,9 @@ import {
 const INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 const GITHUB_INSTALL_URL = "git+https://github.com/NVIDIA/NemoClaw.git";
+// This installer test owns the fake compiled-tree exemption.
+const INSTALLER_ONBOARD_MODULE_DIR = path.join("dist", "lib", "onboard");
+const INSTALLER_READINESS_MODULE_DIR = path.join("dist", "lib", "readiness");
 
 /** Minimal npm stub with an injectable install/link/run handler. */
 
@@ -1143,20 +1146,17 @@ fi`,
   ] as const)("applies installer storage admission when %s", (_context, gatewayMode, storageRemediationAvailable, status, onboardRan) => {
     const fixture = runStorageRemediationInstallerPreflight({
       gatewayMode,
-      // This exempt installer test owns the fake compiled-tree layout.
-      onboardModuleDir: path.join("dist", "lib", "onboard"),
-      readinessModuleDir: path.join("dist", "lib", "readiness"),
+      onboardModuleDir: INSTALLER_ONBOARD_MODULE_DIR,
+      readinessModuleDir: INSTALLER_READINESS_MODULE_DIR,
       storageRemediationAvailable,
     });
     expect(fixture.result.status, fixture.output).toBe(status);
     expect(fixture.onboardRan).toBe(onboardRan);
     expect(fixture.output).not.toMatch(/unsafe|injected/);
-    if (onboardRan) {
-      expect(fixture.output).not.toMatch(/Host preflight found issues/);
-    } else {
-      expect(fixture.output).toMatch(/Host preflight found issues/);
-      expect(fixture.output).toMatch(/Admission finding IDs: host\.docker\.storage_incompatible/);
-    }
+    expect(fixture.output.includes("Host preflight found issues")).toBe(!onboardRan);
+    expect(fixture.output.includes("Admission finding IDs: host.docker.storage_incompatible")).toBe(
+      !onboardRan,
+    );
   });
 
   function runNvidiaCdiInstallerRepairTest({
