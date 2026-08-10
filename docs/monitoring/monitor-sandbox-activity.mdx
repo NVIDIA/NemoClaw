@@ -122,7 +122,7 @@ If the request fails, check these items.
 
 1. Run `$$nemoclaw <name> status` to confirm the active provider and endpoint.
    Check the main `Inference` line first.
-   If it shows `unhealthy`, `unreachable`, or `not probed`, inspect the labeled upstream, local-backend, and auth-proxy diagnostics to identify the failing hop.
+   If it shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled upstream, local-backend, and auth-proxy diagnostics to identify the failing hop.
    Restart a local backend only when its own diagnostic fails.
 2. Run `$$nemoclaw <name> logs --follow` to view error messages from the blueprint runner.
 3. Verify that the host can reach the inference endpoint.

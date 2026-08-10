@@ -4,12 +4,22 @@
 import { captureOpenshellForStatus, isCommandTimeout } from "../../adapters/openshell/runtime";
 import { OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
+import type { ProviderHealthStatus } from "../../inference/health";
 import {
   buildSandboxInferenceRouteProbeArgs,
   classifyInferenceRouteFailureLabel,
   isDcodeManagedExecMissingDetail,
   parseSandboxInferenceRouteProbeResult,
 } from "./connect-inference-route-probe";
+import {
+  probeSandboxInferenceInvocation,
+  READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+  type SandboxInferenceInvocationInput,
+  type SandboxInferenceInvocationResult,
+} from "./inference-invocation-probe";
+
+export type { SandboxInferenceInvocationResult } from "./inference-invocation-probe";
+export type ProbeSandboxInferenceInvocation = typeof probeSandboxInferenceInvocation;
 
 export type SandboxInferenceRouteHealth = {
   ok: boolean;
@@ -89,4 +99,125 @@ export async function probeSandboxInferenceGatewayHealth(
         : `Inference gateway returned an invalid HTTP status (${status}) on ${endpoint}; ` +
           `check the in-sandbox proxy and gateway.`,
   };
+}
+
+function providerHealthDiagnostics(
+  providerHealth: ProviderHealthStatus | null,
+): ProviderHealthStatus[] {
+  if (!providerHealth) return [];
+  const { subprobes = [], ...primary } = providerHealth;
+  const labeledPrimary = primary.probeLabel ? primary : { ...primary, probeLabel: "upstream" };
+  return [labeledPrimary, ...subprobes];
+}
+
+function classifyInferenceInvocationFailureLabel(
+  httpStatus: number | null,
+): NonNullable<ProviderHealthStatus["failureLabel"]> {
+  if (httpStatus === null) return "unreachable";
+  if (httpStatus === 401 || httpStatus === 403) return "unauthorized";
+  return "unhealthy";
+}
+
+/**
+ * Report the reachable route as its own hop so an operator can tell a broken
+ * route from a reachable route that will not serve an inference request.
+ */
+function reachableRouteSubprobe(
+  gateway: SandboxInferenceRouteHealth,
+  endpoint: string,
+): ProviderHealthStatus {
+  return {
+    ok: true,
+    probed: true,
+    providerLabel: "Inference route",
+    probeLabel: "route reachability",
+    endpoint,
+    detail: gateway.detail,
+    okLabel: "reachable",
+  };
+}
+
+/**
+ * The route probe reads any final HTTP 200-499 as reachable, so a route with
+ * an invalidated provider credential answers 401 and still passes it. Health
+ * therefore reports the result of one inference request, and keeps the route
+ * probe as a subprobe so a failure shows that the route itself answered.
+ */
+function buildInvokedRouteHealth(
+  gateway: SandboxInferenceRouteHealth,
+  endpoint: string,
+  invocation: SandboxInferenceInvocationResult,
+): ProviderHealthStatus {
+  if (invocation.ok) {
+    return {
+      ok: true,
+      probed: true,
+      providerLabel: "Inference route",
+      endpoint,
+      detail: "Inference gateway served an inference request on https://inference.local.",
+      subprobes: [reachableRouteSubprobe(gateway, endpoint)],
+    };
+  }
+  return {
+    ok: false,
+    probed: true,
+    providerLabel: "Inference route",
+    endpoint,
+    detail: `Inference gateway did not serve an inference request: ${invocation.detail}.`,
+    failureLabel: classifyInferenceInvocationFailureLabel(invocation.httpStatus),
+    subprobes: [reachableRouteSubprobe(gateway, endpoint)],
+  };
+}
+
+export function buildSandboxInferenceRouteHealth(
+  gateway: SandboxInferenceRouteHealth | null,
+  providerHealth: ProviderHealthStatus | null,
+  invocation: SandboxInferenceInvocationResult | null,
+): ProviderHealthStatus {
+  const endpoint = gateway?.endpoint ?? "https://inference.local/v1/models";
+  const diagnostics = providerHealthDiagnostics(providerHealth);
+  let routeHealth: ProviderHealthStatus;
+  if (gateway?.ok && invocation) {
+    routeHealth = buildInvokedRouteHealth(gateway, endpoint, invocation);
+  } else if (gateway) {
+    routeHealth = {
+      ok: gateway.ok,
+      probed: true,
+      providerLabel: "Inference route",
+      endpoint,
+      detail: gateway.detail,
+      ...(gateway.ok
+        ? { okLabel: "reachable" }
+        : {
+            failureLabel: classifyInferenceRouteFailureLabel(gateway.httpStatus),
+          }),
+    };
+  } else {
+    routeHealth = {
+      ok: false,
+      probed: false,
+      providerLabel: "Inference route",
+      endpoint,
+      detail: `Could not probe ${endpoint} from inside the sandbox.`,
+    };
+  }
+  const subprobes = [...(routeHealth.subprobes ?? []), ...diagnostics];
+  return subprobes.length > 0 ? { ...routeHealth, subprobes } : routeHealth;
+}
+
+export function runSandboxInferenceInvocationProbe(
+  input: SandboxInferenceInvocationInput,
+  probe: ProbeSandboxInferenceInvocation = probeSandboxInferenceInvocation,
+  onProbeError: (error: unknown) => void = () => {},
+): SandboxInferenceInvocationResult {
+  try {
+    return probe(input, {}, READINESS_INFERENCE_INVOCATION_TIMEOUT_MS);
+  } catch (error) {
+    onProbeError(error);
+    return {
+      ok: false,
+      detail: "sandbox inference invocation probe could not run",
+      httpStatus: null,
+    };
+  }
 }

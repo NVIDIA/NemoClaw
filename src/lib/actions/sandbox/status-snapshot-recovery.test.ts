@@ -73,6 +73,7 @@ function snapshotDeps(recoveryResult: unknown) {
     },
     probeProviderHealthImpl,
     probeSandboxInferenceGatewayHealthImpl,
+    probeSandboxInferenceInvocationImpl: vi.fn(() => ({ ok: true }) as const),
     recoverSandboxProcesses: vi.fn(() => recoveryResult) as never,
   };
 }

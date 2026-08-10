@@ -82,8 +82,8 @@ $$nemoclaw my-assistant status
 ```
 
 Confirm that `inference get` reports the `vllm-local` provider and the `nemotron-ultra` model.
-Continue only when the `Inference` row in the status output reports `reachable`.
-This result confirms that the sandbox route returned HTTP `200` through `499`; it does not prove a successful model invocation.
+Continue only when the `Inference` row in the status output reports `healthy`.
+This result confirms that the sandbox route served one inference request; it does not establish results for other requests or models.
 
 ## Review Reboot and Resume Behavior
 

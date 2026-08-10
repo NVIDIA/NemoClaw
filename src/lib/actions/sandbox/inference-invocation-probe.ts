@@ -6,20 +6,29 @@ import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "../../inference/m
 import { shellQuote } from "../../runner";
 import { executeSandboxExecCommand, type SandboxCommandResult } from "./process-recovery";
 
-export type RebuildInferencePreflightInput = {
+export type SandboxInferenceInvocationInput = {
   sandboxName: string;
   provider: string;
   model: string;
   preferredInferenceApi: string | null;
 };
 
-export type RebuildInferencePreflightResult = { ok: true } | { ok: false; detail: string };
+export type SandboxInferenceInvocationResult =
+  | { ok: true }
+  | { ok: false; detail: string; httpStatus: number | null };
 
-export type RebuildInferencePreflightDeps = {
+export type SandboxInferenceInvocationDeps = {
   execute?: (sandboxName: string, command: string, timeout?: number) => SandboxCommandResult | null;
 };
 
-function buildProbeRequest(input: RebuildInferencePreflightInput): {
+/**
+ * Rebuild preflight recreates the sandbox and tolerates a slow first token.
+ * Status and start run in an interactive wait and use the shorter timeout.
+ */
+export const REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS = 100_000;
+export const READINESS_INFERENCE_INVOCATION_TIMEOUT_MS = 30_000;
+
+function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   endpoint: string;
   headers: string[];
   payload: Record<string, unknown>;
@@ -63,7 +72,9 @@ function buildProbeRequest(input: RebuildInferencePreflightInput): {
   };
 }
 
-export function buildRebuildInferenceProbeCommand(input: RebuildInferencePreflightInput): string {
+export function buildSandboxInferenceInvocationCommand(
+  input: SandboxInferenceInvocationInput,
+): string {
   const request = buildProbeRequest(input);
   const headerArgs = ["Content-Type: application/json", ...request.headers]
     .map((header) => `-H ${shellQuote(header)}`)
@@ -78,23 +89,36 @@ export function buildRebuildInferenceProbeCommand(input: RebuildInferencePreflig
 }
 
 /**
- * Exercise the configured gateway route from the still-running sandbox. The
- * request uses OpenShell's stored provider credential through inference.local;
- * no host credential is placed in the command or its output.
+ * Send one minimal agent request over the configured gateway route from the
+ * still-running sandbox. The request uses OpenShell's stored provider
+ * credential through inference.local; no host credential is placed in the
+ * command or its output.
  */
-export function preflightRebuildInferenceRoute(
-  input: RebuildInferencePreflightInput,
-  deps: RebuildInferencePreflightDeps = {},
-): RebuildInferencePreflightResult {
+export function probeSandboxInferenceInvocation(
+  input: SandboxInferenceInvocationInput,
+  deps: SandboxInferenceInvocationDeps = {},
+  timeoutMs: number = REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS,
+): SandboxInferenceInvocationResult {
   const execute = deps.execute ?? executeSandboxExecCommand;
-  const result = execute(input.sandboxName, buildRebuildInferenceProbeCommand(input), 100_000);
+  const result = execute(
+    input.sandboxName,
+    buildSandboxInferenceInvocationCommand(input),
+    timeoutMs,
+  );
   if (result?.status === 0) return { ok: true };
-  if (!result) return { ok: false, detail: "existing sandbox inference probe was unavailable" };
+  if (!result) {
+    return {
+      ok: false,
+      detail: "sandbox inference invocation probe was unavailable",
+      httpStatus: null,
+    };
+  }
   const httpStatus = result.stdout.match(/(?:^|\n)([1-5]\d\d)(?:\n|$)/)?.[1];
   return {
     ok: false,
     detail: httpStatus
-      ? `existing sandbox inference probe returned HTTP ${httpStatus}`
-      : `existing sandbox inference probe exited with status ${result.status}`,
+      ? `sandbox inference invocation probe returned HTTP ${httpStatus}`
+      : `sandbox inference invocation probe exited with status ${result.status}`,
+    httpStatus: httpStatus ? Number.parseInt(httpStatus, 10) : null,
   };
 }

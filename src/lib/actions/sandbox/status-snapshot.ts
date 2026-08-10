@@ -35,11 +35,15 @@ import {
   buildGatewayInferenceGetArgs,
   canSandboxGatewayRouteRealign,
 } from "./connect-inference-gateway";
-import { classifyInferenceRouteFailureLabel } from "./connect-inference-route-probe";
 import { getSandboxDockerRuntime } from "./docker-health";
 import type { SandboxGatewayState } from "./gateway-state";
 import { getReconciledSandboxGatewayState, getSandboxGatewayStateForStatus } from "./gateway-state";
-import { probeSandboxInferenceGatewayHealth } from "./inference-route-health";
+import {
+  buildSandboxInferenceRouteHealth,
+  type ProbeSandboxInferenceInvocation,
+  probeSandboxInferenceGatewayHealth,
+  runSandboxInferenceInvocationProbe,
+} from "./inference-route-health";
 import {
   getSandboxStatusPreflight,
   type SandboxStatusFailureLayer,
@@ -103,47 +107,9 @@ export function maybeGetSandboxStatusInferenceHealth(
   );
 }
 
-function providerHealthDiagnostics(
-  providerHealth: ProviderHealthStatus | null,
-): ProviderHealthStatus[] {
-  if (!providerHealth) return [];
-  const { subprobes = [], ...primary } = providerHealth;
-  const labeledPrimary = primary.probeLabel ? primary : { ...primary, probeLabel: "upstream" };
-  return [labeledPrimary, ...subprobes];
-}
-
 /** True when the authoritative inference route must make status exit nonzero. */
 export function isInferenceHealthFailing(inferenceHealth: ProviderHealthStatus | null): boolean {
   return Boolean(inferenceHealth && (!inferenceHealth.probed || !inferenceHealth.ok));
-}
-
-function buildSandboxInferenceRouteHealth(
-  gateway: Awaited<ReturnType<ProbeSandboxInferenceGatewayHealth>>,
-  providerHealth: ProviderHealthStatus | null,
-): ProviderHealthStatus {
-  const endpoint = gateway?.endpoint ?? "https://inference.local/v1/models";
-  const diagnostics = providerHealthDiagnostics(providerHealth);
-  const routeHealth: ProviderHealthStatus = gateway
-    ? {
-        ok: gateway.ok,
-        probed: true,
-        providerLabel: "Inference route",
-        endpoint,
-        detail: gateway.detail,
-        ...(gateway.ok
-          ? { okLabel: "reachable" }
-          : {
-              failureLabel: classifyInferenceRouteFailureLabel(gateway.httpStatus),
-            }),
-      }
-    : {
-        ok: false,
-        probed: false,
-        providerLabel: "Inference route",
-        endpoint,
-        detail: `Could not probe ${endpoint} from inside the sandbox.`,
-      };
-  return diagnostics.length > 0 ? { ...routeHealth, subprobes: diagnostics } : routeHealth;
 }
 
 export interface SandboxStatusReport {
@@ -294,6 +260,7 @@ interface CollectSandboxStatusSnapshotDeps {
   captureOpenshellForStatusImpl?: typeof captureOpenshellForStatus;
   probeProviderHealthImpl?: ProbeProviderHealth;
   probeSandboxInferenceGatewayHealthImpl?: ProbeSandboxInferenceGatewayHealth;
+  probeSandboxInferenceInvocationImpl?: ProbeSandboxInferenceInvocation;
   delayInferenceRecoveryProbe?: DelayInferenceRecoveryProbe;
   reportInferenceProbeError?: (message: string) => void;
   probeTerminalRuntimeHealth?: ProbeTerminalRuntimeHealth;
@@ -582,7 +549,33 @@ export async function collectSandboxStatusSnapshot(
       reportInferenceProbeError(error, opts.deps?.reportInferenceProbeError ?? console.error);
       gatewayChain = null;
     }
-    inferenceHealth = buildSandboxInferenceRouteHealth(gatewayChain, providerHealth);
+    // Take the provider and model as one pair. Falling back per field can pair
+    // a live model with a recorded provider and request a route neither one
+    // describes.
+    const invocationRoute =
+      live?.provider && live.model
+        ? { provider: live.provider, model: live.model }
+        : { provider: currentProvider, model: currentModel };
+    const invocationModel = (invocationRoute.model || "").trim();
+    const invocationProvider = (invocationRoute.provider || "").trim();
+    const invocation =
+      gatewayChain?.ok && invocationModel && invocationProvider
+        ? runSandboxInferenceInvocationProbe(
+            {
+              sandboxName,
+              provider: invocationProvider,
+              model: invocationModel,
+              preferredInferenceApi: sb?.preferredInferenceApi ?? null,
+            },
+            opts.deps?.probeSandboxInferenceInvocationImpl,
+            (error) =>
+              reportInferenceProbeError(
+                error,
+                opts.deps?.reportInferenceProbeError ?? console.error,
+              ),
+          )
+        : null;
+    inferenceHealth = buildSandboxInferenceRouteHealth(gatewayChain, providerHealth, invocation);
   }
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   const terminalRuntimeHealth =

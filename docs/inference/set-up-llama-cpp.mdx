@@ -155,7 +155,7 @@ $$nemoclaw my-assistant doctor
 docker port nemoclaw-llama-cpp
 ```
 
-Accept the result when `status` reports `Managed llama.cpp: running`, the inference route is `reachable`, and `doctor` exits with status `0`.
+Accept the result when `status` reports `Managed llama.cpp: running`, the inference route is `healthy`, and `doctor` exits with status `0`.
 The Docker port output must contain `127.0.0.1:8081`.
 These checks do not establish agent and model qualification.
 

@@ -127,8 +127,8 @@ $$nemoclaw my-assistant status
 $$nemoclaw my-assistant doctor
 ```
 
-Accept the result when `status` reports the inference route as `reachable` and `doctor` exits with status `0`.
-Route reachability does not by itself establish successful model invocation.
+Accept the result when `status` reports the inference route as `healthy` and `doctor` exits with status `0`.
+The `healthy` state means the route served one inference request; it does not establish results for other requests or models.
 
 Verify the bounded host publication:
 

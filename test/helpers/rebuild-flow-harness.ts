@@ -53,7 +53,7 @@ const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-life
 const messaging = requireDist("../../messaging/index.js");
 const mcpBridge = requireDist("./mcp-bridge.js");
 const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
-const rebuildInference = requireDist("./rebuild-inference-preflight.js");
+const inferenceInvocation = requireDist("./inference-invocation-probe.js");
 const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
 const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
 const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
@@ -529,7 +529,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(nim, "detectGpu").mockReturnValue(null);
   const routeResults = [...(overrides.dcodeRouteResults ?? [{ ok: true }])];
   const preflightDcodeRouteSpy = vi
-    .spyOn(rebuildInference, "preflightRebuildInferenceRoute")
+    .spyOn(inferenceInvocation, "probeSandboxInferenceInvocation")
     .mockImplementation(() => routeResults.shift() ?? { ok: true });
   const preparedDcodeBuildContext = {
     buildCtx: "/tmp/dcode-rebuild-context",

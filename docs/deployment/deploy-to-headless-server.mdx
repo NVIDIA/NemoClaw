@@ -235,8 +235,8 @@ $$nemoclaw headless-agent connect --probe-only
 ```
 
 `$$nemoclaw headless-agent status` exits nonzero when the sandbox, gateway, local container, or authoritative inference route is not verified.
-Its main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox.
-HTTP `200` through `499` reports `reachable`, while HTTP `500` through `599` reports `unhealthy`.
+Its main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox, then sends one inference request over the same route when that probe reports the route reachable.
+The line reports `healthy` when the route served the request, `unauthorized` when the route rejected it with HTTP `401` or `403`, and `unhealthy` when the route returned HTTP `500` through `599`.
 <AgentOnly variant="openclaw,hermes">
 
 During an SSH session, `status` points to `$$nemoclaw headless-agent dashboard-url` only when the agent gateway is running and loopback dashboard access needs a port forward.
@@ -251,7 +251,7 @@ It does not restart or replace the shared host OpenShell gateway.
 Readiness requires all of these results:
 
 - The exact OpenShell sandbox row is `Ready` or `Running`.
-- `$$nemoclaw headless-agent status` exits with status `0` and reports the inference route as `reachable`.
+- `$$nemoclaw headless-agent status` exits with status `0` and reports the inference route as `healthy`.
 - `$$nemoclaw headless-agent connect --probe-only` exits with status `0`.
 
 ## Access the Dashboard and API

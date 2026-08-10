@@ -57,6 +57,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
           ? async () => Promise.reject(new Error("openshell unavailable TOKEN=super-secret"))
           : async () => options.routeHealth,
       ),
+      probeSandboxInferenceInvocationImpl: vi.fn(() => ({ ok: true }) as const),
       probeTerminalRuntimeHealth: vi.fn(() => ({ kind: "ok" as const, oomKillCount: 0 as const })),
       reportInferenceProbeError,
     };
@@ -173,9 +174,9 @@ describe("sandbox status inference.local route health (#6192)", () => {
     const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
 
     expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
-    expect(snapshot.inferenceHealth?.subprobes).toEqual([
+    expect(snapshot.inferenceHealth?.subprobes).toContainEqual(
       expect.objectContaining({ ok: false, probeLabel: "upstream" }),
-    ]);
+    );
   });
 
   it("probes the live route while status displays the sandbox's recorded route (#6315)", async () => {
@@ -219,14 +220,14 @@ describe("sandbox status inference.local route health (#6192)", () => {
     const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
 
     expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
-    expect(snapshot.inferenceHealth?.subprobes).toEqual([
+    expect(snapshot.inferenceHealth?.subprobes).toContainEqual(
       expect.objectContaining({
         ok: false,
         probed: false,
         probeLabel: "upstream",
         detail: "Direct provider health probe could not run.",
       }),
-    ]);
+    );
   });
 
   it("preserves local backend and auth-proxy diagnostics beneath the route result", async () => {
@@ -261,6 +262,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
     const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
 
     expect(snapshot.inferenceHealth?.subprobes?.map((probe) => probe.probeLabel)).toEqual([
+      "route reachability",
       "ollama backend",
       "auth proxy",
     ]);

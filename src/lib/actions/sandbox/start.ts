@@ -8,6 +8,11 @@ import {
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
+  probeSandboxInferenceInvocation,
+  READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+  type SandboxInferenceInvocationResult,
+} from "./inference-invocation-probe";
+import {
   resolveSandboxLifecycleProvider,
   type SandboxLifecycleResult,
 } from "./runtime/lifecycle-runtime";
@@ -52,7 +57,37 @@ export interface SandboxStartDeps {
   runtimeProviders?: RuntimeProviderBundleRegistry;
   restoreStartupState?: (sandboxName: string) => void;
   verifyGateway?: (sandboxName: string) => Promise<void>;
+  probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
   log?: (message: string) => void;
+}
+
+/**
+ * A started gateway that answers the /v1/models probe can still reject an
+ * inference request, so start sends one inference request with the recorded
+ * provider and model before it reports success. A registry entry with no
+ * provider or no model has nothing to request, so start skips the request
+ * instead of failing.
+ */
+function checkStartedSandboxInference(
+  sandboxName: string,
+  sandbox: SandboxEntry,
+  deps: SandboxStartDeps,
+  log: (message: string) => void,
+): SandboxInferenceInvocationResult | null {
+  const model = (sandbox.model ?? "").trim();
+  const provider = (sandbox.provider ?? "").trim();
+  if (!model || !provider) return null;
+  log("  Checking that the sandbox serves an agent request…");
+  return (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(
+    {
+      sandboxName,
+      provider,
+      model,
+      preferredInferenceApi: sandbox.preferredInferenceApi ?? null,
+    },
+    {},
+    READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+  );
 }
 
 /**
@@ -85,6 +120,7 @@ export async function startSandbox(
   const result = resolved.lifecycle.start(input);
   if (result.exitCode !== 0) return result;
 
+  const readiness: { inference: SandboxInferenceInvocationResult | null } = { inference: null };
   await resolved.lifecycle.verifyStarted(input, async (name) => {
     log("  Restoring sandbox startup state…");
     const restoreStartupState =
@@ -96,6 +132,12 @@ export async function startSandbox(
     restoreStartupState(name);
     log("  Checking gateway health and host forwards…");
     await (deps.verifyGateway ?? verifyGateway)(name);
+    readiness.inference = checkStartedSandboxInference(name, resolved.sandbox, deps, log);
   });
+  if (readiness.inference && !readiness.inference.ok) {
+    log(`  The sandbox started but inference is not usable: ${readiness.inference.detail}.`);
+    log(`  Run the sandbox doctor command for '${sandboxName}' to identify the failing hop.`);
+    return { exitCode: 1 };
+  }
   return { exitCode: 0 };
 }
