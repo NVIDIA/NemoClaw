@@ -496,6 +496,60 @@ describe("GPU E2E helpers", () => {
     expect(artifacts).toEqual(["command-v-ollama", "pre-cleanup-managed-image-ollama"]);
   });
 
+  it("keeps protected Ollama startup diagnostics out of assertion output", async () => {
+    const diagnostic = "sensitive Ollama journal diagnostic";
+    const resultArtifact = "/tmp/start-managed-image-ollama.result.json";
+    const artifacts: string[] = [];
+    const host = {
+      command: async (
+        _command: string,
+        _args: string[],
+        options: { artifactName?: string } = {},
+      ) => {
+        artifacts.push(options.artifactName ?? "");
+        switch (options.artifactName) {
+          case "command-v-ollama":
+            return { exitCode: 0, stderr: "", stdout: "/usr/local/bin/ollama\n" };
+          case "pre-cleanup-managed-image-ollama":
+            return { exitCode: 0, stderr: "", stdout: "" };
+          case "start-managed-image-ollama":
+            return {
+              artifacts: {
+                result: resultArtifact,
+                stderr: "/tmp/start-managed-image-ollama.stderr.txt",
+                stdout: "/tmp/start-managed-image-ollama.stdout.txt",
+              },
+              exitCode: 1,
+              stderr: diagnostic,
+              stdout: "",
+            };
+          default:
+            throw new Error(
+              `unexpected command after failed startup: ${options.artifactName ?? ""}`,
+            );
+        }
+      },
+    } as unknown as HostCliClient;
+
+    let failure: unknown;
+    try {
+      await startProtectedOllama(host);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    const failureText = failure instanceof Error ? failure.message : String(failure);
+    expect(failureText).toContain("protected Ollama startup failed");
+    expect(failureText).toContain(resultArtifact);
+    expect(failureText).not.toContain(diagnostic);
+    expect(artifacts).toEqual([
+      "command-v-ollama",
+      "pre-cleanup-managed-image-ollama",
+      "start-managed-image-ollama",
+    ]);
+  });
+
   it("stops GPU setup when Ollama cleanup leaves a listener", async () => {
     const success = { exitCode: 0, stderr: "", stdout: "" };
     const host = {
