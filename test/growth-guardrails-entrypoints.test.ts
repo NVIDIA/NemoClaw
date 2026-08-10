@@ -82,6 +82,25 @@ describe("codebase growth trusted assertion", () => {
     expect(result.stdout).toContain("PASS: this PR preserves the codebase growth contract.");
   });
 
+  it("accepts the initial codebase growth budget migration", () => {
+    const result = runEntrypoint([
+      [
+        {
+          filename: "ci/codebase-growth-budget.json",
+          status: "added",
+          additions: 1,
+          deletions: 0,
+        },
+      ],
+      blobPayload(null),
+      blobPayload(CODEBASE_BUDGET),
+      blobPayload(CLEAN_TEST_BUDGET),
+    ]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("PASS: this PR preserves the codebase growth contract.");
+  });
+
   it("prints a conditional increase in the consolidated failure", () => {
     const baseSource = "it('a', () => { expect(1).toBe(1); });";
     const headSource = "it('a', () => { if (condition) expect(1).toBe(1); });";

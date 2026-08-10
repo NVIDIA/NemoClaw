@@ -51,12 +51,16 @@ async function evaluateBudgetChange(
     ({ filename, previous_filename }) =>
       filename === CODEBASE_GROWTH_BUDGET_FILE || previous_filename === CODEBASE_GROWTH_BUDGET_FILE,
   );
+  const budgetAdded = files.some(
+    ({ filename, status }) => filename === CODEBASE_GROWTH_BUDGET_FILE && status === "added",
+  );
   const baseBlobs = await client.fetchBlobs(env.REPO, env.BASE_SHA, [CODEBASE_GROWTH_BUDGET_FILE]);
   const baseText = baseBlobs.get(CODEBASE_GROWTH_BUDGET_FILE);
-  if (baseText == null)
-    throw new Error(`${CODEBASE_GROWTH_BUDGET_FILE} is missing at the base revision`);
-  const baseBudget = parseCodebaseGrowthBudget(baseText, "base codebase growth budget");
-  if (!budgetChanged) return [];
+  if (!budgetChanged) {
+    if (baseText == null)
+      throw new Error(`${CODEBASE_GROWTH_BUDGET_FILE} is missing at the base revision`);
+    return [];
+  }
   const headBlobs = await client.fetchBlobs(env.HEAD_REPO, env.HEAD_SHA, [
     CODEBASE_GROWTH_BUDGET_FILE,
   ]);
@@ -64,6 +68,12 @@ async function evaluateBudgetChange(
   if (headText == null)
     throw new Error(`${CODEBASE_GROWTH_BUDGET_FILE} must remain present at the latest PR commit`);
   const headBudget = parseCodebaseGrowthBudget(headText, "latest PR commit codebase growth budget");
+  if (baseText == null) {
+    if (!budgetAdded)
+      throw new Error(`${CODEBASE_GROWTH_BUDGET_FILE} is missing at the base revision`);
+    return [];
+  }
+  const baseBudget = parseCodebaseGrowthBudget(baseText, "base codebase growth budget");
   const renames = new Map<string, string>();
   for (const { filename, previous_filename } of files) {
     if (previous_filename && previous_filename !== filename)
@@ -106,7 +116,9 @@ async function main(): Promise<void> {
   if (violations.length > 0) {
     console.error("FAIL: codebase growth contract rejected this PR.");
     for (const violation of violations) console.error(`- ${violation}`);
-    console.error("Run affected tests and the local codebase growth contract test: npm run test:changed");
+    console.error(
+      "Run affected tests and the local codebase growth contract test: npm run test:changed",
+    );
     console.error("The trusted PR check also compares the base and latest PR commits.");
     process.exit(1);
   }
