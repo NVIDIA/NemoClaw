@@ -1,0 +1,46 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.106
+
+NemoClaw v0.0.106 converges readiness across lifecycle commands, upgrades the managed OpenShell runtime to v0.0.101, and adds bounded DGX Spark vLLM choices.
+It strengthens sandbox and Hermes recovery, local inference diagnostics, endpoint policy authority, and scoped uninstall.
+It also improves update safety, image defaults, and installation failure reporting.
+
+- `nemoclaw host probe --json`, onboarding, resume, and rebuild now use one credential-free readiness report and admission policy.
+  Blocking findings stop lifecycle effects before NemoClaw changes credentials, images, gateways, policies, or sandboxes.
+  For more information, refer to [System Readiness](/user-guide/openclaw/reference/system-readiness) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- The managed OpenShell runtime now uses v0.0.101 across installation, gateways, sandboxes, supervisors, and managed agent images.
+  Existing installations retain the v0.0.99 fallback only for migration, and incompatible sandbox names stop the update before destructive work.
+  For more information, refer to [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes) and [Configure Runtime Identity](/user-guide/openclaw/reference/configure-runtime-identity).
+- DGX Spark Express now offers a fixed managed vLLM option, while `nvidia/Qwen3.6-35B-A3B-NVFP4` remains the default profile for one DGX Spark.
+  The additional Muse Glimmer profile remains Experimental, runs on one DGX Spark, and excludes vision and DFlash.
+  Dual DGX Spark route discovery accepts the `iproute2` `from` field, and Model Router allows a longer bounded cold start.
+  For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm) and [Set Up vLLM on Two DGX Sparks](/user-guide/openclaw/inference/local-inference/set-up-vllm-on-two-dgx-sparks).
+- The Experimental portable OpenClaw profile now maps `host.openshell.internal` to the OpenShell Podman host gateway and preserves the profile in recovery commands.
+  Cleanup targets the receipt-owned rootless Podman container and fails closed when socket or container authority cannot be proved.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Managed llama.cpp onboarding now cleans up rejected fixed-port state and distinguishes blocked Docker bridge access from a healthy host and runtime.
+  By default, the local Ollama proxy refuses a backend that listens beyond loopback, and onboarding retries while a selected model becomes tool-call responsive.
+  For more information, refer to [Set Up llama.cpp](/user-guide/openclaw/inference/local-inference/set-up-llama-cpp) and [Use Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama).
+- Gemini 3.x managed routes now load compatibility metadata so OpenClaw preserves thought signatures across tool calls.
+  `NEMOCLAW_AGENT_TIMEOUT` now controls both the agent and provider request deadlines, while `status` waits for route convergence after automatic gateway recovery.
+  For more information, refer to [Use Google Gemini](/user-guide/openclaw/inference/hosted-inference/use-google-gemini), [Configure Inference Timeouts](/user-guide/openclaw/inference/manage-inference/configure-inference-timeouts), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Trusted-private endpoints now keep the normalized hostname and exact address pins bound from admission through policy replay.
+  Managed MCP rejects mixed public and private address answers before mutation, and managed startup rejects a symlinked corporate CA before reading it.
+  The OpenClaw image also defaults to the non-root `sandbox` user, while OpenClaw v2026.7.1 gateway self-dialback stays on loopback inside OpenShell.
+  For more information, refer to [Meet Custom Endpoint Security Requirements](/user-guide/openclaw/inference/custom-endpoints/custom-endpoint-security), [Configure Corporate CA Trust](/user-guide/openclaw/security/configure-corporate-ca-trust), and [Security Best Practices](/user-guide/openclaw/security/best-practices).
+- Hermes rebuilds restart the gateway after workspace restore and before managed MCP restoration.
+  The cron gate remains active until the replacement process passes MCP and health verification.
+  Rebuild also settles an expired Shields timer before success, while macOS profile migration uses a native atomic no-clobber rename.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and [Security Best Practices](/user-guide/hermes/security/best-practices).
+- Sandbox recreation and live creation now wait for OpenShell to release ownership before Docker cutover.
+  Starting a stopped sandbox waits for a transient missing supervisor and repeats recovery, readiness, and port-forward checks.
+  Legacy gateway updates reuse validated prepared backups, while rebuilds restore reviewed build contexts and retire only proven obsolete images.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- `nemoclaw update --fresh` now refuses older or incomparable maintained versions unless the operator supplies `--allow-downgrade`.
+  Scoped uninstall isolates gateway shutdown by namespace and preserves checkpointed state for retry after a partial failure.
+  Installer linking skips npm lifecycle scripts, launcher initialization failures produce redacted single-line errors, and LangChain Deep Agents Code images include `dos2unix`.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).

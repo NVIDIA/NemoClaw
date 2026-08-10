@@ -6,13 +6,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { writeInstallerReadinessModuleStubs } from "./helpers/installer-readiness-stubs";
+import { writeNpmStub } from "./helpers/installer-run-fixture";
 import {
   INSTALLER_PAYLOAD,
   readShellConstant,
   TEST_SYSTEM_PATH,
   writeExecutable,
 } from "./helpers/installer-sourced-env";
-import { writeNpmStub } from "./helpers/installer-run-fixture";
 
 const INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
@@ -784,7 +785,7 @@ exit 0
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
-  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 26.04 LTS","CgroupVersion":"2"}'
+  echo '{"ServerVersion":"29.3.1","Name":"Docker Desktop","OperatingSystem":"Ubuntu 26.04 LTS","CgroupVersion":"2"}'
   exit 0
 fi
 exit 0
@@ -886,7 +887,7 @@ fi`,
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
-  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  echo '{"ServerVersion":"29.3.1","Name":"Docker Desktop","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
   exit 0
 fi
 exit 0
@@ -993,7 +994,7 @@ fi`,
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
-  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  echo '{"ServerVersion":"29.3.1","Name":"Docker Desktop","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
   exit 0
 fi
 exit 0
@@ -1200,31 +1201,32 @@ exports.getNvidiaCdiSpecPath = (host) =>
   String(host.dockerCdiSpecDirs[0]).replace(/\\/+$/, "") + "/nvidia.yaml";
 exports.isWslDockerDesktopRuntime = (host) =>
   Boolean(host && host.isWsl && host.runtime === "docker-desktop");
-exports.planHostRemediation = (host) =>
+exports.planHostAdvisories = (host) =>
   host.cdiNvidiaGpuSpecMissing
     ? host.isWsl && host.runtime === "docker-desktop"
       ? [{
           title: "Use Docker Desktop WSL GPU compatibility path",
           reason: "missing nvidia.com/gpu CDI; using Docker --gpus",
           commands: ["verify Docker --gpus support from WSL"],
-          blocking: false,
+          severity: "info",
         }]
       : [{
           title: "Generate NVIDIA CDI device specs",
           reason: "missing nvidia.com/gpu",
           commands: ["sudo nvidia-ctk cdi generate --output=" + exports.getNvidiaCdiSpecPath(host)],
-          blocking: true,
+          severity: "blocking",
         }]
     : host.cdiNvidiaGpuSpecStale && !host.nvidiaContainerToolkitInstalled
       ? [{
           title: "Install NVIDIA Container Toolkit and refresh CDI device specs",
           reason: "nvidia-container-toolkit missing",
           commands: ["sudo apt-get install -y nvidia-container-toolkit"],
-          blocking: true,
+          severity: "blocking",
         }]
     : [];
 `,
     );
+    writeInstallerReadinessModuleStubs(path.join(sourceRoot, "dist", "lib", "readiness"));
     writeNodeStub(fakeBin);
     writeExecutable(
       path.join(fakeBin, "sudo"),
@@ -1444,7 +1446,7 @@ exit 0
     expect(sudoLog).toBe("");
   });
 
-  it("warns on Podman but still runs onboarding", () => {
+  it("rejects Podman through canonical installer admission (#7411)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-podman-warning-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
@@ -1513,15 +1515,11 @@ exit 0
     });
 
     const output = `${result.stdout}${result.stderr}`;
-    expect(result.status).toBe(0);
-    expect(output).toMatch(/Host preflight found warnings\./);
+    expect(result.status).toBe(1);
+    expect(output).toMatch(/Host preflight found issues that will prevent onboarding right now\./);
     expect(output).toMatch(/Detected container runtime: podman/);
-    expect(output).toMatch(
-      /Podman may work in some environments, but it is not a supported runtime/,
-    );
-    expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(
-      /^onboard --non-interactive --yes-i-accept-third-party-software --yes$/m,
-    );
+    expect(output).toMatch(/Skipping onboarding until the host prerequisites above are fixed\./);
+    expect(fs.existsSync(onboardLog)).toBe(false);
   });
 
   it("requires explicit terms acceptance in non-interactive install mode", () => {
@@ -1537,7 +1535,7 @@ exit 0
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
-  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  echo '{"ServerVersion":"29.3.1","Name":"Docker Desktop","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
   exit 0
 fi
 exit 0
@@ -1608,7 +1606,7 @@ fi`,
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
-  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  echo '{"ServerVersion":"29.3.1","Name":"Docker Desktop","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
   exit 0
 fi
 exit 0
@@ -2005,7 +2003,7 @@ exit 0
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
-  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  echo '{"ServerVersion":"29.3.1","Name":"Docker Desktop","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
   exit 0
 fi
 exit 0
@@ -3881,7 +3879,7 @@ function writeDockerOkStub(fakeBin: string) {
     path.join(fakeBin, "docker"),
     `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
-  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  echo '{"ServerVersion":"29.3.1","Name":"Docker Desktop","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
   exit 0
 fi
 exit 0
