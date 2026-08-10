@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
+import { resolveOpenshellSandboxSshHost } from "../openshell/sandbox-ssh-host";
 
 export type SandboxCommandResult = {
   status: number;
@@ -51,6 +52,8 @@ export function executeSandboxCommandTransport(
   });
   if (sshConfigResult.status !== 0) return null;
   if (!sshConfigResult.output.trim()) return null;
+  const sshHost = resolveOpenshellSandboxSshHost(sandboxName, sshConfigResult.output);
+  if (sshHost === null) return null;
 
   const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-");
   try {
@@ -67,7 +70,7 @@ export function executeSandboxCommandTransport(
         "ConnectTimeout=5",
         "-o",
         "LogLevel=ERROR",
-        `openshell-${sandboxName}`,
+        sshHost,
         command,
       ],
       {

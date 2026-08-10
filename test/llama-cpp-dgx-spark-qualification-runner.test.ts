@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import { loadLlamaCppImageConfig } from "../scripts/checks/export-llama-cpp-image-config.mts";
 import {
   buildCandidateImageArgv,
+  buildRuntimeLogForbiddenValues,
   buildServerContainerArgv,
   expectedRegistryName,
   expectedRegistryOwner,
@@ -25,6 +26,7 @@ import {
   validateModelsResponse,
   validateOpenClawQualificationImageLabels,
   validateQualificationPlan,
+  validateRuntimeLogRedaction,
   validateStartupLog,
 } from "../scripts/checks/run-llama-cpp-dgx-spark-qualification.mts";
 
@@ -280,7 +282,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
-  it("constructs a read-only bounded one-GPU server without putting the key on argv (#8260)", () => {
+  it("activates the YAML-bound guard without putting the key on argv (#8260)", () => {
     const content = Buffer.from("qualification model fixture\n", "utf8");
     const testPlan = qualificationPlanForModel(content);
     const modelRoot = fs.realpathSync(
@@ -338,6 +340,37 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         ]),
       );
       expect(valuesAfter(argv, "--publish")).toEqual(["127.0.0.1::8081"]);
+      expect(valuesAfter(argv, "--entrypoint")).toEqual([
+        "/usr/local/bin/nemoclaw-llama-cpp-request-guard",
+      ]);
+      expect(valuesAfter(argv, "--listen-port")).toEqual([String(testPlan.recipe.serve.port)]);
+      expect(valuesAfter(argv, "--upstream-port")).toEqual([
+        String(testPlan.recipe.serve.requestGuard.upstreamPort),
+      ]);
+      expect(valuesAfter(argv, "--max-request-body-bytes")).toEqual([
+        String(testPlan.recipe.serve.limits.maxRequestBodyBytes),
+      ]);
+      expect(valuesAfter(argv, "--max-request-header-bytes")).toEqual([
+        String(testPlan.recipe.serve.limits.maxRequestHeaderBytes),
+      ]);
+      expect(valuesAfter(argv, "--max-output-tokens")).toEqual([
+        String(testPlan.recipe.serve.limits.maxOutputTokens),
+      ]);
+      expect(valuesAfter(argv, "--request-timeout-seconds")).toEqual([
+        String(testPlan.recipe.serve.limits.requestTimeoutSeconds),
+      ]);
+      expect(valuesAfter(argv, "--shutdown-timeout-seconds")).toEqual([
+        String(testPlan.recipe.serve.limits.shutdownTimeoutSeconds),
+      ]);
+      const separator = argv.indexOf("--");
+      expect(argv[separator + 1]).toBe("/usr/local/bin/llama-server");
+      expect(valuesAfter(argv.slice(separator), "--host")).toEqual(["127.0.0.1"]);
+      expect(valuesAfter(argv.slice(separator), "--port")).toEqual([
+        String(testPlan.recipe.serve.requestGuard.upstreamPort),
+      ]);
+      expect(valuesAfter(argv.slice(separator), "--n-predict")).toEqual([
+        String(testPlan.recipe.serve.limits.maxOutputTokens),
+      ]);
       const agentQualificationArgv = buildServerContainerArgv(testPlan, {
         apiKeyHostPath: "/work/tmp/api-key",
         containerName: "qualified-server",
@@ -349,7 +382,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         runtimeGid: 1001,
         runtimeUid: 1001,
       });
-      expect(valuesAfter(agentQualificationArgv, "--publish")).toEqual(["127.0.0.1:8081:8081"]);
+      expect(valuesAfter(agentQualificationArgv, "--publish")).toEqual([]);
       expect(valuesAfter(argv, "--network")).toEqual(["qualified-internal"]);
       expect(valuesAfter(argv, "--user")).toEqual(["1001:1001"]);
       expect(valuesAfter(argv, "--api-key-file")).toEqual(["/run/secrets/llama-cpp-api-key"]);
@@ -428,6 +461,45 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
       "offloaded 57/57 layers to GPU\noffloaded 58/58 layers to GPU",
     ]) {
       expect(() => validateStartupLog(log)).toThrow();
+    }
+  });
+
+  it("rejects every runner-derived credential, model path, prompt, and response in bounded runtime logs (#8144)", () => {
+    const apiKey = "a".repeat(64);
+    const authorization = `Bearer ${apiKey}`;
+    const forbidden = buildRuntimeLogForbiddenValues(
+      plan,
+      parsedInvocation(),
+      apiKey,
+      authorization,
+    );
+    expect(forbidden).toEqual(
+      expect.arrayContaining([
+        `${authorization.slice(0, -1)}0`,
+        MODEL_PATH,
+        `/models/${plan.recipe.model.file.path}`,
+        "This request must be rejected.",
+        "Return one short readiness token.",
+        "Reply with exactly: ready",
+        "Reply with one token.",
+        "Count upward without stopping.",
+        "Report the requested qualification status.",
+        "Use the available tool to get the weather in Seattle.",
+        '{"conditions":"clear","temperature_c":21}',
+        '{"location":"Seattle"}',
+        plan.qualification.agentQualification.prompts.normal,
+        plan.qualification.agentQualification.prompts.tool,
+        plan.qualification.agentQualification.prompts.continuation,
+        plan.qualification.agentQualification.fixture.value,
+      ]),
+    );
+    expect(validateRuntimeLogRedaction("server request complete\n", forbidden)).toEqual({
+      ok: true,
+    });
+    for (const value of forbidden) {
+      expect(() => validateRuntimeLogRedaction(`server log: ${value}\n`, forbidden)).toThrow(
+        /credential, path, prompt, or response/u,
+      );
     }
   });
 

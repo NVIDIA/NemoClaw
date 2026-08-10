@@ -55,6 +55,7 @@ import {
   type RebuildHermesRegistryImageState,
   rebuildHermesRegistryImageState,
   requireRebuildHermesInitialImageTag,
+  requireRebuildHermesReplacementLifecycleReceipt,
 } from "./rebuild-hermes-image-state.ts";
 import {
   REBUILD_HERMES_OLD_BASE_FIXTURE,
@@ -82,12 +83,8 @@ const HERMES_MANIFEST = path.join(REPO_ROOT, "agents", "hermes", "manifest.yaml"
 const OLD_HERMES_VERSION = `v${REBUILD_HERMES_OLD_BASE_FIXTURE.hermesCalver}`;
 const OLD_HERMES_REGISTRY_VERSION = OLD_HERMES_VERSION.slice(1);
 const STALE_BASE_REBUILD = process.env.NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E === "1";
-const TEST_SANDBOX_PREFIX = STALE_BASE_REBUILD ? "e2e-rebuild-hermes-base" : "e2e-rebuild-hermes";
-const SANDBOX_NAME =
-  process.env.NEMOCLAW_SANDBOX_NAME ??
-  [TEST_SANDBOX_PREFIX, process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT, process.pid]
-    .filter(Boolean)
-    .join("-");
+const TEST_SANDBOX_PREFIX = STALE_BASE_REBUILD ? "e2e-rebuild-base" : "e2e-rebuild-hermes";
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? TEST_SANDBOX_PREFIX;
 validateSandboxName(SANDBOX_NAME);
 SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX) ||
   fail(
@@ -1220,6 +1217,13 @@ test(STALE_BASE_REBUILD
   expect(rebuildOutput).toContain(`Using Hermes Agent base image: ${phase1BaseResolution.ref}`);
   expect(rebuildOutput).not.toContain("Rebuilding Hermes Agent base image");
   expect(rebuildOutput).not.toMatch(/provider credential not found/i);
+  // The gateway starts during recreation and reads its durable state before the
+  // restore replaces it, so rebuild must hand back a process that started after
+  // the restore. Either post-restore path reports one; a live gateway that was
+  // only checked reports neither.
+  expect(rebuildOutput, "rebuild must report a Hermes gateway bound to the restored state").toMatch(
+    /Hermes gateway (?:restarted and verified|recovered) after state restore/u,
+  );
   await waitForSandboxReady(host, apiKey, activeOpenshellBin, "phase-6-post-rebuild");
 
   const backupPathText = rebuildOutput.match(/^\s*Backup:\s+(.+)$/mu)?.[1]?.trim();
@@ -1265,6 +1269,10 @@ test(STALE_BASE_REBUILD
     resultText(oldImageInspect),
   ).toBe(true);
   expect(resultText(oldImageInspect)).toMatch(/No such (?:image|object)(?::|\s)/iu);
+  await artifacts.writeJson(
+    "phase-6-replacement-registry-lifecycle-receipt.json",
+    requireRebuildHermesReplacementLifecycleReceipt(rebuiltRegistry),
+  );
 
   progress.phase("validate upgraded state inference and backup hygiene");
   const restoredMarker = await host.command(

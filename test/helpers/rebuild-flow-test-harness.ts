@@ -587,6 +587,17 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           forwardRecovered: false,
         })),
     );
+  const restartSandboxGatewaySpy = vi
+    .spyOn(processRecovery, "restartSandboxGateway")
+    .mockImplementation(
+      overrides.restartSandboxGateway ??
+        (() => ({
+          ok: true,
+          restarted: true,
+          healthPassed: true,
+          forwardRecovered: false,
+        })),
+    );
   vi.spyOn(shields, "repairMutableConfigPerms").mockImplementation(
     overrides.repairMutableConfigPerms ?? (() => ({ applied: true, verified: true, errors: [] })),
   );
@@ -633,6 +644,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     applyPresetSpy,
     backupSandboxStateSpy,
     checkAndRecoverSandboxProcessesSpy,
+    restartSandboxGatewaySpy,
     errorSpy,
     executeSandboxCommandSpy,
     ensureMessagingHostForwardAfterRebuildSpy,

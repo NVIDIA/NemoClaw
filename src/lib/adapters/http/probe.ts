@@ -40,7 +40,7 @@ export interface CurlProbeOptions {
    * connection with ambient proxies disabled.
    */
   pinnedAddresses?: readonly string[];
-  /** Non-forgeable proof of the exact private subset admitted by the SSRF preflight. */
+  /** Non-forgeable proof of the exact host and complete pins admitted by SSRF preflight. */
   trustedPrivateCapability?: TrustedPrivateEndpointCapability;
   spawnSyncImpl?: (
     command: string,

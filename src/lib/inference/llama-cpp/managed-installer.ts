@@ -24,7 +24,7 @@ import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
 import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
 import { buildVllmDockerEnv } from "../vllm-docker-env";
-import { LLAMA_CPP_CREDENTIAL_ENV, LLAMA_CPP_PORT } from "./contract";
+import { LLAMA_CPP_CREDENTIAL_ENV } from "./contract";
 import { acquireVerifiedLlamaCppGguf, verifyLlamaCppGgufCacheEntry } from "./gguf-acquisition";
 import { compileLlamaCppGgufCachePlan } from "./gguf-cache-plan";
 import type {
@@ -287,7 +287,14 @@ function launchContract(
       flashAttention: recipe.spec.serve.flashAttention,
       idleSleepSeconds: recipe.spec.serve.idleSleepSeconds,
       kvCache: recipe.spec.serve.kvCache,
-      limits: { requestTimeoutSeconds: recipe.spec.serve.limits.requestTimeoutSeconds },
+      limits: {
+        maxRequestBodyBytes: recipe.spec.serve.limits.maxRequestBodyBytes,
+        maxRequestHeaderBytes: recipe.spec.serve.limits.maxRequestHeaderBytes,
+        maxOutputTokens: recipe.spec.serve.limits.maxOutputTokens,
+        requestTimeoutSeconds: recipe.spec.serve.limits.requestTimeoutSeconds,
+        shutdownTimeoutSeconds: recipe.spec.serve.limits.shutdownTimeoutSeconds,
+      },
+      requestGuard: { upstreamPort: recipe.spec.serve.requestGuard.upstreamPort },
       microBatchSize: recipe.spec.serve.microBatchSize,
       port: recipe.spec.serve.port,
       protocol: recipe.spec.serve.protocol,
@@ -350,15 +357,25 @@ export function resolveManagedLlamaCppOwnerSelection(
     throw new Error("Managed llama.cpp catalog authority changed; rerun onboarding.");
   }
   const recipe = catalog.recipes.find(({ metadata }) => metadata.id === owner.recipeId);
-  const preset = catalog.presets.find(
+  const candidatePresets = catalog.presets.filter(
     ({ spec }) =>
       spec.selection === "explicit-only" &&
       spec.plan.backend === "install-llama-cpp" &&
       spec.plan.recipeRef === owner.recipeId,
   );
-  if (!recipe || !isLlamaCppServingRecipe(recipe) || !preset) {
+  if (!recipe || !isLlamaCppServingRecipe(recipe) || candidatePresets.length === 0) {
     throw new Error("Managed llama.cpp declarative authority is unavailable.");
   }
+  const matchingPresets = candidatePresets.filter(({ metadata }) =>
+    catalog.sources.some(
+      ({ kind, id, digest }) =>
+        kind === "ServingPreset" && id === metadata.id && digest === owner.presetDigest,
+    ),
+  );
+  if (matchingPresets.length !== 1) {
+    throw new Error("Managed llama.cpp recipe authority changed; rerun onboarding.");
+  }
+  const preset = matchingPresets[0]!;
   const recipeDigest = catalog.sources.find(
     ({ kind, id }) => kind === "ServingRecipe" && id === recipe.metadata.id,
   )?.digest;
@@ -395,7 +412,7 @@ function lifecycleFor(input: {
     bindings: {
       apiKeyHostPath: input.paths.apiKeyPath,
       containerName: MANAGED_LLAMA_CPP_CONTAINER_NAME,
-      hostPort: LLAMA_CPP_PORT,
+      hostPort: recipe.spec.serve.port,
       imageReference: recipe.spec.runtime.image,
       model: input.artifact,
       network: { isolation: "docker-internal", name: MANAGED_LLAMA_CPP_NETWORK_NAME },
@@ -488,6 +505,7 @@ export async function installManagedLlamaCpp(
   const checkPort = options.checkPort ?? checkPortAvailable;
   const log = options.log ?? ((message: string) => console.log(message));
   const recipe = selection.recipe;
+  const hostPort = recipe.spec.serve.port;
   let engine: ContainerEngine | null = null;
   let operation: HostLocalInferenceOperation | null = null;
   let owner: ReturnType<typeof claimManagedLlamaCppOwner>["owner"] | null = null;
@@ -523,10 +541,10 @@ export async function installManagedLlamaCpp(
     assertContainerNameAvailable(engine, persistedReceipt);
 
     if (persistedReceipt === null && pending.length === 0) {
-      const port = await checkPort(LLAMA_CPP_PORT);
+      const port = await checkPort(hostPort);
       if (!port.ok) {
         throw new Error(
-          `Managed llama.cpp port ${String(LLAMA_CPP_PORT)} is unavailable: ${port.reason}`,
+          `Managed llama.cpp port ${String(hostPort)} is unavailable: ${port.reason}`,
         );
       }
     }
@@ -608,10 +626,10 @@ export async function installManagedLlamaCpp(
     if (receipt !== null) {
       receipt = lifecycle.resume(receipt);
     } else {
-      const port = await checkPort(LLAMA_CPP_PORT);
+      const port = await checkPort(hostPort);
       if (!port.ok) {
         throw new Error(
-          `Managed llama.cpp port ${String(LLAMA_CPP_PORT)} is unavailable: ${port.reason}`,
+          `Managed llama.cpp port ${String(hostPort)} is unavailable: ${port.reason}`,
         );
       }
       const transactionId = randomBytes(32).toString("hex");
@@ -664,6 +682,7 @@ export async function resumeManagedLlamaCppRuntime(
   const engine = operation.engine;
   const verify = options.verifyGguf ?? verifyLlamaCppGgufCacheEntry;
   const checkPort = options.checkPort ?? checkPortAvailable;
+  const hostPort = selection.recipe.spec.serve.port;
   const plan = compileLlamaCppGgufCachePlan(selection.recipe);
   const cacheRoot = ensureSharedHuggingFaceCache(homeDir);
   const artifact = await verify(plan, cacheRoot);
@@ -706,11 +725,9 @@ export async function resumeManagedLlamaCppRuntime(
     receipt = loadManagedLlamaCppReceipt(paths);
   }
   if (receipt === null) {
-    const port = await checkPort(LLAMA_CPP_PORT);
+    const port = await checkPort(hostPort);
     if (!port.ok) {
-      throw new Error(
-        `Managed llama.cpp port ${String(LLAMA_CPP_PORT)} is unavailable: ${port.reason}`,
-      );
+      throw new Error(`Managed llama.cpp port ${String(hostPort)} is unavailable: ${port.reason}`);
     }
     loadOrCreateManagedLlamaCppApiKey(paths);
     const transactionId = randomBytes(32).toString("hex");

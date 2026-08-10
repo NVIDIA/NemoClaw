@@ -12,7 +12,11 @@ import * as httpProbe from "../src/lib/adapters/http/probe";
 import * as runtime from "../src/lib/adapters/openshell/runtime";
 import * as store from "../src/lib/credentials/store";
 import * as gatewayRuntime from "../src/lib/gateway-runtime-action";
-import { MessagingWorkflowPlanner, type SandboxMessagingPlan } from "../src/lib/messaging";
+import {
+  type MessagingAgentId,
+  MessagingWorkflowPlanner,
+  type SandboxMessagingPlan,
+} from "../src/lib/messaging";
 import {
   getMessagingChannelConfigEnvKeys,
   MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
@@ -22,6 +26,7 @@ import { getChannelTokenKeys, knownChannelNames, listChannels } from "../src/lib
 import * as onboardSession from "../src/lib/state/onboard-session";
 import type { SandboxEntry } from "../src/lib/state/registry";
 import * as registry from "../src/lib/state/registry";
+import { makeMessagingPlan } from "./helpers/messaging-plan-fixtures";
 
 class ExitError extends Error {
   constructor(public readonly code: number | undefined) {
@@ -41,41 +46,8 @@ const TEST_ENV_KEYS = new Set([
 ]);
 const originalProcessEnv = { ...process.env };
 
-function makeMessagingPlan(
-  sandboxName: string,
-  channelIds: string[] = [],
-  disabledChannels: string[] = [],
-  agent = "openclaw",
-): SandboxMessagingPlan {
-  const disabled = new Set(disabledChannels);
-  return {
-    schemaVersion: 1,
-    sandboxName,
-    agent: agent as SandboxMessagingPlan["agent"],
-    workflow: "onboard",
-    channels: channelIds.map((channelId) => ({
-      channelId: channelId as SandboxMessagingPlan["channels"][number]["channelId"],
-      displayName: channelId,
-      authMode: channelId === "whatsapp" ? "in-sandbox-qr" : "token-paste",
-      active: !disabled.has(channelId),
-      selected: true,
-      configured: true,
-      disabled: disabled.has(channelId),
-      inputs: [],
-      hooks: [],
-    })),
-    disabledChannels: disabledChannels as SandboxMessagingPlan["disabledChannels"],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
-}
-
 function makeTelegramConfigPlan(requireMention: "0" | "1"): SandboxMessagingPlan {
-  const plan = makeMessagingPlan("test-sb", ["telegram"]);
+  const plan = makeMessagingPlan({ sandboxName: "test-sb", channels: ["telegram"] });
   return {
     ...plan,
     channels: plan.channels.map((channel) => ({
@@ -107,7 +79,12 @@ function makeRegistryEntry(
       ? {
           messaging: {
             schemaVersion: 1,
-            plan: makeMessagingPlan("test-sb", channelIds, disabledChannels, agent),
+            plan: makeMessagingPlan({
+              sandboxName: "test-sb",
+              channels: channelIds,
+              disabledChannels,
+              agent,
+            }),
           },
         }
       : {}),
@@ -154,7 +131,7 @@ let curlProbeSpy: MockInstance;
 let execSpy: MockInstance;
 let buildPlanSpy: MockInstance;
 
-let sandboxAgent: string;
+let sandboxAgent: MessagingAgentId;
 let registryEntry: SandboxEntry;
 let appliedPresets: string[];
 let presetContent: string | null;

@@ -512,6 +512,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const initLib = path.join(localLib, "sandbox-init.sh");
     const validator = path.join(localLib, "validate-hermes-env-secret-boundary.py");
     const sessionListPreviewPatcher = path.join(localLib, "patch-hermes-session-list-preview.py");
+    const sqliteTempStorePatcher = path.join(localLib, "patch-hermes-sqlite-temp-store.py");
     const discordRecoveryPatcher = path.join(
       localLib,
       "patch-hermes-discord-recovery-permissions.py",
@@ -526,7 +527,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const mcpTransaction = path.join(localLib, "hermes-mcp-config-transaction.py");
     const mcpCredentialBoundary = path.join(
       localLib,
-      "openshell-child-visible-credentials.v0.0.85.json",
+      "openshell-child-visible-credentials.v0.0.101.json",
     );
     const preloadDir = path.join(localLib, "preloads");
     const safetyNet = path.join(preloadDir, "sandbox-safety-net.js");
@@ -551,6 +552,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(initLib, "# init fixture\n");
       fs.writeFileSync(validator, "# validator fixture\n");
       fs.writeFileSync(sessionListPreviewPatcher, "# session list preview patcher fixture\n");
+      fs.writeFileSync(sqliteTempStorePatcher, "# SQLite temp store patcher fixture\n");
       fs.writeFileSync(discordRecoveryPatcher, "# Discord recovery patcher fixture\n");
       fs.writeFileSync(profilePolicyPatcher, "# profile policy patcher fixture\n");
       fs.writeFileSync(managedPolicyReader, "# managed policy reader fixture\n");
@@ -597,6 +599,10 @@ describe("sandbox rlimit system hooks (#2173)", () => {
           sessionListPreviewPatcher,
         )
         .replaceAll(
+          "/usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py",
+          sqliteTempStorePatcher,
+        )
+        .replaceAll(
           "/usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py",
           discordRecoveryPatcher,
         )
@@ -615,7 +621,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/usr/local/lib/nemoclaw/build-hermes-mcp-digest.py", buildMcpDigest)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py", mcpTransaction)
         .replaceAll(
-          "/usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json",
+          "/usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.101.json",
           mcpCredentialBoundary,
         )
         .replaceAll("/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js", safetyNet)

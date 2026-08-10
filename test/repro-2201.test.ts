@@ -31,6 +31,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { MessagingAgentId } from "../src/lib/messaging";
+import { makeMessagingPlan } from "./helpers/messaging-plan-fixtures";
+
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const NODE_BIN = path.dirname(process.execPath); // need node on PATH for shebangs
 const tmpFixtures: string[] = [];
@@ -44,33 +47,6 @@ afterEach(() => {
     }
   }
 });
-
-function makeMessagingPlan(sandboxName: string, agent: string | null, channelIds: string[]) {
-  return {
-    schemaVersion: 1,
-    sandboxName,
-    agent: agent ?? "openclaw",
-    workflow: "onboard",
-    channels: channelIds.map((channelId) => ({
-      channelId,
-      displayName: channelId,
-      authMode: "token-paste",
-      active: true,
-      selected: true,
-      configured: true,
-      disabled: false,
-      inputs: [],
-      hooks: [],
-    })),
-    disabledChannels: [],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
-}
 
 /**
  * Set up a temp HOME that mirrors the reporter's scenario:
@@ -90,12 +66,12 @@ function createFixture({
 }: {
   rebuildTarget: {
     name: string;
-    agent: string | null;
+    agent: MessagingAgentId | null;
     messagingPlanChannels?: string[] | null;
   };
   lastOnboarded: {
     name: string;
-    agent: string | null;
+    agent: MessagingAgentId | null;
     messagingPlanChannels?: string[] | null;
   };
   fromDockerfile?: string | null;
@@ -112,18 +88,18 @@ function createFixture({
     fs.writeFileSync(dockerfilePath, "FROM scratch\n");
   }
   const rebuildTargetMessagingPlan = rebuildTarget.messagingPlanChannels
-    ? makeMessagingPlan(
-        rebuildTarget.name,
-        rebuildTarget.agent,
-        rebuildTarget.messagingPlanChannels,
-      )
+    ? makeMessagingPlan({
+        sandboxName: rebuildTarget.name,
+        agent: rebuildTarget.agent ?? "openclaw",
+        channels: rebuildTarget.messagingPlanChannels,
+      })
     : null;
   const lastOnboardedMessagingPlan = lastOnboarded.messagingPlanChannels
-    ? makeMessagingPlan(
-        lastOnboarded.name,
-        lastOnboarded.agent,
-        lastOnboarded.messagingPlanChannels,
-      )
+    ? makeMessagingPlan({
+        sandboxName: lastOnboarded.name,
+        agent: lastOnboarded.agent ?? "openclaw",
+        channels: lastOnboarded.messagingPlanChannels,
+      })
     : null;
 
   // ── Registry — both sandboxes exist ───────────────────────────
@@ -219,7 +195,7 @@ function createFixture({
 
   // ── Fake openshell ────────────────────────────────────────────
   const sshConfig = [
-    `Host openshell-${sandboxName}`,
+    `Host openshell-${sandboxName}.default`,
     "  HostName 127.0.0.1",
     "  Port 2222",
     "  User sandbox",
@@ -234,7 +210,7 @@ const fs = require("node:fs");
 const a = process.argv.slice(2);
 const deleteMarker = ${JSON.stringify(deleteMarker)};
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
-if (a[0]==="-V" || a[0]==="--version")         { process.stdout.write("openshell 0.0.85\\n"); process.exit(0); }
+if (a[0]==="-V" || a[0]==="--version")         { process.stdout.write("openshell 0.0.101\\n"); process.exit(0); }
 if (a[0]==="status")                            { process.stdout.write("Server Status\\n  Gateway: nemoclaw\\n  Status: Connected\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="info")          { const i=a.indexOf("-g"); const name=i>=0?a[i+1]:"nemoclaw"; process.stdout.write("Gateway Info\\n\\nGateway: " + name + "\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="select")        { process.exit(0); }
@@ -256,7 +232,7 @@ process.exit(0);
       path.join(tmpDir, component),
       `#!/usr/bin/env node
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
-if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.85\\n");
+if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.101\\n");
 process.exit(0);
 `,
       { mode: 0o755 },

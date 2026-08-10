@@ -32,6 +32,7 @@ RUN apt-get update \
       curl=8.5.0-2ubuntu10.11 \
       g++-14=14.2.0-4ubuntu2~24.04.1 \
       gcc-14=14.2.0-4ubuntu2~24.04.1 \
+      golang-go=2:1.22~2build1 \
       libcurl4-openssl-dev=8.5.0-2ubuntu10.11 \
       libssl-dev=3.0.13-0ubuntu3.12 \
     && rm -rf /var/lib/apt/lists/*
@@ -80,6 +81,23 @@ RUN cmake -S . -B build \
     && find /opt/llama.cpp/licenses -type d -exec chmod 0555 '{}' + \
     && find /opt/llama.cpp/licenses -type f -exec chmod 0444 '{}' +
 
+WORKDIR /src/nemoclaw-request-guard
+
+COPY request-guard/go.mod request-guard/*.go ./
+
+RUN go test ./... \
+    && CGO_ENABLED=0 go build \
+      -trimpath \
+      -ldflags='-s -w -buildid=' \
+      -o /opt/llama.cpp/bin/nemoclaw-llama-cpp-request-guard . \
+    && mkdir -p /opt/llama.cpp/licenses/go \
+    && set -- /usr/share/doc/golang-[0-9]*-go/copyright \
+    && test "$#" -eq 1 \
+    && cp "$1" /opt/llama.cpp/licenses/go/copyright \
+    && chmod 0555 /opt/llama.cpp/bin/nemoclaw-llama-cpp-request-guard \
+    && chmod 0555 /opt/llama.cpp/licenses/go \
+    && chmod 0444 /opt/llama.cpp/licenses/go/copyright
+
 FROM ${CUDA_RUNTIME_IMAGE} AS runtime
 
 ARG CUDA_DEV_IMAGE
@@ -122,6 +140,7 @@ RUN apt-get update \
       /usr/bin/sh
 
 COPY --from=build --chmod=0555 /opt/llama.cpp/bin/llama-server /usr/local/bin/llama-server
+COPY --from=build --chmod=0555 /opt/llama.cpp/bin/nemoclaw-llama-cpp-request-guard /usr/local/bin/nemoclaw-llama-cpp-request-guard
 COPY --from=build --chmod=0555 /opt/llama.cpp/lib/ /opt/llama.cpp/lib/
 COPY --from=build /opt/llama.cpp/licenses/ /usr/local/share/licenses/
 

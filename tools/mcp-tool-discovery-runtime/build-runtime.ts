@@ -13,8 +13,12 @@ interface PackageLicense {
   text: string;
 }
 
-const outputDir = path.resolve("dist");
-const bundlePath = path.join(outputDir, "mcp-tool-discovery.mjs");
+const outputDir = path.resolve(process.env.NEMOCLAW_MCP_BUNDLE_OUTPUT_DIR ?? "dist");
+const emitReviewedArtifact = process.env.NEMOCLAW_MCP_REVIEWED_ARTIFACT === "1";
+const bundlePath = path.join(
+  outputDir,
+  process.env.NEMOCLAW_MCP_BUNDLE_FILENAME ?? "mcp-tool-discovery.mjs",
+);
 const licenseFileNames = ["LICENSE", "LICENSE.md", "LICENSE.txt", "license", "license.md"];
 const reviewedBundledPackages = [
   "@modelcontextprotocol/sdk",
@@ -57,7 +61,10 @@ function readPackageLicense(packageName: string): PackageLicense {
     name: packageName,
     version: manifest.version,
     declaredLicense: manifest.license,
-    text: fs.readFileSync(path.join(packageDir, licenseFileName), "utf8").trim(),
+    text: fs
+      .readFileSync(path.join(packageDir, licenseFileName), "utf8")
+      .trim()
+      .replace(/[ \t]+$/gmu, ""),
   };
 }
 
@@ -68,6 +75,8 @@ const result = await build({
   platform: "node",
   target: "node22",
   format: "esm",
+  legalComments: emitReviewedArtifact ? "eof" : undefined,
+  minifyWhitespace: emitReviewedArtifact,
   outfile: bundlePath,
   metafile: true,
 });

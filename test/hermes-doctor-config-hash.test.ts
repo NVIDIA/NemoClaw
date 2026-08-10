@@ -117,7 +117,7 @@ describe("Hermes doctor and config hash boundary", () => {
     const managedPolicyReaderPath = path.join(libDir, "managed_policy.py");
     const mcpCredentialBoundaryPath = path.join(
       libDir,
-      "openshell-child-visible-credentials.v0.0.85.json",
+      "openshell-child-visible-credentials.v0.0.101.json",
     );
     const stateLockPlanPath = path.join(tmp, "state-lock-plan.json");
     const hermesCronRestoreControlPath = path.join(libDir, "hermes-cron-restore-control.py");
@@ -141,6 +141,7 @@ describe("Hermes doctor and config hash boundary", () => {
         path.join(libDir, "gateway-supervisor.sh"),
         path.join(libDir, "validate-hermes-env-secret-boundary.py"),
         path.join(libDir, "patch-hermes-session-list-preview.py"),
+        path.join(libDir, "patch-hermes-sqlite-temp-store.py"),
         discordRecoveryPatcherPath,
         profilePolicyPatcherPath,
         managedPolicyReaderPath,

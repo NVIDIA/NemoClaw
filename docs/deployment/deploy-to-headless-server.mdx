@@ -237,6 +237,12 @@ $$nemoclaw headless-agent connect --probe-only
 `$$nemoclaw headless-agent status` exits nonzero when the sandbox, gateway, local container, or authoritative inference route is not verified.
 Its main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox.
 HTTP `200` through `499` reports `reachable`, while HTTP `500` through `599` reports `unhealthy`.
+<AgentOnly variant="openclaw,hermes">
+
+During an SSH session, `status` points to `$$nemoclaw headless-agent dashboard-url` only when the agent gateway is running and loopback dashboard access needs a port forward.
+The printed command quotes the sandbox name so that the shell treats it as one argument.
+
+</AgentOnly>
 
 `connect --probe-only` waits up to 300 seconds by default for a cold sandbox to become ready.
 It then verifies or repairs the in-sandbox agent process and host forwards without opening a shell.
