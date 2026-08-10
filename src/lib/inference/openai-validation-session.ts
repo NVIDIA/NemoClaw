@@ -97,6 +97,7 @@ function chatToolPayload(model: string, maxTokens = STRICT_TOOL_PROBE_INITIAL_TO
 function failedChatValidation(
   result: CurlProbeResult,
   failureMessage: string,
+  diagnosticCodes?: string[],
 ): OpenAiValidationResult {
   const failure = {
     name: "Chat Completions API with tool calling",
@@ -104,6 +105,7 @@ function failedChatValidation(
     curlStatus: result.curlStatus,
     message: failureMessage,
     body: result.body,
+    ...(diagnosticCodes ? { diagnosticCodes } : {}),
   };
   return {
     ok: false,
@@ -118,7 +120,11 @@ function failedChatToolCall(result: CurlProbeResult, leaked: boolean): OpenAiVal
       "Use an endpoint/runtime that returns structured tool_calls (for Hermes on local inference, " +
       "prefer vLLM with --tool-call-parser hermes)."
     : `HTTP ${result.httpStatus}: Chat Completions did not return a tool call`;
-  return failedChatValidation(result, failureMessage);
+  return failedChatValidation(
+    result,
+    failureMessage,
+    leaked ? undefined : ["openai-chat-missing-structured-tool-call"],
+  );
 }
 
 function failedChatValidationAfterReasoningRetry(): OpenAiValidationResult {
@@ -263,6 +269,7 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
     return deps.legacyProbe(endpointUrl, model, apiKey, options);
   };
   let retriedReasoningTruncation = false;
+  let retriedToolReadiness = false;
 
   try {
     if (!options.skipResponsesProbe) {
@@ -336,17 +343,36 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
               }),
             retryTransientHttp,
           );
-        const initial = await requestChat();
-        if (!requireToolCall || !initial.ok || !isReasoningOnlyLengthResponse(initial.body)) {
-          return initial;
+        let result = await requestChat();
+        if (!requireToolCall || !result.ok) return result;
+        if (isReasoningOnlyLengthResponse(result.body)) {
+          retriedReasoningTruncation = true;
+          console.log(STRICT_TOOL_PROBE_REASONING_RETRY_MESSAGE);
+          addTraceEvent("tool_call_reasoning_retry", {
+            initial_max_tokens: STRICT_TOOL_PROBE_INITIAL_TOKENS,
+            retry_max_tokens: STRICT_TOOL_PROBE_RETRY_TOKENS,
+          });
+          return requestChat(STRICT_TOOL_PROBE_RETRY_TOKENS, false);
         }
-        retriedReasoningTruncation = true;
-        console.log(STRICT_TOOL_PROBE_REASONING_RETRY_MESSAGE);
-        addTraceEvent("tool_call_reasoning_retry", {
-          initial_max_tokens: STRICT_TOOL_PROBE_INITIAL_TOKENS,
-          retry_max_tokens: STRICT_TOOL_PROBE_RETRY_TOKENS,
-        });
-        return requestChat(STRICT_TOOL_PROBE_RETRY_TOKENS, false);
+        for (const delayMs of RETRY_DELAYS_MS) {
+          if (
+            options.retryChatCompletionsToolReadiness !== true ||
+            result.httpStatus !== 200 ||
+            deps.hasChatCompletionsToolCall(result.body) ||
+            deps.hasChatCompletionsToolCallLeak(result.body)
+          ) {
+            break;
+          }
+          retriedToolReadiness = true;
+          console.log(
+            `  Chat Completions API validation did not return a structured tool call; retrying in ${Math.round(delayMs / 1000)}s...`,
+          );
+          addTraceEvent("tool_call_readiness_retry", { delay_ms: delayMs });
+          await waitForRetry(delayMs);
+          result = await requestChat(STRICT_TOOL_PROBE_INITIAL_TOKENS, false);
+          if (!result.ok) break;
+        }
+        return result;
       },
     );
     if (chat.curlStatus !== 0) {
@@ -362,7 +388,7 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
     if (requireToolCall) {
       if (!deps.hasChatCompletionsToolCall(chat.body)) {
         const leaked = deps.hasChatCompletionsToolCallLeak(chat.body);
-        if (retriedReasoningTruncation) {
+        if (retriedReasoningTruncation || retriedToolReadiness) {
           return failedChatToolCall(chat, leaked);
         }
         return nativeFailureFallback(

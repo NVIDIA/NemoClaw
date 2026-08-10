@@ -43,6 +43,87 @@ describe("OpenAI validation keepalive sequence", () => {
     expect(harness.legacyProbe).not.toHaveBeenCalled();
   });
 
+  it("retries native validation until a structured tool call appears (#8714)", async () => {
+    const observedBodies: Array<Record<string, unknown>> = [];
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        observedBodies.push(JSON.parse(body));
+        response.setHeader("content-type", "application/json");
+        response.end(
+          observedBodies.length === 1
+            ? '{"choices":[{"finish_reason":"stop","message":{"content":"OK"}}]}'
+            : '{"choices":[{"finish_reason":"tool_calls","message":{"tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":{}}}]}}]}',
+        );
+      });
+    });
+    const port = await listen(server);
+    const harness = createOpenAiValidationTestDeps();
+    vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "nemotron-3-nano:30b",
+      "test-key",
+      {
+        skipResponsesProbe: true,
+        requireChatCompletionsToolCalling: true,
+        retryChatCompletionsToolReadiness: true,
+      },
+      harness,
+    );
+
+    expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+    expect(observedBodies).toHaveLength(2);
+    expect(harness.legacyProbe).not.toHaveBeenCalled();
+  });
+
+  it("stops native validation after structured tool calls remain missing (#8714)", async () => {
+    const observedBodies: Array<Record<string, unknown>> = [];
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        observedBodies.push(JSON.parse(body));
+        response.setHeader("content-type", "application/json");
+        response.end('{"choices":[{"finish_reason":"stop","message":{"content":"OK"}}]}');
+      });
+    });
+    const port = await listen(server);
+    const harness = createOpenAiValidationTestDeps();
+    vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "nemotron-3-nano:30b",
+      "test-key",
+      {
+        skipResponsesProbe: true,
+        requireChatCompletionsToolCalling: true,
+        retryChatCompletionsToolReadiness: true,
+      },
+      harness,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      failures: [
+        expect.objectContaining({
+          diagnosticCodes: ["openai-chat-missing-structured-tool-call"],
+        }),
+      ],
+    });
+    expect(observedBodies).toHaveLength(4);
+    expect(harness.legacyProbe).not.toHaveBeenCalled();
+  });
+
   it("retries reasoning-only tool-call truncation on the native connection", async () => {
     const observedBodies: Array<Record<string, unknown>> = [];
     const server = http.createServer((request, response) => {
