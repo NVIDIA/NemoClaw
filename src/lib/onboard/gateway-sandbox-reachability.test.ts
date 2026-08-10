@@ -507,6 +507,20 @@ describe("formatSandboxBridgeUnreachableMessage", () => {
     expect(msg).not.toContain("Restart Docker");
     expect(msg).not.toContain("ufw allow");
   });
+
+  it("reports Podman recovery when the portable profile cannot reach its daemon", () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const msg = formatSandboxBridgeUnreachableMessage({
+      ok: false,
+      reason: "docker_daemon_unreachable",
+      detail: "Cannot connect to the container runtime",
+    });
+    expect(msg).toContain("Podman service is not reachable");
+    expect(msg).toContain("systemctl --user try-restart podman.service");
+    expect(msg).toContain("systemctl --user enable --now podman.socket");
+    expect(msg).toContain("nemoclaw onboard --experimental-profile portable");
+    expect(msg).not.toContain("Restart the Docker daemon");
+  });
 });
 
 describe("tryAutoApplyUfwRule (#4265)", () => {
@@ -683,6 +697,31 @@ describe("verifySandboxBridgeGatewayReachableOrExit host-gateway retry", () => {
     } finally {
       log.mockRestore();
     }
+  });
+
+  it("retries a transient portable host-gateway TCP failure", async () => {
+    const portableFailure = {
+      ...hostGatewayTcpFailure,
+      routeKind: "portable_host_gateway" as const,
+      gatewayIp: "169.254.1.2",
+    };
+    const reachabilityImpl = vi
+      .fn()
+      .mockResolvedValueOnce(portableFailure)
+      .mockResolvedValueOnce({ ...portableFailure, ok: true as const, reason: "ok" as const });
+    const sleepMsImpl = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await verifySandboxBridgeGatewayReachableOrExit(true, {
+      reachabilityImpl,
+      retryAttempts: 3,
+      retryDelayMs: 25,
+      sleepMsImpl,
+    });
+
+    expect(reachabilityImpl).toHaveBeenCalledTimes(2);
+    expect(sleepMsImpl).toHaveBeenCalledOnce();
+    expect(sleepMsImpl).toHaveBeenCalledWith(25);
   });
 
   it("fails after exhausting persistent host-gateway tcp failures", async () => {

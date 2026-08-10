@@ -455,6 +455,20 @@ export function formatSandboxBridgeUnreachableMessage(
       .join("\n");
   }
 
+  if (result.reason === "docker_daemon_unreachable" && isPortableExperimentalProfile()) {
+    return [
+      failLine("Podman service is not reachable for the portable gateway probe."),
+      result.detail ? `    ${result.detail}` : undefined,
+      "    If the user-scoped Podman service is active, restart it:",
+      "      systemctl --user try-restart podman.service",
+      "    Enable and start the user-scoped Podman socket:",
+      "      systemctl --user enable --now podman.socket",
+      `    Then rerun \`${cliName()} onboard --experimental-profile portable\`.`,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join("\n");
+  }
+
   if (result.reason === "docker_daemon_unreachable") {
     return [
       failLine("Docker daemon is not reachable for the sandbox bridge probe."),
