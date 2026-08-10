@@ -60,6 +60,7 @@ let homeLocalBin: string;
 let openshellPath: string;
 let stateFile: string;
 let scriptFile: string;
+let installerInvocationsFile: string;
 
 function writeDefaultRegistry() {
   fs.writeFileSync(
@@ -249,9 +250,29 @@ beforeEach(() => {
   openshellPath = path.join(homeLocalBin, "openshell");
   stateFile = path.join(tmpDir, "state.json");
   scriptFile = path.join(tmpDir, "script.json");
+  installerInvocationsFile = path.join(tmpDir, "installer-invocations.log");
 
   fs.mkdirSync(homeLocalBin, { recursive: true });
   fs.mkdirSync(registryDir, { recursive: true });
+  fs.writeFileSync(installerInvocationsFile, "");
+  fs.writeFileSync(
+    path.join(homeLocalBin, "bash"),
+    `#!${process.execPath}
+const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args[0] === ${JSON.stringify(
+      path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh"),
+    )}) {
+  fs.appendFileSync(${JSON.stringify(installerInvocationsFile)}, "install\\n");
+  process.exit(0);
+}
+const result = spawnSync("/bin/bash", args, { env: process.env, stdio: "inherit" });
+if (result.error) throw result.error;
+process.exit(result.status ?? 1);
+`,
+    { mode: 0o755 },
+  );
   writeDefaultRegistry();
   writeDefaultSession();
   fs.writeFileSync(
@@ -357,7 +378,21 @@ describe("connect preserves the registry so rebuild can recover in scenario 14 (
       },
     );
     const rebuildOut = `${rebuild.stdout || ""}\n${rebuild.stderr || ""}`;
+    const installerInvocations = fs
+      .readFileSync(installerInvocationsFile, "utf8")
+      .split("\n")
+      .filter(Boolean);
 
+    assert.equal(
+      installerInvocations.length,
+      0,
+      `rebuild must not invoke the OpenShell installer, got ${installerInvocations.length} invocation(s)`,
+    );
+    assert.doesNotMatch(
+      rebuildOut,
+      /below minimum required version|Installing OpenShell/,
+      `rebuild must use the fixture OpenShell binaries, got:\n${rebuildOut}`,
+    );
     assert.doesNotMatch(
       rebuildOut,
       /below minimum.*upgrading|missing provider credential rewrite or MCP L7 policy support.*reinstalling/i,

@@ -20,6 +20,8 @@ import {
   writeTimerAuthorizationProof,
 } from "../../../test/helpers/hermes-shields-provider-consumer-harness";
 
+import { testTimeout } from "../../../test/helpers/timeouts";
+
 const requireSource = createRequire(import.meta.url);
 const INDEX_MODULE = "./index.js";
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
@@ -304,7 +306,7 @@ describe("legacy Hermes shields compatibility", () => {
     );
 
     shields = requireSource(INDEX_MODULE);
-  }, 60_000);
+  }, testTimeout(60_000));
 
   afterEach(() => {
     for (const spy of spies) spy.mockRestore();
