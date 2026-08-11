@@ -38,9 +38,11 @@ describe("Vitest developer feedback", () => {
     expect(testOptions.silent).toBe(resolveVitestFeedback().silent);
   });
 
-  it("runs changed and watch feedback on the focused source projects (#6692)", ({ resources }) => {
+  it("runs changed feedback, the growth contract, and focused watch feedback (#6692)", ({
+    resources,
+  }) => {
     expect(runVitestNpmScript(resources, "test:changed")).toBe(
-      `vitest run --changed ${focusedProjects}`,
+      `vitest run --changed ${focusedProjects}\nvitest run --project integration test/codebase-growth-contract.test.ts`,
     );
     expect(runVitestNpmScript(resources, "test:watch")).toBe(`vitest watch ${focusedProjects}`);
   });

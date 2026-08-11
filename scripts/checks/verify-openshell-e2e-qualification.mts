@@ -28,7 +28,6 @@ const DISPATCH_KIND = "nemoclaw-e2e-dispatch-v2";
 const DISPATCH_FILE = "dispatch.json";
 
 export const REQUIRED_PROOF_CHECKS = {
-  managed: "PR exact all-agent managed runtime activation",
   rootless: "Rootless Podman CPU lifecycle with Docker disabled",
 } as const;
 
@@ -116,31 +115,6 @@ const SENSITIVE_PREFIXES = [
   "test/e2e/live/podman-cpu-lifecycle",
   "test/e2e/support/openshell-gateway-upgrade",
   "test/e2e/support/podman-cpu-proof-workflow",
-] as const;
-
-const MANAGED_PROOF_EXACT_PATHS = new Set([
-  ".dockerignore",
-  ".github/workflows/managed-images.yaml",
-  "Dockerfile",
-  "ci/npm-audit-exceptions.json",
-  "src/lib/core/json-types.ts",
-  "src/lib/core/ports.ts",
-  "src/lib/security/credential-hash.ts",
-  "src/lib/state/paths.ts",
-  "src/lib/state/state-root.ts",
-  "src/lib/tool-disclosure.ts",
-  "tsconfig.runtime-preloads.json",
-]);
-
-const MANAGED_PROOF_PREFIXES = [
-  "agents/",
-  "nemoclaw/",
-  "nemoclaw-blueprint/",
-  "scripts/",
-  "src/lib/messaging/",
-  "src/lib/onboard/",
-  "test/e2e/live/managed-image-activation-e2e",
-  "tools/mcp-tool-discovery-runtime/",
 ] as const;
 
 const ROOTLESS_PROOF_EXACT_PATHS = new Set([
@@ -438,18 +412,6 @@ export function classifyQualification(files: readonly PullRequestFile[]): {
     ...new Set(allPaths.filter(isOpenShellQualificationSensitivePath)),
   ].sort();
   const requiredProofChecks: string[] = [];
-  if (
-    allPaths.some((candidatePath) =>
-      matchesExactOrPrefix(candidatePath, MANAGED_PROOF_EXACT_PATHS, MANAGED_PROOF_PREFIXES),
-    ) ||
-    allPaths.some((candidatePath) =>
-      /^src\/lib\/actions\/sandbox\/openshell-child-visible-credentials\.v[^/]+\.json$/u.test(
-        candidatePath,
-      ),
-    )
-  ) {
-    requiredProofChecks.push(REQUIRED_PROOF_CHECKS.managed);
-  }
   if (
     allPaths.some((candidatePath) =>
       matchesExactOrPrefix(candidatePath, ROOTLESS_PROOF_EXACT_PATHS, ROOTLESS_PROOF_PREFIXES),

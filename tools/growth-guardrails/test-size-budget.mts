@@ -5,21 +5,15 @@
 // and the budget itself must stay monotonic (a PR may not weaken it). Runs from
 // the base checkout under pull_request_target and reads PR blobs as DATA only.
 //
-// Line counting and budget parsing are reused from the local scanner
-// (scripts/check-test-file-size-budget.mts) so the workflow and the local check
-// agree by construction — no second implementation lives in workflow YAML.
+// Line counting and budget parsing are shared with the repository contract test,
+// so local feedback and the trusted PR assertion use one implementation.
 
 import {
   countLines,
   parseBudget,
   type TestFileSizeBudget,
 } from "../../scripts/check-test-file-size-budget.mts";
-import {
-  type BlobMap,
-  createPrBlobClient,
-  type PrBlobClient,
-  type PullRequestFile,
-} from "./pr-blob-client.mts";
+import { type BlobMap, type PrBlobClient, type PullRequestFile } from "./pr-blob-client.mts";
 
 const BUDGET_FILE = "ci/test-file-size-budget.json";
 const FALLBACK_BUDGET = '{"defaultMaxLines":1500,"legacyMaxLines":{}}';
@@ -127,8 +121,9 @@ export type BudgetResult = {
 export async function runTestSizeBudget(
   client: PrBlobClient,
   env: BudgetEnv,
+  pullFiles?: readonly PullRequestFile[],
 ): Promise<BudgetResult> {
-  const files = await client.getPullFiles(env.REPO, env.PR_NUMBER);
+  const files = pullFiles ?? (await client.getPullFiles(env.REPO, env.PR_NUMBER));
   const budgetChanged = files.some(
     ({ filename, previous_filename }) =>
       filename === BUDGET_FILE || previous_filename === BUDGET_FILE,
@@ -184,35 +179,4 @@ export async function runTestSizeBudget(
   });
 
   return { ok: violations.length === 0, violations, changedTestCount: changedTests.length };
-}
-
-function readEnv(): BudgetEnv & { GH_TOKEN: string } {
-  const { BASE_SHA, GH_TOKEN, HEAD_REPO, HEAD_SHA, PR_NUMBER, REPO } = process.env;
-  if (!BASE_SHA || !GH_TOKEN || !HEAD_REPO || !HEAD_SHA || !PR_NUMBER || !REPO) {
-    throw new Error(
-      "Missing required environment: BASE_SHA GH_TOKEN HEAD_REPO HEAD_SHA PR_NUMBER REPO",
-    );
-  }
-  return { BASE_SHA, GH_TOKEN, HEAD_REPO, HEAD_SHA, PR_NUMBER, REPO };
-}
-
-async function main(): Promise<void> {
-  const env = readEnv();
-  const client = createPrBlobClient({ token: env.GH_TOKEN });
-  const result = await runTestSizeBudget(client, env);
-  if (!result.ok) {
-    console.error("FAIL: test size budget policy would be weakened or exceeded.");
-    for (const violation of result.violations) console.error(`- ${violation}`);
-    process.exit(1);
-  }
-  console.log(
-    `PASS: test size budget policy is monotonic and ${result.changedTestCount} changed test file(s) are within budget.`,
-  );
-}
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
 }
