@@ -163,7 +163,7 @@ describe("stopModelRouterProcess", () => {
         isRunning: () => true,
         readCommandLine: () => {
           ownershipChecks += 1;
-          if (ownershipChecks === 2) replacementOwnsPid = true;
+          replacementOwnsPid ||= ownershipChecks === 2;
           return ROUTER_ARGS;
         },
         isHealthy: async () => true,
