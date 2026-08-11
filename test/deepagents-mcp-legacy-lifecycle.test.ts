@@ -38,7 +38,7 @@ vi.mock("../src/lib/actions/sandbox/process-recovery", () => ({
   executeSandboxExecCommand: mocks.executeSandboxExecCommand,
 }));
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.99");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.101");
 const ORIGINAL_HOME = process.env.HOME;
 const ORIGINAL_OPENSHELL_BIN = process.env.NEMOCLAW_OPENSHELL_BIN;
 const ORIGINAL_OPENSHELL_GATEWAY = process.env.OPENSHELL_GATEWAY;

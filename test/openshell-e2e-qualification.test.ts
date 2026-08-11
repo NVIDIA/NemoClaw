@@ -254,7 +254,7 @@ describe("OpenShell qualification-sensitive path detection", () => {
       "agents/langchain-deepagents-code/managed-dcode-runtime.py",
       "src/lib/onboard/docker-driver-gateway-runtime.ts",
       "src/lib/actions/sandbox/supervisor-relaunch.ts",
-      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.99.json",
+      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.101.json",
       "nemoclaw/src/blueprint/runner.ts",
       "src/lib/sandbox/version.ts",
       "src/lib/onboard/openshell-version.ts",
@@ -567,7 +567,7 @@ describe("qualification orchestration", () => {
   });
 
   it("extracts one coherent OpenShell version from the repository trust surfaces", () => {
-    expect(extractOpenShellVersion(REPO_ROOT)).toBe("0.0.99");
+    expect(extractOpenShellVersion(REPO_ROOT)).toBe("0.0.101");
   });
 
   it("rejects mismatched OpenShell target-version surfaces", () => {
@@ -576,7 +576,7 @@ describe("qualification orchestration", () => {
     const replacements = new Map<string, [string, string]>([
       [
         "nemoclaw-blueprint/blueprint.yaml",
-        ['max_openshell_version: "0.0.99"', 'max_openshell_version: "0.0.98"'],
+        ['max_openshell_version: "0.0.101"', 'max_openshell_version: "0.0.100"'],
       ],
     ]);
     for (const relativePath of [

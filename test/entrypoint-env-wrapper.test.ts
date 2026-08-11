@@ -84,12 +84,29 @@ describe("OCI entrypoint env-wrapper normalization", () => {
     expect(result.stdout).toContain("ARG=env\nARG=FOO=bar\nARG=printenv\nARG=FOO\n");
   });
 
+  it("leaves a user command tail that only looks like a managed assignment (#8595)", () => {
+    const result = runNormalizer([
+      "env",
+      "FOO=bar",
+      "/bin/sh",
+      "-c",
+      "NEMOCLAW_SANDBOX_NAME=probe",
+    ]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(
+      "ARG=env\nARG=FOO=bar\nARG=/bin/sh\nARG=-c\nARG=NEMOCLAW_SANDBOX_NAME=probe\n",
+    );
+  });
+
   it.each([
     {
+      name: "rejects an interpreter variable outside the supported set",
       argv: ["env", "NODE_OPTIONS=--require=/sandbox/untrusted.cjs", "nemoclaw-start"],
       message: "unsupported variable 'NODE_OPTIONS'",
     },
     {
+      name: "rejects a repeated assignment",
       argv: [
         "env",
         "NEMOCLAW_STARTUP_PROFILE_B64=first",
@@ -99,14 +116,31 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       message: "repeats variable 'NEMOCLAW_STARTUP_PROFILE_B64'",
     },
     {
+      name: "rejects a startup profile handed to another command",
       argv: ["env", "NEMOCLAW_STARTUP_PROFILE_B64=profile", "/usr/bin/true"],
       message: "Malformed managed startup env wrapper",
     },
     {
+      name: "rejects a break token between assignments and the terminator",
       argv: ["env", "NEMOCLAW_CORPORATE_CA_B64=Y2E=", "not-an-assignment", "nemoclaw-start"],
       message: "Malformed managed startup env wrapper",
     },
-  ])("fails closed for malformed or unsafe root handoff: $message", ({ argv, message }) => {
+    {
+      name: "rejects a managed name in the leading assignment run",
+      argv: ["env", "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=5", "/bin/sh"],
+      message: "Malformed managed startup env wrapper",
+    },
+    {
+      name: "rejects a managed name after an unmanaged assignment",
+      argv: ["env", "FOO=bar", "OPENCLAW_HOME=/sandbox", "/bin/sh", "-c", ":"],
+      message: "Malformed managed startup env wrapper",
+    },
+    {
+      name: "rejects a corporate CA payload in the user command tail",
+      argv: ["env", "FOO=bar", "/bin/sh", "-c", "NEMOCLAW_CORPORATE_CA_B64=Y2E="],
+      message: "Malformed managed startup env wrapper",
+    },
+  ])("fails closed for malformed or unsafe root handoff: $name (#8595)", ({ argv, message }) => {
     const result = runNormalizer(argv);
 
     expect(result.status).toBe(1);

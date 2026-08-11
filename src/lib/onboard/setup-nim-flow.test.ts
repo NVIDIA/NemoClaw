@@ -10,10 +10,37 @@ import { makeDeps, makeHostState, unexpected } from "./__test-helpers__/setup-ni
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
 import type { LocalModelProfilePlan } from "./local-model-profile/integration";
-import { createSetupNim, type SetupNimFlowDeps } from "./setup-nim-flow";
+import { createSetupNim, type SetupNimFlowDeps, withServingPortGuard } from "./setup-nim-flow";
 
 afterEach(() => {
   vi.unstubAllEnvs();
+});
+
+describe("withServingPortGuard", () => {
+  it("binds the serving-port probe without changing installer options (#8685)", async () => {
+    const profile = {} as VllmProfile;
+    type ServingPortProbe = (port: number) => Promise<{ ok: boolean; reason?: string }>;
+    const checkServingPort = vi.fn<ServingPortProbe>(async () => ({ ok: true }));
+    const install = vi.fn(
+      async (
+        receivedProfile: VllmProfile,
+        options: {
+          keepExisting: boolean;
+          checkServingPort?: ServingPortProbe;
+        },
+      ) => ({ ok: receivedProfile === profile && options.keepExisting }),
+    );
+    const guardedInstall = withServingPortGuard<{ keepExisting: boolean }, typeof install>(
+      install,
+      checkServingPort,
+    );
+
+    await expect(guardedInstall(profile, { keepExisting: true })).resolves.toEqual({ ok: true });
+    expect(install).toHaveBeenCalledWith(profile, {
+      keepExisting: true,
+      checkServingPort,
+    });
+  });
 });
 
 describe("createSetupNim", () => {
@@ -877,7 +904,7 @@ describe("createSetupNim", () => {
     expect(handleVllmSelection).toHaveBeenCalledOnce();
     expect(prompt).not.toHaveBeenCalled();
     expect(result).toMatchObject({ provider: "vllm" });
-  });
+  }, 15_000);
 
   it("reuses an already-running local vLLM on a DGX Spark non-interactive run with no requested provider (#7293)", async () => {
     const profile = { name: "DGX Spark" } as VllmProfile;

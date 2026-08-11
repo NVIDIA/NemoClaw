@@ -43,6 +43,7 @@ spec:
     qualification:
       required: true
       execution: enabled
+      requestGuard: required
       profile: dgx-spark-gb10-single
       recipeRef: llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1
       platform: linux/arm64

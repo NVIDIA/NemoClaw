@@ -1,15 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createRebuildFlowHarness,
-  resetRebuildFlowTestEnvironment,
-  restoreRebuildFlowTestEnvironment,
-} from "../../../../test/helpers/rebuild-flow-harness";
+  installRebuildFlowTestHooks,
+} from "../../../../test/helpers/rebuild-flow-dcode-harness";
 import {
   ensureHermesGatewayAfterStateRestore,
   ensureHermesGatewayAfterStateRestoreForCronGate,
+  restartHermesGatewayAfterStateRestore,
+  verifyHermesGatewayAfterStateRestore,
+  verifyHermesGatewayAfterStateRestoreForCronGate,
 } from "./rebuild-hermes-post-restore";
 
 const RESTART_SUCCEEDED = {
@@ -22,6 +24,18 @@ const RESTART_FAILED = {
   ok: false,
   failureLayer: "health timeout",
   detail: "gateway did not become healthy",
+} as const;
+const RESTARTED_WITH_MCP_MISMATCH = {
+  ok: false,
+  failureLayer: "MCP reconciliation refusal",
+  detail: "Hermes MCP config does not match persisted managed intent",
+  restarted: true,
+  healthPassed: true,
+} as const;
+const MCP_REFUSED_BEFORE_RESTART = {
+  ok: false,
+  failureLayer: "MCP reconciliation refusal",
+  detail: "supervisor refused the restart before replacing the gateway",
 } as const;
 
 describe("binding the Hermes gateway to restored state", () => {
@@ -69,6 +83,57 @@ describe("binding the Hermes gateway to restored state", () => {
     });
 
     expect(state).toBe("recovered");
+  });
+
+  it("keeps restart evidence while rebuild restores the managed MCP projection (#8671)", () => {
+    const restartState = restartHermesGatewayAfterStateRestore("alpha", "hermes", {
+      restartSandboxGateway: () => RESTARTED_WITH_MCP_MISMATCH,
+    });
+
+    expect(restartState).toBe("restarted");
+    expect(
+      verifyHermesGatewayAfterStateRestore("alpha", "hermes", restartState, {
+        checkAndRecoverSandboxProcesses: () => ({
+          checked: true,
+          wasRunning: true,
+          recovered: false,
+        }),
+      }),
+    ).toBe("healthy");
+  });
+
+  it("rejects managed MCP drift that remains after rebuild restoration (#8671)", () => {
+    const restartState = restartHermesGatewayAfterStateRestore("alpha", "hermes", {
+      restartSandboxGateway: () => RESTARTED_WITH_MCP_MISMATCH,
+    });
+
+    expect(
+      verifyHermesGatewayAfterStateRestore("alpha", "hermes", restartState, {
+        checkAndRecoverSandboxProcesses: () => ({
+          checked: true,
+          wasRunning: true,
+          recovered: false,
+          mcpReconciliationRefused: true,
+        }),
+      }),
+    ).toBe("unverified");
+  });
+
+  it("preserves an MCP refusal before gateway replacement (#8671)", () => {
+    const restartState = restartHermesGatewayAfterStateRestore("alpha", "hermes", {
+      restartSandboxGateway: () => MCP_REFUSED_BEFORE_RESTART,
+    });
+
+    expect(restartState).toBe("restart-failed");
+    expect(
+      verifyHermesGatewayAfterStateRestore("alpha", "hermes", restartState, {
+        checkAndRecoverSandboxProcesses: () => ({
+          checked: true,
+          wasRunning: true,
+          recovered: false,
+        }),
+      }),
+    ).toBe("unverified");
   });
 
   it("leaves a non-Hermes rebuild without a gateway restart (#8184)", () => {
@@ -164,6 +229,71 @@ describe("binding the Hermes gateway to restored state", () => {
     ).toEqual({ state: "unverified" });
     expect(observeHermesCronReplacement).toHaveBeenCalledTimes(2);
   });
+
+  it("verifies the final cron-bound gateway without restarting after MCP restoration (#8472)", () => {
+    const original = { pid: 41, start_time: 902, drain_token: "restore-token" };
+    const replacement = { pid: 77, start_time: 903, drain_token: "restore-token" };
+    const restartSandboxGateway = vi.fn(() => RESTART_SUCCEEDED);
+    const observeHermesCronReplacement = vi.fn(() => replacement);
+
+    expect(
+      verifyHermesGatewayAfterStateRestoreForCronGate("alpha", "hermes", "restarted", original, {
+        restartSandboxGateway,
+        observeHermesCronReplacement,
+        checkAndRecoverSandboxProcesses: () => ({
+          checked: true,
+          wasRunning: true,
+          recovered: false,
+        }),
+      }),
+    ).toEqual({ state: "healthy", replacementIdentity: replacement });
+    expect(restartSandboxGateway).not.toHaveBeenCalled();
+    expect(observeHermesCronReplacement).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects unstable final cron identity without restarting after MCP restoration (#8472)", () => {
+    const restartSandboxGateway = vi.fn(() => RESTART_SUCCEEDED);
+    const observeHermesCronReplacement = vi
+      .fn()
+      .mockReturnValueOnce({ pid: 77, start_time: 903, drain_token: "restore-token" })
+      .mockReturnValueOnce({ pid: 88, start_time: 904, drain_token: "restore-token" });
+
+    expect(
+      verifyHermesGatewayAfterStateRestoreForCronGate(
+        "alpha",
+        "hermes",
+        "restarted",
+        { pid: 41, start_time: 902, drain_token: "restore-token" },
+        {
+          restartSandboxGateway,
+          observeHermesCronReplacement,
+          checkAndRecoverSandboxProcesses: () => ({
+            checked: true,
+            wasRunning: true,
+            recovered: false,
+          }),
+        },
+      ),
+    ).toEqual({ state: "unverified" });
+    expect(restartSandboxGateway).not.toHaveBeenCalled();
+  });
+
+  it("preserves MCP reconciliation refusal during restart-free final verification (#7084)", () => {
+    const restartSandboxGateway = vi.fn(() => RESTART_SUCCEEDED);
+
+    expect(
+      verifyHermesGatewayAfterStateRestore("alpha", "hermes", "restarted", {
+        restartSandboxGateway,
+        checkAndRecoverSandboxProcesses: () => ({
+          checked: true,
+          wasRunning: true,
+          recovered: false,
+          mcpReconciliationRefused: true,
+        }),
+      }),
+    ).toBe("unverified");
+    expect(restartSandboxGateway).not.toHaveBeenCalled();
+  });
 });
 
 describe("Hermes gateway post-restore recheck", () => {
@@ -232,8 +362,7 @@ describe("Hermes gateway post-restore recheck", () => {
 });
 
 describe("Hermes rebuild post-restore verification", () => {
-  beforeEach(resetRebuildFlowTestEnvironment);
-  afterEach(restoreRebuildFlowTestEnvironment);
+  installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
 
   it("fails instead of reporting readiness when restored state leaves the gateway down (#7084)", async () => {
     const mcpEntry = {
@@ -267,7 +396,7 @@ describe("Hermes rebuild post-restore verification", () => {
     expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
   });
 
-  it("accepts restored MCP configuration only after final gateway recovery (#7084)", async () => {
+  it("restores MCP after gateway restart and before final health verification (#7084)", async () => {
     const mcpEntry = {
       server: "blender",
       providerName: "nemoclaw-mcp-alpha-blender",
@@ -276,9 +405,9 @@ describe("Hermes rebuild post-restore verification", () => {
       agentName: "hermes",
       checkAndRecoverSandboxProcesses: () => ({
         checked: true,
-        wasRunning: false,
-        recovered: true,
-        forwardRecovered: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
       }),
       mcpPreparation: {
         entries: [mcpEntry],
@@ -293,11 +422,14 @@ describe("Hermes rebuild post-restore verification", () => {
     ).resolves.toBeUndefined();
 
     expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+    expect(harness.restartSandboxGatewaySpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.restoreMcpBridgesAfterRebuildSpy.mock.invocationCallOrder[0],
+    );
     expect(harness.restoreMcpBridgesAfterRebuildSpy.mock.invocationCallOrder[0]).toBeLessThan(
       harness.checkAndRecoverSandboxProcessesSpy.mock.invocationCallOrder[0],
     );
     expect(harness.logSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Hermes gateway recovered after state restore"),
+      expect.stringContaining("Hermes gateway restarted and verified after state restore"),
     );
   });
 

@@ -4,6 +4,7 @@
 export { ensureDualStationVllmApiKey, loadDualStationVllmApiKey } from "../vllm-api-key.js";
 export {
   buildLocalDualStationDockerEnv,
+  buildLocalManagedVllmDockerEnv,
   buildRemoteVllmDockerEnv,
   buildVllmDockerEnv,
 } from "../vllm-docker-env.js";
@@ -19,3 +20,7 @@ export {
   persistHostLocalVllmRuntimeReceipt,
   recoverHostLocalManagedVllmEndpoint,
 } from "./vllm-host-local-lifecycle.js";
+export {
+  resolveManagedVllmBridgeHost,
+  validateManagedVllmBridgeHost,
+} from "./vllm-host-local-network.js";

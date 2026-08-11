@@ -25,7 +25,14 @@ This path preserves the sandbox workspace and repairs the agent runtime and host
 If the container is paused, follow the printed `docker unpause` guidance instead.
 If the container is missing or OpenShell reports another terminal phase such as `Failed`, follow the printed `rebuild --yes` guidance so NemoClaw can recreate the sandbox from its recorded metadata.
 
+<AgentOnly variant="openclaw,hermes">
+The `start` command returns success only after it authenticates the recovered agent runtime, OpenShell reports the sandbox ready, and host-side port forwards pass their checks.
+If any check fails, the command keeps the existing container, exits nonzero, identifies the failure, and tells you to run `recover` before retrying `start`.
+</AgentOnly>
+
 <AgentOnly variant="openclaw">
+### Lower Shields After a Failed Startup
+
 If the sandbox has shields up and the OpenClaw gateway does not start after the container restarts, lower shields before you rebuild:
 
 ```bash
@@ -222,8 +229,9 @@ $$nemoclaw <sandbox-name> gateway-token --quiet
 ```
 
 Before post-restore repairs, NemoClaw verifies that the recreated sandbox still identifies as Hermes and exits nonzero if its identity does not match the rebuild target.
-After state restore, NemoClaw restores managed MCP configuration through the normal lifecycle, then restarts the Hermes gateway and verifies or recovers its health before performing final MCP reconciliation.
-The gateway starts during recreation and reads its durable state before the restore replaces it, so the restart is what binds the running gateway to the restored state.
+After state restore, NemoClaw restarts the Hermes gateway so it reads the restored durable state, then restores managed MCP configuration through the normal lifecycle.
+MCP restoration performs an acknowledged gateway reload, so NemoClaw finishes by verifying the final running gateway and its managed MCP state without replacing that verified process again.
+The gateway starts during recreation and reads its durable state before the restore replaces it, which is why the first post-restore restart must happen before managed MCP restoration.
 `rebuild` exits nonzero instead of reporting success when it cannot verify final gateway health or managed MCP state.
 Follow the printed recovery guidance, using `$$nemoclaw <sandbox-name> gateway restart` first for gateway health, `$$nemoclaw <sandbox-name> recover` when the restart does not restore verified health, and `$$nemoclaw <sandbox-name> mcp restart` for incomplete managed MCP restoration.
 

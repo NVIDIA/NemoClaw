@@ -30,6 +30,13 @@ export const PR_E2E_TYPED_TARGET_IDS = [
 
 const PR_E2E_TYPED_TARGET_ID_SET = new Set<string>(PR_E2E_TYPED_TARGET_IDS);
 const PR_E2E_PLANNING_OMITTED_JOB_IDS = new Set(["jetson-nvmap-gpu"]);
+export const PR_E2E_MANUAL_CONTROLLER_JOB_IDS = [
+  "inference-routing",
+  "managed-image-protected-runtime",
+] as const;
+const PR_E2E_MANUAL_CONTROLLER_JOB_ID_SET = new Set<string>(
+  PR_E2E_MANUAL_CONTROLLER_JOB_IDS,
+);
 const DEEPAGENTS_HEADLESS_INFERENCE_CHECK =
   "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh";
 const DEEPAGENTS_CODE_RUNTIME_ROOT = "agents/langchain-deepagents-code/";
@@ -240,6 +247,10 @@ export function isPrE2ePlanningJob(value: string): boolean {
   // Automatic PR planning cannot confirm an online self-hosted Jetson runner.
   // Remove this exclusion after the Colossus-backed runner path can make that confirmation.
   return !PR_E2E_PLANNING_OMITTED_JOB_IDS.has(value);
+}
+
+export function isPrE2eManualControllerJob(value: string): boolean {
+  return PR_E2E_MANUAL_CONTROLLER_JOB_ID_SET.has(value);
 }
 
 export function focusedPrE2eTargetsForChangedFiles(
