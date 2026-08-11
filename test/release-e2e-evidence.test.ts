@@ -45,6 +45,7 @@ function runEvidence(
   return {
     dispatch: {
       allowDgxSparkRunnerQueue: false,
+      allowJetsonDispatch: false,
       allowJetsonRunnerQueue: false,
       ...(receiptVersion === 2
         ? {
@@ -274,14 +275,32 @@ describe("release E2E evidence", () => {
   });
 
   it.each([
-    ["allowJetsonRunnerQueue", "runs[0].dispatch.allowJetsonRunnerQueue must equal false"],
-    ["allowDgxSparkRunnerQueue", "runs[0].dispatch.allowDgxSparkRunnerQueue must equal false"],
-  ])("rejects release evidence that opts into %s", (field, message) => {
+    [2 as const, "allowJetsonDispatch", "runs[0].dispatch.allowJetsonDispatch must equal false"],
+    [1 as const, "allowJetsonDispatch", "runs[0].dispatch.allowJetsonDispatch must equal false"],
+    [
+      1 as const,
+      "allowJetsonRunnerQueue",
+      "runs[0].dispatch.allowJetsonRunnerQueue must equal false",
+    ],
+    [
+      1 as const,
+      "allowDgxSparkRunnerQueue",
+      "runs[0].dispatch.allowDgxSparkRunnerQueue must equal false",
+    ],
+  ])("rejects v%s release evidence that opts into %s", (receiptVersion, field, message) => {
     const plan = preflight();
-    const evidence = runEvidence(plan, "default");
+    const evidence = runEvidence(plan, "default", { receiptVersion });
     (evidence.dispatch as Record<string, unknown>)[field] = true;
 
     expect(() => buildReleaseE2eLedger(plan, [evidence])).toThrow(message);
+  });
+
+  it("keeps allowJetsonDispatch optional for v1 release evidence", () => {
+    const plan = preflight();
+    const evidence = runEvidence(plan, "default", { receiptVersion: 1 });
+    delete (evidence.dispatch as Record<string, unknown>).allowJetsonDispatch;
+
+    expect(buildReleaseE2eLedger(plan, [evidence]).missingCount).toBe(0);
   });
 
   it("reports a failed matrix row without collapsing its successful siblings", () => {

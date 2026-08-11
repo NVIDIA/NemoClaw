@@ -14,6 +14,7 @@ import {
   HERMES_MCP_FAILURE_PREVIEW_CHARS,
   HERMES_MCP_HTTP_STATUS_MARKER,
   HERMES_MCP_RESULT_TOKEN_MARKER,
+  isHermesGatewayDrainingResponse,
 } from "../live/mcp-bridge-hermes-http.ts";
 
 const TIMEOUT_MS = 5_000;
@@ -115,5 +116,23 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
         [],
       ),
     ).not.toThrow();
+  });
+
+  it("classifies only the exact Hermes gateway draining response", () => {
+    const draining = JSON.stringify({ error: { code: "gateway_draining" } });
+    expect(isHermesGatewayDrainingResponse(httpResult(503, draining))).toBe(true);
+    expect(isHermesGatewayDrainingResponse(httpResult(500, draining))).toBe(false);
+    expect(isHermesGatewayDrainingResponse(httpResult(503, "not-json"))).toBe(false);
+    expect(
+      isHermesGatewayDrainingResponse(
+        httpResult(503, JSON.stringify({ error: { code: "other" } })),
+      ),
+    ).toBe(false);
+    expect(
+      isHermesGatewayDrainingResponse({
+        ...httpResult(503, draining),
+        exitCode: 1,
+      }),
+    ).toBe(false);
   });
 });
