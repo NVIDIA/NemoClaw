@@ -40,6 +40,23 @@ describe("continuous E2E fix-loop executable write policy", () => {
     });
   });
 
+  it("denies an ambiguous write retry after ownership transfer starts", () => {
+    expect(
+      evaluateFixLoopPolicy({
+        kind: "ambiguous-write",
+        writeKind: "merge",
+        reconciliation: "observed-not-applied",
+        identitiesUnchanged: true,
+        retryCount: 0,
+        transferStarted: true,
+      }),
+    ).toMatchObject({
+      action: "record-ambiguous-write-blocker",
+      allowedWrites: [],
+      deniedWrites: ["retry:merge"],
+    });
+  });
+
   it("denies fork workflow approval when sensitive workflow code changed", () => {
     expect(
       evaluateFixLoopPolicy({
@@ -194,6 +211,7 @@ describe("continuous E2E fix-loop executable write policy", () => {
         containmentOwner: "maintainer-a",
         badMergeSha: "bad-merge",
         rollbackPrAuthorized: true,
+        attributionCertain: true,
       }),
     ).toMatchObject({
       action: "open-guarded-draft-revert-pr",
@@ -201,6 +219,32 @@ describe("continuous E2E fix-loop executable write policy", () => {
       deniedWrites: ["revert-main-directly", "merge-dependent-fix", "merge-revert-without-gates"],
       mergeWritesPaused: true,
       nextActor: "maintainer-a",
+      queueState: "blocked",
+    });
+  });
+
+  it("denies rollback writes when failure attribution is uncertain", () => {
+    expect(
+      evaluateFixLoopPolicy({
+        kind: "post-merge-e2e",
+        originalFailurePresent: true,
+        newRegressionPresent: false,
+        containmentOwner: "maintainer-a",
+        badMergeSha: "bad-merge",
+        rollbackPrAuthorized: true,
+        attributionCertain: false,
+      }),
+    ).toMatchObject({
+      action: "stop-related-merge-writes-and-review-attribution",
+      allowedWrites: [],
+      deniedWrites: [
+        "revert-main-directly",
+        "open-draft-revert-pr:bad-merge",
+        "merge-dependent-fix",
+        "merge-revert-without-gates",
+      ],
+      mergeWritesPaused: true,
+      nextActor: "maintainer reviewing failure attribution",
       queueState: "blocked",
     });
   });
@@ -214,6 +258,7 @@ describe("continuous E2E fix-loop executable write policy", () => {
         containmentOwner: "maintainer-a",
         badMergeSha: "bad-merge",
         rollbackPrAuthorized: false,
+        attributionCertain: true,
       }),
     ).toMatchObject({
       action: "stop-related-merge-writes-and-request-rollback-authority",

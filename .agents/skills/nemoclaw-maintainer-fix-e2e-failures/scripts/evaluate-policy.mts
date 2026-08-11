@@ -211,6 +211,7 @@ function evaluatePostMerge(state: JsonRecord): FixLoopPolicyDecision {
   const containmentOwner = requiredString(state, "containmentOwner");
   const badMergeSha = requiredString(state, "badMergeSha");
   const rollbackPrAuthorized = requiredBoolean(state, "rollbackPrAuthorized");
+  const attributionCertain = requiredBoolean(state, "attributionCertain");
   if (!originalFailurePresent && !newRegressionPresent) {
     return decision({
       action: "record-post-merge-verification",
@@ -218,6 +219,21 @@ function evaluatePostMerge(state: JsonRecord): FixLoopPolicyDecision {
       queueState: "merged",
       reason:
         "The automatic main evidence contains neither the original failure nor a new regression.",
+    });
+  }
+
+  if (!attributionCertain) {
+    return decision({
+      action: "stop-related-merge-writes-and-review-attribution",
+      deniedWrites: [
+        "revert-main-directly",
+        `open-draft-revert-pr:${badMergeSha}`,
+        "merge-dependent-fix",
+        "merge-revert-without-gates",
+      ],
+      mergeWritesPaused: true,
+      nextActor: "maintainer reviewing failure attribution",
+      reason: "Rollback writes remain denied until the failed merge is certainly attributable.",
     });
   }
 
@@ -236,6 +252,7 @@ function evaluatePostMerge(state: JsonRecord): FixLoopPolicyDecision {
           "revert-main-directly",
           `open-draft-revert-pr:${badMergeSha}`,
           "merge-dependent-fix",
+          "merge-revert-without-gates",
         ],
         mergeWritesPaused: true,
         nextActor: "maintainer with explicit rollback-PR authority",
