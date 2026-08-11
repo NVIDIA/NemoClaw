@@ -7,11 +7,6 @@ import { appendLocalAdapterJsonLine } from "../local-adapter-lifecycle";
 export type AdapterLogFields = Record<string, string | number | boolean | null | undefined>;
 export type AdapterLogger = (event: string, fields?: AdapterLogFields) => void;
 
-export interface LocalAdapterLoggerFactory {
-  defaultLogger: AdapterLogger;
-  logEvent(logger: AdapterLogger, event: string, fields?: AdapterLogFields): void;
-}
-
 function normalizeLogField(
   value: string | number | boolean | null | undefined,
 ): string | number | boolean | null {
@@ -29,7 +24,7 @@ export function createLocalAdapterLogger(options: {
   logPath: string;
   onWriteError?: (message: string) => void;
   onLoggerError?: (message: string) => void;
-}): LocalAdapterLoggerFactory {
+}) {
   const defaultLogger: AdapterLogger = (event, fields = {}) => {
     try {
       const payload: Record<string, string | number | boolean | null> = {
@@ -47,7 +42,7 @@ export function createLocalAdapterLogger(options: {
 
   return {
     defaultLogger,
-    logEvent: (logger, event, fields = {}) => {
+    logEvent: (logger: AdapterLogger, event: string, fields: AdapterLogFields = {}) => {
       try {
         // Callers may inject a scenario-specific logger; this wrapper keeps
         // diagnostics from affecting request handling.
