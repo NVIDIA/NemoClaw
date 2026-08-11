@@ -67,9 +67,12 @@ export function generateTransportTraceId(): string {
 
 const TRACE_ID_SHAPE = /^[A-Za-z0-9-]{8,64}$/;
 
-/** Keeps a well-formed supplied trace id and replaces anything else with a generated one. */
+/** Keeps a supplied trace id only when its shape is allowed and sanitization leaves it unchanged. */
 function safeSuppliedTraceId(supplied: string | undefined): string {
-  if (supplied !== undefined && TRACE_ID_SHAPE.test(supplied)) return supplied;
+  if (supplied !== undefined && TRACE_ID_SHAPE.test(supplied)) {
+    const redacted = redactField(supplied);
+    if (redacted === supplied) return supplied;
+  }
   return generateTransportTraceId();
 }
 
@@ -187,6 +190,7 @@ export function boundedErrorBodySnippet(
 /** Maps a sanitized cause code and HTTP outcome onto the failing phase. */
 export function classifyTransportPhase(input: {
   policyDenied?: boolean;
+  proxyConnectFailure?: boolean;
   causeCode?: string;
   tlsFailure?: boolean;
   httpStatus?: number;
@@ -194,6 +198,7 @@ export function classifyTransportPhase(input: {
 }): ManagedTransportPhase {
   if (input.policyDenied) return "policy";
   if (input.tlsFailure) return "tls";
+  if (input.proxyConnectFailure) return "proxy_connect";
   const code = input.causeCode ?? "";
   if (
     /^(?:UND_ERR_CONNECT_TIMEOUT|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|ENOTFOUND|EAI_AGAIN)$/.test(

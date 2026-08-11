@@ -104,6 +104,9 @@ describe("classifyTransportPhase", () => {
     expect(classifyTransportPhase({ policyDenied: true })).toBe("policy");
     expect(classifyTransportPhase({ tlsFailure: true })).toBe("tls");
     expect(classifyTransportPhase({ causeCode: "CERT_HAS_EXPIRED" })).toBe("tls");
+    expect(classifyTransportPhase({ proxyConnectFailure: true, causeCode: "ECONNREFUSED" })).toBe(
+      "proxy_connect",
+    );
     expect(classifyTransportPhase({ causeCode: "ECONNREFUSED" })).toBe("app_connect");
     expect(classifyTransportPhase({ causeCode: "UND_ERR_CONNECT_TIMEOUT" })).toBe("app_connect");
     expect(classifyTransportPhase({ httpStatus: 503 })).toBe("response_headers");
@@ -164,7 +167,7 @@ describe("buildManagedTransportFailure", () => {
       consumer: "mcp",
       operation: "tools/list",
       route: "trusted_env_proxy",
-      phase: "connect",
+      phase: "app_connect",
       elapsedMs: 12,
       errorBody: { body: '{"ok":"payload"}', contentType: "application/json" },
     });
@@ -240,6 +243,21 @@ describe("buildManagedTransportFailure", () => {
     expect(event.traceId).toBe("trace-0123456789");
   });
 
+  it("replaces a credential-shaped supplied trace id before serialization", () => {
+    const supplied = "sk-abcdef0123456789abcdef0123456789";
+    const event = buildManagedTransportFailure({
+      consumer: "mcp",
+      operation: "tools/list",
+      route: "direct",
+      phase: "request",
+      elapsedMs: 10,
+      traceId: supplied,
+    });
+
+    expect(event.traceId).toMatch(/^[0-9a-f]{32}$/);
+    expect(JSON.stringify(event)).not.toContain(supplied);
+  });
+
   it("surfaces a nested transport cause code at the top level", () => {
     const event = buildManagedTransportFailure({
       consumer: "mcp",
@@ -310,7 +328,7 @@ describe("emitManagedTransportFailure", () => {
         consumer: "mcp",
         operation: "tools/list",
         route: "trusted_env_proxy",
-        phase: "response_body",
+        phase: "response_stream",
         traceId: "trace-9",
         elapsedMs: 5,
         causeChain: [],
