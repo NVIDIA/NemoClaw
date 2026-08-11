@@ -20,6 +20,26 @@ const fixtures: string[] = [];
 
 type RuntimeToolsFixture = "valid" | "missing-setpriv" | "gosu-present";
 
+function writeSetprivFixture(setpriv: string) {
+  fs.writeFileSync(setpriv, "#!/usr/bin/env bash\nprintf 'setpriv fixture\\n'\n", {
+    mode: 0o755,
+  });
+}
+
+const RUNTIME_TOOLS_FIXTURES: Record<
+  RuntimeToolsFixture,
+  (setpriv: string, fakeBin: string) => void
+> = {
+  valid: (setpriv) => writeSetprivFixture(setpriv),
+  "missing-setpriv": () => undefined,
+  "gosu-present": (setpriv, fakeBin) => {
+    writeSetprivFixture(setpriv);
+    fs.writeFileSync(path.join(fakeBin, "gosu"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+  },
+};
+
 function runRuntimeToolsContract(dockerfile: string, fixture: RuntimeToolsFixture) {
   const source = fs.readFileSync(dockerfile, "utf-8");
   const runtimeContract = dockerRunCommandBetween(
@@ -33,16 +53,7 @@ function runRuntimeToolsContract(dockerfile: string, fixture: RuntimeToolsFixtur
   const setpriv = path.join(tmp, "usr", "bin", "setpriv");
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.mkdirSync(path.dirname(setpriv), { recursive: true });
-  if (fixture !== "missing-setpriv") {
-    fs.writeFileSync(setpriv, "#!/usr/bin/env bash\nprintf 'setpriv fixture\\n'\n", {
-      mode: 0o755,
-    });
-  }
-  if (fixture === "gosu-present") {
-    fs.writeFileSync(path.join(fakeBin, "gosu"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
-  }
+  RUNTIME_TOOLS_FIXTURES[fixture](setpriv, fakeBin);
   return runLoggedDockerShell(runtimeContract.replaceAll("/usr/bin/setpriv", setpriv), tmp, [], {
     env: { PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
   }).result;
