@@ -98,10 +98,11 @@ If its build needs network access behind the corporate proxy, establish build-ti
 
 <AgentOnly variant="openclaw">
 
-An OpenClaw custom Dockerfile must also declare `ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox` and set `USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}` before `ENTRYPOINT`.
+In the final image stage, an OpenClaw custom Dockerfile must declare exactly one `ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox`.
+It must set `USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}` before `ENTRYPOINT`.
 NemoClaw selects `root` when it bakes the corporate CA so the entrypoint can create the root-owned merged bundle before it starts agent commands.
-Automatic fallback and host-store sources are a no-op when a custom Dockerfile omits either required argument.
-The explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` path fails onboarding when either argument is absent.
+Automatic fallback and host-store sources are a no-op when a custom Dockerfile does not meet these requirements.
+The explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` path fails onboarding instead.
 
 </AgentOnly>
 

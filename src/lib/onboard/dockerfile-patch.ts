@@ -39,6 +39,7 @@ import {
 } from "./dcode-auto-approval";
 import * as remoteDashboardBindContract from "./dockerfile-remote-dashboard-bind-contract";
 import {
+  type DockerfileInstruction,
   dockerfileInstructions,
   readDockerfilePatchSnapshot,
   replaceDockerfilePatchSnapshot,
@@ -106,6 +107,37 @@ export interface PatchStagedDockerfileOptions {
   compatibleEndpointReasoning?: "true" | "false";
   wslDashboardExposure?: boolean;
   rebuildPreservedEnv?: readonly PreservedEnvFile[];
+}
+
+function openClawRootStartupArg(dockerfile: string): DockerfileInstruction | null {
+  const instructions = dockerfileInstructions(dockerfile);
+  const finalFromIndex = instructions.reduce(
+    (last, instruction, index) => (/^FROM(?:\s|$)/i.test(instruction.text) ? index : last),
+    -1,
+  );
+  const finalStage = instructions.slice(finalFromIndex + 1);
+  const runtimeUserArgs = finalStage.filter((instruction) =>
+    /^ARG\s+NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER\s*=/.test(instruction.text),
+  );
+  if (runtimeUserArgs.length !== 1) return null;
+
+  const runtimeUserArg = runtimeUserArgs[0]!;
+  const runtimeUserArgIndex = finalStage.indexOf(runtimeUserArg);
+  const finalUserIndex = finalStage.reduce(
+    (last, instruction, index) => (/^USER(?:\s|$)/i.test(instruction.text) ? index : last),
+    -1,
+  );
+  const finalEntrypointIndex = finalStage.reduce(
+    (last, instruction, index) => (/^ENTRYPOINT(?:\s|$)/i.test(instruction.text) ? index : last),
+    -1,
+  );
+  const finalUser = finalStage[finalUserIndex]?.text ?? "";
+  const finalUserMatch = /^USER\s+(.+)$/i.exec(finalUser);
+  const runtimeUserControlsStartup =
+    runtimeUserArgIndex < finalUserIndex &&
+    finalUserIndex < finalEntrypointIndex &&
+    finalUserMatch?.[1] === "${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}";
+  return runtimeUserControlsStartup ? runtimeUserArg : null;
 }
 
 export function patchDcodeAutoApprovalDockerArg(
@@ -504,24 +536,21 @@ export function patchStagedDockerfile(
   const corporateCa = resolveCorporateCa(process.env);
   if (corporateCa) {
     const corporateCaArgPattern = /^ARG NEMOCLAW_CORPORATE_CA_B64=.*$/m;
-    const runtimeUserArgPattern = /^ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=.*$/m;
     const openClawRootStartup = options.agentName === "openclaw";
+    const runtimeUserArg = openClawRootStartup ? openClawRootStartupArg(dockerfile) : null;
     if (
       corporateCaArgPattern.test(dockerfile) &&
-      (!openClawRootStartup || runtimeUserArgPattern.test(dockerfile))
+      (!openClawRootStartup || runtimeUserArg !== null)
     ) {
+      if (runtimeUserArg) {
+        // Root startup creates the merged runtime trust bundle before the
+        // entrypoint starts the sandbox user's agent process (#8803).
+        dockerfile = `${dockerfile.slice(0, runtimeUserArg.start)}ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root${dockerfile.slice(runtimeUserArg.end)}`;
+      }
       dockerfile = dockerfile.replace(
         corporateCaArgPattern,
         `ARG NEMOCLAW_CORPORATE_CA_B64=${sanitizeDockerArg(encodeCorporateCaArg(corporateCa.pem))}`,
       );
-      if (openClawRootStartup) {
-        // Root startup creates the merged runtime trust bundle before the
-        // entrypoint starts the sandbox user's agent process (#8803).
-        dockerfile = dockerfile.replace(
-          runtimeUserArgPattern,
-          "ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root",
-        );
-      }
       // Surface which host source is being baked so a fallback import (from a
       // conventional CA env var rather than the explicit opt-in) is never
       // silent. The CA is a public certificate, so logging its source is safe.
@@ -530,12 +559,15 @@ export function patchStagedDockerfile(
       );
     } else if (corporateCa.sourceEnv === CORPORATE_CA_EXPLICIT_ENV) {
       // Explicit opt-in must not silently no-op on a managed Dockerfile.
-      const missingArg =
-        corporateCaArgPattern.test(dockerfile) && openClawRootStartup
-          ? "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER"
-          : "NEMOCLAW_CORPORATE_CA_B64";
+      if (!corporateCaArgPattern.test(dockerfile)) {
+        throw new Error(
+          "Dockerfile is missing ARG NEMOCLAW_CORPORATE_CA_B64; cannot bake the corporate CA from NEMOCLAW_CORPORATE_CA_BUNDLE.",
+        );
+      }
       throw new Error(
-        `Dockerfile is missing ARG ${missingArg}; cannot bake the corporate CA from NEMOCLAW_CORPORATE_CA_BUNDLE.`,
+        "Custom OpenClaw Dockerfile must declare exactly one final-stage ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER. " +
+          "It must set USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER} before ENTRYPOINT. " +
+          "Cannot bake the corporate CA from NEMOCLAW_CORPORATE_CA_BUNDLE.",
       );
     }
     // An OpenClaw fallback source stays a no-op when a custom Dockerfile lacks
