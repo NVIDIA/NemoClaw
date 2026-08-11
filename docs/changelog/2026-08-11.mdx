@@ -22,7 +22,7 @@ It also strengthens Hermes Shields state changes and removes sensitive values fr
   The retry preserves the sandbox and selected port, while authentication, gateway, port-ownership, and unrelated failures remain terminal.
   For more information, refer to the [OpenClaw Quickstart](/user-guide/openclaw/get-started/quickstart) and [Hermes Quickstart](/user-guide/hermes/get-started/quickstart).
   Related changes: [PR #8826](https://github.com/NVIDIA/NemoClaw/pull/8826) and [PR #8828](https://github.com/NVIDIA/NemoClaw/pull/8828).
-- On WSL with Docker Desktop, onboarding now reuses a reachable Windows-host Ollama daemon without applying an unrelated Linux systemd override.
+- On WSL 2 with Docker Desktop, onboarding now reuses a reachable Windows-host Ollama daemon without applying an unrelated Linux systemd override.
   The local Linux Ollama path retains its existing override behavior.
   For more information, refer to [Use Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama) and [Additional Setup for Windows Machines](/user-guide/openclaw/get-started/additional-setup/windows-preparation).
   Related change: [PR #8634](https://github.com/NVIDIA/NemoClaw/pull/8634).
@@ -31,20 +31,22 @@ It also strengthens Hermes Shields state changes and removes sensitive values fr
   For more information, refer to [Set Up Slack](/user-guide/openclaw/manage-sandboxes/messaging-channels/set-up-slack) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
   Related change: [PR #8566](https://github.com/NVIDIA/NemoClaw/pull/8566).
 - Hermes dashboard pairing and the Hermes gateway now share the durable WhatsApp session path.
-  Sandboxes with credentials in a legacy dashboard path receive cleanup and re-pairing guidance, and Hermes skill installs, updates, and removals now direct users to start a new chat session instead of restarting the gateway.
+  Sandboxes with credentials in a legacy dashboard path receive cleanup and re-pairing guidance.
+  Hermes skill installs, updates, and removals now direct users to start a new chat session instead of restarting the gateway.
   For more information, refer to [Set Up WhatsApp](/user-guide/hermes/manage-sandboxes/messaging-channels/set-up-whatsapp) and the [Hermes CLI Commands Reference](/user-guide/hermes/reference/commands).
   Related changes: [PR #8229](https://github.com/NVIDIA/NemoClaw/pull/8229) and [PR #8535](https://github.com/NVIDIA/NemoClaw/pull/8535).
-- Managed Hermes Docker images now use durable, provider-bound state mutation for Shields transitions.
-  NemoClaw validates the exact request and receipt, holds gateway startup behind the current fence, preserves rollback and recovery across controller restarts, and keeps older images on the existing compatibility path.
+- Current NemoClaw-managed Hermes images on the Docker driver now use the durable runtime provider state mutation contract for Shields transitions.
+  NemoClaw validates the exact request and receipt, holds Hermes gateway startup behind the current fence, and preserves rollback and recovery across controller restarts.
+  An older managed image uses the sealed-plan compatibility path only after NemoClaw proves that the runtime-provider capability is absent.
   For more information, refer to [Understand Runtime Changes](/user-guide/hermes/manage-sandboxes/configure-sandboxes/understand-runtime-changes), [Troubleshooting](/user-guide/hermes/reference/troubleshooting), and [Trusted Computing Base](/user-guide/hermes/security/trusted-computing-base).
   Related change: [PR #8658](https://github.com/NVIDIA/NemoClaw/pull/8658).
-- Rebuild and recovery now reuse a gateway-managed web-search credential only with exact sandbox, provider, and recreate-journal ownership evidence.
+- `nemoclaw <sandbox> rebuild --yes` now reuses a web search credential registered with the OpenShell gateway only when the rebuild hands onboarding a recreate journal for the same sandbox and target intent after deletion, and the live binding matches the exact sandbox-scoped provider name, provider type, and credential key.
   Legacy supervisor recovery retries temporary state-backup transport failures after restart, cleans incomplete backups before retrying, and keeps integrity or cleanup failures terminal.
   Failed OpenShell forward-list queries also remain distinct from an empty list, so cleanup does not stop a forward when it cannot establish ownership.
   For more information, refer to [Credential Storage](/user-guide/openclaw/security/credential-storage), [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
   Related changes: [PR #8774](https://github.com/NVIDIA/NemoClaw/pull/8774), [PR #8787](https://github.com/NVIDIA/NemoClaw/pull/8787), and [PR #8529](https://github.com/NVIDIA/NemoClaw/pull/8529).
 - `nemoclaw list --json` and global `nemoclaw status --json` now report `openclaw` for a registry entry without an explicit agent, matching the text and sandbox-scoped status surfaces.
-  The commands reference also uses the configured `main` OpenClaw agent in agent and session examples instead of the nonexistent `work` agent.
+  The commands reference also uses the default `main` OpenClaw agent in agent and session examples instead of `work`, which a clean onboarding does not configure.
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
   Related changes: [PR #8710](https://github.com/NVIDIA/NemoClaw/pull/8710) and [PR #8817](https://github.com/NVIDIA/NemoClaw/pull/8817).
 - A malformed MCP server URL diagnostic no longer echoes the rejected value, which can contain embedded credentials.
