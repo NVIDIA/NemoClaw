@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 EXPECTED_DCODE_VERSION = "0.1.54"
-EXPECTED_DEEPAGENTS_VERSION = "0.7.0a6"
+EXPECTED_DEEPAGENTS_VERSION = "0.7.5"
 EXPECTED_NATIVE_PROFILE_SHA256 = (
     "c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7"
 )
@@ -108,7 +108,7 @@ def _require_source(path: Path, label: str, expected_sha256: str) -> None:
         raise _fail(f"{label} is not a trusted regular file: {path}")
     source = path.read_bytes()
     if _sha256(source) != expected_sha256:
-        raise _fail(f"{label} does not match the reviewed Deep Agents 0.7.0a6 wheel")
+        raise _fail(f"{label} does not match the reviewed Deep Agents 0.7.5 wheel")
     compile(source, str(path), "exec")
 
 

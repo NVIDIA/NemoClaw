@@ -22,7 +22,7 @@ The Deep Agents Code selector is the published `0.1.54` release at commit
 `fbfd0fc31caf5a8b0f1ff4ddea4da0de7837b0ffd3e6a222118c6480c99671ae`;
 the corresponding source archive has SHA-256
 `74df86f91a11d5dbace943d1c747bf67a2354670416c343a6e909133feecaf27`.
-This migration crosses the `0.1.45` MCP and pyasn1 fixes while retaining the
+This semantic migration to `>=0.1.45` crosses the MCP and pyasn1 fixes while retaining the
 managed hook, approval, credential, update, and startup-mode guards at the
 NemoClaw launcher and exact-version package-patch boundaries.
 
@@ -68,7 +68,7 @@ behavior.
 
 ## Released Nemotron 3 Ultra Profile
 
-Deep Agents Code `0.1.54` pins `deepagents==0.7.0a6`, whose official wheel
+Deep Agents Code `0.1.54` pins `deepagents==0.7.5`, whose official wheel
 contains the Nemotron 3 Ultra harness profile merged in Deep Agents PR #4192.
 NemoClaw no longer vendors or overlays that source.
 
@@ -80,7 +80,7 @@ NemoClaw no longer vendors or overlays that source.
 - Adapter wheel license expression: `Apache-2.0`
 - Adapter dependency audit result: `No known vulnerabilities found`. Its only
   requirements are the exact `deepagents-code==0.1.54` and
-  `deepagents==0.7.0a6` entries covered by the lockfile audit command above; no
+  `deepagents==0.7.5` entries covered by the lockfile audit command above; no
   additional third-party distribution is introduced.
 
 ### Test-only legacy license fixture limitation
@@ -176,7 +176,7 @@ complete `execute.command` is the placeholder, ignoring case and whitespace
 around the token and brackets. The released Deep Agents parser/profile can carry that
 argument to normal tool middleware, where an unrestricted execute backend would
 otherwise treat it as a shell command. The model/provider emission and the
-hash-locked `deepagents==0.7.0a6` canonical profile are upstream boundaries;
+hash-locked `deepagents==0.7.5` canonical profile are upstream boundaries;
 NemoClaw owns the two managed aliases and the final middleware immediately before
 dispatch. The adapter therefore rejects only that observed complete argument and
 leaves concrete commands, other tools, the canonical NVIDIA profile, and
@@ -223,7 +223,7 @@ deleted source-backport license path, `LICENSE.langchain-deepagents`, is not
 staged into the image, and image regression tests enforce that absence.
 
 Deep Agents Code `0.1.54` is the released consumer; prerelease risk is limited
-to its exact `deepagents==0.7.0a6` SDK pin. That risk is accepted because the
+to its exact `deepagents==0.7.5` SDK pin. That risk is accepted because the
 consumer and SDK are hash locked and all source, version, middleware, graph,
 and dispatch contracts are enforced by the isolated image-build validator.
 Separately, the point-in-time audit reports no known vulnerabilities for

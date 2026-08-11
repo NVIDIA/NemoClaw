@@ -657,7 +657,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     expect(project).toContain('[project.entry-points."deepagents.harness_profiles"]');
     expect(project).toContain('nemoclaw-managed-aliases = "nemoclaw_deepagents_profile:register"');
     expect(project).toContain('"deepagents-code==0.1.54"');
-    expect(project).toContain('"deepagents==0.7.0a6"');
+    expect(project).toContain('"deepagents==0.7.5"');
   });
 
   it("keeps language-local managed Ultra model ID allowlists in sync", () => {
@@ -844,7 +844,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
 
   it.each([
     ["Deep Agents Code", { dcode: "0.1.55" }, "deepagents-code==0.1.54"],
-    ["Deep Agents", { deepagents: "0.7.0a7" }, "deepagents==0.7.0a6"],
+    ["Deep Agents", { deepagents: "0.7.0a7" }, "deepagents==0.7.5"],
   ] as const)("fails closed on %s version drift", (_label, versions, message) => {
     const fixture = makePluginFixture(versions);
     const result = runPlugin(fixture);
