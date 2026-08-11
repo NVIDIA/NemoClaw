@@ -102,6 +102,10 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
 };
 `,
   );
+  fs.writeFileSync(
+    path.join(onboardDir, "gateway-management.js"),
+    `exports.loadGatewayManagementDeclaration = () => ({ ok: true, declaration: null });\n`,
+  );
   writeNodeStub(fakeBin);
 
   const result = spawnSync(
