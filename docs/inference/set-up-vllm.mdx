@@ -267,6 +267,24 @@ When you start managed vLLM outside the installer express flow, NemoClaw uses th
 For the managed single-node DGX Spark `nvidia/Qwen3.6-35B-A3B-NVFP4` profile, NemoClaw enables async scheduling and does not enable multi-token prediction (MTP) speculative decoding.
 The profile retains `--gpu-memory-utilization 0.4`, a `262144`-token context window, `4` concurrent sequences, an `8192`-token batch limit, chunked prefill, prefix caching, and its registered parsers and acceleration backends.
 
+NVIDIA Nemotron 3.5 Lightning is an additional explicit-only single-DGX Spark profile and does not change the Qwen default.
+Select its stable catalog ID after confirming that `$$nemoclaw profiles list` reports it as compatible.
+
+```bash
+$$nemoclaw onboard --profile vllm.dgx-spark-gb10.single.nemotron-3.5-lightning-30b-a3b-nvfp4
+```
+
+The profile serves the public [`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) checkpoint through a pinned ARM64 vLLM image.
+Its profile limits for one concurrent sequence are a 65,536-token context window, a 4,096-token batch limit, 0.7 GPU-memory utilization, FP8 KV cache, and one-token MTP speculative decoding.
+It uses vLLM's Python frontend because the pinned runtime's Rust frontend does not register the required `step3p5` reasoning and tool-call parsers.
+Physical single-DGX Spark validation covered plain chat, automatic and named structured tool calls, the 10-turn 32K-input/2K-output release workload, OpenClaw chat and file tools, cached restart, cleanup, and restoration of the original Qwen route.
+
+<Warning title="Experimental Nemotron 3.5 Lightning vLLM Profile">
+This profile is an explicit opt-in for one DGX Spark and remains Experimental.
+Promotion requires broader validation of the pinned Python frontend and the `step3p5` reasoning and tool-call parsers.
+The fixed recipe intentionally rejects model and serve-argument overrides; use another catalog profile instead of modifying its validated resource boundary.
+</Warning>
+
 Muse Glimmer is an additional single-DGX Spark choice and does not change the Qwen default.
 Select `muse-glimmer-30b` to serve `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` with the `muse-glimmer` alias.
 The registered recipe configures a 32,768-token context window, 1 concurrent sequence, a 4,096-token batch limit, and 0.75 GPU-memory utilization.
