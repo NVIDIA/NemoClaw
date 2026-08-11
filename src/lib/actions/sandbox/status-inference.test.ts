@@ -60,7 +60,10 @@ describe("sandbox status inference.local route health (#6192)", () => {
           ? async () => Promise.reject(new Error("openshell unavailable TOKEN=super-secret"))
           : async () => options.routeHealth,
       ),
-      probeSandboxInferenceInvocationImpl: vi.fn(() => ({ ok: true }) as const),
+      probeSandboxInferenceInvocationImpl: vi.fn(
+        (_input: Parameters<typeof buildSandboxInferenceInvocationCommand>[0]) =>
+          ({ ok: true }) as const,
+      ),
       probeTerminalRuntimeHealth: vi.fn(() => ({ kind: "ok" as const, oomKillCount: 0 as const })),
       reportInferenceProbeError,
     };
