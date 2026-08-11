@@ -13,7 +13,7 @@ import {
 } from "../advisors/e2e-recommendations.mts";
 import { deleteBotOwnedStickyComments, upsertStickyComment } from "../advisors/github.mts";
 import { parseArgs, readIfExists, readJsonIfExists } from "../advisors/io.mts";
-import { isPrE2ePlanningJob } from "../advisors/risk-plan.mts";
+import { isPrE2eManualControllerJob } from "../advisors/risk-plan.mts";
 
 const MARKER = "<!-- nemoclaw-pr-review-advisor -->";
 const COMMENT_TITLE = "PR Review Advisor";
@@ -684,8 +684,8 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
     changedCredentialFreeJobIds,
   );
   const requiredE2e = uniqueE2eIds([...requiredTargets, ...requiredCoverage]);
-  const commitUnderReviewE2e = requiredE2e.filter(isPrE2ePlanningJob);
-  const manualOnlyE2e = requiredE2e.filter((id) => !isPrE2ePlanningJob(id));
+  const commitUnderReviewE2e = requiredE2e.filter(isPrE2eManualControllerJob);
+  const manualOnlyE2e = requiredE2e.filter((id) => !isPrE2eManualControllerJob(id));
   const optionalE2e = uniqueE2eIds([...optionalTargets, ...optionalCoverage]);
   const lines = [
     "",

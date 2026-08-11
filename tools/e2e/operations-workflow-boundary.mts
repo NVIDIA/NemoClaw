@@ -8,7 +8,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import ts from "typescript";
 import YAML from "yaml";
-import { PR_E2E_MANUAL_JOB_IDS, RISK_RULES } from "../advisors/risk-plan.mts";
+import { PR_E2E_MANUAL_CONTROLLER_JOB_IDS, RISK_RULES } from "../advisors/risk-plan.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -294,9 +294,9 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const authSource = String(authentication.run ?? "");
   const acceptedJobCases = [
     "::false",
-    ...PR_E2E_MANUAL_JOB_IDS.map((jobId) => `${jobId}::false`),
+    ...PR_E2E_MANUAL_CONTROLLER_JOB_IDS.map((jobId) => `${jobId}::false`),
   ].join(" | ");
-  const acceptedJobNames = PR_E2E_MANUAL_JOB_IDS.join(", or ");
+  const acceptedJobNames = PR_E2E_MANUAL_CONTROLLER_JOB_IDS.join(", or ");
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
     '"$WORKFLOW_REF" == "refs/heads/main"',
