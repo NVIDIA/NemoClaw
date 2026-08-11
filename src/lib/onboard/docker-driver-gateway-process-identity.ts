@@ -27,6 +27,53 @@ export function readDockerDriverGatewayProcessIdentity(
   return captureProcessArgs(pid);
 }
 
+export function readDockerDriverGatewayProcessEnvironment(
+  pid: number,
+): Record<string, string> | null {
+  const procEnvPath = `/proc/${pid}/environ`;
+  const env: Record<string, string> = {};
+  try {
+    if (!fs.existsSync(procEnvPath)) return null;
+    for (const entry of fs.readFileSync(procEnvPath, "utf-8").split("\0")) {
+      if (!entry) continue;
+      const separator = entry.indexOf("=");
+      if (separator <= 0) continue;
+      env[entry.slice(0, separator)] = entry.slice(separator + 1);
+    }
+  } catch {
+    return null;
+  }
+  return env;
+}
+
+export function hasDockerDriverGatewayEnvironment(
+  env: Readonly<Record<string, string>> | null,
+  expectedEndpoint: string,
+): boolean {
+  if (!env) return false;
+  return (
+    env.OPENSHELL_DRIVERS === "docker" ||
+    env.OPENSHELL_DRIVERS === "podman" ||
+    Boolean(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE) ||
+    env.OPENSHELL_GRPC_ENDPOINT === expectedEndpoint
+  );
+}
+
+/** Apply the shared positive identity decision used by runtime and readiness scans. */
+export function isDockerDriverGatewayProcessIdentity(input: {
+  pid: number;
+  gatewayBin?: string | null;
+  captureProcessArgs(pid: number): string;
+  processIdentityMatchesGatewayBinary(identity: string, gatewayBin?: string | null): boolean;
+  requireDockerDriverEnv: boolean;
+  hasDockerDriverGatewayEnv(pid: number): boolean;
+}): boolean {
+  const identity = readDockerDriverGatewayProcessIdentity(input.pid, input.captureProcessArgs);
+  if (!identity) return false;
+  if (!input.processIdentityMatchesGatewayBinary(identity, input.gatewayBin)) return false;
+  return !input.requireDockerDriverEnv || input.hasDockerDriverGatewayEnv(input.pid);
+}
+
 export function getDockerDriverGatewayTargetIdentityDrift(input: {
   gatewayBin?: string | null;
   gatewayPort: number;
