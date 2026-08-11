@@ -1354,6 +1354,30 @@ Host-side gateway recovery uses the same per-sandbox serialization.
 
 </AgentOnly>
 
+<AgentOnly variant="hermes">
+
+For a current NemoClaw-managed Hermes image on the Docker driver, `shields status` is a recovery and reconciliation command, not only a display command.
+It first recovers any retained exact runtime provider state mutation, then applies and verifies the declared recursive posture.
+A result exits with status `0` only after the command verifies that posture.
+A status check can therefore complete work retained by an interrupted host process.
+
+If provider recovery restores lockdown while the persisted Shields posture still says mutable, status prints `ERROR (runtime-provider recovery restored lockdown)`, exits with status `2`, and tells you to retry the intended Shields transition.
+If live verification of a mutable default or timed Shields down posture fails, status prints `NOT CONFIGURED (DRIFTED...)` or `DOWN (DRIFTED...)`, exits with status `2`, and directs you to run `$$nemoclaw <name> shields up` to reconcile and verify lockdown.
+Status does not report `UP`, `DOWN`, or mutable-default with exit status `0` when the provider cannot verify the exact recursive posture.
+
+While an exact provider fence is active, ordinary direct-container, SSH, and OpenShell command transports are refused before a sandbox process starts.
+They report `Runtime provider state mutation owns direct-container execution for sandbox '<name>'; retry after the provider fence is released.`
+Recover and retry as follows:
+
+1. Let the active Shields or recovery command finish.
+2. Run `$$nemoclaw <name> shields status`.
+3. Retry the original command only after provider verification completes and the command exits with status `0`.
+
+Older managed Hermes images use the sealed-plan transition only when the current provider capability is proved absent.
+Custom images and legacy Dockerfile workflows remain on their existing transition contract and do not use `provider-state-mutation-v2`.
+
+</AgentOnly>
+
 Before `shields down` opens a new window, NemoClaw must revoke any stale auto-restore timer authority.
 If marker cleanup fails, the command reports `Cannot revoke stale auto-restore timer authority` and stops before policy capture, state writes, config unlock, replacement-timer startup, or audit writes.
 The sandbox retains its existing configuration and policy posture, and the stale timer authority remains.
