@@ -32,7 +32,7 @@ import { resolveSandboxDashboardPort } from "./forward-recovery";
  */
 const LEGACY_OPENSHELL_KEEPALIVE = "sleep infinity";
 const DOCKER_INSPECT_TIMEOUT_MS = 15000;
-const STATE_BACKUP_MAX_ATTEMPTS = 5;
+const STATE_BACKUP_MAX_RETRIES = 5;
 const STATE_BACKUP_RETRY_SECONDS = 2;
 
 export type ManagedSupervisorRelaunch = {
@@ -163,9 +163,9 @@ export function relaunchManagedSupervisorSession(
     // Docker can restore the OpenShell exec relay before its SSH transport.
     // Retry only that typed transport lag; integrity and audit failures remain terminal.
     for (
-      let attempt = 1;
-      attempt < STATE_BACKUP_MAX_ATTEMPTS && !backup.success && backup.unreachable === true;
-      attempt += 1
+      let retry = 0;
+      retry < STATE_BACKUP_MAX_RETRIES && !backup.success && backup.unreachable === true;
+      retry += 1
     ) {
       if (backup.manifest) {
         try {

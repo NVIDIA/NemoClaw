@@ -197,6 +197,41 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(dependencyOrder).toEqual([...dependencyOrder].sort((left, right) => left - right));
   });
 
+  it("allows the state backup to succeed on the fifth retry after a restart", () => {
+    const unreachableBackup = {
+      success: false,
+      unreachable: true,
+      manifest: { backupPath: "/tmp/rebuild-backups/alpha/partial" },
+      backedUpDirs: [],
+      failedDirs: ["workspace"],
+      backedUpFiles: [],
+      failedFiles: [],
+    };
+    const backupState = vi
+      .fn()
+      .mockReturnValueOnce(unreachableBackup)
+      .mockReturnValueOnce(unreachableBackup)
+      .mockReturnValueOnce(unreachableBackup)
+      .mockReturnValueOnce(unreachableBackup)
+      .mockReturnValueOnce(unreachableBackup)
+      .mockReturnValueOnce({
+        success: true,
+        manifest: { backupPath: "/tmp/rebuild-backups/alpha/recovery" },
+        backedUpDirs: ["workspace"],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+      });
+    const sleep = vi.fn();
+    const deps = baseDeps({ backupState: backupState as never, sleep });
+
+    expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).not.toBeNull();
+    expect(backupState).toHaveBeenCalledTimes(6);
+    expect(sleep).toHaveBeenCalledTimes(5);
+    expect(deps.removeBackup).toHaveBeenCalledTimes(5);
+    expect(deps.recreate).toHaveBeenCalledOnce();
+  });
+
   it("rolls the container transaction back when managed readiness is not proven", () => {
     const deps = baseDeps();
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
