@@ -2251,6 +2251,7 @@ function executePlan(
             ...(scopedToSelectedGateway && selectedIsDefault ? ["source"] : []),
             ...(scopedToSelectedGateway
               ? [
+                  ...OLLAMA_AUTH_PROXY_STATE_ENTRIES,
                   ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
                   MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
                   ...managedClusterBindingStateEntries(paths.nemoclawStateDir),
