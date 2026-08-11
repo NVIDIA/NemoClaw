@@ -81,7 +81,7 @@ describe("interactive PTY driver", () => {
         cmd: [
           "python3",
           "-c",
-          "import os, sys, time\nopen(sys.argv[1], 'w').write(str(os.getpid()))\ntime.sleep(30)",
+          "import os, signal, sys, time\nsignal.signal(signal.SIGHUP, signal.SIG_IGN)\nopen(sys.argv[1], 'w').write(str(os.getpid()))\ntime.sleep(30)",
           pidFile,
         ],
         env: process.env,

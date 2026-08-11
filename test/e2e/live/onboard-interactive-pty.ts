@@ -65,6 +65,29 @@ pid, fd = pty.fork()
 if pid == 0:
     os.execvp(cmd[0], cmd)
 
+# pty.fork() makes the command the leader of a separate session/process
+# group. Tell the Node parent which group it must terminate on its hard
+# timeout; killing only this Python driver's group cannot reach that child.
+sys.stderr.write("PTY_CHILD_PID\\t" + str(pid) + "\\n")
+sys.stderr.flush()
+
+def terminate_pty_child():
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+def handle_driver_signal(_signum, _frame):
+    terminate_pty_child()
+    try:
+        os.waitpid(pid, 0)
+    except ChildProcessError:
+        pass
+    sys.exit(124)
+
+signal.signal(signal.SIGTERM, handle_driver_signal)
+signal.signal(signal.SIGINT, handle_driver_signal)
+
 output = bytearray()
 os.set_blocking(fd, False)
 deadline = time.monotonic() + timeout_s
@@ -101,11 +124,11 @@ while time.monotonic() < deadline:
         exit_code = os.waitstatus_to_exitcode(waited[1])
         break
 if exit_code is None:
+    terminate_pty_child()
     try:
-        os.kill(pid, signal.SIGKILL)
-    except ProcessLookupError:
+        os.waitpid(pid, 0)
+    except ChildProcessError:
         pass
-    os.waitpid(pid, 0)
     sys.stderr.write("DRIVER_TIMEOUT\\n")
     sys.exit(124)
 sys.exit(exit_code)
@@ -129,8 +152,8 @@ export function driveInteractiveCommand(
   // below, so the sole audited async child-process boundary stays attached
   // to a named, reviewed callsite. `detached: true` makes the Python driver
   // the leader of its own process group/session, so its pty.fork()'d
-  // onboard child (which inherits that group) can be reaped as a unit on
-  // timeout instead of surviving as an orphan.
+  // driver a stable group for fallback cleanup. pty.fork() creates a separate
+  // child session, whose process-group id is reported over stderr below.
   const child = spawnObservedChild(resolvePython(), ["-c", PTY_DRIVER_SCRIPT], {
     activityLabel: options.activityLabel,
     progress: options.progress,
@@ -147,19 +170,33 @@ export function driveInteractiveCommand(
     let stderrRest = "";
     let timedOut = false;
     let settled = false;
+    let ptyChildPid: number | null = null;
+    let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
 
     const timer = setTimeout(() => {
       timedOut = true;
-      // Kill the whole process group (negative pid), not just the driver
-      // pid: the driver's forked onboard child shares that group and would
-      // otherwise keep running past this test.
+      // pty.fork() puts the onboard command in its own session. Kill that
+      // exact process group, then let the driver reap it through its SIGTERM
+      // handler. The delayed driver-group SIGKILL is only a hard fallback.
       try {
-        if (child.pid) process.kill(-child.pid, "SIGKILL");
+        if (ptyChildPid) process.kill(-ptyChildPid, "SIGKILL");
       } catch {
-        // Group may already be gone (driver exited between the deadline
-        // check and this signal); fall back to the direct pid below.
+        // The PTY child may already have exited between the deadline and the
+        // signal. The driver still receives SIGTERM and reaps its status.
       }
-      child.kill("SIGKILL");
+      child.kill("SIGTERM");
+      forceKillTimer = setTimeout(() => {
+        try {
+          if (ptyChildPid) process.kill(-ptyChildPid, "SIGKILL");
+        } catch {
+          // Already gone.
+        }
+        try {
+          if (child.pid) process.kill(-child.pid, "SIGKILL");
+        } catch {
+          child.kill("SIGKILL");
+        }
+      }, 1_000);
     }, options.timeoutMs);
 
     // Additional listeners alongside spawnObservedChild's own content-free
@@ -172,6 +209,11 @@ export function driveInteractiveCommand(
       const lines = (stderrRest + chunk.toString("utf-8")).split("\n");
       stderrRest = lines.pop() ?? "";
       for (const line of lines) {
+        const childPid = line.match(/^PTY_CHILD_PID\t([1-9]\d*)$/);
+        if (childPid) {
+          ptyChildPid = Number(childPid[1]);
+          continue;
+        }
         const fired = line.match(/^FIRED\t(.*)$/);
         if (fired) firedTriggers.push(fired[1]);
       }
@@ -180,12 +222,14 @@ export function driveInteractiveCommand(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       reject(error);
     });
     child.once("close", (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       const fired = stderrRest.match(/^FIRED\t(.*)$/);
       if (fired) firedTriggers.push(fired[1]);
       resolve({
