@@ -30,6 +30,7 @@ const reviewedBundledPackages = [
   "fast-uri",
   "json-schema-traverse",
   "pkce-challenge",
+  "undici",
   "zod",
   "zod-to-json-schema",
 ] as const;
@@ -75,6 +76,9 @@ const result = await build({
   platform: "node",
   target: "node22",
   format: "esm",
+  banner: {
+    js: 'import { createRequire as createMcpRuntimeRequire } from "node:module"; const require = createMcpRuntimeRequire(import.meta.url);',
+  },
   legalComments: emitReviewedArtifact ? "eof" : undefined,
   minifyWhitespace: emitReviewedArtifact,
   outfile: bundlePath,

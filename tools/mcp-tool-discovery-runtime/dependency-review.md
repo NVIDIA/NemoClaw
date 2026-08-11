@@ -13,6 +13,12 @@ The shared image runtime uses the official `@modelcontextprotocol/sdk` client so
 - License: MIT
 - Locked production graph: `package-lock.json` (lockfile version 3)
 - Build-only tools: `typescript@6.0.3`, `@types/node@25.5.2`, and `esbuild@0.27.4` (not copied into the final image)
+- Scoped HTTP transport: `undici@8.10.0`
+  - Registry tarball: `https://registry.npmjs.org/undici/-/undici-8.10.0.tgz`
+  - Integrity: `sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==`
+  - License: MIT
+  - Dependencies: none
+  - Engine: Node.js `>=22.19.0`
 - Security overrides:
   - `@hono/node-server@2.0.12`: `sha512-eWpQYr67tqJLeaSUl0Q+TquuYfUdTibpOJlUMV2FfUP7+KqCC5TufnwnlXL6mobZBJbGAYRd7ZvEBDCbLInjhg==`
   - `fast-uri@3.1.5`: `sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==`
@@ -20,6 +26,7 @@ The shared image runtime uses the official `@modelcontextprotocol/sdk` client so
   - `ip-address@10.3.1`: `sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==`
 
 OpenClaw's `mcporter` dependency graph also resolves the official SDK but remains separately locked. This runtime keeps a direct lock because Hermes and LangChain Deep Agents Code must not depend on OpenClaw's adapter package.
+The discovery runtime also uses the repository-reviewed `undici@8.10.0` package directly. Its session-scoped `EnvHttpProxyAgent` reads the trusted proxy environment without replacing the process-global dispatcher. This removes the runtime's dependency on whichever Undici revision a managed image's Node binary bundles behind the experimental `NODE_USE_ENV_PROXY` gate. The package, integrity, registry signature, provenance, license, no-dependency graph, and Node engine were already reviewed for the OpenClaw 2026.7.1 dependency refresh in `docs/security/openclaw-2026.7.1-dependency-review.md`.
 The client bundle includes the SDK's AJV validation path, including `ajv-formats` and `fast-uri`, plus `content-type` for standards-compliant response media-type parsing. The `fast-uri` override and `content-type` license are therefore runtime-relevant. The bundle does not include the SDK's Hono server adapter or its `hono` and `ip-address` dependencies, but those packages remain part of the installed production graph that the reviewed npm audit CI check evaluates. The build enforces the exact reviewed bundle-package allowlist and emits `BUNDLED_PACKAGES.json` alongside the generated third-party license notice. The exact overrides keep the installed graph outside the affected ranges for `GHSA-7p8r-x3mc-p8w7`, `GHSA-8j4g-w8fx-2239`, `GHSA-mwp4-54f8-5fhr`, `GHSA-4xrf-jv44-h6hh`, and `GHSA-22jq-vg5j-6vgg` without changing the SDK client pin.
 
 ## 2026-08-03 security refresh
@@ -43,6 +50,7 @@ Concern ledger:
 - `MCP-AUDIT-2` — `hono@4.12.30` uses a regular expression that can cause excessive work for a large CORS request-header value. Surface: installed SDK server dependency; excluded from the client bundle. Resolution: pin `hono@4.12.34`, which replaces the split expression and adds a regression test for a large request header. Validation: exact lock metadata, bundle-input exclusion, and the production audit.
 - `MCP-AUDIT-3` — `ip-address@10.2.0` accepts address forms whose classification can differ across parsers. Surface: installed SDK server dependency; excluded from the client bundle. Resolution: pin `ip-address@10.3.1`, which rejects leading-zero IPv4 octets and stacked subnet suffixes and adds regression tests for IPv4 and IPv6 parsing. Validation: exact lock metadata, bundle-input exclusion, and the production audit.
 - `MCP-AUDIT-4` — Live advisory and Sigstore TUF queries in the image build can prevent a released version from reproducing the same image after external metadata or network availability changes. Surface: `install-reviewed-runtime.sh`. Resolution: move both advisory enforcement and registry-signature verification for this exact lock to the trusted reviewed npm audit CI check. Image assembly copies the exact reviewed bundle and license outputs instead of materializing this npm graph, so protected rebuilds need neither registry access nor committed registry archives. Bundle regeneration remains fail-closed on the committed lock, its SHA-512 archive integrity, the runtime test, typecheck, and exact bundle-package allowlist. Validation: `test/mcp-tool-discovery-image-contract.test.ts` and `npm run bundle:reviewed:check`.
+- `MCP-PROXY-8746-1` — Managed tool discovery used Node's image-bundled global `fetch`, so its proxy implementation varied with the Node patch release and depended on the experimental `NODE_USE_ENV_PROXY` switch. The OpenShell v0.0.101 qualification observed a trusted-private discovery failure before the fixture received any request even though registration, provider, and policy readiness passed. Resolution: use the already-reviewed, lock-pinned Undici `EnvHttpProxyAgent` in one scoped discovery session while preserving the same proxy environment, CA environment, credential placeholder, OpenShell CONNECT policy, response bounds, and no-retry posture. Validation: `streamable-http-client.test.ts` proves the session emits CONNECT for the exact private hostname without depending on `NODE_USE_ENV_PROXY`, and the live OpenClaw MCP bridge E2E remains the full OpenShell v0.0.101 boundary.
 
 ## 2026-08-05 build audit boundary update
 

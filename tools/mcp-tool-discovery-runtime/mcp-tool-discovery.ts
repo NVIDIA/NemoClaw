@@ -3,10 +3,9 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-
+import { createMcpToolDiscoveryFetchSession } from "./proxy-fetch.ts";
 import {
   buildMcpToolDiscoveryAuthorizationPlaceholder,
-  createBoundedMcpFetch,
   MCP_TOOL_DISCOVERY_LIMITS,
   MCP_TOOL_DISCOVERY_PROTOCOL,
   type McpToolDiscoveryResult,
@@ -35,9 +34,9 @@ async function main(): Promise<void> {
   }
 
   const deadlineSignal = AbortSignal.timeout(MCP_TOOL_DISCOVERY_LIMITS.maxTotalTimeMs);
-  const boundedFetch = createBoundedMcpFetch(globalThis.fetch, deadlineSignal);
+  const fetchSession = createMcpToolDiscoveryFetchSession(deadlineSignal);
   const transport = new StreamableHTTPClientTransport(runtimeArguments.url, {
-    fetch: boundedFetch,
+    fetch: fetchSession.fetch,
     requestInit: {
       headers: {
         authorization: buildMcpToolDiscoveryAuthorizationPlaceholder(
@@ -71,7 +70,13 @@ async function main(): Promise<void> {
     },
     hasSession: () => Boolean(transport.sessionId),
     terminateSession: () => transport.terminateSession(),
-    close: () => client.close(),
+    close: async () => {
+      try {
+        await client.close();
+      } finally {
+        await fetchSession.close();
+      }
+    },
     publishResult: writeResult,
   });
 }

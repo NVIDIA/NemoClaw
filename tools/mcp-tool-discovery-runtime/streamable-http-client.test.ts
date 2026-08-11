@@ -8,10 +8,9 @@ import test from "node:test";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-
+import { createMcpToolDiscoveryFetchSession } from "./proxy-fetch.ts";
 import {
   buildMcpToolDiscoveryAuthorizationPlaceholder,
-  createBoundedMcpFetch,
   MCP_TOOL_DISCOVERY_LIMITS,
   type McpToolDiscoveryResult,
   normalizeMcpToolPage,
@@ -107,10 +106,15 @@ test("discovers tools from case-variant SSE response media types (#7726)", async
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   const deadlineSignal = AbortSignal.timeout(MCP_TOOL_DISCOVERY_LIMITS.maxTotalTimeMs);
+  const fetchSession = createMcpToolDiscoveryFetchSession(deadlineSignal, {
+    HTTP_PROXY: "",
+    HTTPS_PROXY: "",
+    NO_PROXY: "*",
+  });
   const transport = new StreamableHTTPClientTransport(
     new URL(`http://127.0.0.1:${address.port}/mcp`),
     {
-      fetch: createBoundedMcpFetch(globalThis.fetch, deadlineSignal),
+      fetch: fetchSession.fetch,
       requestInit: {
         headers: {
           authorization: buildMcpToolDiscoveryAuthorizationPlaceholder("EXAMPLE_MCP_TOKEN"),
@@ -145,7 +149,13 @@ test("discovers tools from case-variant SSE response media types (#7726)", async
         ),
       hasSession: () => Boolean(transport.sessionId),
       terminateSession: () => transport.terminateSession(),
-      close: () => client.close(),
+      close: async () => {
+        try {
+          await client.close();
+        } finally {
+          await fetchSession.close();
+        }
+      },
       publishResult: (result) => {
         published = result;
       },
@@ -171,4 +181,31 @@ test("discovers tools from case-variant SSE response media types (#7726)", async
   const deletion = observed.find((request) => request.httpMethod === "DELETE");
   assert.equal(deletion?.sessionId, sessionId);
   assert.equal(deletion?.protocolVersion, initialized.protocolVersion);
+});
+
+test("routes trusted-private HTTPS discovery through an explicit CONNECT dispatcher (#8746)", async () => {
+  let connectAuthority: string | undefined;
+  const proxy = http.createServer();
+  proxy.on("connect", (request, socket) => {
+    connectAuthority = request.url;
+    socket.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+  });
+  await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+  const proxyAddress = proxy.address() as AddressInfo;
+  const proxyUrl = `http://127.0.0.1:${proxyAddress.port}`;
+  let fetchSession: ReturnType<typeof createMcpToolDiscoveryFetchSession> | undefined;
+
+  try {
+    fetchSession = createMcpToolDiscoveryFetchSession(AbortSignal.timeout(2_000), {
+      HTTP_PROXY: proxyUrl,
+      HTTPS_PROXY: proxyUrl,
+      NO_PROXY: "",
+    });
+
+    await assert.rejects(fetchSession.fetch("https://mcp-rebind.example.test:8443/mcp"));
+    assert.equal(connectAuthority, "mcp-rebind.example.test:8443");
+  } finally {
+    await fetchSession?.close();
+    await closeServer(proxy);
+  }
 });
