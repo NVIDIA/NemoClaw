@@ -98,21 +98,6 @@ Install the following before you begin.
 - Docker (running)
 - [hadolint](https://github.com/hadolint/hadolint) (Dockerfile linter — `brew install hadolint` on macOS)
 
-### Node.js Heap Limit
-
-Node.js derives its default old-space limit from host memory.
-On a host with 8 GB of RAM, that limit is about 2.2 GB.
-The CLI type check needs more heap than that limit.
-Setup then stops at the type-check step and Node.js reports `JavaScript heap out of memory`.
-
-If your host has 8 GB of RAM or less, raise the limit before you run setup:
-
-```bash
-export NODE_OPTIONS=--max-old-space-size=5120
-```
-
-Keep that variable set for later type-check, build, and test commands.
-
 ## Getting Started
 
 From the repository root, prepare the checkout with one command:
