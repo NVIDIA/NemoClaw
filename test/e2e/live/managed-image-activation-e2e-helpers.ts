@@ -327,6 +327,52 @@ function enterCleanupPhase(progress: TestProgress, agent: ShippedManagedImageAge
   }
 }
 
+async function collectOnboardFailureDockerLogs(
+  host: HostCliClient,
+  agent: ShippedManagedImageAgent,
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  try {
+    const inventory = await host.command(
+      "docker",
+      [
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        "label=openshell.ai/managed-by=openshell",
+        "--filter",
+        `label=openshell.ai/sandbox-name=${sandboxName}`,
+        "--format",
+        "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}",
+      ],
+      {
+        artifactName: `managed-activation-onboard-failure-${agent}-container-inventory`,
+        env,
+        redactionValues: [API_KEY],
+        timeoutMs: 30_000,
+      },
+    );
+    const containerIds = inventory.stdout
+      .split(/\r?\n/u)
+      .map((line) => line.trim().split(/\s+/u)[0] ?? "")
+      .filter((containerId) => /^[a-f0-9]{12,64}$/u.test(containerId));
+    await Promise.allSettled(
+      containerIds.map((containerId, index) =>
+        host.command("docker", ["logs", "--tail", "1000", containerId], {
+          artifactName: `managed-activation-onboard-failure-${agent}-container-${index + 1}-logs`,
+          env,
+          redactionValues: [API_KEY],
+          timeoutMs: 30_000,
+        }),
+      ),
+    );
+  } catch {
+    // Preserve the onboarding failure as the primary error when diagnostics are unavailable.
+  }
+}
+
 async function qualifyAgent(
   fixtures: RuntimeFixtures,
   guard: DockerGuard,
@@ -368,6 +414,9 @@ async function qualifyAgent(
       timeoutMs: ONBOARD_TIMEOUT_MS,
     },
   );
+  if (onboard.exitCode !== 0) {
+    await collectOnboardFailureDockerLogs(host, agent, sandboxName, env);
+  }
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
   expectManagedReceipt(sandboxName, contract);
   await host.expectListed(sandboxName, { env });
