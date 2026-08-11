@@ -105,7 +105,7 @@ describe("codebase growth trusted assertion", () => {
     "cjs",
     "mjs",
     "jsx",
-  ])("prints a new .%s JavaScript file in the consolidated failure", (extension) => {
+  ])("reports a newly added .%s JavaScript path in the consolidated failure", (extension) => {
     const filename = `scripts/new.${extension}`;
     const result = runEntrypoint([
       [{ filename, status: "added", additions: 1, deletions: 0 }],

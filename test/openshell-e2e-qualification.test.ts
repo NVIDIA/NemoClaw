@@ -268,7 +268,7 @@ describe("OpenShell qualification-sensitive path detection", () => {
     expect(isOpenShellQualificationSensitivePath("docs/index.mdx")).toBe(false);
   });
 
-  it("removes managed-image activation from required pre-merge checks and retains the rootless lifecycle check", () => {
+  it("does not require managed-image activation before merge and retains the rootless lifecycle check", () => {
     const renamed = validatePullRequestFile({
       filename: "docs/retired.mdx",
       previous_filename: "scripts/install-openshell.sh",
