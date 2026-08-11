@@ -26,6 +26,9 @@ afterEach(() => {
 });
 
 describe("executeGatewaySupervisorAction", () => {
+  const controlPath = "/usr/local/bin/nemoclaw-gateway-control";
+  const targetContainerId = "a".repeat(64);
+
   it("sanitizes a temporarily unavailable direct container into the retry marker", () => {
     const privilegedExec = requireSource("../src/lib/sandbox/privileged-exec.ts");
     vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(() => {
@@ -51,6 +54,62 @@ describe("executeGatewaySupervisorAction", () => {
       status: 1,
       stdout: "",
       stderr: "PRIVILEGED_CONTROL_UNAVAILABLE: container identity changed",
+    });
+  });
+
+  it("binds an exact Docker restart transition to the selected container (#8726)", () => {
+    const dockerExec = requireSource("../src/lib/adapters/docker/exec.ts");
+    const privilegedExec = requireSource("../src/lib/sandbox/privileged-exec.ts");
+    vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockReturnValue([
+      "exec",
+      "--user",
+      "root",
+      targetContainerId,
+      controlPath,
+      "probe",
+      "b".repeat(64),
+    ]);
+    vi.spyOn(dockerExec, "dockerSpawnSync").mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: `Error response from daemon: Container ${targetContainerId} is restarting, wait until the container is running`,
+    } as never);
+
+    expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: `Error response from daemon: Container ${targetContainerId} is restarting, wait until the container is running`,
+      managedControlRestartingContainerId: targetContainerId,
+    });
+  });
+
+  it.each([
+    ["an error for a different container", 1, "", "b".repeat(64), ""],
+    ["a status-2 error", 2, "", targetContainerId, ""],
+    ["a result with stdout", 1, "unexpected", targetContainerId, ""],
+    ["an error with an additional line", 1, "", targetContainerId, "\nunexpected"],
+  ])("does not bind %s as a Docker restart transition (#8726)", (_case, status, stdout, id, suffix) => {
+    const dockerExec = requireSource("../src/lib/adapters/docker/exec.ts");
+    const privilegedExec = requireSource("../src/lib/sandbox/privileged-exec.ts");
+    vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockReturnValue([
+      "exec",
+      "--user",
+      "root",
+      targetContainerId,
+      controlPath,
+      "probe",
+      "b".repeat(64),
+    ]);
+    vi.spyOn(dockerExec, "dockerSpawnSync").mockReturnValue({
+      status,
+      stdout,
+      stderr: `Error response from daemon: Container ${id} is restarting, wait until the container is running${suffix}`,
+    } as never);
+
+    expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
+      status,
+      stdout,
+      stderr: `Error response from daemon: Container ${id} is restarting, wait until the container is running${suffix}`,
     });
   });
 });
