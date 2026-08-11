@@ -35,7 +35,6 @@ export function getSandboxAgent(sandbox: SandboxEntry): AgentDefinition {
 
 /** Return the configured state directory for a registered agent. */
 export function getAgentConfigDir(agentName: string, defaultConfigDir?: string): string {
-  if (agentName === "openclaw" && defaultConfigDir) return defaultConfigDir;
   try {
     return loadAgent(agentName).configPaths.dir;
   } catch (error) {
