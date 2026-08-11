@@ -138,6 +138,8 @@ Managed profiles and model-specific recipes use immutable image digests:
 - DGX Spark and DGX Station models without a model-specific runtime use the `linux/arm64` digest `sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2` with a compressed layer size of `9.60 GB` under `nvcr.io/nvidia/vllm:26.05.post1-py3`.
 - The DGX Spark Muse Glimmer recipe uses the `linux/arm64` digest `sha256:ab0f5fc3bb81b9257a9aee801abcb0eeb94bb0523b57b2bb79349dc61e7c1e25` with a compressed layer size of `10.51 GB` under `vllm/vllm-openai`.
   It pins Hugging Face revision `d35cb79050f419c457611b1cee5c5d15b176f285` for the approximately `25.45 GB` model download.
+- The DGX Spark Nemotron 3.5 Lightning recipe uses the `linux/arm64` digest `sha256:3af90144a0926e5c5fe46ee16e5201e763dd854538b9d7ce433755f11dadaf78` with a compressed layer size of approximately `12.69 GB` under `vllm/vllm-openai`.
+  It pins Hugging Face revision `0dcd680e5585c791728c83342b311d0a0026dbeb` for the approximately `21.56 GB` model download.
 - The DGX Station Nemotron 3 Ultra express recipe uses the multi-platform index digest `sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416` under `vllm/vllm-openai:v0.22.0`; on DGX Station, that index selects a `linux/arm64` manifest with a compressed layer size of `10.67 GB`.
   It also pins Hugging Face revision `183968f87ae4cedce3039313cac1fd43d112c578` for the approximately `352.38 GB` model download.
 - Generic Linux `arm64` hosts use `sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4` with a compressed layer size of `9.28 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
@@ -275,9 +277,11 @@ $$nemoclaw onboard --profile vllm.dgx-spark-gb10.single.nemotron-3.5-lightning-3
 ```
 
 The profile serves the public [`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) checkpoint through a pinned ARM64 vLLM image.
-Its profile limits for one concurrent sequence are a 65,536-token context window, a 4,096-token batch limit, 0.7 GPU-memory utilization, FP8 KV cache, and one-token MTP speculative decoding.
+Its profile limits for one concurrent sequence are a 65,536-token context window, a 4,096-token batch limit, 0.65 GPU-memory utilization, FP8 KV cache, and one-token MTP speculative decoding.
 It uses vLLM's Python frontend because the pinned runtime's Rust frontend does not register the required `step3p5` reasoning and tool-call parsers.
-Physical single-DGX Spark validation covered plain chat, automatic and named structured tool calls, the 10-turn 32K-input/2K-output release workload, OpenClaw chat and file tools, cached restart, cleanup, and restoration of the original Qwen route.
+Physical single-DGX Spark validation of public revision `0dcd680e5585c791728c83342b311d0a0026dbeb` covered direct chat, automatic and named structured tool calls, a ten-request release workload with input lengths from 32,768 through 41,984 tokens and 2,048 output tokens per request, OpenClaw chat and file tools, and a cached restart.
+Requests 2 through 10 averaged about 102 output tokens/s.
+At 0.65 utilization, the workload completed with about 33 GiB of host memory available and no NVIDIA kernel errors.
 
 <Warning title="Experimental Nemotron 3.5 Lightning vLLM Profile">
 This profile is an explicit opt-in for one DGX Spark and remains Experimental.
