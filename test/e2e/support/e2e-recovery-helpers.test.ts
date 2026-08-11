@@ -190,7 +190,7 @@ describe("GatewayClient recovery helpers (#2701)", () => {
 
     it.each([
       { condition: "timed out", reply: { timedOut: true } },
-      { condition: "terminated by a signal", reply: { signal: "SIGTERM" as const } },
+      { condition: "was terminated by a signal", reply: { signal: "SIGTERM" as const } },
     ])("does not accept a probe that $condition", async ({ reply }) => {
       const runner = new ScriptedRunner();
       runner.queue({ exitCode: 1, stderr: "SUPERVISOR_NOT_RUNNING\n", ...reply });
