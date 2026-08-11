@@ -100,14 +100,20 @@ describe("codebase growth trusted assertion", () => {
     expect(result.stderr).toContain("defaultMaxLines increased from 1500 to 2000");
   });
 
-  it("prints a new JavaScript file in the consolidated failure", () => {
+  it.each([
+    "js",
+    "cjs",
+    "mjs",
+    "jsx",
+  ])("prints a new .%s JavaScript file in the consolidated failure", (extension) => {
+    const filename = `scripts/new.${extension}`;
     const result = runEntrypoint([
-      [{ filename: "scripts/new.js", status: "added", additions: 1, deletions: 0 }],
+      [{ filename, status: "added", additions: 1, deletions: 0 }],
       blobPayload(CLEAN_TEST_BUDGET),
     ]);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("scripts/new.js: new JavaScript files must use TypeScript");
+    expect(result.stderr).toContain(`${filename}: new JavaScript files must use TypeScript`);
   });
 
   it("prints net growth in the onboarding entry point in the consolidated failure", () => {

@@ -33,6 +33,8 @@ function mergeBase(): string {
 }
 
 function collectChanges(): LocalChange[] {
+
+  // One revision compares the base with the index and working tree. Untracked files are added below.
   const tokens = git(["diff", "--name-status", "-z", "--find-renames", mergeBase(), "--"])
     .split("\0")
     .filter(Boolean);

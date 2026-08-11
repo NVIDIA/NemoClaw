@@ -8,7 +8,7 @@ import { createPrBlobClient, type PrBlobClient, type PullRequestFile } from "./p
 import { runTestConditionals, type ConditionalEnv } from "./test-conditionals.mts";
 import { runTestSizeBudget, type BudgetEnv } from "./test-size-budget.mts";
 
-const JAVASCRIPT_FILE_RE = /\.(?:js|cjs|mjs)$/;
+const JAVASCRIPT_FILE_RE = /\.(?:js|cjs|mjs|jsx)$/;
 const ONBOARD_ENTRYPOINT = "src/lib/onboard.ts";
 
 export type GrowthGuardrailEnv = ConditionalEnv & BudgetEnv & { readonly GH_TOKEN: string };

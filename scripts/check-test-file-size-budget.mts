@@ -202,3 +202,25 @@ export function formatViolations(
 
   return lines.join("\n");
 }
+
+function main(): void {
+  const violations = evaluateCurrentTestFileSizeBudget();
+  if (violations.length > 0) {
+    console.error(formatViolations(violations));
+    process.exitCode = 1;
+    return;
+  }
+  const entries = collectTestFileSizes();
+  const maxEntry = entries.reduce<TestFileSizeEntry | null>(
+    (max, entry) => (max === null || entry.lines > max.lines ? entry : max),
+    null,
+  );
+  const maxText = maxEntry ? `${maxEntry.file} (${maxEntry.lines} lines)` : "no test files";
+  console.log(
+    `Test file size budget passed: ${entries.length} files scanned; largest is ${maxText}.`,
+  );
+}
+
+if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1] ?? "")) {
+  main();
+}
