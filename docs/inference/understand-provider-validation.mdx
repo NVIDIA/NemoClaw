@@ -38,7 +38,8 @@ For an OpenAI-compatible endpoint, the runtime defaults to `/v1/chat/completions
 Set `NEMOCLAW_PREFERRED_API=openai-responses` before onboarding to select `/v1/responses` only after the probe verifies the required streaming behavior.
 Set `NEMOCLAW_PREFERRED_API=openai-completions` to skip the Responses probe and validate Chat Completions only.
 The Responses streaming check waits up to 5 seconds for `response.output_text.delta` before onboarding falls back to Chat Completions.
-If an OpenAI-compatible Chat Completions validation request that requires structured tool calls reaches its output-token limit with only reasoning content, NemoClaw retries once with a larger output-token budget.
+Some Chat Completions validation requests require a structured tool call.
+If such a request reaches the output-token limit after producing only reasoning content, NemoClaw retries once with a larger token budget.
 This applies to local runtimes such as Ollama and vLLM.
 Onboarding continues only when the retry returns a structured tool call.
 If the retry fails or times out, validation stops without another Chat Completions attempt.

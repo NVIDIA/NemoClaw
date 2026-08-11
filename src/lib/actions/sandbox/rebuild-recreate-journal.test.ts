@@ -13,10 +13,12 @@ vi.mock("../../adapters/openshell/runtime", () => ({
   runOpenshell: vi.fn(),
 }));
 
-vi.mock("../../onboard/gateway-teardown-authority", () => ({
+vi.mock("../../onboard/gateway-teardown-authority", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../onboard/gateway-teardown-authority")>()),
   resolveGatewayRebuildAuthority: mocks.resolveGatewayRebuildAuthority,
 }));
 
+import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
@@ -33,6 +35,17 @@ const NON_DEFAULT_TARGET = {
   sandboxName: "alpha",
   gatewayName: "nemoclaw-9090",
   gatewayPort: 9090,
+};
+
+const STANDALONE_GATEWAY_AUTHORITY: CheckpointGatewayAuthority = {
+  gatewayName: "nemoclaw-9090",
+  gatewayPort: 9090,
+  mode: "nemoclaw-managed",
+  source: "standalone",
+  endpoint: null,
+  stateDir: null,
+  supervisor: null,
+  requiredCapabilities: [],
 };
 
 const recreateOptions: RebuildRecreateOnboardOpts = {
@@ -212,16 +225,7 @@ describe("rebuild replacement journal", () => {
       gatewayName: "nemoclaw-9090",
       gatewayPort: 9090,
     } as registry.SandboxEntry);
-    mocks.resolveGatewayRebuildAuthority.mockReturnValue({
-      gatewayName: "nemoclaw-9090",
-      gatewayPort: 9090,
-      mode: "nemoclaw-managed",
-      source: "standalone",
-      endpoint: null,
-      stateDir: null,
-      supervisor: null,
-      requiredCapabilities: [],
-    });
+    mocks.resolveGatewayRebuildAuthority.mockReturnValue(STANDALONE_GATEWAY_AUTHORITY);
     mocks.captureOpenshell.mockReturnValue(livePresentProbe());
   });
 
@@ -232,6 +236,7 @@ describe("rebuild replacement journal", () => {
   function open() {
     return openRebuildRecreateJournal({
       target: NON_DEFAULT_TARGET,
+      expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
       agentName: "langchain-deepagents-code",
       targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
       log: vi.fn(),
@@ -251,7 +256,7 @@ describe("rebuild replacement journal", () => {
   });
 
   it("selects the exact gateway authority the journal records", () => {
-    open();
+    const journal = open();
 
     expect(mocks.resolveGatewayRebuildAuthority).toHaveBeenCalledWith({
       gatewayName: "nemoclaw-9090",
@@ -261,6 +266,29 @@ describe("rebuild replacement journal", () => {
     expect(authority?.kind).toBe("selected");
     expect(authority?.kind === "selected" && authority.value.gatewayPort).toBe(9090);
     expect(authority?.kind === "selected" && authority.value.source).toBe("standalone");
+    expect(authority?.kind === "selected" && authority.value).toBe(journal.gatewayAuthority);
+  });
+
+  it("refuses an authority change after preflight before writing the journal (#7411)", () => {
+    const onAuthorityRefusal = vi.fn();
+
+    expect(() =>
+      openRebuildRecreateJournal({
+        target: NON_DEFAULT_TARGET,
+        expectedGatewayAuthority: {
+          ...STANDALONE_GATEWAY_AUTHORITY,
+          source: "packaged-service",
+        },
+        agentName: "langchain-deepagents-code",
+        targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
+        log: vi.fn(),
+        onAuthorityRefusal,
+      }),
+    ).toThrow(/authority changed after authoritative rebuild preflight/);
+
+    expect(onAuthorityRefusal).toHaveBeenCalledOnce();
+    expect(onboardSession.updateSession).not.toHaveBeenCalled();
+    expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
   });
 
   it("starts at deleted when the source sandbox is already absent", () => {
@@ -320,6 +348,7 @@ describe("rebuild replacement journal", () => {
     expect(() =>
       openRebuildRecreateJournal({
         target: NON_DEFAULT_TARGET,
+        expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
         agentName: "langchain-deepagents-code",
         targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent({
           ...recreateOptions,
@@ -336,6 +365,7 @@ describe("rebuild replacement journal", () => {
     expect(() =>
       openRebuildRecreateJournal({
         target: NON_DEFAULT_TARGET,
+        expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
         agentName: "langchain-deepagents-code",
         targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent({
           ...recreateOptions,
@@ -356,6 +386,7 @@ describe("rebuild replacement journal", () => {
     expect(() =>
       openRebuildRecreateJournal({
         target: NON_DEFAULT_TARGET,
+        expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
         agentName: "langchain-deepagents-code",
         targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent({
           ...recreateOptions,
