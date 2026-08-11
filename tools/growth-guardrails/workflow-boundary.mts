@@ -18,10 +18,9 @@ import YAML from "yaml";
 /** The only ref a checkout in this workflow may use: the trusted base commit. */
 export const TRUSTED_BASE_REF = "${{ github.event.pull_request.base.sha }}";
 
-/** The trusted tool entrypoints that replace the former inline node heredocs. */
+/** The only trusted policy entrypoint executed by the workflow. */
 export const REQUIRED_TOOL_INVOCATIONS = [
-  "node --experimental-strip-types tools/growth-guardrails/test-size-budget.mts",
-  "node --experimental-strip-types tools/growth-guardrails/test-conditionals.mts",
+  "node --experimental-strip-types tools/growth-guardrails/check-pr.mts",
 ] as const;
 
 const HEAD_REF_MARKERS = [
@@ -42,14 +41,6 @@ const APPROVED_JOB_ENVELOPE_SHA256 =
 // trust boundary.
 const APPROVED_STEP_SHAPES = [
   {
-    name: "Block newly added JavaScript files",
-    sha256: "c2291c5ea47f093845b8e6bc6a93698fd9fe3f617b5c03265c2803439749ea38",
-  },
-  {
-    name: "Require src/lib/onboard.ts to be net-neutral or smaller",
-    sha256: "92aba85cd31e30bfaa9cdd05dde6962f14373b1d60a9121bfcea48146ca0348b",
-  },
-  {
     name: "Check out the trusted base revision",
     sha256: "4ec2659f39a08af0cb6abf60ab63a6732ab2375f538fc5b80601d566fdbcbc5a",
   },
@@ -58,12 +49,8 @@ const APPROVED_STEP_SHAPES = [
     sha256: "2388fa3f5694ed0db8df96bf5f2bbcc3f377d5fe66e433b32d0ef71e88d0f362",
   },
   {
-    name: "Require changed test files to stay within size budget",
-    sha256: "5d631c12f457e947bd7bd83447ab2a294cbe4d8430dbed4e92d09d7f7594dd3b",
-  },
-  {
-    name: "Require changed test files not to add if statements",
-    sha256: "991a7036d27aeb45fde2f3178936fba6ac87b90200b79c933015f9d63525d3cf",
+    name: "Enforce the codebase growth contract",
+    sha256: "281c93a2c5f707db84cee0fc809749968b02a51f4a150cae9497c8b8ff0772d7",
   },
 ] as const;
 
@@ -241,7 +228,7 @@ export function validateGrowthGuardrailsWorkflowBoundary(workflowPath: string): 
     }
   }
 
-  // 5. Each policy must still be invoked through its pinned trusted tool.
+  // 5. The consolidated policy must still use its pinned trusted entrypoint.
   const runScripts = steps.flatMap((step) => (step.run ? [step.run] : []));
   const allRun = runScripts.join("\n");
   for (const invocation of REQUIRED_TOOL_INVOCATIONS) {

@@ -1,4 +1,3 @@
-#!/usr/bin/env -S npx tsx
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -168,6 +167,11 @@ export function evaluateTestFileSizeBudget(
   return violations.sort((a, b) => a.file.localeCompare(b.file));
 }
 
+export function evaluateCurrentTestFileSizeBudget(): TestFileSizeViolation[] {
+  const budget = parseBudget(readFileSync(BUDGET_PATH, "utf-8"), BUDGET_PATH);
+  return evaluateTestFileSizeBudget(collectTestFileSizes(), budget);
+}
+
 export function formatViolations(
   violations: readonly TestFileSizeViolation[],
   budgetPath = "ci/test-file-size-budget.json",
@@ -200,16 +204,13 @@ export function formatViolations(
 }
 
 function main(): void {
-  const budget = parseBudget(readFileSync(BUDGET_PATH, "utf-8"), BUDGET_PATH);
-  const entries = collectTestFileSizes();
-  const violations = evaluateTestFileSizeBudget(entries, budget);
-
+  const violations = evaluateCurrentTestFileSizeBudget();
   if (violations.length > 0) {
     console.error(formatViolations(violations));
     process.exitCode = 1;
     return;
   }
-
+  const entries = collectTestFileSizes();
   const maxEntry = entries.reduce<TestFileSizeEntry | null>(
     (max, entry) => (max === null || entry.lines > max.lines ? entry : max),
     null,
