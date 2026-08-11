@@ -120,8 +120,12 @@ export function looksLikeUntrackedForward(diagnostic: string): boolean {
  * once OpenShell either keeps the attempt alive until the listener is ready or
  * exposes a structured retryable outcome. Keep the fragments narrow so an
  * unrelated SSH or gateway failure cannot enter the listener-retry path.
+ * OpenShell 0.0.101 can also reject a forward during the sandbox readiness
+ * handoff. That command has already exited, so list polling cannot recover it;
+ * the retry wrapper below gives the OpenShell gateway a bounded settle interval.
  */
 export function looksLikeForwardListenerStartFailure(diagnostic: string): boolean {
+  if (/\bsandbox is not ready\b/i.test(diagnostic)) return true;
   return /ssh exited before local forward listener opened|local forward listener did not open\b/i.test(
     diagnostic,
   );
@@ -178,6 +182,7 @@ function blockingSleepMs(ms: number): void {
 // supported OpenShell version either stops retaining persistent dead rows or
 // exposes an atomic recovery operation.
 const DEAD_FORWARD_GRACE_MS = 2_000;
+const SANDBOX_READY_RETRY_SETTLE_MS = 5_000;
 
 /**
  * Build a `DetachedForwardSpawnRunner` that spawns the given argv as a
@@ -502,6 +507,7 @@ export function runDetachedForwardStartWithRetries(
   options: DetachedForwardStartOptions = {},
 ): DetachedForwardStartOutcome {
   const maxRetries = options.maxRetries ?? 3;
+  const sleepImpl = options.sleepMs ?? blockingSleepMs;
   let deadForwardRecoveryAvailable = true;
   const isPortListening = options.isPortListening ?? probeLocalPortListening;
   const runAttempt = (): DetachedForwardStartOutcome =>
@@ -527,6 +533,11 @@ export function runDetachedForwardStartWithRetries(
       if (!isRetryableStandardFailure || standardRetries >= maxRetries) break;
       if (looksLikeForwardPortConflict(attempt.diagnostic)) {
         beforeRetryCleanup();
+      }
+      if (/\bsandbox is not ready\b/i.test(attempt.diagnostic)) {
+        // Keep the existing sandbox and port ownership intact while the
+        // OpenShell gateway finishes the readiness handoff.
+        sleepImpl(SANDBOX_READY_RETRY_SETTLE_MS);
       }
       standardRetries++;
     }
