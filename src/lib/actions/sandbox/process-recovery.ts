@@ -27,6 +27,7 @@ import { ROOT, shellQuote } from "../../runner";
 import {
   isDirectSandboxFallbackUnavailableError,
   privilegedSandboxExecArgv,
+  withPrivilegedSandboxExecutionLease,
 } from "../../sandbox/privileged-exec";
 import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
 import * as registry from "../../state/registry";
@@ -98,6 +99,7 @@ function commandTransportDependencies(): CommandTransportDependencies {
     openshellProbeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
     privilegedSandboxExecArgv,
     root: ROOT,
+    withPrivilegedSandboxExecutionLease,
   };
 }
 
@@ -105,6 +107,15 @@ type AuxiliaryRecoveryResult = {
   label: string;
   recovered: boolean | null;
 };
+
+type ManagedGatewaySupervisorActionResult = SandboxCommandResult & {
+  readonly managedControlRestartingContainerId?: string;
+};
+
+const MANAGED_GATEWAY_CONTROL_PATH = "/usr/local/bin/nemoclaw-gateway-control";
+const MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS = 11;
+const DOCKER_CONTAINER_RESTARTING_ERROR =
+  /^Error response from daemon: Container ([0-9a-f]{64}) is restarting, wait until the container is running$/;
 
 function auxiliaryRecoveryFailureDetail(results: AuxiliaryRecoveryResult[]): string | null {
   const failed = results
@@ -141,20 +152,26 @@ export function executePrivilegedSandboxCommand(
   command: readonly string[],
   timeout: number,
 ): SandboxCommandResult | null {
-  const argv = privilegedSandboxExecArgv(sandboxName, [...command], false, true);
-  const result = dockerSpawnSync(argv, {
-    cwd: ROOT,
-    encoding: "utf-8",
-    env: buildSubprocessEnv(),
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout,
-  });
-  if (result.error) return null;
-  return {
-    status: result.status ?? 1,
-    stdout: String(result.stdout || ""),
-    stderr: String(result.stderr || ""),
-  };
+  return withPrivilegedSandboxExecutionLease(
+    sandboxName,
+    "sandbox process recovery controller",
+    () => {
+      const argv = privilegedSandboxExecArgv(sandboxName, [...command], false, true);
+      const result = dockerSpawnSync(argv, {
+        cwd: ROOT,
+        encoding: "utf-8",
+        env: buildSubprocessEnv(),
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout,
+      });
+      if (result.error) return null;
+      return {
+        status: result.status ?? 1,
+        stdout: String(result.stdout || ""),
+        stderr: String(result.stderr || ""),
+      };
+    },
+  );
 }
 
 export function executeSandboxExecCommand(
@@ -177,17 +194,51 @@ function executeGatewaySupervisorActionPinned(
   action: "restart" | "recover" | "probe",
   timeout: number,
   expectedContainerId?: string,
-): SandboxCommandResult | null {
+): ManagedGatewaySupervisorActionResult | null {
   const nonce = randomBytes(32).toString("hex");
-  let argv: string[];
   try {
-    argv = privilegedSandboxExecArgv(
-      sandboxName,
-      ["/usr/local/bin/nemoclaw-gateway-control", action, nonce],
-      false,
-      true,
-      expectedContainerId,
-    );
+    return withPrivilegedSandboxExecutionLease(sandboxName, `gateway supervisor ${action}`, () => {
+      const argv = privilegedSandboxExecArgv(
+        sandboxName,
+        [MANAGED_GATEWAY_CONTROL_PATH, action, nonce],
+        false,
+        true,
+        expectedContainerId,
+      );
+      const controlPathIndex = argv.lastIndexOf(MANAGED_GATEWAY_CONTROL_PATH);
+      const targetContainerId = controlPathIndex > 0 ? argv[controlPathIndex - 1] : null;
+      const result = dockerSpawnSync(argv, {
+        cwd: ROOT,
+        encoding: "utf-8",
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout,
+      });
+      if (result.error) return null;
+      const status = result.status ?? 1;
+      const stdout = String(result.stdout || "").trim();
+      let stderr = String(result.stderr || "").trim();
+      const restartingContainerMatch = stderr.match(DOCKER_CONTAINER_RESTARTING_ERROR);
+      const managedControlRestartingContainerId =
+        status === 1 &&
+        stdout === "" &&
+        restartingContainerMatch?.[1] !== undefined &&
+        restartingContainerMatch[1] === targetContainerId
+          ? restartingContainerMatch[1]
+          : undefined;
+      if (
+        (status === 126 || status === 127) &&
+        /(?:not found|no such file|executable file)/i.test(`${stdout}\n${stderr}`)
+      ) {
+        stderr = ["SUPERVISOR_REBUILD_REQUIRED", stderr].filter(Boolean).join("\n");
+      }
+      return {
+        status,
+        stdout,
+        stderr,
+        ...(managedControlRestartingContainerId ? { managedControlRestartingContainerId } : {}),
+      };
+    });
   } catch (error) {
     if (isDirectSandboxFallbackUnavailableError(error)) {
       // New clones can report Ready before their labeled direct container is
@@ -206,25 +257,6 @@ function executeGatewaySupervisorActionPinned(
       stderr: `PRIVILEGED_CONTROL_UNAVAILABLE: ${detail}`,
     };
   }
-
-  const result = dockerSpawnSync(argv, {
-    cwd: ROOT,
-    encoding: "utf-8",
-    env: process.env,
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout,
-  });
-  if (result.error) return null;
-  const status = result.status ?? 1;
-  const stdout = String(result.stdout || "").trim();
-  let stderr = String(result.stderr || "").trim();
-  if (
-    (status === 126 || status === 127) &&
-    /(?:not found|no such file|executable file)/i.test(`${stdout}\n${stderr}`)
-  ) {
-    stderr = ["SUPERVISOR_REBUILD_REQUIRED", stderr].filter(Boolean).join("\n");
-  }
-  return { status, stdout, stderr };
 }
 
 type RequestPinnedGatewaySupervisorAction = typeof executeGatewaySupervisorActionPinned;
@@ -233,7 +265,7 @@ export function executeGatewaySupervisorAction(
   sandboxName: string,
   action: "restart" | "recover" | "probe",
   timeout = 210000,
-): SandboxCommandResult | null {
+): ManagedGatewaySupervisorActionResult | null {
   return executeGatewaySupervisorActionPinned(sandboxName, action, timeout);
 }
 
@@ -351,6 +383,21 @@ function isExactlyPendingManagedGatewayHealth(result: SandboxCommandResult | nul
   return lines.length === 1 && lines[0] === "GATEWAY_HEALTH_TIMEOUT";
 }
 
+function isExactlyRetryableManagedControlTransition(
+  result: ManagedGatewaySupervisorActionResult | null,
+): boolean {
+  // The pinned Docker call records the canonical Docker error only after its
+  // container ID matches the selected command target. Status 137 with no
+  // output has no controller protocol result. Retry only those two results in
+  // bounded managed-control loops. An exhausted transition bound, an unbound
+  // error, or status 137 with output is terminal.
+  if (result === null || result.stdout.trim() !== "") return false;
+  if (result.status === 137) return result.stderr.trim() === "";
+  if (result.status !== 1 || result.managedControlRestartingContainerId === undefined) return false;
+  const restartingContainerMatch = result.stderr.trim().match(DOCKER_CONTAINER_RESTARTING_ERROR);
+  return restartingContainerMatch?.[1] === result.managedControlRestartingContainerId;
+}
+
 export function waitForManagedGatewaySupervisor(
   sandboxName: string,
   options: {
@@ -364,7 +411,7 @@ export function waitForManagedGatewaySupervisor(
     options.requestGatewaySupervisorActionImpl ?? executeGatewaySupervisorAction;
   const sleep = options.sleepImpl ?? sleepSeconds;
   const intervalSeconds = options.intervalSeconds ?? 3;
-  const maxAttempts = options.maxAttempts ?? 11;
+  const maxAttempts = options.maxAttempts ?? MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const result = requestGatewaySupervisorAction(sandboxName, "probe", OPENSHELL_PROBE_TIMEOUT_MS);
@@ -373,7 +420,8 @@ export function waitForManagedGatewaySupervisor(
       !isExactlyMissingManagedSupervisor(result) &&
       !isExactlyRetryableManagedRecoveryFailure(result) &&
       !isExactlyPendingManagedSupervisorControl(result) &&
-      !isExactlyPendingManagedGatewayHealth(result)
+      !isExactlyPendingManagedGatewayHealth(result) &&
+      !isExactlyRetryableManagedControlTransition(result)
     ) {
       return false;
     }
@@ -464,12 +512,14 @@ function recoverSandboxProcesses(
   const recoveredSsh = (result: SandboxCommandResult | null): SandboxProcessRecovery | null =>
     result && result.status === 0 && hasGatewayRecoveryMarker(result) ? { kind: "custom" } : null;
   const recoverManagedGateway = (): SandboxProcessRecovery | null => {
-    const maxAttempts = 3;
+    const maxAttempts = MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS;
+    const maxBusyAttempts = 3;
     const retryIntervalSeconds = readNonNegativeNumberEnv(
       "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
       3,
     );
-    let execResult: SandboxCommandResult | null = null;
+    let execResult: ManagedGatewaySupervisorActionResult | null = null;
+    let busyAttempts = 0;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       execResult = requestGatewaySupervisorAction(sandboxName, "recover");
       const managedControlCompletion = parseManagedGatewayControlCompletion(execResult);
@@ -477,9 +527,14 @@ function recoverSandboxProcesses(
       if (hasGatewayRecoveryMarker(execResult)) return { kind: "managed" };
 
       // PID 1 may replace the gateway between the host's stopped observation
-      // and the controller's process-tree capture. Retry only exact transient
-      // controller results; integrity/config/launch refusals are terminal.
-      if (!isExactlyRetryableManagedRecoveryFailure(execResult) || attempt === maxAttempts) break;
+      // and the controller's process-tree capture. Retry only exact controller
+      // contention, status 137 with no output, and ID-bound Docker transition
+      // results. Integrity, configuration, and launch refusals are terminal.
+      if (isExactlyRetryableManagedRecoveryFailure(execResult)) {
+        busyAttempts += 1;
+        if (busyAttempts >= maxBusyAttempts) break;
+      } else if (!isExactlyRetryableManagedControlTransition(execResult)) break;
+      if (attempt === maxAttempts) break;
       sleepSeconds(retryIntervalSeconds);
     }
     const failure = classifyGatewayRestartFailure(execResult);

@@ -60,6 +60,7 @@ Stop and request user remediation for any Git or GitHub access error. Do not att
 remote, protocol, or permission bypass. Then follow
 [Discover the Current Implementation](../_shared/implementation-discovery.md). Apply the shared
 [Code Change Considerations](../_shared/code-change-considerations.md),
+[Root-Cause and Sensitive-Workflow State Checks](../_shared/root-cause-and-state-checks.md),
 [Security Rubric](../_shared/security-rubric.md), and
 [Documentation Writing and Review](../_shared/documentation-writing-review.md) contract.
 
@@ -76,8 +77,10 @@ review, or maintainer workflows to replace routine implementation work.
 ## Implement and validate the slice
 
 Before editing, map each success criterion and applicable security control to its shortest stable
-evidence. Then make the direct change in the current behavior owner. Do not add speculative
-abstractions, configuration, compatibility, migration, or fallback behavior.
+evidence. Name the operation and failure class the change belongs to. Record the sibling paths
+checked for that operation or failure class and the sensitive-workflow state outcomes the change must
+hold. Then make the direct change in the current behavior owner. Do not add speculative abstractions,
+configuration, compatibility, migration, or fallback behavior.
 
 Add focused evidence as applicable:
 
@@ -102,8 +105,11 @@ security control and focused negative evidence that proves forbidden behavior re
 security control changed, state why and cite the reviewed trust boundaries.
 
 Confirm that allowed, denied, error, and boundary behavior remains coherent across failure, retry,
-cleanup, cached, resumed, and compatibility paths that apply. Separate completed local evidence from
-CI, live E2E, hardware, publication, and other external gates.
+cleanup, cached, resumed, and compatibility paths that apply.
+Re-check the recorded operation and failure class, sibling paths, and sensitive-workflow state
+outcomes against the completed diff, and report each sibling path that still needs the same change.
+Separate completed local evidence from CI, live E2E, hardware, publication, and other external
+gates.
 
 ## Report the implementation handoff
 
@@ -126,6 +132,11 @@ Use this structure:
 - Negative:
 - Error or recovery:
 - Boundary or ambiguous state:
+
+## Root cause and sensitive-workflow state
+- Operation and failure class:
+- Sibling paths checked: <path and whether it needs the same change>
+- Sensitive-workflow states: <each applicable failure cell with a separate result and required action, plus each credential location, access, lifetime, and removal, or "not applicable" with the reason>
 
 ## Security considerations
 - Applicable categories and trust boundaries:

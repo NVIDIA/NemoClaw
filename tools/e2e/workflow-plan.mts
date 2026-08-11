@@ -10,6 +10,7 @@ import {
   type CredentialFreeTestMatrixRow,
   discoverCredentialFreeTests,
 } from "./credential-free-tests.mts";
+import { JETSON_DISPATCH_TARGET } from "./jetson-dispatch-contract.mts";
 import { selectedRetiredControllerJobs } from "./retired-selector-compatibility.mts";
 import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import { readFreeStandingJobsInventory } from "./workflow-boundary.mts";
@@ -197,6 +198,17 @@ export function buildE2eWorkflowPlan(selectors: WorkflowPlanSelectors = {}): E2e
   const targets = selectorIds(selectors.targets, "targets");
 
   const inventory = readFreeStandingJobsInventory();
+  const jetsonDispatchSelected =
+    (jobs.length === 1 && jobs[0] === JETSON_DISPATCH_TARGET && targets.length === 0) ||
+    (targets.length === 1 && targets[0] === JETSON_DISPATCH_TARGET && jobs.length === 0);
+  if (jetsonDispatchSelected) {
+    return {
+      matrix: [],
+      testMatrix: [],
+      hermesSelected: false,
+      explicitOnlyJobs: [...inventory.explicitOnlyJobs],
+    };
+  }
   const credentialFreeTests = discoverCredentialFreeTests();
 
   if (jobs.length > 0) {
