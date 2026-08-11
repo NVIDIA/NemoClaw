@@ -6,7 +6,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { writeInstallerReadinessModuleStubs } from "./helpers/installer-readiness-stubs";
+import {
+  runStorageRemediationInstallerPreflight,
+  writeFailedOnboardSession,
+  writeInstallerReadinessModuleStubs,
+  writeNodeStub,
+} from "./helpers/installer-readiness-stubs";
 import { writeNpmStub } from "./helpers/installer-run-fixture";
 import {
   INSTALLER_PAYLOAD,
@@ -18,40 +23,11 @@ import {
 const INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 const GITHUB_INSTALL_URL = "git+https://github.com/NVIDIA/NemoClaw.git";
-
-/** Fake node that reports v22.19.0. */
-function writeNodeStub(fakeBin: string) {
-  writeExecutable(
-    path.join(fakeBin, "node"),
-    `#!/usr/bin/env bash
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.19.0"; exit 0; fi
-if [ -n "\${1:-}" ] && [ -f "$1" ]; then
-  exec ${JSON.stringify(process.execPath)} "$@"
-fi
-if [ "$1" = "-e" ]; then
-  exec ${JSON.stringify(process.execPath)} "$@"
-fi
-exit 99`,
-  );
-}
+// This installer test owns the fake compiled-tree exemption.
+const INSTALLER_ONBOARD_MODULE_DIR = path.join("dist", "lib", "onboard");
+const INSTALLER_READINESS_MODULE_DIR = path.join("dist", "lib", "readiness");
 
 /** Minimal npm stub with an injectable install/link/run handler. */
-
-function writeFailedOnboardSession(home: string) {
-  fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
-  fs.writeFileSync(
-    path.join(home, ".nemoclaw", "onboard-session.json"),
-    JSON.stringify(
-      {
-        resumable: true,
-        status: "failed",
-        failure: { step: "inference", message: "Ollama proxy unreachable" },
-      },
-      null,
-      2,
-    ),
-  );
-}
 
 function runFailedSessionPromptChoice(answer: string) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-failed-choice-"));
@@ -1154,9 +1130,33 @@ fi`,
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).toBe(1);
     expect(output).toMatch(/Host preflight found issues that will prevent onboarding right now\./);
+    expect(output).toMatch(/Admission finding IDs: .*host\.docker\.daemon_unreachable/);
+    expect(output).toMatch(/Admission capability IDs: .*host\.docker\.runtime_supported/);
     expect(output).toMatch(/Start Docker/);
     expect(output).toMatch(/Skipping onboarding until the host prerequisites above are fixed\./);
     expect(fs.existsSync(onboardLog)).toBe(false);
+  });
+
+  it.each([
+    ["no gateway declaration exists", undefined, true, 0, true],
+    ["the gateway is NemoClaw-managed", "nemoclaw-managed", true, 0, true],
+    ["the gateway is externally supervised", "externally-supervised", true, 1, false],
+    ["gateway lifecycle authority is invalid", "invalid", true, 1, false],
+    ["storage remediation is unavailable", "nemoclaw-managed", false, 1, false],
+  ] as const)("applies installer storage admission when %s", (_context, gatewayMode, storageRemediationAvailable, status, onboardRan) => {
+    const fixture = runStorageRemediationInstallerPreflight({
+      gatewayMode,
+      onboardModuleDir: INSTALLER_ONBOARD_MODULE_DIR,
+      readinessModuleDir: INSTALLER_READINESS_MODULE_DIR,
+      storageRemediationAvailable,
+    });
+    expect(fixture.result.status, fixture.output).toBe(status);
+    expect(fixture.onboardRan).toBe(onboardRan);
+    expect(fixture.output).not.toMatch(/unsafe|injected/);
+    expect(fixture.output.includes("Host preflight found issues")).toBe(!onboardRan);
+    expect(fixture.output.includes("Admission finding IDs: host.docker.storage_incompatible")).toBe(
+      !onboardRan,
+    );
   });
 
   function runNvidiaCdiInstallerRepairTest({

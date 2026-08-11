@@ -13,6 +13,7 @@ import {
 } from "../advisors/e2e-recommendations.mts";
 import { deleteBotOwnedStickyComments, upsertStickyComment } from "../advisors/github.mts";
 import { parseArgs, readIfExists, readJsonIfExists } from "../advisors/io.mts";
+import { isPrE2eManualControllerJob } from "../advisors/risk-plan.mts";
 
 const MARKER = "<!-- nemoclaw-pr-review-advisor -->";
 const COMMENT_TITLE = "PR Review Advisor";
@@ -683,17 +684,31 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
     changedCredentialFreeJobIds,
   );
   const requiredE2e = uniqueE2eIds([...requiredTargets, ...requiredCoverage]);
+  const commitUnderReviewE2e = requiredE2e.filter(isPrE2eManualControllerJob);
+  const manualOnlyE2e = requiredE2e.filter((id) => !isPrE2eManualControllerJob(id));
   const optionalE2e = uniqueE2eIds([...optionalTargets, ...optionalCoverage]);
   const lines = [
     "",
     "### E2E guidance",
-    "_Advisory only. A maintainer can dispatch the default E2E suite against this exact revision._",
+    "_Advisory only. A maintainer can dispatch the default E2E suite for the commit under review._",
     "",
   ];
 
-  const hiddenRequiredCount = requiredE2e.length - E2E_RENDER_LIMIT;
+  const hiddenRequiredCount = commitUnderReviewE2e.length - E2E_RENDER_LIMIT;
   const hiddenRequiredText = hiddenRequiredCount > 0 ? ` (+${hiddenRequiredCount} more)` : "";
-  lines.push(`**Recommended E2E:** ${renderE2eIds(requiredE2e) || "_None_"}${hiddenRequiredText}`);
+  lines.push(
+    `**Recommended E2E:** ${renderE2eIds(commitUnderReviewE2e) || "_None_"}${hiddenRequiredText}`,
+  );
+
+  if (manualOnlyE2e.length > 0) {
+    const hiddenManualCount = manualOnlyE2e.length - E2E_RENDER_LIMIT;
+    const hiddenManualText = hiddenManualCount > 0 ? ` (+${hiddenManualCount} more)` : "";
+    lines.push(
+      "",
+      `**Manual-only E2E:** ${renderE2eIds(manualOnlyE2e) || "_None_"}${hiddenManualText}`,
+      "_The manual PR workflow does not run these selectors for the commit under review. Run them from reviewed code on `main`._",
+    );
+  }
 
   if (optionalE2e.length > 0) {
     lines.push(
@@ -719,7 +734,11 @@ function trustedCoverageIds(
   items: unknown,
   inventory: TrustedE2eRecommendationInventory,
 ): string[] {
-  const allowedIds = new Set([...inventory.allowedJobIds, ...inventory.liveSupportedTargetIds]);
+  const allowedIds = new Set([
+    ...inventory.allowedJobIds,
+    ...inventory.manualOnlyJobIds,
+    ...inventory.liveSupportedTargetIds,
+  ]);
   const seen = new Set<string>();
   const entries = Array.isArray(items) ? items : [];
   return entries.flatMap((item) => {
@@ -737,7 +756,7 @@ function trustedTargetIds(
   inventory: TrustedE2eRecommendationInventory,
   changedCredentialFreeJobIds: ReadonlySet<string>,
 ): string[] {
-  const allowedJobs = new Set(inventory.allowedJobIds);
+  const allowedJobs = new Set([...inventory.allowedJobIds, ...inventory.manualOnlyJobIds]);
   const allowedTargets = new Set(inventory.liveSupportedTargetIds);
   const allowedSelectorTypes = new Set<string>(inventory.selectorTypes);
   const seen = new Set<string>();
