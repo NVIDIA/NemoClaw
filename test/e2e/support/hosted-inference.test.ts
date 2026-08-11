@@ -385,6 +385,7 @@ describe("hosted inference E2E config", () => {
       forbiddenMarkers: ["FORBIDDEN_REQUEST_MARKER"],
       model: "nvidia/nvidia/fake-model",
       progress,
+      requestCanaryMarker: "EXPECTED_REQUEST_CANARY",
       requireAuth: true,
       responseText: "RESP_OK",
     });
@@ -408,7 +409,7 @@ describe("hosted inference E2E config", () => {
 
       const chat = await fetch(`${fake.baseUrl}/chat/completions`, {
         body: JSON.stringify({
-          messages: [{ content: "ping", role: "user" }],
+          messages: [{ content: "ping EXPECTED_REQUEST_CANARY", role: "user" }],
           model: "nvidia/nvidia/fake-model",
         }),
         headers: {
@@ -443,6 +444,7 @@ describe("hosted inference E2E config", () => {
             auth: "missing",
             forbiddenMarkerMatches: 1,
             path: "/v1/chat/completions",
+            requestCanaryPresent: false,
           }),
           expect.objectContaining({
             auth: "ok",
@@ -450,6 +452,7 @@ describe("hosted inference E2E config", () => {
             hostHeader: new URL(fake.baseUrl).host,
             model: "nvidia/nvidia/fake-model",
             path: "/v1/chat/completions",
+            requestCanaryPresent: true,
             stream: false,
           }),
           expect.objectContaining({ auth: "ok", path: "/v1/responses", stream: true }),
@@ -459,6 +462,7 @@ describe("hosted inference E2E config", () => {
         requests.reduce((total, request) => total + (request.forbiddenMarkerMatches ?? 0), 0),
       ).toBe(1);
       expect(JSON.stringify(requests)).not.toContain("FORBIDDEN_REQUEST_MARKER");
+      expect(JSON.stringify(requests)).not.toContain("EXPECTED_REQUEST_CANARY");
     } finally {
       await fake.close();
     }

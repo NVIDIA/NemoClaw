@@ -2,12 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import type { DiagnosticSignal } from "../../messaging/channels/channel-health";
 import {
   type ExecResult,
   entry,
   makeDeps,
   showSandboxChannelStatus,
 } from "./channel-status.test-helpers";
+
+function wrappedSignalsOf(result: unknown): DiagnosticSignal[] {
+  expect(result).toHaveProperty("report");
+  return (result as { report: { signals: DiagnosticSignal[] } }).report.signals;
+}
 
 describe("showSandboxChannelStatus channel config parsers", () => {
   it("compares Discord guild-derived render values", async () => {
@@ -138,9 +144,10 @@ describe("showSandboxChannelStatus channel config parsers", () => {
     const result = await showSandboxChannelStatus("alpha", {
       deps,
       channel: "slack",
+      asJson: true,
     });
 
-    const signals = result && "signals" in result ? result.signals : [];
+    const signals = wrappedSignalsOf(result);
     expect(
       signals.find(
         (signal) =>
@@ -203,9 +210,10 @@ describe("showSandboxChannelStatus channel config parsers", () => {
     const result = await showSandboxChannelStatus("alpha", {
       deps,
       channel: "slack",
+      asJson: true,
     });
 
-    const signals = result && "signals" in result ? result.signals : [];
+    const signals = wrappedSignalsOf(result);
     expect(
       signals.find(
         (signal) =>
