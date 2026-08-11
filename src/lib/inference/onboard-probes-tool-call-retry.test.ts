@@ -166,42 +166,55 @@ exit 0
   it("keeps diagnostic codes on the doubled-timeout retry failure (#8714)", () => {
     const script = `#!/usr/bin/env bash
 outfile=""
+payload=""
+maxtime=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
     -w) shift 2 ;;
-    -d) shift 2 ;;
+    -d) payload="$2"; shift 2 ;;
+    --max-time) maxtime="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
 n=$(cat "${HARNESS_COUNTER}")
 n=$((n + 1))
 echo "$n" > "${HARNESS_COUNTER}"
-if [ "$n" -eq 1 ]; then
+printf '%s' "$payload" > "${HARNESS_TMPDIR}/request-$n.json"
+printf '%s' "$maxtime" > "${HARNESS_TMPDIR}/maxtime-$n"
+if [ "$n" -eq 3 ]; then
   : > "$outfile"
   printf '000'
   exit 28
 fi
 if [ -n "$outfile" ]; then
   cat <<'JSON' > "$outfile"
-{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"OK","tool_calls":null}}]}
+{"choices":[{"finish_reason":"length","message":{"content":"","reasoning":"Planning the tool call.","tool_calls":null}}]}
 JSON
 fi
 printf '200'
 exit 0
 `;
-    withFakeCurlProbe({ script, dirPrefix: "nemoclaw-doubled-retry-codes-" }, () => {
+    withFakeCurlProbe({ script, dirPrefix: "nemoclaw-doubled-retry-codes-" }, ({ tmpDir }) => {
       const result = probeOpenAiLikeEndpoint("http://127.0.0.1:11434/v1", "qwen3-vl:4b", "", {
         skipResponsesProbe: true,
         requireChatCompletionsToolCalling: true,
       });
 
       expect(result).toMatchObject({ ok: false });
-      const retryFailure = result.failures.find(
-        (failure: { name: string }) =>
-          failure.name === "Chat Completions API with tool calling (retry)",
+      const payloads = [1, 2, 3].map((n) =>
+        JSON.parse(fs.readFileSync(path.join(tmpDir, `request-${n}.json`), "utf8")),
       );
-      expect(retryFailure).toMatchObject({
+      expect(payloads.map((payload) => payload.max_tokens)).toEqual([256, 1024, 4096]);
+      const maxTimes = [1, 2, 3].map((n) =>
+        Number(fs.readFileSync(path.join(tmpDir, `maxtime-${n}`), "utf8")),
+      );
+      expect(maxTimes[2]).toBe(maxTimes[0] * 2);
+      const ladderFailure = result.failures.find(
+        (failure: { reasoningRetryAttempted?: boolean }) =>
+          failure.reasoningRetryAttempted === true,
+      );
+      expect(ladderFailure).toMatchObject({
         diagnosticCodes: ["openai-chat-missing-structured-tool-call"],
       });
     });

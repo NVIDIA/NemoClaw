@@ -453,7 +453,16 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
     if (!result.ok) {
       const explainedResult = explainDisabledToolParsing(result);
       return reasoningRetryAttempted
-        ? { ...explainedResult, reasoningRetryAttempted: true }
+        ? {
+            ...explainedResult,
+            diagnosticCodes: [
+              ...new Set([
+                "openai-chat-missing-structured-tool-call",
+                ...(explainedResult.diagnosticCodes ?? []),
+              ]),
+            ],
+            reasoningRetryAttempted: true,
+          }
         : explainedResult;
     }
     if (hasChatCompletionsToolCall(result.body)) {

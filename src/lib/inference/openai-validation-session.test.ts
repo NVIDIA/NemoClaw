@@ -200,7 +200,7 @@ describe("OpenAI validation keepalive sequence", () => {
     expect(harness.legacyProbe).not.toHaveBeenCalled();
   });
 
-  it("escalates the reasoning-only retry to a 4096-token budget (#8714)", async () => {
+  it("gives the delayed 4096-token native retry the doubled deadline (#8714)", async () => {
     const observedBodies: Array<Record<string, unknown>> = [];
     const server = http.createServer((request, response) => {
       let body = "";
@@ -212,11 +212,11 @@ describe("OpenAI validation keepalive sequence", () => {
         const parsed = JSON.parse(body) as Record<string, unknown>;
         observedBodies.push(parsed);
         response.setHeader("content-type", "application/json");
-        response.end(
+        const reply =
           (parsed.max_tokens as number) < 4096
             ? '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}'
-            : '{"choices":[{"finish_reason":"tool_calls","message":{"content":"","tool_calls":[{"type":"function","function":{"name":"sessions_send","arguments":"{\\"message\\":\\"hello\\"}"}}]}}]}',
-        );
+            : '{"choices":[{"finish_reason":"tool_calls","message":{"content":"","tool_calls":[{"type":"function","function":{"name":"sessions_send","arguments":"{\\"message\\":\\"hello\\"}"}}]}}]}';
+        setTimeout(() => response.end(reply), (parsed.max_tokens as number) === 4096 ? 1_200 : 0);
       });
     });
     const port = await listen(server);
