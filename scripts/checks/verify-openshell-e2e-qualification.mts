@@ -11,7 +11,10 @@ import { extractInstallerPins } from "./extract-installer-pins.mts";
 
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
-const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+$/u;
+// compareDottedVersions parses a segment with Number.parseInt, which loses
+// precision above Number.MAX_SAFE_INTEGER. That value has 16 digits, so a
+// 15-digit bound keeps every accepted version exactly ordered.
+const VERSION_PATTERN = /^[0-9]{1,15}(?:\.[0-9]{1,15}){2}$/u;
 const SAFE_PATH_PATTERN = /^[^\u0000-\u001f\u007f\\]{1,4096}$/u;
 const SAFE_JOB_NAME_PATTERN = /^[^\u0000-\u001f\u007f]{1,256}$/u;
 const MAX_JSON_RESPONSE_BYTES = 16 * 1024 * 1024;

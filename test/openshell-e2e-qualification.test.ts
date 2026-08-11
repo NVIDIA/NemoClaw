@@ -447,6 +447,34 @@ describe("qualification orchestration", () => {
     ]);
   });
 
+  it("rejects an OpenShell version segment that no longer orders exactly (#8292)", async () => {
+    const baseRoot = createBaseRoot();
+    await expect(
+      verifyOpenShellE2EQualification(
+        {
+          baseRoot,
+          baseSha: BASE_SHA,
+          candidateRoot: "/candidate",
+          candidateSha: HEAD_SHA,
+          prNumber: 8583,
+          repository: REPOSITORY,
+          workflowSha: BASE_SHA,
+        },
+        {
+          api: fullApi(),
+          async loadReceipt() {
+            return validReceipt();
+          },
+          // 9007199254740993 exceeds Number.MAX_SAFE_INTEGER, so predecessor
+          // selection could not order it against 9007199254740992.
+          readVersion() {
+            return "9007199254740993.0.0";
+          },
+        },
+      ),
+    ).rejects.toThrow("baseline or target OpenShell version is malformed");
+  });
+
   it("fails closed when a sensitive change has no current-head v2 receipt", async () => {
     const baseRoot = createBaseRoot();
     const verify = (receipt: Record<string, unknown>) =>
