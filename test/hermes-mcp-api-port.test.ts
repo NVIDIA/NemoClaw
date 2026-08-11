@@ -18,7 +18,8 @@ describe("Hermes MCP API port resolution", () => {
       [
         "-c",
         `
-import importlib.util, json, sys
+import importlib.util, json, sys, types
+sys.modules["yaml"] = types.SimpleNamespace(YAMLError=type("YAMLError", (Exception,), {}))
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
@@ -97,7 +98,8 @@ print(json.dumps({
       [
         "-c",
         `
-import importlib.util, json, os, pathlib, shutil, sys, tempfile
+import importlib.util, json, os, pathlib, shutil, sys, tempfile, types
+sys.modules["yaml"] = types.SimpleNamespace(YAMLError=type("YAMLError", (Exception,), {}))
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
@@ -207,7 +209,8 @@ print(json.dumps({
       [
         "-c",
         `
-import importlib.util, json, sys
+import importlib.util, json, sys, types
+sys.modules["yaml"] = types.SimpleNamespace(YAMLError=type("YAMLError", (Exception,), {}))
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
@@ -268,16 +271,18 @@ print(json.dumps({
       [
         "-c",
         `
-import importlib.util, pathlib, sys, tempfile
+import importlib.util, pathlib, sys, tempfile, types
+sys.modules["yaml"] = types.SimpleNamespace(YAMLError=type("YAMLError", (Exception,), {}))
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
-module.GATEWAY_PUBLIC_PORT_PATH = str(pathlib.Path(tempfile.mkdtemp()) / "absent-marker")
-module.os.geteuid = lambda: 0
-sys.argv = ["mcp-config-transaction.py", "probe"]
-raise SystemExit(module.main())
+with tempfile.TemporaryDirectory() as temp_dir:
+    module.GATEWAY_PUBLIC_PORT_PATH = str(pathlib.Path(temp_dir) / "absent-marker")
+    module.os.geteuid = lambda: 0
+    sys.argv = ["mcp-config-transaction.py", "probe"]
+    raise SystemExit(module.main())
 `,
         TRANSACTION,
       ],
