@@ -392,7 +392,7 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     expect(reportOf(run())?.verdict).toBeDefined();
   });
 
-  it("reports the Hermes dashboard-only session path split from fixed session roots", () => {
+  it("guides the Hermes dashboard-only session split through re-pairing (#8184)", () => {
     const exec = makeExec({
       status: 0,
       stdout: hermesSessionProbeOutput({
@@ -406,13 +406,14 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     );
     const report = reportOf(result);
     const command = String(exec.mock.calls[0]?.[1] ?? "");
+    const hint = report?.signals.find((s) => s.label === "Session location")?.hint;
     expect(report?.verdict).toBe("unpaired");
-    expect(report?.signals.find((s) => s.label === "Session location")?.hint).toContain(
-      "platforms.whatsapp.extra.session_path",
-    );
-    expect(report?.signals.find((s) => s.label === "Session location")?.hint).toContain(
-      "--config-accept-new-path",
-    );
+    expect(hint).toContain("`nemoclaw <sandbox> channels remove whatsapp`");
+    expect(hint).toContain("`nemoclaw <sandbox> channels add whatsapp`");
+    expect(hint).toMatch(/Pair again from the dashboard/);
+    expect(hint).toContain("/sandbox/.hermes/platforms/whatsapp/session");
+    expect(hint).toContain("`nemoclaw <sandbox> channels status --channel whatsapp`");
+    expect(hint).not.toContain("platforms.whatsapp.extra.session_path");
     expect(command).toContain("/sandbox/.hermes/platforms/whatsapp/session/creds.json");
     expect(command).toContain(
       "/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session/creds.json",

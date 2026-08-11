@@ -92,6 +92,7 @@ import {
   type ReplacedSandboxWorkloadCleanupResult,
   retireReplacedSandboxWorkload as retireReplacedSandboxWorkloadDefault,
   type SandboxRecreateObservation,
+  sandboxRecreatePhaseReached,
   sandboxRecreateSourceWorkloadEntry,
   selectedGatewayForSandboxRecreate,
 } from "../../sandbox-recreate-transaction";
@@ -1106,6 +1107,46 @@ class SandboxStateFlow<
     }
   }
 
+  /**
+   * Durable-ownership evidence that lets recreate reuse the web-search
+   * credential already registered with this sandbox's OpenShell gateway
+   * provider instead of revalidating a host credential.
+   *
+   * A staged receipt proves this session registered the provider itself, which
+   * is the evidence an interrupted onboard resumes against. `rebuild` can never
+   * present one: it resets the session and derives a fresh checkpoint before it
+   * calls `onboard --resume`, so `stagedCredentialProviders` is empty by the
+   * time recreate resolves web search. The recreate journal it hands off carries
+   * that ownership claim instead — the same claim the rebuild preflight
+   * (`canReuseGatewayWebSearchCredential`) and `messaging-prep` already accept
+   * for this binding (#7097).
+   *
+   * A journal merely resident in the session is not enough, because nothing
+   * binds it to this run: one survives a failed attempt, and
+   * `beginSandboxRecreateTransaction` opens one straight at `deleted` when the
+   * sandbox is already missing. What is checked is therefore that the journal
+   * was handed to this run by the driver that owns the replacement, names this
+   * sandbox, and has passed the delete boundary — the state in which the source
+   * is gone and no host key can be read. Both forms stay paired with the exact
+   * live gateway binding check, so neither can reuse a provider bound to
+   * anything but this sandbox (#8717).
+   */
+  private ownsGatewayWebSearchProvider(
+    state: SandboxStepState<WebSearchConfig>,
+    providerName: string,
+  ): boolean {
+    if (state.session?.stagedCredentialProviders.includes(providerName)) return true;
+    const handoff = this.options.recreateJournalTargetIntentFingerprint;
+    const recreate = state.session?.checkpoint?.sandboxRecreate;
+    return Boolean(
+      handoff &&
+        recreate &&
+        recreate.sandboxName === state.sandboxName &&
+        recreate.targetIntentFingerprint === handoff &&
+        sandboxRecreatePhaseReached(recreate.phase, "deleted"),
+    );
+  }
+
   private async resolveWebSearchForCreation(
     state: SandboxStepState<WebSearchConfig>,
   ): Promise<WebSearchConfig | null> {
@@ -1121,9 +1162,7 @@ class SandboxStateFlow<
       this.options.resume &&
       state.sandboxName &&
       !localCredential &&
-      state.session?.stagedCredentialProviders.includes(
-        `${state.sandboxName}-${provider}-search`,
-      ) &&
+      this.ownsGatewayWebSearchProvider(state, `${state.sandboxName}-${provider}-search`) &&
       this.deps.providerMatchesGatewayCredential(
         `${state.sandboxName}-${provider}-search`,
         provider,
