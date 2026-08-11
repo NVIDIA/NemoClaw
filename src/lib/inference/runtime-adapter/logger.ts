@@ -18,16 +18,21 @@ function normalizeLogField(
 
 /** Convert an unknown failure into a compact diagnostic message. */
 function errorMessage(error: unknown): string {
-  return compactText(error instanceof Error ? error.message : String(error));
+  try {
+    return compactText(error instanceof Error ? error.message : String(error));
+  } catch {
+    return "adapter logger diagnostic unavailable";
+  }
 }
 
 /** Invoke an optional diagnostic callback without exposing its failures. */
 function reportDiagnosticFailure(
   callback: ((message: string) => void) | undefined,
-  message: string,
+  error: unknown,
 ): void {
+  if (!callback) return;
   try {
-    callback?.(message);
+    callback(errorMessage(error));
   } catch {
     // Diagnostics must never replace the adapter result or error path.
   }
@@ -50,7 +55,7 @@ export function createLocalAdapterLogger(options: {
       }
       appendLocalAdapterJsonLine(options.logPath, payload);
     } catch (error) {
-      reportDiagnosticFailure(options.onWriteError, errorMessage(error));
+      reportDiagnosticFailure(options.onWriteError, error);
     }
   };
 
@@ -62,7 +67,7 @@ export function createLocalAdapterLogger(options: {
         // diagnostics from affecting request handling.
         logger(event, fields);
       } catch (error) {
-        reportDiagnosticFailure(options.onLoggerError, errorMessage(error));
+        reportDiagnosticFailure(options.onLoggerError, error);
       }
     },
   };

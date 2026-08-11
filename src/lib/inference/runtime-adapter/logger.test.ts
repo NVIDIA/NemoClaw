@@ -10,6 +10,30 @@ import { describe, expect, it, vi } from "vitest";
 import { createLocalAdapterLogger } from "./logger";
 
 describe("local adapter logger", () => {
+  it("contains diagnostic conversion failures and skips conversion without a callback", () => {
+    const messageGetter = vi.fn(() => {
+      throw new Error("message conversion failed");
+    });
+    const hostileFailure = Object.create(Error.prototype);
+    Object.defineProperty(hostileFailure, "message", { get: messageGetter });
+    const injectedLogger = () => {
+      throw hostileFailure;
+    };
+
+    const withoutDiagnostic = createLocalAdapterLogger({ logPath: "/unused/adapter.log" });
+    expect(() => withoutDiagnostic.logEvent(injectedLogger, "request_failed")).not.toThrow();
+    expect(messageGetter).not.toHaveBeenCalled();
+
+    const onLoggerError = vi.fn();
+    const withDiagnostic = createLocalAdapterLogger({
+      logPath: "/unused/adapter.log",
+      onLoggerError,
+    });
+    expect(() => withDiagnostic.logEvent(injectedLogger, "request_failed")).not.toThrow();
+    expect(messageGetter).toHaveBeenCalledOnce();
+    expect(onLoggerError).toHaveBeenCalledWith("adapter logger diagnostic unavailable");
+  });
+
   it("writes normalized JSONL fields and reports logger failures without throwing", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-adapter-logger-"));
     const logPath = path.join(dir, "adapter.log");
