@@ -103,8 +103,46 @@ async function expectShieldsStatus(
   expect(resultText(status)).toContain(`Shields: ${expected}`);
 }
 
+async function collectStartFailureDockerLogs(
+  host: HostCliClient,
+  artifactPrefix: string,
+): Promise<string> {
+  const lookup = await host.command(
+    "docker",
+    [
+      "ps",
+      "--all",
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+      "--filter",
+      "label=openshell.ai/sandbox-workspace=default",
+      "-q",
+    ],
+    {
+      artifactName: `${artifactPrefix}-failure-container`,
+      env: commandEnv(),
+      redactionValues: [COMPATIBLE_API_KEY],
+      timeoutMs: 30_000,
+    },
+  );
+  const containerId = lookup.stdout.trim().split(/\s+/u).filter(Boolean)[0] ?? "";
+  const result =
+    lookup.exitCode !== 0 || !containerId
+      ? lookup
+      : await host.command("docker", ["logs", "--tail", "200", containerId], {
+          artifactName: `${artifactPrefix}-failure-docker-logs`,
+          env: commandEnv(),
+          redactionValues: [COMPATIBLE_API_KEY],
+          timeoutMs: 30_000,
+        });
+  return resultText(result);
+}
+
 async function expectStopStartRecovery(
   host: HostCliClient,
+  sandbox: SandboxClient,
   posture: "DOWN" | "UP",
   artifactPrefix: string,
 ): Promise<void> {
@@ -122,7 +160,17 @@ async function expectStopStartRecovery(
     redactionValues: [COMPATIBLE_API_KEY],
     timeoutMs: 5 * 60_000,
   });
-  assertExitZero(start, `start Hermes with shields ${posture.toLowerCase()}`);
+  const startFailureLogs =
+    start.exitCode === 0 ? "" : await collectStartFailureDockerLogs(host, artifactPrefix);
+  expect(
+    start.exitCode,
+    [
+      `start Hermes with shields ${posture.toLowerCase()}: ${resultText(start)}`,
+      startFailureLogs && `Docker logs:\n${startFailureLogs}`,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  ).toBe(0);
 
   const status = await host.nemoclaw([SANDBOX_NAME, "status"], {
     artifactName: `${artifactPrefix}-status`,
@@ -133,6 +181,17 @@ async function expectStopStartRecovery(
   assertExitZero(status, `read Hermes status with shields ${posture.toLowerCase()}`);
   expect(stripAnsi(resultText(status))).toMatch(/Phase:\s*Ready/i);
   await expectShieldsStatus(host, posture, `${artifactPrefix}-shields-status`);
+
+  const runtimeIdentity = await sandboxShell(
+    sandbox,
+    'printf \'pwd=%s\\nhome=%s\\nuser=%s\\ngroup=%s\\n\' "$PWD" "$HOME" "$(id -un)" "$(id -gn)"',
+    `${artifactPrefix}-runtime-identity`,
+  );
+  assertExitZero(runtimeIdentity, `inspect Hermes runtime identity with shields ${posture}`);
+  expect(runtimeIdentity.stdout).toContain("pwd=/sandbox\n");
+  expect(runtimeIdentity.stdout).toContain("home=/sandbox\n");
+  expect(runtimeIdentity.stdout).toContain("user=sandbox\n");
+  expect(runtimeIdentity.stdout).toContain("group=sandbox\n");
 }
 
 async function expectMutablePosture(sandbox: SandboxClient, cycle: number): Promise<void> {
@@ -358,7 +417,7 @@ test("hermes-shields-config: stopped Hermes restores under both Shields postures
   await completeShieldsCycle(host, sandbox, 1);
 
   progress.phase("restart Hermes with shields up");
-  await expectStopStartRecovery(host, "UP", "cycle-1-shields-up-start-recovery");
+  await expectStopStartRecovery(host, sandbox, "UP", "cycle-1-shields-up-start-recovery");
   await expectLockedPosture(sandbox, 1);
 
   progress.phase("unlock shields and restart Hermes");
@@ -371,7 +430,7 @@ test("hermes-shields-config: stopped Hermes restores under both Shields postures
   await expectImmediateInferenceRoute(sandbox, 2);
   await expectShieldsStatus(host, "DOWN", "cycle-2-status-down");
   await expectMutablePosture(sandbox, 2);
-  await expectStopStartRecovery(host, "DOWN", "cycle-2-shields-down-start-recovery");
+  await expectStopStartRecovery(host, sandbox, "DOWN", "cycle-2-shields-down-start-recovery");
   await expectMutablePosture(sandbox, 2);
 
   progress.phase("complete second shields cycle");

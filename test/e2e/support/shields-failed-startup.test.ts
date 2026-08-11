@@ -2,15 +2,30 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { failedStartupProcessControlCommands } from "../fixtures/shields-failed-startup.ts";
+import {
+  failedStartupProcessControlCommands,
+  resumeSupervisorIfPaused,
+} from "../fixtures/shields-failed-startup.ts";
 
 describe("Shields failed-startup process control", () => {
-  it("pauses PID 1 before terminating its child and resumes the same supervisor", () => {
+  it("builds host-side PID 1 signals and an in-sandbox child termination signal", () => {
     expect(failedStartupProcessControlCommands("abc123def456", 44)).toEqual({
-      pauseSupervisor: ["exec", "--user", "0", "abc123def456", "kill", "-STOP", "1"],
-      resumeSupervisor: ["exec", "--user", "0", "abc123def456", "kill", "-CONT", "1"],
+      pauseSupervisor: ["kill", "--signal", "SIGSTOP", "abc123def456"],
+      resumeSupervisor: ["kill", "--signal", "SIGCONT", "abc123def456"],
       terminateStartupChild: ["exec", "--user", "0", "abc123def456", "kill", "-TERM", "44"],
     });
+  });
+
+  it("runs the resume callback only when the supervisor was paused", async () => {
+    const events: string[] = [];
+    const resume = async () => {
+      events.push("resume");
+    };
+
+    await resumeSupervisorIfPaused(false, resume);
+    await resumeSupervisorIfPaused(true, resume);
+
+    expect(events).toEqual(["resume"]);
   });
 
   it.each([

@@ -630,7 +630,7 @@ describe("managed inference resolver", () => {
       ["equals", "host.os.platform", "windows"],
       ["one-of", "host.os.architecture", "riscv64"],
       ["at-least", "host.gpu.count", 0],
-      ["version-at-least", "host.gpu.driver_version", "579.99.0"],
+      ["version-at-least", "host.gpu.driver_version", "580.65"],
       ["malformed version-at-least", "host.gpu.driver_version", "580.65.x"],
       [
         "version segment above Number.MAX_SAFE_INTEGER",
