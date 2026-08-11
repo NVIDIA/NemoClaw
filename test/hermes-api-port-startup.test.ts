@@ -11,23 +11,23 @@ const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "s
 
 function runHermesApiPortBootstrap(apiPort: string) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-api-port-"));
-  const scriptPath = path.join(tmpDir, "run.sh");
-  const source = fs.readFileSync(START_SCRIPT, "utf-8");
-  const start = source.indexOf('NEMOCLAW_CMD=("$@")');
-  const end = source.indexOf('\nHERMES="$(command -v hermes)"', start);
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      "set --",
-      source.slice(start, end).trimEnd(),
-      'printf "PUBLIC_PORT=%s\\n" "$PUBLIC_PORT"',
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-
   try {
+    const scriptPath = path.join(tmpDir, "run.sh");
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const start = source.indexOf('NEMOCLAW_CMD=("$@")');
+    const end = source.indexOf('\nHERMES="$(command -v hermes)"', start);
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "set -- true",
+        source.slice(start, end).trimEnd(),
+        'printf "PUBLIC_PORT=%s\\n" "$PUBLIC_PORT"',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
     return spawnSync("bash", [scriptPath], {
       encoding: "utf-8",
       timeout: 5000,

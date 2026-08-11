@@ -18,7 +18,8 @@ describe("Hermes MCP lifecycle probe API port", () => {
       [
         "-c",
         `
-import importlib.util, json, sys
+import importlib.util, json, sys, types
+sys.modules["yaml"] = types.SimpleNamespace(YAMLError=type("YAMLError", (Exception,), {}))
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
@@ -45,7 +46,8 @@ print(json.dumps(module.probe(), sort_keys=True))
       [
         "-c",
         `
-import importlib.util, json, sys
+import importlib.util, json, sys, types
+sys.modules["yaml"] = types.SimpleNamespace(YAMLError=type("YAMLError", (Exception,), {}))
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module

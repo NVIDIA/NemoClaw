@@ -98,14 +98,15 @@ print(json.dumps({
       [
         "-c",
         `
-import importlib.util, json, os, pathlib, shutil, sys, tempfile, types
+import importlib.util, json, os, pathlib, sys, tempfile, types
 sys.modules["yaml"] = types.SimpleNamespace(YAMLError=type("YAMLError", (Exception,), {}))
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
-root = pathlib.Path(tempfile.mkdtemp())
+temporary = tempfile.TemporaryDirectory()
+root = pathlib.Path(temporary.name)
 module.GATEWAY_PUBLIC_PORT_PATH = str(root / "hermes-api-port")
 absent = module._root_gateway_public_port_marker()
 
@@ -130,6 +131,12 @@ class RootOwnedStat:
 
     def __getattr__(self, name):
         return getattr(self._real, name)
+
+class SandboxOwnedStat(RootOwnedStat):
+    def __init__(self, real):
+        super().__init__(real)
+        self.st_uid = 1000
+        self.st_gid = 1000
 
 real_fstat = module.os.fstat
 
@@ -162,6 +169,21 @@ try:
 finally:
     module.os.fstat = real_fstat
 
+owned = root / "owned"
+owned.mkdir()
+owned_marker = owned / "hermes-api-port"
+owned_marker.write_bytes(b"8645")
+owned_marker.chmod(0o444)
+module.GATEWAY_PUBLIC_PORT_PATH = str(owned_marker)
+module.os.fstat = lambda descriptor: SandboxOwnedStat(real_fstat(descriptor))
+non_root_owner = ""
+try:
+    module._root_gateway_public_port_marker()
+except PermissionError as error:
+    non_root_owner = str(error)
+finally:
+    module.os.fstat = real_fstat
+
 linked = root / "linked"
 linked.mkdir()
 target = linked / "hermes-api-port"
@@ -176,13 +198,14 @@ try:
 except PermissionError as error:
     followed = str(error)
 
-shutil.rmtree(root)
+temporary.cleanup()
 
 print(json.dumps({
     "absent": absent,
     "sound": sound,
     "unsafe": unsafe,
     "followed": followed,
+    "non_root_owner": non_root_owner,
 }))
 `,
         TRANSACTION,
@@ -200,6 +223,7 @@ print(json.dumps({
         "Hermes API port marker is unsafe",
       ],
       followed: "Hermes API port marker cannot be opened safely",
+      non_root_owner: "Hermes API port marker is unsafe",
     });
   });
 

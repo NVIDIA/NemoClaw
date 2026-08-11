@@ -29,19 +29,20 @@ function callInstallerPayloadFn(fnCall: string, env: Record<string, string | und
 describe("Hermes installer forward restore", () => {
   it("fails closed without a registered port and restores the recorded port (#8543)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-forward-restore-"));
-    const fakeBin = path.join(tempDir, "bin");
-    const stateDir = path.join(tempDir, ".nemoclaw");
-    const openshellLog = path.join(tempDir, "openshell.log");
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.mkdirSync(stateDir, { recursive: true });
-    fs.symlinkSync(process.execPath, path.join(fakeBin, "node"));
-    fs.writeFileSync(
-      path.join(stateDir, "onboard-session.json"),
-      JSON.stringify({ sandboxName: "created-by-onboard", agent: "hermes" }),
-    );
-    writeExecutable(
-      path.join(fakeBin, "openshell"),
-      `#!/usr/bin/env bash
+    try {
+      const fakeBin = path.join(tempDir, "bin");
+      const stateDir = path.join(tempDir, ".nemoclaw");
+      const openshellLog = path.join(tempDir, "openshell.log");
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.symlinkSync(process.execPath, path.join(fakeBin, "node"));
+      fs.writeFileSync(
+        path.join(stateDir, "onboard-session.json"),
+        JSON.stringify({ sandboxName: "created-by-onboard", agent: "hermes" }),
+      );
+      writeExecutable(
+        path.join(fakeBin, "openshell"),
+        `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$OPENSHELL_LOG"
 case "$1 $2" in
   "forward list")
@@ -51,37 +52,40 @@ case "$1 $2" in
 esac
 exit 0
 `,
-    );
-    for (const command of ["curl", "sleep"]) {
-      writeExecutable(path.join(fakeBin, command), "#!/usr/bin/env bash\nexit 0\n");
+      );
+      for (const command of ["curl", "sleep"]) {
+        writeExecutable(path.join(fakeBin, command), "#!/usr/bin/env bash\nexit 0\n");
+      }
+
+      const restoreEnv = {
+        HOME: tempDir,
+        NEMOCLAW_SKIP_FORWARD_WATCHER: "1",
+        OPENSHELL_LOG: openshellLog,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+      };
+      const restore = () =>
+        callInstallerPayloadFn("restore_onboard_forward_after_post_checks", restoreEnv);
+
+      const missingRegistry = restore();
+      expect(missingRegistry.status).toBe(1);
+      expect(missingRegistry.stderr).toContain(
+        "registered API port for sandbox 'created-by-onboard' is unavailable or invalid",
+      );
+
+      fs.writeFileSync(
+        path.join(stateDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: { "created-by-onboard": { hermesApiPort: 8647 } },
+        }),
+      );
+      const restored = restore();
+
+      expect(restored.status).toBe(0);
+      const openshellCalls = fs.readFileSync(openshellLog, "utf-8");
+      expect(openshellCalls).toContain("forward stop 8647 created-by-onboard");
+      expect(openshellCalls).toContain("forward start --background 8647 created-by-onboard");
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
     }
-
-    const restoreEnv = {
-      HOME: tempDir,
-      NEMOCLAW_SKIP_FORWARD_WATCHER: "1",
-      OPENSHELL_LOG: openshellLog,
-      PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
-    };
-    const restore = () =>
-      callInstallerPayloadFn("restore_onboard_forward_after_post_checks", restoreEnv);
-
-    const missingRegistry = restore();
-    expect(missingRegistry.status).toBe(1);
-    expect(missingRegistry.stderr).toContain(
-      "registered API port for sandbox 'created-by-onboard' is unavailable or invalid",
-    );
-
-    fs.writeFileSync(
-      path.join(stateDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: { "created-by-onboard": { hermesApiPort: 8647 } },
-      }),
-    );
-    const restored = restore();
-
-    expect(restored.status).toBe(0);
-    const openshellCalls = fs.readFileSync(openshellLog, "utf-8");
-    expect(openshellCalls).toContain("forward stop 8647 created-by-onboard");
-    expect(openshellCalls).toContain("forward start --background 8647 created-by-onboard");
-  });
+  }, 15_000);
 });
