@@ -1493,22 +1493,24 @@ SERVER_ENV_OVERRIDES_PATCH = '''        env.update(self._persistent_env_override
             env[nemoclaw_mcp_binding_env] = binding
 '''
 
-SERVER_POPEN_MARKER = '''        self._process = subprocess.Popen(  # noqa: S603, ASYNC220
+SERVER_POPEN_MARKER = '''        self._process = subprocess.Popen(  # noqa: S603
             cmd,
             cwd=str(work_dir),
             env=env,
             stdout=self._log_file,
             stderr=subprocess.STDOUT,
+            start_new_session=(sys.platform != "win32"),
         )
 '''
 
-SERVER_POPEN_PATCH = '''        self._process = subprocess.Popen(  # noqa: S603, ASYNC220
+SERVER_POPEN_PATCH = '''        self._process = subprocess.Popen(  # noqa: S603
             cmd,
             cwd=str(work_dir),
             env=env,
             stdout=self._log_file,
             stderr=subprocess.STDOUT,
             pass_fds=nemoclaw_mcp_pass_fds,
+            start_new_session=(sys.platform != "win32"),
         )
 '''
 
