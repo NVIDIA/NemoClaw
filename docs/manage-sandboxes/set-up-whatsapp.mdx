@@ -33,25 +33,22 @@ NemoClaw validates the gateway URL before pairing and renders the WhatsApp QR co
 If pairing exits with a gateway close such as `1008`, rerun the login command once, then check `$$nemoclaw <sandbox> channels status --channel whatsapp` to diagnose the gateway and session path separately from QR rendering.
 </AgentOnly>
 <AgentOnly variant="hermes">
-Hermes can pair from the Dashboard profile while the gateway reads the default `platforms/whatsapp/session` path.
-After scanning a dashboard QR code, run `$$nemoclaw <sandbox> channels status --channel whatsapp`.
-If the report says `dashboard-home has WhatsApp credentials, but the Hermes gateway session path is empty`, point the gateway at the dashboard session with the supported config command:
+Hermes dashboard pairing and the gateway share `/sandbox/.hermes/platforms/whatsapp/session`.
+After scanning a dashboard QR code, run `$$nemoclaw <sandbox> channels status --channel whatsapp` to confirm that the shared session is available to the gateway.
+
+If `channels status` reports credentials only under the legacy `profiles/dashboard-home` path, the sandbox has credentials from an image that wrote dashboard sessions to that path.
+Rebuilding and pairing again writes new credentials to the shared path, but it leaves the legacy credentials in durable state, and sandbox startup treats that copy as migration input.
+Clear every WhatsApp session path first with the supported removal command, then re-add the channel:
 
 ```bash
-$$nemoclaw <sandbox> shields down --reason "repair Hermes WhatsApp session path"
-$$nemoclaw <sandbox> config set --key platforms.whatsapp.extra.session_path --value /sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session --restart --config-accept-new-path
-$$nemoclaw <sandbox> shields up
+$$nemoclaw <sandbox> channels remove whatsapp
+$$nemoclaw <sandbox> channels add whatsapp
 ```
 
-Keep Shields down until `config set` finishes, then restore the restrictive posture with `shields up`.
-The `--config-accept-new-path` flag lets the command write the `platforms.whatsapp.extra.session_path` configuration key when the generated config does not already contain it.
-Dashboard pairing writes session credentials under `profiles/dashboard-home`; this bounded compatibility repair redirects the gateway to that session path while it still reads the default path otherwise.
-The repair stays documented until Hermes dashboard pairing state and gateway startup converge on one shared session path; NemoClaw can redirect the configured path but does not rewrite Hermes pairing state.
-Before removing the override, run `$$nemoclaw <sandbox> channels status --channel whatsapp` after dashboard pairing and gateway startup and confirm the report no longer shows a dashboard-home session with an empty gateway session path.
-Remove the override only after Hermes uses one shared WhatsApp session path for dashboard pairing and gateway startup.
-Do not edit `/sandbox/.hermes/.env` or `/sandbox/.hermes/config.yaml` by hand.
-Manual edits can cause the Hermes config-integrity guard to reject restart with `hash-mismatch`.
-Supervisor quarantine happens after repeated relaunch failures or other integrity failures.
+`channels remove` clears `/sandbox/.hermes/platforms/whatsapp`, the dashboard profile session at `/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session`, and the legacy migration source at `/sandbox/.hermes/dashboard-home/platforms/whatsapp/session`.
+The sandbox must be running for that cleanup to succeed; `channels remove` refuses to proceed when it cannot reach the sandbox.
+Pair again from the dashboard so the credentials are written to `/sandbox/.hermes/platforms/whatsapp/session`.
+Rerun `$$nemoclaw <sandbox> channels status --channel whatsapp` and confirm that the gateway session path holds the credentials and that the report no longer lists a `profiles/dashboard-home` session.
 </AgentOnly>
 
 ## Protect Paired Session State
@@ -60,9 +57,13 @@ Supervisor quarantine happens after repeated relaunch failures or other integrit
 The sandbox stores mutable session credentials in durable `whatsapp` state.
 </AgentOnly>
 <AgentOnly variant="hermes">
-The sandbox stores mutable session credentials in durable `platforms/whatsapp` state for the gateway and `profiles/dashboard-home/platforms/whatsapp` state for Dashboard pairing.
+The sandbox stores mutable session credentials in durable `platforms/whatsapp` state for both dashboard pairing and the gateway.
 </AgentOnly>
 The credentials survive rebuilds without re-pairing.
+<AgentOnly variant="hermes">
+A sandbox that also holds legacy `profiles/dashboard-home` or `dashboard-home` credentials keeps both copies across a rebuild, because both paths are part of the durable state that a rebuild restores.
+Run `$$nemoclaw <sandbox> channels remove whatsapp` to clear every WhatsApp session path, then re-add the channel and pair again.
+</AgentOnly>
 This is the runtime tradeoff of enabling WhatsApp without a host bridge: a paired sandbox can use that WhatsApp account until you unpair it or clear the durable state.
 
 NemoClaw cannot detect cross-sandbox WhatsApp conflicts the way it does for token-based channels.

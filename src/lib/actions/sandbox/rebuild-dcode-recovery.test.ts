@@ -1,21 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   configureDcodeSession,
   makeDcodeSandboxEntry,
 } from "../../../../test/helpers/rebuild-dcode-flow-helpers";
 import {
   createRebuildFlowHarness,
+  installRebuildFlowTestHooks,
   makePreparedRecoveryManifest,
-  resetRebuildFlowTestEnvironment,
-  restoreRebuildFlowTestEnvironment,
-} from "../../../../test/helpers/rebuild-flow-harness";
+} from "../../../../test/helpers/rebuild-flow-dcode-harness";
 
 describe("rebuildSandbox DCode flow: recovery", () => {
-  beforeEach(resetRebuildFlowTestEnvironment);
-  afterEach(restoreRebuildFlowTestEnvironment);
+  installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
 
   it("recreates non-Ready DCode from a validated backup without requiring a live route (#6195)", async () => {
     const recoveryManifest = {

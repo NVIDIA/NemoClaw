@@ -895,15 +895,13 @@ The user-supplied context uses the OpenShell gateway builder instead of NemoClaw
 $$nemoclaw onboard --from ./Dockerfile.custom
 ```
 
-### GPU passthrough
+### GPU Passthrough
 
 When `$$nemoclaw onboard` detects an NVIDIA GPU on the host, it enables OpenShell GPU passthrough at both the gateway and sandbox level by default.
-Detection proceeds along two paths. The `nvidia-smi`-based paths (the primary `--query-gpu=name,memory.total,memory.free` probe and the unified-memory `--query-gpu=name` fallback) require `nvidia-smi` to succeed and, on hosts whose firmware does not classify as a known NVIDIA platform (DGX Spark, DGX Station, Jetson, or Tegra), additionally require that the GPU name does not match the placeholder family observed on the Windows-on-ARM WSL2 nvidia-smi shim (`JMJWOA-Generic-*`) and that either the host is not ARM64 Linux (the observed shim is Windows-on-ARM only) or the NVIDIA kernel driver is bound (`/proc/driver/nvidia/` present), so that placeholder shims on non-NVIDIA hardware are not mistaken for real GPUs.
+The `nvidia-smi` probes require a successful result and reject placeholder `JMJWOA-Generic-*` GPU names unless NemoClaw can prove a supported NVIDIA platform or GPU execution.
 NemoClaw treats a recognized NVIDIA product model from `/sys/class/dmi/id/product_name` or `/sys/firmware/devicetree/base/model`, or a known Tegra device node, as authoritative platform identity.
-Remove the native ARM64 proof exception when every supported host that uses it exposes a stable value through one of these signals and `detectNvidiaPlatform()` recognizes that value.
-On a native or Docker Desktop-backed WSL ARM64 Linux host without firmware-confirmed NVIDIA platform metadata, the primary memory-query probe can clear a `JMJWOA-Generic-*` name only after a bounded CUDA workload succeeds.
-The workload runs `docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41`.
-Docker may pull the CUDA sample image from `nvcr.io` and keeps the image in the local cache after the container exits.
+On eligible native or Docker Desktop-backed WSL ARM64 Linux hosts without that firmware evidence, one bounded Docker CUDA workload can prove GPU execution.
+For the proof command, timeout control, and failure recovery, refer to [GPU Setup Fails with a Placeholder GPU Name](troubleshooting#gpu-setup-fails-with-a-placeholder-gpu-name).
 The names-only unified-memory fallback does not run this workload and rejects denylisted names.
 Other non-firmware-vouched hosts also reject denylisted names.
 Jetson/Tegra hosts that ship without `nvidia-smi` continue to be detected via the devicetree firmware fallback (`/sys/firmware/devicetree/base/model`) or the Tegra device-node fallback (`/dev/nvhost-gpu`, `/dev/nvhost-ctrl-gpu`, `/dev/nvhost-ctrl`, or `/dev/nvmap`); both bypass the trust-tier gate above.
@@ -953,6 +951,10 @@ Use `--no-sandbox-gpu`, `--no-gpu`, or `NEMOCLAW_SANDBOX_GPU=0` when you want to
 List all registered sandboxes with their model, provider, and policy presets.
 Pass `--json` for machine-readable output that includes a `schemaVersion`, the default sandbox, recovery metadata, and the sandbox inventory.
 Each sandbox row reports `activeSessionCount` as a nonnegative integer when the SSH-session probe is available and `null` when it is unavailable.
+Each sandbox row reports `agent` as a string in both text and JSON output, never `null`.
+The row reports `openclaw` when the registry records no agent for the sandbox.
+The row reports `unknown` for a sandbox that `$$nemoclaw list` recovers from the live OpenShell gateway.
+The gateway sandbox list does not expose the agent.
 The row does not include the former derived `connected` boolean.
 Sandboxes with an active SSH session are marked with a `●` indicator so you can tell at a glance which sandbox you are already connected to in another terminal.
 <AgentOnly variant="openclaw,hermes">
@@ -1410,8 +1412,19 @@ NemoClaw removes the temporary state backup after a successful restore or rollba
 If state restoration and rollback both fail, it retains the backup and prints host recovery guidance.
 Mounted state remains available, but a committed swap does not retain other writable-layer changes.
 It is idempotent.
-When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats the recovery action only for an exit status of `1` with blank stdout and a sole nonblank stderr line equal to `SUPERVISOR_BUSY`, with at most three controller attempts.
-The same result is inconclusive during managed settle confirmation and can be probed again only within the configured settle window.
+When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats the recovery action only for these exact transient results:
+
+- Status `1` with blank stdout and exactly one stderr line, `SUPERVISOR_BUSY`.
+- Status `137` with blank stdout and stderr.
+- Status `1` with blank stdout and exactly one stderr line, `Error response from daemon: Container <id> is restarting, wait until the container is running`.
+
+For the Docker result, `<id>` must be a 64-character lowercase hexadecimal ID that matches the selected registry-owned container.
+Recovery makes at most 11 controller attempts in total.
+It stops after 3 of those attempts return `SUPERVISOR_BUSY`.
+Managed settle confirmation treats exact `SUPERVISOR_BUSY` as inconclusive within its configured window.
+Status `137` and the Docker restart result remain terminal during that confirmation.
+The managed supervisor startup waiter accepts the two container-transition results within its separate 11-attempt bound.
+Unbound container IDs, reformatted Docker errors, status `137` with nonblank output, and other diagnostic results are terminal.
 NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because the managed controller uses it for integrity refusals, ambiguous discovery, and process-identity changes.
 It does not repeat the recovery action or treat the settle probe as inconclusive, and instead prints host-side restart and rebuild guidance.
 Other controller failures also stop immediately.
@@ -1569,6 +1582,7 @@ When the live shared route differs, text output prints both routes and JSON outp
 When `routeDrift.canConnect` is `false`, `connect` cannot safely restore the recorded route because provider-global identity differs or required route or gateway metadata is incomplete.
 Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for the route-sharing workflow.
 `openshellDriver` and `openshellVersion` are always strings (falling back to `"unknown"` when the registry has no value), so consumers can rely on `typeof` checks.
+`agent` is always a string and reports `openclaw` when the registry records no agent for the sandbox.
 `failureLayer` is `null` when no preflight failure was detected and otherwise one of `docker_unreachable`, `sandbox_container_stopped`, or `sandbox_dashboard_port_conflict`; when set, `inferenceHealth` is suppressed to `null` so automation does not see a stale remote-provider healthy status during a local outage.
 `dockerPaused` is `true` when NemoClaw detects that the Docker-driver sandbox container is paused.
 In that case, text output keeps OpenShell's authoritative phase but prints a `docker unpause <container>` recovery hint instead of sending you directly to rebuild.
@@ -2494,7 +2508,9 @@ For an OpenClaw WhatsApp sandbox, `--channel whatsapp` probes the sandbox to sep
 A paired channel with no observed inbound delivery exits non-zero with verdict `idle` so an unhealthy bridge cannot pass as healthy.
 The detailed WhatsApp probe stays focused on QR/session runtime diagnostics and does not include rendered-config comparison lines.
 For a Hermes WhatsApp sandbox, `--channel whatsapp` probes only whether the default gateway session path and the `profiles/dashboard-home` session path contain `creds.json`.
-If the dashboard path has credentials and the gateway path is empty, the report prints the supported `config set` command for the `platforms.whatsapp.extra.session_path` configuration key, including the new-configuration-key opt-in when generated configs do not already contain that key.
+If the dashboard path has credentials and the gateway path is empty, the report tells you to run `$$nemoclaw <sandbox> channels remove whatsapp` and then `$$nemoclaw <sandbox> channels add whatsapp`, because a rebuild restores the legacy session instead of dropping it.
+Pair again from the dashboard so credentials use `/sandbox/.hermes/platforms/whatsapp/session`.
+Rerun `$$nemoclaw <sandbox> channels status --channel whatsapp`.
 NemoClaw does not treat a Hermes session file as live inbound-health evidence.
 
 For Telegram, `--channel telegram` probes the sandbox to report the gateway process, Bot API reachability, and inbound delivery alongside the config comparison.
@@ -3576,6 +3592,9 @@ For gateway-based messaging agents, it also reports messaging overlap warnings w
 </AgentOnly>
 Use `$$nemoclaw <name> status` when you need one sandbox's live health and recovery guidance.
 Pass `--json` for machine-readable output with registered sandboxes, service state, inference routes, and health details.
+Each JSON sandbox row reports `agent` as a string, never `null`.
+The row reports `openclaw` when the registry records no agent for the sandbox.
+This command reads the registry without gateway recovery, so it never reports `unknown`.
 For each listed sandbox, the text output includes the configured inference provider and model plus the number of active SSH sessions when the session probe is available.
 Host-service PID lookup honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
 
@@ -4540,6 +4559,7 @@ Defaults are sized for typical hardware; override only if you see false-positive
 | `NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS` | `30` | Maximum time to wait for an OpenShell MCP provider credential revision to become active or fully revoked inside the sandbox. Integer seconds; raise only when provider synchronization is unusually slow. |
 | `NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS` | per call site (typically `15000`) | Overrides the default timeout for `openshell sandbox exec` calls issued by recovery and lifecycle helpers. Integer milliseconds; non-positive or non-numeric values fall back to the per-call-site default. |
 | `NEMOCLAW_STATUS_PROBE_TIMEOUT_MS` | built-in default | Overrides the timeout for the OpenShell status probe used by `$$nemoclaw <name> status`. Integer milliseconds; non-positive or non-numeric values fall back to the default. |
+| `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` | `180000` | Maximum time for the bounded Docker CUDA workload that proves a placeholder-named GPU on an eligible ARM64 Linux host. A positive finite number of milliseconds overrides the default. Invalid, infinite, zero, and negative values use the default. |
 
 ### Onboard and Sandbox Readiness Timeouts
 

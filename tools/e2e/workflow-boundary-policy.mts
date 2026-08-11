@@ -19,9 +19,9 @@ export const E2E_ACTION_PROVENANCE = {
   },
   dockerAuth: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/docker-auth-setup@78091da47e290f49b8fe3f3e70b72362a0853928",
+      "NVIDIA/NemoClaw/.github/actions/docker-auth-setup@05fa6b810017752ab21148cb7e9d82d12a88c92f",
     actionSha256: "cf93dcbd19589a56d1d58225fd6b3f8ad2180705662ff79a3407f340b5dba4c0",
-    scriptSha256: "853a3f742f057c29ed465b63bed1ec8d8f306a1c046877a8556cadf290ef0cb6",
+    scriptSha256: "f4c7ba1d7c3dc5e82bacfdb85c94ed0838251dfaa88a081b4f64fba4f744b6dc",
   },
   dockerCleanup: {
     reference:
