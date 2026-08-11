@@ -1339,6 +1339,34 @@ If a concurrent config or shields command reports `Hermes config mutation is alr
 Wait for the active config, shields, recovery, or restart command to finish, then retry.
 If the command says shields are up, run `$$nemoclaw <name> shields down` before `config set` or `inference set`.
 
+### A Hermes command reports that runtime provider state mutation owns direct-container execution
+
+A current managed Hermes image on the Docker driver can report this retryable refusal while an exact Shields provider fence is active:
+
+```text
+Runtime provider state mutation owns direct-container execution for sandbox '<name>'; retry after the provider fence is released.
+```
+
+The refused command did not start a process inside the sandbox.
+Do not bypass the fence with manual `docker exec`, OpenShell, or SSH commands, and do not delete `~/.nemoclaw/state/runtime-provider-lifecycle/`.
+Wait for the active Shields or recovery command to finish, then reconcile the retained authority from the host:
+
+```bash
+$$nemoclaw <name> shields status
+```
+
+Use the status result as follows:
+
+- If status reports verified `UP`, `DOWN`, or mutable-default posture and exits with status `0`, retry the original command.
+- If status reports `runtime-provider recovery restored lockdown`, retry the intended `shields up` or `shields down` transition because provider verification rejected the persisted mutable posture.
+- If status reports `DOWN (DRIFTED...)` or `NOT CONFIGURED (DRIFTED...)`, run `$$nemoclaw <name> shields up`.
+  Open a new shields-down window only after `shields status` reports `UP` and exits with status `0`.
+
+Hermes can also log `[SECURITY] Hermes startup held by an active runtime state mutation.` before it reads mutable state.
+Do not kill or manually restart the held entrypoint.
+Run `$$nemoclaw <name> shields status` from the host so NemoClaw can recover the exact retained target and authenticate the startup release.
+If recovery still fails, preserve the owner-only lifecycle ledger and the complete error for diagnosis instead of removing a marker or changing in-sandbox permissions.
+
 ### Hermes startup reports `HERMES_CONFIG_MUTATION_ORPHANED`
 
 This refusal means a root-owned config or shields transaction stopped without a safely recoverable complete state.

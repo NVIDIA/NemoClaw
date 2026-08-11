@@ -96,6 +96,13 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "jetson-nvmap-gpu",
+    {
+      name: "e2e-jetson-nvmap-gpu",
+      path: "${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu/",
+    },
+  ],
+  [
     "retired-selector-compatibility",
     {
       name: "e2e-retired-selector-compatibility",
@@ -415,6 +422,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         return (
           jobName === "staging-brev-launchable" ||
           jobName === "generate-matrix" ||
+          jobName === "jetson-nvmap-gpu" ||
           jobName === "live" ||
           jobName === RETIRED_SELECTOR_COMPATIBILITY_JOB ||
           env.E2E_JOB === "1" ||

@@ -14,6 +14,7 @@ import {
   managedMcpPolicy,
   managedMcpSandbox,
   type ShieldsFlowHarnessOptions,
+  writeShieldsTimerAuthorizationProof,
 } from "../../../test/helpers/shields-flow-harness";
 
 const requireDist = createRequire(import.meta.url);
@@ -28,21 +29,10 @@ function createHarness(options: ShieldsFlowHarnessOptions = {}) {
   return createShieldsFlowHarness(requireDist, tmpDir, options);
 }
 
-function expectStagedDriverNeutralRecovery(
-  errorSpy: MockInstance,
-  sandboxName: string,
-  cliName = "nemoclaw",
-): string {
-  const output = errorSpy.mock.calls.flat().map(String).join("\n");
-  expect(output).toContain(
-    `Recovery: confirm the sandbox is running and ready, then retry \`${cliName} ${sandboxName} shields up\`.`,
-  );
-  expect(output).toContain(
-    `If the retry still fails, rebuild a known-good baseline with \`${cliName} ${sandboxName} rebuild --yes\`.`,
-  );
-  expect(output).not.toMatch(/kubectl/i);
-  return output;
-}
+const timerAuthorityFixtures: ReadonlyArray<readonly [string, (markerPath: string) => void]> = [
+  ["missing", () => undefined],
+  ["malformed", (markerPath) => fs.writeFileSync(markerPath, "{not-json")],
+];
 
 function writeExpiredShieldsFixture(
   processToken: string,
@@ -111,15 +101,14 @@ describe("shields command flow", () => {
     delete require.cache[requireDist.resolve("../cli/branding.js")];
   });
 
-  it("shieldsDown captures policy, unlocks config, saves state, and skips timer on request", {
+  it("shieldsDown captures policy, unlocks config, saves state, and authorizes a timer", {
     timeout: 30_000,
   }, () => {
-    const harness = createHarness();
+    const harness = createHarness({ confirmOpenClawInodeFlags: true });
 
     harness.shieldsDown("openclaw", {
       timeout: "5m",
       reason: "coverage",
-      skipTimer: true,
       throwOnError: true,
     });
 
@@ -134,7 +123,7 @@ describe("shields command flow", () => {
     expect(fs.existsSync(state.shieldsPolicySnapshotPath)).toBe(true);
     expect(harness.isShieldsDown("openclaw")).toBe(true);
     expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
-      "Config unlocked for openclaw (no auto-lockdown timer",
+      "Config unlocked for openclaw (auto-lockdown in: 5m)",
     );
   });
 
@@ -156,7 +145,6 @@ describe("shields command flow", () => {
     harness.shieldsDown("openclaw", {
       timeout: "5m",
       reason: "managed MCP transition coverage",
-      skipTimer: true,
       throwOnError: true,
     });
 
@@ -167,6 +155,65 @@ describe("shields command flow", () => {
     const applied = YAML.parse(harness.policySetBodies.at(-1)!);
     expect(applied.network_policies.mcp_bridge_alpha).toEqual(alpha.networkPolicy);
     expect(applied.network_policies).not.toHaveProperty("restrictive_baseline");
+  });
+
+  it("isolates same-millisecond policy snapshots and cleanup across sandboxes", () => {
+    const fixedNow = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(fixedNow);
+    const harness = createHarness({ confirmOpenClawInodeFlags: true });
+    const alphaToken = "a".repeat(32);
+    const betaToken = "b".repeat(32);
+    const alphaPolicy = "version: 1\nnetwork_policies:\n  alpha: {}\n";
+    const betaPolicy = "version: 1\nnetwork_policies:\n  beta: {}\n";
+    harness.runCaptureSpy.mockReturnValue(alphaPolicy);
+
+    harness.shieldsDown("alpha", {
+      timeout: "5m",
+      reason: "same millisecond alpha",
+      processToken: alphaToken,
+      throwOnError: true,
+    });
+
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const alphaState = JSON.parse(
+      fs.readFileSync(path.join(stateDir, "shields-alpha.json"), "utf-8"),
+    );
+    harness.shieldsUp("alpha", { throwOnError: true });
+    harness.runCaptureSpy.mockReturnValue("version: 1\nnetwork_policies:\n  alpha_second: {}\n");
+    harness.shieldsDown("alpha", {
+      timeout: "5m",
+      reason: "reused alpha token",
+      processToken: alphaToken,
+      throwOnError: true,
+    });
+    const reusedAlphaState = JSON.parse(
+      fs.readFileSync(path.join(stateDir, "shields-alpha.json"), "utf-8"),
+    );
+    expect(reusedAlphaState.shieldsPolicySnapshotPath).not.toBe(
+      alphaState.shieldsPolicySnapshotPath,
+    );
+    expect(fs.existsSync(alphaState.shieldsPolicySnapshotPath)).toBe(true);
+
+    harness.runCaptureSpy.mockReturnValue(betaPolicy);
+    expect(() =>
+      harness.shieldsDown("beta", {
+        timeout: "5m",
+        reason: "same millisecond beta",
+        policy: "missing-beta-policy",
+        processToken: betaToken,
+        throwOnError: true,
+      }),
+    ).toThrow(/unknown policy/iu);
+
+    expect(alphaState.shieldsPolicySnapshotPath).not.toBe(
+      reusedAlphaState.shieldsPolicySnapshotPath,
+    );
+    expect(fs.readFileSync(alphaState.shieldsPolicySnapshotPath, "utf-8")).toBe(alphaPolicy);
+    expect(
+      fs
+        .readdirSync(stateDir)
+        .some((entry) => entry.startsWith(`policy-snapshot-beta-${betaToken}-`)),
+    ).toBe(false);
   });
 
   it("cleans the staged managed MCP policy when timer startup fails", () => {
@@ -214,7 +261,6 @@ describe("shields command flow", () => {
       harness.shieldsDown("openclaw", {
         timeout: "5m",
         reason: "cleanup coverage",
-        skipTimer: true,
         throwOnError: true,
       }),
     ).toThrow(/EISDIR|directory/i);
@@ -418,6 +464,18 @@ describe("shields command flow", () => {
     const lockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
+    const timerControl = requireDist("./timer-control.js") as typeof import("./timer-control.js");
+    vi.spyOn(timerControl, "isProcessAlive").mockReturnValue(true);
+    vi.spyOn(timerControl, "readProcessStartIdentity").mockReturnValue("live-timer-start");
+    vi.spyOn(timerControl, "verifyTimerMarkerIdentity").mockReturnValue({ verified: true });
+    vi.spyOn(timerControl, "killTimer").mockReturnValue({
+      authorityRevoked: true,
+      markerFound: true,
+      markerPid: 999_999,
+      wasAlive: true,
+      terminated: true,
+      warnings: [],
+    });
     fs.writeFileSync(
       path.join(stateDir, `shields-${sandboxName}.json`),
       JSON.stringify({
@@ -437,8 +495,10 @@ describe("shields command flow", () => {
         snapshotPath,
         restoreAt: new Date(Date.now() + 60_000).toISOString(),
         processToken,
+        timerProcessStartIdentity: "live-timer-start",
       }),
     );
+    writeShieldsTimerAuthorizationProof(requireDist, sandboxName);
 
     let observedOwner: Record<string, unknown> | null = null;
     const harness = createHarness({
@@ -975,26 +1035,36 @@ describe("shields command flow", () => {
     });
   });
 
-  it("shields down removes the permissive runtime temp directory when the auto-restore timer fails (#7964)", () => {
-    const tempRoot = os.tmpdir();
-    const permissiveRuntimeDirs = () =>
-      fs.readdirSync(tempRoot).filter((name) => name.startsWith("nemoclaw-permissive-runtime-"));
-    const before = permissiveRuntimeDirs();
-    // shieldsDown builds the temp policy before it forks the auto-restore timer,
-    // so the fork mock observes the runtime-policy directory mid-transition. That
-    // proves the test exercises real temp-policy creation, not only the absence
-    // of a leak.
-    let runtimeDirsDuringFork: string[] = [];
-    // A real `openshell policy get --base` carries filesystem_policy paths, so the
-    // permissive merge writes a temp policy file instead of returning the static
-    // base path. That is the state that makes the leak reachable.
+  it("releases a stale timer token before publishing a fresh DOWN generation", () => {
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const sandboxName = "openclaw";
+    const staleToken = "8".repeat(32);
+    const freshToken = "7".repeat(32);
+    const snapshotPath = path.join(stateDir, "stale-policy-snapshot.yaml");
+    const lockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
+    fs.writeFileSync(
+      path.join(stateDir, `shields-${sandboxName}.json`),
+      JSON.stringify({ shieldsDown: false, updatedAt: new Date().toISOString() }),
+    );
+    fs.writeFileSync(
+      path.join(stateDir, `shields-timer-${sandboxName}.json`),
+      JSON.stringify({
+        pid: 4242,
+        sandboxName,
+        snapshotPath,
+        restoreAt: new Date(Date.now() + 60_000).toISOString(),
+        processToken: staleToken,
+      }),
+    );
+    let ownerDuringFork: Record<string, unknown> | null = null;
     const harness = createHarness({
-      livePolicyYaml:
-        "version: 1\nfilesystem_policy:\n  read_write:\n    - /proc\n  read_only:\n    - /opt/hermes\n",
+      initialOpenClawPosture: "locked",
       fork: () => {
-        runtimeDirsDuringFork = permissiveRuntimeDirs();
+        ownerDuringFork = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
         return {
-          pid: 0,
+          pid: 4343,
           disconnect: vi.fn(),
           unref: vi.fn(),
           send: vi.fn(() => true),
@@ -1003,311 +1073,112 @@ describe("shields command flow", () => {
       },
     });
 
-    expect(() =>
-      harness.shieldsDown("openclaw", {
-        timeout: "5m",
-        reason: "temp cleanup coverage",
-        throwOnError: true,
-      }),
-    ).toThrow("Cannot start auto-restore timer");
-    // One runtime-policy directory existed during the transition, and none
-    // remains after the failed shields down.
-    expect(runtimeDirsDuringFork.length).toBe(before.length + 1);
-    expect(permissiveRuntimeDirs()).toEqual(before);
+    harness.shieldsDown(sandboxName, {
+      timeout: "5m",
+      reason: "stale generation handoff coverage",
+      processToken: freshToken,
+      throwOnError: true,
+    });
+
+    expect(ownerDuringFork).toMatchObject({ takeoverToken: freshToken });
+    expect(ownerDuringFork).not.toMatchObject({ takeoverToken: staleToken });
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(stateDir, `shields-timer-${sandboxName}.json`), "utf-8"),
+      ),
+    ).toMatchObject({ processToken: freshToken });
   });
 
-  it.skipIf(process.platform === "win32")(
-    "atomically replaces a timer marker symlink without modifying its target",
-    () => {
-      const stateDir = path.join(tmpDir, ".nemoclaw", "state");
-      const markerPath = path.join(stateDir, "shields-timer-openclaw.json");
-      const markerTargetPath = path.join(stateDir, "operator-owned-marker.json");
-      const markerTarget = "operator-owned marker contents";
-      fs.mkdirSync(stateDir, { recursive: true });
-      fs.writeFileSync(markerTargetPath, markerTarget);
-      const originalRename = fs.renameSync.bind(fs);
-      const plantMarkerSymlink = () => fs.symlinkSync(markerTargetPath, markerPath);
-      const publicationRoutes = new Map<string, () => void>([[markerPath, plantMarkerSymlink]]);
-      const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
-        (publicationRoutes.get(String(destination)) ?? (() => undefined))();
-        originalRename(source, destination);
-      });
-      const harness = createHarness({
-        fork: () => ({
-          pid: 4242,
-          disconnect: vi.fn(),
-          unref: vi.fn(),
-          send: vi.fn(() => true),
-          kill: vi.fn(() => true),
-        }),
-      });
-
-      harness.shieldsDown("openclaw", {
-        timeout: "5m",
-        reason: "marker publication coverage",
-        throwOnError: true,
-      });
-
-      expect(renameSpy).toHaveBeenCalledWith(expect.stringContaining(".tmp"), markerPath);
-      const markerFd = fs.openSync(markerPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-      try {
-        expect(fs.fstatSync(markerFd).isFile()).toBe(true);
-        expect(JSON.parse(fs.readFileSync(markerFd, "utf-8"))).toMatchObject({
-          pid: 4242,
-          sandboxName: "openclaw",
-        });
-      } finally {
-        fs.closeSync(markerFd);
-      }
-      expect(fs.readFileSync(markerTargetPath, "utf-8")).toBe(markerTarget);
-    },
-  );
-
-  it("shieldsUp refuses to mark lockdown active when the saved restrictive policy snapshot is missing", () => {
-    const harness = createHarness();
-    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
-    fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(stateDir, "shields-openclaw.json"),
-      JSON.stringify({
-        shieldsDown: true,
-        shieldsDownAt: new Date(Date.now() - 120_000).toISOString(),
-        shieldsDownTimeout: 300,
-        shieldsDownReason: "coverage",
-        shieldsDownPolicy: "permissive",
-        shieldsPolicySnapshotPath: path.join(stateDir, "missing-snapshot.yaml"),
+  it("fails before policy mutation when the fresh timer dies before authorization proof", () => {
+    const harness = createHarness({
+      timerAuthorizationOutcome: "dies-before-proof",
+      fork: () => ({
+        pid: 4545,
+        disconnect: vi.fn(),
+        unref: vi.fn(),
+        send: vi.fn(() => true),
+        kill: vi.fn(() => true),
       }),
-    );
-
-    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
-      "Saved policy snapshot is missing",
-    );
-  });
-
-  it("reports staged driver-neutral recovery when shields-down rollback cannot re-lock (#6126)", () => {
-    const harness = createHarness({ failOpenClawGuardActions: ["unlock", "lock"] });
+    });
 
     expect(() =>
       harness.shieldsDown("openclaw", {
         timeout: "5m",
-        reason: "recovery-hint coverage",
-        skipTimer: true,
+        reason: "timer authorization failure",
         throwOnError: true,
       }),
-    ).toThrow(/startup-not-ready/);
+    ).toThrow(/authorization proof/u);
 
-    const output = expectStagedDriverNeutralRecovery(harness.errorSpy, "openclaw");
-    expect(output).toContain("Rolling back — restoring policy from snapshot");
-    expect(output).toContain("Config remains unlocked — manual intervention required");
+    expect(harness.runSpy).not.toHaveBeenCalled();
+    expect(harness.auditSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "shields_down" }),
+    );
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    expect(fs.existsSync(path.join(stateDir, "shields-openclaw.json"))).toBe(false);
+    expect(
+      fs.readdirSync(stateDir).some((entry) => entry.startsWith("shields-transition-openclaw-")),
+    ).toBe(false);
+    expect(
+      fs
+        .readdirSync(stateDir)
+        .some((entry) => entry.startsWith("shields-timer-authorization-openclaw-")),
+    ).toBe(false);
   });
 
-  it("keeps the host attached beyond failed-startup recovery's container timeout (#8304)", () => {
-    const harness = createHarness({ failOpenClawGuardActions: ["preflight"] });
+  it("rolls back when the authorized fresh timer dies before active commit", () => {
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, "shields-openclaw.json"),
+      JSON.stringify({ shieldsDown: false, updatedAt: new Date().toISOString() }),
+    );
+    const harness = createHarness({
+      confirmOpenClawInodeFlags: true,
+      initialOpenClawPosture: "locked",
+      timerDiesAfterUnlock: true,
+      fork: () => ({
+        pid: 4646,
+        disconnect: vi.fn(),
+        unref: vi.fn(),
+        send: vi.fn(() => true),
+        kill: vi.fn(() => true),
+      }),
+    });
 
     expect(() =>
       harness.shieldsDown("openclaw", {
         timeout: "5m",
-        reason: "failed-startup timeout coverage",
-        skipTimer: true,
+        reason: "timer died before active",
         throwOnError: true,
       }),
-    ).not.toThrow();
+    ).toThrow(/live future auto-restore timer authority/u);
 
-    const recovery = harness.dockerSpawnCalls.find(({ args }) =>
-      args.includes("unlock-failed-startup"),
+    expect(harness.getOpenClawPosture()).toBe("locked");
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json"), "utf-8"),
+      ),
+    ).toMatchObject({ shieldsDown: false });
+    expect(harness.auditSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "shields_down" }),
     );
-    expect(recovery?.args).toEqual(
-      expect.arrayContaining(["timeout", "--kill-after=5s", "25m", "unlock-failed-startup"]),
-    );
-    expect(recovery?.timeout).toBe(26 * 60 * 1000);
   });
 
-  it("reports staged driver-neutral recovery when snapshot restoration fails (#6126)", () => {
-    const harness = createHarness({ run: () => ({ status: 1 }) });
+  it("restores lockdown instead of trusting a dead future timer marker", () => {
+    const harness = createHarness({ confirmOpenClawInodeFlags: true });
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
-    const snapshotPath = path.join(stateDir, "policy-snapshot-failed-restore.yaml");
-    fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n");
-    fs.writeFileSync(
-      path.join(stateDir, "shields-openclaw.json"),
-      JSON.stringify({
-        shieldsDown: true,
-        shieldsDownAt: new Date().toISOString(),
-        shieldsDownTimeout: 300,
-        shieldsDownReason: "recovery-hint coverage",
-        shieldsDownPolicy: "permissive",
-        shieldsPolicySnapshotPath: snapshotPath,
-      }),
-    );
-
-    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
-      "policy restore exited with status 1",
-    );
-
-    const output = expectStagedDriverNeutralRecovery(harness.errorSpy, "openclaw");
-    expect(output).toContain("Config remains unlocked — manual intervention required");
-  });
-
-  it("reports staged driver-neutral recovery when the initial config lock fails (#6126)", () => {
-    const harness = createHarness({ failOpenClawGuardActions: ["lock"] });
-
-    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
-      /startup-not-ready/,
-    );
-
-    const output = expectStagedDriverNeutralRecovery(harness.errorSpy, "openclaw");
-    expect(output).toContain(
-      "Warning: OpenClaw lock rollback could not restore the trusted posture",
-    );
-    expect(output).not.toContain("CRITICAL: OpenClaw lock rollback");
-    expect(output).not.toContain(
-      "OpenClaw lock rollback could not restore the trusted posture. Restore from a trusted backup and recreate the sandbox",
-    );
-  });
-
-  it("uses the invoked nemohermes alias in staged recovery commands (#6126)", () => {
-    const harness = createHarness({
-      failOpenClawGuardActions: ["lock"],
-      invokedAs: "nemohermes",
-    });
-
-    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
-      /startup-not-ready/,
-    );
-
-    const output = expectStagedDriverNeutralRecovery(harness.errorSpy, "openclaw", "nemohermes");
-    expect(output).not.toContain("`nemoclaw openclaw shields up`");
-    expect(output).not.toContain("`nemoclaw openclaw rebuild --yes`");
-  });
-
-  it("reports staged recovery when a stopped sandbox prevents config relock (#6126)", () => {
-    const harness = createHarness({ directSandboxUnavailable: true });
-
-    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
-      /No running direct OpenShell sandbox container found/,
-    );
-
-    const output = expectStagedDriverNeutralRecovery(harness.errorSpy, "openclaw");
-    expect(output).toContain(
-      "Warning: OpenClaw lock rollback could not restore the trusted posture",
-    );
-    expect(output).not.toContain("CRITICAL: OpenClaw lock rollback");
-  });
-
-  it("retains critical recovery for non-transient OpenClaw rollback failures (#6126)", () => {
-    const harness = createHarness({
-      failOpenClawGuardActions: ["lock"],
-      openClawGuardFailure: {
-        code: "unsafe-config-path",
-        path: "/sandbox/.openclaw/openclaw.json",
-        detail: "canonical config path is not a safe regular file",
-      },
-    });
-
-    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
-      /unsafe-config-path/,
-    );
-
-    const output = harness.errorSpy.mock.calls.flat().map(String).join("\n");
-    expect(output).toContain(
-      "CRITICAL: OpenClaw lock rollback could not restore the trusted posture. Restore from a trusted backup and recreate the sandbox.",
-    );
-    expect(output).not.toContain(
-      "Warning: OpenClaw lock rollback could not restore the trusted posture",
-    );
-  });
-
-  it("retains critical recovery for structural startup-not-ready diagnostics (#6126)", () => {
-    const harness = createHarness({
-      failOpenClawGuardActions: ["lock"],
-      openClawGuardFailure: {
-        code: "startup-not-ready",
-        path: "/run/nemoclaw/openclaw-config-ready.json",
-        detail: "installed config guard requires NemoClaw PID 1",
-      },
-    });
-
-    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
-      /requires NemoClaw PID 1/,
-    );
-
-    const output = harness.errorSpy.mock.calls.flat().map(String).join("\n");
-    expect(output).toContain(
-      "CRITICAL: OpenClaw lock rollback could not restore the trusted posture. Restore from a trusted backup and recreate the sandbox.",
-    );
-    expect(output).not.toContain(
-      "Warning: OpenClaw lock rollback could not restore the trusted posture",
-    );
-  });
-
-  it("retains critical recovery when a transient diagnostic is followed by another issue (#6126)", () => {
-    const harness = createHarness({
-      failOpenClawGuardActions: ["lock"],
-      openClawGuardFailures: [
-        {
-          code: "startup-not-ready",
-          path: "/run/nemoclaw/openclaw-config-ready.json",
-          detail: "OpenClaw startup is not ready for host config mutations",
-        },
-        {
-          code: "unsafe-config-path",
-          path: "/sandbox/.openclaw/openclaw.json",
-          detail: "canonical config path is not a safe regular file",
-        },
-      ],
-    });
-
-    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
-      /unsafe-config-path/,
-    );
-
-    const output = harness.errorSpy.mock.calls.flat().map(String).join("\n");
-    expect(output).toContain(
-      "CRITICAL: OpenClaw lock rollback could not restore the trusted posture. Restore from a trusted backup and recreate the sandbox.",
-    );
-    expect(output).not.toContain(
-      "Warning: OpenClaw lock rollback could not restore the trusted posture",
-    );
-  });
-
-  it("reports staged driver-neutral recovery when drift remediation cannot re-lock (#6126)", () => {
-    const harness = createHarness({ failOpenClawGuardActions: ["lock"] });
-    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
-    fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(stateDir, "shields-openclaw.json"),
-      JSON.stringify({
-        shieldsDown: false,
-        chattrApplied: false,
-        fileHashes: {
-          "/sandbox/.openclaw/openclaw.json": "a".repeat(64),
-          "/sandbox/.openclaw/.config-hash": "a".repeat(64),
-        },
-      }),
-    );
-
-    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
-      /startup-not-ready/,
-    );
-
-    const output = expectStagedDriverNeutralRecovery(harness.errorSpy, "openclaw");
-    expect(output).toContain("Config remains drifted — manual intervention required");
-  });
-
-  it("retains the bounded auto-restore owner when manual shields-up fails", () => {
-    const harness = createHarness();
-    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
-    const snapshotPath = path.join(stateDir, "policy-snapshot-relock-failure.yaml");
+    const snapshotPath = path.join(stateDir, "policy-snapshot-dead-future-timer.yaml");
     const markerPath = path.join(stateDir, "shields-timer-openclaw.json");
+    const processToken = "6".repeat(32);
     fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n");
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
     fs.writeFileSync(
       path.join(stateDir, "shields-openclaw.json"),
       JSON.stringify({
         shieldsDown: true,
         shieldsDownAt: new Date().toISOString(),
-        shieldsDownTimeout: 1800,
-        shieldsDownReason: "rebuild",
+        shieldsDownTimeout: 300,
+        shieldsDownReason: "dead future timer",
         shieldsDownPolicy: "permissive",
         shieldsPolicySnapshotPath: snapshotPath,
       }),
@@ -1315,26 +1186,111 @@ describe("shields command flow", () => {
     fs.writeFileSync(
       markerPath,
       JSON.stringify({
-        pid: 4242,
+        pid: 2_147_483_647,
         sandboxName: "openclaw",
         snapshotPath,
         restoreAt: new Date(Date.now() + 60_000).toISOString(),
-        processToken: "timer-token",
-        allowLegacyHermesProtocol: false,
+        processToken,
+        timerProcessStartIdentity: "dead-timer-start",
+        agentName: "openclaw",
+        configPath: "/sandbox/.openclaw/openclaw.json",
+        configDir: "/sandbox/.openclaw",
       }),
     );
-    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
 
-    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
-      /Config not locked/,
-    );
+    harness.shieldsStatus("openclaw");
 
-    expect(fs.existsSync(markerPath)).toBe(true);
-    expect(killSpy).not.toHaveBeenCalled();
     expect(
-      JSON.parse(fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf-8"))
-        .shieldsDown,
-    ).toBe(true);
+      JSON.parse(fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf-8")),
+    ).toMatchObject({ shieldsDown: false, shieldsDownAt: null });
+    expect(fs.existsSync(markerPath)).toBe(false);
+    expect(harness.runSpy).toHaveBeenCalledWith(
+      ["openshell", "policy", "set"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(harness.logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
+  });
+
+  it.each(
+    timerAuthorityFixtures,
+  )("restores lockdown when DOWN timer authority is %s", (markerState, writeMarker) => {
+    const harness = createHarness({ confirmOpenClawInodeFlags: true });
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const snapshotPath = path.join(stateDir, `policy-snapshot-${markerState}-timer.yaml`);
+    const markerPath = path.join(stateDir, "shields-timer-openclaw.json");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
+    fs.writeFileSync(
+      path.join(stateDir, "shields-openclaw.json"),
+      JSON.stringify({
+        shieldsDown: true,
+        shieldsDownAt: new Date().toISOString(),
+        shieldsDownTimeout: 300,
+        shieldsDownReason: `${markerState} timer marker`,
+        shieldsDownPolicy: "permissive",
+        shieldsPolicySnapshotPath: snapshotPath,
+      }),
+    );
+    writeMarker(markerPath);
+
+    harness.shieldsStatus("openclaw");
+
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf-8")),
+    ).toMatchObject({ shieldsDown: false, shieldsDownAt: null });
+    expect(fs.existsSync(markerPath)).toBe(false);
+    expect(harness.runSpy).toHaveBeenCalledWith(
+      ["openshell", "policy", "set"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("restores lockdown when a future marker PID has the wrong timer command identity", () => {
+    const harness = createHarness({ confirmOpenClawInodeFlags: true });
+    const timerControl = requireDist("./timer-control.js") as typeof import("./timer-control.js");
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const snapshotPath = path.join(stateDir, "policy-snapshot-wrong-timer-command.yaml");
+    const markerPath = path.join(stateDir, "shields-timer-openclaw.json");
+    const processToken = "5".repeat(32);
+    const startIdentity = timerControl.readProcessStartIdentity(process.pid);
+    expect(startIdentity).toBeTypeOf("string");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
+    fs.writeFileSync(
+      path.join(stateDir, "shields-openclaw.json"),
+      JSON.stringify({
+        shieldsDown: true,
+        shieldsDownAt: new Date().toISOString(),
+        shieldsDownTimeout: 300,
+        shieldsDownReason: "wrong timer command",
+        shieldsDownPolicy: "permissive",
+        shieldsPolicySnapshotPath: snapshotPath,
+      }),
+    );
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify({
+        pid: process.pid,
+        sandboxName: "openclaw",
+        snapshotPath,
+        restoreAt: new Date(Date.now() + 60_000).toISOString(),
+        processToken,
+        timerProcessStartIdentity: startIdentity,
+        agentName: "openclaw",
+        configPath: "/sandbox/.openclaw/openclaw.json",
+        configDir: "/sandbox/.openclaw",
+      }),
+    );
+    const killSpy = vi.spyOn(process, "kill");
+
+    harness.shieldsStatus("openclaw");
+
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf-8")),
+    ).toMatchObject({ shieldsDown: false, shieldsDownAt: null });
+    expect(fs.existsSync(markerPath)).toBe(false);
+    expect(killSpy).not.toHaveBeenCalledWith(process.pid, "SIGTERM");
+    expect(killSpy).not.toHaveBeenCalledWith(process.pid, "SIGKILL");
   });
 
   it("shieldsStatus contains an expired timer whose transition owner exited", () => {
