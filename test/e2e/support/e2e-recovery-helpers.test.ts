@@ -35,6 +35,8 @@ class ScriptedRunner implements CommandRunner {
   readonly calls: RunnerCall[] = [];
   private replies: ScriptedReply[] = [];
 
+  constructor(private readonly observe?: (call: RunnerCall, reply: ScriptedReply) => void) {}
+
   queue(...replies: ScriptedReply[]): void {
     this.replies.push(...replies);
   }
@@ -43,8 +45,10 @@ class ScriptedRunner implements CommandRunner {
     command: TrustedShellCommand,
     options?: ShellProbeRunOptions,
   ): Promise<ShellProbeResult> {
-    this.calls.push({ command: command.command, args: [...command.args], options });
+    const call = { command: command.command, args: [...command.args], options };
+    this.calls.push(call);
     const reply = this.replies.shift() ?? {};
+    this.observe?.(call, reply);
     return {
       command: [command.command, ...command.args],
       exitCode: reply.exitCode ?? 0,
@@ -89,6 +93,80 @@ function buildGateway(runner: ScriptedRunner): GatewayClient {
 }
 
 describe("GatewayClient recovery helpers (#2701)", () => {
+  describe("waitForMissingManagedSupervisor", () => {
+    it("waits for the exact missing-supervisor proof and a quiet settle", async () => {
+      const events: string[] = [];
+      const runner = new ScriptedRunner((_call, reply) => {
+        events.push(
+          reply.stderr === "SUPERVISOR_NOT_RUNNING\n" ? "probe-not-running" : "probe-unavailable",
+        );
+      });
+      runner.queue(
+        {
+          exitCode: 1,
+          stderr: "SUPERVISOR_UNAVAILABLE\nNEMOCLAW_CONTROL_STAGE=discover-supervisor\n",
+        },
+        { exitCode: 1, stderr: "SUPERVISOR_NOT_RUNNING\n" },
+      );
+      const gateway = buildGateway(runner);
+      const sleep = vi.fn(async (milliseconds: number) => {
+        events.push(`sleep-${milliseconds}`);
+      });
+      const onRetry = vi.fn();
+
+      await gateway.waitForMissingManagedSupervisor("container-123", {
+        attempts: 3,
+        delayMs: 3_000,
+        settleMs: 3_000,
+        sleep,
+        onRetry,
+      });
+
+      expect(onRetry).toHaveBeenCalledOnce();
+      expect(onRetry).toHaveBeenCalledWith(1);
+      expect(events).toEqual([
+        "probe-unavailable",
+        "sleep-3000",
+        "probe-not-running",
+        "sleep-3000",
+      ]);
+      expect(runner.calls).toHaveLength(2);
+      for (const call of runner.calls) {
+        expect(call.command).toBe("docker");
+        expect(call.args.slice(0, -1)).toEqual([
+          "exec",
+          "--env",
+          "LD_PRELOAD=",
+          "--env",
+          "PYTHONPATH=",
+          "--user",
+          "root",
+          "container-123",
+          "/usr/local/bin/nemoclaw-gateway-control",
+          "probe",
+        ]);
+        expect(call.args.at(-1)).toMatch(/^[0-9a-f]{64}$/);
+      }
+    });
+
+    it("does not accept a composite missing-supervisor diagnostic", async () => {
+      const runner = new ScriptedRunner();
+      runner.queue({
+        exitCode: 1,
+        stderr: "SUPERVISOR_NOT_RUNNING\nNEMOCLAW_CONTROL_STAGE=discover-supervisor\n",
+      });
+      const gateway = buildGateway(runner);
+
+      await expect(
+        gateway.waitForMissingManagedSupervisor("container-123", {
+          attempts: 1,
+          delayMs: 0,
+          settleMs: 0,
+        }),
+      ).rejects.toThrow(/polling exhausted/);
+    });
+  });
+
   describe("expectGuardChainActive", () => {
     it("passes when proxy-env.sh contains the default safety-net + ciao markers", async () => {
       const runner = new ScriptedRunner();
