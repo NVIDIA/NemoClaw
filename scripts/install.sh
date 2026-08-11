@@ -3127,7 +3127,7 @@ run_installer_host_preflight() {
               finding,
             ])
           );
-          for (const findingId of admission.findingIds || []) {
+          for (const findingId of stableIds(admission.findingIds)) {
             const finding = findingById.get(findingId);
             actionLines.push(
               finding?.summary
@@ -3135,7 +3135,7 @@ run_installer_host_preflight() {
                 : `- Readiness finding: ${findingId}`
             );
           }
-          for (const capabilityId of admission.capabilityIds || []) {
+          for (const capabilityId of stableIds(admission.capabilityIds)) {
             actionLines.push(
               `- NemoClaw could not confirm the required readiness capability ${capabilityId}.`
             );
