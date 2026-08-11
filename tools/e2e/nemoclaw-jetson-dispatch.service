@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[Unit]
+Description=NemoClaw Jetson dispatcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nemoclaw-jetson-dispatch
+Group=nemoclaw-jetson-dispatch
+UMask=0077
+WorkingDirectory=/opt/nemoclaw-jetson-dispatch/current
+EnvironmentFile=/etc/nemoclaw-jetson-dispatch/environment
+ExecStart=/usr/bin/node --experimental-strip-types --no-warnings tools/e2e/jetson-dispatch-service.mts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=360
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/nemoclaw-jetson-dispatch
+
+[Install]
+WantedBy=multi-user.target
