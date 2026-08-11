@@ -258,6 +258,12 @@ describe("startSandbox", () => {
       "supervisor not running",
       "prefix SUPERVISOR_NOT_RUNNING suffix",
     ],
+    ["restart that exits with status 137", "launch failure", "restart exited 137"],
+    [
+      "restart that exits with status 137 and diagnostic output",
+      "launch failure",
+      "restart exited 137 with diagnostic output",
+    ],
   ] as const)("does not wait after a %s (#8726)", async (_label, layer, detail) => {
     const h = harness();
     h.restoreStartupState.mockReturnValue({
