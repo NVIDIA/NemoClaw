@@ -609,6 +609,8 @@ ${copyBlock?.[1] ?? ""}
     const jwt = `eyJ${"j".repeat(12)}.${"k".repeat(12)}.${"l".repeat(12)}`;
     const base64Blob = "Q".repeat(64);
     const awsAccessKey = `AKIA${"1".repeat(16)}`;
+    const structuredBasic = Buffer.from("user:topsecret").toString("base64");
+    const structuredProxyBasic = Buffer.from("proxy:topsecret").toString("base64");
     const redactionCases = [
       { input: `jwt=${jwt}`, secret: jwt },
       { input: `github_pat_${"a".repeat(30)}`, secret: "github_pat_" },
@@ -618,9 +620,22 @@ ${copyBlock?.[1] ?? ""}
       { input: `aws_access_key_id=${awsAccessKey}`, secret: awsAccessKey },
       { input: "aws_secret_access_key=aws-secret-value", secret: "aws-secret-value" },
       { input: `Authorization: Bearer ${"b".repeat(40)}`, secret: `Bearer ${"b".repeat(40)}` },
+      {
+        input: JSON.stringify({ Authorization: `Basic ${structuredBasic}` }),
+        secret: structuredBasic,
+      },
+      {
+        input: JSON.stringify({ "Proxy-Authorization": `Basic ${structuredProxyBasic}` }),
+        secret: structuredProxyBasic,
+      },
       { input: `Cookie: session=${"c".repeat(40)}`, secret: "session=" },
       { input: '{"Cookie":"session=topsecret"}', secret: "topsecret" },
+      { input: '{"Cookie":"session=\\\"opaquevalue\\\""}', secret: "opaquevalue" },
       { input: '"Set-Cookie" = "session=spaced-secret"', secret: "spaced-secret" },
+      {
+        input: '{"Set-Cookie":"session=\\\"escapedvalue\\\"; Path=/"}',
+        secret: "escapedvalue",
+      },
       { input: `> Authorization: Basic ${"e".repeat(40)}`, secret: `Basic ${"e".repeat(40)}` },
       {
         input: `* Proxy-Authorization: Bearer ${"f".repeat(40)}`,
@@ -662,19 +677,24 @@ ${copyBlock?.[1] ?? ""}
     const reproducer = [
       "openshell forward list",
       "sudo nemoclaw sandbox list",
+      "openclaw channels add telegram",
       "xnemoclaw status",
     ].join("\n");
     const extracted = spawnSync(
       "sh",
       [
         "-c",
-        "grep -oE '(^|[^[:alnum:]_])(openshell|nemoclaw)[[:space:]]+[a-z-]+' | sed -E 's/^[^[:alnum:]_]+//' | sort -u",
+        "grep -oE '(^|[^[:alnum:]_])(openshell|nemoclaw|openclaw)[[:space:]]+[a-z-]+' | sed -E 's/^[^[:alnum:]_]+//' | sort -u",
       ],
       { encoding: "utf8", input: reproducer },
     );
 
     expect(extracted.status, extracted.stderr).toBe(0);
-    expect(extracted.stdout.trim().split("\n")).toEqual(["nemoclaw sandbox", "openshell forward"]);
+    expect(extracted.stdout.trim().split("\n")).toEqual([
+      "nemoclaw sandbox",
+      "openclaw channels",
+      "openshell forward",
+    ]);
   });
 
   it("makes DCO and GitHub verification explicit approval gates", () => {

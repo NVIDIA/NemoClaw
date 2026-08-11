@@ -140,8 +140,9 @@ The helper implements the patterns below in this order. Update the helper and it
 7.  (?i)aws_secret_access_key\s*=\s*\S+
     → AWS secret keys
 
-8.  (?i)^(\s*(?:[><*]\s*)?)(authorization|proxy-authorization|cookie|set-cookie):[^\n]*
-    → HTTP authentication and session headers, including curl verbose prefixes
+8.  (?i)^(\s*(?:[><*]\s*)?)(["']?(?:authorization|proxy-authorization|cookie|set-cookie)["']?\s*(?::|=))[^\n]*
+    and a structured-field variant whose quoted value accepts escaped characters
+    → HTTP authentication and session headers in line, assignment, JSON, and curl verbose forms
 
 9.  (?i)(\bBearer\s+)\S+
     → Standalone bearer credentials
