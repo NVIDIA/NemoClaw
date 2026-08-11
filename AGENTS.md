@@ -114,7 +114,7 @@ When writing tests:
   - Newly added JavaScript files.
   - Growth in `src/lib/onboard.ts`.
   - Current test-file line-budget violations.
-  - Added `if` statements in changed test files.
+  - An increased `if`-statement count in a changed test file.
   The trusted PR check also rejects test-file budget limits that increase from the base commit.
 - Use `npm run test:watch` for focused source-test feedback.
 - Add only concrete opaque-input mappings to `test/helpers/vitest-watch-triggers.ts`.

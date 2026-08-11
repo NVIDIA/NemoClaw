@@ -294,7 +294,7 @@ After those tests pass, it checks the current checkout for:
 - Newly added JavaScript files.
 - Growth in `src/lib/onboard.ts`.
 - Test-file line-budget violations.
-- Added `if` statements in changed test files.
+- An increased `if`-statement count in a changed test file.
 
 The pull request check separately compares `ci/test-file-size-budget.json` with the base commit.
 The local check validates the current budget file but does not compare its limits with the base commit.
@@ -414,9 +414,12 @@ The repository is organized as follows.
 
 ## Language Policy
 
-All new source files must be TypeScript. Do not add new `.js` files to the project. When modifying an existing JavaScript file, prefer migrating it to TypeScript in the same PR.
+All new source, test, and script files must use TypeScript.
+Do not add `.js`, `.cjs`, `.mjs`, or `.jsx` files.
+Existing JavaScript files may be modified or deleted.
 
-Only a small CommonJS launcher/compatibility layer remains in `bin/`, while the main CLI implementation now lives in `src/lib/` and compiles to `dist/`. Tests in `test/` may remain ESM JavaScript for now but new test files should use TypeScript where practical.
+Only a small CommonJS launcher and compatibility layer remains in `bin/`, while the main CLI implementation lives in `src/lib/` and compiles to `dist/`.
+Existing ESM JavaScript tests under `test/` may remain, but new tests must use TypeScript.
 
 Shell scripts (`scripts/*.sh`) must pass ShellCheck and use `shfmt` formatting.
 

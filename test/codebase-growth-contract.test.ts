@@ -26,6 +26,6 @@ it("keeps test files within their line budgets", () => {
   expectNoViolations(evaluateCurrentTestFileSizeBudget());
 });
 
-it("does not add if statements to changed test files", () => {
+it("does not increase if-statement counts in changed test files", () => {
   expectNoViolations(evaluateCurrentTestConditionalContract());
 });
