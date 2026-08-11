@@ -26,18 +26,20 @@ fi
 auth_marker="${DOCKER_CONFIG}/.nemoclaw-docker-login-attempted"
 : >"${auth_marker}"
 chmod 600 "${auth_marker}"
+login_attempts=5
+retry_seconds=5
 login_succeeded=0
-for attempt in 1 2 3; do
+for ((attempt = 1; attempt <= login_attempts; attempt += 1)); do
   if printf '%s' "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
     login_succeeded=1
     break
   fi
-  if [[ "${attempt}" -lt 3 ]]; then
-    echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-    sleep 5
+  if ((attempt < login_attempts)); then
+    echo "::warning::Docker Hub login attempt ${attempt}/${login_attempts} failed; retrying in ${retry_seconds}s."
+    sleep "${retry_seconds}"
   fi
 done
 if [[ "${login_succeeded}" -ne 1 ]]; then
-  echo "::error::Docker Hub login failed after 3 attempts."
+  echo "::error::Docker Hub login failed after ${login_attempts} attempts."
   exit 1
 fi

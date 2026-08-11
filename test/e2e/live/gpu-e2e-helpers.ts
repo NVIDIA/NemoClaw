@@ -228,21 +228,54 @@ export async function cleanupGpu(host: HostCliClient, sandbox: SandboxClient): P
       timeoutMs: 60_000,
     }),
   );
-  await cleanupOllama(host, "cleanup-ollama-processes");
+  const ollamaCleanup = await cleanupOllama(host, "cleanup-ollama-processes");
+  expect(ollamaCleanup.exitCode, resultText(ollamaCleanup)).toBe(0);
 }
 
 export async function cleanupOllama(
   host: HostCliClient,
   artifactName: string,
 ): Promise<ShellProbeResult> {
-  return await host.command(
-    "bash",
-    [
-      "-lc",
-      "systemctl --user stop ollama 2>/dev/null || true; systemctl stop ollama 2>/dev/null || true; pkill -f '[o]llama serve' 2>/dev/null || true; pkill -f '[o]llama-auth-proxy' 2>/dev/null || true",
-    ],
-    { artifactName, env: env(), timeoutMs: 30_000 },
-  );
+  return await host.command("bash", ["-lc", ollamaCleanupScript()], {
+    artifactName,
+    env: env(),
+    timeoutMs: 30_000,
+  });
+}
+
+export function ollamaCleanupScript(listenerPort = 11434): string {
+  if (!Number.isInteger(listenerPort) || listenerPort < 1 || listenerPort > 65_535) {
+    throw new Error(`invalid Ollama listener port: ${String(listenerPort)}`);
+  }
+  return `set -euo pipefail
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl --user stop ollama.service >/dev/null 2>&1 || true
+  if systemctl cat ollama.service >/dev/null 2>&1; then
+    if [ "$(id -u)" -eq 0 ]; then
+      systemctl stop ollama.service
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+      sudo -n systemctl stop ollama.service
+    else
+      echo 'Ollama system service exists but passwordless sudo is unavailable' >&2
+      exit 1
+    fi
+  fi
+fi
+pkill -f '[o]llama-auth-proxy' >/dev/null 2>&1 || true
+pkill -f '[o]llama serve' >/dev/null 2>&1 || true
+if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+  sudo -n pkill -f '[o]llama serve' >/dev/null 2>&1 || true
+fi
+
+if pgrep -f '[o]llama serve' >/dev/null 2>&1; then
+  echo 'Ollama cleanup left a daemon process' >&2
+  pgrep -af '[o]llama serve' >&2 || true
+  exit 1
+fi
+if (exec 3<>/dev/tcp/127.0.0.1/${listenerPort}) 2>/dev/null; then
+  echo 'Ollama cleanup left a listener on 127.0.0.1:${listenerPort}' >&2
+  exit 1
+fi`;
 }
 
 export function assertNvidiaAvailable(

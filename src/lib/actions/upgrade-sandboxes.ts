@@ -153,12 +153,13 @@ function confirmedLegacyManagedRecoveryNames(): Set<string> {
   }
 }
 
-// Under installer restore intent, a registry sandbox the selected gateway does
-// not report Ready/Running is eligible for prepared-backup recovery only when
-// its persisted binding resolves to that selected gateway, whether the gateway
-// observes it in a non-Ready phase or it is absent. Observation alone is
-// insufficient: a sandbox bound to a different recorded gateway may be Ready
-// there, so recovering it would clobber a healthy sandbox.
+// Under installer restore intent, a registry sandbox is eligible for prepared-
+// backup recovery only when its persisted binding resolves to the selected
+// gateway. Ready/Running sandboxes are eligible only when upgrade classification
+// also proves them stale; non-Ready or absent sandboxes remain eligible because
+// the replaced gateway may expose legacy state optimistically or not at all.
+// Observation alone is insufficient: a sandbox bound to a different recorded
+// gateway may be Ready there, so recovering it would clobber a healthy sandbox.
 // resolveSandboxGatewayName throws on an invalid persisted
 // binding — report that fixed, sanitized condition and treat it as ineligible so
 // a corrupted registry row never drives a recreate. Remove this guard only when
@@ -166,9 +167,10 @@ function confirmedLegacyManagedRecoveryNames(): Set<string> {
 function isPreparedRecoveryCandidate(
   sandbox: registry.SandboxEntry,
   liveNames: Set<string>,
+  staleLiveNames: Set<string>,
   selectedGatewayName: string,
 ): boolean {
-  if (liveNames.has(sandbox.name)) return false;
+  if (liveNames.has(sandbox.name) && !staleLiveNames.has(sandbox.name)) return false;
   try {
     return resolveSandboxGatewayName(sandbox) === selectedGatewayName;
   } catch {
@@ -302,8 +304,9 @@ export async function upgradeSandboxes(
       });
   const liveNames = parseReadySandboxNames(liveResult.output || "");
   // Sandboxes the selected gateway observes in a non-Ready phase. Absence from
-  // the selected gateway is handled by isPreparedRecoveryCandidate, which recovers
-  // an absent sandbox only when it resolves to the selected gateway.
+  // the selected gateway and stale Ready/Running rows are handled by
+  // isPreparedRecoveryCandidate, which recovers them only when they resolve to
+  // the selected gateway.
   const nonReadyLiveNames = new Set(
     parseLiveSandboxEntries(liveResult.output || "")
       .filter(
@@ -322,14 +325,15 @@ export async function upgradeSandboxes(
     { currentNemoclawVersion: resolveCurrentNemoclawVersion() },
   );
 
-  // Source boundary (#6114): a v0.0.55/legacy-OpenShell install can leave its
-  // already-registered sandboxes in Provisioning/Error after the host upgrade.
-  // That state comes from the already-installed legacy CLI/gateway and cannot be
-  // prevented at its source by this candidate. install.sh exports this signal only
-  // after the current CLI completes a strict backup, or after an operator asserts
-  // prepared upgrade state. Pre-fingerprint OpenClaw/Hermes rows require a separate,
-  // exact-name confirmation that they used a managed image; custom-image evidence
-  // still fails closed.
+  // Source boundary (#6114): a legacy OpenShell install can leave its already-
+  // registered sandboxes in Provisioning/Error after the host upgrade, or the
+  // replacement gateway can report a stale row as Ready even though its legacy
+  // state is no longer inspectable. That state comes from the already-installed
+  // legacy CLI/gateway and cannot be prevented at its source by this candidate.
+  // install.sh exports this signal only after the current CLI completes a strict
+  // backup, or after an operator asserts prepared upgrade state. Pre-fingerprint
+  // OpenClaw/Hermes rows require a separate, exact-name confirmation that they
+  // used a managed image; custom-image evidence still fails closed.
   // upgrade-sandboxes-recovery.test.ts and
   // install-preexisting-sandbox-recovery.test.ts guard the handoff. Remove this
   // bridge with onboard's matching consumer once prepared-backup installer recovery
@@ -351,14 +355,20 @@ export async function upgradeSandboxes(
   // reconnected mid-run, so neither recovery candidates nor orphans.
   const becameReadyNames = new Set<string>();
   if (recoverPreparedBackups) {
+    const staleLiveNames = new Set(
+      stale.filter((sandbox) => sandbox.running).map((sandbox) => sandbox.name),
+    );
     const gatewayEligible = sandboxes.filter((sandbox) =>
-      isPreparedRecoveryCandidate(sandbox, liveNames, selectedGatewayName),
+      isPreparedRecoveryCandidate(sandbox, liveNames, staleLiveNames, selectedGatewayName),
+    );
+    const staleLiveCandidates = gatewayEligible.filter((sandbox) =>
+      staleLiveNames.has(sandbox.name),
     );
     const nonReadyCandidates = gatewayEligible.filter((sandbox) =>
       nonReadyLiveNames.has(sandbox.name),
     );
     const absentCandidates = gatewayEligible.filter(
-      (sandbox) => !nonReadyLiveNames.has(sandbox.name),
+      (sandbox) => !staleLiveNames.has(sandbox.name) && !nonReadyLiveNames.has(sandbox.name),
     );
     const confirmedAbsentCandidates = await confirmAbsentRecoveryCandidates(
       absentCandidates,
@@ -369,7 +379,11 @@ export async function upgradeSandboxes(
     for (const sandbox of absentCandidates) {
       if (!confirmedAbsentNames.has(sandbox.name)) becameReadyNames.add(sandbox.name);
     }
-    recoveryCandidates = [...nonReadyCandidates, ...confirmedAbsentCandidates];
+    recoveryCandidates = [
+      ...staleLiveCandidates,
+      ...nonReadyCandidates,
+      ...confirmedAbsentCandidates,
+    ];
   }
   const backupRecoveryAssessments = recoveryCandidates.map((sandbox) =>
     prepareBackupRecovery(
@@ -433,7 +447,7 @@ export async function upgradeSandboxes(
     console.log(`\n  ${B}Prepared backup recovery:${R}`);
     for (const recovery of preparedRecoveries) {
       console.log(
-        `    ${recovery.sandbox.name}  ${D}${recovery.manifest.timestamp}${R}  (non-Ready)`,
+        `    ${recovery.sandbox.name}  ${D}${recovery.manifest.timestamp}${R}  (pre-upgrade backup)`,
       );
       // #7073: the validated manifest records the agent-specific managed state
       // root restored for this sandbox. Warn before the destructive recreate so
@@ -461,13 +475,11 @@ export async function upgradeSandboxes(
     }
     if (preparedRecoveries.length > 0) {
       console.log(
-        `  ${preparedRecoveries.length} non-Ready sandbox(es) have a validated pre-upgrade backup.`,
+        `  ${preparedRecoveries.length} sandbox(es) have a validated pre-upgrade backup.`,
       );
     }
     if (rejectedRecoveries.length > 0) {
-      console.log(
-        `  ${rejectedRecoveries.length} non-Ready sandbox(es) cannot be recovered automatically.`,
-      );
+      console.log(`  ${rejectedRecoveries.length} sandbox(es) cannot be recovered automatically.`);
     }
     // Check mode must agree with auto mode on the orphan diagnosis (#6520).
     printOrphanedRegistrySandboxes(unobservedOwnGatewaySandboxes);
@@ -476,6 +488,9 @@ export async function upgradeSandboxes(
   }
 
   const { rebuildable, stopped } = splitRebuildableSandboxes(stale);
+  const ordinaryRebuildable = rebuildable.filter(
+    (sandbox) => !assessedRecoveryNames.has(sandbox.name),
+  );
   const notObservedReadyOrNonReady = stopped.filter(
     (sandbox) => !assessedRecoveryNames.has(sandbox.name),
   );
@@ -485,7 +500,7 @@ export async function upgradeSandboxes(
     );
   }
   if (
-    rebuildable.length === 0 &&
+    ordinaryRebuildable.length === 0 &&
     preparedRecoveries.length === 0 &&
     rejectedRecoveries.length === 0
   ) {
@@ -498,7 +513,7 @@ export async function upgradeSandboxes(
   let failed = rejectedRecoveries.length;
   const recoveredNames = new Set<string>();
   const work = [
-    ...rebuildable.map((sandbox) => ({ sandbox, manifest: null })),
+    ...ordinaryRebuildable.map((sandbox) => ({ sandbox, manifest: null })),
     ...preparedRecoveries.map((recovery) => ({
       sandbox: { name: recovery.sandbox.name },
       manifest: recovery.manifest,

@@ -141,7 +141,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -153,7 +153,7 @@ jobs:
         uses: ./.github/actions/ci-cli-coverage-shard
         with:
           shard: ${{ matrix.shard }}
-          shard-count: "8"
+          shard-count: "12"
 
   cli-tests:
     needs: cli-test-shards
@@ -191,10 +191,10 @@ jobs:
                 else
                   [.jobs[] |
                     select((.name | type) == "string") |
-                    select(.name | test("^cli-test-shards \\([1-8]\\)$")) |
+                    select(.name | test("^cli-test-shards \\(([1-9]|1[0-2])\\)$")) |
                     select(.conclusion != "success")] as $failed |
                   if ($failed | length) == 0 or
-                    ($failed | length) > 8 or
+                    ($failed | length) > 12 or
                     (($failed | map(.name) | unique | length) != ($failed | length))
                   then error("invalid failed CLI shard listing")
                   else
@@ -230,7 +230,7 @@ jobs:
       - name: Merge CLI coverage
         uses: ./.github/actions/ci-cli-coverage-merge
         with:
-          shard-count: "8"
+          shard-count: "12"
 
   plugin-tests:
     permissions:

@@ -7,6 +7,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildRiskPlan,
+  isPrE2eManualControllerJob,
   PR_E2E_TYPED_TARGET_IDS,
   RISK_RULES,
   riskPlanRequiredJobIds,
@@ -81,6 +82,22 @@ function plan(...changedFiles: string[]) {
 }
 
 describe("deterministic PR risk plan", () => {
+  it.each([
+    "inference-routing",
+    "managed-image-protected-runtime",
+  ])("classifies the controller-accepted %s job for the commit under review", (jobId) => {
+    expect(isPrE2eManualControllerJob(jobId)).toBe(true);
+  });
+
+  it.each([
+    "cloud-inference",
+    "security-posture",
+    "network-policy",
+    "jetson-nvmap-gpu",
+  ])("classifies %s as manual-only when the controller rejects the job", (jobId) => {
+    expect(isPrE2eManualControllerJob(jobId)).toBe(false);
+  });
+
   it("emits a stable plan and digest for equivalent inputs", () => {
     const first = plan("src/lib/state/registry.ts", "src/lib/onboard.ts");
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");

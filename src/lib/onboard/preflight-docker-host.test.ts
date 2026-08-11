@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { assessHost, planHostRemediation } from "./preflight";
+import { assessHost, planHostAdvisories } from "./preflight";
 import { printRemediationActions } from "./remediation";
 
 // Regression: NemoClaw #7731. This invalid TCP endpoint makes `docker info`
@@ -27,7 +27,7 @@ describe("assessHost invalid DOCKER_HOST (#7731)", () => {
       });
 
       const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
-      printRemediationActions(planHostRemediation(assessment));
+      printRemediationActions(planHostAdvisories(assessment));
       const output = err.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
 
       expect(output).toContain("Fix the DOCKER_HOST endpoint (invalid_docker_host):");
@@ -52,7 +52,7 @@ describe("assessHost invalid DOCKER_HOST (#7731)", () => {
     expect(assessment.dockerReachable).toBe(false);
     expect(assessment.dockerServiceActive).toBe(true);
 
-    const ids = planHostRemediation(assessment).map((action) => action.id);
+    const ids = planHostAdvisories(assessment).map((action) => action.id);
     expect(ids).toContain("invalid_docker_host");
     expect(ids).not.toContain("docker_group_permission");
   });

@@ -106,6 +106,15 @@ type AuxiliaryRecoveryResult = {
   recovered: boolean | null;
 };
 
+type ManagedGatewaySupervisorActionResult = SandboxCommandResult & {
+  readonly managedControlRestartingContainerId?: string;
+};
+
+const MANAGED_GATEWAY_CONTROL_PATH = "/usr/local/bin/nemoclaw-gateway-control";
+const MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS = 11;
+const DOCKER_CONTAINER_RESTARTING_ERROR =
+  /^Error response from daemon: Container ([0-9a-f]{64}) is restarting, wait until the container is running$/;
+
 function auxiliaryRecoveryFailureDetail(results: AuxiliaryRecoveryResult[]): string | null {
   const failed = results
     .filter((result) => result.recovered === false)
@@ -177,13 +186,13 @@ function executeGatewaySupervisorActionPinned(
   action: "restart" | "recover" | "probe",
   timeout: number,
   expectedContainerId?: string,
-): SandboxCommandResult | null {
+): ManagedGatewaySupervisorActionResult | null {
   const nonce = randomBytes(32).toString("hex");
   let argv: string[];
   try {
     argv = privilegedSandboxExecArgv(
       sandboxName,
-      ["/usr/local/bin/nemoclaw-gateway-control", action, nonce],
+      [MANAGED_GATEWAY_CONTROL_PATH, action, nonce],
       false,
       true,
       expectedContainerId,
@@ -207,6 +216,8 @@ function executeGatewaySupervisorActionPinned(
     };
   }
 
+  const controlPathIndex = argv.lastIndexOf(MANAGED_GATEWAY_CONTROL_PATH);
+  const targetContainerId = controlPathIndex > 0 ? argv[controlPathIndex - 1] : null;
   const result = dockerSpawnSync(argv, {
     cwd: ROOT,
     encoding: "utf-8",
@@ -218,13 +229,26 @@ function executeGatewaySupervisorActionPinned(
   const status = result.status ?? 1;
   const stdout = String(result.stdout || "").trim();
   let stderr = String(result.stderr || "").trim();
+  const restartingContainerMatch = stderr.match(DOCKER_CONTAINER_RESTARTING_ERROR);
+  const managedControlRestartingContainerId =
+    status === 1 &&
+    stdout === "" &&
+    restartingContainerMatch?.[1] !== undefined &&
+    restartingContainerMatch[1] === targetContainerId
+      ? restartingContainerMatch[1]
+      : undefined;
   if (
     (status === 126 || status === 127) &&
     /(?:not found|no such file|executable file)/i.test(`${stdout}\n${stderr}`)
   ) {
     stderr = ["SUPERVISOR_REBUILD_REQUIRED", stderr].filter(Boolean).join("\n");
   }
-  return { status, stdout, stderr };
+  return {
+    status,
+    stdout,
+    stderr,
+    ...(managedControlRestartingContainerId ? { managedControlRestartingContainerId } : {}),
+  };
 }
 
 type RequestPinnedGatewaySupervisorAction = typeof executeGatewaySupervisorActionPinned;
@@ -233,7 +257,7 @@ export function executeGatewaySupervisorAction(
   sandboxName: string,
   action: "restart" | "recover" | "probe",
   timeout = 210000,
-): SandboxCommandResult | null {
+): ManagedGatewaySupervisorActionResult | null {
   return executeGatewaySupervisorActionPinned(sandboxName, action, timeout);
 }
 
@@ -351,6 +375,21 @@ function isExactlyPendingManagedGatewayHealth(result: SandboxCommandResult | nul
   return lines.length === 1 && lines[0] === "GATEWAY_HEALTH_TIMEOUT";
 }
 
+function isExactlyRetryableManagedControlTransition(
+  result: ManagedGatewaySupervisorActionResult | null,
+): boolean {
+  // The pinned Docker call records the canonical Docker error only after its
+  // container ID matches the selected command target. Status 137 with no
+  // output has no controller protocol result. Retry only those two results in
+  // bounded managed-control loops. An exhausted transition bound, an unbound
+  // error, or status 137 with output is terminal.
+  if (result === null || result.stdout.trim() !== "") return false;
+  if (result.status === 137) return result.stderr.trim() === "";
+  if (result.status !== 1 || result.managedControlRestartingContainerId === undefined) return false;
+  const restartingContainerMatch = result.stderr.trim().match(DOCKER_CONTAINER_RESTARTING_ERROR);
+  return restartingContainerMatch?.[1] === result.managedControlRestartingContainerId;
+}
+
 export function waitForManagedGatewaySupervisor(
   sandboxName: string,
   options: {
@@ -364,7 +403,7 @@ export function waitForManagedGatewaySupervisor(
     options.requestGatewaySupervisorActionImpl ?? executeGatewaySupervisorAction;
   const sleep = options.sleepImpl ?? sleepSeconds;
   const intervalSeconds = options.intervalSeconds ?? 3;
-  const maxAttempts = options.maxAttempts ?? 11;
+  const maxAttempts = options.maxAttempts ?? MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const result = requestGatewaySupervisorAction(sandboxName, "probe", OPENSHELL_PROBE_TIMEOUT_MS);
@@ -373,7 +412,8 @@ export function waitForManagedGatewaySupervisor(
       !isExactlyMissingManagedSupervisor(result) &&
       !isExactlyRetryableManagedRecoveryFailure(result) &&
       !isExactlyPendingManagedSupervisorControl(result) &&
-      !isExactlyPendingManagedGatewayHealth(result)
+      !isExactlyPendingManagedGatewayHealth(result) &&
+      !isExactlyRetryableManagedControlTransition(result)
     ) {
       return false;
     }
@@ -445,7 +485,7 @@ function recoverSandboxProcesses(
     requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
     requestPinnedGatewaySupervisorAction?: RequestPinnedGatewaySupervisorAction;
     relaunchManagedSupervisorSessionImpl?: typeof relaunchManagedSupervisorSession;
-    onFailureLayer?: (layer: GatewayRestartFailureLayer) => void;
+    onFailureLayer?: (layer: GatewayRestartFailureLayer, detail: string) => void;
   } = {},
 ): SandboxProcessRecovery | null {
   const agent = agentRuntime.getSessionAgent(sandboxName);
@@ -464,12 +504,14 @@ function recoverSandboxProcesses(
   const recoveredSsh = (result: SandboxCommandResult | null): SandboxProcessRecovery | null =>
     result && result.status === 0 && hasGatewayRecoveryMarker(result) ? { kind: "custom" } : null;
   const recoverManagedGateway = (): SandboxProcessRecovery | null => {
-    const maxAttempts = 3;
+    const maxAttempts = MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS;
+    const maxBusyAttempts = 3;
     const retryIntervalSeconds = readNonNegativeNumberEnv(
       "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
       3,
     );
-    let execResult: SandboxCommandResult | null = null;
+    let execResult: ManagedGatewaySupervisorActionResult | null = null;
+    let busyAttempts = 0;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       execResult = requestGatewaySupervisorAction(sandboxName, "recover");
       const managedControlCompletion = parseManagedGatewayControlCompletion(execResult);
@@ -477,13 +519,18 @@ function recoverSandboxProcesses(
       if (hasGatewayRecoveryMarker(execResult)) return { kind: "managed" };
 
       // PID 1 may replace the gateway between the host's stopped observation
-      // and the controller's process-tree capture. Retry only exact transient
-      // controller results; integrity/config/launch refusals are terminal.
-      if (!isExactlyRetryableManagedRecoveryFailure(execResult) || attempt === maxAttempts) break;
+      // and the controller's process-tree capture. Retry only exact controller
+      // contention, status 137 with no output, and ID-bound Docker transition
+      // results. Integrity, configuration, and launch refusals are terminal.
+      if (isExactlyRetryableManagedRecoveryFailure(execResult)) {
+        busyAttempts += 1;
+        if (busyAttempts >= maxBusyAttempts) break;
+      } else if (!isExactlyRetryableManagedControlTransition(execResult)) break;
+      if (attempt === maxAttempts) break;
       sleepSeconds(retryIntervalSeconds);
     }
     const failure = classifyGatewayRestartFailure(execResult);
-    onFailureLayer?.(failure.layer);
+    onFailureLayer?.(failure.layer, failure.detail);
     if (
       failure.layer === "supervisor not running" &&
       isExactlyMissingManagedSupervisor(execResult)
@@ -1078,7 +1125,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
     isWsl?: boolean;
-    onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null) => void;
+    onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null, detail?: string) => void;
   } = {},
 ) {
   const recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
@@ -1252,13 +1299,15 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
   }
 
   let managedRecoveryFailureLayer: GatewayRestartFailureLayer | null = null;
+  let managedRecoveryFailureDetail: string | null = null;
   const recovery = recoverSandboxProcesses(sandboxName, {
     quiet,
     requestGatewaySupervisorAction,
     requestPinnedGatewaySupervisorAction,
     relaunchManagedSupervisorSessionImpl,
-    onFailureLayer: (layer) => {
+    onFailureLayer: (layer, detail) => {
       managedRecoveryFailureLayer = layer;
+      managedRecoveryFailureDetail = detail;
     },
   });
   if (recovery !== null) {
@@ -1353,7 +1402,10 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           managedRecoveryFailureLayer,
         );
       }
-      onRecoveryFailureLayer?.(managedRecoveryFailureLayer);
+      onRecoveryFailureLayer?.(
+        managedRecoveryFailureLayer,
+        managedRecoveryFailureDetail ?? undefined,
+      );
       if (relaunchedManagedHealthFailureDetail) {
         return {
           checked: true,
@@ -1366,14 +1418,16 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       }
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
     }
-    // State restore crosses the OpenShell SSH boundary. Prove the replacement
-    // is both identity-pinned and registered before asking finalize(true) to
-    // mutate it; otherwise a slow control-plane handoff can make a healthy
-    // replacement look like a failed restore and trigger rollback.
-    const readinessFailureDetail = relaunch
+    // Host-forward recovery requires an OpenShell-ready sandbox. Managed
+    // recovery has already passed its authenticated control and health gates;
+    // a replacement also rechecks its pinned identity before readiness.
+    const recoveryRequiresReadiness = recovery.kind === "managed" || relaunch;
+    const readinessFailureDetail = recoveryRequiresReadiness
       ? (() => {
           const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
-            beforeProbe: (timeoutMs) => confirmRelaunchedManagedHealth?.(timeoutMs) ?? null,
+            beforeProbe: relaunch
+              ? (timeoutMs) => confirmRelaunchedManagedHealth?.(timeoutMs) ?? null
+              : undefined,
           };
           const readiness =
             waitForRecreatedSandboxOpenShellReadyImpl === waitForRecreatedSandboxOpenShellReady
@@ -1528,7 +1582,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     printHostManagedGatewayRecoveryHints(sandboxName, recoveryAgent, managedRecoveryFailureLayer);
   }
 
-  onRecoveryFailureLayer?.(managedRecoveryFailureLayer);
+  onRecoveryFailureLayer?.(managedRecoveryFailureLayer, managedRecoveryFailureDetail ?? undefined);
   return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
 }
 
@@ -1542,7 +1596,7 @@ export function checkAndRecoverSandboxProcesses(
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
     isWsl?: boolean;
-    onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null) => void;
+    onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null, detail?: string) => void;
   } = {},
 ) {
   return withTimerBoundShieldsMutationLock(sandboxName, "gateway process recovery", () =>

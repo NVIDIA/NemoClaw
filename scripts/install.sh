@@ -2848,6 +2848,9 @@ preinstall_backup_and_retire_legacy_gateway() {
     fi
     error "Pre-upgrade backup stopped the installer. Resolve every reported sandbox backup failure or skipped sandbox using the CLI output above, then rerun the installer."
   fi
+  # The replacement gateway may report legacy rows as Ready even when their
+  # state is no longer inspectable. Reuse this validated backup for every stale
+  # or non-Ready recreate instead of attempting a second live backup.
   export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
 
   # Retire a backed-up gateway before install-openshell replaces an out-of-range
@@ -3027,7 +3030,14 @@ repair_installer_nvidia_cdi_spec() {
 
 run_installer_host_preflight() {
   local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/preflight.js"
-  if ! command_exists node || [[ ! -f "$preflight_module" ]]; then
+  local gateway_management_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/gateway-management.js"
+  local host_readiness_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/host.js"
+  local onboard_admission_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/onboard-admission.js"
+  if ! command_exists node \
+    || [[ ! -f "$preflight_module" ]] \
+    || [[ ! -f "$gateway_management_module" ]] \
+    || [[ ! -f "$host_readiness_module" ]] \
+    || [[ ! -f "$onboard_admission_module" ]]; then
     return 0
   fi
 
@@ -3038,23 +3048,93 @@ run_installer_host_preflight() {
     # shellcheck disable=SC2016
     node -e '
       const preflightPath = process.argv[1];
+      const hostReadinessPath = process.argv[2];
+      const onboardAdmissionPath = process.argv[3];
+      const gatewayManagementPath = process.argv[4];
       try {
-        const { assessHost, planHostRemediation } = require(preflightPath);
+        const { assessHost, planHostAdvisories } = require(preflightPath);
+        const { createHostReadinessReport } = require(hostReadinessPath);
+        const { evaluateOnboardReadinessAdmission } = require(onboardAdmissionPath);
+        const { loadGatewayManagementDeclaration } = require(gatewayManagementPath);
         const host = assessHost();
-        const actions = planHostRemediation(host);
-        const blockingActions = actions.filter((action) => action && action.blocking);
+        const actions = planHostAdvisories(host);
+        const gatewayManagement = loadGatewayManagementDeclaration();
+        const allowStorageRemediation =
+          gatewayManagement.ok &&
+          (gatewayManagement.declaration === null ||
+            gatewayManagement.declaration?.mode === "nemoclaw-managed");
+        const readiness = createHostReadinessReport(
+          { nemoclawVersion: "installer", sourceRevision: "installer" },
+          {
+            assess: () => host,
+            detectGpu: () => null,
+            detectHostGpuPlatform: () => host.hostGpuPlatform,
+            detectNvidiaDriverVersion: () => host.nvidiaDriverVersion,
+            collectPlatformIdentity: () => ({}),
+          }
+        );
+        const admission = evaluateOnboardReadinessAdmission(readiness, {
+          explicitlyOptedOutGpuPassthrough: false,
+          allowUnsupportedRuntime: false,
+          // The installer starts a NemoClaw-managed onboarding flow. Let the
+          // authoritative onboarding gate apply supported storage remediation,
+          // but only when the gateway declaration confirms NemoClaw ownership.
+          allowStorageRemediation,
+        });
         const infoLines = [];
         const actionLines = [];
+        const stableIdPattern = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$/;
+        const stableIds = (values) => [
+          ...new Set(
+            (Array.isArray(values) ? values : []).filter(
+              (value) =>
+                typeof value === "string" &&
+                value.length <= 128 &&
+                stableIdPattern.test(value)
+            )
+          ),
+        ];
         if (host.runtime && host.runtime !== "unknown") {
           infoLines.push(`Detected container runtime: ${host.runtime}`);
         }
-        if (host.notes && host.notes.includes("Running under WSL")) {
+        if (host.isWsl) {
           infoLines.push("Running under WSL");
+        }
+        if (!admission.admitted) {
+          const findingIds = stableIds(admission.findingIds);
+          const capabilityIds = stableIds(admission.capabilityIds);
+          if (findingIds.length > 0) {
+            actionLines.push(`Admission finding IDs: ${findingIds.join(", ")}`);
+          }
+          if (capabilityIds.length > 0) {
+            actionLines.push(`Admission capability IDs: ${capabilityIds.join(", ")}`);
+          }
         }
         for (const action of actions) {
           actionLines.push(`- ${action.title}: ${action.reason}`);
           for (const command of action.commands || []) {
             actionLines.push(`  ${command}`);
+          }
+        }
+        if (!admission.admitted) {
+          const findingById = new Map(
+            (Array.isArray(readiness.findings) ? readiness.findings : []).map((finding) => [
+              finding.id,
+              finding,
+            ])
+          );
+          for (const findingId of admission.findingIds || []) {
+            const finding = findingById.get(findingId);
+            actionLines.push(
+              finding?.summary
+                ? `- ${finding.summary}`
+                : `- Readiness finding: ${findingId}`
+            );
+          }
+          for (const capabilityId of admission.capabilityIds || []) {
+            actionLines.push(
+              `- NemoClaw could not confirm the required readiness capability ${capabilityId}.`
+            );
           }
         }
         if (infoLines.length > 0) {
@@ -3063,11 +3143,11 @@ run_installer_host_preflight() {
         if (actionLines.length > 0) {
           process.stdout.write(`__ACTIONS__\n${actionLines.join("\n")}`);
         }
-        process.exit(blockingActions.length > 0 ? 10 : 0);
+        process.exit(admission.admitted ? 0 : 10);
       } catch {
         process.exit(0);
       }
-    ' "$preflight_module"
+    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module" "$gateway_management_module"
   )"; then
     status=0
   else
