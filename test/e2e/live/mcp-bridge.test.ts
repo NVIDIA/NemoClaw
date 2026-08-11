@@ -583,13 +583,15 @@ async function assertRealAdapterToolCall(
         timeoutMs: 5 * 60_000,
       },
     );
-  let result = await runToolCall(options.artifactName);
-  if (options.agent === "hermes") {
-    result = await retryHermesGatewayDraining({
-      initialResult: result,
-      retry: (attempt) => runToolCall(`${options.artifactName}-gateway-draining-retry-${attempt}`),
-    });
-  }
+  const initialResult = await runToolCall(options.artifactName);
+  const result =
+    options.agent === "hermes"
+      ? await retryHermesGatewayDraining({
+          initialResult,
+          retry: (attempt) =>
+            runToolCall(`${options.artifactName}-gateway-draining-retry-${attempt}`),
+        })
+      : initialResult;
   const assertResponse =
     options.agent === "hermes"
       ? () => assertHermesMcpHttpResponse(result, hermesRedactionValues)

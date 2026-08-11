@@ -145,7 +145,8 @@ describe("MCP bridge transient classification", () => {
     ).resolves.toBe(passing);
     expect(retry).toHaveBeenCalledTimes(2);
     expect(wait).toHaveBeenCalledTimes(2);
-    expect(wait).toHaveBeenCalledWith(5_000);
+    expect(wait).toHaveBeenNthCalledWith(1, 5_000);
+    expect(wait).toHaveBeenNthCalledWith(2, 5_000);
   });
 
   it("stops after three gateway draining retries", async () => {
