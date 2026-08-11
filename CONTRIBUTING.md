@@ -296,8 +296,8 @@ After those tests pass, it checks the current checkout for:
 - Test-file line-budget violations.
 - An increased `if`-statement count in a changed test file.
 
-The pull request check separately compares `ci/test-file-size-budget.json` with the base commit.
-The local check validates the current budget file but does not compare its limits with the base commit.
+The pull request check compares `ci/test-file-size-budget.json` with the PR base commit.
+The local check validates the current budget file but does not compare its limits with the PR base commit.
 Keep `npm run test:watch` running for source-test feedback while editing.
 Watch mode also maps the repository's current opaque YAML, Python, shell, generated, and workflow inputs to concrete contract tests outside Vitest's import graph.
 Add a narrow mapping in `test/helpers/vitest-watch-triggers.ts` when a new opaque input needs the same treatment.
@@ -418,7 +418,8 @@ Use TypeScript instead of JavaScript for new source, test, and script files.
 Do not add `.js`, `.cjs`, `.mjs`, or `.jsx` files.
 Existing JavaScript files may be modified or deleted.
 
-Only a small CommonJS launcher and compatibility layer remains in `bin/`, while the main CLI implementation lives in `src/lib/` and compiles to `dist/`.
+`bin/` retains a small CommonJS launcher and compatibility layer.
+The main CLI implementation lives in `src/lib/` and compiles to `dist/`.
 Existing ESM JavaScript tests under `test/` may remain, but new tests must use TypeScript.
 
 Shell scripts (`scripts/*.sh`) must pass ShellCheck and use `shfmt` formatting.
