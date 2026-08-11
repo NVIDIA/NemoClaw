@@ -1317,6 +1317,58 @@ validate_recorded_pid 1234 ollama-auth-proxy.
     expect(dispatcherRunbook).toContain("ollama list");
   });
 
+  it("uses a private temporary file for the pinned Jetson host key (#8142)", () => {
+    const hostKeySection = dispatcherRunbook.slice(
+      dispatcherRunbook.indexOf("Capture the Jetson host key"),
+      dispatcherRunbook.indexOf("## Define the Cleanup Program"),
+    );
+    const temporary = hostKeySection.indexOf(
+      'known_hosts_tmp="$(mktemp /tmp/nemoclaw-jetson-known-hosts.XXXXXX)"',
+    );
+    const cleanupTrap = hostKeySection.indexOf("trap 'rm -f -- \"$known_hosts_tmp\"' EXIT");
+    const keyScan = hostKeySection.indexOf("ssh-keyscan -T 10");
+    const install = hostKeySection.indexOf("sudo install");
+
+    expect(hostKeySection).toContain("umask 077");
+    expect(temporary).toBeGreaterThan(-1);
+    expect(cleanupTrap).toBeGreaterThan(temporary);
+    expect(keyScan).toBeGreaterThan(cleanupTrap);
+    expect(install).toBeGreaterThan(keyScan);
+    expect(hostKeySection).not.toContain("/tmp/jetson_known_hosts");
+  });
+
+  it("bounds every Jetson teardown SSH probe and the Ollama model query (#8142)", () => {
+    const teardown = dispatcherRunbook.slice(
+      dispatcherRunbook.indexOf("## Recover or Disable the Deployment"),
+    );
+    const sshProbes = teardown.match(/sudo -u nemoclaw-jetson-dispatch ssh/gmu) ?? [];
+    const boundedSshProbes =
+      teardown.match(
+        /timeout --kill-after=5 120 \\\n\s+sudo -u nemoclaw-jetson-dispatch ssh -F \/dev\/null -T \\\n\s+-o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \\\n\s+-o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3/gmu,
+      ) ?? [];
+
+    expect(sshProbes).toHaveLength(4);
+    expect(boundedSshProbes).toHaveLength(sshProbes.length);
+    expect(teardown).toContain("timeout --kill-after=5 30 ollama list >/dev/null");
+  });
+
+  it("stops credential teardown when the Jetson key-removal probe fails (#8142)", () => {
+    const credentialTeardown = dispatcherRunbook.slice(
+      dispatcherRunbook.indexOf("Remove the dedicated Jetson public key"),
+      dispatcherRunbook.indexOf("Remove the cleanup executable and pinned SSH host-key file"),
+    );
+    const strictMode = credentialTeardown.indexOf("set -euo pipefail");
+    const keyRemovalProbe = credentialTeardown.indexOf("timeout --kill-after=5 120");
+    const privateKeyRemoval = credentialTeardown.indexOf(
+      "sudo rm -- \\\n  /var/lib/nemoclaw-jetson-dispatch/id_ed25519",
+    );
+
+    expect(strictMode).toBeGreaterThan(-1);
+    expect(keyRemovalProbe).toBeGreaterThan(strictMode);
+    expect(privateKeyRemoval).toBeGreaterThan(keyRemovalProbe);
+    expect(credentialTeardown.slice(keyRemovalProbe, privateKeyRemoval)).not.toContain("|| true");
+  });
+
   it("keeps recovery credentials until idle teardown verification succeeds (#8142)", () => {
     const stopTunnel = dispatcherRunbook.indexOf(
       "sudo systemctl disable --now nemoclaw-jetson-tunnel.service",

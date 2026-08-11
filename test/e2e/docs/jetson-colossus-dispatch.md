@@ -225,11 +225,16 @@ from="192.168.55.100",restrict ssh-ed25519 AAAA...
 Capture the Jetson host key and verify its fingerprint through the serial console or another trusted channel:
 
 ```bash
-ssh-keyscan -H 192.168.55.1 >/tmp/jetson_known_hosts
-ssh-keygen -lf /tmp/jetson_known_hosts
+set -euo pipefail
+umask 077
+known_hosts_tmp="$(mktemp /tmp/nemoclaw-jetson-known-hosts.XXXXXX)"
+trap 'rm -f -- "$known_hosts_tmp"' EXIT
+ssh-keyscan -T 10 -H 192.168.55.1 >"$known_hosts_tmp"
+ssh-keygen -lf "$known_hosts_tmp"
 sudo install -o nemoclaw-jetson-dispatch -g nemoclaw-jetson-dispatch -m 0600 \
-  /tmp/jetson_known_hosts /var/lib/nemoclaw-jetson-dispatch/known_hosts
-rm /tmp/jetson_known_hosts
+  "$known_hosts_tmp" /var/lib/nemoclaw-jetson-dispatch/known_hosts
+rm -f -- "$known_hosts_tmp"
+trap - EXIT
 ```
 
 The pinned `known_hosts` file validates the SSH host identity separately from the persisted cleanup baseline.
@@ -937,8 +942,10 @@ while IFS=$'\t' read -r identity_kind identity; do
   esac
 done <<<"$cleanup_identities"
 for volume in "${cleanup_volumes[@]}"; do
-  sudo -u nemoclaw-jetson-dispatch ssh -F /dev/null -T \
+  timeout --kill-after=5 120 \
+    sudo -u nemoclaw-jetson-dispatch ssh -F /dev/null -T \
     -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+    -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
     -o UserKnownHostsFile=/var/lib/nemoclaw-jetson-dispatch/known_hosts \
     -i /var/lib/nemoclaw-jetson-dispatch/id_ed25519 \
     nvidia@192.168.55.1 bash -s -- "$volume" <<'VERIFY_RECORDED_VOLUME'
@@ -954,8 +961,10 @@ fi
 VERIFY_RECORDED_VOLUME
 done
 for process_id in "${cleanup_process_ids[@]}"; do
-  sudo -u nemoclaw-jetson-dispatch ssh -F /dev/null -T \
+  timeout --kill-after=5 120 \
+    sudo -u nemoclaw-jetson-dispatch ssh -F /dev/null -T \
     -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+    -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
     -o UserKnownHostsFile=/var/lib/nemoclaw-jetson-dispatch/known_hosts \
     -i /var/lib/nemoclaw-jetson-dispatch/id_ed25519 \
     nvidia@192.168.55.1 bash -s -- "$process_id" <<'VERIFY_RECORDED_PROCESS'
@@ -966,8 +975,10 @@ if [ -e "/proc/$1" ]; then
 fi
 VERIFY_RECORDED_PROCESS
 done
-sudo -u nemoclaw-jetson-dispatch ssh -F /dev/null -T \
+timeout --kill-after=5 120 \
+  sudo -u nemoclaw-jetson-dispatch ssh -F /dev/null -T \
   -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+  -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
   -o UserKnownHostsFile=/var/lib/nemoclaw-jetson-dispatch/known_hosts \
   -i /var/lib/nemoclaw-jetson-dispatch/id_ed25519 \
   nvidia@192.168.55.1 bash -s -- "$LAST_JOB_ID" <<'VERIFY_JETSON_IDLE'
@@ -1062,7 +1073,7 @@ image_rows="$(docker image ls nemoclaw-sandbox-local --format '{{.Repository}}\t
 test -z "$(printf '%s\n' "$image_rows" |
   awk '$1 == "nemoclaw-sandbox-local" && index($2, "e2e-jetson-nvmap-") == 1 { print $1 ":" $2 }')"
 command -v node npm ollama
-ollama list >/dev/null
+timeout --kill-after=5 30 ollama list >/dev/null
 for openshell_component in openshell openshell-gateway openshell-sandbox; do
   if command -v "$openshell_component" >/dev/null 2>&1; then
     echo "A host-level OpenShell binary remains after cleanup: $openshell_component" >&2
@@ -1127,6 +1138,7 @@ Remove the dedicated Jetson public key and the Colossus SSH private key.
 Encode the exact authorized-key line so the space-containing value remains one remote-command argument, then verify that exact line is absent before deleting the Colossus key:
 
 ```bash
+set -euo pipefail
 JETSON_PUBLIC_KEY="$(sudo cat /var/lib/nemoclaw-jetson-dispatch/id_ed25519.pub)"
 case "$JETSON_PUBLIC_KEY" in
   ssh-ed25519\ *) ;;
@@ -1134,8 +1146,10 @@ case "$JETSON_PUBLIC_KEY" in
 esac
 JETSON_AUTHORIZED_KEY_LINE="from=\"192.168.55.100\",restrict $JETSON_PUBLIC_KEY"
 JETSON_AUTHORIZED_KEY_B64="$(printf '%s' "$JETSON_AUTHORIZED_KEY_LINE" | base64 --wrap=0)"
-sudo -u nemoclaw-jetson-dispatch ssh -F /dev/null -T \
+timeout --kill-after=5 120 \
+  sudo -u nemoclaw-jetson-dispatch ssh -F /dev/null -T \
   -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+  -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
   -o UserKnownHostsFile=/var/lib/nemoclaw-jetson-dispatch/known_hosts \
   -i /var/lib/nemoclaw-jetson-dispatch/id_ed25519 \
   nvidia@192.168.55.1 bash -s -- "$JETSON_AUTHORIZED_KEY_B64" <<'REMOVE_DISPATCH_KEY'
