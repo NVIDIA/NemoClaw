@@ -28,6 +28,7 @@ import type { SandboxGatewayState } from "./gateway-state";
 import { isSandboxGatewayRunningForStatus } from "./status/process-recovery";
 import {
   isInferenceHealthFailing,
+  normalizeSandboxStatusHostMounts,
   resolveSandboxStatusDcodeAutoApprovalMode,
   type SandboxStatusAgentInfo,
   type SandboxStatusRouteDrift,
@@ -205,9 +206,10 @@ function printSandboxGpuStatus(sandbox: SandboxEntry): void {
 }
 
 function printSandboxHostMounts(sandbox: SandboxEntry): void {
-  if (!sandbox.hostMounts?.length) return;
+  const hostMounts = normalizeSandboxStatusHostMounts(sandbox.hostMounts);
+  if (hostMounts.length === 0) return;
   console.log("    Host mounts:");
-  for (const mount of sandbox.hostMounts) {
+  for (const mount of hostMounts) {
     console.log(`      ${mount.source} -> ${mount.target} (read-only)`);
   }
 }

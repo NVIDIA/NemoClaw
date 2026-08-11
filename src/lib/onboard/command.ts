@@ -178,8 +178,15 @@ function resolveSandboxGpu(flags: OnboardFlags): "enable" | "disable" | null {
 
 function resolveHostMounts(
   values: readonly string[] | undefined,
+  experimentalProfile: ExperimentalOnboardProfile | null,
   deps: ResolveOnboardOptionsDeps,
 ): import("../state/registry/types").SandboxHostMount[] {
+  if ((values?.length ?? 0) > 0 && experimentalProfile === PORTABLE_EXPERIMENTAL_PROFILE) {
+    fail(
+      deps,
+      "  --host-mount requires the OpenShell Docker driver and cannot be used with --experimental-profile portable.",
+    );
+  }
   let mounts: import("../state/registry/types").SandboxHostMount[];
   try {
     mounts = parseReadOnlyHostMounts(values ?? []);
@@ -366,7 +373,7 @@ export function resolveOnboardOptions(
   } catch (error) {
     fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
   }
-  const hostMounts = resolveHostMounts(flags["host-mount"], deps);
+  const hostMounts = resolveHostMounts(flags["host-mount"], experimentalProfile, deps);
   return {
     tempManagedRuntime: flags["temp-managed-runtime"] === true,
     tempManagedRuntimeCatalog: resolveFileOption(

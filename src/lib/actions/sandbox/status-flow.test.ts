@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import {
@@ -160,17 +163,41 @@ describe("showSandboxStatus flow", () => {
   });
 
   it("reports durable read-only host directory exposure", async () => {
+    const source = fs.mkdtempSync(path.join(process.cwd(), ".status-text-host-mount-test-"));
+    try {
+      const harness = createStatusFlowHarness({
+        sandboxEntry: {
+          hostMounts: [{ source, target: "/sandbox/project", readOnly: true }],
+        },
+      });
+
+      await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+      const output = harness.logSpy.mock.calls.flat().join("\n");
+      expect(output).toContain("Host mounts:");
+      expect(output).toContain(`${source} -> /sandbox/project (read-only)`);
+    } finally {
+      fs.rmSync(source, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects control-character host mounts before terminal rendering", async () => {
     const harness = createStatusFlowHarness({
       sandboxEntry: {
-        hostMounts: [{ source: "/srv/project", target: "/sandbox/project", readOnly: true }],
+        hostMounts: [
+          {
+            source: "/srv/project\u001b[31m",
+            target: "/sandbox/project",
+            readOnly: true,
+          },
+        ],
       },
     });
 
-    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
-
-    const output = harness.logSpy.mock.calls.flat().join("\n");
-    expect(output).toContain("Host mounts:");
-    expect(output).toContain("/srv/project -> /sandbox/project (read-only)");
+    await expect(harness.showSandboxStatus("alpha")).rejects.toThrow(
+      "unsafe terminal control characters",
+    );
+    expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain("\u001b[31m");
   });
 
   it("omits SSH sessions when the active-session probe is unavailable (#7805)", async () => {

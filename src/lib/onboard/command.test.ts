@@ -311,6 +311,21 @@ describe("onboard command options", () => {
     }
   });
 
+  it("rejects host mounts for the portable Podman profile before path or runtime effects", () => {
+    const errors: string[] = [];
+
+    expect(() =>
+      resolve(
+        {
+          "experimental-profile": "portable",
+          "host-mount": ["/path/that/need/not/exist:/sandbox/project"],
+        },
+        { platform: "linux", error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("requires the OpenShell Docker driver");
+  });
+
   it("resolves the portable profile to deterministic unattended defaults", () => {
     expect(resolve({ "experimental-profile": "portable" })).toMatchObject({
       experimentalProfile: "portable",
