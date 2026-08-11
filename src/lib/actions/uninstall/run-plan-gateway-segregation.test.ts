@@ -786,8 +786,17 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
-      const proxyPidFile = path.join(shared, "ollama-auth-proxy.pid");
-      fs.writeFileSync(proxyPidFile, "4242\n");
+      const proxyStateEntries = [
+        "ollama-proxy-token",
+        "ollama-backend",
+        "ollama-auth-proxy.pid",
+        "ollama-auth-proxy.status",
+      ];
+      for (const entry of proxyStateEntries) {
+        const value = entry === "ollama-auth-proxy.pid" ? "4242\n" : `${entry}\n`;
+        fs.writeFileSync(path.join(shared, entry), value);
+        fs.writeFileSync(path.join(selected, entry), `legacy-${value}`);
+      }
 
       const runCalls: Array<{ command: string; args: string[] }> = [];
       const dockerCalls: string[][] = [];
@@ -850,7 +859,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(runCalls.some(({ command }) => command === "systemctl")).toBe(false);
       expect(fs.existsSync(path.join(nemoclawConfig, "keep"))).toBe(true);
       expect(kill.mock.calls.every(([pid]) => pid !== 4242)).toBe(true);
-      expect(fs.existsSync(proxyPidFile)).toBe(true);
+      for (const entry of proxyStateEntries) {
+        expect(fs.existsSync(path.join(shared, entry))).toBe(true);
+      }
       expect(logs).toContain(
         "Preserving the shared Ollama auth proxy for the remaining gateway ports",
       );

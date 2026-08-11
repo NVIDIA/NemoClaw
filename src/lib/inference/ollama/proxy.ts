@@ -190,7 +190,8 @@ function adoptGatewayScopedProxyToken(): string | null {
         "NemoClaw cannot safely select one.",
     );
   }
-  persistProxyTokenUnlocked(selectedToken, backendUrls[0] || undefined);
+  const selectedBackendUrl = backendUrls[0] ?? readProxyStateFile(PROXY_BACKEND_PATH) ?? undefined;
+  persistProxyTokenUnlocked(selectedToken, selectedBackendUrl);
   return selectedToken;
 }
 

@@ -328,6 +328,21 @@ function managedClusterBindingStateEntries(stateDir: string): readonly string[] 
   }
 }
 
+function scopedStatePreservationEntries(
+  stateDir: string,
+  selectedIsDefault: boolean,
+): readonly string[] {
+  return [
+    ...(selectedIsDefault ? OLLAMA_AUTH_PROXY_STATE_ENTRIES : []),
+    ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
+    MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
+    ...managedClusterBindingStateEntries(stateDir),
+    DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
+    `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
+    MANAGED_VLLM_API_KEY_FILE,
+  ];
+}
+
 function dormantHostGlobalLifecycleState(sharedRoot: string): boolean {
   const stateDir = path.join(sharedRoot, "state");
   try {
@@ -2250,15 +2265,7 @@ function executePlan(
               : []),
             ...(scopedToSelectedGateway && selectedIsDefault ? ["source"] : []),
             ...(scopedToSelectedGateway
-              ? [
-                  ...OLLAMA_AUTH_PROXY_STATE_ENTRIES,
-                  ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
-                  MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
-                  ...managedClusterBindingStateEntries(paths.nemoclawStateDir),
-                  DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
-                  `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
-                  MANAGED_VLLM_API_KEY_FILE,
-                ]
+              ? scopedStatePreservationEntries(paths.nemoclawStateDir, selectedIsDefault)
               : []),
           ],
           runtime,

@@ -930,6 +930,23 @@ console.log(JSON.stringify({
     assert.equal(payload.gatewayScopedBackend, "http://127.0.0.1:12345");
   });
 
+  it("keeps the shared backend when adopting a gateway-scoped token without one (#8704)", () => {
+    const payload = runSecondGatewayProxyStart({
+      callingGatewayPort: 9000,
+      gatewayScopedPort: 8990,
+      gatewayScopedToken: "scoped-token",
+      prefix: "nemoclaw-ollama-proxy-adopt-mixed-backend-",
+      recover: true,
+      sharedBackend: "http://127.0.0.1:12345",
+    });
+
+    assert.deepEqual(payload.spawnedTokens, ["scoped-token"]);
+    assert.deepEqual(payload.spawnedBackends, ["http://127.0.0.1:12345"]);
+    assert.equal(payload.sharedToken, "scoped-token");
+    assert.equal(payload.sharedBackend, "http://127.0.0.1:12345");
+    assert.equal(payload.gatewayScopedBackend, null);
+  });
+
   it("mints a token when no gateway on the host has one (#8704)", () => {
     const payload = runSecondGatewayProxyStart({
       prefix: "nemoclaw-ollama-proxy-first-run-",
