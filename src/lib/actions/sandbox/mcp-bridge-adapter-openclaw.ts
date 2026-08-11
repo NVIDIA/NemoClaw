@@ -14,8 +14,8 @@ import {
   DEFAULT_OPENCLAW_CONFIG_DIR,
   entryHeaders,
   mcporterHeaderMatcherSource,
-  openClawMcporterRoot,
   OPENCLAW_MCPORTER_ROOT,
+  openClawMcporterRoot,
   pythonJsonLiteral,
 } from "./mcp-bridge-adapter-status";
 import { McpBridgeError } from "./mcp-bridge-contracts";
@@ -90,6 +90,7 @@ export function buildOpenClawMcporterRemoveCommand(
     mcporterHeaderMatcherSource(),
     'const detail = (result) => `${result.stderr || ""}\n${result.stdout || ""}`;',
     "const isAbsent = (result) => result.status !== 0 && /not\\s+found|does\\s+not\\s+exist|unknown\\s+server/i.test(detail(result));",
+    "const isMissingConfig = (result, configPath) => result.status !== 0 && /ENOENT: no such file or directory/i.test(detail(result)) && detail(result).includes(configPath);",
     'const projectDir = path.join(expected.root, "config");',
     'const xdgHome = path.isAbsolute(process.env.XDG_CONFIG_HOME || "") ? process.env.XDG_CONFIG_HOME : path.join(os.homedir(), ".config");',
     'const xdgDir = path.join(xdgHome, "mcporter");',
@@ -99,7 +100,7 @@ export function buildOpenClawMcporterRemoveCommand(
     "for (const configPath of configPaths) {",
     '  const get = spawnSync("mcporter", ["--root", expected.root, "config", "--config", configPath, "get", expected.server, "--json"], { encoding: "utf8" });',
     "  if (get.error) { console.error(get.error.message); process.exit(3); }",
-    "  if (isAbsent(get)) continue;",
+    "  if (isAbsent(get) || isMissingConfig(get, configPath)) continue;",
     "  if (get.status !== 0) { console.error(detail(get).trim()); process.exit(3); }",
     "  let actual = null; try { actual = JSON.parse(get.stdout); } catch {}",
     '  const headers = actual && actual.headers && typeof actual.headers === "object" ? actual.headers : {};',

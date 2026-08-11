@@ -119,7 +119,10 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
           "};",
           "const selectedConfig = configPath(requestedConfig);",
           'if (subcommand === "get") {',
-          '  if (!fs.existsSync(selectedConfig)) { console.error("not found"); process.exit(1); }',
+          "  if (!fs.existsSync(selectedConfig)) {",
+          "    console.error(requestedConfig ? `ENOENT: no such file or directory, open '${requestedConfig}'` : \"not found\");",
+          "    process.exit(1);",
+          "  }",
           '  process.stdout.write(fs.readFileSync(selectedConfig, "utf8"));',
           "  process.exit(0);",
           "}",
@@ -233,14 +236,26 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
           headers: normalizedHeaders,
         }),
       );
+      fs.mkdirSync(path.dirname(legacyConfigState), { recursive: true });
+      fs.writeFileSync(
+        legacyConfigState,
+        JSON.stringify({
+          name: "github",
+          transport: "http",
+          baseUrl: "https://api.githubcopilot.com/mcp/",
+          headers: normalizedHeaders,
+        }),
+      );
       expect(run(buildOpenClawMcporterRegisterCommand(baseEntry, true)).status).toBe(0);
       expectFilePresent(configState);
       expectFilePresent(homeConfigState);
+      expectFilePresent(legacyConfigState);
 
       const layeredRemove = run(buildOpenClawMcporterRemoveCommand(baseEntry));
       expect(layeredRemove.status).toBe(0);
       expectFileAbsent(configState);
       expectFileAbsent(homeConfigState);
+      expectFileAbsent(legacyConfigState);
       expect(run(buildOpenClawMcporterInspectCommand(baseEntry, false)).stdout.trim()).toBe(
         "absent",
       );
@@ -329,6 +344,15 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
         "config",
         "--config",
         `${OPENCLAW_MCPORTER_ROOT}/config/mcporter.json`,
+        "remove",
+        "github",
+      ]);
+      expect(observedArgs).toContainEqual([
+        "--root",
+        OPENCLAW_MCPORTER_ROOT,
+        "config",
+        "--config",
+        path.join(os.homedir(), ".mcporter", "mcporter.json"),
         "remove",
         "github",
       ]);
