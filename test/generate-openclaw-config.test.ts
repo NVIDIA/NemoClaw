@@ -760,10 +760,10 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.tools?.toolSearch).toEqual(STRUCTURED_TOOL_SEARCH);
     expect(config.tools?.web?.search).toBeUndefined();
   });
-
-  it("propagates agent timeout", () => {
+  it("propagates the agent timeout to the run and provider request (#8468)", () => {
     const config = runConfigScript({ NEMOCLAW_AGENT_TIMEOUT: "300" });
     expect(config.agents.defaults.timeoutSeconds).toBe(300);
+    expect(config.models.providers["test-provider"].timeoutSeconds).toBe(300);
   });
 
   it("rejects invalid agent timeout values", () => {

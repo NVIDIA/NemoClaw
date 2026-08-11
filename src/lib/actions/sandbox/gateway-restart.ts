@@ -69,6 +69,15 @@ export type GatewayRestartResult =
       ok: false;
       failureLayer: GatewayRestartFailureLayer;
       detail: string;
+      restarted?: never;
+      healthPassed?: never;
+    }
+  | {
+      ok: false;
+      failureLayer: "MCP reconciliation refusal";
+      detail: string;
+      restarted: true;
+      healthPassed: true;
     };
 
 type SandboxAgentLookup = (sandboxName: string) => { agent?: string | null } | null | undefined;
@@ -430,6 +439,8 @@ export function restartSandboxGatewayWithDeps(
         ok: false,
         failureLayer: "MCP reconciliation refusal",
         detail,
+        restarted: true,
+        healthPassed: true,
       };
     }
   }

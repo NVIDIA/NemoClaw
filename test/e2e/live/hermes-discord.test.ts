@@ -14,6 +14,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { hermesDiscordHttpProxyWebSocketUrl } from "./hermes-discord-proxy.ts";
 import { type FakeDockerApi, startFakeDockerApi } from "./messaging-providers-helpers.ts";
 import {
   runSecondaryCleanup as bestEffortLifecycleCleanup,
@@ -36,6 +37,10 @@ const DISCORD_ALLOWED_IDS = process.env.DISCORD_ALLOWED_IDS ?? "1005536447329222
 const DISCORD_REQUIRE_MENTION = process.env.DISCORD_REQUIRE_MENTION ?? "0";
 const HERMES_HEALTH_URL = "http://localhost:8642/health";
 const FAKE_DISCORD_HOST = "host.docker.internal";
+const HERMES_DISCORD_HTTP_PROXY_GATEWAY_TEMPLATE = hermesDiscordHttpProxyWebSocketUrl(
+  "{host}",
+  "{port}",
+);
 
 function commandEnv(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return phase6Env({
@@ -270,7 +275,12 @@ async def main():
     client.http._global_over.set()
     try:
         from_client = discord.gateway.DiscordWebSocket.from_client
-        kwargs = {"gateway": URL(f"ws://{host}:{port}/gateway")}
+        # aiohttp preserves the target scheme in the absolute-form request it
+        # sends to an HTTP proxy. OpenShell accepts WebSocket upgrades through
+        # that proxy as HTTP requests with Upgrade headers, matching the raw
+        # Node proof below; a ws:// absolute-form target is rejected with 400
+        # before it reaches the fake gateway.
+        kwargs = {"gateway": URL(f"${HERMES_DISCORD_HTTP_PROXY_GATEWAY_TEMPLATE}")}
         params = inspect.signature(from_client).parameters
         if "initial" in params:
             kwargs["initial"] = False

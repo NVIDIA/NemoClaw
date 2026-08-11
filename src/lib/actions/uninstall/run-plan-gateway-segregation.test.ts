@@ -23,6 +23,7 @@ function ok(stdout = ""): RunResult {
 
 function withManagedGatewayAuthority(deps: UninstallRunDeps): UninstallRunDeps {
   return {
+    isPortFree: () => true,
     resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
       gatewayName,
       gatewayPort,

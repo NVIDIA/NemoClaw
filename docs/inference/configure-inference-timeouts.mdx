@@ -36,7 +36,7 @@ An unset, blank, invalid, or negative value uses 30 seconds for OpenClaw gateway
 <AgentOnly variant="openclaw">
 
 Increase `NEMOCLAW_AGENT_TIMEOUT` for a slow model server, such as CPU-only local inference or modest vLLM hardware.
-NemoClaw writes this value to `agents.defaults.timeoutSeconds` during onboarding.
+NemoClaw writes this value to `agents.defaults.timeoutSeconds` and `models.providers.<provider-id>.timeoutSeconds` during onboarding.
 
 ```bash
 export NEMOCLAW_AGENT_TIMEOUT=1800

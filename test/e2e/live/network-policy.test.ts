@@ -533,7 +533,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
       "deny-by-default egress",
       "restricted tier begins with zero active presets",
       "package metadata is readable while package database writes remain denied (#8467)",
-      "OpenShell 0.0.99 preserves the full denied endpoint and policy disposition through nemoclaw logs --tail 50 (#4760)",
+      "OpenShell 0.0.101 preserves the full denied endpoint and policy disposition through nemoclaw logs --tail 50 (#4760)",
       "read-only preset allowlist behavior",
       "weather preset allows wttr.in GET and HEAD but denies POST and unrelated hosts",
       "live policy-add and dry-run behavior",
@@ -570,7 +570,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
     timeoutMs: 30_000,
   });
   expect(openshellVersion.exitCode, text(openshellVersion)).toBe(0);
-  expect(text(openshellVersion)).toContain("0.0.99");
+  expect(text(openshellVersion)).toContain("0.0.101");
 
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>

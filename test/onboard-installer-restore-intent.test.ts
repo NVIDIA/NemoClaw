@@ -184,6 +184,7 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
       PATH: `${fakeBin}:${process.env.PATH || ""}`,
       NEMOCLAW_NON_INTERACTIVE: "1",
       NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
+      NEMOCLAW_SANDBOX_PREBUILD: "1",
     };
     delete env["NEMOCLAW_RECREATE_SANDBOX"];
     const result = spawnSync(process.execPath, [scriptPath], {
