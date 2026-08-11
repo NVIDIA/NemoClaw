@@ -28,6 +28,8 @@ import {
 } from "./managed-cluster-topology.js";
 import type { ManagedInferenceServingRecipe } from "./types.js";
 
+const LIGHTNING_RECIPE_ID = "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.spark-single.v1";
+
 function shippedRecipe(): ManagedInferenceServingRecipe {
   const recipe = loadManagedInferenceCatalog().recipes.find(
     ({ spec }) => spec.execution.materializerRef === MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
@@ -36,9 +38,9 @@ function shippedRecipe(): ManagedInferenceServingRecipe {
   return structuredClone(recipe as ManagedInferenceServingRecipe);
 }
 
-function shippedHostLocalRecipe(): ManagedInferenceServingRecipe {
+function shippedLightningRecipe(): ManagedInferenceServingRecipe {
   const recipe = loadManagedInferenceCatalog().recipes.find(
-    ({ spec }) => spec.execution.materializerRef === HOST_LOCAL_VLLM_MATERIALIZER_REF,
+    ({ metadata }) => metadata.id === LIGHTNING_RECIPE_ID,
   );
   expect(recipe).toBeDefined();
   return structuredClone(recipe as ManagedInferenceServingRecipe);
@@ -152,23 +154,7 @@ describe("managed inference adapter registries", () => {
   });
 
   it("accepts shell-quoted JSON values for host-local vLLM arguments", () => {
-    const recipe = shippedHostLocalRecipe();
-    const structuredArgument = {
-      ...recipe,
-      spec: {
-        ...recipe.spec,
-        serve: {
-          ...recipe.spec.serve,
-          arguments: [
-            ...recipe.spec.serve.arguments,
-            {
-              name: "--speculative-config",
-              value: '{"method":"mtp","num_speculative_tokens":1}',
-            },
-          ],
-        },
-      },
-    } as ManagedInferenceServingRecipe;
+    const structuredArgument = shippedLightningRecipe();
     const unsafeArgument = {
       ...structuredArgument,
       spec: {
@@ -186,6 +172,27 @@ describe("managed inference adapter registries", () => {
 
     expect(getManagedInferenceRecipeRegistrationError(structuredArgument)).toBeUndefined();
     expect(getManagedInferenceRecipeRegistrationError(unsafeArgument)).toMatch(
+      /bounded safe text/u,
+    );
+  });
+
+  it("rejects structured host-local vLLM environment values", () => {
+    const recipe = shippedLightningRecipe();
+    const structuredEnvironment = {
+      ...recipe,
+      spec: {
+        ...recipe.spec,
+        runtime: {
+          ...recipe.spec.runtime,
+          environment: {
+            ...recipe.spec.runtime.environment,
+            VLLM_TEST_CONFIG: '{"enabled":true}',
+          },
+        },
+      },
+    } as ManagedInferenceServingRecipe;
+
+    expect(getManagedInferenceRecipeRegistrationError(structuredEnvironment)).toMatch(
       /bounded safe text/u,
     );
   });
