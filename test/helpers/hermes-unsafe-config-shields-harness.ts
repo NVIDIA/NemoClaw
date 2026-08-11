@@ -46,6 +46,7 @@ const hermesTarget = {
 export type HermesUnsafeConfigScenario =
   | "preflight-symlink"
   | "preflight-dir-symlink"
+  | "preflight-sensitive-file-symlink"
   | "unlock-symlink"
   | "unlock-ok-relock-symlink";
 
@@ -181,6 +182,12 @@ export function createHermesUnsafeConfigHarness(
       const replacementDir = path.join(homeDir, "replacement-hermes");
       fs.renameSync(configFixtureDir, replacementDir);
       fs.symlinkSync(replacementDir, configFixtureDir, "dir");
+    }
+    if (scenario === "preflight-sensitive-file-symlink") {
+      const target = path.join(homeDir, "real-env");
+      fs.writeFileSync(target, "TEST_VALUE=1\n");
+      fs.rmSync(path.join(configFixtureDir, ".env"));
+      fs.symlinkSync(target, path.join(configFixtureDir, ".env"));
     }
   };
 

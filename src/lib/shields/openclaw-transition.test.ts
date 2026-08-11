@@ -820,6 +820,23 @@ describe("Hermes Shields down unsafe config path (#8804)", () => {
     });
   });
 
+  it("rejects a Hermes sensitive-file symlink before Shields down weakens posture (#8804)", () => {
+    const stateDir = harness.seedLockedState("hermes-shields");
+    harness.setScenario("preflight-sensitive-file-symlink");
+
+    expect(() =>
+      harness.shields.shieldsDown("hermes-shields", { reason: "unsafe-path", throwOnError: true }),
+    ).toThrow(/refusing symlink path: .*\.env/);
+
+    expect(harness.runSpy).not.toHaveBeenCalled();
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+    expectHermesShieldsUpRecord(stateDir, "hermes-shields", harness.shields);
+    expect(harness.shields.getShieldsPosture("hermes-shields", false)).toMatchObject({
+      locked: true,
+      mutable: false,
+    });
+  });
+
   it("clears provisional DOWN when unlock fails on an unsafe Hermes config symlink (#8804)", () => {
     const stateDir = harness.seedLockedState("hermes-shields");
     harness.setScenario("unlock-symlink");
