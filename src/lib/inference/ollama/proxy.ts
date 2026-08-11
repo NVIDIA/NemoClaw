@@ -3,6 +3,13 @@
 //
 // Ollama auth-proxy lifecycle: token persistence, PID management,
 // proxy start/stop, model pull and validation.
+//
+// @ts-nocheck is pre-existing. Removing it surfaces ~14 implicit-any
+// parameter errors scattered through the 992-line file (sleep, model, err,
+// code, bytes, pct, line, tag, ...). Typing each callback is a separate
+// refactor tracked as a follow-up on #6014. This PR only touches the
+// status-file IPC seam and the spawn env; it does not extend the
+// @ts-nocheck-suppressed area with new implicit-any surface.
 
 import type { GpuInfo } from "../local";
 import type { PulledModelDiscoveryDeps } from "./model-discovery";
@@ -55,12 +62,20 @@ const {
   spawnDetachedNodeAdapter,
   writeLocalAdapterSecretFile,
 } = require("../local-adapter-lifecycle");
+const {
+  clearStaleProxyStatus,
+  defaultProxyStatusPath,
+  printProxyStartupReason,
+  PROXY_STATUS_ENV,
+  readProxyExitStatus,
+} = require("./proxy-status");
 
 // ── State ────────────────────────────────────────────────────────
 
 const PROXY_STATE_DIR = DEFAULT_LOCAL_ADAPTER_STATE_DIR;
 const PROXY_TOKEN_PATH = path.join(PROXY_STATE_DIR, "ollama-proxy-token");
 const PROXY_PID_PATH = path.join(PROXY_STATE_DIR, "ollama-auth-proxy.pid");
+const PROXY_STATUS_PATH = defaultProxyStatusPath(PROXY_STATE_DIR);
 
 let ollamaProxyToken: string | null = null;
 
@@ -150,6 +165,9 @@ function isOllamaProxyProcess(pid: number | null | undefined): boolean {
 }
 
 function spawnOllamaAuthProxy(token: string, backendUrl?: string): number | null {
+  // Clear any stale status file so a read after this spawn observes the new
+  // proxy's exit reason (or finds no file when the proxy starts cleanly).
+  clearStaleProxyStatus(PROXY_STATUS_PATH);
   const url = backendUrl || readLocalAdapterTextFile(path.join(PROXY_STATE_DIR, "ollama-backend"));
   const child = spawnDetachedNodeAdapter({
     scriptPath: path.join(SCRIPTS, "ollama-auth-proxy.mts"),
@@ -157,6 +175,7 @@ function spawnOllamaAuthProxy(token: string, backendUrl?: string): number | null
       OLLAMA_PROXY_TOKEN: token,
       OLLAMA_PROXY_PORT: String(OLLAMA_PROXY_PORT),
       OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
+      [PROXY_STATUS_ENV]: PROXY_STATUS_PATH,
       ...(url ? { OLLAMA_BACKEND_URL: url } : {}),
     },
     buildEnv: buildSubprocessEnv,
@@ -307,15 +326,23 @@ function startOllamaAuthProxyWithToken(proxyToken: string, backendUrl?: string):
       sleep(1); // alive but not yet bound — give a slow host more time
       continue;
     }
-    // The spawned proxy is gone. If it lost an EADDRINUSE race the blocker may
-    // be an IPv6 dual-stack listener, so use the broad scope to name the owner.
-    const owners = inspectForeignProxyPortOwners("any");
-    if (owners.pids.length > 0) {
-      printProxyPortConflict(owners);
+    // The spawned proxy is gone. Three failure modes, in priority order:
+    //   1. #6014 backend-bind probe failed (or any structured reason the
+    //      proxy wrote to PROXY_STATUS_PATH before exit)
+    //   2. Port conflict (EADDRINUSE race lost after pre-check)
+    //   3. Generic "exited during startup" without a structured reason
+    const status = readProxyExitStatus(PROXY_STATUS_PATH);
+    if (printProxyStartupReason(status, OLLAMA_PORT)) {
+      // Already rendered above.
     } else {
-      console.error(`  Error: Ollama auth proxy exited during startup on :${OLLAMA_PROXY_PORT}.`);
-      console.error("  Containers will not be able to reach Ollama without the proxy.");
-      console.error(`  Check the proxy port owner: lsof -ti :${OLLAMA_PROXY_PORT}`);
+      const owners = inspectForeignProxyPortOwners("any");
+      if (owners.pids.length > 0) {
+        printProxyPortConflict(owners);
+      } else {
+        console.error(`  Error: Ollama auth proxy exited during startup on :${OLLAMA_PROXY_PORT}.`);
+        console.error("  Containers will not be able to reach Ollama without the proxy.");
+        console.error(`  Check the proxy port owner: lsof -ti :${OLLAMA_PROXY_PORT}`);
+      }
     }
     return false;
   }

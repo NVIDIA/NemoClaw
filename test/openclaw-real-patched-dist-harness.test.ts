@@ -25,6 +25,12 @@ const PATCH_OPENCLAW_SHARED_STATE_PERMISSIONS = path.join(
   "scripts",
   "patch-openclaw-shared-state-permissions.mts",
 );
+const PATCH_OPENCLAW_GATEWAY_DAEMON_DIALBACK = path.join(
+  REPO_ROOT,
+  "scripts",
+  "openclaw",
+  "patch-gateway-daemon-dialback.mts",
+);
 const PATCH_OPENCLAW_MCP_RELIABILITY = path.join(
   REPO_ROOT,
   "scripts",
@@ -552,6 +558,56 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           "#4434 patch state audit",
         );
 
+        const gatewayDialbackPatch = spawnSync(
+          nodeRuntime.executable,
+          ["--experimental-strip-types", PATCH_OPENCLAW_GATEWAY_DAEMON_DIALBACK, dist],
+          { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+        );
+        requireSpawnSuccess(gatewayDialbackPatch, "apply gateway daemon self-dialback patch");
+        requireRuntimeIncludes(
+          gatewayDialbackPatch.stdout,
+          "patched OpenClaw gateway daemon self-dialback (3 files)",
+          "gateway daemon self-dialback patch output",
+        );
+
+        const gatewayDialbackAudit = spawnSync(
+          nodeRuntime.executable,
+          ["--experimental-strip-types", PATCH_OPENCLAW_GATEWAY_DAEMON_DIALBACK, "--audit", dist],
+          { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+        );
+        requireSpawnSuccess(gatewayDialbackAudit, "audit gateway daemon self-dialback patch");
+        requireRuntimeIncludes(
+          gatewayDialbackAudit.stdout,
+          "audited OpenClaw gateway daemon self-dialback (3 files)",
+          "gateway daemon self-dialback audit output",
+        );
+        const gatewayDialbackTargets = fs
+          .readdirSync(dist)
+          .filter((file) => file.endsWith(".js"))
+          .map((file) => path.join(dist, file))
+          .filter((file) =>
+            fs.readFileSync(file, "utf-8").includes("nemoclaw: keep gateway-daemon"),
+          );
+        requireRuntimeEqual(
+          String(gatewayDialbackTargets.length),
+          "2",
+          "gateway daemon self-dialback transport target count",
+        );
+        const gatewayToolTarget = fs
+          .readdirSync(dist)
+          .filter((file) => file.endsWith(".js"))
+          .map((file) => path.join(dist, file))
+          .filter((file) =>
+            fs
+              .readFileSync(file, "utf-8")
+              .includes("nemoclaw: classify gateway-daemon tool RPC as local"),
+          );
+        requireRuntimeEqual(
+          String(gatewayToolTarget.length),
+          "1",
+          "gateway daemon self-dialback tool target count",
+        );
+
         const sharedStatePatch = spawnSync(
           nodeRuntime.executable,
           ["--experimental-strip-types", PATCH_OPENCLAW_SHARED_STATE_PERMISSIONS, dist],
@@ -687,6 +743,8 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           "generated models file mode patch target count",
         );
         for (const target of [
+          ...gatewayDialbackTargets,
+          ...gatewayToolTarget,
           ...sharedStateTargets,
           ...agentStateTargets,
           ...privateStoreTargets,

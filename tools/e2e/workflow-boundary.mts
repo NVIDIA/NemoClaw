@@ -52,6 +52,7 @@ import {
   validateTrustedHermesSwapWorkflow,
 } from "./trusted-hermes-swap-workflow-boundary.mts";
 import {
+  E2E_ACTION_PROVENANCE,
   UPLOAD_E2E_ARTIFACTS_ACTION,
   validateUploadE2eArtifactsWorkflowBoundary,
 } from "./upload-e2e-artifacts-workflow-boundary.mts";
@@ -189,25 +190,10 @@ const NO_IMAGE_E2E_JOBS = new Set(["staging-brev-launchable", SHARED_E2E_JOB_ID]
 const DOCKER_HUB_AUTH_STEP = "Authenticate to Docker Hub";
 const DOCKER_HUB_CLEANUP_STEP = "Clean up Docker auth";
 const DOCKER_HUB_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
-const DOCKER_HUB_AUTH_PROVENANCE = {
-  reference:
-    "NVIDIA/NemoClaw/.github/actions/docker-auth-setup@78091da47e290f49b8fe3f3e70b72362a0853928",
-  actionSha256: "cf93dcbd19589a56d1d58225fd6b3f8ad2180705662ff79a3407f340b5dba4c0",
-  scriptSha256: "853a3f742f057c29ed465b63bed1ec8d8f306a1c046877a8556cadf290ef0cb6",
-} as const;
-const DOCKER_HUB_CLEANUP_PROVENANCE = {
-  reference:
-    "NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3",
-  actionSha256: "8b7bf4bdb793ddd27aa9bab2e38157e91f0401148f6ba684acb516fc75e8d367",
-  scriptSha256: "4e5ce850c28f309b97695d61e11bcf1f154eae2b1d58c9697a3f49631c76abb4",
-} as const;
+const DOCKER_HUB_AUTH_PROVENANCE = E2E_ACTION_PROVENANCE.dockerAuth;
+const DOCKER_HUB_CLEANUP_PROVENANCE = E2E_ACTION_PROVENANCE.dockerCleanup;
 const DOCKER_HUB_AUTH_USES = DOCKER_HUB_AUTH_PROVENANCE.reference;
-const HOST_DEPENDENCY_ACTION_PROVENANCE = {
-  reference:
-    "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75",
-  actionSha256: "1ac05a0e0a0159fa0850eb82fccb0704d0e49b15bc6f2d6e3b6bb04c7ab94923",
-  scriptSha256: "2e910ed80b5dcf9aaf94230371fe586376c46f6df8fcbd76229063cbda1852c8",
-} as const;
+const HOST_DEPENDENCY_ACTION_PROVENANCE = E2E_ACTION_PROVENANCE.hostDependencies;
 const HOST_DEPENDENCY_ACTION_USES = HOST_DEPENDENCY_ACTION_PROVENANCE.reference;
 const DOCKER_HUB_CLEANUP_KEYS = ["if", "name", "run", "shell"];
 // The general E2E workflow runs on push/manual dispatch. Its event set is
@@ -1180,6 +1166,42 @@ function validateInferenceRoutingJob(errors: string[], jobs: WorkflowRecord): vo
   const run = requireJobStep(errors, jobName, steps, "Run inference routing live test");
   requireRunContains(errors, run, "test/e2e/live/inference-routing.test.ts");
   requireRunDoesNotContain(errors, run, "inference-routing-provider-smoke.test.ts");
+}
+
+function validateLlamaCppGenericGpuJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "llama-cpp-generic-gpu";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push(`workflow missing ${jobName} job`);
+    return;
+  }
+  if (job["runs-on"] !== "linux-amd64-gpu-rtxpro6000-latest-1") {
+    errors.push(`${jobName} job must use the reviewed NVIDIA GPU runner`);
+  }
+  const jobEnv = asRecord(job.env);
+  const expectedEnv = {
+    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
+    NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: "${{ inputs.checkout_sha || github.sha }}",
+    NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
+    NEMOCLAW_PROVIDER: "install-llama-cpp",
+    NEMOCLAW_SANDBOX_NAME: "e2e-llamacpp-gpu",
+  };
+  for (const [name, expected] of Object.entries(expectedEnv)) {
+    if (jobEnv[name] !== expected) errors.push(`${jobName} job must set ${name} to ${expected}`);
+  }
+  if (Object.hasOwn(jobEnv, "NEMOCLAW_MODEL")) {
+    errors.push(`${jobName} job must leave NEMOCLAW_MODEL unset so YAML remains authoritative`);
+  }
+  if (asRecord(asRecord(jobs["gpu-e2e"]).env).E2E_LLAMA_CPP_DEDICATED_LANE !== "1") {
+    errors.push("gpu-e2e must disable the pre-merge llama.cpp compatibility bridge");
+  }
+  const run = requireJobStep(
+    errors,
+    jobName,
+    asSteps(job.steps),
+    "Run generic NVIDIA GPU llama.cpp live test",
+  );
+  requireRunContains(errors, run, "test/e2e/live/llama-cpp-generic-gpu.test.ts");
 }
 
 function jobPassesNvidiaInferenceSecret(job: WorkflowRecord): boolean {
@@ -2762,7 +2784,6 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("hermes-e2e checkout step must set persist-credentials=false");
   }
-
   const runVitest = requireJobStep(errors, jobName, steps, "Run Hermes live Vitest test");
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== GUARDED_HERMES_E2E_INFERENCE_KEY) {
@@ -4271,6 +4292,8 @@ function validateTrustedE2eDispatchReceipt(
   const expectedDispatchReceiptEnv = {
     ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
     ALLOW_JETSON_RUNNER_QUEUE: "${{ inputs.allow_jetson_runner_queue && 'true' || 'false' }}",
+    BASE_SHA: "${{ inputs.checkout_sha != '' && inputs.base_sha || github.sha }}",
+    CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository || github.repository }}",
     CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
     DISPATCH_JOBS: "${{ inputs.jobs }}",
     DISPATCH_RECEIPT_DIR: "${{ runner.temp }}/nemoclaw-e2e-dispatch",
@@ -4278,17 +4301,28 @@ function validateTrustedE2eDispatchReceipt(
     EVENT_NAME: "${{ github.event_name }}",
     INCLUDE_STAGING_BREV_LAUNCHABLE:
       "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
+    PR_NUMBER: "${{ inputs.checkout_sha != '' && inputs.pr_number || '' }}",
+    REPOSITORY: "${{ github.repository }}",
     RUN_ATTEMPT: "${{ github.run_attempt }}",
     RUN_ID: "${{ github.run_id }}",
+    WORKFLOW_SHA: "${{ github.workflow_sha }}",
   };
   if (!isDeepStrictEqual(dispatchReceiptEnv, expectedDispatchReceiptEnv)) {
     errors.push(
-      "trusted E2E dispatch receipt must bind only the candidate, run, attempt, and dispatch inputs",
+      "trusted E2E dispatch receipt must bind only the authenticated repository, PR, candidate, workflow, run, and dispatch identities",
     );
   }
+  if (dispatchReceipt?.shell !== "bash") {
+    errors.push("trusted E2E dispatch receipt must use bash");
+  }
   for (const fragment of [
-    'kind: "nemoclaw-e2e-dispatch-v1"',
+    'kind: "nemoclaw-e2e-dispatch-v2"',
+    "repository: $repository",
+    'prNumber: (if $prNumber == "" then null else ($prNumber | tonumber) end)',
+    "candidateRepository: $candidateRepository",
     "candidateSha: $candidateSha",
+    "baseSha: $baseSha",
+    "workflowSha: $workflowSha",
     "eventName: $eventName",
     "workflowRunId: $workflowRunId",
     "workflowRunAttempt: $workflowRunAttempt",
@@ -4301,6 +4335,52 @@ function validateTrustedE2eDispatchReceipt(
     '>"$DISPATCH_RECEIPT_DIR/dispatch.json"',
   ]) {
     requireRunContains(errors, dispatchReceipt, fragment);
+  }
+
+  const dispatchUpload = requireStep(errors, generateSteps, "Upload trusted E2E dispatch receipt");
+  if (dispatchUpload?.if !== "${{ github.event_name == 'workflow_dispatch' }}") {
+    errors.push("trusted E2E dispatch receipt upload must run for workflow dispatches only");
+  }
+  if (dispatchUpload?.uses !== UPLOAD_E2E_ARTIFACTS_ACTION) {
+    errors.push("trusted E2E dispatch receipt upload must use the reviewed pinned action");
+  }
+  if (
+    !isDeepStrictEqual(asRecord(dispatchUpload?.with), {
+      name: "e2e-dispatch-${{ github.run_id }}-${{ github.run_attempt }}",
+      path: "${{ runner.temp }}/nemoclaw-e2e-dispatch/dispatch.json",
+    })
+  ) {
+    errors.push("trusted E2E dispatch receipt upload must preserve its immutable run identity");
+  }
+
+  const authentication = namedStep(generateSteps, "Authenticate manual PR dispatch");
+  const candidateCheckout = generateSteps.find((step) =>
+    stringValue(step.uses).startsWith("actions/checkout@"),
+  );
+  const authenticationIndex = authentication ? generateSteps.indexOf(authentication) : -1;
+  const receiptIndex = dispatchReceipt ? generateSteps.indexOf(dispatchReceipt) : -1;
+  const uploadIndex = dispatchUpload ? generateSteps.indexOf(dispatchUpload) : -1;
+  const checkoutIndex = candidateCheckout ? generateSteps.indexOf(candidateCheckout) : -1;
+  const trustedPrefix = [
+    "Build trusted controller target matrix",
+    "Build trusted larger-runner routing",
+    "Authenticate manual PR dispatch",
+    "Record trusted E2E dispatch receipt",
+    "Upload trusted E2E dispatch receipt",
+  ];
+  if (
+    !isDeepStrictEqual(
+      generateSteps.slice(0, trustedPrefix.length).map((step) => step.name),
+      trustedPrefix,
+    ) ||
+    authenticationIndex < 0 ||
+    receiptIndex !== authenticationIndex + 1 ||
+    uploadIndex !== receiptIndex + 1 ||
+    checkoutIndex <= uploadIndex
+  ) {
+    errors.push(
+      "trusted E2E dispatch receipt must be created and uploaded immediately after authentication and before candidate execution",
+    );
   }
 }
 
@@ -4428,14 +4508,31 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     .join(",");
   const deepAgentsMapping = `{"id":"${deepAgentsTarget}","runner":"ubuntu-latest","label":"${deepAgentsTarget}"}`;
   const postRebootMapping = `{"id":"${postRebootTarget}","runner":"ubuntu-latest","label":"${postRebootTarget}"}`;
+  const defaultTestMappings = [
+    {
+      file: "test/onboard-managed-image-buildless-e2e.test.ts",
+      id: "onboard-managed-image-buildless-e2e",
+      project: "integration",
+    },
+    {
+      file: "test/vllm-docker-storage.test.ts",
+      id: "vllm-docker-storage",
+      project: "integration",
+    },
+  ]
+    .map(({ file, id, project }) => `{"id":"${id}","file":"${file}","project":"${project}"}`)
+    .join(",");
   requireRunContains(errors, controllerMatrix, `matrix='[${defaultMappings}]'`);
+  requireRunContains(errors, controllerMatrix, `test_matrix='[${defaultTestMappings}]'`);
   const trustedControllerMatrixScript = [
     "set -euo pipefail",
+    "test_matrix='[]'",
     'case "${JOBS}:${TARGETS}" in',
     ":)",
     `matrix='[${defaultMappings}]'`,
+    `test_matrix='[${defaultTestMappings}]'`,
     ";;",
-    "managed-image-protected-runtime:)",
+    "inference-routing: | managed-image-protected-runtime:)",
     "matrix='[]'",
     ";;",
     `:${deepAgentsTarget})`,
@@ -4453,6 +4550,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     ";;",
     "esac",
     `printf 'matrix=%s\\n' "\${matrix}" >> "\${GITHUB_OUTPUT}"`,
+    `printf 'test_matrix=%s\\n' "\${test_matrix}" >> "\${GITHUB_OUTPUT}"`,
   ];
   const controllerMatrixLines = controllerMatrixScript
     .split("\n")
@@ -4495,6 +4593,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (generateEnv.CONTROLLER_MATRIX !== "${{ steps.controller_matrix.outputs.matrix }}") {
     errors.push("matrix generation step must receive the trusted controller matrix");
   }
+  if (generateEnv.CONTROLLER_TEST_MATRIX !== "${{ steps.controller_matrix.outputs.test_matrix }}") {
+    errors.push("matrix generation step must receive the trusted controller test matrix");
+  }
   if (generateEnv.JOBS !== "${{ inputs.jobs }}") {
     errors.push("matrix generation step must pass jobs through JOBS env");
   }
@@ -4508,6 +4609,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   requireRunContains(errors, generate, "GITHUB_OUTPUT");
   requireRunContains(errors, generate, "expected_controller_matrix=");
   requireRunContains(errors, generate, "actual_controller_matrix=");
+  requireRunContains(errors, generate, "expected_controller_test_matrix=");
+  requireRunContains(errors, generate, "actual_controller_test_matrix=");
   requireRunContains(errors, generate, ': > "${GITHUB_OUTPUT}"');
   requireRunContains(
     errors,
@@ -4856,9 +4959,11 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateStagingBrevLaunchableJob(errors, jobs);
   validateSkillAgentJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "sessions-agents-cli", "sessions-agents-cli");
+  validateFreeStandingJobSelector(errors, jobs, "whatsapp-qr-compact", "whatsapp-qr-compact");
   validateFreeStandingJobSelector(errors, jobs, "inference-routing", "inference-routing");
   validateInferenceRoutingJob(errors, jobs);
   validateCloudInferenceJob(errors, jobs);
+  validateLlamaCppGenericGpuJob(errors, jobs);
   validateDoubleOnboardJob(errors, jobs);
   validateHermesE2EJob(errors, jobs);
   validateHermesTimeoutHeadroom(errors, jobs);

@@ -2,14 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * OpenShell v0.0.85 provider mutations have no compare-and-swap operation, so
- * another client can race between NemoClaw's preinspection and mutation. A
- * nonzero mutation result is therefore ambiguous and always fails closed;
- * NemoClaw never infers success from a later resource-version increase.
+ * OpenShell v0.0.99 serializes provider writes with a server-side resource-version
+ * compare-and-swap, but `provider update` exposes no caller-supplied expected
+ * version. Another client can therefore race between NemoClaw's preinspection
+ * and mutation, and the server can merge against state NemoClaw did not approve.
+ * A nonzero mutation result is ambiguous and always fails closed; NemoClaw never
+ * infers success from a later resource-version increase.
  * Randomized provider names, the MCP lifecycle lock, and mandatory
  * postinspection of immutable identity, credential shape, and resource version
  * constrain this TOCTOU boundary. Remove the compensation when OpenShell
- * exposes provider CAS or immutable provider IDs as mutation targets.
+ * exposes caller-supplied provider CAS or immutable provider IDs as mutation
+ * targets.
  */
 
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
@@ -121,13 +124,16 @@ export function upsertMcpProvider(
   options.prepareMutation?.(action);
   // invalidState: another OpenShell client replaces a mutable provider name
   // between inspection and mutation. sourceBoundary: OpenShell owns provider
-  // compare-and-swap; v0.0.85 exposes no provider CAS flags. whyNotSourceFix:
-  // NemoClaw cannot atomically mutate the upstream store, so it uses randomized
-  // names, a lifecycle mutex, and immutable-ID/resource-version reinspection.
+  // compare-and-swap; v0.0.99 uses the version read inside the server but its
+  // update CLI exposes no caller-supplied expected version. whyNotSourceFix:
+  // NemoClaw cannot bind its preinspection to the upstream atomic mutation, so
+  // it uses randomized names, a lifecycle mutex, and immutable-ID/resource-version
+  // reinspection.
   // regressionTest: mcp-provider-ownership.test.ts simulates a concurrent
   // resource-version writer and requires the ambiguous update to fail closed.
-  // removalCondition: use native immutable provider IDs/CAS once OpenShell
-  // exposes them, then remove this inspect-mutate-inspect compensation.
+  // removalCondition: use native immutable provider IDs or caller-supplied CAS
+  // once OpenShell exposes them, then remove this inspect-mutate-inspect
+  // compensation.
   const beforeMutation = inspectMcpProvider(providerName);
   if (action === "create" && beforeMutation.exists !== false) {
     const detail =

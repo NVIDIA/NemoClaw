@@ -13,7 +13,10 @@ import {
   PODMAN_SANDBOX_CONTAINER_PREFIX,
   PODMAN_SANDBOX_ID_LABEL,
   PODMAN_SANDBOX_NAME_LABEL,
+  PODMAN_SANDBOX_NAMESPACE,
   PODMAN_SANDBOX_NAMESPACE_LABEL,
+  PODMAN_SANDBOX_WORKSPACE,
+  PODMAN_SANDBOX_WORKSPACE_LABEL,
 } from "./podman-lifecycle";
 import {
   createRuntimeProviderBundleRegistry,
@@ -23,6 +26,12 @@ import {
 const AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 const CONTAINER_ID = "a".repeat(64);
 const AUTHORITY_ID = "test:podman-socket";
+const SUCCESSFUL_RECOVERY = {
+  checked: true,
+  wasRunning: true,
+  recovered: false,
+  forwardRecovered: false,
+} as const;
 
 function hostDoctorEngine(authorityId = AUTHORITY_ID): ContainerEngine {
   return {
@@ -66,6 +75,8 @@ function hostDoctorEngine(authorityId = AUTHORITY_ID): ContainerEngine {
 
 function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): ContainerEngine {
   let running = false;
+  const sandboxId = `id-${sandboxName}`;
+  const containerName = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}-${sandboxId}`;
   return {
     operation: "sandbox-lifecycle",
     engineId: "podman",
@@ -77,7 +88,7 @@ function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): Conta
         case "ps":
           return {
             status: 0,
-            stdout: `${CONTAINER_ID}\t${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}\n`,
+            stdout: `${CONTAINER_ID}\n`,
             stderr: "",
           };
         case "container":
@@ -86,13 +97,14 @@ function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): Conta
             stdout: JSON.stringify([
               {
                 Id: CONTAINER_ID,
-                Name: `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}`,
+                Name: containerName,
                 Config: {
                   Labels: {
                     [PODMAN_MANAGED_LABEL]: "true",
-                    [PODMAN_SANDBOX_ID_LABEL]: `id-${sandboxName}`,
+                    [PODMAN_SANDBOX_ID_LABEL]: sandboxId,
                     [PODMAN_SANDBOX_NAME_LABEL]: sandboxName,
-                    [PODMAN_SANDBOX_NAMESPACE_LABEL]: "default",
+                    [PODMAN_SANDBOX_NAMESPACE_LABEL]: PODMAN_SANDBOX_NAMESPACE,
+                    [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
                   },
                 },
                 State: {
@@ -140,7 +152,7 @@ describe("dormant Podman runtime provider", () => {
   )("runs basic CPU start and stop for %s through an injected bundle", async (agent) => {
     const runtime = providerHarness(agent);
     const verifyGateway = vi.fn(async () => undefined);
-    const restoreStartupState = vi.fn();
+    const restoreStartupState = vi.fn(() => SUCCESSFUL_RECOVERY);
     const stopSandboxChannels = vi.fn();
 
     await expect(
@@ -182,7 +194,7 @@ describe("dormant Podman runtime provider", () => {
       startSandbox(runtime.sandboxName, {
         getSandbox: () => runtime.entry,
         runtimeProviders: runtime.providers,
-        restoreStartupState: vi.fn(),
+        restoreStartupState: vi.fn(() => SUCCESSFUL_RECOVERY),
         verifyGateway,
         log: vi.fn(),
       }),

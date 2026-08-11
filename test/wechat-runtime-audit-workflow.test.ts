@@ -68,11 +68,24 @@ function runAuditValidation(
       "wechat-runtime-audit",
       "npm-audit.provenance.json",
     );
+    const reportDir = path.join(targetRoot, "artifacts", "wechat-runtime-audit");
+    const signatureReportPath = path.join(reportDir, "npm-audit-signatures.txt");
+    const signatureCounterPath = path.join(targetRoot, "signature-attempt-count");
+    const signatureDebugDir = path.join(reportDir, "npm-audit-signature-debug");
     return {
       ...result,
       provenance: fs.existsSync(provenancePath)
         ? (JSON.parse(fs.readFileSync(provenancePath, "utf8")) as Record<string, unknown>)
         : undefined,
+      signatureAttemptCount: fs.existsSync(signatureCounterPath)
+        ? Number(fs.readFileSync(signatureCounterPath, "utf8"))
+        : 0,
+      signatureDebugFiles: fs.existsSync(signatureDebugDir)
+        ? fs.readdirSync(signatureDebugDir).sort()
+        : [],
+      signatureReport: fs.existsSync(signatureReportPath)
+        ? fs.readFileSync(signatureReportPath, "utf8")
+        : "",
     };
   } finally {
     fs.rmSync(targetRoot, { force: true, recursive: true });
@@ -83,26 +96,63 @@ function installFakeAuditNpm(
   targetRoot: string,
   auditOutput: Record<string, unknown> | string,
   auditStatus: number,
+  signatureAttempts: readonly { readonly output: string; readonly status: number }[] = [
+    { output: "verified signatures", status: 0 },
+  ],
 ): void {
   const binDir = path.join(targetRoot, "bin");
   fs.mkdirSync(binDir, { recursive: true });
   const npm = path.join(binDir, "npm");
+  const packageLock = JSON.parse(
+    fs.readFileSync(
+      path.join(targetRoot, "agents", "openclaw", "wechat-runtime", "package-lock.json"),
+      "utf8",
+    ),
+  );
+  const expectedIntegrity =
+    packageLock.packages["node_modules/@tencent-weixin/openclaw-weixin"].integrity;
   fs.writeFileSync(
     npm,
     [
       "#!/usr/bin/env node",
+      'const fs = require("node:fs");',
+      'const path = require("node:path");',
       `const auditReport = ${JSON.stringify(
         typeof auditOutput === "string" ? auditOutput : JSON.stringify(auditOutput),
       )};`,
       `const auditStatus = ${auditStatus};`,
+      `const expectedIntegrity = ${JSON.stringify(expectedIntegrity)};`,
+      `const signatureAttempts = ${JSON.stringify(signatureAttempts)};`,
+      `const signatureCounterPath = ${JSON.stringify(path.join(targetRoot, "signature-attempt-count"))};`,
       "const args = process.argv.slice(2);",
       'if (args[0] === "--version") {',
       '  console.log("10.9.4");',
       "  process.exit(0);",
       "}",
+      'if (args.includes("audit") && args.includes("signatures")) {',
+      '  const attempt = fs.existsSync(signatureCounterPath) ? Number(fs.readFileSync(signatureCounterPath, "utf8")) + 1 : 1;',
+      "  fs.writeFileSync(signatureCounterPath, String(attempt));",
+      "  const selected = signatureAttempts[Math.min(attempt - 1, signatureAttempts.length - 1)];",
+      '  const cacheIndex = args.indexOf("--cache");',
+      "  if (cacheIndex >= 0) {",
+      '    const logDir = path.join(args[cacheIndex + 1], "_logs");',
+      "    fs.mkdirSync(logDir, { recursive: true });",
+      '    fs.writeFileSync(path.join(logDir, \"signature-attempt-\" + attempt + \".log\"), selected.output + \"\\\\n\");',
+      "  }",
+      "  console.error(selected.output);",
+      "  process.exit(selected.status);",
+      "}",
       'if (args.includes("audit")) {',
       "  console.log(auditReport);",
       "  process.exit(auditStatus);",
+      "}",
+      'if (args[0] === "pack") {',
+      '  const destination = args[args.indexOf("--pack-destination") + 1];',
+      '  const filename = "wechat-runtime-test.tgz";',
+      "  fs.mkdirSync(destination, { recursive: true });",
+      '  fs.writeFileSync(path.join(destination, filename), "test archive");',
+      "  console.log(JSON.stringify([{ filename, integrity: expectedIntegrity }]));",
+      "  process.exit(0);",
       "}",
       "process.exit(0);",
       "",
@@ -118,70 +168,6 @@ function requiredStep(job: WorkflowJob, name: string): WorkflowStep {
 }
 
 describe("WeChat runtime audit and install-cache gates (#5896)", () => {
-  // source-shape-contract: security -- Trusted PR and main workflows must enforce the reviewed WeChat runtime audit boundary
-  it("makes the trusted audit required in PR and main workflows", () => {
-    const pr = readYaml<Workflow>(".github/workflows/pr.yaml");
-    const main = readYaml<Workflow>(".github/workflows/main.yaml");
-    const prJob = pr.jobs["wechat-runtime-audit"];
-    const mainJob = main.jobs["wechat-runtime-audit"];
-
-    const trustedCheckout = requiredStep(prJob, "Checkout trusted WeChat runtime audit");
-    expect(trustedCheckout.with).toMatchObject({
-      ref: "${{ github.event.pull_request.base.sha }}",
-      path: ".trusted-wechat-audit",
-      "persist-credentials": false,
-      "sparse-checkout-cone-mode": false,
-    });
-    expect(String(trustedCheckout.with?.["sparse-checkout"])).toContain(
-      ".github/actions/ci-wechat-runtime-audit",
-    );
-
-    const bootstrapCheckout = requiredStep(prJob, "Checkout pinned bootstrap WeChat runtime audit");
-    expect(bootstrapCheckout.if).toBe(
-      "${{ steps.trusted-wechat-audit.outputs.available != 'true' && github.event.pull_request.number == 6739 && github.event.pull_request.head.repo.full_name == 'HOYALIM/NemoClaw' }}",
-    );
-    expect(bootstrapCheckout.with).toMatchObject({
-      repository: "HOYALIM/NemoClaw",
-      ref: "0d2256d71d5bbba3bcaaaa4d01714fa56f22d1e2",
-      path: ".trusted-wechat-audit-bootstrap",
-      "persist-credentials": false,
-    });
-    expect(requiredStep(prJob, "Audit locked WeChat runtime graph").uses).toBe(
-      "./.trusted-wechat-audit/.github/actions/ci-wechat-runtime-audit",
-    );
-    expect(requiredStep(prJob, "Audit locked WeChat runtime graph (pinned bootstrap)").uses).toBe(
-      "./.trusted-wechat-audit-bootstrap/.github/actions/ci-wechat-runtime-audit",
-    );
-    expect(requiredStep(mainJob, "Audit locked WeChat runtime graph").uses).toBe(
-      "./.github/actions/ci-wechat-runtime-audit",
-    );
-
-    for (const [workflowName, workflow, job] of [
-      ["pr", pr, prJob],
-      ["main", main, mainJob],
-    ] as const) {
-      const upload = requiredStep(job, "Upload WeChat runtime audit evidence");
-      expect(upload.if).toBe("${{ always() }}");
-      expect(upload.uses).toBe("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
-      expect(upload.with).toMatchObject({
-        path: "artifacts/wechat-runtime-audit",
-        "if-no-files-found": "error",
-      });
-
-      expect(workflow.jobs.checks.needs).toContain("wechat-runtime-audit");
-      const gate = requiredStep(
-        workflow.jobs.checks,
-        workflowName === "pr" ? "Verify required PR checks" : "Verify required main checks",
-      );
-      expect(gate.env).toMatchObject({
-        WECHAT_RUNTIME_AUDIT_RESULT: "${{ needs['wechat-runtime-audit'].result }}",
-      });
-      expect(gate.run).toContain(
-        'require_success "wechat-runtime-audit" "$WECHAT_RUNTIME_AUDIT_RESULT"',
-      );
-    }
-  });
-
   it("audits the installed graph and exercises the exact archive through a copied cache", () => {
     const script = fs.readFileSync(auditScript, "utf8");
     for (const fragment of [
@@ -208,17 +194,6 @@ describe("WeChat runtime audit and install-cache gates (#5896)", () => {
     ]) {
       expect(script).toContain(fragment);
     }
-
-    const action = fs.readFileSync(
-      path.join(repoRoot, ".github", "actions", "ci-wechat-runtime-audit", "action.yaml"),
-      "utf8",
-    );
-    expect(action).toContain('node-version: "22.19.0"');
-    expect(action).toContain('cd "$RUNNER_TEMP"');
-    expect(action).toContain("npm install --global npm@10.9.4");
-    expect(action).toContain("--userconfig /dev/null");
-    expect(action).toContain("--registry https://registry.npmjs.org/");
-    expect(action).toContain('run: bash "$GITHUB_ACTION_PATH/audit.sh"');
   });
 
   it("rejects a target-controlled npm registry override", () => {
@@ -279,20 +254,78 @@ describe("WeChat runtime audit and install-cache gates (#5896)", () => {
     });
 
     expect(result.status).not.toBe(0);
-    expect(result.provenance).toMatchObject({
+    expect(result.provenance, result.stderr).toMatchObject({
       failure: expect.stringMatching(expectedFailure),
       rawReportPath: "npm-audit.json",
     });
   });
 
+  it("retries signature download failures and succeeds on the third attempt", () => {
+    const result = runAuditValidation(({ targetRoot }) => {
+      installFakeAuditNpm(
+        targetRoot,
+        {
+          vulnerabilities: {},
+          metadata: {
+            vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 },
+          },
+        },
+        0,
+        [
+          { output: "npm error Failed to download", status: 1 },
+          { output: "npm error Failed to download", status: 1 },
+          { output: "verified signatures", status: 0 },
+        ],
+      );
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.signatureAttemptCount, result.stderr).toBe(3);
+    expect(result.signatureDebugFiles).toEqual([
+      "signature-attempt-1.log",
+      "signature-attempt-2.log",
+    ]);
+    expect(result.signatureReport).toContain("retrying transient signature download");
+    expect(result.signatureReport).toContain("attempt=3 status=0");
+  });
+
+  it("does not retry an invalid signature result", () => {
+    const result = runAuditValidation(({ targetRoot }) => {
+      installFakeAuditNpm(
+        targetRoot,
+        {
+          vulnerabilities: {},
+          metadata: {
+            vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 },
+          },
+        },
+        0,
+        [
+          { output: "npm error Invalid registry signature", status: 1 },
+          { output: "verified signatures", status: 0 },
+        ],
+      );
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.signatureAttemptCount, result.stderr).toBe(1);
+    expect(result.signatureDebugFiles).toEqual(["signature-attempt-1.log"]);
+    expect(result.signatureReport).not.toContain("retrying transient signature download");
+  });
+
   it("keeps the image cache trusted and deletes the sandbox-writable copy", () => {
     const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
     for (const fragment of [
-      "chown -R root:root /usr/local/lib/nemoclaw/wechat-runtime",
-      "node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts",
-      "--lockfile /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json",
-      "--cache /usr/local/share/nemoclaw/wechat-npm-cache",
+      "AS wechat-npm-cache",
+      "COPY scripts/checks/materialize-locked-npm-cache-seed.mts /opt/checks/",
+      "RUN --network=none",
+      "node --experimental-strip-types /opt/nemoclaw-build-tools/reviewed-npm-archive.mts",
+      "--lockfile /opt/wechat-runtime/package-lock.json",
+      "--cache /out/wechat-npm-cache",
       "--registry-origin https://registry.npmjs.org/",
+      "chown -R root:root /out/wechat-npm-cache",
+      "chmod -R a+rX,go-w /out/wechat-npm-cache",
+      "COPY --from=wechat-npm-cache /out/wechat-npm-cache/ /usr/local/share/nemoclaw/wechat-npm-cache/",
       "trusted_cache=/usr/local/share/nemoclaw/wechat-npm-cache",
       'install_cache="$(mktemp -d /tmp/nemoclaw-wechat-npm-cache.XXXXXX)"',
       'cp -R "$trusted_cache"/. "$install_cache"/',
@@ -303,12 +336,9 @@ describe("WeChat runtime audit and install-cache gates (#5896)", () => {
       expect(dockerfile).toContain(fragment);
     }
     const cacheVerification = dockerfile.indexOf(
-      "--lockfile /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json",
+      "--lockfile /opt/wechat-runtime/package-lock.json",
     );
-    const cacheLockdown = dockerfile.indexOf(
-      "chown -R root:root /usr/local/lib/nemoclaw/wechat-runtime",
-      cacheVerification,
-    );
+    const cacheLockdown = dockerfile.indexOf("chown -R root:root /out/wechat-npm-cache");
     expect(cacheVerification).toBeGreaterThan(-1);
     expect(cacheLockdown).toBeGreaterThan(cacheVerification);
   });

@@ -28,6 +28,7 @@ export type ConnectHarness = {
   checkAndRecoverSpy: MockInstance;
   connectSandbox: ConnectSandbox;
   ensureOllamaAuthProxySpy: MockInstance;
+  findReachableOllamaHostSpy: MockInstance;
   ensureLiveSandboxSpy: MockInstance;
   errorSpy: MockInstance;
   logSpy: MockInstance;
@@ -195,7 +196,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const ensureOllamaAuthProxySpy = vi
     .spyOn(ollamaProxy, "ensureOllamaAuthProxy")
     .mockImplementation(() => undefined);
-  vi.spyOn(localInference, "findReachableOllamaHost").mockReturnValue("127.0.0.1");
+  const findReachableOllamaHostSpy = vi
+    .spyOn(localInference, "findReachableOllamaHost")
+    .mockReturnValue("127.0.0.1");
   const probeLocalProviderHealthSpy = vi
     .spyOn(localInference, "probeLocalProviderHealth")
     .mockReturnValue({ ok: true });
@@ -271,6 +274,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     checkAndRecoverSpy,
     connectSandbox: requireDist(connectModulePath).connectSandbox,
     ensureOllamaAuthProxySpy,
+    findReachableOllamaHostSpy,
     ensureLiveSandboxSpy,
     errorSpy,
     logSpy,

@@ -83,6 +83,7 @@ function executeGenerateMatrixWithPlannerOutput(
   options: {
     checkoutSha?: string;
     controllerMatrix?: string;
+    controllerTestMatrix?: string;
     jobs?: string;
     targets?: string;
   } = {},
@@ -117,6 +118,7 @@ function executeGenerateMatrixWithPlannerOutput(
           ...process.env,
           CHECKOUT_SHA: options.checkoutSha ?? "",
           CONTROLLER_MATRIX: options.controllerMatrix ?? "",
+          CONTROLLER_TEST_MATRIX: options.controllerTestMatrix ?? "[]",
           FAKE_E2E_PLAN: JSON.stringify(plan),
           GITHUB_OUTPUT: outputPath,
           GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),

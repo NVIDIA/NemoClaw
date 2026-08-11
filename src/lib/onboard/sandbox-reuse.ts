@@ -10,15 +10,42 @@ import {
 } from "./hermes-dashboard";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
+  isExplicitMissingSandboxGatewayOutput,
+  SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
+} from "./sandbox-recreate-probe";
+import {
   fingerprintSandboxLiveIdentity,
   type SandboxRecreateObservation,
 } from "./sandbox-recreate-transaction";
 
+interface SandboxCaptureResult {
+  status: number | null;
+  output: string;
+  stdout?: string;
+  stderr?: string;
+  error?: Error;
+  signal?: NodeJS.Signals | null;
+}
+
 export interface SandboxReuseDeps {
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string;
+  captureOpenshell(args: string[], opts?: Record<string, unknown>): SandboxCaptureResult;
   getSandboxStateFromOutputs(sandboxName: string, getOutput: string, listOutput: string): string;
   // Read at call time: onboarding rebinds the gateway after preflight resolves it.
   getGatewayName?(): string;
+  now?(): number;
+  sleep?(milliseconds: number): void;
+  waitUntil?(
+    condition: () => boolean,
+    options: {
+      deadlineMs: number;
+      initialIntervalMs: number;
+      maxIntervalMs: number;
+      maxAttempts: number;
+      now: () => number;
+      sleep?: (milliseconds: number) => void;
+    },
+  ): boolean;
 }
 
 export interface SandboxReuseHelpers {
@@ -27,6 +54,28 @@ export interface SandboxReuseHelpers {
     sandboxName: string | null,
     gatewayName?: string,
   ): SandboxRecreateObservation;
+  waitForSandboxRecreateDeleteAbsence(
+    sandboxName: string,
+    gatewayName: string,
+    note: (message: string) => void,
+  ): boolean;
+}
+
+const DELETE_ABSENCE_MAX_ATTEMPTS = 20;
+const DELETE_ABSENCE_INITIAL_INTERVAL_MS = 250;
+const DELETE_ABSENCE_MAX_INTERVAL_MS = 1_000;
+
+function capturedProbeOutput(probe: SandboxCaptureResult): {
+  combined: string;
+  stdout: string;
+} {
+  const stdout = String(probe.stdout ?? (probe.status === 0 ? probe.output : "")).trim();
+  const stderr = String(probe.stderr ?? (probe.status !== 0 ? probe.output : "")).trim();
+  return { combined: `${stdout}\n${stderr}`.trim(), stdout };
+}
+
+function isCleanFailedProbe(probe: SandboxCaptureResult): boolean {
+  return !probe.error && !probe.signal && probe.status !== null && probe.status !== 0;
 }
 
 export interface ReusedSandboxDashboardForwarding {
@@ -127,6 +176,7 @@ export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseH
     const args = gatewayArgs(recordedGatewayName);
     const getOutput = deps.runCaptureOpenshell(["sandbox", "get", ...args, sandboxName], {
       ignoreError: true,
+      includeStderr: true,
     });
     const listOutput = deps.runCaptureOpenshell(["sandbox", "list", ...args], {
       ignoreError: true,
@@ -139,16 +189,40 @@ export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseH
     sandboxName: string | null,
     recordedGatewayName?: string,
   ): SandboxRecreateObservation {
-    const { state, getOutput } = readSandboxState(sandboxName, recordedGatewayName);
+    if (!sandboxName) return { state: "missing", liveIdentityFingerprint: null };
+    const args = gatewayArgs(recordedGatewayName);
+    const probe = deps.captureOpenshell(["sandbox", "get", ...args, sandboxName], {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      timeout: SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
+    });
+    const { combined, stdout } = capturedProbeOutput(probe);
+    if (isCleanFailedProbe(probe) && isExplicitMissingSandboxGatewayOutput(combined, sandboxName)) {
+      return { state: "missing", liveIdentityFingerprint: null };
+    }
+    if (probe.status !== 0 || probe.error || probe.signal || stdout.length === 0) {
+      throw new Error(
+        `Cannot observe sandbox '${sandboxName}' for recreate recovery: OpenShell reported neither a live sandbox nor explicit absence.`,
+      );
+    }
+    const listOutput = deps.runCaptureOpenshell(["sandbox", "list", ...args], {
+      ignoreError: true,
+    });
+    const state = deps.getSandboxStateFromOutputs(sandboxName, stdout, listOutput);
     if (state !== "missing" && state !== "not_ready" && state !== "ready") {
       throw new Error(
         `Cannot observe sandbox '${sandboxName}' for recreate recovery: OpenShell returned state '${state}'.`,
       );
     }
+    if (state === "missing") {
+      throw new Error(
+        `Cannot observe sandbox '${sandboxName}' for recreate recovery: OpenShell reported neither a live sandbox nor explicit absence.`,
+      );
+    }
     return {
       state,
-      liveIdentityFingerprint:
-        state === "missing" ? null : fingerprintSandboxLiveIdentity(getOutput),
+      liveIdentityFingerprint: fingerprintSandboxLiveIdentity(stdout),
     };
   }
 
@@ -156,5 +230,56 @@ export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseH
     return readSandboxState(sandboxName).state;
   }
 
-  return { getSandboxReuseState, getSandboxRecreateObservation };
+  function waitForSandboxRecreateDeleteAbsence(
+    sandboxName: string,
+    gatewayName: string,
+    note: (message: string) => void,
+  ): boolean {
+    const now = deps.now ?? Date.now;
+    const deadlineMs = now() + SANDBOX_RECREATE_PROBE_TIMEOUT_MS;
+    if (!deps.waitUntil) {
+      throw new Error("Sandbox delete convergence requires the bounded wait dependency.");
+    }
+    let attempt = 0;
+
+    return deps.waitUntil(
+      () => {
+        attempt += 1;
+        const remainingMs = Math.max(1, Math.ceil(deadlineMs - now()));
+        let probe: SandboxCaptureResult | null = null;
+        try {
+          probe = deps.captureOpenshell(["sandbox", "get", "-g", gatewayName, sandboxName], {
+            ignoreError: true,
+            includeStderr: true,
+            includeStreams: true,
+            timeout: remainingMs,
+          });
+        } catch {
+          // Transport failures stay unknown and are retried within the bound.
+        }
+        const { combined } = probe ? capturedProbeOutput(probe) : { combined: "" };
+        const absent =
+          probe !== null &&
+          isCleanFailedProbe(probe) &&
+          isExplicitMissingSandboxGatewayOutput(combined, sandboxName);
+        const state = absent ? "absent" : combined.length > 0 ? "present-or-error" : "unknown";
+        note(`  Delete convergence probe ${String(attempt)}: state=${state}`);
+        return absent;
+      },
+      {
+        deadlineMs,
+        initialIntervalMs: DELETE_ABSENCE_INITIAL_INTERVAL_MS,
+        maxIntervalMs: DELETE_ABSENCE_MAX_INTERVAL_MS,
+        maxAttempts: DELETE_ABSENCE_MAX_ATTEMPTS,
+        now,
+        ...(deps.sleep ? { sleep: deps.sleep } : {}),
+      },
+    );
+  }
+
+  return {
+    getSandboxReuseState,
+    getSandboxRecreateObservation,
+    waitForSandboxRecreateDeleteAbsence,
+  };
 }

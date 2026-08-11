@@ -1865,40 +1865,6 @@ function currentCheckRollup(
     return { runId: segments[4], jobId: segments[6] };
   };
 
-  const isAuthenticatedAdvisoryPrReviewCheck = (check: StatusCheck): boolean => {
-    const checkName = check.name ?? "";
-    if (
-      check.__typename !== "CheckRun" ||
-      check.workflowName !== PR_REVIEW_ADVISOR_WORKFLOW_NAME ||
-      !ADVISORY_PR_REVIEW_ADVISOR_JOB_NAMES.has(checkName)
-    ) {
-      return false;
-    }
-    const identity = actionRunJobIdentity(check);
-    if (!identity) return false;
-    const run = actionRunMetadata(identity.runId);
-    const job = latestAttemptJobs(identity.runId)?.get(identity.jobId);
-    const checkStatus = check.status?.toUpperCase() ?? null;
-    const checkConclusion = check.conclusion?.toUpperCase() ?? null;
-    return Boolean(
-      run &&
-        job &&
-        run.event === "pull_request_target" &&
-        run.path === PR_REVIEW_ADVISOR_WORKFLOW_PATH &&
-        run.hasPullRequests === true &&
-        run.exactDiff === true &&
-        job.name === checkName &&
-        job.status === checkStatus &&
-        job.conclusion === checkConclusion,
-    );
-  };
-
-  const isTrustedCustomE2eCheck = (check: StatusCheck): boolean =>
-    e2eCoordinationEvidence.trustedCustomCheckId !== undefined &&
-    check.name === "E2E / PR Gate" &&
-    check.detailsUrl?.match(/\/runs\/(\d+)(?:[/?#]|$)/u)?.[1] ===
-      String(e2eCoordinationEvidence.trustedCustomCheckId);
-
   const associationLessHeadBinding = (
     metadata: ActionRunMetadata,
   ): "current" | "other" | "unknown" => {
@@ -1921,6 +1887,47 @@ function currentCheckRollup(
       ? "current"
       : "unknown";
   };
+
+  const isAuthenticatedAdvisoryPrReviewCheck = (check: StatusCheck): boolean => {
+    const checkName = check.name ?? "";
+    if (
+      check.__typename !== "CheckRun" ||
+      check.workflowName !== PR_REVIEW_ADVISOR_WORKFLOW_NAME ||
+      !ADVISORY_PR_REVIEW_ADVISOR_JOB_NAMES.has(checkName)
+    ) {
+      return false;
+    }
+    const identity = actionRunJobIdentity(check);
+    if (!identity) return false;
+    const run = actionRunMetadata(identity.runId);
+    const job = latestAttemptJobs(identity.runId)?.get(identity.jobId);
+    const checkStatus = check.status?.toUpperCase() ?? null;
+    const checkConclusion = check.conclusion?.toUpperCase() ?? null;
+    const currentPrBinding =
+      run?.hasPullRequests === true && run.exactDiff === true
+        ? true
+        : exactDiff.headRepository !== repo &&
+          run !== null &&
+          run.status === "COMPLETED" &&
+          run.conclusion !== null &&
+          associationLessHeadBinding(run) === "current";
+    return Boolean(
+      run &&
+        job &&
+        run.event === "pull_request_target" &&
+        run.path === PR_REVIEW_ADVISOR_WORKFLOW_PATH &&
+        currentPrBinding &&
+        job.name === checkName &&
+        job.status === checkStatus &&
+        job.conclusion === checkConclusion,
+    );
+  };
+
+  const isTrustedCustomE2eCheck = (check: StatusCheck): boolean =>
+    e2eCoordinationEvidence.trustedCustomCheckId !== undefined &&
+    check.name === "E2E / PR Gate" &&
+    check.detailsUrl?.match(/\/runs\/(\d+)(?:[/?#]|$)/u)?.[1] ===
+      String(e2eCoordinationEvidence.trustedCustomCheckId);
 
   function runIdentityEvidence(
     runId: string,

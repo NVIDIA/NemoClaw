@@ -41,7 +41,11 @@ import * as onboardSession from "../../state/onboard-session";
 import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
 import { confirmSandboxDestroy } from "./destroy-confirmation";
-import { executeSandboxDestroy, redactDestroyError } from "./destroy-execution";
+import {
+  executeSandboxDestroy,
+  redactDestroyError,
+  retirePortableLifecycleAuthority,
+} from "./destroy-execution";
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
 import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
 import { prepareSandboxDestroy } from "./destroy-preflight";
@@ -611,6 +615,15 @@ async function destroySandboxUnlocked(
       console.warn(`  ${YW}⚠${R}${message}`),
     );
     process.exit(1);
+  }
+  if (removed) {
+    try {
+      retirePortableLifecycleAuthority(sandboxName);
+    } catch (error) {
+      console.warn(
+        `  ${YW}⚠${R} Failed to retire portable lifecycle authority for '${sandboxName}': ${redactDestroyError(error)}`,
+      );
+    }
   }
   if (deleteSucceededOrAlreadyGone && removed && priorHttpsPinRouteId) {
     await revokeDestroyedSandboxHttpsPinRoute(cleanupGatewayName, priorHttpsPinRouteId);

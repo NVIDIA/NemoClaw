@@ -420,6 +420,7 @@ function readReviewedLockPackages(
   registryOrigin: string,
   omitDev = false,
   allowEmpty = false,
+  allowNestedShrinkwrap = false,
 ): readonly ReviewedNpmArchiveRequest[] {
   const reviewed: ReviewedNpmArchiveRequest[] = [];
   const identities = new Map<string, ReviewedNpmArchiveRequest>();
@@ -432,7 +433,7 @@ function readReviewedLockPackages(
     const record = value as Record<string, unknown>;
     assertNotProductionDev(productionLocations, location, record);
     if (omitDev && record.dev === true) continue;
-    if (Object.prototype.hasOwnProperty.call(record, "hasShrinkwrap")) {
+    if (!allowNestedShrinkwrap && Object.prototype.hasOwnProperty.call(record, "hasShrinkwrap")) {
       throw new Error(
         `reviewed npm lock package must not delegate to nested shrinkwrap: ${location}`,
       );
@@ -485,7 +486,12 @@ function readReviewedLockPackages(
 }
 
 export function verifyReviewedNpmLockPackages(
-  request: Readonly<{ lockfilePath: string; omitDev?: boolean; registryOrigin: string }>,
+  request: Readonly<{
+    allowNestedShrinkwrap?: boolean;
+    lockfilePath: string;
+    omitDev?: boolean;
+    registryOrigin: string;
+  }>,
 ): readonly string[] {
   const registryOrigin = normalizeRegistryOrigin(request.registryOrigin);
   return readReviewedLockPackages(
@@ -494,6 +500,7 @@ export function verifyReviewedNpmLockPackages(
     registryOrigin,
     request.omitDev,
     true,
+    request.allowNestedShrinkwrap,
   ).map(({ packageSpec }) => packageSpec);
 }
 

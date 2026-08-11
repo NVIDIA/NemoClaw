@@ -12,6 +12,7 @@ import {
 } from "../.agents/skills/nemoclaw-maintainer-cut-release-tag/scripts/release-e2e-evidence.mts";
 
 const candidateSha = "a".repeat(40);
+const workflowSha = "b".repeat(40);
 
 function preflight(
   input: { candidatePathExists?: (candidateSha: string, candidatePath: string) => boolean } = {},
@@ -29,12 +30,14 @@ function runEvidence(
     attempt?: number;
     conclusion?: (execution: ReleaseE2eExecution) => string;
     only?: (execution: ReleaseE2eExecution) => boolean;
+    receiptVersion?: 1 | 2;
     sha?: string;
     status?: (execution: ReleaseE2eExecution) => string;
   } = {},
 ): ReleaseE2eRunEvidence {
   const attempt = options.attempt ?? 1;
   const runId = 1001;
+  const receiptVersion = options.receiptVersion ?? 1;
   const executions = plan.executions.filter(
     (execution) => execution.group === group && (options.only?.(execution) ?? true),
   );
@@ -43,12 +46,21 @@ function runEvidence(
     dispatch: {
       allowDgxSparkRunnerQueue: false,
       allowJetsonRunnerQueue: false,
+      ...(receiptVersion === 2
+        ? {
+            baseSha: "c".repeat(40),
+            candidateRepository: "NVIDIA/NemoClaw",
+            prNumber: 8583,
+            repository: "NVIDIA/NemoClaw",
+            workflowSha,
+          }
+        : {}),
       candidateSha,
       emptySelectors: true,
       eventName: "workflow_dispatch",
       includeStagingBrevLaunchable: plan.dispatches.completeRun.includeStagingBrevLaunchable,
       jobs: selectors.join(","),
-      kind: "nemoclaw-e2e-dispatch-v1",
+      kind: `nemoclaw-e2e-dispatch-v${receiptVersion}`,
       targets: "",
       workflowRunAttempt: attempt,
       workflowRunId: String(runId),
@@ -71,10 +83,25 @@ function runEvidence(
       status: "completed",
       conclusion: "success",
       run_attempt: attempt,
-      head_sha: options.sha ?? candidateSha,
+      head_sha: options.sha ?? (receiptVersion === 2 ? workflowSha : candidateSha),
       html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}`,
     },
   };
+}
+
+function directMainV2Evidence(
+  plan: ReleaseE2ePreflight,
+  group: ReleaseE2eExecution["group"],
+): ReleaseE2eRunEvidence {
+  const evidence = runEvidence(plan, group, { receiptVersion: 2 });
+  Object.assign(evidence.dispatch as Record<string, unknown>, {
+    baseSha: candidateSha,
+    candidateRepository: "NVIDIA/NemoClaw",
+    prNumber: null,
+    workflowSha: candidateSha,
+  });
+  (evidence.run as Record<string, unknown>).head_sha = candidateSha;
+  return evidence;
 }
 
 describe("release E2E evidence", () => {
@@ -96,6 +123,61 @@ describe("release E2E evidence", () => {
         "llama-cpp-dgx-spark-qualification",
       ]),
     );
+  });
+
+  it("accepts v2 evidence bound to the candidate and trusted workflow SHAs", () => {
+    const plan = preflight();
+    const ledger = buildReleaseE2eLedger(plan, [
+      runEvidence(plan, "default", { receiptVersion: 2 }),
+    ]);
+
+    expect(ledger.successfulCount).toBe(ledger.requiredCount);
+    expect(ledger.missingCount).toBe(0);
+  });
+
+  it("accepts direct-main v2 evidence with identical repository and SHA identities", () => {
+    const plan = preflight();
+    const ledger = buildReleaseE2eLedger(plan, [directMainV2Evidence(plan, "default")]);
+
+    expect(ledger.successfulCount).toBe(ledger.requiredCount);
+    expect(ledger.missingCount).toBe(0);
+  });
+
+  it.each([
+    ["candidateRepository", "contributor/NemoClaw", "runs[0].dispatch.candidateRepository"],
+    ["baseSha", "c".repeat(40), "runs[0].dispatch.baseSha"],
+    ["workflowSha", workflowSha, "runs[0].dispatch.workflowSha"],
+  ])("rejects direct-main v2 evidence with a mismatched %s identity", (field, value, message) => {
+    const plan = preflight();
+    const evidence = directMainV2Evidence(plan, "default");
+    (evidence.dispatch as Record<string, unknown>)[field] = value;
+
+    expect(() => buildReleaseE2eLedger(plan, [evidence])).toThrow(message);
+  });
+
+  it.each([
+    ["repository", "other/NemoClaw", "runs[0].dispatch.repository"],
+    ["prNumber", 0, "runs[0].dispatch.prNumber"],
+    ["candidateRepository", "not-a-repository", "runs[0].dispatch.candidateRepository"],
+    ["candidateSha", "d".repeat(40), "runs[0].dispatch.candidateSha"],
+    ["baseSha", "short", "runs[0].dispatch.baseSha"],
+    ["workflowSha", "short", "runs[0].dispatch.workflowSha"],
+  ])("rejects v2 evidence with a mismatched %s", (field, value, message) => {
+    const plan = preflight();
+    const evidence = runEvidence(plan, "default", { receiptVersion: 2 });
+    (evidence.dispatch as Record<string, unknown>)[field] = value;
+
+    expect(() => buildReleaseE2eLedger(plan, [evidence])).toThrow(message);
+  });
+
+  it("rejects a v2 run whose head is the candidate instead of the trusted workflow", () => {
+    const plan = preflight();
+
+    expect(() =>
+      buildReleaseE2eLedger(plan, [
+        runEvidence(plan, "default", { receiptVersion: 2, sha: candidateSha }),
+      ]),
+    ).toThrow("runs[0].run.head_sha must equal");
   });
 
   it("rejects a missing activation path for a default E2E", () => {

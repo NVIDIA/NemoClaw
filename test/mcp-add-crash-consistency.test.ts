@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.99");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.101");
 
 type CrashBoundary =
   | "provider"

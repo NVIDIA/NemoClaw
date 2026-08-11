@@ -16,23 +16,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildConfig, main } from "../scripts/generate-openclaw-config.mts";
+import { baseOpenClawGenerationEnv } from "./helpers/openclaw-env-fixture";
 
 /** Minimal env vars required for a valid config generation run. */
-const BASE_ENV: Record<string, string> = {
-  NEMOCLAW_MODEL: "test-model",
-  NEMOCLAW_PROVIDER_KEY: "test-provider",
-  NEMOCLAW_PRIMARY_MODEL_REF: "test-ref",
-  CHAT_UI_URL: "http://127.0.0.1:18789",
-  NEMOCLAW_INFERENCE_BASE_URL: "http://localhost:8080",
-  NEMOCLAW_INFERENCE_API: "openai",
-  NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from("{}").toString("base64"),
-  NEMOCLAW_PROXY_HOST: "10.200.0.1",
-  NEMOCLAW_PROXY_PORT: "3128",
-  NEMOCLAW_CONTEXT_WINDOW: "131072",
-  NEMOCLAW_MAX_TOKENS: "4096",
-  NEMOCLAW_REASONING: "false",
-  NEMOCLAW_AGENT_TIMEOUT: "600",
-};
+const BASE_ENV = baseOpenClawGenerationEnv();
 
 let tmpDir: string;
 

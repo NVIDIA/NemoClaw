@@ -5,7 +5,7 @@
 
 Date: 2026-07-25
 
-Last updated: 2026-08-03
+Last updated: August 8, 2026
 
 ## Scope
 
@@ -107,7 +107,10 @@ The replacement helper:
 10. invokes npm and npx only after the fixed package is active.
 
 All managed base images apply the helper after the complete npm upgrade.
-Their final images reassert the same idempotent contract so the scanned filesystem, not an intermediate stage, owns the dependency boundary.
+Each final image reruns the idempotent helper against `/usr/local/lib/node_modules/npm`.
+The final image stage therefore owns the bundled npm dependency boundary.
+NemoClaw image builds and image workflows do not scan the complete image filesystem for other `node_modules/tar` packages.
+They do not create or retain a node-tar inventory artifact.
 
 ### Perl component versions
 
@@ -193,4 +196,4 @@ Required evidence for the final pull-request head:
 - real reviewed npm archive replacement using the registry artifact;
 - repository formatting and type checks;
 - amd64 and arm64 builds for the OpenClaw, Hermes, and Deep Agents Code base images; and
-- completed-image dependency inventory.
+- final-stage npm remediation ordering checks for OpenClaw, Hermes, and Deep Agents Code.

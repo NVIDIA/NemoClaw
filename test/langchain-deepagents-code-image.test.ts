@@ -201,9 +201,11 @@ describe("LangChain Deep Agents Code image contracts", () => {
       dockerfile.indexOf(runtimeModeReplay),
     );
     expect(dockerfile).toContain(
+      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
+    );
+    expect(dockerfile).not.toContain(
       "COPY src/lib/onboard/managed-bootstrap/ ./src/lib/onboard/managed-bootstrap/",
     );
-    expect(dockerfile).toContain("src/lib/onboard/managed-bootstrap/image-runtime.ts");
     expect(dockerfile).toContain(
       "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap",
     );

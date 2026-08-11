@@ -19,9 +19,10 @@ before those targets run; local runners must provide it themselves.
   attempts, requests at most two failed-job reruns, and uploads attempt evidence.
 - The `staging-brev-launchable` job in `.github/workflows/e2e.yaml` validates
   the baked candidate without installing or copying NemoClaw source.
-- Platform workflows such as macOS, WSL, sandbox image, and regression E2E
-  call their target E2E tests directly. The Ollama auth proxy target is
-  selected through `.github/workflows/e2e.yaml`.
+- `.github/workflows/macos-e2e.yaml`, `.github/workflows/wsl-e2e.yaml`, and
+  `.github/workflows/sandbox-images-and-e2e.yaml` call focused E2E targets directly.
+  `.github/workflows/e2e.yaml` selects free-standing jobs, including
+  `whatsapp-qr-compact` and `ollama-auth-proxy`.
 
 ## CI execution shape
 
@@ -30,10 +31,10 @@ before those targets run; local runners must provide it themselves.
 The candidate CLI comes from the source commit that an E2E run tests.
 The `generate-matrix` job builds it once.
 The job publishes root `dist/` and `nemoclaw/dist/shared/` in one content-addressed artifact.
-The workflow has 62 artifact-using job definitions.
-Each selected job execution restores the artifact instead of running `npm run build:cli`.
-Each selected job still runs the pinned preparation action to install Node.js and project dependencies.
-It sets `build-cli: "false"` so the preparation action does not rebuild the CLI.
+The boundary validator derives artifact consumers from jobs that use the pinned preparation action.
+It excludes `generate-matrix` and the no-build and trusted-build jobs in `E2E_JOB_POLICY`.
+Each selected consumer restores the artifact instead of running `npm run build:cli`.
+Each consumer runs the pinned preparation action with `build-cli: "false"` to install Node.js and project dependencies.
 The `managed-image-protected-runtime` qualification does not use this artifact.
 It builds the CLI from the trusted workflow checkout and never executes or restores the candidate CLI.
 
@@ -299,6 +300,11 @@ stock policy-source bytes, and the distinct-device and source-side `EXDEV`
 checks. The duplicate v3 rebuild is removed from this job. The
 `rebuild-openclaw` job remains the canonical live rebuild coverage.
 
+The current-checkout fixture locally prebuilds its repository-controlled v1
+and v2 Dockerfiles with BuildKit, then hands only those local image references
+to OpenShell. User-supplied `--from` Dockerfiles retain the gateway-builder
+trust boundary and are never host-prebuilt by this fixture.
+
 The runtime target for `openclaw-plugin-runtime-exdev` is 16–17 minutes.
 Push-run timing for the reduced lifecycle has not yet been measured.
 
@@ -526,7 +532,8 @@ larger runner.
 Each execution writes one bounded, ordered v2 time series to the canonical
 `runner-comparison.jsonl` ledger. It contains:
 
-- an `initialize` endpoint after exact-commit artifact restoration, or after workspace preparation for `security-posture`; the rebuild jobs initialize after their fixed-capacity swap;
+- an `initialize` endpoint after exact-commit artifact restoration; the rebuild
+  jobs initialize after their fixed-capacity swap;
 - a distinct `scenario-start` for every test handled by the execution;
 - a `periodic` sample on an approximately 15-second fixed cadence for
   `rebuild-hermes` and `rebuild-hermes-stale-base`, and an approximately
@@ -581,10 +588,10 @@ following procfs observation and may differ when a live process changes memory.
 
 The finalizer validates the complete ledger before writing
 `runner-comparison-summary.json`. The v2 summary reports the sampled window from
-`initialize` until immediately before artifact scanning or upload. For artifact-using
-jobs, initialization follows artifact restoration and any required rebuild swap. For
-the Hermes `security-posture` shard, initialization follows workspace preparation,
-so the window includes OpenShell installation and installer-backed NemoClaw setup.
+`initialize` until immediately before artifact scanning or upload. Initialization
+follows artifact restoration and any required rebuild swap. For the Hermes
+`security-posture` shard, the window includes OpenShell installation and
+installer-backed NemoClaw setup, but not workspace preparation or artifact restoration.
 The summary reports CPU average and busiest interval; one-minute load;
 available, cached, reclaimable, swap, root-cgroup current/peak/limit, and
 endpoint OOM-counter evidence; memory and I/O pressure; workspace bytes and
@@ -698,6 +705,32 @@ Validate phase coverage without executing test bodies with:
 ```bash
 npm run test:e2e-phases:check
 ```
+
+### DGX Spark Express vLLM
+
+`spark-express-vllm.test.ts` is a physical-host qualification for the second DGX Spark Express inference option, the catalog-backed fixed vLLM profile.
+It requires a qualified NVIDIA DGX Spark with Docker, NVIDIA Container Toolkit, OpenShell prerequisites, enough storage for the pinned image and model, and no unrelated `nemoclaw-vllm` container.
+The target accepts only a local Docker socket and the default Docker context, rejects remote selectors, and treats Docker inspection errors as preflight failures instead of absent resources.
+The target sources `scripts/install.sh` from the candidate checkout, calls the Express option-selection functions with option 2, and invokes the candidate CLI directly for onboarding.
+It does not run the hosted installer bootstrap, clone or ref selection, dependency installation, CLI exposure, or the real terminal prompt.
+Separate installer tests own those earlier boundaries.
+The live target refuses to replace a pre-existing sandbox or `nemoclaw-vllm` container.
+It preserves the shared Hugging Face cache, records the created sandbox and container identities, and revalidates each identity before cleanup.
+If onboarding exits nonzero, the target captures the managed-container log tail and sandbox details before cleanup.
+The standard E2E artifacts retain bounded command output.
+
+Run the target from a clean candidate checkout on the Spark host:
+
+```bash
+E2E_JOB=1 \
+E2E_TARGET_ID=spark-express-vllm \
+NEMOCLAW_RUN_LIVE_E2E=1 \
+NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm \
+npx tsx tools/e2e/live-vitest-invocation.mts run \
+  --test-path test/e2e/live/spark-express-vllm.test.ts
+```
+
+A passing target establishes that the source-checkout option-2 path selects the fixed vLLM preset and recipe, the managed container carries exact catalog provenance and the exact catalog-derived serve command, `inference.local` completes a chat request, and unrelated sandbox egress receives an HTTP `403` response.
 
 The checker preserves coverage for every file under `test/e2e/live/` and adds
 workflow-selected integration files from the authoritative shared-job planner.
@@ -836,7 +869,11 @@ classify that guidance as required, but rendered advisor guidance remains
 non-authoritative. Model advice is additive and cannot downgrade the
 deterministic floor. PR Review Advisor recommendations remain advisory.
 A maintainer decides whether to dispatch this trusted selection for the current PR
-revision. No PR E2E controller dispatches the risk plan.
+revision. The manual PR controller accepts the credential-free
+`inference-routing` job; secret-backed jobs such as `network-policy` remain
+available only through manual dispatch from reviewed code on `main` and are
+labeled that way in the Advisor comment.
+No PR E2E controller dispatches the risk plan.
 
 The `full-e2e` target enforces a separate hard acceptance contract for the
 first fresh onboarding path in that job. It measures from the onboard root span

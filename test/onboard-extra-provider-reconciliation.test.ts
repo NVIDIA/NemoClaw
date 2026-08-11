@@ -145,6 +145,7 @@ const { createSandbox } = require(${onboardPath});
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
           NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
+          NEMOCLAW_SANDBOX_PREBUILD: "1",
           OPENSHELL_GATEWAY_ENDPOINT: undefined,
         },
       });

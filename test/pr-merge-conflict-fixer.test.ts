@@ -189,6 +189,7 @@ function createResolutionPatch(
 
 function pullRequest(input: {
   baseRef?: string;
+  draft?: boolean;
   headRef?: string;
   headRepository?: string;
   number: number;
@@ -198,6 +199,7 @@ function pullRequest(input: {
   const repository = input.repository ?? "NVIDIA/NemoClaw";
   return {
     base: { ref: input.baseRef ?? "main" },
+    draft: input.draft ?? false,
     head: {
       ref: input.headRef ?? `branch-${input.number}`,
       repo:
@@ -237,16 +239,15 @@ describe("PR merge conflict fixer", () => {
     expect(checkConflict).toHaveBeenCalledTimes(1);
   });
 
-  it("selects draft and non-draft same-repository conflicts without labels (#7542)", () => {
-    const draft = { ...pullRequest({ number: 1 }), draft: true } as PullRequest;
+  it("skips draft same-repository conflicts (#7542)", () => {
     const selected = selectConflictingPullRequests(
-      [draft, pullRequest({ number: 2 })],
+      [pullRequest({ draft: true, number: 1 }), pullRequest({ number: 2 })],
       "NVIDIA/NemoClaw",
       "b".repeat(40),
       { checkConflict: () => ["conflict.txt"] },
     );
 
-    expect(selected.map((item) => item.pr_number)).toEqual([1, 2]);
+    expect(selected.map((item) => item.pr_number)).toEqual([2]);
   });
 
   it("skips GitHub workflow conflicts before model selection (#7542)", () => {
@@ -333,6 +334,7 @@ describe("PR merge conflict fixer", () => {
         ref: "feature",
         repo: { full_name: "NVIDIA/NemoClaw" },
       },
+      draft: false,
       state: "open",
     };
 
@@ -346,6 +348,37 @@ describe("PR merge conflict fixer", () => {
         object: { sha: entry.base_sha },
       }),
     ).not.toThrow();
+  });
+
+  it("rejects publication when the pull request becomes a draft after discovery (#7542)", () => {
+    const entry: ConflictMatrixEntry = {
+      base_sha: "a".repeat(40),
+      conflict_paths: ["conflict.txt"],
+      head_ref: "feature",
+      head_sha: "b".repeat(40),
+      pr_number: 42,
+    };
+    expect(() =>
+      validatePublicationState(
+        entry,
+        "NVIDIA/NemoClaw",
+        {
+          base: {
+            ref: "main",
+            repo: { full_name: "NVIDIA/NemoClaw", node_id: "R_repo" },
+          },
+          head: {
+            ref: "feature",
+            repo: { full_name: "NVIDIA/NemoClaw" },
+          },
+          draft: true,
+          state: "open",
+        },
+        {
+          object: { sha: entry.base_sha },
+        },
+      ),
+    ).toThrow(/draft/u);
   });
 
   it("creates a verified commit from a main-relative tree before the atomic head update (#7542)", async () => {
@@ -377,6 +410,7 @@ describe("PR merge conflict fixer", () => {
           ref: entry.head_ref,
           repo: { full_name: "NVIDIA/NemoClaw" },
         },
+        draft: false,
         state: "open",
       }),
       "/repos/NVIDIA/NemoClaw/git/ref/heads/main": () => ({

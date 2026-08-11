@@ -3,14 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "System Readiness"
 sidebar-title: "System Readiness"
-description: "Check host readiness before NemoClaw onboarding without changing system state."
-description-agent: "Documents the read-only host readiness command, JSON contract, exit codes, redaction boundary, and mutation guarantees. Use when checking a host before onboarding or consuming readiness JSON."
+description: "Check host and gateway readiness before NemoClaw onboarding without changing system state."
+description-agent: "Documents the read-only system readiness command, host and gateway contract, onboarding admission, exit codes, redaction boundary, and mutation guarantees. Use when checking a system before onboarding or consuming readiness JSON."
 keywords: ["nemoclaw host probe", "system readiness", "readiness json", "pre-onboarding check"]
 content:
   type: "reference"
 ---
 
-Use the system readiness report to inspect a host before you run onboarding.
+Use the system readiness report to inspect host prerequisites and OpenShell gateway authority before you run onboarding.
 The command works without a registered gateway or sandbox.
 
 ## Run the readiness check
@@ -61,7 +61,7 @@ The identity is present for `supported`, `incompatible`, and `inconclusive` repo
 | --- | --- |
 | `provenance.nemoclawVersion` | Public version of the executing CLI build. |
 | `provenance.sourceRevision` | Full immutable source revision of that build. |
-| `provenance.observedAt` | Time when the host observation started. |
+| `provenance.observedAt` | Time when the system observation started. |
 
 A Git-described version can use a value such as `0.0.96-35-g8bfff4526`.
 The version must begin with three dot-separated digit groups.
@@ -97,6 +97,11 @@ Do not use `observedAt` as build identity.
 
 ## Interpret Docker storage
 
+The report rejects an unsupported `DOCKER_HOST` before it uses Docker daemon evidence.
+`host.docker.host_invalid` records whether the configured endpoint is invalid, `host.docker.endpoint_supported` is absent when a configured endpoint is not an absolute local `unix://` socket, and the blocking `host.docker.host_invalid` finding identifies that condition.
+TCP, SSH, relative Unix socket, and unsafe path values do not fall back to the default Docker socket.
+Unset `DOCKER_HOST` continues to use Docker's default local socket.
+
 The Docker storage capabilities separate the current host configuration from NemoClaw's supported remediation path.
 
 | Capability ID | Result represented |
@@ -130,10 +135,14 @@ Each capability uses `present`, `absent`, or `unknown`.
 | `host.platform.dgx_spark` | DGX Spark identity on ARM64 with an available NVIDIA GPU. |
 | `host.platform.dgx_station` | Qualified DGX Station GB300 identity, Linux ARM64 runtime, Ubuntu 24.04, hardware, and software profile. |
 
+If the combined platform capability is absent and no more specific platform qualification finding applies, the blocking `host.platform.unsupported` finding identifies an unsupported host and runtime combination.
+
 The report adds `host.platform.wsl`, `host.platform.dgx_spark`, or `host.platform.dgx_station` qualifications when those platforms apply.
 For WSL, Docker Desktop is `qualified`, native Docker is `unqualified`, and an unrecognized reachable runtime is `unknown`.
 The `host.platform.wsl_gpu_passthrough` capability is `present` only after the Docker Desktop proof passes.
 It is `absent` when the proof fails or the host has no NVIDIA GPU, and `unknown` when the proof cannot run conclusively.
+The read-only `host probe` command does not pull or start the container-backed WSL GPU proof, so a host that needs that proof reports this capability as `unknown`.
+Onboarding can run the bounded proof only after its current host and gateway readiness checks admit the run.
 
 DGX Station qualification fails closed.
 The `host.platform.dgx_station` capability is `present` only when the host runs Linux ARM64 on Ubuntu 24.04, reports an effective NVIDIA GPU, and the product identity, an exact display-class PCI device with NVIDIA vendor ID (`0x10de`) and GB300 device ID (`0x31c2` or `0x31c3`), and the software profile all qualify.
@@ -144,10 +153,156 @@ An unreadable marker or missing required OS or PCI evidence produces an `unknown
 Both outcomes prevent `host.platform.supported` from becoming `present`.
 When available, bounded Station identity appears under evidence ID `host.platform.identity`.
 
-## Understand the read-only boundary
+## Interpret NVIDIA GPU Integration
+
+GPU readiness distinguishes Jetson/Tegra Docker runtime integration from CDI-based NVIDIA GPU integration on other Linux hosts.
+
+| Stable ID | Kind | Result represented |
+| --- | --- | --- |
+| `host.gpu.nvidia_runtime` | Observation | Whether Docker advertises an NVIDIA runtime when the detected GPU platform is Jetson/Tegra. It is `present` when advertised, `absent` when missing or when the check does not apply, and `unknown` when an applicable check lacks enough evidence. The `host.gpu.nvidia_runtime_missing` finding distinguishes a missing Jetson/Tegra runtime from an inapplicable check. |
+| `host.gpu.nvidia_available` | Capability | `present` when NemoClaw detects an NVIDIA GPU and `absent` otherwise. |
+| `host.gpu.container_toolkit_available` | Capability | NVIDIA container integration is available. On Jetson/Tegra, this capability is derived from Docker NVIDIA runtime evidence rather than CDI files. It is `present` when container integration checks do not apply. |
+| `host.gpu.cdi_healthy` | Capability | Applicable CDI specifications are present and current. It is `present` when CDI checks do not apply, including Jetson/Tegra and Docker Desktop GPU integration in WSL. |
+| `host.gpu.nvidia_runtime_missing` | Finding | Blocking: Docker NVIDIA runtime support is missing for Jetson/Tegra sandbox GPU. |
+| `host.gpu.container_toolkit_missing` | Finding | Blocking: NVIDIA Container Toolkit is missing where toolkit integration applies. |
+| `host.gpu.cdi_missing` | Finding | Blocking: an applicable NVIDIA CDI specification is missing. |
+| `host.gpu.cdi_stale` | Finding | Blocking: an applicable NVIDIA CDI specification is stale. |
+
+Jetson/Tegra detection can use platform firmware and device evidence even when `nvidia-smi` is unavailable.
+Its remediation configures the Docker NVIDIA runtime and does not instruct the user to generate CDI files.
+An explicit CPU-only onboarding run can waive GPU integration findings for that run; `host probe` still reports the observed host state.
+
+## Interpret Gateway Readiness
+
+Gateway readiness establishes one lifecycle authority before onboarding can create or change managed resources.
+The report covers both NemoClaw-managed and externally supervised gateways.
+
+The gateway observations use these stable IDs:
+
+| Observation ID | Values and meaning |
+| --- | --- |
+| `gateway.management.mode` | `nemoclaw-managed` lets NemoClaw manage the gateway lifecycle. `externally-supervised` limits NemoClaw to attachment and validation. |
+| `gateway.owner.name` | The canonical OpenShell gateway registration for later operations. |
+| `gateway.owner.source` | `declared`, `packaged-service`, or `standalone`, according to how NemoClaw resolved the authority. |
+| `gateway.owner.port` | The host gateway port paired with the resolved registration. |
+| `gateway.attachment` | `verified`, `rejected`, or `unknown` for external supervision. NemoClaw-managed gateways report `not-applicable`. |
+| `gateway.reuse` | `healthy`, `missing`, `stale`, `active-unnamed`, `foreign-active`, or `unknown` for managed gateways. External supervision reports `not-applicable`. |
+| `gateway.version_drift` | `detected`, `not-detected`, or `unknown` for managed gateways. External supervision reports `not-applicable`. |
+| `gateway.port_conflict` | `none`, `occupied`, `multiple-owners`, `owner-mismatch`, or `unknown`. |
+
+Each gateway capability uses `present`, `absent`, or `unknown`:
+
+| Capability ID | Result represented |
+| --- | --- |
+| `gateway.authority.resolved` | NemoClaw resolved one lifecycle authority for the run. |
+| `gateway.attachment.valid` | The external attachment passed, or attachment does not apply to the managed mode. |
+| `gateway.reuse.ready` | The managed gateway is reusable, no gateway exists yet, or reuse does not apply. An absent value can require managed reconciliation. |
+| `gateway.version.compatible` | A positively identified managed gateway has source-bound version evidence that matches the installed OpenShell version, no managed gateway is running, or the check does not apply. Missing or unbound version evidence is unknown. |
+| `gateway.port.uncontested` | The gateway port has no incompatible or ambiguous owner. |
+
+Use finding IDs to handle gateway failures without parsing summaries:
+
+| Finding ID | Severity | Meaning |
+| --- | --- | --- |
+| `gateway.authority.invalid` | Blocking | NemoClaw could not resolve one lifecycle authority. |
+| `gateway.probe.inconclusive` | Warning | Required gateway observations could not be collected. |
+| `gateway.attachment.effect_forbidden` | Blocking | An operation conflicts with external lifecycle authority. |
+| `gateway.attachment.unreachable` | Blocking | The declared external gateway did not answer its health probe. |
+| `gateway.supervisor.inactive` | Blocking | The declared external supervisor was not active. |
+| `gateway.ownership.mismatch` | Blocking | The listener identity did not match the declared supervisor. |
+| `gateway.ownership.unverified` | Blocking | NemoClaw could not verify the listener identity. |
+| `gateway.ownership.multiple` | Blocking | More than one process could own the declared gateway port. |
+| `gateway.endpoint.port_mismatch` | Blocking | The declared endpoint port did not match the configured gateway port. |
+| `gateway.registration.failed` | Blocking | NemoClaw could not verify the required OpenShell registration. |
+| `gateway.capability.unsupported` | Blocking | This NemoClaw build does not implement a capability required by the declaration. |
+| `gateway.attachment.inconclusive` | Warning | The external attachment probe did not establish a result. |
+| `gateway.reuse.stale` | Warning | Managed gateway metadata requires reconciliation before reuse. |
+| `gateway.reuse.active_unnamed` | Warning | A managed gateway is active without the expected named registration. |
+| `gateway.reuse.foreign_active` | Blocking | A different active gateway conflicts with the configured gateway. |
+| `gateway.reuse.inconclusive` | Warning | NemoClaw could not determine managed gateway reuse state. |
+| `gateway.version.drift` | Blocking | The running gateway version does not match the installed OpenShell version. |
+| `gateway.version.inconclusive` | Warning | NemoClaw could not determine gateway version drift. |
+| `gateway.port.multiple_owners` | Blocking | Multiple listeners claim the managed gateway port. |
+| `gateway.port.owner_mismatch` | Blocking | A listener on the managed gateway port failed identity verification. |
+| `gateway.port.occupied` | Blocking | An incompatible listener occupies the managed gateway port. |
+| `gateway.port.inconclusive` | Warning | NemoClaw could not establish gateway port ownership. |
+
+The report includes bounded evidence for the resolved owner and applicable attachment, port, collection, or stale-observation failures.
+It omits the gateway state directory, removes process environments, redacts credential-shaped content, bounds diagnostic length, and renders control characters visibly.
+
+Managed gateway metadata is reusable only when its endpoint is bound to loopback on the configured gateway port.
+A legacy Docker proxy is accepted only when the active cluster container and its published host port establish the same target.
+For a direct Linux host-process gateway, version comparison runs only against an independently resolved binary whose exact path matches the listener's kernel-backed executable identity.
+For a package service, the validated systemd `ExecStart` or official Homebrew formula binary must match the live executable before NemoClaw runs that trusted binary's version command.
+NemoClaw samples the listener executable on both sides of identity checks and samples an external listener on both sides of its health request.
+A PID, executable, service, or listener change during that interval makes the result inconclusive instead of combining evidence from different processes.
+A service PID with missing or ambiguous executable evidence produces unknown version compatibility instead of comparing an unrelated CLI sibling.
+
+An externally supervised declaration is authoritative.
+NemoClaw validates its endpoint, supervisor, listener identity, port, and required capabilities.
+NemoClaw does not start, stop, replace, or use a standalone fallback for that gateway.
+An owner mismatch, multiple listeners, or missing identity evidence blocks onboarding before managed lifecycle effects.
+
+## Understand Onboarding Admission
+
+Onboarding consumes the same stable host and gateway entities as `host probe`.
+It applies an onboarding policy instead of treating the public report status as the only decision.
+
+Fresh onboarding and authoritative rebuilds use this order:
+
+1. Resolve and validate gateway authority.
+2. Collect canonical host and gateway facts and reject blocking findings or unknown required capabilities.
+3. On a resumed agent change, retain the old router and durable provider state until the full preflight phase succeeds; only then stop the old router and commit the projected agent state.
+4. Apply only an explicitly permitted host remediation, if required, and replace the earlier observations.
+5. Run a bounded WSL GPU proof when required, then revalidate live host and gateway facts.
+6. Validate the effective GPU configuration before Docker bridge and container DNS probes that can start a short-lived container.
+7. Install or upgrade OpenShell when required. A successful install can change gateway authority only from managed `standalone` to `packaged-service`. NemoClaw records that transition before later effects.
+8. Revalidate gateway authority immediately before gateway selection, recovery, reconciliation, or other lifecycle effects.
+
+The readiness gate runs before model-router cleanup, provider selection, credential registration, policy changes, image builds, or sandbox lifecycle effects.
+Host and gateway observations have a 30-second reuse window.
+If collection itself takes too long, onboarding rejects the stale composite instead of assigning a fresh timestamp to old facts.
+
+The policy permits only these narrow exceptions:
+
+- An explicit CPU-only sandbox mode makes NVIDIA GPU passthrough findings irrelevant to that run.
+- The experimental portable profile can prepare its rootless runtime after an initial admission check.
+- A NemoClaw-managed gateway can apply the documented Docker storage remediation when the report says it is available.
+- A NemoClaw-managed gateway can reconcile version drift after its ownership and port checks pass.
+- An explicit runtime path that does not use the standard Docker driver can admit its documented runtime exception.
+
+The portable profile discards its earlier host and gateway observations after preparation.
+It collects both again before the runtime probes or later lifecycle effects.
+No other blocking finding or unknown required capability is waived.
+
+Resume does not trust a cached preflight result for live host or gateway facts.
+It collects both again before a container-backed WSL GPU proof, GPU validation, or bridge and DNS probes.
+Explicit CPU-only intent skips the WSL GPU proof.
+The gateway phase validates authority again immediately before managed reconciliation or external attachment.
+
+Authoritative rebuild preflight pins read-only probes to the recorded gateway without selecting, starting, or recovering it.
+Immediately before source deletion, the rebuild journal requires the complete gateway authority to match that preflight handoff and carries the journaled authority into replacement onboarding.
+Gateway recovery remains after the canonical readiness gate.
+
+For external supervision, onboarding skips managed gateway selection, reuse refresh, cleanup, start, stop, replace, and standalone fallback paths.
+It attaches only after the current external authority passes the readiness checks.
+
+## Distinguish Sandbox Doctor
+
+`$$nemoclaw <name> doctor` remains a separate diagnostic workflow for an existing sandbox and its dependencies.
+Its report and exit behavior are not the system readiness JSON contract.
+An agent runtime can expose an explicit `doctor --fix` repair mode, while `host probe` cannot change state.
+
+The Docker host check in `doctor` and the system readiness report share the same daemon-reachability semantics.
+Both require positive server-version evidence from JSON `docker info` output.
+They reject an exit-zero response that contains empty or error-only daemon data.
+
+## Understand the Read-Only Boundary
 
 `host probe` observes the host and does not run remediation.
 Repeated runs do not change filesystem, service, Docker image or container, gateway, provider, credential, policy, or sandbox state.
+Read-only child processes receive a replacement environment containing only exact system variables, the selected OpenShell gateway, its validated local TLS directory when present, and a supported local Unix Docker socket when configured.
+Ambient provider, OpenShell, sandbox, and gateway credentials are not forwarded to those children.
 A future command that changes the host must use a separate mutating mode.
 That mode cannot run with `--json` probing.
 

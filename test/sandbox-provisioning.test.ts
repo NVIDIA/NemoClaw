@@ -168,6 +168,8 @@ function runOpenclawUserSetupBlock() {
     'useradd() { printf "useradd %s\\n" "$*" >> "$call_log"; }',
     'usermod() { printf "usermod %s\\n" "$*" >> "$call_log"; }',
     'chown() { printf "chown %s\\n" "$*" >> "$call_log"; }',
+    'id() { case "$1" in -u|-g) printf "998\\n" ;; *) return 1 ;; esac; }',
+    `getent() { printf "%s\\n" ${JSON.stringify(`sandbox:x:998:998::${sandboxRoot}:/bin/bash`)}; }`,
   ]);
   return { ...result, tmp, sandboxRoot };
 }
@@ -306,7 +308,7 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
     const command = dockerHealthCommandBetween(
       dockerfile,
       "# Health check: poll the gateway's /health endpoint",
-      "# Entrypoint runs as root",
+      "ENTRYPOINT",
     );
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-health-probe-"));
 
@@ -378,7 +380,7 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
       const rawCommand = dockerHealthCommandBetween(
         dockerfile,
         "# Health check: poll the gateway's /health endpoint",
-        "# Entrypoint runs as root",
+        "ENTRYPOINT",
       );
       const command = rawCommand
         .replaceAll("/tmp/gateway.log", logPath)
@@ -540,7 +542,7 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
         const command = dockerHealthCommandBetween(
           dockerfile,
           "# Health check: poll the gateway's /health endpoint",
-          "# Entrypoint runs as root",
+          "ENTRYPOINT",
         )
           .replaceAll("/tmp/gateway.log", logPath)
           .replaceAll("/tmp/nemoclaw-gateway-local", markerPath)
@@ -745,6 +747,14 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
     const fallback = runOpenclawStaleGroupFallback();
     try {
       expect(base.result.status, base.result.stderr).toBe(0);
+      expect(base.calls).toContain("groupadd -r -g 999 gateway");
+      expect(base.calls).toContain(
+        `useradd -r -u 999 -g gateway -d ${base.sandboxRoot} -s /usr/sbin/nologin gateway`,
+      );
+      expect(base.calls).toContain("groupadd -r -g 998 sandbox");
+      expect(base.calls).toContain(
+        `useradd -r -u 998 -g sandbox -d ${base.sandboxRoot} -s /bin/bash sandbox`,
+      );
       expect(base.calls).toContain("usermod -aG sandbox gateway");
       expect(base.calls).toContain("usermod -aG sandbox root");
       expect(fallback.result.status, fallback.result.stderr).toBe(0);
@@ -1036,7 +1046,7 @@ describe("Hermes sandbox provisioning", () => {
       "patch-hermes-langfuse-credentials.mts",
     );
     const managedPolicyReaderPath = path.join(localLib, "managed_policy.py");
-    const mcpManifest = path.join(localLib, "openshell-child-visible-credentials.v0.0.99.json");
+    const mcpManifest = path.join(localLib, "openshell-child-visible-credentials.v0.0.101.json");
     const stateDirGuardPath = path.join(localLib, "state-dir-guard.py");
     const stateLockPlanPath = path.join(
       tmp,
@@ -1171,6 +1181,10 @@ describe("Hermes sandbox provisioning", () => {
       'useradd() { printf "useradd %s\\n" "$*" >> "$call_log"; }',
       'usermod() { printf "usermod %s\\n" "$*" >> "$call_log"; }',
       'chown() { printf "chown %s\\n" "$*" >> "$call_log"; }',
+      'id() { case "$1" in -u) printf "998\\n" ;; -g) printf "999\\n" ;; *) return 1 ;; esac; }',
+      `getent() { printf "%s\\n" ${JSON.stringify(
+        `sandbox:x:998:999::${sandboxRoot}:/bin/bash`,
+      )}; }`,
     ]);
     return { ...result, tmp, sandboxRoot };
   }
@@ -1306,8 +1320,14 @@ describe("Hermes sandbox provisioning", () => {
     const { result, calls, tmp, sandboxRoot } = runHermesUserSetupBlock();
     try {
       expect(result.status).toBe(0);
-      expect(calls).toContain("groupadd -r sandbox");
-      expect(calls).toContain("groupadd -r gateway");
+      expect(calls).toContain("groupadd -r -g 999 sandbox");
+      expect(calls).toContain("groupadd -r -g 998 gateway");
+      expect(calls).toContain(
+        `useradd -r -u 999 -g gateway -G sandbox -d ${sandboxRoot} -s /usr/sbin/nologin gateway`,
+      );
+      expect(calls).toContain(
+        `useradd -r -u 998 -g sandbox -d ${sandboxRoot} -s /bin/bash sandbox`,
+      );
       expect(calls).toContain("usermod -a -G sandbox root");
       expect(calls).toContain(`chown -R sandbox:sandbox ${sandboxRoot}`);
     } finally {

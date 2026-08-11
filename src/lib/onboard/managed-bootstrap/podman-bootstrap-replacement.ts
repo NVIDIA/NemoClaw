@@ -18,9 +18,13 @@ import {
 } from "./podman-bootstrap-journal";
 import {
   PODMAN_MANAGED_LABEL,
+  PODMAN_SANDBOX_CONTAINER_PREFIX,
   PODMAN_SANDBOX_ID_LABEL,
   PODMAN_SANDBOX_NAME_LABEL,
+  PODMAN_SANDBOX_NAMESPACE,
   PODMAN_SANDBOX_NAMESPACE_LABEL,
+  PODMAN_SANDBOX_WORKSPACE,
+  PODMAN_SANDBOX_WORKSPACE_LABEL,
   type PodmanHeldWorkloadObservation,
 } from "./podman-held-workload";
 import type { PodmanGatewayWatcherLease } from "./podman-watcher-lease";
@@ -262,11 +266,13 @@ function canonicalLabels(
   heldWorkload: PodmanHeldWorkloadObservation,
 ): Readonly<Record<string, string>> {
   const labels = exactStringMap(heldWorkload.labels, "Podman held-workload labels");
+  const sandboxNamespace = labels[PODMAN_SANDBOX_NAMESPACE_LABEL];
   if (
     labels[PODMAN_MANAGED_LABEL] !== "true" ||
     labels[PODMAN_SANDBOX_ID_LABEL] !== heldWorkload.sandboxId ||
     labels[PODMAN_SANDBOX_NAME_LABEL] !== heldWorkload.sandboxName ||
-    !Object.hasOwn(labels, PODMAN_SANDBOX_NAMESPACE_LABEL)
+    sandboxNamespace !== PODMAN_SANDBOX_NAMESPACE ||
+    labels[PODMAN_SANDBOX_WORKSPACE_LABEL] !== PODMAN_SANDBOX_WORKSPACE
   ) {
     return failure("Podman replacement labels do not match exact OpenShell ownership.", false);
   }
@@ -443,6 +449,13 @@ function normalizePlan(plan: PodmanBootstrapReplacementPlan): NormalizedReplacem
   );
   if (!SAFE_NAME.test(originalContainerName)) {
     return failure("Podman held-workload container name is malformed.", false);
+  }
+  const expectedOriginalContainerName = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${held.sandboxName}-${held.sandboxId}`;
+  if (originalContainerName !== expectedOriginalContainerName) {
+    return failure(
+      "Podman held-workload container name does not match exact OpenShell ownership.",
+      false,
+    );
   }
   const entrypointArgv = exactArgv(plan.entrypointArgv, "Podman replacement entrypoint", false);
   if (!entrypointArgv[0]?.startsWith("/")) {

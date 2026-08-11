@@ -46,6 +46,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
       "workload",
       "lifecycle",
       "mutationAuthority",
+      "stateMutation",
       "bootstrap",
       "snapshot",
       "recovery",
@@ -112,6 +113,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
     for (const surface of [
       provider.lifecycle,
       provider.mutationAuthority,
+      provider.stateMutation,
       provider.bootstrap,
       provider.snapshot,
       provider.recovery,

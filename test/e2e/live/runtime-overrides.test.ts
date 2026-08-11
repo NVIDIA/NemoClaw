@@ -158,6 +158,8 @@ function dockerRunArgs(image: string, env: Record<string, string>, script: strin
   return [
     "run",
     "--rm",
+    "--user",
+    "root",
     ...Object.entries(env).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
     image,
     "bash",
@@ -174,7 +176,12 @@ async function runContainer(
   env: Record<string, string>,
   script: string,
 ): Promise<CommandResult> {
-  const result = await run("docker", dockerRunArgs(image, env, script), label);
+  const args = dockerRunArgs(image, env, script);
+  expect(
+    args.slice(0, 4),
+    "runtime overrides require root to mutate root-owned OpenClaw configuration",
+  ).toEqual(["run", "--rm", "--user", "root"]);
+  const result = await run("docker", args, label);
   dockerLog.push(formatLog(label, result));
   return result;
 }

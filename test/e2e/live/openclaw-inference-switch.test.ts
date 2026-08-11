@@ -808,7 +808,7 @@ run_with_timeout 120s ssh -F "$ssh_config" \
   -o UserKnownHostsFile=/dev/null \
   -o ConnectTimeout=10 \
   -o LogLevel=ERROR \
-  "openshell-${SANDBOX_NAME}" \
+  "openshell-${SANDBOX_NAME}.default" \
   "openclaw agent --agent main --json --session-id '$SESSION_ID' -m 'Reply with exactly one word: PONG'" \
   2>"$stderr_file"
 rc=$?
