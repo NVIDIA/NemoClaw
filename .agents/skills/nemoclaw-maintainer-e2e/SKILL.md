@@ -67,7 +67,8 @@ Choose exactly one mode:
   - every default-selected free-standing workflow E2E except `Exact staging Brev Launchable`;
   - every shared credential-free test; and
   - these controller-selected registry targets: `ubuntu-policy-custom-missing-presets-negative`, `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and `ubuntu-repo-docker-post-reboot-recovery`.
-  The run skips `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification` unless their separate runner-queue flags are `true`.
+  The run skips `jetson-nvmap-gpu` unless its Colossus dispatch flag is `true`.
+  It skips `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification` unless their runner-queue flag is `true`.
 - For protected managed-image runtime qualification, set `E2E_JOBS=managed-image-protected-runtime`. The exact candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
 
 Leave `targets` empty and keep Launchable disabled:
@@ -81,7 +82,7 @@ esac
 REVIEW_REASON='Reviewed the PR head commit for credentialed E2E.'
 CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 INFERENCE_MODE=mock
-ALLOW_JETSON_RUNNER_QUEUE=false
+ALLOW_JETSON_DISPATCH=false
 ALLOW_DGX_SPARK_RUNNER_QUEUE=false
 gh workflow run .github/workflows/e2e.yaml \
   --repo NVIDIA/NemoClaw \
@@ -90,7 +91,7 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "jobs=${E2E_JOBS}" \
   -f "inference_mode=${INFERENCE_MODE}" \
   -f include_staging_brev_launchable=false \
-  -f "allow_jetson_runner_queue=${ALLOW_JETSON_RUNNER_QUEUE}" \
+  -f "allow_jetson_dispatch=${ALLOW_JETSON_DISPATCH}" \
   -f "allow_dgx_spark_runner_queue=${ALLOW_DGX_SPARK_RUNNER_QUEUE}" \
   -f "pr_number=${PR_NUMBER}" \
   -f "checkout_sha=${HEAD_SHA}" \
@@ -162,7 +163,7 @@ Ask for clarification only when the request contains conflicting mode phrases.
 Ordinary mode selects every default-selected workflow E2E except `Exact staging Brev Launchable`.
 Launchable mode runs only `Exact staging Brev Launchable`.
 Full mode adds `Exact staging Brev Launchable` to the default E2E selection in the same workflow run.
-The documented invocations for all three modes keep both hardware runner-queue flags set to `false`.
+The documented invocations for all three modes keep the Jetson dispatch and DGX Spark runner-queue flags set to `false`.
 
 ## Resolve the Candidate
 
@@ -199,7 +200,7 @@ gh workflow run .github/workflows/e2e.yaml \
   -f jobs= \
   -f inference_mode=mock \
   -f include_staging_brev_launchable=false \
-  -f allow_jetson_runner_queue=false \
+  -f allow_jetson_dispatch=false \
   -f allow_dgx_spark_runner_queue=false \
   -f "correlation_id=${CORRELATION_ID}"
 ```
@@ -214,7 +215,7 @@ gh workflow run .github/workflows/e2e.yaml \
   -f jobs=staging-brev-launchable \
   -f inference_mode=mock \
   -f include_staging_brev_launchable=false \
-  -f allow_jetson_runner_queue=false \
+  -f allow_jetson_dispatch=false \
   -f allow_dgx_spark_runner_queue=false \
   -f "correlation_id=${CORRELATION_ID}"
 ```
@@ -229,7 +230,7 @@ gh workflow run .github/workflows/e2e.yaml \
   -f jobs= \
   -f inference_mode=mock \
   -f include_staging_brev_launchable=true \
-  -f allow_jetson_runner_queue=false \
+  -f allow_jetson_dispatch=false \
   -f allow_dgx_spark_runner_queue=false \
   -f "correlation_id=${CORRELATION_ID}"
 ```
@@ -240,11 +241,14 @@ The `include_staging_brev_launchable` input adds the Launchable E2E job to that 
 The trusted `main` workflow verifies that the dispatching and rerunning actors have
 repository `maintain` or `admin` permission before the Launchable path's source
 checkout. That role check is the authorization.
-A user permitted to dispatch this workflow may set
-`allow_jetson_runner_queue=true` to add `jetson-nvmap-gpu` to an empty-selector
-manual run or enable its explicit selection. Set it only after a repository
-administrator confirms an online Jetson runner in the authoritative runner
-inventory.
+A user permitted to dispatch this workflow may set `allow_jetson_dispatch=true`
+to add `jetson-nvmap-gpu` to an empty-selector manual run or enable its explicit
+selection. Set it only after every deployment check in
+[Jetson Dispatch Through Colossus](../../../test/e2e/docs/jetson-colossus-dispatch.md)
+passes.
+The Jetson lifecycle removes and verifies only its fixed job-owned cleanup
+allowlist. Do not treat `cleanup: "succeeded"` as evidence that every possible
+candidate host change was reversed.
 A permitted dispatcher may set `allow_dgx_spark_runner_queue=true` to add
 `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification` to an
 empty-selector manual run or enable explicit qualification selection. Set it
@@ -350,6 +354,8 @@ The validator requires:
 
 - the workflow run to succeed for the selected SHA;
 - `dispatch.json` to bind the same run, empty selectors, `include_staging_brev_launchable=true`, `allowJetsonRunnerQueue: false`, `allowDgxSparkRunnerQueue: false`, and the selected successful Launchable job attempt;
+- `allowJetsonDispatch: false` in every v2 `dispatch.json` receipt;
+- `allowJetsonDispatch` to be absent or `false` in every v1 `dispatch.json` receipt;
 - `Exact staging Brev Launchable` to conclude `success` in the selected current or earlier attempt of the same workflow run;
 - `launchable-e2e.json` to identify the selected SHA in the repository and provision records;
 - the booted repository to be unmodified;
@@ -376,7 +382,10 @@ If the release candidate SHA changes, discard the earlier full run and dispatch 
 No release-note-only delta exception is currently defined.
 
 When `nemoclaw-maintainer-cut-release-tag` invokes this skill, return the validated fields for its pre-tag E2E evidence ledger.
-The trusted `dispatch.json` receipt proves that full mode used empty selectors, included `Exact staging Brev Launchable`, and disabled both optional hardware paths.
+The trusted `dispatch.json` receipt proves that full mode used empty selectors and included `Exact staging Brev Launchable`.
+For Jetson dispatch, a v2 receipt requires `allowJetsonDispatch: false`.
+A v1 receipt may omit `allowJetsonDispatch`, but it must be `false` when present.
+Both receipt versions require the optional DGX Spark runner path to be disabled.
 The release evidence ledger proves the result of each workflow E2E.
 Do not ask for the release confirmation phrase in this skill.
 

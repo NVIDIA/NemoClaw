@@ -18,6 +18,7 @@ describe("private E2E controller files", () => {
   it("writes private regular files without following links or truncating hardlink targets", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-private-file-"));
     const regular = path.join(directory, "regular.json");
+    const binary = path.join(directory, "artifact.tar.gz");
     const target = path.join(directory, "target.json");
     const symlink = path.join(directory, "symlink.json");
     const hardlink = path.join(directory, "hardlink.json");
@@ -28,6 +29,9 @@ describe("private E2E controller files", () => {
       writePrivateRegularFile(regular, "updated\n");
       appendPrivateRegularFile(regular, "appended\n", { maxBytes: 64 });
       expect(readPrivateRegularFile(regular, { maxBytes: 64 })).toBe("updated\nappended\n");
+      writePrivateRegularFile(binary, Uint8Array.from([0, 255, 31, 139]));
+      expect(fs.readFileSync(binary)).toEqual(Buffer.from([0, 255, 31, 139]));
+      expect(fs.statSync(binary).mode & 0o777).toBe(0o600);
 
       fs.writeFileSync(target, "protected\n");
       fs.symlinkSync(target, symlink);
