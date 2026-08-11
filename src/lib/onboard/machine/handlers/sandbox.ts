@@ -171,6 +171,7 @@ export interface SandboxStateOptions<
   sandboxName: string | null;
   model: string;
   provider: string;
+  hostLocalInferenceRouteOnly?: boolean;
   endpointUrl: string | null;
   compatibleEndpointReasoning: string | null;
   credentialEnv: string | null;
@@ -283,6 +284,7 @@ export interface SandboxStateOptions<
     resolveSandboxCreateIntent(input: {
       sandboxName: string;
       inferenceProvider?: string | null;
+      hostLocalInferenceRouteOnly?: boolean;
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;
       agent: Agent;
@@ -1440,6 +1442,7 @@ class SandboxStateFlow<
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
       inferenceProvider: this.options.provider,
+      hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
       enabledChannels: state.selectedMessagingChannels,
       webSearchConfig: state.webSearchConfig,
       agent: this.options.agent,

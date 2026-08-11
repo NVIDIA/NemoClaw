@@ -26,6 +26,7 @@ export type SandboxCreatePolicyRequest = {
     readonly directGpu: boolean;
     readonly hostGpuAvailable?: boolean;
     readonly additionalPresets: readonly string[];
+    readonly hostLocalInferenceRouteOnly?: true;
     readonly agentName?: string | null;
     readonly policyTier: string | null;
     readonly baselineExclusions: readonly BaselineExclusionEntry[];
@@ -64,6 +65,7 @@ export type ResolveSandboxCreateIntentInput = {
   basePolicyPath: string;
   sandboxName: string;
   inferenceProvider?: string | null;
+  hostLocalInferenceRouteOnly?: boolean;
   channels: readonly MessagingChannel[];
   enabledChannels: string[] | null;
   disabledChannelNames: ReadonlySet<string>;

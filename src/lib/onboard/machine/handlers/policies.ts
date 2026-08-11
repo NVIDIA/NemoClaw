@@ -7,6 +7,7 @@ import {
   getActiveChannelsFromPlan,
   getDisabledChannelsFromPlan,
 } from "../../messaging-plan-session";
+import type { HostLocalInferenceSandboxProofAuthority } from "../../runtime-provider/host-local-inference-routing";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
 // Inlined to avoid pulling sandbox-agent's transitive runner.ts deps into
@@ -40,6 +41,8 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
   authoritativePolicyTier?: string | null;
   sandboxName: string;
   provider: string;
+  hostLocalInferenceRouteOnly?: boolean;
+  hostLocalInferenceSandboxProofAuthority?: HostLocalInferenceSandboxProofAuthority | null;
   model: string;
   endpointUrl: string | null;
   credentialEnv: string | null;
@@ -66,6 +69,8 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
       credentialEnv: string | null;
       messagingChannels: string[];
       agent: Agent;
+      forceCanonicalRoute?: boolean;
+      hostLocalInferenceProofAuthority?: HostLocalInferenceSandboxProofAuthority;
     }): void;
     preparePolicyPresetResumeSelection(
       sandboxName: string,
@@ -99,7 +104,8 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
         enabledChannels: string[];
         disabledChannels?: string[] | null;
         webSearchConfig: WebSearchConfig | null;
-        provider: string;
+        provider: string | null;
+        excludedPresets?: readonly string[];
         agent?: string | null;
         observabilityEnabled?: boolean | null;
         tierName?: string | null;
@@ -134,6 +140,8 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   authoritativePolicyTier,
   sandboxName,
   provider,
+  hostLocalInferenceRouteOnly = false,
+  hostLocalInferenceSandboxProofAuthority = null,
   model,
   endpointUrl,
   credentialEnv,
@@ -147,9 +155,12 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
 }: PoliciesStateOptions<Agent, WebSearchConfig>): Promise<PoliciesStateResult> {
   const latestSession = deps.loadSession();
   const observabilityEnabled = latestSession?.observabilityEnabled === true;
-  const recordedPolicyPresets = Array.isArray(latestSession?.policyPresets)
+  const rawRecordedPolicyPresets = Array.isArray(latestSession?.policyPresets)
     ? latestSession.policyPresets
     : null;
+  const recordedPolicyPresets = hostLocalInferenceRouteOnly
+    ? (rawRecordedPolicyPresets?.filter((name) => name !== "local-inference") ?? null)
+    : rawRecordedPolicyPresets;
   const recordedMessagingChannels = getActiveChannelsFromPlan(latestSession?.messagingPlan);
   const activeSandbox = deps.getActiveSandbox(sandboxName);
   const effectivePolicyTier = authoritativePolicyTier ?? activeSandbox?.policyTier ?? null;
@@ -162,15 +173,21 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     activeMessagingChannels,
     disabledChannels,
   );
-  deps.verifyCompatibleEndpointSandboxSmoke({
-    sandboxName,
-    provider,
-    model,
-    endpointUrl,
-    credentialEnv,
-    messagingChannels: policyMessagingChannels,
-    agent,
-  });
+  const verifySandboxInferenceRoute = () =>
+    deps.verifyCompatibleEndpointSandboxSmoke({
+      sandboxName,
+      provider,
+      model,
+      endpointUrl,
+      credentialEnv,
+      messagingChannels: policyMessagingChannels,
+      agent,
+      ...(hostLocalInferenceRouteOnly ? { forceCanonicalRoute: true } : {}),
+      ...(hostLocalInferenceRouteOnly
+        ? { hostLocalInferenceProofAuthority: hostLocalInferenceSandboxProofAuthority ?? undefined }
+        : {}),
+    });
+  if (!hostLocalInferenceRouteOnly) verifySandboxInferenceRoute();
 
   const policyResumeSelection = deps.preparePolicyPresetResumeSelection(sandboxName, {
     recordedPolicyPresets,
@@ -185,8 +202,13 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     tierName: effectivePolicyTier,
   });
   const recordedPolicyPresetsForSupport = policyResumeSelection.policyPresets;
+  const staleLocalInferencePolicy =
+    hostLocalInferenceRouteOnly &&
+    (rawRecordedPolicyPresets?.includes("local-inference") === true ||
+      deps.arePolicyPresetsApplied(sandboxName, ["local-inference"]));
   const resumePolicies =
     resume &&
+    !staleLocalInferencePolicy &&
     !policyResumeSelection.recordedPolicyPresetsNeedReconcile &&
     !policyResumeSelection.disabledMessagingPolicyPresetApplied &&
     !policyResumeSelection.suppressedAgentRequiredPresetsLive &&
@@ -212,6 +234,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       reason: "resume",
       policyPresets: recordedPolicyPresetsForSupport,
     });
+    if (hostLocalInferenceRouteOnly) verifySandboxInferenceRoute();
     session = await deps.recordStepComplete(
       "policies",
       deps.toSessionUpdates({
@@ -235,7 +258,8 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       enabledChannels: policyMessagingChannels,
       disabledChannels,
       webSearchConfig,
-      provider,
+      provider: hostLocalInferenceRouteOnly ? null : provider,
+      ...(hostLocalInferenceRouteOnly ? { excludedPresets: ["local-inference"] } : {}),
       // selectOnboardAgent returns null for the default OpenClaw path (no
       // --agent flag, no recorded agent). Normalise null/blank/whitespace
       // to "openclaw" so the auto-suggest gate still fires; explicit
@@ -266,6 +290,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     if (reflectsLiveAppliedSet) {
       deps.persistAppliedPolicyPresets(sandboxName, appliedPolicyPresets);
     }
+    if (hostLocalInferenceRouteOnly) verifySandboxInferenceRoute();
     session = await deps.recordStepComplete(
       "policies",
       deps.toSessionUpdates({ sandboxName, provider, model, policyPresets: appliedPolicyPresets }),

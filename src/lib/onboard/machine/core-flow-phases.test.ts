@@ -143,6 +143,7 @@ function createPhases(
         nimContainer: "nim-test",
       })),
       setupInference: vi.fn(async () => ({ ok: true as const })),
+      resolveHostLocalInferenceStartupSelection: vi.fn(() => null),
       startRecordedStep: vi.fn(async () => undefined),
       recordStepComplete: vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>
         sessionWithUpdates(updates),

@@ -91,6 +91,7 @@ function createDeps() {
     normalizeHermesAuthMethod: () => null,
     setupNim: calls.setupNim,
     setupInference: calls.setupInference,
+    resolveHostLocalInferenceStartupSelection: () => null,
     startRecordedStep: vi.fn(async () => undefined),
     recordStepComplete: calls.recordStepComplete,
     toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,

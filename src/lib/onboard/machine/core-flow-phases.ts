@@ -17,19 +17,19 @@ import {
   type OnboardFlowContext,
 } from "./flow-context";
 import { createProviderInferencePhase, createSandboxPhase } from "./flow-phases/provider-sandbox";
+import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 import { runCoreOnboardFlowSequence } from "./flow-slices";
 import {
   handleProviderInferenceState,
   type ProviderInferenceStateOptions,
 } from "./handlers/provider-inference";
 import { handleSandboxState, type SandboxStateOptions } from "./handlers/sandbox";
-import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 import {
   type OnboardPrerequisiteRepairEventRecorder,
   runOnboardPrerequisiteRepair,
 } from "./prerequisite-repair";
 import type { OnboardMachineRunnerResult, OnboardMachineRunnerRuntime } from "./runner";
-import { runOnboardSequenceWithRunner, type OnboardSequencePhase } from "./sequence-runner";
+import { type OnboardSequencePhase, runOnboardSequenceWithRunner } from "./sequence-runner";
 import type { OnboardMachineState } from "./types";
 
 export { prepareCoreOnboardFlowContext, prepareFinalOnboardFlowContext } from "./flow-handoff";
@@ -193,6 +193,9 @@ export function createProviderInferenceOnboardFlowPhase<
           providerInferenceResult.compatibleEndpointReasoningEffort,
         nimContainer: providerInferenceResult.nimContainer,
         webSearchConfig: providerInferenceResult.webSearchConfig,
+        hostLocalInferenceRouteOnly: providerInferenceResult.hostLocalInferenceRouteOnly,
+        hostLocalInferenceSandboxProofAuthority:
+          providerInferenceResult.hostLocalInferenceSandboxProofAuthority,
       }),
       result: providerInferenceResult.stateResults,
     };
@@ -245,6 +248,7 @@ export function createSandboxOnboardFlowPhase<
       sandboxGpuConfig: context.sandboxGpuConfig,
       hermesToolGateways: context.hermesToolGateways,
       hermesAuthMethod: context.hermesAuthMethod,
+      hostLocalInferenceRouteOnly: context.hostLocalInferenceRouteOnly === true,
       controlUiPort: options.controlUiPort,
       rootDir: options.rootDir,
       env: options.env,

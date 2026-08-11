@@ -230,6 +230,53 @@ describe("resolveSandboxCreateIntent", () => {
     expect(JSON.stringify(first)).not.toContain("/tmp/");
   });
 
+  it("keeps the real gateway provider while excluding direct host-local inference policy", () => {
+    const intent = resolveSandboxCreateIntent({
+      basePolicyPath: "/repo/policy.yaml",
+      sandboxName: "sandbox",
+      inferenceProvider: "vllm-local",
+      hostLocalInferenceRouteOnly: true,
+      channels: [],
+      enabledChannels: [],
+      disabledChannelNames: new Set(),
+      messagingProviderRequests: [],
+      primaryMessagingCredentialEnvKeys: [],
+      reusableMessagingChannels: [],
+      reusableMessagingProviders: [],
+      hermesToolGateways: ["local-inference"],
+      sandboxGpuConfig,
+      gpuCreateArgs: [],
+      gpuRoutePlan: "native-only",
+      sandboxGpuLogMessage: null,
+      agentName: "hermes",
+      policyTier: "balanced",
+    });
+    const preparePolicy = vi.fn(() => ({
+      policyPath: "/tmp/policy.yaml",
+      appliedPresets: [],
+    }));
+
+    const plan = materializeSandboxCreatePlan({
+      intent,
+      fromRef: "/tmp/nemoclaw-build-1/Dockerfile",
+      messagingTokenDefs: [],
+      prepareInitialSandboxCreatePolicy: preparePolicy,
+      runProviderPreDeleteCleanup: vi.fn(),
+      upsertMessagingProviders: vi.fn(() => []),
+      getHermesToolGatewayProviderName: vi.fn(() => "sandbox-hermes-tools"),
+    });
+
+    expect(intent.inferenceProvider).toBe("vllm-local");
+    expect(intent.policy.options.hostLocalInferenceRouteOnly).toBe(true);
+    expect(preparePolicy).toHaveBeenCalledWith(
+      "/repo/policy.yaml",
+      [],
+      expect.objectContaining({ additionalPresets: [] }),
+    );
+    expect(plan.createArgs).toContain("vllm-local");
+    expect(plan.createArgs).not.toContain("local-inference");
+  });
+
   it("materializes policy and provider effects after resolving intent", () => {
     const tokenDefs = [
       {

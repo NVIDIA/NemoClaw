@@ -4133,7 +4133,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           normalizeHermesAuthMethod,
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
           setupNim: (g, s, a, recover, gateway, assertRouteCompatible, canProbeRoute, recoverySessionId) => setupNim(g, s, a, recover, opts.rebuildRegistryInferenceRoute, gateway, assertRouteCompatible, canProbeRoute, recoverySessionId),
-          setupInference,
+          setupInference, resolveHostLocalInferenceStartupSelection: () => null,
           startRecordedStep,
           recordStepComplete,
           toSessionUpdates: (updates) =>
