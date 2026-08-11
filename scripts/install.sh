@@ -3094,8 +3094,8 @@ run_installer_host_preflight() {
             )
           ),
         ];
-        const admissionFindingIds = stableIds(admission.findingIds);
-        const admissionCapabilityIds = stableIds(admission.capabilityIds);
+        const findingIds = admission.admitted ? [] : stableIds(admission.findingIds);
+        const capabilityIds = admission.admitted ? [] : stableIds(admission.capabilityIds);
         if (host.runtime && host.runtime !== "unknown") {
           infoLines.push(`Detected container runtime: ${host.runtime}`);
         }
@@ -3103,11 +3103,11 @@ run_installer_host_preflight() {
           infoLines.push("Running under WSL");
         }
         if (!admission.admitted) {
-          if (admissionFindingIds.length > 0) {
-            actionLines.push(`Admission finding IDs: ${admissionFindingIds.join(", ")}`);
+          if (findingIds.length > 0) {
+            actionLines.push(`Admission finding IDs: ${findingIds.join(", ")}`);
           }
-          if (admissionCapabilityIds.length > 0) {
-            actionLines.push(`Admission capability IDs: ${admissionCapabilityIds.join(", ")}`);
+          if (capabilityIds.length > 0) {
+            actionLines.push(`Admission capability IDs: ${capabilityIds.join(", ")}`);
           }
         }
         for (const action of actions) {
@@ -3123,7 +3123,7 @@ run_installer_host_preflight() {
               finding,
             ])
           );
-          for (const findingId of admissionFindingIds) {
+          for (const findingId of findingIds) {
             const finding = findingById.get(findingId);
             actionLines.push(
               finding?.summary
@@ -3131,7 +3131,7 @@ run_installer_host_preflight() {
                 : `- Readiness finding: ${findingId}`
             );
           }
-          for (const capabilityId of admissionCapabilityIds) {
+          for (const capabilityId of capabilityIds) {
             actionLines.push(
               `- NemoClaw could not confirm the required readiness capability ${capabilityId}.`
             );
