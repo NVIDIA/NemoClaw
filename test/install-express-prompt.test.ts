@@ -55,7 +55,7 @@ describe("installer express install prompt (sourced)", () => {
 source "$INSTALLER_UNDER_TEST" >/dev/null
 classify_dgx_station_release() {
   if [[ -z "$EXPRESS_DGX_RELEASE_PATH" ]]; then
-    bash "$STATION_PREPARE" --classify-dgx-release
+    printf "generic-ubuntu"
     return
   fi
   bash -c '
@@ -177,24 +177,58 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
   });
 
   it("offers express install when curl-piped stdin still has a controlling TTY", () => {
-    const result = runExpressPromptWithTty("y\n", "pipe");
+    const result = runExpressPromptWithTty("\ny\n", "pipe");
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected DGX Spark/);
+    expect(output).toMatch(/Choose the DGX Spark inference setup/);
+    expect(output).toMatch(/Managed vLLM with automatic serving-profile selection \(default\)/);
+    expect(output).toMatch(/Qwen3\.6 35B-A3B NVFP4 with the fixed catalog-backed vLLM profile/);
     expect(output).toMatch(
       /Express install will configure managed vLLM with automatic DGX Spark serving-profile selection/,
     );
-    expect(output).toMatch(/one exactly qualified pretrusted managed cluster topology/);
-    expect(output).toMatch(/related or ambiguous setup remains untouched and stops installation/);
-    expect(output).toMatch(/experimental pending physical end-to-end validation/);
+    expect(output).toMatch(/ordinary no-match keeps the existing single-host DGX Spark profile/);
     expect(output).toMatch(/Sandbox name: my-assistant/);
     expect(output).toMatch(/Sandbox policy: suggested mode, tier 'balanced'/);
     expect(output).toMatch(/Run express install/);
     expect(output).toMatch(/Using express install for DGX Spark/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=my-assistant/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=my-assistant STATION_EXPRESS= PROFILE_GATE= PROFILE_RUNTIME= SPARK_SELECTION=managed-vllm/,
     );
     expect(output).toMatch(/STATION_EXPRESS=\s/);
+  });
+
+  it("offers the fixed catalog-backed vLLM profile as the second Spark Express option", () => {
+    const result = runExpressPromptWithTty("2\ny\n", "pipe");
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Choose 1 or 2 \[1\]/);
+    expect(output).toMatch(
+      /Express install will configure Qwen3\.6 35B-A3B NVFP4 with the fixed catalog-backed vLLM profile/,
+    );
+    expect(output).toMatch(/The serving catalog owns the model, image, port, and vLLM arguments/);
+    expect(output).toMatch(/installer rejects provider and model overrides/);
+    expect(output).toMatch(
+      /dedicated local-model onboarder rejects vLLM model, port, and serve-argument overrides/,
+    );
+    expect(output).toMatch(
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER= MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=my-assistant STATION_EXPRESS= PROFILE_GATE=1 PROFILE_RUNTIME=vllm SPARK_SELECTION=fixed-vllm/,
+    );
+  });
+
+  it.each([
+    ["port", { NEMOCLAW_VLLM_PORT: "18000" }],
+    ["serve arguments", { NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '["--max-model-len","4096"]' }],
+  ])("rejects a preset %s before activating the fixed Spark Express profile", (_, extraEnv) => {
+    const result = runExpressPromptWithTty("2\ny\n", "pipe", "DGX Spark", extraEnv);
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain(
+      "The fixed DGX Spark vLLM profile does not accept provider, model, port, or serve-argument overrides.",
+    );
+    expect(output).not.toContain("RESULT NON_INTERACTIVE=");
+    expect(output).not.toContain("PROFILE_GATE=1");
   });
 
   it("preserves a preset Spark vLLM model in the prompt and exported env", () => {
@@ -212,10 +246,26 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL=custom-qwen3\.6 POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
+    expect(output).toMatch(/PROFILE_GATE= PROFILE_RUNTIME=/);
+  });
+
+  it("keeps an explicit generic model on the customizable Spark Express path", () => {
+    const result = runExpressPromptWithTty("y\n", "pipe", "DGX Spark", {
+      NEMOCLAW_MODEL: "catalog/model",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).not.toMatch(/Choose the DGX Spark inference setup/);
+    expect(output).not.toMatch(/fixed catalog-backed vLLM profile/);
+    expect(output).toMatch(/managed local vLLM with explicit model intent catalog\/model/);
+    expect(output).toMatch(/does not offer the fixed profile/);
+    expect(output).toMatch(
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=catalog\/model VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=my-assistant STATION_EXPRESS= PROFILE_GATE= PROFILE_RUNTIME= SPARK_SELECTION=/,
+    );
   });
 
   it("preserves an explicit NEMOCLAW_SANDBOX_NAME over the DGX Spark default (#6525)", () => {
-    const result = runExpressPromptWithTty("y\n", "pipe", "DGX Spark", {
+    const result = runExpressPromptWithTty("2\ny\n", "pipe", "DGX Spark", {
       NEMOCLAW_SANDBOX_NAME: "custom-spark",
     });
     const output = `${result.stdout}${result.stderr}`;
@@ -223,7 +273,7 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(output).toMatch(/Detected DGX Spark/);
     expect(output).toMatch(/Sandbox name: custom-spark/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=custom-spark/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER= MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=custom-spark STATION_EXPRESS= PROFILE_GATE=1 PROFILE_RUNTIME=vllm SPARK_SELECTION=fixed-vllm/,
     );
   });
 

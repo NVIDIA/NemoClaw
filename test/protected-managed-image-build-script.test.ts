@@ -7,6 +7,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -19,7 +20,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const REPO_ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const SCRIPT = path.join(REPO_ROOT, "scripts/checks/build-protected-managed-images.sh");
 const REVISION = "a".repeat(40);
 const DIGEST = "b".repeat(64);
@@ -27,6 +28,7 @@ const DIGEST = "b".repeat(64);
 let testRoot = "";
 let stubBin = "";
 let dockerLog = "";
+let seedLog = "";
 
 function writeExecutable(name: string, source: string): void {
   const target = path.join(stubBin, name);
@@ -52,6 +54,97 @@ esac
 `,
   );
   writeExecutable("sha256sum", `#!/usr/bin/env bash\nprintf '%s  %s\\n' '${DIGEST}' "$1"\n`);
+  writeExecutable(
+    "node",
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$NEMOCLAW_TEST_SEED_LOG"
+mode="$4"
+shift 4
+output=""
+while (($# > 0)); do
+  case "$1" in
+    --output)
+      output="$2"
+      shift 2
+      ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$output"
+case "$mode" in
+  export)
+    printf '{"kind":"test"}\n' >"$output/manifest.json"
+    printf 'archive\n' >"$output/complete-1.0.0.tgz"
+    ;;
+  copy)
+    printf 'archive\n' >"$output/complete-1.0.0.tgz"
+    ;;
+  *) exit 92 ;;
+esac
+`,
+  );
+}
+
+function completeImportedCache(cacheRoot: string): void {
+  for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
+    mkdirSync(path.join(cacheRoot, agent, "blobs", "sha256"), { recursive: true });
+    writeFileSync(path.join(cacheRoot, agent, "index.json"), "{}\n", "utf8");
+  }
+  mkdirSync(path.join(cacheRoot, "npm-cache-seed"));
+  writeFileSync(path.join(cacheRoot, "npm-cache-seed", "manifest.json"), "{}\n", "utf8");
+  mkdirSync(path.join(cacheRoot, "mcp-runtime-npm-cache-seed"));
+  writeFileSync(
+    path.join(cacheRoot, "mcp-runtime-npm-cache-seed", "manifest.json"),
+    "{}\n",
+    "utf8",
+  );
+  mkdirSync(path.join(cacheRoot, "messaging-npm-cache-seed"));
+  writeFileSync(path.join(cacheRoot, "messaging-npm-cache-seed", "manifest.json"), "{}\n", "utf8");
+}
+
+function completeSourceBoundary(sourceRoot: string): void {
+  mkdirSync(path.join(sourceRoot, "nemoclaw"), { recursive: true });
+  mkdirSync(path.join(sourceRoot, "scripts", "checks"), { recursive: true });
+  mkdirSync(path.join(sourceRoot, "tools", "mcp-tool-discovery-runtime", "npm-cache-seed"), {
+    recursive: true,
+  });
+  mkdirSync(
+    path.join(sourceRoot, "tools", "mcp-tool-discovery-runtime", "mcp-runtime-npm-cache-seed"),
+    { recursive: true },
+  );
+  mkdirSync(
+    path.join(
+      sourceRoot,
+      "agents",
+      "openclaw",
+      "managed-image-messaging-runtime",
+      "npm-cache-seed",
+    ),
+    { recursive: true },
+  );
+  writeFileSync(path.join(sourceRoot, "nemoclaw", "package-lock.json"), "{}\n", "utf8");
+  writeFileSync(
+    path.join(sourceRoot, "tools", "mcp-tool-discovery-runtime", "package-lock.json"),
+    "{}\n",
+    "utf8",
+  );
+  writeFileSync(
+    path.join(
+      sourceRoot,
+      "agents",
+      "openclaw",
+      "managed-image-messaging-runtime",
+      "package-lock.json",
+    ),
+    "{}\n",
+    "utf8",
+  );
+  writeFileSync(
+    path.join(sourceRoot, "scripts", "checks", "materialize-locked-npm-cache-seed.mts"),
+    "export {};\n",
+    "utf8",
+  );
 }
 
 function recordedBuildInvocations(): string[] {
@@ -98,6 +191,7 @@ function runBuild(sourceRoot: string, extraArgs: readonly string[] = []) {
       env: {
         ...process.env,
         NEMOCLAW_TEST_DOCKER_LOG: dockerLog,
+        NEMOCLAW_TEST_SEED_LOG: seedLog,
         PATH: `${stubBin}:${process.env.PATH ?? ""}`,
         RUNNER_TEMP: testRoot,
       },
@@ -109,6 +203,7 @@ beforeEach(() => {
   testRoot = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-protected-build-"));
   stubBin = path.join(testRoot, "bin");
   dockerLog = path.join(testRoot, "docker.log");
+  seedLog = path.join(testRoot, "seed.log");
   mkdirSync(stubBin);
   writeExecutable(
     "docker",
@@ -125,7 +220,7 @@ afterEach(() => {
 describe("protected managed-image source-root boundary", () => {
   it("accepts one absolute non-symlink source root before invoking Docker", () => {
     const sourceRoot = path.join(testRoot, "candidate");
-    mkdirSync(sourceRoot);
+    completeSourceBoundary(sourceRoot);
 
     const result = runBuild(sourceRoot);
 
@@ -184,6 +279,22 @@ describe("protected managed-image build-cache boundary", () => {
         `--cache-to type=local,dest=${realpathSync(cacheRoot)}/${agent},mode=max`,
       );
     }
+    expect(readFileSync(seedLog, "utf8")).toContain(
+      `materialize-locked-npm-cache-seed.mts export --lockfile ${REPO_ROOT}/nemoclaw/package-lock.json --output ${realpathSync(cacheRoot)}/npm-cache-seed`,
+    );
+    expect(existsSync(path.join(cacheRoot, "npm-cache-seed", "manifest.json"))).toBe(true);
+    expect(readFileSync(seedLog, "utf8")).toContain(
+      `materialize-locked-npm-cache-seed.mts export --lockfile ${REPO_ROOT}/tools/mcp-tool-discovery-runtime/package-lock.json --output ${realpathSync(cacheRoot)}/mcp-runtime-npm-cache-seed`,
+    );
+    expect(existsSync(path.join(cacheRoot, "mcp-runtime-npm-cache-seed", "manifest.json"))).toBe(
+      true,
+    );
+    expect(readFileSync(seedLog, "utf8")).toContain(
+      `materialize-locked-npm-cache-seed.mts export --lockfile ${REPO_ROOT}/agents/openclaw/managed-image-messaging-runtime/package-lock.json --output ${realpathSync(cacheRoot)}/messaging-npm-cache-seed`,
+    );
+    expect(existsSync(path.join(cacheRoot, "messaging-npm-cache-seed", "manifest.json"))).toBe(
+      true,
+    );
   });
 
   it.each([
@@ -217,40 +328,106 @@ describe("protected managed-image build-cache boundary", () => {
     expect(existsSync(dockerLog)).toBe(false);
   });
 
-  it("rejects an incomplete offline cache before invoking Docker", () => {
-    const cacheRoot = path.join(testRoot, "offline-cache");
+  it("rejects an incomplete imported cache before invoking Docker", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
     mkdirSync(cacheRoot);
 
-    const result = runBuild(REPO_ROOT, ["--offline-cache", cacheRoot]);
+    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
 
     expect(result.status, result.stderr).toBe(1);
-    expect(result.stderr).toContain("offline cache is incomplete for openclaw");
+    expect(result.stderr).toContain("imported cache is incomplete for openclaw");
     expect(existsSync(dockerLog)).toBe(false);
   });
 
-  it("passes each agent complete offline cache metadata with network disabled", () => {
-    const cacheRoot = path.join(testRoot, "offline-cache");
+  it("rejects imported agent caches that omit the complete locked npm seed", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
     for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
-      mkdirSync(path.join(cacheRoot, agent, "blobs", "sha256"), {
-        recursive: true,
-      });
+      mkdirSync(path.join(cacheRoot, agent, "blobs", "sha256"), { recursive: true });
       writeFileSync(path.join(cacheRoot, agent, "index.json"), "{}\n", "utf8");
     }
+
+    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("imported cache has no locked npm cache seed");
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
+  it("rejects an imported cache that omits the locked messaging npm seed", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
+    completeImportedCache(cacheRoot);
+    rmSync(path.join(cacheRoot, "messaging-npm-cache-seed"), { recursive: true });
+
+    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("imported cache has no locked messaging npm cache seed");
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
+  it("rejects an imported cache that omits the locked MCP runtime npm seed", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
+    completeImportedCache(cacheRoot);
+    rmSync(path.join(cacheRoot, "mcp-runtime-npm-cache-seed"), { recursive: true });
+
+    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("imported cache has no locked MCP runtime npm cache seed");
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
+  it("imports locked seeds, reuses safe agent caches, and disables RUN network access", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
+    const sourceSeed = path.join(REPO_ROOT, "tools/mcp-tool-discovery-runtime/npm-cache-seed");
+    const sourceMessagingSeed = path.join(
+      REPO_ROOT,
+      "agents/openclaw/managed-image-messaging-runtime/npm-cache-seed",
+    );
+    const sourceMcpSeed = path.join(
+      REPO_ROOT,
+      "tools/mcp-tool-discovery-runtime/mcp-runtime-npm-cache-seed",
+    );
+    const originalSeedNames = readdirSync(sourceSeed).sort();
+    const originalMcpSeedNames = readdirSync(sourceMcpSeed).sort();
+    const originalMessagingSeedNames = readdirSync(sourceMessagingSeed).sort();
+    completeImportedCache(cacheRoot);
     stubBuildInvocation();
 
-    const result = runBuild(REPO_ROOT, ["--offline-cache", cacheRoot]);
+    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
 
     expect(result.status, result.stderr).toBe(0);
     expect(recordedBuildInvocations()).toHaveLength(3);
     for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
+      expect(recordedBuildInvocation(agent)).toContain("--network none");
+    }
+    expect(recordedBuildInvocation("openclaw")).not.toContain("--cache-from");
+    for (const agent of ["hermes", "langchain-deepagents-code"]) {
       expect(recordedBuildInvocation(agent)).toContain(
-        `--cache-from type=local,src=${realpathSync(cacheRoot)}/${agent} --network none`,
+        `--cache-from type=local,src=${realpathSync(cacheRoot)}/${agent}`,
       );
     }
+    expect(recordedBuildInvocation("openclaw").split(" ")).toContain("--no-cache");
+    expect(recordedBuildInvocation("hermes").split(" ")).not.toContain("--no-cache");
+    expect(recordedBuildInvocation("langchain-deepagents-code").split(" ")).not.toContain(
+      "--no-cache",
+    );
+    expect(readFileSync(seedLog, "utf8")).toContain(
+      `materialize-locked-npm-cache-seed.mts copy --lockfile ${REPO_ROOT}/nemoclaw/package-lock.json --seed ${realpathSync(cacheRoot)}/npm-cache-seed`,
+    );
+    expect(readFileSync(seedLog, "utf8")).toContain(
+      `materialize-locked-npm-cache-seed.mts copy --lockfile ${REPO_ROOT}/tools/mcp-tool-discovery-runtime/package-lock.json --seed ${realpathSync(cacheRoot)}/mcp-runtime-npm-cache-seed`,
+    );
+    expect(readFileSync(seedLog, "utf8")).toContain(
+      `materialize-locked-npm-cache-seed.mts copy --lockfile ${REPO_ROOT}/agents/openclaw/managed-image-messaging-runtime/package-lock.json --seed ${realpathSync(cacheRoot)}/messaging-npm-cache-seed`,
+    );
+    expect(readdirSync(sourceSeed).sort()).toEqual(originalSeedNames);
+    expect(readdirSync(sourceMcpSeed).sort()).toEqual(originalMcpSeedNames);
+    expect(readdirSync(sourceMessagingSeed).sort()).toEqual(originalMessagingSeedNames);
   });
 
-  it("rejects a nested symlink in a complete offline cache before invoking Docker", () => {
-    const cacheRoot = path.join(testRoot, "offline-cache");
+  it("rejects a nested symlink in a complete imported cache before invoking Docker", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
     for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
       mkdirSync(path.join(cacheRoot, agent, "blobs", "sha256"), {
         recursive: true,
@@ -262,10 +439,10 @@ describe("protected managed-image build-cache boundary", () => {
       path.join(cacheRoot, "openclaw", "blobs", "sha256", "nested-link"),
     );
 
-    const result = runBuild(REPO_ROOT, ["--offline-cache", cacheRoot]);
+    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
 
     expect(result.status, result.stderr).toBe(1);
-    expect(result.stderr).toContain("offline cache contains a symlink");
+    expect(result.stderr).toContain("imported cache contains a symlink");
     expect(existsSync(dockerLog)).toBe(false);
   });
 });

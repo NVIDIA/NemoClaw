@@ -3,9 +3,10 @@
 
 # Docs Skip List
 #
-# Features and commits listed here are excluded from the
+# Features and paths listed here are excluded from the
 # nemoclaw-contributor-update-docs skill. The skill reads this file
-# before mapping commits to doc pages and silently skips any match.
+# before mapping commits to doc pages and silently skips the matching
+# feature or path.
 #
 # Use this when a feature is merged but not ready for public docs
 # (experimental, under UX review, pending approval, etc.).
@@ -13,8 +14,9 @@
 # Format
 # ------
 # skip-features:   substring matches against commit messages and
-#                   changed file paths. Any commit whose message or
-#                   diff file list contains a listed string is skipped.
+#                   changed file paths. Exclude the matched feature or
+#                   path and its directly related behavior. Continue
+#                   auditing other user-visible changes in a mixed commit.
 #
 # skip-terms:      terms that must never appear in generated docs,
 #                   even if the commit itself is not skipped. The skill

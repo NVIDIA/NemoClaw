@@ -738,7 +738,7 @@ function openClawNpmReviewedEntries(baselinePolicyContent: string): {
 }
 
 /**
- * OpenShell 0.0.99 rejects overlapping endpoint selectors whose TLS or L7
+ * OpenShell 0.0.101 rejects overlapping endpoint selectors whose TLS or L7
  * metadata differs, even when their binary lists are disjoint. Keep the
  * restricted OpenClaw baseline GET-only. While the broader npm preset is
  * active, its reviewed full-access L4 endpoint temporarily replaces the
@@ -2513,7 +2513,7 @@ function removeBuiltinPresetAttribution(sandboxName: string, presetName: string)
  * `null` to distinguish "gateway unreachable" from "gateway has no
  * matching presets" (`[]`).
  */
-function getGatewayPresets(sandboxName: string): string[] | null {
+function getGatewayPresets(sandboxName: string, timeoutMs?: number): string[] | null {
   let sandboxAgent: string | null = null;
   try {
     sandboxAgent = registry.getSandbox(sandboxName)?.agent ?? null;
@@ -2521,7 +2521,11 @@ function getGatewayPresets(sandboxName: string): string[] | null {
     sandboxAgent = null;
   }
   return inspectGatewayPresetNames({
-    readPolicy: () => runCapture(buildPolicyGetFullCommand(sandboxName), { ignoreError: true }),
+    readPolicy: () =>
+      runCapture(buildPolicyGetFullCommand(sandboxName), {
+        ignoreError: true,
+        ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }),
+      }),
     parseCurrentPolicy: parseCurrentPolicyOrEmpty,
     extractPresetEntries,
     sources: () => [

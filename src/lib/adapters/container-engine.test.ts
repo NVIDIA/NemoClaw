@@ -62,6 +62,32 @@ describe("operation-scoped container engine command", () => {
     );
   });
 
+  it("forwards bounded binary stdin to one endpoint-scoped command", () => {
+    const capture = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const engine = createContainerEngineCommand({
+      operation: "managed-bootstrap",
+      engineId: "podman",
+      displayName: "Podman",
+      authorityId: "test:podman-socket",
+      executable: "podman",
+      endpointArgs: ["--url", "unix:///runtime/podman.sock"],
+      capture,
+    });
+    const archive = Buffer.from("archive");
+
+    engine.capture(["container", "cp", "-", "abc:/"], 2_345, archive);
+
+    expect(capture).toHaveBeenCalledExactlyOnceWith(
+      "podman",
+      ["--url", "unix:///runtime/podman.sock", "container", "cp", "-", "abc:/"],
+      2_345,
+      archive,
+    );
+    expect(() => engine.capture(["info"], 1_000, Buffer.alloc(1024 * 1024 + 1))).toThrow(
+      "exceeds its byte bound",
+    );
+  });
+
   it("guards before and after commands while preserving command failures", () => {
     const commandFailure = new Error("command failed");
     const guardFailure = new Error("authority changed");

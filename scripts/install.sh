@@ -1139,7 +1139,7 @@ _PREEXISTING_SANDBOX_RECOVERY_RAN=false
 # preserved). The final summary must not claim those sandboxes were recovered.
 _PREEXISTING_SANDBOX_ORPHANED=false
 _LEGACY_MANAGED_RECOVERY_NAMES_JSON="[]"
-# OpenShell v0.0.99 routes sandbox and workspace identities through labels
+# OpenShell v0.0.101 routes sandbox and workspace identities through labels
 # capped at 19 characters. Keep this installer-only raw-registry preflight in
 # sync with NAME_MAX_LENGTH in nemoclaw/src/shared/sandbox-name.cts. The
 # current CLI cannot be prepared safely until legacy names are checked.
@@ -1310,7 +1310,9 @@ prefer_user_local_openshell() {
   local openshell_bin="${local_bin}/openshell"
   if [[ -x "$openshell_bin" ]]; then
     export NEMOCLAW_OPENSHELL_BIN="$openshell_bin"
-    export PATH="$local_bin:$PATH"
+    if [[ ":$PATH:" != *":$local_bin:"* ]]; then
+      export PATH="$local_bin:$PATH"
+    fi
   fi
 }
 
@@ -1640,7 +1642,7 @@ ensure_cli_shim() {
   expected_shim="$(
     cat <<EOF
 #!/usr/bin/env bash
-export PATH="$node_dir:\$PATH"
+[[ "\$(command -v node 2>/dev/null)" == "$node_path" ]] || export PATH="$node_dir:\$PATH"
 exec "$cli_path" "\$@"
 EOF
   )"
@@ -1885,7 +1887,9 @@ fix_npm_permissions() {
     fi
   done
 
-  export PATH="$HOME/.npm-global/bin:$PATH"
+  if [[ ":$PATH:" != *":$HOME/.npm-global/bin:"* ]]; then
+    export PATH="$HOME/.npm-global/bin:$PATH"
+  fi
   ok "npm configured for user-local installs (~/.npm-global)"
 }
 
@@ -2107,7 +2111,7 @@ install_nemoclaw() {
     spin "Installing ${_CLI_DISPLAY} dependencies" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm install --ignore-scripts"
     spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm run --if-present build:cli"
     spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\"/nemoclaw && npm ci --ignore-scripts && npm run build"
-    spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm link"
+    spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm link --ignore-scripts"
 
     _NEMOCLAW_CLI_INSTALL_MODE=source
   else
@@ -2151,7 +2155,7 @@ install_nemoclaw() {
       spin "Installing ${_CLI_DISPLAY} dependencies" bash -c "cd \"$nemoclaw_src\" && npm install --ignore-scripts"
       spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
       spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm ci --ignore-scripts && npm run build"
-      spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$nemoclaw_src\" && npm link"
+      spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$nemoclaw_src\" && npm link --ignore-scripts"
       restore_managed_source_lockfile "$nemoclaw_src" \
         || warn "Could not restore package-lock.json in ${nemoclaw_src} — the next install re-clones that checkout instead of reusing it."
     fi
@@ -2538,7 +2542,7 @@ require_openshell_compatible_sandbox_names() {
 
   cat <<EOF
 
-  ${incompatible_count} existing sandbox name(s) cannot be recreated by OpenShell 0.0.99:
+  ${incompatible_count} existing sandbox name(s) cannot be recreated by OpenShell 0.0.101:
 EOF
   while IFS= read -r sandbox_name; do
     [[ -n "$sandbox_name" ]] && printf "    %s\n" "$sandbox_name"
@@ -2560,7 +2564,7 @@ EOF
   ' "$incompatible_json")
   cat <<EOF
 
-  OpenShell 0.0.99 caps routed sandbox names at
+  OpenShell 0.0.101 caps routed sandbox names at
   ${_OPENSHELL_SANDBOX_NAME_MAX_LENGTH} characters and rejects consecutive
   hyphens. Current NemoClaw names must use 1-${_OPENSHELL_SANDBOX_NAME_MAX_LENGTH}
   lowercase letters, numbers, and single internal hyphens, starting with a
@@ -2576,7 +2580,7 @@ EOF
   OpenShell runtime and gateway before migrating the sandbox state.
 
 EOF
-  error "OpenShell 0.0.99 upgrade blocked by incompatible existing sandbox names."
+  error "OpenShell 0.0.101 upgrade blocked by incompatible existing sandbox names."
 }
 
 normalize_legacy_managed_confirmation_json() {
@@ -2848,6 +2852,9 @@ preinstall_backup_and_retire_legacy_gateway() {
     fi
     error "Pre-upgrade backup stopped the installer. Resolve every reported sandbox backup failure or skipped sandbox using the CLI output above, then rerun the installer."
   fi
+  # The replacement gateway may report legacy rows as Ready even when their
+  # state is no longer inspectable. Reuse this validated backup for every stale
+  # or non-Ready recreate instead of attempting a second live backup.
   export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
 
   # Retire a backed-up gateway before install-openshell replaces an out-of-range
@@ -3027,7 +3034,14 @@ repair_installer_nvidia_cdi_spec() {
 
 run_installer_host_preflight() {
   local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/preflight.js"
-  if ! command_exists node || [[ ! -f "$preflight_module" ]]; then
+  local gateway_management_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/gateway-management.js"
+  local host_readiness_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/host.js"
+  local onboard_admission_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/onboard-admission.js"
+  if ! command_exists node \
+    || [[ ! -f "$preflight_module" ]] \
+    || [[ ! -f "$gateway_management_module" ]] \
+    || [[ ! -f "$host_readiness_module" ]] \
+    || [[ ! -f "$onboard_admission_module" ]]; then
     return 0
   fi
 
@@ -3038,23 +3052,93 @@ run_installer_host_preflight() {
     # shellcheck disable=SC2016
     node -e '
       const preflightPath = process.argv[1];
+      const hostReadinessPath = process.argv[2];
+      const onboardAdmissionPath = process.argv[3];
+      const gatewayManagementPath = process.argv[4];
       try {
-        const { assessHost, planHostRemediation } = require(preflightPath);
+        const { assessHost, planHostAdvisories } = require(preflightPath);
+        const { createHostReadinessReport } = require(hostReadinessPath);
+        const { evaluateOnboardReadinessAdmission } = require(onboardAdmissionPath);
+        const { loadGatewayManagementDeclaration } = require(gatewayManagementPath);
         const host = assessHost();
-        const actions = planHostRemediation(host);
-        const blockingActions = actions.filter((action) => action && action.blocking);
+        const actions = planHostAdvisories(host);
+        const gatewayManagement = loadGatewayManagementDeclaration();
+        const allowStorageRemediation =
+          gatewayManagement.ok &&
+          (gatewayManagement.declaration === null ||
+            gatewayManagement.declaration?.mode === "nemoclaw-managed");
+        const readiness = createHostReadinessReport(
+          { nemoclawVersion: "installer", sourceRevision: "installer" },
+          {
+            assess: () => host,
+            detectGpu: () => null,
+            detectHostGpuPlatform: () => host.hostGpuPlatform,
+            detectNvidiaDriverVersion: () => host.nvidiaDriverVersion,
+            collectPlatformIdentity: () => ({}),
+          }
+        );
+        const admission = evaluateOnboardReadinessAdmission(readiness, {
+          explicitlyOptedOutGpuPassthrough: false,
+          allowUnsupportedRuntime: false,
+          // The installer starts a NemoClaw-managed onboarding flow. Let the
+          // authoritative onboarding gate apply supported storage remediation,
+          // but only when the gateway declaration confirms NemoClaw ownership.
+          allowStorageRemediation,
+        });
         const infoLines = [];
         const actionLines = [];
+        const stableIdPattern = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$/;
+        const stableIds = (values) => [
+          ...new Set(
+            (Array.isArray(values) ? values : []).filter(
+              (value) =>
+                typeof value === "string" &&
+                value.length <= 128 &&
+                stableIdPattern.test(value)
+            )
+          ),
+        ];
+        const findingIds = admission.admitted ? [] : stableIds(admission.findingIds);
+        const capabilityIds = admission.admitted ? [] : stableIds(admission.capabilityIds);
         if (host.runtime && host.runtime !== "unknown") {
           infoLines.push(`Detected container runtime: ${host.runtime}`);
         }
-        if (host.notes && host.notes.includes("Running under WSL")) {
+        if (host.isWsl) {
           infoLines.push("Running under WSL");
+        }
+        if (!admission.admitted) {
+          if (findingIds.length > 0) {
+            actionLines.push(`Admission finding IDs: ${findingIds.join(", ")}`);
+          }
+          if (capabilityIds.length > 0) {
+            actionLines.push(`Admission capability IDs: ${capabilityIds.join(", ")}`);
+          }
         }
         for (const action of actions) {
           actionLines.push(`- ${action.title}: ${action.reason}`);
           for (const command of action.commands || []) {
             actionLines.push(`  ${command}`);
+          }
+        }
+        if (!admission.admitted) {
+          const findingById = new Map(
+            (Array.isArray(readiness.findings) ? readiness.findings : []).map((finding) => [
+              finding.id,
+              finding,
+            ])
+          );
+          for (const findingId of findingIds) {
+            const finding = findingById.get(findingId);
+            actionLines.push(
+              finding?.summary
+                ? `- ${finding.summary}`
+                : `- Readiness finding: ${findingId}`
+            );
+          }
+          for (const capabilityId of capabilityIds) {
+            actionLines.push(
+              `- NemoClaw could not confirm the required readiness capability ${capabilityId}.`
+            );
           }
         }
         if (infoLines.length > 0) {
@@ -3063,11 +3147,11 @@ run_installer_host_preflight() {
         if (actionLines.length > 0) {
           process.stdout.write(`__ACTIONS__\n${actionLines.join("\n")}`);
         }
-        process.exit(blockingActions.length > 0 ? 10 : 0);
+        process.exit(admission.admitted ? 0 : 10);
       } catch {
         process.exit(0);
       }
-    ' "$preflight_module"
+    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module" "$gateway_management_module"
   )"; then
     status=0
   else
@@ -4384,6 +4468,40 @@ resolve_pending_express_wsl_provider() {
   fi
 }
 
+select_spark_express_inference() {
+  local input_fd="${1:-0}"
+  local reply=""
+
+  unset _SPARK_EXPRESS_INFERENCE_SELECTION
+  if [ -n "${NEMOCLAW_MODEL:-}" ] || [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
+    return 0
+  fi
+
+  printf "  Choose the DGX Spark inference setup:\n"
+  printf "    1) Managed vLLM with automatic serving-profile selection (default)\n"
+  printf "    2) Qwen3.6 35B-A3B NVFP4 with the fixed catalog-backed vLLM profile\n"
+  while true; do
+    printf "  Choose 1 or 2 [1]: "
+    if ! IFS= read -r -u "$input_fd" reply; then
+      return 1
+    fi
+    reply="$(printf "%s" "$reply" | tr '[:upper:]' '[:lower:]')"
+    case "$reply" in
+      "" | 1)
+        _SPARK_EXPRESS_INFERENCE_SELECTION="managed-vllm"
+        return 0
+        ;;
+      2)
+        _SPARK_EXPRESS_INFERENCE_SELECTION="fixed-vllm"
+        return 0
+        ;;
+      *)
+        warn "Choose 1 or 2."
+        ;;
+    esac
+  done
+}
+
 activate_express_install() {
   local platform="$1"
   _SELECTED_EXPRESS_PLATFORM="$platform"
@@ -4399,9 +4517,21 @@ activate_express_install() {
   case "$platform" in
     "DGX Spark")
       export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
-      export NEMOCLAW_PROVIDER=install-vllm
-      if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
-        export NEMOCLAW_VLLM_MODEL
+      if [ "${_SPARK_EXPRESS_INFERENCE_SELECTION:-managed-vllm}" = "fixed-vllm" ]; then
+        if [ -n "${NEMOCLAW_PROVIDER:-}" ] || [ -n "${NEMOCLAW_MODEL:-}" ] \
+          || [ -n "${NEMOCLAW_VLLM_MODEL:-}" ] || [ -n "${NEMOCLAW_VLLM_PORT:-}" ] \
+          || [ -n "${NEMOCLAW_VLLM_EXTRA_ARGS_JSON:-}" ]; then
+          error "The fixed DGX Spark vLLM profile does not accept provider, model, port, or serve-argument overrides."
+        fi
+        unset NEMOCLAW_PROVIDER
+        export NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1
+        export NEMOCLAW_LOCAL_MODEL_RUNTIME=vllm
+      else
+        unset NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE NEMOCLAW_LOCAL_MODEL_RUNTIME
+        export NEMOCLAW_PROVIDER=install-vllm
+        if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
+          export NEMOCLAW_VLLM_MODEL
+        fi
       fi
       ;;
     "DGX Station")
@@ -4837,9 +4967,15 @@ describe_express_install() {
 
   case "$platform" in
     "DGX Spark")
-      if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
+      if [ "${_SPARK_EXPRESS_INFERENCE_SELECTION:-managed-vllm}" = "fixed-vllm" ]; then
+        inference_summary="Qwen3.6 35B-A3B NVFP4 with the fixed catalog-backed vLLM profile"
+        inference_disclosure="The serving catalog owns the model, image, port, and vLLM arguments. The installer rejects provider and model overrides, and the dedicated local-model onboarder rejects vLLM model, port, and serve-argument overrides before starting its managed container."
+      elif [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
         inference_summary="managed local vLLM with model ${NEMOCLAW_VLLM_MODEL}"
         inference_disclosure="The explicit model remains authoritative, so this run keeps the existing single-host DGX Spark profile. Managed vLLM pulls the configured image/model and runs only its dedicated container."
+      elif [ -n "${NEMOCLAW_MODEL:-}" ]; then
+        inference_summary="managed local vLLM with explicit model intent ${NEMOCLAW_MODEL}"
+        inference_disclosure="The explicit model remains authoritative, so this run keeps the customizable managed-vLLM path and does not offer the fixed profile."
       else
         inference_summary="managed vLLM with automatic DGX Spark serving-profile selection"
         inference_disclosure="With no explicit inference intent or related runtime, one exactly qualified pretrusted managed cluster topology selects a matching pinned distributed profile. An ordinary no-match keeps the existing single-host DGX Spark profile; any related or ambiguous setup remains untouched and stops installation. Managed vLLM pulls the selected image/model and runs only its dedicated containers. The selected distributed profile is experimental pending physical end-to-end validation."
@@ -5023,6 +5159,10 @@ maybe_offer_express_install() {
   local reply=""
   if [ -t 0 ]; then
     info "Detected ${platform}."
+    if [ "$platform" = "DGX Spark" ] && ! select_spark_express_inference 0; then
+      info "Skipping express install (unable to read from TTY)."
+      return 0
+    fi
     describe_express_install "$platform"
     printf "  Run express install with these settings? [Y/n]: "
     if ! IFS= read -r reply; then
@@ -5036,6 +5176,11 @@ maybe_offer_express_install() {
     fi
   elif { exec 3</dev/tty; } 2>/dev/null; then
     info "Detected ${platform}."
+    if [ "$platform" = "DGX Spark" ] && ! select_spark_express_inference 3; then
+      exec 3<&-
+      info "Skipping express install (unable to read from TTY)."
+      return 0
+    fi
     describe_express_install "$platform"
     printf "  Run express install with these settings? [Y/n]: "
     if ! IFS= read -r reply <&3; then

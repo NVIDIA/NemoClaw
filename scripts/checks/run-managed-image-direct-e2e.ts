@@ -12,9 +12,9 @@ import {
 } from "../../src/lib/onboard/managed-bootstrap/adapter.ts";
 import {
   MANAGED_BOOTSTRAP_REQUEST_FILE,
-  serializeManagedBootstrapEnvelope,
   serializeManagedBootstrapEnvelopeTar,
 } from "../../src/lib/onboard/managed-bootstrap/envelope.ts";
+import { managedImageRuntimeIdentity } from "../../src/lib/onboard/managed-image/contract.ts";
 import { MANAGED_STARTUP_EXECUTABLE } from "../../src/lib/onboard/managed-startup/hold.ts";
 import {
   encodeManagedStartupProfile,
@@ -173,32 +173,12 @@ function stageManagedBootstrapEnvelope(
   bootstrapIdentity: string,
   request: ManagedStartupRootApplyRequest,
 ): void {
-  const envelope = serializeManagedBootstrapEnvelope({
-    bootstrapIdentity,
-    rootApplyRequest: request,
+  docker(["cp", "-", `${containerId}:/`], {
+    input: serializeManagedBootstrapEnvelopeTar({
+      bootstrapIdentity,
+      rootApplyRequest: request,
+    }),
   });
-  docker(
-    [
-      "exec",
-      "--interactive",
-      "--user",
-      "0:0",
-      containerId,
-      "/bin/sh",
-      "-eu",
-      "-c",
-      [
-        `test ! -e ${MANAGED_BOOTSTRAP_REQUEST_FILE}`,
-        `test ! -L ${MANAGED_BOOTSTRAP_REQUEST_FILE}`,
-        "umask 077",
-        `cat > ${MANAGED_BOOTSTRAP_REQUEST_FILE}`,
-        `chown 0:0 ${MANAGED_BOOTSTRAP_REQUEST_FILE}`,
-        `chmod 0400 ${MANAGED_BOOTSTRAP_REQUEST_FILE}`,
-        `test "$(stat -c '%u:%g:%a:%h' ${MANAGED_BOOTSTRAP_REQUEST_FILE})" = '0:0:400:1'`,
-      ].join("\n"),
-    ],
-    { input: envelope },
-  );
 }
 
 function verifyManagedBootstrapPidOneBoundary(
@@ -245,7 +225,7 @@ function verifyManagedBootstrapPidOneBoundary(
     if (!CONTAINER_ID_RE.test(containerId)) {
       throw new Error("docker create did not return one exact PID 1 bootstrap container");
     }
-    docker(["container", "cp", "-", `${containerId}:/`], {
+    docker(["cp", "-", `${containerId}:/`], {
       input: serializeManagedBootstrapEnvelopeTar({
         bootstrapIdentity,
         rootApplyRequest: request,
@@ -531,6 +511,23 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
       "-g",
       "sandbox",
     ]).stdout.trim();
+    const expectedIdentity = managedImageRuntimeIdentity(input.agent);
+    const imageWorkdir = docker([
+      "image",
+      "inspect",
+      "--format",
+      "{{.Config.WorkingDir}}",
+      input.image,
+    ]).stdout.trim();
+    if (
+      sandboxUid !== String(expectedIdentity.uid) ||
+      sandboxGid !== String(expectedIdentity.gid) ||
+      imageWorkdir !== expectedIdentity.workdir
+    ) {
+      throw new Error(
+        `managed image runtime identity drifted: expected ${expectedIdentity.uid}:${expectedIdentity.gid}:${expectedIdentity.workdir}, received ${sandboxUid}:${sandboxGid}:${imageWorkdir}`,
+      );
+    }
     verifyManagedBootstrapPidOneBoundary(
       input,
       request,

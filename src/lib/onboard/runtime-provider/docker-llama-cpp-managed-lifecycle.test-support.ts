@@ -6,7 +6,6 @@ import { createHash } from "node:crypto";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { LlamaCppHostLocalLaunchContract } from "../../inference/llama-cpp/host-local-runtime";
 
-export const HOST_PORT = String(LLAMA_CPP_PORT);
 export const MODEL_DIGEST = `sha256:${"a".repeat(64)}`;
 export const IMAGE = `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"c".repeat(64)}`;
 export const PROBE_IMAGE = `quay.io/curl/curl@sha256:${"d".repeat(64)}`;
@@ -86,7 +85,14 @@ export function contract(): LlamaCppHostLocalLaunchContract {
       flashAttention: "enabled",
       idleSleepSeconds: -1,
       kvCache: { key: "f16", value: "f16" },
-      limits: { requestTimeoutSeconds: 900 },
+      limits: {
+        maxRequestBodyBytes: 1_048_576,
+        maxRequestHeaderBytes: 32_768,
+        maxOutputTokens: 4_096,
+        requestTimeoutSeconds: 900,
+        shutdownTimeoutSeconds: 25,
+      },
+      requestGuard: { upstreamPort: 8_082 },
       microBatchSize: 512,
       port: LLAMA_CPP_PORT,
       protocol: "openai-completions",

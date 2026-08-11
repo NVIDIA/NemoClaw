@@ -306,13 +306,18 @@ test/e2e/
   `ubuntu-policy-custom-missing-presets-negative`,
   `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and
   `ubuntu-repo-docker-post-reboot-recovery`. Keep
-  `allow_jetson_runner_queue=false` and `allow_dgx_spark_runner_queue=false` for
+  `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for
   this default selection. If the DGX Spark flag is `true`, GitHub can pause the
   qualification job for the `approve-dgx-spark-image-qualification` environment.
   An authorized environment reviewer must approve it before qualification starts.
   The only accepted nonempty
   `jobs` value is `managed-image-protected-runtime`; `targets` must remain empty.
   Refer to [NemoClaw E2E CI](../README.md).
+
+- [Jetson Dispatch Through Colossus](jetson-colossus-dispatch.md) defines how
+  maintainers deploy and verify the temporary authenticated controller,
+  dispatcher, SSH, bounded cleanup, and stale-lock recovery path for
+  `jetson-nvmap-gpu`.
 
 - `.github/workflows/e2e.yaml` runs selected or all supported
   live E2E targets and uploads an explicit artifact allowlist with
@@ -341,10 +346,10 @@ test/e2e/
   Each macOS shard installs the pinned OpenShell formula and has a 30-minute
   budget. Each WSL shard has a 90-minute budget, and WSL runs its additional
   root-required contracts on shard 1 only.
-  `macos-e2e.yaml`, `wsl-e2e.yaml`, and `regression-e2e.yaml` call focused E2E
-  targets directly for their platform coverage.
-  Repository-hosted targets, including `ollama-auth-proxy`, are selected
-  through `.github/workflows/e2e.yaml`.
+  `.github/workflows/macos-e2e.yaml`, `.github/workflows/wsl-e2e.yaml`, and
+  `.github/workflows/sandbox-images-and-e2e.yaml` call focused E2E targets
+  directly. `.github/workflows/e2e.yaml` selects free-standing jobs, including
+  `whatsapp-qr-compact` and `ollama-auth-proxy`.
 - The `staging-brev-launchable` job validates the exact baked candidate in
   preinstalled mode. Generic Brev VMs with source overlays are not a
   qualification boundary.

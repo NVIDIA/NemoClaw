@@ -737,6 +737,8 @@ export const MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS = {
     { input: "OPENCLAW_2026_4_24_INTEGRITY", reason: "integrity-pin" },
     { input: "OPENCLAW_2026_4_24_TARBALL", reason: "release-composition" },
     { input: "CODEX_ACP_0_11_1_INTEGRITY", reason: "integrity-pin" },
+    { input: "CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY", reason: "integrity-pin" },
+    { input: "CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY", reason: "integrity-pin" },
     { input: "MCPORTER_VERSION", reason: "release-composition" },
     { input: "MCPORTER_0_7_3_INTEGRITY", reason: "integrity-pin" },
     { input: "MCPORTER_0_7_3_TARBALL", reason: "release-composition" },

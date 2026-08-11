@@ -13,6 +13,8 @@ import {
   validateE2eOperationsWorkflow,
   validateE2eOperationsWorkflowBoundary,
 } from "../../../tools/e2e/operations-workflow-boundary.mts";
+import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
+import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 
 const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (
   ...parameters: string[]
@@ -25,7 +27,7 @@ function workflowScript(jobName: string, stepName: string): string {
   return step?.with?.script as string;
 }
 
-describe("E2E operations workflow boundary", () => {
+describe("E2E operations workflow boundary", testTimeoutOptions(15_000), () => {
   it("accepts the checked-in workflow and rejects aggregation, permission, and secret-scope drift", () => {
     expect(validateE2eOperationsWorkflowBoundary()).toEqual([]);
 
@@ -194,27 +196,76 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("limits manual PR runs to empty selectors or protected managed-runtime qualification", () => {
+  it("does not activate generic GPU risk reporting for an automatic main push", () => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs["llama-cpp-generic-gpu"]!.env!.NEMOCLAW_E2E_EXPECTED_SHA =
+      "${{ inputs.checkout_sha || github.sha }}";
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "llama-cpp-generic-gpu job must set NEMOCLAW_E2E_EXPECTED_SHA to ${{ inputs.checkout_sha }}",
+    );
+  });
+
+  it("retains generic GPU candidate identity for main and manual PR runs", () => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs["llama-cpp-generic-gpu"]!.env!.NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA =
+      "${{ inputs.checkout_sha }}";
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "llama-cpp-generic-gpu job must set NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA to ${{ inputs.checkout_sha || github.sha }}",
+    );
+  });
+
+  it("rejects drift from the manual PR risk-signal identity inputs", () => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.env!.NEMOCLAW_E2E_EXPECTED_SHA = "${{ inputs.checkout_sha || github.sha }}";
+    workflow.env!.NEMOCLAW_E2E_CORRELATION_ID = "";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "E2E workflow must bind NEMOCLAW_E2E_EXPECTED_SHA",
+        "E2E workflow must bind NEMOCLAW_E2E_CORRELATION_ID",
+      ]),
+    );
+  });
+
+  it("limits manual PR runs to trusted controller selectors or opted-in Jetson dispatch", () => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
     )!;
     authentication.run = authentication.run!.replace(
-      "Manual PR E2E accepts only empty selectors or managed-image-protected-runtime",
+      "Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag",
       "Manual PR E2E accepts arbitrary selectors",
     );
 
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "Manual PR authentication must retain Manual PR E2E accepts only empty selectors or managed-image-protected-runtime",
+      "Manual PR authentication must retain Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag",
+    );
+  });
+
+  it("keeps the controller selector cases equal to the Advisor planning contract", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const authentication = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Authenticate manual PR dispatch",
+    )!;
+    authentication.run = authentication.run!.replace("inference-routing::false:false | ", "");
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "Manual PR authentication must retain ::false:false | inference-routing::false:false | managed-image-protected-runtime::false:false | :jetson-nvmap-gpu:false:true) ;;",
     );
   });
 
   it.each([
-    ["maintain", "", 0, ""],
-    ["maintain", "managed-image-protected-runtime", 0, ""],
-    ["maintain", "gpu-e2e", 1, "accepts only empty selectors or managed-image-protected-runtime"],
-    ["write", "", 1, "requires a repository maintainer or administrator"],
-  ])("requires a maintainer role and bounded selector before manual PR E2E for %s with %s", (role, jobs, expectedStatus, expectedStderr) => {
+    ["maintain", "", "", "false", 0, ""],
+    ["maintain", "inference-routing", "", "false", 0, ""],
+    ["maintain", "managed-image-protected-runtime", "", "false", 0, ""],
+    ["maintain", "", "jetson-nvmap-gpu", "true", 0, ""],
+    ["maintain", "", "jetson-nvmap-gpu", "false", 1, "accepts only empty selectors"],
+    ["maintain", "network-policy", "", "false", 1, "accepts only empty selectors"],
+    ["maintain", "gpu-e2e", "", "false", 1, "accepts only empty selectors"],
+    ["write", "", "", "false", 1, "requires a repository maintainer or administrator"],
+  ])("requires a maintainer role and bounded selector before manual PR E2E for %s with jobs %s and targets %s", (role, jobs, targets, allowJetsonDispatch, expectedStatus, expectedStderr) => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
@@ -239,6 +290,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         env: {
           ...process.env,
           ACTOR: "maintainer",
+          ALLOW_JETSON_DISPATCH: allowJetsonDispatch,
           BASE_SHA: baseSha,
           CHECKOUT_REPOSITORY: "contributor/NemoClaw",
           CHECKOUT_SHA: headSha,
@@ -250,7 +302,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
           PR_NUMBER: "42",
           REVIEW_REASON: "Reviewed PR head revision",
           RUN_ATTEMPT: "1",
-          TARGETS: "",
+          TARGETS: targets,
           TRIGGERING_ACTOR: "maintainer",
           WORKFLOW_EVENT: "workflow_dispatch",
           WORKFLOW_REF: "refs/heads/main",
@@ -361,7 +413,11 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     }
   });
 
-  it("selects no shared targets for protected managed-runtime qualification", () => {
+  it.each([
+    ["inference-routing job", "inference-routing", ""],
+    ["managed-image-protected-runtime job", "managed-image-protected-runtime", ""],
+    ["jetson-nvmap-gpu target", "", "jetson-nvmap-gpu"],
+  ])("selects no shared targets for the %s selector", (_name, jobSelector, targetSelector) => {
     const workflow = readE2eOperationsWorkflow();
     const controller = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Build trusted controller target matrix",
@@ -369,7 +425,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     const planner = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Generate E2E target matrix",
     )!;
-    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-protected-matrix-"));
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-job-selector-matrix-"));
     const output = join(directory, "output");
     const summary = join(directory, "summary");
 
@@ -384,8 +440,8 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
           env: {
             ...process.env,
             GITHUB_OUTPUT: output,
-            JOBS: "managed-image-protected-runtime",
-            TARGETS: "",
+            JOBS: jobSelector,
+            TARGETS: targetSelector,
           },
         },
       );
@@ -407,8 +463,8 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             GITHUB_OUTPUT: output,
             GITHUB_STEP_SUMMARY: summary,
             INFERENCE_MODE: "mock",
-            JOBS: "managed-image-protected-runtime",
-            TARGETS: "",
+            JOBS: jobSelector,
+            TARGETS: targetSelector,
           },
         },
       );

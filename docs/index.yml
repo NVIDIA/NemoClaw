@@ -107,6 +107,9 @@ navigation:
                   - page: "Set Up vLLM on Two DGX Stations"
                     path: _build/agent-variants/inference/set-up-vllm-on-two-dgx-stations.openclaw.generated.mdx
                     slug: set-up-vllm-on-two-dgx-stations
+                  - page: "Set Up llama.cpp"
+                    path: _build/agent-variants/inference/set-up-llama-cpp.openclaw.generated.mdx
+                    slug: set-up-llama-cpp
                   - page: "Set Up NVIDIA NIM"
                     path: _build/agent-variants/inference/set-up-nvidia-nim.openclaw.generated.mdx
                     slug: set-up-nvidia-nim
@@ -528,6 +531,9 @@ navigation:
                   - page: "Set Up vLLM on Two DGX Stations"
                     path: _build/agent-variants/inference/set-up-vllm-on-two-dgx-stations.deepagents.generated.mdx
                     slug: set-up-vllm-on-two-dgx-stations
+                  - page: "Set Up llama.cpp"
+                    path: _build/agent-variants/inference/set-up-llama-cpp.deepagents.generated.mdx
+                    slug: set-up-llama-cpp
                   - page: "Set Up NVIDIA NIM"
                     path: _build/agent-variants/inference/set-up-nvidia-nim.deepagents.generated.mdx
                     slug: set-up-nvidia-nim
@@ -874,6 +880,9 @@ navigation:
                   - page: "Set Up vLLM on Two DGX Stations"
                     path: _build/agent-variants/inference/set-up-vllm-on-two-dgx-stations.hermes.generated.mdx
                     slug: set-up-vllm-on-two-dgx-stations
+                  - page: "Set Up llama.cpp"
+                    path: _build/agent-variants/inference/set-up-llama-cpp.hermes.generated.mdx
+                    slug: set-up-llama-cpp
                   - page: "Set Up NVIDIA NIM"
                     path: _build/agent-variants/inference/set-up-nvidia-nim.hermes.generated.mdx
                     slug: set-up-nvidia-nim

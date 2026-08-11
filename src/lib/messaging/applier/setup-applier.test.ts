@@ -699,6 +699,7 @@ describe("MessagingSetupApplier", () => {
       "slack:slack-socket-mode-gateway-conflict",
       "slack:slack-openclaw-bridge-health",
       "slack:slack-socket-mode-gateway-status",
+      "slack:slack-status-health",
       "slack:slack-token-paste",
       "slack:slack-config-prompt",
       "slack:slack-credential-validation",

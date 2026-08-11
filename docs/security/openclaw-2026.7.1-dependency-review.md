@@ -5,7 +5,7 @@
 
 Review date: 2026-07-21
 
-Last updated: 2026-08-06
+Last updated: 2026-08-07
 
 ## Decision
 
@@ -293,6 +293,30 @@ reviewed npm plugin registry integrity, and the helper returns only the verified
 local `.tgz` path. Its locked-runtime
 checks bind the OpenClaw and mcporter installs to exact committed lock digests,
 the official registry origin, and post-install graph verification.
+
+The final OpenClaw image materializes its optional OTEL and Brave plugins, the
+WeChat runtime, the complete managed-messaging dependency graph, and
+`@zed-industries/codex-acp@0.11.1` without network access in any package-install
+instruction. For these components, BuildKit fetches every source archive
+through a checksum-addressed `ADD` instruction.
+The optional plugin boundary verifies the committed SHA-512 identities for `@openclaw/diagnostics-otel@2026.7.1` and `@openclaw/brave-plugin@2026.7.1`.
+Its diagnostics remediation consumes only the mounted, checksum-addressed `@opentelemetry/propagator-jaeger@2.9.0` and `@opentelemetry/core@2.9.0` archives.
+The WeChat dependencies `openclaw-weixin@2.4.3`, `qrcode-terminal@0.12.0`, and `zod@4.4.3` use committed SHA-256 source checksums and their lockfile SHA-512 identities.
+Codex ACP uses committed SHA-256 source checksums and SHA-512 identities for the common package and the selected `linux-x64` or `linux-arm64` native package.
+`scripts/lib/seed-reviewed-npm-cache.mts` rejects missing, extra, symlinked, off-registry, or integrity-mismatched archives before it creates the minimal npm resolver metadata.
+The managed-messaging lock selects 266 archives for each supported platform:
+264 common archives and two architecture-specific Davey archives for either
+`linux-x64` or `linux-arm64`. The Dockerfile selects that exact platform stage,
+verifies every archive again against the committed lockfile SHA-512 identity,
+and runs `npm ci` with `NPM_CONFIG_OFFLINE=true` under `RUN --network=none`.
+The WeChat stage runs `npm ci` and re-packs every locked archive with `NPM_CONFIG_OFFLINE=true`.
+The Codex ACP stage verifies both local archives and installs them with `npm install --offline`.
+Only the installed optional-plugin contents, root-owned WeChat cache, installed
+managed-messaging packages, and installed Codex ACP payload enter the final
+image. The mounted source archives do not enter the final image. Imported build
+cache remains an optimization, but the protected OpenClaw GPU rebuild no longer
+depends on it to supply the managed-messaging archive graph. Package
+materialization cannot fall back to the public registry.
 
 ## OpenClaw Compiled-Dist Patch Runtime Boundary
 

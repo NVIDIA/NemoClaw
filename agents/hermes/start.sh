@@ -19,6 +19,105 @@ set -euo pipefail
 
 # SECURITY: Lock down PATH before resolving or sourcing root startup helpers.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+NEMOCLAW_RUNTIME_STATE_MUTATION_RETRY_ARGV=("$@")
+
+# The provider gate is a fixed root-owned file beneath a search-only directory
+# outside /sandbox, so the sandbox identity cannot rename either the gate or
+# its parent.  Run the immutable validator as this shell's direct child before
+# sourcing helpers or reading mutable state; its permit is bound to this exact
+# process identity.  Invalid or uninspectable gate state is a hold, never an
+# availability-to-integrity downgrade.
+readonly NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON="/opt/hermes/.venv/bin/python3"
+readonly NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER="/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py"
+readonly NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_SETPRIV="/usr/bin/setpriv"
+
+if [ ! -x "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON" ] \
+  || [ ! -f "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" ] \
+  || [ -L "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" ] \
+  || { [ "$EUID" -eq 0 ] && [ ! -x "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_SETPRIV" ]; }; then
+  printf '%s\n' '[SECURITY] Required runtime state mutation startup gate is unavailable.' >&2
+  exit 1
+fi
+
+nemoclaw_runtime_state_mutation_gate() {
+  local action="$1"
+  if [ "$EUID" -eq 0 ]; then
+    "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_SETPRIV" \
+      --reuid=sandbox --regid=sandbox --init-groups -- \
+      "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON" -I \
+      "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" "$action" >/dev/null
+    return
+  fi
+  "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON" -I \
+    "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" "$action" >/dev/null
+}
+
+nemoclaw_runtime_state_mutation_retry_exec() {
+  local status
+  if nemoclaw_runtime_state_mutation_gate restart; then
+    status=0
+  else
+    status=$?
+  fi
+  if [ "$status" -eq 12 ]; then
+    exec /usr/local/bin/nemoclaw-start \
+      "${NEMOCLAW_RUNTIME_STATE_MUTATION_RETRY_ARGV[@]}"
+  fi
+  printf '%s\n' '[SECURITY] Runtime state mutation retry was not authenticated; holding startup.' >&2
+  kill -STOP "$$"
+}
+trap nemoclaw_runtime_state_mutation_retry_exec USR2
+
+while :; do
+  if nemoclaw_runtime_state_mutation_gate admit; then
+    break
+  else
+    _nemoclaw_runtime_state_mutation_gate_status=$?
+  fi
+  case "$_nemoclaw_runtime_state_mutation_gate_status" in
+    10) break ;;
+    75)
+      printf '%s\n' '[SECURITY] Hermes startup held by an active runtime state mutation.' >&2
+      /bin/sleep 1 || true
+      ;;
+    *)
+      printf '%s\n' '[SECURITY] Runtime state mutation startup gate failed.' >&2
+      exit 1
+      ;;
+  esac
+done
+unset _nemoclaw_runtime_state_mutation_gate_status
+
+# Publish a candidate only after the complete gateway topology is healthy.
+# The shell then stops itself until the root controller has independently
+# authenticated the candidate, frozen the exact process tree, and published a
+# release receipt.  Calling this with no active mutation is a cheap no-op.
+nemoclaw_runtime_state_mutation_checkpoint() {
+  local status
+  if nemoclaw_runtime_state_mutation_gate checkpoint; then
+    return 0
+  else
+    status=$?
+  fi
+  if [ "$status" -ne 11 ]; then
+    printf '%s\n' '[SECURITY] Runtime state mutation startup checkpoint was refused; holding startup.' >&2
+    kill -STOP "$$"
+    return 1
+  fi
+  kill -STOP "$$"
+  if nemoclaw_runtime_state_mutation_gate resume; then
+    return 0
+  else
+    status=$?
+  fi
+  if [ "$status" -eq 12 ]; then
+    exec /usr/local/bin/nemoclaw-start \
+      "${NEMOCLAW_RUNTIME_STATE_MUTATION_RETRY_ARGV[@]}"
+  fi
+  printf '%s\n' '[SECURITY] Runtime state mutation release receipt was not authenticated; holding startup.' >&2
+  kill -STOP "$$"
+  return 1
+}
 
 # managed-entrypoint-env-wrapper begin
 _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER="/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh"
@@ -127,6 +226,7 @@ exec > >(tee -a "$_START_LOG") 2> >(tee -a "$_START_LOG" >&2)
 drop_capabilities /usr/local/bin/nemoclaw-start "$@"
 
 NEMOCLAW_CMD=("$@")
+NEMOCLAW_RUNTIME_STATE_MUTATION_RETRY_ARGV=("${NEMOCLAW_CMD[@]}")
 
 _chat_ui_url_port() {
   [ -n "${CHAT_UI_URL:-}" ] || return 1
@@ -1664,6 +1764,17 @@ _nemoclaw_ca_merge_warn() {
   echo "[nemoclaw] WARNING: corporate proxy CA merge failed at ${1}; keeping OpenShell-only trust — external TLS through the corporate proxy may fail (#6210)" >&2
 }
 merge_corporate_proxy_ca() {
+  # Trust-anchor tampering (#8650): replacing the baked corporate CA file with a
+  # symlink makes the merge below read the link target instead, adding
+  # attacker-selected bytes to the trust bundle that curl, python, git, and node
+  # verify against. The image bakes this path as a root-owned 0444 regular file,
+  # so a symlink here is never a legitimate state. This is not the recoverable
+  # "merge failed" case below, which safely keeps OpenShell-only trust, so it
+  # fails closed instead of warning.
+  if [ -L "$_NEMOCLAW_CORPORATE_CA_FILE" ]; then
+    echo "[nemoclaw] refusing symlinked corporate CA at ${_NEMOCLAW_CORPORATE_CA_FILE}; expected a regular file (#8650)" >&2
+    exit 1
+  fi
   [ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0
   _base_bundle=""
   if [ -n "${SSL_CERT_FILE:-}" ] && [ -f "${SSL_CERT_FILE}" ]; then
@@ -1703,11 +1814,46 @@ merge_corporate_proxy_ca() {
       return 0
     }
   fi
-  cat "$_NEMOCLAW_CORPORATE_CA_FILE" >>"$_tmp" 2>/dev/null || {
+  # Append through a descriptor opened with O_NOFOLLOW and verified as a regular
+  # file (#8650). The check above rejects a planted symlink; this rejects one
+  # swapped in afterwards, because the type check and the read share one
+  # descriptor and no path is resolved twice. Status 2 means the source was
+  # rejected as a trust anchor; any other non-zero status is an ordinary read
+  # failure that keeps the existing warn-and-continue behavior.
+  _ca_append_status=0
+  python3 -I - "$_NEMOCLAW_CORPORATE_CA_FILE" "$_tmp" <<'PY_APPEND_CORPORATE_CA' || _ca_append_status=$?
+import errno
+import os
+import stat
+import sys
+
+source, target = sys.argv[1], sys.argv[2]
+try:
+    descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+except OSError as error:
+    raise SystemExit(2 if error.errno == errno.ELOOP else 3)
+try:
+    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        raise SystemExit(2)
+    with open(target, "ab") as merged:
+        while True:
+            chunk = os.read(descriptor, 65536)
+            if not chunk:
+                break
+            merged.write(chunk)
+finally:
+    os.close(descriptor)
+PY_APPEND_CORPORATE_CA
+  if [ "$_ca_append_status" -eq 2 ]; then
+    rm -f "$_tmp"
+    echo "[nemoclaw] refusing corporate CA at ${_NEMOCLAW_CORPORATE_CA_FILE}; expected a regular file, not a symlink (#8650)" >&2
+    exit 1
+  fi
+  if [ "$_ca_append_status" -ne 0 ]; then
     rm -f "$_tmp"
     _nemoclaw_ca_merge_warn "append corporate CA"
     return 0
-  }
+  fi
   chmod 0444 "$_tmp" 2>/dev/null || {
     rm -f "$_tmp"
     _nemoclaw_ca_merge_warn "set merged bundle permissions (${_merged})"
@@ -2862,6 +3008,11 @@ handle_hermes_gateway_control_request() {
     return 1
   fi
   refresh_hermes_supervised_child_pids
+  nemoclaw_runtime_state_mutation_checkpoint || {
+    stop_hermes_gateway_fail_closed
+    gateway_control_fail internal "$old_pid"
+    return 1
+  }
   gateway_control_complete ok "$old_pid" "$GATEWAY_PID"
 }
 
@@ -3090,6 +3241,7 @@ recover_hermes_gateway_current_user() {
             return 1
           fi
           refresh_hermes_supervised_child_pids
+          nemoclaw_runtime_state_mutation_checkpoint || return 1
           return 0
         fi
         echo "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy" >&2
@@ -3182,6 +3334,7 @@ bootstrap_hermes_gateway_current_user() {
       return 1
     fi
     refresh_hermes_supervised_child_pids
+    nemoclaw_runtime_state_mutation_checkpoint || return 1
     return 0
   fi
 
@@ -3197,6 +3350,7 @@ bootstrap_hermes_gateway_current_user() {
   sleep 2 || true
   recover_hermes_gateway_current_user || return 1
   refresh_hermes_supervised_child_pids
+  nemoclaw_runtime_state_mutation_checkpoint || return 1
 }
 
 # ── Main ─────────────────────────────────────────────────────────
@@ -3279,7 +3433,7 @@ fi
 # while Hermes actually runs in the legacy root-separated topology.
 # sourceBoundary: OpenShell owns workload topology; NemoClaw owns the immutable
 # root-lifecycle marker and stamps it before starting the root-separated gateway.
-# whyNotSourceFix: OpenShell 0.0.99 supports both topologies but exposes no
+# whyNotSourceFix: OpenShell 0.0.101 supports both topologies but exposes no
 # attested same-UID capability that this packaged entrypoint can query.
 # regressionTest: hermes-mcp-config-transaction.test.ts rejects both probe and
 # add when the root-lifecycle marker identifies the legacy topology.
@@ -3325,6 +3479,7 @@ if ! "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" publish-startup-ready 
   echo "[gateway-control] failed to publish Hermes startup readiness" >&2
   exit 1
 fi
+nemoclaw_runtime_state_mutation_checkpoint || exit 1
 print_dashboard_urls
 
 # PID 1 remains alive even when Hermes stops its gateway. Host recovery uses

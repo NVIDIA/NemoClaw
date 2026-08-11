@@ -10,7 +10,7 @@ import YAML from "yaml";
 
 import { exportLlamaCppDgxSparkQualificationPlan } from "../scripts/checks/export-llama-cpp-dgx-spark-qualification-plan.mts";
 import {
-  LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
+  LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
   parseLlamaCppDgxSparkExecutionPlan,
   parseLlamaCppDgxSparkQualificationPlan,
 } from "../scripts/checks/llama-cpp-dgx-spark-qualification-contract.mts";
@@ -128,7 +128,7 @@ describe("llama.cpp DGX Spark qualification plan export (#8260)", () => {
             toolResultContinuation: 64,
           },
         },
-        probes: LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
+        probes: LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
       },
       recipe: {
         capabilities: {

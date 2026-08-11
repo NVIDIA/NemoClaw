@@ -3,7 +3,51 @@
 
 import { describe, expect, it } from "vitest";
 
-import { isSupportedGatewayDockerHost } from "./docker-host";
+import {
+  isDockerDaemonReachable,
+  isSupportedGatewayDockerHost,
+  parseDockerDaemonObservation,
+} from "./docker-host";
+
+describe("parseDockerDaemonObservation", () => {
+  it("requires positive daemon evidence from Docker JSON", () => {
+    expect(
+      parseDockerDaemonObservation(
+        JSON.stringify({ ServerVersion: "29.3.1", OperatingSystem: "Ubuntu 24.04" }),
+      ),
+    ).toEqual({ reachable: true, serverVersion: "29.3.1" });
+
+    expect(
+      parseDockerDaemonObservation(
+        JSON.stringify({
+          ServerVersion: "",
+          ServerErrors: ["Cannot connect to the Docker daemon"],
+        }),
+      ),
+    ).toEqual({ reachable: false });
+    expect(isDockerDaemonReachable(JSON.stringify({ ServerVersion: "" }))).toBe(false);
+  });
+
+  it("recognizes native Podman version evidence used by a docker alias", () => {
+    expect(
+      parseDockerDaemonObservation(
+        JSON.stringify({ version: { APIVersion: "5.3.1", Version: "5.3.1" } }),
+      ),
+    ).toEqual({ reachable: true, serverVersion: "5.3.1" });
+  });
+
+  it("keeps the plain-text compatibility path without accepting connection errors", () => {
+    expect(parseDockerDaemonObservation("25.0.0")).toEqual({
+      reachable: true,
+      serverVersion: "25.0.0",
+    });
+    expect(
+      isDockerDaemonReachable(
+        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("isSupportedGatewayDockerHost (#7731)", () => {
   it.each([

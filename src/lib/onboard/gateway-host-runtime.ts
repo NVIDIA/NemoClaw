@@ -48,6 +48,7 @@ const SUPERVISOR_PROBE_TIMEOUT_MS = 5_000;
 export interface GatewayHostRuntimeDeps {
   applyOverlayfsAutoFix(clusterImage: string): string | null;
   checkGatewayPortAvailable(): Promise<PortProbeResult>;
+  hasOpenShellGatewayUserService?: typeof hasOpenShellGatewayUserService;
   /**
    * Read lazily: the onboarding entrypoint rebinds its gateway port at runtime
    * when an authoritative gateway is selected, so a captured value goes stale.
@@ -65,6 +66,7 @@ export interface GatewayHostRuntimeDeps {
   ): GatewayPortListenerRawScan;
   getInstalledOpenshellVersion(): string | null;
   isGatewayHealthy?: typeof isGatewayHealthy;
+  loadGatewayManagementDeclaration?: typeof loadGatewayManagementDeclaration;
   runCaptureOpenshell(args: string[], opts?: { ignoreError?: boolean }): string;
   runOpenshell(
     args: string[],
@@ -72,8 +74,14 @@ export interface GatewayHostRuntimeDeps {
   ): { status: number | null };
   resolveOpenShellGatewayBinary(): string | null;
   spawnSyncImpl?: typeof import("node:child_process").spawnSync;
+  /** Explicit environment for local supervisor status probes. */
+  supervisorProbeEnv?: NodeJS.ProcessEnv;
+  /** Credential-free base environment for external HTTPS client probes. */
+  clientProbeEnv?: NodeJS.ProcessEnv;
   /** Overrides the readiness request; defaults to a real probe of `endpoint`. */
   probeGatewayHttpReady?(endpoint: string | null): Promise<boolean>;
+  /** Defaults to true; public observation-only readiness disables trace initialization. */
+  recordHttpReadinessTrace?: boolean;
   /** Overrides `/proc/<pid>/exe` resolution; defaults to the real symlink. */
   readProcExe?(pid: number): string | null;
   /** Overrides `/proc/<pid>/cgroup` reads; defaults to the real file. */
@@ -93,6 +101,13 @@ export interface GatewayHostRuntime {
     target?: { gatewayName: string; gatewayPort: number },
   ): void;
   attachGateway(owner: GatewayOwner, expectedProbe: GatewayAttachmentProbe): Promise<void>;
+  /**
+   * Adopt the packaged managed service only after NemoClaw's installer has
+   * successfully installed it during this run.
+   */
+  adoptPackagedGatewayOwnerAfterTrustedInstall(
+    persistOwner?: (owner: GatewayOwner) => void,
+  ): GatewayOwner;
   bindGatewayOwner(owner: GatewayOwner): void;
   /** Local endpoint of the gateway this process operates. */
   getGatewayLocalEndpoint(): string;
@@ -114,7 +129,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
   let boundOwner: GatewayOwner | null = null;
 
   function resolveCurrentGatewayOwner(gatewayName: string, gatewayPort: number): GatewayOwner {
-    const loaded = loadGatewayManagementDeclaration();
+    const loaded = (deps.loadGatewayManagementDeclaration ?? loadGatewayManagementDeclaration)();
     if (!loaded.ok) {
       throw invalidGatewayManagementDeclarationError(loaded.reason);
     }
@@ -122,7 +137,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       gatewayName,
       gatewayPort,
       declaration: loaded.declaration,
-      hasPackagedService: hasOpenShellGatewayUserService(),
+      hasPackagedService: (deps.hasOpenShellGatewayUserService ?? hasOpenShellGatewayUserService)(),
     });
   }
 
@@ -152,7 +167,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
         throw new Error(
           "Gateway lifecycle authority changed during this run " +
             `(${describeGatewayOwnerForError(boundOwner)} -> ${describeGatewayOwnerForError(resolved)}). ` +
-            "Exactly one component owns the gateway per run; re-run onboarding to adopt the new authority.",
+            "Exactly one component owns the gateway per run; rerun onboarding to adopt the new authority.",
         );
       }
       return boundOwner;
@@ -165,6 +180,33 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     return getGatewayOwnerForTarget();
   }
 
+  function adoptPackagedGatewayOwnerAfterTrustedInstall(
+    persistOwner?: (owner: GatewayOwner) => void,
+  ): GatewayOwner {
+    if (!boundOwner) {
+      throw new Error(
+        "Cannot adopt a packaged gateway owner before this run has bound its lifecycle authority.",
+      );
+    }
+    const resolved = resolveCurrentGatewayOwner(boundOwner.gatewayName, boundOwner.gatewayPort);
+    if (sameGatewayOwner(boundOwner, resolved)) return boundOwner;
+    const expectedPackagedOwner = { ...boundOwner, source: "packaged-service" as const };
+    if (
+      boundOwner.mode !== "nemoclaw-managed" ||
+      boundOwner.source !== "standalone" ||
+      !sameGatewayOwner(expectedPackagedOwner, resolved)
+    ) {
+      throw new Error(
+        "Gateway lifecycle authority changed during this run " +
+          `(${describeGatewayOwnerForError(boundOwner)} -> ${describeGatewayOwnerForError(resolved)}). ` +
+          "Exactly one component owns the gateway per run; re-run onboarding to adopt the new authority.",
+      );
+    }
+    persistOwner?.(resolved);
+    boundOwner = resolved;
+    return boundOwner;
+  }
+
   function isSupervisorUnitActive(owner: GatewayOwner): boolean | null {
     const supervisor = owner.supervisor;
     if (!supervisor) return null;
@@ -172,6 +214,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     const scope = supervisor.kind === "systemd-user" ? ["--user"] : [];
     const result = spawnSyncImpl("systemctl", [...scope, "is-active", supervisor.serviceName], {
       encoding: "utf-8",
+      env: deps.supervisorProbeEnv,
       // spawnSync blocks the event loop, so a wedged systemd/D-Bus session would
       // otherwise stall onboarding indefinitely. A timeout surfaces as an error,
       // which the unknown-supervisor path below already treats as "cannot tell".
@@ -236,8 +279,9 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     const startTime = readProcStartTime(pid);
     const execPath = readListenerExecPath(pid);
     const supervisorMatch = readListenerSupervisorMatch(owner, pid);
+    const confirmedExecPath = readListenerExecPath(pid);
     const endTime = readProcStartTime(pid);
-    return startTime !== null && endTime === startTime
+    return startTime !== null && endTime === startTime && confirmedExecPath === execPath
       ? { startTime, execPath, supervisorMatch }
       : null;
   }
@@ -253,15 +297,26 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     if (!owner.endpoint) return deps.waitForGatewayHttpReady();
     // The endpoint is constrained to a supported loopback origin at parse time,
     // so this cannot be pointed at an arbitrary host.
-    prepareExternalGatewayClient(owner);
+    const clientEnv = getExternalGatewayClientEnv(owner);
     const endpoint = owner.endpoint;
+    const recordTrace = deps.recordHttpReadinessTrace !== false;
     if (new URL(endpoint).protocol === "https:") {
       return waitForGatewayHttpReady({
         probe: () =>
-          isDockerDriverGatewayHttpReady(undefined, `${endpoint}/openshell.v1.OpenShell/Health`),
+          isDockerDriverGatewayHttpReady(
+            undefined,
+            `${endpoint}/openshell.v1.OpenShell/Health`,
+            clientEnv,
+            { recordTrace },
+          ),
+        recordTrace,
       });
     }
-    return waitForGatewayHttpReady({ probe: () => isGatewayHttpReady(undefined, `${endpoint}/`) });
+    return waitForGatewayHttpReady({
+      probe: () =>
+        isGatewayHttpReady(undefined, `${endpoint}/`, undefined, undefined, { recordTrace }),
+      recordTrace,
+    });
   }
 
   /**
@@ -274,8 +329,6 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       throw new GatewayOwnershipError(configuration.code, configuration.message, owner);
     }
     const portCheck = await deps.checkGatewayPortAvailable();
-    const httpReady = await waitForDeclaredGatewayHttpReady(owner);
-    const supervisorActive = isSupervisorUnitActive(owner);
     const gatewayBin = deps.resolveOpenShellGatewayBinary();
     const scan = deps.getGatewayPortListenerRawScan(portCheck, {
       gatewayBin,
@@ -285,6 +338,11 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       scan.complete && scan.pids.length === 1 && typeof firstPid === "number"
         ? readStableListenerIdentity(owner, firstPid)
         : null;
+    // Bind the health response to the same process identity observed on both
+    // sides of the request. Otherwise a foreign listener can answer health,
+    // exit, and be replaced by the declared service before identity sampling.
+    const httpReady = await waitForDeclaredGatewayHttpReady(owner);
+    const supervisorActive = isSupervisorUnitActive(owner);
     const verifiedScan =
       typeof firstPid === "number"
         ? deps.getGatewayPortListenerRawScan(portCheck, {
@@ -338,7 +396,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     }
   }
 
-  function prepareExternalGatewayClient(owner: GatewayOwner): void {
+  function getExternalGatewayClientEnv(owner: GatewayOwner): NodeJS.ProcessEnv | undefined {
     if (!isExternallySupervised(owner) || !owner.endpoint) return;
     if (new URL(owner.endpoint).protocol !== "https:") return;
     if (!owner.stateDir) {
@@ -356,7 +414,14 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
         );
       }
     }
-    process.env.OPENSHELL_LOCAL_TLS_DIR = localTlsDir;
+    return { ...(deps.clientProbeEnv ?? {}), OPENSHELL_LOCAL_TLS_DIR: localTlsDir };
+  }
+
+  function prepareExternalGatewayClient(owner: GatewayOwner): void {
+    const clientEnv = getExternalGatewayClientEnv(owner);
+    if (clientEnv?.OPENSHELL_LOCAL_TLS_DIR) {
+      process.env.OPENSHELL_LOCAL_TLS_DIR = clientEnv.OPENSHELL_LOCAL_TLS_DIR;
+    }
   }
 
   function sameAttachmentEvidence(
@@ -494,6 +559,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
   }
 
   return {
+    adoptPackagedGatewayOwnerAfterTrustedInstall,
     assertGatewayStartAllowed,
     attachGateway,
     bindGatewayOwner,

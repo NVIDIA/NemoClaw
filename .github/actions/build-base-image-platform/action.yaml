@@ -1,0 +1,131 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: build-base-image-platform
+description: Build and publish one immutable base image digest for a platform.
+
+inputs:
+  agent:
+    description: Agent identifier used for build arguments and artifact names.
+    required: true
+  arch:
+    description: Artifact architecture identifier.
+    required: true
+  platform:
+    description: Docker platform to build.
+    required: true
+  dockerfile:
+    description: Path to the base image Dockerfile.
+    required: true
+  image:
+    description: Image repository relative to the registry.
+    required: true
+  registry:
+    description: Container registry host.
+    required: true
+  registry-username:
+    description: Registry login user.
+    required: true
+  registry-password:
+    description: Registry login credential.
+    required: true
+  openclaw-version:
+    description: Optional OpenClaw version build argument.
+    required: false
+    default: ""
+  metadata-tags:
+    description: Optional docker/metadata-action tag rules.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+    - name: Log in to GHCR
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.registry-username }}
+        password: ${{ inputs.registry-password }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+      env:
+        DOCKER_METADATA_SHORT_SHA_LENGTH: 8
+      with:
+        images: ${{ inputs.registry }}/${{ inputs.image }}
+        tags: ${{ inputs.metadata-tags }}
+
+    - name: Validate production Docker build args
+      id: production-build-args
+      shell: bash
+      env:
+        AGENT: ${{ inputs.agent }}
+        OPENCLAW_VERSION_INPUT: ${{ inputs.openclaw-version }}
+      run: |
+        set -euo pipefail
+        build_args=()
+        openclaw_build_arg=""
+        if [ "$AGENT" = "openclaw" ] && [ -n "${OPENCLAW_VERSION_INPUT}" ]; then
+          openclaw_build_arg="OPENCLAW_VERSION=${OPENCLAW_VERSION_INPUT}"
+          build_args+=(--build-arg "$openclaw_build_arg")
+        fi
+        if [ "${#build_args[@]}" -gt 0 ]; then
+          scripts/check-production-build-args.sh "${build_args[@]}"
+        else
+          scripts/check-production-build-args.sh
+        fi
+        if [ "$AGENT" = "openclaw" ] && [ -n "${OPENCLAW_VERSION_INPUT}" ]; then
+          if [[ "$OPENCLAW_VERSION_INPUT" == *$'\r'* || "$OPENCLAW_VERSION_INPUT" == *$'\n'* ]]; then
+            echo "ERROR: OpenClaw version must not contain CR or LF characters." >&2
+            exit 1
+          fi
+          if [[ ! "$OPENCLAW_VERSION_INPUT" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
+            echo "ERROR: OpenClaw version must contain one or more decimal integers separated by periods (for example, 2026.6.10)." >&2
+            exit 1
+          fi
+        fi
+        printf 'openclaw_build_arg=%s\n' "$openclaw_build_arg" >> "$GITHUB_OUTPUT"
+
+    - name: Build and push platform digest
+      id: build
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      with:
+        context: .
+        file: ${{ inputs.dockerfile }}
+        platforms: ${{ inputs.platform }}
+        labels: ${{ steps.meta.outputs.labels }}
+        outputs: type=image,name=${{ inputs.registry }}/${{ inputs.image }},push-by-digest=true,name-canonical=true,push=true
+        cache-from: type=registry,ref=${{ inputs.registry }}/${{ inputs.image }}:buildcache-${{ inputs.arch }}
+        cache-to: type=registry,ref=${{ inputs.registry }}/${{ inputs.image }}:buildcache-${{ inputs.arch }},mode=max
+        build-args: ${{ steps.production-build-args.outputs.openclaw_build_arg }}
+
+    - name: Export platform digest
+      shell: bash
+      env:
+        ARCH: ${{ inputs.arch }}
+        DIGEST: ${{ steps.build.outputs.digest }}
+      run: |
+        set -euo pipefail
+        if [[ ! "$ARCH" =~ ^(amd64|arm64)$ ]]; then
+          echo "ERROR: unsupported platform architecture: $ARCH" >&2
+          exit 1
+        fi
+        if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+          echo "ERROR: build did not return a valid sha256 digest: $DIGEST" >&2
+          exit 1
+        fi
+        mkdir -p "$RUNNER_TEMP/digests"
+        touch "$RUNNER_TEMP/digests/${ARCH}-${DIGEST#sha256:}"
+
+    - name: Upload platform digest
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ inputs.agent }}-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.arch }}
+        path: ${{ runner.temp }}/digests/*
+        if-no-files-found: error
+        retention-days: 1

@@ -166,14 +166,18 @@ function indexOfRequired(haystack: string, needle: string): number {
   return index;
 }
 
-function hasBuildKitRunMount(dockerfile: string): boolean {
+function buildKitRunMountOptions(dockerfile: string): string[] {
   return dockerfile
     .replace(/\\\r?\n[ \t]*/gu, " ")
     .split(/\r?\n/u)
-    .some((instruction) => {
+    .flatMap((instruction) => {
       const runOptionPrefix = instruction.match(/^\s*RUN((?:\s+--\S+)*)/iu)?.[1] ?? "";
-      return /(?:^|\s)--mount(?:=|$)/iu.test(runOptionPrefix);
+      return /(?:^|\s)--mount(?:=|$)/iu.test(runOptionPrefix) ? [runOptionPrefix.trim()] : [];
     });
+}
+
+function hasBuildKitRunMount(dockerfile: string): boolean {
+  return buildKitRunMountOptions(dockerfile).length > 0;
 }
 
 function runFinalLayout({
@@ -293,9 +297,13 @@ describe("Hermes final image layout", () => {
           "COPY agents/hermes/build-mcp-digest.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py",
           "COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py",
           "COPY agents/hermes/cron-restore-control.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
-          "COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.99.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.99.json",
+          "COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.101.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.101.json",
           "COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py",
+          "COPY scripts/runtime-state-mutation-control.py /usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
+          "COPY scripts/runtime-state-mutation-startup-gate.py /usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py",
+          "COPY scripts/runtime_state_mutation_hermes_publisher.py /usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py",
           "COPY agents/hermes/state-lock-plan.json /usr/local/share/nemoclaw/state-lock-plan.json",
+          "COPY agents/hermes/runtime-state-mutation-publisher-v1.json /usr/local/share/nemoclaw/runtime-state-mutation-publisher-v1.json",
           "COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/",
         ],
       },
@@ -307,21 +315,16 @@ describe("Hermes final image layout", () => {
           "COPY agents/hermes/hermes-cli-adapter-v1.json /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json",
         ],
       },
-      {
-        stage: "hermes-scan-payload",
-        copies: [
-          "COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts",
-        ],
-      },
     ] as const;
     const npmPatchCopy = "COPY --from=hermes-npm-patch-payload / /";
     const agentCopy = "COPY --from=hermes-agent-payload / /";
     const runtimeCopy = "COPY --from=hermes-runtime-payload / /";
     const wrapperCopy = "COPY --from=hermes-wrapper-payload / /";
-    const scanCopy = "COPY --from=hermes-scan-payload / /";
 
     expect(finalStageIndex).toBe(stages.length - 1);
-    expect(hasBuildKitRunMount(dockerfile)).toBe(false);
+    expect(buildKitRunMountOptions(dockerfile)).toEqual([
+      "--network=none --mount=from=hermes-managed-teams-wheels,target=/opt/nemoclaw-hermes-teams-wheels,ro",
+    ]);
     expectManagedBootstrapNativeImageContract(dockerfile);
     for (const payload of payloads) {
       const stage = stages.find((entry) => entry.startsWith(`FROM scratch AS ${payload.stage}`));
@@ -333,13 +336,11 @@ describe("Hermes final image layout", () => {
       agentCopy,
       runtimeCopy,
       wrapperCopy,
-      scanCopy,
     ]);
     const npmPatch = indexOfRequired(finalStage, npmPatchCopy);
     const agent = indexOfRequired(finalStage, agentCopy);
     const runtime = indexOfRequired(finalStage, runtimeCopy);
     const wrapper = indexOfRequired(finalStage, wrapperCopy);
-    const scan = indexOfRequired(finalStage, scanCopy);
     const tarPatch = requireSingleReviewedDockerfileRunCommand(
       finalStage,
       "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
@@ -354,6 +355,28 @@ describe("Hermes final image layout", () => {
       finalStage,
       "--agent hermes --phase managed-image-capability-union",
     );
+    expect(finalStage).toContain("UV_OFFLINE=true UV_FIND_LINKS=/opt/nemoclaw-hermes-teams-wheels");
+    expect(dockerfile).toContain("FROM scratch AS hermes-managed-teams-0-wheels");
+    expect(dockerfile).toContain(
+      "FROM hermes-managed-teams-${TARGETARCH}-wheels AS hermes-managed-teams-1-wheels",
+    );
+    expect(dockerfile).toContain(
+      "FROM hermes-managed-teams-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION}-wheels AS hermes-managed-teams-wheels",
+    );
+    expect(
+      indexOfRequired(dockerfile, "ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0"),
+    ).toBeLessThan(indexOfRequired(dockerfile, "FROM scratch AS mcp-tool-discovery-runtime"));
+    for (const wheelSha256 of [
+      "db16f714ec658b592929c6386a29792e90bb73840732f8ae65a198cda1fea96c",
+      "0072ffe68863a4c62818a4e631a186f092a4f09dfda74d1d4713415bac5d202d",
+      "e2b0257d9b8782830df61eb6aa993a1ddc0349daddd845739da45d2a29a0c44b",
+      "c61057695b9f1a97de9b6f54f0c66206903f56c22427b0bca31e0fc34da49311",
+      "dd17e95a7c71bce75e8108113438ba7c4a086b3bcad4f57a8c09b7af3d753c2d",
+      "10e481880b307a6a438c1cc7b0a1fa8754247239ef5a2e8fe82bd8a1e76e7682",
+      "e05da5bc73a3e026f962a223672002934c0f415064b6e2c3db0b255e46c7b521",
+    ]) {
+      expect(dockerfile).toContain(`--checksum=sha256:${wheelSha256}`);
+    }
     const cronRestoreDrainPatch = indexOfRequired(
       finalStage,
       "ARG NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256=",
@@ -391,10 +414,6 @@ describe("Hermes final image layout", () => {
     );
     const metadataCheck = indexOfRequired(finalStage, "RUN check_metadata()");
     const modeNormalize = indexOfRequired(finalStage, "RUN chmod 755 \\");
-    const imageScan = indexOfRequired(
-      finalStage,
-      "node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts",
-    );
 
     expect(npmPatch).toBeLessThan(tarPatch);
     expect(agent).toBeGreaterThan(certifiInstall);
@@ -410,14 +429,14 @@ describe("Hermes final image layout", () => {
     expect(managedRuntimeDirectory).toBeLessThan(runtimeModeReplay);
     expect(finalStage).toContain("/usr/local/bin/nemoclaw-managed-bootstrap");
     expect(dockerfile).toContain(
+      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
+    );
+    expect(dockerfile).not.toContain(
       "COPY src/lib/onboard/managed-bootstrap/ ./src/lib/onboard/managed-bootstrap/",
     );
-    expect(dockerfile).toContain("src/lib/onboard/managed-bootstrap/image-runtime.ts");
     expect(wrapper).toBeGreaterThan(tirithFinalizerHash);
     expect(wrapper).toBeLessThan(pythonCheck);
-    expect(scan).toBeGreaterThan(darwinCompatibility);
-    expect(scan).toBeLessThan(metadataCheck);
-    expect(modeNormalize).toBeGreaterThan(scan);
+    expect(modeNormalize).toBeGreaterThan(darwinCompatibility);
     expect(modeNormalize).toBeLessThan(metadataCheck);
     for (const metadataContract of [
       "/scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444'",
@@ -435,16 +454,29 @@ describe("Hermes final image layout", () => {
       "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py 'root:root 700'",
       "/sandbox/.nemoclaw 'root:root 1755'",
       "/usr/local/share/nemoclaw/state-lock-plan.json 'root:root 444'",
+      "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py 'root:root 500'",
+      "/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py 'root:root 555'",
+      "/usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py 'root:root 500'",
+      "/var/lib/nemoclaw/runtime-state-mutation 'root:root 711'",
+      "/run/nemoclaw/runtime-state-mutation-startup 'root:root 711'",
+      "/usr/local/share/nemoclaw/runtime-state-mutation-publisher-v1.json 'root:root 444'",
       "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444'",
       "/usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755'",
       "/usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py 'root:root 755'",
       "/usr/local/share/nemoclaw/hermes-cli-adapter-v1.json 'root:root 444'",
-      "/scripts/checks/node-tar-image-scan.mts 'root:root 755'",
     ]) {
       expect(finalStage).toContain(`check_metadata ${metadataContract}`);
     }
-    expect(metadataCheck).toBeGreaterThan(scan);
-    expect(metadataCheck).toBeLessThan(imageScan);
+    expect(finalStage).toContain("/opt/hermes/.venv/bin/python3 -I -c 'import runpy, yaml;");
+    expect(finalStage).toContain(
+      'runpy.run_path("/usr/local/lib/nemoclaw/runtime-state-mutation-control.py"',
+    );
+    expect(finalStage).toContain(
+      'runpy.run_path("/usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py"',
+    );
+    expect(finalStage).toContain(
+      'runpy.run_path("/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py"',
+    );
     expect(doctorLayer).toContain(
       "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix",
     );
@@ -471,6 +503,9 @@ describe("Hermes final image layout", () => {
     );
     expect(finalStage).toContain(
       "&& check_absent /sandbox/.nemoclaw/hermes-cron-restore-drain.json \\",
+    );
+    expect(finalStage).toContain(
+      "&& check_absent /sandbox/.nemoclaw/hermes-cron-restore-release-recovery.json \\",
     );
     expect(finalStage).toContain("&& check_absent /sandbox/.cache \\");
     expect(finalStage).toContain("&& check_absent /sandbox/.hermes/managed-policy.json \\");

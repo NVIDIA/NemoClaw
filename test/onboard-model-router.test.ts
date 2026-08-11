@@ -379,6 +379,83 @@ describe("onboard Model Router setup", () => {
     );
   });
 
+  it("starts a Model Router whose health check passes after 16 retry intervals", async () => {
+    const pid = 12_345;
+    const sleep = vi.fn(async () => undefined);
+    const terminateProcess = vi.fn();
+    let healthProbe = 0;
+
+    const startedPid = await startModelRouter(
+      { port: 45_679, pool_config_path: "router/test-pool.yaml" },
+      {
+        rootDir: "/test/repo",
+        homeDir: "/test/home",
+        ensureModelRouterCommand: () => "/test/model-router",
+        mkdirSync: () => undefined,
+        runProxyConfig: () => ({ status: 0 }),
+        spawnProxy: () => ({
+          pid,
+          onError: () => undefined,
+          onExit: () => undefined,
+          unref: () => undefined,
+        }),
+        resolveProviderCredential: () => null,
+        buildSubprocessEnv: () => ({}),
+        isRouterHealthy: async () => {
+          healthProbe += 1;
+          return healthProbe > 16;
+        },
+        sleep,
+        isProcessAlive: () => true,
+        terminateProcess,
+        getProviderKey: () => "",
+      },
+    );
+
+    assert.equal(startedPid, pid);
+    assert.equal(healthProbe, 17);
+    assert.equal(sleep.mock.calls.length, 16);
+    assert.equal(terminateProcess.mock.calls.length, 0);
+  });
+
+  it("requests termination for a Model Router that stays unhealthy after 60 retry intervals", async () => {
+    const pid = 12_345;
+    const sleep = vi.fn(async () => undefined);
+    const terminateProcess = vi.fn();
+    const isRouterHealthy = vi.fn(async () => false);
+
+    await assert.rejects(
+      startModelRouter(
+        { port: 45_680, pool_config_path: "router/test-pool.yaml" },
+        {
+          rootDir: "/test/repo",
+          homeDir: "/test/home",
+          ensureModelRouterCommand: () => "/test/model-router",
+          mkdirSync: () => undefined,
+          runProxyConfig: () => ({ status: 0 }),
+          spawnProxy: () => ({
+            pid,
+            onError: () => undefined,
+            onExit: () => undefined,
+            unref: () => undefined,
+          }),
+          resolveProviderCredential: () => null,
+          buildSubprocessEnv: () => ({}),
+          isRouterHealthy,
+          sleep,
+          isProcessAlive: () => true,
+          terminateProcess,
+          getProviderKey: () => "",
+        },
+      ),
+      /failed to become healthy on port 45680 after 60 attempts/,
+    );
+
+    assert.equal(isRouterHealthy.mock.calls.length, 61);
+    assert.equal(sleep.mock.calls.length, 60);
+    assert.deepEqual(terminateProcess.mock.calls, [[pid]]);
+  });
+
   it("writes router state beneath the selected nondefault gateway root", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-port-"));
     tempDirs.add(tmpDir);

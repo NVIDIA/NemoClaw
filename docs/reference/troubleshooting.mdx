@@ -346,7 +346,7 @@ Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and 
 
 ### Older-glibc gateway compatibility container
 
-OpenShell 0.0.99 directly supports Linux hosts with glibc 2.39 or newer.
+OpenShell 0.0.101 directly supports Linux hosts with glibc 2.39 or newer.
 On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container.
 Leave it unset on supported hosts.
 
@@ -831,14 +831,13 @@ On DGX machines, sandbox creation can fail if the gateway's DNS has not finished
 Run `$$nemoclaw onboard` to retry.
 The wizard cleans up stale port forwards and waits for gateway readiness automatically.
 
-### GPU setup fails with a placeholder GPU name
+### GPU Setup Fails with a Placeholder GPU Name
 
 On Windows, WSL, and native Linux ARM64 hosts, some systems report a placeholder display adapter name even when no NVIDIA GPU firmware is present.
 NVIDIA NIM and GPU-backed sandbox setup require a real NVIDIA GPU.
 
 When the primary memory-query probe reports a placeholder name on a native or Docker Desktop-backed WSL ARM64 Linux host without firmware-confirmed NVIDIA platform metadata, onboarding runs one bounded Docker CUDA workload.
 NemoClaw treats a recognized NVIDIA product model from `/sys/class/dmi/id/product_name` or `/sys/firmware/devicetree/base/model`, or a known Tegra device node, as authoritative platform identity.
-Remove the native ARM64 proof exception when every supported host that uses it exposes a stable value through one of these signals and `detectNvidiaPlatform()` recognizes that value.
 Docker may pull the CUDA sample image from `nvcr.io` and keeps the image in the local cache after the container exits.
 The workload uses this command:
 
@@ -848,7 +847,7 @@ docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d
 
 The run is bounded to 3 minutes.
 Set `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` to a positive millisecond value to change that bound.
-Increase the value on slow links.
+Increase the value only when the image pull or GPU workload needs more than 3 minutes.
 A passing workload qualifies the detected GPU for GPU passthrough.
 A failed or timed-out workload leaves the GPU unproven and does not enable GPU passthrough.
 The names-only unified-memory fallback does not run this workload and rejects denylisted names.
@@ -892,6 +891,43 @@ On Docker Desktop, raise CPU and memory limits in *Settings → Resources*, then
 To silence the warning when the host is intentionally small, set `NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1` before running `$$nemoclaw onboard`.
 
 <AgentOnly variant="openclaw,hermes">
+
+### Managed Sandbox Image Build Requires Local BuildKit
+
+On a local Docker-driver gateway, NemoClaw builds each generated OpenClaw or Hermes sandbox image with host-side BuildKit.
+The generated Dockerfiles include BuildKit-only file-mode, per-step network, and mount controls.
+NemoClaw stops before sandbox creation in these cases:
+
+- The local build is disabled.
+- The staged build context fails trust validation.
+- Docker cannot start the build.
+- The build exits with an error.
+
+It does not send that generated Dockerfile to the OpenShell gateway's classic Docker API builder because that builder cannot enforce the same instructions.
+
+Keep the local prebuild enabled, and verify that the host Docker installation provides BuildKit:
+
+```bash
+unset NEMOCLAW_SANDBOX_PREBUILD
+docker info
+docker buildx version
+```
+
+Repair Docker access or the Docker Buildx plugin when either Docker command fails.
+Then rerun the original onboarding or rebuild command.
+For a resumable onboarding session, run:
+
+```bash
+$$nemoclaw onboard --resume
+```
+
+A passing recovery completes the local BuildKit build before sandbox creation starts.
+If NemoClaw rejects the staged build context trust boundary, do not change its permissions or move its Dockerfile.
+Rerun the command so NemoClaw creates a new private staged context.
+If the new context is also rejected, preserve the complete error and stop instead of forcing the gateway builder.
+
+This requirement does not change user-supplied `--from` contexts, which continue to use the OpenShell gateway builder.
+It also preserves the gateway fallback when a generated LangChain Deep Agents Code image does not complete its local prebuild.
 
 ### Re-onboard fails because port 18789 is held by SSH
 
@@ -1259,14 +1295,25 @@ On a direct-container deployment, first confirm that the sandbox is running:
 $$nemoclaw <name> status
 ```
 
-When `recover` repairs a stopped built-in gateway, NemoClaw repeats the recovery action only for an exit status of `1` with blank stdout and a sole nonblank stderr line equal to `SUPERVISOR_BUSY`, with at most three controller attempts.
-The same result is inconclusive during managed settle confirmation and can be probed again only within the configured settle window.
+When `recover` repairs a stopped built-in gateway, NemoClaw repeats the recovery action only for these exact transient results:
+
+- Status `1` with blank stdout and exactly one stderr line, `SUPERVISOR_BUSY`.
+- Status `137` with blank stdout and stderr.
+- Status `1` with blank stdout and exactly one stderr line, `Error response from daemon: Container <id> is restarting, wait until the container is running`.
+
+For the Docker result, `<id>` must be a 64-character lowercase hexadecimal ID that matches the selected registry-owned container.
+Recovery makes at most 11 controller attempts in total.
+It stops after 3 of those attempts return `SUPERVISOR_BUSY`.
+Managed settle confirmation treats exact `SUPERVISOR_BUSY` as inconclusive within its configured window.
+Status `137` and the Docker restart result remain terminal during that confirmation.
+The managed supervisor startup waiter accepts the two container-transition results within its separate 11-attempt bound.
+Unbound container IDs, reformatted Docker errors, status `137` with nonblank output, and other diagnostic results stop immediately.
 NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because it can report unreadable or untrusted supervisor state, ambiguous discovery, or a process-identity change.
-It does not retry other status or output combinations.
 `SUPERVISOR_NOT_RUNNING` is a separate result that requires two zero-supervisor scans with a stable PID 1 and does not enter that retry loop.
 On a supported local Docker-driver sandbox with the legacy keepalive startup, it can authorize a container-identity-pinned recreation that commits only after managed health and settle checks pass.
 To bypass that trusted recreation while troubleshooting, run `NEMOCLAW_DISABLE_SUPERVISOR_RELAUNCH=1 $$nemoclaw <name> recover`; NemoClaw leaves the container unchanged and returns rebuild or re-onboard guidance.
-If that bounded retry is exhausted, or if `gateway restart` reports `SUPERVISOR_BUSY`, wait for the active request to finish and retry the command.
+If recovery stops after 3 `SUPERVISOR_BUSY` results, or if `gateway restart` reports `SUPERVISOR_BUSY`, wait for the active request to finish and retry the command.
+If recovery exhausts the transition bound after status `137` or the Docker restart result, wait for the container to finish restarting and retry the command.
 If the error mentions `SUPERVISOR_NOT_RUNNING` and trusted recreation could not proceed, `SUPERVISOR_REBUILD_REQUIRED`, a missing `nemoclaw-gateway-control` helper, or a missing managed controller, the sandbox image may predate the current lifecycle contract.
 An exact `SUPERVISOR_UNAVAILABLE` result instead means the managed controller refused the current supervisor state rather than guessing which same-UID process is the gateway.
 The current recovery action and any managed settle confirmation stop immediately.
@@ -1291,6 +1338,34 @@ For shields changes, the lock remains held through recursive state-directory upd
 If a concurrent config or shields command reports `Hermes config mutation is already in progress`, do not remove `/run/nemoclaw/hermes-config-mutation.lock` manually.
 Wait for the active config, shields, recovery, or restart command to finish, then retry.
 If the command says shields are up, run `$$nemoclaw <name> shields down` before `config set` or `inference set`.
+
+### A Hermes command reports that runtime provider state mutation owns direct-container execution
+
+A current managed Hermes image on the Docker driver can report this retryable refusal while an exact Shields provider fence is active:
+
+```text
+Runtime provider state mutation owns direct-container execution for sandbox '<name>'; retry after the provider fence is released.
+```
+
+The refused command did not start a process inside the sandbox.
+Do not bypass the fence with manual `docker exec`, OpenShell, or SSH commands, and do not delete `~/.nemoclaw/state/runtime-provider-lifecycle/`.
+Wait for the active Shields or recovery command to finish, then reconcile the retained authority from the host:
+
+```bash
+$$nemoclaw <name> shields status
+```
+
+Use the status result as follows:
+
+- If status reports verified `UP`, `DOWN`, or mutable-default posture and exits with status `0`, retry the original command.
+- If status reports `runtime-provider recovery restored lockdown`, retry the intended `shields up` or `shields down` transition because provider verification rejected the persisted mutable posture.
+- If status reports `DOWN (DRIFTED...)` or `NOT CONFIGURED (DRIFTED...)`, run `$$nemoclaw <name> shields up`.
+  Open a new shields-down window only after `shields status` reports `UP` and exits with status `0`.
+
+Hermes can also log `[SECURITY] Hermes startup held by an active runtime state mutation.` before it reads mutable state.
+Do not kill or manually restart the held entrypoint.
+Run `$$nemoclaw <name> shields status` from the host so NemoClaw can recover the exact retained target and authenticate the startup release.
+If recovery still fails, preserve the owner-only lifecycle ledger and the complete error for diagnosis instead of removing a marker or changing in-sandbox permissions.
 
 ### Hermes startup reports `HERMES_CONFIG_MUTATION_ORPHANED`
 
@@ -3016,6 +3091,53 @@ Then rerun portable onboarding:
 ```bash
 $$nemoclaw onboard --experimental-profile portable
 ```
+
+### Portable Host Gateway Is Unreachable
+
+The portable experimental profile maps `host.openshell.internal` to the OpenShell Podman host gateway.
+Do not apply the Docker bridge UFW command when portable onboarding reports this route as unreachable.
+
+Use the same procedure when onboarding reports that the Podman service is unreachable for the portable gateway probe.
+
+Portable onboarding reports output like this:
+
+```text
+✗ Sandbox containers cannot reach the gateway at host.openshell.internal:8080.
+  The probe mapped host.openshell.internal to the OpenShell Podman host gateway.
+```
+
+If `podman.service` is active, restart it.
+Then enable and start the user-scoped Podman socket:
+
+```bash
+systemctl --user try-restart podman.service
+systemctl --user enable --now podman.socket
+```
+
+The first command does not start an inactive service.
+The second command enables and starts the current user's Podman API socket.
+These commands affect only the current user's Podman units.
+They do not read or write credentials.
+
+Verify that the socket is active:
+
+```bash
+systemctl --user is-active podman.socket
+```
+
+Expected output:
+
+```text
+active
+```
+
+Then rerun portable onboarding:
+
+```bash
+$$nemoclaw onboard --experimental-profile portable
+```
+
+Continue only when onboarding no longer reports that the Podman service or OpenShell Podman host gateway is unreachable.
 
 <AgentOnly variant="hermes">
 
