@@ -3094,6 +3094,8 @@ run_installer_host_preflight() {
             )
           ),
         ];
+        const findingIds = admission.admitted ? [] : stableIds(admission.findingIds);
+        const capabilityIds = admission.admitted ? [] : stableIds(admission.capabilityIds);
         if (host.runtime && host.runtime !== "unknown") {
           infoLines.push(`Detected container runtime: ${host.runtime}`);
         }
@@ -3101,8 +3103,6 @@ run_installer_host_preflight() {
           infoLines.push("Running under WSL");
         }
         if (!admission.admitted) {
-          const findingIds = stableIds(admission.findingIds);
-          const capabilityIds = stableIds(admission.capabilityIds);
           if (findingIds.length > 0) {
             actionLines.push(`Admission finding IDs: ${findingIds.join(", ")}`);
           }
@@ -3123,7 +3123,7 @@ run_installer_host_preflight() {
               finding,
             ])
           );
-          for (const findingId of admission.findingIds || []) {
+          for (const findingId of findingIds) {
             const finding = findingById.get(findingId);
             actionLines.push(
               finding?.summary
@@ -3131,7 +3131,7 @@ run_installer_host_preflight() {
                 : `- Readiness finding: ${findingId}`
             );
           }
-          for (const capabilityId of admission.capabilityIds || []) {
+          for (const capabilityId of capabilityIds) {
             actionLines.push(
               `- NemoClaw could not confirm the required readiness capability ${capabilityId}.`
             );
