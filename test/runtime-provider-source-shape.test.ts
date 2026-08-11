@@ -171,6 +171,8 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/runtime-provider/docker-llama-cpp-operation.ts",
       "src/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge-process.ts",
       "src/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge.ts",
+      "src/lib/onboard/runtime-provider/docker-operation-authority.ts",
+      "src/lib/onboard/runtime-provider/docker-state-mutation.ts",
       "src/lib/onboard/runtime-provider/docker.ts",
       "src/lib/onboard/runtime-provider/host-local-create-journal.ts",
       "src/lib/onboard/runtime-provider/host-local-inference.ts",
