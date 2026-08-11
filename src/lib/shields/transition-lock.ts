@@ -15,6 +15,11 @@ import {
 import { resolveNemoclawStateDir } from "../state/paths";
 import { isProcessAlive, readProcessStartIdentity } from "./timer-control";
 
+/** Shared state-root authority for callers already serialized by this facade. */
+export function resolveShieldsStateDir(homeDir?: string): string {
+  return resolveNemoclawStateDir(homeDir);
+}
+
 const LOCK_VERSION = 1;
 const MAX_OWNER_BYTES = 16 * 1024;
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
@@ -411,7 +416,7 @@ export function isShieldsTransitionLockUnavailable(
 
 export function shieldsTransitionLockPath(
   sandboxName: string,
-  stateDir: string = resolveNemoclawStateDir(),
+  stateDir: string = resolveShieldsStateDir(),
 ): string {
   const validName = validateSandboxName(sandboxName);
   return path.join(stateDir, `shields-transition-lock-${validName}.json`);
@@ -430,7 +435,7 @@ export class ShieldsTransitionLockManager {
   private readonly ownership = new AsyncLocalStorage<ReadonlyMap<string, symbol>>();
 
   constructor(deps: ShieldsTransitionLockDependencies = {}) {
-    this.stateDir = deps.stateDir ?? resolveNemoclawStateDir();
+    this.stateDir = deps.stateDir ?? resolveShieldsStateDir();
     this.pid = deps.pid ?? process.pid;
     this.now = deps.now ?? Date.now;
     this.sleep = deps.sleep ?? defaultSleep;

@@ -103,8 +103,8 @@ test("interactive onboard wizard reaches Policy presets in step order (#6042)", 
     cwd: REPO_ROOT,
     env: buildAvailabilityProbeEnv(),
     rules: [
-      // First-run license notice; already accepted on a reused host, so
-      // this rule may simply never fire.
+      // A reused host can already have accepted this first-run license
+      // notice, so this rule might not fire.
       { trigger: "Type 'yes' to accept", response: "yes\n" },
       // Only appears when the preflight resource check warns; skipped on
       // an adequately provisioned CI runner.

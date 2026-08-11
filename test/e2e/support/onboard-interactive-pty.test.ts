@@ -26,7 +26,7 @@ function observedProgress(scenario: string): TestProgress {
 }
 
 describe("interactive PTY driver", () => {
-  it("reports the real exit code for a clean run instead of a false timeout", async () => {
+  it("reports the real exit code when the child exits normally instead of a false timeout", async () => {
     const progress = observedProgress("onboard-interactive-pty clean exit");
     try {
       const result = await driveInteractiveCommand({

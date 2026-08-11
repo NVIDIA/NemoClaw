@@ -151,9 +151,9 @@ export function driveInteractiveCommand(
   // Kept directly in this function's body, not inside the Promise executor
   // below, so the sole audited async child-process boundary stays attached
   // to a named, reviewed callsite. `detached: true` makes the Python driver
-  // the leader of its own process group/session, so its pty.fork()'d
-  // driver a stable group for fallback cleanup. pty.fork() creates a separate
-  // child session, whose process-group id is reported over stderr below.
+  // its process-group leader, which gives fallback cleanup a stable target.
+  // pty.fork() creates a separate child session, whose process-group id is
+  // reported over stderr below.
   const child = spawnObservedChild(resolvePython(), ["-c", PTY_DRIVER_SCRIPT], {
     activityLabel: options.activityLabel,
     progress: options.progress,

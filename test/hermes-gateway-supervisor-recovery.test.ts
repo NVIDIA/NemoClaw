@@ -117,6 +117,7 @@ function runHermesStartupReadiness(gatewayInitStatus: 0 | 1) {
     '_HERMES_PYTHON="hermes-python"',
     '_HERMES_RUNTIME_CONFIG_GUARD="runtime-guard"',
     'hermes-python() { printf "publish:%s\\n" "$*" >&2; return 0; }',
+    'nemoclaw_runtime_state_mutation_checkpoint() { printf "state-mutation-checkpoint\\n" >&2; }',
     "print_dashboard_urls() { trace dashboard-urls; }",
     block,
   ]);
@@ -128,6 +129,7 @@ describe("Hermes PID 1 supervisor recovery", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim().split("\n")).toEqual(["gateway-control-init", "dashboard-urls"]);
+    expect(result.stderr).toContain("state-mutation-checkpoint");
     expect(result.stderr).toContain(
       "publish:-I runtime-guard publish-startup-ready --hermes-dir /sandbox/.hermes --startup-owner",
     );
@@ -613,8 +615,10 @@ describe("Hermes supervised auxiliary recovery", () => {
       'launch_hermes_gateway_current_user() { launch_calls=$((launch_calls + 1)); [ "$launch_calls" -eq 1 ] && GATEWAY_PID=5252 || GATEWAY_PID=6262; trace "launch:$GATEWAY_PID"; }',
       'wait_for_hermes_gateway_internal() { trace "health:$1"; }',
       "ensure_hermes_supervised_auxiliaries() { trace auxiliaries; }",
+      "finalize_tirith_marker_retry() { :; }",
       "commit_hermes_mcp_applied_if_pending() { return 0; }",
       'refresh_hermes_supervised_child_pids() { trace "refresh:$GATEWAY_PID"; }',
+      "nemoclaw_runtime_state_mutation_checkpoint() { :; }",
       "hermes_gateway_healthy() { return 0; }",
       'hermes_stop_tracked_role() { trace "unexpected-stop:$2"; return 1; }',
       extractShellFunction(source, "quarantine_hermes_managed_gateway_relaunch"),
@@ -775,8 +779,10 @@ describe("Hermes supervised auxiliary recovery", () => {
       "hermes_tracked_role_is_current() { return 0; }",
       "hermes_gateway_healthy() { return 0; }",
       "ensure_hermes_supervised_auxiliaries() { return 0; }",
+      "finalize_tirith_marker_retry() { :; }",
       "commit_hermes_mcp_applied_if_pending() { return 0; }",
       "refresh_hermes_supervised_child_pids() { trace refresh; }",
+      "nemoclaw_runtime_state_mutation_checkpoint() { :; }",
       'date() { trace unexpected-exit-record; printf "100\\n"; }',
       'sleep() { trace "sleep:$1"; }',
       extractShellFunction(source, "quarantine_hermes_managed_gateway_relaunch"),
@@ -817,6 +823,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
       "mark_hermes_gateway_stopped() { trace mark-stopped; GATEWAY_PID=0; }",
       'recover_hermes_gateway_current_user() { GATEWAY_PID=4200; trace "recover:$GATEWAY_PID"; }',
+      "nemoclaw_runtime_state_mutation_checkpoint() { :; }",
       'date() { printf "100\\n"; }',
       'sleep() { trace "sleep:$1"; }',
       extractShellFunction(source, "quarantine_hermes_managed_gateway_relaunch"),

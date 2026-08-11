@@ -35,6 +35,7 @@ import {
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
 import { createDockerLlamaCppHostLocalOperation } from "./docker-llama-cpp-operation";
+import { createDockerStateMutationSurface } from "./docker-state-mutation";
 import { createDockerRuntimeProviderSnapshotSurface } from "./snapshot";
 
 type DockerOpResult = { status?: number | null };
@@ -365,7 +366,7 @@ export function createDockerRuntimeProviderBundle(
         "workload-cleanup",
       ],
     },
-    stateMutation: unsupported(providerId, futureReason),
+    stateMutation: createDockerStateMutationSurface(),
     bootstrap: createDockerManagedBootstrapSurface(providerId),
     snapshot: createDockerRuntimeProviderSnapshotSurface(providerId, {
       captureHostCommand: deps.captureHostCommand,
