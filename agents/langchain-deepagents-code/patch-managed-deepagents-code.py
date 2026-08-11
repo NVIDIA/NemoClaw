@@ -1455,63 +1455,63 @@ MCP_EXPLICIT_CONFIG_PATCH = '''    if explicit_config_path:
         configs.append(load_mcp_config(config_path))
 '''
 
-SERVER_ENV_OVERRIDES_MARKER = '''        env.update(self._persistent_env_overrides)
-        env.update(self._env_overrides)
+SERVER_ENV_OVERRIDES_MARKER = '''            env.update(self._persistent_env_overrides)
+            env.update(self._env_overrides)
 '''
 
-SERVER_ENV_OVERRIDES_PATCH = '''        env.update(self._persistent_env_overrides)
-        env.update(self._env_overrides)
+SERVER_ENV_OVERRIDES_PATCH = '''            env.update(self._persistent_env_overrides)
+            env.update(self._env_overrides)
 
-        # Reassert the managed child-process posture after both override
-        # layers so restarts cannot re-enable update checks, optional
-        # analytics, or unmanaged telemetry export.
-        env["LANGGRAPH_NO_VERSION_CHECK"] = "true"
-        env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"
-        env["OTEL_ENABLED"] = "false"
-        for name in (
-            "OPENAI_PROXY",
-            "OTEL_EXPORTER_OTLP_ENDPOINT",
-            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-            "OTEL_EXPORTER_OTLP_HEADERS",
-            "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
-        ):
-            env.pop(name, None)
+            # Reassert the managed child-process posture after both override
+            # layers so restarts cannot re-enable update checks, optional
+            # analytics, or unmanaged telemetry export.
+            env["LANGGRAPH_NO_VERSION_CHECK"] = "true"
+            env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"
+            env["OTEL_ENABLED"] = "false"
+            for name in (
+                "OPENAI_PROXY",
+                "OTEL_EXPORTER_OTLP_ENDPOINT",
+                "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+                "OTEL_EXPORTER_OTLP_HEADERS",
+                "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+            ):
+                env.pop(name, None)
 
-        # Revalidate and bind the exact managed MCP snapshot before creating
-        # any launch artifacts. Initial start and restart share this path.
-        nemoclaw_mcp_pass_fds: tuple[int, ...] = ()
-        nemoclaw_mcp_binding_env = "NEMOCLAW_DCODE_MCP_BINDING"
-        env.pop(nemoclaw_mcp_binding_env, None)
-        nemoclaw_mcp_path = env.get("DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH")
-        if nemoclaw_mcp_path:
-            from deepagents_code._nemoclaw_managed import (
-                managed_mcp_server_binding,
+            # Revalidate and bind the exact managed MCP snapshot before creating
+            # any launch artifacts. Initial start and restart share this path.
+            nemoclaw_mcp_pass_fds: tuple[int, ...] = ()
+            nemoclaw_mcp_binding_env = "NEMOCLAW_DCODE_MCP_BINDING"
+            env.pop(nemoclaw_mcp_binding_env, None)
+            nemoclaw_mcp_path = env.get("DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH")
+            if nemoclaw_mcp_path:
+                from deepagents_code._nemoclaw_managed import (
+                    managed_mcp_server_binding,
+                )
+
+                descriptor, binding = managed_mcp_server_binding(nemoclaw_mcp_path)
+                nemoclaw_mcp_pass_fds = (descriptor,)
+                env[nemoclaw_mcp_binding_env] = binding
+'''
+
+SERVER_POPEN_MARKER = '''            self._process = subprocess.Popen(  # noqa: S603
+                cmd,
+                cwd=str(work_dir),
+                env=env,
+                stdout=self._log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=(sys.platform != "win32"),
             )
-
-            descriptor, binding = managed_mcp_server_binding(nemoclaw_mcp_path)
-            nemoclaw_mcp_pass_fds = (descriptor,)
-            env[nemoclaw_mcp_binding_env] = binding
 '''
 
-SERVER_POPEN_MARKER = '''        self._process = subprocess.Popen(  # noqa: S603
-            cmd,
-            cwd=str(work_dir),
-            env=env,
-            stdout=self._log_file,
-            stderr=subprocess.STDOUT,
-            start_new_session=(sys.platform != "win32"),
-        )
-'''
-
-SERVER_POPEN_PATCH = '''        self._process = subprocess.Popen(  # noqa: S603
-            cmd,
-            cwd=str(work_dir),
-            env=env,
-            stdout=self._log_file,
-            stderr=subprocess.STDOUT,
-            pass_fds=nemoclaw_mcp_pass_fds,
-            start_new_session=(sys.platform != "win32"),
-        )
+SERVER_POPEN_PATCH = '''            self._process = subprocess.Popen(  # noqa: S603
+                cmd,
+                cwd=str(work_dir),
+                env=env,
+                stdout=self._log_file,
+                stderr=subprocess.STDOUT,
+                pass_fds=nemoclaw_mcp_pass_fds,
+                start_new_session=(sys.platform != "win32"),
+            )
 '''
 
 UPDATE_CHECK_PATCH = r'''

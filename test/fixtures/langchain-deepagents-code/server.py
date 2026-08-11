@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 
 
 def _build_server_env():
@@ -22,22 +23,24 @@ class ServerProcess:
         self._process = None
         self._persistent_env_overrides = {}
         self._env_overrides = {}
+        self._state_lock = threading.Lock()
 
     async def start(self):
-        cmd = self.cmd
-        work_dir = self.work_dir
-        env = self.env
-        env.update(self._persistent_env_overrides)
-        env.update(self._env_overrides)
-        self._log_file = subprocess.PIPE
-        self._process = subprocess.Popen(  # noqa: S603
-            cmd,
-            cwd=str(work_dir),
-            env=env,
-            stdout=self._log_file,
-            stderr=subprocess.STDOUT,
-            start_new_session=(sys.platform != "win32"),
-        )
+        with self._state_lock:
+            cmd = self.cmd
+            work_dir = self.work_dir
+            env = self.env
+            env.update(self._persistent_env_overrides)
+            env.update(self._env_overrides)
+            self._log_file = subprocess.PIPE
+            self._process = subprocess.Popen(  # noqa: S603
+                cmd,
+                cwd=str(work_dir),
+                env=env,
+                stdout=self._log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=(sys.platform != "win32"),
+            )
         output, _ = self._process.communicate(timeout=10)
         if self._process.returncode != 0:
             raise RuntimeError(output.decode())
