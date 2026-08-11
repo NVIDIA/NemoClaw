@@ -192,6 +192,9 @@ describe("base-image publication evidence", () => {
         "nemoclaw/**",
         "nemoclaw-blueprint/**",
         "scripts/**",
+
+        "test/e2e/live/managed-image-activation-e2e.test.ts",
+        "test/e2e/live/managed-image-activation-e2e-helpers.ts",
         "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
         "src/lib/messaging/**",
         "src/lib/tool-disclosure.ts",
