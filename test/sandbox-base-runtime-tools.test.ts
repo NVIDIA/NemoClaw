@@ -53,9 +53,10 @@ function runRuntimeToolsContract(dockerfile: string, fixture: RuntimeToolsFixtur
   const setpriv = path.join(tmp, "usr", "bin", "setpriv");
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.mkdirSync(path.dirname(setpriv), { recursive: true });
+  fs.symlinkSync("/bin/bash", path.join(fakeBin, "bash"));
   RUNTIME_TOOLS_FIXTURES[fixture](setpriv, fakeBin);
   return runLoggedDockerShell(runtimeContract.replaceAll("/usr/bin/setpriv", setpriv), tmp, [], {
-    env: { PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
+    env: { PATH: fakeBin },
   }).result;
 }
 
