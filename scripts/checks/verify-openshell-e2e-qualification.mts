@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { compareDottedVersions } from "../../src/lib/domain/maintenance/upgrade.ts";
 import { readValidatedArtifactZipEntry } from "../scorecard/read-artifact-zip.mts";
 import { extractInstallerPins } from "./extract-installer-pins.mts";
 
@@ -603,18 +604,6 @@ export function extractOpenShellVersion(root: string): string {
   return unique[0] ?? fail("OpenShell version is missing");
 }
 
-function compareVersions(left: string, right: string): number {
-  const leftParts = left.split(".").map((part) => BigInt(part));
-  const rightParts = right.split(".").map((part) => BigInt(part));
-  for (let index = 0; index < 3; index += 1) {
-    const leftPart = leftParts[index] ?? 0n;
-    const rightPart = rightParts[index] ?? 0n;
-    if (leftPart < rightPart) return -1;
-    if (leftPart > rightPart) return 1;
-  }
-  return 0;
-}
-
 function extractUpgradeFixtureRequirement(
   baseRoot: string,
   baselineVersion: string,
@@ -649,8 +638,8 @@ function extractUpgradeFixtureRequirement(
       ? baselineVersion
       : fixtures
           .map((fixture) => fixture.version)
-          .filter((version) => compareVersions(version, targetVersion) < 0)
-          .sort((left, right) => compareVersions(right, left))[0];
+          .filter((version) => compareDottedVersions(version, targetVersion) < 0)
+          .sort((left, right) => compareDottedVersions(right, left))[0];
   if (!selectedVersion) {
     fail(`trusted E2E matrix has no predecessor fixture below target ${targetVersion}`);
   }
