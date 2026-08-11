@@ -258,6 +258,29 @@ describe("dockerfile patch — corporate CA baking (#6210)", () => {
     expect(runtimeUserArgLine(dockerfilePath)).toBe("ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root");
   });
 
+  it("rejects corporate CA baking when the staged Dockerfile agent identity is absent (#8803)", () => {
+    process.env.NEMOCLAW_CORPORATE_CA_BUNDLE = writeCa();
+    const dockerfilePath = openClawDockerfileWith(["ARG NEMOCLAW_CORPORATE_CA_B64="]);
+    const original = fs.readFileSync(dockerfilePath, "utf8");
+
+    expect(() =>
+      patchStagedDockerfile(
+        dockerfilePath,
+        "custom-model",
+        "https://chat.example",
+        "build-1",
+        "compatible-endpoint",
+        null,
+        null,
+        null,
+        false,
+        null,
+        [],
+      ),
+    ).toThrow(/without the staged Dockerfile agent identity/);
+    expect(fs.readFileSync(dockerfilePath, "utf8")).toBe(original);
+  });
+
   it("rejects an explicit corporate CA when USER references a differently cased argument (#8803)", () => {
     process.env.NEMOCLAW_CORPORATE_CA_BUNDLE = writeCa();
     const dockerfilePath = dockerfileWith([

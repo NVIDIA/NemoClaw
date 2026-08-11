@@ -549,6 +549,11 @@ export function patchStagedDockerfile(
   // custom/legacy Dockerfiles that predate this ARG.
   const corporateCa = resolveCorporateCa(process.env);
   if (corporateCa) {
+    if (options.agentName === undefined) {
+      throw new Error(
+        "NemoClaw cannot bake a corporate CA without the staged Dockerfile agent identity.",
+      );
+    }
     const corporateCaArgPattern = /^ARG NEMOCLAW_CORPORATE_CA_B64=.*$/m;
     const openClawRootStartup = options.agentName === "openclaw";
     const runtimeUserArg = openClawRootStartup ? openClawRootStartupArg(dockerfile) : null;
