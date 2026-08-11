@@ -21,9 +21,7 @@ export function runVitestNpmScript(
   fs.mkdirSync(fakeBin);
   fs.writeFileSync(
     path.join(fakeBin, "vitest"),
-    `#!/bin/sh
-printf 'vitest %s\\n' "$*" >> "$COMMAND_LOG"
-`,
+    '#!/bin/sh\nprintf \'vitest %s\\n\' "$*" > "$COMMAND_LOG"\n',
     { mode: 0o755 },
   );
   fs.writeFileSync(path.join(fakeBin, "tsx"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
