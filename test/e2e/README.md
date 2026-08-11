@@ -869,7 +869,11 @@ classify that guidance as required, but rendered advisor guidance remains
 non-authoritative. Model advice is additive and cannot downgrade the
 deterministic floor. PR Review Advisor recommendations remain advisory.
 A maintainer decides whether to dispatch this trusted selection for the current PR
-revision. No PR E2E controller dispatches the risk plan.
+revision. The manual PR controller accepts the credential-free
+`inference-routing` job; secret-backed jobs such as `network-policy` remain
+available only through manual dispatch from reviewed code on `main` and are
+labeled that way in the Advisor comment.
+No PR E2E controller dispatches the risk plan.
 
 The `full-e2e` target enforces a separate hard acceptance contract for the
 first fresh onboarding path in that job. It measures from the onboard root span

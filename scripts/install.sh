@@ -3076,6 +3076,9 @@ run_installer_host_preflight() {
         const admission = evaluateOnboardReadinessAdmission(readiness, {
           explicitlyOptedOutGpuPassthrough: false,
           allowUnsupportedRuntime: false,
+          // The installer starts a NemoClaw-managed onboarding flow. Let the
+          // authoritative onboarding gate apply supported storage remediation,
+          // but only when the gateway declaration confirms NemoClaw ownership.
           allowStorageRemediation,
         });
         const infoLines = [];
@@ -3111,6 +3114,27 @@ run_installer_host_preflight() {
           actionLines.push(`- ${action.title}: ${action.reason}`);
           for (const command of action.commands || []) {
             actionLines.push(`  ${command}`);
+          }
+        }
+        if (!admission.admitted) {
+          const findingById = new Map(
+            (Array.isArray(readiness.findings) ? readiness.findings : []).map((finding) => [
+              finding.id,
+              finding,
+            ])
+          );
+          for (const findingId of admission.findingIds || []) {
+            const finding = findingById.get(findingId);
+            actionLines.push(
+              finding?.summary
+                ? `- ${finding.summary}`
+                : `- Readiness finding: ${findingId}`
+            );
+          }
+          for (const capabilityId of admission.capabilityIds || []) {
+            actionLines.push(
+              `- NemoClaw could not confirm the required readiness capability ${capabilityId}.`
+            );
           }
         }
         if (infoLines.length > 0) {

@@ -126,7 +126,7 @@ describe("PR review advisor", () => {
     const comment = buildComment({ summary: renderSummary(result), result });
     expect(comment).toContain("### E2E guidance");
     expect(comment).toContain(
-      "Advisory only. A maintainer can dispatch the default E2E suite against this exact revision.",
+      "Advisory only. A maintainer can dispatch the default E2E suite for the commit under review.",
     );
     expect(comment).toContain("<code>rebuild-openclaw</code>");
     expect(comment).toContain("**Recommended E2E:**");
@@ -179,8 +179,12 @@ describe("PR review advisor", () => {
             classifiedDomains: [],
             requiredTests: [
               {
+                id: "inference-routing",
+                reason: "The controller can run this job for the commit under review.",
+              },
+              {
                 id: "security-posture",
-                reason: "The combined advisor path needs end-to-end regression coverage.",
+                reason: "This job must run from reviewed code on main.",
               },
             ],
             optionalTests: [],
@@ -201,7 +205,9 @@ describe("PR review advisor", () => {
     );
 
     const comment = buildComment({ summary: renderSummary(result), result });
-    expect(comment).toContain("**Recommended E2E:** <code>security-posture</code>");
+    expect(comment).toContain("**Recommended E2E:** <code>inference-routing</code>");
+    expect(comment).toContain("**Manual-only E2E:** <code>security-posture</code>");
+    expect(comment.match(/<code>inference-routing<\/code>/gu)).toHaveLength(1);
     expect(comment.match(/<code>security-posture<\/code>/gu)).toHaveLength(1);
 
     const noE2eResult = normalizeReviewResult(validResult(), metadata());
@@ -211,6 +217,35 @@ describe("PR review advisor", () => {
     });
     expect(noE2eComment).toContain("**Recommended E2E:** _None_");
     expect(noE2eComment).not.toContain("Why no");
+  });
+
+  it("separates E2E for the commit under review from secret-backed manual-only coverage", () => {
+    const result = {
+      headSha: "abc123def456",
+      e2e: {
+        coverage: {
+          requiredTests: [
+            {
+              id: "inference-routing",
+              reason: "Credential-free coverage for the commit under review.",
+            },
+            { id: "network-policy", reason: "Secret-backed trusted-main coverage." },
+          ],
+          optionalTests: [],
+        },
+        targets: { required: [], optional: [] },
+      },
+    };
+    const comment = buildComment({ summary: "Trusted E2E classification.", result });
+    expect(comment).toContain("**Recommended E2E:** <code>inference-routing</code>");
+    expect(comment).toContain("**Manual-only E2E:** <code>network-policy</code>");
+    const recommendedLine = comment
+      .split("\n")
+      .find((line) => line.startsWith("**Recommended E2E:**"));
+    expect(recommendedLine).not.toContain("<code>network-policy</code>");
+    expect(comment).toContain(
+      "The manual PR workflow does not run these selectors for the commit under review.",
+    );
   });
 
   it("sanitizes malformed enum values and preserves deterministic fallback gates", () => {
