@@ -19,6 +19,7 @@ import { ADVISORY_CHECKS } from "../advisories/registry";
 import { runAdvisories } from "../advisories/runner";
 import { DASHBOARD_PORT } from "../core/ports";
 import { isDockerDaemonReachable, isSupportedGatewayDockerHost } from "../domain/docker-host";
+import { classifyDockerVersionIdentity } from "../platform";
 import { resolveOpenshell } from "../readiness/openshell-resolver";
 import {
   MIN_RECOMMENDED_DOCKER_CPUS,
@@ -238,59 +239,6 @@ function inferContainerRuntime(info = ""): ContainerRuntime {
   if (normalized.includes("colima")) return "colima";
   if (normalized.includes("docker desktop")) return "docker-desktop";
   if (normalized.includes("docker")) return "docker";
-  return "unknown";
-}
-
-type DockerVersionIdentity = "docker" | "podman" | "unknown";
-
-/**
- * Classify the engine identity from the explicit
- * `docker version --format '{{json .}}'` banner.
- *
- * Podman's docker-compat `/info` endpoint mimics Docker so closely that
- * `docker info` carries no "podman" marker (observed on Apple Silicon macOS:
- * `ServerVersion: "5.6.2"`, `OperatingSystem: "fedora"`, no "podman"
- * substring), so `inferContainerRuntime` misclassifies it as plain Docker.
- * The docker-compat `/version` payload still names the engine: a
- * `Server.Components[].Name` of "Podman Engine" and a `Server.Platform.Name`
- * like "linux/arm64/fedora-42". Real Docker reports
- * `Server.Platform.Name: "Docker Engine - Community"` and components
- * `Engine`/`containerd`/`runc`, which provide positive Docker identity on
- * Docker Engine, Docker Desktop, and Colima (#7320).
- */
-function classifyDockerVersionIdentity(versionOutput = ""): DockerVersionIdentity {
-  const text = String(versionOutput || "").trim();
-  if (!text) return "unknown";
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    // Plain-text `docker version` still prints the "Podman Engine" server banner.
-    if (/podman/i.test(text)) return "podman";
-    return /docker engine/i.test(text) ? "docker" : "unknown";
-  }
-  const server = (parsed as Record<string, unknown> | null)?.Server;
-  if (!server || typeof server !== "object") return "unknown";
-  const s = server as Record<string, unknown>;
-  const platformName = (s.Platform as Record<string, unknown> | undefined)?.Name;
-  if (typeof platformName === "string" && /podman/i.test(platformName)) return "podman";
-  const components = s.Components;
-  const componentNames = Array.isArray(components)
-    ? components.flatMap((component) => {
-        const name =
-          component && typeof component === "object"
-            ? (component as Record<string, unknown>).Name
-            : undefined;
-        return typeof name === "string" ? [name] : [];
-      })
-    : [];
-  if (componentNames.some((name) => /podman/i.test(name))) return "podman";
-  if (
-    (typeof platformName === "string" && /^docker (?:engine|desktop)\b/i.test(platformName)) ||
-    componentNames.some((name) => name.trim().toLowerCase() === "engine")
-  ) {
-    return "docker";
-  }
   return "unknown";
 }
 
