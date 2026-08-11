@@ -18,6 +18,7 @@ const ENTRYPOINT_ENV = {
   PR_NUMBER: "1",
   REPO: "NVIDIA/NemoClaw",
 } as const;
+const CLEAN_TEST_BUDGET = '{"defaultMaxLines":1500,"legacyMaxLines":{}}';
 
 const FETCH_PRELOAD = `
 const responses = JSON.parse(process.env.MOCK_RESPONSES ?? "[]");
@@ -38,10 +39,7 @@ function blobPayload(text: string | null): unknown {
   };
 }
 
-function runEntrypoint(
-  relativeToolPath: string,
-  responses: readonly unknown[],
-): ReturnType<typeof spawnSync> {
+function runEntrypoint(responses: readonly unknown[]): ReturnType<typeof spawnSync> {
   const directory = mkdtempSync(join(tmpdir(), "growth-guardrail-entrypoint-"));
   const preload = join(directory, "fetch-preload.mjs");
   writeFileSync(preload, FETCH_PRELOAD);
@@ -51,7 +49,7 @@ function runEntrypoint(
       "--experimental-strip-types",
       "--import",
       pathToFileURL(preload).href,
-      resolve(REPO_ROOT, relativeToolPath),
+      resolve(REPO_ROOT, "tools/growth-guardrails/check-pr.mts"),
     ],
     {
       cwd: REPO_ROOT,
@@ -67,49 +65,71 @@ function runEntrypoint(
   return result;
 }
 
-describe("growth-guardrails executable entrypoints (#6953)", () => {
-  it("prints the conditional guardrail PASS diagnostic", () => {
-    const result = runEntrypoint("tools/growth-guardrails/test-conditionals.mts", [[]]);
+describe("codebase growth trusted assertion", () => {
+  it("prints the consolidated PASS diagnostic", () => {
+    const result = runEntrypoint([[], blobPayload(CLEAN_TEST_BUDGET)]);
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain(
-      "PASS: changed test files did not add if statements (0 at PR head vs 0 at base).",
-    );
+    expect(result.stdout).toContain("PASS: this PR preserves the codebase growth policies.");
   });
 
-  it("prints the conditional guardrail FAIL heading and file detail", () => {
-    const result = runEntrypoint("tools/growth-guardrails/test-conditionals.mts", [
-      [{ filename: "test/a.test.ts", status: "modified" }],
-      blobPayload("it('a', () => { expect(1).toBe(1); });"),
-      blobPayload("it('a', () => { if (condition) expect(1).toBe(1); });"),
+  it("prints an increased test-file if-statement count in the consolidated failure", () => {
+    const baseSource = "it('a', () => { expect(1).toBe(1); });";
+    const headSource = "it('a', () => { if (condition) expect(1).toBe(1); });";
+    const result = runEntrypoint([
+      [{ filename: "test/a.test.ts", status: "modified", additions: 1, deletions: 0 }],
+      blobPayload(CLEAN_TEST_BUDGET),
+      blobPayload(headSource),
+      blobPayload(baseSource),
+      blobPayload(headSource),
     ]);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("FAIL: changed test files add if statements.");
+    expect(result.stderr).toContain("FAIL: codebase growth policies rejected this PR.");
     expect(result.stderr).toContain("test/a.test.ts: 1 if statement(s), up from 0");
   });
 
-  it("prints the size-budget guardrail PASS diagnostic", () => {
-    const result = runEntrypoint("tools/growth-guardrails/test-size-budget.mts", [
-      [],
-      blobPayload(null),
-    ]);
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain(
-      "PASS: test size budget policy is monotonic and 0 changed test file(s) are within budget.",
-    );
-  });
-
-  it("prints the size-budget guardrail FAIL heading and budget detail", () => {
-    const result = runEntrypoint("tools/growth-guardrails/test-size-budget.mts", [
-      [{ filename: "ci/test-file-size-budget.json", status: "added" }],
+  it("reports an increased default test-file line budget in the consolidated failure", () => {
+    const result = runEntrypoint([
+      [{ filename: "ci/test-file-size-budget.json", status: "added", additions: 1, deletions: 0 }],
       blobPayload(null),
       blobPayload('{"defaultMaxLines":2000,"legacyMaxLines":{}}'),
     ]);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("FAIL: test size budget policy would be weakened or exceeded.");
     expect(result.stderr).toContain("defaultMaxLines increased from 1500 to 2000");
+  });
+
+  it.each([
+    "js",
+    "cjs",
+    "mjs",
+    "jsx",
+  ])("prints a new .%s JavaScript file in the consolidated failure", (extension) => {
+    const filename = `scripts/new.${extension}`;
+    const result = runEntrypoint([
+      [{ filename, status: "added", additions: 1, deletions: 0 }],
+      blobPayload(CLEAN_TEST_BUDGET),
+    ]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`${filename}: new JavaScript files must use TypeScript`);
+  });
+
+  it("prints net growth in the onboarding entry point in the consolidated failure", () => {
+    const result = runEntrypoint([
+      [
+        {
+          filename: "src/lib/onboard.ts",
+          status: "modified",
+          additions: 3,
+          deletions: 1,
+        },
+      ],
+      blobPayload(CLEAN_TEST_BUDGET),
+    ]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/lib/onboard.ts: grew by 2 line(s) (+3/-1)");
   });
 });
