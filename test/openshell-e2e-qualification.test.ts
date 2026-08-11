@@ -101,7 +101,7 @@ function workflowRun(id: number, status = "completed", conclusion: string | null
   };
 }
 
-function createBaseRoot(): string {
+function createBaseRoot(fixtureVersion = "0.0.85"): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-qualification-"));
   tempRoots.push(root);
   fs.mkdirSync(path.join(root, ".github/workflows"), { recursive: true });
@@ -122,7 +122,7 @@ function createBaseRoot(): string {
       "      matrix:",
       "        include:",
       "          - id: legacy-v1",
-      "            openshell_version: 0.0.85",
+      `            openshell_version: ${fixtureVersion}`,
       "    env:",
       "      E2E_JOB: '1'",
       "",
@@ -460,6 +460,15 @@ describe("qualification orchestration", () => {
         readVersion: () => "9007199254740993.0.0",
       }),
     ).rejects.toThrow("baseline or target OpenShell version is malformed");
+  });
+
+  it("rejects an upgrade fixture version segment that no longer orders exactly (#8292)", async () => {
+    await expect(
+      verifyOpenShellE2EQualification(qualificationInput(createBaseRoot("9007199254740993.0.0")), {
+        api: fullApi(),
+        readVersion: () => "0.0.99",
+      }),
+    ).rejects.toThrow("trusted E2E fixture legacy-v1 has a malformed openshell_version");
   });
 
   it("fails closed when a sensitive change has no current-head v2 receipt", async () => {

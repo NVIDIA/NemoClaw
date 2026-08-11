@@ -631,6 +631,9 @@ function extractUpgradeFixtureRequirement(
     const version = /^            openshell_version: ([0-9]+\.[0-9]+\.[0-9]+)$/u.exec(line)?.[1];
     if (version) {
       if (!currentId) fail("trusted E2E upgrade version has no fixture id");
+      if (!VERSION_PATTERN.test(version)) {
+        fail(`trusted E2E fixture ${currentId} has a malformed openshell_version`);
+      }
       fixtures.push({ id: currentId, version });
       currentId = undefined;
     }
