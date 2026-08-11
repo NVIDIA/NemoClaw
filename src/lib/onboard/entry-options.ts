@@ -51,6 +51,30 @@ export interface ResolvedOnboardEntryOptions {
 
 type NonInteractiveEntryOptions = { nonInteractive?: boolean };
 type ResumableEntryOptions = NonInteractiveEntryOptions & { resume?: boolean; fresh?: boolean };
+
+export function resolveOnboardReviewContext(
+  options: { resume?: boolean; fresh?: boolean; autoYes?: boolean; nonInteractive?: boolean },
+  env: NodeJS.ProcessEnv,
+  persistedSessionStatus: string | null,
+  isNonInteractiveEnv: () => boolean,
+  terminal: { stdinIsTty: boolean; stdoutIsTty: boolean },
+) {
+  const resume =
+    options.resume === true || (options.fresh !== true && persistedSessionStatus === "in_progress");
+  return {
+    resume,
+    nonInteractive:
+      options.nonInteractive === true ||
+      ((options.autoYes === true || env.NEMOCLAW_YES === "1") && resume && !terminal.stdinIsTty) ||
+      isNonInteractiveEnv(),
+    entryOptionsInput: {
+      opts: options,
+      env,
+      ...terminal,
+      persistedSessionStatus,
+    },
+  };
+}
 interface StationExpressSessionLifecycle {
   loadSession(): StationExpressSessionLike | null;
   reconcileStationExpressReceiptRetirement(generation: string): void;

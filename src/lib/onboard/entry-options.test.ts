@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   type OnboardEntryOptionsDeps,
   resolveOnboardEntryOptions,
+  resolveOnboardReviewContext,
   withNonInteractiveEnvironment,
 } from "./entry-options";
 
@@ -29,6 +30,41 @@ function createDeps(overrides: Partial<OnboardEntryOptionsDeps> = {}): OnboardEn
     ...overrides,
   };
 }
+
+describe("resolveOnboardReviewContext", () => {
+  it.each([
+    [false, true],
+    [false, false],
+  ])("treats auto-yes resume as non-interactive when stdin=%s and stdout=%s", (stdinIsTty, stdoutIsTty) => {
+    expect(
+      resolveOnboardReviewContext({ autoYes: true, resume: true }, {}, null, () => false, {
+        stdinIsTty,
+        stdoutIsTty,
+      }).nonInteractive,
+    ).toBe(true);
+  });
+
+  it.each([
+    [true, true],
+    [true, false],
+  ])("keeps auto-yes resume interactive when stdin=%s and stdout=%s", (stdinIsTty, stdoutIsTty) => {
+    expect(
+      resolveOnboardReviewContext({ autoYes: true, resume: true }, {}, null, () => false, {
+        stdinIsTty,
+        stdoutIsTty,
+      }).nonInteractive,
+    ).toBe(false);
+  });
+
+  it("keeps fresh no-TTY auto-yes interactive", () => {
+    expect(
+      resolveOnboardReviewContext({ autoYes: true }, {}, null, () => false, {
+        stdinIsTty: false,
+        stdoutIsTty: false,
+      }).nonInteractive,
+    ).toBe(false);
+  });
+});
 
 describe("resolveOnboardEntryOptions", () => {
   it("rejects mutually exclusive resume and fresh flags", () => {

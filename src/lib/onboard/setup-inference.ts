@@ -22,8 +22,41 @@ import {
   type OpenShellGatewayEndpointEnvironment,
 } from "../openshell-gateway-endpoint-guard";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
+import type { Session } from "../state/onboard-session";
 
 export { assertNoOpenShellGatewayEndpointOverride };
+
+export function createProviderReviewDeps(input: {
+  updateSession: (mutator: (session: Session) => Session | void) => Session | Promise<Session>;
+  checkpointSandboxName: (
+    sandboxName: string,
+    agent: { name?: string } | null,
+    updateSession: (mutator: (session: Session) => Session | void) => Session | Promise<Session>,
+  ) => Promise<void>;
+  shouldFrontOllamaWithProxy: () => boolean;
+  startOllamaAuthProxy: () => boolean;
+  getOllamaProxyToken: () => string | null;
+  persistAndProbeOllamaProxy: (token: string) => Promise<void>;
+  exitProcess: (code: number) => never;
+  writeError: (message: string) => void;
+}) {
+  return {
+    checkpointSandboxIdentity: (sandboxName: string, agent: { name?: string } | null) =>
+      input.checkpointSandboxName(sandboxName, agent, input.updateSession),
+    prepareLocalProviderForInference: async (providerName: string) => {
+      if (providerName !== "ollama-local" || !input.shouldFrontOllamaWithProxy()) return;
+      if (!input.startOllamaAuthProxy()) input.exitProcess(1);
+      const proxyToken = input.getOllamaProxyToken();
+      if (!proxyToken) {
+        input.writeError(
+          "  Ollama auth proxy token is not set. Re-run onboard to initialize the proxy.",
+        );
+        input.exitProcess(1);
+      }
+      await input.persistAndProbeOllamaProxy(proxyToken);
+    },
+  };
+}
 
 import type { HermesAuthMethod } from "./hermes-auth";
 
