@@ -35,7 +35,10 @@ import type {
   RuntimeProviderBundle,
 } from "../../src/lib/onboard/runtime-provider/contract.ts";
 import { createDockerRuntimeProviderBundle } from "../../src/lib/onboard/runtime-provider/docker.ts";
-import { prepareSandboxCreateLaunch } from "../../src/lib/onboard/sandbox-create-launch.ts";
+import {
+  OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
+  prepareSandboxCreateLaunch,
+} from "../../src/lib/onboard/sandbox-create-launch.ts";
 import {
   resolveDockerStartupCommandPatch,
   runSandboxGpuCreateFlow,
@@ -70,6 +73,8 @@ const MANAGED_AGENT_BASE_POLICIES: Record<ManagedStartupAgent, readonly string[]
   hermes: ["agents", "hermes", "policy-additions.yaml"],
   "langchain-deepagents-code": ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
 };
+
+export const MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV = OPENSHELL_SANDBOX_SUPERVISOR_ARGV;
 
 function compactText(value = ""): string {
   return String(value).replace(/\s+/gu, " ").trim();
@@ -886,7 +891,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
             image,
             agentIdentity: managedImageRuntimeIdentity(input.agent),
             intendedWorkloadArgv: launch.intendedSandboxStartupCommand,
-            expectedSupervisorArgv: ["/opt/openshell/bin/openshell-sandbox"],
+            expectedSupervisorArgv: MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV,
           },
           ...startupPlan,
         },

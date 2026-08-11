@@ -17,6 +17,7 @@ import {
   withManagedImageLocalInferenceProfile,
 } from "../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
+  MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV,
   managedImageLocalInferenceBaseUrl,
   managedImageOpenShellBasePolicyPath,
   managedImageOpenShellCommittedProbe,
@@ -30,6 +31,15 @@ const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".r
 const VALID_SANDBOX = "managed-openclaw";
 
 describe("protected managed-image runtime contract", () => {
+  it("binds protected bootstrap to the canonical OpenShell supervisor argv (#7744)", () => {
+    expect(MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV).toEqual([
+      "/opt/openshell/bin/openshell-sandbox",
+      "--workdir",
+      "/sandbox",
+    ]);
+    expect(Object.isFrozen(MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV)).toBe(true);
+  });
+
   it("loads every OpenShell operation required before protected image launch (#7744)", async () => {
     const onboard = resolveManagedImageOnboardModule(await import("../src/lib/onboard.ts"));
 
