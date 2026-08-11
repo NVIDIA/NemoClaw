@@ -275,9 +275,10 @@ $$nemoclaw onboard --profile vllm.dgx-spark-gb10.single.nemotron-3.5-lightning-3
 ```
 
 The profile serves the public [`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) checkpoint through a pinned ARM64 vLLM image.
-Its profile limits for one concurrent sequence are a 65,536-token context window, a 4,096-token batch limit, 0.7 GPU-memory utilization, FP8 KV cache, and one-token MTP speculative decoding.
+Its profile limits for one concurrent sequence are a 65,536-token context window, a 4,096-token batch limit, 0.65 GPU-memory utilization, FP8 KV cache, and one-token MTP speculative decoding.
 It uses vLLM's Python frontend because the pinned runtime's Rust frontend does not register the required `step3p5` reasoning and tool-call parsers.
-Physical single-DGX Spark validation covered plain chat, automatic and named structured tool calls, the 10-turn 32K-input/2K-output release workload, OpenClaw chat and file tools, cached restart, cleanup, and restoration of the original Qwen route.
+Physical single-DGX Spark validation of the pinned public revision covered direct chat, automatic and named structured tool calls, a ten-request 32K-to-41K input/2K-output release workload at about 102 output tokens/s across warm requests, OpenClaw chat and file tools, and a cached restart.
+At 0.65 utilization, the workload completed with about 33 GiB of host memory available and no NVIDIA kernel errors.
 
 <Warning title="Experimental Nemotron 3.5 Lightning vLLM Profile">
 This profile is an explicit opt-in for one DGX Spark and remains Experimental.

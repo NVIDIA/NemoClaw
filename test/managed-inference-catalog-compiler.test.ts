@@ -171,6 +171,7 @@ describe("managed inference YAML profile contract", () => {
       },
       serve: {
         arguments: expect.arrayContaining([
+          { name: "--gpu-memory-utilization", value: 0.65 },
           { name: "--tool-call-parser", value: "step3p5" },
           { name: "--reasoning-parser", value: "step3p5" },
           {
