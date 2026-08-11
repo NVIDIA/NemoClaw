@@ -197,11 +197,13 @@ describe("e2e workflow boundary", () => {
     };
     workflow.concurrency.group =
       "e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'pr-gate' || inputs.jobs || 'all-jobs' }}";
+    workflow.concurrency["cancel-in-progress"] = "${{ inputs.checkout_sha != '' }}";
     delete workflow.jobs["staging-brev-launchable"]!.concurrency!.queue;
 
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "workflow concurrency must isolate each full dispatch with github.run_id",
+        "workflow concurrency must not cancel an active Jetson dispatch",
         "staging-brev-launchable concurrency must queue all pending Launchable E2E runs without cancellation",
       ]),
     );
