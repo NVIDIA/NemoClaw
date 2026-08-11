@@ -34,8 +34,8 @@ export default class SandboxSessionsDeleteCommand extends NemoClawCommand {
   static usage = ["<name> <key> [--agent <id>] [--keep-transcript] [--json] [--verbose]"];
   static examples = [
     "<%= config.bin %> sandbox sessions delete alpha telegram:t-1",
-    "<%= config.bin %> sandbox sessions delete alpha agent:work:telegram:t-1",
-    "<%= config.bin %> sandbox sessions delete alpha telegram:t-1 --agent work --keep-transcript",
+    "<%= config.bin %> sandbox sessions delete alpha agent:main:telegram:t-1",
+    "<%= config.bin %> sandbox sessions delete alpha telegram:t-1 --agent main --keep-transcript",
     "<%= config.bin %> sandbox sessions delete alpha agent:main:slack:c-9 --json",
   ];
   static args = {
