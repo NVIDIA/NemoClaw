@@ -99,6 +99,29 @@ Before each fix push and merge decision, check whether `main` or another PR alre
 3. Close its PR with the superseding PR or commit and the verification evidence. Re-read the PR after the write.
 4. Mark the queue item `obsolete`; do not count it as this loop's verified fix.
 
+## Contain a Failed Merge
+
+Treat an automatic `main` run as a post-merge failure when it preserves the claimed root-cause
+signature or introduces a regression attributable to the merged fix.
+
+1. The loop agent that confirms the failure becomes the containment owner until an acknowledged
+   handoff names another owner.
+2. Mark the root cause `blocked`. Pause merge writes for the failed root cause and for fixes that
+   depend on the affected `main` state.
+3. Run the `post-merge-e2e` state through the executable write guard in
+   [Review and Merge](references/review-and-merge.md).
+4. Never revert `main` directly. If the invocation explicitly grants rollback-PR creation authority,
+   open one guarded draft revert PR for the exact merge. Include the merge SHA, first parent, failed
+   run and jobs, original signature, regression signature, and containment scope.
+5. If rollback-PR authority is absent or attribution is uncertain, make no rollback write. Route the
+   evidence to a maintainer with explicit rollback-PR authority and continue unrelated queue reads.
+6. Apply the ordinary independent review, required checks, exact-head, and merge authorization gates
+   to the revert PR. A merge grant for the loop does not grant a bypass or direct rollback.
+
+Resume related merge writes only after a guarded revert or forward fix merges and a later automatic
+`main` run proves that the original failure and the regression are absent. Operator authorization may
+choose a different disposition, but it must name the affected merge and the new containment owner.
+
 ## Transfer Without Ending the Loop
 
 The loop has no scheduled endpoint. An agent may leave only after the operator cancels the loop or another active agent acknowledges ownership of monitoring and every open item.

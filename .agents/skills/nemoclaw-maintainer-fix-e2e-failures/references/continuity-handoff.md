@@ -23,6 +23,9 @@ Use this handoff only when responsibility moves to another active agent or the o
 ## Merged, awaiting verification
 | Root cause | PR | Merge commit | Expected next evidence |
 
+## Post-merge containment
+| Failed merge | Failure evidence | Containment owner | Rollback-PR authority | Related merge writes | Guarded revert/forward fix | Resume condition | Next actor |
+
 ## Open fixes
 | Root cause | PR/remote head | Owner | Branch/worktree | Local HEAD | Last pushed SHA | Local state/changed paths | State | CI | Approval/reviewer | Next actor/action |
 

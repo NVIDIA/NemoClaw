@@ -6,12 +6,32 @@
 ## Contents
 
 - [Reconcile Every GitHub Write](#reconcile-every-github-write)
+- [Run the Executable Write Guard](#run-the-executable-write-guard)
 - [Separate Roles](#separate-roles)
 - [Review the Exact Head](#review-the-exact-head)
 - [Unblock “Approve and run workflows”](#unblock-approve-and-run-workflows)
 - [Decide Whether to Refresh the Branch](#decide-whether-to-refresh-the-branch)
 - [Final Merge Gate](#final-merge-gate)
 - [Merge Without Bypass](#merge-without-bypass)
+
+## Run the Executable Write Guard
+
+Before a retry, fork-workflow approval, review approval, merge, or rollback PR write, capture the
+current GitHub identities and run:
+
+```bash
+node --experimental-strip-types \
+  .agents/skills/nemoclaw-maintainer-fix-e2e-failures/scripts/evaluate-policy.mts \
+  < <policy-state.json>
+```
+
+Use one supported `kind`: `ambiguous-write`, `fork-workflow-approval`, `review`, `merge`, or
+`post-merge-e2e`. The executable scenarios in `test/maintainer-fix-e2e-policy.test.ts` define each
+required state field.
+
+Perform only the exact entry returned in `allowedWrites`. An empty list denies the requested write.
+Do not reinterpret `reason` as permission. Re-read GitHub immediately before the write and rerun the
+guard when an identity or gate changes.
 
 ## Reconcile Every GitHub Write
 
