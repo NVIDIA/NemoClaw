@@ -1179,6 +1179,10 @@ sudo test ! -e /var/lib/nemoclaw-jetson-dispatch/id_ed25519
 sudo test ! -e /var/lib/nemoclaw-jetson-dispatch/id_ed25519.pub
 ```
 
+An SSH transport failure keeps the Colossus SSH key and pinned host-key files.
+The Jetson `authorized_keys` result is inconclusive in this case.
+Use the serial console to confirm that the exact key line is absent before you continue credential removal.
+
 Remove the cleanup executable and pinned SSH host-key file, then verify their absence:
 
 ```bash

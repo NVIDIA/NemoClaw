@@ -1367,6 +1367,9 @@ validate_recorded_pid 1234 ollama-auth-proxy.
     expect(keyRemovalProbe).toBeGreaterThan(strictMode);
     expect(privateKeyRemoval).toBeGreaterThan(keyRemovalProbe);
     expect(credentialTeardown.slice(keyRemovalProbe, privateKeyRemoval)).not.toContain("|| true");
+    expect(dispatcherRunbook).toContain(
+      "Use the serial console to confirm that the exact key line is absent",
+    );
   });
 
   it("keeps recovery credentials until idle teardown verification succeeds (#8142)", () => {
