@@ -96,6 +96,8 @@ function isMissingManagedSupervisorProof(result: ShellProbeResult): boolean {
     .filter(Boolean);
   return (
     result.exitCode === 1 &&
+    result.timedOut === false &&
+    result.signal === null &&
     result.stdout.trim() === "" &&
     stderrLines.length === 1 &&
     stderrLines[0] === "SUPERVISOR_NOT_RUNNING"

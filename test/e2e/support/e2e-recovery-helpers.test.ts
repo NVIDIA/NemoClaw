@@ -21,6 +21,8 @@ interface ScriptedReply {
   stdout?: string;
   stderr?: string;
   exitCode?: number | null;
+  signal?: NodeJS.Signals | null;
+  timedOut?: boolean;
 }
 
 /**
@@ -52,8 +54,8 @@ class ScriptedRunner implements CommandRunner {
     return {
       command: [command.command, ...command.args],
       exitCode: reply.exitCode ?? 0,
-      signal: null,
-      timedOut: false,
+      signal: reply.signal ?? null,
+      timedOut: reply.timedOut ?? false,
       stdout: reply.stdout ?? "",
       stderr: reply.stderr ?? "",
       artifacts: {
@@ -175,6 +177,23 @@ describe("GatewayClient recovery helpers (#2701)", () => {
         stdout: "unexpected output\n",
         stderr: "SUPERVISOR_NOT_RUNNING\n",
       });
+      const gateway = buildGateway(runner);
+
+      await expect(
+        gateway.waitForMissingManagedSupervisor("container-123", {
+          attempts: 1,
+          delayMs: 0,
+          settleMs: 0,
+        }),
+      ).rejects.toThrow(/polling exhausted/);
+    });
+
+    it.each([
+      { condition: "timed out", reply: { timedOut: true } },
+      { condition: "terminated by a signal", reply: { signal: "SIGTERM" as const } },
+    ])("does not accept a probe that $condition", async ({ reply }) => {
+      const runner = new ScriptedRunner();
+      runner.queue({ exitCode: 1, stderr: "SUPERVISOR_NOT_RUNNING\n", ...reply });
       const gateway = buildGateway(runner);
 
       await expect(
