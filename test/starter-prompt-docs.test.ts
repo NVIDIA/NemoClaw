@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -1280,25 +1281,68 @@ describe("starter prompt docs CTA", () => {
 });
 
 describe("starter prompt checkout line endings", () => {
-  // Resolve the attribute through Git so the test exercises the checkout
-  // contract instead of asserting .gitattributes text.
-  function checkAttr(relativePath: string): string {
-    const result = runGit(["check-attr", "text", "eol", "--", relativePath]);
-    expect(result.status).toBe(0);
-    return result.stdout.toString("utf8");
+  // Point core.attributesFile at an absent path and set GIT_ATTR_NOSYSTEM so the
+  // result comes from the repository .gitattributes alone. Without that, a
+  // contributor's global "* text=auto" would decide the outcome.
+  const absentAttributesFile = path.join(os.tmpdir(), "nemoclaw-absent-gitattributes");
+
+  function checkoutEol(relativePath: string): string {
+    const result = spawnSync(
+      "git",
+      [
+        "-c",
+        `core.attributesFile=${absentAttributesFile}`,
+        "check-attr",
+        "eol",
+        "--",
+        relativePath,
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: { ...process.env, GIT_ATTR_NOSYSTEM: "1" },
+        timeout: 10_000,
+      },
+    );
+    if (result.error || result.status !== 0) {
+      throw new Error(
+        [
+          `git check-attr did not run for ${relativePath}:`,
+          `status=${result.status}`,
+          `signal=${result.signal}`,
+          result.error?.message ?? "",
+          result.stderr ?? "",
+        ]
+          .join(" ")
+          .trim(),
+      );
+    }
+    return result.stdout;
   }
 
-  it("pins the starter prompt source to LF so an autocrlf checkout keeps it readable (#8648)", () => {
-    const attributes = checkAttr(STARTER_PROMPT_SOURCE_PATH);
+  // check-attr answers for any path, so require the file before trusting its
+  // attribute; otherwise a rename would leave these assertions passing.
+  function readCheckoutEol(relativePath: string): string {
+    expect(fs.existsSync(path.join(repoRoot, relativePath))).toBe(true);
+    return checkoutEol(relativePath);
+  }
 
-    expect(attributes).toContain(`${STARTER_PROMPT_SOURCE_PATH}: text: set`);
-    expect(attributes).toContain(`${STARTER_PROMPT_SOURCE_PATH}: eol: lf`);
+  // Every file whose exact working-tree bytes this suite asserts.
+  const bytePinnedPaths = [
+    STARTER_PROMPT_SOURCE_PATH,
+    ...Object.values(promptAssets).map((asset) => asset.path),
+    "docs/resources/local-credential-form.html",
+  ];
+
+  it.each(
+    bytePinnedPaths,
+  )("checks out %s with LF so an autocrlf clone keeps the bytes this suite asserts (#8648)", (relativePath) => {
+    expect(readCheckoutEol(relativePath)).toContain(`${relativePath}: eol: lf`);
   });
 
-  it("leaves line endings unspecified for a file the rule does not name (#8648)", () => {
-    const attributes = checkAttr("CONTRIBUTING.md");
-
-    expect(attributes).toContain("CONTRIBUTING.md: text: unspecified");
-    expect(attributes).toContain("CONTRIBUTING.md: eol: unspecified");
+  // Asserts only the absence of the LF pin. Asserting "unspecified" would also
+  // forbid a repository-wide "* text=auto" rule, which is unrelated policy.
+  it("leaves a file without a byte-exact contract unpinned (#8648)", () => {
+    expect(readCheckoutEol("docs/resources/agent-skills.mdx")).not.toContain("eol: lf");
   });
 });
