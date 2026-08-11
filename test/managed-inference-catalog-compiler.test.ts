@@ -182,6 +182,25 @@ describe("managed inference YAML profile contract", () => {
     });
   });
 
+  it("documents the Experimental Lightning support boundary (#8385)", () => {
+    const setupGuide = readFileSync(
+      path.join(REPOSITORY_ROOT, "docs", "inference", "set-up-vllm.mdx"),
+      "utf8",
+    );
+    const warning = setupGuide.match(
+      /<Warning title="Experimental Nemotron 3\.5 Lightning vLLM Profile">([\s\S]*?)<\/Warning>/u,
+    )?.[1];
+
+    expect(warning).toBeDefined();
+    expect(warning).toContain(
+      "This profile is an explicit opt-in for one DGX Spark and remains Experimental.",
+    );
+    expect(warning).toContain(
+      "Promotion requires broader validation of the pinned Python frontend and the `step3p5` reasoning and tool-call parsers.",
+    );
+    expect(warning).not.toContain("qualified for broader support");
+  });
+
   it("keeps vLLM automatic while llama.cpp remains explicit-only (#8173)", () => {
     const catalog = compile(catalogSources());
     const vllmPreset = catalog.presets.find(({ metadata }) => metadata.id === PROFILE_ID);
