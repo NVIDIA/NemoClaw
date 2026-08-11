@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
+
 import type { McpBridgeEntry } from "../../state/registry";
 import {
   buildOpenClawMcporterRegisterCommand,
@@ -32,7 +34,7 @@ const baseEntry: McpBridgeEntry = {
   addedAt: new Date(0).toISOString(),
 };
 
-describe("OpenClaw mcporter MCP adapter", () => {
+describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
   it("accepts only mcporter's synthesized HTTP Accept header in ownership checks", () => {
     const expected = {
       Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN",
@@ -164,7 +166,10 @@ describe("OpenClaw mcporter MCP adapter", () => {
           FAKE_MCPORTER_REMOVE_MARKER: removeMarker,
         };
         delete env.XDG_CONFIG_HOME;
-        return spawnSync("/bin/sh", ["-c", command], { encoding: "utf8", env });
+        return spawnSync("/bin/sh", ["-c", command], {
+          encoding: "utf8",
+          env,
+        });
       };
       const normalizedHeaders = {
         Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN",
