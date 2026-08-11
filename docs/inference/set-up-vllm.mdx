@@ -129,6 +129,10 @@ NemoClaw also records an owner-only, credential-free runtime receipt that binds 
 
 If an existing `nemoclaw-vllm` container does not carry that label, NemoClaw preserves it and asks you to remove or rename it before installing managed vLLM.
 If another vLLM server already occupies port `8000`, NemoClaw selects the existing-server path and applies the model-identity checks described above.
+If another process holds the configured single-host port, NemoClaw stops the managed install before it persists a bearer key or records the selected model.
+NemoClaw also stops before storage prompts, cache creation, image pull, or container start.
+Stop the process, then run onboarding again.
+Docker reports a bind failure if another process claims the port after this preflight.
 Managed profiles and model-specific recipes use immutable image digests:
 
 - DGX Spark and DGX Station models without a model-specific runtime use the `linux/arm64` digest `sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2` with a compressed layer size of `9.60 GB` under `nvcr.io/nvidia/vllm:26.05.post1-py3`.

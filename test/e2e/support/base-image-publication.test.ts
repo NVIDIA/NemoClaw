@@ -198,6 +198,7 @@ describe("base-image publication evidence", () => {
         "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
         "src/lib/messaging/**",
         "src/lib/tool-disclosure.ts",
+        "test/e2e/live/managed-image-activation-e2e*.ts",
         "tools/mcp-tool-discovery-runtime/**",
         "tsconfig.runtime-preloads.json",
       ]),
@@ -255,8 +256,14 @@ describe("base-image publication evidence", () => {
       "Dockerfile",
       "agents/**",
       "src/lib/messaging/**",
+      "test/e2e/live/managed-image-activation-e2e*.ts",
     ]);
-    expect(expanded).toEqual([":(glob)agents/**", ":(glob)src/lib/messaging/**", "Dockerfile"]);
+    expect(expanded).toEqual([
+      ":(glob)agents/**",
+      ":(glob)src/lib/messaging/**",
+      ":(glob)test/e2e/live/managed-image-activation-e2e*.ts",
+      "Dockerfile",
+    ]);
   });
 
   it("binds the applicable commit to the checked-out first-parent chain (#7372)", () => {
