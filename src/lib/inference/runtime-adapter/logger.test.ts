@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createLocalAdapterLogger } from "./logger";
 
 describe("local adapter logger", () => {
-  it("normalizes JSONL fields and isolates injected logger failures", () => {
+  it("writes normalized JSONL fields and reports injected logger failures without throwing", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-adapter-logger-"));
     const logPath = path.join(dir, "adapter.log");
     const onLoggerError = vi.fn();
