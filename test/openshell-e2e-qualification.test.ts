@@ -131,6 +131,18 @@ function createBaseRoot(): string {
   return root;
 }
 
+function qualificationInput(baseRoot: string) {
+  return {
+    baseRoot,
+    baseSha: BASE_SHA,
+    candidateRoot: "/candidate",
+    candidateSha: HEAD_SHA,
+    prNumber: 8583,
+    repository: REPOSITORY,
+    workflowSha: BASE_SHA,
+  };
+}
+
 function fullApi(files = [prFile("scripts/install-openshell.sh")]): GitHubReader {
   let pullReads = 0;
   const routes: Array<[(apiPath: string) => boolean, () => unknown]> = [
@@ -411,26 +423,15 @@ describe("trusted dispatch and result validation", () => {
 describe("qualification orchestration", () => {
   it("uses the highest predecessor fixture when base and target pins match", async () => {
     const baseRoot = createBaseRoot();
-    const evidence = await verifyOpenShellE2EQualification(
-      {
-        baseRoot,
-        baseSha: BASE_SHA,
-        candidateRoot: "/candidate",
-        candidateSha: HEAD_SHA,
-        prNumber: 8583,
-        repository: REPOSITORY,
-        workflowSha: BASE_SHA,
+    const evidence = await verifyOpenShellE2EQualification(qualificationInput(baseRoot), {
+      api: fullApi(),
+      async loadReceipt() {
+        return validReceipt();
       },
-      {
-        api: fullApi(),
-        async loadReceipt() {
-          return validReceipt();
-        },
-        readVersion() {
-          return "0.0.99";
-        },
+      readVersion() {
+        return "0.0.99";
       },
-    );
+    });
     expect(evidence).toMatchObject({
       baselineVersion: "0.0.99",
       baseSha: BASE_SHA,
@@ -448,56 +449,31 @@ describe("qualification orchestration", () => {
   });
 
   it("rejects an OpenShell version segment that no longer orders exactly (#8292)", async () => {
-    const baseRoot = createBaseRoot();
+    // 9007199254740993 exceeds Number.MAX_SAFE_INTEGER, so predecessor selection
+    // could not order it against 9007199254740992.
     await expect(
-      verifyOpenShellE2EQualification(
-        {
-          baseRoot,
-          baseSha: BASE_SHA,
-          candidateRoot: "/candidate",
-          candidateSha: HEAD_SHA,
-          prNumber: 8583,
-          repository: REPOSITORY,
-          workflowSha: BASE_SHA,
+      verifyOpenShellE2EQualification(qualificationInput(createBaseRoot()), {
+        api: fullApi(),
+        async loadReceipt() {
+          return validReceipt();
         },
-        {
-          api: fullApi(),
-          async loadReceipt() {
-            return validReceipt();
-          },
-          // 9007199254740993 exceeds Number.MAX_SAFE_INTEGER, so predecessor
-          // selection could not order it against 9007199254740992.
-          readVersion() {
-            return "9007199254740993.0.0";
-          },
-        },
-      ),
+        readVersion: () => "9007199254740993.0.0",
+      }),
     ).rejects.toThrow("baseline or target OpenShell version is malformed");
   });
 
   it("fails closed when a sensitive change has no current-head v2 receipt", async () => {
     const baseRoot = createBaseRoot();
     const verify = (receipt: Record<string, unknown>) =>
-      verifyOpenShellE2EQualification(
-        {
-          baseRoot,
-          baseSha: BASE_SHA,
-          candidateRoot: "/candidate",
-          candidateSha: HEAD_SHA,
-          prNumber: 8583,
-          repository: REPOSITORY,
-          workflowSha: BASE_SHA,
+      verifyOpenShellE2EQualification(qualificationInput(baseRoot), {
+        api: fullApi(),
+        async loadReceipt() {
+          return receipt;
         },
-        {
-          api: fullApi(),
-          async loadReceipt() {
-            return receipt;
-          },
-          readVersion(root) {
-            return root === baseRoot ? "0.0.85" : "0.0.99";
-          },
+        readVersion(root) {
+          return root === baseRoot ? "0.0.85" : "0.0.99";
         },
-      );
+      });
 
     await expect(verify(validReceipt({ kind: "nemoclaw-e2e-dispatch-v1" }))).rejects.toThrow(
       "no current-head trusted full E2E dispatch receipt",
@@ -510,32 +486,21 @@ describe("qualification orchestration", () => {
   it("ignores a newer legitimate selective v2 dispatch when choosing full evidence", async () => {
     const baseRoot = createBaseRoot();
     const selectiveRunId = RUN_ID + 1;
-    const evidence = await verifyOpenShellE2EQualification(
-      {
-        baseRoot,
-        baseSha: BASE_SHA,
-        candidateRoot: "/candidate",
-        candidateSha: HEAD_SHA,
-        prNumber: 8583,
-        repository: REPOSITORY,
-        workflowSha: BASE_SHA,
+    const evidence = await verifyOpenShellE2EQualification(qualificationInput(baseRoot), {
+      api: apiWithWorkflowRuns([workflowRun(RUN_ID), workflowRun(selectiveRunId)]),
+      async loadReceipt(artifact) {
+        return artifact.runId === selectiveRunId
+          ? validReceipt({
+              emptySelectors: false,
+              jobs: "managed-image-protected-runtime",
+              workflowRunId: String(selectiveRunId),
+            })
+          : validReceipt();
       },
-      {
-        api: apiWithWorkflowRuns([workflowRun(RUN_ID), workflowRun(selectiveRunId)]),
-        async loadReceipt(artifact) {
-          return artifact.runId === selectiveRunId
-            ? validReceipt({
-                emptySelectors: false,
-                jobs: "managed-image-protected-runtime",
-                workflowRunId: String(selectiveRunId),
-              })
-            : validReceipt();
-        },
-        readVersion() {
-          return "0.0.99";
-        },
+      readVersion() {
+        return "0.0.99";
       },
-    );
+    });
 
     expect(evidence.e2e?.runId).toBe(RUN_ID);
   });
@@ -548,29 +513,18 @@ describe("qualification orchestration", () => {
     const baseRoot = createBaseRoot();
     const newestRunId = RUN_ID + 1;
     await expect(
-      verifyOpenShellE2EQualification(
-        {
-          baseRoot,
-          baseSha: BASE_SHA,
-          candidateRoot: "/candidate",
-          candidateSha: HEAD_SHA,
-          prNumber: 8583,
-          repository: REPOSITORY,
-          workflowSha: BASE_SHA,
+      verifyOpenShellE2EQualification(qualificationInput(baseRoot), {
+        api: apiWithWorkflowRuns([
+          workflowRun(RUN_ID),
+          workflowRun(newestRunId, status, conclusion),
+        ]),
+        async loadReceipt(artifact) {
+          return validReceipt({ workflowRunId: String(artifact.runId) });
         },
-        {
-          api: apiWithWorkflowRuns([
-            workflowRun(RUN_ID),
-            workflowRun(newestRunId, status, conclusion),
-          ]),
-          async loadReceipt(artifact) {
-            return validReceipt({ workflowRunId: String(artifact.runId) });
-          },
-          readVersion() {
-            return "0.0.99";
-          },
+        readVersion() {
+          return "0.0.99";
         },
-      ),
+      }),
     ).rejects.toThrow(`newest current-head full E2E run ${newestRunId} is not successful`);
   });
 
