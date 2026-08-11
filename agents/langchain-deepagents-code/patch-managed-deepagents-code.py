@@ -1835,7 +1835,7 @@ def main() -> None:
         "server_config": root / "_server_config.py",
         "mcp_tools": root / "mcp_tools.py",
         "subagents": root / "subagents.py",
-        "hooks": root / "hooks.py",
+        "hooks": root / "hooks" / "legacy.py",
         "non_interactive": root / "client" / "non_interactive.py",
     }
     texts = {name: path.read_text(encoding="utf-8") for name, path in paths.items()}

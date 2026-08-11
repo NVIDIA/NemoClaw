@@ -75,8 +75,8 @@ NemoClaw no longer vendors or overlays that source.
 - Native profile SHA-256: `c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7`
 - Unmodified built-in bootstrap SHA-256: `005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf`
 - First-party adapter: `nemoclaw-deepagents-profile==0.1.0`
-- Adapter module SHA-256: `8fba11c64c561cad2568714363199f6ac28826e028f7743e19a2439a6de5a874`
-- Adapter project metadata SHA-256: `c7bc651acc8c719aafb74993578b31c105a2190dc7dcf329c52c098cb6fa9c5f`
+- Adapter module SHA-256: `b481aee6c9115346f5ed75d25abf9e7bec237e866c1f96c6e01fb747ccd1de83`
+- Adapter project metadata SHA-256: `5a07d4b473f2714021756eda005dceb6a0c7e6f3ff02ca4021d4debb8c170ff8`
 - Adapter wheel license expression: `Apache-2.0`
 - Adapter dependency audit result: `No known vulnerabilities found`. Its only
   requirements are the exact `deepagents-code==0.1.54` and

@@ -34,11 +34,11 @@ from langchain_openai import ChatOpenAI
 EXPECTED_VERSIONS = {
     "nemoclaw-deepagents-profile": "0.1.0",
     "deepagents-code": "0.1.54",
-    "deepagents": "0.7.0a6",
-    "langchain": "1.3.11",
-    "langchain-core": "1.4.8",
-    "langgraph": "1.2.6",
-    "langchain-openai": "1.3.3",
+    "deepagents": "0.7.5",
+    "langchain": "1.3.14",
+    "langchain-core": "1.5.3",
+    "langgraph": "1.2.10",
+    "langchain-openai": "1.4.3",
 }
 EXPECTED_PROFILE_ENTRY_POINT = (
     "deepagents.harness_profiles",

@@ -80,6 +80,25 @@ function sha256(contents: string | Buffer): string {
   return createHash("sha256").update(contents).digest("hex");
 }
 
+function lockedRequirementVersion(requirementsLock: string, distribution: string): string {
+  const escapedDistribution = distribution.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = requirementsLock.match(
+    new RegExp(`^${escapedDistribution}==([^\\s\\\\]+)\\s+\\\\$`, "m"),
+  );
+  expect(match, `${distribution} must be exactly pinned in requirements.lock`).not.toBeNull();
+  return match?.[1] ?? "";
+}
+
+function pythonStringMap(source: string, constantName: string): Record<string, string> {
+  const block = source.match(new RegExp(`${constantName}\\s*=\\s*\\{([\\s\\S]*?)\\n\\}`));
+  expect(block, `${constantName} must be a literal Python dictionary`).not.toBeNull();
+  return Object.fromEntries(
+    [...(block?.[1] ?? "").matchAll(/^\s*"([^"]+)":\s*"([^"]+)",?\s*$/gm)].map(
+      ([, distribution, version]) => [distribution, version],
+    ),
+  );
+}
+
 function writeMinimalWheel(directory: string): string {
   const wheelPath = path.join(directory, "nemoclaw_hash_contract-1.0-py3-none-any.whl");
   execFileSync(
@@ -1064,6 +1083,62 @@ describe("LangChain Deep Agents Code image contracts", () => {
     }
   });
 
+  it("keeps image validator versions aligned with the reviewed lockfile", () => {
+    const requirementsLock = readAgentFile("requirements.lock");
+    const pluginMetadata = readAgentFile("profile-plugin/pyproject.toml");
+    const pluginVersion = pluginMetadata.match(/^version = "([^"]+)"$/m)?.[1];
+    expect(pluginVersion).toBe("0.1.0");
+
+    const assertVersionsMatchLock = (versions: Record<string, string>) => {
+      for (const [distribution, version] of Object.entries(versions)) {
+        if (distribution === "nemoclaw-deepagents-profile") {
+          expect(version).toBe(pluginVersion);
+        } else {
+          expect(version, distribution).toBe(
+            lockedRequirementVersion(requirementsLock, distribution),
+          );
+        }
+      }
+    };
+
+    assertVersionsMatchLock(
+      pythonStringMap(readAgentFile("validate-nemotron-ultra-profile.py"), "EXPECTED_VERSIONS"),
+    );
+    assertVersionsMatchLock(
+      pythonStringMap(readAgentFile("validate-progressive-tool-disclosure.py"), "PINNED_VERSIONS"),
+    );
+
+    const observabilityValidator = readAgentFile("validate-observability.py");
+    const observabilityVersion = observabilityValidator.match(
+      /^_EXPECTED_LANGGRAPH_VERSION = "([^"]+)"$/m,
+    )?.[1];
+    expect(observabilityVersion).toBe(lockedRequirementVersion(requirementsLock, "langgraph"));
+
+    const e2eProfileCheck = fs.readFileSync(
+      path.join(
+        repoRoot,
+        "test",
+        "e2e",
+        "e2e-cloud-experimental",
+        "checks",
+        "03-deepagents-code-nemotron-ultra-profile.sh",
+      ),
+      "utf8",
+    );
+    assertVersionsMatchLock(pythonStringMap(e2eProfileCheck, "EXPECTED_VERSIONS"));
+
+    const pluginTest = fs.readFileSync(
+      path.join(repoRoot, "test", "langchain-deepagents-code-nemotron-profile-plugin.test.ts"),
+      "utf8",
+    );
+    expect(pluginTest).toContain(
+      `const EXPECTED_DEEPAGENTS_VERSION = "${lockedRequirementVersion(
+        requirementsLock,
+        "deepagents",
+      )}";`,
+    );
+  });
+
   it("records dependency advisory review for the lockfile", () => {
     const review = readAgentFile("dependency-review.md");
     const requirementsLock = readAgentFile("requirements.lock");
@@ -1071,6 +1146,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "profile-plugin/src/nemoclaw_deepagents_profile/__init__.py",
     );
     const adapterMetadata = readAgentFile("profile-plugin/pyproject.toml");
+    const dockerfile = readAgentFile("Dockerfile");
+    const profileValidator = readAgentFile("validate-nemotron-ultra-profile.py");
 
     expect(review).toContain(`Lockfile SHA-256: \`${sha256(requirementsLock)}\``);
     expect(review).toContain(
@@ -1104,6 +1181,13 @@ describe("LangChain Deep Agents Code image contracts", () => {
     }
     expect(review).toContain(`Adapter module SHA-256: \`${sha256(adapterModule)}\``);
     expect(review).toContain(`Adapter project metadata SHA-256: \`${sha256(adapterMetadata)}\``);
+    expect(dockerfile).toContain(
+      `'${sha256(adapterModule)}' '/opt/nemoclaw-deepagents-profile-plugin/src/nemoclaw_deepagents_profile/__init__.py'`,
+    );
+    expect(dockerfile).toContain(
+      `'${sha256(adapterMetadata)}' '/opt/nemoclaw-deepagents-profile-plugin/pyproject.toml'`,
+    );
+    expect(profileValidator).toContain(`"${sha256(adapterModule)}"`);
     expect(review).toContain("Adapter dependency audit result: `No known vulnerabilities found`");
   });
 });

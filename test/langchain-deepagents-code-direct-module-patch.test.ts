@@ -58,13 +58,14 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       "_server_config.py",
       "mcp_tools.py",
       "subagents.py",
-      "hooks.py",
+      "hooks/legacy.py",
       "client/non_interactive.py",
       "_nemoclaw_managed.py",
     ]) {
       const source = fs.readFileSync(path.join(packageDir, relativePath), "utf8");
       expect(source.match(/NemoClaw-managed Deep Agents Code hardening v2\./g)).toHaveLength(1);
     }
+    expect(fs.existsSync(path.join(packageDir, "hooks.py"))).toBe(false);
     const main = fs.readFileSync(path.join(packageDir, "main.py"), "utf8");
     for (const expected of [
       'args.sandbox = "none"',

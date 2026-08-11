@@ -574,7 +574,16 @@ def _normalize_path(raw_path, project_context, label):
   );
   writeFixtureFile(
     packageDir,
-    "hooks.py",
+    "hooks/__init__.py",
+    `
+from deepagents_code.hooks.legacy import _load_hooks, _run_single_hook
+
+__all__ = ["_load_hooks", "_run_single_hook"]
+`,
+  );
+  writeFixtureFile(
+    packageDir,
+    "hooks/legacy.py",
     `
 from __future__ import annotations
 
