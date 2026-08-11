@@ -16,6 +16,11 @@ after the exact pinned artifacts pass NemoClaw's managed activation and live E2E
 previously observed `0.0.85` activation mismatch remains part of this upgrade's completion. It is
 not a waived unrelated failure.
 
+Later Shields lifecycle evidence found an escaped compatibility regression in upstream commit `537805568d8ebed1f057e035e09dbc4a71976d2c`.
+When OCI image-user metadata is present, OpenShell prepares its default `/sandbox` working directory by changing the directory owner to the policy-selected process identity.
+This preparation runs before OpenShell exposes SSH and starts the workload.
+It breaks the Shields up requirement that `/sandbox` remain `root:sandbox` with mode `1775`.
+
 ## Audit Method and Exact Boundary
 
 The repository-owned release-ledger collector enumerated every adjacent tag, commit, and changed
@@ -110,7 +115,7 @@ than enabling optional upstream behavior implicitly.
 | `OS99-07` | Internal allowed-IP proposal state | Pending proposals are not treated as effective policy. |
 | `OS99-08` | Listener/readiness lifecycle changes | Managed activation, start, stop, rebuild, and gateway health require live evidence. |
 | `OS99-09` | Docker activation spec representation | Attach markers and empty port maps are normalized; non-empty port bindings are rejected. |
-| `OS99-10` | OCI WorkingDir and image-user metadata | Driver-owned values remain under the runtime-control boundary. |
+| `OS99-10` | OCI working-directory preparation can change the protected `/sandbox` owner before workload startup | The reviewed Docker recreation omits only `OPENSHELL_OCI_IMAGE_USER` at the exact NemoClaw startup boundary. It preserves empty `OPENSHELL_SANDBOX_UID` and `OPENSHELL_SANDBOX_GID`, the explicit `sandbox:sandbox` policy identity, and the `/sandbox` runtime contract. |
 | `OS99-11` | System CA root mode | Not enabled implicitly; current CA-policy tests remain required. |
 | `OS99-12` | Podman lifecycle changes | Podman exact-version live coverage remains an acceptance gate. |
 | `OS99-13` | Inference status heading changed from `Gateway inference:` to `Inference:` | The parser accepts both headings, with focused regression coverage for the exact v0.0.99 output. |
@@ -127,6 +132,29 @@ than enabling optional upstream behavior implicitly.
 
 An unresolved critical or high concern blocks the upgrade. Test selection cannot waive a concern;
 conditional skips and expected failures do not count as qualification evidence.
+
+## Escaped Working Directory Ownership Finding
+
+OpenShell commit `537805568d8ebed1f057e035e09dbc4a71976d2c` made the OCI image working directory part of the process identity preparation path.
+For NemoClaw images, the supervisor runs as root while the explicit policy selects the `sandbox:sandbox` workload identity.
+The new preparation interpreted `OPENSHELL_OCI_IMAGE_USER` as a request to change `/sandbox` to that identity before the workload started.
+Shields up then rejected startup because the untrusted workload user owned its protected parent directory.
+
+The compatibility correction applies only when the inspected Docker workload matches all reviewed NemoClaw boundaries:
+
+- root supervisor user `0`;
+- Docker working directory `/`;
+- entrypoint `/opt/openshell/bin/openshell-sandbox`;
+- empty arguments or the exact `--workdir /sandbox` arguments;
+- label `openshell.ai/managed-by=openshell`; and
+- a `nemoclaw-start` workload command.
+
+At that boundary, Docker recreation omits only `OPENSHELL_OCI_IMAGE_USER`.
+It preserves empty `OPENSHELL_SANDBOX_UID` and `OPENSHELL_SANDBOX_GID` metadata.
+The explicit OpenShell policy continues to select `sandbox:sandbox` for workload processes.
+This restores the earlier workspace preparation behavior without changing the `/sandbox` home, working directory, or Landlock contract.
+The helper preserves the legacy state when all three identity entries are absent.
+When any entry is present, a missing or duplicate entry, an empty OCI user, or a nonempty UID or GID stops recreation before the replacement workload starts.
 
 ## The 0.0.85 Activation Failure
 
@@ -199,6 +227,9 @@ invalidates every earlier receipt and proof check.
   `0.0.99` and exact reviewed identities.
 - The `v0.0.99` credential-boundary manifest is the active manifest and its source commit is exact.
 - Static checks, focused lifecycle tests, CLI and plugin builds, and documentation checks pass.
+- The reviewed Docker recreation omits only `OPENSHELL_OCI_IMAGE_USER` at the exact NemoClaw startup boundary and rejects every unreviewed metadata shape.
+- The OpenClaw and Hermes Shields lanes restart successfully under Shields up.
+  The OpenClaw lane verifies that `/sandbox` remains `1775 root:sandbox` after restart.
 - Default OpenClaw policy composition activates without endpoint-metadata ambiguity while retaining
   the reviewed binary scopes for npm, Homebrew, and pricing traffic.
 - Managed Docker and Podman activation, lifecycle, policy, credential, inference, and MCP E2E run

@@ -317,6 +317,11 @@
       "category": "security"
     },
     {
+      "file": "test/openshell-0.0.99-migration-review.test.ts",
+      "test": "keeps every managed Docker policy identity explicit for workspace compatibility (#8662)",
+      "category": "security"
+    },
+    {
       "file": "test/onboard-performance-config-schema.test.ts",
       "test": "keeps baseline budgets derived from the checked-in samples",
       "category": "compatibility"
