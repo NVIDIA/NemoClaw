@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -35,6 +35,33 @@ const MODEL = "nemoclaw-managed-activation-model";
 const GATEWAY = "nemoclaw";
 const AGENT_TIMEOUT_MS = 3 * 60_000;
 const ONBOARD_TIMEOUT_MS = 20 * 60_000;
+const ONBOARD_FAILURE_STARTUP_SIGNALS = {
+  environmentWrapperMissing: "[SECURITY] Required entrypoint env-wrapper normalizer is missing.",
+  foreignPidOneBoundary: "Hermes runtime config guard refuses mutation under a foreign PID 1",
+  runtimeMutationCheckpointRefused:
+    "[SECURITY] Runtime state mutation startup checkpoint was refused; holding startup.",
+  runtimeMutationGateFailed: "[SECURITY] Runtime state mutation startup gate failed.",
+  runtimeMutationGateUnavailable:
+    "[SECURITY] Required runtime state mutation startup gate is unavailable.",
+  runtimeMutationReleaseUnauthenticated:
+    "[SECURITY] Runtime state mutation release receipt was not authenticated; holding startup.",
+  runtimeMutationRetryUnauthenticated:
+    "[SECURITY] Runtime state mutation retry was not authenticated; holding startup.",
+  setupStarted: "Setting up NemoClaw",
+} as const;
+type OnboardFailureStartupSignal = keyof typeof ONBOARD_FAILURE_STARTUP_SIGNALS;
+
+export function summarizeOnboardFailureStartupSignals(
+  output: string,
+): Record<OnboardFailureStartupSignal, boolean> {
+  return Object.fromEntries(
+    Object.entries(ONBOARD_FAILURE_STARTUP_SIGNALS).map(([signal, marker]) => [
+      signal,
+      output.includes(marker),
+    ]),
+  ) as Record<OnboardFailureStartupSignal, boolean>;
+}
+
 const SANDBOX_NAMES: Record<ShippedManagedImageAgent, string> = {
   openclaw: "mi-act-openclaw",
   hermes: "mi-act-hermes",
@@ -327,7 +354,8 @@ function enterCleanupPhase(progress: TestProgress, agent: ShippedManagedImageAge
   }
 }
 
-async function collectOnboardFailureDockerLogs(
+async function collectOnboardFailureDockerDiagnostics(
+  artifacts: ArtifactSink,
   host: HostCliClient,
   agent: ShippedManagedImageAgent,
   sandboxName: string,
@@ -360,13 +388,39 @@ async function collectOnboardFailureDockerLogs(
       .filter((containerId) => /^[a-f0-9]{12,64}$/u.test(containerId));
     await Promise.allSettled(
       containerIds.map((containerId, index) =>
-        host.command("docker", ["logs", "--tail", "1000", containerId], {
-          artifactName: `managed-activation-onboard-failure-${agent}-container-${index + 1}-logs`,
-          env,
-          redactionValues: [API_KEY],
-          timeoutMs: 30_000,
-        }),
+        host.command(
+          "docker",
+          [
+            "inspect",
+            "--format",
+            "{{.State.Status}}\t{{.State.Running}}\t{{.State.Restarting}}\t{{.State.OOMKilled}}\t{{.State.Dead}}\t{{.State.ExitCode}}\t{{.State.StartedAt}}\t{{.State.FinishedAt}}",
+            containerId,
+          ],
+          {
+            artifactName: `managed-activation-onboard-failure-${agent}-container-${index + 1}-state`,
+            env,
+            redactionValues: [API_KEY],
+            timeoutMs: 30_000,
+          },
+        ),
       ),
+    );
+    await Promise.allSettled(
+      containerIds.map(async (containerId, index) => {
+        const logs = spawnSync("docker", ["logs", "--tail", "1000", containerId], {
+          encoding: "utf8",
+          env,
+          killSignal: "SIGKILL",
+          maxBuffer: 2 * 1024 * 1024,
+          timeout: 30_000,
+        });
+        if (logs.status !== 0 || logs.error) return;
+        const output = `${logs.stdout ?? ""}\n${logs.stderr ?? ""}`;
+        await artifacts.writeJson(
+          `managed-activation-onboard-failure-${agent}-container-${index + 1}-startup-signals.json`,
+          summarizeOnboardFailureStartupSignals(output),
+        );
+      }),
     );
   } catch {
     // Preserve the onboarding failure as the primary error when diagnostics are unavailable.
@@ -381,7 +435,7 @@ async function qualifyAgent(
   agent: ShippedManagedImageAgent,
   contract: ManagedImageContractV1,
 ): Promise<void> {
-  const { cleanup, host, lifecycle, progress, sandbox } = fixtures;
+  const { artifacts, cleanup, host, lifecycle, progress, sandbox } = fixtures;
   const sandboxName = SANDBOX_NAMES[agent];
   const env = commandEnv(guard, catalogPath, endpointUrl);
   cleanup.trackDisposable(`delete OpenShell sandbox ${sandboxName}`, () =>
@@ -415,7 +469,7 @@ async function qualifyAgent(
     },
   );
   if (onboard.exitCode !== 0) {
-    await collectOnboardFailureDockerLogs(host, agent, sandboxName, env);
+    await collectOnboardFailureDockerDiagnostics(artifacts, host, agent, sandboxName, env);
   }
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
   expectManagedReceipt(sandboxName, contract);
