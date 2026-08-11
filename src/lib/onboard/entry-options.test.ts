@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   type OnboardEntryOptionsDeps,
   resolveOnboardEntryOptions,
-  resolveOnboardReviewContext,
+  resolveOnboardRunOptions,
   withNonInteractiveEnvironment,
 } from "./entry-options";
 
@@ -31,13 +31,13 @@ function createDeps(overrides: Partial<OnboardEntryOptionsDeps> = {}): OnboardEn
   };
 }
 
-describe("resolveOnboardReviewContext", () => {
+describe("resolveOnboardRunOptions", () => {
   it.each([
     [false, true],
     [false, false],
   ])("treats auto-yes resume as non-interactive when stdin=%s and stdout=%s", (stdinIsTty, stdoutIsTty) => {
     expect(
-      resolveOnboardReviewContext({ autoYes: true, resume: true }, {}, null, () => false, {
+      resolveOnboardRunOptions({ autoYes: true, resume: true }, {}, null, () => false, {
         stdinIsTty,
         stdoutIsTty,
       }).nonInteractive,
@@ -49,7 +49,7 @@ describe("resolveOnboardReviewContext", () => {
     [true, false],
   ])("keeps auto-yes resume interactive when stdin=%s and stdout=%s", (stdinIsTty, stdoutIsTty) => {
     expect(
-      resolveOnboardReviewContext({ autoYes: true, resume: true }, {}, null, () => false, {
+      resolveOnboardRunOptions({ autoYes: true, resume: true }, {}, null, () => false, {
         stdinIsTty,
         stdoutIsTty,
       }).nonInteractive,
@@ -58,7 +58,7 @@ describe("resolveOnboardReviewContext", () => {
 
   it("keeps fresh no-TTY auto-yes interactive", () => {
     expect(
-      resolveOnboardReviewContext({ autoYes: true }, {}, null, () => false, {
+      resolveOnboardRunOptions({ autoYes: true }, {}, null, () => false, {
         stdinIsTty: false,
         stdoutIsTty: false,
       }).nonInteractive,

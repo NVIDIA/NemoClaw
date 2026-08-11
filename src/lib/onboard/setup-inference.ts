@@ -26,34 +26,34 @@ import type { Session } from "../state/onboard-session";
 
 export { assertNoOpenShellGatewayEndpointOverride };
 
-export function createProviderReviewDeps(input: {
-  updateSession: (mutator: (session: Session) => Session | void) => Session | Promise<Session>;
+export function createProviderReviewDeps(
+  updateSession: (mutator: (session: Session) => Session | void) => Session | Promise<Session>,
   checkpointSandboxName: (
     sandboxName: string,
     agent: { name?: string } | null,
     updateSession: (mutator: (session: Session) => Session | void) => Session | Promise<Session>,
-  ) => Promise<void>;
-  shouldFrontOllamaWithProxy: () => boolean;
-  startOllamaAuthProxy: () => boolean;
-  getOllamaProxyToken: () => string | null;
-  persistAndProbeOllamaProxy: (token: string) => Promise<void>;
-  exitProcess: (code: number) => never;
-  writeError: (message: string) => void;
-}) {
+  ) => Promise<void>,
+  localProvider: {
+    shouldFrontOllamaWithProxy: () => boolean;
+    startOllamaAuthProxy: () => boolean;
+    getOllamaProxyToken: () => string | null;
+    persistAndProbeOllamaProxy: (token: string) => Promise<void>;
+  },
+  exitProcess: (code: number) => never,
+  writeError: (message: string) => void,
+) {
   return {
     checkpointSandboxIdentity: (sandboxName: string, agent: { name?: string } | null) =>
-      input.checkpointSandboxName(sandboxName, agent, input.updateSession),
+      checkpointSandboxName(sandboxName, agent, updateSession),
     prepareLocalProviderForInference: async (providerName: string) => {
-      if (providerName !== "ollama-local" || !input.shouldFrontOllamaWithProxy()) return;
-      if (!input.startOllamaAuthProxy()) input.exitProcess(1);
-      const proxyToken = input.getOllamaProxyToken();
+      if (providerName !== "ollama-local" || !localProvider.shouldFrontOllamaWithProxy()) return;
+      if (!localProvider.startOllamaAuthProxy()) exitProcess(1);
+      const proxyToken = localProvider.getOllamaProxyToken();
       if (!proxyToken) {
-        input.writeError(
-          "  Ollama auth proxy token is not set. Re-run onboard to initialize the proxy.",
-        );
-        input.exitProcess(1);
+        writeError("  Ollama auth proxy token is not set. Re-run onboard to initialize the proxy.");
+        exitProcess(1);
       }
-      await input.persistAndProbeOllamaProxy(proxyToken);
+      await localProvider.persistAndProbeOllamaProxy(proxyToken);
     },
   };
 }

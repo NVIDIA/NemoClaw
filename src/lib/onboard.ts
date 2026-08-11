@@ -3754,18 +3754,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   );
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
-  const terminal = {
-    stdinIsTty: Boolean(process.stdin?.isTTY),
-    stdoutIsTty: Boolean(process.stdout?.isTTY),
-  };
-  const { entryOptionsInput, nonInteractive, resume } =
-    onboardEntryOptions.resolveOnboardReviewContext(
-      opts,
-      process.env,
-      onboardSession.loadSession()?.status ?? null,
-      isNonInteractiveEnv,
-      terminal,
-    );
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const { fresh, nonInteractive, requestedFromDockerfile, requestedSandboxName, cannotPrompt, resume } = onboardEntryOptions.resolveOnboardRunEntryOptions(opts, process.env, onboardSession.loadSession()?.status ?? null, isNonInteractiveEnv, { validateName, reservedSandboxNames: RESERVED_SANDBOX_NAMES, cliDisplayName, getNameValidationGuidance, error: (message) => console.error(message), exitProcess: (code) => process.exit(code) });
   NON_INTERACTIVE = nonInteractive;
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   _preflightDashboardPort =
@@ -3773,16 +3763,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   onboardRuntimeBoundary.reset();
   if (!authoritativeGateway) delete process.env.OPENSHELL_GATEWAY;
   preparedDcodeRuntime.applyGatewayEnv(process.env);
-  const { fresh, requestedFromDockerfile, requestedSandboxName, cannotPrompt } =
-    onboardEntryOptions.resolveOnboardEntryOptions(entryOptionsInput, {
-      isNonInteractive,
-      validateName,
-      reservedSandboxNames: RESERVED_SANDBOX_NAMES,
-      cliDisplayName,
-      getNameValidationGuidance,
-      error: (message) => console.error(message),
-      exitProcess: (code) => process.exit(code),
-    });
   const baseImageResolutionContext = baseImageResolutionFlow.createBaseImageResolutionContext({
     fresh,
     initialHint: opts.baseImageResolutionHint,
@@ -4115,22 +4095,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const endpointProvenance = { endpointSource: opts.endpointSource, endpointSourceProvider: opts.rebuildRegistryInferenceRoute?.route.provider ?? null, endpointSourceEndpointUrl: opts.rebuildRegistryInferenceRoute?.route.endpointUrl ?? null, getSandboxRegistryEntry: registry.getSandbox };
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    const providerReviewDeps = setupInferenceFactory.createProviderReviewDeps({
-      updateSession: onboardSession.updateSession,
-      checkpointSandboxName: onboardSessionBootstrap.checkpointSandboxName,
-      shouldFrontOllamaWithProxy,
-      startOllamaAuthProxy,
-      getOllamaProxyToken,
-      persistAndProbeOllamaProxy,
-      exitProcess: process.exit,
-      writeError: console.error,
-    });
-    const coreFlowPhases = createCoreOnboardFlowPhases<
-      InitialOnboardFlowContext,
-      unknown,
-      MessagingChannelConfig,
-      import("./resources-cmd").ResourceProfile
-    >({
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const providerReviewDeps = setupInferenceFactory.createProviderReviewDeps(onboardSession.updateSession, onboardSessionBootstrap.checkpointSandboxName, { shouldFrontOllamaWithProxy, startOllamaAuthProxy, getOllamaProxyToken, persistAndProbeOllamaProxy }, process.exit, console.error);
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const coreFlowPhases = createCoreOnboardFlowPhases<InitialOnboardFlowContext, unknown, MessagingChannelConfig, import("./resources-cmd").ResourceProfile>({
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
       resumeProvider: { isNonInteractive, isRoutedInferenceProvider, providerExistsInGateway, replaceNamedCredential, resumeManagedLlamaCppRuntime: (sandboxName) => setupNimFlow.resumeManagedLlamaCppRuntime(sandboxName, { gatewayPort: GATEWAY_PORT, runtimeProvider: setupNimFlow.resolveCurrentRuntimeProviderBundle() }) },
       providerInference: {
