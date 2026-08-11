@@ -58,6 +58,10 @@ exports.planHostAdvisories = () => [];
 `,
   );
   fs.writeFileSync(
+    path.join(onboardDir, "gateway-management.js"),
+    `exports.loadGatewayManagementDeclaration = () => ({ ok: true, declaration: null });\n`,
+  );
+  fs.writeFileSync(
     path.join(readinessDir, "host.js"),
     `exports.createHostReadinessReport = (_options, collection) => {
   const host = collection.assess();

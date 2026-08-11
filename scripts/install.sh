@@ -3094,6 +3094,8 @@ run_installer_host_preflight() {
             )
           ),
         ];
+        const admissionFindingIds = stableIds(admission.findingIds);
+        const admissionCapabilityIds = stableIds(admission.capabilityIds);
         if (host.runtime && host.runtime !== "unknown") {
           infoLines.push(`Detected container runtime: ${host.runtime}`);
         }
@@ -3101,13 +3103,11 @@ run_installer_host_preflight() {
           infoLines.push("Running under WSL");
         }
         if (!admission.admitted) {
-          const findingIds = stableIds(admission.findingIds);
-          const capabilityIds = stableIds(admission.capabilityIds);
-          if (findingIds.length > 0) {
-            actionLines.push(`Admission finding IDs: ${findingIds.join(", ")}`);
+          if (admissionFindingIds.length > 0) {
+            actionLines.push(`Admission finding IDs: ${admissionFindingIds.join(", ")}`);
           }
-          if (capabilityIds.length > 0) {
-            actionLines.push(`Admission capability IDs: ${capabilityIds.join(", ")}`);
+          if (admissionCapabilityIds.length > 0) {
+            actionLines.push(`Admission capability IDs: ${admissionCapabilityIds.join(", ")}`);
           }
         }
         for (const action of actions) {
@@ -3123,7 +3123,7 @@ run_installer_host_preflight() {
               finding,
             ])
           );
-          for (const findingId of admission.findingIds || []) {
+          for (const findingId of admissionFindingIds) {
             const finding = findingById.get(findingId);
             actionLines.push(
               finding?.summary
@@ -3131,7 +3131,7 @@ run_installer_host_preflight() {
                 : `- Readiness finding: ${findingId}`
             );
           }
-          for (const capabilityId of admission.capabilityIds || []) {
+          for (const capabilityId of admissionCapabilityIds) {
             actionLines.push(
               `- NemoClaw could not confirm the required readiness capability ${capabilityId}.`
             );
