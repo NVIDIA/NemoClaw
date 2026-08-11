@@ -152,19 +152,43 @@ describe("installer host preflight package contract", () => {
     expect(output).toMatch(/The detected container runtime is unsupported\./);
   });
 
-  it("prints unknown finding and required-capability diagnostics", () => {
+  it("prints only stable unknown finding and required-capability diagnostics", () => {
+    const oversizedFindingId = `host.${"f".repeat(124)}`;
+    const oversizedCapabilityId = `host.${"c".repeat(124)}`;
     const { output, result } = runInstallerHostAdmissionTest(
       { runtime: "docker" },
       {
-        findingIds: ["host.test.unknown"],
-        capabilityIds: ["host.test.required-capability"],
+        findingIds: [
+          "host.test.unknown",
+          "host.test.unknown",
+          "unsafe\ninjected-finding",
+          oversizedFindingId,
+          "invalidfinding",
+        ],
+        capabilityIds: [
+          "host.test.required-capability",
+          "host.test.required-capability",
+          "unsafe\ninjected-capability",
+          oversizedCapabilityId,
+          "INVALID.CAPABILITY",
+        ],
       },
     );
 
     expect(result.status).toBe(1);
+    expect(output).toMatch(/Admission finding IDs: host\.test\.unknown/);
     expect(output).toMatch(/Readiness finding: host\.test\.unknown/);
+    expect(output).toMatch(/Admission capability IDs: host\.test\.required-capability/);
     expect(output).toMatch(
       /NemoClaw could not confirm the required readiness capability host\.test\.required-capability\./,
     );
+    expect(output.match(/host\.test\.unknown/g)).toHaveLength(2);
+    expect(output.match(/host\.test\.required-capability/g)).toHaveLength(2);
+    expect(output).not.toContain("injected-finding");
+    expect(output).not.toContain("injected-capability");
+    expect(output).not.toContain(oversizedFindingId);
+    expect(output).not.toContain(oversizedCapabilityId);
+    expect(output).not.toContain("invalidfinding");
+    expect(output).not.toContain("INVALID.CAPABILITY");
   });
 });
