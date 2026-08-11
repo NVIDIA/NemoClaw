@@ -47,7 +47,17 @@ Store them as `$OPENCLAW_WORKSPACE_DIR/USER.md` and `$OPENCLAW_WORKSPACE_DIR/SOU
 </AgentOnly>
 
 Before NemoClaw marks a snapshot complete, it strips recognized credential values from copied JSON, YAML, and `.env` files.
-It skips dependency lockfiles and installed package manifests because dependency names in those files can match credential field names.
+It preserves recognized dependency lockfiles byte for byte when they contain only dependency metadata.
+This behavior includes installed npm `.package-lock.json` files.
+It omits a recognized lockfile when the file contains any of these values:
+
+- A credential field.
+- A provider-shaped secret outside a dependency URL.
+- URL user information.
+- A credential-bearing query parameter.
+
+Dependency names in lockfile maps do not count as credential fields.
+NemoClaw also preserves installed `node_modules/**/package.json` manifests byte for byte because dependency names can match credential field names.
 It continues to sanitize configuration and `.env` files inside installed dependency trees.
 It preserves OpenShell credential placeholders so rebuild can reattach the host-side provider.
 If NemoClaw cannot sanitize a copied configuration or environment file, it omits that file from the snapshot.
