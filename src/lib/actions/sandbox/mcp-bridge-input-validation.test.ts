@@ -320,6 +320,7 @@ describe("MCP CLI input validation", () => {
       `https://${user}:${password}@/mcp`,
       `//${user}:${password}@/mcp`,
       `https:/${user}:${password}@/mcp`,
+      `https://${user}:${password} extra@/mcp`,
       `https://${user}:${password}@/mcp/${password}`,
     ]) {
       const message = captureMessage(rawUrl);
