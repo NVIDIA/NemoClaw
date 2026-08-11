@@ -130,6 +130,12 @@ function isParseableTimestamp(value: string | null): value is string {
   return value !== null && Number.isFinite(Date.parse(value));
 }
 
+// A rebuild restores the legacy dashboard session instead of dropping it, so
+// re-pairing alone leaves the sandbox holding two credential sets. Send the
+// operator through `channels remove`, which clears every WhatsApp session path.
+const HERMES_LEGACY_DASHBOARD_SESSION_HINT =
+  "Run `nemoclaw <sandbox> channels remove whatsapp` to clear every WhatsApp session path, then `nemoclaw <sandbox> channels add whatsapp`. Pair again from the dashboard so credentials are stored in `/sandbox/.hermes/platforms/whatsapp/session`. Rerun `nemoclaw <sandbox> channels status --channel whatsapp`.";
+
 function pairingSignal(input: WhatsappProbeInput): DiagnosticSignal {
   if (!input.probeReachable) {
     return {
@@ -154,7 +160,7 @@ function pairingSignal(input: WhatsappProbeInput): DiagnosticSignal {
         severity: "warn",
         detail: "Hermes gateway session path has no WhatsApp credentials",
         hint: dashboardOnly
-          ? "point the Hermes WhatsApp session_path at the dashboard-home session path, then restart the gateway"
+          ? HERMES_LEGACY_DASHBOARD_SESSION_HINT
           : "run `hermes whatsapp` inside the sandbox to display a QR code",
       };
     }
@@ -195,7 +201,7 @@ function sessionLocationSignal(input: WhatsappProbeInput): DiagnosticSignal | nu
       severity: "warn",
       detail:
         "dashboard-home has WhatsApp credentials, but the Hermes gateway session path is empty",
-      hint: "run `nemoclaw <sandbox> config set --key platforms.whatsapp.extra.session_path --value /sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session --restart --config-accept-new-path`",
+      hint: HERMES_LEGACY_DASHBOARD_SESSION_HINT,
     };
   }
   if (gateway === true && dashboard === false) {
@@ -473,7 +479,7 @@ function buildHints(verdict: WhatsappVerdict, input: WhatsappProbeInput): string
       if (hermesDashboardOnlySession(input)) {
         hints.push(
           "Hermes dashboard pairing wrote credentials under dashboard-home, but the gateway reads the default platforms path.",
-          "Use `nemoclaw <sandbox> config set --key platforms.whatsapp.extra.session_path --value /sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session --restart --config-accept-new-path` to point the gateway at that session.",
+          HERMES_LEGACY_DASHBOARD_SESSION_HINT,
         );
         break;
       }
