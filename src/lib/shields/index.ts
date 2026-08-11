@@ -1417,6 +1417,20 @@ function deriveShieldsMode(state: ShieldsState, hasStateFile: boolean): ShieldsM
   return "mutable_default";
 }
 
+function isEquivalentShieldsDownRequest(
+  state: ShieldsState,
+  timeoutSeconds: number,
+  reason: string | null,
+  policyName: string,
+): boolean {
+  return (
+    state.shieldsDown === true &&
+    state.shieldsDownTimeout === timeoutSeconds &&
+    state.shieldsDownReason === reason &&
+    state.shieldsDownPolicy === policyName
+  );
+}
+
 function describeShieldsMode(mode: ShieldsPostureMode): Omit<ShieldsPosture, "state"> {
   switch (mode) {
     case "mutable_default":
@@ -4602,6 +4616,9 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     recoveredProviderTarget = retainedProviderTarget;
   }
   const initialMode = deriveShieldsMode(state, state._hasStateFile);
+  const timeoutSeconds = parseDuration(opts.timeout || `${DEFAULT_TIMEOUT_SECONDS}`);
+  const reason = opts.reason || null;
+  const policyName = opts.policy || "permissive";
   if (state.shieldsDown) {
     // Provider release deliberately precedes route convergence and the final
     // timer-bound transition commit. A process can therefore die after the
@@ -4668,6 +4685,10 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       console.log(`  Recovered interrupted config unlock for ${sandboxName}.`);
       return;
     }
+    if (isEquivalentShieldsDownRequest(state, timeoutSeconds, reason, policyName)) {
+      console.log(`  Shields already down for ${sandboxName}; equivalent request accepted.`);
+      return;
+    }
     console.error(
       `  Config is already unlocked for ${sandboxName} (since ${state.shieldsDownAt}).`,
     );
@@ -4699,9 +4720,6 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     );
   }
 
-  const timeoutSeconds = parseDuration(opts.timeout || `${DEFAULT_TIMEOUT_SECONDS}`);
-  const reason = opts.reason || null;
-  const policyName = opts.policy || "permissive";
   const processToken = opts.processToken ?? randomBytes(16).toString("hex");
   if (!/^[0-9a-f]{32}$/.test(processToken)) {
     throw new Error("Invalid shields-down recovery process token");

@@ -386,6 +386,18 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     return output;
   }
 
+  function readStateAndTimer() {
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const statePath = path.join(stateDir, "shields-openclaw.json");
+    const timerPath = path.join(stateDir, "shields-timer-openclaw.json");
+    return {
+      statePath,
+      timerPath,
+      state: fs.readFileSync(statePath, "utf-8"),
+      timer: fs.readFileSync(timerPath, "utf-8"),
+    };
+  }
+
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-openclaw-recovery-"));
     vi.stubEnv("HOME", tmpDir);
@@ -401,6 +413,79 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     delete require.cache[requireSource.resolve("./permissive-runtime.js")];
     delete require.cache[requireSource.resolve("../actions/sandbox/mcp-bridge-policy.js")];
     delete require.cache[requireSource.resolve("../cli/branding.js")];
+  });
+
+  it("accepts an equivalent repeated shieldsDown request without changing state or timer authority (#8806)", {
+    timeout: 30_000,
+  }, () => {
+    const harness = createHarness({
+      confirmOpenClawInodeFlags: true,
+      processStartIdentity: "issue-8806-owner",
+    });
+
+    harness.shieldsDown("openclaw", {
+      timeout: "5m",
+      reason: "retry-safe",
+      throwOnError: true,
+    });
+
+    const before = readStateAndTimer();
+    harness.logSpy.mockClear();
+    harness.errorSpy.mockClear();
+    harness.runCaptureSpy.mockClear();
+    harness.runSpy.mockClear();
+    harness.auditSpy.mockClear();
+
+    harness.shieldsDown("openclaw", {
+      timeout: "5m",
+      reason: "retry-safe",
+      throwOnError: true,
+    });
+
+    expect(fs.readFileSync(before.statePath, "utf-8")).toBe(before.state);
+    expect(fs.readFileSync(before.timerPath, "utf-8")).toBe(before.timer);
+    expect(harness.runCaptureSpy).not.toHaveBeenCalled();
+    expect(harness.runSpy).not.toHaveBeenCalled();
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy).not.toHaveBeenCalled();
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
+      "Shields already down for openclaw; equivalent request accepted.",
+    );
+  });
+
+  it("rejects a conflicting repeated shieldsDown request without changing state or timer authority (#8806)", {
+    timeout: 30_000,
+  }, () => {
+    const harness = createHarness({
+      confirmOpenClawInodeFlags: true,
+      processStartIdentity: "issue-8806-owner",
+    });
+
+    harness.shieldsDown("openclaw", {
+      timeout: "5m",
+      reason: "retry-safe",
+      throwOnError: true,
+    });
+
+    const before = readStateAndTimer();
+    harness.runCaptureSpy.mockClear();
+    harness.runSpy.mockClear();
+    harness.auditSpy.mockClear();
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "changed-reason",
+        throwOnError: true,
+      }),
+    ).toThrow(/Config is already unlocked for openclaw/u);
+
+    expect(fs.readFileSync(before.statePath, "utf-8")).toBe(before.state);
+    expect(fs.readFileSync(before.timerPath, "utf-8")).toBe(before.timer);
+    expect(harness.runCaptureSpy).not.toHaveBeenCalled();
+    expect(harness.runSpy).not.toHaveBeenCalled();
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("already unlocked");
   });
 
   it("shields down removes the permissive runtime temp directory when the auto-restore timer fails (#7964)", () => {
