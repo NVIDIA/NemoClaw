@@ -12,7 +12,7 @@ import {
   installRebuildFlowTestHooks,
   originalSandboxName,
   snapshotEnv,
-} from "../../../../test/helpers/rebuild-flow-test-harness";
+} from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { fingerprintBuildContext } from "../../adapters/fs/build-context-fingerprint";
 import { createBuildContextVerifier } from "./rebuild-prepared-image-context";
 
