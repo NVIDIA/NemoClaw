@@ -896,7 +896,7 @@ describe("legacy Hermes shields compatibility", () => {
         events.push("audit");
       });
 
-      shields.shieldsDown(sandbox.name, { throwOnError: true });
+      shields.shieldsDown(sandbox.name, { timeout: "not-a-duration", throwOnError: true });
 
       expect(
         transitionSpy.mock.calls.map(([input]) => ({

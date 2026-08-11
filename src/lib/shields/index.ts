@@ -4626,9 +4626,6 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     recoveredProviderTarget = retainedProviderTarget;
   }
   const initialMode = deriveShieldsMode(state, state._hasStateFile);
-  const timeoutSeconds = parseDuration(opts.timeout || `${DEFAULT_TIMEOUT_SECONDS}`);
-  const reason = opts.reason || null;
-  const policyName = opts.policy || "permissive";
   if (state.shieldsDown) {
     // Provider release deliberately precedes route convergence and the final
     // timer-bound transition commit. A process can therefore die after the
@@ -4695,6 +4692,12 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       console.log(`  Recovered interrupted config unlock for ${sandboxName}.`);
       return;
     }
+  }
+
+  const timeoutSeconds = parseDuration(opts.timeout || `${DEFAULT_TIMEOUT_SECONDS}`);
+  const reason = opts.reason || null;
+  const policyName = opts.policy || "permissive";
+  if (state.shieldsDown) {
     if (isEquivalentShieldsDownRequest(state, timeoutSeconds, reason, policyName)) {
       if (!hasEquivalentShieldsDownTimerAuthority(sandboxName, state)) {
         recoverExpiredAutoRestoreInline(sandboxName, state);

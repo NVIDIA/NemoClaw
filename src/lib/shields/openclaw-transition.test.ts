@@ -85,13 +85,13 @@ const retryAgentCases: ReadonlyArray<
     "dcode",
     {
       agentName: "langchain-deepagents-code",
-      configPath: "/sandbox/.dcode/config.json",
-      configDir: "/sandbox/.dcode",
-      format: "json",
-      configFile: "config.json",
-      sensitiveFiles: ["/sandbox/.dcode/.config-hash"],
+      configPath: "/sandbox/.deepagents/config.toml",
+      configDir: "/sandbox/.deepagents",
+      format: "toml",
+      configFile: "config.toml",
+      sensitiveFiles: ["/sandbox/.deepagents/.config-hash"],
       stateLockPlan: RETRY_STATE_LOCK_PLAN,
-      stateLockPlanInImage: true,
+      stateLockPlanInImage: false,
     },
   ],
 ];
@@ -554,6 +554,7 @@ describe("OpenClaw shields flow rollback and recovery", () => {
       harness.runCaptureSpy.mockClear();
       harness.runSpy.mockClear();
       harness.auditSpy.mockClear();
+      harness.errorSpy.mockClear();
 
       expect(() => harness.shieldsDown(sandboxName, retryOptions)).toThrow(
         new RegExp(`Config is already unlocked for ${sandboxName}`, "u"),
@@ -585,6 +586,7 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     harness.runCaptureSpy.mockClear();
     harness.runSpy.mockClear();
     harness.auditSpy.mockClear();
+    harness.errorSpy.mockClear();
 
     expect(() => harness.shieldsDown(sandboxName, { throwOnError: true })).toThrow(
       /Config is already unlocked for hermes/u,
@@ -614,6 +616,7 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     fs.rmSync(before.timerPath, { force: true });
     harness.runCaptureSpy.mockClear();
     harness.auditSpy.mockClear();
+    harness.errorSpy.mockClear();
 
     expect(() =>
       harness.shieldsDown("openclaw", {
