@@ -297,7 +297,7 @@ describe("install.sh OpenShell gateway service", () => {
   it.each([
     "FragmentPath",
     "ExecStart",
-  ] as const)("continues to the PID-file fallback when %s service metadata is unavailable (#8800)", (failedMetadataProperty) => {
+  ] as const)("returns control for the PID-file fallback when %s service metadata is unavailable (#8800)", (failedMetadataProperty) => {
     const home = makeTempRoot();
     const gatewayBin = userGatewayBin(home);
     const staged = stageService(home, gatewayBin);
@@ -315,6 +315,9 @@ describe("install.sh OpenShell gateway service", () => {
     const calls = fs.readFileSync(systemctl.log, "utf-8");
 
     expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(calls).toContain(
+      `--user show nemoclaw-openshell-gateway.service --property=${failedMetadataProperty} --value`,
+    );
     expect(result.stdout).toContain("pid-file-fallback");
     expect(calls).not.toContain("--user stop nemoclaw-openshell-gateway.service");
   });
