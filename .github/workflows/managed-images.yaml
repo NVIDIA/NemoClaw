@@ -32,7 +32,6 @@ on:
       - "src/lib/security/credential-hash.ts"
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
-      - "test/e2e/live/managed-image-activation-e2e*.ts"
       - "src/lib/tool-disclosure.ts"
       - "tools/mcp-tool-discovery-runtime/**"
       - "tsconfig.runtime-preloads.json"
@@ -49,6 +48,229 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  pr-staging-qa-deep-code:
+    name: Staging QA base permission regression (Deep Agents Code)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+      STAGING_PRODUCER_SHA: cd0cb2b89965d57cd3d7d97a30d4bdab26781b61
+      STAGING_QA_SOURCE_SHA: d097a22145859102c0495b0310de264b7a27624f
+      STAGING_QA_RECORDED_INDEX_DIGEST: sha256:ceaa94a895ba5cb3f231074b97f9910df3ce9d375802cb1d21c777691e0feb43
+      STAGING_QA_BASE_IMAGE: nemoclaw-deepagents-code-base:staging-31396519688
+      STAGING_QA_FINAL_IMAGE: nemoclaw-managed-pr/langchain-deepagents-code-staging-qa
+    steps:
+      - name: Checkout latest PR commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          persist-credentials: false
+
+      # Run 31396519688 built this source locally and never published it. Keep
+      # the recorded local-only index digest as provenance. Rebuild the base from
+      # the exact source with Dockerfile.base and its repository build context.
+      - name: Checkout exact staging QA base source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.STAGING_QA_SOURCE_SHA }}
+          path: staging-qa-base-source
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Validate staging QA source and recorded digest format
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_root="$GITHUB_WORKSPACE/staging-qa-base-source"
+          actual_source_sha="$(git -C "$source_root" rev-parse HEAD)"
+          if [ "$actual_source_sha" != "$STAGING_QA_SOURCE_SHA" ]; then
+            echo "ERROR: staging QA base source does not match the recorded NemoClaw commit." >&2
+            exit 1
+          fi
+          if [[ ! "$STAGING_QA_RECORDED_INDEX_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: staging QA base provenance has an invalid recorded index digest." >&2
+            exit 1
+          fi
+          printf '### Staging run 31396519688 Deep Agents Code QA base\n\n'
+          printf 'Producer commit: %s\n\n' "$STAGING_PRODUCER_SHA"
+          printf 'NemoClaw source commit: %s\n\n' "$STAGING_QA_SOURCE_SHA"
+          printf 'Recorded local-only index digest: %s\n' "$STAGING_QA_RECORDED_INDEX_DIGEST"
+          {
+            printf '### Staging run 31396519688 Deep Agents Code QA base\n\n'
+            printf 'Producer commit: %s\n\n' "$STAGING_PRODUCER_SHA"
+            printf 'NemoClaw source commit: %s\n\n' "$STAGING_QA_SOURCE_SHA"
+            printf 'Recorded local-only index digest: %s\n' "$STAGING_QA_RECORDED_INDEX_DIGEST"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Reproduce staging discovery permission drift
+        shell: bash
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          reviewed_root="tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery"
+          for artifact in \
+            BUNDLED_PACKAGES.json \
+            THIRD_PARTY_LICENSES.txt \
+            mcp-tool-discovery.bundle
+          do
+            artifact_path="${reviewed_root}/${artifact}"
+            if [ ! -f "$artifact_path" ] || [ -L "$artifact_path" ]; then
+              echo "ERROR: reviewed discovery permission fixture must be a regular non-symlink: ${artifact_path}" >&2
+              exit 1
+            fi
+            chmod 0664 "$artifact_path"
+          done
+
+      - name: Rebuild staging QA Deep Agents Code base from exact source
+        id: staging-base
+        shell: bash
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: |
+          set -euo pipefail
+          source_root="$GITHUB_WORKSPACE/staging-qa-base-source"
+          docker build --progress=plain \
+            -f "$source_root/agents/langchain-deepagents-code/Dockerfile.base" \
+            -t "$STAGING_QA_BASE_IMAGE" \
+            "$source_root"
+          base_id="$(docker image inspect --format "{{.Id}}" "$STAGING_QA_BASE_IMAGE")"
+          if [[ ! "$base_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: rebuilt staging QA base did not resolve to an immutable local image ID." >&2
+            exit 1
+          fi
+          printf 'id=%s\n' "$base_id" >> "$GITHUB_OUTPUT"
+          printf '\nRebuilt local image: %s\n' "$base_id" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build latest PR commit against reproduced staging QA base
+        id: staging-final
+        shell: bash
+        working-directory: candidate
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: |
+          set -euo pipefail
+          final_reference="${STAGING_QA_FINAL_IMAGE}:${CANDIDATE_SHA}"
+          docker build --progress=plain \
+            -f agents/langchain-deepagents-code/Dockerfile \
+            --build-arg BASE_IMAGE="$STAGING_QA_BASE_IMAGE" \
+            --build-arg NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b \
+            --build-arg NEMOCLAW_INFERENCE_PROVIDER_ID=inference \
+            --build-arg NEMOCLAW_UPSTREAM_PROVIDER=nvidia-nim \
+            --build-arg NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1 \
+            --build-arg NEMOCLAW_INFERENCE_API=openai-completions \
+            --build-arg NEMOCLAW_DCODE_AUTO_APPROVAL=thread-opt-in \
+            --build-arg NEMOCLAW_BUILD_ID="$STAGING_QA_SOURCE_SHA" \
+            --build-arg NEMOCLAW_DARWIN_VM_COMPAT=0 \
+            -t "$final_reference" \
+            .
+          final_id="$(docker image inspect --format "{{.Id}}" "$final_reference")"
+          if [[ ! "$final_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: staging QA final image did not resolve to an immutable local image ID." >&2
+            exit 1
+          fi
+          printf 'id=%s\n' "$final_id" >> "$GITHUB_OUTPUT"
+
+      - name: Validate staging QA final image contract
+        shell: bash
+        env:
+          BASE_ID: ${{ steps.staging-base.outputs.id }}
+          FINAL_ID: ${{ steps.staging-final.outputs.id }}
+        run: |
+          set -euo pipefail
+          base_layers="$(docker image inspect --format "{{json .RootFS.Layers}}" "$BASE_ID")"
+          final_layers="$(docker image inspect --format "{{json .RootFS.Layers}}" "$FINAL_ID")"
+          if ! jq -n -e \
+            --argjson base "$base_layers" \
+            --argjson final "$final_layers" '
+              ($base | length) > 0 and
+              ($final | length) >= ($base | length) and
+              all(range(0; $base | length); $final[.] == $base[.])
+            ' >/dev/null; then
+            echo "ERROR: staging QA final image does not extend the rebuilt QA base." >&2
+            exit 1
+          fi
+          if ! actual_discovery_contract="$(
+            docker run --rm --platform linux/amd64 --entrypoint /bin/sh "$FINAL_ID" -c '
+            set -eu
+            discovery_runtime=/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime
+            if ! entry_owner_unsafe="$(find -P "$discovery_runtime" ! -user root -print -quit)"; then
+              echo "ERROR: staging QA discovery entry ownership inspection failed." >&2
+              exit 1
+            fi
+            if [ -n "$entry_owner_unsafe" ]; then
+              echo "ERROR: staging QA discovery entry is not root-owned: $entry_owner_unsafe" >&2
+              exit 1
+            fi
+            if ! owner_or_write_unsafe="$(
+              find -L "$discovery_runtime" \
+                \( ! -user root -o -perm /022 \) -print -quit
+            )"; then
+              echo "ERROR: staging QA discovery tree inspection failed." >&2
+              exit 1
+            fi
+            if [ -n "$owner_or_write_unsafe" ]; then
+              echo "ERROR: staging QA discovery tree is not root-owned and read-only: $owner_or_write_unsafe" >&2
+              exit 1
+            fi
+            if ! mode_unsafe="$(
+              find -P "$discovery_runtime" \
+                \( \( -type d ! -perm 0555 \) -o \( -type f ! -perm 0444 \) \) \
+                -print -quit
+            )"; then
+              echo "ERROR: staging QA discovery mode inspection failed." >&2
+              exit 1
+            fi
+            if [ -n "$mode_unsafe" ]; then
+              echo "ERROR: staging QA discovery path has an unexpected mode: $mode_unsafe" >&2
+              exit 1
+            fi
+            if ! actual_discovery_contract="$(node "$discovery_runtime/mcp-tool-discovery.mjs")"; then
+              echo "ERROR: staging QA discovery bundle execution failed." >&2
+              exit 1
+            fi
+            printf "%s" "$actual_discovery_contract"
+          '
+          )"; then
+            echo "ERROR: staging QA final image discovery contract probe failed." >&2
+            exit 1
+          fi
+          if ! node -e '
+            const expected = {
+              protocol: 1,
+              ok: false,
+              detail: "tool discovery received invalid runtime arguments",
+            };
+            let result;
+            try {
+              result = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+            } catch {
+              process.exit(1);
+            }
+            const record =
+              result !== null && typeof result === "object" && !Array.isArray(result)
+                ? result
+                : undefined;
+            if (
+              !record ||
+              record.protocol !== expected.protocol ||
+              record.ok !== expected.ok ||
+              record.detail !== expected.detail
+            ) {
+              process.exit(1);
+            }
+          ' <<< "$actual_discovery_contract" >/dev/null; then
+            echo "ERROR: staging QA discovery bundle contract mismatch." >&2
+            exit 1
+          fi
+
   pr-build-and-entrypoint:
     name: PR build and direct managed startup (${{ matrix.display_name }})
     # External contributor PRs retain the local build/direct-startup lane after
@@ -93,6 +315,24 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
+
+      - name: Reproduce reviewed discovery permission drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          reviewed_root="tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery"
+          for artifact in \
+            BUNDLED_PACKAGES.json \
+            THIRD_PARTY_LICENSES.txt \
+            mcp-tool-discovery.bundle
+          do
+            artifact_path="${reviewed_root}/${artifact}"
+            if [ ! -f "$artifact_path" ] || [ -L "$artifact_path" ]; then
+              echo "ERROR: reviewed discovery permission fixture must be a regular non-symlink: ${artifact_path}" >&2
+              exit 1
+            fi
+            chmod 0664 "$artifact_path"
+          done
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -241,6 +481,79 @@ jobs:
             exit 1
           fi
 
+          discovery_runtime="/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime"
+          if ! actual_discovery_contract="$(
+            docker run --rm --platform "$PLATFORM" --entrypoint /bin/sh "$image_id" -c '
+              set -eu
+              discovery_runtime="$1"
+              if ! entry_owner_unsafe="$(
+                find -P "$discovery_runtime" ! -user root -print -quit
+              )"; then
+                echo "ERROR: final PR managed image discovery entry ownership inspection failed." >&2
+                exit 1
+              fi
+              if [ -n "$entry_owner_unsafe" ]; then
+                echo "ERROR: final PR managed image discovery entry is not root-owned: $entry_owner_unsafe" >&2
+                exit 1
+              fi
+              if ! owner_or_write_unsafe="$(
+                find -L "$discovery_runtime" \
+                  \( ! -user root -o -perm /022 \) -print -quit
+              )"; then
+                echo "ERROR: final PR managed image discovery tree inspection failed." >&2
+                exit 1
+              fi
+              if [ -n "$owner_or_write_unsafe" ]; then
+                echo "ERROR: final PR managed image discovery tree is not root-owned and read-only: $owner_or_write_unsafe" >&2
+                exit 1
+              fi
+              if ! mode_unsafe="$(
+                find -P "$discovery_runtime" \
+                  \( \( -type d ! -perm 0555 \) -o \( -type f ! -perm 0444 \) \) \
+                  -print -quit
+              )"; then
+                echo "ERROR: final PR managed image discovery mode inspection failed." >&2
+                exit 1
+              fi
+              if [ -n "$mode_unsafe" ]; then
+                echo "ERROR: final PR managed image discovery path has an unexpected mode: $mode_unsafe" >&2
+                exit 1
+              fi
+              node "$discovery_runtime/mcp-tool-discovery.mjs"
+            ' -- "$discovery_runtime"
+          )"; then
+            echo "ERROR: final PR managed image discovery contract probe failed." >&2
+            exit 1
+          fi
+          if ! node -e '
+            const expected = {
+              protocol: 1,
+              ok: false,
+              detail: "tool discovery received invalid runtime arguments",
+            };
+            let result;
+            try {
+              result = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+            } catch {
+              process.exit(1);
+            }
+            const record =
+              result !== null && typeof result === "object" && !Array.isArray(result)
+                ? result
+                : undefined;
+            if (
+              !record ||
+              record.protocol !== expected.protocol ||
+              record.ok !== expected.ok ||
+              record.detail !== expected.detail
+            ) {
+              process.exit(1);
+            }
+          ' <<< "$actual_discovery_contract" >/dev/null; then
+            echo "ERROR: final PR managed image discovery bundle contract mismatch." >&2
+            exit 1
+          fi
+
           printf 'reference=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
           printf '### %s exact PR managed image\n\n`%s`\n' "$AGENT" "$image_id" \
             >> "$GITHUB_STEP_SUMMARY"
@@ -303,166 +616,6 @@ jobs:
         if: always() && github.event.pull_request.head.repo.full_name == github.repository
         shell: bash
         run: docker logout ghcr.io
-
-      - name: Export exact published PR managed-image contract
-        if: github.event.pull_request.head.repo.full_name == github.repository
-        shell: bash
-        env:
-          AGENT: ${{ matrix.agent }}
-          COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
-          DIGEST: ${{ steps.publish.outputs.digest }}
-          IMAGE: ${{ matrix.repository }}
-        run: |
-          set -euo pipefail
-          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
-            echo "ERROR: exact PR head SHA is invalid" >&2
-            exit 1
-          }
-          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || {
-            echo "ERROR: PR publication did not return an immutable digest" >&2
-            exit 1
-          }
-          reference="${IMAGE}@${DIGEST}"
-          raw="$RUNNER_TEMP/${AGENT}-published-manifest.raw"
-          docker buildx imagetools inspect "$reference" --raw > "$raw"
-          [[ "sha256:$(sha256sum "$raw" | awk '{print $1}')" == "$DIGEST" ]] || {
-            echo "ERROR: published PR manifest bytes do not match the build digest" >&2
-            exit 1
-          }
-          anonymous_config="$(mktemp -d "$RUNNER_TEMP/managed-pr-anonymous.XXXXXX")"
-          trap 'rm -rf -- "$anonymous_config"' EXIT
-          DOCKER_CONFIG="$anonymous_config" docker pull --platform linux/amd64 "$reference"
-          release="v$(node -p 'require("./package.json").version')"
-          contract_dir="$RUNNER_TEMP/managed-pr-contract"
-          mkdir -p "$contract_dir"
-          jq -n \
-            --arg agent "$AGENT" \
-            --arg cohort "$COHORT" \
-            --arg digest "$DIGEST" \
-            --arg image "$IMAGE" \
-            --arg reference "$reference" \
-            --arg release "$release" \
-            --arg revision "$CANDIDATE_SHA" \
-            '{
-              contractVersion: 1,
-              agent: $agent,
-              platform: "linux/amd64",
-              image: $image,
-              digest: $digest,
-              reference: $reference,
-              source: {
-                repository: "NVIDIA/NemoClaw",
-                revision: $revision,
-                release: $release,
-                cohort: $cohort
-              },
-              startupProfileContractVersion: 1,
-              capabilityContractVersion: 1
-            }' > "$contract_dir/contract.json"
-
-      - name: Upload exact published PR managed-image contract
-        if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}
-          path: ${{ runner.temp }}/managed-pr-contract/contract.json
-          if-no-files-found: error
-          retention-days: 1
-
-  pr-managed-activation:
-    name: PR exact all-agent managed runtime activation
-    needs: pr-build-and-entrypoint
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    permissions:
-      contents: read
-    env:
-      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-activation
-      E2E_JOB: "1"
-      E2E_TARGET_ID: managed-image-activation
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ github.workspace }}/managed-pr-catalog.json
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      OPENSHELL_GATEWAY: nemoclaw
-    steps:
-      - name: Checkout exact PR head
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          persist-credentials: false
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22.19.0
-
-      - name: Download exact published all-agent contracts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-*
-          path: ${{ runner.temp }}/managed-pr-contracts
-          merge-multiple: false
-
-      - name: Assemble exact all-agent activation catalog
-        shell: bash
-        run: |
-          set -euo pipefail
-          mapfile -d '' contracts < <(
-            find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
-          )
-          [[ "${#contracts[@]}" -eq 3 ]] || {
-            echo "ERROR: exact all-agent activation requires three contracts" >&2
-            exit 1
-          }
-          jq -se \
-            --arg revision "$CANDIDATE_SHA" '
-              if (
-                length == 3 and
-                ([.[].agent] | sort) == ["hermes", "langchain-deepagents-code", "openclaw"] and
-                ([.[].source.revision] | unique) == [$revision] and
-                ([.[].source.cohort] | unique | length) == 1 and
-                ([.[].platform] | unique) == ["linux/amd64"]
-              )
-              then map({key: .agent, value: .}) | from_entries
-              else error("published PR contracts do not form one exact all-agent cohort")
-              end
-            ' "${contracts[@]}" > "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG"
-
-      - name: Build exact candidate CLI
-        run: |
-          npm ci --ignore-scripts
-          npm run build:cli
-
-      - name: Install OpenShell CLI
-        shell: bash
-        run: env -u GITHUB_TOKEN bash scripts/install-openshell.sh
-
-      - name: Run real all-agent managed runtime activation
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]] || {
-            echo "ERROR: managed activation checkout does not match the exact PR head" >&2
-            exit 1
-          }
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          export OPENSHELL_BIN="$(command -v openshell)"
-          "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run \
-            --test-path test/e2e/live/managed-image-activation-e2e.test.ts
-
-      - name: Upload managed runtime activation evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: managed-image-activation-${{ github.run_id }}-${{ github.run_attempt }}
-          path: e2e-artifacts/live/managed-image-activation/
-          if-no-files-found: error
-          retention-days: 1
-
   build-and-validate:
     name: Build and validate ${{ matrix.display_name }} managed image (${{ matrix.arch }})
     if: github.event_name != 'pull_request'
@@ -1978,3 +2131,119 @@ jobs:
               exit 1
             fi
           done
+
+
+  main-managed-image-lifecycle:
+    name: Verify managed image lifecycle for all shipped agents
+    needs: promote
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      MAIN_SHA: ${{ github.sha }}
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-activation
+      E2E_JOB: "1"
+      E2E_TARGET_ID: managed-image-activation
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ github.workspace }}/managed-main-catalog.json
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - name: Check out the workflow commit from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Download published amd64 managed image contracts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: managed-image-${{ github.run_id }}-${{ github.run_attempt }}-*-linux-amd64
+          path: ${{ runner.temp }}/managed-main-contracts
+          merge-multiple: false
+
+      - name: Assemble managed image lifecycle catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' contracts < <(
+            find "$RUNNER_TEMP/managed-main-contracts" -type f -name contract.json -print0
+          )
+          [[ "${#contracts[@]}" -eq 3 ]] || {
+            echo "ERROR: managed image lifecycle verification requires three contracts" >&2
+            exit 1
+          }
+          release="v$(node -p 'require("./package.json").version')"
+          jq -se \
+            --arg release "$release" \
+            --arg revision "$MAIN_SHA" '
+              if (
+                length == 3 and
+                ([.[].contractVersion] | unique) == [2] and
+                ([.[].agent] | sort) == ["hermes", "langchain-deepagents-code", "openclaw"] and
+                ([.[].source.revision] | unique) == [$revision] and
+                ([.[].source.cohort] | unique | length) == 1 and
+                ([.[].platform] | unique) == ["linux/amd64"]
+              )
+              then map({
+                key: .agent,
+                value: {
+                  contractVersion: 1,
+                  agent,
+                  platform,
+                  image,
+                  digest,
+                  reference,
+                  source: {
+                    repository: .source.repository,
+                    revision: .source.revision,
+                    release: $release,
+                    cohort: .source.cohort
+                  },
+                  startupProfileContractVersion: 1,
+                  capabilityContractVersion: 1
+                }
+              }) | from_entries
+              else error("published main-branch contracts do not form one amd64 cohort for all shipped agents")
+              end
+            ' "${contracts[@]}" > "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG"
+
+      - name: Build the CLI from the workflow commit
+        run: |
+          npm ci --ignore-scripts
+          npm run build:cli
+
+      - name: Install OpenShell CLI
+        shell: bash
+        run: env -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
+      - name: Verify managed image lifecycle for all shipped agents
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse --verify HEAD)" == "$MAIN_SHA" ]] || {
+            echo "ERROR: managed image lifecycle checkout does not match the workflow commit" >&2
+            exit 1
+          }
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          export OPENSHELL_BIN="$(command -v openshell)"
+          "$OPENSHELL_BIN" --version
+          npx tsx tools/e2e/live-vitest-invocation.mts run \
+            --test-path test/e2e/live/managed-image-activation-e2e.test.ts
+
+      - name: Upload managed image lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-image-lifecycle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: e2e-artifacts/live/managed-image-activation/
+          if-no-files-found: error
+          retention-days: 1

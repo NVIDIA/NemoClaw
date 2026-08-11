@@ -1614,6 +1614,8 @@ export function validateOllamaModel(
 export function buildOllamaProbeOptions(allowToolsIncompatible: boolean): {
   skipResponsesProbe: true;
   requireChatCompletionsToolCalling: boolean;
+  retryChatCompletionsToolReadiness: boolean;
+
   allowHostDockerInternal: boolean;
   probeFromDocker: { expectedPort: number } | null;
 } {
@@ -1621,6 +1623,8 @@ export function buildOllamaProbeOptions(allowToolsIncompatible: boolean): {
   return {
     skipResponsesProbe: true,
     requireChatCompletionsToolCalling: !allowToolsIncompatible,
+    retryChatCompletionsToolReadiness: !allowToolsIncompatible,
+
     allowHostDockerInternal: windowsHostOllama,
     probeFromDocker: windowsHostOllama ? { expectedPort: OLLAMA_PORT } : null,
   };
