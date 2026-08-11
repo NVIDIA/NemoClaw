@@ -416,6 +416,109 @@ function provenResumeSandboxName(
     : null;
 }
 
+function reviewRecoveryState(session: Session | null, sandboxName: string | null) {
+  return (
+    session?.steps?.provider_selection?.status === "failed" &&
+    session.sandboxPromptProgress.sandboxName === true &&
+    session.sandboxName === sandboxName
+  );
+}
+
+function canResumeProviderSelection(
+  forceProviderSelection: boolean,
+  effectiveResume: boolean,
+  authoritativeResumeConfig: boolean,
+  session: Session | null,
+  interruptedReview: boolean,
+  provider: string | null,
+  model: string | null,
+): boolean {
+  return (
+    !forceProviderSelection &&
+    effectiveResume &&
+    (authoritativeResumeConfig ||
+      session?.steps?.provider_selection?.status === "complete" ||
+      interruptedReview) &&
+    typeof provider === "string" &&
+    typeof model === "string"
+  );
+}
+
+type ResumeReasoningDeps = Pick<
+  ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
+  | "clearCompatibleEndpointReasoning"
+  | "clearCompatibleEndpointReasoningEffort"
+  | "cliName"
+  | "configureCompatibleEndpointReasoning"
+  | "configureCompatibleEndpointReasoningEffort"
+  | "log"
+>;
+
+async function configureResumeReasoning(
+  provider: string,
+  reasoning: string | null,
+  effort: string | null,
+  env: NodeJS.ProcessEnv,
+  deps: ResumeReasoningDeps,
+): Promise<{ reasoning: string | null; effort: string | null }> {
+  if (provider !== "compatible-endpoint") {
+    return {
+      reasoning: deps.clearCompatibleEndpointReasoning(),
+      effort: deps.clearCompatibleEndpointReasoningEffort(),
+    };
+  }
+  const ignoredReasoning = describeIgnoredReasoningEnv(reasoning, deps.cliName());
+  if (ignoredReasoning) deps.log(ignoredReasoning);
+  const ignoredEffort = describeIgnoredReasoningEffortEnv(effort, deps.cliName(), env);
+  if (ignoredEffort) deps.log(ignoredEffort);
+  return {
+    reasoning: await deps.configureCompatibleEndpointReasoning(reasoning),
+    effort: await deps.configureCompatibleEndpointReasoningEffort(effort, env, false),
+  };
+}
+
+type LocalInferenceRepairDeps = Pick<
+  ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
+  "recordRepairEvent" | "repairLocalInferenceSystemdOverrideOrExit"
+>;
+
+async function repairResumedLocalInference(
+  provider: string,
+  model: string,
+  agent: unknown,
+  deps: LocalInferenceRepairDeps,
+): Promise<void> {
+  const options = {
+    provider,
+    model,
+    contextWindowFloor: getOllamaContextWindowFloorForAgent(agentName(agent)),
+    isNonInteractive: () => false,
+  };
+  if (provider !== "ollama-local") {
+    deps.repairLocalInferenceSystemdOverrideOrExit(options);
+    return;
+  }
+  const metadata = { repair: "ollama-systemd-loopback" };
+  await deps.recordRepairEvent("state.repair.started", {
+    state: "provider_selection",
+    metadata,
+  });
+  try {
+    deps.repairLocalInferenceSystemdOverrideOrExit(options);
+  } catch (error) {
+    await deps.recordRepairEvent("state.repair.failed", {
+      state: "provider_selection",
+      error: error instanceof Error ? error.message : String(error),
+      metadata,
+    });
+    throw error;
+  }
+  await deps.recordRepairEvent("state.repair.completed", {
+    state: "provider_selection",
+    metadata,
+  });
+}
+
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
   gatewayName,
   resume,
@@ -503,24 +606,26 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       recoveryReceiptLedger: providerRecoveryReceiptLedger,
       gatewayName,
     });
-    const completeRecoveredReviewSelectionAfterInference =
-      session?.steps?.provider_selection?.status === "failed" &&
-      session.sandboxPromptProgress.sandboxName === true &&
-      session.sandboxName === sandboxName;
+    const completeRecoveredReviewSelectionAfterInference = reviewRecoveryState(
+      session,
+      sandboxName,
+    );
     const reviewRecoveredInteractively =
       completeRecoveredReviewSelectionAfterInference && !deps.isNonInteractive();
-    const resumeProviderSelection =
-      !forceProviderSelection &&
-      effectiveResume &&
-      (authoritativeResumeConfig ||
-        session?.steps?.provider_selection?.status === "complete" ||
-        completeRecoveredReviewSelectionAfterInference) &&
-      typeof provider === "string" &&
-      typeof model === "string";
+    const resumeProviderSelection = canResumeProviderSelection(
+      forceProviderSelection,
+      effectiveResume,
+      authoritativeResumeConfig,
+      session,
+      completeRecoveredReviewSelectionAfterInference,
+      provider,
+      model,
+    );
     let shouldRecordProviderSelection = false;
     // A review interruption selected a provider but did not configure its
     // route. Do not let a coincidentally ready gateway route skip setup.
-    forceInferenceSetup ||= completeRecoveredReviewSelectionAfterInference || reviewRecoveredInteractively;
+    forceInferenceSetup ||=
+      completeRecoveredReviewSelectionAfterInference || reviewRecoveredInteractively;
     if (resumeProviderSelection) {
       assertOnboardReasoningEffortRoute(reasoningEffortRequest, provider, preferredInferenceApi);
       assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
@@ -605,61 +710,24 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         provider,
         model,
       });
-      if (provider === "compatible-endpoint") {
-        // Report before configuring: configureCompatibleEndpointReasoning
-        // overwrites process.env.NEMOCLAW_REASONING with the recorded value.
-        const ignoredReasoning = describeIgnoredReasoningEnv(
-          compatibleEndpointReasoning,
-          deps.cliName(),
-        );
-        if (ignoredReasoning) deps.log(ignoredReasoning);
-        const ignoredReasoningEffort = describeIgnoredReasoningEffortEnv(
-          compatibleEndpointReasoningEffort,
-          deps.cliName(),
-          env,
-        );
-        if (ignoredReasoningEffort) deps.log(ignoredReasoningEffort);
-        compatibleEndpointReasoning = await deps.configureCompatibleEndpointReasoning(
-          compatibleEndpointReasoning,
-        );
-        compatibleEndpointReasoningEffort = await deps.configureCompatibleEndpointReasoningEffort(
-          compatibleEndpointReasoningEffort,
-          env,
-          false,
-        );
-      } else {
-        compatibleEndpointReasoning = deps.clearCompatibleEndpointReasoning();
-        compatibleEndpointReasoningEffort = deps.clearCompatibleEndpointReasoningEffort();
-      }
-      const localInferenceRepairOptions = {
-        provider,
-        model,
-        contextWindowFloor: getOllamaContextWindowFloorForAgent(agentName(agent)),
-        isNonInteractive: deps.isNonInteractive,
-      };
-      if (provider === "ollama-local") {
-        const repairMetadata = { repair: "ollama-systemd-loopback" };
-        await deps.recordRepairEvent("state.repair.started", {
-          state: "provider_selection",
-          metadata: repairMetadata,
-        });
-        try {
-          deps.repairLocalInferenceSystemdOverrideOrExit(localInferenceRepairOptions);
-        } catch (err) {
-          await deps.recordRepairEvent("state.repair.failed", {
-            state: "provider_selection",
-            error: err instanceof Error ? err.message : String(err),
-            metadata: repairMetadata,
-          });
-          throw err;
-        }
-        await deps.recordRepairEvent("state.repair.completed", {
-          state: "provider_selection",
-          metadata: repairMetadata,
-        });
-      } else {
-        deps.repairLocalInferenceSystemdOverrideOrExit(localInferenceRepairOptions);
-      }
+      const resumedSelection = requireSelection(provider, model, deps);
+      const configuredReasoning = await configureResumeReasoning(
+        resumedSelection.provider,
+        compatibleEndpointReasoning,
+        compatibleEndpointReasoningEffort,
+        env,
+        deps,
+      );
+      compatibleEndpointReasoning = configuredReasoning.reasoning;
+      compatibleEndpointReasoningEffort = configuredReasoning.effort;
+      await repairResumedLocalInference(resumedSelection.provider, resumedSelection.model, agent, {
+        ...deps,
+        repairLocalInferenceSystemdOverrideOrExit: (options) =>
+          deps.repairLocalInferenceSystemdOverrideOrExit({
+            ...options,
+            isNonInteractive: deps.isNonInteractive,
+          }),
+      });
     } else {
       // An incomplete Station Express resume intentionally retries setupNim here. The outer
       // Station resume wrapper restores the exact provider/model as non-interactive env input,
