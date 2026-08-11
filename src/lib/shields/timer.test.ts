@@ -301,6 +301,11 @@ describe("shields timer authorization", () => {
   );
 
   it("binds rebuild-only legacy authorization to both argv and the root-owned marker", async () => {
+    const timerControl = await import("./timer-control");
+    const selfStartIdentity = "proc:self-start";
+    const identitySpy = vi
+      .spyOn(timerControl, "readProcessStartIdentity")
+      .mockReturnValue(selfStartIdentity);
     const timer = await import("./timer");
     const stateDir = path.join(tmpHome, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
@@ -316,6 +321,7 @@ describe("shields timer authorization", () => {
         snapshotPath,
         restoreAt: restoreAtIso,
         processToken: PROCESS_TOKEN,
+        timerProcessStartIdentity: selfStartIdentity,
         allowLegacyHermesProtocol: true,
         agentName: "openclaw",
         configPath: "/sandbox/.hermes/config.yaml",
@@ -380,6 +386,7 @@ describe("shields timer authorization", () => {
     expect(timer.markerMatchesCurrentTimer(ordinary!)).toBe(false);
     expect(timer.markerMatchesCurrentTimer(mismatchedAgent!)).toBe(false);
     expect(timer.markerMatchesCurrentTimer(mismatchedTarget!)).toBe(false);
+    expect(identitySpy).toHaveBeenCalledTimes(1);
     expect(
       timer.parseTimerArgs([sandboxName, snapshotPath, restoreAtIso, "", "", PROCESS_TOKEN, "yes"]),
     ).toBeNull();
