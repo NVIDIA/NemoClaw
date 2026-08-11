@@ -1284,7 +1284,7 @@ $$nemoclaw my-assistant config get --key model --format yaml
 Write one value into the agent configuration in a sandbox.
 The command validates every HTTP and HTTPS URL in the value, including URLs nested inside JSON objects or arrays.
 It pins an HTTP host to the validated IP address.
-Config changes are unavailable while shields are up, so lower shields with `$$nemoclaw <name> shields down` first.
+Configuration changes are unavailable while shields are up, so lower shields with `$$nemoclaw <name> shields down` first.
 
 ```bash
 $$nemoclaw my-assistant config set --key agents.defaults.model.primary --value nvidia/nemotron
@@ -1305,6 +1305,16 @@ Pass `--config-accept-new-path`, or set `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH=1`, to 
 If the confirmation reaches the end of input, for example when you press `Ctrl-D` or run the command from a harness that closes stdin, the command exits non-zero without writing and repeats the same guidance.
 
 The command refuses to write `gateway` or any dotpath under `gateway.`, which holds credentials.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+For Hermes, the command validates the complete candidate configuration with the bundled Hermes schema before it writes configuration or integrity metadata.
+An incomplete structural object is rejected without changing the configuration or hashes.
+Private URLs remain rejected unless the existing Hermes configuration explicitly sets `security.allow_private_urls: true`.
+That opt-in allows private URLs for any Hermes configuration value. Public hostnames still receive DNS validation and pinning.
+Hermes can restart its gateway when it applies a configuration change. Use `--restart` when the command must request and verify that restart.
+`config set` changes `config.yaml` only. Hermes startup and rebuild can update managed `.env` keys and their integrity hashes without printing their values.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
