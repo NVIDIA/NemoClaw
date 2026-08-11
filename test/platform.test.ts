@@ -223,12 +223,10 @@ describe("platform helpers", () => {
           platform: "linux",
           uid: 1000,
           existsSync: (candidate) => sockets.has(candidate),
-          probeDockerHost: (dockerHost) => {
-            if (dockerHost === `unix://${dockerSocket}`) {
-              return { reachable: true, identity: "docker" };
-            }
-            return { reachable: false, identity: "unknown" };
-          },
+          probeDockerHost: (dockerHost) =>
+            dockerHost === `unix://${dockerSocket}`
+              ? { reachable: true, identity: "docker" }
+              : { reachable: false, identity: "unknown" },
         }),
       ).toEqual({
         dockerHost: `unix://${dockerSocket}`,
@@ -269,12 +267,12 @@ describe("platform helpers", () => {
           platform: "linux",
           uid: 1000,
           existsSync: (candidate) => sockets.has(candidate),
-          probeDockerHost: (dockerHost) => {
-            if (!dockerHost) return { reachable: false, identity: "unknown" };
-            return dockerHost.includes("podman")
-              ? { reachable: true, identity: "podman" }
-              : { reachable: true, identity: "docker" };
-          },
+          probeDockerHost: (dockerHost) =>
+            dockerHost
+              ? dockerHost.includes("podman")
+                ? { reachable: true, identity: "podman" }
+                : { reachable: true, identity: "docker" }
+              : { reachable: false, identity: "unknown" },
         }),
       ).toBe(null);
     });
