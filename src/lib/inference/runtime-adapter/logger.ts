@@ -21,6 +21,18 @@ function errorMessage(error: unknown): string {
   return compactText(error instanceof Error ? error.message : String(error));
 }
 
+/** Invoke an optional diagnostic callback without exposing its failures. */
+function reportDiagnosticFailure(
+  callback: ((message: string) => void) | undefined,
+  message: string,
+): void {
+  try {
+    callback?.(message);
+  } catch {
+    // Diagnostics must never replace the adapter result or error path.
+  }
+}
+
 /** Build the shared best-effort JSONL logger used by host-side inference adapters. */
 export function createLocalAdapterLogger(options: {
   logPath: string;
@@ -38,7 +50,7 @@ export function createLocalAdapterLogger(options: {
       }
       appendLocalAdapterJsonLine(options.logPath, payload);
     } catch (error) {
-      options.onWriteError?.(errorMessage(error));
+      reportDiagnosticFailure(options.onWriteError, errorMessage(error));
     }
   };
 
@@ -50,7 +62,7 @@ export function createLocalAdapterLogger(options: {
         // diagnostics from affecting request handling.
         logger(event, fields);
       } catch (error) {
-        options.onLoggerError?.(errorMessage(error));
+        reportDiagnosticFailure(options.onLoggerError, errorMessage(error));
       }
     },
   };
