@@ -72,6 +72,9 @@ describe("provider inference review recovery", () => {
     expect(calls.promptName).toHaveBeenCalledWith(null);
     expect(calls.checkpointSandboxIdentity).toHaveBeenCalledWith("my-assistant", null);
     expect(promptYesNoOrDefault).toHaveBeenCalledWith("  Apply this configuration?", null, true);
+    expect(calls.checkpointSandboxIdentity.mock.invocationCallOrder[0]).toBeLessThan(
+      promptYesNoOrDefault.mock.invocationCallOrder[0],
+    );
     expect(calls.setupInference).toHaveBeenCalled();
     expect(calls.complete).toHaveBeenCalledWith(
       "provider_selection",
@@ -128,6 +131,9 @@ describe("provider inference review recovery", () => {
 
     expect(calls.promptName).not.toHaveBeenCalled();
     expect(calls.checkpointSandboxIdentity).toHaveBeenCalledWith("supplied-review", null);
+    expect(calls.checkpointSandboxIdentity.mock.invocationCallOrder[0]).toBeLessThan(
+      promptYesNoOrDefault.mock.invocationCallOrder[0],
+    );
     expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
       provider: "nvidia-prod",
       model: "nvidia/test",
