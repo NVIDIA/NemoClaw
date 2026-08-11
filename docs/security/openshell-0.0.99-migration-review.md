@@ -185,7 +185,7 @@ select them, including Launchable, Jetson, DGX Spark, retired-selector compatibi
 and scorecard jobs.
 
 The managed image lifecycle check for all shipped agents is not a required PR check.
-After promotion on `main`, the managed image workflow verifies the published `linux/amd64` image cohort for OpenClaw, Hermes, and LangChain Deep Agents Code.
+After the `promote` job succeeds on `main`, the managed image workflow verifies the published `linux/amd64` image cohort for OpenClaw, Hermes, and LangChain Deep Agents Code.
 Changes that can affect rootless Podman still require the latest PR commit's rootless Podman CPU lifecycle check with Docker disabled.
 
 The gate fails closed for missing, expired, duplicate, or malformed evidence. It also rejects a

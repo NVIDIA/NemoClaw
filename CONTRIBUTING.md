@@ -414,7 +414,7 @@ The repository is organized as follows.
 
 ## Language Policy
 
-All new source, test, and script files must use TypeScript.
+Use TypeScript instead of JavaScript for new source, test, and script files.
 Do not add `.js`, `.cjs`, `.mjs`, or `.jsx` files.
 Existing JavaScript files may be modified or deleted.
 
