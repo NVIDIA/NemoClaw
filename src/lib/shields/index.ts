@@ -815,20 +815,35 @@ def die(message):
     sys.stderr.write(message + "\n")
     raise SystemExit(1)
 
-def open_nofollow(path, want_dir):
+def open_flags(want_dir):
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     if want_dir:
         flags |= getattr(os, "O_DIRECTORY", 0)
     else:
         flags |= getattr(os, "O_NONBLOCK", 0)
+    return flags
+
+def open_nofollow(path, want_dir, dir_fd=None):
     try:
-        return os.open(path, flags)
+        if dir_fd is None:
+            return os.open(path, open_flags(want_dir))
+        return os.open(path, open_flags(want_dir), dir_fd=dir_fd)
     except OSError as exc:
+        label = path if dir_fd is None else "%s/%s" % (sys.argv[1].rstrip("/"), path)
         if exc.errno in (errno.ELOOP, getattr(errno, "ENOTDIR", errno.EINVAL)):
-            die("refusing symlink path: " + path)
+            die("refusing symlink path: " + label)
         if exc.errno == errno.ENOENT:
-            die("missing config path: " + path)
-        die("open failed for %s: %s" % (path, exc))
+            die("missing config path: " + label)
+        die("open failed for %s: %s" % (label, exc))
+
+def child_name(config_dir, path):
+    prefix = config_dir.rstrip("/") + "/"
+    if not path.startswith(prefix):
+        die("refusing config path outside config dir: " + path)
+    name = path[len(prefix):]
+    if not name or "/" in name or name in (".", ".."):
+        die("refusing nested or unsafe config path: " + path)
+    return name
 
 config_dir = sys.argv[1]
 files = sys.argv[2:]
@@ -837,16 +852,17 @@ try:
     mode = os.fstat(dir_fd).st_mode
     if not stat.S_ISDIR(mode):
         die("refusing non-directory config path: " + config_dir)
+    for path in files:
+        name = child_name(config_dir, path)
+        fd = open_nofollow(name, False, dir_fd=dir_fd)
+        try:
+            mode = os.fstat(fd).st_mode
+            if not stat.S_ISREG(mode):
+                die("refusing non-regular config path: " + path)
+        finally:
+            os.close(fd)
 finally:
     os.close(dir_fd)
-for path in files:
-    fd = open_nofollow(path, False)
-    try:
-        mode = os.fstat(fd).st_mode
-        if not stat.S_ISREG(mode):
-            die("refusing non-regular config path: " + path)
-    finally:
-        os.close(fd)
 `;
 
 function errorText(error: unknown): string {
@@ -4027,6 +4043,7 @@ function rollbackShieldsDown(
   initialState: LoadedShieldsState,
   allowLegacyHermesProtocol = false,
   cachedProtocol?: HermesShieldsProtocol,
+  configUnlocked = false,
 ): ShieldsDownRollbackResult {
   console.error("  Rolling back — restoring policy from snapshot...");
   let rollbackResult: ReturnType<typeof run> | null = null;
@@ -4080,13 +4097,13 @@ function rollbackShieldsDown(
       console.error(
         `  Warning: Rollback re-lock could not be re-confirmed. Check config manually. ${relock.error ?? ""}`.trimEnd(),
       );
-      // An unsafe config path (for example a symlink planted after shields up)
-      // fails unlock and then fails the same re-lock. Restrictive policy is
-      // already restored. Clearing the provisional DOWN record keeps status
-      // honest instead of reporting DOWN/permissive for an unlock that never
-      // completed (#8804 / #8198 status integrity).
+      // Unlock never completed, but an unsafe config path also blocks re-lock.
+      // Restrictive policy is already restored. Clearing the provisional DOWN
+      // record keeps status honest for an unlock that never happened (#8804).
+      // After a successful unlock, do not claim UP without a verified re-lock.
       if (
         initialMode === "locked" &&
+        !configUnlocked &&
         relock.error !== undefined &&
         isUnsafeShieldsConfigPathError(relock.error)
       ) {
@@ -4546,6 +4563,7 @@ function failRecoveredHermesShieldsDown(
     state,
     allowLegacyHermesProtocol,
     "provider-state-mutation-v2",
+    true,
   );
   if (completion.transition && rollback.timerAuthorityRevoked) {
     clearShieldsDownTransition(sandboxName, completion.transition.processToken);
@@ -5075,6 +5093,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   //     is a member of the sandbox group, can mutate runtime config.
   console.log(`  Unlocking ${target.agentName} config (${target.configPath})...`);
   let inferenceRouteConvergenceFailed = false;
+  let configUnlocked = false;
   try {
     if (transition && timerAuthority) {
       assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
@@ -5086,6 +5105,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       opts.allowLegacyHermesProtocol === true,
       protocol,
     );
+    configUnlocked = true;
     if (target.agentName === "hermes") {
       console.log("  Confirming Hermes inference route after policy transition...");
       const convergence = waitForHermesInferenceRouteConvergence(sandboxName, { run });
@@ -5108,6 +5128,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       state,
       opts.allowLegacyHermesProtocol === true,
       protocol,
+      configUnlocked,
     );
     if (transition && rollback.timerAuthorityRevoked) {
       clearShieldsDownTransition(sandboxName, transition.processToken);
@@ -5161,6 +5182,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
         state,
         opts.allowLegacyHermesProtocol === true,
         protocol,
+        true,
       );
       if (rollback.timerAuthorityRevoked) {
         clearShieldsDownTransition(sandboxName, transition.processToken);
