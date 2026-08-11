@@ -139,13 +139,16 @@ function hostLocalPublishedResumeSelection(
   service: "nim" | "vllm" = "vllm",
 ): HostLocalInferenceStartupSelection {
   const selected = hostLocalStartupSelection(input, service);
-  if (selected.request.service === "ollama") {
-    throw new Error("managed published-resume test selection unexpectedly resolved Ollama");
-  }
+  const managedRequest =
+    selected.request.service === "ollama"
+      ? (() => {
+          throw new Error("managed published-resume test selection unexpectedly resolved Ollama");
+        })()
+      : selected.request;
   return {
     ...selected,
     request: {
-      ...selected.request,
+      ...managedRequest,
       resumeReceipt: publishedManagedReceipt(
         service,
         input.model,

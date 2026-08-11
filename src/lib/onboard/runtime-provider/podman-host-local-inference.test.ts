@@ -232,9 +232,12 @@ describe("Podman host-local inference lifecycle", () => {
       redactSensitive: harness.redactSensitive,
     });
     const runtime = operation.managedRuntime!;
-    if (priorState !== "absent") {
-      harness.seedManaged(priorState, priorState === "running", operation.bindingSha256);
-    }
+    const seedPriorState = {
+      absent: () => undefined,
+      running: () => harness.seedManaged("running", true, operation.bindingSha256),
+      stopped: () => harness.seedManaged("stopped", false, operation.bindingSha256),
+    } as const;
+    seedPriorState[priorState]();
     harness.state.probeRemoveLeavesContainer = true;
     harness.events.length = 0;
 
@@ -749,16 +752,14 @@ describe("Podman host-local inference lifecycle", () => {
     const startIndex = harness.events.indexOf(`podman:start ${"a".repeat(64)}`);
     expect(evidenceIndex).toBeGreaterThanOrEqual(0);
     expect(startIndex).toBeGreaterThan(evidenceIndex);
-    if (phase !== "gpu") {
-      expect(
-        harness.events.some(
-          (event, index) =>
-            index > evidenceIndex &&
-            index < startIndex &&
-            event.includes(`podman:rm --force ${"c".repeat(64)}`),
-        ),
-      ).toBe(true);
-    }
+    expect(
+      harness.events.some(
+        (event, index) =>
+          index > evidenceIndex &&
+          index < startIndex &&
+          event.includes(`podman:rm --force ${"c".repeat(64)}`),
+      ),
+    ).toBe(phase !== "gpu");
   });
 
   it("re-proves a lost rollback-start acknowledgement before preserving the original failure", () => {

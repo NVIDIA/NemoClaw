@@ -46,6 +46,10 @@ function raise(error: Error): never {
   throw error;
 }
 
+function raiseOptional(error: Error | undefined): void {
+  return error === undefined ? undefined : raise(error);
+}
+
 function receipt(
   service: Exclude<HostLocalInferenceService, "llama-cpp">,
   priorState: "absent" | "running" | "stopped" | "host-process" = service === "ollama"
@@ -122,12 +126,9 @@ function prepared(
     }),
     commit: vi.fn(() => {
       events.push("runtime-commit");
-      if (options.commitValidationError) return raise(options.commitValidationError);
-      if (options.commitError) {
-        publicationState = "indeterminate";
-        return raise(options.commitError);
-      }
-      publicationState = "published";
+      raiseOptional(options.commitValidationError);
+      publicationState = options.commitError === undefined ? "published" : "indeterminate";
+      raiseOptional(options.commitError);
       return value;
     }),
     rollback: vi.fn(() => {
@@ -165,7 +166,7 @@ function runtime(
   const value = receipt(service, options.priorState);
   const start = () => {
     events.push("provider-ready-proof");
-    if (options.startupError) return raise(options.startupError);
+    raiseOptional(options.startupError);
     const startup = prepared(value, events, options);
     preparedStartups.push(startup);
     return startup;
@@ -179,14 +180,14 @@ function runtime(
     startManaged: vi.fn(start),
     recoverManaged: vi.fn(() => {
       events.push("provider-recovery-proof");
-      if (options.startupError) return raise(options.startupError);
+      raiseOptional(options.startupError);
       const startup = prepared(value, events, options);
       preparedStartups.push(startup);
       return startup;
     }),
     resumeManaged: vi.fn(() => {
       events.push("provider-published-resume-proof");
-      if (options.startupError) return raise(options.startupError);
+      raiseOptional(options.startupError);
       const startup = prepared(value, events, {
         ...options,
         rollbackPriorState: options.resumeStateAtEntry ?? "running",

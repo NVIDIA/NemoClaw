@@ -353,8 +353,11 @@ describe("provider-neutral host-local inference startup routing", () => {
 
   it("binds endpoint, immutable images, runtime name, and canonical CDI devices", () => {
     const base = receipt("vllm");
-    if (base.runtime.kind !== "container") throw new Error("test receipt must be managed");
-    const baseRuntime = base.runtime;
+    expect(base.runtime.kind).toBe("container");
+    const baseRuntime = base.runtime as Extract<
+      HostLocalInferenceReceipt["runtime"],
+      { readonly kind: "container" }
+    >;
     const request = managed("vllm");
     const cases: HostLocalInferenceReceipt[] = [
       { ...base, endpoint: { ...base.endpoint, host: "host.openshell.internal.evil" } },
@@ -452,7 +455,11 @@ describe("provider-neutral host-local inference startup routing", () => {
 
   it("binds Ollama endpoint, network, and immutable probe image authority", () => {
     const base = receipt("ollama");
-    if (base.runtime.kind !== "host") throw new Error("test receipt must be host-local");
+    expect(base.runtime.kind).toBe("host");
+    const baseRuntime = base.runtime as Extract<
+      HostLocalInferenceReceipt["runtime"],
+      { readonly kind: "host" }
+    >;
     const cases: HostLocalInferenceReceipt[] = [
       { ...base, endpoint: { ...base.endpoint, host: "HOST.openshell.internal" } },
       { ...base, endpoint: { ...base.endpoint, port: 11435 } },
@@ -462,7 +469,7 @@ describe("provider-neutral host-local inference startup routing", () => {
       {
         ...base,
         runtime: {
-          ...base.runtime,
+          ...baseRuntime,
           probeImageRef: `quay.io/curl/curl@sha256:${"9".repeat(64)}`,
         },
       },
