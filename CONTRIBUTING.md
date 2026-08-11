@@ -272,7 +272,7 @@ The test then reports `TypeError: Cannot read properties of undefined (reading '
 The error does not identify the missing utility or macOS.
 
 Install these command-line tools before you run the test suite on macOS.
-Put their directories first on `PATH`:
+Put the `bash`, `coreutils`, and `gawk` package directories first on `PATH`:
 
 ```bash
 brew install bash coreutils fd gawk ripgrep
