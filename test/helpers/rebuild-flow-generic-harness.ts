@@ -2,77 +2,62 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import { createRequire } from "node:module";
-import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, vi } from "vitest";
+import { vi } from "vitest";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import {
+  agentDefs,
+  agentRuntime,
+  buildContextFingerprint,
+  createHarnessTempDir,
   createRebuildFlowSession,
+  destroy,
+  dockerInspect,
+  gatewayDrift,
+  gatewayState,
+  gatewayTeardownAuthority,
+  hermesProviderAuth,
   installTerminalStepFailureMock,
-  originalSandboxName,
+  loadRebuildSandbox,
+  mcpBridge,
+  messaging,
+  messagingHostForwardLifecycle,
+  nim,
+  onboardCredentialEnv,
+  onboardSession,
+  openshellRuntime,
+  policies,
+  processRecovery,
+  purgeRebuildModule,
   type RebuildFlowHarness,
   type RebuildFlowOverrides,
-} from "./rebuild-flow-test-support";
+  rebuildCustomImagePreflight,
+  rebuildFlowHelpers,
+  rebuildOnboardDependencies,
+  rebuildPreparedImageContext,
+  rebuildRoutePreflight,
+  rebuildShields,
+  rebuildUsageNotice,
+  registry,
+  registryPersistence,
+  resolve,
+  sandboxList,
+  sandboxSession,
+  sandboxState,
+  sandboxVersion,
+  shields,
+  sourceSandboxGateway,
+} from "./rebuild-flow-harness";
 
-export { originalSandboxName, snapshotEnv } from "./rebuild-flow-test-support";
-
-const requireDist = createRequire(
-  new URL("../../src/lib/actions/sandbox/rebuild.ts", import.meta.url),
-);
-const rebuildModulePath = "./rebuild.js";
-requireDist(rebuildModulePath);
-delete require.cache[requireDist.resolve(rebuildModulePath)];
-const harnessTempDirs: string[] = [];
-
-// Cache stable dependency modules outside each test's timeout. The rebuild
-// entry itself is still reloaded after these modules receive fresh spies.
-const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
-const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
-const dockerInspect = requireDist("../../adapters/docker/inspect.js");
-const sandboxList = requireDist("../../openshell-sandbox-list.js");
-const resolve = requireDist("../../adapters/openshell/resolve.js");
-const gatewayTeardownAuthority = requireDist(
-  "../../onboard/gateway-teardown-authority.js",
-) as typeof import("../../src/lib/onboard/gateway-teardown-authority");
-const agentDefs = requireDist("../../agent/defs.js");
-const agentRuntime = requireDist("../../agent/runtime.js");
-const { rebuildOnboardDependencies } = requireDist("./rebuild-onboard-dependencies.js");
-const onboardCredentialEnv = requireDist("../../onboard/credential-env.js");
-const hermesProviderAuth = requireDist("../../hermes-provider-auth.js");
-const onboardSession = requireDist("../../state/onboard-session.js");
-const registry = requireDist("../../state/registry.js");
-const registryPersistence = requireDist("../../state/registry/persistence.js");
-const sandboxState = requireDist("../../state/sandbox.js");
-const sandboxSession = requireDist("../../state/sandbox-session.js");
-const sandboxVersion = requireDist("../../sandbox/version.js");
-const destroy = requireDist("./destroy.js");
-const gatewayState = requireDist("./gateway-state.js");
-const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
-const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
-const rebuildPreparedImageContext = requireDist("./rebuild-prepared-image-context.js");
-const rebuildRoutePreflight = requireDist("./rebuild-preflight-guards.js");
-const buildContextFingerprint = requireDist("../../adapters/fs/build-context-fingerprint.js");
-const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");
-const rebuildShields = requireDist("./rebuild-shields.js");
-const nim = requireDist("../../inference/nim.js");
-const policies = requireDist("../../policy/index.js");
-const processRecovery = requireDist("./process-recovery.js");
-const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
-const mcpBridge = requireDist("./mcp-bridge.js");
-const messaging = requireDist("../../messaging/index.js");
-const shields = requireDist("../../shields/index.js");
-
-function sourceSandboxGateway(argv: string[], verb: string): string | null {
-  const gatewayFlag = argv.indexOf("-g");
-  return argv[0] === "sandbox" && argv[1] === verb && argv.at(-1) === "alpha" && gatewayFlag > 0
-    ? (argv[gatewayFlag + 1] ?? null)
-    : null;
-}
+export {
+  installRebuildFlowTestHooks,
+  originalSandboxName,
+  snapshotEnv,
+} from "./rebuild-flow-harness";
 
 export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
-  delete require.cache[requireDist.resolve(rebuildModulePath)];
+  purgeRebuildModule();
 
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -82,8 +67,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
   let policyAdditionsPath: string | null = null;
   if (typeof overrides.agentPolicyAdditionsContent === "string") {
-    const policyDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-agent-policy-"));
-    harnessTempDirs.push(policyDir);
+    const policyDir = createHarnessTempDir("nemoclaw-rebuild-agent-policy-");
     policyAdditionsPath = path.join(policyDir, "policy-additions.yaml");
     fs.writeFileSync(policyAdditionsPath, overrides.agentPolicyAdditionsContent);
   }
@@ -141,8 +125,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const ensureTargetGatewaySpy = vi
     .spyOn(rebuildFlowHelpers, "ensureRebuildTargetGatewaySelected")
     .mockResolvedValue(true);
-  const preparedBuildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-flow-image-"));
-  harnessTempDirs.push(preparedBuildCtx);
+  const preparedBuildCtx = createHarnessTempDir("nemoclaw-rebuild-flow-image-");
   const preparedDockerfile = path.join(preparedBuildCtx, "Dockerfile");
   fs.writeFileSync(preparedDockerfile, "FROM scratch\n");
   const rebuildAgent =
@@ -667,7 +650,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   warnSpy.mockClear();
 
   return {
-    rebuildSandbox: requireDist(rebuildModulePath).rebuildSandbox,
+    rebuildSandbox: loadRebuildSandbox(),
     applyPresetSpy,
     backupSandboxStateSpy,
     checkAndRecoverSandboxProcessesSpy,
@@ -714,22 +697,4 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     finalizePreparedImageSpy,
     session,
   };
-}
-
-export function installRebuildFlowTestHooks(): void {
-  beforeEach(() => {
-    delete process.env.NEMOCLAW_SANDBOX_NAME;
-  });
-  afterEach(() => {
-    vi.restoreAllMocks();
-    delete require.cache[requireDist.resolve(rebuildModulePath)];
-    for (const dir of harnessTempDirs.splice(0)) {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-    if (originalSandboxName === undefined) {
-      delete process.env.NEMOCLAW_SANDBOX_NAME;
-    } else {
-      process.env.NEMOCLAW_SANDBOX_NAME = originalSandboxName;
-    }
-  });
 }
