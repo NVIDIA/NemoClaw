@@ -110,7 +110,7 @@ describe("codebase growth trusted assertion", () => {
     expect(result.stderr).toContain("scripts/new.js: new JavaScript files must use TypeScript");
   });
 
-  it("prints net onboard growth in the consolidated failure", () => {
+  it("prints net growth in the onboarding entry point in the consolidated failure", () => {
     const result = runEntrypoint([
       [
         {

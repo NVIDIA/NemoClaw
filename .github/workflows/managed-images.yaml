@@ -2136,7 +2136,7 @@ jobs:
   main-managed-image-lifecycle:
     name: Verify managed image lifecycle for all shipped agents
     needs: promote
-    if: github.event_name == 'workflow_call' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
@@ -2152,7 +2152,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       OPENSHELL_GATEWAY: nemoclaw
     steps:
-      - name: Checkout exact main commit
+      - name: Check out the workflow commit from main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
@@ -2212,11 +2212,11 @@ jobs:
                   capabilityContractVersion: 1
                 }
               }) | from_entries
-              else error("published main contracts do not form one all-agent amd64 cohort")
+              else error("published main-branch contracts do not form one amd64 cohort for all shipped agents")
               end
             ' "${contracts[@]}" > "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG"
 
-      - name: Build exact main CLI
+      - name: Build the CLI from the workflow commit
         run: |
           npm ci --ignore-scripts
           npm run build:cli
@@ -2230,7 +2230,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$(git rev-parse --verify HEAD)" == "$MAIN_SHA" ]] || {
-            echo "ERROR: managed image lifecycle checkout does not match main" >&2
+            echo "ERROR: managed image lifecycle checkout does not match the workflow commit" >&2
             exit 1
           }
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"

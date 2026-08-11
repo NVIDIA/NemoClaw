@@ -18,7 +18,7 @@ it("does not add JavaScript files", () => {
   expectNoViolations(evaluateCurrentJavaScriptContract());
 });
 
-it("does not increase the onboard entrypoint line count", () => {
+it("does not increase the onboarding entry point line count", () => {
   expectNoViolations(evaluateCurrentOnboardContract());
 });
 

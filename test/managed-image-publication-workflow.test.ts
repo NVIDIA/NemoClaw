@@ -171,7 +171,7 @@ function stagingQaDeepCodeBuilder(workflow: Workflow): Job {
 function managedMainLifecycle(workflow: Workflow): Job {
   return required(
     workflow.jobs?.["main-managed-image-lifecycle"],
-    "managed-image workflow is missing its main all-agent lifecycle verification",
+    "managed-image workflow is missing lifecycle verification for all shipped agents on the main branch",
   );
 }
 
@@ -719,7 +719,7 @@ describe("complete managed-image publication workflow", () => {
     expect(inlineNodeStdinValidator(contractSource)).toBe(inlineNodeStdinValidator(mainContract));
   });
 
-  it("verifies the managed image lifecycle for every shipped agent only on main (#7744)", () => {
+  it("runs managed image lifecycle verification for all shipped agents only on the main branch (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const lifecycle = managedMainLifecycle(workflow);
     const steps = lifecycle.steps ?? [];
@@ -729,9 +729,7 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(JSON.stringify(managedPrBuilder(workflow))).not.toContain("managed-pr-contract");
     expect(lifecycle.needs).toBe("promote");
-    expect(lifecycle.if).toBe(
-      "github.event_name == 'workflow_call' && github.ref == 'refs/heads/main'",
-    );
+    expect(lifecycle.if).toBe("github.ref == 'refs/heads/main'");
     expect(lifecycle.permissions).toEqual({ contents: "read" });
     expect(lifecycle.env?.MAIN_SHA).toBe("${{ github.sha }}");
     expect(lifecycle.env?.NEMOCLAW_MANAGED_ACTIVATION_CATALOG).toBe(
@@ -739,7 +737,9 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(JSON.stringify(lifecycle)).not.toContain("secrets.");
     expect(JSON.stringify(lifecycle)).not.toContain("github.token");
-    expect(step(lifecycle, "Checkout exact main commit").with?.ref).toBe("${{ github.sha }}");
+    expect(step(lifecycle, "Check out the workflow commit from main").with?.ref).toBe(
+      "${{ github.sha }}",
+    );
     expect(step(lifecycle, "Download published amd64 managed image contracts").with?.pattern).toBe(
       "managed-image-${{ github.run_id }}-${{ github.run_attempt }}-*-linux-amd64",
     );
@@ -747,7 +747,9 @@ describe("complete managed-image publication workflow", () => {
     expect(assemble).toContain("([.[].contractVersion] | unique) == [2]");
     expect(assemble).toContain("contractVersion: 1");
     expect(assemble).toContain('release="v$(node -p');
-    expect(step(lifecycle, "Build exact main CLI").run).toContain("npm run build:cli");
+    expect(step(lifecycle, "Build the CLI from the workflow commit").run).toContain(
+      "npm run build:cli",
+    );
     expect(step(lifecycle, "Install OpenShell CLI").run).toContain("scripts/install-openshell.sh");
     const run = step(lifecycle, "Verify managed image lifecycle for all shipped agents").run ?? "";
     expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$MAIN_SHA" ]]');
