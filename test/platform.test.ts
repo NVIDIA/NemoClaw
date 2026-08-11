@@ -294,7 +294,7 @@ describe("platform helpers", () => {
       ).toBe(null);
     });
 
-    it("probes the Docker CLI default before local socket fallbacks (#8816)", () => {
+    it("preserves a reachable Docker context before local socket fallbacks (#8816)", () => {
       const fixtureDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-authority-"));
       try {
         const docker = path.join(fixtureDir, "docker");
@@ -303,8 +303,11 @@ describe("platform helpers", () => {
           [
             "#!/bin/sh",
             'test "$1" = "version" || exit 2',
-            'test -z "${DOCKER_HOST:-}" || exit 3',
-            'test -z "${DOCKER_CONTEXT:-}" || exit 4',
+            'if test -z "${DOCKER_HOST:-}"; then',
+            '  test "${DOCKER_CONTEXT:-}" = "healthy-context" || exit 4',
+            "else",
+            '  test -z "${DOCKER_CONTEXT:-}" || exit 6',
+            "fi",
             'test -z "${NVIDIA_INFERENCE_API_KEY:-}" || exit 5',
             'printf \'%s\\n\' \'{"Server":{"Platform":{"Name":"Docker Engine - Community"}}}\'',
           ].join("\n"),
@@ -316,7 +319,7 @@ describe("platform helpers", () => {
             env: {
               HOME: fixtureDir,
               PATH: fixtureDir,
-              DOCKER_CONTEXT: "untrusted-context",
+              DOCKER_CONTEXT: "healthy-context",
               NVIDIA_INFERENCE_API_KEY: "test-secret-must-not-cross-probe-boundary",
             },
             platform: "linux",
