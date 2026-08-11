@@ -1304,19 +1304,17 @@ describe("starter prompt checkout line endings", () => {
         timeout: 10_000,
       },
     );
-    if (result.error || result.status !== 0) {
-      throw new Error(
-        [
-          `git check-attr did not run for ${relativePath}:`,
-          `status=${result.status}`,
-          `signal=${result.signal}`,
-          result.error?.message ?? "",
-          result.stderr ?? "",
-        ]
-          .join(" ")
-          .trim(),
-      );
-    }
+    const diagnostic = [
+      `git check-attr did not run for ${relativePath}:`,
+      `status=${result.status}`,
+      `signal=${result.signal}`,
+      result.error?.message ?? "",
+      result.stderr ?? "",
+    ]
+      .join(" ")
+      .trim();
+    expect(result.error, diagnostic).toBeUndefined();
+    expect(result.status, diagnostic).toBe(0);
     return result.stdout;
   }
 
