@@ -1,8 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { createPersistedLifecycleStoreOrThrow } from "../../../test/helpers/privileged-exec-test-helpers";
 
 // The shared source hook preserves the writable CommonJS cache used by these mocks.
 const require = createRequire(import.meta.url);
@@ -12,6 +16,11 @@ const dockerRunPath = require.resolve("../adapters/docker/run");
 const portableLifecyclePath = require.resolve("../onboard/experimental/portable-demo-lifecycle");
 const registryPath = require.resolve("../state/registry");
 const lifecycleGenerationPath = require.resolve("../state/registry/lifecycle-generation");
+const persistedLifecyclePath = require.resolve(
+  "../onboard/runtime-provider/persisted-engine-lifecycle",
+);
+const statePathsPath = require.resolve("../state/paths");
+const transitionLockPath = require.resolve("../shields/transition-lock");
 const { containerNameMatchesSandbox, selectDirectSandboxContainer } = require(helperPath);
 
 function restoreRequireCacheEntry(modulePath: string, priorEntry: unknown): void {
@@ -42,6 +51,12 @@ function withPrivilegedExecMocks<T>(
         registryGeneration?: string;
       },
     ) => { assertRuntimeAuthority: () => void; containerId: string; dockerHost: string } | null;
+    stateMutationGate?: {
+      readonly active: boolean;
+      readonly stateDir: string;
+      readonly storeError?: Error;
+    };
+    withShieldsTransitionLock?: <T>(sandboxName: string, operation: string, fn: () => T) => T;
   },
   run: (helper: typeof import("./privileged-exec")) => T,
 ): T {
@@ -50,6 +65,9 @@ function withPrivilegedExecMocks<T>(
   const priorPortableLifecycle = require.cache[portableLifecyclePath];
   const priorRegistry = require.cache[registryPath];
   const priorLifecycleGeneration = require.cache[lifecycleGenerationPath];
+  const priorPersistedLifecycle = require.cache[persistedLifecyclePath];
+  const priorStatePaths = require.cache[statePathsPath];
+  const priorTransitionLock = require.cache[transitionLockPath];
 
   delete require.cache[helperPath];
   requireCache[dockerRunPath] = {
@@ -85,6 +103,36 @@ function withPrivilegedExecMocks<T>(
         deps.compareAndSetLegacySandboxLifecycleGeneration ?? (() => false),
     },
   } as any;
+  requireCache[persistedLifecyclePath] = {
+    id: persistedLifecyclePath,
+    filename: persistedLifecyclePath,
+    loaded: true,
+    exports: {
+      PERSISTED_ENGINE_LIFECYCLE_DIRECTORY: "runtime-provider-lifecycle",
+      createFilePersistedEngineLifecycleStore: () =>
+        createPersistedLifecycleStoreOrThrow(deps.stateMutationGate),
+      hasActivePersistedEngineStateMutationTarget: () => deps.stateMutationGate?.active ?? false,
+    },
+  } as any;
+  requireCache[statePathsPath] = {
+    id: statePathsPath,
+    filename: statePathsPath,
+    loaded: true,
+    exports: {
+      resolveNemoclawStateDir: () => deps.stateMutationGate?.stateDir ?? "/nonexistent",
+    },
+  } as any;
+  requireCache[transitionLockPath] = {
+    id: transitionLockPath,
+    filename: transitionLockPath,
+    loaded: true,
+    exports: {
+      resolveShieldsStateDir: () => deps.stateMutationGate?.stateDir ?? "/nonexistent",
+      withShieldsTransitionLock:
+        deps.withShieldsTransitionLock ??
+        (<T>(_sandboxName: string, _operation: string, fn: () => T): T => fn()),
+    },
+  } as any;
 
   try {
     return run(require(helperPath));
@@ -94,6 +142,9 @@ function withPrivilegedExecMocks<T>(
     restoreRequireCacheEntry(portableLifecyclePath, priorPortableLifecycle);
     restoreRequireCacheEntry(registryPath, priorRegistry);
     restoreRequireCacheEntry(lifecycleGenerationPath, priorLifecycleGeneration);
+    restoreRequireCacheEntry(persistedLifecyclePath, priorPersistedLifecycle);
+    restoreRequireCacheEntry(statePathsPath, priorStatePaths);
+    restoreRequireCacheEntry(transitionLockPath, priorTransitionLock);
   }
 }
 
@@ -182,6 +233,109 @@ describe("privileged sandbox exec routing", () => {
         ]);
       },
     );
+  });
+
+  it("rejects every ordinary direct exec while a provider target claim is active", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-direct-exec-gate-"));
+    fs.mkdirSync(path.join(stateDir, "runtime-provider-lifecycle"));
+    let dockerPsCalls = 0;
+    try {
+      withPrivilegedExecMocks(
+        {
+          getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+          listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+          dockerCapture: () => {
+            dockerPsCalls += 1;
+            return "immutable-alpha-id\topenshell-alpha\n";
+          },
+          stateMutationGate: { active: true, stateDir },
+        },
+        ({ privilegedSandboxExecArgv }) => {
+          expect(() => privilegedSandboxExecArgv("alpha", ["sh", "-c", "write"])).toThrow(
+            /state mutation owns direct-container execution.*provider fence is released/i,
+          );
+        },
+      );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+    expect(dockerPsCalls).toBe(0);
+  });
+
+  it("fails closed when a present lifecycle ledger cannot be validated", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-direct-exec-invalid-gate-"));
+    fs.symlinkSync(
+      path.join(stateDir, "missing-ledger-target"),
+      path.join(stateDir, "runtime-provider-lifecycle"),
+    );
+    let dockerPsCalls = 0;
+    try {
+      withPrivilegedExecMocks(
+        {
+          getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+          listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+          dockerCapture: () => {
+            dockerPsCalls += 1;
+            return "immutable-alpha-id\topenshell-alpha\n";
+          },
+          stateMutationGate: {
+            active: false,
+            stateDir,
+            storeError: new Error("lifecycle ledger is present but invalid"),
+          },
+        },
+        ({ privilegedSandboxExecArgv }) => {
+          expect(() => privilegedSandboxExecArgv("alpha", ["id"])).toThrow(
+            /lifecycle ledger is present but invalid/u,
+          );
+        },
+      );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+    expect(dockerPsCalls).toBe(0);
+  });
+
+  it("holds the shared exclusion across target check and the complete exec callback", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-direct-exec-lease-"));
+    fs.mkdirSync(path.join(stateDir, "runtime-provider-lifecycle"));
+    const events: string[] = [];
+    let lockHeld = false;
+    try {
+      withPrivilegedExecMocks(
+        {
+          getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+          listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+          dockerCapture: () => "immutable-alpha-id\topenshell-alpha\n",
+          stateMutationGate: { active: false, stateDir },
+          withShieldsTransitionLock: (sandboxName, operation, fn) => {
+            events.push(`lock:${sandboxName}:${operation}`);
+            lockHeld = true;
+            try {
+              return fn();
+            } finally {
+              events.push("unlock");
+              lockHeld = false;
+            }
+          },
+        },
+        ({ withPrivilegedSandboxExecutionLease }) => {
+          const result = withPrivilegedSandboxExecutionLease("alpha", "test subprocess", () => {
+            expect(lockHeld).toBe(true);
+            events.push("spawn-and-wait");
+            return "complete";
+          });
+          expect(result).toBe("complete");
+        },
+      );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+    expect(events).toEqual([
+      "lock:alpha:privileged direct-container execution: test subprocess",
+      "spawn-and-wait",
+      "unlock",
+    ]);
   });
 
   it("uses the receipt-owned Podman socket when the default Docker daemon has no container (#8584)", () => {

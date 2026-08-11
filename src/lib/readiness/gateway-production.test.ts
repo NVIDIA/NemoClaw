@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { isDockerDriverGatewayProcessIdentity } from "../onboard/docker-driver-gateway-process-identity";
 import type { GatewayOwner } from "../onboard/gateway-ownership";
 import { resetTraceForTests, TRACE_FILE_ENV } from "../trace";
 
@@ -20,6 +21,7 @@ vi.mock("node:child_process", async (importOriginal) => ({
 
 afterEach(() => {
   resetTraceForTests();
+  subprocess.spawnSync.mockReset();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
@@ -31,13 +33,13 @@ import {
   classifyManagedGatewayVersionDrift,
   classifyManagedGatewayVersionSource,
   createProductionGatewayReadinessDependencies,
-  gatewayExecutableSamplesMatchTrustedBinary,
   gatewayProcessIdentityMatchesTrustedBinary,
+  gatewayProcessSamplesMatchTrustedBinary,
   parseDarwinLsofExecutable,
 } from "./gateway-production";
 
-function commandResult(stdout = "", status = 1) {
-  return { status, stdout, stderr: "", signal: null, pid: 1, output: [] };
+function commandResult(stdout = "", status = 1, stderr = "") {
+  return { status, stdout, stderr, signal: null, pid: 1, output: [] };
 }
 
 function managedOwner(gatewayPort: number): GatewayOwner {
@@ -151,6 +153,69 @@ describe("managed gateway port readiness (#7411)", () => {
     expect(subprocess.spawnSync).not.toHaveBeenCalled();
   });
 
+  it("accepts the owned gateway tag with trusted Linux executable and environment evidence (#8755)", () => {
+    const trusted = "/opt/openshell/bin/openshell-gateway";
+    const input = {
+      pid: 999_999,
+      gatewayBin: trusted,
+      captureProcessArgs: () => "openshell-gateway[nemoclaw=nemoclaw;port=8080]",
+      processIdentityMatchesGatewayBinary: (identity: string) =>
+        gatewayProcessIdentityMatchesTrustedBinary(
+          identity,
+          trusted,
+          "nemoclaw",
+          8080,
+          trusted,
+          "linux",
+        ),
+      requireDockerDriverEnv: true,
+      hasDockerDriverGatewayEnv: () => false,
+    };
+
+    expect(isDockerDriverGatewayProcessIdentity(input)).toBe(false);
+    expect(
+      isDockerDriverGatewayProcessIdentity({
+        ...input,
+        hasDockerDriverGatewayEnv: () => true,
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    [
+      "a foreign executable",
+      "openshell-gateway[nemoclaw=nemoclaw;port=8080]",
+      "/tmp/foreign-gateway",
+      "linux",
+    ],
+    [
+      "a different gateway target",
+      "openshell-gateway[nemoclaw=nemoclaw-8081;port=8081]",
+      "/opt/openshell/bin/openshell-gateway",
+      "linux",
+    ],
+    ["no executable evidence", "openshell-gateway[nemoclaw=nemoclaw;port=8080]", null, "linux"],
+    [
+      "a macOS direct listener",
+      "openshell-gateway[nemoclaw=nemoclaw;port=8080]",
+      "/opt/openshell/bin/openshell-gateway",
+      "darwin",
+    ],
+  ] as const)("rejects the owned gateway tag with %s (#8755)", (_case, identity, executable, platform) => {
+    const trusted = "/opt/openshell/bin/openshell-gateway";
+
+    expect(
+      gatewayProcessIdentityMatchesTrustedBinary(
+        identity,
+        trusted,
+        "nemoclaw",
+        8080,
+        executable,
+        platform,
+      ),
+    ).toBe(false);
+  });
+
   it("rejects trusted-looking argv on macOS without package-service identity", () => {
     const trusted = "/opt/homebrew/opt/openshell/bin/openshell-gateway";
     const spoofedArgv = `${trusted} --name nemoclaw-readiness-test --port 8080`;
@@ -167,16 +232,24 @@ describe("managed gateway port readiness (#7411)", () => {
     ).toBe(false);
   });
 
-  it("rejects an executable change while a listener PID remains stable", () => {
+  it("rejects a listener when Linux process samples change (#8755)", () => {
     const trusted = "/opt/openshell/bin/openshell-gateway";
 
-    expect(gatewayExecutableSamplesMatchTrustedBinary(trusted, trusted, trusted)).toBe(true);
+    expect(gatewayProcessSamplesMatchTrustedBinary("41", "41", trusted, trusted, trusted)).toBe(
+      true,
+    );
     expect(
-      gatewayExecutableSamplesMatchTrustedBinary(trusted, "/tmp/foreign-gateway", trusted),
+      gatewayProcessSamplesMatchTrustedBinary("41", "41", trusted, "/tmp/foreign-gateway", trusted),
     ).toBe(false);
     expect(
-      gatewayExecutableSamplesMatchTrustedBinary("/tmp/foreign-gateway", trusted, trusted),
+      gatewayProcessSamplesMatchTrustedBinary("41", "41", "/tmp/foreign-gateway", trusted, trusted),
     ).toBe(false);
+    expect(gatewayProcessSamplesMatchTrustedBinary("41", "42", trusted, trusted, trusted)).toBe(
+      false,
+    );
+    expect(gatewayProcessSamplesMatchTrustedBinary(null, null, trusted, trusted, trusted)).toBe(
+      false,
+    );
   });
 
   it("uses the main macOS executable vnode before dyld or later mappings", () => {
@@ -218,14 +291,27 @@ describe("managed gateway port readiness (#7411)", () => {
   });
 
   it.each([
-    ["https://127.0.0.1:8080", 8080, "match"],
-    ["http://localhost:8080", 8080, "match"],
-    ["https://127.0.0.1:9090", 8080, "mismatch"],
-    ["https://gateway.example:8080", 8080, "mismatch"],
-  ] as const)("binds managed endpoint %s to port %s as %s", (endpoint, port, expected) => {
-    expect(classifyManagedGatewayEndpointBinding([`Gateway endpoint: ${endpoint}`], port)).toBe(
-      expected,
-    );
+    ["Gateway endpoint: https://127.0.0.1:8080", 8080, "match"],
+    ["Gateway endpoint: http://localhost:8080", 8080, "match"],
+    ["Server: https://127.0.0.1:8080", 8080, "match"],
+    ["Server: https://127.0.0.1:9090", 8080, "mismatch"],
+    ["Server: https://gateway.example:8080", 8080, "mismatch"],
+    ["Server: ftp://127.0.0.1:8080", 8080, "mismatch"],
+    ["Server: not-a-url", 8080, "mismatch"],
+    ["Gateway endpoint:", 8080, "mismatch"],
+    ["Server: https://127.0.0.1:8080 trailing-data", 8080, "mismatch"],
+    ["DNS Server: https://127.0.0.1:8080", 8080, "unknown"],
+  ] as const)("classifies managed endpoint output %s for port %s as %s", (output, port, expected) => {
+    expect(classifyManagedGatewayEndpointBinding([output], port)).toBe(expected);
+  });
+
+  it("rejects conflicting managed endpoint output across OpenShell probes", () => {
+    expect(
+      classifyManagedGatewayEndpointBinding(
+        ["Gateway endpoint: https://127.0.0.1:8080", "Server: https://127.0.0.1:9090"],
+        8080,
+      ),
+    ).toBe("mismatch");
   });
 
   it("rejects healthy managed metadata bound to another endpoint", () => {
@@ -237,6 +323,17 @@ describe("managed gateway port readiness (#7411)", () => {
     expect(classifyManagedGatewayPortConflict(false, listener, "healthy", false, "unknown")).toBe(
       "unknown",
     );
+    expect(
+      classifyManagedGatewayPortConflict(false, listener, "healthy", false, "mismatch", true),
+    ).toBe("owner-mismatch");
+  });
+
+  it("accepts a target-bound listener when managed endpoint text is unavailable (#8755)", () => {
+    const listener = { pids: [41], unverifiedPids: [], complete: true };
+
+    expect(
+      classifyManagedGatewayPortConflict(false, listener, "healthy", false, "unknown", true),
+    ).toBe("none");
   });
 
   it("accepts one legacy Docker proxy only when the exact cluster endpoint owns the port", () => {
@@ -280,6 +377,68 @@ describe("managed gateway port readiness (#7411)", () => {
   ] as const)("maps portAvailable=%s, reuse=%s, version=%s to %s", (portAvailable, reuseState, compatibility, expected) => {
     expect(classifyManagedGatewayVersionDrift(portAvailable, reuseState, compatibility)).toBe(
       expected,
+    );
+  });
+
+  it("preserves scoped stale gateway state from OpenShell connection errors", async () => {
+    const statusConnectionRefused = [
+      "Error:   × client error (Connect)",
+      "  ├─▶ tcp connect error",
+      "  ╰─▶ Connection refused (os error 111)",
+    ].join("\n");
+    const infoConnectionRefused = [
+      "Error:   × transport error",
+      "  ╰─▶ Connection refused (os error 111)",
+    ].join("\n");
+    const resultByInvocation = new Map([
+      [
+        ["sh", "-c", 'command -v "$1"', "--", "openshell"].join("\0"),
+        commandResult("/usr/local/bin/openshell\n", 0),
+      ],
+      [
+        ["/usr/local/bin/openshell", "status", "-g", "nemoclaw-readiness-test"].join("\0"),
+        commandResult("", 1, statusConnectionRefused),
+      ],
+      [
+        ["/usr/local/bin/openshell", "gateway", "info", "-g", "nemoclaw-readiness-test"].join("\0"),
+        commandResult("", 1, infoConnectionRefused),
+      ],
+      [
+        ["/usr/local/bin/openshell", "gateway", "info"].join("\0"),
+        commandResult("", 1, infoConnectionRefused),
+      ],
+    ]);
+    subprocess.spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+      return resultByInvocation.get([command, ...args].join("\0")) ?? commandResult();
+    });
+
+    const gatewayPort = 0;
+    const deps = createProductionGatewayReadinessDependencies({
+      gatewayName: () => "nemoclaw-readiness-test",
+      gatewayPort: () => gatewayPort,
+    });
+
+    await expect(deps.observeManagedGateway(managedOwner(gatewayPort))).resolves.toMatchObject({
+      reuseState: "stale",
+      driftState: "not-detected",
+      portConflictState: "none",
+    });
+    expect(subprocess.spawnSync).toHaveBeenCalledWith(
+      "/usr/local/bin/openshell",
+      ["status", "-g", "nemoclaw-readiness-test"],
+      expect.objectContaining({
+        env: expect.objectContaining({ OPENSHELL_GATEWAY: "nemoclaw-readiness-test" }),
+      }),
+    );
+    expect(subprocess.spawnSync).toHaveBeenCalledWith(
+      "/usr/local/bin/openshell",
+      ["gateway", "info", "-g", "nemoclaw-readiness-test"],
+      expect.any(Object),
+    );
+    expect(subprocess.spawnSync).toHaveBeenCalledWith(
+      "/usr/local/bin/openshell",
+      ["gateway", "info"],
+      expect.any(Object),
     );
   });
 

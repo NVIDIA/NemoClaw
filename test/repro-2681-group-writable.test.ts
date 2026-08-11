@@ -163,6 +163,7 @@ function withMockedDockerExecFileSync<T>(
   options: {
     hermesLockedTransaction?: boolean;
     installedStateLockPlan?: AgentStateLockPlan;
+    registryAgent?: "hermes" | "openclaw";
     symlinkedPaths?: ReadonlySet<string>;
   } = {},
 ): T {
@@ -173,6 +174,13 @@ function withMockedDockerExecFileSync<T>(
   };
   const originalDockerExecFileSync = dockerExecModule.dockerExecFileSync;
   const originalDockerSpawnSync = dockerExecModule.dockerSpawnSync;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const registryModule =
+    require("../src/lib/state/registry.js") as typeof import("../src/lib/state/registry");
+  const getSandboxSpy = vi.spyOn(registryModule, "getSandbox").mockReturnValue({
+    agent: options.registryAgent ?? "openclaw",
+    name: "sandbox-pod",
+  } as never);
   const shieldsModulePath = require.resolve("../src/lib/shields/index.js");
   const privilegedExecPath = require.resolve("../src/lib/sandbox/privileged-exec.js");
   const transitionLockPath = require.resolve("../src/lib/shields/transition-lock.js");
@@ -189,6 +197,11 @@ function withMockedDockerExecFileSync<T>(
     loaded: true,
     exports: {
       privilegedSandboxExecArgv: (_sandboxName: string, cmd: readonly string[]) => [...cmd],
+      withPrivilegedSandboxExecutionLease: <T>(
+        _sandboxName: string,
+        _operation: string,
+        fn: () => T,
+      ): T => fn(),
     },
   } as any;
   require.cache[transitionLockPath] = {
@@ -369,6 +382,7 @@ function withMockedDockerExecFileSync<T>(
   } finally {
     dockerExecModule.dockerExecFileSync = originalDockerExecFileSync;
     dockerExecModule.dockerSpawnSync = originalDockerSpawnSync;
+    getSandboxSpy.mockRestore();
     delete require.cache[shieldsModulePath];
     restoreCachedModule(privilegedExecPath, priorPrivilegedExec);
     restoreCachedModule(transitionLockPath, priorTransitionLock);
@@ -643,7 +657,7 @@ describe("mutable agent config permissions", () => {
           stateLockPlanInImage: true,
         });
       },
-      { installedStateLockPlan: HERMES_STATE_LOCK_PLAN },
+      { installedStateLockPlan: HERMES_STATE_LOCK_PLAN, registryAgent: "hermes" },
     );
 
     const hermesActions = commands
@@ -704,6 +718,7 @@ describe("mutable agent config permissions", () => {
       {
         hermesLockedTransaction: true,
         installedStateLockPlan: HERMES_STATE_LOCK_PLAN,
+        registryAgent: "hermes",
       },
     );
 
@@ -830,6 +845,9 @@ Module._load = function patchedLoad(request, parent, isMain) {
     return {
       privilegedSandboxExecArgv(_sandboxName, cmd) {
         return [...cmd];
+      },
+      withPrivilegedSandboxExecutionLease(_sandboxName, _operation, fn) {
+        return fn();
       },
     };
   }

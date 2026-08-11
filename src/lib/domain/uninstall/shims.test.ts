@@ -40,6 +40,22 @@ describe("uninstall shim classification", () => {
     });
   });
 
+  it("recognizes installer-managed wrappers with an idempotent Node PATH", () => {
+    const contents = [
+      "#!/usr/bin/env bash",
+      '[[ "$(command -v node 2>/dev/null)" == "/tmp/node-bin/node" ]] || export PATH="/tmp/node-bin:$PATH"',
+      'exec "/tmp/prefix/bin/nemoclaw" "$@"',
+    ].join("\n");
+
+    expect(isInstallerManagedWrapperContents(contents)).toBe(true);
+    expect(
+      classifyNemoclawShim({ contents, exists: true, isFile: true, isSymlink: false }),
+    ).toMatchObject({
+      kind: "managed-wrapper",
+      remove: true,
+    });
+  });
+
   it("recognizes agent-alias wrapper shims by bin name (#6098)", () => {
     const hermesWrapper = [
       "#!/usr/bin/env bash",
@@ -100,6 +116,16 @@ describe("uninstall shim classification", () => {
         isSymlink: false,
       }),
     ).toMatchObject({ kind: "preserve-foreign-file", remove: false });
+
+    expect(
+      isInstallerManagedWrapperContents(
+        [
+          "#!/usr/bin/env bash",
+          '[[ "$(command -v node 2>/dev/null)" == "/tmp/other-node-bin/node" ]] || export PATH="/tmp/node-bin:$PATH"',
+          'exec "/tmp/prefix/bin/nemoclaw" "$@"',
+        ].join("\n"),
+      ),
+    ).toBe(false);
   });
 
   it("treats missing and non-regular paths as no-remove cases", () => {
