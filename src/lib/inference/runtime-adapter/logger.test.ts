@@ -40,21 +40,27 @@ describe("local adapter logger", () => {
       expect(() => failing.defaultLogger("adapter_ready")).not.toThrow();
       expect(onWriteError).toHaveBeenCalledOnce();
 
+      const onWriteCallbackFailure = vi.fn(() => {
+        throw new Error("write callback failed");
+      });
+      const onLoggerCallbackFailure = vi.fn(() => {
+        throw new Error("logger callback failed");
+      });
+      const injectedLoggerFailure = vi.fn(() => {
+        throw new Error("injected logger failed");
+      });
       const callbackFailures = createLocalAdapterLogger({
         logPath: path.join(logPath, "callback-child"),
-        onWriteError: () => {
-          throw new Error("write callback failed");
-        },
-        onLoggerError: () => {
-          throw new Error("logger callback failed");
-        },
+        onWriteError: onWriteCallbackFailure,
+        onLoggerError: onLoggerCallbackFailure,
       });
       expect(() => callbackFailures.defaultLogger("adapter_ready")).not.toThrow();
+      expect(onWriteCallbackFailure).toHaveBeenCalledOnce();
       expect(() =>
-        callbackFailures.logEvent(() => {
-          throw new Error("injected logger failed");
-        }, "request_failed"),
+        callbackFailures.logEvent(injectedLoggerFailure, "request_failed"),
       ).not.toThrow();
+      expect(injectedLoggerFailure).toHaveBeenCalledOnce();
+      expect(onLoggerCallbackFailure).toHaveBeenCalledOnce();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
