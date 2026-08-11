@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AGENTS_DIR,
   getAgentChoices,
+  listAgents,
   loadAgent,
   requireAgentPolicyAdditionsPath,
   resolveAgentName,
@@ -36,6 +37,27 @@ afterEach(() => {
 });
 
 describe("agent definitions", () => {
+  it("cannot discover or load a local NemoCUA manifest while the feature is disabled (#7755)", () => {
+    const realExistsSync = fs.existsSync.bind(fs);
+    vi.spyOn(fs, "existsSync").mockImplementation((candidate) =>
+      candidate === path.join(AGENTS_DIR, "nemocua", "manifest.yaml")
+        ? true
+        : realExistsSync(candidate),
+    );
+    vi.spyOn(fs, "readdirSync").mockReturnValue([
+      { name: "nemocua", isDirectory: () => true } as fs.Dirent,
+    ] as never);
+    const disabledEnv = {
+      NEMOCLAW_CUA_RUNTIME_MANIFEST: "/private/untrusted/runtime-manifest.json",
+      NEMOCLAW_CUA_RUNTIME_MANIFEST_SHA256: "a".repeat(64),
+    };
+
+    expect(listAgents(disabledEnv)).not.toContain("nemocua");
+    expect(() => loadAgent("nemocua", disabledEnv)).toThrow(
+      "use the controlled Brev Launchable activation",
+    );
+  });
+
   it("orders OpenClaw first in interactive choices", () => {
     const choices = getAgentChoices();
     expect(choices[0]?.name).toBe("openclaw");

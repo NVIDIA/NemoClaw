@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
@@ -36,6 +37,7 @@ export async function assertTrustedPrivateMcpRebindingDenied(
   cleanup: CleanupRegistry,
   options: {
     adapter: McpDnsRebindingAdapter;
+    artifacts: Pick<ArtifactSink, "writeJson">;
     artifactPrefix: string;
     assertSecretAbsent: (
       sandbox: SandboxClient,
@@ -164,6 +166,7 @@ export async function assertTrustedPrivateMcpRebindingDenied(
     `${options.artifactPrefix}-dns-rebinding-secret-absent-from-sandbox`,
   );
   await assertAuthenticatedMcpToolDiscovery(host, rebindMcp, {
+    artifacts: options.artifacts,
     sandboxName: options.sandboxName,
     artifactPrefix: `${options.artifactPrefix}-trusted-private`,
     credentialKey: REBIND_CREDENTIAL_KEY,

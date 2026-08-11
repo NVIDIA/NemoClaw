@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { StdioOptions } from "node:child_process";
+import path from "node:path";
 
 import { ROOT } from "../../runner";
 import {
@@ -11,12 +12,14 @@ import {
   getInstalledOpenshellVersion,
   runOpenshellCommand,
 } from "./client";
-import { resolveOpenshell } from "./resolve";
+import { resolveOpenshellBinaryOrNull } from "./resolve-shared";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
 type CommandArgs = string[];
 
 type RunnerOptions = {
+  /** Exact canonical executable selected by a CUA authority snapshot. */
+  openshellBinary?: string;
   env?: NodeJS.ProcessEnv;
   replaceEnv?: boolean;
   stdio?: StdioOptions;
@@ -33,7 +36,7 @@ let openshellBin: string | null = null;
 /** Resolve and cache the OpenShell binary path, exiting if it is not installed. */
 export function getOpenshellBinary(): string {
   if (!openshellBin) {
-    openshellBin = resolveOpenshell();
+    openshellBin = resolveOpenshellBinaryOrNull();
   }
   if (!openshellBin) {
     console.error("openshell CLI not found. Install OpenShell before using sandbox commands.");
@@ -64,6 +67,25 @@ export function runOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
  */
 export function captureOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
   return captureOpenshellCommand(getOpenshellBinary(), args, {
+    cwd: ROOT,
+    env: opts.env,
+    replaceEnv: opts.replaceEnv,
+    ignoreError: opts.ignoreError,
+    includeStderr: opts.includeStderr,
+    includeStreams: opts.includeStreams,
+    timeout: opts.timeout,
+    maxBuffer: opts.maxBuffer,
+    errorLine: console.error,
+    exit: (code: number) => process.exit(code),
+  });
+}
+
+/** Capture an OpenShell command while treating an unavailable binary as a recoverable error. */
+export function captureResolvedOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
+  const openshell = opts.openshellBinary ?? resolveOpenshellBinaryOrNull();
+  if (!openshell) throw new Error("OpenShell is unavailable");
+  if (!path.isAbsolute(openshell)) throw new Error("OpenShell executable must be absolute");
+  return captureOpenshellCommand(openshell, args, {
     cwd: ROOT,
     env: opts.env,
     replaceEnv: opts.replaceEnv,
