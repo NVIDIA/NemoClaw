@@ -161,7 +161,10 @@ export interface DirectSandboxGpuVerifierDeps extends WslDockerDesktopDetectionD
     args: string[],
     opts?: Record<string, unknown>,
   ): { status?: number | null; stdout?: unknown; stderr?: unknown };
-  buildDirectSandboxGpuProofCommands?: (sandboxName: string) => Array<{
+  buildDirectSandboxGpuProofCommands?: (
+    sandboxName: string,
+    options?: { includeCudaDriverDiagnostics?: boolean },
+  ) => Array<{
     id?: string;
     args: string[];
     label: string;
@@ -236,7 +239,9 @@ export function createDirectSandboxGpuVerifier(
     // could not run at all). Records the proof that determines "failed" status.
     let cudaFailure: { label: string; detail: string } | null = null;
     let explicitNvidiaSmiFailure: { label: string; detail: string } | null = null;
-    for (const proof of buildProofCommands(sandboxName)) {
+    for (const proof of buildProofCommands(sandboxName, {
+      includeCudaDriverDiagnostics: resolvedPlatform === "jetson",
+    })) {
       const result = deps.runOpenshell(proof.args, {
         ignoreError: true,
         suppressOutput: true,
@@ -257,6 +262,9 @@ export function createDirectSandboxGpuVerifier(
       const diagnostic = deps.compactText(rawOutput).slice(0, 300);
       if (result.status === 0) {
         console.log(`  ✓ GPU proof passed: ${proof.label}`);
+        if (proof.id === CUDA_USABILITY_PROOF_ID && resolvedPlatform === "jetson" && diagnostic) {
+          console.log(`    ${diagnostic}`);
+        }
         if (proof.id === CUDA_USABILITY_PROOF_ID && cudaInitRan) {
           // Require the cuInit(0)=0 marker on success too, symmetric with the
           // failure path: a zero exit without driver initialization, or a

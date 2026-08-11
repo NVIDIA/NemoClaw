@@ -168,7 +168,17 @@ describe("direct sandbox GPU proof", () => {
     const verifier = createDirectSandboxGpuVerifier({
       runOpenshell: vi.fn((args: string[]) => {
         if (args.includes("cuda-init-cmd")) {
-          return { status: 1, stdout: "cuInit(0)=999", stderr: "" };
+          return {
+            status: 1,
+            stdout: [
+              "cuInit(0)=999",
+              "cuDriverGetVersion()=3 version=0",
+              "cuDeviceGetCount()=3 count=0",
+              "cuDeviceGet(0)=3 device=0",
+              "cuDeviceGetName(0)=skipped name=unavailable",
+            ].join("\n"),
+            stderr: "",
+          };
         }
         return { status: 0, stdout: "", stderr: "" };
       }),
@@ -196,6 +206,9 @@ describe("direct sandbox GPU proof", () => {
       expect(result.status).toBe("failed");
       expect(result.cudaVerified).toBe(false);
       expect(result.detail).toContain("cuInit(0)=999");
+      expect(result.detail).toContain("cuDriverGetVersion()=3 version=0");
+      expect(result.detail).toContain("cuDeviceGetCount()=3 count=0");
+      expect(result.detail).toContain("cuDeviceGetName(0)=skipped name=unavailable");
       const warnings = warnSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(warnings).toContain("/dev/nvmap");
     } finally {
@@ -222,6 +235,48 @@ describe("direct sandbox GPU proof", () => {
     const result = verifier("demo");
     expect(result.status).toBe("verified");
     expect(result.cudaVerified).toBe(true);
+  });
+
+  it("reports Driver API diagnostics without changing the cuInit verification gate (#7610)", () => {
+    const diagnostic = [
+      "cuInit(0)=0",
+      "cuDriverGetVersion()=0 version=12080",
+      "cuDeviceGetCount()=801 count=0",
+      "cuDeviceGet(0)=801 device=0",
+      "cuDeviceGetName(0)=skipped name=unavailable",
+    ].join("\n");
+    const buildProofCommands = vi.fn(() => [
+      {
+        id: "cuda-init",
+        args: ["sandbox", "exec", "demo", "--", "cuda"],
+        label: "cuInit(0)",
+        optional: true,
+      },
+    ]);
+    const verifier = createDirectSandboxGpuVerifier({
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: diagnostic, stderr: "" })),
+      detectNvidiaPlatform: () => "jetson",
+      buildDirectSandboxGpuProofCommands: buildProofCommands,
+      compactText: (value) => value.trim().replace(/\s+/gu, " "),
+      redact: (value) => String(value),
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      const result = verifier("demo");
+      const output = logSpy.mock.calls.flat().join("\n");
+
+      expect(result.status).toBe("verified");
+      expect(result.cudaVerified).toBe(true);
+      expect(buildProofCommands).toHaveBeenCalledWith("demo", {
+        includeCudaDriverDiagnostics: true,
+      });
+      expect(output).toContain("cuDriverGetVersion()=0 version=12080");
+      expect(output).toContain("cuDeviceGetCount()=801 count=0");
+      expect(output).toContain("cuDeviceGetName(0)=skipped name=unavailable");
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 
   it("does not report verified when cuda-init exits 0 without the cuInit marker", () => {
