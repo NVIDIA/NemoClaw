@@ -1310,7 +1310,9 @@ prefer_user_local_openshell() {
   local openshell_bin="${local_bin}/openshell"
   if [[ -x "$openshell_bin" ]]; then
     export NEMOCLAW_OPENSHELL_BIN="$openshell_bin"
-    export PATH="$local_bin:$PATH"
+    if [[ ":$PATH:" != *":$local_bin:"* ]]; then
+      export PATH="$local_bin:$PATH"
+    fi
   fi
 }
 
@@ -1640,7 +1642,7 @@ ensure_cli_shim() {
   expected_shim="$(
     cat <<EOF
 #!/usr/bin/env bash
-export PATH="$node_dir:\$PATH"
+[[ "\$(command -v node 2>/dev/null)" == "$node_path" ]] || export PATH="$node_dir:\$PATH"
 exec "$cli_path" "\$@"
 EOF
   )"
@@ -1885,7 +1887,9 @@ fix_npm_permissions() {
     fi
   done
 
-  export PATH="$HOME/.npm-global/bin:$PATH"
+  if [[ ":$PATH:" != *":$HOME/.npm-global/bin:"* ]]; then
+    export PATH="$HOME/.npm-global/bin:$PATH"
+  fi
   ok "npm configured for user-local installs (~/.npm-global)"
 }
 

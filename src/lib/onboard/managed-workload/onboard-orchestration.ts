@@ -40,6 +40,7 @@ import type {
   SandboxCreateIntent,
 } from "../sandbox-create-intent-types";
 import {
+  OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
   prepareSandboxCreateLaunch,
   prepareSandboxCreateLaunchWithPrebuild,
   type SandboxCreateLaunchInput,
@@ -408,7 +409,7 @@ export function resolveOnboardManagedBootstrapLaunch(input: {
     },
     agentIdentity: managedImageRuntimeIdentity(input.workload.source.contract.agent),
     intendedWorkloadArgv: input.intendedWorkloadArgv,
-    expectedSupervisorArgv: ["/opt/openshell/bin/openshell-sandbox", "--workdir", "/sandbox"],
+    expectedSupervisorArgv: OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
   } as const;
 }
 
