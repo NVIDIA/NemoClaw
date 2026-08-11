@@ -39,10 +39,12 @@ It also improves update safety, image defaults, and installation failure reporti
   Rebuild also settles an expired Shields timer before success, while macOS profile migration uses a native atomic no-clobber rename.
   For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and [Security Best Practices](/user-guide/hermes/security/best-practices).
 - Sandbox recreation and live creation now wait for OpenShell to release ownership before Docker cutover.
-  Starting a stopped sandbox waits for a transient missing supervisor and repeats recovery, readiness, and port-forward checks.
+  Starting a stopped OpenClaw or Hermes sandbox waits through transient supervisor absence and managed-container restart transitions before it repeats recovery, readiness, and port-forward checks.
+  A Shields up restart also keeps `/sandbox` at `root:sandbox` mode `1775` while the explicit process policy selects the sandbox workload identity.
   Legacy gateway updates reuse validated prepared backups, while rebuilds restore reviewed build contexts and retire only proven obsolete images.
   For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
 - `nemoclaw update --fresh` now refuses older or incomparable maintained versions unless the operator supplies `--allow-downgrade`.
   Scoped uninstall isolates gateway shutdown by namespace and preserves checkpointed state for retry after a partial failure.
+  Installer preflight preserves managed `fuse-overlayfs` storage remediation and accepts valid two- or three-component NVIDIA driver versions without changing the `580.65.06` minimum.
   Installer linking skips npm lifecycle scripts, launcher initialization failures produce redacted single-line errors, and LangChain Deep Agents Code images include `dos2unix`.
-  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
+  For more information, refer to [Prerequisites](/user-guide/openclaw/get-started/prerequisites), [Set Up llama.cpp](/user-guide/openclaw/inference/local-inference/set-up-llama-cpp), the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
