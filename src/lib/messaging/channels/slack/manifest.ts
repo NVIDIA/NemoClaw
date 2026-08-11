@@ -249,6 +249,19 @@ export const slackManifest = {
       ],
     },
     {
+      id: "slack-status-health",
+      phase: "status",
+      handler: "slack.statusHealth",
+      providesReadiness: true,
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "channelHealth",
+          kind: "status",
+        },
+      ],
+    },
+    {
       id: "slack-token-paste",
       phase: "enroll",
       handler: "common.tokenPaste",
