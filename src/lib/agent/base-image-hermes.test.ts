@@ -49,7 +49,7 @@ describe("agent base image provisioning", () => {
     );
     expect(trackedRef).not.toBeNull();
     expect(trackedRef?.[1]).toBe(
-      "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96",
+      "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:3d54b928baef9df403227e846f73079d13ca8424a27cd5268ca97bac3f030b27",
     );
 
     const messagingInstallIndex = dockerfile.indexOf("RUN unset SSL_CERT_FILE REQUESTS_CA_BUNDLE");

@@ -147,6 +147,133 @@ function scriptedPinnedGatewayRecovery(
 }
 
 describe("waitForManagedGatewaySupervisor", () => {
+  const restartingContainerId = "a".repeat(64);
+  const restartingContainer = {
+    status: 1,
+    stdout: "",
+    stderr: `Error response from daemon: Container ${restartingContainerId} is restarting, wait until the container is running`,
+    managedControlRestartingContainerId: restartingContainerId,
+  } as const;
+
+  it("retries a controller probe after status 137 with no output (#8726)", () => {
+    const sleepImpl = vi.fn();
+    const requestGatewaySupervisorActionImpl = vi
+      .fn()
+      .mockReturnValueOnce({ status: 137, stdout: "", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "GATEWAY_PID=4242",
+        stderr: "",
+      });
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        intervalSeconds: 3,
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(true);
+    expect(sleepImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).toHaveBeenCalledWith(3);
+  });
+
+  it("stops after two status 137 controller probes with no output (#8726)", () => {
+    const sleepImpl = vi.fn();
+    const requestGatewaySupervisorActionImpl = vi.fn(() => ({
+      status: 137,
+      stdout: "",
+      stderr: "",
+    }));
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        intervalSeconds: 3,
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(false);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(2);
+    expect(sleepImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).toHaveBeenCalledWith(3);
+  });
+
+  it("does not retry a status 137 controller probe with diagnostic output (#8726)", () => {
+    const sleepImpl = vi.fn();
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl: vi.fn(() => ({
+          status: 137,
+          stdout: "",
+          stderr: "container stopped",
+        })),
+        sleepImpl,
+      }),
+    ).toBe(false);
+    expect(sleepImpl).not.toHaveBeenCalled();
+  });
+
+  it("waits through an exact managed-container restart transition (#8726)", () => {
+    const sleepImpl = vi.fn();
+    const requestGatewaySupervisorActionImpl = vi
+      .fn()
+      .mockReturnValueOnce(restartingContainer)
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "GATEWAY_PID=4242",
+        stderr: "",
+      });
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        intervalSeconds: 3,
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(true);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(2);
+    expect(sleepImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).toHaveBeenCalledWith(3);
+  });
+
+  it("stops after two managed-container restart transitions (#8726)", () => {
+    const sleepImpl = vi.fn();
+    const requestGatewaySupervisorActionImpl = vi.fn(() => restartingContainer);
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        intervalSeconds: 3,
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(false);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(2);
+    expect(sleepImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).toHaveBeenCalledWith(3);
+  });
+
+  it("does not wait through an unbound Docker restart diagnostic (#8726)", () => {
+    const sleepImpl = vi.fn();
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl: vi.fn(() => ({
+          status: 1,
+          stdout: "",
+          stderr: restartingContainer.stderr,
+        })),
+        sleepImpl,
+      }),
+    ).toBe(false);
+    expect(sleepImpl).not.toHaveBeenCalled();
+  });
+
   it("waits through an exact missing-supervisor startup race", () => {
     const sleepImpl = vi.fn();
     const requestGatewaySupervisorActionImpl = vi

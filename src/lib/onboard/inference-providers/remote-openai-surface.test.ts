@@ -3,7 +3,9 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { withCredentialOverrides } from "../../credentials/scoped-overrides";
 import { noAuthProxy } from "../../inference/ollama/proxy";
+import { hydrateCredentialEnv } from "../credential-env";
 import { setupRemoteProviderInference } from "./remote";
 import type { RemoteProviderDeps } from "./types";
 
@@ -41,6 +43,7 @@ function createHarness() {
     configKeys: ["ANTHROPIC_BASE_URL"],
   }));
   const deleteGatewayProvider = vi.fn(() => ({ ok: true }));
+  const hydrateCredential = vi.fn((_name: string) => "test-secret");
   const exitProcess = vi.fn((code: number): never => {
     throw new Error(`EXIT_CALLED:${code}`);
   });
@@ -88,7 +91,7 @@ function createHarness() {
         skipVerify: true,
       },
     },
-    hydrateCredentialEnv: vi.fn(() => "test-secret"),
+    hydrateCredentialEnv: hydrateCredential,
     promptValidationRecovery: vi.fn(async () => "selection" as const),
     classifyApplyFailure: vi.fn(() => "unknown"),
     LOCAL_INFERENCE_TIMEOUT_SECS: 60,
@@ -120,6 +123,49 @@ function createHarness() {
 afterEach(() => {
   vi.mocked(noAuthProxy).mockReset();
   delete process.env[NO_AUTH_ENV];
+  vi.unstubAllEnvs();
+});
+
+describe("OpenAI-compatible scoped credential registration", () => {
+  it("passes the scoped key only in the authorized provider-registration environment", async () => {
+    vi.stubEnv("COMPATIBLE_API_KEY", undefined);
+    const harness = createHarness();
+    harness.deps.hydrateCredentialEnv.mockImplementation((name: string) => {
+      const value = hydrateCredentialEnv(name);
+      if (!value) {
+        throw new Error(`Missing scoped credential '${name}'.`);
+      }
+      return value;
+    });
+
+    await withCredentialOverrides({ COMPATIBLE_API_KEY: "runtime-only-secret" }, async () => {
+      await expect(
+        setupRemoteProviderInference(
+          {
+            sandboxName: SANDBOX,
+            model: MODEL,
+            provider: "compatible-endpoint",
+            endpointUrl: "https://inference.example/v1",
+            credentialEnv: "COMPATIBLE_API_KEY",
+            preferredInferenceApi: "openai-completions",
+            pinnedAddresses: ["93.184.216.34"],
+          },
+          harness.deps,
+        ),
+      ).resolves.toEqual({ done: false });
+
+      expect(harness.upsertProvider).toHaveBeenCalledWith(
+        "compatible-endpoint",
+        "openai",
+        "COMPATIBLE_API_KEY",
+        "https://inference.example/v1",
+        { COMPATIBLE_API_KEY: "runtime-only-secret" },
+      );
+      expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+    });
+
+    expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+  });
 });
 
 describe("custom Anthropic provider replacement on the OpenAI surface", () => {
