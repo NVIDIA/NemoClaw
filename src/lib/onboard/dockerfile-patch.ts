@@ -95,6 +95,7 @@ function normalizeOptionalEndpointUrlArg(value: string | null | undefined, name:
 export type DockerfileBuildIdPolicy = "preserve" | "rewrite";
 
 export interface PatchStagedDockerfileOptions {
+  agentName?: string;
   buildIdPolicy?: DockerfileBuildIdPolicy;
   toolDisclosure?: ToolDisclosure;
   requireToolDisclosureContract?: boolean;
@@ -503,11 +504,24 @@ export function patchStagedDockerfile(
   const corporateCa = resolveCorporateCa(process.env);
   if (corporateCa) {
     const corporateCaArgPattern = /^ARG NEMOCLAW_CORPORATE_CA_B64=.*$/m;
-    if (corporateCaArgPattern.test(dockerfile)) {
+    const runtimeUserArgPattern = /^ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=.*$/m;
+    const openClawRootStartup = options.agentName === "openclaw";
+    if (
+      corporateCaArgPattern.test(dockerfile) &&
+      (!openClawRootStartup || runtimeUserArgPattern.test(dockerfile))
+    ) {
       dockerfile = dockerfile.replace(
         corporateCaArgPattern,
         `ARG NEMOCLAW_CORPORATE_CA_B64=${sanitizeDockerArg(encodeCorporateCaArg(corporateCa.pem))}`,
       );
+      if (openClawRootStartup) {
+        // Root startup creates the merged runtime trust bundle before the
+        // entrypoint starts the sandbox user's agent process (#8803).
+        dockerfile = dockerfile.replace(
+          runtimeUserArgPattern,
+          "ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root",
+        );
+      }
       // Surface which host source is being baked so a fallback import (from a
       // conventional CA env var rather than the explicit opt-in) is never
       // silent. The CA is a public certificate, so logging its source is safe.
@@ -516,11 +530,16 @@ export function patchStagedDockerfile(
       );
     } else if (corporateCa.sourceEnv === CORPORATE_CA_EXPLICIT_ENV) {
       // Explicit opt-in must not silently no-op on a managed Dockerfile.
+      const missingArg =
+        corporateCaArgPattern.test(dockerfile) && openClawRootStartup
+          ? "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER"
+          : "NEMOCLAW_CORPORATE_CA_B64";
       throw new Error(
-        "Dockerfile is missing ARG NEMOCLAW_CORPORATE_CA_B64; cannot bake the corporate CA from NEMOCLAW_CORPORATE_CA_BUNDLE.",
+        `Dockerfile is missing ARG ${missingArg}; cannot bake the corporate CA from NEMOCLAW_CORPORATE_CA_BUNDLE.`,
       );
     }
-    // Fallback source + a custom Dockerfile without the ARG: leave a no-op.
+    // An OpenClaw fallback source stays a no-op when a custom Dockerfile lacks
+    // either build argument required for root-owned runtime trust.
   }
 
   replaceDockerfilePatchSnapshot(dockerfilePath, patchSnapshot, dockerfile);

@@ -98,9 +98,10 @@ const BASE_ARGS = [
   "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
   "ARG NEMOCLAW_OPENCLAW_OTEL=0",
   "ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0",
+  "ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
 ];
 
-function patch(dockerfilePath: string): void {
+function patch(dockerfilePath: string, agentName = "openclaw"): void {
   patchStagedDockerfile(
     dockerfilePath,
     "custom-model",
@@ -113,6 +114,7 @@ function patch(dockerfilePath: string): void {
     false,
     null,
     [],
+    { agentName },
   );
 }
 
@@ -121,6 +123,13 @@ function corporateCaArgLine(dockerfilePath: string): string | undefined {
     .readFileSync(dockerfilePath, "utf-8")
     .split("\n")
     .find((entry) => entry.startsWith("ARG NEMOCLAW_CORPORATE_CA_B64="));
+}
+
+function runtimeUserArgLine(dockerfilePath: string): string | undefined {
+  return fs
+    .readFileSync(dockerfilePath, "utf-8")
+    .split("\n")
+    .find((entry) => entry.startsWith("ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER="));
 }
 
 describe("dockerfile patch — corporate CA baking (#6210)", () => {
@@ -135,6 +144,7 @@ describe("dockerfile patch — corporate CA baking (#6210)", () => {
     const encoded = line.slice("ARG NEMOCLAW_CORPORATE_CA_B64=".length);
     expect(encoded).not.toBe("");
     expect(Buffer.from(encoded, "base64").toString("utf8")).toBe(CA_PEM);
+    expect(runtimeUserArgLine(dockerfilePath)).toBe("ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root");
   });
 
   it("bakes a fallback REQUESTS_CA_BUNDLE corporate CA", () => {
@@ -145,6 +155,7 @@ describe("dockerfile patch — corporate CA baking (#6210)", () => {
 
     const line = corporateCaArgLine(dockerfilePath);
     expect(line?.slice("ARG NEMOCLAW_CORPORATE_CA_B64=".length)).not.toBe("");
+    expect(runtimeUserArgLine(dockerfilePath)).toBe("ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root");
   });
 
   it("logs the fallback source env var and path when baking a fallback CA", () => {
@@ -168,6 +179,46 @@ describe("dockerfile patch — corporate CA baking (#6210)", () => {
     patch(dockerfilePath);
 
     expect(corporateCaArgLine(dockerfilePath)).toBe("ARG NEMOCLAW_CORPORATE_CA_B64=");
+    expect(runtimeUserArgLine(dockerfilePath)).toBe(
+      "ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
+    );
+  });
+
+  it("rejects an explicit corporate CA when the Dockerfile cannot select root startup (#8803)", () => {
+    process.env.NEMOCLAW_CORPORATE_CA_BUNDLE = writeCa();
+    const dockerfilePath = dockerfileWith([
+      ...BASE_ARGS.filter((line) => !line.startsWith("ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=")),
+      "ARG NEMOCLAW_CORPORATE_CA_B64=",
+    ]);
+
+    expect(() => patch(dockerfilePath)).toThrow(/NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER/);
+    expect(corporateCaArgLine(dockerfilePath)).toBe("ARG NEMOCLAW_CORPORATE_CA_B64=");
+  });
+
+  it("does not bake a fallback corporate CA without root startup selection (#8803)", () => {
+    process.env.REQUESTS_CA_BUNDLE = writeCa();
+    const dockerfilePath = dockerfileWith([
+      ...BASE_ARGS.filter((line) => !line.startsWith("ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=")),
+      "ARG NEMOCLAW_CORPORATE_CA_B64=",
+    ]);
+
+    patch(dockerfilePath);
+
+    expect(corporateCaArgLine(dockerfilePath)).toBe("ARG NEMOCLAW_CORPORATE_CA_B64=");
+  });
+
+  it("keeps Deep Agents Code sandbox startup when baking a corporate CA (#8803)", () => {
+    process.env.NEMOCLAW_CORPORATE_CA_BUNDLE = writeCa();
+    const dockerfilePath = dockerfileWith([...BASE_ARGS, "ARG NEMOCLAW_CORPORATE_CA_B64="]);
+
+    patch(dockerfilePath, "langchain-deepagents-code");
+
+    expect(
+      corporateCaArgLine(dockerfilePath)?.slice("ARG NEMOCLAW_CORPORATE_CA_B64=".length),
+    ).not.toBe("");
+    expect(runtimeUserArgLine(dockerfilePath)).toBe(
+      "ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
+    );
   });
 
   it("fails loudly when an explicit CA is set but the Dockerfile lacks the ARG", () => {
