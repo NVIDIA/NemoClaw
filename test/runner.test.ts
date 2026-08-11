@@ -53,6 +53,16 @@ function requireCall(calls: SpawnCall[], index: number): SpawnCall {
   return call;
 }
 
+function withoutDockerAuthorityProbe(calls: SpawnCall[]): SpawnCall[] {
+  return calls.filter(
+    ([command, args]) =>
+      command !== "docker" ||
+      args?.[0] !== "version" ||
+      args?.[1] !== "--format" ||
+      args?.[2] !== "{{json .}}",
+  );
+}
+
 describe("runner helpers", () => {
   it("does not let child commands consume installer stdin", () => {
     const script = `
@@ -94,9 +104,10 @@ describe("runner helpers", () => {
       delete require.cache[require.resolve(runnerPath)];
     }
 
-    expect(calls).toHaveLength(2);
-    const firstCall = requireCall(calls, 0);
-    const secondCall = requireCall(calls, 1);
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(2);
+    const firstCall = requireCall(runnerCalls, 0);
+    const secondCall = requireCall(runnerCalls, 1);
     expect(firstCall[2]?.stdio).toEqual(["ignore", "pipe", "pipe"]);
     expect(secondCall[2]?.stdio).toEqual(["inherit", "pipe", "pipe"]);
   });
@@ -119,8 +130,9 @@ describe("runner helpers", () => {
       delete require.cache[require.resolve(runnerPath)];
     }
 
-    expect(calls).toHaveLength(1);
-    const firstCall = requireCall(calls, 0);
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(1);
+    const firstCall = requireCall(runnerCalls, 0);
     expect(firstCall[0]).toBe("bash");
     expect(firstCall[1]).toEqual(["/tmp/setup.sh", "safe;name", "$(id)"]);
     expect(firstCall[2]?.shell).toBe(false);
@@ -212,8 +224,9 @@ describe("runner env merging", () => {
       delete require.cache[require.resolve(runnerPath)];
     }
 
-    expect(calls).toHaveLength(1);
-    const firstCall = requireCall(calls, 0);
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(1);
+    const firstCall = requireCall(runnerCalls, 0);
     expect(firstCall[2]?.env?.OPENSHELL_CLUSTER_IMAGE).toBe(
       "ghcr.io/nvidia/openshell/cluster:0.0.12",
     );
@@ -250,8 +263,9 @@ describe("runner env merging", () => {
       delete require.cache[require.resolve(runnerPath)];
     }
 
-    expect(calls).toHaveLength(1);
-    const firstCall = requireCall(calls, 0);
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(1);
+    const firstCall = requireCall(runnerCalls, 0);
     expect(firstCall[2]?.env?.OPENSHELL_CLUSTER_IMAGE).toBe(
       "ghcr.io/nvidia/openshell/cluster:0.0.12",
     );
@@ -294,8 +308,9 @@ describe("runner env merging", () => {
       delete require.cache[require.resolve(runnerPath)];
     }
 
-    expect(calls).toHaveLength(1);
-    const firstCall = requireCall(calls, 0);
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(1);
+    const firstCall = requireCall(runnerCalls, 0);
     const env = firstCall[2]?.env ?? {};
     expect(env.http_proxy).toBe("http://127.0.0.1:8118");
     // Both casings get the loopback hosts so curl, Node, Python all respect
@@ -666,7 +681,7 @@ describe("regression guards", () => {
       delete require.cache[require.resolve(runnerPath)];
       const { runInteractive } = require(runnerPath);
       runInteractive(["echo", "interactive"]);
-      const firstCall = requireCall(calls, 0);
+      const firstCall = requireCall(withoutDockerAuthorityProbe(calls), 0);
       expect(firstCall[2]?.stdio).toEqual(["inherit", "pipe", "pipe"]);
       expect(stdoutSpy).toHaveBeenCalledWith("visit https://****:****@example.com/?token=****\n");
       expect(stderrSpy).not.toHaveBeenCalled();

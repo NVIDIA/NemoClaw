@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import { existsSync as defaultExistsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+import { dockerSpawnSync } from "./adapters/docker/exec";
 
 export type ContainerRuntime = "podman" | "colima" | "docker-desktop" | "docker" | "unknown";
 
@@ -142,16 +143,16 @@ function probeDockerHost(
   dockerHost: string | undefined,
   source: NodeJS.ProcessEnv,
 ): DockerHostProbeResult {
-  const result = spawnSync("docker", ["version", "--format", "{{json .}}"], {
+  const result = dockerSpawnSync(["version", "--format", "{{json .}}"], {
     encoding: "utf-8",
     env: buildDockerProbeEnv(source, dockerHost),
     timeout: DOCKER_PROBE_TIMEOUT_MS,
     maxBuffer: DOCKER_PROBE_MAX_BUFFER_BYTES,
   });
-  if (result.status !== 0) return { reachable: false, identity: "unknown" };
+  if (!result || result.status !== 0) return { reachable: false, identity: "unknown" };
   return {
     reachable: true,
-    identity: classifyDockerVersionIdentity(result.stdout),
+    identity: classifyDockerVersionIdentity(String(result.stdout ?? "")),
   };
 }
 
