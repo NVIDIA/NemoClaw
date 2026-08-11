@@ -102,6 +102,14 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern:
+      /(?:^|\/)tools\/e2e\/(?:colossus-jetson-dispatch\.environment|nemoclaw-jetson-dispatch\.service)$/,
+    testsToRun: runTests(
+      "test/e2e/support/colossus-jetson-dispatch-deploy.test.ts",
+      "test/e2e/support/jetson-dispatch-worker.test.ts",
+    ),
+  },
+  {
+    pattern:
       /(?:^|\/)(?:\.github\/workflows\/base-image\.yaml|scripts\/export-managed-base-image-contract\.sh)$/,
     testsToRun: runTests(
       "test/managed-base-image-contract.test.ts",

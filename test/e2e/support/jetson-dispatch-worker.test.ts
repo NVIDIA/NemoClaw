@@ -22,6 +22,10 @@ const cleanupProgram = fs.readFileSync(
   path.join(process.cwd(), "tools/e2e/jetson-dispatch-cleanup.sh"),
   "utf8",
 );
+const dispatcherServiceUnit = fs.readFileSync(
+  path.join(process.cwd(), "tools/e2e/nemoclaw-jetson-dispatch.service"),
+  "utf8",
+);
 const workerProgram = fs.readFileSync(
   path.join(process.cwd(), "tools/e2e/jetson-dispatch-worker.mts"),
   "utf8",
@@ -109,19 +113,34 @@ function loadConfig(files = deploymentFiles()) {
 }
 
 describe("Colossus SSH worker deployment boundary", () => {
-  it("uses the fixed deployment command before service startup (#8142)", () => {
+  it("uses one fixed command for initial service deployment (#8142)", () => {
     const deployment =
-      'sudo /usr/local/sbin/nemoclaw-colossus-jetson-dispatch-deploy \\\n  --commit "$REVIEWED_COMMIT_SHA"';
+      "sudo nemoclaw-colossus-jetson-dispatch-deploy --commit 0000000000000000000000000000000000000000";
+    const configure = dispatcherRunbook.indexOf("## Configure the Dispatcher Service");
     expect(dispatcherRunbook).toContain(
       "tools/e2e/colossus-jetson-dispatch-deploy.sh \\\n  /usr/local/sbin/nemoclaw-colossus-jetson-dispatch-deploy",
     );
     expect(dispatcherRunbook).toContain(deployment);
-    expect(dispatcherRunbook).toContain("WorkingDirectory=/opt/nemoclaw-jetson-dispatch/current");
+    expect(dispatcherRunbook).toContain("tools/e2e/colossus-jetson-dispatch.environment");
+    expect(dispatcherRunbook).toContain("tools/e2e/nemoclaw-jetson-dispatch.service");
+    expect(dispatcherServiceUnit).toContain(
+      "WorkingDirectory=/opt/nemoclaw-jetson-dispatch/current",
+    );
+    expect(dispatcherRunbook.indexOf(deployment)).toBeGreaterThan(configure);
     expect(dispatcherRunbook.indexOf(deployment)).toBeLessThan(
-      dispatcherRunbook.indexOf("## Configure the Dispatcher Service"),
+      dispatcherRunbook.indexOf("## Deploy a Later Reviewed Commit"),
     );
     expect(dispatcherRunbook).not.toContain("sudo git -C /opt/nemoclaw-jetson-dispatch init");
     expect(dispatcherRunbook).not.toContain("git clone --branch main");
+  });
+
+  it("distinguishes pinned SSH identity from the persisted cleanup baseline (#8142)", () => {
+    expect(dispatcherRunbook).toContain(
+      "The pinned `known_hosts` file validates the SSH host identity separately from the persisted cleanup baseline.",
+    );
+    expect(dispatcherRunbook).not.toContain(
+      "Treat the verified SSH host identity as part of the protected baseline.",
+    );
   });
 
   it("keeps public ingress stopped until a later release passes local verification (#8142)", () => {
@@ -854,7 +873,7 @@ esac
       "Remove the dedicated Jetson public key and the Colossus SSH private key.",
     );
 
-    expect(dispatcherRunbook).toContain("TimeoutStopSec=360");
+    expect(dispatcherServiceUnit).toContain("TimeoutStopSec=360");
     expect(stopTunnel).toBeGreaterThan(-1);
     expect(waitForLock).toBeGreaterThan(stopTunnel);
     expect(verifyCleanup).toBeGreaterThan(waitForLock);

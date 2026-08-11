@@ -154,7 +154,7 @@ The cleanup program must not change or remove any resource outside its allowlist
 Review its command construction and target resolution before deployment.
 Do not use broad process termination, Docker pruning, wildcard paths, or host-wide package removal.
 
-## Create the Colossus Dispatcher Account and Bootstrap Deployment
+## Prepare the Colossus Dispatcher Account and Deployment Command
 
 Run these commands on Colossus.
 The dispatcher requires `/usr/bin/node` 22.19.0 or later.
@@ -170,11 +170,11 @@ sudo useradd --system --create-home \
   --home-dir /var/lib/nemoclaw-jetson-dispatch \
   --shell /usr/sbin/nologin nemoclaw-jetson-dispatch
 sudo install -d -o nemoclaw-jetson-dispatch -g nemoclaw-jetson-dispatch -m 0700 \
-  /var/lib/nemoclaw-jetson-dispatch /etc/nemoclaw-jetson-dispatch
+  /var/lib/nemoclaw-jetson-dispatch
 ```
 
 Bootstrap the deployment command from a separately reviewed checkout of `https://github.com/NVIDIA/NemoClaw.git`.
-Replace both placeholder SHAs with full lowercase 40-character reviewed commit SHAs:
+Replace the placeholder with the full lowercase 40-character SHA of that reviewed checkout:
 
 ```bash
 set -euo pipefail
@@ -185,30 +185,13 @@ test -z "$(git status --short)"
 sudo install -o root -g root -m 0755 \
   tools/e2e/colossus-jetson-dispatch-deploy.sh \
   /usr/local/sbin/nemoclaw-colossus-jetson-dispatch-deploy
-
-test "$(systemctl show --property=LoadState --value \
-  nemoclaw-jetson-dispatch.service)" = not-found
-sudo test ! -e /var/lib/nemoclaw-jetson-dispatch/state/device.lock
-sudo test ! -L /var/lib/nemoclaw-jetson-dispatch/state/device.lock
-REVIEWED_COMMIT_SHA=0000000000000000000000000000000000000000
-sudo /usr/local/sbin/nemoclaw-colossus-jetson-dispatch-deploy \
-  --commit "$REVIEWED_COMMIT_SHA"
-test "$(sudo readlink /opt/nemoclaw-jetson-dispatch/current)" = \
-  "/opt/nemoclaw-jetson-dispatch/releases/$REVIEWED_COMMIT_SHA"
-sudo test -L /usr/local/libexec/nemoclaw-jetson-cleanup
-test "$(sudo readlink /usr/local/libexec/nemoclaw-jetson-cleanup)" = \
-  /opt/nemoclaw-jetson-dispatch/current/tools/e2e/jetson-dispatch-cleanup.sh
+test "$(sudo stat --format='%F:%u:%g:%a' -- \
+  /usr/local/sbin/nemoclaw-colossus-jetson-dispatch-deploy)" = \
+  'regular file:0:0:755'
 ```
 
 The deployment command requires root and accepts only `--commit <full lowercase 40-character SHA>`.
-It fetches only that commit from the fixed `https://github.com/NVIDIA/NemoClaw.git` origin.
-It stores each verified release at `/opt/nemoclaw-jetson-dispatch/releases/<sha>`.
-Each release directory must be owned by `root:root` with mode `0755`.
-The command verifies the origin, commit, unmodified worktree, and bundled cleanup file before selection.
-It installs one root-owned stable symbolic link from `/usr/local/libexec/nemoclaw-jetson-cleanup` to `/opt/nemoclaw-jetson-dispatch/current/tools/e2e/jetson-dispatch-cleanup.sh`.
-It then selects the dispatcher and cleanup program together with one atomic absolute `/opt/nemoclaw-jetson-dispatch/current` symbolic-link switch.
-The initial deployment requires the systemd service and `device.lock` to be absent.
-It installs the release selection and cleanup link without starting a service.
+It rejects any additional argument.
 The command does not update its installed copy.
 Install a reviewed deployment-command revision separately when that command changes.
 
@@ -241,7 +224,7 @@ sudo install -o nemoclaw-jetson-dispatch -g nemoclaw-jetson-dispatch -m 0600 \
 rm /tmp/jetson_known_hosts
 ```
 
-Treat the verified SSH host identity as part of the protected baseline.
+The pinned `known_hosts` file validates the SSH host identity separately from the persisted cleanup baseline.
 Do not accept a changed host key without reconciling it through the serial console or another trusted channel.
 
 ## Define the Cleanup Program
@@ -325,10 +308,56 @@ After the helper succeeds, the worker independently verifies these conditions ov
 The worker reports cleanup failure when any helper or independent verification step fails.
 
 The dispatcher runs the cleanup program as `nemoclaw-jetson-dispatch`.
-The service unit below prevents privilege elevation.
+The managed service unit prevents privilege elevation.
 Do not remove that protection or grant the dispatcher account passwordless `sudo` access.
 
-Test cleanup-program access and the SSH path as the service account:
+## Configure the Dispatcher Service
+
+Review these fixed files in the selected commit before deployment:
+
+- `tools/e2e/colossus-jetson-dispatch.environment`
+- `tools/e2e/nemoclaw-jetson-dispatch.service`
+
+The environment fixes the repository ID, state path, timeouts, Jetson SSH destination, pinned SSH files, and cleanup executable.
+The unit fixes the service account, selected-release working directory, Node.js command, restart policy, and filesystem restrictions.
+It sets `TimeoutStopSec=360` so systemd allows the bounded cleanup interval during service stop.
+
+For an initial deployment, the dispatcher service must have `LoadState=not-found`.
+The device lock, destination environment file, and destination unit file must be absent.
+The Cloudflare Tunnel service must be absent or both disabled and inactive.
+
+Replace the placeholder with the full lowercase 40-character SHA of the reviewed release, then run one command:
+
+```bash
+sudo nemoclaw-colossus-jetson-dispatch-deploy --commit 0000000000000000000000000000000000000000
+```
+
+The command reports five stages:
+
+1. Validate the request, service-owned home, dispatcher account, SSH key, pinned host key, and Node.js version.
+2. Verify the absent service, device lock, destination files, and public ingress.
+3. Fetch and verify the exact commit from `https://github.com/NVIDIA/NemoClaw.git`.
+4. Select the dispatcher and cleanup code with one atomic `current` switch.
+5. Install, enable, start, and verify the dispatcher service.
+
+The command accepts an absent cleanup link or verifies the exact managed link before release selection.
+It stores each verified release at `/opt/nemoclaw-jetson-dispatch/releases/<sha>`.
+Each release directory must be owned by `root:root` with mode `0755`.
+The command verifies the fixed origin, exact commit, unmodified worktree, cleanup program, environment, and unit before selection.
+It installs `/etc/nemoclaw-jetson-dispatch/environment` as `root:root` mode `0600`.
+It installs `/etc/systemd/system/nemoclaw-jetson-dispatch.service` as `root:root` mode `0644`.
+It runs `systemctl daemon-reload` and `systemctl enable --now nemoclaw-jetson-dispatch.service`.
+Before success, it requires the service to listen only on `127.0.0.1:8787`, an anonymous job request to return HTTP `401`, and the Cloudflare Tunnel service to remain disabled and inactive.
+
+If initial startup or verification fails after enablement, the command disables and stops the service before rollback.
+It requires exact `ActiveState=inactive` and an absent device lock before it restores the prior release and cleanup selection.
+An earlier selection or configuration-installation failure restores the prior selection and removes only files or links created by the attempt.
+Rollback removes any environment and unit that the attempt installed, reloads systemd, and requires `LoadState=not-found`.
+If it cannot establish these conditions, it reports rollback failure.
+The command never enables or starts the Cloudflare Tunnel service.
+It accepts no cleanup override and does not change the cleanup allowlist.
+
+After the command returns, test cleanup-program access and the SSH path as the service account:
 
 ```bash
 sudo -u nemoclaw-jetson-dispatch test -x \
@@ -343,78 +372,25 @@ sudo -u nemoclaw-jetson-dispatch ssh -F /dev/null -o BatchMode=yes \
 Do not invoke the cleanup program manually without the dispatcher-created device lock and baseline record.
 The proof-job procedure below exercises cleanup and verifies its result.
 
-## Configure the Dispatcher Service
-
-Get the immutable GitHub repository ID:
+For independent verification or recovery, repeat the command's loopback checks:
 
 ```bash
-gh api repos/NVIDIA/NemoClaw --jq .id
+set -euo pipefail
+test "$(sudo systemctl show --property=ActiveState --value \
+  nemoclaw-jetson-dispatch.service)" = active
+listeners="$(sudo ss -H -ltn 'sport = :8787')"
+test -n "$listeners"
+printf '%s\n' "$listeners" | awk '$4 != "127.0.0.1:8787" { exit 1 }'
+HTTP_CODE="$(
+  curl --disable --noproxy '*' --silent --show-error --output /dev/null \
+    --write-out '%{http_code}' --max-time 5 --request POST \
+    --header 'Content-Type: application/json' \
+    --data '{"schemaVersion":1,"target":"jetson-nvmap-gpu","candidateSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","workflowRunId":"1","workflowRunAttempt":1}' \
+    http://127.0.0.1:8787/v1/jobs
+)"
+test "$HTTP_CODE" = 401
 ```
 
-Create `/etc/nemoclaw-jetson-dispatch/environment` as a root-owned file with mode `0600`.
-Substitute the repository ID returned above:
-
-```text
-JETSON_DISPATCH_STATE_DIRECTORY=/var/lib/nemoclaw-jetson-dispatch/state
-JETSON_DISPATCH_GITHUB_REPOSITORY_ID=REPOSITORY_ID
-JETSON_DISPATCH_PORT=8787
-JETSON_DISPATCH_EXECUTION_TIMEOUT_SECONDS=3000
-JETSON_DISPATCH_CLEANUP_TIMEOUT_SECONDS=300
-JETSON_DISPATCH_TEST_TIMEOUT_SECONDS=2700
-JETSON_DISPATCH_SSH_DESTINATION=nvidia@192.168.55.1
-JETSON_DISPATCH_SSH_IDENTITY_FILE=/var/lib/nemoclaw-jetson-dispatch/id_ed25519
-JETSON_DISPATCH_SSH_KNOWN_HOSTS_FILE=/var/lib/nemoclaw-jetson-dispatch/known_hosts
-JETSON_DISPATCH_CLEANUP_EXECUTABLE=/usr/local/libexec/nemoclaw-jetson-cleanup
-```
-
-Install `/etc/systemd/system/nemoclaw-jetson-dispatch.service`:
-
-```ini
-[Unit]
-Description=NemoClaw Jetson dispatcher
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=nemoclaw-jetson-dispatch
-Group=nemoclaw-jetson-dispatch
-UMask=0077
-WorkingDirectory=/opt/nemoclaw-jetson-dispatch/current
-EnvironmentFile=/etc/nemoclaw-jetson-dispatch/environment
-ExecStart=/usr/bin/node --experimental-strip-types --no-warnings tools/e2e/jetson-dispatch-service.mts
-Restart=on-failure
-RestartSec=5
-TimeoutStopSec=360
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
-ProtectSystem=strict
-ReadWritePaths=/var/lib/nemoclaw-jetson-dispatch
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Start the service and confirm that it listens only on the loopback address:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now nemoclaw-jetson-dispatch.service
-sudo systemctl status nemoclaw-jetson-dispatch.service
-sudo ss -ltnp | grep '127.0.0.1:8787'
-```
-
-An anonymous request must fail:
-
-```bash
-curl --disable --noproxy '*' --fail-with-body \
-  -X POST http://127.0.0.1:8787/v1/jobs \
-  -H 'Content-Type: application/json' \
-  --data '{"schemaVersion":1,"target":"jetson-nvmap-gpu","candidateSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","workflowRunId":"1","workflowRunAttempt":1}'
-```
-
-The expected result is HTTP `401`.
 A malformed request returns HTTP `400`, and an unknown route returns HTTP `404`.
 
 ## Deploy a Later Reviewed Commit
@@ -524,7 +500,7 @@ Do not restart it until the dispatcher again binds only to `127.0.0.1:8787` and 
 Then rerun the complete later-deployment subshell.
 Its exit trap keeps the tunnel stopped unless `ActiveState=active` and the config-free, direct public HTTP `401` proof both succeed.
 
-The command does not modify the dispatcher environment, systemd unit, SSH credentials, or Cloudflare credentials.
+A later deployment does not modify the dispatcher environment, systemd unit, SSH credentials, or Cloudflare credentials.
 It does not update itself.
 Normal deployment requires the selected release to preserve the documented cleanup allowlist.
 A cleanup-scope change requires separate review and a corresponding runbook update before deployment.

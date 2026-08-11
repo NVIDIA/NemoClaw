@@ -9,7 +9,12 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const DEPLOY_SCRIPT = path.join(process.cwd(), "tools/e2e/colossus-jetson-dispatch-deploy.sh");
+const ENVIRONMENT_SOURCE = path.join(
+  process.cwd(),
+  "tools/e2e/colossus-jetson-dispatch.environment",
+);
 const FIXED_ORIGIN = "https://github.com/NVIDIA/NemoClaw.git";
+const UNIT_SOURCE = path.join(process.cwd(), "tools/e2e/nemoclaw-jetson-dispatch.service");
 const temporaryDirectories: string[] = [];
 
 const HARNESS = String.raw`
@@ -22,15 +27,49 @@ current_link="$deploy_root/current"
 deploy_lock="$deploy_root/deploy.lock"
 cleanup_executable="$TEST_ROOT/usr/local/libexec/nemoclaw-jetson-cleanup"
 cleanup_link_target="$current_link/$cleanup_relative"
-state_directory="$TEST_ROOT/var/lib/nemoclaw-jetson-dispatch/state"
+service_home="$TEST_ROOT/var/lib/nemoclaw-jetson-dispatch"
+state_directory="$service_home/state"
 device_lock="$state_directory/device.lock"
+ssh_identity_file="$service_home/id_ed25519"
+ssh_known_hosts_file="$service_home/known_hosts"
+node_executable="$NODE_EXECUTABLE"
+environment_file="$TEST_ROOT/etc/nemoclaw-jetson-dispatch/environment"
+unit_file="$TEST_ROOT/etc/systemd/system/$service_name"
 
-mkdir -p "$state_directory"
+mkdir -p "$state_directory" "${"$"}{environment_file%/*}" "${"$"}{unit_file%/*}"
+printf 'test-private-key\n' >"$ssh_identity_file"
+printf 'test-known-host\n' >"$ssh_known_hosts_file"
 [ "$SERVICE_LOAD_STATE" != loaded ] || : >"$TEST_ROOT/service-active"
 [ "$INITIAL_DEVICE_LOCK" != 1 ] || printf '%064d\n' 0 >"$device_lock"
 
 effective_uid() {
   printf '%s\n' "$FAKE_UID"
+}
+
+id_exec() {
+  [ "$MISSING_ACCOUNT" != 1 ] || return 1
+  printf '1001\n'
+}
+
+require_service_owned_file() {
+  [ -f "$1" ] && [ ! -L "$1" ]
+}
+
+require_service_owned_directory() {
+  [ "$INVALID_SERVICE_HOME" != 1 ] || fail "$1 must be a directory, not a symbolic link"
+  [ -d "$1" ] && [ ! -L "$1" ]
+}
+
+ssh_identity_is_valid() {
+  [ "$INVALID_SSH_KEY" != 1 ]
+}
+
+known_hosts_has_jetson() {
+  [ "$INVALID_KNOWN_HOSTS" != 1 ]
+}
+
+node_version_is_supported() {
+  [ "$UNSUPPORTED_NODE" != 1 ]
 }
 
 install_directory() {
@@ -46,6 +85,10 @@ require_root_owned_directory() {
 }
 
 require_root_owned_file() {
+  [ -f "$1" ] && [ ! -L "$1" ]
+}
+
+root_owned_file_matches() {
   [ -f "$1" ] && [ ! -L "$1" ]
 }
 
@@ -93,7 +136,11 @@ git_exec() {
 }
 
 service_load_state() {
-  printf '%s\n' "$SERVICE_LOAD_STATE"
+  if [ -f "$unit_file" ]; then
+    printf 'loaded\n'
+  else
+    printf '%s\n' "$SERVICE_LOAD_STATE"
+  fi
 }
 
 service_active_state() {
@@ -109,9 +156,37 @@ current_sha() {
   /usr/bin/readlink "$current_link" 2>/dev/null | /usr/bin/awk -F/ '{print $NF}'
 }
 
+tunnel_is_active() {
+  tunnel_check_count="$(cat "$TEST_ROOT/tunnel-check-count" 2>/dev/null || printf '0')"
+  [ "$TUNNEL_ACTIVE" = 1 ] ||
+    { [ "$TUNNEL_ACTIVATE_AFTER_FIRST_CHECK" = 1 ] && [ "$tunnel_check_count" -gt 1 ]; }
+}
+
 systemctl_exec() {
   printf 'systemctl\t%s\n' "$*" >>"$TEST_ROOT/service.log"
   case "$1" in
+  show)
+    if [ "${"$"}{!#}" = "$tunnel_service_name" ]; then
+      case "$2" in
+      --property=LoadState)
+        tunnel_check_count="$(cat "$TEST_ROOT/tunnel-check-count" 2>/dev/null || printf '0')"
+        tunnel_check_count="$((tunnel_check_count + 1))"
+        printf '%s\n' "$tunnel_check_count" >"$TEST_ROOT/tunnel-check-count"
+        if tunnel_is_active; then printf 'loaded\n'; else printf 'not-found\n'; fi
+        ;;
+      --property=ActiveState)
+        if tunnel_is_active; then printf 'active\n'; else printf 'inactive\n'; fi
+        ;;
+      --property=UnitFileState)
+        if tunnel_is_active; then printf 'enabled\n'; else printf 'disabled\n'; fi
+        ;;
+      *) return 1 ;;
+      esac
+    else
+      return 1
+    fi
+    ;;
+  daemon-reload) : ;;
   stop)
     stop_count="$(cat "$TEST_ROOT/stop-count" 2>/dev/null || printf '0')"
     stop_count="$((stop_count + 1))"
@@ -125,6 +200,16 @@ systemctl_exec() {
     else
       /bin/rm -f "$device_lock"
     fi
+    ;;
+  enable)
+    selected="$(current_sha)"
+    printf 'enable-sha\t%s\n' "$selected" >>"$TEST_ROOT/service.log"
+    [ "$selected" != "$FAIL_START_SHA" ] || return 1
+    : >"$TEST_ROOT/service-active"
+    ;;
+  disable)
+    [ "$FAIL_INITIAL_ROLLBACK_DISABLE" != 1 ] || return 1
+    /bin/rm -f "$TEST_ROOT/service-active"
     ;;
   start)
     selected="$(current_sha)"
@@ -175,13 +260,21 @@ interface Fixture {
 interface DeployOptions {
   activeStateError?: boolean;
   fakeUid?: string;
+  failInitialRollbackDisable?: boolean;
   failRollbackStop?: boolean;
   failSelectSha?: string;
   serviceLoadState?: "loaded" | "not-found";
   failStartSha?: string;
   failVerifySha?: string;
   initialDeviceLock?: boolean;
+  invalidKnownHosts?: boolean;
+  invalidServiceHome?: boolean;
+  invalidSshKey?: boolean;
   leaveDeviceLock?: boolean;
+  missingAccount?: boolean;
+  tunnelActive?: boolean;
+  tunnelActivatesAfterFirstCheck?: boolean;
+  unsupportedNode?: boolean;
 }
 
 afterEach(() => {
@@ -205,8 +298,12 @@ function createFixture(): Fixture {
   git(repository, "config", "user.name", "NemoClaw Test");
   git(repository, "config", "user.email", "test@example.com");
   const cleanup = path.join(repository, "tools/e2e/jetson-dispatch-cleanup.sh");
+  const environment = path.join(repository, "tools/e2e/colossus-jetson-dispatch.environment");
+  const unit = path.join(repository, "tools/e2e/nemoclaw-jetson-dispatch.service");
   fs.writeFileSync(cleanup, "#!/usr/bin/env bash\necho first-release\n", { mode: 0o755 });
-  git(repository, "add", cleanup);
+  fs.writeFileSync(environment, "JETSON_DISPATCH_PORT=8787\n");
+  fs.writeFileSync(unit, "[Service]\nEnvironmentFile=/etc/nemoclaw-jetson-dispatch/environment\n");
+  git(repository, "add", "tools/e2e");
   git(repository, "commit", "--quiet", "-m", "first release");
   const firstSha = git(repository, "rev-parse", "HEAD");
   fs.writeFileSync(cleanup, "#!/usr/bin/env bash\necho second-release\n", { mode: 0o755 });
@@ -227,6 +324,7 @@ function runDeploy(
       ...process.env,
       ACTIVE_STATE_ERROR: options.activeStateError ? "1" : "0",
       DEPLOY_SCRIPT,
+      FAIL_INITIAL_ROLLBACK_DISABLE: options.failInitialRollbackDisable ? "1" : "0",
       FAIL_ROLLBACK_STOP: options.failRollbackStop ? "1" : "0",
       FAIL_SELECT_SHA: options.failSelectSha ?? "",
       FAIL_START_SHA: options.failStartSha ?? "",
@@ -234,10 +332,17 @@ function runDeploy(
       FAKE_UID: options.fakeUid ?? "0",
       FIXTURE_REPOSITORY: fixture.repository,
       INITIAL_DEVICE_LOCK: options.initialDeviceLock ? "1" : "0",
+      INVALID_KNOWN_HOSTS: options.invalidKnownHosts ? "1" : "0",
+      INVALID_SERVICE_HOME: options.invalidServiceHome ? "1" : "0",
+      INVALID_SSH_KEY: options.invalidSshKey ? "1" : "0",
       LEAVE_DEVICE_LOCK: options.leaveDeviceLock ? "1" : "0",
+      MISSING_ACCOUNT: options.missingAccount ? "1" : "0",
       NODE_EXECUTABLE: process.execPath,
       SERVICE_LOAD_STATE: options.serviceLoadState ?? "not-found",
       TEST_ROOT: fixture.directory,
+      TUNNEL_ACTIVE: options.tunnelActive ? "1" : "0",
+      TUNNEL_ACTIVATE_AFTER_FIRST_CHECK: options.tunnelActivatesAfterFirstCheck ? "1" : "0",
+      UNSUPPORTED_NODE: options.unsupportedNode ? "1" : "0",
     },
   });
 }
@@ -247,8 +352,10 @@ function deploymentPaths(fixture: Fixture) {
   return {
     cleanup: path.join(fixture.directory, "usr/local/libexec/nemoclaw-jetson-cleanup"),
     current: path.join(root, "current"),
+    environment: path.join(fixture.directory, "etc/nemoclaw-jetson-dispatch/environment"),
     releases: path.join(root, "releases"),
     serviceLog: path.join(fixture.directory, "service.log"),
+    unit: path.join(fixture.directory, "etc/systemd/system/nemoclaw-jetson-dispatch.service"),
   };
 }
 
@@ -257,22 +364,168 @@ function readIfPresent(file: string): string {
 }
 
 describe("Colossus Jetson dispatcher deployment", () => {
-  it("deploys an exact commit from the fixed origin before the service is installed (#8142)", () => {
+  it("ships the fixed dispatcher environment and restricted systemd unit (#8142)", () => {
+    const environment = fs.readFileSync(ENVIRONMENT_SOURCE, "utf8");
+    const unit = fs.readFileSync(UNIT_SOURCE, "utf8");
+
+    expect(environment).toContain("JETSON_DISPATCH_GITHUB_REPOSITORY_ID=1182547092");
+    expect(environment).toContain("JETSON_DISPATCH_SSH_DESTINATION=nvidia@192.168.55.1");
+    expect(environment).toContain(
+      "JETSON_DISPATCH_CLEANUP_EXECUTABLE=/usr/local/libexec/nemoclaw-jetson-cleanup",
+    );
+    expect(environment).not.toContain("=REPOSITORY_ID");
+    expect(unit).toContain("EnvironmentFile=/etc/nemoclaw-jetson-dispatch/environment");
+    expect(unit).toContain("WorkingDirectory=/opt/nemoclaw-jetson-dispatch/current");
+    expect(unit).toContain("NoNewPrivileges=true");
+    expect(unit).not.toContain("nemoclaw-jetson-tunnel.service");
+  });
+
+  it("installs and verifies an exact release when the service is absent (#8142)", () => {
     const fixture = createFixture();
     const result = runDeploy(fixture, ["--commit", fixture.firstSha]);
     const paths = deploymentPaths(fixture);
 
-    expect(result.status).toBe(0);
+    expect(result.status, String(result.stderr)).toBe(0);
     expect(fs.readlinkSync(paths.current)).toBe(path.join(paths.releases, fixture.firstSha));
     expect(fs.readlinkSync(paths.cleanup)).toBe(
       path.join(paths.current, "tools/e2e/jetson-dispatch-cleanup.sh"),
     );
     expect(fs.readFileSync(paths.cleanup, "utf8")).toContain("first-release");
     expect(fs.readdirSync(paths.releases)).toEqual([fixture.firstSha]);
-    expect(readIfPresent(paths.serviceLog)).toBe("");
+    expect(fs.readFileSync(paths.environment, "utf8")).toBe("JETSON_DISPATCH_PORT=8787\n");
+    expect(fs.readFileSync(paths.unit, "utf8")).toContain(
+      "EnvironmentFile=/etc/nemoclaw-jetson-dispatch/environment",
+    );
+    expect(readIfPresent(paths.serviceLog)).toMatch(
+      /systemctl\tdaemon-reload[\s\S]*systemctl\tenable --now nemoclaw-jetson-dispatch\.service/u,
+    );
+    expect(result.stdout).toMatch(
+      /\[1\/5\].*[\s\S]*\[2\/5\].*[\s\S]*\[3\/5\].*[\s\S]*\[4\/5\].*[\s\S]*\[5\/5\]/u,
+    );
+    expect(result.stdout).toContain("public ingress remains disabled");
+    expect(readIfPresent(paths.serviceLog)).not.toContain(
+      "enable --now nemoclaw-jetson-tunnel.service",
+    );
+    expect(fs.readFileSync(path.join(fixture.directory, "curl.log"), "utf8")).toContain(
+      "curl\t--disable\t--noproxy\t*\t--silent",
+    );
     expect(fs.readFileSync(path.join(fixture.directory, "git.log"), "utf8")).toContain(
       `remote\tadd\torigin\t${FIXED_ORIGIN}`,
     );
+  });
+
+  it.each([
+    ["dispatcher account", { missingAccount: true }, "account is required"],
+    ["service home", { invalidServiceHome: true }, "must be a directory"],
+    ["SSH identity", { invalidSshKey: true }, "is not a readable OpenSSH private key"],
+    ["pinned host key", { invalidKnownHosts: true }, "does not contain the pinned Jetson"],
+    ["Node.js version", { unsupportedNode: true }, "must be Node.js 22.19.0 or later"],
+  ] satisfies Array<
+    [string, DeployOptions, string]
+  >)("rejects initial deployment when the prepared %s is invalid (#8142)", (_name, options, error) => {
+    const fixture = createFixture();
+    const result = runDeploy(fixture, ["--commit", fixture.firstSha], options);
+    const paths = deploymentPaths(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(error);
+    expect(fs.existsSync(paths.current)).toBe(false);
+    expect(fs.existsSync(paths.environment)).toBe(false);
+    expect(fs.existsSync(paths.unit)).toBe(false);
+  });
+
+  it("rejects an unmanaged cleanup path before initial deployment (#8142)", () => {
+    const fixture = createFixture();
+    const paths = deploymentPaths(fixture);
+    fs.mkdirSync(path.dirname(paths.cleanup), { recursive: true });
+    fs.writeFileSync(paths.cleanup, "unmanaged\n");
+
+    const result = runDeploy(fixture, ["--commit", fixture.firstSha]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("exists without one managed current release");
+    expect(fs.readFileSync(paths.cleanup, "utf8")).toBe("unmanaged\n");
+    expect(fs.existsSync(paths.environment)).toBe(false);
+    expect(fs.existsSync(paths.unit)).toBe(false);
+  });
+
+  it("rejects an unmanaged current link before initial deployment (#8142)", () => {
+    const fixture = createFixture();
+    const paths = deploymentPaths(fixture);
+    fs.mkdirSync(path.dirname(paths.current), { recursive: true });
+    fs.symlinkSync(fixture.repository, paths.current);
+
+    const result = runDeploy(fixture, ["--commit", fixture.firstSha]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("does not select one managed release");
+    expect(fs.readlinkSync(paths.current)).toBe(fixture.repository);
+    expect(fs.existsSync(paths.cleanup)).toBe(false);
+    expect(fs.existsSync(paths.environment)).toBe(false);
+    expect(fs.existsSync(paths.unit)).toBe(false);
+  });
+
+  it("rejects initial deployment while public ingress is active (#8142)", () => {
+    const fixture = createFixture();
+    const paths = deploymentPaths(fixture);
+    const result = runDeploy(fixture, ["--commit", fixture.firstSha], {
+      tunnelActive: true,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must be disabled and inactive");
+    expect(fs.existsSync(paths.current)).toBe(false);
+    expect(fs.existsSync(paths.environment)).toBe(false);
+    expect(fs.existsSync(paths.unit)).toBe(false);
+  });
+
+  it("rolls back initial deployment when public ingress becomes active (#8142)", () => {
+    const fixture = createFixture();
+    const paths = deploymentPaths(fixture);
+    const result = runDeploy(fixture, ["--commit", fixture.firstSha], {
+      tunnelActivatesAfterFirstCheck: true,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("release, unit, and environment were rolled back");
+    expect(fs.existsSync(paths.current)).toBe(false);
+    expect(fs.existsSync(paths.cleanup)).toBe(false);
+    expect(fs.existsSync(paths.environment)).toBe(false);
+    expect(fs.existsSync(paths.unit)).toBe(false);
+  });
+
+  it("rolls back the initial release, unit, and environment when verification fails (#8142)", () => {
+    const fixture = createFixture();
+    const paths = deploymentPaths(fixture);
+    const result = runDeploy(fixture, ["--commit", fixture.firstSha], {
+      failVerifySha: fixture.firstSha,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("release, unit, and environment were rolled back");
+    expect(fs.existsSync(paths.current)).toBe(false);
+    expect(fs.existsSync(paths.cleanup)).toBe(false);
+    expect(fs.existsSync(paths.environment)).toBe(false);
+    expect(fs.existsSync(paths.unit)).toBe(false);
+    expect(readIfPresent(paths.serviceLog)).toMatch(
+      /systemctl\tenable --now nemoclaw-jetson-dispatch\.service[\s\S]*systemctl\tdisable --now nemoclaw-jetson-dispatch\.service[\s\S]*systemctl\tdaemon-reload/u,
+    );
+  });
+
+  it("reports when initial rollback cannot disable the service (#8142)", () => {
+    const fixture = createFixture();
+    const paths = deploymentPaths(fixture);
+    const result = runDeploy(fixture, ["--commit", fixture.firstSha], {
+      failInitialRollbackDisable: true,
+      failVerifySha: fixture.firstSha,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("rollback did not restore the prepared host");
+    expect(fs.readlinkSync(paths.current)).toBe(path.join(paths.releases, fixture.firstSha));
+    expect(fs.readFileSync(paths.cleanup, "utf8")).toContain("first-release");
+    expect(fs.existsSync(paths.environment)).toBe(true);
+    expect(fs.existsSync(paths.unit)).toBe(true);
   });
 
   it("stops, switches, starts, and verifies an installed loopback service (#8142)", () => {
