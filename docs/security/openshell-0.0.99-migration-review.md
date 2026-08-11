@@ -185,8 +185,9 @@ select them, including Launchable, Jetson, DGX Spark, retired-selector compatibi
 and scorecard jobs.
 
 The managed image lifecycle job is not a required PR check and does not gate or roll back promotion.
-On pushes to `main`, it runs after `promote` moves the OpenClaw cohort pointer.
-It verifies the exact published `linux/amd64` image references for OpenClaw, Hermes, and LangChain Deep Agents Code.
+When the base-image workflow publishes managed images from `main`, this job runs after `promote` moves the OpenClaw cohort pointer.
+It exercises each published `linux/amd64` digest reference through onboarding, agent turns, gateway restart recovery, and destroy.
+The references cover OpenClaw, Hermes, and LangChain Deep Agents Code.
 If verification fails, the workflow does not roll back the promoted cohort pointer.
 Changes that can affect rootless Podman still require the latest PR commit's rootless Podman CPU lifecycle check with Docker disabled.
 
