@@ -1008,7 +1008,7 @@ describe("Podman host-local inference lifecycle", () => {
     );
     expect(JSON.stringify(prepared.receipt)).not.toContain(proxySecret);
     expect(harness.events.join("\n")).not.toContain(proxySecret);
-    expect(harness.failures.join("\n")).not.toContain(proxySecret);
+    expect(harness.failures.map(({ message }) => message).join("\n")).not.toContain(proxySecret);
   });
 
   it.each([

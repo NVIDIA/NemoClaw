@@ -28,7 +28,6 @@ type CompatibleEndpointSandboxSmokeScriptOptions = {
   initialMaxTokens?: number;
   retryDelaySeconds?: number;
   retryMaxTokens?: number;
-  validateOpenClawConfig?: boolean;
 };
 
 type CompatibleEndpointSmokeRun = (
@@ -45,14 +44,32 @@ const COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS = 3;
 const COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS = 60;
 const COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS = 5;
 const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS = 30;
+const PROVIDER_NEUTRAL_SMOKE_INFERENCE_PROOF_COUNT = 2;
+const PROVIDER_NEUTRAL_SMOKE_DIRECT_DENY_TIMEOUT_SECONDS = 10;
+const COMPATIBLE_ENDPOINT_SMOKE_PROOF_TIMEOUT_SECONDS =
+  COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS * COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS +
+  totalRetryBackoffSeconds(
+    COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS,
+    COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS,
+  );
 const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS =
-  (COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS * COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS +
-    totalRetryBackoffSeconds(
-      COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS,
-      COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS,
-    ) +
+  (COMPATIBLE_ENDPOINT_SMOKE_PROOF_TIMEOUT_SECONDS +
     COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS) *
   1000;
+const PROVIDER_NEUTRAL_SMOKE_COMMAND_TIMEOUT_MS =
+  (PROVIDER_NEUTRAL_SMOKE_INFERENCE_PROOF_COUNT * COMPATIBLE_ENDPOINT_SMOKE_PROOF_TIMEOUT_SECONDS +
+    PROVIDER_NEUTRAL_SMOKE_DIRECT_DENY_TIMEOUT_SECONDS +
+    COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS) *
+  1000;
+const OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT = Object.freeze({
+  version: 1,
+  httpStatus: 403,
+  error: "policy_denied",
+  method: "POST",
+  host: "host.openshell.internal",
+  path: "/v1/chat/completions",
+  detailSuffix: "not permitted by policy",
+});
 
 /**
  * Normalizes optional token-budget overrides while preserving safe defaults for
@@ -193,7 +210,9 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
       ignoreError: true,
       suppressOutput: true,
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS,
+      timeout: forceCanonicalRoute
+        ? PROVIDER_NEUTRAL_SMOKE_COMMAND_TIMEOUT_MS
+        : COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS,
     },
   );
   const smokeOutput = [
@@ -253,7 +272,6 @@ export function buildCompatibleEndpointSandboxSmokeScript(
 set -eu
 MODEL=${shellQuote(model)}
 CONFIG=${shellQuote(configPath)}
-VALIDATE_OPENCLAW_CONFIG=${options.validateOpenClawConfig === false ? 0 : 1}
 INFERENCE_URL=${shellQuote(inferenceUrl)}
 INITIAL_MAX_TOKENS=${initialMaxTokens}
 RETRY_MAX_TOKENS=${retryMaxTokens}
@@ -262,7 +280,6 @@ SMOKE_ATTEMPTS=${attempts}
 SMOKE_REQUEST_TIMEOUT_SECONDS=${COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS}
 SMOKE_RETRY_DELAY_SECONDS=${retryDelaySeconds}
 
-if [ "$VALIDATE_OPENCLAW_CONFIG" -eq 1 ]; then
 python3 - "$CONFIG" "$MODEL" <<'PYCFG'
 import json
 import sys
@@ -301,7 +318,6 @@ if primary != expected_primary:
 
 print("OPENCLAW_CONFIG_OK")
 PYCFG
-fi
 
 payload_file="$(mktemp)"
 response_file="$(mktemp)"
@@ -488,11 +504,16 @@ export function buildProviderNeutralInferenceSandboxSmokeScript(
   const maxTokensField = JSON.stringify(resolveMaxTokensField(model));
   const modelValue = JSON.stringify(model);
   const toolCallingRequired = authority.toolCallingRequired ? "True" : "False";
+  const directAuthority = `${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.host}:${String(
+    authority.directHostPort,
+  )}`;
   const directUrl = JSON.stringify(
-    `http://host.openshell.internal:${String(authority.directHostPort)}/v1/chat/completions`,
+    `http://${directAuthority}${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.path}`,
   );
+  const directMethod = JSON.stringify(OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.method);
+  const directDenialError = JSON.stringify(OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.error);
   const directDenialDetail = JSON.stringify(
-    `POST host.openshell.internal:${String(authority.directHostPort)}/v1/chat/completions not permitted by policy`,
+    `${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.method} ${directAuthority}${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.path} ${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.detailSuffix}`,
   );
   return `
 import json
@@ -596,7 +617,12 @@ if tool_calling_required:
         sys.exit(1)
 
 direct_url = ${directUrl}
+direct_method = ${directMethod}
+direct_denial_contract_version = ${String(OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.version)}
+direct_denial_http_status = ${String(OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.httpStatus)}
+direct_denial_error = ${directDenialError}
 direct_denial_detail = ${directDenialDetail}
+direct_deny_timeout_seconds = ${String(PROVIDER_NEUTRAL_SMOKE_DIRECT_DENY_TIMEOUT_SECONDS)}
 direct_request = urllib.request.Request(
     direct_url,
     data=json.dumps({
@@ -605,10 +631,10 @@ direct_request = urllib.request.Request(
         max_tokens_field: 1,
     }).encode("utf-8"),
     headers={"Content-Type": "application/json"},
-    method="POST",
+    method=direct_method,
 )
 try:
-    with opener.open(direct_request, timeout=10) as direct_response:
+    with opener.open(direct_request, timeout=direct_deny_timeout_seconds) as direct_response:
         print(
             "direct host inference route unexpectedly returned HTTP %s" % direct_response.status,
             file=sys.stderr,
@@ -621,12 +647,18 @@ except urllib.error.HTTPError as error:
         denial = None
     detail = denial.get("detail") if isinstance(denial, dict) else None
     if (
-        error.code != 403
+        error.code != direct_denial_http_status
         or not isinstance(denial, dict)
-        or denial.get("error") != "policy_denied"
-        or detail != direct_denial_detail
+        or denial.get("error") != direct_denial_error
     ):
         print("direct host inference response was not an OpenShell policy denial", file=sys.stderr)
+        sys.exit(1)
+    if detail != direct_denial_detail:
+        print(
+            "direct host inference OpenShell policy-denial contract v%s format drifted"
+            % direct_denial_contract_version,
+            file=sys.stderr,
+        )
         sys.exit(1)
 except urllib.error.URLError:
     print("direct host inference deny could not be proven", file=sys.stderr)

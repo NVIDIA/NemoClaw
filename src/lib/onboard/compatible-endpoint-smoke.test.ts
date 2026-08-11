@@ -219,6 +219,34 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     );
   });
 
+  it("budgets the canonical outer timeout for both tool proofs and direct denial", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "provider ready" })
+      .mockReturnValueOnce({ status: 0, stdout: "INFERENCE_SMOKE_OK PONG" });
+
+    verifyCompatibleEndpointSandboxSmoke({
+      sandboxName: "managed-inference-sandbox",
+      provider: "vllm-local",
+      model: "qwen3.5-9b",
+      runOpenshell,
+      redact: (value) => value,
+      forceCanonicalRoute: true,
+      hostLocalInferenceProofAuthority: {
+        service: "vllm",
+        directHostPort: 8000,
+        directHealthPath: "/health",
+        toolCallingRequired: true,
+      },
+    });
+
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      expect.any(Array),
+      expect.objectContaining({ timeout: 430_000 }),
+    );
+  });
+
   it.each(
     providerNeutralCases,
   )("runs a real provider-neutral $service request inside the $agentName sandbox", ({
@@ -272,10 +300,12 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(sandboxCommand[7]).toContain(
       `host.openshell.internal:${String(port)}/v1/chat/completions`,
     );
-    expect(sandboxCommand[7]).toContain('method="POST"');
+    expect(sandboxCommand[7]).toContain('direct_method = "POST"');
+    expect(sandboxCommand[7]).toContain("method=direct_method");
     expect(sandboxCommand[7]).toContain('response_data.get("model") != model');
     expect(sandboxCommand[7]).toContain('"tool_choice"');
-    expect(sandboxCommand[7]).toContain('denial.get("error") != "policy_denied"');
+    expect(sandboxCommand[7]).toContain('direct_denial_error = "policy_denied"');
+    expect(sandboxCommand[7]).toContain('denial.get("error") != direct_denial_error');
     expect(sandboxCommand[7]).toContain("ProxyHandler({})");
     expect(sandboxCommand[7]).not.toContain("curl");
   });
@@ -324,6 +354,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(script).toContain("SMOKE_REQUEST_TIMEOUT_SECONDS=60");
     expect(script).toContain("SMOKE_RETRY_DELAY_SECONDS=5");
     expect(script).toContain("MODEL='provider/model'\\'''");
+    expect(script).not.toContain("VALIDATE_OPENCLAW_CONFIG");
   });
 
   it("builds a Python-only provider-neutral route allow and direct-host deny proof", () => {
@@ -336,12 +367,16 @@ describe("compatible endpoint sandbox smoke helpers", () => {
 
     expect(script).toContain("https://inference.local/v1/chat/completions");
     expect(script).toContain("INFERENCE_SMOKE_OK");
-    expect(script).toContain('denial.get("error") != "policy_denied"');
+    expect(script).toContain('denial.get("error") != direct_denial_error');
     expect(script).toContain("host.openshell.internal:8001/v1/chat/completions");
-    expect(script).toContain('method="POST"');
+    expect(script).toContain('direct_method = "POST"');
+    expect(script).toContain("method=direct_method");
     expect(script).toContain("max_tokens_field: 1");
     expect(script).toContain('response_data.get("model") != model');
     expect(script).toContain('"tool_choice"');
+    expect(script).toContain("direct_denial_contract_version = 1");
+    expect(script).toContain('direct_denial_error = "policy_denied"');
+    expect(script).toContain("direct_deny_timeout_seconds = 10");
     expect(script).toContain("ProxyHandler({})");
     expect(script).not.toContain("curl");
   });
@@ -425,6 +460,21 @@ describe("compatible endpoint sandbox smoke helpers", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("was not an OpenShell policy denial");
+  });
+
+  it("reports OpenShell policy-denial contract format drift separately", () => {
+    const authority = allAgentProofAuthorities[2].authority;
+    const result = runProviderNeutralScript({
+      authority,
+      denial: {
+        error: "policy_denied",
+        detail: "POST host.openshell.internal:8000/v1/chat/completions denied by policy",
+      },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("OpenShell policy-denial contract v1 format drifted");
+    expect(result.stderr).not.toContain("was not an OpenShell policy denial");
   });
 
   it("shell-quotes hostile model text through the generated smoke script", () => {

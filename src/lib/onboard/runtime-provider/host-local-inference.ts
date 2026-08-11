@@ -424,10 +424,7 @@ function normalizeEndpoint(
   });
 }
 
-function normalizeInferenceProof(
-  _service: Exclude<HostLocalInferenceService, "llama-cpp">,
-  value: unknown,
-): HostLocalInferenceProofAuthority {
+function normalizeInferenceProof(value: unknown): HostLocalInferenceProofAuthority {
   const inference = exactRecord(value, "inference proof authority");
   exactKeys(inference, ["model", "protocol", "toolCallingRequired"], "inference proof authority");
   const expectedProtocol = "openai-chat-completions" as const;
@@ -625,12 +622,7 @@ export function normalizeHostLocalInferenceReceipt(value: unknown): HostLocalInf
     ...(!proofReceipt
       ? {}
       : {
-          inference: normalizeInferenceProof(
-            service === "llama-cpp"
-              ? fail("proof receipt schema does not support llama.cpp")
-              : service,
-            receipt.inference,
-          ),
+          inference: normalizeInferenceProof(receipt.inference),
           publication,
         }),
   });
