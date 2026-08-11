@@ -138,6 +138,32 @@ describe("continuous E2E fix-loop executable write policy", () => {
     expect(trustedInvocation).toBeGreaterThan(trustCheck);
   });
 
+  it("fails closed before the final gate and invokes only the compared trusted copy", () => {
+    const guide = fs.readFileSync(
+      new URL(
+        "../.agents/skills/nemoclaw-maintainer-fix-e2e-failures/references/review-and-merge.md",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const finalGate = guide.slice(
+      guide.indexOf("## Final Merge Gate"),
+      guide.indexOf("## Merge Without Bypass"),
+    );
+    const trustCheck = finalGate.indexOf('cmp -s "$trusted_gate_root/$gate_file" "$gate_file"');
+    const trustedInvocation = finalGate.indexOf('"$trusted_gate_root/$gate_path" <pr-number>');
+
+    expect(finalGate).toContain("set -euo pipefail");
+    expect(finalGate).toContain('gate_surface=("$gate_path" "$gate_shared_path")');
+    expect(finalGate).toContain('test -z "$(git status --porcelain -- "${gate_surface[@]}")"');
+    expect(finalGate).toContain("If either file differs");
+    expect(trustCheck).toBeGreaterThanOrEqual(0);
+    expect(trustedInvocation).toBeGreaterThan(trustCheck);
+    expect(finalGate).not.toContain(
+      "  .agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number>",
+    );
+  });
+
   it("denies a merge when approval and checks belong to a stale head", () => {
     expect(
       evaluateFixLoopPolicy({

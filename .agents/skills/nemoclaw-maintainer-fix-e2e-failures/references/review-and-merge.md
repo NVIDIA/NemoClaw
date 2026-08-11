@@ -143,12 +143,39 @@ Re-read the PR after the write and require a new head before classifying the ref
 
 Treat the gate checker and all transitive local imports as execution surfaces. Refresh `origin/main`. Before executing a checkout-local copy, compare the complete execution surface with refreshed `origin/main`, including staged, unstaged, and untracked files. If any surface differs, do not execute the checkout-local copy. Obtain explicit user approval for the exact changed surface, or invoke a separately reviewed trusted copy from a clean `origin/main` worktree.
 
-Immediately before approval, run that trusted gate checker as a preliminary gate:
+Immediately before approval, create a fresh trusted worktree and run only its gate checker as a
+preliminary gate. `check-gates.ts` currently imports `shared.ts`; both files are the complete local
+execution surface and must match the candidate before the trusted copy runs:
 
 ```bash
+set -euo pipefail
+git fetch origin main
+trusted_gate_tmp=$(mktemp -d)
+trusted_gate_root="$trusted_gate_tmp/main"
+cleanup_trusted_gate_root() {
+  git worktree remove --force "$trusted_gate_root" >/dev/null 2>&1 || true
+  rmdir "$trusted_gate_tmp" >/dev/null 2>&1 || true
+}
+trap cleanup_trusted_gate_root EXIT INT TERM
+git worktree add --detach "$trusted_gate_root" origin/main
+gate_path=.agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts
+gate_shared_path=.agents/skills/nemoclaw-maintainer-day/scripts/shared.ts
+gate_surface=("$gate_path" "$gate_shared_path")
+for gate_file in "${gate_surface[@]}"; do
+  test -f "$trusted_gate_root/$gate_file"
+  test -f "$gate_file"
+  cmp -s "$trusted_gate_root/$gate_file" "$gate_file"
+done
+test -z "$(git status --porcelain -- "${gate_surface[@]}")"
 node --experimental-strip-types --no-warnings \
-  .agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number>
+  "$trusted_gate_root/$gate_path" <pr-number>
+cleanup_trusted_gate_root
+trap - EXIT INT TERM
 ```
+
+If either file differs, is missing, has candidate worktree changes, or gains an unlisted transitive
+local import, the comparison must stop the gate before execution. Do not fall back to the
+checkout-local checker. Update `gate_surface` only after reviewing the complete new import graph.
 
 Also read the effective rules for `main` as part of the preliminary gate. Treat every active required-status and pull-request-review rule as authoritative even when it changed during the loop:
 
