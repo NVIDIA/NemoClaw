@@ -126,8 +126,9 @@ export function doesModelRouterProcessOwnPort(
 
 /**
  * Stop the exact router process and return only after both its PID and health
- * endpoint disappear. Ownership is checked again before SIGKILL to avoid
- * signaling a PID that was reused during the graceful-shutdown window.
+ * endpoint disappear. The session stores a numeric PID, not a PID-stable OS
+ * handle. Never escalate with SIGKILL because the PID can be reused between an
+ * ownership check and the signal.
  */
 export async function stopModelRouterProcess(
   pid: number,
@@ -185,33 +186,12 @@ export async function stopModelRouterProcess(
     })
   ) {
     throw new Error(
-      `Refusing to send SIGKILL to PID ${pid}: model-router ownership changed during shutdown.`,
+      `Model router ownership changed during shutdown for PID ${pid}; no escalation signal was sent.`,
     );
   }
-
-  try {
-    kill(pid, "SIGKILL");
-  } catch (error) {
-    if (!isRunning(pid) && !(await isHealthy(port, 1000))) return;
-    throw new Error(
-      `Failed to send SIGKILL to model router PID ${pid}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-  for (let _attempt = 0; _attempt < 5; _attempt++) {
-    await sleep(500);
-    if (!isRunning(pid) && !(await isHealthy(port, 1000))) return;
-  }
-
-  const processStillRunning = isRunning(pid);
-  const endpointStillHealthy = await isHealthy(port, 1000);
-  if (!processStillRunning && !endpointStillHealthy) return;
-  const survivors = [
-    processStillRunning ? `PID ${pid}` : null,
-    endpointStillHealthy ? `health endpoint on port ${port}` : null,
-  ].filter(Boolean);
-  throw new Error(`Model router shutdown did not converge; still active: ${survivors.join(", ")}.`);
+  throw new Error(
+    `Model router shutdown did not converge after SIGTERM; refusing PID-based SIGKILL for PID ${pid} because process identity cannot be preserved atomically.`,
+  );
 }
 
 /**

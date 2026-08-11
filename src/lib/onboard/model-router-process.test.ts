@@ -118,7 +118,7 @@ describe("stopModelRouterProcess", () => {
     ).rejects.toThrow("Failed to send SIGTERM");
   });
 
-  it("escalates to SIGKILL and reports a process that survives both signals", async () => {
+  it("does not escalate when a process survives SIGTERM without a PID-stable handle", async () => {
     const signals: NodeJS.Signals[] = [];
 
     await expect(
@@ -129,31 +129,11 @@ describe("stopModelRouterProcess", () => {
         kill: (_pid, signal) => signals.push(signal),
         sleep: async () => {},
       }),
-    ).rejects.toThrow("shutdown did not converge");
-    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    ).rejects.toThrow("refusing PID-based SIGKILL");
+    expect(signals).toEqual(["SIGTERM"]);
   });
 
-  it("returns after SIGKILL removes the owned process and endpoint", async () => {
-    let running = true;
-    let healthy = true;
-    const signals: NodeJS.Signals[] = [];
-
-    await stopModelRouterProcess(123, 4000, {
-      isRunning: () => running,
-      readCommandLine: () => ROUTER_ARGS,
-      isHealthy: async () => healthy,
-      kill: (_pid, signal) => {
-        signals.push(signal);
-        running = signal !== "SIGKILL";
-        healthy = signal !== "SIGKILL";
-      },
-      sleep: async () => {},
-    });
-
-    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
-  });
-
-  it("refuses SIGKILL when PID ownership changes during graceful shutdown", async () => {
+  it("sends no escalation signal when PID ownership changes during graceful shutdown", async () => {
     let ownershipChecks = 0;
     const signals: NodeJS.Signals[] = [];
 
@@ -170,6 +150,33 @@ describe("stopModelRouterProcess", () => {
       }),
     ).rejects.toThrow("ownership changed during shutdown");
     expect(signals).toEqual(["SIGTERM"]);
+  });
+
+  it("does not signal a replacement that takes the PID after final ownership observation", async () => {
+    let ownershipChecks = 0;
+    let replacementOwnsPid = false;
+    const routerSignals: NodeJS.Signals[] = [];
+    const replacementSignals: NodeJS.Signals[] = [];
+
+    await expect(
+      stopModelRouterProcess(123, 4000, {
+        isRunning: () => true,
+        readCommandLine: () => {
+          ownershipChecks += 1;
+          if (ownershipChecks === 2) replacementOwnsPid = true;
+          return ROUTER_ARGS;
+        },
+        isHealthy: async () => true,
+        kill: (_pid, signal) => {
+          (replacementOwnsPid ? replacementSignals : routerSignals).push(signal);
+        },
+        sleep: async () => {},
+      }),
+    ).rejects.toThrow("refusing PID-based SIGKILL");
+
+    expect(ownershipChecks).toBe(2);
+    expect(routerSignals).toEqual(["SIGTERM"]);
+    expect(replacementSignals).toEqual([]);
   });
 
   it("does not declare success when the PID exits but the endpoint survives", async () => {
