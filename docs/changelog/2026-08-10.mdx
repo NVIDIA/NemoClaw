@@ -11,6 +11,8 @@ It also improves update safety, image defaults, and installation failure reporti
 
 - `nemoclaw host probe --json`, onboarding, resume, and rebuild now use one credential-free readiness report and admission policy.
   Blocking findings stop lifecycle effects before NemoClaw changes credentials, images, gateways, policies, or sandboxes.
+  Gateway readiness accepts OpenShell v0.0.101 `Server:` endpoint output and target-bound process tags only when trusted listener evidence matches the configured gateway.
+  It preserves the selected gateway's stale state when a gateway-scoped OpenShell status check cannot connect, so onboarding can reconcile the registered gateway.
   For more information, refer to [System Readiness](/user-guide/openclaw/reference/system-readiness) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - The managed OpenShell runtime now uses v0.0.101 across installation, gateways, sandboxes, supervisors, and managed agent images.
   Existing installations retain the v0.0.99 fallback only for migration, and incompatible sandbox names stop the update before destructive work.
