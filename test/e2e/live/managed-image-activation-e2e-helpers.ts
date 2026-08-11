@@ -426,7 +426,7 @@ function expectNoDockerfileBuild(trace: string): void {
 
 export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): Promise<void> {
   const { artifacts, cleanup, host, progress } = fixtures;
-  progress.phase("validate exact candidate catalog and host runtime");
+  progress.phase("validate exact managed image catalog and host runtime");
   const catalogPath = requiredCatalogPath();
   const contracts = exactCatalog(catalogPath);
   const guard = createDockerBuildGuard();
