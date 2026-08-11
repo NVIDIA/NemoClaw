@@ -72,10 +72,10 @@ Deep Agents Code `0.1.54` pins `deepagents==0.7.5`, whose official wheel
 contains the Nemotron 3 Ultra harness profile merged in Deep Agents PR #4192.
 NemoClaw no longer vendors or overlays that source.
 
-- Native profile SHA-256: `c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7`
+- Native profile SHA-256: `3b95b118e90c4ae19890c611cc7e1e85261217f971496e9bb7508142133c7d9a`
 - Unmodified built-in bootstrap SHA-256: `005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf`
 - First-party adapter: `nemoclaw-deepagents-profile==0.1.0`
-- Adapter module SHA-256: `b481aee6c9115346f5ed75d25abf9e7bec237e866c1f96c6e01fb747ccd1de83`
+- Adapter module SHA-256: `86b46958cd969407b05ce7ab10e711c7ad25375028a4c864f6f12519fe091ab3`
 - Adapter project metadata SHA-256: `5a07d4b473f2714021756eda005dceb6a0c7e6f3ff02ca4021d4debb8c170ff8`
 - Adapter wheel license expression: `Apache-2.0`
 - Adapter dependency audit result: `No known vulnerabilities found`. Its only

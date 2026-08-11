@@ -34,7 +34,7 @@ const pythonBin = execFileSync("python3", ["-c", "import sys; print(sys.executab
 
 const EXPECTED_DCODE_VERSION = "0.1.54";
 const EXPECTED_DEEPAGENTS_VERSION = "0.7.5";
-const NATIVE_PROFILE_SHA256 = "c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7";
+const NATIVE_PROFILE_SHA256 = "3b95b118e90c4ae19890c611cc7e1e85261217f971496e9bb7508142133c7d9a";
 const UNMODIFIED_BOOTSTRAP_SHA256 =
   "005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf";
 const CANONICAL_MODEL_SPEC = "nvidia:nvidia/nemotron-3-ultra-550b-a55b";
