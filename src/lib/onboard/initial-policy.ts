@@ -265,48 +265,17 @@ const PROC_COMM_WRITE_PROBE = [
   "fi",
 ].join(" ");
 
-function buildCudaInitProbe(diagnosticStatements: readonly string[] = []): string {
-  return [
-    "python3",
-    "-c",
-    [
-      "'import ctypes;",
-      'lib = ctypes.CDLL("libcuda.so.1");',
-      "lib.cuInit.argtypes = [ctypes.c_uint];",
-      "lib.cuInit.restype = ctypes.c_int;",
-      "init_rc = lib.cuInit(0);",
-      'print(f"cuInit(0)={init_rc}");',
-      ...diagnosticStatements,
-      "raise SystemExit(0 if init_rc == 0 else 1)'",
-    ].join(" "),
-  ].join(" ");
-}
-
-const CUDA_INIT_PROBE = buildCudaInitProbe();
-const JETSON_CUDA_DRIVER_DIAGNOSTIC_PROBE = buildCudaInitProbe([
-  "driver_version = ctypes.c_int();",
-  "lib.cuDriverGetVersion.argtypes = [ctypes.POINTER(ctypes.c_int)];",
-  "lib.cuDriverGetVersion.restype = ctypes.c_int;",
-  "driver_version_rc = lib.cuDriverGetVersion(ctypes.byref(driver_version));",
-  'print(f"cuDriverGetVersion()={driver_version_rc} version={driver_version.value}");',
-  "device_count = ctypes.c_int();",
-  "lib.cuDeviceGetCount.argtypes = [ctypes.POINTER(ctypes.c_int)];",
-  "lib.cuDeviceGetCount.restype = ctypes.c_int;",
-  "device_count_rc = lib.cuDeviceGetCount(ctypes.byref(device_count));",
-  'print(f"cuDeviceGetCount()={device_count_rc} count={device_count.value}");',
-  "device = ctypes.c_int();",
-  "lib.cuDeviceGet.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_int];",
-  "lib.cuDeviceGet.restype = ctypes.c_int;",
-  "device_rc = lib.cuDeviceGet(ctypes.byref(device), 0);",
-  'print(f"cuDeviceGet(0)={device_rc} device={device.value}");',
-  "device_name = ctypes.create_string_buffer(128);",
-  "lib.cuDeviceGetName.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int];",
-  "lib.cuDeviceGetName.restype = ctypes.c_int;",
-  "device_name_rc = lib.cuDeviceGetName(ctypes.cast(device_name, ctypes.c_void_p), len(device_name), device.value) if device_rc == 0 else None;",
-  'device_name_status = str(device_name_rc) if device_name_rc is not None else "skipped";',
-  'device_name_value = device_name.value.decode("utf-8", errors="replace") if device_name_rc == 0 else "unavailable";',
-  'print(f"cuDeviceGetName(0)={device_name_status} name={device_name_value}");',
-]);
+const CUDA_INIT_PROBE = [
+  "python3",
+  "-c",
+  [
+    "'import ctypes;",
+    'lib = ctypes.CDLL("libcuda.so.1");',
+    "rc = lib.cuInit(0);",
+    'print(f"cuInit(0)={rc}");',
+    "raise SystemExit(0 if rc == 0 else 1)'",
+  ].join(" "),
+].join(" ");
 
 const NVIDIA_SMI_OPTIONAL_PROBE = [
   "set -eu;",
@@ -325,7 +294,6 @@ export type DirectSandboxGpuProofCommand = {
 
 export function buildDirectSandboxGpuProofCommands(
   sandboxName: string,
-  options: { includeCudaDriverDiagnostics?: boolean } = {},
 ): DirectSandboxGpuProofCommand[] {
   return [
     {
@@ -343,18 +311,7 @@ export function buildDirectSandboxGpuProofCommands(
       id: "cuda-init",
       label: "cuInit(0) via libcuda.so.1",
       optional: true,
-      args: [
-        "sandbox",
-        "exec",
-        "-n",
-        sandboxName,
-        "--",
-        "sh",
-        "-lc",
-        options.includeCudaDriverDiagnostics
-          ? JETSON_CUDA_DRIVER_DIAGNOSTIC_PROBE
-          : CUDA_INIT_PROBE,
-      ],
+      args: ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", CUDA_INIT_PROBE],
     },
   ];
 }

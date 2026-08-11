@@ -481,9 +481,7 @@ network_policies: {}
   });
 
   it("builds direct sandbox GPU proof commands", () => {
-    const commands = buildDirectSandboxGpuProofCommands("alpha", {
-      includeCudaDriverDiagnostics: true,
-    });
+    const commands = buildDirectSandboxGpuProofCommands("alpha");
     expect(commands.map((entry) => entry.label)).toEqual([
       "nvidia-smi when available",
       "/proc/<pid>/task/<tid>/comm write",
@@ -508,18 +506,7 @@ network_policies: {}
     ]);
     expect(commands[1].args.join(" ")).toContain("/proc/self/comm");
     expect(commands[1].args.join(" ")).not.toContain("ls /proc/self/task");
-    const cudaProbe = commands[2].args.join(" ");
-    expect(cudaProbe).toContain("cuInit(0)");
-    expect(cudaProbe).toContain("cuDriverGetVersion()");
-    expect(cudaProbe).toContain("cuDeviceGetCount()");
-    expect(cudaProbe).toContain("cuDeviceGet(0)");
-    expect(cudaProbe).toContain("cuDeviceGetName(0)");
-    expect(cudaProbe).toContain("raise SystemExit(0 if init_rc == 0 else 1)");
-    expect(cudaProbe).not.toContain("cuCtxCreate");
-    expect(cudaProbe).not.toContain("cuMemAlloc");
-    const genericCudaProbe = buildDirectSandboxGpuProofCommands("alpha")[2].args.join(" ");
-    expect(genericCudaProbe).toContain("cuInit(0)");
-    expect(genericCudaProbe).not.toContain("cuDeviceGetCount()");
+    expect(commands[2].args.join(" ")).toContain("cuInit(0)");
     for (const command of commands) {
       for (const arg of command.args) {
         expect(arg).not.toMatch(/[\r\n]/);
