@@ -174,6 +174,50 @@ describe("runner helpers", () => {
 });
 
 describe("runner env merging", () => {
+  it("preserves Docker context only for Docker subprocesses (#8816)", () => {
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    const originalDockerContext = process.env.DOCKER_CONTEXT;
+    const originalApiKey = process.env.NVIDIA_INFERENCE_API_KEY;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    try {
+      process.env.DOCKER_CONTEXT = "healthy-context";
+      process.env.NVIDIA_INFERENCE_API_KEY = "test-secret-must-not-cross-runner-boundary";
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      run(["docker", "ps"]);
+      run(["echo", "test"]);
+    } finally {
+      if (originalDockerContext === undefined) {
+        delete process.env.DOCKER_CONTEXT;
+      } else {
+        process.env.DOCKER_CONTEXT = originalDockerContext;
+      }
+      if (originalApiKey === undefined) {
+        delete process.env.NVIDIA_INFERENCE_API_KEY;
+      } else {
+        process.env.NVIDIA_INFERENCE_API_KEY = originalApiKey;
+      }
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(2);
+    const dockerEnv = requireCall(runnerCalls, 0)[2]?.env;
+    const nonDockerEnv = requireCall(runnerCalls, 1)[2]?.env;
+    expect(dockerEnv?.DOCKER_CONTEXT).toBe("healthy-context");
+    expect(dockerEnv?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(nonDockerEnv?.DOCKER_CONTEXT).toBeUndefined();
+    expect(nonDockerEnv?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+  });
+
   it("preserves process env when opts.env is provided to runCapture", () => {
     const originalGateway = process.env.OPENSHELL_GATEWAY;
     process.env.OPENSHELL_GATEWAY = "nemoclaw";
