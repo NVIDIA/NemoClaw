@@ -26,7 +26,13 @@ import { resolveNemoclawStateDir } from "../state/paths";
 import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";
 import * as shields from "./index";
 import { relockAndReconfirm } from "./relock-reconfirm";
-import { isProcessAlive, readProcessStartIdentity } from "./timer-control";
+import {
+  hasExactTimerAuthorizationProof,
+  isProcessAlive,
+  readProcessStartIdentity,
+  removeTimerAuthorizationProof,
+  writeTimerAuthorizationProofForMarker,
+} from "./timer-control";
 import { withShieldsTransitionLock } from "./transition-lock";
 
 interface ShieldsStatePatch {
@@ -184,6 +190,17 @@ function readTimerMarker(markerPath: string): ShieldsTimerMarker | null {
   return readShieldsTimerMarkerFile(markerPath);
 }
 
+let cachedCurrentProcessStartIdentity: string | undefined;
+
+function currentProcessStartIdentity(): string | null {
+  if (cachedCurrentProcessStartIdentity !== undefined) {
+    return cachedCurrentProcessStartIdentity;
+  }
+  const identity = readProcessStartIdentity(process.pid);
+  if (identity !== null) cachedCurrentProcessStartIdentity = identity;
+  return identity;
+}
+
 function markerRecordMatchesCurrentTimer(
   marker: ShieldsTimerMarker | null,
   args: TimerArgs,
@@ -195,6 +212,8 @@ function markerRecordMatchesCurrentTimer(
     marker.snapshotPath === args.snapshotPath &&
     marker.restoreAt === args.restoreAtIso &&
     marker.processToken === args.processToken &&
+    (marker.timerProcessStartIdentity === undefined ||
+      marker.timerProcessStartIdentity === currentProcessStartIdentity()) &&
     (marker.allowLegacyHermesProtocol === true) === args.allowLegacyHermesProtocol &&
     marker.leaseOwnerPid === args.leaseOwnerPid &&
     marker.leaseOwnerStartIdentity === args.leaseOwnerStartIdentity &&
@@ -215,6 +234,13 @@ function cleanupOwnedTimerMarker(args: TimerArgs): boolean {
 
   if (markerRecordMatchesCurrentTimer(readTimerMarker(quarantinePath), args)) {
     fs.unlinkSync(quarantinePath);
+    removeTimerAuthorizationProof(args.sandboxName, args.processToken);
+    const directoryFd = fs.openSync(path.dirname(args.markerPath), "r");
+    try {
+      fs.fsyncSync(directoryFd);
+    } finally {
+      fs.closeSync(directoryFd);
+    }
     return true;
   }
 
@@ -650,12 +676,16 @@ function main(): void {
   let scheduled = false;
   const authorize = (): boolean => {
     if (scheduled) return true;
-    if (!markerMatchesCurrentTimer(args)) return false;
-    scheduled = true;
+    const marker = readTimerMarker(args.markerPath);
+    if (!markerRecordMatchesCurrentTimer(marker, args)) return false;
     const restoreTimeout = setTimeout(
       () => {
         clearInterval(authorityPoll);
-        if (!markerMatchesCurrentTimer(args)) {
+        const currentMarker = readTimerMarker(args.markerPath);
+        if (
+          !markerRecordMatchesCurrentTimer(currentMarker, args) ||
+          !hasExactTimerAuthorizationProof(currentMarker!)
+        ) {
           process.exit(0);
           return;
         }
@@ -664,11 +694,29 @@ function main(): void {
       Math.max(0, args.restoreAtMs - Date.now()),
     );
     const authorityPoll = setInterval(() => {
-      if (markerMatchesCurrentTimer(args)) return;
+      const currentMarker = readTimerMarker(args.markerPath);
+      if (
+        markerRecordMatchesCurrentTimer(currentMarker, args) &&
+        hasExactTimerAuthorizationProof(currentMarker!)
+      ) {
+        return;
+      }
       clearTimeout(restoreTimeout);
       clearInterval(authorityPoll);
       process.exit(0);
     }, AUTO_RESTORE_AUTHORITY_POLL_MS);
+    scheduled = true;
+    try {
+      writeTimerAuthorizationProofForMarker(marker!);
+      if (!hasExactTimerAuthorizationProof(marker!)) {
+        throw new Error("Timer authorization proof did not verify after publication");
+      }
+    } catch {
+      clearTimeout(restoreTimeout);
+      clearInterval(authorityPoll);
+      scheduled = false;
+      return false;
+    }
     return true;
   };
 
@@ -688,18 +736,17 @@ function main(): void {
       request.processToken === args.processToken
     ) {
       const authorized = authorize();
-      if (
-        authorized &&
-        request.acknowledge === true &&
-        process.connected &&
-        process.send !== undefined
-      ) {
+      if (!authorized) {
+        process.exit(1);
+        return;
+      }
+      if (request.acknowledge === true && process.connected && process.send !== undefined) {
         process.send({ type: "authorized", processToken: args.processToken }, () => undefined);
       }
     }
   });
   process.once("disconnect", () => {
-    authorize();
+    if (!authorize()) process.exit(1);
   });
 }
 

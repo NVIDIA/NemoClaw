@@ -52,6 +52,7 @@ installMock(source("sandbox", "privileged-exec.js"), {
     capturedPrivilegedExec = { command, sanitizeEnvironment };
     return ["docker", "exec", ...(stdin ? ["-i"] : []), sandboxName, ...command];
   },
+  withPrivilegedSandboxExecutionLease: (_sandboxName, _operation, callback) => callback(),
 });
 installMock(source("adapters", "docker", "exec.js"), {
   dockerExecFileSync: (argv, options) => {

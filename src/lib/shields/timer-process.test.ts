@@ -29,7 +29,7 @@ describe("detached Shields timer process", () => {
     "exits after cooperative marker revocation",
     { timeout: 20_000 },
     async () => {
-      const { killTimer } = await import("./timer-control");
+      const { killTimer, readProcessStartIdentity } = await import("./timer-control");
       const stateDir = path.join(tmpHome, ".nemoclaw", "state");
       const sandboxName = "cooperative-stop";
       const snapshotPath = path.join(stateDir, "snapshot.yaml");
@@ -60,6 +60,14 @@ describe("detached Shields timer process", () => {
       );
       expect(child.pid).toBeTypeOf("number");
       const childPid = child.pid as number;
+      let childStartIdentity: string | null = null;
+      await vi.waitFor(
+        () => {
+          childStartIdentity = readProcessStartIdentity(childPid);
+          expect(childStartIdentity).toBeTypeOf("string");
+        },
+        { timeout: 5_000, interval: 10 },
+      );
       let childStderr = "";
       child.stderr?.setEncoding("utf-8");
       child.stderr?.on("data", (chunk: string) => {
@@ -75,6 +83,7 @@ describe("detached Shields timer process", () => {
             snapshotPath,
             restoreAt: restoreAtIso,
             processToken: PROCESS_TOKEN,
+            timerProcessStartIdentity: childStartIdentity,
             agentName: "openclaw",
             configPath: "/sandbox/.openclaw/openclaw.json",
             configDir: "/sandbox/.openclaw",

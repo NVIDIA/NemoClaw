@@ -35,10 +35,14 @@ import type {
   RuntimeProviderBundle,
 } from "../../src/lib/onboard/runtime-provider/contract.ts";
 import { createDockerRuntimeProviderBundle } from "../../src/lib/onboard/runtime-provider/docker.ts";
-import { prepareSandboxCreateLaunch } from "../../src/lib/onboard/sandbox-create-launch.ts";
+import {
+  OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
+  prepareSandboxCreateLaunch,
+} from "../../src/lib/onboard/sandbox-create-launch.ts";
 import {
   resolveDockerStartupCommandPatch,
   runSandboxGpuCreateFlow,
+  type SandboxGpuCreateFlowInput,
 } from "../../src/lib/onboard/sandbox-gpu-create-flow.ts";
 import { createDirectSandboxGpuVerifier } from "../../src/lib/onboard/sandbox-gpu-preflight.ts";
 import {
@@ -70,6 +74,22 @@ const MANAGED_AGENT_BASE_POLICIES: Record<ManagedStartupAgent, readonly string[]
   hermes: ["agents", "hermes", "policy-additions.yaml"],
   "langchain-deepagents-code": ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
 };
+
+export const MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV = OPENSHELL_SANDBOX_SUPERVISOR_ARGV;
+
+type ProtectedManagedImageBootstrapInput = Omit<
+  NonNullable<SandboxGpuCreateFlowInput["managedBootstrap"]>,
+  "expectedSupervisorArgv"
+>;
+
+export function createProtectedManagedImageBootstrapInput(
+  input: ProtectedManagedImageBootstrapInput,
+): NonNullable<SandboxGpuCreateFlowInput["managedBootstrap"]> {
+  return Object.freeze({
+    ...input,
+    expectedSupervisorArgv: MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV,
+  });
+}
 
 function compactText(value = ""): string {
   return String(value).replace(/\s+/gu, " ").trim();
@@ -877,7 +897,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           prebuild,
           restoreBackupPath: null,
           terminalAgent: input.agent === "langchain-deepagents-code",
-          managedBootstrap: {
+          managedBootstrap: createProtectedManagedImageBootstrapInput({
             bootstrapIdentity: launch.managedBootstrapIdentity,
             stateRoot: stateDir,
             runtimeProvider,
@@ -886,8 +906,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
             image,
             agentIdentity: managedImageRuntimeIdentity(input.agent),
             intendedWorkloadArgv: launch.intendedSandboxStartupCommand,
-            expectedSupervisorArgv: ["/opt/openshell/bin/openshell-sandbox"],
-          },
+          }),
           ...startupPlan,
         },
         {
