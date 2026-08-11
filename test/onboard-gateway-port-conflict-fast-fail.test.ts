@@ -5,7 +5,10 @@ import type { AddressInfo } from "node:net";
 import net from "node:net";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getGatewayClusterContainerName } from "../src/lib/adapters/openshell/gateway-drift";
+import { resolveGatewayName } from "../src/lib/onboard/gateway-binding";
+import { createProductionGatewayReadinessDependencies } from "../src/lib/readiness/gateway-production";
 import {
   createOnboardProcessWorkspace,
   type OnboardProcessWorkspace,
@@ -77,6 +80,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await new Promise<void>((resolve) => gatewayServer.close(() => resolve()));
     workspace.remove();
   });
@@ -112,6 +116,99 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
       expect(combined).toMatch(
         /The gateway port is held by an incompatible or ambiguous owner|OpenShell gateway needs this port/,
       );
+    },
+  );
+
+  it(
+    "accepts Server endpoint evidence on repeated production readiness probes",
+    testTimeoutOptions(30_000),
+    async () => {
+      const gatewayName = resolveGatewayName(gatewayPort);
+      const gatewayEndpoint = `https://127.0.0.1:${String(gatewayPort)}/`;
+      const gatewayStatus = [
+        "Server Status",
+        "",
+        `Gateway: ${gatewayName}`,
+        `Server: ${gatewayEndpoint}`,
+        "Status: Connected",
+        "",
+      ].join("\n");
+      const gatewayInfo = [
+        "Gateway Info",
+        "",
+        `Gateway: ${gatewayName}`,
+        `Server: ${gatewayEndpoint}`,
+        "",
+      ].join("\n");
+
+      for (const component of ["openshell", "openshell-gateway", "openshell-sandbox"]) {
+        workspace.writeExecutable(
+          component,
+          [
+            "#!/usr/bin/env bash",
+            "# openshell capabilities: request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods",
+            'case "$*" in',
+            '  --version|-V) printf "%s 0.0.101\\n" "${0##*/}"; exit 0;;',
+            `  status|"status -g ${gatewayName}") printf ${JSON.stringify(gatewayStatus)}; exit 0;;`,
+            `  "gateway info"|"gateway info -g ${gatewayName}") printf ${JSON.stringify(gatewayInfo)}; exit 0;;`,
+            "esac",
+            "exit 1",
+          ].join("\n"),
+        );
+      }
+
+      const containerName = getGatewayClusterContainerName(gatewayName);
+      const portBindings = JSON.stringify({
+        [`${String(gatewayPort)}/tcp`]: [{ HostPort: String(gatewayPort) }],
+      });
+      workspace.writeExecutable(
+        "docker",
+        [
+          "#!/usr/bin/env bash",
+          `if [ "$1" = info ]; then printf '%s\\n' ${JSON.stringify(
+            JSON.stringify({
+              ServerVersion: "24.0.0",
+              OperatingSystem: "Docker Desktop",
+              NCPU: 8,
+              MemTotal: 17_179_869_184,
+            }),
+          )}; exit 0; fi`,
+          'if [ "$1" = ps ]; then exit 0; fi',
+          'if [ "$1" = inspect ] && [ "$4" = ' + JSON.stringify(containerName) + " ]; then",
+          '  case "$3" in',
+          '    "{{.State.Running}}") printf "true\\n";;',
+          `    "{{json .NetworkSettings.Ports}}") printf '%s\\n' ${JSON.stringify(portBindings)};;`,
+          '    "{{.Config.Image}}") printf "nvcr.io/nvidia/openshell/cluster:0.0.101\\n";;',
+          "    *) exit 1;;",
+          "  esac",
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+      );
+      workspace.writeExecutable("lsof", "#!/usr/bin/env bash\nexit 1\n");
+
+      vi.stubEnv("HOME", workspace.homeDir);
+      vi.stubEnv("PATH", `${workspace.binDir}:${process.env.PATH || ""}`);
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(gatewayPort));
+      vi.stubEnv(
+        "NEMOCLAW_OPENSHELL_GATEWAY_BIN",
+        path.join(workspace.binDir, "openshell-gateway"),
+      );
+      workspace.writeExecutable("sudo", "#!/usr/bin/env bash\nexit 1\n");
+
+      const readiness = createProductionGatewayReadinessDependencies({
+        gatewayName: () => gatewayName,
+        gatewayPort: () => gatewayPort,
+      });
+      const owner = readiness.resolveOwner();
+      for (const result of [
+        await readiness.observeManagedGateway(owner),
+        await readiness.observeManagedGateway(owner),
+      ]) {
+        expect(result.reuseState).toBe("healthy");
+        expect(result.portConflictState).toBe("none");
+      }
     },
   );
 });
