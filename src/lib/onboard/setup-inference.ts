@@ -46,7 +46,9 @@ export function createProviderReviewDeps(
     checkpointSandboxIdentity: (sandboxName: string, agent: { name?: string } | null) =>
       checkpointSandboxName(sandboxName, agent, updateSession),
     prepareLocalProviderForInference: async (providerName: string) => {
-      if (providerName !== "ollama-local" || !localProvider.shouldFrontOllamaWithProxy()) return;
+      if (providerName !== "ollama-local" || !localProvider.shouldFrontOllamaWithProxy()) {
+        return null;
+      }
       if (!localProvider.startOllamaAuthProxy()) exitProcess(1);
       const proxyToken = localProvider.getOllamaProxyToken();
       if (!proxyToken) {
@@ -54,6 +56,7 @@ export function createProviderReviewDeps(
         exitProcess(1);
       }
       await localProvider.persistAndProbeOllamaProxy(proxyToken);
+      return proxyToken;
     },
   };
 }
@@ -484,7 +487,12 @@ export function createSetupInference(
           if (outcome.done) return outcome.result;
         } else if (provider === "ollama-local") {
           const outcome = await inferenceProviders.setupOllamaLocalInference(
-            { model, provider, allowToolsIncompatible: options.allowToolsIncompatible === true },
+            {
+              model,
+              provider,
+              allowToolsIncompatible: options.allowToolsIncompatible === true,
+              preparedProxyToken: options.preparedOllamaProxyToken,
+            },
             {
               ...commonDeps,
               validateLocalProvider: deps.validateLocalProvider,

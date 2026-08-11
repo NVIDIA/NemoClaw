@@ -120,7 +120,7 @@ function createDeps() {
     reserveSandboxInferenceRoute: calls.reserveRoute,
     registryUpdateSandbox: calls.updateSandbox,
     checkpointSandboxIdentity: vi.fn(async () => undefined),
-    prepareLocalProviderForInference: vi.fn(async () => undefined),
+    prepareLocalProviderForInference: vi.fn(async () => null),
     promptValidatedSandboxName: vi.fn(async () => "target-sandbox"),
     assessHost: () => ({ cpus: 8 }),
     formatSandboxBuildEstimateNote: () => "estimate",

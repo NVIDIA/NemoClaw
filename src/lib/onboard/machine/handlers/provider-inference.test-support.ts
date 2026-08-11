@@ -135,7 +135,7 @@ export function createDeps(
     reserveRoute: vi.fn(() => true),
     updateSandbox: vi.fn(),
     checkpointSandboxIdentity: vi.fn(async () => undefined),
-    prepareLocalProviderForInference: vi.fn(async () => undefined),
+    prepareLocalProviderForInference: vi.fn(async () => null),
     promptName: vi.fn(async () => "my-assistant"),
     promptYesNo: vi.fn(async () => true),
     log: vi.fn(),

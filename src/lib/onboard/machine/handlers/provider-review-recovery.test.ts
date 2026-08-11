@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type SessionUpdates } from "../../../state/onboard-session";
+import { createProviderReviewDeps } from "../../setup-inference";
 import { handleProviderInferenceState } from "./provider-inference";
 import { baseOptions, baseSelection, createDeps } from "./provider-inference.test-support";
 
@@ -142,6 +143,23 @@ describe("provider inference review recovery", () => {
   });
 
   it("does not prepare the Ollama proxy after interactive review decline (#8687)", async () => {
+    const startOllamaAuthProxy = vi.fn(() => true);
+    const getOllamaProxyToken = vi.fn(() => "proxy-token");
+    const persistAndProbeOllamaProxy = vi.fn(async () => undefined);
+    const providerReviewDeps = createProviderReviewDeps(
+      vi.fn(),
+      vi.fn(async () => undefined),
+      {
+        shouldFrontOllamaWithProxy: () => true,
+        startOllamaAuthProxy,
+        getOllamaProxyToken,
+        persistAndProbeOllamaProxy,
+      },
+      (code): never => {
+        throw new Error(`exit ${code}`);
+      },
+      vi.fn(),
+    );
     const { deps, calls } = createDeps({
       isNonInteractive: () => false,
       setupNim: vi.fn(async () => ({
@@ -151,6 +169,7 @@ describe("provider inference review recovery", () => {
         endpointUrl: "http://127.0.0.1:11435/v1",
         credentialEnv: null,
       })),
+      prepareLocalProviderForInference: providerReviewDeps.prepareLocalProviderForInference,
       promptYesNoOrDefault: vi.fn(async () => false),
     });
 
@@ -162,10 +181,13 @@ describe("provider inference review recovery", () => {
     });
     expect(calls.prepareLocalProviderForInference).not.toHaveBeenCalled();
     expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(startOllamaAuthProxy).not.toHaveBeenCalled();
+    expect(getOllamaProxyToken).not.toHaveBeenCalled();
+    expect(persistAndProbeOllamaProxy).not.toHaveBeenCalled();
   });
 
   it("prepares the Ollama proxy after review acceptance and before inference setup (#8687)", async () => {
-    const prepareLocalProviderForInference = vi.fn(async () => undefined);
+    const prepareLocalProviderForInference = vi.fn(async () => "proxy-token");
     const { deps, calls } = createDeps({
       isNonInteractive: () => false,
       setupNim: vi.fn(async () => ({
@@ -184,6 +206,16 @@ describe("provider inference review recovery", () => {
     expect(prepareLocalProviderForInference).toHaveBeenCalledWith("ollama-local");
     expect(prepareLocalProviderForInference.mock.invocationCallOrder[0]).toBeLessThan(
       calls.setupInference.mock.invocationCallOrder[0],
+    );
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "my-assistant",
+      "qwen3.5:9b",
+      "ollama-local",
+      "http://127.0.0.1:11435/v1",
+      null,
+      null,
+      [],
+      expect.objectContaining({ preparedOllamaProxyToken: "proxy-token" }),
     );
   });
 

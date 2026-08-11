@@ -185,7 +185,7 @@ function createPhases(
       reserveSandboxInferenceRoute: vi.fn(() => true),
       registryUpdateSandbox: vi.fn(),
       checkpointSandboxIdentity: vi.fn(async () => undefined),
-      prepareLocalProviderForInference: vi.fn(async () => undefined),
+      prepareLocalProviderForInference: vi.fn(async () => null),
       promptValidatedSandboxName: vi.fn(async () => "my-sandbox"),
       assessHost: () => ({ memoryGb: 64 }),
       formatSandboxBuildEstimateNote: () => null,

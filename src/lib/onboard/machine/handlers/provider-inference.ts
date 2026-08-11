@@ -67,6 +67,8 @@ export interface ProviderInferenceSetupOptions {
   reservationSessionId?: string;
   /** Recheck recorded-route ownership after acquiring route mutation locks. */
   isRecordedProviderRecoveryAuthorized?: () => boolean;
+  /** Proxy token prepared after configuration review; avoids repeating host mutations in setup. */
+  preparedOllamaProxyToken?: string;
 }
 
 export interface ProviderSelectionResult {
@@ -240,7 +242,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     ): boolean;
     registryUpdateSandbox(sandboxName: string, updates: { nimContainer?: string | null }): void;
     checkpointSandboxIdentity(sandboxName: string, agent: Agent): Promise<void>;
-    prepareLocalProviderForInference(provider: string): Promise<void>;
+    prepareLocalProviderForInference(provider: string): Promise<string | null>;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     assessHost(): Host;
     formatSandboxBuildEstimateNote(host: Host): string | null;
@@ -1115,11 +1117,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           }),
         );
       }
-      await deps.prepareLocalProviderForInference(provider);
+      const preparedOllamaProxyToken = await deps.prepareLocalProviderForInference(provider);
 
       const inferenceOptions = {
         gatewayName,
         allowToolsIncompatible,
+        ...(preparedOllamaProxyToken ? { preparedOllamaProxyToken } : {}),
         ...(skipHostInferenceSmoke ? { skipHostInferenceSmoke } : {}),
         ...(reuseGatewayCredentialWithoutLocalKey ? { reuseGatewayCredentialWithoutLocalKey } : {}),
         ...(preferredInferenceApi ? { preferredInferenceApi } : {}),

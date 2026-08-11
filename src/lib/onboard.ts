@@ -1061,7 +1061,6 @@ const {
   ensureOllamaLoopbackSystemdOverride,
   runOllamaStartupOrGate,
   shouldFrontOllamaWithProxy,
-  startOllamaAuthProxy,
   getLocalProviderBaseUrl,
   selectAndValidateOllamaModel,
   printOllamaExposureWarning,
