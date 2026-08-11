@@ -1431,6 +1431,16 @@ function isEquivalentShieldsDownRequest(
   );
 }
 
+function hasEquivalentShieldsDownTimerAuthority(sandboxName: string, state: ShieldsState): boolean {
+  const marker = readTimerMarker(sandboxName);
+  return (
+    marker !== null &&
+    marker.sandboxName === sandboxName &&
+    marker.snapshotPath === state.shieldsPolicySnapshotPath &&
+    isExactLiveFutureTimerAuthority(marker)
+  );
+}
+
 function describeShieldsMode(mode: ShieldsPostureMode): Omit<ShieldsPosture, "state"> {
   switch (mode) {
     case "mutable_default":
@@ -4686,6 +4696,16 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       return;
     }
     if (isEquivalentShieldsDownRequest(state, timeoutSeconds, reason, policyName)) {
+      if (!hasEquivalentShieldsDownTimerAuthority(sandboxName, state)) {
+        recoverExpiredAutoRestoreInline(sandboxName, state);
+        console.error(
+          "  Cannot accept equivalent shields down request without live auto-restore timer authority.",
+        );
+        return failShieldsCommand(
+          `Cannot accept equivalent shields down request without live auto-restore timer authority for ${sandboxName}`,
+          opts.throwOnError,
+        );
+      }
       console.log(`  Shields already down for ${sandboxName}; equivalent request accepted.`);
       return;
     }
