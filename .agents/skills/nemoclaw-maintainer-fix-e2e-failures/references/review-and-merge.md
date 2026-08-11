@@ -16,14 +16,46 @@
 
 ## Run the Executable Write Guard
 
+The evaluator and every transitive local import are part of the write authority boundary. Never run
+the checkout-local copy until its complete execution surface matches refreshed `origin/main`. The
+evaluator currently has no local imports; if one is added, include it and its transitive local imports
+in `policy_surface` before using the guard.
+
 Before a retry, fork-workflow approval, review approval, merge, or rollback PR write, capture the
-current GitHub identities and run:
+current GitHub identities. Then create a clean trusted worktree, compare the complete candidate
+surface (including staged, unstaged, and untracked state) with that trusted source, and run only the
+trusted worktree copy:
 
 ```bash
+set -euo pipefail
+git fetch origin main
+trusted_policy_tmp=$(mktemp -d)
+trusted_policy_root="$trusted_policy_tmp/main"
+cleanup_trusted_policy_root() {
+  git worktree remove --force "$trusted_policy_root" >/dev/null 2>&1 || true
+  rmdir "$trusted_policy_tmp" >/dev/null 2>&1 || true
+}
+trap cleanup_trusted_policy_root EXIT INT TERM
+git worktree add --detach "$trusted_policy_root" origin/main
+policy_path=.agents/skills/nemoclaw-maintainer-fix-e2e-failures/scripts/evaluate-policy.mts
+policy_surface=("$policy_path")
+for policy_file in "${policy_surface[@]}"; do
+  test -f "$trusted_policy_root/$policy_file"
+  test -f "$policy_file"
+  cmp -s "$trusted_policy_root/$policy_file" "$policy_file"
+done
+test -z "$(git status --porcelain -- "${policy_surface[@]}")"
 node --experimental-strip-types \
-  .agents/skills/nemoclaw-maintainer-fix-e2e-failures/scripts/evaluate-policy.mts \
+  "$trusted_policy_root/$policy_path" \
   < <policy-state.json>
+cleanup_trusted_policy_root
+trap - EXIT INT TERM
 ```
+
+If any trusted file is absent, any comparison or worktree-state check fails, or the local import graph
+is incomplete, do not execute the candidate evaluator. Obtain explicit approval for the exact changed
+surface or use a separately reviewed trusted copy from a clean worktree. Remove the temporary trusted
+worktree after the decision, including on an interrupted or denied run.
 
 Use one supported `kind`: `ambiguous-write`, `fork-workflow-approval`, `review`, `merge`, or
 `post-merge-e2e`. The executable scenarios in `test/maintainer-fix-e2e-policy.test.ts` define each

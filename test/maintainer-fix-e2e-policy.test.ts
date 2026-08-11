@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+
 import { describe, expect, it } from "vitest";
 import { evaluateFixLoopPolicy } from "../.agents/skills/nemoclaw-maintainer-fix-e2e-failures/scripts/evaluate-policy.mts";
 
@@ -66,6 +68,8 @@ describe("continuous E2E fix-loop executable write policy", () => {
         authors: ["fix-author"],
         currentHead: "head-b",
         reviewedHead: "head-b",
+        checksHead: "head-b",
+        requiredChecksPass: true,
       }),
     ).toMatchObject({
       action: "route-to-independent-current-head-reviewer",
@@ -73,6 +77,65 @@ describe("continuous E2E fix-loop executable write policy", () => {
       deniedWrites: ["submit-approval"],
       queueState: "waiting-review",
     });
+  });
+
+  it.each([
+    ["pending", "head-b", false],
+    ["failing", "head-b", false],
+    ["stale", "head-a", true],
+  ])("denies current-head approval when required checks are %s", (_state, checksHead, pass) => {
+    expect(
+      evaluateFixLoopPolicy({
+        kind: "review",
+        actor: "independent-reviewer",
+        opener: "fix-author",
+        authors: ["fix-author"],
+        currentHead: "head-b",
+        reviewedHead: "head-b",
+        checksHead,
+        requiredChecksPass: pass,
+      }),
+    ).toMatchObject({
+      action: "wait-for-current-head-required-checks",
+      allowedWrites: [],
+      deniedWrites: ["submit-approval"],
+      queueState: "waiting-ci",
+    });
+  });
+
+  it("allows independent approval only after required checks pass on the reviewed head", () => {
+    expect(
+      evaluateFixLoopPolicy({
+        kind: "review",
+        actor: "independent-reviewer",
+        opener: "fix-author",
+        authors: ["fix-author"],
+        currentHead: "head-b",
+        reviewedHead: "head-b",
+        checksHead: "head-b",
+        requiredChecksPass: true,
+      }),
+    ).toMatchObject({
+      action: "submit-current-head-approval",
+      allowedWrites: ["submit-approval"],
+      queueState: "approval-ready",
+    });
+  });
+
+  it("verifies the policy execution surface before invoking the trusted worktree copy", () => {
+    const guide = fs.readFileSync(
+      new URL(
+        "../.agents/skills/nemoclaw-maintainer-fix-e2e-failures/references/review-and-merge.md",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const trustCheck = guide.indexOf('cmp -s "$trusted_policy_root/$policy_file" "$policy_file"');
+    const trustedInvocation = guide.indexOf('"$trusted_policy_root/$policy_path"');
+
+    expect(guide).toContain("every transitive local import");
+    expect(trustCheck).toBeGreaterThanOrEqual(0);
+    expect(trustedInvocation).toBeGreaterThan(trustCheck);
   });
 
   it("denies a merge when approval and checks belong to a stale head", () => {

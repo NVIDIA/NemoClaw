@@ -144,24 +144,35 @@ function evaluateReview(state: JsonRecord): FixLoopPolicyDecision {
   const authors = requiredStringArray(state, "authors");
   const currentHead = requiredString(state, "currentHead");
   const reviewedHead = requiredString(state, "reviewedHead");
+  const checksHead = requiredString(state, "checksHead");
+  const requiredChecksPass = requiredBoolean(state, "requiredChecksPass");
   const independent = actor !== opener && !authors.includes(actor);
 
-  return independent && currentHead === reviewedHead
-    ? decision({
-        action: "submit-current-head-approval",
-        allowedWrites: ["submit-approval"],
-        queueState: "waiting-ci",
-        reason: "A non-contributor reviewed the current head.",
-      })
-    : decision({
-        action: "route-to-independent-current-head-reviewer",
-        deniedWrites: ["submit-approval"],
-        nextActor: "independent maintainer",
-        queueState: "waiting-review",
-        reason: independent
-          ? "The reviewed head is stale."
-          : "The PR opener, author, or co-author cannot provide the independent approval.",
-      });
+  if (!independent || currentHead !== reviewedHead) {
+    return decision({
+      action: "route-to-independent-current-head-reviewer",
+      deniedWrites: ["submit-approval"],
+      nextActor: "independent maintainer",
+      queueState: "waiting-review",
+      reason: independent
+        ? "The reviewed head is stale."
+        : "The PR opener, author, or co-author cannot provide the independent approval.",
+    });
+  }
+  if (checksHead !== currentHead || !requiredChecksPass) {
+    return decision({
+      action: "wait-for-current-head-required-checks",
+      deniedWrites: ["submit-approval"],
+      queueState: "waiting-ci",
+      reason: "Required checks are stale, pending, or failing for the reviewed current head.",
+    });
+  }
+  return decision({
+    action: "submit-current-head-approval",
+    allowedWrites: ["submit-approval"],
+    queueState: "approval-ready",
+    reason: "A non-contributor reviewed the current head and its required checks pass.",
+  });
 }
 
 function evaluateMerge(state: JsonRecord): FixLoopPolicyDecision {
@@ -205,7 +216,8 @@ function evaluatePostMerge(state: JsonRecord): FixLoopPolicyDecision {
       action: "record-post-merge-verification",
       nextActor: containmentOwner,
       queueState: "merged",
-      reason: "The automatic main evidence contains neither the original failure nor a new regression.",
+      reason:
+        "The automatic main evidence contains neither the original failure nor a new regression.",
     });
   }
 
