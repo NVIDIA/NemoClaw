@@ -160,11 +160,13 @@ describe("installer host preflight package contract", () => {
       {
         findingIds: [
           "host.test.unknown",
+          "host.test.unknown",
           "unsafe\ninjected-finding",
           oversizedFindingId,
           "invalidfinding",
         ],
         capabilityIds: [
+          "host.test.required-capability",
           "host.test.required-capability",
           "unsafe\ninjected-capability",
           oversizedCapabilityId,
@@ -180,6 +182,8 @@ describe("installer host preflight package contract", () => {
     expect(output).toMatch(
       /NemoClaw could not confirm the required readiness capability host\.test\.required-capability\./,
     );
+    expect(output.match(/host\.test\.unknown/g)).toHaveLength(2);
+    expect(output.match(/host\.test\.required-capability/g)).toHaveLength(2);
     expect(output).not.toContain("injected-finding");
     expect(output).not.toContain("injected-capability");
     expect(output).not.toContain(oversizedFindingId);
