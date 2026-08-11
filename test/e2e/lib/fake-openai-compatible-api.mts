@@ -28,6 +28,7 @@ const requireAuth = process.env.NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH === "1";
 const requireAuthModels = process.env.NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH_MODELS === "1";
 const chatContent = process.env.NEMOCLAW_FAKE_OPENAI_CHAT_CONTENT || "ok";
 const responseText = process.env.NEMOCLAW_FAKE_OPENAI_RESPONSE_TEXT || chatContent;
+const requestCanaryMarker = process.env.NEMOCLAW_FAKE_OPENAI_REQUEST_CANARY_MARKER || "";
 const forbiddenMarkers = (() => {
   try {
     const parsed = JSON.parse(process.env.NEMOCLAW_FAKE_OPENAI_FORBIDDEN_MARKERS || "[]");
@@ -137,6 +138,13 @@ function forbiddenMarkerMatches(req: IncomingMessage, raw: Buffer): number {
   return forbiddenMarkers.filter((marker) => requestMaterial.includes(marker)).length;
 }
 
+function requestCanaryPresent(req: IncomingMessage, raw: Buffer): boolean | undefined {
+  if (!requestCanaryMarker) return undefined;
+  const headerValues = Object.values(req.headers).flatMap((value) => value ?? []);
+  const requestMaterial = [req.url ?? "", ...headerValues, raw.toString("utf8")].join("\n");
+  return requestMaterial.includes(requestCanaryMarker);
+}
+
 const server = createServer(async (req, res) => {
   const path = requestPath(req);
 
@@ -153,6 +161,7 @@ const server = createServer(async (req, res) => {
       // credential without leaking it into the requests log (#6177).
       authorizationSent: Boolean(req.headers.authorization),
       forbiddenMarkerMatches: forbiddenMarkerMatches(req, Buffer.alloc(0)),
+      requestCanaryPresent: requestCanaryPresent(req, Buffer.alloc(0)),
     });
     if (!modelsAuthOk) {
       sendJson(res, 401, { error: { message: "missing bearer credential" } });
@@ -178,6 +187,7 @@ const server = createServer(async (req, res) => {
     model: payload.model,
     stream: Boolean(payload.stream),
     forbiddenMarkerMatches: forbiddenMarkerMatches(req, raw),
+    requestCanaryPresent: requestCanaryPresent(req, raw),
   });
 
   if (req.method === "POST" && ["/v1/chat/completions", "/chat/completions"].includes(path)) {

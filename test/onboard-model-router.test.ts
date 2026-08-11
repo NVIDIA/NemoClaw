@@ -379,7 +379,7 @@ describe("onboard Model Router setup", () => {
     );
   });
 
-  it("starts a Model Router whose health check passes after 16 retry intervals", async () => {
+  it("starts a Model Router whose health check passes after 61 retry intervals", async () => {
     const pid = 12_345;
     const sleep = vi.fn(async () => undefined);
     const terminateProcess = vi.fn();
@@ -403,7 +403,7 @@ describe("onboard Model Router setup", () => {
         buildSubprocessEnv: () => ({}),
         isRouterHealthy: async () => {
           healthProbe += 1;
-          return healthProbe > 16;
+          return healthProbe > 61;
         },
         sleep,
         isProcessAlive: () => true,
@@ -413,12 +413,12 @@ describe("onboard Model Router setup", () => {
     );
 
     assert.equal(startedPid, pid);
-    assert.equal(healthProbe, 17);
-    assert.equal(sleep.mock.calls.length, 16);
+    assert.equal(healthProbe, 62);
+    assert.equal(sleep.mock.calls.length, 61);
     assert.equal(terminateProcess.mock.calls.length, 0);
   });
 
-  it("requests termination for a Model Router that stays unhealthy after 60 retry intervals", async () => {
+  it("requests termination for a Model Router that stays unhealthy after 300 retry intervals", async () => {
     const pid = 12_345;
     const sleep = vi.fn(async () => undefined);
     const terminateProcess = vi.fn();
@@ -448,11 +448,57 @@ describe("onboard Model Router setup", () => {
           getProviderKey: () => "",
         },
       ),
-      /failed to become healthy on port 45680 after 60 attempts/,
+      /failed to become healthy on port 45680 within 600 seconds \(completed health checks: 300\)/,
     );
 
-    assert.equal(isRouterHealthy.mock.calls.length, 61);
-    assert.equal(sleep.mock.calls.length, 60);
+    assert.equal(isRouterHealthy.mock.calls.length, 301);
+    assert.equal(sleep.mock.calls.length, 300);
+    assert.deepEqual(terminateProcess.mock.calls, [[pid]]);
+  });
+
+  it("stops when the 10-minute Model Router startup deadline expires", async () => {
+    const pid = 12_345;
+    const terminateProcess = vi.fn();
+    let nowMs = 0;
+    const sleep = vi.fn(async (milliseconds: number) => {
+      nowMs += milliseconds;
+    });
+    const isRouterHealthy = vi.fn(async (_port: number, timeoutMs = 0) => {
+      nowMs += timeoutMs;
+      return false;
+    });
+
+    await assert.rejects(
+      startModelRouter(
+        { port: 45_681, pool_config_path: "router/test-pool.yaml" },
+        {
+          rootDir: "/test/repo",
+          homeDir: "/test/home",
+          ensureModelRouterCommand: () => "/test/model-router",
+          mkdirSync: () => undefined,
+          runProxyConfig: () => ({ status: 0 }),
+          spawnProxy: () => ({
+            pid,
+            onError: () => undefined,
+            onExit: () => undefined,
+            unref: () => undefined,
+          }),
+          resolveProviderCredential: () => null,
+          buildSubprocessEnv: () => ({}),
+          isRouterHealthy,
+          sleep,
+          now: () => nowMs,
+          isProcessAlive: () => true,
+          terminateProcess,
+          getProviderKey: () => "",
+        },
+      ),
+      /failed to become healthy on port 45681 within 600 seconds \(completed health checks: 120\)/,
+    );
+
+    assert.equal(nowMs, 600_000);
+    assert.equal(isRouterHealthy.mock.calls.length, 121);
+    assert.equal(sleep.mock.calls.length, 120);
     assert.deepEqual(terminateProcess.mock.calls, [[pid]]);
   });
 

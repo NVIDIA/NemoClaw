@@ -17,6 +17,8 @@ import {
   withManagedImageLocalInferenceProfile,
 } from "../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
+  createProtectedManagedImageBootstrapInput,
+  MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV,
   managedImageLocalInferenceBaseUrl,
   managedImageOpenShellBasePolicyPath,
   managedImageOpenShellCommittedProbe,
@@ -25,11 +27,50 @@ import {
   removeManagedImageGatewayStateIfSafe,
   resolveManagedImageOnboardModule,
 } from "../scripts/checks/run-managed-image-openshell-e2e.ts";
+import { resolveOnboardManagedBootstrapLaunch } from "../src/lib/onboard/managed-workload/onboard-orchestration.js";
 
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
 const VALID_SANDBOX = "managed-openclaw";
 
 describe("protected managed-image runtime contract", () => {
+  it("binds the public and protected managed-image plans to one supervisor argv (#7744)", () => {
+    const authorityStore = {};
+    const publicLaunch = resolveOnboardManagedBootstrapLaunch({
+      runtime: {
+        runtimeProvider: {
+          bootstrap: {
+            supported: true,
+            createAuthorityStore: () => authorityStore,
+          },
+        },
+      } as never,
+      workload: {
+        source: {
+          kind: "managed-image",
+          contract: {
+            agent: "openclaw",
+            image: "registry.example/nemoclaw/openclaw",
+            digest: `sha256:${"a".repeat(64)}`,
+          },
+        },
+      } as never,
+      stateRoot: "/tmp/nemoclaw-state",
+      bootstrapIdentity: "bootstrap-identity",
+      request: {} as never,
+      intendedWorkloadArgv: ["/usr/local/bin/nemoclaw-start"],
+    })!;
+    const protectedLaunch = createProtectedManagedImageBootstrapInput(publicLaunch);
+
+    expect(protectedLaunch.expectedSupervisorArgv).toBe(publicLaunch.expectedSupervisorArgv);
+    expect(protectedLaunch.expectedSupervisorArgv).toBe(MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV);
+    expect(protectedLaunch.expectedSupervisorArgv).toEqual([
+      "/opt/openshell/bin/openshell-sandbox",
+      "--workdir",
+      "/sandbox",
+    ]);
+    expect(Object.isFrozen(protectedLaunch.expectedSupervisorArgv)).toBe(true);
+  });
+
   it("loads every OpenShell operation required before protected image launch (#7744)", async () => {
     const onboard = resolveManagedImageOnboardModule(await import("../src/lib/onboard.ts"));
 
