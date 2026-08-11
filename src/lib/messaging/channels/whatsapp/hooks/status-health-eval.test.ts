@@ -77,7 +77,7 @@ describe("evaluateWhatsappDiagnostics", () => {
     expect(report.hints.join(" ")).toMatch(/hermes whatsapp/);
   });
 
-  it("guides legacy Hermes dashboard sessions through rebuild and re-pairing (#8184)", () => {
+  it("guides legacy Hermes dashboard sessions through channel removal and re-pairing (#8184)", () => {
     const report = evaluateWhatsappDiagnostics(
       baseInput({
         agent: "hermes",
@@ -94,8 +94,9 @@ describe("evaluateWhatsappDiagnostics", () => {
     expect(report.verdict).toBe("unpaired");
     expect(session?.severity).toBe("warn");
     expect(session?.detail).toMatch(/dashboard-home has WhatsApp credentials/);
-    expect(pairing?.hint).toContain("`nemoclaw <sandbox> rebuild --yes`");
-    expect(session?.hint).toMatch(/Pair again from Dashboard/);
+    expect(pairing?.hint).toContain("`nemoclaw <sandbox> channels remove whatsapp`");
+    expect(session?.hint).toContain("`nemoclaw <sandbox> channels add whatsapp`");
+    expect(session?.hint).toMatch(/Pair again from the dashboard/);
     expect(hints).toContain("/sandbox/.hermes/platforms/whatsapp/session");
     expect(hints).toContain("`nemoclaw <sandbox> channels status --channel whatsapp`");
     expect(hints).not.toContain("platforms.whatsapp.extra.session_path");

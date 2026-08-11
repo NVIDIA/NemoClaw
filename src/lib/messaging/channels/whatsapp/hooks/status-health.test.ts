@@ -408,8 +408,9 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     const command = String(exec.mock.calls[0]?.[1] ?? "");
     const hint = report?.signals.find((s) => s.label === "Session location")?.hint;
     expect(report?.verdict).toBe("unpaired");
-    expect(hint).toContain("`nemoclaw <sandbox> rebuild --yes`");
-    expect(hint).toMatch(/Pair again from Dashboard/);
+    expect(hint).toContain("`nemoclaw <sandbox> channels remove whatsapp`");
+    expect(hint).toContain("`nemoclaw <sandbox> channels add whatsapp`");
+    expect(hint).toMatch(/Pair again from the dashboard/);
     expect(hint).toContain("/sandbox/.hermes/platforms/whatsapp/session");
     expect(hint).toContain("`nemoclaw <sandbox> channels status --channel whatsapp`");
     expect(hint).not.toContain("platforms.whatsapp.extra.session_path");
