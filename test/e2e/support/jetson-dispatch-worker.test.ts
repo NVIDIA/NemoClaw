@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -136,8 +137,7 @@ if [ "${"${DISAPPEAR_PROC_FILE:-}"}" = "$input" ]; then rm -rf -- "${"${input%/*
   );
   const functionsStart = cleanupProgram.indexOf("read_proc_uid() {");
   const functionsEnd = cleanupProgram.indexOf("\nauth_proxy_pid=", functionsStart);
-  if (functionsStart < 0 || functionsEnd < 0)
-    throw new Error("cleanup process functions are absent");
+  assert.ok(functionsStart >= 0 && functionsEnd >= 0, "cleanup process functions are absent");
   const functions = cleanupProgram
     .slice(functionsStart, functionsEnd)
     .replace('proc_dir="/proc/$pid"', 'proc_dir="$PROC_ROOT/$pid"');
