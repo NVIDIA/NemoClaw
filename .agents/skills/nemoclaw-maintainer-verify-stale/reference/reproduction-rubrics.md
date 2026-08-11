@@ -219,7 +219,8 @@ Cross-version verification compares two tool surfaces. The reproducer assumes th
 # Extract the primary verification command from the reproducer (e.g. "openshell forward list").
 # Preserve multi-word tool strings without Bash 4-only `mapfile`; maintainers
 # can run this check from macOS's system Bash.
-grep -oE '\b(openshell|nemoclaw)[[:space:]]+[a-z-]+' "$EVIDENCE_DIR/reproducer.sh" \
+grep -oE '(^|[^[:alnum:]_])(openshell|nemoclaw)[[:space:]]+[a-z-]+' "$EVIDENCE_DIR/reproducer.sh" \
+  | sed -E 's/^[^[:alnum:]_]+//' \
   | sort -u \
   | while IFS= read -r t; do
   echo "=== drift check: $t ==="

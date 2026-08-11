@@ -37,7 +37,14 @@ PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (
         re.compile(
-            r"^(\s*(?:[><*]\s*)?)(authorization|proxy-authorization|cookie|set-cookie):[^\n]*",
+            r'''(["']?(?:cookie|set-cookie)["']?\s*(?::|=)\s*)(?:"[^"\n]*"|'[^'\n]*'|[^\n,}\]]+)''',
+            re.IGNORECASE,
+        ),
+        rf"\1{REDACTED}",
+    ),
+    (
+        re.compile(
+            r"^(\s*(?:[><*]\s*)?)(authorization|proxy-authorization):[^\n]*",
             re.IGNORECASE | re.MULTILINE,
         ),
         rf"\1\2: {REDACTED}",

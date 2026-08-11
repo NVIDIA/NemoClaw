@@ -619,6 +619,8 @@ ${copyBlock?.[1] ?? ""}
       { input: "aws_secret_access_key=aws-secret-value", secret: "aws-secret-value" },
       { input: `Authorization: Bearer ${"b".repeat(40)}`, secret: `Bearer ${"b".repeat(40)}` },
       { input: `Cookie: session=${"c".repeat(40)}`, secret: "session=" },
+      { input: '{"Cookie":"session=topsecret"}', secret: "topsecret" },
+      { input: '"Set-Cookie" = "session=spaced-secret"', secret: "spaced-secret" },
       { input: `> Authorization: Basic ${"e".repeat(40)}`, secret: `Basic ${"e".repeat(40)}` },
       {
         input: `* Proxy-Authorization: Bearer ${"f".repeat(40)}`,
@@ -654,6 +656,25 @@ ${copyBlock?.[1] ?? ""}
     expect(redactedHtml.status, redactedHtml.stderr).toBe(0);
     expect(redactedHtml.stdout).toContain("visible diagnostic");
     expect(redactedHtml.stdout).not.toContain(htmlSecret);
+  });
+
+  it("extracts architecture-drift tool commands with POSIX grep boundaries", () => {
+    const reproducer = [
+      "openshell forward list",
+      "sudo nemoclaw sandbox list",
+      "xnemoclaw status",
+    ].join("\n");
+    const extracted = spawnSync(
+      "sh",
+      [
+        "-c",
+        "grep -oE '(^|[^[:alnum:]_])(openshell|nemoclaw)[[:space:]]+[a-z-]+' | sed -E 's/^[^[:alnum:]_]+//' | sort -u",
+      ],
+      { encoding: "utf8", input: reproducer },
+    );
+
+    expect(extracted.status, extracted.stderr).toBe(0);
+    expect(extracted.stdout.trim().split("\n")).toEqual(["nemoclaw sandbox", "openshell forward"]);
   });
 
   it("makes DCO and GitHub verification explicit approval gates", () => {
