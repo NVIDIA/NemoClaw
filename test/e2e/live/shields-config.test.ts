@@ -409,6 +409,29 @@ async function waitForChildlessStartup(host: HostCliClient, containerId: string)
   });
 }
 
+async function waitForStoppedSupervisor(host: HostCliClient, containerId: string): Promise<void> {
+  const script = [
+    "from pathlib import Path",
+    "lines = Path('/proc/1/status').read_text(encoding='ascii').splitlines()",
+    "print(next((line.split()[1] for line in lines if line.startswith('State:')), ''))",
+  ].join("\n");
+  await pollUntil({
+    artifactPrefix: "phase-12-stopped-supervisor",
+    attempts: 20,
+    delayMs: 100,
+    probe: async (_attempt, artifactName) => {
+      const result = await docker(
+        host,
+        ["exec", "--user", "0", containerId, "python3", "-I", "-c", script],
+        { artifactName, timeoutMs: 30_000 },
+      );
+      expect(result.exitCode, resultText(result)).toBe(0);
+      return result.stdout.trim();
+    },
+    accept: (state) => state === "T" || state === "t",
+  });
+}
+
 async function readOriginalConfig(
   host: HostCliClient,
   containerId: string,
@@ -1098,6 +1121,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   });
   expect(pauseSupervisor.exitCode, resultText(pauseSupervisor)).toBe(0);
   supervisorPaused = true;
+  await waitForStoppedSupervisor(host, recoveryContainerId);
 
   const pausedCensus = await installedStartupCensus(
     host,
