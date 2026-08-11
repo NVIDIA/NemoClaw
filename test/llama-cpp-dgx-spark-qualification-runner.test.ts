@@ -21,6 +21,7 @@ import {
   parseQualificationInvocation,
   type QualificationInvocation,
   type QualificationPlan,
+  qualifyDockerLoopbackPublishAuthority,
   sha256Text,
   validateCandidateDockerfile,
   validateChatCompletionResponse,
@@ -30,6 +31,10 @@ import {
   validateRuntimeLogRedaction,
   validateStartupLog,
 } from "../scripts/checks/run-llama-cpp-dgx-spark-qualification.mts";
+import {
+  consumeDockerLoopbackPublishAuthority,
+  type DockerLoopbackPublishAuthority,
+} from "../src/lib/inference/llama-cpp/host-local-runtime";
 
 const BASE_SHA = "b".repeat(40);
 const HEAD_SHA = "a".repeat(40);
@@ -45,6 +50,9 @@ const config = loadLlamaCppImageConfig();
 const planSource = config.publication_qualification_plan;
 const planDigest = config.publication_qualification_plan_sha256;
 const plan = validateQualificationPlan(planSource, planDigest);
+function loopbackPublishAuthority(): ReturnType<typeof qualifyDockerLoopbackPublishAuthority> {
+  return qualifyDockerLoopbackPublishAuthority("28.3.3");
+}
 
 function trustedEnvironment(overrides: Record<string, string | undefined> = {}) {
   return {
@@ -123,6 +131,38 @@ function qualificationPlanForModel(content: Buffer): QualificationPlan {
 }
 
 describe("trusted llama.cpp DGX Spark qualification runner", () => {
+  it("requires a patched live Docker server before loopback publication (#8260)", () => {
+    for (const version of ["27.5.1", "28.0.0", "28.3.2", "28.3.3-rc.1", "", "client 29.0.0"]) {
+      expect(() => qualifyDockerLoopbackPublishAuthority(version)).toThrow(
+        /Docker Engine 28\.3\.3 or newer/u,
+      );
+    }
+    expect(qualifyDockerLoopbackPublishAuthority("28.3.3\n").serverVersion).toBe("28.3.3");
+    expect(qualifyDockerLoopbackPublishAuthority("28.3.3+ubuntu.1").serverVersion).toBe(
+      "28.3.3+ubuntu.1",
+    );
+    expect(qualifyDockerLoopbackPublishAuthority("29.0.0").serverVersion).toBe("29.0.0");
+
+    const singleUseAuthority = qualifyDockerLoopbackPublishAuthority("28.3.3");
+    for (const clonedAuthority of [
+      Object.create(singleUseAuthority),
+      Object.assign({}, singleUseAuthority),
+    ] as DockerLoopbackPublishAuthority[]) {
+      expect(() => consumeDockerLoopbackPublishAuthority(clonedAuthority)).toThrow(
+        /authority is invalid/u,
+      );
+    }
+    expect(() => consumeDockerLoopbackPublishAuthority(singleUseAuthority)).not.toThrow();
+    expect(() => consumeDockerLoopbackPublishAuthority(singleUseAuthority)).toThrow(
+      /already consumed/u,
+    );
+    expect(() =>
+      consumeDockerLoopbackPublishAuthority({
+        serverVersion: "29.0.0",
+      } as DockerLoopbackPublishAuthority),
+    ).toThrow(/authority is invalid/u);
+  });
+
   it("accepts only the canonical digest-bound declarative execution plan (#8260)", () => {
     expect(plan.contractVersion).toBe(1);
     expect(plan.recipe.id).toBe("llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1");
@@ -312,7 +352,10 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         runtimeGid: 1001,
         runtimeUid: 1001,
       } as const;
-      const argv = buildServerContainerArgv(testPlan, containerOptions);
+      const argv = buildServerContainerArgv(testPlan, {
+        ...containerOptions,
+        loopbackPublishAuthority: loopbackPublishAuthority(),
+      });
       expect(argv).toEqual(
         expect.arrayContaining([
           "--read-only",
@@ -383,6 +426,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
       const agentQualificationArgv = buildServerContainerArgv(testPlan, {
         ...containerOptions,
         hostPort: testPlan.recipe.serve.port,
+        loopbackPublishAuthority: loopbackPublishAuthority(),
       });
       expect(valuesAfter(agentQualificationArgv, "--publish")).toEqual([
         `127.0.0.1:${String(testPlan.recipe.serve.port)}:${String(testPlan.recipe.serve.port)}`,
@@ -396,7 +440,10 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
           serve: { ...testPlan.recipe.serve, port: alternateContainerPort },
         },
       } as unknown as QualificationPlan;
-      const alternatePortArgv = buildServerContainerArgv(alternatePortPlan, containerOptions);
+      const alternatePortArgv = buildServerContainerArgv(alternatePortPlan, {
+        ...containerOptions,
+        loopbackPublishAuthority: loopbackPublishAuthority(),
+      });
       expect(valuesAfter(alternatePortArgv, "--publish")).toEqual([
         `127.0.0.1::${String(alternateContainerPort)}`,
       ]);
@@ -436,6 +483,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
           registryOwner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
           runtimeGid: 1001,
           runtimeUid: 0,
+          loopbackPublishAuthority: loopbackPublishAuthority(),
         }),
       ).toThrow(/runtime uid/u);
     } finally {
@@ -446,19 +494,40 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
   it("rejects Docker publish aliases before inserting one loopback mapping at the image boundary (#8667)", () => {
     const imageReference = `localhost:5000/repo@sha256:${"d".repeat(64)}`;
     const containerPort = 9_081;
-    const options = { containerPort, imageReference };
-
-    expect(insertQualificationLoopbackPublishArgv(["run", imageReference], options)).toEqual([
-      "run",
-      "--publish",
-      `127.0.0.1::${String(containerPort)}`,
+    const options = () => ({
+      containerPort,
       imageReference,
-    ]);
-    expect(() => insertQualificationLoopbackPublishArgv(["run"], options)).toThrow(
-      /exactly one Docker image reference/u,
-    );
+      loopbackPublishAuthority: loopbackPublishAuthority(),
+    });
+    const consumedAuthority = loopbackPublishAuthority();
+
+    expect(
+      insertQualificationLoopbackPublishArgv(["run", imageReference], {
+        ...options(),
+        loopbackPublishAuthority: consumedAuthority,
+      }),
+    ).toEqual(["run", "--publish", `127.0.0.1::${String(containerPort)}`, imageReference]);
     expect(() =>
-      insertQualificationLoopbackPublishArgv(["run", imageReference, imageReference], options),
+      insertQualificationLoopbackPublishArgv(["run", imageReference], {
+        ...options(),
+        loopbackPublishAuthority: consumedAuthority,
+      }),
+    ).toThrow(/already consumed/u);
+    const authorityAfterRejectedBoundary = loopbackPublishAuthority();
+    expect(() =>
+      insertQualificationLoopbackPublishArgv(["run"], {
+        ...options(),
+        loopbackPublishAuthority: authorityAfterRejectedBoundary,
+      }),
+    ).toThrow(/exactly one Docker image reference/u);
+    expect(
+      insertQualificationLoopbackPublishArgv(["run", imageReference], {
+        ...options(),
+        loopbackPublishAuthority: authorityAfterRejectedBoundary,
+      }),
+    ).toEqual(["run", "--publish", `127.0.0.1::${String(containerPort)}`, imageReference]);
+    expect(() =>
+      insertQualificationLoopbackPublishArgv(["run", imageReference, imageReference], options()),
     ).toThrow(/exactly one Docker image reference/u);
     for (const publishArgv of [
       ["--publish", "0.0.0.0:8081:8081"],
@@ -471,11 +540,14 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
       ["-P=true"],
     ]) {
       expect(() =>
-        insertQualificationLoopbackPublishArgv(["run", ...publishArgv, imageReference], options),
+        insertQualificationLoopbackPublishArgv(["run", ...publishArgv, imageReference], options()),
       ).toThrow(/must not publish/u);
     }
     expect(
-      insertQualificationLoopbackPublishArgv(["run", imageReference, "-p", "guard-value"], options),
+      insertQualificationLoopbackPublishArgv(
+        ["run", imageReference, "-p", "guard-value"],
+        options(),
+      ),
     ).toEqual([
       "run",
       "--publish",

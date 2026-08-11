@@ -36,6 +36,11 @@ function installMockPrivilegedExec(
       // config validation and write behavior without requiring real Docker.
       privilegedSandboxExecArgv: (_sandboxName: string, cmd: readonly string[]) => [...cmd],
       resolveDirectSandboxContainer: () => "container-id",
+      withPrivilegedSandboxExecutionLease: <T>(
+        _sandboxName: string,
+        _operation: string,
+        fn: () => T,
+      ): T => fn(),
     },
   } as any;
   requireCache[timerBoundLockPath] = {

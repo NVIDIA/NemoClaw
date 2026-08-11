@@ -10,6 +10,9 @@ import { fileURLToPath } from "node:url";
 
 import {
   buildLlamaCppRequestGuardDockerArgv,
+  consumeDockerLoopbackPublishAuthority,
+  type DockerLoopbackPublishAuthority,
+  qualifyDockerLoopbackPublishAuthority,
   type VerifiedLocalModelArtifact,
 } from "../../src/lib/inference/llama-cpp/host-local-runtime.ts";
 import {
@@ -29,7 +32,11 @@ import { runLlamaCppOpenClawAgentQualification } from "./llama-cpp-openclaw-agen
 import { resolveManagedImageLocalInferenceRoute } from "./managed-image-protected-runtime-contract.ts";
 import { runManagedImageOpenShellE2e } from "./run-managed-image-openshell-e2e.ts";
 
-export { validateChatCompletionResponse, validateModelsResponse };
+export {
+  qualifyDockerLoopbackPublishAuthority,
+  validateChatCompletionResponse,
+  validateModelsResponse,
+};
 
 const sha256Pattern = /^sha256:[0-9a-f]{64}$/u;
 const gitShaPattern = /^[0-9a-f]{40}$/u;
@@ -324,6 +331,7 @@ export function insertQualificationLoopbackPublishArgv(
     containerPort: number;
     hostPort?: number;
     imageReference: string;
+    loopbackPublishAuthority: DockerLoopbackPublishAuthority;
   },
 ): string[] {
   const imageIndex = argv.indexOf(options.imageReference);
@@ -358,6 +366,7 @@ export function insertQualificationLoopbackPublishArgv(
     options.hostPort === undefined
       ? ""
       : String(requiredInteger(options.hostPort, "qualification host port", 1, 65_535));
+  consumeDockerLoopbackPublishAuthority(options.loopbackPublishAuthority);
   return [
     ...argv.slice(0, imageIndex),
     "--publish",
@@ -377,6 +386,7 @@ export function buildServerContainerArgv(
     registryOwner: string;
     runtimeGid: number;
     runtimeUid: number;
+    loopbackPublishAuthority: DockerLoopbackPublishAuthority;
     hostPort?: number;
   },
 ): string[] {
@@ -398,6 +408,7 @@ export function buildServerContainerArgv(
     containerPort: plan.recipe.serve.port,
     ...(options.hostPort === undefined ? {} : { hostPort: options.hostPort }),
     imageReference: options.imageReference,
+    loopbackPublishAuthority: options.loopbackPublishAuthority,
   });
 }
 
@@ -804,6 +815,7 @@ function startRegistry(names: RuntimeNames): void {
   if (dockerContainerOwner(names.registryName) !== null) {
     throw new Error("isolated registry name is already in use");
   }
+  consumeDockerLoopbackPublishAuthority(qualifyLiveDockerLoopbackPublishAuthority());
   runCommand(
     "docker",
     [
@@ -818,6 +830,12 @@ function startRegistry(names: RuntimeNames): void {
       registryImage,
     ],
     { capture: false },
+  );
+}
+
+function qualifyLiveDockerLoopbackPublishAuthority(): DockerLoopbackPublishAuthority {
+  return qualifyDockerLoopbackPublishAuthority(
+    runCommand("docker", ["version", "--format", "{{.Server.Version}}"]).toString("utf8"),
   );
 }
 
@@ -1016,6 +1034,7 @@ async function runQualification(
         registryOwner: names.registryOwner,
         runtimeGid,
         runtimeUid,
+        loopbackPublishAuthority: qualifyLiveDockerLoopbackPublishAuthority(),
         ...(plan.qualification.agentQualification.execution === "enabled"
           ? { hostPort: plan.recipe.serve.port }
           : {}),
