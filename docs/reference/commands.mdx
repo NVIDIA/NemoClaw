@@ -1334,6 +1334,10 @@ If that record cannot be cleared and NemoClaw writes the rejection marker, `shie
 The auto-restore timer and transition remain the recovery authority.
 If the rejection marker also cannot be written, `shields status` reports the incomplete transition as an error.
 
+If a config path is unsafe, for example a symlink at the Hermes `config.yaml` path, `shields down` returns an error and keeps the sandbox in the Shields up state.
+The command refuses that path before it weakens policy, writes a provisional Shields down record, or starts a timer.
+If unlock fails on that unsafe path after a provisional Shields down record exists, the command restores the restrictive policy, clears the provisional record and timer, and `shields status` remains `UP`.
+
 If `shields up` reports that the config remains unlocked or drifted, confirm that the sandbox is running and ready, then retry `$$nemoclaw <name> shields up`.
 If the retry still fails, rebuild a known-good baseline with `$$nemoclaw <name> rebuild --yes`.
 

@@ -800,6 +800,101 @@ function privilegedSandboxExecCapture(sandboxName: string, cmd: string[], timeou
   );
 }
 
+// Reject unsafe config paths before Shields down weakens policy or persists a
+// provisional DOWN record. A symlink planted after shields up is refused by the
+// unlock path, but without this preflight the provisional DOWN/permissive
+// status survives when re-lock also fails on the same path (#8804).
+const SHIELDS_DOWN_CONFIG_PATH_PREFLIGHT_SCRIPT = String.raw`
+# nemoclaw-shields-down-path-preflight
+import errno
+import os
+import stat
+import sys
+
+def die(message):
+    sys.stderr.write(message + "\n")
+    raise SystemExit(1)
+
+def open_nofollow(path, want_dir):
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    if want_dir:
+        flags |= getattr(os, "O_DIRECTORY", 0)
+    else:
+        flags |= getattr(os, "O_NONBLOCK", 0)
+    try:
+        return os.open(path, flags)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, getattr(errno, "ENOTDIR", errno.EINVAL)):
+            die("refusing symlink path: " + path)
+        if exc.errno == errno.ENOENT:
+            die("missing config path: " + path)
+        die("open failed for %s: %s" % (path, exc))
+
+config_dir = sys.argv[1]
+files = sys.argv[2:]
+dir_fd = open_nofollow(config_dir, True)
+try:
+    mode = os.fstat(dir_fd).st_mode
+    if not stat.S_ISDIR(mode):
+        die("refusing non-directory config path: " + config_dir)
+finally:
+    os.close(dir_fd)
+for path in files:
+    fd = open_nofollow(path, False)
+    try:
+        mode = os.fstat(fd).st_mode
+        if not stat.S_ISREG(mode):
+            die("refusing non-regular config path: " + path)
+    finally:
+        os.close(fd)
+`;
+
+function errorText(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const stderr =
+    "stderr" in error && error.stderr != null
+      ? Buffer.isBuffer(error.stderr)
+        ? error.stderr.toString("utf8")
+        : String(error.stderr)
+      : "";
+  return `${error.message}\n${stderr}`.trim();
+}
+
+function isUnsafeShieldsConfigPathError(error: unknown): boolean {
+  const message = errorText(error);
+  return (
+    /refusing (?:to follow )?symlink(?: path)?/i.test(message) ||
+    /refusing non-(?:regular|directory) config path/i.test(message) ||
+    /refusing unsafe(?:-| )(?:config|sealed|Hermes).*path/i.test(message) ||
+    /canonical config path is not a safe regular file/i.test(message) ||
+    /missing config path:/i.test(message)
+  );
+}
+
+function assertShieldsDownConfigPathsSafe(sandboxName: string, target: AgentConfigTarget): void {
+  const files = [target.configPath, ...(target.sensitiveFiles || [])];
+  try {
+    privilegedSandboxExecCapture(sandboxName, [
+      "python3",
+      "-I",
+      "-c",
+      SHIELDS_DOWN_CONFIG_PATH_PREFLIGHT_SCRIPT,
+      target.configDir,
+      ...files,
+    ]);
+  } catch (error) {
+    const message = errorText(error);
+    const refusal = message
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => isUnsafeShieldsConfigPathError(line));
+    if (refusal) {
+      throw new Error(refusal);
+    }
+    throw new Error(`Unsafe Shields config path check failed: ${message}`);
+  }
+}
+
 function hermesShieldsGuardArgs(
   action: string,
   target: AgentConfigTarget,
@@ -3985,6 +4080,29 @@ function rollbackShieldsDown(
       console.error(
         `  Warning: Rollback re-lock could not be re-confirmed. Check config manually. ${relock.error ?? ""}`.trimEnd(),
       );
+      // An unsafe config path (for example a symlink planted after shields up)
+      // fails unlock and then fails the same re-lock. Restrictive policy is
+      // already restored. Clearing the provisional DOWN record keeps status
+      // honest instead of reporting DOWN/permissive for an unlock that never
+      // completed (#8804 / #8198 status integrity).
+      if (
+        initialMode === "locked" &&
+        relock.error !== undefined &&
+        isUnsafeShieldsConfigPathError(relock.error)
+      ) {
+        const timerCancellation = killTimer(sandboxName);
+        timerAuthorityRevoked = timerCancellation.authorityRevoked;
+        if (!timerCancellation.authorityRevoked) {
+          console.error(
+            `  Warning: Restrictive policy was restored, but auto-restore timer authority could not be revoked: ${timerCancellation.warnings.join("; ")}`,
+          );
+        }
+        restoreShieldsStateSnapshot(sandboxName, initialState);
+        console.error(
+          "  Restrictive policy restored and provisional Shields down cleared. The config path remains unsafe; restore a regular config file before retrying.",
+        );
+        return { outcome: "lockdown_restored", timerAuthorityRevoked };
+      }
     }
   } else {
     console.error("  Warning: Policy restore failed during rollback.");
@@ -4685,6 +4803,19 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   const protocol: HermesShieldsProtocol = recoveredProviderTarget
     ? "provider-state-mutation-v2"
     : requireHermesShieldsProtocol(sandboxName, target, opts.allowLegacyHermesProtocol === true);
+
+  // Refuse an unsafe config path before timer, host state, or policy mutation.
+  // Otherwise unlock rejects the path after the provisional DOWN/permissive
+  // record is already live, and status integrity fails when re-lock cannot
+  // reseal the same unsafe path (#8804).
+  try {
+    assertShieldsDownConfigPathsSafe(sandboxName, target);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`  ERROR: ${message}`);
+    console.error("  Shields down did not take effect. `shields status` continues to report `UP`.");
+    return failShieldsCommand(message, opts.throwOnError);
+  }
 
   // Kill stale auto-restore markers only when this command will actually
   // transition into shields-down. A repeated shields-down must not cancel the
