@@ -413,9 +413,10 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
   });
 
   it.each([
-    "inference-routing",
-    "managed-image-protected-runtime",
-  ])("selects no shared targets for the %s job selector", (jobSelector) => {
+    ["inference-routing job", "inference-routing", ""],
+    ["managed-image-protected-runtime job", "managed-image-protected-runtime", ""],
+    ["jetson-nvmap-gpu target", "", "jetson-nvmap-gpu"],
+  ])("selects no shared targets for the %s selector", (_name, jobSelector, targetSelector) => {
     const workflow = readE2eOperationsWorkflow();
     const controller = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Build trusted controller target matrix",
@@ -439,7 +440,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             ...process.env,
             GITHUB_OUTPUT: output,
             JOBS: jobSelector,
-            TARGETS: "",
+            TARGETS: targetSelector,
           },
         },
       );
@@ -462,7 +463,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             GITHUB_STEP_SUMMARY: summary,
             INFERENCE_MODE: "mock",
             JOBS: jobSelector,
-            TARGETS: "",
+            TARGETS: targetSelector,
           },
         },
       );
