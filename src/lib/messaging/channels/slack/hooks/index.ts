@@ -15,6 +15,10 @@ import {
   type SlackSocketModeGatewayStatusHookOptions,
 } from "./socket-mode-gateway-status";
 import {
+  createSlackStatusHealthHookRegistration,
+  type SlackStatusHealthHookOptions,
+} from "./status-health";
+import {
   createSlackValidateCredentialsHookRegistration,
   type SlackValidateCredentialsHookOptions,
 } from "./validate-credentials";
@@ -23,11 +27,13 @@ export * from "./credential-validation";
 export * from "./openclaw-bridge-health";
 export * from "./socket-mode-gateway-conflict";
 export * from "./socket-mode-gateway-status";
+export * from "./status-health";
 export * from "./validate-credentials";
 
 export interface SlackHookOptions {
   readonly socketModeGatewayConflict?: SlackSocketModeGatewayConflictHookOptions;
   readonly socketModeGatewayStatus?: SlackSocketModeGatewayStatusHookOptions;
+  readonly statusHealth?: SlackStatusHealthHookOptions;
   readonly validateCredentials?: SlackValidateCredentialsHookOptions;
   readonly openclawBridgeHealth?: OpenClawBridgeHealthHookOptions;
 }
@@ -42,6 +48,7 @@ export function createSlackHookRegistrations(
     createSlackSocketModeGatewayStatusHookRegistration(
       withoutUndefinedValues(options.socketModeGatewayStatus),
     ),
+    createSlackStatusHealthHookRegistration(options.statusHealth),
     createSlackOpenClawBridgeHealthHookRegistration(options.openclawBridgeHealth),
     createSlackValidateCredentialsHookRegistration(
       withoutUndefinedValues(options.validateCredentials),
