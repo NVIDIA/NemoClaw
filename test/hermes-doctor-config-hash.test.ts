@@ -120,6 +120,19 @@ describe("Hermes doctor and config hash boundary", () => {
       "openshell-child-visible-credentials.v0.0.101.json",
     );
     const stateLockPlanPath = path.join(tmp, "state-lock-plan.json");
+    const runtimeStateMutationControlPath = path.join(libDir, "runtime-state-mutation-control.py");
+    const runtimeStateMutationStartupGatePath = path.join(
+      libDir,
+      "runtime-state-mutation-startup-gate.py",
+    );
+    const runtimeStateMutationPublisherPath = path.join(
+      libDir,
+      "runtime_state_mutation_hermes_publisher.py",
+    );
+    const runtimeStateMutationCapabilityPath = path.join(
+      tmp,
+      "runtime-state-mutation-publisher-v1.json",
+    );
     const hermesCronRestoreControlPath = path.join(libDir, "hermes-cron-restore-control.py");
     const nestedDir = path.join(preloadsDir, "nested");
     const profileDir = path.join(tmp, "etc-profile.d");
@@ -153,7 +166,11 @@ describe("Hermes doctor and config hash boundary", () => {
         mcpConfigTransactionPath,
         mcpCredentialBoundaryPath,
         path.join(libDir, "state-dir-guard.py"),
+        runtimeStateMutationControlPath,
+        runtimeStateMutationStartupGatePath,
+        runtimeStateMutationPublisherPath,
         stateLockPlanPath,
+        runtimeStateMutationCapabilityPath,
         path.join(libDir, "managed-gateway-control.py"),
         hermesCronRestoreControlPath,
         path.join(libDir, "sandbox-rlimits.sh"),
@@ -164,6 +181,10 @@ describe("Hermes doctor and config hash boundary", () => {
         fs.mkdirSync(path.dirname(relativePath), { recursive: true });
         fs.writeFileSync(relativePath, "test\n", { mode: 0o666 });
       }
+      fs.writeFileSync(runtimeStateMutationControlPath, "# controller fixture\n");
+      fs.writeFileSync(runtimeStateMutationStartupGatePath, "# startup gate fixture\n");
+      fs.writeFileSync(runtimeStateMutationPublisherPath, "# publisher fixture\n");
+      fs.writeFileSync(path.join(libDir, "hermes-runtime-config-guard.py"), "# guard fixture\n");
 
       const lockCommand = dockerRunCommandBetween(
         dockerfile,
@@ -172,7 +193,12 @@ describe("Hermes doctor and config hash boundary", () => {
       )
         .replaceAll("/usr/local/bin", binDir)
         .replaceAll("/usr/local/lib/nemoclaw", libDir)
+        .replaceAll("/opt/hermes/.venv/bin/python3", "python3")
         .replaceAll("/usr/local/share/nemoclaw/state-lock-plan.json", stateLockPlanPath)
+        .replaceAll(
+          "/usr/local/share/nemoclaw/runtime-state-mutation-publisher-v1.json",
+          runtimeStateMutationCapabilityPath,
+        )
         .replaceAll("/etc/profile.d", profileDir)
         .replaceAll("/etc/bash.bashrc", bashrcPath);
       const script = [
@@ -191,7 +217,7 @@ describe("Hermes doctor and config hash boundary", () => {
       expect(result.stderr).toBe("");
       expect(fs.readFileSync(chownLogPath, "utf-8")).toBe(
         [
-          `root:root ${path.join(binDir, "nemoclaw-gateway-control")} ${path.join(libDir, "gateway-supervisor.sh")} ${path.join(libDir, "state-dir-guard.py")} ${stateLockPlanPath} ${path.join(libDir, "managed-gateway-control.py")} ${buildMcpDigestPath} ${hermesCronRestoreControlPath} ${mcpCredentialBoundaryPath}`,
+          `root:root ${path.join(binDir, "nemoclaw-gateway-control")} ${path.join(libDir, "gateway-supervisor.sh")} ${path.join(libDir, "state-dir-guard.py")} ${runtimeStateMutationControlPath} ${runtimeStateMutationStartupGatePath} ${runtimeStateMutationPublisherPath} ${stateLockPlanPath} ${runtimeStateMutationCapabilityPath} ${path.join(libDir, "managed-gateway-control.py")} ${buildMcpDigestPath} ${hermesCronRestoreControlPath} ${mcpCredentialBoundaryPath}`,
           `-R 0:0 ${preloadsDir}`,
           "",
         ].join("\n"),
@@ -208,7 +234,11 @@ describe("Hermes doctor and config hash boundary", () => {
       expect(mode(buildMcpDigestPath)).toBe("444");
       expect(mode(path.join(libDir, "gateway-supervisor.sh"))).toBe("444");
       expect(mode(path.join(libDir, "state-dir-guard.py"))).toBe("500");
+      expect(mode(runtimeStateMutationControlPath)).toBe("500");
+      expect(mode(runtimeStateMutationStartupGatePath)).toBe("555");
+      expect(mode(runtimeStateMutationPublisherPath)).toBe("500");
       expect(mode(stateLockPlanPath)).toBe("444");
+      expect(mode(runtimeStateMutationCapabilityPath)).toBe("444");
       expect(mode(path.join(libDir, "managed-gateway-control.py"))).toBe("500");
       expect(mode(preloadsDir)).toBe("755");
       expect(mode(nestedDir)).toBe("755");

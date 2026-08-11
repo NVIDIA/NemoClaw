@@ -1,9 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
+
 import { dockerCapture } from "../adapters/docker/run";
 import { resolveSandboxContainerOwner } from "../domain/sandbox/container-owner";
 import { resolvePortableDemoPrivilegedExecTarget } from "../onboard/experimental/portable-demo-lifecycle";
+import {
+  createFilePersistedEngineLifecycleStore,
+  hasActivePersistedEngineStateMutationTarget,
+  PERSISTED_ENGINE_LIFECYCLE_DIRECTORY,
+} from "../onboard/runtime-provider/persisted-engine-lifecycle";
+import { resolveShieldsStateDir, withShieldsTransitionLock } from "../shields/transition-lock";
 import * as registry from "../state/registry";
 import { compareAndSetLegacySandboxLifecycleGeneration } from "../state/registry/lifecycle-generation";
 
@@ -197,6 +206,46 @@ function unsupportedDirectDriverError(sandboxName: string, driver: string): Erro
   );
 }
 
+function assertNoActiveStateMutationTarget(sandboxName: string): void {
+  const stateDir = resolveShieldsStateDir();
+  const lifecycleDirectory = path.join(stateDir, PERSISTED_ENGINE_LIFECYCLE_DIRECTORY);
+  try {
+    fs.lstatSync(lifecycleDirectory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  const lifecycleStore = createFilePersistedEngineLifecycleStore(stateDir);
+  if (hasActivePersistedEngineStateMutationTarget(lifecycleStore, sandboxName)) {
+    throw new Error(
+      `Runtime provider state mutation owns direct-container execution for sandbox '${sandboxName}'; retry after the provider fence is released.`,
+    );
+  }
+}
+
+/**
+ * Serialize one ordinary direct-container execution against provider fence
+ * acquisition. The callback must include both argv resolution and the complete
+ * synchronous Docker subprocess lifetime. Taking the lock before checking the
+ * durable target claim closes the check/acquire/exec race: an older exec drains
+ * before the provider can publish its fence, while a later exec observes the
+ * claim and is rejected before it can spawn.
+ */
+function withPrivilegedSandboxExecutionLease<T>(
+  sandboxName: string,
+  operation: string,
+  fn: () => T,
+): T {
+  return withShieldsTransitionLock(
+    sandboxName,
+    `privileged direct-container execution: ${operation}`,
+    () => {
+      assertNoActiveStateMutationTarget(sandboxName);
+      return fn();
+    },
+  );
+}
+
 function resolveDirectSandboxContainer(sandboxName: string, driver: string | null): string {
   const selected = findDirectSandboxContainer(sandboxName);
   if (selected) return selected;
@@ -216,6 +265,7 @@ function privilegedSandboxExecArgv(
   if (driver !== null && driver !== "docker" && driver !== "vm") {
     throw unsupportedDirectDriverError(sandboxName, driver);
   }
+  assertNoActiveStateMutationTarget(sandboxName);
   const portableTarget =
     driver === "docker"
       ? resolvePortableDemoPrivilegedExecTarget(sandboxName, {
@@ -281,4 +331,5 @@ export {
   privilegedSandboxExecArgv,
   resolveDirectSandboxContainer,
   selectDirectSandboxContainer,
+  withPrivilegedSandboxExecutionLease,
 };
