@@ -102,7 +102,8 @@ For Local Ollama strict tool-call validation, NemoClaw uses the missing-tool-cal
 - The response contains no tool-call JSON in plain message text.
 - The response does not stop at the output token limit after producing only reasoning.
 
-If a response stops at the output token limit after producing only reasoning, NemoClaw retries once with a larger output token limit.
+If a response stops at the output token limit after producing only reasoning, NemoClaw retries with a 1024-token output limit and then, when reasoning still uses the full output token limit, with a 4096-token output limit and a doubled request deadline.
+When reasoning also uses the full 4096-token output limit, onboarding stops and reports `reasoning used the full output-token budget before a tool call` alongside `missing structured tool call`.
 NemoClaw waits 5, 15, and 30 seconds before the second, third, and fourth validation requests.
 If four consecutive responses meet these conditions, onboarding stops and reports `missing structured tool call` without displaying the response body.
 NemoClaw does not apply the missing-tool-call retry schedule to other compatible endpoints.
