@@ -39,7 +39,7 @@ const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
 const CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 =
   "3578a053cede863f7aa4814d8399b4ca21ea0b77cee712e6d549c684818f11dd";
 const CLI_ARTIFACT_WORKFLOW_CONTRACT_SHA256 =
-  "1138f6070c01d615c45ddf42f45dd1bd50ab81c70bb71a3df0d4abf2e0c702d6";
+  "827680cf3570fda59d20b8a50973740ef9d14bfe186e2e269e171a6170fa98b0";
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {

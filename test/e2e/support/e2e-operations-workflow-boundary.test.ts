@@ -228,26 +228,40 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("limits manual PR runs to empty selectors, protected managed-runtime qualification, or Jetson dispatch", () => {
+  it("limits manual PR runs to trusted controller selectors or opted-in Jetson dispatch", () => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
     )!;
     authentication.run = authentication.run!.replace(
-      "Manual PR E2E accepts only empty selectors, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag",
+      "Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag",
       "Manual PR E2E accepts arbitrary selectors",
     );
 
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "Manual PR authentication must retain Manual PR E2E accepts only empty selectors, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag",
+      "Manual PR authentication must retain Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag",
+    );
+  });
+
+  it("keeps the controller selector cases equal to the Advisor planning contract", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const authentication = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Authenticate manual PR dispatch",
+    )!;
+    authentication.run = authentication.run!.replace("inference-routing::false:false | ", "");
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "Manual PR authentication must retain ::false:false | inference-routing::false:false | managed-image-protected-runtime::false:false | :jetson-nvmap-gpu:false:true) ;;",
     );
   });
 
   it.each([
     ["maintain", "", "", "false", 0, ""],
+    ["maintain", "inference-routing", "", "false", 0, ""],
     ["maintain", "managed-image-protected-runtime", "", "false", 0, ""],
     ["maintain", "", "jetson-nvmap-gpu", "true", 0, ""],
     ["maintain", "", "jetson-nvmap-gpu", "false", 1, "accepts only empty selectors"],
+    ["maintain", "network-policy", "", "false", 1, "accepts only empty selectors"],
     ["maintain", "gpu-e2e", "", "false", 1, "accepts only empty selectors"],
     ["write", "", "", "false", 1, "requires a repository maintainer or administrator"],
   ])("requires a maintainer role and bounded selector before manual PR E2E for %s with jobs %s and targets %s", (role, jobs, targets, allowJetsonDispatch, expectedStatus, expectedStderr) => {
@@ -398,7 +412,10 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     }
   });
 
-  it("selects no shared targets for protected managed-runtime qualification", () => {
+  it.each([
+    "inference-routing",
+    "managed-image-protected-runtime",
+  ])("selects no shared targets for the %s job selector", (jobSelector) => {
     const workflow = readE2eOperationsWorkflow();
     const controller = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Build trusted controller target matrix",
@@ -406,7 +423,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     const planner = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Generate E2E target matrix",
     )!;
-    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-protected-matrix-"));
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-job-selector-matrix-"));
     const output = join(directory, "output");
     const summary = join(directory, "summary");
 
@@ -421,7 +438,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
           env: {
             ...process.env,
             GITHUB_OUTPUT: output,
-            JOBS: "managed-image-protected-runtime",
+            JOBS: jobSelector,
             TARGETS: "",
           },
         },
@@ -444,7 +461,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             GITHUB_OUTPUT: output,
             GITHUB_STEP_SUMMARY: summary,
             INFERENCE_MODE: "mock",
-            JOBS: "managed-image-protected-runtime",
+            JOBS: jobSelector,
             TARGETS: "",
           },
         },

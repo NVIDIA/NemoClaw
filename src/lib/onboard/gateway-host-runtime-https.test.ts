@@ -8,13 +8,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const readiness = vi.hoisted(() => ({
   http: vi.fn(async () => false),
   https: vi.fn(async () => true),
+  wait: vi.fn(
+    async (options: { probe?: () => Promise<boolean>; recordTrace?: boolean } = {}) =>
+      options.probe?.() ?? false,
+  ),
 }));
 
 vi.mock("./gateway-http-readiness", () => ({
   isGatewayHttpReady: readiness.http,
   isDockerDriverGatewayHttpReady: readiness.https,
-  waitForGatewayHttpReady: async (options: { probe?: () => Promise<boolean> } = {}) =>
-    options.probe?.() ?? false,
+  waitForGatewayHttpReady: readiness.wait,
 }));
 
 import { createGatewayHostRuntime, type GatewayHostRuntimeDeps } from "./gateway-host-runtime";
@@ -31,6 +34,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   readiness.http.mockClear();
   readiness.https.mockClear();
+  readiness.wait.mockClear();
 });
 
 function createDeps(): GatewayHostRuntimeDeps {
@@ -41,6 +45,7 @@ function createDeps(): GatewayHostRuntimeDeps {
     gatewayPort: () => 8080,
     getGatewayPortListenerRawScan: () => ({ pids: [4242], complete: true }),
     getInstalledOpenshellVersion: () => "0.0.90",
+    hasOpenShellGatewayUserService: () => false,
     isGatewayHealthy: () => true,
     readProcCgroup: () => `0::/system.slice/${SERVICE_NAME}\n`,
     readProcExe: () => EXEC_PATH,
@@ -74,6 +79,8 @@ function declareHttpsExternalSupervision() {
 describe("externally supervised HTTPS gateway readiness", () => {
   it("uses the production mTLS gRPC probe and the declared TLS bundle (#6576)", async () => {
     declareHttpsExternalSupervision();
+    const originalTlsDir = process.env.OPENSHELL_LOCAL_TLS_DIR;
+    process.env.OPENSHELL_GATEWAY_AUTH_TOKEN = "must-not-cross-readiness-boundary";
     const runtime = createGatewayHostRuntime(createDeps());
     const owner = runtime.getGatewayOwner();
 
@@ -84,14 +91,36 @@ describe("externally supervised HTTPS gateway readiness", () => {
     expect(readiness.https).toHaveBeenCalledWith(
       undefined,
       "https://127.0.0.1:8080/openshell.v1.OpenShell/Health",
+      { OPENSHELL_LOCAL_TLS_DIR: `${STATE_DIR}/tls` },
+      { recordTrace: true },
     );
-    expect(process.env.OPENSHELL_LOCAL_TLS_DIR).toBe(`${STATE_DIR}/tls`);
+    expect(readiness.wait).toHaveBeenCalledWith(expect.objectContaining({ recordTrace: true }));
+    expect(process.env.OPENSHELL_LOCAL_TLS_DIR).toBe(originalTlsDir);
     expect(fs.statSync).toHaveBeenCalledTimes(3);
     expect(fs.accessSync).toHaveBeenCalledTimes(3);
   });
 
+  it("disables both readiness trace spans for an observation-only probe (#7411)", async () => {
+    declareHttpsExternalSupervision();
+    const runtime = createGatewayHostRuntime({
+      ...createDeps(),
+      recordHttpReadinessTrace: false,
+    });
+
+    await runtime.probeGatewayAttachment(runtime.getGatewayOwner());
+
+    expect(readiness.https).toHaveBeenCalledWith(
+      undefined,
+      "https://127.0.0.1:8080/openshell.v1.OpenShell/Health",
+      expect.objectContaining({ OPENSHELL_LOCAL_TLS_DIR: `${STATE_DIR}/tls` }),
+      { recordTrace: false },
+    );
+    expect(readiness.wait).toHaveBeenCalledWith(expect.objectContaining({ recordTrace: false }));
+  });
+
   it("fails before probing when the declared client TLS bundle is unreadable (#6576)", async () => {
     declareHttpsExternalSupervision();
+    const originalTlsDir = process.env.OPENSHELL_LOCAL_TLS_DIR;
     vi.mocked(fs.accessSync).mockImplementation(() => {
       throw new Error("EACCES");
     });
@@ -101,5 +130,6 @@ describe("externally supervised HTTPS gateway readiness", () => {
       /TLS file is missing or unreadable/,
     );
     expect(readiness.https).not.toHaveBeenCalled();
+    expect(process.env.OPENSHELL_LOCAL_TLS_DIR).toBe(originalTlsDir);
   });
 });

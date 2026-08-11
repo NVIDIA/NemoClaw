@@ -179,7 +179,7 @@ jobs:
               matrix='[{"id":"ubuntu-policy-custom-missing-presets-negative","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-openclaw","runner":"ubuntu-latest"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest"}]'
               test_matrix='[{"id":"onboard-managed-image-buildless-e2e","file":"test/onboard-managed-image-buildless-e2e.test.ts","project":"integration"},{"id":"vllm-docker-storage","file":"test/vllm-docker-storage.test.ts","project":"integration"}]'
               ;;
-            managed-image-protected-runtime:)
+            inference-routing: | managed-image-protected-runtime:)
               matrix='[]'
               ;;
             :ubuntu-repo-cloud-langchain-deepagents-code)
@@ -270,9 +270,9 @@ jobs:
           }
           [[ "$RUN_ATTEMPT" == "1" ]] || { echo "::error::Manual PR E2E cannot be rerun" >&2; exit 1; }
           case "${JOBS}:${TARGETS}:${INCLUDE_LAUNCHABLE}:${ALLOW_JETSON_DISPATCH}" in
-            ::false:false | managed-image-protected-runtime::false:false | :jetson-nvmap-gpu:false:true) ;;
+            ::false:false | inference-routing::false:false | managed-image-protected-runtime::false:false | :jetson-nvmap-gpu:false:true) ;;
             *)
-              echo "::error::Manual PR E2E accepts only empty selectors, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag" >&2
+              echo "::error::Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag" >&2
               exit 1
               ;;
           esac
@@ -797,7 +797,7 @@ jobs:
       # explicit because strict YAML decoders reject 100 or more aliases here.
       - &dockerhub-auth
         name: Authenticate to Docker Hub
-        uses: NVIDIA/NemoClaw/.github/actions/docker-auth-setup@78091da47e290f49b8fe3f3e70b72362a0853928
+        uses: NVIDIA/NemoClaw/.github/actions/docker-auth-setup@05fa6b810017752ab21148cb7e9d82d12a88c92f
         with:
           auth-required: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && '1' || '0' }}
           username: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && secrets.DOCKERHUB_USERNAME || '' }}
