@@ -768,39 +768,22 @@ describe("ollama auth proxy state across gateway ports", () => {
     const sharedDir = path.join(tmpDir, ".nemoclaw");
     const gatewayScopedPort = options.gatewayScopedPort ?? 8990;
     const gatewayScopedDir = path.join(sharedDir, "gateways", String(gatewayScopedPort));
+    const otherGatewayDir = path.join(sharedDir, "gateways", "8991");
     fs.mkdirSync(gatewayScopedDir, { recursive: true });
-    if (options.sharedToken !== undefined) {
-      fs.writeFileSync(path.join(sharedDir, "ollama-proxy-token"), `${options.sharedToken}\n`, {
-        mode: 0o600,
-      });
-    }
-    if (options.sharedBackend !== undefined) {
-      fs.writeFileSync(path.join(sharedDir, "ollama-backend"), `${options.sharedBackend}\n`, {
-        mode: 0o600,
-      });
-    }
-    if (options.gatewayScopedToken !== undefined) {
-      fs.writeFileSync(
-        path.join(gatewayScopedDir, "ollama-proxy-token"),
-        `${options.gatewayScopedToken}\n`,
-        { mode: 0o600 },
-      );
-    }
-    if (options.gatewayScopedBackend !== undefined) {
-      fs.writeFileSync(
-        path.join(gatewayScopedDir, "ollama-backend"),
-        `${options.gatewayScopedBackend}\n`,
-        { mode: 0o600 },
-      );
-    }
-    if (options.otherGatewayScopedToken !== undefined) {
-      const otherGatewayDir = path.join(sharedDir, "gateways", "8991");
-      fs.mkdirSync(otherGatewayDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(otherGatewayDir, "ollama-proxy-token"),
-        `${options.otherGatewayScopedToken}\n`,
-        { mode: 0o600 },
-      );
+    fs.mkdirSync(otherGatewayDir, { recursive: true });
+
+    const optionalStateFiles: ReadonlyArray<readonly [string, string | undefined]> = [
+      [path.join(sharedDir, "ollama-proxy-token"), options.sharedToken],
+      [path.join(sharedDir, "ollama-backend"), options.sharedBackend],
+      [path.join(gatewayScopedDir, "ollama-proxy-token"), options.gatewayScopedToken],
+      [path.join(gatewayScopedDir, "ollama-backend"), options.gatewayScopedBackend],
+      [path.join(otherGatewayDir, "ollama-proxy-token"), options.otherGatewayScopedToken],
+    ];
+    const presentStateFiles = optionalStateFiles.filter(
+      (entry): entry is readonly [string, string] => entry[1] !== undefined,
+    );
+    for (const [file, value] of presentStateFiles) {
+      fs.writeFileSync(file, `${value}\n`, { mode: 0o600 });
     }
 
     const script = String.raw`
@@ -1038,15 +1021,16 @@ if (mode === "start" || mode === "start-peer") {
         });
         child.on("error", reject);
         child.on("close", (code) => {
-          if (code === 0) resolve({ stderr, stdout });
-          else reject(new Error(`${mode} child exited ${String(code)}: ${stderr || stdout}`));
+          code === 0
+            ? resolve({ stderr, stdout })
+            : reject(new Error(`${mode} child exited ${String(code)}: ${stderr || stdout}`));
         });
       });
 
     const waitForStartupEntry = async (): Promise<void> => {
       const deadline = Date.now() + 5_000;
       while (!fs.existsSync(enteredPath)) {
-        if (Date.now() >= deadline) throw new Error("startup child did not enter proxy spawn");
+        assert.ok(Date.now() < deadline, "startup child did not enter proxy spawn");
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
     };

@@ -817,10 +817,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           log: (line) => logs.push(line),
           run: (command, args) => {
             runCalls.push({ command, args });
-            if (command === "ps" && args.includes("4242") && args.includes("args=")) {
-              return ok("node /opt/nemoclaw/scripts/ollama-auth-proxy.mts\n");
-            }
-            return ok();
+            return command === "ps" && args.includes("4242") && args.includes("args=")
+              ? ok("node /opt/nemoclaw/scripts/ollama-auth-proxy.mts\n")
+              : ok();
           },
           runDocker: (args) => {
             dockerCalls.push(args);
