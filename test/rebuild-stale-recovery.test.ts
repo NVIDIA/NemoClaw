@@ -28,7 +28,7 @@ import { expectNoSandboxDelete } from "./helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
-} from "./helpers/rebuild-flow-test-harness";
+} from "./helpers/rebuild-flow-generic-harness";
 
 installRebuildFlowTestHooks();
 

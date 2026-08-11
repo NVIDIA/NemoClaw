@@ -1,30 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
+  installRebuildFlowTestHooks,
   makePreparedRecoveryManifest,
-  resetRebuildFlowTestEnvironment,
-  restoreRebuildFlowTestEnvironment,
-  snapshotEnv,
-} from "../../../../test/helpers/rebuild-flow-harness";
-
-const restoreSandboxEnv = snapshotEnv([
-  "NEMOCLAW_SANDBOX_NAME",
-  "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
-]);
+} from "../../../../test/helpers/rebuild-flow-dcode-harness";
 
 describe("prepared rebuild recovery", () => {
-  beforeEach(() => {
-    resetRebuildFlowTestEnvironment();
-  });
-
-  afterEach(() => {
-    restoreRebuildFlowTestEnvironment();
-    restoreSandboxEnv();
-  });
+  installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
 
   it("restores the validated pre-upgrade manifest without taking a second backup (#6114)", async () => {
     const harness = createRebuildFlowHarness({
