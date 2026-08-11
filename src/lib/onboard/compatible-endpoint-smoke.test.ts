@@ -247,6 +247,55 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     );
   });
 
+  it.each([
+    {
+      label: "provider-neutral",
+      forceCanonicalRoute: true,
+      provider: "vllm-local",
+      expected: ["Provider-neutral inference provider", "inference.local route cannot reach"],
+      unexpected: "Telegram",
+    },
+    {
+      label: "compatible-endpoint messaging",
+      forceCanonicalRoute: false,
+      provider: "compatible-endpoint",
+      expected: ["Compatible endpoint provider", "sandbox would start Telegram"],
+      unexpected: "Provider-neutral inference provider",
+    },
+  ])("reports mode-accurate $label provider lookup failures", (testCase) => {
+    const errors: string[] = [];
+    const error = vi.spyOn(console, "error").mockImplementation((message) => {
+      errors.push(String(message));
+    });
+    const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`process.exit(${code})`);
+    });
+
+    try {
+      expect(() =>
+        verifyCompatibleEndpointSandboxSmoke({
+          sandboxName: "provider-lookup-failure-sandbox",
+          provider: testCase.provider,
+          model: "qwen3.5-9b",
+          runOpenshell: vi.fn().mockReturnValue({ status: 1, stderr: "provider query failed" }),
+          redact: (value) => value,
+          messagingChannels: ["telegram"],
+          forceCanonicalRoute: testCase.forceCanonicalRoute,
+        }),
+      ).toThrow("process.exit(1)");
+
+      const diagnostics = errors.join("\n");
+      expect(diagnostics).toContain(testCase.expected[0]);
+      expect(diagnostics).toContain(testCase.expected[1]);
+      expect(diagnostics).not.toContain(testCase.unexpected);
+      expect(diagnostics).toContain("provider query failed");
+      expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      exit.mockRestore();
+      error.mockRestore();
+    }
+  });
+
   it.each(
     providerNeutralCases,
   )("runs a real provider-neutral $service request inside the $agentName sandbox", ({

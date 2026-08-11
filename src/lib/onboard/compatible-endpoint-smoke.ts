@@ -161,10 +161,14 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
 
   if (providerResult.status !== 0) {
     console.error(
-      `  Compatible endpoint provider '${options.provider}' is missing from the OpenShell gateway.`,
+      options.forceCanonicalRoute
+        ? `  Provider-neutral inference provider '${options.provider}' is missing or unreachable in the OpenShell gateway.`
+        : `  Compatible endpoint provider '${options.provider}' is missing from the OpenShell gateway.`,
     );
     console.error(
-      "  The sandbox would start Telegram, but agent turns would fail before reaching the model.",
+      options.forceCanonicalRoute
+        ? "  The sandbox inference.local route cannot reach the selected model provider."
+        : "  The sandbox would start Telegram, but agent turns would fail before reaching the model.",
     );
     if (providerDetails) {
       console.error(`  ${compactText(options.redact(providerDetails)).slice(0, 800)}`);
