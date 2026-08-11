@@ -198,6 +198,7 @@ describe("relaunchManagedSupervisorSession", () => {
   });
 
   it("allows the state backup to succeed on the fifth retry after a restart", () => {
+    const events: string[] = [];
     const unreachableBackup = {
       success: false,
       unreachable: true,
@@ -209,27 +210,79 @@ describe("relaunchManagedSupervisorSession", () => {
     };
     const backupState = vi
       .fn()
-      .mockReturnValueOnce(unreachableBackup)
-      .mockReturnValueOnce(unreachableBackup)
-      .mockReturnValueOnce(unreachableBackup)
-      .mockReturnValueOnce(unreachableBackup)
-      .mockReturnValueOnce(unreachableBackup)
-      .mockReturnValueOnce({
-        success: true,
-        manifest: { backupPath: "/tmp/rebuild-backups/alpha/recovery" },
-        backedUpDirs: ["workspace"],
-        failedDirs: [],
-        backedUpFiles: [],
-        failedFiles: [],
+      .mockImplementationOnce(() => {
+        events.push("backup:1");
+        return unreachableBackup;
+      })
+      .mockImplementationOnce(() => {
+        events.push("backup:2");
+        return unreachableBackup;
+      })
+      .mockImplementationOnce(() => {
+        events.push("backup:3");
+        return unreachableBackup;
+      })
+      .mockImplementationOnce(() => {
+        events.push("backup:4");
+        return unreachableBackup;
+      })
+      .mockImplementationOnce(() => {
+        events.push("backup:5");
+        return unreachableBackup;
+      })
+      .mockImplementationOnce(() => {
+        events.push("backup:6");
+        return {
+          success: true,
+          manifest: { backupPath: "/tmp/rebuild-backups/alpha/recovery" },
+          backedUpDirs: ["workspace"],
+          failedDirs: [],
+          backedUpFiles: [],
+          failedFiles: [],
+        };
       });
-    const sleep = vi.fn();
-    const deps = baseDeps({ backupState: backupState as never, sleep });
+    const removeBackup = vi.fn(() => {
+      events.push("remove");
+      return true;
+    });
+    const sleep = vi.fn((seconds: number) => {
+      events.push(`sleep:${seconds}`);
+    });
+    const recreate = vi.fn(() => {
+      events.push("recreate");
+      return patchResult();
+    });
+    const deps = baseDeps({
+      backupState: backupState as never,
+      recreate,
+      removeBackup,
+      sleep,
+    });
 
     expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).not.toBeNull();
     expect(backupState).toHaveBeenCalledTimes(6);
     expect(sleep).toHaveBeenCalledTimes(5);
     expect(deps.removeBackup).toHaveBeenCalledTimes(5);
     expect(deps.recreate).toHaveBeenCalledOnce();
+    expect(events).toEqual([
+      "backup:1",
+      "remove",
+      "sleep:2",
+      "backup:2",
+      "remove",
+      "sleep:2",
+      "backup:3",
+      "remove",
+      "sleep:2",
+      "backup:4",
+      "remove",
+      "sleep:2",
+      "backup:5",
+      "remove",
+      "sleep:2",
+      "backup:6",
+      "recreate",
+    ]);
   });
 
   it("rolls the container transaction back when managed readiness is not proven", () => {
