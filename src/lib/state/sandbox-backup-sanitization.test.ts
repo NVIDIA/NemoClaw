@@ -146,6 +146,37 @@ describe("rebuild backup credential sanitization", () => {
     expect(existsSync(authPath)).toBe(false);
   });
 
+  it("still sanitizes a credential config inside a dependency tree", () => {
+    const backupPath = createBackup();
+    const vendoredDirectory = join(backupPath, "state", "scripts", "node_modules", "some-package");
+    mkdirSync(vendoredDirectory, { recursive: true });
+    const configPath = join(vendoredDirectory, "config.json");
+    writeFileSync(configPath, '{"apiKey":"sk-abcdefghijklmnopqrstuvwxyz0123456789"}', {
+      mode: 0o644,
+    });
+
+    sanitizeBackupDirectory(backupPath);
+
+    expect(readFileSync(configPath, "utf-8")).toContain("[STRIPPED_BY_MIGRATION]");
+    expect(readFileSync(configPath, "utf-8")).not.toContain(
+      "sk-abcdefghijklmnopqrstuvwxyz0123456789",
+    );
+    expect(statSync(configPath).mode & 0o777).toBe(0o600);
+  });
+
+  it("still sanitizes an environment file inside a dependency tree", () => {
+    const backupPath = createBackup();
+    const vendoredDirectory = join(backupPath, "state", "scripts", "node_modules", "some-package");
+    mkdirSync(vendoredDirectory, { recursive: true });
+    const envPath = join(vendoredDirectory, ".env");
+    writeFileSync(envPath, "TOKEN=opaque-runtime-secret\nLOG_LEVEL=info\n", { mode: 0o644 });
+
+    sanitizeBackupDirectory(backupPath);
+
+    expect(readFileSync(envPath, "utf-8")).toBe("TOKEN=[STRIPPED_BY_MIGRATION]\nLOG_LEVEL=info\n");
+    expect(statSync(envPath).mode & 0o777).toBe(0o600);
+  });
+
   it("omits unsanitizable config and env artifacts", () => {
     const backupPath = createBackup();
     const yamlPath = join(backupPath, "state", "config.yaml");

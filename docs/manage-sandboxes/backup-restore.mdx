@@ -47,7 +47,8 @@ Store them as `$OPENCLAW_WORKSPACE_DIR/USER.md` and `$OPENCLAW_WORKSPACE_DIR/SOU
 </AgentOnly>
 
 Before NemoClaw marks a snapshot complete, it strips recognized credential values from copied JSON, YAML, and `.env` files.
-It skips dependency lockfiles and installed dependency trees, whose package names match the credential field names and whose contents `npm install` recreates from the lockfile.
+It skips dependency lockfiles and installed package manifests because dependency names in those files can match credential field names.
+It continues to sanitize configuration and `.env` files inside installed dependency trees.
 It preserves OpenShell credential placeholders so rebuild can reattach the host-side provider.
 If NemoClaw cannot sanitize a copied configuration or environment file, it omits that file from the snapshot.
 If it cannot remove the unsafe file, snapshot creation returns an error.
@@ -56,7 +57,7 @@ This sanitization uses an isolated `python3` helper on POSIX hosts to keep reads
 If a copied file or parent directory changes identity during the operation, snapshot creation fails closed instead of following the changed path.
 
 <AgentOnly variant="hermes">
-A release published before this exemption scanned dependency trees as well.
+A previous release sanitized dependency lockfiles and installed package manifests.
 It replaced package versions in the Hermes WhatsApp bridge with the `[STRIPPED_BY_MIGRATION]` marker and left a tree that `npm install` rejects.
 A sandbox rebuilt on such a release reports `whatsapp failed to connect` on every gateway start.
 Destroy that sandbox with `$$nemoclaw <sandbox> destroy --yes`.

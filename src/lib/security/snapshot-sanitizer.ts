@@ -23,6 +23,7 @@ import {
 const MAX_SANITIZATION_PASSES = 3;
 
 const VENDORED_DEPENDENCY_DIRECTORY = "node_modules";
+const DEPENDENCY_MANIFEST_NAME = "package.json";
 
 /**
  * Whether a scanned file is machine-generated dependency material rather than
@@ -38,7 +39,10 @@ const VENDORED_DEPENDENCY_DIRECTORY = "node_modules";
  */
 function isVendoredDependencyArtifact(filePath: string, basename: string): boolean {
   if (isDependencyLockfile(basename)) return true;
-  return filePath.split("/").includes(VENDORED_DEPENDENCY_DIRECTORY);
+  return (
+    filePath.split("/").includes(VENDORED_DEPENDENCY_DIRECTORY) &&
+    basename === DEPENDENCY_MANIFEST_NAME
+  );
 }
 
 function actionForScannedFile(file: SnapshotScannedFile): SnapshotSanitizationAction | null {
@@ -46,8 +50,8 @@ function actionForScannedFile(file: SnapshotScannedFile): SnapshotSanitizationAc
   if (isSensitiveFile(name)) {
     return { kind: "remove", path: file.path, metadata: file.metadata };
   }
-  // Runs after the sensitive-basename check so a `CREDENTIAL_SENSITIVE_BASENAMES`
-  // file inside a dependency tree is still removed.
+  // Runs after the sensitive-basename check. Only package manifests and
+  // lockfiles bypass sanitization; config and environment files do not.
   if (isVendoredDependencyArtifact(file.path, name)) return null;
 
   const raw = decodeDescriptorSnapshotContent(file.content);
