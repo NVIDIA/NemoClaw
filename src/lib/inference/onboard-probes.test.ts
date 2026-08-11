@@ -922,6 +922,100 @@ exit 0
       );
     });
 
+    it("retries Local Ollama validation when HTTP 200 omits a structured tool call (#8714)", () => {
+      const body = `n=$(cat "${HARNESS_COUNTER}")
+n=$((n + 1))
+echo "$n" > "${HARNESS_COUNTER}"
+if [ "$n" -eq 1 ]; then
+  printf '%s' '{"choices":[{"finish_reason":"stop","message":{"content":"OK"}}]}' > "$outfile"
+else
+  printf '%s' '{"choices":[{"finish_reason":"tool_calls","message":{"tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":{}}}]}}]}' > "$outfile"
+fi
+printf '200'
+`;
+      withFakeCurlProbe(
+        {
+          script: makeFakeCurlScript(body),
+          dirPrefix: "nemoclaw-ollama-tool-readiness-probe-",
+        },
+        ({ lines, counter }) => {
+          const result = probeOpenAiLikeEndpoint(
+            "http://127.0.0.1:11434/v1",
+            "nemotron-3-nano:30b",
+            "",
+            {
+              skipResponsesProbe: true,
+              requireChatCompletionsToolCalling: true,
+              retryChatCompletionsToolReadiness: true,
+            },
+          );
+
+          expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+          expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+          expect(lines).toContain(
+            "  Chat Completions API validation did not return a structured tool call; retrying in 5s...",
+          );
+        },
+      );
+    });
+
+    it("does not retry missing structured tool calls for generic endpoints (#8714)", () => {
+      const body = `n=$(cat "${HARNESS_COUNTER}")
+n=$((n + 1))
+echo "$n" > "${HARNESS_COUNTER}"
+printf '%s' '{"choices":[{"finish_reason":"stop","message":{"content":"OK"}}]}' > "$outfile"
+printf '200'
+`;
+      withFakeCurlProbe(
+        { script: makeFakeCurlScript(body), dirPrefix: "nemoclaw-generic-tool-probe-" },
+        ({ counter }) => {
+          const result = probeOpenAiLikeEndpoint(
+            "https://api.example.com/v1",
+            "tool-model",
+            "sk-test",
+            { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
+          );
+
+          expect(result).toMatchObject({ ok: false });
+          expect(fs.readFileSync(counter, "utf8").trim()).toBe("1");
+        },
+      );
+    });
+
+    it("stops retrying Local Ollama validation after the backoff schedule when structured tool calls remain missing (#8714)", () => {
+      const body = `n=$(cat "${HARNESS_COUNTER}")
+n=$((n + 1))
+echo "$n" > "${HARNESS_COUNTER}"
+printf '%s' '{"choices":[{"finish_reason":"stop","message":{"content":"OK"}}]}' > "$outfile"
+printf '200'
+`;
+      withFakeCurlProbe(
+        { script: makeFakeCurlScript(body), dirPrefix: "nemoclaw-ollama-tool-timeout-" },
+        ({ counter }) => {
+          const result = probeOpenAiLikeEndpoint(
+            "http://127.0.0.1:11434/v1",
+            "nemotron-3-nano:30b",
+            "",
+            {
+              skipResponsesProbe: true,
+              requireChatCompletionsToolCalling: true,
+              retryChatCompletionsToolReadiness: true,
+            },
+          );
+
+          expect(result).toMatchObject({
+            ok: false,
+            failures: [
+              expect.objectContaining({
+                diagnosticCodes: ["openai-chat-missing-structured-tool-call"],
+              }),
+            ],
+          });
+          expect(fs.readFileSync(counter, "utf8").trim()).toBe("4");
+        },
+      );
+    });
+
     it("keeps GPT-5 timeout retries strict when tool calling is required (#6642)", () => {
       const script = `#!/usr/bin/env bash
 outfile=""
