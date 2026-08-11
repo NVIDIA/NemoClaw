@@ -707,8 +707,8 @@ jobs:
         name: Prepare the trusted lane
         env:
           BREV_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.BREV_API_KEY || '' }}
-          BREV_CLI_SHA256: 5a6e70374db9be33f85f299161733b4a8409840d47638c781429b96e8d53704f
-          BREV_CLI_VERSION: 0.6.330
+          BREV_CLI_SHA256: d4aa49db1716f10308a6587778a676a0c0076bd48a212d86a421ab9550bc8f32
+          BREV_CLI_VERSION: 0.6.334
           BREV_ORG_ID: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.BREV_ORG_ID || '' }}
         run: |
           set -euo pipefail
