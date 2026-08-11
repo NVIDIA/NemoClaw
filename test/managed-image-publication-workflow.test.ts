@@ -168,10 +168,10 @@ function stagingQaDeepCodeBuilder(workflow: Workflow): Job {
   );
 }
 
-function managedMainLifecycle(workflow: Workflow): Job {
+function managedPrActivation(workflow: Workflow): Job {
   return required(
-    workflow.jobs?.["main-managed-image-lifecycle"],
-    "managed-image workflow is missing lifecycle verification for all shipped agents on the main branch",
+    workflow.jobs?.["pr-managed-activation"],
+    "managed-image workflow is missing its exact all-agent PR activation gate",
   );
 }
 
@@ -613,6 +613,8 @@ describe("complete managed-image publication workflow", () => {
     const login = step(prBuilder, "Log in to GHCR for exact same-repository PR digest");
     const publish = step(prBuilder, "Publish exact same-repository PR managed image by digest");
     const logout = step(prBuilder, "Remove PR publication credentials");
+    const exportContract = step(prBuilder, "Export exact published PR managed-image contract");
+    const uploadContract = step(prBuilder, "Upload exact published PR managed-image contract");
     const sameRepository = "github.event.pull_request.head.repo.full_name == github.repository";
     expect(login.if).toBe(sameRepository);
     expect(publish.if).toBe(sameRepository);
@@ -625,6 +627,11 @@ describe("complete managed-image publication workflow", () => {
     });
     expect(publish.with?.tags).toBeUndefined();
     expect(logout.if).toContain(sameRepository);
+    expect(exportContract.if).toBe(sameRepository);
+    expect(uploadContract.if).toBe(sameRepository);
+    expect(steps.indexOf(logout)).toBeLessThan(steps.indexOf(exportContract));
+    expect(exportContract.run).toContain('DOCKER_CONFIG="$anonymous_config" docker pull');
+    expect(exportContract.run).toContain("revision: $revision");
     expect(JSON.stringify(prBuilder).match(/secrets\.GITHUB_TOKEN/gu)).toHaveLength(1);
     expect(JSON.stringify(prBuilder)).not.toContain("github.token");
   });
@@ -719,42 +726,37 @@ describe("complete managed-image publication workflow", () => {
     expect(inlineNodeStdinValidator(contractSource)).toBe(inlineNodeStdinValidator(mainContract));
   });
 
-  it("runs managed image lifecycle verification for all shipped agents only on the main branch (#7744)", () => {
+  it("runs the exact candidate CLI through real all-agent Docker and OpenShell activation (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
-    const lifecycle = managedMainLifecycle(workflow);
-    const steps = lifecycle.steps ?? [];
+    const activation = managedPrActivation(workflow);
+    const steps = activation.steps ?? [];
 
-    expect(workflow.on?.pull_request?.paths).not.toContain(
-      "test/e2e/live/managed-image-activation-e2e*.ts",
+    expect(workflow.on?.pull_request?.paths).toEqual(
+      expect.arrayContaining([
+        "src/lib/onboard/**",
+        "test/e2e/live/managed-image-activation-e2e*.ts",
+      ]),
     );
-    expect(JSON.stringify(managedPrBuilder(workflow))).not.toContain("managed-pr-contract");
-    expect(lifecycle.needs).toBe("promote");
-    expect(lifecycle.if).toBe("github.ref == 'refs/heads/main'");
-    expect(lifecycle.permissions).toEqual({ contents: "read" });
-    expect(lifecycle.env?.MAIN_SHA).toBe("${{ github.sha }}");
-    expect(lifecycle.env?.NEMOCLAW_MANAGED_ACTIVATION_CATALOG).toBe(
-      "${{ github.workspace }}/managed-main-catalog.json",
+    expect(activation.needs).toBe("pr-build-and-entrypoint");
+    expect(activation.if).toContain(
+      "github.event.pull_request.head.repo.full_name == github.repository",
     );
-    expect(JSON.stringify(lifecycle)).not.toContain("secrets.");
-    expect(JSON.stringify(lifecycle)).not.toContain("github.token");
-    expect(step(lifecycle, "Check out the workflow commit from main").with?.ref).toBe(
-      "${{ github.sha }}",
+    expect(activation.permissions).toEqual({ contents: "read" });
+    expect(activation.env?.CANDIDATE_SHA).toBe("${{ github.event.pull_request.head.sha }}");
+    expect(activation.env?.NEMOCLAW_MANAGED_ACTIVATION_CATALOG).toBe(
+      "${{ github.workspace }}/managed-pr-catalog.json",
     );
-    expect(step(lifecycle, "Download published amd64 managed image contracts").with?.pattern).toBe(
-      "managed-image-${{ github.run_id }}-${{ github.run_attempt }}-*-linux-amd64",
+    expect(JSON.stringify(activation)).not.toContain("secrets.");
+    expect(JSON.stringify(activation)).not.toContain("github.token");
+    expect(step(activation, "Checkout exact PR head").with?.ref).toBe(
+      "${{ github.event.pull_request.head.sha }}",
     );
-    const assemble = step(lifecycle, "Assemble managed image lifecycle catalog").run ?? "";
-    expect(assemble).toContain("([.[].contractVersion] | unique) == [2]");
-    expect(assemble).toContain("contractVersion: 1");
-    expect(assemble).toContain('release="v$(node -p');
-    expect(step(lifecycle, "Build the CLI from the workflow commit").run).toContain(
-      "npm run build:cli",
-    );
-    expect(step(lifecycle, "Install OpenShell CLI").run).toContain("scripts/install-openshell.sh");
-    const run = step(lifecycle, "Verify managed image lifecycle for all shipped agents").run ?? "";
-    expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$MAIN_SHA" ]]');
+    expect(step(activation, "Build exact candidate CLI").run).toContain("npm run build:cli");
+    expect(step(activation, "Install OpenShell CLI").run).toContain("scripts/install-openshell.sh");
+    const run = step(activation, "Run real all-agent managed runtime activation").run ?? "";
+    expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
     expect(run).toContain("test/e2e/live/managed-image-activation-e2e.test.ts");
-    expect(steps.map(({ name }) => name)).toContain("Upload managed image lifecycle evidence");
+    expect(steps.map(({ name }) => name)).toContain("Upload managed runtime activation evidence");
   });
 
   it("keeps the activation proof outside mocked runtime boundaries (#7744)", () => {
