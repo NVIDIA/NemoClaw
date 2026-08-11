@@ -164,6 +164,16 @@ const TEXTUAL_BODY_TYPES = /^(?:text\/|application\/(?:json|problem\+json)\b)/;
  * content types yield nothing, and the caller must pass an already-consumed
  * copy so streaming consumption stays untouched.
  */
+/**
+ * Whether a status is a captured failure status. Body capture is restricted
+ * to non-2xx responses, so a caller cannot attach a successful response body
+ * to failure diagnostics. An absent status is not a failure status: a
+ * transport error that never produced a response has no body to capture.
+ */
+function isErrorStatus(httpStatus: number | undefined): boolean {
+  return httpStatus !== undefined && (httpStatus < 200 || httpStatus >= 300);
+}
+
 export function boundedErrorBodySnippet(
   body: string,
   contentType: string | undefined,
@@ -248,7 +258,7 @@ export function buildManagedTransportFailure(
     causeChain,
     ...(input.responseHeaders === undefined ? {} : pickSafeResponseHeaders(input.responseHeaders)),
     ...(input.sessionIdPresent === undefined ? {} : { sessionIdPresent: input.sessionIdPresent }),
-    ...(input.errorBody === undefined
+    ...(input.errorBody === undefined || !isErrorStatus(input.httpStatus)
       ? {}
       : (() => {
           const snippet = boundedErrorBodySnippet(
@@ -265,14 +275,17 @@ const MAX_LOG_FIELD = 256;
 /**
  * Encodes one value for a single-record key=value log line. The value is
  * redacted again (defense in depth on top of the build-time redaction),
- * length-bounded, and any value carrying a control character, whitespace,
+ * length-bounded to maxLength, and any value carrying a control character, whitespace,
  * quote, or `=` is JSON quoted so it cannot inject a line break or forge a
  * second field.
  */
-export function encodeLogField(value: string | number | boolean): string {
+export function encodeLogField(
+  value: string | number | boolean,
+  maxLength: number = MAX_LOG_FIELD,
+): string {
   if (typeof value !== "string") return String(value);
   const redacted = sanitizeTraceAttributes({ value }).value;
-  const text = (typeof redacted === "string" ? redacted : value).slice(0, MAX_LOG_FIELD);
+  const text = (typeof redacted === "string" ? redacted : value).slice(0, maxLength);
   if (/[\s="\\]|[\u0000-\u001f\u007f]/.test(text)) return JSON.stringify(text);
   return text;
 }
@@ -280,9 +293,10 @@ export function encodeLogField(value: string | number | boolean): string {
 /**
  * Formats the event as stable single-record key=value lines under the shared
  * event name and hands each to write; stderr by default. Every emitted string
- * passes through encodeLogField, so a delimiter- or credential-bearing
- * upstream value cannot forge records or leak. Consumers call this on failure
- * only.
+ * passes through encodeLogField, including the error-body snippet, so a
+ * delimiter- or credential-bearing upstream value cannot forge records or
+ * leak even when the event object was constructed directly rather than by
+ * buildManagedTransportFailure. Consumers call this on failure only.
  */
 export function emitManagedTransportFailure(
   event: ManagedTransportFailure,
@@ -324,7 +338,7 @@ export function emitManagedTransportFailure(
   }
   if (event.errorBodySnippet !== undefined) {
     write(
-      `${MANAGED_TRANSPORT_FAILURE_EVENT} trace_id=${encodeLogField(event.traceId)} error_body=${JSON.stringify(event.errorBodySnippet)}`,
+      `${MANAGED_TRANSPORT_FAILURE_EVENT} trace_id=${encodeLogField(event.traceId)} error_body=${encodeLogField(event.errorBodySnippet, MAX_ERROR_BODY_SNIPPET)}`,
     );
   }
 }

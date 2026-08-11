@@ -147,6 +147,41 @@ describe("buildManagedTransportFailure", () => {
     expect(serialized).not.toContain("debug=1");
   });
 
+  it("refuses an error body when the response succeeded", () => {
+    const withSuccess = buildManagedTransportFailure({
+      consumer: "mcp",
+      operation: "tools/list",
+      route: "trusted_env_proxy",
+      phase: "response_headers",
+      elapsedMs: 12,
+      httpStatus: 200,
+      errorBody: { body: '{"ok":"payload"}', contentType: "application/json" },
+    });
+    expect(withSuccess.errorBodySnippet).toBeUndefined();
+    expect(JSON.stringify(withSuccess)).not.toContain("payload");
+
+    const withoutStatus = buildManagedTransportFailure({
+      consumer: "mcp",
+      operation: "tools/list",
+      route: "trusted_env_proxy",
+      phase: "connect",
+      elapsedMs: 12,
+      errorBody: { body: '{"ok":"payload"}', contentType: "application/json" },
+    });
+    expect(withoutStatus.errorBodySnippet).toBeUndefined();
+
+    const withFailure = buildManagedTransportFailure({
+      consumer: "mcp",
+      operation: "tools/list",
+      route: "trusted_env_proxy",
+      phase: "response_headers",
+      elapsedMs: 12,
+      httpStatus: 502,
+      errorBody: { body: '{"error":"upstream"}', contentType: "application/json" },
+    });
+    expect(withFailure.errorBodySnippet).toContain("upstream");
+  });
+
   it("redacts untrusted fields in the built object before any formatting", () => {
     const token = "sk-abcdef0123456789abcdef0123456789";
     const event = buildManagedTransportFailure({
@@ -266,6 +301,31 @@ describe("emitManagedTransportFailure", () => {
       ].join(" "),
     );
     expect(lines[1]).toContain("cause_chain=Error/UND_ERR_SOCKET/read");
+  });
+
+  it("encodes an error-body snippet on a directly constructed event", () => {
+    const lines: string[] = [];
+    emitManagedTransportFailure(
+      {
+        consumer: "mcp",
+        operation: "tools/list",
+        route: "trusted_env_proxy",
+        phase: "response_body",
+        traceId: "trace-9",
+        elapsedMs: 5,
+        causeChain: [],
+        errorBodySnippet:
+          "authorization: Bearer sk-live-not-a-real-key\nmanaged_transport_failure phase=forged",
+      },
+      (line) => lines.push(line),
+    );
+
+    const emitted = lines.join("\n");
+    expect(emitted).not.toContain("sk-live-not-a-real-key");
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain("error_body=");
+    expect(lines[1]).not.toMatch(/\n/);
+    expect(lines.filter((line) => line.startsWith("managed_transport_failure "))).toHaveLength(2);
   });
 
   it("neutralizes delimiter- and credential-bearing values in every emitted field", () => {
