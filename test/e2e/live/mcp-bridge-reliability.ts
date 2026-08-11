@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  type HermesMcpCommandResult,
+  isHermesGatewayDrainingResponse,
+} from "./mcp-bridge-hermes-http.ts";
+
 const ANSI_ESCAPE = /\u001b\[[0-9;]*m/gu;
+const HERMES_GATEWAY_DRAINING_RETRIES = 3;
+const HERMES_GATEWAY_DRAINING_RETRY_DELAY_MS = 5_000;
 const HERMES_RESTART_TRANSPORT_FAILURE_SUFFIX = [
   `Error: x code: 'Unknown error', message: "h2 protocol error: error reading a body`,
   `| from connection", source: hyper::Error(Body, Error { kind: Io(Custom`,
@@ -69,4 +76,23 @@ export async function retryAfterHermesRestartTransportFailure<T>(options: {
     throw new Error("rejected concurrent add was not a known Hermes restart transport failure");
   }
   return options.retry();
+}
+
+export async function retryHermesGatewayDraining<T extends HermesMcpCommandResult>(options: {
+  initialResult: T;
+  retry: (attempt: number) => Promise<T>;
+  wait?: (milliseconds: number) => Promise<void>;
+}): Promise<T> {
+  const wait =
+    options.wait ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  let result = options.initialResult;
+  for (
+    let attempt = 1;
+    attempt <= HERMES_GATEWAY_DRAINING_RETRIES && isHermesGatewayDrainingResponse(result);
+    attempt += 1
+  ) {
+    await wait(HERMES_GATEWAY_DRAINING_RETRY_DELAY_MS);
+    result = await options.retry(attempt);
+  }
+  return result;
 }
