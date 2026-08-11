@@ -218,6 +218,7 @@ describe("resolveSkillPaths", () => {
     expect(paths.mirrorDir).toBe("$HOME/.openclaw/skills/weather");
     expect(paths.uploadDirSharedWithAgent).toBe(false);
     expect(paths.sessionFile).toBe("/sandbox/.openclaw/agents/main/sessions/sessions.json");
+    expect(paths.reloadsSkillsOnSessionStart).toBe(false);
     expect(paths.isOpenClaw).toBe(true);
   });
 
@@ -234,6 +235,7 @@ describe("resolveSkillPaths", () => {
     expect(paths.mirrorDir).toBe("$HOME/.openclaw/skills/my-skill");
     expect(paths.uploadDirSharedWithAgent).toBe(false);
     expect(paths.sessionFile).toBe("/sandbox/.openclaw/agents/main/sessions/sessions.json");
+    expect(paths.reloadsSkillsOnSessionStart).toBe(false);
     expect(paths.isOpenClaw).toBe(true);
   });
 
@@ -250,6 +252,7 @@ describe("resolveSkillPaths", () => {
     expect(paths.mirrorDir).toBeNull();
     expect(paths.uploadDirSharedWithAgent).toBe(false);
     expect(paths.sessionFile).toBeNull();
+    expect(paths.reloadsSkillsOnSessionStart).toBe(true);
     expect(paths.isOpenClaw).toBe(false);
   });
 
@@ -269,6 +272,7 @@ describe("resolveSkillPaths", () => {
     expect(paths.mirrorDir).toBeNull();
     expect(paths.uploadDirSharedWithAgent).toBe(true);
     expect(paths.sessionFile).toBeNull();
+    expect(paths.reloadsSkillsOnSessionStart).toBe(false);
     expect(paths.isOpenClaw).toBe(false);
   });
 
@@ -285,11 +289,34 @@ describe("resolveSkillPaths", () => {
     expect(paths.mirrorDir).toBeNull();
     expect(paths.uploadDirSharedWithAgent).toBe(false);
     expect(paths.sessionFile).toBeNull();
+    expect(paths.reloadsSkillsOnSessionStart).toBe(false);
     expect(paths.isOpenClaw).toBe(false);
   });
 });
 
 describe("postInstall", () => {
+  it("tells Hermes users to start a fresh session without restarting the gateway", () => {
+    const paths = resolveSkillPaths(
+      { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } },
+      "weather",
+    );
+    const result = postInstall(
+      { configFile: "/tmp/ssh-config", sandboxName: "alpha" },
+      paths,
+      "/unused",
+      {
+        sshExecImpl: () => {
+          throw new Error("Hermes activation must not require an SSH mutation");
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      success: true,
+      messages: ["Start a new chat session to load the skill; a gateway restart is not required."],
+    });
+  });
+
   it("refreshes OpenClaw sessions after installing an updated skill", () => {
     const skillDir = mkdtempSync(join(tmpdir(), "skill-postinstall-"));
     const commands: string[] = [];
