@@ -253,9 +253,13 @@ function validateCanonicalAuth(errors: string[], auth: SandboxImagesWorkflowStep
     'auth_marker="${DOCKER_CONFIG}/.nemoclaw-docker-login-attempted"',
     ': > "${auth_marker}"',
     'chmod 600 "${auth_marker}"',
-    "for attempt in 1 2 3; do",
+    "login_attempts=5",
+    "retry_seconds=5",
+    "for ((attempt = 1; attempt <= login_attempts; attempt += 1)); do",
     `if printf '%s' "\${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "\${DOCKERHUB_USERNAME}" --password-stdin; then`,
-    "Docker Hub login failed after 3 attempts",
+    "if ((attempt < login_attempts)); then",
+    'sleep "${retry_seconds}"',
+    'Docker Hub login failed after ${login_attempts} attempts',
   ];
   for (const fragment of requiredFragments) {
     if (!run.includes(fragment)) {

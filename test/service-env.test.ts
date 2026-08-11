@@ -662,7 +662,17 @@ describe("service environment", () => {
         expect(envFile).toContain("10.200.0.1");
         expect(envFile).toContain('export AWS_EC2_METADATA_DISABLED="true"');
         expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN");
-        expect(envFile).toContain("OPENCLAW_GATEWAY_TOKEN='test-token-123'");
+        for (const shell of ["sh", "bash"]) {
+          const sourced = execFileSync(
+            shell,
+            [
+              "-c",
+              `unset OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_URL _nemoclaw_gateway_token; . '${join(fakeDataDir, "proxy-env.sh")}'; printf 'TOKEN=[%s] TEMP=[%s]\\n' "\${OPENCLAW_GATEWAY_TOKEN-<UNSET>}" "\${_nemoclaw_gateway_token-<UNSET>}"`,
+            ],
+            { encoding: "utf-8" },
+          );
+          expect(sourced).toContain("TOKEN=[test-token-123] TEMP=[<UNSET>]");
+        }
         expect(envFile).toContain("nemoclaw-configure-guard begin");
         expect(envFile).toContain('/usr/bin/env openclaw "$@"');
         // Tool cache redirects should be present (#804)
