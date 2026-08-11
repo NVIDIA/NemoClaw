@@ -27,11 +27,14 @@ exit 99`,
   );
 }
 
-function runInstallerHostAdmissionTest(host: {
-  runtime: string;
-  hasNestedOverlayConflict?: boolean;
-  isUnsupportedRuntime?: boolean;
-}) {
+function runInstallerHostAdmissionTest(
+  host: {
+    runtime: string;
+    hasNestedOverlayConflict?: boolean;
+    isUnsupportedRuntime?: boolean;
+  },
+  forcedRejection?: { findingIds: string[]; capabilityIds: string[] },
+) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-host-admission-"));
   const fakeBin = path.join(tmp, "bin");
   const sourceRoot = path.join(tmp, "source");
@@ -79,7 +82,11 @@ exports.planHostAdvisories = () => [];
   );
   fs.writeFileSync(
     path.join(readinessDir, "onboard-admission.js"),
-    `exports.evaluateOnboardReadinessAdmission = (report, options) => {
+    `const forcedRejection = ${JSON.stringify(forcedRejection ?? null)};
+exports.evaluateOnboardReadinessAdmission = (report, options) => {
+  if (forcedRejection) {
+    return { admitted: false, reasonIds: [], ...forcedRejection, waivedFindingIds: [] };
+  }
   const findingIds = report.findings
     .filter((finding) =>
       finding.id !== "host.docker.storage_incompatible" || !options.allowStorageRemediation
@@ -139,5 +146,21 @@ describe("installer host preflight package contract", () => {
     expect(result.status).toBe(1);
     expect(output).toMatch(/Host preflight found issues/);
     expect(output).toMatch(/The detected container runtime is unsupported\./);
+  });
+
+  it("prints unknown finding and required-capability diagnostics", () => {
+    const { output, result } = runInstallerHostAdmissionTest(
+      { runtime: "docker" },
+      {
+        findingIds: ["host.test.unknown"],
+        capabilityIds: ["host.test.required-capability"],
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(output).toMatch(/Readiness finding: host\.test\.unknown/);
+    expect(output).toMatch(
+      /NemoClaw could not confirm the required readiness capability host\.test\.required-capability\./,
+    );
   });
 });

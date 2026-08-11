@@ -243,6 +243,18 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
+  it("keeps the controller selector cases equal to the Advisor planning contract", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const authentication = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Authenticate manual PR dispatch",
+    )!;
+    authentication.run = authentication.run!.replace("inference-routing::false | ", "");
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "Manual PR authentication must retain ::false | inference-routing::false | managed-image-protected-runtime::false) ;;",
+    );
+  });
+
   it.each([
     ["maintain", "", 0, ""],
     ["maintain", "inference-routing", 0, ""],
