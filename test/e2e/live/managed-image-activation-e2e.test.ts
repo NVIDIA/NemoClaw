@@ -6,11 +6,11 @@ import { qualifyManagedImageActivation } from "./managed-image-activation-e2e-he
 
 const TIMEOUT_MS = 75 * 60_000;
 
-test("CLI activates exact managed images for every shipped agent without a Dockerfile build (#7744)", {
+test("candidate CLI activates exact managed images for every shipped agent without a Dockerfile build (#7744)", {
   timeout: TIMEOUT_MS,
   meta: {
     e2ePhases: [
-      "validate exact managed image catalog and host runtime",
+      "validate exact candidate catalog and host runtime",
       "onboard and exercise OpenClaw",
       "restart and recover OpenClaw",
       "destroy and verify OpenClaw cleanup",
@@ -27,7 +27,7 @@ test("CLI activates exact managed images for every shipped agent without a Docke
   await artifacts.target.declare({
     id: "managed-image-activation",
     boundary:
-      "CLI and published managed-image digests for all shipped agents through real Docker, OpenShell, agent turns, restart recovery, and exact cleanup",
+      "exact candidate CLI and published all-agent managed-image digests through real Docker, OpenShell, agent turns, restart recovery, and exact cleanup",
     agents: ["openclaw", "hermes", "langchain-deepagents-code"],
     syntheticBoundary:
       "Only the OpenAI-compatible inference response is synthetic; runtime construction and agent execution are real.",

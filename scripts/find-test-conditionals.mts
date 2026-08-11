@@ -1,3 +1,4 @@
+#!/usr/bin/env -S npx tsx
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -56,6 +57,13 @@ export type TestConditionalReport = {
 type CallbackContext = {
   readonly kind: TestConditionalContextKind;
   readonly name: string | null;
+};
+
+type CliOptions = {
+  readonly json: boolean;
+  readonly top: number;
+  readonly minScore: number;
+  readonly roots: readonly string[];
 };
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -480,4 +488,120 @@ export function collectTestConditionals(roots = DEFAULT_SCAN_ROOTS): TestConditi
     files,
     occurrences,
   };
+}
+
+function formatContext(occurrence: TestConditionalOccurrence): string {
+  const name = occurrence.contextName === null ? "" : `: ${occurrence.contextName}`;
+  return `${occurrence.contextKind}${name}`;
+}
+
+function formatOccurrence(occurrence: TestConditionalOccurrence): string {
+  const reasons = occurrence.reasons.length > 0 ? occurrence.reasons.join(", ") : "plain branch";
+  return [
+    `- ${occurrence.file}:${occurrence.line}:${occurrence.column}`,
+    `score=${occurrence.score}`,
+    `[${formatContext(occurrence)}]`,
+    `if (${occurrence.condition})`,
+    `— ${reasons}`,
+  ].join(" ");
+}
+
+export function formatReport(
+  report: TestConditionalReport,
+  options: Pick<CliOptions, "top">,
+): string {
+  const lines = [
+    `Scanned ${report.summary.scannedFiles} test files; found ${report.summary.conditionalCount} if statement(s) in ${report.summary.filesWithConditionals} file(s).`,
+    `${report.summary.testBodyConditionalCount} are inside test bodies; ${report.summary.assertionBranchCount} branch assertions; ${report.summary.highScoreCount} score >= ${HIGH_SCORE_THRESHOLD}.`,
+    "",
+    "Top files by conditional score:",
+  ];
+
+  for (const file of report.files.slice(0, options.top)) {
+    lines.push(
+      `- ${file.file}: score=${file.score}, ifs=${file.count}, test-body=${file.testBodyCount}, assertion-branches=${file.assertionBranchCount}, max=${file.maxScore}`,
+    );
+  }
+
+  lines.push("", "Most egregious if statements:");
+  for (const occurrence of report.occurrences.slice(0, options.top)) {
+    lines.push(formatOccurrence(occurrence));
+  }
+
+  return lines.join("\n");
+}
+
+function parsePositiveInt(value: string, flag: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${flag} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function parseArgs(argv: readonly string[]): CliOptions {
+  const roots: string[] = [];
+  let json = false;
+  let top = 20;
+  let minScore = 1;
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--json") {
+      json = true;
+    } else if (arg === "--top") {
+      top = parsePositiveInt(argv[++index] ?? "", "--top");
+    } else if (arg === "--min-score") {
+      minScore = parsePositiveInt(argv[++index] ?? "", "--min-score");
+    } else if (arg === "--root") {
+      roots.push(argv[++index] ?? "");
+    } else if (arg === "--help" || arg === "-h") {
+      console.log(
+        `Usage: tsx scripts/find-test-conditionals.mts [--top N] [--min-score N] [--root PATH] [--json]\n\nScans test/spec files under test, src, and nemoclaw/src by default.`,
+      );
+      process.exit(0);
+    } else {
+      throw new Error(`Unknown argument: ${arg}`);
+    }
+  }
+
+  if (roots.some((root) => root.trim() === "")) throw new Error("--root requires a path");
+  return { json, top, minScore, roots: roots.length > 0 ? roots : DEFAULT_SCAN_ROOTS };
+}
+
+function filterReport(report: TestConditionalReport, minScore: number): TestConditionalReport {
+  if (minScore <= 1) return report;
+  const occurrences = report.occurrences.filter((entry) => entry.score >= minScore);
+  const files = summarizeFiles(occurrences);
+  return {
+    summary: {
+      ...report.summary,
+      filesWithConditionals: files.length,
+      conditionalCount: occurrences.length,
+      testBodyConditionalCount: occurrences.filter((entry) => entry.contextKind === "test").length,
+      assertionBranchCount: occurrences.filter((entry) => entry.containsAssertion).length,
+      highScoreCount: occurrences.filter((entry) => entry.score >= HIGH_SCORE_THRESHOLD).length,
+    },
+    files,
+    occurrences,
+  };
+}
+
+function main(): void {
+  try {
+    const options = parseArgs(process.argv.slice(2));
+    const report = filterReport(collectTestConditionals(options.roots), options.minScore);
+    if (options.json) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(formatReport(report, options));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+}
+
+if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1] ?? "")) {
+  main();
 }

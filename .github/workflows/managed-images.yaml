@@ -32,6 +32,7 @@ on:
       - "src/lib/security/credential-hash.ts"
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
+      - "test/e2e/live/managed-image-activation-e2e*.ts"
       - "src/lib/tool-disclosure.ts"
       - "tools/mcp-tool-discovery-runtime/**"
       - "tsconfig.runtime-preloads.json"
@@ -616,6 +617,166 @@ jobs:
         if: always() && github.event.pull_request.head.repo.full_name == github.repository
         shell: bash
         run: docker logout ghcr.io
+
+      - name: Export exact published PR managed-image contract
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
+          COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          DIGEST: ${{ steps.publish.outputs.digest }}
+          IMAGE: ${{ matrix.repository }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
+            echo "ERROR: exact PR head SHA is invalid" >&2
+            exit 1
+          }
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+            echo "ERROR: PR publication did not return an immutable digest" >&2
+            exit 1
+          }
+          reference="${IMAGE}@${DIGEST}"
+          raw="$RUNNER_TEMP/${AGENT}-published-manifest.raw"
+          docker buildx imagetools inspect "$reference" --raw > "$raw"
+          [[ "sha256:$(sha256sum "$raw" | awk '{print $1}')" == "$DIGEST" ]] || {
+            echo "ERROR: published PR manifest bytes do not match the build digest" >&2
+            exit 1
+          }
+          anonymous_config="$(mktemp -d "$RUNNER_TEMP/managed-pr-anonymous.XXXXXX")"
+          trap 'rm -rf -- "$anonymous_config"' EXIT
+          DOCKER_CONFIG="$anonymous_config" docker pull --platform linux/amd64 "$reference"
+          release="v$(node -p 'require("./package.json").version')"
+          contract_dir="$RUNNER_TEMP/managed-pr-contract"
+          mkdir -p "$contract_dir"
+          jq -n \
+            --arg agent "$AGENT" \
+            --arg cohort "$COHORT" \
+            --arg digest "$DIGEST" \
+            --arg image "$IMAGE" \
+            --arg reference "$reference" \
+            --arg release "$release" \
+            --arg revision "$CANDIDATE_SHA" \
+            '{
+              contractVersion: 1,
+              agent: $agent,
+              platform: "linux/amd64",
+              image: $image,
+              digest: $digest,
+              reference: $reference,
+              source: {
+                repository: "NVIDIA/NemoClaw",
+                revision: $revision,
+                release: $release,
+                cohort: $cohort
+              },
+              startupProfileContractVersion: 1,
+              capabilityContractVersion: 1
+            }' > "$contract_dir/contract.json"
+
+      - name: Upload exact published PR managed-image contract
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}
+          path: ${{ runner.temp }}/managed-pr-contract/contract.json
+          if-no-files-found: error
+          retention-days: 1
+
+  pr-managed-activation:
+    name: PR exact all-agent managed runtime activation
+    needs: pr-build-and-entrypoint
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-activation
+      E2E_JOB: "1"
+      E2E_TARGET_ID: managed-image-activation
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ github.workspace }}/managed-pr-catalog.json
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Download exact published all-agent contracts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}/managed-pr-contracts
+          merge-multiple: false
+
+      - name: Assemble exact all-agent activation catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' contracts < <(
+            find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
+          )
+          [[ "${#contracts[@]}" -eq 3 ]] || {
+            echo "ERROR: exact all-agent activation requires three contracts" >&2
+            exit 1
+          }
+          jq -se \
+            --arg revision "$CANDIDATE_SHA" '
+              if (
+                length == 3 and
+                ([.[].agent] | sort) == ["hermes", "langchain-deepagents-code", "openclaw"] and
+                ([.[].source.revision] | unique) == [$revision] and
+                ([.[].source.cohort] | unique | length) == 1 and
+                ([.[].platform] | unique) == ["linux/amd64"]
+              )
+              then map({key: .agent, value: .}) | from_entries
+              else error("published PR contracts do not form one exact all-agent cohort")
+              end
+            ' "${contracts[@]}" > "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG"
+
+      - name: Build exact candidate CLI
+        run: |
+          npm ci --ignore-scripts
+          npm run build:cli
+
+      - name: Install OpenShell CLI
+        shell: bash
+        run: env -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
+      - name: Run real all-agent managed runtime activation
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]] || {
+            echo "ERROR: managed activation checkout does not match the exact PR head" >&2
+            exit 1
+          }
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          export OPENSHELL_BIN="$(command -v openshell)"
+          "$OPENSHELL_BIN" --version
+          npx tsx tools/e2e/live-vitest-invocation.mts run \
+            --test-path test/e2e/live/managed-image-activation-e2e.test.ts
+
+      - name: Upload managed runtime activation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-image-activation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: e2e-artifacts/live/managed-image-activation/
+          if-no-files-found: error
+          retention-days: 1
+
   build-and-validate:
     name: Build and validate ${{ matrix.display_name }} managed image (${{ matrix.arch }})
     if: github.event_name != 'pull_request'
@@ -2131,119 +2292,3 @@ jobs:
               exit 1
             fi
           done
-
-
-  main-managed-image-lifecycle:
-    name: Verify managed image lifecycle for all shipped agents
-    needs: promote
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    permissions:
-      contents: read
-    env:
-      MAIN_SHA: ${{ github.sha }}
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-activation
-      E2E_JOB: "1"
-      E2E_TARGET_ID: managed-image-activation
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ github.workspace }}/managed-main-catalog.json
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      OPENSHELL_GATEWAY: nemoclaw
-    steps:
-      - name: Check out the workflow commit from main
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22.19.0
-
-      - name: Download published amd64 managed image contracts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: managed-image-${{ github.run_id }}-${{ github.run_attempt }}-*-linux-amd64
-          path: ${{ runner.temp }}/managed-main-contracts
-          merge-multiple: false
-
-      - name: Assemble managed image lifecycle catalog
-        shell: bash
-        run: |
-          set -euo pipefail
-          mapfile -d '' contracts < <(
-            find "$RUNNER_TEMP/managed-main-contracts" -type f -name contract.json -print0
-          )
-          [[ "${#contracts[@]}" -eq 3 ]] || {
-            echo "ERROR: managed image lifecycle verification requires three contracts" >&2
-            exit 1
-          }
-          release="v$(node -p 'require("./package.json").version')"
-          jq -se \
-            --arg release "$release" \
-            --arg revision "$MAIN_SHA" '
-              if (
-                length == 3 and
-                ([.[].contractVersion] | unique) == [2] and
-                ([.[].agent] | sort) == ["hermes", "langchain-deepagents-code", "openclaw"] and
-                ([.[].source.revision] | unique) == [$revision] and
-                ([.[].source.cohort] | unique | length) == 1 and
-                ([.[].platform] | unique) == ["linux/amd64"]
-              )
-              then map({
-                key: .agent,
-                value: {
-                  contractVersion: 1,
-                  agent,
-                  platform,
-                  image,
-                  digest,
-                  reference,
-                  source: {
-                    repository: .source.repository,
-                    revision: .source.revision,
-                    release: $release,
-                    cohort: .source.cohort
-                  },
-                  startupProfileContractVersion: 1,
-                  capabilityContractVersion: 1
-                }
-              }) | from_entries
-              else error("published main-branch contracts do not form one amd64 cohort for all shipped agents")
-              end
-            ' "${contracts[@]}" > "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG"
-
-      - name: Build the CLI from the workflow commit
-        run: |
-          npm ci --ignore-scripts
-          npm run build:cli
-
-      - name: Install OpenShell CLI
-        shell: bash
-        run: env -u GITHUB_TOKEN bash scripts/install-openshell.sh
-
-      - name: Verify managed image lifecycle for all shipped agents
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$(git rev-parse --verify HEAD)" == "$MAIN_SHA" ]] || {
-            echo "ERROR: managed image lifecycle checkout does not match the workflow commit" >&2
-            exit 1
-          }
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          export OPENSHELL_BIN="$(command -v openshell)"
-          "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run \
-            --test-path test/e2e/live/managed-image-activation-e2e.test.ts
-
-      - name: Upload managed image lifecycle evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: managed-image-lifecycle-${{ github.run_id }}-${{ github.run_attempt }}
-          path: e2e-artifacts/live/managed-image-activation/
-          if-no-files-found: error
-          retention-days: 1
