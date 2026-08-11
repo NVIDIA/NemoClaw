@@ -446,8 +446,16 @@ const releasePath = process.argv[3];
       })}\n`,
     );
 
+    let monotonicNow = 0;
     await expect(
-      lifecycleLock.withMcpLifecycleLock("alpha", () => undefined, options({ timeoutMs: 40 })),
+      lifecycleLock.withMcpLifecycleLock(
+        "alpha",
+        () => undefined,
+        options({
+          timeoutMs: 40,
+          monotonicNow: () => monotonicNow++,
+        }),
+      ),
     ).rejects.toThrow("Sandbox mutation containment is active");
     expect(fs.existsSync(deadlinePath)).toBe(true);
     expect(fs.existsSync(containmentPath)).toBe(true);

@@ -84,7 +84,6 @@
     "test/pr-workflow-contract.test.ts": 15130,
     "test/reboot-identity-drift.test.ts": 10286,
     "test/rebuild-credential-preflight.test.ts": 19588,
-    "test/rebuild-shields-auto-unlock.test.ts": 8147,
     "test/recover-port-forward.test.ts": 6524,
     "test/release-latest-tag.test.ts": 26289,
     "test/repro-2201.test.ts": 19110,

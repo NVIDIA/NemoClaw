@@ -95,7 +95,7 @@ function parseDockerBridgeCidr(
   return { network, prefix, mask };
 }
 
-function validateUfwRuleOperands(
+export function validateUfwRuleOperands(
   subnet: string,
   gatewayIp: string,
   port: number,

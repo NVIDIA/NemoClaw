@@ -19,13 +19,13 @@ The review was performed against NemoClaw worktree base
 `02398f3433f8c8d4cc329328229854bde7f4ce77`; it does not rebase its conclusions
 onto later `main` changes.
 
-The source decision is **conditionally compatible**. No reviewed upstream change requires a
-NemoClaw code or configuration change, but v0.0.101 does change upstream credential-storage
-behavior, and source compatibility is not release acceptance. The final `#8598` identity and trust
-handoff has been consumed below and passes independent exact-commit review. Acceptance remains
-conditional until both of the following are true. This completed review belongs to the
-parent epic `#8590`; that epic also retains its later selector, qualification, and final-candidate
-gates.
+The source decision is **conditionally compatible** with the Docker recreation correction recorded in `OS101-I15`.
+OpenShell v0.0.101 retains the v0.0.99 default workspace preparation that later Shields evidence identified as an escaped compatibility regression.
+The correction preserves NemoClaw's existing user-visible runtime contract and does not change a command or default.
+OpenShell v0.0.101 also changes upstream credential-storage behavior, and source compatibility is not release acceptance.
+The final `#8598` identity and trust handoff has been consumed below and passes independent exact-commit review.
+Acceptance remains conditional until both of the following are true.
+This completed review belongs to the parent epic `#8590`; that epic also retains its later selector, qualification, and final-candidate gates.
 
 1. issue `#8600` lands the base-trusted qualification descriptor, orchestration workflow, and
    fail-closed receipt checks; and
@@ -207,10 +207,33 @@ listed qualification owner.
 | `OS101-I12` | RFC 0005 adds no executable egress adapter; NemoClaw's existing network-policy producers remain authoritative. | `rfc/0005-sandbox-proxy-egress-adapter/`. | NemoClaw policy composition and MCP bridge restrictions. | Policy/credential and egress-negative evidence in `#8602`. |
 | `OS101-I13` | Supervisor middleware uses a 5-second connect timeout, 10-second HTTP/2 keepalive interval, 20-second timeout, keepalive while idle, and adaptive windows without bypassing policy. | `crates/openshell-supervisor-middleware/src/remote.rs:18-39`. | Long-lived inference/MCP connections through the managed supervisor. | Idle, reconnect, long-running, and proxy/policy-path proof in `#8601`. |
 | `OS101-I14` | The russh update accepts loopback forwarding and rejects non-loopback or out-of-range targets; OIDC RS256 validation still rejects tampering, wrong keys, expiry, issuer, audience, and `kid` mismatches. | `crates/openshell-supervisor-process/src/ssh.rs:300-404` and `crates/openshell-server/src/auth/oidc.rs`. | NemoClaw SSH alias transport and authenticated gateway operations. | Runtime identity/SSH evidence in `#8604`; authenticated policy/credential operations in `#8602`. |
-| `OS101-I15` | Docker/Podman labels, full IDs, names, aliases, supervisor argv, workdir, image metadata, effective non-root identity, and the prepared Podman socket retain the reviewed v0.0.99 contracts. | Unchanged OpenShell Docker, Podman, SSH, and driver-utility sources between v0.0.99 and v0.0.101. | Managed bootstrap, ownership resolution, privileged execution, SSH host resolution, and Podman adapter. | Docker/runtime identity proof in `#8604`; rootless Podman proof in `#8603`. |
+| `OS101-I15` | Docker recreation retains the root supervisor, Docker working directory `/`, exact `--workdir /sandbox` supervisor arguments, explicit `sandbox:sandbox` process policy, and the effective `/sandbox` home, workload working directory, and Landlock root. At the exact NemoClaw startup boundary, it omits only `OPENSHELL_OCI_IMAGE_USER` so OpenShell does not change the protected `/sandbox` owner. Podman contracts remain unchanged. | OpenShell commit `537805568d8ebed1f057e035e09dbc4a71976d2c` uses OCI image-user metadata presence to prepare the default working directory. The producer is byte-unchanged from v0.0.99 to v0.0.101. | Managed bootstrap, ownership resolution, privileged execution, SSH host resolution, and Podman adapter. | Focused metadata and replacement-delta tests plus OpenClaw and Hermes Shields restart evidence in `#8662`; rootless Podman proof remains in `#8603`. |
 | `OS101-I16` | Upgrade, deletion convergence, activation, restart, rebuild, rollback journal, and same-name isolation preserve source state and never reuse ambiguous ownership. | OpenShell gateway lifecycle plus the inherited 0.0.99 behavior. | NemoClaw upgrade preflight/recovery and managed lifecycle. | Clean and direct 0.0.85 upgrades, recovery injection, and same-name isolation in `#8605`. |
 
 ## Credential and Security Verdicts
+
+### Escaped Default Workspace Ownership Finding
+
+OpenShell commit `537805568d8ebed1f057e035e09dbc4a71976d2c` made the OCI image working directory part of process identity preparation.
+When `OPENSHELL_OCI_IMAGE_USER` is present, OpenShell changes `/sandbox` ownership to the policy-selected process identity before it exposes SSH and starts the workload.
+NemoClaw's explicit policy selects `sandbox:sandbox`, but Shields up requires `/sandbox` to remain `root:sandbox` with mode `1775`.
+The ownership change caused OpenClaw and Hermes startup to fail after a Shields up stop and start.
+
+The reviewed compatibility path applies only to Docker recreation that has all of these properties:
+
+- root supervisor user `0`;
+- Docker working directory `/`;
+- entrypoint `/opt/openshell/bin/openshell-sandbox`;
+- empty arguments or the exact `--workdir /sandbox` arguments;
+- label `openshell.ai/managed-by=openshell`; and
+- a `nemoclaw-start` workload command.
+
+At that boundary, NemoClaw omits only `OPENSHELL_OCI_IMAGE_USER`.
+It preserves empty `OPENSHELL_SANDBOX_UID` and `OPENSHELL_SANDBOX_GID` entries.
+The explicit OpenShell policy remains the workload process-identity authority.
+The correction therefore preserves `/sandbox` as the home, working directory, and Landlock root without triggering this OpenShell ownership change.
+The compatibility helper preserves the legacy state when all three identity entries are absent.
+When any entry is present, an incomplete, duplicate, or unexpected metadata shape stops recreation before the replacement workload starts.
 
 ### Default Storage Is Active, Not Disabled
 
@@ -255,9 +278,10 @@ wholesale at-rest migration at startup. A correct upgrade therefore proves three
   positive and negative tests; production OIDC selection logic is unchanged. The tar update does
   not alter a reviewed NemoClaw contract.
 
-No critical or high source-level regression was found in the reviewed range. That verdict remains
-conditional on the exact live evidence above; it is not a claim that unselected surfaces are safe
-to enable later without a new review.
+The escaped v0.0.99 default workspace ownership regression is recorded above.
+No additional critical or high source-level regression was found in the v0.0.99-to-v0.0.101 range.
+That verdict remains conditional on the exact live evidence above.
+It does not establish that an unselected surface can be enabled without a new review.
 
 ## Regenerated Child-Visible Credential Manifest
 
@@ -296,7 +320,7 @@ stays with `#8602`; the new HTTP/2 keepalive delta is separately owned by `#8601
 | `OS99-07` | Pending allowed-IP proposals are not effective policy. | Policy state and MCP bridge negative paths. | `#8602` |
 | `OS99-08` | Listener/readiness lifecycle converges before use. | Managed start/stop/rebuild health and `openshell-gateway-upgrade-workflow-boundary.test.ts`. | `#8605` |
 | `OS99-09` | Docker activation spec normalizes only reviewed empty defaults. | `docker-spec.test.ts`; non-empty port bindings remain rejected. | `#8604` |
-| `OS99-10` | Working directory and image-user metadata remain driver-owned. | Managed-bootstrap Docker spec and runtime identity checks. | `#8604` |
+| `OS99-10` | Docker recreation prevents OCI image-user metadata from changing the protected `/sandbox` owner at the exact NemoClaw startup boundary. | `docker-gpu-patch-clone.test.ts`, managed-bootstrap replacement-delta tests, and Shields restart evidence verify the narrow omission and preserved runtime identity. | `#8662` |
 | `OS99-11` | System CA mode is not enabled implicitly. | Policy/CA configuration negatives and exact live policy proof. | `#8602` |
 | `OS99-12` | Podman lifecycle remains exact-version qualified. | `podman-cpu-lifecycle.test.ts` and `podman-cpu-proof.yaml`. | `#8603` |
 | `OS99-13` | Both reviewed inference status headings parse without broadening authority. | `parseGatewayInference` regression coverage. | `#8604` |
@@ -361,8 +385,9 @@ but they are not substitutes for the final clean and direct-public-v0.0.85 paths
 
 ## Compatibility Correction Assignments
 
-This review makes recommendations but implements none of them. Each correction is assigned to one
-and only one child issue:
+The original review made the following recommendations and implemented none of them.
+Each original correction remains assigned to one child issue.
+Issue `#8662` owns only the later escaped working-directory correction and does not change these assignments.
 
 | Correction | Required correction | Sole implementation owner |
 | --- | --- | --- |
@@ -383,6 +408,9 @@ and only one child issue:
   downstream digests. Activation is owned by `#8606`.
 - Every inherited `OS99-01` through `OS99-23` invariant remains represented by exact-version
   behavior or live evidence.
+- The reviewed Docker recreation omits only `OPENSHELL_OCI_IMAGE_USER` at the exact NemoClaw startup boundary and rejects every unreviewed metadata shape.
+- The OpenClaw and Hermes Shields lanes restart successfully under Shields up.
+  The OpenClaw lane verifies that `/sandbox` remains `1775 root:sandbox` after restart.
 - Each `OS101-C01` through `OS101-C05` correction is implemented by only its named owner.
 - Clean and direct v0.0.85 upgrade lanes exercise both Docker and rootless Podman. The public
   v0.0.85 path cannot be replaced by a v0.0.99-only upgrade.
