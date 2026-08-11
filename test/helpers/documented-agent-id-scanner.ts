@@ -41,7 +41,7 @@ function collectIds(text: string): string[] {
 function scanDoc(file: string): Map<string, Usage[]> {
   const byVariant = new Map<string, Usage[]>();
   const variants: string[] = [];
-  let inFence = false;
+  let activeFence: { length: number; marker: "`" | "~" } | null = null;
 
   fs.readFileSync(file, "utf8")
     .split("\n")
@@ -55,11 +55,27 @@ function scanDoc(file: string): Map<string, Usage[]> {
         variants.pop();
         return;
       }
-      if (/^\s*(?:`{3,}|~{3,})/.test(line)) {
-        inFence = !inFence;
+      const fence = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
+      if (!activeFence && fence) {
+        const delimiter = fence[1] as string;
+        activeFence = {
+          length: delimiter.length,
+          marker: delimiter[0] as "`" | "~",
+        };
         return;
       }
-      if (!inFence || line.includes(" onboard ")) {
+      if (activeFence && fence) {
+        const delimiter = fence[1] as string;
+        const closesFence =
+          delimiter[0] === activeFence.marker &&
+          delimiter.length >= activeFence.length &&
+          (fence[2] as string).trim().length === 0;
+        if (closesFence) {
+          activeFence = null;
+          return;
+        }
+      }
+      if (!activeFence || line.includes(" onboard ")) {
         return;
       }
       const variant = variants.at(-1) ?? "any";

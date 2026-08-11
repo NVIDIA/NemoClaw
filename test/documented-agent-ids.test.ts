@@ -90,4 +90,27 @@ describe("agent ids in NemoClaw documentation and CLI examples (#8706)", () => {
       "reference/commands.mdx:2 (any) -> nemoclaw sandbox sessions list --agent agent-42.beta",
     ]);
   });
+
+  it("keeps mixed and shorter delimiter lines inside their opening fences", () => {
+    const docsRoot = path.join(tmpDir, "docs");
+    const commandReference = path.join(docsRoot, "reference", "commands.mdx");
+    const otherPage = path.join(docsRoot, "short-closing-fence.mdx");
+    fs.mkdirSync(path.dirname(commandReference), { recursive: true });
+    fs.writeFileSync(
+      commandReference,
+      "~~~sh\nnemoclaw sandbox sessions list --agent main\n```\nnemoclaw sandbox sessions list --agent work\n~~~\n",
+    );
+    fs.writeFileSync(
+      otherPage,
+      "````sh\nnemoclaw sandbox sessions list --agent main\n```\nnemoclaw sandbox sessions list --agent work\n````\n",
+    );
+
+    const audit = auditDocumentationAgentIds(docsRoot, commandReference, bakedAgentIds);
+    expect(audit.commandReferenceOffenders).toEqual([
+      "reference/commands.mdx:4 (any) -> nemoclaw sandbox sessions list --agent work",
+    ]);
+    expect(audit.otherPageOffenders).toEqual([
+      "short-closing-fence.mdx:4 -> nemoclaw sandbox sessions list --agent work",
+    ]);
+  });
 });
