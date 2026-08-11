@@ -8,7 +8,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import ts from "typescript";
 import YAML from "yaml";
-import { RISK_RULES } from "../advisors/risk-plan.mts";
+import { PR_E2E_MANUAL_CONTROLLER_JOB_IDS, RISK_RULES } from "../advisors/risk-plan.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -292,6 +292,11 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       errors.push(`Manual PR authentication must bind ${name}`);
   }
   const authSource = String(authentication.run ?? "");
+  const acceptedJobCases = [
+    "::false",
+    ...PR_E2E_MANUAL_CONTROLLER_JOB_IDS.map((jobId) => `${jobId}::false`),
+  ].join(" | ");
+  const acceptedJobNames = PR_E2E_MANUAL_CONTROLLER_JOB_IDS.join(", or ");
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
     '"$WORKFLOW_REF" == "refs/heads/main"',
@@ -305,7 +310,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "${#REVIEW_REASON} <= 500",
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
     "Manual PR E2E requires a repository maintainer or administrator",
-    "Manual PR E2E accepts only empty selectors or managed-image-protected-runtime",
+    `${acceptedJobCases}) ;;`,
+    `Manual PR E2E accepts only empty selectors, ${acceptedJobNames}`,
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
