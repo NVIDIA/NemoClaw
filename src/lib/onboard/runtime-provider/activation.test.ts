@@ -168,6 +168,29 @@ describe("runtime provider activation catalog", () => {
     );
   });
 
+  it.each([
+    "host-doctor",
+    "host-local-inference",
+    "sandbox-lifecycle",
+    "workload-cleanup",
+  ] as const)("rejects a bundle missing the %s container-engine scope", (operation) => {
+    const bundle = completeBundle();
+    if (!bundle.containerEngine.supported) throw new Error("complete fixture must support engines");
+    const incomplete = {
+      ...bundle,
+      containerEngine: {
+        ...bundle.containerEngine,
+        identities: bundle.containerEngine.identities.filter(
+          (identity) => identity.operation !== operation,
+        ),
+      },
+    } as RuntimeProviderBundle;
+
+    expect(() => createRuntimeProviderActivationCatalog([registration(incomplete)])).toThrow(
+      `missing the '${operation}' engine scope`,
+    );
+  });
+
   it("rejects requirement drift instead of silently shrinking qualification", () => {
     const candidate = registration();
     const drifted = {
