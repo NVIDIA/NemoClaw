@@ -347,9 +347,12 @@ describe("createSetupNim", () => {
   it("reuses reachable Windows-host Ollama when PowerShell cannot find its executable (#7472)", async () => {
     const model = "qwen3.6:35b";
     const handleRunningOllamaSelection = vi.fn<SetupNimFlowDeps["handleRunningOllamaSelection"]>(
-      async (_gpu, requestedModel, _recoveredModel, ollamaRunning, state) => {
+      async (_gpu, requestedModel, _recoveredModel, ollamaRunning, state, isWindowsHostOllama) => {
         expect(requestedModel).toBe(model);
         expect(ollamaRunning).toBe(true);
+        // The flow must tell the handler the daemon is on the Windows host so it
+        // skips the Linux systemd loopback override (#8596).
+        expect(isWindowsHostOllama).toBe(true);
         state.model = model;
         state.provider = "ollama-local";
         state.endpointUrl = "http://host.docker.internal:11434/v1";
