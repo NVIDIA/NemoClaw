@@ -44,10 +44,10 @@ PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (
         re.compile(
-            r'''(["']?(?:authorization|proxy-authorization|cookie|set-cookie)["']?\s*(?::|=)\s*)(?:"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|[^\n,}\]]+)''',
+            r'''(["']?(?:authorization|proxy-authorization|cookie|set-cookie)["']?\s*(?::|=))(?!\s*\[REDACTED\])(\s*)(?:"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|[^\n,}\]]+)''',
             re.IGNORECASE,
         ),
-        rf"\1{REDACTED}",
+        rf"\1\2{REDACTED}",
     ),
 
     (

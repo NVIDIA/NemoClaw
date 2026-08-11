@@ -998,4 +998,30 @@ ${copyBlock?.[1] ?? ""}
       "Dockerfiles, workflows, network policies, blueprints, dependencies, and security configuration",
     );
   });
+
+  it("redacts structured HTTP credentials exactly once", () => {
+    const script = path.join(
+      root,
+      ".agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.py",
+    );
+    const input = [
+      "Authorization: Bearer topsecret",
+      '\"cookie\":\"session-value\"',
+      "proxy-authorization='escaped\\\\\"value'",
+      "safe line",
+      "",
+    ].join("\n");
+    const result = spawnSync("python3", [script], { encoding: "utf8", input });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe(
+      [
+        "Authorization: [REDACTED]",
+        '\"cookie\": [REDACTED]',
+        "proxy-authorization= [REDACTED]",
+        "safe line",
+        "",
+      ].join("\n"),
+    );
+  });
 });
