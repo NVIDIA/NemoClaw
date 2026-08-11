@@ -1080,7 +1080,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "Targeted audit result: `aiohttp 3.14.3, cryptography 50.0.0, uv 0.11.33, MCP 1.28.1, Pillow 12.3.0, and pyasn1 0.6.4 have no known vulnerabilities`",
     );
     expect(review).toContain(
-      "Complete-lock audit result: `2 known vulnerabilities in 1 unrelated package`",
+      "Complete-lock audit result: `2 duplicate records in 1 unrelated package`",
     );
     expect(review).toContain("`GHSA-cq5v-8q36-5273`");
     expect(review).toContain("`GHSA-g6cj-pr64-35w5`");
