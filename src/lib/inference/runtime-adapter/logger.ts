@@ -7,6 +7,7 @@ import { appendLocalAdapterJsonLine } from "../local-adapter-lifecycle";
 export type AdapterLogFields = Record<string, string | number | boolean | null | undefined>;
 export type AdapterLogger = (event: string, fields?: AdapterLogFields) => void;
 
+/** Normalize one log field for compact, bounded JSONL output. */
 function normalizeLogField(
   value: string | number | boolean | null | undefined,
 ): string | number | boolean | null {
@@ -15,6 +16,7 @@ function normalizeLogField(
   return value;
 }
 
+/** Convert an unknown failure into a compact diagnostic message. */
 function errorMessage(error: unknown): string {
   return compactText(error instanceof Error ? error.message : String(error));
 }
