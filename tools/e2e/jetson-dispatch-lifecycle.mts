@@ -153,6 +153,21 @@ function ensurePrivateDirectory(directory: string): void {
   fs.chmodSync(directory, 0o700);
 }
 
+function fsyncDirectory(directory: string): void {
+  const descriptor = fs.openSync(
+    directory,
+    fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0) | (fs.constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    if (!fs.fstatSync(descriptor).isDirectory()) {
+      throw new Error(`${directory} must be a directory`);
+    }
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 function dispatchJobId(request: JetsonDispatchRequest): string {
   return createHash("sha256")
     .update(
@@ -336,7 +351,7 @@ export class JetsonDispatchCoordinator {
         recoveredStatus.error = "Jetson dispatcher restarted before terminal status was persisted";
         this.#persist(recoveredStatus);
       }
-      fs.unlinkSync(this.#lockPath);
+      this.#removeDeviceLock(jobId);
     }
     this.#restoreCompletedStatuses();
     this.#initialized = true;
@@ -377,8 +392,9 @@ export class JetsonDispatchCoordinator {
     try {
       this.#clearPriorResultFiles(jobId);
       this.#persist(status);
+      fsyncDirectory(this.#stateDirectory);
     } catch (error) {
-      fs.unlinkSync(this.#lockPath);
+      this.#removeDeviceLock(jobId);
       throw error;
     }
     this.#jobs.set(jobId, status);
@@ -515,7 +531,7 @@ export class JetsonDispatchCoordinator {
       }
       if (status.cleanup === "succeeded" && terminalStatusPersisted) {
         try {
-          fs.unlinkSync(this.#lockPath);
+          this.#removeDeviceLock(status.jobId);
         } catch (error) {
           const lockError = `Jetson lock removal failed: ${safeError(error)}`;
           status.error = appendBoundedError(status.error, lockError);
@@ -537,6 +553,23 @@ export class JetsonDispatchCoordinator {
 
   #persist(status: JetsonDispatchStatus): void {
     writePrivateRegularFile(this.#statusPath(status.jobId), `${JSON.stringify(status, null, 2)}\n`);
+  }
+
+  #removeDeviceLock(jobId: string): void {
+    fs.unlinkSync(this.#lockPath);
+    try {
+      fsyncDirectory(this.#stateDirectory);
+    } catch (error) {
+      try {
+        createPrivateRegularFile(this.#lockPath, `${jobId}\n`);
+        fsyncDirectory(this.#stateDirectory);
+      } catch (restoreError) {
+        throw new Error(
+          `${safeError(error)}; Jetson lock restoration failed: ${safeError(restoreError)}`,
+        );
+      }
+      throw error;
+    }
   }
 
   #statusPath(jobId: string): string {

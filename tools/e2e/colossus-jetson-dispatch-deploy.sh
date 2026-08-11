@@ -530,8 +530,10 @@ verify_loopback_service() {
 }
 
 start_and_verify_service() {
+  public_ingress_is_disabled || return 1
   systemctl_exec start "$service_name" || return 1
-  verify_loopback_service
+  verify_loopback_service || return 1
+  public_ingress_is_disabled
 }
 
 enable_and_verify_initial_service() {
@@ -540,9 +542,11 @@ enable_and_verify_initial_service() {
   bootstrap_daemon_reloaded=1
   load_state="$(service_load_state)" || return 1
   [ "$load_state" = loaded ] || return 1
+  public_ingress_is_disabled || return 1
   bootstrap_enable_attempted=1
   systemctl_exec enable --now "$service_name" || return 1
-  verify_loopback_service
+  verify_loopback_service || return 1
+  public_ingress_is_disabled
 }
 
 restore_cleanup_selection() {
@@ -627,6 +631,7 @@ main() {
   validate_dispatcher_prerequisites
   ensure_layout
   acquire_deploy_lock
+  require_public_ingress_disabled
 
   load_state="$(service_load_state)" || fail "could not inspect $service_name"
   if [ "$load_state" = loaded ]; then
@@ -638,7 +643,6 @@ main() {
   else
     print_stage 2 "Verify initial deployment state"
     require_device_lock_absent
-    require_public_ingress_disabled
     require_bootstrap_destinations_absent
   fi
 
@@ -672,7 +676,7 @@ main() {
     echo "Deployed Colossus Jetson dispatcher release $sha and verified its loopback service"
   else
     print_stage 5 "Install, enable, and verify the dispatcher"
-    if ! install_bootstrap_files "$release" || ! enable_and_verify_initial_service || ! public_ingress_is_disabled; then
+    if ! install_bootstrap_files "$release" || ! enable_and_verify_initial_service; then
       if rollback_initial_deployment "$previous_release" "$cleanup_was_present"; then
         fail "release $sha initial deployment failed; the release, unit, and environment were rolled back"
       fi

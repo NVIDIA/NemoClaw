@@ -158,8 +158,13 @@ current_sha() {
 
 tunnel_is_active() {
   tunnel_check_count="$(cat "$TEST_ROOT/tunnel-check-count" 2>/dev/null || printf '0')"
-  [ "$TUNNEL_ACTIVE" = 1 ] ||
-    { [ "$TUNNEL_ACTIVATE_AFTER_FIRST_CHECK" = 1 ] && [ "$tunnel_check_count" -gt 1 ]; }
+  if [ "$TUNNEL_ACTIVE" = 1 ]; then
+    return 0
+  fi
+  if [ "$TUNNEL_ACTIVATE_AFTER_FIRST_CHECK" = 1 ] && [ "$tunnel_check_count" -gt 1 ]; then
+    return 0
+  fi
+  [ "$TUNNEL_ACTIVATE_AFTER_START" = 1 ] && [ "$tunnel_check_count" -gt 2 ]
 }
 
 systemctl_exec() {
@@ -274,6 +279,7 @@ interface DeployOptions {
   missingAccount?: boolean;
   tunnelActive?: boolean;
   tunnelActivatesAfterFirstCheck?: boolean;
+  tunnelActivatesAfterStart?: boolean;
   unsupportedNode?: boolean;
 }
 
@@ -342,6 +348,7 @@ function runDeploy(
       TEST_ROOT: fixture.directory,
       TUNNEL_ACTIVE: options.tunnelActive ? "1" : "0",
       TUNNEL_ACTIVATE_AFTER_FIRST_CHECK: options.tunnelActivatesAfterFirstCheck ? "1" : "0",
+      TUNNEL_ACTIVATE_AFTER_START: options.tunnelActivatesAfterStart ? "1" : "0",
       UNSUPPORTED_NODE: options.unsupportedNode ? "1" : "0",
     },
   });
@@ -544,6 +551,50 @@ describe("Colossus Jetson dispatcher deployment", () => {
     );
     expect(result.stdout).toContain("verified its loopback service");
     expect(curlLog).toContain("curl\t--disable\t--noproxy\t*\t--silent");
+  });
+
+  it("rejects a later dispatcher deployment while public ingress is active (#8142)", () => {
+    const fixture = createFixture();
+    const paths = deploymentPaths(fixture);
+    expect(runDeploy(fixture, ["--commit", fixture.firstSha]).status).toBe(0);
+    const serviceLogBeforeDeployment = fs.readFileSync(paths.serviceLog, "utf8");
+
+    const result = runDeploy(fixture, ["--commit", fixture.secondSha], {
+      serviceLoadState: "loaded",
+      tunnelActive: true,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must be disabled and inactive");
+    expect(fs.readlinkSync(paths.current)).toBe(path.join(paths.releases, fixture.firstSha));
+    const deploymentServiceLog = fs
+      .readFileSync(paths.serviceLog, "utf8")
+      .slice(serviceLogBeforeDeployment.length);
+    expect(deploymentServiceLog).not.toContain("systemctl\tstop");
+    expect(deploymentServiceLog).not.toContain("start-sha");
+  });
+
+  it("leaves the installed dispatcher stopped when public ingress activates during a later deployment (#8142)", () => {
+    const fixture = createFixture();
+    const paths = deploymentPaths(fixture);
+    expect(runDeploy(fixture, ["--commit", fixture.firstSha]).status).toBe(0);
+    fs.rmSync(path.join(fixture.directory, "tunnel-check-count"));
+    const serviceLogBeforeDeployment = fs.readFileSync(paths.serviceLog, "utf8");
+
+    const result = runDeploy(fixture, ["--commit", fixture.secondSha], {
+      serviceLoadState: "loaded",
+      tunnelActivatesAfterStart: true,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("rollback did not restore a verified service");
+    expect(fs.readlinkSync(paths.current)).toBe(path.join(paths.releases, fixture.firstSha));
+    expect(fs.existsSync(path.join(fixture.directory, "service-active"))).toBe(false);
+    const deploymentServiceLog = fs
+      .readFileSync(paths.serviceLog, "utf8")
+      .slice(serviceLogBeforeDeployment.length);
+    expect(deploymentServiceLog).toContain(`start-sha\t${fixture.secondSha}`);
+    expect(deploymentServiceLog).not.toContain(`start-sha\t${fixture.firstSha}`);
   });
 
   it.each([

@@ -364,6 +364,56 @@ describe("Jetson single-device lifecycle", () => {
     await waitForCompletion(dispatch, accepted.jobId);
   });
 
+  it("persists the lock and queued status before worker execution (#8142)", async () => {
+    const stateDirectory = temporaryDirectory();
+    const syncEvents: Array<"directory" | "file"> = [];
+    let eventsBeforeRun: Array<"directory" | "file"> = [];
+    const fsyncSync = fs.fsyncSync.bind(fs);
+    vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) => {
+      syncEvents.push(fs.fstatSync(descriptor).isDirectory() ? "directory" : "file");
+      fsyncSync(descriptor);
+    });
+    const expectedResult = await worker().run(REQUEST, {
+      jobId: "e".repeat(64),
+      signal: new AbortController().signal,
+    });
+    const run = vi.fn(async () => {
+      eventsBeforeRun = [...syncEvents];
+      return expectedResult;
+    });
+    const dispatch = coordinator(stateDirectory, worker({ run }));
+    await dispatch.initialize();
+
+    const accepted = dispatch.dispatch(REQUEST, identity());
+    await waitForCompletion(dispatch, accepted.jobId);
+
+    expect(eventsBeforeRun).toEqual(["file", "file", "directory", "file"]);
+    expect(syncEvents.filter((event) => event === "directory")).toHaveLength(2);
+  });
+
+  it("does not start the worker when state directory persistence fails (#8142)", async () => {
+    const stateDirectory = temporaryDirectory();
+    const fsyncSync = fs.fsyncSync.bind(fs);
+    vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) => {
+      if (fs.fstatSync(descriptor).isDirectory()) {
+        throw new Error("state directory persistence failed");
+      }
+      fsyncSync(descriptor);
+    });
+    const run = vi.fn(worker().run);
+    const cleanup = vi.fn(async () => {});
+    const dispatch = coordinator(stateDirectory, worker({ cleanup, run }));
+    await dispatch.initialize();
+
+    expect(() => dispatch.dispatch(REQUEST, identity())).toThrow(
+      "state directory persistence failed",
+    );
+
+    expect(run).not.toHaveBeenCalled();
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(true);
+  });
+
   it("cancels the worker and still cleans the device with a fresh signal (#8142)", async () => {
     let runSignal: AbortSignal | undefined;
     let cleanupSignal: AbortSignal | undefined;
@@ -429,6 +479,39 @@ describe("Jetson single-device lifecycle", () => {
     expect(completed).toMatchObject({
       conclusion: "cleanup-failed",
       error: "Jetson lock removal failed: lock filesystem unavailable",
+      cleanup: "succeeded",
+    });
+    expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(true);
+
+    const restarted = coordinator(stateDirectory, worker({ cleanup }));
+    await restarted.initialize();
+
+    expect(cleanup).toHaveBeenCalledTimes(2);
+    expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(false);
+  });
+
+  it("restores the device lock when directory fsync fails after removal (#8142)", async () => {
+    const stateDirectory = temporaryDirectory();
+    const cleanup = vi.fn(async () => {});
+    const fsyncSync = fs.fsyncSync.bind(fs);
+    let directorySyncCount = 0;
+    vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) => {
+      if (fs.fstatSync(descriptor).isDirectory()) {
+        directorySyncCount += 1;
+        if (directorySyncCount === 2) {
+          throw new Error("lock directory persistence failed");
+        }
+      }
+      fsyncSync(descriptor);
+    });
+    const dispatch = coordinator(stateDirectory, worker({ cleanup }));
+    await dispatch.initialize();
+    const accepted = dispatch.dispatch(REQUEST, identity());
+    const completed = await waitForCompletion(dispatch, accepted.jobId);
+
+    expect(completed).toMatchObject({
+      conclusion: "cleanup-failed",
+      error: "Jetson lock removal failed: lock directory persistence failed",
       cleanup: "succeeded",
     });
     expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(true);

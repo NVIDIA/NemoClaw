@@ -664,7 +664,7 @@ gh workflow run .github/workflows/e2e.yaml --repo NVIDIA/NemoClaw --ref main \
   -f "checkout_repository=$CANDIDATE_REPOSITORY" \
   -f "base_sha=$BASE_SHA" \
   -f "workflow_sha=$WORKFLOW_SHA" \
-  -f review_reason='Reviewed this PR commit for the isolated Jetson E2E.'
+  -f review_reason='Reviewed the commit under review for the isolated Jetson E2E.'
 ```
 
 The `jetson-nvmap-gpu` job uses the fixed `jetson-nvmap-gpu-colossus` concurrency group.
