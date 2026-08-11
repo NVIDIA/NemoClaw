@@ -187,6 +187,14 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(sleep).toHaveBeenCalledWith(2);
     expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/first");
     expect(deps.recreate).toHaveBeenCalledOnce();
+    const dependencyOrder = [
+      backupState.mock.invocationCallOrder[0],
+      vi.mocked(deps.removeBackup).mock.invocationCallOrder[0],
+      sleep.mock.invocationCallOrder[0],
+      backupState.mock.invocationCallOrder[1],
+      vi.mocked(deps.recreate).mock.invocationCallOrder[0],
+    ];
+    expect(dependencyOrder).toEqual([...dependencyOrder].sort((left, right) => left - right));
   });
 
   it("rolls the container transaction back when managed readiness is not proven", () => {
