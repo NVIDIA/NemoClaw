@@ -541,11 +541,12 @@ export function createPodmanHostLocalInferenceTestHarness(
           : result(0, `${currentContainer.id}\n`);
       }
       if (args[0] === "stop") {
-        if (currentProbe?.id === args.at(-1)) {
-          currentProbe.running = false;
-          currentProbe.status = "exited";
-          currentProbe.exitCode = 137;
-          return result(0, `${currentProbe.id}\n`);
+        const probe = currentProbe;
+        if (probe !== null && probe.id === args.at(-1)) {
+          probe.running = false;
+          probe.status = "exited";
+          probe.exitCode = 137;
+          return result(0, `${probe.id}\n`);
         }
         if (!currentContainer || currentContainer.id !== args.at(-1))
           return result(125, "", "missing");
@@ -556,8 +557,9 @@ export function createPodmanHostLocalInferenceTestHarness(
           : result(0, `${currentContainer.id}\n`);
       }
       if (args[0] === "rm") {
-        if (currentProbe?.id === args.at(-1)) {
-          const removedProbe = currentProbe;
+        const probe = currentProbe;
+        if (probe !== null && probe.id === args.at(-1)) {
+          const removedProbe = probe;
           if (!state.probeRemoveLeavesContainer) {
             currentProbe = state.probeReuseNameAfterRemoval
               ? {

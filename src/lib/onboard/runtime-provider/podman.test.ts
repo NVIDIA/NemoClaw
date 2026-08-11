@@ -78,7 +78,7 @@ function podmanExecutableAuthorityDeps(): PodmanExecutableAuthorityDeps {
   };
 }
 
-function realOperationEngines(socketAuthority = REAL_SOCKET_AUTHORITY) {
+function realOperationEngines(socketAuthority: PodmanSocketAuthority = REAL_SOCKET_AUTHORITY) {
   const common = {
     socketAuthority,
     executable: "/usr/bin/podman",

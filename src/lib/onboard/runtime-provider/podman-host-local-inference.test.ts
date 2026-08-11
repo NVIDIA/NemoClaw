@@ -525,8 +525,10 @@ describe("Podman host-local inference lifecycle", () => {
     }
     expect(evidence).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
     const evidenceIndex = harness.events.findIndex((event) => event === "evidence:inference");
-    const removeIndex = harness.events.findLastIndex((event) =>
-      event.includes(`podman:rm --force ${"a".repeat(64)}`),
+    const removeIndex = harness.events.reduce(
+      (lastIndex, event, index) =>
+        event.includes(`podman:rm --force ${"a".repeat(64)}`) ? index : lastIndex,
+      -1,
     );
     expect(evidenceIndex).toBeGreaterThanOrEqual(0);
     expect(removeIndex).toBeGreaterThan(evidenceIndex);

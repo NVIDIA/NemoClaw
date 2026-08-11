@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type {
   HostLocalInferenceOperation,
+  HostLocalInferencePublicationState,
   HostLocalInferenceReceipt,
   HostLocalInferenceReceiptWriter,
   HostLocalInferenceRuntime,
@@ -80,7 +81,7 @@ function prepared(value: HostLocalInferenceReceipt) {
   return {
     receipt: value,
     rollbackPriorState,
-    publicationState: vi.fn(() => "unpublished" as const),
+    publicationState: vi.fn((): HostLocalInferencePublicationState => "unpublished"),
     validateBeforeCommit: vi.fn(() => value),
     commit: vi.fn(() => value),
     rollback: vi.fn(() => ({
