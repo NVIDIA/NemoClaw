@@ -114,8 +114,8 @@ When writing tests:
   - Newly added JavaScript files.
   - Growth in `src/lib/onboard.ts`.
   - Current test-file line-budget violations.
-  - Added `if` statements in changed test files.
-  The trusted PR check also rejects test-file budget limits that increase from the base commit.
+  - An increased `if`-statement count in a changed test file.
+  The trusted PR check also rejects test-file budget limits that increase from the PR base commit.
 - Use `npm run test:watch` for focused source-test feedback.
 - Add only concrete opaque-input mappings to `test/helpers/vitest-watch-triggers.ts`.
 - Use `npm run test:shuffle -- --sequence.seed=<seed>` to replay a printed test-order seed. Use `npm run test:diagnose:leaks` for async-resource or shutdown-hang diagnostics; both commands keep coverage disabled, and leak diagnostics can accompany exit code 0 when assertions pass.
