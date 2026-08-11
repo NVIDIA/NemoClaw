@@ -23,6 +23,11 @@ import {
   openClawMcporterRoot,
 } from "./mcp-bridge-adapter-status";
 
+const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
+const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
+  .filter(Boolean)
+  .join(" ");
+
 const baseEntry: McpBridgeEntry = {
   server: "github",
   agent: "openclaw",
@@ -446,6 +451,44 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
     expect(root).toBe("/sandbox/.custom-openclaw/workspace");
     for (const command of commands) {
       expect(command).toContain(root);
+      expect(command).not.toContain(OPENCLAW_MCPORTER_ROOT);
+    }
+  });
+
+  it("uses the loaded OpenClaw workspace throughout adapter lifecycle calls", () => {
+    const script = `
+const agentDefs = require("./src/lib/agent/defs.js");
+const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+agentDefs.loadAgent = () => ({
+  name: "openclaw",
+  displayName: "OpenClaw",
+  configPaths: { dir: "/sandbox/.custom-openclaw" },
+  mcpCapability: { support: "bridge", adapter: "mcporter" },
+});
+const commands = [];
+processRecovery.executeSandboxCommand = (_sandboxName, command) => {
+  commands.push(command);
+  return command === "command -v mcporter"
+    ? { status: 0, stdout: "/usr/bin/mcporter\\n", stderr: "" }
+    : { status: 0, stdout: command.includes("config get") ? "registered\\n" : "", stderr: "" };
+};
+const adapter = require("./src/lib/actions/sandbox/mcp-bridge-adapter-openclaw.js");
+const entry = ${JSON.stringify(baseEntry)};
+adapter.registerOpenClawAdapter("custom-root-lifecycle", entry);
+adapter.unregisterOpenClawAdapter("custom-root-lifecycle", entry);
+process.stdout.write(JSON.stringify(commands));
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: sourceNodeOptions },
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const commands = JSON.parse(result.stdout) as string[];
+    expect(commands).toHaveLength(4);
+    for (const command of commands.slice(1)) {
+      expect(command).toContain("/sandbox/.custom-openclaw/workspace");
       expect(command).not.toContain(OPENCLAW_MCPORTER_ROOT);
     }
   });
