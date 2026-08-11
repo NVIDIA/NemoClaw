@@ -22,8 +22,10 @@ It also improves update safety, image defaults, and installation failure reporti
   Dual DGX Spark route discovery accepts the `iproute2` `from` field, and Model Router allows a longer bounded cold start.
   For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm) and [Set Up vLLM on Two DGX Sparks](/user-guide/openclaw/inference/local-inference/set-up-vllm-on-two-dgx-sparks).
 - The Experimental portable OpenClaw profile now maps `host.openshell.internal` to the OpenShell Podman host gateway and preserves the profile in recovery commands.
+  A host-side activation component can also supply a single-use inference descriptor that selects an OpenAI-compatible endpoint without exporting its short-lived API key.
+  An existing local runner remains installed as manual standby, and NemoClaw does not switch to it automatically.
   Cleanup targets the receipt-owned rootless Podman container and fails closed when socket or container authority cannot be proved.
-  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+  For more information, refer to [Set Up an OpenAI-Compatible Endpoint](/user-guide/openclaw/inference/custom-endpoints/set-up-openai-compatible-endpoint), the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
 - Managed llama.cpp onboarding now cleans up rejected fixed-port state and distinguishes blocked Docker bridge access from a healthy host and runtime.
   By default, the local Ollama proxy refuses a backend that listens beyond loopback, and onboarding retries while a selected model becomes tool-call responsive.
   For more information, refer to [Set Up llama.cpp](/user-guide/openclaw/inference/local-inference/set-up-llama-cpp) and [Use Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama).
