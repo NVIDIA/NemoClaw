@@ -434,7 +434,6 @@ def dispatch_execute_once(
             model,
             "nemoclaw-profile-validation",
             sandbox=backend,
-            sandbox_type="nemoclaw-validation",
             system_prompt="Use the execute tool once, then report the result.",
             interactive=False,
             auto_approve=not restrict_shell,

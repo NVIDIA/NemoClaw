@@ -821,6 +821,8 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     const e2eCheck = fs.readFileSync(e2eProfileCheckPath, "utf8");
 
     expect(requirements).toMatch(/^langchain-core==1\.5\.3(?:[ \t]|$)/m);
+    expect(validator).toContain("sandbox=backend");
+    expect(validator).not.toContain('sandbox_type="nemoclaw-validation"');
     for (const source of [validator, e2eCheck]) {
       expect(source).toContain("isinstance(sync_result.content, str)");
       expect(source).toContain("isinstance(async_result.content, str)");
