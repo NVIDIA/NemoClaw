@@ -22,6 +22,8 @@ on:
       # takes effect immediately after merge instead of waiting for another tag.
       - ".github/workflows/base-image.yaml"
       - ".github/workflows/managed-images.yaml"
+
+      - "test/e2e/live/managed-image-activation-e2e*.ts"
       - ".github/actions/ci-reviewed-npm-audit/**"
       - ".github/actions/build-base-image-platform/**"
       - ".github/actions/publish-base-image-manifest/**"
