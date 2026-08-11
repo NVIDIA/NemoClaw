@@ -19,11 +19,10 @@
  * The documented repair for a dashboard-only session points
  * `platforms.whatsapp.extra.session_path` at another directory, so the default
  * gateway path stays empty while the gateway reads credentials elsewhere. When
- * the default path holds no credentials the probe reads that key from the
- * Hermes config and re-checks the configured directory, so the repair can be
- * confirmed instead of reported as an unresolved split. The probe parses the
- * whole config file in the host process but keeps and reports only the
- * configured session path.
+ * the default path holds no credentials, a sandbox-local parser reads that
+ * key and returns only its JSON value. The host never receives the complete
+ * Hermes config. The probe then re-checks the configured directory so the
+ * repair can be confirmed instead of reported as an unresolved split.
  *
  * This is a bounded compatibility probe for Hermes dashboard pairing that can
  * write credentials under profiles/dashboard-home while the gateway reads the
@@ -58,7 +57,6 @@
  */
 
 import { shellQuote } from "../../../../core/shell-quote";
-import { parseConfig } from "../../../../sandbox/config-format";
 import type { MessagingHookHandler, MessagingHookRegistration } from "../../../hooks/types";
 import type { MessagingSerializableValue } from "../../../manifest";
 import {
@@ -80,6 +78,7 @@ export const WHATSAPP_STATUS_HEALTH_HOOK_HANDLER_ID = "whatsapp.statusHealth";
 // inheriting that hang.
 const DEFAULT_TIMEOUT_MS = 8_000;
 const HERMES_SESSION_PROBE_SENTINEL = "NEMOCLAW_HERMES_WHATSAPP_SESSION_V1";
+const HERMES_CONFIG_PROBE_SENTINEL = "NEMOCLAW_HERMES_WHATSAPP_CONFIG_V1";
 const HERMES_CONFIG_PATH = "/sandbox/.hermes/config.yaml";
 const HERMES_DEFAULT_SESSION_DIR = "/sandbox/.hermes/platforms/whatsapp/session";
 const HERMES_DASHBOARD_SESSION_DIR =
@@ -268,12 +267,13 @@ function runHermesSessionProbe(
     fallbackTimeoutMs,
   );
   if (!configuredLocations) return hermesProbeResult(defaultLocations, "default");
-  return hermesProbeResult(configuredLocations, "config");
+  return hermesProbeResult(configuredLocations, "config", configured.dir);
 }
 
 function hermesProbeResult(
   locations: WhatsappSessionLocations,
   gatewaySessionPathSource: HermesSessionPathSource,
+  gatewaySessionDir?: string,
 ): ProbeResult {
   const gatewaySession = locations.gatewaySessionCreds === true;
   return {
@@ -282,7 +282,11 @@ function hermesProbeResult(
     bridgeProcessAlive: null,
     heartbeat: null,
     recentLogSignals: [],
-    sessionLocations: { ...locations, gatewaySessionPathSource },
+    sessionLocations: {
+      ...locations,
+      gatewaySessionPathSource,
+      ...(gatewaySessionDir === undefined ? {} : { gatewaySessionDir }),
+    },
   };
 }
 
@@ -312,17 +316,12 @@ function readHermesConfiguredSessionDir(
   const fallback = { dir: HERMES_DEFAULT_SESSION_DIR, source: "default" } as const;
   let exec: ReturnType<typeof execute>;
   try {
-    exec = execute(sandboxName, `cat ${shellQuote(HERMES_CONFIG_PATH)}`, timeoutMs);
+    exec = execute(sandboxName, hermesConfiguredSessionPathCommand(), timeoutMs);
   } catch {
     return fallback;
   }
   if (!exec || exec.status !== 0) return fallback;
-  let configured: unknown;
-  try {
-    configured = readConfiguredSessionPath(parseConfig(String(exec.stdout ?? ""), "yaml"));
-  } catch {
-    return fallback;
-  }
+  const configured = parseHermesConfiguredSessionPath(String(exec.stdout ?? ""));
   if (configured === undefined || configured === null) return fallback;
   if (!isSupportedHermesSessionDir(configured)) {
     return { dir: HERMES_DEFAULT_SESSION_DIR, source: "unsupported" };
@@ -331,13 +330,33 @@ function readHermesConfiguredSessionDir(
   return { dir: configured, source: "config" };
 }
 
-function readConfiguredSessionPath(config: unknown): unknown {
-  let node: unknown = config;
-  for (const key of HERMES_SESSION_PATH_KEYS) {
-    if (!isObjectRecord(node)) return undefined;
-    node = node[key];
+function hermesConfiguredSessionPathCommand(): string {
+  const script = [
+    "import json",
+    "from pathlib import Path",
+    "import yaml",
+    `config = yaml.safe_load(Path(${JSON.stringify(HERMES_CONFIG_PATH)}).read_text(encoding=\"utf-8\"))`,
+    "def child(value, key):",
+    "    return value.get(key) if isinstance(value, dict) else None",
+    "node = config",
+    ...HERMES_SESSION_PATH_KEYS.map((key) => `node = child(node, ${JSON.stringify(key)})`),
+    `print(${JSON.stringify(HERMES_CONFIG_PROBE_SENTINEL)})`,
+    "print(json.dumps(node))",
+  ].join("\n");
+  return `python3 -c ${shellQuote(script)}`;
+}
+
+function parseHermesConfiguredSessionPath(stdout: string): unknown {
+  const lines = stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length !== 2 || lines[0] !== HERMES_CONFIG_PROBE_SENTINEL) return undefined;
+  try {
+    return JSON.parse(lines[1]);
+  } catch {
+    return undefined;
   }
-  return node;
 }
 
 function isSupportedHermesSessionDir(value: unknown): value is string {

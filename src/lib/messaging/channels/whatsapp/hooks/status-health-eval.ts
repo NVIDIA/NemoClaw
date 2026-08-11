@@ -94,6 +94,7 @@ export type WhatsappSessionLocations = {
   gatewaySessionCreds: boolean | null;
   dashboardSessionCreds: boolean | null;
   gatewaySessionPathSource?: "default" | "config" | "unsupported";
+  gatewaySessionDir?: string;
 };
 
 /**
@@ -198,16 +199,19 @@ function sessionLocationSignal(input: WhatsappProbeInput): DiagnosticSignal | nu
   const gateway = locations.gatewaySessionCreds;
   const dashboard = locations.dashboardSessionCreds;
   if (locations.gatewaySessionPathSource === "config" && gateway !== null) {
+    const configuredPath = locations.gatewaySessionDir
+      ? ` at \`${locations.gatewaySessionDir}\``
+      : "";
     return gateway
       ? {
           label: "Session location",
           severity: "ok",
-          detail: "the configured Hermes WhatsApp session path contains credentials",
+          detail: `the configured Hermes WhatsApp session path${configuredPath} contains credentials`,
         }
       : {
           label: "Session location",
           severity: "warn",
-          detail: "the configured Hermes WhatsApp session path has no WhatsApp credentials",
+          detail: `the configured Hermes WhatsApp session path${configuredPath} has no WhatsApp credentials`,
           hint: "pair WhatsApp again, or set `platforms.whatsapp.extra.session_path` to the session path that holds the credentials",
         };
   }

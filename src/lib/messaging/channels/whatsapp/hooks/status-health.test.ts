@@ -115,35 +115,32 @@ const HERMES_DEFAULT_SESSION_DIR = "/sandbox/.hermes/platforms/whatsapp/session"
 const HERMES_DASHBOARD_SESSION_DIR =
   "/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session";
 
-function hermesConfigYaml(sessionPath: unknown): string {
-  return [
-    "platforms:",
-    "  whatsapp:",
-    "    extra:",
-    `      session_path: ${JSON.stringify(sessionPath)}`,
-  ].join("\n");
-}
-
 function hermesExec(options: {
-  readonly configYaml?: string;
+  readonly configuredSessionPath?: unknown;
+  readonly configProbeStdout?: string;
   readonly credsDirs: readonly string[];
 }) {
   const hasCreds = (credsFile: string) =>
     options.credsDirs.some((dir) => credsFile === `${dir}/creds.json`);
   return vi.fn((_sandbox: string, command: string, _timeout: number): ExecResult => {
-    if (command.startsWith("cat ")) {
-      return options.configYaml === undefined
-        ? { status: 1, stdout: "", stderr: "cat: no such file" }
-        : { status: 0, stdout: options.configYaml, stderr: "" };
-    }
-    return {
-      status: 0,
-      stdout: hermesSessionProbeOutput({
-        gatewaySessionCreds: hasCreds(/gateway='([^']*)'/.exec(command)?.[1] ?? ""),
-        dashboardSessionCreds: hasCreds(/dashboard='([^']*)'/.exec(command)?.[1] ?? ""),
-      }),
-      stderr: "",
-    };
+    return command.startsWith("python3 -c ")
+      ? options.configProbeStdout !== undefined
+        ? { status: 0, stdout: options.configProbeStdout, stderr: "" }
+        : options.configuredSessionPath === undefined
+          ? { status: 1, stdout: "", stderr: "config unavailable" }
+          : {
+              status: 0,
+              stdout: `NEMOCLAW_HERMES_WHATSAPP_CONFIG_V1\n${JSON.stringify(options.configuredSessionPath)}`,
+              stderr: "",
+            }
+      : {
+          status: 0,
+          stdout: hermesSessionProbeOutput({
+            gatewaySessionCreds: hasCreds(/gateway='([^']*)'/.exec(command)?.[1] ?? ""),
+            dashboardSessionCreds: hasCreds(/dashboard='([^']*)'/.exec(command)?.[1] ?? ""),
+          }),
+          stderr: "",
+        };
   });
 }
 
@@ -478,7 +475,7 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     sessionPath,
   }) => {
     const exec = hermesExec({
-      configYaml: hermesConfigYaml(sessionPath),
+      configuredSessionPath: sessionPath,
       credsDirs: [HERMES_DASHBOARD_SESSION_DIR],
     });
     const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
@@ -487,7 +484,7 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     const report = reportOf(result);
     const probeCommands = exec.mock.calls
       .map((call) => String(call[1] ?? ""))
-      .filter((command) => !command.startsWith("cat "));
+      .filter((command) => !command.startsWith("python3 -c "));
     expect(report?.verdict).toBe("unpaired");
     expect(report?.signals.find((s) => s.label === "Session path override")?.severity).toBe("warn");
     expect(probeCommands).toHaveLength(1);
@@ -497,7 +494,7 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
 
   it("reads the Hermes config only when the default session path is empty (#8718)", () => {
     const exec = hermesExec({
-      configYaml: hermesConfigYaml(HERMES_DASHBOARD_SESSION_DIR),
+      configuredSessionPath: HERMES_DASHBOARD_SESSION_DIR,
       credsDirs: [HERMES_DEFAULT_SESSION_DIR],
     });
     const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
@@ -510,20 +507,38 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
 
   it("keeps unrelated Hermes config values out of the report (#8718)", () => {
     const exec = hermesExec({
-      configYaml: [
-        "model:",
-        '  api_key: "sk-do-not-leak-this"',
-        "platforms:",
-        "  whatsapp:",
-        "    extra:",
-        `      session_path: ${JSON.stringify(HERMES_DASHBOARD_SESSION_DIR)}`,
-      ].join("\n"),
+      configuredSessionPath: HERMES_DASHBOARD_SESSION_DIR,
       credsDirs: [HERMES_DASHBOARD_SESSION_DIR],
     });
     const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
       context({ ...BASE_INPUTS, agent: "hermes" }),
     );
     expect(stringifyReport(result)).not.toContain("sk-do-not-leak-this");
+    expect(exec.mock.calls.map((call) => String(call[1] ?? "")).join("\n")).not.toContain(
+      "cat /sandbox/.hermes/config.yaml",
+    );
+  });
+
+  it("rejects a config probe response that carries unrelated values (#8718)", () => {
+    const secret = "sk-do-not-cross-the-sandbox-boundary";
+    const exec = hermesExec({
+      configProbeStdout: [
+        "NEMOCLAW_HERMES_WHATSAPP_CONFIG_V1",
+        JSON.stringify(HERMES_DASHBOARD_SESSION_DIR),
+        JSON.stringify({ api_key: secret }),
+      ].join("\n"),
+      credsDirs: [HERMES_DASHBOARD_SESSION_DIR],
+    });
+    const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
+      context({ ...BASE_INPUTS, agent: "hermes" }),
+    );
+    const report = reportOf(result);
+    const probeCommands = exec.mock.calls.map((call) => String(call[1] ?? ""));
+
+    expect(report?.verdict).toBe("unpaired");
+    expect(stringifyReport(result)).not.toContain(secret);
+    expect(probeCommands).toHaveLength(2);
+    expect(probeCommands[0]).toContain(`gateway='${HERMES_DEFAULT_SESSION_DIR}/creds.json'`);
   });
 
   it("falls back to the default session path when the Hermes config cannot be read (#8718)", () => {
@@ -534,6 +549,9 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     const report = reportOf(result);
     expect(report?.verdict).toBe("unpaired");
     expect(report?.signals.find((s) => s.label === "Session location")?.hint).toContain(
+      "channels add whatsapp",
+    );
+    expect(report?.signals.find((s) => s.label === "Session location")?.hint).not.toContain(
       "platforms.whatsapp.extra.session_path",
     );
     expect(report?.signals.find((s) => s.label === "Session path override")).toBeUndefined();

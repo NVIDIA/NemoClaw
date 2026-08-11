@@ -32,35 +32,29 @@ const HERMES_DEFAULT_SESSION_DIR = "/sandbox/.hermes/platforms/whatsapp/session"
 const HERMES_DASHBOARD_SESSION_DIR =
   "/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session";
 
-function hermesConfigYaml(sessionPath: string): string {
-  return [
-    "platforms:",
-    "  whatsapp:",
-    "    extra:",
-    `      session_path: ${JSON.stringify(sessionPath)}`,
-  ].join("\n");
-}
-
 function hermesExec(options: {
-  readonly configYaml?: string;
+  readonly configuredSessionPath?: string;
   readonly credsDirs: readonly string[];
 }) {
   const hasCreds = (credsFile: string) =>
     options.credsDirs.some((dir) => credsFile === `${dir}/creds.json`);
   return vi.fn((_sandbox: string, command: string, _timeoutMs?: number) => {
-    if (command.startsWith("cat ")) {
-      return options.configYaml === undefined
-        ? { status: 1, stdout: "", stderr: "cat: no such file" }
-        : { status: 0, stdout: options.configYaml, stderr: "" };
-    }
-    return {
-      status: 0,
-      stdout: hermesSessionProbeOutput({
-        gatewaySessionCreds: hasCreds(/gateway='([^']*)'/.exec(command)?.[1] ?? ""),
-        dashboardSessionCreds: hasCreds(/dashboard='([^']*)'/.exec(command)?.[1] ?? ""),
-      }),
-      stderr: "",
-    };
+    return command.startsWith("python3 -c ")
+      ? options.configuredSessionPath === undefined
+        ? { status: 1, stdout: "", stderr: "config unavailable" }
+        : {
+            status: 0,
+            stdout: `NEMOCLAW_HERMES_WHATSAPP_CONFIG_V1\n${JSON.stringify(options.configuredSessionPath)}`,
+            stderr: "",
+          }
+      : {
+          status: 0,
+          stdout: hermesSessionProbeOutput({
+            gatewaySessionCreds: hasCreds(/gateway='([^']*)'/.exec(command)?.[1] ?? ""),
+            dashboardSessionCreds: hasCreds(/dashboard='([^']*)'/.exec(command)?.[1] ?? ""),
+          }),
+          stderr: "",
+        };
   });
 }
 
@@ -319,7 +313,7 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
 
   it("clears the session-path split after the documented session_path repair (#8718)", async () => {
     const exec = hermesExec({
-      configYaml: hermesConfigYaml(HERMES_DASHBOARD_SESSION_DIR),
+      configuredSessionPath: HERMES_DASHBOARD_SESSION_DIR,
       credsDirs: [HERMES_DASHBOARD_SESSION_DIR],
     });
     const { deps, out_lines } = makeDeps({
@@ -336,6 +330,7 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
       "info",
     );
     expect(dump).not.toContain("the Hermes gateway session path is empty");
+    expect(dump).toContain(HERMES_DASHBOARD_SESSION_DIR);
     expect(exec.mock.calls.map((call) => String(call[1] ?? "")).join("\n")).toContain(
       `gateway='${HERMES_DASHBOARD_SESSION_DIR}/creds.json'`,
     );
@@ -343,7 +338,7 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
 
   it("keeps the default session path when the configured session path is unsupported (#8718)", async () => {
     const exec = hermesExec({
-      configYaml: hermesConfigYaml("/etc/hermes/session"),
+      configuredSessionPath: "/etc/hermes/session",
       credsDirs: [HERMES_DASHBOARD_SESSION_DIR],
     });
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
