@@ -56,4 +56,54 @@ describe("createProviderReviewDeps", () => {
     expect(startOllamaAuthProxy).not.toHaveBeenCalled();
     expect(persistAndProbeOllamaProxy).not.toHaveBeenCalled();
   });
+
+  it("exits without persisting when the Ollama proxy cannot start", async () => {
+    const persistAndProbeOllamaProxy = vi.fn(async () => undefined);
+    const exitProcess = vi.fn((code: number): never => {
+      throw new Error(`exit ${code}`);
+    });
+    const deps = createProviderReviewDeps(
+      vi.fn(),
+      vi.fn(async () => undefined),
+      {
+        shouldFrontOllamaWithProxy: () => true,
+        startOllamaAuthProxy: () => false,
+        getOllamaProxyToken: () => "proxy-token",
+        persistAndProbeOllamaProxy,
+      },
+      exitProcess,
+      vi.fn(),
+    );
+
+    await expect(deps.prepareLocalProviderForInference("ollama-local")).rejects.toThrow("exit 1");
+
+    expect(exitProcess).toHaveBeenCalledWith(1);
+    expect(persistAndProbeOllamaProxy).not.toHaveBeenCalled();
+  });
+
+  it("exits without persisting when the Ollama proxy token is unavailable", async () => {
+    const persistAndProbeOllamaProxy = vi.fn(async () => undefined);
+    const exitProcess = vi.fn((code: number): never => {
+      throw new Error(`exit ${code}`);
+    });
+    const writeError = vi.fn();
+    const deps = createProviderReviewDeps(
+      vi.fn(),
+      vi.fn(async () => undefined),
+      {
+        shouldFrontOllamaWithProxy: () => true,
+        startOllamaAuthProxy: () => true,
+        getOllamaProxyToken: () => null,
+        persistAndProbeOllamaProxy,
+      },
+      exitProcess,
+      writeError,
+    );
+
+    await expect(deps.prepareLocalProviderForInference("ollama-local")).rejects.toThrow("exit 1");
+
+    expect(writeError).toHaveBeenCalledWith(expect.stringContaining("proxy token is not set"));
+    expect(exitProcess).toHaveBeenCalledWith(1);
+    expect(persistAndProbeOllamaProxy).not.toHaveBeenCalled();
+  });
 });
