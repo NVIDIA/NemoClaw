@@ -73,11 +73,18 @@ afterEach(() => {
 describe("sandbox base runtime tools", () => {
   it.each(
     MANAGED_BASE_DOCKERFILES,
-  )("%s explicitly installs setpriv through pinned util-linux without gosu", (dockerfile) => {
+  )("%s fails its image build when setpriv is unavailable or gosu is present (#8805)", (dockerfile) => {
     const source = fs.readFileSync(dockerfile, "utf-8");
+    const runtimeContract = dockerRunCommandBetween(
+      source,
+      "# setpriv runtime contract",
+      "RUN groupadd",
+    );
 
     expect(source).toContain("util-linux=2.41-5");
-    expect(source).not.toMatch(/\bgosu\b/u);
+    expect(runtimeContract).toContain("test -x /usr/bin/setpriv");
+    expect(runtimeContract).toContain("/usr/bin/setpriv --version");
+    expect(runtimeContract).toContain("! command -v gosu");
   });
 
   it("installs the required process, filesystem, and SFTP tools", () => {
