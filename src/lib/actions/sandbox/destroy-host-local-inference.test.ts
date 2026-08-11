@@ -98,12 +98,13 @@ async function runDestroy(
     stderr: "",
   },
   sandboxConfirmedAbsent = false,
+  force = false,
 ) {
   const entry = sandbox();
   const events: string[] = [];
   const result = await executeSandboxDestroy({
     cleanupShieldsArtifacts: () => events.push("cleanup"),
-    force: false,
+    force,
     getSandbox: () => entry,
     listSandboxes: () => ({ sandboxes: [entry, ...peers] }),
     runOpenshell: (args) => {
@@ -151,6 +152,30 @@ describe("sandbox destroy host-local inference transaction", () => {
       hostLocalInferenceCleanupFailure: "injected runtime removal failure",
     });
     expect(events.slice(-2)).toEqual(["sandbox delete alpha", "cleanup"]);
+  });
+
+  it("preserves durable runtime ownership when --force cannot reach the gateway", async () => {
+    const runtimeProvider = provider();
+    const { events, result } = await runDestroy(
+      runtimeProvider,
+      [],
+      {
+        status: 1,
+        stdout: "",
+        stderr: "tcp connect error: Connection refused (os error 61)",
+      },
+      false,
+      true,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      gatewayUnreachable: true,
+      hostLocalInferenceOwnershipRequiresGateway: true,
+    });
+    expect(events).toContain("sandbox delete alpha");
+    expect(events).not.toContain("cleanup");
+    expect(runtimeProvider.destroy).not.toHaveBeenCalled();
   });
 
   it("reconciles retained ownership when destroy is retried after confirmed deletion", async () => {

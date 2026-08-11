@@ -499,6 +499,13 @@ async function destroySandboxUnlocked(
         console.error(
           `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot safely discard a record whose config lock is unconfirmed.`,
         );
+      } else if (destructiveResult.hostLocalInferenceOwnershipRequiresGateway) {
+        console.error(
+          `  The OpenShell gateway is unreachable. Local state was preserved because it contains the exact host-local inference ownership required to retire the managed runtime.`,
+        );
+        console.error(
+          `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot safely discard host-local inference ownership.`,
+        );
       } else if (destructiveResult.mcpOwnershipRequiresGateway) {
         console.error(
           `  The OpenShell gateway is unreachable. Local state was preserved because it contains MCP ownership required for exact provider cleanup.`,

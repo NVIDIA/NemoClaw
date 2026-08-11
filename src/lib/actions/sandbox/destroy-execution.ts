@@ -66,6 +66,7 @@ export type SandboxDestroyExecutionResult =
       deleteOutput: string;
       exitCode: number;
       gatewayUnreachable: boolean;
+      hostLocalInferenceOwnershipRequiresGateway: boolean;
       mcpOwnershipRequiresGateway: boolean;
       mcpRecoveryFailure?: string;
       shieldsRelockRequiresGateway: boolean;
@@ -280,6 +281,7 @@ export async function executeSandboxDestroy({
           deleteOutput: redactDestroyError(error),
           exitCode: 1,
           gatewayUnreachable: false,
+          hostLocalInferenceOwnershipRequiresGateway: false,
           mcpOwnershipRequiresGateway: false,
           shieldsRelockRequiresGateway: false,
         };
@@ -315,14 +317,17 @@ export async function executeSandboxDestroy({
     // #7727: a failed pre-delete re-lock leaves the auto-restore timer as the
     // only authority that can lock the config again. Discarding the local
     // record here would revoke it for a sandbox the gateway never confirmed
-    // deleting, so --force must not take the local-cleanup shortcut until the
-    // gateway is back and deletion is confirmed.
+    // deleting. The same applies to an exact host-local inference receipt: it
+    // is the only durable authority that can retire the managed runtime. Thus
+    // --force must not take the local-cleanup shortcut until the gateway is
+    // back and deletion is confirmed.
     const forcedLocalCleanup =
       deleteResult.status !== 0 &&
       !alreadyGone &&
       gatewayUnreachable &&
       force &&
       !hasMcpOwnership &&
+      !hostLocalInferenceAuthority &&
       !hardened.hardeningFailed;
 
     if (deleteResult.status !== 0 && !alreadyGone && !forcedLocalCleanup) {
@@ -334,6 +339,8 @@ export async function executeSandboxDestroy({
         deleteOutput,
         exitCode: deleteResult.status || 1,
         gatewayUnreachable,
+        hostLocalInferenceOwnershipRequiresGateway:
+          gatewayUnreachable && hostLocalInferenceAuthority !== null,
         mcpOwnershipRequiresGateway: gatewayUnreachable && hasMcpOwnership,
         mcpRecoveryFailure,
         shieldsRelockRequiresGateway: gatewayUnreachable && hardened.hardeningFailed,
@@ -370,6 +377,7 @@ export async function executeSandboxDestroy({
           deleteOutput,
           exitCode: 1,
           gatewayUnreachable: false,
+          hostLocalInferenceOwnershipRequiresGateway: false,
           mcpOwnershipRequiresGateway: false,
           shieldsRelockRequiresGateway: false,
           hostLocalInferenceCleanupFailure: redactDestroyError(error),
