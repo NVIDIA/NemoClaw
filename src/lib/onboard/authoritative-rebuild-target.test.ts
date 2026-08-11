@@ -26,8 +26,10 @@ const originalGateway = process.env.OPENSHELL_GATEWAY;
 function deps(overrides: Partial<AuthoritativeRebuildTargetDeps> = {}) {
   return {
     resolveBaselinePolicy: vi.fn(() => ({})),
+    bindGatewayAuthority: vi.fn(),
     runFatalRuntimePreflight: vi.fn(),
     ensureOpenshell: vi.fn(),
+    assertGatewayReadiness: vi.fn(),
     inferenceRouteReady: vi.fn(() => true),
     captureForwardList: vi.fn(() => "alpha 127.0.0.1 18789 42 active"),
     checkPort: vi.fn(async () => ({ ok: true })),
@@ -199,6 +201,22 @@ describe("prepared provider reconfiguration handoff", () => {
 });
 
 describe("authoritative rebuild target preflight", () => {
+  it("binds process-local gateway authority before readiness and install (#7411)", async () => {
+    const calls: string[] = [];
+    const targetDeps = deps({
+      bindGatewayAuthority: vi.fn(() => calls.push("bind")),
+      runFatalRuntimePreflight: vi.fn(() => calls.push("readiness")),
+      ensureOpenshell: vi.fn(() => calls.push("install")),
+      assertGatewayReadiness: vi.fn(() => calls.push("post-install-readiness")),
+    });
+
+    await preflightAuthoritativeRebuildTarget(target, targetDeps);
+
+    expect(calls).toEqual(["bind", "readiness", "install", "post-install-readiness"]);
+    expect(targetDeps.bindGatewayAuthority).toHaveBeenCalledOnce();
+    expect(targetDeps.assertGatewayReadiness).toHaveBeenCalledOnce();
+  });
+
   it("rejects an unreadable replacement baseline before runtime probes (#7194)", async () => {
     const targetDeps = deps({ resolveBaselinePolicy: vi.fn(() => null) });
 
@@ -207,7 +225,9 @@ describe("authoritative rebuild target preflight", () => {
     );
 
     expect(targetDeps.runFatalRuntimePreflight).not.toHaveBeenCalled();
+    expect(targetDeps.bindGatewayAuthority).not.toHaveBeenCalled();
     expect(targetDeps.ensureOpenshell).not.toHaveBeenCalled();
+    expect(targetDeps.assertGatewayReadiness).not.toHaveBeenCalled();
     expect(targetDeps.inferenceRouteReady).not.toHaveBeenCalled();
   });
 
@@ -293,5 +313,49 @@ describe("authoritative rebuild target preflight", () => {
       ),
     ).rejects.toThrow("fatal runtime gate");
     expect(process.env.OPENSHELL_GATEWAY).toBe("before");
+  });
+
+  it("awaits async runtime readiness before OpenShell and route checks", async () => {
+    let releaseRuntime!: () => void;
+    const runtimeReady = new Promise<void>((resolve) => {
+      releaseRuntime = resolve;
+    });
+    const calls: string[] = [];
+    const targetDeps = deps({
+      runFatalRuntimePreflight: vi.fn(async () => {
+        calls.push("runtime-start");
+        await runtimeReady;
+        calls.push("runtime-end");
+      }),
+      ensureOpenshell: vi.fn(() => calls.push("openshell")),
+      assertGatewayReadiness: vi.fn(() => calls.push("gateway")),
+      inferenceRouteReady: vi.fn(() => {
+        calls.push("route");
+        return true;
+      }),
+    });
+
+    const pending = preflightAuthoritativeRebuildTarget(target, targetDeps);
+    await vi.waitFor(() => expect(calls).toEqual(["runtime-start"]));
+    expect(targetDeps.ensureOpenshell).not.toHaveBeenCalled();
+
+    releaseRuntime();
+    await pending;
+    expect(calls).toEqual(["runtime-start", "runtime-end", "openshell", "gateway", "route"]);
+  });
+
+  it("stops rebuild checks when async runtime readiness rejects", async () => {
+    const targetDeps = deps({
+      runFatalRuntimePreflight: vi.fn(async () => {
+        throw new Error("gateway readiness changed");
+      }),
+    });
+
+    await expect(preflightAuthoritativeRebuildTarget(target, targetDeps)).rejects.toThrow(
+      "gateway readiness changed",
+    );
+    expect(targetDeps.ensureOpenshell).not.toHaveBeenCalled();
+    expect(targetDeps.assertGatewayReadiness).not.toHaveBeenCalled();
+    expect(targetDeps.inferenceRouteReady).not.toHaveBeenCalled();
   });
 });

@@ -212,7 +212,7 @@ If the gateway is not running, Kubernetes allocatable fields are omitted and hos
 
 ### `$$nemoclaw host probe`
 
-Inspect host readiness before onboarding without changing host, Docker, gateway, credential, policy, or sandbox state.
+Inspect host capabilities and gateway authority before onboarding without changing host, Docker, gateway, credential, policy, or sandbox state.
 Use `--json` for the schema-versioned report.
 The command exits with `0` for `supported`, `2` for `incompatible`, and `3` for `inconclusive`.
 
@@ -828,7 +828,7 @@ Kanban backup does not include named boards, attachments, worker logs, scratch w
 </AgentOnly>
 
 Before creating the gateway, the wizard runs preflight checks.
-It verifies that Docker is reachable, warns on untested runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
+It verifies that Docker is reachable, rejects unsupported runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
 The preflight also enforces the OpenShell version range declared in the blueprint (`min_openshell_version` and `max_openshell_version`).
 If the installed OpenShell version falls outside this range, onboarding exits with an actionable error and a link to compatible releases.
 For fresh OpenShell installs, NemoClaw queries published OpenShell releases and asks the installer to use a release that fits the blueprint range.
@@ -843,8 +843,15 @@ For Linux Docker-driver gateways, onboarding also checks that a helper container
 If a host firewall blocks that sandbox path, onboarding exits with a `sudo ufw allow from <subnet> to <gateway-ip> port <gateway-port> proto tcp` command before it reports the gateway healthy.
 Set `NEMOCLAW_AUTO_FIX_FIREWALL=1` to opt in to automatic UFW remediation for this specific failure: NemoClaw uses `sudo -n` only, validates the Docker bridge subnet/gateway/port, applies the narrow UFW rule only after a proven TCP reachability failure, and re-probes before continuing.
 If passwordless sudo, UFW, or active UFW is unavailable, NemoClaw falls back to the manual guidance path without prompting for a password.
-Tune the wait via `NEMOCLAW_REUSE_HEALTH_POLL_COUNT` (default `6`) and `NEMOCLAW_REUSE_HEALTH_POLL_INTERVAL` (default `5` seconds).
-The poll count is clamped to a minimum of `1` so the probe always runs at least once, and the interval is clamped to a minimum of `0` (no sleep between attempts).
+
+For the portable experimental profile, the helper maps `host.openshell.internal` to the OpenShell Podman host gateway instead of the inspected network gateway.
+This path does not use Docker bridge UFW remediation.
+After all portable TCP probe attempts fail, onboarding prints commands for the user-scoped Podman service and socket.
+
+Onboarding prints the same commands when the portable probe cannot reach the user-scoped Podman service.
+The printed rerun command keeps the portable experimental profile selected.
+To tune the existing-gateway HTTP health poll, use `NEMOCLAW_REUSE_HEALTH_POLL_COUNT` (default `6`) and `NEMOCLAW_REUSE_HEALTH_POLL_INTERVAL` (default `5` seconds).
+The poll count is clamped to a minimum of `1` so the health probe always runs at least once, and the interval is clamped to a minimum of `0` (no sleep between attempts).
 
 #### `--from <Dockerfile>`
 
@@ -960,15 +967,13 @@ The user-supplied context uses the OpenShell gateway builder instead of NemoClaw
 $$nemoclaw onboard --from ./Dockerfile.custom
 ```
 
-### GPU passthrough
+### GPU Passthrough
 
 When `$$nemoclaw onboard` detects an NVIDIA GPU on the host, it enables OpenShell GPU passthrough at both the gateway and sandbox level by default.
-Detection proceeds along two paths. The `nvidia-smi`-based paths (the primary `--query-gpu=name,memory.total,memory.free` probe and the unified-memory `--query-gpu=name` fallback) require `nvidia-smi` to succeed and, on hosts whose firmware does not classify as a known NVIDIA platform (DGX Spark, DGX Station, Jetson, or Tegra), additionally require that the GPU name does not match the placeholder family observed on the Windows-on-ARM WSL2 nvidia-smi shim (`JMJWOA-Generic-*`) and that either the host is not ARM64 Linux (the observed shim is Windows-on-ARM only) or the NVIDIA kernel driver is bound (`/proc/driver/nvidia/` present), so that placeholder shims on non-NVIDIA hardware are not mistaken for real GPUs.
+The `nvidia-smi` probes require a successful result and reject placeholder `JMJWOA-Generic-*` GPU names unless NemoClaw can prove a supported NVIDIA platform or GPU execution.
 NemoClaw treats a recognized NVIDIA product model from `/sys/class/dmi/id/product_name` or `/sys/firmware/devicetree/base/model`, or a known Tegra device node, as authoritative platform identity.
-Remove the native ARM64 proof exception when every supported host that uses it exposes a stable value through one of these signals and `detectNvidiaPlatform()` recognizes that value.
-On a native or Docker Desktop-backed WSL ARM64 Linux host without firmware-confirmed NVIDIA platform metadata, the primary memory-query probe can clear a `JMJWOA-Generic-*` name only after a bounded CUDA workload succeeds.
-The workload runs `docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41`.
-Docker may pull the CUDA sample image from `nvcr.io` and keeps the image in the local cache after the container exits.
+On eligible native or Docker Desktop-backed WSL ARM64 Linux hosts without that firmware evidence, one bounded Docker CUDA workload can prove GPU execution.
+For the proof command, timeout control, and failure recovery, refer to [GPU Setup Fails with a Placeholder GPU Name](troubleshooting#gpu-setup-fails-with-a-placeholder-gpu-name).
 The names-only unified-memory fallback does not run this workload and rejects denylisted names.
 Other non-firmware-vouched hosts also reject denylisted names.
 Jetson/Tegra hosts that ship without `nvidia-smi` continue to be detected via the devicetree firmware fallback (`/sys/firmware/devicetree/base/model`) or the Tegra device-node fallback (`/dev/nvhost-gpu`, `/dev/nvhost-ctrl-gpu`, `/dev/nvhost-ctrl`, or `/dev/nvmap`); both bypass the trust-tier gate above.
@@ -1475,8 +1480,19 @@ NemoClaw removes the temporary state backup after a successful restore or rollba
 If state restoration and rollback both fail, it retains the backup and prints host recovery guidance.
 Mounted state remains available, but a committed swap does not retain other writable-layer changes.
 It is idempotent.
-When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats the recovery action only for an exit status of `1` with blank stdout and a sole nonblank stderr line equal to `SUPERVISOR_BUSY`, with at most three controller attempts.
-The same result is inconclusive during managed settle confirmation and can be probed again only within the configured settle window.
+When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats the recovery action only for these exact transient results:
+
+- Status `1` with blank stdout and exactly one stderr line, `SUPERVISOR_BUSY`.
+- Status `137` with blank stdout and stderr.
+- Status `1` with blank stdout and exactly one stderr line, `Error response from daemon: Container <id> is restarting, wait until the container is running`.
+
+For the Docker result, `<id>` must be a 64-character lowercase hexadecimal ID that matches the selected registry-owned container.
+Recovery makes at most 11 controller attempts in total.
+It stops after 3 of those attempts return `SUPERVISOR_BUSY`.
+Managed settle confirmation treats exact `SUPERVISOR_BUSY` as inconclusive within its configured window.
+Status `137` and the Docker restart result remain terminal during that confirmation.
+The managed supervisor startup waiter accepts the two container-transition results within its separate 11-attempt bound.
+Unbound container IDs, reformatted Docker errors, status `137` with nonblank output, and other diagnostic results are terminal.
 NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because the managed controller uses it for integrity refusals, ambiguous discovery, and process-identity changes.
 It does not repeat the recovery action or treat the settle probe as inconclusive, and instead prints host-side restart and rebuild guidance.
 Other controller failures also stop immediately.
@@ -2559,7 +2575,9 @@ For an OpenClaw WhatsApp sandbox, `--channel whatsapp` probes the sandbox to sep
 A paired channel with no observed inbound delivery exits non-zero with verdict `idle` so an unhealthy bridge cannot pass as healthy.
 The detailed WhatsApp probe stays focused on QR/session runtime diagnostics and does not include rendered-config comparison lines.
 For a Hermes WhatsApp sandbox, `--channel whatsapp` probes only whether the default gateway session path and the `profiles/dashboard-home` session path contain `creds.json`.
-If the dashboard path has credentials and the gateway path is empty, the report prints the supported `config set` command for the `platforms.whatsapp.extra.session_path` configuration key, including the new-configuration-key opt-in when generated configs do not already contain that key.
+If the dashboard path has credentials and the gateway path is empty, the report tells you to run `$$nemoclaw <sandbox> channels remove whatsapp` and then `$$nemoclaw <sandbox> channels add whatsapp`, because a rebuild restores the legacy session instead of dropping it.
+Pair again from the dashboard so credentials use `/sandbox/.hermes/platforms/whatsapp/session`.
+Rerun `$$nemoclaw <sandbox> channels status --channel whatsapp`.
 NemoClaw does not treat a Hermes session file as live inbound-health evidence.
 
 For Telegram, `--channel telegram` probes the sandbox to report the gateway process, Bot API reachability, and inbound delivery alongside the config comparison.
@@ -3964,6 +3982,17 @@ Rerun `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw uninstall` with the gateway port 
 For an externally supervised authority, uninstall preserves the selected local gateway state in both full and gateway-scoped cleanup.
 It also preserves the gateway process, supervisor resources, marked Linux unit, Docker resources, OpenShell binaries, and the declared external state directory.
 A custom-port uninstall does not stop or remove the default gateway service or its environment file.
+Before scoped cleanup stops a Docker gateway process, including a managed default gateway service, NemoClaw requires two Docker namespace proofs.
+The selected Docker gateway configuration and any running gateway process must use the state-root-specific OpenShell sandbox namespace that NemoClaw generated.
+Because the supported OpenShell Podman schema does not expose `sandbox_namespace`, scoped Podman uninstall fails closed before signaling and preserves the gateway runtime evidence and local state.
+Full single-gateway Podman uninstall continues to use normal graceful teardown.
+For Docker, if either proof is absent, uninstall exits nonzero before it signals the host gateway.
+NemoClaw preserves the gateway runtime evidence and local state.
+Keep that state intact.
+Restore the selected Docker gateway through the supported install or onboarding recovery flow so it restarts with the generated configuration.
+Verify every gateway with `openshell gateway list`.
+Retry the scoped uninstall.
+Do not add `sandbox_namespace` manually to a live gateway configuration because the running process can still be using its previous namespace.
 
 ##### Uninstalling Every Gateway Port
 
@@ -4292,7 +4321,7 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_INSTALL_TAG` | release tag | For internal installer commands: the release tag to install when `NEMOCLAW_INSTALL_REF` is unset or empty. Defaults to the admin-promoted `lkg` tag when unset. Overridden by the `--install-tag` flag. |
 | `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE` | `1` to enable | Enables the fixed vLLM local model profile. Requires `NEMOCLAW_LOCAL_MODEL_RUNTIME=vllm`. Direct `$$nemoclaw onboard` use also requires `NEMOCLAW_NON_INTERACTIVE=1`. The hosted installer makes onboarding non-interactive, disables Express selection, and sets this value automatically when it receives `--local-model-runtime=vllm`. |
 | `NEMOCLAW_LOCAL_MODEL_RUNTIME` | `vllm` | Selects the fixed vLLM local model profile. Requires `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1`; direct onboarding also requires `NEMOCLAW_NON_INTERACTIVE=1`. The hosted installer sets this value from `--local-model-runtime=vllm`. |
-| `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model id | Selects the model the managed-vLLM install path serves and remains authoritative during DGX Station installer setup. Recognised slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `nemotron-3-nano-4b`, `deepseek-v4-flash`, `nemotron-3-ultra-550b-a55b`, `deepseek-r1-distill-70b`. Station Express selects `nemotron-3-ultra-550b-a55b`; a qualified reciprocal pair uses the distributed topology, while no qualifying pair retains the single-Station Ultra topology. Outside Station Express, unset uses the per-platform profile default. Gated models (e.g. `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
+| `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model ID | Selects the model the managed-vLLM install path serves and remains authoritative during DGX Station installer setup. Recognized slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `muse-glimmer-30b`, `nemotron-3-nano-4b`, `deepseek-v4-flash`, `nemotron-3-ultra-550b-a55b`, `deepseek-r1-distill-70b`. The `muse-glimmer-30b` profile remains Experimental until the upstream vLLM support is merged and NemoClaw qualifies a replacement runtime. NemoClaw does not enable or support DFlash speculative decoding for this profile. Station Express selects `nemotron-3-ultra-550b-a55b`; a qualified reciprocal pair uses the distributed topology, while no qualifying pair retains the single-Station Ultra topology. Outside Station Express, unset uses the per-platform profile default. Gated models (for example, `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
 | `NEMOCLAW_DGX_STATION_PEER` | SSH host or `user@host` | Selects one exact, already-trusted DGX Station peer for Nemotron 3 Ultra pair qualification. The peer must match the reciprocal private `/30` rail and hardware checks; an explicit peer failure stops setup instead of falling back. NemoClaw does not enroll SSH trust or accept a port or SSH option in this value. When unset, DGX Station installer discovery checks only the two deterministic `/30` counterpart addresses. A peer cannot be combined with an explicit non-Ultra model; conflicting explicit selections fail before pair preparation. |
 | `NEMOCLAW_DGX_STATION_SSH_BINDING` | opaque installer-managed token | Carries the qualified peer endpoint and host-key binding from DGX Station pair preparation into the current managed-vLLM install. The installer creates and clears this token; operators should not set or persist it. Missing, changed, or mismatched binding state fails before peer SSH or Docker work. |
 | `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` | JSON array of non-blank strings | Appends advanced operator-owned tokens to the managed `vllm serve` command after NemoClaw's registry defaults. Example: `["--max-num-seqs","2"]`. Malformed JSON, non-string tokens, or blank tokens fail before Docker work starts. |
@@ -4594,6 +4623,7 @@ Defaults are sized for typical hardware; override only if you see false-positive
 | `NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS` | `30` | Maximum time to wait for an OpenShell MCP provider credential revision to become active or fully revoked inside the sandbox. Integer seconds; raise only when provider synchronization is unusually slow. |
 | `NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS` | per call site (typically `15000`) | Overrides the default timeout for `openshell sandbox exec` calls issued by recovery and lifecycle helpers. Integer milliseconds; non-positive or non-numeric values fall back to the per-call-site default. |
 | `NEMOCLAW_STATUS_PROBE_TIMEOUT_MS` | built-in default | Overrides the timeout for the OpenShell status probe used by `$$nemoclaw <name> status`. Integer milliseconds; non-positive or non-numeric values fall back to the default. |
+| `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` | `180000` | Maximum time for the bounded Docker CUDA workload that proves a placeholder-named GPU on an eligible ARM64 Linux host. A positive finite number of milliseconds overrides the default. Invalid, infinite, zero, and negative values use the default. |
 
 ### Onboard and Sandbox Readiness Timeouts
 

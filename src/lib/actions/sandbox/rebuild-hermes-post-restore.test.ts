@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createRebuildFlowHarness,
-  resetRebuildFlowTestEnvironment,
-  restoreRebuildFlowTestEnvironment,
-} from "../../../../test/helpers/rebuild-flow-harness";
+  installRebuildFlowTestHooks,
+} from "../../../../test/helpers/rebuild-flow-dcode-harness";
 import {
   ensureHermesGatewayAfterStateRestore,
   ensureHermesGatewayAfterStateRestoreForCronGate,
+  restartHermesGatewayAfterStateRestore,
   verifyHermesGatewayAfterStateRestore,
   verifyHermesGatewayAfterStateRestoreForCronGate,
 } from "./rebuild-hermes-post-restore";
@@ -24,6 +24,18 @@ const RESTART_FAILED = {
   ok: false,
   failureLayer: "health timeout",
   detail: "gateway did not become healthy",
+} as const;
+const RESTARTED_WITH_MCP_MISMATCH = {
+  ok: false,
+  failureLayer: "MCP reconciliation refusal",
+  detail: "Hermes MCP config does not match persisted managed intent",
+  restarted: true,
+  healthPassed: true,
+} as const;
+const MCP_REFUSED_BEFORE_RESTART = {
+  ok: false,
+  failureLayer: "MCP reconciliation refusal",
+  detail: "supervisor refused the restart before replacing the gateway",
 } as const;
 
 describe("binding the Hermes gateway to restored state", () => {
@@ -71,6 +83,57 @@ describe("binding the Hermes gateway to restored state", () => {
     });
 
     expect(state).toBe("recovered");
+  });
+
+  it("keeps restart evidence while rebuild restores the managed MCP projection (#8671)", () => {
+    const restartState = restartHermesGatewayAfterStateRestore("alpha", "hermes", {
+      restartSandboxGateway: () => RESTARTED_WITH_MCP_MISMATCH,
+    });
+
+    expect(restartState).toBe("restarted");
+    expect(
+      verifyHermesGatewayAfterStateRestore("alpha", "hermes", restartState, {
+        checkAndRecoverSandboxProcesses: () => ({
+          checked: true,
+          wasRunning: true,
+          recovered: false,
+        }),
+      }),
+    ).toBe("healthy");
+  });
+
+  it("rejects managed MCP drift that remains after rebuild restoration (#8671)", () => {
+    const restartState = restartHermesGatewayAfterStateRestore("alpha", "hermes", {
+      restartSandboxGateway: () => RESTARTED_WITH_MCP_MISMATCH,
+    });
+
+    expect(
+      verifyHermesGatewayAfterStateRestore("alpha", "hermes", restartState, {
+        checkAndRecoverSandboxProcesses: () => ({
+          checked: true,
+          wasRunning: true,
+          recovered: false,
+          mcpReconciliationRefused: true,
+        }),
+      }),
+    ).toBe("unverified");
+  });
+
+  it("preserves an MCP refusal before gateway replacement (#8671)", () => {
+    const restartState = restartHermesGatewayAfterStateRestore("alpha", "hermes", {
+      restartSandboxGateway: () => MCP_REFUSED_BEFORE_RESTART,
+    });
+
+    expect(restartState).toBe("restart-failed");
+    expect(
+      verifyHermesGatewayAfterStateRestore("alpha", "hermes", restartState, {
+        checkAndRecoverSandboxProcesses: () => ({
+          checked: true,
+          wasRunning: true,
+          recovered: false,
+        }),
+      }),
+    ).toBe("unverified");
   });
 
   it("leaves a non-Hermes rebuild without a gateway restart (#8184)", () => {
@@ -299,8 +362,7 @@ describe("Hermes gateway post-restore recheck", () => {
 });
 
 describe("Hermes rebuild post-restore verification", () => {
-  beforeEach(resetRebuildFlowTestEnvironment);
-  afterEach(restoreRebuildFlowTestEnvironment);
+  installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
 
   it("fails instead of reporting readiness when restored state leaves the gateway down (#7084)", async () => {
     const mcpEntry = {

@@ -4,9 +4,9 @@
 // Host-side credential helpers.
 //
 // The OpenShell gateway is the system of record for provider credentials.
-// This module holds them only in the current process environment so they
-// can be passed through to `openshell provider create/update --credential KEY`
-// during onboarding. Nothing is written to disk.
+// This module exposes staged process-environment values and asynchronous
+// in-process overrides. Callers pass the selected value explicitly to
+// `openshell provider create/update --credential KEY`. Nothing is written to disk.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -19,6 +19,9 @@ import { createPromptActivityCleanup } from "../core/prompt-activity";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
+import { getScopedCredentialOverride } from "./scoped-overrides";
+
+export { withCredentialOverrides } from "./scoped-overrides";
 
 const UNSAFE_HOME_PATHS = new Set(["/tmp", "/var/tmp", "/dev/shm", "/"]);
 
@@ -182,8 +185,10 @@ export function saveCredential(key: string, value: CredentialInput): void {
   }
 }
 
-/** Return the staged value for `key` from the current process env, or null. */
+/** Return the scoped or staged value for `key`, or null. */
 export function getCredential(key: string): string | null {
+  const scoped = getScopedCredentialOverride(key);
+  if (scoped) return scoped;
   const raw = process.env[key];
   if (!raw) return null;
   const normalized = normalizeCredentialValue(raw);
@@ -200,10 +205,11 @@ function getLegacyCredentialAlias(envName: string): string | null {
 
 /**
  * Canonical entry point for provider credential resolution (PR #2306).
- * Resolves the credential for `envName` from `process.env`, falling back
- * to a one-time on-demand stage of any pre-fix `~/.nemoclaw/credentials.json`,
- * and writes the resolved value back into `process.env` so downstream
- * code that reads `process.env[envName]` directly sees it.
+ * Resolves an asynchronous in-process override before `process.env`.
+ * Without an override, falls back to a one-time on-demand stage of any
+ * pre-fix `~/.nemoclaw/credentials.json` and writes the resolved value back
+ * into `process.env` for downstream compatibility. A scoped override never
+ * enters `process.env` through this function.
  *
  * Returns the resolved value, or `null` if neither env nor the legacy
  * file produced one.
@@ -218,6 +224,8 @@ function getLegacyCredentialAlias(envName: string): string | null {
  * guard inside the staging helper itself.
  */
 export function resolveProviderCredential(envName: string): string | null {
+  const scoped = getScopedCredentialOverride(envName);
+  if (scoped) return scoped;
   let value = getCredential(envName) || getLegacyCredentialAlias(envName);
   if (!value) {
     stageLegacyCredentialsToEnv();

@@ -228,6 +228,7 @@ async function runAgentTurn(
 
 async function preclean(
   host: HostCliClient,
+  lifecycle: LifecyclePhaseFixture,
   sandbox: SandboxClient,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
@@ -239,6 +240,12 @@ async function preclean(
   });
   await sandbox.cleanupSandbox(sandboxName, {
     artifactName: `pre-cleanup-openshell-${sandboxName}`,
+    env,
+    timeoutMs: 60_000,
+  });
+  await lifecycle.stopGatewayRuntime();
+  await host.cleanupGatewayRegistration(GATEWAY, {
+    artifactName: `pre-cleanup-gateway-${sandboxName}`,
     env,
     timeoutMs: 60_000,
   });
@@ -335,7 +342,7 @@ async function qualifyAgent(
     sandbox.cleanupSandbox(sandboxName, { env, timeoutMs: 60_000 }),
   );
   cleanup.trackSandbox(host, sandboxName, { env, timeoutMs: 3 * 60_000 });
-  await preclean(host, sandbox, sandboxName, env);
+  await preclean(host, lifecycle, sandbox, sandboxName, env);
 
   enterOnboardPhase(progress, agent);
   const onboard = await host.nemoclaw(

@@ -493,8 +493,6 @@ const authoritativeRebuildTarget: typeof import("./onboard/authoritative-rebuild
   require("./onboard/authoritative-rebuild-target");
 const { assertDashboardPortNotReserved, buildRequiredPreflightPorts } =
   require("./onboard/preflight-ports") as typeof import("./onboard/preflight-ports");
-const { failFastOnForeignGatewayPortConflict } =
-  require("./onboard/gateway-port-conflict") as typeof import("./onboard/gateway-port-conflict");
 const { printPortConflictReport } =
   require("./onboard/port-conflict-report") as typeof import("./onboard/port-conflict-report");
 const { tryCleanupOrphanedDashboardForward } =
@@ -529,6 +527,8 @@ const dockerDriverGatewayRuntimeMarker: typeof import("./onboard/docker-driver-g
 const gatewayBinding: typeof import("./onboard/gateway-binding") = require("./onboard/gateway-binding");
 const fatalRuntimePreflight: typeof import("./onboard/fatal-runtime-preflight") =
   require("./onboard/fatal-runtime-preflight");
+const preflightGatewayAuthority: typeof import("./onboard/machine/preflight-gateway-authority") =
+  require("./onboard/machine/preflight-gateway-authority");
 const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/preflight");
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
 const overlayfsAutoFix: typeof import("./onboard/overlayfs-auto-fix") = require("./onboard/overlayfs-auto-fix");
@@ -564,7 +564,8 @@ import {
   type MessagingChannelConfig,
 } from "./messaging-channel-config";
 import { streamGatewayStart } from "./onboard/gateway";
-import { bindGatewayAuthorityToCheckpoint } from "./onboard/gateway-authority-checkpoint";
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+import { adoptPackagedGatewayAuthorityAfterTrustedInstall, bindGatewayAuthorityToCheckpoint, checkpointGatewayAuthority } from "./onboard/gateway-authority-checkpoint";
 import { createGatewayHostRuntime } from "./onboard/gateway-host-runtime";
 import {
   mergeRequiredHermesToolGatewayPolicyPresets,
@@ -1126,8 +1127,10 @@ function areRequiredDockerDriverBinariesPresent(
 
 function ensureOpenshellForOnboard(
   exitProcess: (code: number) => never = (code) => process.exit(code),
+  persistTrustedGatewayOwner?: (owner: import("./onboard/gateway-ownership").GatewayOwner) => void,
 ): OpenShellInstallResult {
-  return openshellInstallFlow.ensureOpenshellForOnboard(getOpenShellInstallDeps(exitProcess));
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  return openshellInstallFlow.ensureOpenshellForOnboard(getOpenShellInstallDeps(exitProcess), { afterSuccessfulInstall: () => adoptPackagedGatewayOwnerAfterTrustedInstall(persistTrustedGatewayOwner) });
 }
 
 function getOpenShellInstallDeps(
@@ -1406,17 +1409,15 @@ function attachGatewayMetadataIfNeeded({
 // ── Step 1: Preflight ────────────────────────────────────────────
 
 type PreflightOptions = import("./onboard/fatal-runtime-preflight").FatalRuntimePreflightOptions;
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+async function collectOnboardGatewayReadiness() { return preflightGatewayAuthority.collectOnboardGatewayReadiness({ gatewayName: () => GATEWAY_NAME, gatewayPort: () => GATEWAY_PORT, resolveOwner: getGatewayOwner, probeAttachment: machineGatewayOwnerDeps.probeGatewayAttachment }); }
 
 async function preflight(
   preflightOpts: PreflightOptions = {},
 ): Promise<ReturnType<typeof nim.detectGpu>> {
   step(1, 8, "Preflight checks");
-  const { gpu, host, sandboxGpuConfig } = fatalRuntimePreflight.runFatalOnboardRuntimePreflight(
-    preflightOpts,
-    {
-      nonInteractive: isNonInteractive(),
-    },
-  );
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const { gpu, host, sandboxGpuConfig } = await fatalRuntimePreflight.runReadinessGatedRuntimePreflight(preflightOpts, { nonInteractive: isNonInteractive(), collectGatewayReadiness: collectOnboardGatewayReadiness });
 
   await preflightUtils.checkContainerRuntimeResources(host, {
     ignored: process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1",
@@ -1424,25 +1425,9 @@ async function preflight(
     confirm: () => promptYesNoOrDefault("  Continue with onboarding?", null, false),
   });
 
-  ensureOpenshellForOnboard();
-  // Bind the one lifecycle authority before applying any legacy listener-name
-  // heuristic. An external supervisor may intentionally use an arbitrary
-  // executable name; its listener is validated exactly by the downstream FSM.
-  const gatewayExternallySupervised = isGatewayExternallySupervised();
-  await failFastOnForeignGatewayPortConflict({
-    gatewayPort: GATEWAY_PORT,
-    externallySupervised: gatewayExternallySupervised,
-    checkPortAvailable,
-    getGatewayPortCheckOptions: dockerDriverGatewayEnv.getGatewayPortCheckOptions,
-    isDockerDriverGatewayPortListener,
-    exitProcess: (code) => process.exit(code),
-  });
-
-  // Classify gateway state before port checks; the legacy path destroys
-  // stale/unnamed gateways here while the Docker-driver path defers (#2020).
-  const gatewaySnapshot = selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot());
-  let gatewayReuseState = gatewaySnapshot.gatewayReuseState;
-  gatewayReuseState = await refreshDockerDriverGatewayReuseState(gatewayReuseState);
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const { externallySupervised: gatewayExternallySupervised, gatewayReuseState: initialGatewayReuseState } = await preflightGatewayAuthority.preparePreflightGatewayAuthority({ collectGatewayReadiness: collectOnboardGatewayReadiness, ensureOpenshell: (persistTrustedGatewayOwner) => ensureOpenshellForOnboard((code) => process.exit(code), persistTrustedGatewayOwner), persistTrustedGatewayOwner: (owner) => { onboardSession.updateSession((session) => { adoptPackagedGatewayAuthorityAfterTrustedInstall(session, owner); }); }, gatewayPort: GATEWAY_PORT, portConflict: { checkPortAvailable, getGatewayPortCheckOptions: dockerDriverGatewayEnv.getGatewayPortCheckOptions, isDockerDriverGatewayPortListener, exitProcess: (code) => process.exit(code) }, getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded, refreshDockerDriverGatewayReuseState });
+  let gatewayReuseState = initialGatewayReuseState;
 
   // Verify the legacy gateway container is actually running — openshell CLI
   // metadata can be stale after a manual `docker rm`. See #2020. Newer
@@ -2051,6 +2036,7 @@ const applyOverlayfsAutoFix = overlayfsAutoFix.createOverlayfsAutoFix({
 });
 
 const {
+  adoptPackagedGatewayOwnerAfterTrustedInstall,
   assertGatewayStartAllowed,
   bindGatewayOwner,
   getGatewayLocalEndpoint,
@@ -3370,7 +3356,7 @@ function getSetupNimDeps(): SetupNimDeps {
     handleRunningOllamaSelection,
     handleWindowsHostOllamaSelection,
     handleInstallOllamaSelection,
-    installVllm: vllmInference.installVllm,
+    installVllm: setupNimFlow.withServingPortGuard(vllmInference.installVllm, checkPortAvailable),
     handleVllmSelection,
     handleRoutedSelection,
     coerceAgentInferenceApi: inferenceConfig.coerceAgentInferenceApi,
@@ -3605,10 +3591,10 @@ const recordStepSkipped = onboardRuntimeBoundary.recordStepSkipped.bind(onboardR
 const recordStepFailed = onboardRuntimeBoundary.recordStepFailed.bind(onboardRuntimeBoundary);
 const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboardRuntimeBoundary);
 const recordRepairEvent = onboardRuntimeBoundary.recordRepairEvent.bind(onboardRuntimeBoundary);
-/** Run only non-mutating fatal onboard gates while the rebuild target is still intact. */
+/** Run readiness gates while the authoritative rebuild target is still intact. */
 async function preflightAuthoritativeRebuildTarget(
   opts: import("./onboard/authoritative-rebuild-target").AuthoritativeRebuildPreflightOptions,
-): Promise<void> {
+): Promise<import("./state/onboard-checkpoint-types").CheckpointGatewayAuthority> {
   const authoritativeGateway =
     authoritativeRebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts);
   if (!authoritativeGateway) throw new Error("Authoritative rebuild preflight has no gateway");
@@ -3622,6 +3608,7 @@ async function preflightAuthoritativeRebuildTarget(
   GATEWAY_PORT = authoritativeGateway.port;
   NON_INTERACTIVE = true;
   _preflightDashboardPort = opts.controlUiPort ?? null;
+  resetGatewayOwnerBinding();
   const fail = (message: string): never => {
     throw new Error(message);
   };
@@ -3630,8 +3617,9 @@ async function preflightAuthoritativeRebuildTarget(
       { ...opts, controlUiPort: opts.controlUiPort ?? null },
       {
         resolveBaselinePolicy: resolveSandboxBaselinePolicy,
-        runFatalRuntimePreflight: () =>
-          fatalRuntimePreflight.runFatalOnboardRuntimePreflight(
+        bindGatewayAuthority: () => bindGatewayOwner(getGatewayOwner()),
+        runFatalRuntimePreflight: async () =>
+          fatalRuntimePreflight.runReadinessGatedRuntimePreflight(
             {
               sandboxGpu: opts.sandboxGpu,
               sandboxGpuDevice: opts.sandboxGpuDevice,
@@ -3639,6 +3627,7 @@ async function preflightAuthoritativeRebuildTarget(
             },
             {
               nonInteractive: true,
+              collectGatewayReadiness: collectOnboardGatewayReadiness,
               exitProcess: (code) =>
                 fail(`onboard runtime preflight exited with code ${String(code)}`),
             },
@@ -3647,12 +3636,15 @@ async function preflightAuthoritativeRebuildTarget(
           ensureOpenshellForOnboard((code) =>
             fail(`OpenShell component preflight exited with code ${String(code)}`),
           ),
+        assertGatewayReadiness: collectOnboardGatewayReadiness,
         inferenceRouteReady: (p, m) => isInferenceRouteReady(authoritativeGateway.name, p, m),
         captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
         checkPort: (port) => checkPortAvailable(port),
       },
     );
+    return checkpointGatewayAuthority(getGatewayOwner());
   } finally {
+    resetGatewayOwnerBinding();
     GATEWAY_NAME = previous.gatewayName;
     GATEWAY_PORT = previous.gatewayPort;
     NON_INTERACTIVE = previous.nonInteractive;
@@ -3932,17 +3924,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       resume,
       canPrompt: !cannotPrompt,
     });
-    const selectedAgentTransition = await runtimeControlFlow.applySelectedAgentTransition({
-      resume,
-      session,
-      selectedAgentName: agent?.name,
-      routerPort: loadBlueprintProfile("routed")?.router.port || 4000,
-      note,
-    });
-    session = selectedAgentTransition.session;
-    const resumeAgentChanged = selectedAgentTransition.resumeAgentChanged;
-    const forceProviderSelectionForAgentChange = resumeAgentChanged;
-
     const recordedSandboxName =
       session?.steps?.sandbox?.status === "complete" ? session?.sandboxName || null : null;
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -3964,6 +3945,17 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       );
     });
     bindGatewayOwner(checkpointedGatewayOwner);
+    const selectedAgentTransition = runtimeControlFlow.planSelectedAgentTransition({
+      resume,
+      session,
+      selectedAgentName: agent?.name,
+      routerPort: loadBlueprintProfile("routed")?.router.port || 4000,
+      note,
+    });
+    setOnboardBrandingAgent(agent?.name || "openclaw");
+    session = selectedAgentTransition.session;
+    const resumeAgentChanged = selectedAgentTransition.resumeAgentChanged;
+    const forceProviderSelectionForAgentChange = resumeAgentChanged;
     console.log("");
     console.log(`  ${cliDisplayName()} Onboarding`);
     if (isNonInteractive()) note("  (non-interactive mode)");
@@ -4015,17 +4007,22 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       noGpu: opts.noGpu === true,
       env: process.env,
       recordedGpuPassthroughBeforePreflight,
+      commitSelectedAgentTransition: selectedAgentTransition.commit,
       ensureResumePreflightDashboardPortAvailable: () => {
         if (_preflightDashboardPort === null) preflightDashboardPortRangeAvailability();
       },
       preflightDeps: {
         getSandbox: registry.getSandbox.bind(registry),
         getResumeSandboxGpuOverrides,
+        detectGpuForReadiness: () => nim.detectGpu({ proveArm64WslDockerDesktopGpu: null }),
         detectGpu: nim.detectGpu,
         runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions }),
         assessHost,
-        assertCdiNvidiaGpuSpecPresent: preflightUtils.assertCdiNvidiaGpuSpecPresent,
-        rejectUnsupportedContainerRuntime: fatalRuntimePreflight.rejectUnsupportedContainerRuntime,
+        assertOnboardHostReadiness: (host, gpu, options) =>
+          fatalRuntimePreflight.assertOnboardHostReadiness(host, gpu ?? null, {
+            ...options,
+            allowStorageRemediation: !isGatewayExternallySupervised(),
+          }),
         assertDockerBridgeAndContainerDnsHealthy,
         resolveSandboxGpuConfig,
         validateSandboxGpuPreflight,
@@ -4037,6 +4034,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       },
       getInitialGatewayReuseState: () =>
         selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot()).gatewayReuseState,
+      assertGatewayReadiness: async () => {
+        await collectOnboardGatewayReadiness();
+      },
       gatewayName: GATEWAY_NAME,
       recreateSandbox: isRecreateSandbox,
       gatewayDeps: {
@@ -4291,6 +4291,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           recordStepComplete,
           recordStepFailed,
           skippedStepMessage,
+          cuaRegistry: registry,
         }),
         ensureAgentDashboardForward: (name, selectedAgent) =>
           selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : 0,
@@ -4381,7 +4382,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         log: (message) => console.log(message),
       },
     });
-
     const finalFlowResult = await runFinalOnboardFlowSlice({
       context: finalFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
@@ -4496,8 +4496,7 @@ module.exports = {
   startDockerDriverGateway,
   findAvailableDashboardPort,
   startGatewayForRecovery,
-  openshellArgv,
-  runCaptureOpenshell,
+  ...{ openshellArgv, runOpenshell, runCaptureOpenshell, sleepSeconds },
   agentSupportsWebSearch,
   agentSupportsWebSearchProvider,
   createSetupInference,

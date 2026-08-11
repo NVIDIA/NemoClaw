@@ -3,13 +3,12 @@
 
 import { createRequire } from "node:module";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createRebuildFlowHarness,
+  installRebuildFlowTestHooks,
   type RebuildFlowHarness,
-  resetRebuildFlowTestEnvironment,
-  restoreRebuildFlowTestEnvironment,
-} from "../../../../test/helpers/rebuild-flow-harness";
+} from "../../../../test/helpers/rebuild-flow-dcode-harness";
 import {
   setupOllamaLocalInference,
   setupVllmLocalInference,
@@ -136,8 +135,7 @@ function makeRouteApplier() {
   });
 }
 
-beforeEach(resetRebuildFlowTestEnvironment);
-afterEach(restoreRebuildFlowTestEnvironment);
+installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
 
 describe("rebuild local-provider recreation", () => {
   it.each(

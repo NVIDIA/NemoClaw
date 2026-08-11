@@ -46,8 +46,8 @@ describe("container runtime host advisories (#3213)", () => {
 
     expect(result.advisories.map((advisory) => advisory.id)).toEqual([
       "container_runtime_under_provisioned",
-      "unsupported_runtime_warning",
     ]);
+    expect(result.advisories.some(({ id }) => id.includes("unsupported"))).toBe(false);
     expect(result.advisories[0]?.commands).toContain("colima start --cpu 4 --memory 8 --disk 100");
   });
 });

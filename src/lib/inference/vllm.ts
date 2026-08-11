@@ -1444,6 +1444,30 @@ interface InstallVllmOptions {
   promptFn: (q: string) => Promise<string>;
   beforeInstall?: (modelId: string) => void;
   resolveManagedBridgeHost?: (dockerEnv: Record<string, string>) => string;
+  /**
+   * Injected rather than imported so this module does not take a dependency on
+   * the onboard preflight layer. onboard.ts supplies the same probe the gateway
+   * port check uses. Absent means the caller opted out of the guard.
+   */
+  checkServingPort?: (port: number) => Promise<ServingPortProbe>;
+}
+
+/** The subset of the preflight port probe this module consumes. */
+interface ServingPortProbe {
+  ok: boolean;
+  reason?: string;
+}
+
+/**
+ * Name the process holding the serving port so the operator can act, matching
+ * how the Ollama auth proxy reports its own port conflict.
+ */
+function printServingPortConflict(probe: ServingPortProbe): void {
+  console.error(
+    `  vLLM install failed: port ${String(VLLM_PORT)} is already in use by another process.`,
+  );
+  if (probe.reason) console.error(`    ${probe.reason}`);
+  console.error("  Stop that process, then rerun onboarding.");
 }
 
 export function imageIsCached(
@@ -1684,6 +1708,19 @@ async function runVllmInstall(
       }
     }
   }
+
+  // Reject a held serving port before anything durable happens. In
+  // particular, managed bearer auth persists a host credential below and
+  // beforeInstall publishes the selected model to onboarding state. Running
+  // the guard first keeps a refused install free of both side effects.
+  // Port 25000 is not checked here: it belongs to the managed-cluster
+  // rendezvous contract and this single-node path never binds it.
+  const servingPort = await opts.checkServingPort?.(VLLM_PORT);
+  if (servingPort && !servingPort.ok) {
+    printServingPortConflict(servingPort);
+    return { ok: false };
+  }
+
   let hostLocalApiKey: string | null = null;
   if (!dualStationPlan && model.managedBearerAuth) {
     try {

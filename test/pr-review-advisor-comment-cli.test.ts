@@ -132,7 +132,7 @@ describe("PR review advisor comment CLI", () => {
         },
       },
     });
-    expect(selectorTypeComment).toContain("**Recommended E2E:** <code>security-posture</code>");
+    expect(selectorTypeComment).toContain("**Manual-only E2E:** <code>security-posture</code>");
     expect(selectorTypeComment).not.toContain("<code>full-e2e</code>");
   });
 

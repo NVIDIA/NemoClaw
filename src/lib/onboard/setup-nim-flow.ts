@@ -170,6 +170,7 @@ export interface SetupNimFlowDeps {
     recoveredModel: string | null,
     ollamaRunning: boolean,
     state: SetupNimSelectionState,
+    isWindowsHostOllama?: boolean,
   ): Promise<SetupNimSelectionResult>;
   handleWindowsHostOllamaSelection(
     gpu: SetupNimGpu,
@@ -824,6 +825,7 @@ export function createSetupNim(
             recoveredFromSandbox ? recoveredModel : null,
             ollamaRunning,
             state,
+            isWindowsHostOllama,
           );
           ({
             model,
@@ -1002,4 +1004,27 @@ export function createSetupNim(
       inferenceCapabilityCache,
     };
   };
+}
+
+/**
+ * Bind the serving-port probe to the vLLM installer (#8685).
+ *
+ * The installer declares the probe it needs instead of importing the preflight
+ * layer, because `src/lib/inference/vllm.ts` sits at its recorded fan-out
+ * budget. The wiring lives here rather than in `onboard.ts`, which the codebase
+ * growth guardrail keeps net-neutral.
+ */
+export function withServingPortGuard<
+  Options,
+  Install extends (
+    profile: VllmProfile,
+    options: Options & {
+      checkServingPort?: (port: number) => Promise<{ ok: boolean; reason?: string }>;
+    },
+  ) => Promise<{ ok: boolean }>,
+>(
+  install: Install,
+  checkServingPort: (port: number) => Promise<{ ok: boolean; reason?: string }>,
+): (profile: VllmProfile, options: Options) => Promise<{ ok: boolean }> {
+  return (profile, options) => install(profile, { ...options, checkServingPort });
 }

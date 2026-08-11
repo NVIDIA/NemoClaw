@@ -152,6 +152,36 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.events).not.toContain(`stop:${OLD_ID}`);
   });
 
+  it("accepts only the reviewed OCI-user omission before cutover (#8662)", async () => {
+    const fake = fixture();
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request } = authority();
+    const discovered = await adapter.discoverHeldWorkload({
+      sandbox: handle.sandbox,
+      bootstrapIdentity: handle.bootstrapIdentity,
+      expectedImage: handle.plan.image,
+      metadata: handle.plan.metadata,
+    });
+    const snapshot = await adapter.inspectHeldWorkload({ handle, discovered });
+
+    await expect(
+      adapter.prepareBootstrapReplacement({
+        handle,
+        snapshot,
+        request,
+        replacementOptions: { values: {} },
+      }),
+    ).resolves.toMatchObject({ preparedRuntimeId: NEW_ID });
+    expect(fake.original?.Config?.Env).toContain("OPENSHELL_OCI_IMAGE_USER=root");
+    expect(fake.replacement?.Config?.Env).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/^OPENSHELL_OCI_IMAGE_USER=/u)]),
+    );
+    expect(fake.replacement?.Config?.Env).toEqual(
+      expect.arrayContaining(["OPENSHELL_SANDBOX_UID=", "OPENSHELL_SANDBOX_GID="]),
+    );
+    expect(fake.events).not.toContain(`stop:${OLD_ID}`);
+  });
+
   it("preserves signed and accepts Docker-normalized required ulimits before cutover", async () => {
     const fake = fixture();
     fake.original!.HostConfig!.Ulimits = [
@@ -219,6 +249,31 @@ describe("Docker managed bootstrap adapter", () => {
     const fake = fixture({
       replacementEnvironment: (environment) =>
         environment.map((entry) => (entry === "A=1" ? "A=changed" : entry)),
+    });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request } = authority();
+    const discovered = await adapter.discoverHeldWorkload({
+      sandbox: handle.sandbox,
+      bootstrapIdentity: handle.bootstrapIdentity,
+      expectedImage: handle.plan.image,
+      metadata: handle.plan.metadata,
+    });
+    const snapshot = await adapter.inspectHeldWorkload({ handle, discovered });
+
+    await expect(
+      adapter.prepareBootstrapReplacement({
+        handle,
+        snapshot,
+        request,
+        replacementOptions: { values: {} },
+      }),
+    ).rejects.toThrow("replacement environment changed outside declared deltas");
+    expect(fake.events).not.toContain(`stop:${OLD_ID}`);
+  });
+
+  it("rejects a replacement that restores the omitted OCI-user marker (#8662)", async () => {
+    const fake = fixture({
+      replacementEnvironment: (environment) => [...environment, "OPENSHELL_OCI_IMAGE_USER=root"],
     });
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
     const { handle, request } = authority();
