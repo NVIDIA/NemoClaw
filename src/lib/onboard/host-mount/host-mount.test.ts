@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { persistedSandboxHostMountsEqual } from "../../state/registry/host-mount";
 import {
   beginHostMountScope,
@@ -118,6 +118,25 @@ describe("read-only host mount validation", () => {
     expect(persistedSandboxHostMountsEqual([first, second], [first])).toBe(false);
     expect(persistedSandboxHostMountsEqual([first], [second])).toBe(false);
     expect(persistedSandboxHostMountsEqual(undefined, [first])).toBe(false);
+  });
+
+  it("compares reordered distinct Unicode mount keys with a binary total order", () => {
+    const lstat = vi
+      .spyOn(fs, "lstatSync")
+      .mockReturnValue({ isSymbolicLink: () => false } as fs.Stats);
+    const stat = vi.spyOn(fs, "statSync").mockReturnValue({
+      isDirectory: () => true,
+      dev: 1n,
+      ino: 2n,
+    } as fs.BigIntStats);
+    const first = { source: "/srv/ñ", target: "/sandbox/é", readOnly: true as const };
+    const second = { source: "/srv/ñ", target: "/sandbox/é", readOnly: true as const };
+    try {
+      expect(persistedSandboxHostMountsEqual([first, second], [second, first])).toBe(true);
+    } finally {
+      lstat.mockRestore();
+      stat.mockRestore();
+    }
   });
 
   it("rejects a validated source replaced before the sandbox create boundary", () => {
