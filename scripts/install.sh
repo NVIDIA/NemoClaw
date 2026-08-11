@@ -3030,10 +3030,12 @@ repair_installer_nvidia_cdi_spec() {
 
 run_installer_host_preflight() {
   local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/preflight.js"
+  local gateway_management_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/gateway-management.js"
   local host_readiness_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/host.js"
   local onboard_admission_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/onboard-admission.js"
   if ! command_exists node \
     || [[ ! -f "$preflight_module" ]] \
+    || [[ ! -f "$gateway_management_module" ]] \
     || [[ ! -f "$host_readiness_module" ]] \
     || [[ ! -f "$onboard_admission_module" ]]; then
     return 0
@@ -3048,12 +3050,19 @@ run_installer_host_preflight() {
       const preflightPath = process.argv[1];
       const hostReadinessPath = process.argv[2];
       const onboardAdmissionPath = process.argv[3];
+      const gatewayManagementPath = process.argv[4];
       try {
         const { assessHost, planHostAdvisories } = require(preflightPath);
         const { createHostReadinessReport } = require(hostReadinessPath);
         const { evaluateOnboardReadinessAdmission } = require(onboardAdmissionPath);
+        const { loadGatewayManagementDeclaration } = require(gatewayManagementPath);
         const host = assessHost();
         const actions = planHostAdvisories(host);
+        const gatewayManagement = loadGatewayManagementDeclaration();
+        const allowStorageRemediation =
+          gatewayManagement.ok &&
+          (gatewayManagement.declaration === null ||
+            gatewayManagement.declaration?.mode === "nemoclaw-managed");
         const readiness = createHostReadinessReport(
           { nemoclawVersion: "installer", sourceRevision: "installer" },
           {
@@ -3068,17 +3077,38 @@ run_installer_host_preflight() {
           explicitlyOptedOutGpuPassthrough: false,
           allowUnsupportedRuntime: false,
           // The installer starts a NemoClaw-managed onboarding flow. Let the
-          // authoritative onboarding gate apply its supported storage
-          // remediation or reject an externally supervised gateway.
-          allowStorageRemediation: true,
+          // authoritative onboarding gate apply supported storage remediation,
+          // but only when the gateway declaration confirms NemoClaw ownership.
+          allowStorageRemediation,
         });
         const infoLines = [];
         const actionLines = [];
+        const stableIdPattern = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$/;
+        const stableIds = (values) => [
+          ...new Set(
+            (Array.isArray(values) ? values : []).filter(
+              (value) =>
+                typeof value === "string" &&
+                value.length <= 128 &&
+                stableIdPattern.test(value)
+            )
+          ),
+        ];
         if (host.runtime && host.runtime !== "unknown") {
           infoLines.push(`Detected container runtime: ${host.runtime}`);
         }
         if (host.isWsl) {
           infoLines.push("Running under WSL");
+        }
+        if (!admission.admitted) {
+          const findingIds = stableIds(admission.findingIds);
+          const capabilityIds = stableIds(admission.capabilityIds);
+          if (findingIds.length > 0) {
+            actionLines.push(`Admission finding IDs: ${findingIds.join(", ")}`);
+          }
+          if (capabilityIds.length > 0) {
+            actionLines.push(`Admission capability IDs: ${capabilityIds.join(", ")}`);
+          }
         }
         for (const action of actions) {
           actionLines.push(`- ${action.title}: ${action.reason}`);
@@ -3117,7 +3147,7 @@ run_installer_host_preflight() {
       } catch {
         process.exit(0);
       }
-    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module"
+    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module" "$gateway_management_module"
   )"; then
     status=0
   else
