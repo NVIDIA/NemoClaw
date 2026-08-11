@@ -18,7 +18,10 @@ import {
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   expectedLegacyRegistryMetadata,
+  GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
+  legacyGatewayUpgradeHostFirewallOptions,
   oldGatewayUpgradeInstallerArgs,
+  throwGatewayUpgradeSetupFailures,
   upgradeGatewayCleanupScript,
   validateLegacyGatewayUpgradeFixture,
 } from "../live/openshell-gateway-upgrade-helpers.ts";
@@ -99,6 +102,57 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
       currentNemoclawUpgradeRef({ NEMOCLAW_E2E_EXPECTED_SHA: "", GITHUB_SHA: "workflow-sha" }),
     ).toBe("workflow-sha");
     expect(currentNemoclawUpgradeRef({})).toBe("HEAD");
+  });
+
+  it("waits through the historical install for each gateway network", () => {
+    expect(legacyGatewayUpgradeHostFirewallOptions("v0.0.36")).toEqual({
+      networkName: "openshell-cluster-nemoclaw",
+      waitForNetworkMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
+    });
+    for (const nemoclawRef of ["v0.0.55", "v0.0.74", "v0.0.89"]) {
+      expect(legacyGatewayUpgradeHostFirewallOptions(nemoclawRef)).toEqual({
+        networkName: undefined,
+        waitForNetworkMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
+      });
+    }
+    expect(() => legacyGatewayUpgradeHostFirewallOptions("v0.0.90")).toThrow(
+      /Unsupported gateway-upgrade network fixture/,
+    );
+  });
+
+  it("accepts successful legacy install and firewall setup results (#8696)", () => {
+    expect(() =>
+      throwGatewayUpgradeSetupFailures([
+        { status: "fulfilled", value: undefined },
+        { status: "fulfilled", value: undefined },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("preserves one legacy setup failure (#8696)", () => {
+    const failure = new Error("firewall setup failed");
+    expect(() =>
+      throwGatewayUpgradeSetupFailures([
+        { status: "fulfilled", value: undefined },
+        { reason: failure, status: "rejected" },
+      ]),
+    ).toThrow(failure);
+  });
+
+  it("aggregates concurrent legacy setup failures (#8696)", () => {
+    const installFailure = new Error("legacy install failed");
+    const firewallFailure = new Error("firewall setup failed");
+    expect(() =>
+      throwGatewayUpgradeSetupFailures([
+        { reason: installFailure, status: "rejected" },
+        { reason: firewallFailure, status: "rejected" },
+      ]),
+    ).toThrow(
+      expect.objectContaining({
+        errors: [installFailure, firewallFailure],
+        message: "legacy install and host mock firewall setup failed",
+      }),
+    );
   });
 
   it("pins the registry metadata written by each historical release fixture", () => {

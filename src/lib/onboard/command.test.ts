@@ -7,10 +7,12 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { getCredential } from "../credentials/store";
 import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import { servingProfileProvenance } from "../inference/serving/profile-provenance";
 import { resolveOnboardOptions, runOnboardCommand } from "./command";
 import type { OnboardFlags } from "./command-support";
+import { PortableInferenceDescriptorError } from "./experimental/portable-inference-descriptor";
 import { invalidGatewayManagementDeclarationError } from "./gateway-management";
 import { GatewayAuthorityError } from "./gateway-teardown-authority";
 import {
@@ -248,6 +250,7 @@ describe("onboard command options", () => {
       autoYes: true,
       noOllamaAutostart: true,
       experimentalProfile: null,
+      portableInferenceActivation: null,
       servingProfile: null,
       servingProfileProvenance: null,
     });
@@ -276,6 +279,7 @@ describe("onboard command options", () => {
       autoYes: false,
       noOllamaAutostart: false,
       experimentalProfile: null,
+      portableInferenceActivation: null,
       servingProfile: null,
       servingProfileProvenance: null,
     });
@@ -488,7 +492,7 @@ describe("onboard command options", () => {
     expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
   });
 
-  it("prepares and scopes portable profile defaults around onboarding", async () => {
+  it("keeps local portable defaults when no descriptor is present", async () => {
     const env: NodeJS.ProcessEnv = {
       NEMOCLAW_EXPERIMENTAL_PROFILE: "previous-profile",
       NEMOCLAW_PROVIDER: "previous-provider",
@@ -502,6 +506,7 @@ describe("onboard command options", () => {
     await runOnboardCommand({
       flags: { "experimental-profile": "portable" },
       env,
+      loadPortableInferenceDescriptor: async () => null,
       runOnboard: async () => {
         for (const key of [
           "NEMOCLAW_EXPERIMENTAL_PROFILE",
@@ -535,6 +540,69 @@ describe("onboard command options", () => {
       NEMOCLAW_POLICY_TIER: "previous-tier",
       NEMOCLAW_TOOL_DISCLOSURE: "progressive",
     });
+  });
+
+  it("configures portable onboarding from an admitted descriptor without exporting its credential", async () => {
+    vi.stubEnv("COMPATIBLE_API_KEY", undefined);
+    const env: NodeJS.ProcessEnv = {};
+    const runOnboard = vi.fn(async (options) => {
+      expect(options.portableInferenceActivation).toEqual({
+        schemaVersion: 1,
+        baseUrl: "https://inference.example.test/v1",
+        model: "vendor/model-1",
+        expiresAt: "2026-08-10T18:05:00Z",
+      });
+      expect(env).toMatchObject({
+        NEMOCLAW_PROVIDER: "custom",
+        NEMOCLAW_MODEL: "vendor/model-1",
+        NEMOCLAW_ENDPOINT_URL: "https://inference.example.test/v1",
+        NEMOCLAW_PREFERRED_API: "openai-completions",
+      });
+      expect(env.COMPATIBLE_API_KEY).toBeUndefined();
+      expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+      expect(getCredential("COMPATIBLE_API_KEY")).toBe("runtime-only-secret");
+    });
+
+    await runOnboardCommand({
+      flags: { "experimental-profile": "portable" },
+      env,
+      loadPortableInferenceDescriptor: async () => ({
+        schemaVersion: 1,
+        apiKey: "runtime-only-secret",
+        baseUrl: "https://inference.example.test/v1",
+        model: "vendor/model-1",
+        expiresAt: "2026-08-10T18:05:00Z",
+      }),
+      runOnboard,
+    });
+
+    expect(runOnboard).toHaveBeenCalledOnce();
+    expect(env.NEMOCLAW_PROVIDER).toBeUndefined();
+    expect(env.NEMOCLAW_ENDPOINT_URL).toBeUndefined();
+    expect(getCredential("COMPATIBLE_API_KEY")).toBeNull();
+  });
+
+  it("fails before onboarding when a present portable descriptor is invalid", async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const errors: string[] = [];
+    const runOnboard = vi.fn(async () => {});
+
+    await expect(
+      runOnboardCommand({
+        flags: { "experimental-profile": "portable" },
+        env,
+        loadPortableInferenceDescriptor: async () => {
+          throw new PortableInferenceDescriptorError("Runtime inference descriptor has expired.");
+        },
+        runOnboard,
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    expect(runOnboard).not.toHaveBeenCalled();
+    expect(env).toEqual({});
+    expect(errors).toEqual(["  Runtime inference descriptor has expired."]);
   });
 
   it("scopes an agents manifest to one onboarding run", async () => {

@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { gatewayIdForStateDir } from "../../onboard/docker-driver-gateway-config";
 import {
   getNemoclawOpenShellGatewayUserServicePath,
   getOpenShellUserConfigHome,
@@ -48,6 +49,7 @@ function fixture(useXdg = false): Fixture {
 }
 
 function writeManagedService(test: Fixture): string {
+  writeGatewayState(test);
   const servicePath = getNemoclawOpenShellGatewayUserServicePath(test.home, test.env);
   fs.mkdirSync(path.dirname(servicePath), { recursive: true });
   fs.writeFileSync(
@@ -84,16 +86,13 @@ function writeSelectedSandboxRegistry(test: Fixture, sandboxName: string): strin
 }
 
 function writeGatewayState(test: Fixture): string {
-  const configPath = path.join(
-    test.home,
-    ".local",
-    "state",
-    "nemoclaw",
-    "openshell-docker-gateway",
-    "openshell-gateway.toml",
-  );
+  const stateDir = path.join(test.home, ".local", "state", "nemoclaw", "openshell-docker-gateway");
+  const configPath = path.join(stateDir, "openshell-gateway.toml");
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, 'listen_address = "127.0.0.1:8080"\n');
+  fs.writeFileSync(
+    configPath,
+    `[openshell.drivers.docker]\nsandbox_namespace = "${gatewayIdForStateDir(stateDir)}"\n`,
+  );
   return configPath;
 }
 
@@ -109,6 +108,7 @@ function uninstall(
     {
       env: test.env,
       existsSync: (target) => String(target).startsWith(test.root) && fs.existsSync(target),
+      isPortFree: () => true,
       isTty: false,
       platform: "linux",
       resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
@@ -128,7 +128,9 @@ function uninstall(
       run: (command, args, options) =>
         command === "openshell" && args[0] === "gateway" && args[1] === "list"
           ? ok(JSON.stringify(gateways))
-          : run(command, args, options),
+          : command === "systemctl" && args.includes("--property=MainPID")
+            ? ok("0\n")
+            : run(command, args, options),
     },
   );
 }
@@ -243,6 +245,30 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(disabledAt).toBeGreaterThan(deletedAt);
     expect(dockerCalls).toContainEqual(["rm", "-f", "sandbox-id"]);
     expect(fs.existsSync(servicePath)).toBe(false);
+  });
+
+  it("does not signal a scoped service whose sandbox namespace is unproven (#8663)", () => {
+    const test = fixture(true);
+    const servicePath = writeManagedService(test);
+    fs.writeFileSync(writeGatewayState(test), "[openshell.drivers.docker]\n");
+    const calls: string[][] = [];
+
+    const result = uninstall(
+      test,
+      false,
+      {
+        commandExists: (command) => command === "systemctl",
+        run: (command, args) => {
+          calls.push([command, ...args]);
+          return ok();
+        },
+      },
+      [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(fs.existsSync(servicePath)).toBe(true);
+    expect(calls.some(([command]) => command === "systemctl")).toBe(false);
   });
 
   it("preserves the marked Linux unit when scoped sandbox deletion fails (#8220)", () => {

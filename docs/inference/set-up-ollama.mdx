@@ -95,6 +95,19 @@ The starter list includes `qwen3.6:35b` and selects it by default when current G
 When another GPU workload consumes most of the available memory, NemoClaw selects the largest starter model that still fits.
 It pulls the selected model, loads it into memory, and validates it before continuing.
 
+For Local Ollama strict tool-call validation, NemoClaw uses the missing-tool-call retry schedule only when all these conditions apply:
+
+- Ollama returns HTTP `200`.
+- The response contains no structured tool call.
+- The response contains no tool-call JSON in plain message text.
+- The response does not stop at the output token limit after producing only reasoning.
+
+If a response stops at the output token limit after producing only reasoning, NemoClaw retries once with a larger output token limit.
+NemoClaw waits 5, 15, and 30 seconds before the second, third, and fourth validation requests.
+If four consecutive responses meet these conditions, onboarding stops and reports `missing structured tool call` without displaying the response body.
+NemoClaw does not apply the missing-tool-call retry schedule to other compatible endpoints.
+
+
 <AgentOnly variant="openclaw">
 When Ollama reports a loaded-model context length, NemoClaw uses it for the `contextWindow` written to `openclaw.json` unless you set `NEMOCLAW_CONTEXT_WINDOW`.
 Onboarding stops when the selected model does not declare tool support or returns tool-call JSON as plain message text instead of structured tool calls.

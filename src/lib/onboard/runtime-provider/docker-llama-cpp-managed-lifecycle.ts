@@ -21,6 +21,8 @@ import {
   type LlamaCppHostLocalLaunchContract,
   type LlamaCppHostLocalRuntimeBindings,
 } from "../../inference/llama-cpp/host-local-runtime";
+import { formatHostServiceUnreachableMessage } from "../host-service-reachability";
+import { validateUfwRuleOperands } from "../ufw-auto-apply";
 import {
   createDockerLlamaCppPrivateBridgeController,
   type DockerLlamaCppPrivateBridgeAuthority,
@@ -72,6 +74,7 @@ const MUTATION_TIMEOUT_MS = 30 * 60 * 1000;
 const UNCERTAIN_CREATE_ABSENCE_GRACE_MS = MUTATION_TIMEOUT_MS + INSPECT_TIMEOUT_MS;
 const STOP_GRACE_SECONDS = 30;
 const AT_REST = new Set(["created", "dead", "exited"]);
+const CURL_CONNECTIVITY_FAILURE_EXIT_CODES = new Set([7, 28]);
 
 export type DockerLlamaCppManagedLifecycleOptions = HostLocalLlamaCppLifecycleInput;
 
@@ -92,6 +95,7 @@ interface DockerNetworkAuthority {
 interface DockerGatewayBridgeAuthority {
   readonly gatewayIp: string;
   readonly name: typeof OPENSHELL_DOCKER_NETWORK;
+  readonly subnet?: string;
 }
 
 interface DockerContainerInspection {
@@ -298,19 +302,20 @@ function inspectGatewayBridge(engine: ContainerEngine): DockerGatewayBridgeAutho
   ) {
     throw new Error("Docker llama.cpp requires the native OpenShell Docker bridge.");
   }
-  const gatewayIps = configs.flatMap((candidate) => {
+  const gateways = configs.flatMap((candidate) => {
     const config = record(candidate, "Docker llama.cpp OpenShell bridge IPAM entry");
-    return typeof config.Gateway === "string" &&
-      /^172\.(?:1[6-9]|2[0-9]|3[01])\.(?:[0-9]{1,3})\.(?:[0-9]{1,3})$/u.test(config.Gateway)
-      ? [config.Gateway]
-      : typeof config.Gateway === "string" && /^(?:10\.|192\.168\.)/u.test(config.Gateway)
-        ? [config.Gateway]
-        : [];
+    const gatewayIp = config.Gateway;
+    const subnet = config.Subnet;
+    return typeof gatewayIp === "string" &&
+      (/^172\.(?:1[6-9]|2[0-9]|3[01])\.(?:[0-9]{1,3})\.(?:[0-9]{1,3})$/u.test(gatewayIp) ||
+        /^(?:10\.|192\.168\.)/u.test(gatewayIp))
+      ? [{ gatewayIp, ...(typeof subnet === "string" ? { subnet } : {}) }]
+      : [];
   });
-  if (gatewayIps.length !== 1) {
+  if (gateways.length !== 1) {
     throw new Error("Docker llama.cpp requires one private IPv4 OpenShell bridge gateway.");
   }
-  return Object.freeze({ gatewayIp: gatewayIps[0]!, name: OPENSHELL_DOCKER_NETWORK });
+  return Object.freeze({ ...gateways[0]!, name: OPENSHELL_DOCKER_NETWORK });
 }
 
 function inspectNetwork(
@@ -1018,28 +1023,58 @@ function probePrivateBridge(
       timeoutSeconds * 1_000 + INSPECT_TIMEOUT_MS,
     ),
   );
-  requireSuccess(
-    "private sandbox bridge probe",
-    captureMutation(
-      options,
-      lease,
-      execution,
-      [
-        "run",
-        "--rm",
-        "--pull=never",
-        "--network",
-        gateway.name,
-        "--add-host",
-        `${ENDPOINT_HOST}:${gateway.gatewayIp}`,
-        "--entrypoint",
-        "curl",
-        options.probeImageReference,
-        ...curlArguments(`http://${ENDPOINT_HOST}:${String(options.bindings.hostPort)}/health`),
-      ],
-      timeoutSeconds * 1_000 + INSPECT_TIMEOUT_MS,
-    ),
+  const sandboxProbe = captureMutation(
+    options,
+    lease,
+    execution,
+    [
+      "run",
+      "--rm",
+      "--pull=never",
+      "--network",
+      gateway.name,
+      "--add-host",
+      `${ENDPOINT_HOST}:${gateway.gatewayIp}`,
+      "--entrypoint",
+      "curl",
+      options.probeImageReference,
+      ...curlArguments(`http://${ENDPOINT_HOST}:${String(options.bindings.hostPort)}/health`),
+    ],
+    timeoutSeconds * 1_000 + INSPECT_TIMEOUT_MS,
   );
+  if (sandboxProbe.error || sandboxProbe.status !== 0) {
+    const port = options.bindings.hostPort;
+    const subnet = gateway.subnet;
+    if (
+      !sandboxProbe.error &&
+      CURL_CONNECTIVITY_FAILURE_EXIT_CODES.has(sandboxProbe.status) &&
+      subnet &&
+      !validateUfwRuleOperands(subnet, gateway.gatewayIp, port)
+    ) {
+      const remediation = formatHostServiceUnreachableMessage(
+        {
+          ok: false,
+          reason: "tcp_failed",
+          port,
+          networkName: gateway.name,
+          subnet,
+          gatewayIp: gateway.gatewayIp,
+        },
+        { serviceLabel: "managed llama.cpp server", port },
+      );
+      throw new Error(
+        [
+          "Managed llama.cpp host-loopback health check passed, but the OpenShell Docker bridge health check failed.",
+          `    OpenShell Docker network: ${gateway.name}`,
+          `    Source subnet: ${subnet}`,
+          `    Gateway IP address: ${gateway.gatewayIp}`,
+          `    TCP port: ${String(port)}`,
+          remediation,
+        ].join("\n"),
+      );
+    }
+    requireSuccess("private sandbox bridge probe", sandboxProbe);
+  }
   bridge.assertRunning(authority);
   options.journalStore.assertExecution(lease);
 }
