@@ -652,14 +652,15 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(followUp).toContain("Collect One Complete Review Cycle");
     expect(followUp).toContain("Group findings by root cause");
     expect(followUp).toContain("Do not create a separate commit or push for each finding");
-    expect(followUp).toContain("Sensitive-Workflow State Matrix");
-    expect(followUp).toContain("location, access, lifetime, and removal");
+    expect(followUp).toContain("root-cause-and-state-checks.md");
+    expect(followUp).toContain("Record the sibling paths checked");
 
     expect(followUp).toContain("Bind every read to `NVIDIA/NemoClaw`");
     expect(followUp).toContain("Record each page count and terminal pagination signal");
-    expect(followUp).toContain("including pending, cancelled, and skipped results");
+    expect(followUp).toContain(
+      "every required check, including pending, cancelled, and skipped results",
+    );
     expect(followUp).toContain("retained evidence: none");
-    expect(followUp).toContain("Assume a possible write and re-read external state");
     expect(followUp).toContain("stop without further edits, commits, or pushes");
     expect(createPr).toContain("Apply one coherent change set");
   });
