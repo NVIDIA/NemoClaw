@@ -1408,8 +1408,19 @@ NemoClaw removes the temporary state backup after a successful restore or rollba
 If state restoration and rollback both fail, it retains the backup and prints host recovery guidance.
 Mounted state remains available, but a committed swap does not retain other writable-layer changes.
 It is idempotent.
-When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats the recovery action only for an exit status of `1` with blank stdout and a sole nonblank stderr line equal to `SUPERVISOR_BUSY`, with at most three controller attempts.
-The same result is inconclusive during managed settle confirmation and can be probed again only within the configured settle window.
+When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats the recovery action only for these exact transient results:
+
+- Status `1` with blank stdout and exactly one stderr line, `SUPERVISOR_BUSY`.
+- Status `137` with blank stdout and stderr.
+- Status `1` with blank stdout and exactly one stderr line, `Error response from daemon: Container <id> is restarting, wait until the container is running`.
+
+For the Docker result, `<id>` must be a 64-character lowercase hexadecimal ID that matches the selected registry-owned container.
+Recovery makes at most 11 controller attempts in total.
+It stops after 3 of those attempts return `SUPERVISOR_BUSY`.
+Managed settle confirmation treats exact `SUPERVISOR_BUSY` as inconclusive within its configured window.
+Status `137` and the Docker restart result remain terminal during that confirmation.
+The managed supervisor startup waiter accepts the two container-transition results within its separate 11-attempt bound.
+Unbound container IDs, reformatted Docker errors, status `137` with nonblank output, and other diagnostic results are terminal.
 NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because the managed controller uses it for integrity refusals, ambiguous discovery, and process-identity changes.
 It does not repeat the recovery action or treat the settle probe as inconclusive, and instead prints host-side restart and rebuild guidance.
 Other controller failures also stop immediately.
@@ -2492,7 +2503,9 @@ For an OpenClaw WhatsApp sandbox, `--channel whatsapp` probes the sandbox to sep
 A paired channel with no observed inbound delivery exits non-zero with verdict `idle` so an unhealthy bridge cannot pass as healthy.
 The detailed WhatsApp probe stays focused on QR/session runtime diagnostics and does not include rendered-config comparison lines.
 For a Hermes WhatsApp sandbox, `--channel whatsapp` probes only whether the default gateway session path and the `profiles/dashboard-home` session path contain `creds.json`.
-If the dashboard path has credentials and the gateway path is empty, the report prints the supported `config set` command for the `platforms.whatsapp.extra.session_path` configuration key, including the new-configuration-key opt-in when generated configs do not already contain that key.
+If the dashboard path has credentials and the gateway path is empty, the report tells you to run `$$nemoclaw <sandbox> channels remove whatsapp` and then `$$nemoclaw <sandbox> channels add whatsapp`, because a rebuild restores the legacy session instead of dropping it.
+Pair again from the dashboard so credentials use `/sandbox/.hermes/platforms/whatsapp/session`.
+Rerun `$$nemoclaw <sandbox> channels status --channel whatsapp`.
 NemoClaw does not treat a Hermes session file as live inbound-health evidence.
 
 For Telegram, `--channel telegram` probes the sandbox to report the gateway process, Bot API reachability, and inbound delivery alongside the config comparison.

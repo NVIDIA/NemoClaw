@@ -55,11 +55,16 @@ runs:
       run: |
         npx prek run --all-files --stage pre-commit \
           --skip source-shape-test-budget \
+          --skip test-file-size-budget \
           --skip test-skills-yaml
 
     - name: Run source-shape budget
       shell: bash
       run: npm run source-shape:check
+
+    - name: Run test file size budget
+      shell: bash
+      run: npm run test-size:check
 
     - name: Verify platform matrix is in sync
       shell: bash
