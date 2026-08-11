@@ -15,10 +15,15 @@ function openClawHealthFragment(endpoint: string): string {
   const probe = managedImageOpenShellProbe("openclaw");
   const assignmentMarker = 'openclaw_health_code="';
   const assignmentOffset = probe.indexOf(assignmentMarker);
+  const caseEndMarker = "\nesac";
+  const caseEndOffset = probe.indexOf(caseEndMarker, assignmentOffset);
   expect(assignmentOffset).toBeGreaterThanOrEqual(0);
+  expect(caseEndOffset).toBeGreaterThan(assignmentOffset);
   expect(probe).toContain(`-w '%{http_code}'`);
   expect(probe).toContain(OPENCLAW_HEALTH_URL);
-  return probe.slice(assignmentOffset).replace(OPENCLAW_HEALTH_URL, endpoint);
+  return probe
+    .slice(assignmentOffset, caseEndOffset + caseEndMarker.length)
+    .replace(OPENCLAW_HEALTH_URL, endpoint);
 }
 
 function runOpenClawHealthProbe(endpoint: string) {
