@@ -14,6 +14,7 @@ import {
 
 import {
   CREDENTIAL_SENSITIVE_BASENAMES,
+  isDependencyLockfile,
   isSensitiveFile,
   sanitizeConfigFileContent,
   sanitizeEnvFileContent,
@@ -21,11 +22,33 @@ import {
 
 const MAX_SANITIZATION_PASSES = 3;
 
+const VENDORED_DEPENDENCY_DIRECTORY = "node_modules";
+
+/**
+ * Whether a scanned file is machine-generated dependency material rather than
+ * an artifact an operator or agent writes credentials into.
+ *
+ * Package names are object keys in a lockfile and in an installed package's own
+ * manifest. The credential key matcher therefore reads `cookie`, `js-tokens`,
+ * and `path-key` as secrets and replaces the versions they resolve to.
+ * `npm install` then fails. That failure is not a credential control; it
+ * corrupts the dependency tree that the sandbox restores.
+ * `shouldScanSnapshotFileForCredentials` already excludes lockfiles from the
+ * leak check for the same reason.
+ */
+function isVendoredDependencyArtifact(filePath: string, basename: string): boolean {
+  if (isDependencyLockfile(basename)) return true;
+  return filePath.split("/").includes(VENDORED_DEPENDENCY_DIRECTORY);
+}
+
 function actionForScannedFile(file: SnapshotScannedFile): SnapshotSanitizationAction | null {
   const name = path.posix.basename(file.path).toLowerCase();
   if (isSensitiveFile(name)) {
     return { kind: "remove", path: file.path, metadata: file.metadata };
   }
+  // Runs after the sensitive-basename check so a `CREDENTIAL_SENSITIVE_BASENAMES`
+  // file inside a dependency tree is still removed.
+  if (isVendoredDependencyArtifact(file.path, name)) return null;
 
   const raw = decodeDescriptorSnapshotContent(file.content);
   if (raw === null) {
