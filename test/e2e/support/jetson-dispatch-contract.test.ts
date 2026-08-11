@@ -31,6 +31,7 @@ import {
   MAX_JETSON_DISPATCH_LOG_BYTES,
 } from "../../../tools/e2e/jetson-dispatch-lifecycle.mts";
 import { createJetsonDispatchServer } from "../../../tools/e2e/jetson-dispatch-service.mts";
+import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 
 const NOW_SECONDS = 1_800_000_000;
 const REPOSITORY_ID = "987654321";
@@ -550,33 +551,42 @@ describe("Jetson single-device lifecycle", () => {
     }
   });
 
-  it("restores private completed status after in-memory eviction (#8142)", async () => {
-    const stateDirectory = temporaryDirectory();
-    const dispatch = coordinator(stateDirectory, worker());
-    await dispatch.initialize();
-    let firstJobId = "";
-    for (let index = 0; index < 129; index += 1) {
-      const accepted = dispatch.dispatch(
-        { ...REQUEST, candidateSha: index.toString(16).padStart(40, "0") },
-        identity(),
+  it(
+    "restores private completed status after in-memory eviction (#8142)",
+    testTimeoutOptions(10_000),
+    async () => {
+      const stateDirectory = temporaryDirectory();
+      const dispatch = coordinator(stateDirectory, worker());
+      await dispatch.initialize();
+      let firstJobId = "";
+      for (let index = 0; index < 129; index += 1) {
+        const accepted = dispatch.dispatch(
+          { ...REQUEST, candidateSha: index.toString(16).padStart(40, "0") },
+          identity(),
+        );
+        firstJobId ||= accepted.jobId;
+        await waitForCompletion(dispatch, accepted.jobId);
+      }
+
+      expect(dispatch.status(firstJobId)).toMatchObject({ state: "completed" });
+      expect(fs.existsSync(path.join(stateDirectory, `${firstJobId}.json`))).toBe(true);
+      fs.writeFileSync(path.join(stateDirectory, `${firstJobId}.json`), "{");
+      await expect(coordinator(stateDirectory, worker()).initialize()).rejects.toThrow(
+        `Jetson dispatch status ${firstJobId}.json is invalid`,
       );
-      firstJobId ||= accepted.jobId;
-      await waitForCompletion(dispatch, accepted.jobId);
-    }
+    },
+  );
 
-    expect(dispatch.status(firstJobId)).toMatchObject({ state: "completed" });
-    expect(fs.existsSync(path.join(stateDirectory, `${firstJobId}.json`))).toBe(true);
-    fs.writeFileSync(path.join(stateDirectory, `${firstJobId}.json`), "{");
-    await expect(coordinator(stateDirectory, worker()).initialize()).rejects.toThrow(
-      `Jetson dispatch status ${firstJobId}.json is invalid`,
-    );
-  });
-
-  it("keeps the device locked when cleanup fails (#8142)", async () => {
+  it("keeps the device locked when cleanup loses a pre-existing Ollama model (#8142)", async () => {
     const stateDirectory = temporaryDirectory();
     const dispatch = coordinator(
       stateDirectory,
-      worker({ cleanup: async () => Promise.reject(new Error("cleanup helper failed")) }),
+      worker({
+        cleanup: async () =>
+          Promise.reject(
+            new Error("Jetson cleanup did not preserve every pre-existing Ollama model"),
+          ),
+      }),
     );
     await dispatch.initialize();
     const accepted = dispatch.dispatch(REQUEST, identity());
@@ -610,6 +620,66 @@ describe("Jetson single-device lifecycle", () => {
       conclusion: "cleanup-failed",
       error: "artifact collection failed; Jetson cleanup failed: cleanup verification failed",
     });
+    expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(true);
+  });
+
+  it("keeps a cleanup failure visible after a 500-character execution error (#8142)", async () => {
+    const stateDirectory = temporaryDirectory();
+    const dispatch = coordinator(
+      stateDirectory,
+      worker({
+        cleanup: async () => Promise.reject(new Error("cleanup verification failed")),
+        run: async () => Promise.reject(new Error("x".repeat(500))),
+      }),
+    );
+    await dispatch.initialize();
+    const accepted = dispatch.dispatch(REQUEST, identity());
+    const completed = await waitForCompletion(dispatch, accepted.jobId);
+
+    expect(completed.error).toContain("Jetson cleanup failed: cleanup verification failed");
+    expect(completed.error).toHaveLength(500);
+    expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(true);
+  });
+
+  it("keeps a final persistence failure visible after a 500-character execution error (#8142)", async () => {
+    const stateDirectory = temporaryDirectory();
+    let rejectRun!: (error: Error) => void;
+    const run = vi.fn(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          rejectRun = reject;
+        }),
+    );
+    const dispatch = coordinator(stateDirectory, worker({ run }));
+    await dispatch.initialize();
+    const accepted = dispatch.dispatch(REQUEST, identity());
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    const statusPath = path.join(stateDirectory, `${accepted.jobId}.json`);
+    fs.rmSync(statusPath);
+    fs.mkdirSync(statusPath);
+    rejectRun(new Error("x".repeat(500)));
+    const completed = await waitForCompletion(dispatch, accepted.jobId);
+
+    expect(completed.error).toContain("Final status persistence failed:");
+    expect(completed.error).toHaveLength(500);
+    expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(true);
+  });
+
+  it("keeps a lock-removal failure visible after a 500-character execution error (#8142)", async () => {
+    const stateDirectory = temporaryDirectory();
+    vi.spyOn(fs, "unlinkSync").mockImplementationOnce(() => {
+      throw new Error("lock filesystem unavailable");
+    });
+    const dispatch = coordinator(
+      stateDirectory,
+      worker({ run: async () => Promise.reject(new Error("x".repeat(500))) }),
+    );
+    await dispatch.initialize();
+    const accepted = dispatch.dispatch(REQUEST, identity());
+    const completed = await waitForCompletion(dispatch, accepted.jobId);
+
+    expect(completed.error).toContain("Jetson lock removal failed: lock filesystem unavailable");
+    expect(completed.error).toHaveLength(500);
     expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(true);
   });
 

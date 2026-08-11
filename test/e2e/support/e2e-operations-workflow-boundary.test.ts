@@ -14,6 +14,7 @@ import {
   validateE2eOperationsWorkflowBoundary,
 } from "../../../tools/e2e/operations-workflow-boundary.mts";
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
+import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 
 const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (
   ...parameters: string[]
@@ -26,7 +27,7 @@ function workflowScript(jobName: string, stepName: string): string {
   return step?.with?.script as string;
 }
 
-describe("E2E operations workflow boundary", () => {
+describe("E2E operations workflow boundary", testTimeoutOptions(15_000), () => {
   it("accepts the checked-in workflow and rejects aggregation, permission, and secret-scope drift", () => {
     expect(validateE2eOperationsWorkflowBoundary()).toEqual([]);
 

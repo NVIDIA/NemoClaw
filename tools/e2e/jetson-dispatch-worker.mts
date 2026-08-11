@@ -6,11 +6,13 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { JetsonDispatchRequest } from "./jetson-dispatch-contract.mts";
-import {
-  decodeJetsonArtifactArchive,
+import type {
   JetsonDeviceIdentity,
   JetsonDispatchWorker,
   JetsonWorkerResult,
+} from "./jetson-dispatch-lifecycle.mts";
+import {
+  decodeJetsonArtifactArchive,
   MAX_JETSON_ARTIFACT_ARCHIVE_BYTES,
 } from "./jetson-dispatch-lifecycle.mts";
 import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.mts";
@@ -24,7 +26,10 @@ const SAFE_PROCESS_ENV = {
   LANG: "C.UTF-8",
   PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 };
-const MAX_BASELINE_BYTES = 4 * 1024;
+const MAX_BASELINE_OUTPUT_BYTES = 4 * 1024;
+const MAX_BASELINE_RECORD_BYTES = 8 * 1024;
+const MAX_OLLAMA_MODELS = 64;
+const MAX_OLLAMA_MODELS_BYTES = 3 * 1024;
 const MAX_CLEANUP_EVIDENCE_BYTES = 64 * 1024;
 const CLEANUP_EVIDENCE_BEGIN = "nemoclaw-cleanup-evidence-v1-begin";
 const CLEANUP_EVIDENCE_END = "nemoclaw-cleanup-evidence-v1-end";
@@ -85,7 +90,12 @@ case "$docker_runtimes" in
   *nvidia*) ;;
   *) echo "Docker does not report the NVIDIA runtime" >&2; exit 1 ;;
 esac
-ollama_models_sha256="$(ollama list | awk 'NR > 1 && NF >= 2 { print $1 "\t" $2 }' | sort | sha256sum | cut -d ' ' -f 1)"
+ollama_models_base64="$(
+  ollama list |
+    awk 'NR == 1 { if ($1 != "NAME" || $2 != "ID") exit 1; next } { if (NF < 2) exit 1; print $1 "\t" $2 } END { if (NR == 0) exit 1 }' |
+    LC_ALL=C sort |
+    base64 --wrap=0
+)"
 test_owned_images="$(docker image ls nemoclaw-sandbox-local --format '{{.Repository}}\t{{.Tag}}' | awk '$1 == "nemoclaw-sandbox-local" && index($2, "e2e-jetson-nvmap-") == 1 { print $1 ":" $2 }')"
 [ -z "$test_owned_images" ] || { echo "A test-owned Jetson image remains before dispatch" >&2; exit 1; }
 printf 'nodePath\t'; printf '%s' "$node_path" | clean_line
@@ -93,7 +103,7 @@ printf '\nnodeVersion\t'; printf '%s' "$node_version" | clean_line
 printf '\nnpmPath\t'; printf '%s' "$npm_path" | clean_line
 printf '\nnpmVersion\t'; printf '%s' "$npm_version" | clean_line
 printf '\nollamaPath\t'; printf '%s' "$ollama_path" | clean_line
-printf '\nollamaModelsSha256\t'; printf '%s' "$ollama_models_sha256" | clean_line
+printf '\nollamaModelsBase64\t'; printf '%s' "$ollama_models_base64" | clean_line
 printf '\nopenshellState\tabsent'
 printf '\n'
 `;
@@ -164,10 +174,47 @@ for pid in "${"${recorded_process_ids[@]}"}"; do
     exit 1
   fi
 done
+read_proc_uid() {
+  awk '/^Uid:/ { print $2; found = 1; exit } END { exit found ? 0 : 1 }' "$1/status" 2>/dev/null
+}
+read_proc_environment() {
+  dd if="$1/environ" status=none 2>/dev/null | tr '\000' '\n'
+}
+read_proc_command() {
+  dd if="$1/cmdline" status=none 2>/dev/null | tr '\000' ' '
+}
+handle_proc_read_failure() {
+  local proc_dir="$1" field="$2" process_uid directory_uid
+  [ -d "$proc_dir" ] || return 0
+  if process_uid="$(read_proc_uid "$proc_dir")"; then
+    [ "$process_uid" = "$(id -u)" ] || return 0
+  else
+    [ -d "$proc_dir" ] || return 0
+    if ! directory_uid="$(stat -c %u "$proc_dir" 2>/dev/null)"; then
+      [ -d "$proc_dir" ] || return 0
+      echo "Unable to verify the owner of a live process after a failed $field read" >&2
+      exit 1
+    fi
+    [ "$directory_uid" = "$(id -u)" ] || return 0
+  fi
+  echo "Unable to inspect $field for a live same-user process" >&2
+  exit 1
+}
 for proc_dir in /proc/[0-9]*; do
-  [ -r "$proc_dir/environ" ] && [ -r "$proc_dir/cmdline" ] || continue
-  tr '\000' '\n' <"$proc_dir/environ" | grep -Fqx "HOME=$job_home" || continue
-  cmdline="$(tr '\000' ' ' <"$proc_dir/cmdline")"
+  if ! process_uid="$(read_proc_uid "$proc_dir")"; then
+    handle_proc_read_failure "$proc_dir" owner
+    continue
+  fi
+  [ "$process_uid" = "$(id -u)" ] || continue
+  if ! environment="$(read_proc_environment "$proc_dir")"; then
+    handle_proc_read_failure "$proc_dir" environment
+    continue
+  fi
+  printf '%s\n' "$environment" | grep -Fqx "HOME=$job_home" || continue
+  if ! cmdline="$(read_proc_command "$proc_dir")"; then
+    handle_proc_read_failure "$proc_dir" command
+    continue
+  fi
   case "$cmdline" in
     *ollama-auth-proxy.* | *openshell-gateway* | *openshell-forward* | *openshell\ forward* | *cloudflared*)
       echo "A job-owned helper process remains" >&2
@@ -205,6 +252,7 @@ install -d -m 0700 \
   "$workspace/home/.local/share" \
   "$workspace/home/.local/state" \
   "$workspace/npm-prefix" \
+  "$workspace/runtime" \
   "$workspace/tmp"
 
 export HOME="$workspace/home"
@@ -214,10 +262,11 @@ export XDG_CONFIG_HOME="$workspace/home/.config"
 export XDG_DATA_HOME="$workspace/home/.local/share"
 export XDG_STATE_HOME="$workspace/home/.local/state"
 export XDG_BIN_HOME="$workspace/home/.local/bin"
+export XDG_RUNTIME_DIR="$workspace/runtime"
 export npm_config_prefix="$workspace/npm-prefix"
 export PATH="$XDG_BIN_HOME:$workspace/npm-prefix/bin:$PATH"
 export NEMOCLAW_JETSON_WORKSPACE="$workspace"
-unset NEMOCLAW_OPENSHELL_BIN NEMOCLAW_OPENSHELL_GATEWAY_BIN
+unset DBUS_SESSION_BUS_ADDRESS NEMOCLAW_OPENSHELL_BIN NEMOCLAW_OPENSHELL_GATEWAY_BIN
 
 if [ -w /usr/local/bin ] || [ -w /usr/bin ]; then
   echo "Jetson job user must not be able to install OpenShell into a host binary directory" >&2
@@ -517,12 +566,91 @@ interface JetsonPreservedBaseline {
   npmPath: string;
   npmVersion: string;
   ollamaPath: string;
-  ollamaModelsSha256: string;
+  ollamaModels: JetsonOllamaModel[];
   openshellState: "absent";
 }
 
+interface JetsonOllamaModel {
+  name: string;
+  id: string;
+}
+
+function parseOllamaModelsBase64(value: string): JetsonOllamaModel[] {
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)) {
+    throw new Error("Jetson protected-baseline Ollama model data is malformed");
+  }
+  const decoded = Buffer.from(value, "base64");
+  if (
+    decoded.length > MAX_OLLAMA_MODELS_BYTES ||
+    decoded.toString("base64") !== value ||
+    decoded.includes(0)
+  ) {
+    throw new Error("Jetson protected-baseline Ollama model data is malformed or oversized");
+  }
+  const rows = decoded.length === 0 ? [] : decoded.toString("utf8").trimEnd().split("\n");
+  if (rows.length > MAX_OLLAMA_MODELS) {
+    throw new Error("Jetson protected-baseline Ollama model data is malformed or oversized");
+  }
+  const models = rows.map((row) => {
+    const fields = row.split("\t");
+    if (
+      fields.length !== 2 ||
+      !/^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$/u.test(fields[0]!) ||
+      !/^[a-f0-9]{12,64}$/u.test(fields[1]!)
+    ) {
+      throw new Error("Jetson protected-baseline Ollama model data is malformed");
+    }
+    return { name: fields[0]!, id: fields[1]! };
+  });
+  const sorted = [...models].sort((left, right) => {
+    if (left.name !== right.name) return left.name < right.name ? -1 : 1;
+    if (left.id === right.id) return 0;
+    return left.id < right.id ? -1 : 1;
+  });
+  const names = new Set<string>();
+  if (
+    models.some((model) => {
+      if (names.has(model.name)) return true;
+      names.add(model.name);
+      return false;
+    }) ||
+    models.some(
+      (model, index) => model.name !== sorted[index]!.name || model.id !== sorted[index]!.id,
+    )
+  ) {
+    throw new Error("Jetson protected-baseline Ollama model data is duplicate or ambiguous");
+  }
+  return models;
+}
+
+function validateOllamaModels(value: unknown): JetsonOllamaModel[] {
+  if (!Array.isArray(value) || value.length > MAX_OLLAMA_MODELS) {
+    throw new Error("Jetson protected-baseline Ollama model record is malformed or oversized");
+  }
+  const serialized = value
+    .map((model) => {
+      if (!model || typeof model !== "object" || Array.isArray(model)) {
+        throw new Error("Jetson protected-baseline Ollama model record is malformed");
+      }
+      const record = model as Record<string, unknown>;
+      if (
+        Object.keys(record).sort().join(",") !== "id,name" ||
+        typeof record.name !== "string" ||
+        typeof record.id !== "string"
+      ) {
+        throw new Error("Jetson protected-baseline Ollama model record is malformed");
+      }
+      return `${record.name}\t${record.id}`;
+    })
+    .join("\n");
+  if (Buffer.byteLength(serialized) > MAX_OLLAMA_MODELS_BYTES) {
+    throw new Error("Jetson protected-baseline Ollama model record is malformed or oversized");
+  }
+  return parseOllamaModelsBase64(Buffer.from(serialized).toString("base64"));
+}
+
 function parsePreservedBaseline(output: string): JetsonPreservedBaseline {
-  if (Buffer.byteLength(output) > MAX_BASELINE_BYTES) {
+  if (Buffer.byteLength(output) > MAX_BASELINE_OUTPUT_BYTES) {
     throw new Error("Jetson protected-baseline output is too large");
   }
   const entries = new Map<string, string>();
@@ -531,7 +659,11 @@ function parsePreservedBaseline(output: string): JetsonPreservedBaseline {
     if (separator < 1) throw new Error("Jetson protected-baseline output is malformed");
     const key = line.slice(0, separator);
     const value = line.slice(separator + 1);
-    if (entries.has(key) || value.length === 0 || /[\u0000-\u001f\u007f]/u.test(value)) {
+    if (
+      entries.has(key) ||
+      (value.length === 0 && key !== "ollamaModelsBase64") ||
+      /[\u0000-\u001f\u007f]/u.test(value)
+    ) {
       throw new Error("Jetson protected-baseline output is malformed");
     }
     entries.set(key, value);
@@ -542,7 +674,7 @@ function parsePreservedBaseline(output: string): JetsonPreservedBaseline {
     "npmPath",
     "npmVersion",
     "ollamaPath",
-    "ollamaModelsSha256",
+    "ollamaModelsBase64",
     "openshellState",
   ] as const;
   if (entries.size !== expected.length || expected.some((key) => !entries.has(key))) {
@@ -554,20 +686,20 @@ function parsePreservedBaseline(output: string): JetsonPreservedBaseline {
     npmPath: entries.get("npmPath")!,
     npmVersion: entries.get("npmVersion")!,
     ollamaPath: entries.get("ollamaPath")!,
-    ollamaModelsSha256: entries.get("ollamaModelsSha256")!,
+    ollamaModels: parseOllamaModelsBase64(entries.get("ollamaModelsBase64")!),
     openshellState: entries.get("openshellState") as "absent",
   };
   if (baseline.openshellState !== "absent") {
     throw new Error("Jetson protected-baseline OpenShell state is malformed");
   }
-  if (!/^[a-f0-9]{64}$/u.test(baseline.ollamaModelsSha256)) {
-    throw new Error("Jetson protected-baseline Ollama model digest is malformed");
+  if (Buffer.byteLength(`${JSON.stringify(baseline)}\n`) > MAX_BASELINE_RECORD_BYTES) {
+    throw new Error("Jetson protected-baseline record is too large");
   }
   return baseline;
 }
 
 function parsePreservedBaselineJson(output: string): JetsonPreservedBaseline {
-  if (Buffer.byteLength(output) > MAX_BASELINE_BYTES) {
+  if (Buffer.byteLength(output) > MAX_BASELINE_RECORD_BYTES) {
     throw new Error("Jetson protected-baseline record is too large");
   }
   let parsed: unknown;
@@ -586,16 +718,50 @@ function parsePreservedBaselineJson(output: string): JetsonPreservedBaseline {
     "npmPath",
     "npmVersion",
     "ollamaPath",
-    "ollamaModelsSha256",
+    "ollamaModels",
     "openshellState",
   ];
   if (
     Object.keys(record).length !== expected.length ||
-    expected.some((key) => typeof record[key] !== "string")
+    expected.some((key) => key !== "ollamaModels" && typeof record[key] !== "string")
   ) {
     throw new Error("Jetson protected-baseline record is incomplete");
   }
-  return parsePreservedBaseline(expected.map((key) => `${key}\t${record[key]}`).join("\n"));
+  const ollamaModels = validateOllamaModels(record.ollamaModels);
+  const baselineOutput = [
+    `nodePath\t${record.nodePath}`,
+    `nodeVersion\t${record.nodeVersion}`,
+    `npmPath\t${record.npmPath}`,
+    `npmVersion\t${record.npmVersion}`,
+    `ollamaPath\t${record.ollamaPath}`,
+    `ollamaModelsBase64\t${Buffer.from(
+      ollamaModels.map((model) => `${model.name}\t${model.id}`).join("\n"),
+    ).toString("base64")}`,
+    `openshellState\t${record.openshellState}`,
+  ].join("\n");
+  return parsePreservedBaseline(baselineOutput);
+}
+
+function protectedHostBaselineMatches(
+  expected: JetsonPreservedBaseline,
+  actual: JetsonPreservedBaseline,
+): boolean {
+  return (
+    expected.nodePath === actual.nodePath &&
+    expected.nodeVersion === actual.nodeVersion &&
+    expected.npmPath === actual.npmPath &&
+    expected.npmVersion === actual.npmVersion &&
+    expected.ollamaPath === actual.ollamaPath &&
+    expected.openshellState === actual.openshellState
+  );
+}
+
+function preservesOllamaModels(
+  expected: JetsonPreservedBaseline,
+  actual: JetsonPreservedBaseline,
+): boolean {
+  const actualModels = new Map(actual.ollamaModels.map((model) => [model.name, model.id]));
+  return expected.ollamaModels.every((model) => actualModels.get(model.name) === model.id);
 }
 
 function validateCleanupEvidence(value: unknown): JetsonCleanupEvidence {
@@ -827,7 +993,7 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
     const serializedEvidence = `${JSON.stringify(persistedEvidence)}\n`;
     const expectedRaw = readPrivateRegularFile(this.#baselinePath(options.jobId), {
       allowMissing: true,
-      maxBytes: MAX_BASELINE_BYTES,
+      maxBytes: MAX_BASELINE_RECORD_BYTES,
     });
     const verification = await this.#runProcess({
       executable: "ssh",
@@ -846,8 +1012,11 @@ export class SshJetsonDispatchWorker implements JetsonDispatchWorker {
     const actual = parsePreservedBaseline(verification.stdout);
     if (expectedRaw === null) return;
     const expected = parsePreservedBaselineJson(expectedRaw);
-    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-      throw new Error("Jetson protected tool or Ollama model baseline differs after cleanup");
+    if (!protectedHostBaselineMatches(expected, actual)) {
+      throw new Error("Jetson protected tool baseline differs after cleanup");
+    }
+    if (!preservesOllamaModels(expected, actual)) {
+      throw new Error("Jetson cleanup did not preserve every pre-existing Ollama model");
     }
   }
 

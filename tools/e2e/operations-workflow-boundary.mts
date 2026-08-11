@@ -241,8 +241,11 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   ) {
     errors.push("Manual PR E2E concurrency must be scoped to its pull request");
   }
-  if (workflow.concurrency?.["cancel-in-progress"] !== "${{ inputs.checkout_sha != '' }}") {
-    errors.push("Manual PR E2E concurrency must cancel obsolete runs");
+  if (
+    workflow.concurrency?.["cancel-in-progress"] !==
+    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch }}"
+  ) {
+    errors.push("Manual PR E2E concurrency must not cancel an active Jetson dispatch");
   }
 
   const matrixJob = workflow.jobs["generate-matrix"] ?? {};

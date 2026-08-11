@@ -98,9 +98,11 @@ The worker creates `/var/tmp/nemoclaw-jetson-e2e/<jobId>` and sets these job-loc
 - `XDG_DATA_HOME=<workspace>/home/.local/share`
 - `XDG_STATE_HOME=<workspace>/home/.local/state`
 - `XDG_BIN_HOME=<workspace>/home/.local/bin`
+- `XDG_RUNTIME_DIR=<workspace>/runtime`
 - `npm_config_prefix=<workspace>/npm-prefix`
 - `PATH=$XDG_BIN_HOME:<workspace>/npm-prefix/bin:$PATH`
 
+The worker unsets `DBUS_SESSION_BUS_ADDRESS` so onboarding uses OpenShell's existing standalone fallback when the job-local systemd user service cannot load.
 The worker must not set `NEMOCLAW_DEFER_OPENSHELL_INSTALL`.
 It must not invoke `scripts/install-openshell.sh`.
 The existing live E2E runs `bash install.sh --non-interactive`.
@@ -127,11 +129,16 @@ Before candidate execution, the worker records this protected tool and model bas
 
 - The resolved Node.js path and version.
 - The resolved npm path and version.
-- The resolved Ollama path and a SHA-256 digest of the sorted Ollama model names and IDs.
+- The resolved Ollama path and the sorted pre-existing Ollama model names and IDs.
 - The required absence of host-level `openshell`, `openshell-gateway`, and `openshell-sandbox` binaries.
 
+The Ollama list accepts at most 64 sorted, unique model name and ID rows whose decoded content is at most 3 KiB.
+The SSH probe output is limited to 4 KiB, while the persisted baseline record and its reader are limited to 8 KiB.
+Before candidate execution, the worker serializes the baseline and rejects it if persistence would exceed that 8 KiB read bound.
 The dispatcher stores the recorded values in a private `<jobId>.baseline.json` state file.
-After cleanup, the worker repeats the probes and compares them with that record.
+After cleanup, the worker repeats the probes and requires every pre-existing Ollama model name and ID to remain.
+Additional models installed by the job, such as `qwen3.5:9b`, are allowed only while the post-cleanup list stays within the same row and size bounds.
+An oversized post-cleanup list fails cleanup and retains the device lock without removing any model.
 Before and after candidate execution, the worker also requires `/dev/nvmap` and the Docker NVIDIA runtime to be available.
 The worker keeps the record through cleanup and device-lock release so startup recovery can repeat the same comparison.
 The host retention policy may remove it only after no device lock exists.
@@ -151,6 +158,7 @@ These other host resources also remain outside the cleanup allowlist:
 - Colossus credentials, service configuration, and job evidence.
 
 The cleanup program must not change or remove any resource outside its allowlist.
+It never removes Ollama models.
 Review its command construction and target resolution before deployment.
 Do not use broad process termination, Docker pruning, wildcard paths, or host-wide package removal.
 
@@ -255,6 +263,8 @@ It accepts a helper or forward PID only when its environment has the exact job `
 - `openshell forward`
 - `cloudflared`
 
+Discovery, worker absence verification, and the teardown probe fail closed when the owner, environment, or command of a live same-user process cannot be read from `/proc`.
+A process that disappears during inspection or is identified as owned by a different user is ignored.
 It merges them into a mode-`0600` private `<jobId>.cleanup.json` record on Colossus.
 The record survives retries so stale-lock recovery can clean and verify the same identities.
 The cleanup program must not execute OpenShell or any other executable installed in the job workspace.
@@ -265,7 +275,7 @@ The destructive phase must perform these bounded actions:
 2. Remove the exact labeled sandbox containers and exact gateway container.
 3. Remove the recorded volumes and reserved test image tags.
 4. Remove the helper-service directory and `/var/tmp/nemoclaw-jetson-e2e/<validated-job-id>` workspace for the locked job.
-5. Independently verify that the allowlisted resources are absent, host OpenShell remains absent, and the host baseline matches.
+5. Independently verify that the allowlisted resources are absent, host OpenShell remains absent, the protected tools match, and every pre-existing Ollama model name and ID remains.
 
 The cleanup program must be idempotent.
 It must treat an already absent allowlisted resource as success.
@@ -301,7 +311,7 @@ After the helper succeeds, the worker independently verifies these conditions ov
 - The `openshell-cluster-nemoclaw` gateway container and volume are absent.
 - No `nemoclaw-sandbox-local` image has a tag that begins with `e2e-jetson-nvmap-`.
 - Every Docker volume and process ID in the merged cleanup record is absent.
-- Every recorded Node.js, npm, Ollama, and Ollama model baseline value matches.
+- Every recorded Node.js, npm, and Ollama tool value matches, and every pre-existing Ollama model name and ID remains.
 - No host-level `openshell`, `openshell-gateway`, or `openshell-sandbox` binary resolves or exists in a checked host binary path.
 - `/dev/nvmap` exists, and Docker still reports the NVIDIA runtime.
 
@@ -652,6 +662,9 @@ gh workflow run .github/workflows/e2e.yaml --repo NVIDIA/NemoClaw --ref main \
   -f review_reason='Reviewed this PR commit for the isolated Jetson E2E.'
 ```
 
+The `jetson-nvmap-gpu` job uses the fixed `jetson-nvmap-gpu-colossus` concurrency group.
+`queue: max` queues every dispatch, and `cancel-in-progress: false` prevents automatic cancellation.
+
 The controller must run on `ubuntu-latest`.
 The GitHub controller log must show one `Jetson dispatch accepted as <jobId>` line.
 The Colossus journal must not contain a bearer token.
@@ -757,6 +770,7 @@ A repeated deterministic dispatch returns that recovered failure without rerunni
 If cleanup fails, startup fails or the completed job reports `conclusion: "cleanup-failed"` with `cleanup: "failed"`.
 If cleanup succeeds but lock removal fails, the completed job reports `conclusion: "cleanup-failed"` with `cleanup: "succeeded"`.
 The lock remains in either case.
+Bounded status error text retains the newest cleanup, persistence, or lock-removal error.
 
 If the service stops before durable persistence completes, destructive cleanup has not started.
 If it stops after durable persistence, the cleanup record and device lock remain for startup recovery.
@@ -992,10 +1006,48 @@ if printf '%s\n' "$volume_names" | grep -Fqx openshell-cluster-nemoclaw; then
   echo 'The job-owned gateway volume remains' >&2
   exit 1
 fi
+read_proc_uid() {
+  awk '/^Uid:/ { print $2; found = 1; exit } END { exit found ? 0 : 1 }' \
+    "$1/status" 2>/dev/null
+}
+read_proc_environment() {
+  dd if="$1/environ" status=none 2>/dev/null | tr '\000' '\n'
+}
+read_proc_command() {
+  dd if="$1/cmdline" status=none 2>/dev/null | tr '\000' ' '
+}
+handle_proc_read_failure() {
+  local proc_dir="$1" field="$2" process_uid directory_uid
+  [ -d "$proc_dir" ] || return 0
+  if process_uid="$(read_proc_uid "$proc_dir")"; then
+    [ "$process_uid" = "$(id -u)" ] || return 0
+  else
+    [ -d "$proc_dir" ] || return 0
+    if ! directory_uid="$(stat -c %u "$proc_dir" 2>/dev/null)"; then
+      [ -d "$proc_dir" ] || return 0
+      echo "Unable to verify the owner of a live process after a failed $field read" >&2
+      exit 1
+    fi
+    [ "$directory_uid" = "$(id -u)" ] || return 0
+  fi
+  echo "Unable to inspect $field for a live same-user process" >&2
+  exit 1
+}
 for proc_dir in /proc/[0-9]*; do
-  [ -r "$proc_dir/environ" ] || continue
-  tr '\000' '\n' <"$proc_dir/environ" | grep -Fqx "HOME=$job_home" || continue
-  cmdline="$(tr '\000' ' ' <"$proc_dir/cmdline")"
+  if ! process_uid="$(read_proc_uid "$proc_dir")"; then
+    handle_proc_read_failure "$proc_dir" owner
+    continue
+  fi
+  [ "$process_uid" = "$(id -u)" ] || continue
+  if ! environment="$(read_proc_environment "$proc_dir")"; then
+    handle_proc_read_failure "$proc_dir" environment
+    continue
+  fi
+  printf '%s\n' "$environment" | grep -Fqx "HOME=$job_home" || continue
+  if ! cmdline="$(read_proc_command "$proc_dir")"; then
+    handle_proc_read_failure "$proc_dir" command
+    continue
+  fi
   case "$cmdline" in
     *ollama-auth-proxy.*|*openshell-gateway*|*openshell-forward*|*openshell\ forward*|*cloudflared*)
       echo "A job-owned helper process remains: ${proc_dir##*/}" >&2

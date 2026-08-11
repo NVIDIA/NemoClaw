@@ -86,6 +86,22 @@ function safeError(error: unknown): string {
   return message.replace(/[\u0000-\u001f\u007f]/gu, " ").slice(0, 500);
 }
 
+function appendBoundedError(previous: string | undefined, newest: string): string {
+  const latest = newest.replace(/[\u0000-\u001f\u007f]/gu, " ").slice(0, 500);
+  if (!previous) return latest;
+  const separator = "; ";
+  const available = 500 - separator.length - latest.length;
+  if (available <= 0) return latest;
+  const earlier = previous.replace(/[\u0000-\u001f\u007f]/gu, " ");
+  const boundedEarlier =
+    earlier.length <= available
+      ? earlier
+      : available > 3
+        ? `${earlier.slice(0, available - 3)}...`
+        : earlier.slice(0, available);
+  return `${boundedEarlier}${separator}${latest}`;
+}
+
 function workerErrorLog(error: unknown): string | undefined {
   if (!error || typeof error !== "object" || !("log" in error)) return undefined;
   const log = (error as { log?: unknown }).log;
@@ -467,8 +483,10 @@ export class JetsonDispatchCoordinator {
           writePrivateRegularFile(this.#artifactPath(status.jobId), artifactArchiveBase64);
         }
       } catch (resultError) {
-        status.error =
-          `${status.error}; result persistence failed: ${safeError(resultError)}`.slice(0, 500);
+        status.error = appendBoundedError(
+          status.error,
+          `Result persistence failed: ${safeError(resultError)}`,
+        );
       }
     } finally {
       clearTimeout(timer);
@@ -480,9 +498,7 @@ export class JetsonDispatchCoordinator {
       } catch (error) {
         status.cleanup = "failed";
         const cleanupError = `Jetson cleanup failed: ${safeError(error)}`;
-        status.error = status.error
-          ? `${status.error}; ${cleanupError}`.slice(0, 500)
-          : cleanupError;
+        status.error = appendBoundedError(status.error, cleanupError);
         conclusion = "cleanup-failed";
       }
       status.conclusion = conclusion;
@@ -494,9 +510,7 @@ export class JetsonDispatchCoordinator {
         terminalStatusPersisted = true;
       } catch (error) {
         const persistenceError = `Final status persistence failed: ${safeError(error)}`;
-        status.error = status.error
-          ? `${status.error}; ${persistenceError}`.slice(0, 500)
-          : persistenceError;
+        status.error = appendBoundedError(status.error, persistenceError);
         if (status.conclusion !== "cleanup-failed") status.conclusion = "failure";
       }
       if (status.cleanup === "succeeded" && terminalStatusPersisted) {
@@ -504,13 +518,13 @@ export class JetsonDispatchCoordinator {
           fs.unlinkSync(this.#lockPath);
         } catch (error) {
           const lockError = `Jetson lock removal failed: ${safeError(error)}`;
-          status.error = status.error ? `${status.error}; ${lockError}`.slice(0, 500) : lockError;
+          status.error = appendBoundedError(status.error, lockError);
           status.conclusion = "cleanup-failed";
           try {
             this.#persist(status);
           } catch (persistError) {
             const persistenceError = `Lock failure persistence failed: ${safeError(persistError)}`;
-            status.error = `${status.error}; ${persistenceError}`.slice(0, 500);
+            status.error = appendBoundedError(status.error, persistenceError);
           }
         }
       }

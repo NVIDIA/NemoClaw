@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -41,13 +42,24 @@ const BASELINE = {
   npmPath: "/usr/bin/npm",
   npmVersion: "10.9.3",
   ollamaPath: "/usr/local/bin/ollama",
-  ollamaModelsSha256: "a".repeat(64),
+  ollamaModels: [{ name: "existing:latest", id: "a".repeat(12) }],
   openshellState: "absent",
 };
 
 function baselineOutput(overrides: Partial<typeof BASELINE> = {}): string {
   const baseline = { ...BASELINE, ...overrides };
-  return `${Object.entries(baseline)
+  const ollamaModelsBase64 = Buffer.from(
+    baseline.ollamaModels.map((model) => `${model.name}\t${model.id}`).join("\n"),
+  ).toString("base64");
+  return `${Object.entries({
+    nodePath: baseline.nodePath,
+    nodeVersion: baseline.nodeVersion,
+    npmPath: baseline.npmPath,
+    npmVersion: baseline.npmVersion,
+    ollamaPath: baseline.ollamaPath,
+    ollamaModelsBase64,
+    openshellState: baseline.openshellState,
+  })
     .map(([key, value]) => `${key}\t${value}`)
     .join("\n")}\n`;
 }
@@ -78,6 +90,68 @@ function persistCleanupEvidence(
   const file = path.join(files.stateDirectory, `${jobId}.cleanup.json`);
   fs.writeFileSync(file, `${JSON.stringify(evidence)}\n`, { mode: 0o600 });
   return file;
+}
+
+function cleanupProcessFixture(
+  options: {
+    command?: string;
+    deny?: "cmdline" | "environ";
+    disappear?: "cmdline" | "environ";
+    home?: string;
+    uid?: number;
+  } = {},
+) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-jetson-proc-"));
+  temporaryDirectories.push(directory);
+  const procRoot = path.join(directory, "proc");
+  const procDirectory = path.join(procRoot, "1234");
+  const binDirectory = path.join(directory, "bin");
+  fs.mkdirSync(procDirectory, { recursive: true });
+  fs.mkdirSync(binDirectory);
+  fs.writeFileSync(
+    path.join(procDirectory, "status"),
+    `Name:\ttest\nUid:\t${options.uid ?? process.getuid!()}\t0\t0\t0\n`,
+  );
+  fs.writeFileSync(
+    path.join(procDirectory, "environ"),
+    Buffer.from(`HOME=${options.home ?? "/job/home"}\0PATH=/usr/bin\0`),
+  );
+  fs.writeFileSync(
+    path.join(procDirectory, "cmdline"),
+    Buffer.from(`${options.command ?? "node ollama-auth-proxy.mjs"}\0`),
+  );
+  fs.writeFileSync(
+    path.join(binDirectory, "dd"),
+    `#!/usr/bin/env bash
+set -eu
+input=
+for argument in "$@"; do
+  case "$argument" in if=*) input="${"${argument#if=}"}" ;; esac
+done
+if [ "${"${DENY_PROC_FILE:-}"}" = "$input" ]; then exit 1; fi
+if [ "${"${DISAPPEAR_PROC_FILE:-}"}" = "$input" ]; then rm -rf -- "${"${input%/*}"}"; exit 1; fi
+/bin/cat "$input"
+`,
+    { mode: 0o700 },
+  );
+  const functionsStart = cleanupProgram.indexOf("read_proc_uid() {");
+  const functionsEnd = cleanupProgram.indexOf("\nauth_proxy_pid=", functionsStart);
+  if (functionsStart < 0 || functionsEnd < 0)
+    throw new Error("cleanup process functions are absent");
+  const functions = cleanupProgram
+    .slice(functionsStart, functionsEnd)
+    .replace('proc_dir="/proc/$pid"', 'proc_dir="$PROC_ROOT/$pid"');
+  return {
+    environment: {
+      ...process.env,
+      DENY_PROC_FILE: options.deny ? path.join(procDirectory, options.deny) : "",
+      DISAPPEAR_PROC_FILE: options.disappear ? path.join(procDirectory, options.disappear) : "",
+      PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
+      PROC_ROOT: procRoot,
+    },
+    functions,
+    procRoot,
+  };
 }
 
 afterEach(() => {
@@ -113,6 +187,26 @@ function loadConfig(files = deploymentFiles()) {
 }
 
 describe("Colossus SSH worker deployment boundary", () => {
+  it("loads the dispatcher service with direct Node.js type stripping (#8142)", () => {
+    const service = pathToFileURL(
+      path.join(process.cwd(), "tools/e2e/jetson-dispatch-service.mts"),
+    ).href;
+    const result = spawnSync(
+      "node",
+      [
+        "--experimental-strip-types",
+        "--no-warnings",
+        "--input-type=module",
+        "--eval",
+        `await import(${JSON.stringify(service)})`,
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).not.toContain("does not provide an export named JetsonDeviceIdentity");
+  });
+
   it("uses one fixed command for initial service deployment (#8142)", () => {
     const deployment =
       "sudo nemoclaw-colossus-jetson-dispatch-deploy --commit 0000000000000000000000000000000000000000";
@@ -300,6 +394,11 @@ esac
       "major < 22 || (major === 22 && minor < 19)",
     );
     expect(processRunner.mock.calls[2]![0].input).toContain("npm_major >= 10");
+    expect(processRunner.mock.calls[2]![0].input).toContain('"$workspace/runtime"');
+    expect(processRunner.mock.calls[2]![0].input).toContain(
+      'export XDG_RUNTIME_DIR="$workspace/runtime"',
+    );
+    expect(processRunner.mock.calls[2]![0].input).toContain("unset DBUS_SESSION_BUS_ADDRESS");
     expect(JSON.parse(fs.readFileSync(baselinePath, "utf8"))).toEqual(BASELINE);
     expect(processRunner.mock.calls[2]![0].input).not.toContain("trap cleanup EXIT");
     expect(processRunner.mock.calls[3]![0].input).not.toContain("trap cleanup EXIT");
@@ -582,7 +681,6 @@ esac
     ["Node.js", { nodeVersion: "v22.20.0" }],
     ["npm", { npmVersion: "11.0.0" }],
     ["Ollama executable", { ollamaPath: "/tmp/ollama" }],
-    ["Ollama models", { ollamaModelsSha256: "c".repeat(64) }],
   ])("rejects cleanup when the protected %s baseline changes (#8142)", async (_name, change) => {
     const files = deploymentFiles();
     const jobId = "b".repeat(64);
@@ -596,9 +694,149 @@ esac
     const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
 
     await expect(worker.cleanup({ jobId, signal: new AbortController().signal })).rejects.toThrow(
-      "Jetson protected tool or Ollama model baseline differs after cleanup",
+      "Jetson protected tool baseline differs after cleanup",
     );
     expect(fs.existsSync(baselinePath)).toBe(true);
+  });
+
+  it.each([
+    {
+      name: "an initially empty model set followed by the onboarding model",
+      initial: [],
+      final: [{ name: "qwen3.5:9b", id: "b".repeat(12) }],
+    },
+    {
+      name: "a pre-existing model plus a newly installed model",
+      initial: [{ name: "existing:latest", id: "a".repeat(12) }],
+      final: [
+        { name: "existing:latest", id: "a".repeat(12) },
+        { name: "qwen3.5:9b", id: "b".repeat(12) },
+      ],
+    },
+  ])("allows $name after cleanup (#8142)", async ({ initial, final }) => {
+    const files = deploymentFiles();
+    const jobId = "b".repeat(64);
+    fs.writeFileSync(
+      path.join(files.stateDirectory, `${jobId}.baseline.json`),
+      `${JSON.stringify({ ...BASELINE, ollamaModels: initial })}\n`,
+      { mode: 0o600 },
+    );
+    persistCleanupEvidence(files, jobId, { schemaVersion: 1, volumes: [], processIds: [] });
+    const processRunner = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: cleanupOutput(), stderr: "" })
+      .mockResolvedValueOnce({ stdout: baselineOutput({ ollamaModels: final }), stderr: "" });
+    const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
+
+    await expect(
+      worker.cleanup({ jobId, signal: new AbortController().signal }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("keeps a maximum accepted Ollama baseline readable after persistence (#8142)", async () => {
+    const files = deploymentFiles();
+    const jobId = "b".repeat(64);
+    const models = Array.from({ length: 64 }, (_value, index) => ({
+      name: `model-${index.toString().padStart(2, "0")}-${"x".repeat(22)}`,
+      id: index.toString(16).padStart(12, "0"),
+    }));
+    const processRunner = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: baselineOutput({ ollamaModels: models }), stderr: "" })
+      .mockResolvedValueOnce({
+        stdout:
+          "model\tNVIDIA Jetson AGX Thor Developer Kit\njetpackVersion\t7.2.2\njetsonLinuxRelease\tR38\nkernel\t6.8.12-tegra\n",
+        stderr: "",
+      })
+      .mockResolvedValueOnce({ stdout: "test passed\n", stderr: "" })
+      .mockResolvedValueOnce({ stdout: Buffer.from("archive").toString("base64"), stderr: "" })
+      .mockResolvedValueOnce({ stdout: cleanupOutput(), stderr: "" })
+      .mockResolvedValueOnce({ stdout: baselineOutput({ ollamaModels: models }), stderr: "" });
+    const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
+
+    await worker.run(
+      {
+        schemaVersion: 1,
+        target: "jetson-nvmap-gpu",
+        candidateSha: "a".repeat(40),
+        workflowRunId: "123",
+        workflowRunAttempt: 1,
+      },
+      { jobId, signal: new AbortController().signal },
+    );
+    const baselinePath = path.join(files.stateDirectory, `${jobId}.baseline.json`);
+    expect(fs.statSync(baselinePath).size).toBeGreaterThan(4 * 1024);
+    persistCleanupEvidence(files, jobId, { schemaVersion: 1, volumes: [], processIds: [] });
+
+    await expect(
+      worker.cleanup({ jobId, signal: new AbortController().signal }),
+    ).resolves.toBeUndefined();
+  });
+
+  it.each([
+    {
+      name: "a pre-existing model is removed",
+      final: [],
+    },
+    {
+      name: "a pre-existing model ID changes",
+      final: [{ name: "existing:latest", id: "c".repeat(12) }],
+    },
+  ])("fails cleanup when $name (#8142)", async ({ final }) => {
+    const files = deploymentFiles();
+    const jobId = "b".repeat(64);
+    const baselinePath = path.join(files.stateDirectory, `${jobId}.baseline.json`);
+    fs.writeFileSync(baselinePath, `${JSON.stringify(BASELINE)}\n`, { mode: 0o600 });
+    persistCleanupEvidence(files, jobId, { schemaVersion: 1, volumes: [], processIds: [] });
+    const processRunner = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: cleanupOutput(), stderr: "" })
+      .mockResolvedValueOnce({ stdout: baselineOutput({ ollamaModels: final }), stderr: "" });
+    const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
+
+    await expect(worker.cleanup({ jobId, signal: new AbortController().signal })).rejects.toThrow(
+      "Jetson cleanup did not preserve every pre-existing Ollama model",
+    );
+    expect(fs.existsSync(baselinePath)).toBe(true);
+  });
+
+  it.each([
+    {
+      name: "malformed model data",
+      encoded: Buffer.from("qwen3.5:9b\tnot-an-id").toString("base64"),
+    },
+    {
+      name: "duplicate model names",
+      encoded: Buffer.from(`qwen3.5:9b\t${"a".repeat(12)}\nqwen3.5:9b\t${"b".repeat(12)}`).toString(
+        "base64",
+      ),
+    },
+    {
+      name: "oversized model data",
+      encoded: Buffer.from(
+        Array.from(
+          { length: 65 },
+          (_value, index) => `model-${index}:latest\t${index.toString(16).padStart(12, "0")}`,
+        ).join("\n"),
+      ).toString("base64"),
+    },
+  ])("rejects $name in the protected baseline (#8142)", async ({ encoded }) => {
+    const files = deploymentFiles();
+    const jobId = "b".repeat(64);
+    persistCleanupEvidence(files, jobId, { schemaVersion: 1, volumes: [], processIds: [] });
+    const malformedOutput = baselineOutput().replace(
+      /^ollamaModelsBase64\t.*$/mu,
+      `ollamaModelsBase64\t${encoded}`,
+    );
+    const processRunner = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: cleanupOutput(), stderr: "" })
+      .mockResolvedValueOnce({ stdout: malformedOutput, stderr: "" });
+    const worker = new SshJetsonDispatchWorker(loadConfig(files), processRunner);
+
+    await expect(worker.cleanup({ jobId, signal: new AbortController().signal })).rejects.toThrow(
+      /Jetson protected-baseline Ollama model data/u,
+    );
   });
 
   it("rejects cleanup unless OpenShell returns to the absent baseline (#8142)", async () => {
@@ -767,11 +1005,178 @@ esac
     ).rejects.toThrow("Jetson cleanup evidence is missing");
   });
 
+  it("ignores permission denial while inspecting an unrelated process (#8142)", () => {
+    const fixture = cleanupProcessFixture({
+      deny: "environ",
+      uid: process.getuid!() + 1,
+    });
+    const result = spawnSync(
+      "/bin/bash",
+      [
+        "-c",
+        `set -euo pipefail
+${fixture.functions}
+job_home=/job/home
+for proc_dir in "$PROC_ROOT"/*; do
+  if ! process_uid="$(read_proc_uid "$proc_dir")"; then
+    handle_proc_read_failure "$proc_dir" owner
+    continue
+  fi
+  [ "$process_uid" = "$(id -u)" ] || continue
+  if ! environment="$(read_proc_environment "$proc_dir")"; then
+    handle_proc_read_failure "$proc_dir" environment
+    continue
+  fi
+  printf '%s\n' "$environment" | grep -Fqx "HOME=$job_home" || continue
+  if ! cmdline="$(read_proc_command "$proc_dir")"; then
+    handle_proc_read_failure "$proc_dir" command
+    continue
+  fi
+done
+printf 'inspection-complete\n'
+`,
+      ],
+      { encoding: "utf8", env: fixture.environment },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("inspection-complete\n");
+  });
+
+  it("rejects an unreadable live same-user process during discovery (#8142)", () => {
+    const fixture = cleanupProcessFixture({ deny: "environ" });
+    const result = spawnSync(
+      "/bin/bash",
+      [
+        "-c",
+        `set -euo pipefail
+${fixture.functions}
+job_home=/job/home
+for proc_dir in "$PROC_ROOT"/*; do
+  if ! process_uid="$(read_proc_uid "$proc_dir")"; then
+    handle_proc_read_failure "$proc_dir" owner
+    continue
+  fi
+  [ "$process_uid" = "$(id -u)" ] || continue
+  if ! environment="$(read_proc_environment "$proc_dir")"; then
+    handle_proc_read_failure "$proc_dir" environment
+    continue
+  fi
+done
+`,
+      ],
+      { encoding: "utf8", env: fixture.environment },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Unable to inspect environment for a live same-user process");
+  });
+
+  it("ignores a recorded process that disappears during inspection (#8142)", () => {
+    const fixture = cleanupProcessFixture({ disappear: "cmdline" });
+    const result = spawnSync(
+      "/bin/bash",
+      [
+        "-c",
+        `set -euo pipefail
+${fixture.functions}
+kill() { [ "$1" = -0 ] && [ -d "$PROC_ROOT/$2" ]; }
+job_home=/job/home
+validate_recorded_pid 1234 ollama-auth-proxy.
+`,
+      ],
+      { encoding: "utf8", env: fixture.environment },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("rejects a live recorded PID whose owner cannot be verified (#8142)", () => {
+    const fixture = cleanupProcessFixture();
+    fs.rmSync(path.join(fixture.procRoot, "1234", "status"));
+    const result = spawnSync(
+      "/bin/bash",
+      [
+        "-c",
+        `set -euo pipefail
+${fixture.functions}
+kill() { [ "$1" = -0 ] && [ -d "$PROC_ROOT/$2" ]; }
+job_home=/job/home
+validate_recorded_pid 1234 ollama-auth-proxy.
+`,
+      ],
+      { encoding: "utf8", env: fixture.environment },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("owner cannot be verified");
+  });
+
+  it.each([
+    {
+      name: "owner",
+      options: { uid: process.getuid!() + 1 },
+      error: "owned by another user",
+    },
+    {
+      name: "HOME",
+      options: { home: "/unrelated/home" },
+      error: "outside the job home",
+    },
+    {
+      name: "command",
+      options: { command: "node unrelated-service.mjs" },
+      error: "unexpected command",
+    },
+  ])("rejects a recorded PID with an unexpected $name (#8142)", ({ error, options }) => {
+    const fixture = cleanupProcessFixture(options);
+    const result = spawnSync(
+      "/bin/bash",
+      [
+        "-c",
+        `set -euo pipefail
+${fixture.functions}
+kill() { [ "$1" = -0 ] && [ -d "$PROC_ROOT/$2" ]; }
+job_home=/job/home
+validate_recorded_pid 1234 ollama-auth-proxy.
+`,
+      ],
+      { encoding: "utf8", env: fixture.environment },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(error);
+  });
+
+  it("accepts a recorded PID with the expected owner, HOME, and command (#8142)", () => {
+    const fixture = cleanupProcessFixture();
+    const result = spawnSync(
+      "/bin/bash",
+      [
+        "-c",
+        `set -euo pipefail
+${fixture.functions}
+kill() { [ "$1" = -0 ] && [ -d "$PROC_ROOT/$2" ]; }
+job_home=/job/home
+validate_recorded_pid 1234 ollama-auth-proxy.
+`,
+      ],
+      { encoding: "utf8", env: fixture.environment },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it("keeps cleanup targets fixed and preserves the Jetson baseline (#8142)", () => {
     const fileFsync = cleanupProgram.indexOf("fs.fsyncSync(descriptor)");
     const atomicRename = cleanupProgram.indexOf("fs.renameSync(temporaryFile, cleanupFile)");
     const directoryFsync = cleanupProgram.indexOf("fs.fsyncSync(directoryDescriptor)");
     const destructivePhase = cleanupProgram.indexOf("<<'JETSON_CLEANUP'");
+    const stopFunctionStart = cleanupProgram.lastIndexOf("stop_recorded_pid()");
+    const stopFunction = cleanupProgram.slice(
+      stopFunctionStart,
+      cleanupProgram.indexOf('for pid in "${recorded_process_ids[@]}"', stopFunctionStart),
+    );
     expect(cleanupProgram).toContain("sandbox_name=e2e-jetson-nvmap");
     expect(cleanupProgram).toContain("gateway_container=openshell-cluster-nemoclaw");
     expect(cleanupProgram).toContain("destination=nvidia@192.168.55.1");
@@ -781,11 +1186,28 @@ esac
     expect(cleanupProgram).toContain('require_plain_directory_if_present "$service_directory"');
     expect(cleanupProgram).toContain('rm -rf -- "$workspace"');
     expect(cleanupProgram).toContain("ollama-auth-proxy.pid");
-    expect(cleanupProgram).toContain('process_uid="$(awk');
+    expect(cleanupProgram).toContain("read_proc_uid()");
+    expect(cleanupProgram).toContain('dd if="$1/environ"');
+    expect(cleanupProgram).toContain('dd if="$1/cmdline"');
+    expect(
+      cleanupProgram.match(/handle_proc_read_failure "\$proc_dir" environment/gu),
+    ).toHaveLength(2);
+    expect(cleanupProgram.match(/handle_proc_read_failure "\$proc_dir" command/gu)).toHaveLength(2);
+    expect(workerProgram).toContain('handle_proc_read_failure "$proc_dir" environment');
+    expect(workerProgram).toContain('handle_proc_read_failure "$proc_dir" command');
     expect(cleanupProgram).toContain('grep -Fqx "HOME=$job_home"');
     expect(cleanupProgram).toContain("*openshell-forward*");
     expect(cleanupProgram).toContain("*openshell\\ forward*");
     expect(cleanupProgram).toContain('kill "$pid"');
+    expect(stopFunction.indexOf('process_uid="$(read_proc_uid')).toBeLessThan(
+      stopFunction.indexOf('kill "$pid"'),
+    );
+    expect(stopFunction.indexOf('cmdline="$(read_proc_command')).toBeLessThan(
+      stopFunction.indexOf('kill "$pid"'),
+    );
+    expect(stopFunction.indexOf('grep -Fqx "HOME=$job_home"')).toBeLessThan(
+      stopFunction.indexOf('kill "$pid"'),
+    );
     expect(cleanupProgram).toContain("label=openshell.ai/sandbox-name=$sandbox_name");
     expect(cleanupProgram).toContain("image_repository=nemoclaw-sandbox-local");
     expect(cleanupProgram).toContain('docker image rm "$image"');
@@ -815,6 +1237,7 @@ esac
     expect(cleanupProgram).not.toMatch(/pkill|pgrep|docker (?:system|container|volume) prune/u);
     expect(cleanupProgram).not.toContain('rm -rf -- "$workspace_root"');
     expect(cleanupProgram).not.toContain("ollama serve");
+    expect(cleanupProgram).not.toMatch(/ollama (?:rm|delete)/u);
     expect(cleanupProgram).not.toMatch(/apt(?:-get)?|boardctl|reboot|shutdown|nvidia-l4t/u);
     expect(cleanupProgram).not.toMatch(/npm uninstall|uninstall\.sh|rm .*ollama/u);
   });

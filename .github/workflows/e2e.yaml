@@ -92,7 +92,7 @@ permissions:
 
 concurrency:
   group: e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
-  cancel-in-progress: ${{ inputs.checkout_sha != '' }}
+  cancel-in-progress: ${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch }}
 
 env:
   NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
@@ -4923,6 +4923,10 @@ jobs:
   jetson-nvmap-gpu:
     needs: generate-matrix
     if: ${{ inputs.allow_jetson_dispatch && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}
+    concurrency:
+      group: jetson-nvmap-gpu-colossus
+      queue: max
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:

@@ -160,22 +160,65 @@ read_recorded_pid() {
   printf '%s\n' "$pid"
 }
 
+read_proc_uid() {
+  awk '/^Uid:/ { print $2; found = 1; exit } END { exit found ? 0 : 1 }' "$1/status" 2>/dev/null
+}
+
+read_proc_environment() {
+  dd if="$1/environ" status=none 2>/dev/null | tr '\000' '\n'
+}
+
+read_proc_command() {
+  dd if="$1/cmdline" status=none 2>/dev/null | tr '\000' ' '
+}
+
+handle_proc_read_failure() {
+  local proc_dir="$1" field="$2" process_uid directory_uid
+  [ -d "$proc_dir" ] || return 0
+  if process_uid="$(read_proc_uid "$proc_dir")"; then
+    [ "$process_uid" = "$(id -u)" ] || return 0
+  else
+    [ -d "$proc_dir" ] || return 0
+    if ! directory_uid="$(stat -c %u "$proc_dir" 2>/dev/null)"; then
+      [ -d "$proc_dir" ] || return 0
+      echo "Unable to verify the owner of a live process after a failed $field read" >&2
+      exit 1
+    fi
+    [ "$directory_uid" = "$(id -u)" ] || return 0
+  fi
+  echo "Unable to inspect $field for a live same-user process" >&2
+  exit 1
+}
+
 validate_recorded_pid() {
   local pid="$1" marker="$2"
   [ -n "$pid" ] || return 0
   kill -0 "$pid" 2>/dev/null || return 0
-  local process_uid cmdline
-  process_uid="$(awk '/^Uid:/ { print $2; exit }' "/proc/$pid/status")"
+  local process_uid cmdline environment proc_dir="/proc/$pid"
+  if ! process_uid="$(read_proc_uid "$proc_dir")"; then
+    kill -0 "$pid" 2>/dev/null || return 0
+    echo "Refusing to record a live process whose owner cannot be verified" >&2
+    exit 1
+  fi
   [ "$process_uid" = "$(id -u)" ] || {
     echo "Refusing to record a process owned by another user" >&2
     exit 1
   }
-  cmdline="$(tr '\000' ' ' <"/proc/$pid/cmdline")"
+  if ! cmdline="$(read_proc_command "$proc_dir")"; then
+    kill -0 "$pid" 2>/dev/null || return 0
+    echo "Refusing to record a live process whose command cannot be verified" >&2
+    exit 1
+  fi
   case "$cmdline" in
     *"$marker"*) ;;
     *) echo "Refusing to record a PID with an unexpected command" >&2; exit 1 ;;
   esac
-  if ! tr '\000' '\n' <"/proc/$pid/environ" | grep -Fqx "HOME=$job_home"; then
+  if ! environment="$(read_proc_environment "$proc_dir")"; then
+    kill -0 "$pid" 2>/dev/null || return 0
+    echo "Refusing to record a live process whose environment cannot be verified" >&2
+    exit 1
+  fi
+  if ! printf '%s\n' "$environment" | grep -Fqx "HOME=$job_home"; then
     echo "Refusing to record a process outside the job home" >&2
     exit 1
   fi
@@ -198,11 +241,20 @@ for pid in "$auth_proxy_pid" "$gateway_pid" "$cloudflared_pid"; do
   fi
 done
 for proc_dir in /proc/[0-9]*; do
-  [ -r "$proc_dir/status" ] && [ -r "$proc_dir/environ" ] && [ -r "$proc_dir/cmdline" ] || continue
-  process_uid="$(awk '/^Uid:/ { print $2; exit }' "$proc_dir/status")"
+  if ! process_uid="$(read_proc_uid "$proc_dir")"; then
+    handle_proc_read_failure "$proc_dir" owner
+    continue
+  fi
   [ "$process_uid" = "$(id -u)" ] || continue
-  tr '\000' '\n' <"$proc_dir/environ" | grep -Fqx "HOME=$job_home" || continue
-  cmdline="$(tr '\000' ' ' <"$proc_dir/cmdline")"
+  if ! environment="$(read_proc_environment "$proc_dir")"; then
+    handle_proc_read_failure "$proc_dir" environment
+    continue
+  fi
+  printf '%s\n' "$environment" | grep -Fqx "HOME=$job_home" || continue
+  if ! cmdline="$(read_proc_command "$proc_dir")"; then
+    handle_proc_read_failure "$proc_dir" command
+    continue
+  fi
   case "$cmdline" in
     *ollama-auth-proxy.* | *openshell-gateway* | *openshell-forward* | *openshell\ forward* | *cloudflared*)
       printf 'processId\t%s\n' "${proc_dir##*/}"
@@ -336,25 +388,54 @@ if [ -n "$cleanup_rows" ]; then
   done <<<"$cleanup_rows"
 fi
 
+read_proc_uid() {
+  awk '/^Uid:/ { print $2; found = 1; exit } END { exit found ? 0 : 1 }' "$1/status" 2>/dev/null
+}
+
+read_proc_environment() {
+  dd if="$1/environ" status=none 2>/dev/null | tr '\000' '\n'
+}
+
+read_proc_command() {
+  dd if="$1/cmdline" status=none 2>/dev/null | tr '\000' ' '
+}
+
 stop_recorded_pid() {
   local pid="$1"
   kill -0 "$pid" 2>/dev/null || return 0
-  local process_uid cmdline
-  process_uid="$(awk '/^Uid:/ { print $2; exit }' "/proc/$pid/status")"
+  local process_uid cmdline environment proc_dir="/proc/$pid"
+  if ! process_uid="$(read_proc_uid "$proc_dir")"; then
+    kill -0 "$pid" 2>/dev/null || return 0
+    echo "Refusing to stop a live process whose owner cannot be verified" >&2
+    exit 1
+  fi
   [ "$process_uid" = "$(id -u)" ] || {
     echo "Refusing to stop a process owned by another user" >&2
     exit 1
   }
-  cmdline="$(tr '\000' ' ' <"/proc/$pid/cmdline")"
+  if ! cmdline="$(read_proc_command "$proc_dir")"; then
+    kill -0 "$pid" 2>/dev/null || return 0
+    echo "Refusing to stop a live process whose command cannot be verified" >&2
+    exit 1
+  fi
   case "$cmdline" in
     *ollama-auth-proxy.* | *openshell-gateway* | *openshell-forward* | *openshell\ forward* | *cloudflared*) ;;
     *) echo "Refusing to stop a recorded PID with an unexpected command" >&2; exit 1 ;;
   esac
-  if ! tr '\000' '\n' <"/proc/$pid/environ" | grep -Fqx "HOME=$job_home"; then
+  if ! environment="$(read_proc_environment "$proc_dir")"; then
+    kill -0 "$pid" 2>/dev/null || return 0
+    echo "Refusing to stop a live process whose environment cannot be verified" >&2
+    exit 1
+  fi
+  if ! printf '%s\n' "$environment" | grep -Fqx "HOME=$job_home"; then
     echo "Refusing to stop a process outside the job home" >&2
     exit 1
   fi
-  kill "$pid"
+  if ! kill "$pid" 2>/dev/null; then
+    kill -0 "$pid" 2>/dev/null || return 0
+    echo "Unable to stop a validated cleanup process" >&2
+    exit 1
+  fi
   for _attempt in 1 2 3 4 5 6 7 8 9 10; do
     kill -0 "$pid" 2>/dev/null || return 0
     sleep 0.2
@@ -484,9 +565,20 @@ for pid in "${recorded_process_ids[@]}"; do
   fi
 done
 for proc_dir in /proc/[0-9]*; do
-  [ -r "$proc_dir/environ" ] && [ -r "$proc_dir/cmdline" ] || continue
-  tr '\000' '\n' <"$proc_dir/environ" | grep -Fqx "HOME=$job_home" || continue
-  cmdline="$(tr '\000' ' ' <"$proc_dir/cmdline")"
+  if ! process_uid="$(read_proc_uid "$proc_dir")"; then
+    handle_proc_read_failure "$proc_dir" owner
+    continue
+  fi
+  [ "$process_uid" = "$(id -u)" ] || continue
+  if ! environment="$(read_proc_environment "$proc_dir")"; then
+    handle_proc_read_failure "$proc_dir" environment
+    continue
+  fi
+  printf '%s\n' "$environment" | grep -Fqx "HOME=$job_home" || continue
+  if ! cmdline="$(read_proc_command "$proc_dir")"; then
+    handle_proc_read_failure "$proc_dir" command
+    continue
+  fi
   case "$cmdline" in
     *ollama-auth-proxy.* | *openshell-gateway* | *openshell-forward* | *openshell\ forward* | *cloudflared*)
       echo "A job-owned helper process remains" >&2

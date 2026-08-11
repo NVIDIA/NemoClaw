@@ -3997,6 +3997,17 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
   }
   if (job["timeout-minutes"] !== 60)
     errors.push("jetson-nvmap-gpu controller timeout must be 60 minutes");
+  if (
+    !isDeepStrictEqual(asRecord(job.concurrency), {
+      group: "jetson-nvmap-gpu-colossus",
+      queue: "max",
+      "cancel-in-progress": false,
+    })
+  ) {
+    errors.push(
+      "jetson-nvmap-gpu concurrency must queue every dispatch on one fixed device without cancellation",
+    );
+  }
   if (!isDeepStrictEqual(asRecord(job.permissions), { contents: "read", "id-token": "write" })) {
     errors.push("jetson-nvmap-gpu controller must grant only contents:read and id-token:write");
   }
@@ -4110,8 +4121,11 @@ function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord):
   if (concurrency.group !== expectedGroup) {
     errors.push("workflow concurrency must isolate each full dispatch with github.run_id");
   }
-  if (concurrency["cancel-in-progress"] !== "${{ inputs.checkout_sha != '' }}") {
-    errors.push("workflow concurrency must cancel only superseded PR gate runs");
+  if (
+    concurrency["cancel-in-progress"] !==
+    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch }}"
+  ) {
+    errors.push("workflow concurrency must not cancel an active Jetson dispatch");
   }
 }
 

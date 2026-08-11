@@ -3102,8 +3102,6 @@ run_installer_host_preflight() {
         if (host.isWsl) {
           infoLines.push("Running under WSL");
         }
-        const findingIds = admission.admitted ? [] : stableIds(admission.findingIds);
-        const capabilityIds = admission.admitted ? [] : stableIds(admission.capabilityIds);
         if (!admission.admitted) {
           if (findingIds.length > 0) {
             actionLines.push(`Admission finding IDs: ${findingIds.join(", ")}`);

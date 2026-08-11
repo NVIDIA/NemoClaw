@@ -51,6 +51,21 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
     );
   });
 
+  it("queues every Jetson dispatch on one fixed device without cancellation (#8142)", () => {
+    const workflow = readWorkflow();
+    const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {
+      concurrency?: Record<string, unknown>;
+    };
+    job.concurrency = {
+      group: "jetson-${{ github.ref }}",
+      queue: 1,
+      "cancel-in-progress": true,
+    };
+    expect(validateJetsonDispatchBoundary(workflow)).toContain(
+      "jetson-nvmap-gpu concurrency must queue every dispatch on one fixed device without cancellation",
+    );
+  });
+
   it("rejects candidate execution or credential-bearing controller steps (#8142)", () => {
     const errors = validateWorkflowMutation((workflow) => {
       const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {
