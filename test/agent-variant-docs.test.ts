@@ -340,9 +340,10 @@ import { AgentOnly } from "../_components/AgentGuide";
     });
 
     expect(hermes).toContain(
-      "Hermes Dashboard pairing and the gateway share `/sandbox/.hermes/platforms/whatsapp/session`",
+      "Hermes dashboard pairing and the gateway share `/sandbox/.hermes/platforms/whatsapp/session`",
     );
     expect(hermes).toContain("nemohermes <sandbox> channels status --channel whatsapp");
+    expect(hermes).toContain("nemohermes <sandbox> channels remove whatsapp");
     expect(hermes).not.toContain("platforms.whatsapp.extra.session_path");
   });
 
