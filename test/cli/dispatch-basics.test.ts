@@ -648,6 +648,42 @@ describe("CLI dispatch", () => {
     );
   });
 
+  it("does not suggest a route-only reservation as a registered sandbox (#8801)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, stderr }) => {
+        await expect(dispatchCli(["stail", "stop"])).rejects.toThrow("process.exit:1");
+
+        const output = stderr.join("\n");
+        expect(output).toContain("Sandbox 'stail' does not exist");
+        expect(output).not.toContain("Did you mean: nemoclaw stale stop?");
+        expect(output).not.toContain("Registered sandboxes: stale");
+        expect(output).toContain("Run 'nemoclaw onboard' to create one.");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+      { sandboxNames: ["stale"], pendingSandboxNames: ["stale"] },
+    );
+  });
+
+  it("suggests a created sandbox when its reservation flag remains pending (#8801)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, sandboxes, stderr }) => {
+        sandboxes.set("created", {
+          name: "created",
+          pendingRouteReservation: true,
+          createdAt: "2026-01-01T00:00:00Z",
+        });
+
+        await expect(dispatchCli(["create", "stop"])).rejects.toThrow("process.exit:1");
+
+        const output = stderr.join("\n");
+        expect(output).toContain("Did you mean: nemoclaw created stop?");
+        expect(output).toContain("Registered sandboxes: created");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+      { sandboxNames: ["created"], pendingSandboxNames: ["created"] },
+    );
+  });
+
   it("suggests the closest registered sandbox name when a bare typo lacks a known action", async () => {
     await withDirectPublicDispatch(
       async ({ dispatchCli, exitSpy, stderr }) => {
