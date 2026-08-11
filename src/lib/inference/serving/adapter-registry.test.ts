@@ -36,6 +36,14 @@ function shippedRecipe(): ManagedInferenceServingRecipe {
   return structuredClone(recipe as ManagedInferenceServingRecipe);
 }
 
+function shippedHostLocalRecipe(): ManagedInferenceServingRecipe {
+  const recipe = loadManagedInferenceCatalog().recipes.find(
+    ({ spec }) => spec.execution.materializerRef === HOST_LOCAL_VLLM_MATERIALIZER_REF,
+  );
+  expect(recipe).toBeDefined();
+  return structuredClone(recipe as ManagedInferenceServingRecipe);
+}
+
 describe("managed inference adapter registries", () => {
   it("registers one versioned descriptor for each shipped managed cluster mechanic", () => {
     expect(listManagedInferenceTopologyQualificationDescriptors()).toMatchObject([
@@ -141,6 +149,45 @@ describe("managed inference adapter registries", () => {
       /unknown materializer/u,
     );
     expect(getManagedInferenceRecipeRegistrationError(wrongShape)).toMatch(/TP times PP/u);
+  });
+
+  it("accepts shell-quoted JSON values for host-local vLLM arguments", () => {
+    const recipe = shippedHostLocalRecipe();
+    const structuredArgument = {
+      ...recipe,
+      spec: {
+        ...recipe.spec,
+        serve: {
+          ...recipe.spec.serve,
+          arguments: [
+            ...recipe.spec.serve.arguments,
+            {
+              name: "--speculative-config",
+              value: '{"method":"mtp","num_speculative_tokens":1}',
+            },
+          ],
+        },
+      },
+    } as ManagedInferenceServingRecipe;
+    const unsafeArgument = {
+      ...structuredArgument,
+      spec: {
+        ...structuredArgument.spec,
+        serve: {
+          ...structuredArgument.spec.serve,
+          arguments: structuredArgument.spec.serve.arguments.map((argument) =>
+            argument.name === "--speculative-config"
+              ? { ...argument, value: '{"method":"mtp"};touch/tmp/unsafe' }
+              : argument,
+          ),
+        },
+      },
+    } as ManagedInferenceServingRecipe;
+
+    expect(getManagedInferenceRecipeRegistrationError(structuredArgument)).toBeUndefined();
+    expect(getManagedInferenceRecipeRegistrationError(unsafeArgument)).toMatch(
+      /bounded safe text/u,
+    );
   });
 
   it("rejects schema-valid values that the registered adapter cannot execute", () => {
