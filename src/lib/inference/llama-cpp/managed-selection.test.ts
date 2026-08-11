@@ -181,7 +181,7 @@ describe("managed llama.cpp selection", () => {
         }),
         detectGpu: () => ({ count: 1 }),
         detectHostGpuPlatform: () => "linux",
-        detectNvidiaDriverVersion: () => "580.65.06",
+        detectNvidiaDriverVersion: () => "595.84",
       },
     );
 
