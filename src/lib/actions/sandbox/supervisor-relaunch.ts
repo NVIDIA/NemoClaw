@@ -32,6 +32,8 @@ import { resolveSandboxDashboardPort } from "./forward-recovery";
  */
 const LEGACY_OPENSHELL_KEEPALIVE = "sleep infinity";
 const DOCKER_INSPECT_TIMEOUT_MS = 15000;
+const STATE_BACKUP_MAX_RETRIES = 5;
+const STATE_BACKUP_RETRY_SECONDS = 2;
 
 export type ManagedSupervisorRelaunch = {
   containerId: string;
@@ -50,6 +52,7 @@ export type ManagedSupervisorRelaunchDeps = {
   confirmMissingSupervisor?: (containerId: string) => boolean;
   restartRestoredManagedGateway?: (containerId: string) => boolean;
   backupState?: typeof sandboxState.backupSandboxState;
+  sleep?: (seconds: number) => void;
   restoreState?: typeof sandboxState.restoreSandboxState;
   removeBackup?: typeof sandboxState.removeSandboxStateBackup;
   recreate?: typeof recreateOpenShellDockerSandboxWithStartupCommand;
@@ -146,9 +149,34 @@ export function relaunchManagedSupervisorSession(
   let pendingStateBackupPath: string | null = null;
   try {
     const containerId = resolveContainer(sandboxName, driver);
+    const sleep =
+      deps.sleep ??
+      ((seconds: number) => {
+        dockerCapture(["exec", containerId, "sleep", String(seconds)], {
+          ignoreError: true,
+          timeout: (seconds + 5) * 1000,
+        });
+      });
     if (!hasLegacyKeepaliveStartup(inspect(containerId))) return null;
     if (!confirmMissingSupervisor?.(containerId)) return null;
-    const backup = backupState(sandboxName);
+    let backup = backupState(sandboxName);
+    // Docker can restore the OpenShell exec relay before its SSH transport.
+    // Retry only that typed transport lag; integrity and audit failures remain terminal.
+    for (
+      let retry = 0;
+      retry < STATE_BACKUP_MAX_RETRIES && !backup.success && backup.unreachable === true;
+      retry += 1
+    ) {
+      if (backup.manifest) {
+        try {
+          if (!removeBackup(sandboxName, backup.manifest.backupPath)) return null;
+        } catch {
+          return null;
+        }
+      }
+      sleep(STATE_BACKUP_RETRY_SECONDS);
+      backup = backupState(sandboxName);
+    }
     if (
       !backup.success ||
       !backup.manifest ||
