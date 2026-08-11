@@ -176,7 +176,7 @@ describe("managed inference adapter registries", () => {
     );
   });
 
-  it("does not broaden host-local vLLM environment values for structured arguments", () => {
+  it("rejects structured host-local vLLM environment values", () => {
     const recipe = shippedLightningRecipe();
     const structuredEnvironment = {
       ...recipe,
