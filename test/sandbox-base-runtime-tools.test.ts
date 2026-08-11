@@ -18,6 +18,36 @@ const MANAGED_BASE_DOCKERFILES = [
 ] as const;
 const fixtures: string[] = [];
 
+type RuntimeToolsFixture = "valid" | "missing-setpriv" | "gosu-present";
+
+function runRuntimeToolsContract(dockerfile: string, fixture: RuntimeToolsFixture) {
+  const source = fs.readFileSync(dockerfile, "utf-8");
+  const runtimeContract = dockerRunCommandBetween(
+    source,
+    "# setpriv runtime contract",
+    "RUN groupadd",
+  );
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-tools-"));
+  fixtures.push(tmp);
+  const fakeBin = path.join(tmp, "bin");
+  const setpriv = path.join(tmp, "usr", "bin", "setpriv");
+  fs.mkdirSync(fakeBin, { recursive: true });
+  fs.mkdirSync(path.dirname(setpriv), { recursive: true });
+  if (fixture !== "missing-setpriv") {
+    fs.writeFileSync(setpriv, "#!/usr/bin/env bash\nprintf 'setpriv fixture\\n'\n", {
+      mode: 0o755,
+    });
+  }
+  if (fixture === "gosu-present") {
+    fs.writeFileSync(path.join(fakeBin, "gosu"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+  }
+  return runLoggedDockerShell(runtimeContract.replaceAll("/usr/bin/setpriv", setpriv), tmp, [], {
+    env: { PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
+  }).result;
+}
+
 function runBaseAptLayer(prefix: string) {
   const source = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
   const completedStage = source.lastIndexOf("\nFROM ");
@@ -73,7 +103,7 @@ afterEach(() => {
 describe("sandbox base runtime tools", () => {
   it.each(
     MANAGED_BASE_DOCKERFILES,
-  )("%s fails its image build when setpriv is unavailable or gosu is present (#8805)", (dockerfile) => {
+  )("%s declares the setpriv and gosu build contract (#8805)", (dockerfile) => {
     const source = fs.readFileSync(dockerfile, "utf-8");
     const runtimeContract = dockerRunCommandBetween(
       source,
@@ -85,6 +115,32 @@ describe("sandbox base runtime tools", () => {
     expect(runtimeContract).toContain("test -x /usr/bin/setpriv");
     expect(runtimeContract).toContain("/usr/bin/setpriv --version");
     expect(runtimeContract).toContain("! command -v gosu");
+  });
+
+  it.each(
+    MANAGED_BASE_DOCKERFILES,
+  )("%s accepts executable setpriv when gosu is absent (#8805)", (dockerfile) => {
+    const result = runRuntimeToolsContract(dockerfile, "valid");
+
+    expect({ status: result.status, stderr: result.stderr }).toEqual({
+      status: 0,
+      stderr: "",
+    });
+    expect(result.stdout).toContain("setpriv fixture");
+  });
+
+  it.each(
+    MANAGED_BASE_DOCKERFILES,
+  )("%s rejects a missing setpriv executable (#8805)", (dockerfile) => {
+    const result = runRuntimeToolsContract(dockerfile, "missing-setpriv");
+
+    expect(result.status).not.toBe(0);
+  });
+
+  it.each(MANAGED_BASE_DOCKERFILES)("%s rejects gosu on PATH (#8805)", (dockerfile) => {
+    const result = runRuntimeToolsContract(dockerfile, "gosu-present");
+
+    expect(result.status).not.toBe(0);
   });
 
   it("installs the required process, filesystem, and SFTP tools", () => {
