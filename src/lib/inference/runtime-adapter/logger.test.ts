@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createLocalAdapterLogger } from "./logger";
 
 describe("local adapter logger", () => {
-  it("writes normalized JSONL fields and reports injected logger failures without throwing", () => {
+  it("writes normalized JSONL fields and reports logger failures without throwing", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-adapter-logger-"));
     const logPath = path.join(dir, "adapter.log");
     const onLoggerError = vi.fn();
@@ -31,6 +31,14 @@ describe("local adapter logger", () => {
         }, "request_failed"),
       ).not.toThrow();
       expect(onLoggerError).toHaveBeenCalledWith("logger failed");
+
+      const onWriteError = vi.fn();
+      const failing = createLocalAdapterLogger({
+        logPath: path.join(logPath, "child"),
+        onWriteError,
+      });
+      expect(() => failing.defaultLogger("adapter_ready")).not.toThrow();
+      expect(onWriteError).toHaveBeenCalledOnce();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
