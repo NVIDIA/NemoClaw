@@ -285,6 +285,13 @@ exception whose file, test title, and category are not in the reviewed allowlist
 rejects unused allowlist entries, so one exception cannot silently replace another. Its output and
 metrics list every accepted exception so these contracts remain visible during review.
 
+### Blueprint Image Pin Updates
+
+When the managed sandbox image changes, update both `digest` and `components.sandbox.image` in
+`nemoclaw-blueprint/blueprint.yaml` with the same SHA-256 digest. Release tooling should rewrite
+both fields together. `test/validate-blueprint.test.ts` rejects a mutable image tag or a mismatch
+between the two digest fields.
+
 ### Focused Vitest Feedback
 
 Use `npm run test:changed` for the staged, unstaged, and untracked changes in the current checkout,
