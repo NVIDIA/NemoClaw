@@ -532,8 +532,15 @@ verify_loopback_service() {
 start_and_verify_service() {
   public_ingress_is_disabled || return 1
   systemctl_exec start "$service_name" || return 1
+  if ! public_ingress_is_disabled; then
+    stop_unverified_service || return 1
+    return 1
+  fi
   verify_loopback_service || return 1
-  public_ingress_is_disabled
+  if ! public_ingress_is_disabled; then
+    stop_unverified_service || return 1
+    return 1
+  fi
 }
 
 enable_and_verify_initial_service() {
@@ -545,8 +552,17 @@ enable_and_verify_initial_service() {
   public_ingress_is_disabled || return 1
   bootstrap_enable_attempted=1
   systemctl_exec enable --now "$service_name" || return 1
+  public_ingress_is_disabled || return 1
   verify_loopback_service || return 1
   public_ingress_is_disabled
+}
+
+stop_unverified_service() {
+  local active_state
+  systemctl_exec stop "$service_name" || return 1
+  active_state="$(service_active_state)" || return 1
+  [ "$active_state" = inactive ] || return 1
+  device_lock_is_absent
 }
 
 restore_cleanup_selection() {
@@ -631,18 +647,19 @@ main() {
   validate_dispatcher_prerequisites
   ensure_layout
   acquire_deploy_lock
-  require_public_ingress_disabled
 
   load_state="$(service_load_state)" || fail "could not inspect $service_name"
   if [ "$load_state" = loaded ]; then
     service_installed=1
     print_stage 2 "Stop and verify the dispatcher"
+    require_public_ingress_disabled
     stop_installed_service
   elif [ "$load_state" != not-found ]; then
     fail "$service_name has unsupported load state: $load_state"
   else
     print_stage 2 "Verify initial deployment state"
     require_device_lock_absent
+    require_public_ingress_disabled
     require_bootstrap_destinations_absent
   fi
 
@@ -658,6 +675,9 @@ main() {
   release="$(prepare_release "$sha")"
 
   print_stage 4 "Select dispatcher and cleanup code"
+  if [ "$service_installed" = 1 ]; then
+    require_public_ingress_disabled
+  fi
   if ! activate_release "$release"; then
     if rollback_deployment "$previous_release" "$cleanup_was_present" "$service_installed"; then
       fail "release $sha activation or verification failed; the previous deployment state was restored"

@@ -370,20 +370,26 @@ describe("Jetson single-device lifecycle", () => {
 
   it("persists the lock and queued status before worker execution (#8142)", async () => {
     const stateDirectory = temporaryDirectory();
-    const syncEvents: Array<"directory" | "file"> = [];
-    let eventsBeforeRun: Array<"directory" | "file"> = [];
+    const events: string[] = [];
     const fsyncSync = fs.fsyncSync.bind(fs);
     vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) => {
-      syncEvents.push(fs.fstatSync(descriptor).isDirectory() ? "directory" : "file");
+      events.push(fs.fstatSync(descriptor).isDirectory() ? "directory-fsync" : "file-fsync");
       fsyncSync(descriptor);
     });
-    const expectedResult = await worker().run(REQUEST, {
-      jobId: "e".repeat(64),
-      signal: new AbortController().signal,
+    const unlinkSync = fs.unlinkSync.bind(fs);
+    vi.spyOn(fs, "unlinkSync").mockImplementation((file) => {
+      events.push(file === path.join(stateDirectory, "device.lock") ? "lock-unlink" : "unlink");
+      unlinkSync(file);
     });
-    const run = vi.fn(async () => {
-      eventsBeforeRun = [...syncEvents];
-      return expectedResult;
+    const run = vi.fn(async (_request, options) => {
+      events.push("worker-run");
+      expect(fs.readFileSync(path.join(stateDirectory, "device.lock"), "utf8")).toBe(
+        `${options.jobId}\n`,
+      );
+      expect(
+        JSON.parse(fs.readFileSync(path.join(stateDirectory, `${options.jobId}.json`), "utf8")),
+      ).toMatchObject({ jobId: options.jobId, state: "queued" });
+      return worker().run(_request, options);
     });
     const dispatch = coordinator(stateDirectory, worker({ run }));
     await dispatch.initialize();
@@ -391,18 +397,21 @@ describe("Jetson single-device lifecycle", () => {
     const accepted = dispatch.dispatch(REQUEST, identity());
     await waitForCompletion(dispatch, accepted.jobId);
 
-    expect(eventsBeforeRun).toEqual(["file", "file", "directory", "file"]);
-    expect(syncEvents.filter((event) => event === "directory")).toHaveLength(2);
+    expect(events.indexOf("directory-fsync")).toBeLessThan(events.indexOf("worker-run"));
+    expect(events.indexOf("worker-run")).toBeLessThan(events.indexOf("lock-unlink"));
+    expect(events.indexOf("lock-unlink")).toBeLessThan(events.lastIndexOf("directory-fsync"));
   });
 
   it("does not start the worker when state directory persistence fails (#8142)", async () => {
     const stateDirectory = temporaryDirectory();
     const fsyncSync = fs.fsyncSync.bind(fs);
-    vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) =>
-      fs.fstatSync(descriptor).isDirectory()
-        ? failTest("state directory persistence failed")
-        : fsyncSync(descriptor),
-    );
+    let rejectDirectoryFsync = true;
+    vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) => {
+      const isDirectory = fs.fstatSync(descriptor).isDirectory();
+      const shouldReject = rejectDirectoryFsync && isDirectory;
+      rejectDirectoryFsync = rejectDirectoryFsync && !isDirectory;
+      return shouldReject ? failTest("state directory persistence failed") : fsyncSync(descriptor);
+    });
     const run = vi.fn(worker().run);
     const cleanup = vi.fn(async () => {});
     const dispatch = coordinator(stateDirectory, worker({ cleanup, run }));
@@ -415,6 +424,13 @@ describe("Jetson single-device lifecycle", () => {
     expect(run).not.toHaveBeenCalled();
     expect(cleanup).not.toHaveBeenCalled();
     expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(true);
+
+    const restarted = coordinator(stateDirectory, worker({ cleanup, run }));
+    await restarted.initialize();
+
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(run).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(false);
   });
 
   it("cancels the worker and still cleans the device with a fresh signal (#8142)", async () => {
@@ -515,13 +531,54 @@ describe("Jetson single-device lifecycle", () => {
       error: "Jetson lock removal failed: lock directory persistence failed",
       cleanup: "succeeded",
     });
-    expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(true);
+    expect(directorySyncCount).toBe(3);
+    expect(fs.readFileSync(path.join(stateDirectory, "device.lock"), "utf8")).toBe(
+      `${accepted.jobId}\n`,
+    );
 
     const restarted = coordinator(stateDirectory, worker({ cleanup }));
     await restarted.initialize();
 
     expect(cleanup).toHaveBeenCalledTimes(2);
     expect(fs.existsSync(path.join(stateDirectory, "device.lock"))).toBe(false);
+  });
+
+  it("blocks later dispatch when lock restoration cannot recreate the lock (#8142)", async () => {
+    const stateDirectory = temporaryDirectory();
+    const lockPath = path.join(stateDirectory, "device.lock");
+    const fsyncSync = fs.fsyncSync.bind(fs);
+    let directorySyncCount = 0;
+    vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) => {
+      const isDirectory = fs.fstatSync(descriptor).isDirectory();
+      directorySyncCount += Number(isDirectory);
+      return isDirectory && directorySyncCount === 2
+        ? failTest("lock directory persistence failed")
+        : fsyncSync(descriptor);
+    });
+    const run = vi.fn(worker().run);
+    const dispatch = coordinator(stateDirectory, worker({ run }));
+    await dispatch.initialize();
+    const openSync = fs.openSync.bind(fs);
+    let lockOpenCount = 0;
+    vi.spyOn(fs, "openSync").mockImplementation((file, flags, mode) => {
+      const isLock = file === lockPath;
+      lockOpenCount += Number(isLock);
+      return isLock && lockOpenCount === 2
+        ? failTest("lock restoration unavailable")
+        : openSync(file, flags, mode);
+    });
+    const accepted = dispatch.dispatch(REQUEST, identity());
+    const completed = await waitForCompletion(dispatch, accepted.jobId);
+
+    expect(completed.error).toContain("lock restoration failed: lock restoration unavailable");
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(() =>
+      dispatch.dispatch({ ...REQUEST, candidateSha: "c".repeat(40) }, identity()),
+    ).toThrow("Jetson device lock requires recovery");
+    expect(run).toHaveBeenCalledOnce();
+    await expect(dispatch.shutdown()).rejects.toThrow(
+      "Jetson device lock state requires operator recovery",
+    );
   });
 
   it("keeps the lock until restart persists a terminal result (#8142)", async () => {

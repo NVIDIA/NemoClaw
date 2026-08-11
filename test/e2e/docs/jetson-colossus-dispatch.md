@@ -362,13 +362,16 @@ The command verifies the fixed origin, exact commit, unmodified worktree, cleanu
 It installs `/etc/nemoclaw-jetson-dispatch/environment` as `root:root` mode `0600`.
 It installs `/etc/systemd/system/nemoclaw-jetson-dispatch.service` as `root:root` mode `0644`.
 It runs `systemctl daemon-reload` and `systemctl enable --now nemoclaw-jetson-dispatch.service`.
-Before success, it requires the service to listen only on `127.0.0.1:8787`, an anonymous job request to return HTTP `401`, and the Cloudflare Tunnel service to remain disabled and inactive.
+It requires the Cloudflare Tunnel service to be absent or disabled and inactive immediately before the dispatcher starts, immediately after it starts, and after loopback verification.
+Before success, it also requires the dispatcher to listen only on `127.0.0.1:8787` and an anonymous job request to return HTTP `401`.
 
-If initial startup or verification fails after enablement, the command disables and stops the service before rollback.
-It requires exact `ActiveState=inactive` and an absent device lock before it restores the prior release and cleanup selection.
+If initial startup or verification fails after enablement, the command attempts to disable and stop the service before rollback.
+It restores the prior release and cleanup selection only after proving exact `ActiveState=inactive` and an absent device lock.
 An earlier selection or configuration-installation failure restores the prior selection and removes only files or links created by the attempt.
 Rollback removes any environment and unit that the attempt installed, reloads systemd, and requires `LoadState=not-found`.
 If it cannot establish these conditions, it reports rollback failure.
+If initial activation detects public ingress and rollback cannot disable and stop the dispatcher, its state is inconclusive.
+Immediately disable or delete public ingress through the approved Cloudflare administrator path and prove that the public endpoint is unavailable before local recovery.
 The command never enables or starts the Cloudflare Tunnel service.
 It accepts no cleanup override and does not change the cleanup allowlist.
 
@@ -488,31 +491,37 @@ Both cases require `device.lock` to be absent before release preparation.
 A loaded service is eligible only when `current` selects one managed release and the stable cleanup link follows `current`.
 For a loaded service, the command performs these actions:
 
-1. Stop the service.
-2. Query `ActiveState` and require the exact value `inactive`.
+1. Require the Cloudflare Tunnel service to be disabled and inactive, then stop the dispatcher.
+2. Query dispatcher `ActiveState` and require the exact value `inactive`.
 3. Refuse deployment when `/var/lib/nemoclaw-jetson-dispatch/state/device.lock` remains.
 4. Validate the managed `current` release and stable cleanup link, then prepare and verify the requested release.
-5. Atomically switch `current`, selecting the requested dispatcher code and cleanup program together.
-6. Start the service.
+5. Require the tunnel to remain disabled and inactive, then atomically switch `current`, selecting the requested dispatcher code and cleanup program together.
+6. Require the tunnel to remain disabled and inactive immediately before and after starting the dispatcher.
 7. Verify that only `127.0.0.1:8787` listens and make a config-free, direct request with `curl --disable --noproxy '*'`; the anonymous job request must return HTTP `401`.
+8. Require the tunnel to remain disabled and inactive after loopback verification.
 
-If the post-stop state cannot be read, is not `inactive`, or `device.lock` remains, the command exits with the service stopped and does not prepare or select a release.
+If the stop or post-stop inspection cannot prove `inactive`, dispatcher state is inconclusive and the command does not prepare or select a release.
+If `device.lock` remains after a proven stop, the command exits with the service stopped and does not prepare or select a release.
 Do not remove the lock.
 Complete the recovery procedure on this page before you rerun deployment.
+If the loaded service's pre-stop public-ingress check fails, the previously verified dispatcher remains running and unchanged.
 
 An interruption before the atomic `current` switch leaves the previous dispatcher and cleanup program selected; an interruption after it selects both from the requested release.
 If activation, start, or loopback verification fails for a loaded service, rollback must first stop the service successfully, require `ActiveState=inactive`, and require `device.lock` to be absent.
 Only then does it atomically restore the prior `current` selection, which restores both the dispatcher and cleanup program.
 If rollback cannot prove those three conditions after the requested pair is selected, it leaves that new code and cleanup pair selected and reports rollback failure.
 When an earlier selected release exists, it restarts that release and repeats the loopback verification.
+That rollback restart passes the same tunnel checks before and after start and after loopback verification.
+If public ingress activates after a dispatcher start, the command attempts to stop it and does not restart either release while ingress remains active.
+If that stop, the `ActiveState` inspection, or the device-lock check fails, dispatcher state is inconclusive.
 When no prior selection exists, rollback removes the new `current` and stable cleanup link.
 If rollback cannot restore a verified service, the command exits with an explicit rollback failure.
 When the trap confirms `ActiveState=inactive`, keep the tunnel stopped while you complete dispatcher recovery.
 If it reports `PUBLIC INGRESS CONTAINMENT FAILED`, do not assume that the tunnel stopped.
 Immediately disable or delete the public ingress through the approved Cloudflare administrator path and confirm that the public endpoint is unavailable.
-Only after that external containment proof should you recover the dispatcher locally.
-Do not restart it until the dispatcher again binds only to `127.0.0.1:8787` and a config-free, direct anonymous request returns HTTP `401` locally.
-Then rerun the complete later-deployment subshell.
+Keep the dispatcher stopped until the tunnel is confirmed disabled and inactive and the public endpoint is unavailable.
+Then rerun the complete later-deployment subshell instead of starting the dispatcher manually.
+The deployer repeats the ingress gates and local bind and authentication verification before the subshell can publish the tunnel again.
 Its exit trap keeps the tunnel stopped unless `ActiveState=active` and the config-free, direct public HTTP `401` proof both succeed.
 
 A later deployment does not modify the dispatcher environment, systemd unit, SSH credentials, or Cloudflare credentials.
@@ -747,8 +756,14 @@ An invalid matching file fails initialization before the dispatcher accepts work
 Status and artifact requests both restore an evicted completed status from its private file.
 Only an artifact request returns the persisted log and archive.
 A repeated deterministic dispatch returns the persisted completed status without rerunning candidate code or clearing its evidence.
+Before worker execution, the dispatcher creates `device.lock`, persists the queued status, and synchronizes the Colossus state directory.
+If queued-state persistence or that directory synchronization fails, candidate code does not run and the dispatcher does not unlink the exact live job lock.
+Because a failed directory synchronization cannot prove reboot durability, inspect the live state and restart the dispatcher service to invoke startup cleanup without rebooting the Colossus host.
 The dispatcher persists terminal status before it removes `device.lock`.
-If that persistence fails, it reports a completed in-memory failure and retains the lock.
+After removing the lock, it synchronizes the state directory.
+If terminal-status persistence fails, it reports a completed in-memory failure and retains the lock.
+If the lock-removal directory synchronization fails and restoration succeeds, it re-establishes the exact same job lock, synchronizes the directory again, and reports the lock-removal failure.
+If restoration fails, lock state is inconclusive; the dispatcher sets an in-memory recovery barrier, blocks later dispatches, and reports that operator recovery is required during shutdown.
 
 After the workflow completes, independently verify every allowlisted resource is absent.
 Require the private `<jobId>.cleanup.json` file and verify every recorded volume and process ID is absent.
@@ -774,7 +789,8 @@ Only then does the dispatcher remove the lock; if this recovery persistence fail
 A repeated deterministic dispatch returns that recovered failure without rerunning candidate code.
 If cleanup fails, startup fails or the completed job reports `conclusion: "cleanup-failed"` with `cleanup: "failed"`.
 If cleanup succeeds but lock removal fails, the completed job reports `conclusion: "cleanup-failed"` with `cleanup: "succeeded"`.
-The lock remains in either case.
+The lock remains after a cleanup failure or successful lock restoration.
+A lock-restoration failure does not prove whether the lock exists.
 Bounded status error text retains the newest cleanup, persistence, or lock-removal error.
 
 If the service stops before durable persistence completes, destructive cleanup has not started.
@@ -846,6 +862,8 @@ For `cleanup: "failed"`, inspect the recorded error before choosing a recovery a
 Repair the cleanup program or allowlisted resource state only when that named operation failed.
 If the protected tool or Ollama model baseline differs after cleanup, investigate candidate activity and external host drift without assigning the change to cleanup.
 For `cleanup: "succeeded"` with a lock-removal error, repair the state-directory filesystem or permissions.
+If the error also reports lock-restoration failure, stop the dispatcher and treat the exact `device.lock` state as inconclusive.
+Use the ownership, file-type, mode, and exact job-ID checks above to inspect it without following links; do not accept more work until approved recovery and a service restart complete startup cleanup.
 Start the dispatcher after the named condition is fixed:
 
 ```bash

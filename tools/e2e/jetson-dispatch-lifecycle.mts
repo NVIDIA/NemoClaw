@@ -295,6 +295,7 @@ export class JetsonDispatchCoordinator {
   #activeRun: Promise<void> | undefined;
   #cancelRequested = false;
   #initialized = false;
+  #lockRecoveryRequired = false;
 
   constructor(options: {
     stateDirectory: string;
@@ -359,6 +360,9 @@ export class JetsonDispatchCoordinator {
 
   dispatch(request: JetsonDispatchRequest, identity: GitHubOidcIdentity): JetsonDispatchStatus {
     this.#requireInitialized();
+    if (this.#lockRecoveryRequired) {
+      throw new JetsonDispatchBusyError("Jetson device lock requires recovery");
+    }
     if (
       identity.runId !== request.workflowRunId ||
       identity.runAttempt !== request.workflowRunAttempt
@@ -389,14 +393,9 @@ export class JetsonDispatchCoordinator {
       createdAt: new Date().toISOString(),
       cleanup: "pending",
     };
-    try {
-      this.#clearPriorResultFiles(jobId);
-      this.#persist(status);
-      fsyncDirectory(this.#stateDirectory);
-    } catch (error) {
-      this.#removeDeviceLock(jobId);
-      throw error;
-    }
+    this.#clearPriorResultFiles(jobId);
+    this.#persist(status);
+    fsyncDirectory(this.#stateDirectory);
     this.#jobs.set(jobId, status);
     this.#activeJobId = jobId;
     this.#activeRun = this.#run(status);
@@ -428,6 +427,9 @@ export class JetsonDispatchCoordinator {
   async shutdown(): Promise<void> {
     if (this.#activeJobId) this.cancel(this.#activeJobId);
     await this.#activeRun;
+    if (this.#lockRecoveryRequired) {
+      throw new Error("Jetson device lock state requires operator recovery");
+    }
     if (
       readPrivateRegularFile(this.#lockPath, {
         allowMissing: true,
@@ -561,15 +563,28 @@ export class JetsonDispatchCoordinator {
       fsyncDirectory(this.#stateDirectory);
     } catch (error) {
       try {
-        createPrivateRegularFile(this.#lockPath, `${jobId}\n`);
-        fsyncDirectory(this.#stateDirectory);
+        this.#restoreDeviceLock(jobId);
       } catch (restoreError) {
+        this.#lockRecoveryRequired = true;
         throw new Error(
-          `${safeError(error)}; Jetson lock restoration failed: ${safeError(restoreError)}`,
+          `Jetson lock directory persistence failed: ${safeError(error)}; lock restoration failed: ${safeError(restoreError)}`,
         );
       }
       throw error;
     }
+  }
+
+  #restoreDeviceLock(jobId: string): void {
+    try {
+      createPrivateRegularFile(this.#lockPath, `${jobId}\n`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const existing = readPrivateRegularFile(this.#lockPath, { maxBytes: 1024 });
+      if (existing !== `${jobId}\n`) {
+        throw new Error("Jetson device lock changed while durability was restored");
+      }
+    }
+    fsyncDirectory(this.#stateDirectory);
   }
 
   #statusPath(jobId: string): string {
