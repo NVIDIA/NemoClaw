@@ -786,9 +786,13 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
+      const proxyPidFile = path.join(shared, "ollama-auth-proxy.pid");
+      fs.writeFileSync(proxyPidFile, "4242\n");
 
       const runCalls: Array<{ command: string; args: string[] }> = [];
       const dockerCalls: string[][] = [];
+      const logs: string[] = [];
+      const kill = vi.fn(() => true);
       const dockerOutputByCommand: Record<string, string> = {
         images: "shared-image nemoclaw:latest",
         ps: [
@@ -809,9 +813,13 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           env: { HOME: tmpHome, NEMOCLAW_GATEWAY_PORT: String(port) } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
-          log: vi.fn(),
+          kill,
+          log: (line) => logs.push(line),
           run: (command, args) => {
             runCalls.push({ command, args });
+            if (command === "ps" && args.includes("4242") && args.includes("args=")) {
+              return ok("node /opt/nemoclaw/scripts/ollama-auth-proxy.mts\n");
+            }
             return ok();
           },
           runDocker: (args) => {
@@ -842,6 +850,12 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(fs.existsSync(servicePath)).toBe(true);
       expect(runCalls.some(({ command }) => command === "systemctl")).toBe(false);
       expect(fs.existsSync(path.join(nemoclawConfig, "keep"))).toBe(true);
+      expect(kill).not.toHaveBeenCalledWith(4242, expect.anything());
+      expect(kill).not.toHaveBeenCalledWith(4242);
+      expect(fs.existsSync(proxyPidFile)).toBe(true);
+      expect(logs).toContain(
+        "Preserving the shared Ollama auth proxy for the remaining gateway ports",
+      );
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }

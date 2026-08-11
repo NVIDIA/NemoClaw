@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -737,14 +737,24 @@ console.log(JSON.stringify({
 
 describe("ollama auth proxy state across gateway ports", () => {
   function runSecondGatewayProxyStart(options: {
+    readonly callingGatewayPort?: number;
+    readonly gatewayScopedBackend?: string;
+    readonly gatewayScopedPort?: number;
+    readonly otherGatewayScopedToken?: string;
     readonly prefix: string;
+    readonly recover?: boolean;
+    readonly sharedBackend?: string;
     readonly sharedToken?: string;
     readonly gatewayScopedToken?: string;
   }): {
+    readonly spawnedBackends: Array<string | null>;
     readonly spawnedTokens: string[];
     readonly activeToken: string | null;
+    readonly sharedBackend: string | null;
     readonly sharedToken: string | null;
+    readonly gatewayScopedBackend: string | null;
     readonly gatewayScopedToken: string | null;
+    readonly operationError: string | null;
   } {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), options.prefix));
@@ -756,10 +766,16 @@ describe("ollama auth proxy state across gateway ports", () => {
     const waitPath = JSON.stringify(path.join(repoRoot, "src", "lib", "core", "wait.ts"));
 
     const sharedDir = path.join(tmpDir, ".nemoclaw");
-    const gatewayScopedDir = path.join(sharedDir, "gateways", "8990");
+    const gatewayScopedPort = options.gatewayScopedPort ?? 8990;
+    const gatewayScopedDir = path.join(sharedDir, "gateways", String(gatewayScopedPort));
     fs.mkdirSync(gatewayScopedDir, { recursive: true });
     if (options.sharedToken !== undefined) {
       fs.writeFileSync(path.join(sharedDir, "ollama-proxy-token"), `${options.sharedToken}\n`, {
+        mode: 0o600,
+      });
+    }
+    if (options.sharedBackend !== undefined) {
+      fs.writeFileSync(path.join(sharedDir, "ollama-backend"), `${options.sharedBackend}\n`, {
         mode: 0o600,
       });
     }
@@ -767,6 +783,22 @@ describe("ollama auth proxy state across gateway ports", () => {
       fs.writeFileSync(
         path.join(gatewayScopedDir, "ollama-proxy-token"),
         `${options.gatewayScopedToken}\n`,
+        { mode: 0o600 },
+      );
+    }
+    if (options.gatewayScopedBackend !== undefined) {
+      fs.writeFileSync(
+        path.join(gatewayScopedDir, "ollama-backend"),
+        `${options.gatewayScopedBackend}\n`,
+        { mode: 0o600 },
+      );
+    }
+    if (options.otherGatewayScopedToken !== undefined) {
+      const otherGatewayDir = path.join(sharedDir, "gateways", "8991");
+      fs.mkdirSync(otherGatewayDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(otherGatewayDir, "ollama-proxy-token"),
+        `${options.otherGatewayScopedToken}\n`,
         { mode: 0o600 },
       );
     }
@@ -781,8 +813,10 @@ const wait = require(${waitPath});
 wait.waitForPort = () => true;
 
 const spawnedTokens = [];
+const spawnedBackends = [];
 childProcess.spawn = (_cmd, _args, opts = {}) => {
   spawnedTokens.push(opts.env && opts.env.OLLAMA_PROXY_TOKEN);
+  spawnedBackends.push((opts.env && opts.env.OLLAMA_BACKEND_URL) || null);
   return { pid: 4242, unref() {} };
 };
 runner.runCapture = (command) => {
@@ -803,17 +837,29 @@ childProcess.spawnSync = (...args) => {
 };
 
 const proxy = require(${proxyPath});
-proxy.startOllamaAuthProxy();
+let operationError = null;
+try {
+  if (${JSON.stringify(options.recover === true)}) proxy.ensureOllamaAuthProxy();
+  else proxy.startOllamaAuthProxy();
+} catch (error) {
+  operationError = error instanceof Error ? error.message : String(error);
+}
 
 const readToken = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8").trim() : null);
 const sharedDir = path.join(process.env.HOME, ".nemoclaw");
 console.log(JSON.stringify({
+  spawnedBackends,
   spawnedTokens,
-  activeToken: proxy.getOllamaProxyToken(),
+  activeToken: operationError ? null : proxy.getOllamaProxyToken(),
+  sharedBackend: readToken(path.join(sharedDir, "ollama-backend")),
   sharedToken: readToken(path.join(sharedDir, "ollama-proxy-token")),
-  gatewayScopedToken: readToken(
-    path.join(sharedDir, "gateways", "8990", "ollama-proxy-token"),
+  gatewayScopedBackend: readToken(
+    path.join(sharedDir, "gateways", ${JSON.stringify(String(options.gatewayScopedPort ?? 8990))}, "ollama-backend"),
   ),
+  gatewayScopedToken: readToken(
+    path.join(sharedDir, "gateways", ${JSON.stringify(String(options.gatewayScopedPort ?? 8990))}, "ollama-proxy-token"),
+  ),
+  operationError,
 }));
 `;
     fs.writeFileSync(scriptPath, script);
@@ -821,7 +867,11 @@ console.log(JSON.stringify({
     const result = spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
       encoding: "utf-8",
-      env: { ...process.env, HOME: tmpDir, NEMOCLAW_GATEWAY_PORT: "8990" },
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_GATEWAY_PORT: String(options.callingGatewayPort ?? 8990),
+      },
     });
 
     assert.equal(result.status, 0, result.stderr);
@@ -842,12 +892,31 @@ console.log(JSON.stringify({
 
   it("adopts a token an earlier gateway-scoped run left behind (#8704)", () => {
     const payload = runSecondGatewayProxyStart({
+      callingGatewayPort: 9000,
+      gatewayScopedPort: 8990,
       prefix: "nemoclaw-ollama-proxy-adopt-scoped-",
       gatewayScopedToken: "scoped-token",
     });
 
     assert.deepEqual(payload.spawnedTokens, ["scoped-token"]);
     assert.equal(payload.sharedToken, "scoped-token");
+  });
+
+  it("adopts a gateway-scoped backend with its token during recovery (#8704)", () => {
+    const payload = runSecondGatewayProxyStart({
+      callingGatewayPort: 9000,
+      gatewayScopedBackend: "http://127.0.0.1:12345",
+      gatewayScopedPort: 8990,
+      prefix: "nemoclaw-ollama-proxy-adopt-backend-",
+      gatewayScopedToken: "scoped-token",
+      recover: true,
+    });
+
+    assert.deepEqual(payload.spawnedTokens, ["scoped-token"]);
+    assert.deepEqual(payload.spawnedBackends, ["http://127.0.0.1:12345"]);
+    assert.equal(payload.sharedToken, "scoped-token");
+    assert.equal(payload.sharedBackend, "http://127.0.0.1:12345");
+    assert.equal(payload.gatewayScopedBackend, "http://127.0.0.1:12345");
   });
 
   it("mints a token when no gateway on the host has one (#8704)", () => {
@@ -858,5 +927,154 @@ console.log(JSON.stringify({
     assert.equal(payload.spawnedTokens.length, 1);
     assert.match(payload.spawnedTokens[0], /^[0-9a-f]{48}$/);
     assert.equal(payload.activeToken, payload.spawnedTokens[0]);
+  });
+
+  it("fails safely when dormant gateway roots contain conflicting tokens (#8704)", () => {
+    const payload = runSecondGatewayProxyStart({
+      callingGatewayPort: 9000,
+      gatewayScopedPort: 8990,
+      gatewayScopedToken: "first-token",
+      otherGatewayScopedToken: "second-token",
+      prefix: "nemoclaw-ollama-proxy-conflicting-scoped-",
+    });
+
+    assert.deepEqual(payload.spawnedTokens, []);
+    assert.equal(payload.sharedToken, null);
+    assert.match(payload.operationError || "", /Conflicting legacy Ollama proxy tokens/);
+  });
+
+  it("serializes concurrent startup and recovery around one shared proxy (#8704)", {
+    timeout: 15_000,
+  }, async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-lock-"));
+    const stateDir = path.join(tmpDir, ".nemoclaw");
+    const scriptPath = path.join(tmpDir, "concurrent-proxy-check.js");
+    const enteredPath = path.join(tmpDir, "startup-entered");
+    const activeTokenPath = path.join(tmpDir, "active-token");
+    const spawnLogPath = path.join(tmpDir, "proxy-spawns.log");
+    const proxyPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "inference", "ollama", "proxy.ts"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const waitPath = JSON.stringify(path.join(repoRoot, "src", "lib", "core", "wait.ts"));
+
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(path.join(stateDir, "ollama-backend"), "http://127.0.0.1:11434\n", {
+      mode: 0o600,
+    });
+
+    const script = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const childProcess = require("child_process");
+const runner = require(${runnerPath});
+const wait = require(${waitPath});
+const mode = process.argv[2];
+const enteredPath = ${JSON.stringify(enteredPath)};
+const activeTokenPath = ${JSON.stringify(activeTokenPath)};
+const spawnLogPath = ${JSON.stringify(spawnLogPath)};
+const pause = new Int32Array(new SharedArrayBuffer(4));
+
+wait.waitForPort = () => true;
+childProcess.spawn = (_cmd, _args, opts = {}) => {
+  const token = opts.env && opts.env.OLLAMA_PROXY_TOKEN;
+  fs.appendFileSync(spawnLogPath, mode + ":" + token + "\n");
+  fs.writeFileSync(activeTokenPath, token + "\n");
+  if (mode === "start") {
+    fs.writeFileSync(enteredPath, "entered\n");
+    Atomics.wait(pause, 0, 0, 500);
+  }
+  return { pid: 4242, unref() {} };
+};
+runner.runCapture = (command) => {
+  const text = Array.isArray(command) ? command.join(" ") : command;
+  if (text.includes("ps -p 4242") && fs.existsSync(activeTokenPath)) {
+    return "node /tmp/ollama-auth-proxy.js";
+  }
+  return "";
+};
+runner.run = () => ({ status: 0, stdout: "", stderr: "" });
+
+const originalSpawnSync = childProcess.spawnSync;
+childProcess.spawnSync = (...args) => {
+  if (args[0] === "curl") {
+    const input = String((args[2] && args[2].input) || "");
+    const active = fs.existsSync(activeTokenPath)
+      ? fs.readFileSync(activeTokenPath, "utf8").trim()
+      : "";
+    return {
+      status: 0,
+      stdout: input.includes("Bearer " + active) && active ? "200" : "401",
+      stderr: "",
+    };
+  }
+  if (args[0] === "sleep") return { status: 0, stdout: "", stderr: "" };
+  return originalSpawnSync(...args);
+};
+
+const proxy = require(${proxyPath});
+if (mode === "start" || mode === "start-peer") {
+  if (!proxy.startOllamaAuthProxy()) process.exitCode = 1;
+} else {
+  proxy.ensureOllamaAuthProxy();
+}
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const runChild = (mode: "start" | "start-peer" | "ensure") =>
+      new Promise<{ stderr: string; stdout: string }>((resolve, reject) => {
+        const child = spawn(process.execPath, [scriptPath, mode], {
+          cwd: repoRoot,
+          env: { ...process.env, HOME: tmpDir },
+        });
+        let stdout = "";
+        let stderr = "";
+        child.stdout?.on("data", (chunk) => {
+          stdout += String(chunk);
+        });
+        child.stderr?.on("data", (chunk) => {
+          stderr += String(chunk);
+        });
+        child.on("error", reject);
+        child.on("close", (code) => {
+          if (code === 0) resolve({ stderr, stdout });
+          else reject(new Error(`${mode} child exited ${String(code)}: ${stderr || stdout}`));
+        });
+      });
+
+    const waitForStartupEntry = async (): Promise<void> => {
+      const deadline = Date.now() + 5_000;
+      while (!fs.existsSync(enteredPath)) {
+        if (Date.now() >= deadline) throw new Error("startup child did not enter proxy spawn");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    };
+
+    try {
+      const startup = runChild("start");
+      await waitForStartupEntry();
+      const peerStartup = runChild("start-peer");
+      const recovery = runChild("ensure");
+      await Promise.all([startup, peerStartup, recovery]);
+
+      const spawnRecords = fs.readFileSync(spawnLogPath, "utf8").trim().split("\n");
+      const spawnedTokens = spawnRecords.map((record) => record.split(":")[1]);
+      assert.equal(spawnRecords[0]?.split(":")[0], "start");
+      assert.equal(spawnRecords.length, 2);
+      assert.match(spawnedTokens[0] || "", /^[0-9a-f]{48}$/);
+      assert.equal(spawnedTokens[1], spawnedTokens[0]);
+      assert.equal(
+        fs.readFileSync(path.join(stateDir, "ollama-proxy-token"), "utf8").trim(),
+        spawnedTokens[0],
+      );
+      assert.equal(
+        fs.readFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "utf8").trim(),
+        "4242",
+      );
+      assert.equal(fs.readFileSync(activeTokenPath, "utf8").trim(), spawnedTokens[0]);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
