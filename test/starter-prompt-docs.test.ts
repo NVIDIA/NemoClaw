@@ -14,6 +14,7 @@ import {
   renderStarterPromptSnippet,
   runStarterPromptGenerator,
   STARTER_PROMPT_GENERATED_PATH,
+  STARTER_PROMPT_SOURCE_PATH,
 } from "../scripts/generate-starter-prompt.mts";
 import {
   createGitRunner,
@@ -1275,5 +1276,29 @@ describe("starter prompt docs CTA", () => {
     );
     expect(promptSource).toContain("NEMOCLAW_AGENT=langchain-deepagents-code");
     expect(promptSource).toContain("nemo-deepagents onboard");
+  });
+});
+
+describe("starter prompt checkout line endings", () => {
+  // Resolve the attribute through Git so the test exercises the checkout
+  // contract instead of asserting .gitattributes text.
+  function checkAttr(relativePath: string): string {
+    const result = runGit(["check-attr", "text", "eol", "--", relativePath]);
+    expect(result.status).toBe(0);
+    return result.stdout.toString("utf8");
+  }
+
+  it("pins the starter prompt source to LF so an autocrlf checkout keeps it readable (#8648)", () => {
+    const attributes = checkAttr(STARTER_PROMPT_SOURCE_PATH);
+
+    expect(attributes).toContain(`${STARTER_PROMPT_SOURCE_PATH}: text: set`);
+    expect(attributes).toContain(`${STARTER_PROMPT_SOURCE_PATH}: eol: lf`);
+  });
+
+  it("leaves line endings unspecified for a file the rule does not name (#8648)", () => {
+    const attributes = checkAttr("CONTRIBUTING.md");
+
+    expect(attributes).toContain("CONTRIBUTING.md: text: unspecified");
+    expect(attributes).toContain("CONTRIBUTING.md: eol: unspecified");
   });
 });

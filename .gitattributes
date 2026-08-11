@@ -1,6 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# The starter-prompt generator rejects a carriage return in this source, so the
+# checkout must keep LF even when core.autocrlf converts other text files.
+/docs/resources/starter-prompt.md text eol=lf
+
 /skills/nemoclaw/** linguist-generated=true
 /skills/nemoclaw/**/*.md diff=markdown
 /tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/**/*.bundle linguist-generated=true -diff
