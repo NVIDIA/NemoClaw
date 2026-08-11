@@ -22,6 +22,19 @@ export type DiagnosticSignal = {
   hint?: string;
 };
 
+export type ChannelReadinessState = "ready" | "waiting" | "terminal";
+
+export type ChannelReadinessCategory = "credential" | "network" | "plugin" | "policy" | "runtime";
+
+/** Channel-owned readiness classification consumed by the generic wait loop. */
+export type ChannelReadiness = {
+  state: ChannelReadinessState;
+  category: ChannelReadinessCategory | null;
+  reason: string;
+  retryable: boolean;
+  lastTransitionAt: string | null;
+};
+
 /**
  * Structured runtime-health verdict a status hook emits. `verdict` is a plain
  * string so the generic renderer stays channel-agnostic; each channel narrows
@@ -35,10 +48,13 @@ export type ChannelHealthReport = {
   probedAt: string;
   signals: DiagnosticSignal[];
   hints: string[];
+  readiness?: ChannelReadiness;
 };
 
 /** `kind: "status"` output `value.type` carrying a {@link ChannelHealthReport}. */
 export const MESSAGING_CHANNEL_HEALTH_OUTPUT_TYPE = "messaging-channel-health";
+
+export const DEFAULT_CHANNEL_STATUS_HEALTH_TIMEOUT_MS = 8_000;
 
 export interface ChannelHealthCommandResult {
   readonly status?: number | null;
