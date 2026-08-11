@@ -184,9 +184,9 @@ projects. Reviewed condition-only jobs may be skipped when the empty-selector di
 select them, including Launchable, Jetson, DGX Spark, retired-selector compatibility, reporting,
 and scorecard jobs.
 
-Changes that can affect managed activation also require the current head's exact all-agent managed
-runtime activation check. Changes that can affect rootless Podman also require the current head's
-rootless Podman CPU lifecycle check with Docker disabled.
+The managed image lifecycle check for all shipped agents is not a required PR check.
+After promotion on `main`, the managed image workflow verifies the published `linux/amd64` image cohort for OpenClaw, Hermes, and LangChain Deep Agents Code.
+Changes that can affect rootless Podman still require the latest PR commit's rootless Podman CPU lifecycle check with Docker disabled.
 
 The gate fails closed for missing, expired, duplicate, or malformed evidence. It also rejects a
 stale head or base, a workflow mismatch, nonempty selectors, an unreviewed skipped job, an

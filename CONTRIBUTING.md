@@ -212,7 +212,7 @@ These are the primary npm scripts for day-to-day development:
 | `npm test` | Build package artifacts and run every non-live Vitest project for broad changes |
 | `npm run test:spec` | Run every non-live test with hierarchical behavior-oriented output |
 | `npm run test:fast` | Clean `dist/` and run source CLI, plugin, and E2E-support tests |
-| `npm run test:changed` | Run tests affected by staged, unstaged, or untracked changes in the CLI, plugin, and E2E-support projects |
+| `npm run test:changed` | Run affected source tests, then check growth against `origin/main`; the PR check also compares test-file budget limits with the base commit |
 | `npm run test:watch` | Watch the CLI, plugin, and E2E-support projects and rerun affected tests |
 | `npm run test:shuffle` | Shuffle test order in the focused source projects without collecting coverage |
 | `npm run test:diagnose:leaks` | Report async-resource leaks and diagnose a Vitest process that hangs during shutdown |
@@ -287,12 +287,20 @@ metrics list every accepted exception so these contracts remain visible during r
 
 ### Focused Vitest Feedback
 
-Use `npm run test:changed` for the staged, unstaged, and untracked changes in the current checkout,
-or keep `npm run test:watch` running while editing. Both commands select only the source-backed
-`cli`, `plugin`, and `e2e-support` projects. Watch mode also maps the repository's current opaque
-YAML, Python, shell, generated, and workflow inputs to the concrete contract tests that read or
-execute them outside Vitest's import graph. Add a narrow mapping in
-`test/helpers/vitest-watch-triggers.ts` when a new opaque input needs the same treatment.
+Run `npm run test:changed` from a checkout that has the `origin/main` Git ref.
+The command runs affected tests from the source-backed `cli`, `plugin`, and `e2e-support` projects.
+After those tests pass, it checks the current checkout for:
+
+- Newly added JavaScript files.
+- Growth in `src/lib/onboard.ts`.
+- Test-file line-budget violations.
+- Added `if` statements in changed test files.
+
+The pull request check separately compares `ci/test-file-size-budget.json` with the base commit.
+The local check validates the current budget file but does not compare its limits with the base commit.
+Keep `npm run test:watch` running for source-test feedback while editing.
+Watch mode also maps the repository's current opaque YAML, Python, shell, generated, and workflow inputs to concrete contract tests outside Vitest's import graph.
+Add a narrow mapping in `test/helpers/vitest-watch-triggers.ts` when a new opaque input needs the same treatment.
 
 Use `npm run test:shuffle` to expose order dependencies in those focused projects. The command
 shuffles tests within files and leaves coverage disabled. Vitest prints the chosen seed at the
