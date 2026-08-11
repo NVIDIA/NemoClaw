@@ -93,6 +93,7 @@ export const CREDENTIAL_SENSITIVE_BASENAMES = new Set([
  * checks.
  */
 const SNAPSHOT_CREDENTIAL_SCAN_EXCLUDED_BASENAMES = new Set([
+  ".package-lock.json",
   "package-lock.json",
   "npm-shrinkwrap.json",
   "yarn.lock",

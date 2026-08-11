@@ -100,6 +100,39 @@ describe("rebuild backup credential sanitization", () => {
     expect(readFileSync(lockPath, "utf-8")).toBe(contents);
   });
 
+  it("leaves an installed npm lockfile byte for byte when it contains no credentials", () => {
+    const backupPath = createBackup();
+    const modulesDirectory = join(backupPath, "state", "node_modules");
+    mkdirSync(modulesDirectory, { recursive: true });
+    const lockPath = join(modulesDirectory, ".package-lock.json");
+    const contents = `{\n    "lockfileVersion": 3,\n    "packages": {\n        "node_modules/cookie": {\n            "version": "0.7.1",\n            "resolved": "https://registry.example.test/sk-example-dependency-with-a-long-name-0.7.1.tgz"\n        }\n    }\n}\n`;
+    writeFileSync(lockPath, contents, { mode: 0o600 });
+
+    sanitizeBackupDirectory(backupPath);
+
+    expect(readFileSync(lockPath, "utf-8")).toBe(contents);
+  });
+
+  it.each([
+    ["credential field", '{"lockfileVersion":3,"token":"opaque-runtime-secret"}'],
+    [
+      "credential-bearing URL",
+      '{"lockfileVersion":3,"resolved":"https://registry.example.test/pkg.tgz?token=opaque"}',
+    ],
+    [
+      "URL user information",
+      '{"lockfileVersion":3,"resolved":"https://build-user:build-password@registry.example.test/pkg.tgz"}',
+    ],
+  ])("removes a recognized lockfile containing %s", (_label, contents) => {
+    const backupPath = createBackup();
+    const lockPath = join(backupPath, "state", "package-lock.json");
+    writeFileSync(lockPath, contents, { mode: 0o600 });
+
+    sanitizeBackupDirectory(backupPath);
+
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
   // source-shape-contract: security -- Package names inside an installed manifest are the exact bytes the credential key matcher would rewrite, so only the unmodified content proves the dependency-tree exclusion holds.
   it("leaves an installed package manifest that names a credential-shaped dependency", () => {
     const backupPath = createBackup();
