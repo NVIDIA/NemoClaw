@@ -244,8 +244,8 @@ export function isPrE2eTypedTargetId(value: string): boolean {
 }
 
 export function isPrE2ePlanningJob(value: string): boolean {
-  // Automatic PR planning cannot confirm an online self-hosted Jetson runner.
-  // Remove this exclusion after the Colossus-backed runner path can make that confirmation.
+  // Automatic PR planning cannot attest the external Colossus dispatcher and cleanup path.
+  // Remove this exclusion after that hardware gate produces trusted planning evidence.
   return !PR_E2E_PLANNING_OMITTED_JOB_IDS.has(value);
 }
 
