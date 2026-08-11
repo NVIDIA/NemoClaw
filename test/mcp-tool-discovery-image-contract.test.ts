@@ -184,7 +184,7 @@ describe("MCP tool discovery image contract", () => {
       integrity: reviewedSdk.integrity,
       tarballUrl: reviewedSdk.resolved,
       directory: "tools/mcp-tool-discovery-runtime",
-      lockSha256: "bc7e34d9eb1f72cf3016c8b88c72d3b7682a4f234903cb93b9476b10d7e954eb",
+      lockSha256: "b1d5f21eb3a7efabcd43d162f3d4a0ca9edfb7355b4e17615c88d592d3232878",
     });
     expect(installer).toContain(
       'export NODE_OPTIONS="${NODE_OPTIONS:---dns-result-order=ipv4first}"',

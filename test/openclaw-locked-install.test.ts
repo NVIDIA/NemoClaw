@@ -24,7 +24,7 @@ const MCPORTER_PACKAGE_SPEC = "mcporter@0.7.3";
 const MCPORTER_LOCK_SHA256 = "962dee34f6b0a493521d1619d1cf030e2630cbdfce8bf0598217202f57078793";
 const MCP_TOOL_DISCOVERY_PACKAGE_SPEC = "@modelcontextprotocol/sdk@1.30.0";
 const MCP_TOOL_DISCOVERY_LOCK_SHA256 =
-  "bc7e34d9eb1f72cf3016c8b88c72d3b7682a4f234903cb93b9476b10d7e954eb";
+  "b1d5f21eb3a7efabcd43d162f3d4a0ca9edfb7355b4e17615c88d592d3232878";
 const roots: string[] = [];
 
 function sha256(file: string): string {
