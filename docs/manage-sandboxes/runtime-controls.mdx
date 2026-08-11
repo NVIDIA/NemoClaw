@@ -93,7 +93,33 @@ NemoClaw binds the write to the SHA-256 digest of the matching read, temporarily
 `shields up` also publishes fresh config, environment, and compatibility-hash inodes so a descriptor opened before lockdown cannot retain write authority.
 Shields up keeps `/sandbox/.hermes/profiles/dashboard-home/` sandbox-owned at mode `0700` so the dashboard can update its isolated profile.
 Other Hermes profiles remain read-only during lockdown.
-The same root-only mutation lock stays held through Hermes config writes, the full `shields up` or `shields down` filesystem transition and verification, and lifecycle recovery that needs to seal those paths.
+The root-only mutation lock stays held through every Hermes host-side config write.
+On the sealed-plan and compatibility Shields paths, it also stays held through the full `shields up` or `shields down` filesystem transition and verification, and lifecycle recovery that needs to seal those paths.
+
+Current NemoClaw-managed Hermes images on the Docker driver use the `provider-state-mutation-v2` runtime provider state mutation contract for Shields filesystem transitions.
+NemoClaw selects this contract only when all these conditions apply:
+
+- The registered sandbox is a managed Hermes image.
+- The sandbox registry records its lifecycle generation.
+- The image exposes the exact root-owned capability installed by NemoClaw.
+
+An older managed image uses the sealed-plan transition only after NemoClaw proves that the capability is absent.
+A custom image, including a legacy Dockerfile workflow, remains on its existing sealed-plan or compatibility contract and cannot opt in by adding a similarly named file.
+An invalid capability that is present fails closed and requires a rebuild with a current managed image.
+
+The Docker provider binds each transition to the registered lifecycle generation, exact container, qualified Docker engine authority, mount namespace, `/sandbox/.hermes` inode, AgentDefinition-derived plan and projection, target posture, rollback posture, and fresh nonce.
+Before the provider fence becomes active, NemoClaw drains any earlier privileged sandbox execution lease.
+While the fence is active, new direct-container, SSH, and OpenShell command transports are rejected before a sandbox command starts.
+The installed root-owned controller and Hermes publisher apply and verify the exact target posture, then the provider starts only the bound Hermes entrypoint and proves the replacement gateway and startup checkpoint before it releases the fence.
+
+The owner-only ledger under `~/.nemoclaw/state/runtime-provider-lifecycle/` survives a host controller restart and remains authoritative for recovery of the exact target.
+The next Shields command, including `shields status`, must recover a retained fence before it can report or change posture.
+Hermes startup also checks the image-owned startup gate before it reads mutable state and remains held when the runtime provider state mutation is active or cannot be authenticated.
+While recovery is incomplete, do not:
+
+- Delete the ledger.
+- Kill a held entrypoint.
+- Use a manual container command to bypass the fence.
 
 If another host mutation is active, the command reports `Hermes config mutation is already in progress`.
 If another lifecycle request owns the supervisor, it reports `SUPERVISOR_BUSY`.

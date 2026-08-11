@@ -57,7 +57,7 @@ related work. Do not assign an owner through GitHub unless the user authorizes t
 
 ## Discover the current implementation
 
-Before running any `git` or `gh` discovery command, follow [Stop for Git and GitHub Access Errors](../_shared/git-github-hard-stop.md). Then follow [Discover the Current Implementation](../_shared/implementation-discovery.md). Apply the shared [Code Change Considerations](../_shared/code-change-considerations.md) and [Security Rubric](../_shared/security-rubric.md) at the planning stage.
+Before running any `git` or `gh` discovery command, follow [Stop for Git and GitHub Access Errors](../_shared/git-github-hard-stop.md). Then follow [Discover the Current Implementation](../_shared/implementation-discovery.md). Apply the shared [Code Change Considerations](../_shared/code-change-considerations.md), [Root-Cause and Sensitive-Workflow State Checks](../_shared/root-cause-and-state-checks.md), and [Security Rubric](../_shared/security-rubric.md) at the planning stage.
 
 Read before proposing work:
 
@@ -67,8 +67,10 @@ Read before proposing work:
 - documentation only to locate claims and rationale, not as behavior authority.
 
 Identify the existing structure to extend. Report duplicate ownership, conflicting work, delivery
-order constraints, unresolved decisions, and trust boundaries. Stop discovery when the smallest
-coherent delivery plan is supported by current evidence.
+order constraints, unresolved decisions, and trust boundaries. Name the operation and failure class
+that the work belongs to, record the sibling paths checked, and record the sensitive-workflow state
+outcomes the plan must hold. Stop discovery when the smallest coherent delivery plan is supported by
+current evidence.
 
 ## Define observable acceptance
 
@@ -136,6 +138,9 @@ the planning result reliably:
 ## Current state and decisions
 - Existing structure to extend: <owner and evidence>
 - Unresolved product decisions: <decision or "none found">
+- Operation and failure class: <operation and failure class the work belongs to>
+- Sibling paths checked: <path and whether it needs the same change>
+- Sensitive-workflow states: <each applicable failure cell with a separate result and required action, plus each credential location, access, lifetime, and removal, or "not applicable" with the reason>
 - Security boundaries: <applicable risks, controls, and required negative evidence>
 
 ## Observable acceptance examples

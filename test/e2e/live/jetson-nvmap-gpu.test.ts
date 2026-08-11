@@ -21,12 +21,22 @@ const TIMEOUT_MS = 50 * 60_000;
 function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     ...buildAvailabilityProbeEnv(),
+    HOME: process.env.HOME,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    NEMOCLAW_JETSON_WORKSPACE: process.env.NEMOCLAW_JETSON_WORKSPACE,
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_PROVIDER: process.env.NEMOCLAW_PROVIDER ?? "ollama",
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+    PATH: process.env.PATH,
+    TMPDIR: process.env.TMPDIR,
+    XDG_BIN_HOME: process.env.XDG_BIN_HOME,
+    XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
+    XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+    XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+    XDG_STATE_HOME: process.env.XDG_STATE_HOME,
+    npm_config_prefix: process.env.npm_config_prefix,
     ...extra,
   };
 }
@@ -55,9 +65,7 @@ fi
 if command -v openshell >/dev/null 2>&1; then
   openshell sandbox delete "$NEMOCLAW_SANDBOX_NAME" 2>/dev/null || true
   openshell gateway destroy -g nemoclaw 2>/dev/null || true
-fi
-pkill -f "ollama serve" 2>/dev/null || true
-pkill -f "ollama-auth-proxy" 2>/dev/null || true`,
+fi`,
     "cleanup-jetson-nvmap",
     120_000,
   ).catch(() => undefined);
@@ -112,25 +120,6 @@ fi`,
       "Not a Jetson/Tegra host (/dev/nvmap absent) — reporter workflow requires Jetson hardware; hermetic #4231 coverage remains in src/lib/onboard/docker-gpu-patch.test.ts.",
     );
 
-  cleanup.trackDisposable("stop Jetson Ollama processes", async () => {
-    const stop = await hostShell(
-      host,
-      String.raw`set +e
-status=0
-for pattern in '[o]llama serve' '[o]llama-auth-proxy'; do
-  pkill -f "$pattern"
-  rc=$?
-  case "$rc" in
-    0|1) ;;
-    *) status="$rc" ;;
-  esac
-done
-exit "$status"`,
-      "cleanup-jetson-ollama-processes",
-      120_000,
-    );
-    expect(stop.exitCode, resultText(stop)).toBe(0);
-  });
   const gatewayCleanupOptions = {
     artifactName: "cleanup-jetson-openshell-gateway",
     env: env(),
@@ -224,17 +213,13 @@ exit "$status"`,
 
   // A3: preserve the reporter workflow by installing/running the real onboarding shell path.
   progress.phase("install NemoClaw on the Jetson host");
-  const installOllama = await hostShell(
+  const ollamaBaseline = await hostShell(
     host,
-    'if [ "${NEMOCLAW_PROVIDER:-ollama}" = "ollama" ] && ! command -v ollama >/dev/null 2>&1; then\n' +
-      "  curl -fsSL https://ollama.com/install.sh | sh 2>&1 || true\n" +
-      "  systemctl stop ollama 2>/dev/null || true\n" +
-      '  pkill -f "ollama serve" 2>/dev/null || true\n' +
-      "fi",
-    "phase-1-install-ollama-if-needed",
-    10 * 60_000,
+    "command -v ollama && ollama list",
+    "phase-1-ollama-baseline",
+    120_000,
   );
-  expect(installOllama.exitCode, resultText(installOllama)).toBe(0);
+  expect(ollamaBaseline.exitCode, resultText(ollamaBaseline)).toBe(0);
 
   const install = await host.command("bash", ["install.sh", "--non-interactive"], {
     artifactName: "phase-2-install-jetson-nvmap",
@@ -248,6 +233,23 @@ exit "$status"`,
   const installedCli = await hostShell(host, "command -v nemoclaw", "phase-2-command-v-nemoclaw");
   expect(installedCli.exitCode, resultText(installedCli)).toBe(0);
   expect(installedCli.stdout.trim()).not.toBe("");
+
+  const installedBinaries = await hostShell(
+    host,
+    String.raw`set -euo pipefail
+[ -n "$NEMOCLAW_JETSON_WORKSPACE" ]
+for installed_command in nemoclaw openshell openshell-gateway openshell-sandbox; do
+  installed_path="$(command -v "$installed_command")"
+  canonical_path="$(realpath -e "$installed_path")"
+  case "$canonical_path" in
+    "$NEMOCLAW_JETSON_WORKSPACE"/*) printf '%s\t%s\n' "$installed_command" "$canonical_path" ;;
+    *) echo "$installed_command resolved outside the Jetson job workspace" >&2; exit 1 ;;
+  esac
+done`,
+    "phase-2-job-local-installation",
+  );
+  expect(installedBinaries.exitCode, resultText(installedBinaries)).toBe(0);
+  expect(installedBinaries.stdout.trim().split("\n")).toHaveLength(4);
 
   // A4: the Jetson recreate must grant Tegra device-node groups via --group-add.
   expect(resultText(install)).toContain(
