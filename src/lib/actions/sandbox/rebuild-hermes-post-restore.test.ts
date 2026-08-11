@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createRebuildFlowHarness,
-  resetRebuildFlowTestEnvironment,
-  restoreRebuildFlowTestEnvironment,
-} from "../../../../test/helpers/rebuild-flow-harness";
+  installRebuildFlowTestHooks,
+} from "../../../../test/helpers/rebuild-flow-dcode-harness";
 import {
   ensureHermesGatewayAfterStateRestore,
   ensureHermesGatewayAfterStateRestoreForCronGate,
@@ -363,8 +362,7 @@ describe("Hermes gateway post-restore recheck", () => {
 });
 
 describe("Hermes rebuild post-restore verification", () => {
-  beforeEach(resetRebuildFlowTestEnvironment);
-  afterEach(restoreRebuildFlowTestEnvironment);
+  installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
 
   it("fails instead of reporting readiness when restored state leaves the gateway down (#7084)", async () => {
     const mcpEntry = {

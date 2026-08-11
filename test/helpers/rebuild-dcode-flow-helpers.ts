@@ -4,7 +4,7 @@
 import { expect } from "vitest";
 
 import { expectNoSandboxDelete } from "./rebuild-delete-assertions";
-import type { RebuildFlowHarness } from "./rebuild-flow-harness";
+import type { RebuildFlowHarness } from "./rebuild-flow-dcode-harness";
 
 export function makeDcodeSandboxEntry(): Record<string, unknown> {
   return {
