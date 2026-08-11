@@ -3440,7 +3440,7 @@ function getSetupNimDeps(): SetupNimDeps {
     handleRunningOllamaSelection,
     handleWindowsHostOllamaSelection,
     handleInstallOllamaSelection,
-    installVllm: vllmInference.installVllm,
+    installVllm: setupNimFlow.withServingPortGuard(vllmInference.installVllm, checkPortAvailable),
     handleVllmSelection,
     handleRoutedSelection,
     coerceAgentInferenceApi: inferenceConfig.coerceAgentInferenceApi,
