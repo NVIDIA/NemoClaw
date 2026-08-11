@@ -159,6 +159,36 @@ describe("relaunchManagedSupervisorSession", () => {
     });
   });
 
+  it("retries only transport-level state backup failures after a container restart", () => {
+    const backupState = vi
+      .fn()
+      .mockReturnValueOnce({
+        success: false,
+        unreachable: true,
+        manifest: { backupPath: "/tmp/rebuild-backups/alpha/first" },
+        backedUpDirs: [],
+        failedDirs: ["workspace"],
+        backedUpFiles: [],
+        failedFiles: [],
+      })
+      .mockReturnValueOnce({
+        success: true,
+        manifest: { backupPath: "/tmp/rebuild-backups/alpha/recovery" },
+        backedUpDirs: ["workspace"],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+      });
+    const sleep = vi.fn();
+    const deps = baseDeps({ backupState: backupState as never, sleep });
+
+    expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).not.toBeNull();
+    expect(backupState).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(2);
+    expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/first");
+    expect(deps.recreate).toHaveBeenCalledOnce();
+  });
+
   it("rolls the container transaction back when managed readiness is not proven", () => {
     const deps = baseDeps();
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
