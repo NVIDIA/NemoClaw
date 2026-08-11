@@ -3,6 +3,7 @@
 
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 
 import { describe, expect, it } from "vitest";
 
@@ -39,8 +40,7 @@ async function withHealthStatus<T>(statusCode: number, run: (endpoint: string) =
     response.writeHead(statusCode).end();
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("expected TCP test server");
+  const address = server.address() as AddressInfo;
   try {
     return await run(`http://127.0.0.1:${address.port}/health`);
   } finally {
@@ -68,8 +68,7 @@ describe("protected managed-image OpenClaw health probe", () => {
   it("reports transport failure as HTTP 000", async () => {
     const server = createServer();
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const address = server.address();
-    if (!address || typeof address === "string") throw new Error("expected TCP test server");
+    const address = server.address() as AddressInfo;
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );
