@@ -107,6 +107,7 @@ describe("GatewayClient recovery helpers (#2701)", () => {
           stderr: "SUPERVISOR_UNAVAILABLE\nNEMOCLAW_CONTROL_STAGE=discover-supervisor\n",
         },
         { exitCode: 1, stderr: "SUPERVISOR_NOT_RUNNING\n" },
+        { exitCode: 1, stderr: "SUPERVISOR_NOT_RUNNING\n" },
       );
       const gateway = buildGateway(runner);
       const sleep = vi.fn(async (milliseconds: number) => {
@@ -129,8 +130,9 @@ describe("GatewayClient recovery helpers (#2701)", () => {
         "sleep-3000",
         "probe-not-running",
         "sleep-3000",
+        "probe-not-running",
       ]);
-      expect(runner.calls).toHaveLength(2);
+      expect(runner.calls).toHaveLength(3);
       for (const call of runner.calls) {
         expect(call.command).toBe("docker");
         expect(call.args.slice(0, -1)).toEqual([
@@ -164,6 +166,52 @@ describe("GatewayClient recovery helpers (#2701)", () => {
           settleMs: 0,
         }),
       ).rejects.toThrow(/polling exhausted/);
+    });
+
+    it("does not accept missing-supervisor output with stdout", async () => {
+      const runner = new ScriptedRunner();
+      runner.queue({
+        exitCode: 1,
+        stdout: "unexpected output\n",
+        stderr: "SUPERVISOR_NOT_RUNNING\n",
+      });
+      const gateway = buildGateway(runner);
+
+      await expect(
+        gateway.waitForMissingManagedSupervisor("container-123", {
+          attempts: 1,
+          delayMs: 0,
+          settleMs: 0,
+        }),
+      ).rejects.toThrow(/polling exhausted/);
+    });
+
+    it("retries when supervisor absence changes during the settle interval", async () => {
+      const runner = new ScriptedRunner();
+      runner.queue(
+        { exitCode: 1, stderr: "SUPERVISOR_NOT_RUNNING\n" },
+        { exitCode: 0, stdout: "SUPERVISOR_RUNNING\n" },
+        { exitCode: 1, stderr: "SUPERVISOR_NOT_RUNNING\n" },
+        { exitCode: 0, stdout: "SUPERVISOR_RUNNING\n" },
+      );
+      const gateway = buildGateway(runner);
+      const sleep = vi.fn(async () => undefined);
+      const onRetry = vi.fn();
+
+      await expect(
+        gateway.waitForMissingManagedSupervisor("container-123", {
+          attempts: 2,
+          delayMs: 0,
+          settleMs: 3_000,
+          sleep,
+          onRetry,
+        }),
+      ).rejects.toThrow(/polling exhausted/);
+
+      expect(sleep).toHaveBeenCalledTimes(2);
+      expect(onRetry).toHaveBeenNthCalledWith(1, 1);
+      expect(onRetry).toHaveBeenNthCalledWith(2, 2);
+      expect(runner.calls).toHaveLength(4);
     });
   });
 

@@ -89,6 +89,19 @@ export interface HostGatewayRuntime {
   id: string;
 }
 
+function isMissingManagedSupervisorProof(result: ShellProbeResult): boolean {
+  const stderrLines = result.stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return (
+    result.exitCode === 1 &&
+    result.stdout.trim() === "" &&
+    stderrLines.length === 1 &&
+    stderrLines[0] === "SUPERVISOR_NOT_RUNNING"
+  );
+}
+
 export class GatewayClient {
   private readonly host: HostCliClient;
   private readonly sandbox: SandboxClient;
@@ -183,6 +196,11 @@ export class GatewayClient {
    * Wait until the trusted root controller proves that a restarted legacy
    * container has no managed supervisor. This keeps the live E2E recovery test
    * out of the brief process-churn window after OpenShell becomes reachable.
+   * The fixture owns this wait because Docker restart and OpenShell readiness
+   * can complete before the container process table settles, while production
+   * recovery must keep treating uncertain controller output as terminal. Remove
+   * the wait when OpenShell readiness guarantees the controller absence proof
+   * remains stable across the settle interval.
    */
   async waitForMissingManagedSupervisor(
     containerId: string,
@@ -200,46 +218,40 @@ export class GatewayClient {
       attempts,
       delayMs,
       sleep,
-      probe: async (_attempt, artifactName) =>
-        await this.host.command(
-          "docker",
-          [
-            "exec",
-            "--env",
-            "LD_PRELOAD=",
-            "--env",
-            "PYTHONPATH=",
-            "--user",
-            "root",
-            containerId,
-            "/usr/local/bin/nemoclaw-gateway-control",
-            "probe",
-            randomBytes(32).toString("hex"),
-          ],
-          {
-            artifactName,
-            env: probeEnv(),
-            timeoutMs: 30_000,
-          },
-        ),
+      probe: async (_attempt, artifactName) => {
+        const runProbe = async (name: string) =>
+          await this.host.command(
+            "docker",
+            [
+              "exec",
+              "--env",
+              "LD_PRELOAD=",
+              "--env",
+              "PYTHONPATH=",
+              "--user",
+              "root",
+              containerId,
+              "/usr/local/bin/nemoclaw-gateway-control",
+              "probe",
+              randomBytes(32).toString("hex"),
+            ],
+            {
+              artifactName: name,
+              env: probeEnv(),
+              timeoutMs: 30_000,
+            },
+          );
+        const initial = await runProbe(artifactName);
+        if (!isMissingManagedSupervisorProof(initial) || settleMs <= 0) return initial;
+        await sleep(settleMs);
+        return await runProbe(`${artifactName}-after-settle`);
+      },
       accept: (result, attempt) => {
-        const stderrLines = result.stderr
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .filter(Boolean);
-        if (
-          result.exitCode === 1 &&
-          result.stdout.trim() === "" &&
-          stderrLines.length === 1 &&
-          stderrLines[0] === "SUPERVISOR_NOT_RUNNING"
-        ) {
-          return true;
-        }
+        if (isMissingManagedSupervisorProof(result)) return true;
         options.onRetry?.(attempt);
         return false;
       },
     });
-    if (settleMs > 0) await sleep(settleMs);
   }
 
   // ─── Guard-chain recovery probes (#2478, #2701) ────────────────────
