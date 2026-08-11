@@ -173,7 +173,8 @@ The wizard manages the proxy lifecycle:
 - It starts and verifies the proxy after Ollama.
 - It removes stale matching proxy processes from previous runs.
 - It probes the sandbox Docker network path before saving the inference route.
-- It stops matching proxy processes during uninstall.
+- It stops matching proxy processes when uninstall removes the final or only gateway that uses the proxy.
+- A scoped uninstall preserves the shared proxy process and state while another gateway remains.
 - It reuses the persisted token after a host reboot and during re-onboarding for the committed local Ollama route.
 - It reuses that same token for every gateway port on the host, because one proxy serves them all.
 - Export the same `NEMOCLAW_OLLAMA_PROXY_PORT` for every gateway port on the host, because all of them manage that one proxy.
@@ -186,6 +187,7 @@ NemoClaw stops before proxy restart when it cannot select one token or one backe
 Keep every token file private.
 Back up the gateway state roots and confirm which token and backend serve the active sandboxes before you remove stale legacy files.
 Rerun onboarding for every affected Local Ollama gateway after you resolve the conflict.
+Scoped uninstall preserves the shared proxy state while a sibling gateway remains; removing the final gateway stops the proxy and removes that state.
 </Warning>
 
 All proxy endpoints require the token, including `GET /api/tags`.
@@ -260,7 +262,7 @@ NEMOCLAW_GATEWAY_PORT=8990 NEMOCLAW_MODEL=qwen3.5:9b $$nemoclaw onboard
 ```
 
 Every gateway port on the host shares one authenticated proxy and one token.
-Onboarding another gateway port restarts the shared proxy with the token already stored on the host.
+When token and backend state are compatible, onboarding another gateway port restarts the shared proxy with the token already stored on the host.
 Sandboxes on the gateway you onboarded first keep reaching Ollama after the restart.
 If the restart fails, onboarding reports the port owner or the startup error.
 No sandbox on any gateway port can reach Ollama until you resolve the error and rerun onboarding.

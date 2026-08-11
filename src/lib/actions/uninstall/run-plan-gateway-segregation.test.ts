@@ -792,7 +792,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const runCalls: Array<{ command: string; args: string[] }> = [];
       const dockerCalls: string[][] = [];
       const logs: string[] = [];
-      const kill = vi.fn(() => true);
+      const kill = vi.fn((_pid: number, _signal?: NodeJS.Signals | number) => true);
       const dockerOutputByCommand: Record<string, string> = {
         images: "shared-image nemoclaw:latest",
         ps: [
@@ -849,8 +849,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(fs.existsSync(servicePath)).toBe(true);
       expect(runCalls.some(({ command }) => command === "systemctl")).toBe(false);
       expect(fs.existsSync(path.join(nemoclawConfig, "keep"))).toBe(true);
-      expect(kill).not.toHaveBeenCalledWith(4242, expect.anything());
-      expect(kill).not.toHaveBeenCalledWith(4242);
+      expect(kill.mock.calls.every(([pid]) => pid !== 4242)).toBe(true);
       expect(fs.existsSync(proxyPidFile)).toBe(true);
       expect(logs).toContain(
         "Preserving the shared Ollama auth proxy for the remaining gateway ports",

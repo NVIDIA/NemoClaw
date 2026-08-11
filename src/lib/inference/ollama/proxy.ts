@@ -157,6 +157,7 @@ function adoptGatewayScopedProxyToken(): string | null {
         {
           backendUrl: readProxyStateFile(path.join(root, "ollama-backend")),
           token,
+          tokenPath: path.join(root, "ollama-proxy-token"),
         },
       ];
     });
@@ -169,9 +170,11 @@ function adoptGatewayScopedProxyToken(): string | null {
   } else {
     const accepted = tokens.filter((token) => probeProxyToken(token) === "accepted");
     if (accepted.length !== 1) {
+      const tokenPaths = candidates.map(({ tokenPath }) => tokenPath).join(", ");
       throw new Error(
         "Conflicting legacy Ollama proxy tokens exist across gateway state roots. " +
-          "NemoClaw cannot safely select one while preserving existing sandbox access.",
+          "NemoClaw cannot safely select one while preserving existing sandbox access. " +
+          `After confirming which token serves the active sandboxes, reconcile or remove the stale files and retry: ${tokenPaths}`,
       );
     }
     [selectedToken] = accepted;

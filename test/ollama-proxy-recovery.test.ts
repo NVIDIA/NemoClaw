@@ -857,8 +857,12 @@ console.log(JSON.stringify({
       },
     });
 
-    assert.equal(result.status, 0, result.stderr);
-    return parseStdoutJson(result.stdout);
+    try {
+      assert.equal(result.status, 0, result.stderr);
+      return parseStdoutJson(result.stdout);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   }
 
   it("reuses the persisted host token when onboarding a second gateway port (#8704)", () => {
@@ -924,6 +928,9 @@ console.log(JSON.stringify({
     assert.deepEqual(payload.spawnedTokens, []);
     assert.equal(payload.sharedToken, null);
     assert.match(payload.operationError || "", /Conflicting legacy Ollama proxy tokens/);
+    assert.match(payload.operationError || "", /gateways\/8990\/ollama-proxy-token/);
+    assert.match(payload.operationError || "", /gateways\/8991\/ollama-proxy-token/);
+    assert.match(payload.operationError || "", /reconcile or remove the stale files/);
   });
 
   it("serializes concurrent startup and recovery around one shared proxy (#8704)", {
