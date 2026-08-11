@@ -264,14 +264,14 @@ audited subprocess boundaries.
 
 ### macOS Test Dependencies
 
-Some tests run GNU utilities that macOS does not ship.
+Some tests run command-line tools that macOS does not ship.
 `src/lib/shields/state-dir-lock.test.ts` runs `timeout`.
 On a macOS host that does not provide `timeout`, the process spawn fails.
 The result has no `stdout`.
 The test then reports `TypeError: Cannot read properties of undefined (reading 'split')`.
 The error does not identify the missing utility or macOS.
 
-Install the GNU utilities before you run the test suite on macOS.
+Install these command-line tools before you run the test suite on macOS.
 Put their directories first on `PATH`:
 
 ```bash
