@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +12,7 @@ type RequireSource = NodeJS.Require;
 
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
 const HERMES_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py";
+const PATH_PREFLIGHT_MARKER = "nemoclaw-shields-down-path-preflight";
 const LOCK_TOKEN = "a".repeat(64);
 const CURRENT_GUARD_HELP = [
   "begin-shields-transition",
@@ -43,6 +45,7 @@ const hermesTarget = {
 
 export type HermesUnsafeConfigScenario =
   | "preflight-symlink"
+  | "preflight-dir-symlink"
   | "unlock-symlink"
   | "unlock-ok-relock-symlink";
 
@@ -54,13 +57,17 @@ function isGuardAction(cmd: string[], action: string): boolean {
 }
 
 function isPathPreflight(cmd: string[]): boolean {
-  return (
+  const matchesCommand =
     cmd[0] === "python3" &&
     cmd[1] === "-I" &&
     cmd[2] === "-c" &&
-    typeof cmd[3] === "string" &&
-    cmd[3].includes("nemoclaw-shields-down-path-preflight")
-  );
+    cmd[4] === hermesTarget.configDir &&
+    cmd[5] === hermesTarget.configPath;
+  if (!matchesCommand) return false;
+  if (typeof cmd[3] !== "string" || !cmd[3].includes(PATH_PREFLIGHT_MARKER)) {
+    throw new Error(`Expected ${PATH_PREFLIGHT_MARKER} in the Shields path preflight command`);
+  }
+  return true;
 }
 
 function shieldsMode(cmd: string[]): string | undefined {
@@ -91,17 +98,26 @@ function defaultDockerExec(cmd: string[]): string {
   return "";
 }
 
-function wrapScenario(scenario: HermesUnsafeConfigScenario, prior: DockerExecImpl): DockerExecImpl {
+function runPathPreflight(cmd: string[], configFixtureDir: string): string {
+  const fixtureArgs = cmd.slice(1, 4).concat(
+    configFixtureDir,
+    cmd.slice(5).map((file) => path.join(configFixtureDir, path.basename(file))),
+  );
+  return execFileSync(cmd[0], fixtureArgs, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
+function wrapScenario(
+  scenario: HermesUnsafeConfigScenario,
+  prior: DockerExecImpl,
+  configFixtureDir: string,
+): DockerExecImpl {
   const unsafePathError = new Error("refusing to follow symlink: /sandbox/.hermes/config.yaml");
-  const preflightError = new Error("refusing symlink path: /sandbox/.hermes/config.yaml");
 
   return (cmd: string[]) => {
-    if (scenario === "preflight-symlink" && isPathPreflight(cmd)) {
-      throw preflightError;
-    }
-    if (scenario !== "preflight-symlink" && isPathPreflight(cmd)) {
-      return "";
-    }
+    if (isPathPreflight(cmd)) return runPathPreflight(cmd, configFixtureDir);
     if (scenario === "unlock-symlink" && isGuardAction(cmd, "begin-shields-transition")) {
       throw unsafePathError;
     }
@@ -142,6 +158,31 @@ export function createHermesUnsafeConfigHarness(
   let auditSpy: MockInstance;
   let errorSpy: MockInstance;
   let baseDockerExec: DockerExecImpl = defaultDockerExec;
+  let configFixtureDir = "";
+
+  const resetConfigFixture = () => {
+    configFixtureDir = path.join(homeDir, "sandbox", ".hermes");
+    fs.rmSync(configFixtureDir, { recursive: true, force: true });
+    fs.mkdirSync(configFixtureDir, { recursive: true });
+    fs.writeFileSync(path.join(configFixtureDir, "config.yaml"), "model: test\n");
+    fs.writeFileSync(path.join(configFixtureDir, ".env"), "TEST_VALUE=1\n");
+    fs.writeFileSync(path.join(configFixtureDir, ".config-hash"), `${"b".repeat(64)}\n`);
+  };
+
+  const prepareConfigFixture = (scenario: HermesUnsafeConfigScenario) => {
+    resetConfigFixture();
+    if (scenario === "preflight-symlink") {
+      const target = path.join(homeDir, "real-config.yaml");
+      fs.writeFileSync(target, "model: test\n");
+      fs.rmSync(path.join(configFixtureDir, "config.yaml"));
+      fs.symlinkSync(target, path.join(configFixtureDir, "config.yaml"));
+    }
+    if (scenario === "preflight-dir-symlink") {
+      const replacementDir = path.join(homeDir, "replacement-hermes");
+      fs.renameSync(configFixtureDir, replacementDir);
+      fs.symlinkSync(replacementDir, configFixtureDir, "dir");
+    }
+  };
 
   const seedLockedState = (sandboxName: string): string => {
     const stateDir = path.join(homeDir, ".nemoclaw", "state");
@@ -163,16 +204,18 @@ export function createHermesUnsafeConfigHarness(
   };
 
   const setScenario = (scenario: HermesUnsafeConfigScenario) => {
-    dockerExecSpy.mockImplementation(wrapScenario(scenario, baseDockerExec));
+    prepareConfigFixture(scenario);
+    dockerExecSpy.mockImplementation(wrapScenario(scenario, baseDockerExec, configFixtureDir));
   };
 
   return {
     beforeEachHook: () => {
       homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-unsafe-"));
       vi.stubEnv("HOME", homeDir);
-      delete require.cache[requireSource.resolve(indexModule)];
-      delete require.cache[requireSource.resolve("./timer-bound-lock.js")];
-      delete require.cache[requireSource.resolve("./transition-lock.js")];
+      delete requireSource.cache[requireSource.resolve(indexModule)];
+      delete requireSource.cache[requireSource.resolve("./timer-bound-lock.js")];
+      delete requireSource.cache[requireSource.resolve("./transition-lock.js")];
+      resetConfigFixture();
 
       const runner = requireSource("../runner.js");
       const policy = requireSource("../policy/index.js");
@@ -267,7 +310,7 @@ export function createHermesUnsafeConfigHarness(
             }
             return true;
           }),
-        };
+        } as unknown as ChildProcess;
       });
 
       baseDockerExec = defaultDockerExec;
@@ -288,7 +331,9 @@ export function createHermesUnsafeConfigHarness(
     afterEachHook: () => {
       vi.restoreAllMocks();
       vi.unstubAllEnvs();
-      delete require.cache[requireSource.resolve(indexModule)];
+      delete requireSource.cache[requireSource.resolve(indexModule)];
+      delete requireSource.cache[requireSource.resolve("./timer-bound-lock.js")];
+      delete requireSource.cache[requireSource.resolve("./transition-lock.js")];
       fs.rmSync(homeDir, { recursive: true, force: true });
     },
   };
@@ -308,7 +353,7 @@ export function expectHermesShieldsUpRecord(
 
 export function failHermesInferenceConvergence(requireSource: RequireSource): void {
   const relockReconfirm = requireSource("./relock-reconfirm.js");
-  vi.spyOn(relockReconfirm, "waitForHermesInferenceRouteConvergence").mockReturnValue({
+  vi.mocked(relockReconfirm.waitForHermesInferenceRouteConvergence).mockReturnValue({
     ok: false,
     attempts: 3,
     httpStatus: 503,

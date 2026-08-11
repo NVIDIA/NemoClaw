@@ -865,15 +865,14 @@ finally:
     os.close(dir_fd)
 `;
 
+function errorStderr(error: unknown): string {
+  if (!(error instanceof Error) || !("stderr" in error) || error.stderr == null) return "";
+  return Buffer.isBuffer(error.stderr) ? error.stderr.toString("utf8") : String(error.stderr);
+}
+
 function errorText(error: unknown): string {
   if (!(error instanceof Error)) return String(error);
-  const stderr =
-    "stderr" in error && error.stderr != null
-      ? Buffer.isBuffer(error.stderr)
-        ? error.stderr.toString("utf8")
-        : String(error.stderr)
-      : "";
-  return `${error.message}\n${stderr}`.trim();
+  return `${errorStderr(error)}\n${error.message}`.trim();
 }
 
 function isUnsafeShieldsConfigPathError(error: unknown): boolean {

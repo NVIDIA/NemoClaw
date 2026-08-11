@@ -792,7 +792,24 @@ describe("Hermes Shields down unsafe config path (#8804)", () => {
 
     expect(() =>
       harness.shields.shieldsDown("hermes-shields", { reason: "unsafe-path", throwOnError: true }),
-    ).toThrow(/refusing symlink path: \/sandbox\/\.hermes\/config\.yaml/);
+    ).toThrow(/refusing symlink path: .*config\.yaml/);
+
+    expect(harness.runSpy).not.toHaveBeenCalled();
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+    expectHermesShieldsUpRecord(stateDir, "hermes-shields", harness.shields);
+    expect(harness.shields.getShieldsPosture("hermes-shields", false)).toMatchObject({
+      locked: true,
+      mutable: false,
+    });
+  });
+
+  it("rejects a replaced Hermes config directory before Shields down weakens posture (#8804)", () => {
+    const stateDir = harness.seedLockedState("hermes-shields");
+    harness.setScenario("preflight-dir-symlink");
+
+    expect(() =>
+      harness.shields.shieldsDown("hermes-shields", { reason: "unsafe-path", throwOnError: true }),
+    ).toThrow(/refusing symlink path: .*\.hermes/);
 
     expect(harness.runSpy).not.toHaveBeenCalled();
     expect(harness.auditSpy).not.toHaveBeenCalled();
@@ -816,6 +833,10 @@ describe("Hermes Shields down unsafe config path (#8804)", () => {
     ).toThrow(/refusing to follow symlink: \/sandbox\/\.hermes\/config\.yaml/);
 
     expectHermesShieldsUpRecord(stateDir, "hermes-shields", harness.shields);
+    expect(harness.shields.getShieldsPosture("hermes-shields", false)).toMatchObject({
+      locked: true,
+      mutable: false,
+    });
     expect(harness.auditSpy).not.toHaveBeenCalled();
     expect(harness.errorSpy.mock.calls.flat().map(String).join("\n")).toContain(
       "Restrictive policy restored and provisional Shields down cleared",
