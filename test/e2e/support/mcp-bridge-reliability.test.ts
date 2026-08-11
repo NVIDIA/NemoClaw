@@ -6,7 +6,19 @@ import { describe, expect, it, vi } from "vitest";
 import {
   isHermesRestartTransportFailure,
   retryAfterHermesRestartTransportFailure,
+  retryHermesGatewayDraining,
 } from "../live/mcp-bridge-reliability.ts";
+
+const HTTP_STATUS_MARKER = "NEMOCLAW_HERMES_MCP_HTTP_STATUS=";
+
+function gatewayResult(status: number, code: string) {
+  return {
+    exitCode: 0,
+    signal: null,
+    stdout: JSON.stringify({ error: { code } }),
+    stderr: `${HTTP_STATUS_MARKER}${status}\n`,
+  };
+}
 
 const HERMES_BROKEN_PIPE = `  Effective egress that would be opened:
     policy 'mcp-bridge-concurrent':
@@ -114,5 +126,50 @@ describe("MCP bridge transient classification", () => {
       }),
     ).rejects.toThrow("requires a verified committed bridge");
     expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("retries the exact gateway draining response with a bounded delay", async () => {
+    const passing = gatewayResult(200, "none");
+    const retry = vi
+      .fn<(attempt: number) => Promise<typeof passing>>()
+      .mockResolvedValueOnce(gatewayResult(503, "gateway_draining"))
+      .mockResolvedValueOnce(passing);
+    const wait = vi.fn(async () => undefined);
+
+    await expect(
+      retryHermesGatewayDraining({
+        initialResult: gatewayResult(503, "gateway_draining"),
+        retry,
+        wait,
+      }),
+    ).resolves.toBe(passing);
+    expect(retry).toHaveBeenCalledTimes(2);
+    expect(wait).toHaveBeenCalledTimes(2);
+    expect(wait).toHaveBeenNthCalledWith(1, 5_000);
+    expect(wait).toHaveBeenNthCalledWith(2, 5_000);
+  });
+
+  it("stops after three gateway draining retries", async () => {
+    const draining = gatewayResult(503, "gateway_draining");
+    const retry = vi.fn(async () => draining);
+    const wait = vi.fn(async () => undefined);
+
+    await expect(
+      retryHermesGatewayDraining({ initialResult: draining, retry, wait }),
+    ).resolves.toBe(draining);
+    expect(retry).toHaveBeenCalledTimes(3);
+    expect(wait).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not retry a different Hermes HTTP failure", async () => {
+    const failed = gatewayResult(503, "other");
+    const retry = vi.fn(async () => gatewayResult(200, "none"));
+    const wait = vi.fn(async () => undefined);
+
+    await expect(retryHermesGatewayDraining({ initialResult: failed, retry, wait })).resolves.toBe(
+      failed,
+    );
+    expect(retry).not.toHaveBeenCalled();
+    expect(wait).not.toHaveBeenCalled();
   });
 });

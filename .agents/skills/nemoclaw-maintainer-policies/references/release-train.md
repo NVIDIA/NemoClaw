@@ -57,7 +57,7 @@ Before asking for the release confirmation phrase, build and show an evidence le
 - Require the workflow-produced trusted dispatch receipt to bind the accepted run candidate SHA, run ID, attempt, and selector inputs.
 - Run `nemoclaw-maintainer-e2e` in full mode when the ledger lacks complete evidence for the candidate SHA.
 - Require one completed, successful full workflow run for all default-selected workflow E2E jobs and the full-mode additions, including `Exact staging Brev Launchable`.
-- Require the trusted dispatch receipt to record `allowJetsonRunnerQueue: false` and `allowDgxSparkRunnerQueue: false`.
+- Require the trusted dispatch receipt to record `allowJetsonRunnerQueue: false` and `allowDgxSparkRunnerQueue: false`. A v1 receipt may omit `allowJetsonDispatch` but must record `false` when the field is present. A v2 receipt must record `allowJetsonDispatch: false`.
 - Exclude `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification` from the required denominator.
 - Require the trusted dispatch receipt to bind the workflow run and an attempt no later than the run's latest attempt. The receipt must record empty selectors and `include_staging_brev_launchable=true`.
 - Require the Launchable E2E receipt to identify the candidate SHA in the repository and provision records.
