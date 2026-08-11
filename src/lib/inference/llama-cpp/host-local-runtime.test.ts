@@ -220,6 +220,7 @@ describe("llama.cpp host-local runtime materializer", () => {
       "ALL",
       "--security-opt",
       "no-new-privileges=true",
+      "--no-healthcheck",
       "--memory",
       "51539607552b",
       "--memory-swap",
@@ -279,6 +280,8 @@ describe("llama.cpp host-local runtime materializer", () => {
     const argv = buildLlamaCppRequestGuardDockerArgv(input, runtime);
     const separator = argv.indexOf("--");
 
+    expect(valuesAfter(argv, "--publish")).toEqual([]);
+    expect(argv).toContain("--no-healthcheck");
     expect(valuesAfter(argv, "--entrypoint")).toEqual([LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH]);
     expect(valuesAfter(argv, "--listen-port")).toEqual([String(input.serve.port)]);
     expect(valuesAfter(argv, "--upstream-port")).toEqual([
