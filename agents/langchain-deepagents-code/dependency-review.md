@@ -7,7 +7,7 @@ This file records the reviewed dependency baseline for the Deep Agents Code sand
 Update it whenever `requirements.lock` changes.
 
 - Lockfile: `agents/langchain-deepagents-code/requirements.lock`
-- Lockfile SHA-256: `2e9d59768ea20953c184b52220334e969356ac1a684ff334f0f3767c9f859229`
+- Lockfile SHA-256: `a422ac80565b6a77ed521fed190dca77a8ad0fc24f41dab5da756f0532feb6c5`
 - Audit command: `uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip`
 - Audit date: August 3, 2026
 - Targeted audit result: `aiohttp 3.14.3, cryptography 50.0.0, uv 0.11.33, MCP 1.28.1, Pillow 12.3.0, and pyasn1 0.6.4 have no known vulnerabilities`
