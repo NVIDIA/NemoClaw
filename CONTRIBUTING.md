@@ -372,7 +372,25 @@ CI runs the complete type-check gates independently; local path selection is a f
 
 If you still have `core.hooksPath` set from an old Husky setup, Git will ignore `.git/hooks`. Run `git config --unset core.hooksPath` in this repo, then `npm install` so `prek install` (via `prepare`) can register the hooks.
 
-If you cloned this repo on Windows before `.gitattributes` set `* text=auto eol=lf`, your working tree still holds CRLF and the repository checks still fail. First commit or stash all local changes. Then run `git rm --cached -r .` and `git reset --hard` from the root of this repo to check the files out again with LF.
+If you cloned this repo on Windows before `.gitattributes` set `* text=auto eol=lf`, your working tree can still contain CRLF line endings.
+These line endings cause repository checks to fail.
+
+Warning: `git reset --hard` discards tracked changes.
+Commit all changes, or stash tracked and untracked changes with `git stash push --include-untracked`.
+Run `git status --short`, and continue only if the command produces no output.
+From the root of this repo, remove tracked files from the Git index:
+
+```bash
+git rm --cached -r .
+```
+
+Then restore the Git index and working tree from the current commit:
+
+```bash
+git reset --hard
+```
+
+Git checks out tracked text files with LF line endings.
 
 `npm run checks:repository` runs only the custom checks collected under `scripts/checks`; lint and the repository-check hook use it internally. The `npm run checks` alias remains available for compatibility and prints the canonical routine and narrow command names before delegating.
 
