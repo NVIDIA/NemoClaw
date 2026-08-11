@@ -1091,19 +1091,18 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
     const assertVersionsMatchLock = (versions: Record<string, string>) => {
       for (const [distribution, version] of Object.entries(versions)) {
-        if (distribution === "nemoclaw-deepagents-profile") {
-          expect(version).toBe(pluginVersion);
-        } else {
-          expect(version, distribution).toBe(
-            lockedRequirementVersion(requirementsLock, distribution),
-          );
-        }
+        expect(version, distribution).toBe(
+          lockedRequirementVersion(requirementsLock, distribution),
+        );
       }
     };
 
-    assertVersionsMatchLock(
-      pythonStringMap(readAgentFile("validate-nemotron-ultra-profile.py"), "EXPECTED_VERSIONS"),
-    );
+    const {
+      "nemoclaw-deepagents-profile": profileValidatorPluginVersion,
+      ...profileValidatorVersions
+    } = pythonStringMap(readAgentFile("validate-nemotron-ultra-profile.py"), "EXPECTED_VERSIONS");
+    expect(profileValidatorPluginVersion).toBe(pluginVersion);
+    assertVersionsMatchLock(profileValidatorVersions);
     assertVersionsMatchLock(
       pythonStringMap(readAgentFile("validate-progressive-tool-disclosure.py"), "PINNED_VERSIONS"),
     );
@@ -1125,7 +1124,12 @@ describe("LangChain Deep Agents Code image contracts", () => {
       ),
       "utf8",
     );
-    assertVersionsMatchLock(pythonStringMap(e2eProfileCheck, "EXPECTED_VERSIONS"));
+    const { "nemoclaw-deepagents-profile": e2ePluginVersion, ...e2eVersions } = pythonStringMap(
+      e2eProfileCheck,
+      "EXPECTED_VERSIONS",
+    );
+    expect(e2ePluginVersion).toBe(pluginVersion);
+    assertVersionsMatchLock(e2eVersions);
 
     const pluginTest = fs.readFileSync(
       path.join(repoRoot, "test", "langchain-deepagents-code-nemotron-profile-plugin.test.ts"),
