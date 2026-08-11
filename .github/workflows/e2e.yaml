@@ -15,7 +15,7 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated E2E test IDs. Empty selectors choose the default suite. Set include_staging_brev_launchable for Launchable. Jetson and DGX Spark require their queue flags. PR revisions use the trusted controller matrix."
+        description: "Optional comma-separated E2E test IDs. Empty selectors choose the default suite. Set include_staging_brev_launchable for Launchable. Jetson dispatch and DGX Spark require their opt-in flags. PR revisions use the trusted controller matrix."
         required: false
         default: ""
         type: string
@@ -33,8 +33,8 @@ on:
           - mock
           - internal-nvidia
           - public-nvidia
-      allow_jetson_runner_queue:
-        description: "Before setting true for jetson-nvmap-gpu, obtain repository administrator confirmation of an online Jetson runner in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory; queued jobs do not honor timeout-minutes before assignment."
+      allow_jetson_dispatch:
+        description: "Set true for jetson-nvmap-gpu only after the Colossus dispatcher, Cloudflare Tunnel, cleanup helper, and JETSON_DISPATCH_URL repository variable have passed the deployment checks in test/e2e/docs/jetson-colossus-dispatch.md."
         required: false
         default: false
         type: boolean
@@ -92,7 +92,7 @@ permissions:
 
 concurrency:
   group: e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
-  cancel-in-progress: ${{ inputs.checkout_sha != '' }}
+  cancel-in-progress: ${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch }}
 
 env:
   NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
@@ -179,7 +179,7 @@ jobs:
               matrix='[{"id":"ubuntu-policy-custom-missing-presets-negative","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-openclaw","runner":"ubuntu-latest"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest"}]'
               test_matrix='[{"id":"onboard-managed-image-buildless-e2e","file":"test/onboard-managed-image-buildless-e2e.test.ts","project":"integration"},{"id":"vllm-docker-storage","file":"test/vllm-docker-storage.test.ts","project":"integration"}]'
               ;;
-            inference-routing: | managed-image-protected-runtime:)
+            inference-routing: | managed-image-protected-runtime: | :jetson-nvmap-gpu)
               matrix='[]'
               ;;
             :ubuntu-repo-cloud-langchain-deepagents-code)
@@ -224,6 +224,7 @@ jobs:
         if: ${{ inputs.checkout_sha != '' }}
         env:
           ACTOR: ${{ github.actor }}
+          ALLOW_JETSON_DISPATCH: ${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
@@ -268,10 +269,10 @@ jobs:
             exit 1
           }
           [[ "$RUN_ATTEMPT" == "1" ]] || { echo "::error::Manual PR E2E cannot be rerun" >&2; exit 1; }
-          case "${JOBS}:${TARGETS}:${INCLUDE_LAUNCHABLE}" in
-            ::false | inference-routing::false | managed-image-protected-runtime::false) ;;
+          case "${JOBS}:${TARGETS}:${INCLUDE_LAUNCHABLE}:${ALLOW_JETSON_DISPATCH}" in
+            ::false:false | inference-routing::false:false | managed-image-protected-runtime::false:false | :jetson-nvmap-gpu:false:true) ;;
             *)
-              echo "::error::Manual PR E2E accepts only empty selectors, inference-routing, or managed-image-protected-runtime without target or Launchable selectors" >&2
+              echo "::error::Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag" >&2
               exit 1
               ;;
           esac
@@ -286,7 +287,7 @@ jobs:
 
 
           require_maintainer "$ACTOR"
-          if [[ "${TRIGGERING_ACTOR,,}" != "${ACTOR,,}" ]]; then
+          if [[ "$(printf '%s' "$TRIGGERING_ACTOR" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$ACTOR" | tr '[:upper:]' '[:lower:]')" ]]; then
             require_maintainer "$TRIGGERING_ACTOR"
           fi
 
@@ -304,7 +305,8 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
           ALLOW_DGX_SPARK_RUNNER_QUEUE: ${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}
-          ALLOW_JETSON_RUNNER_QUEUE: ${{ inputs.allow_jetson_runner_queue && 'true' || 'false' }}
+          ALLOW_JETSON_DISPATCH: ${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}
+          ALLOW_JETSON_RUNNER_QUEUE: "false"
           BASE_SHA: ${{ inputs.checkout_sha != '' && inputs.base_sha || github.sha }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
@@ -334,6 +336,7 @@ jobs:
             --arg workflowRunId "$RUN_ID" \
             --arg workflowSha "$WORKFLOW_SHA" \
             --argjson allowDgxSparkRunnerQueue "$ALLOW_DGX_SPARK_RUNNER_QUEUE" \
+            --argjson allowJetsonDispatch "$ALLOW_JETSON_DISPATCH" \
             --argjson allowJetsonRunnerQueue "$ALLOW_JETSON_RUNNER_QUEUE" \
             --argjson includeStagingBrevLaunchable "$INCLUDE_STAGING_BREV_LAUNCHABLE" \
             --argjson workflowRunAttempt "$RUN_ATTEMPT" \
@@ -351,6 +354,7 @@ jobs:
               jobs: $jobs,
               targets: $targets,
               allowDgxSparkRunnerQueue: $allowDgxSparkRunnerQueue,
+              allowJetsonDispatch: $allowJetsonDispatch,
               allowJetsonRunnerQueue: $allowJetsonRunnerQueue,
               includeStagingBrevLaunchable: $includeStagingBrevLaunchable,
               emptySelectors: ($jobs == "" and $targets == "")
@@ -400,7 +404,7 @@ jobs:
           }
 
           require_maintainer "$ACTOR"
-          if [[ "${TRIGGERING_ACTOR,,}" != "${ACTOR,,}" ]]; then
+          if [[ "$(printf '%s' "$TRIGGERING_ACTOR" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$ACTOR" | tr '[:upper:]' '[:lower:]')" ]]; then
             require_maintainer "$TRIGGERING_ACTOR"
           fi
 
@@ -4918,70 +4922,42 @@ jobs:
 
   jetson-nvmap-gpu:
     needs: generate-matrix
-    # The opt-in flag prevents assignment to an unavailable Jetson runner.
-    if: ${{ inputs.allow_jetson_runner_queue && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}
-    runs-on: ${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}
+    if: ${{ inputs.allow_jetson_dispatch && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}
+    concurrency:
+      group: jetson-nvmap-gpu-colossus
+      queue: max
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
     timeout-minutes: 60
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "jetson-nvmap-gpu"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/jetson-nvmap-gpu
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-jetson-nvmap"
-      NEMOCLAW_RECREATE_SANDBOX: "1"
-      NEMOCLAW_PROVIDER: "ollama"
-      OPENSHELL_GATEWAY: "nemoclaw"
+    permissions:
+      contents: read
+      id-token: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out trusted Jetson controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
 
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+      - name: Set up Node for Jetson controller
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          build-cli: "false"
+          node-version: 22
 
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Verify Jetson GPU availability
-        run: |
-          set -euo pipefail
-          echo "=== Tegra release ==="
-          cat /etc/nv_tegra_release 2>/dev/null || echo "(no /etc/nv_tegra_release)"
-          echo ""
-          echo "=== /dev/nvmap ==="
-          ls -l /dev/nvmap 2>/dev/null || echo "(no /dev/nvmap)"
-          echo ""
-          echo "=== Docker ==="
-          docker info --format '{{.ServerVersion}}'
-          docker info --format '{{json .Runtimes}}'
-
-      - name: Run Jetson nvmap GPU live Vitest test
-        # Keeps the
-        # Jetson/Tegra host, NVIDIA Docker runtime, install.sh, OpenShell
-        # sandbox exec, /dev/nvmap, CUDA cuInit(0), and status-proof boundary.
-        run: |
-          set -euo pipefail
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/jetson-nvmap-gpu.test.ts
+      - name: Dispatch exact commit to Jetson through Colossus
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu
+          JETSON_DISPATCH_CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          JETSON_DISPATCH_URL: ${{ vars.JETSON_DISPATCH_URL }}
+        run: node --experimental-strip-types --no-warnings tools/e2e/jetson-dispatch-client.mts
 
       - name: Upload Jetson nvmap GPU artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
+        with:
+          name: e2e-jetson-nvmap-gpu
+          path: ${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu/
 
   concurrent-gateway-ports:
     needs: generate-matrix
