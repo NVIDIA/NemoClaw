@@ -2552,6 +2552,7 @@ export function normalizeCombinedE2eResult(
   const inventory = trustedE2eRecommendationInventory();
   const selectorTypes = new Map<string, "job" | "target">([
     ...inventory.allowedJobIds.map((id) => [id, "job"] as const),
+    ...inventory.manualOnlyJobIds.map((id) => [id, "job"] as const),
     ...inventory.liveSupportedTargetIds.map((id) => [id, "target"] as const),
   ]);
   const targetInput = isObjectRecord(object.targets) ? object.targets : {};
@@ -2606,7 +2607,11 @@ export function normalizeCombinedE2eResult(
 
 function reconcileCombinedE2eResult(result: CombinedE2eResult): CombinedE2eResult {
   const inventory = trustedE2eRecommendationInventory();
-  const regularIds = new Set([...inventory.allowedJobIds, ...inventory.liveSupportedTargetIds]);
+  const regularIds = new Set([
+    ...inventory.allowedJobIds,
+    ...inventory.manualOnlyJobIds,
+    ...inventory.liveSupportedTargetIds,
+  ]);
   const requiredIds = [
     ...new Set([
       ...result.coverage.requiredTests.map((item) => item.id),

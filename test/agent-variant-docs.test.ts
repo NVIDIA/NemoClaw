@@ -330,7 +330,7 @@ import { AgentOnly } from "../_components/AgentGuide";
     expect(hermes.split(baselineExplanation)).toHaveLength(2);
   });
 
-  it("keeps the Hermes WhatsApp repair inside a shields maintenance window (#8184)", () => {
+  it("renders the shared Hermes WhatsApp session path without a configuration repair (#8184)", () => {
     const whatsapp = readFileSync(
       new URL("../docs/manage-sandboxes/set-up-whatsapp.mdx", import.meta.url),
       "utf8",
@@ -338,17 +338,13 @@ import { AgentOnly } from "../_components/AgentGuide";
     const hermes = renderAgentVariantPage(whatsapp, "hermes", {
       sourcePath: "/repo/docs/manage-sandboxes/set-up-whatsapp.mdx",
     });
-    const shieldsDown = hermes.indexOf(
-      'nemohermes <sandbox> shields down --reason "repair Hermes WhatsApp session path"',
-    );
-    const configSet = hermes.indexOf(
-      "nemohermes <sandbox> config set --key platforms.whatsapp.extra.session_path",
-    );
-    const shieldsUp = hermes.indexOf("nemohermes <sandbox> shields up", configSet);
 
-    expect(shieldsDown).toBeGreaterThanOrEqual(0);
-    expect(configSet).toBeGreaterThan(shieldsDown);
-    expect(shieldsUp).toBeGreaterThan(configSet);
+    expect(hermes).toContain(
+      "Hermes dashboard pairing and the gateway share `/sandbox/.hermes/platforms/whatsapp/session`",
+    );
+    expect(hermes).toContain("nemohermes <sandbox> channels status --channel whatsapp");
+    expect(hermes).toContain("nemohermes <sandbox> channels remove whatsapp");
+    expect(hermes).not.toContain("platforms.whatsapp.extra.session_path");
   });
 
   it("keeps the troubleshooting security review link within each agent guide (#6558)", () => {

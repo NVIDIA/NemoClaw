@@ -12,6 +12,10 @@ import { openshellSandboxCommandEnvValue } from "./docker-startup-command-env";
 const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
 const OPENSHELL_SANDBOX_ENTRYPOINT = "/opt/openshell/bin/openshell-sandbox";
 const OPENSHELL_V0_0_99_WORKDIR_COMMAND = ["--workdir", "/sandbox"] as const;
+const OPENSHELL_OCI_IMAGE_USER_ENV = "OPENSHELL_OCI_IMAGE_USER";
+const OPENSHELL_SANDBOX_UID_ENV = "OPENSHELL_SANDBOX_UID";
+const OPENSHELL_SANDBOX_GID_ENV = "OPENSHELL_SANDBOX_GID";
+const NEMOCLAW_STARTUP_EXECUTABLES = new Set(["nemoclaw-start", "/usr/local/bin/nemoclaw-start"]);
 const GPU_ENV_KEYS = new Set([
   "NVIDIA_VISIBLE_DEVICES",
   "NVIDIA_DRIVER_CAPABILITIES",
@@ -339,6 +343,73 @@ function exactArrayEqual(left: readonly string[], right: readonly string[]): boo
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+function exactEnvironmentEntries(environment: readonly string[], key: string): string[] {
+  return environment.filter((entry) => envKey(entry) === key);
+}
+
+function isExactNemoClawOciWorkspaceBoundary(
+  config: NonNullable<DockerContainerInspect["Config"]>,
+  intendedWorkloadArgv: readonly string[] | null | undefined,
+): boolean {
+  const entrypoint = stringArray(config.Entrypoint);
+  const configuredCommand = stringArray(config.Cmd);
+  const labels = config.Labels ?? {};
+  const startupExecutable = intendedWorkloadArgv?.at(-1);
+  return (
+    config.User === "0" &&
+    config.WorkingDir === "/" &&
+    exactArrayEqual(entrypoint, [OPENSHELL_SANDBOX_ENTRYPOINT]) &&
+    (configuredCommand.length === 0 ||
+      exactArrayEqual(configuredCommand, OPENSHELL_V0_0_99_WORKDIR_COMMAND)) &&
+    labels["openshell.ai/managed-by"] === "openshell" &&
+    typeof startupExecutable === "string" &&
+    NEMOCLAW_STARTUP_EXECUTABLES.has(startupExecutable)
+  );
+}
+
+function validateOpenShellOciIdentityMetadata(environment: readonly string[]): boolean {
+  const ociUsers = exactEnvironmentEntries(environment, OPENSHELL_OCI_IMAGE_USER_ENV);
+  const sandboxUids = exactEnvironmentEntries(environment, OPENSHELL_SANDBOX_UID_ENV);
+  const sandboxGids = exactEnvironmentEntries(environment, OPENSHELL_SANDBOX_GID_ENV);
+  if (ociUsers.length === 0 && sandboxUids.length === 0 && sandboxGids.length === 0) {
+    // OpenShell through v0.0.85 did not publish OCI identity metadata.
+    return false;
+  }
+  const ociUserPrefix = `${OPENSHELL_OCI_IMAGE_USER_ENV}=`;
+  if (
+    ociUsers.length !== 1 ||
+    !ociUsers[0]?.startsWith(ociUserPrefix) ||
+    ociUsers[0] === ociUserPrefix ||
+    sandboxUids.length !== 1 ||
+    sandboxUids[0] !== `${OPENSHELL_SANDBOX_UID_ENV}=` ||
+    sandboxGids.length !== 1 ||
+    sandboxGids[0] !== `${OPENSHELL_SANDBOX_GID_ENV}=`
+  ) {
+    throw new Error(
+      "OpenShell workspace identity metadata is not the reviewed Docker compatibility contract.",
+    );
+  }
+  return true;
+}
+
+/**
+ * OpenShell 0.0.99 began using `OPENSHELL_OCI_IMAGE_USER` presence to prepare
+ * its default workspace. That preparation changes the `/sandbox` owner before
+ * the workload starts, which breaks NemoClaw's Shields parent ownership
+ * requirement. The recreated Docker supervisor retains NemoClaw's explicit
+ * sandbox policy, so omitting only this marker replays the pre-0.0.99 workspace
+ * behavior without changing the process identity selected by policy.
+ */
+export function shouldOmitOpenShellOciImageUser(
+  inspect: DockerContainerInspect,
+  intendedWorkloadArgv: readonly string[] | null | undefined,
+): boolean {
+  const config: NonNullable<DockerContainerInspect["Config"]> = inspect.Config ?? {};
+  return isExactNemoClawOciWorkspaceBoundary(config, intendedWorkloadArgv)
+    ? validateOpenShellOciIdentityMetadata(stringArray(config.Env))
+    : false;
+}
+
 function dockerContainerCommandArgs(
   entrypoint: readonly string[],
   configuredCommand: readonly string[],
@@ -410,9 +481,15 @@ export function buildDockerGpuCloneRunArgs(
   }
 
   const sandboxCommand = openshellSandboxCommandEnvValue(options.openshellSandboxCommand);
+  const omitOciImageUser = shouldOmitOpenShellOciImageUser(
+    inspect,
+    options.openshellSandboxCommand,
+  );
   let sawSandboxCommand = false;
   for (const env of stringArray(config.Env).filter(
-    (entry) => !gpuAugment || !GPU_ENV_KEYS.has(envKey(entry)),
+    (entry) =>
+      (!gpuAugment || !GPU_ENV_KEYS.has(envKey(entry))) &&
+      (!omitOciImageUser || envKey(entry) !== OPENSHELL_OCI_IMAGE_USER_ENV),
   )) {
     const key = envKey(env);
     if (key === OPENSHELL_SANDBOX_COMMAND_ENV && sandboxCommand) {

@@ -228,25 +228,49 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("limits manual PR runs to empty selectors or protected managed-runtime qualification", () => {
+  it("limits manual PR runs to credential-free selectors for the commit under review", () => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
     )!;
     authentication.run = authentication.run!.replace(
-      "Manual PR E2E accepts only empty selectors or managed-image-protected-runtime",
+      "Manual PR E2E accepts only empty selectors, inference-routing, or managed-image-protected-runtime",
       "Manual PR E2E accepts arbitrary selectors",
     );
 
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "Manual PR authentication must retain Manual PR E2E accepts only empty selectors or managed-image-protected-runtime",
+      "Manual PR authentication must retain Manual PR E2E accepts only empty selectors, inference-routing, or managed-image-protected-runtime",
+    );
+  });
+
+  it("keeps the controller selector cases equal to the Advisor planning contract", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const authentication = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Authenticate manual PR dispatch",
+    )!;
+    authentication.run = authentication.run!.replace("inference-routing::false | ", "");
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "Manual PR authentication must retain ::false | inference-routing::false | managed-image-protected-runtime::false) ;;",
     );
   });
 
   it.each([
     ["maintain", "", 0, ""],
+    ["maintain", "inference-routing", 0, ""],
     ["maintain", "managed-image-protected-runtime", 0, ""],
-    ["maintain", "gpu-e2e", 1, "accepts only empty selectors or managed-image-protected-runtime"],
+    [
+      "maintain",
+      "network-policy",
+      1,
+      "accepts only empty selectors, inference-routing, or managed-image-protected-runtime",
+    ],
+    [
+      "maintain",
+      "gpu-e2e",
+      1,
+      "accepts only empty selectors, inference-routing, or managed-image-protected-runtime",
+    ],
     ["write", "", 1, "requires a repository maintainer or administrator"],
   ])("requires a maintainer role and bounded selector before manual PR E2E for %s with %s", (role, jobs, expectedStatus, expectedStderr) => {
     const workflow = readE2eOperationsWorkflow();
@@ -395,7 +419,10 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     }
   });
 
-  it("selects no shared targets for protected managed-runtime qualification", () => {
+  it.each([
+    "inference-routing",
+    "managed-image-protected-runtime",
+  ])("selects no shared targets for the %s job selector", (jobSelector) => {
     const workflow = readE2eOperationsWorkflow();
     const controller = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Build trusted controller target matrix",
@@ -403,7 +430,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     const planner = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Generate E2E target matrix",
     )!;
-    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-protected-matrix-"));
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-job-selector-matrix-"));
     const output = join(directory, "output");
     const summary = join(directory, "summary");
 
@@ -418,7 +445,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
           env: {
             ...process.env,
             GITHUB_OUTPUT: output,
-            JOBS: "managed-image-protected-runtime",
+            JOBS: jobSelector,
             TARGETS: "",
           },
         },
@@ -441,7 +468,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             GITHUB_OUTPUT: output,
             GITHUB_STEP_SUMMARY: summary,
             INFERENCE_MODE: "mock",
-            JOBS: "managed-image-protected-runtime",
+            JOBS: jobSelector,
             TARGETS: "",
           },
         },
