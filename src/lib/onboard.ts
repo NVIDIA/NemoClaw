@@ -454,12 +454,8 @@ const promptValidatedSandboxName = sandboxAgent.createPromptValidatedSandboxName
   promptOrDefault,
   cliDisplayName,
   isNonInteractive,
-  checkpointSandboxName: async (sandboxName, agent) =>
-    await onboardSessionBootstrap.checkpointSandboxName(
-      sandboxName,
-      agent,
-      onboardSession.updateSession,
-    ),
+  checkpointSandboxName: (sandboxName, agent) =>
+    onboardSessionBootstrap.checkpointSandboxName(sandboxName, agent, onboardSession.updateSession),
   exit: process.exit,
 });
 const modelRouter: typeof import("./onboard/model-router") = require("./onboard/model-router");
@@ -662,8 +658,8 @@ const {
 });
 
 import type { JsonObject as LooseObject } from "./core/json-types";
-import { isOnboardAutoYesNonInteractive } from "./onboard/no-tty-auto-yes";
 import type { PreparedSandboxBuildContext } from "./onboard/build-context-stage";
+const onboardReviewWiring: typeof import("./onboard/provider-review-wiring") = require("./onboard/provider-review-wiring");
 
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
@@ -3767,28 +3763,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   );
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
-  const terminal = {
-    stdinIsTty: Boolean(process.stdin?.isTTY),
-    stdoutIsTty: Boolean(process.stdout?.isTTY),
-  };
-  const entryOptionsInput = {
-    opts,
-    env: process.env,
-    stdinIsTty: Boolean(process.stdin && process.stdin.isTTY),
-    stdoutIsTty: Boolean(process.stdout && process.stdout.isTTY),
-    persistedSessionStatus: onboardSession.loadSession()?.status ?? null,
-  };
-  const resume =
-    opts.resume === true ||
-    (opts.fresh !== true && entryOptionsInput.persistedSessionStatus === "in_progress");
-  NON_INTERACTIVE =
-    opts.nonInteractive ||
-    isOnboardAutoYesNonInteractive(
-      opts.autoYes === true || process.env.NEMOCLAW_YES === "1",
-      resume,
-      terminal,
-    ) ||
-    isNonInteractiveEnv();
+  const { entryOptionsInput, nonInteractive, resume } = onboardReviewWiring.resolveOnboardReviewContext(opts, process.env, onboardSession.loadSession()?.status ?? null, isNonInteractiveEnv);
+  NON_INTERACTIVE = nonInteractive;
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   _preflightDashboardPort =
     opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
@@ -4129,6 +4105,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const endpointProvenance = { endpointSource: opts.endpointSource, endpointSourceProvider: opts.rebuildRegistryInferenceRoute?.route.provider ?? null, endpointSourceEndpointUrl: opts.rebuildRegistryInferenceRoute?.route.endpointUrl ?? null, getSandboxRegistryEntry: registry.getSandbox };
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const providerReviewDeps = onboardReviewWiring.createProviderReviewDeps({ updateSession: onboardSession.updateSession, checkpointSandboxName: onboardSessionBootstrap.checkpointSandboxName, shouldFrontOllamaWithProxy, startOllamaAuthProxy, getOllamaProxyToken, persistAndProbeOllamaProxy, exitProcess: process.exit, writeError: console.error });
     const coreFlowPhases = createCoreOnboardFlowPhases<InitialOnboardFlowContext, unknown, MessagingChannelConfig, import("./resources-cmd").ResourceProfile>({
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
       resumeProvider: { isNonInteractive, isRoutedInferenceProvider, providerExistsInGateway, replaceNamedCredential, resumeManagedLlamaCppRuntime: (sandboxName) => setupNimFlow.resumeManagedLlamaCppRuntime(sandboxName, { gatewayPort: GATEWAY_PORT, runtimeProvider: setupNimFlow.resolveCurrentRuntimeProviderBundle() }) },
@@ -4186,22 +4163,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           },
           reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
           registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
-          checkpointSandboxIdentity: async (name, checkpointAgent) =>
-            await onboardSessionBootstrap.checkpointSandboxName(
-              name,
-              checkpointAgent,
-              onboardSession.updateSession,
-            ),
-          prepareLocalProviderForInference: async (providerName) => {
-            if (providerName !== "ollama-local" || !shouldFrontOllamaWithProxy()) return;
-            if (!startOllamaAuthProxy()) process.exit(1);
-            const proxyToken = getOllamaProxyToken();
-            if (!proxyToken) {
-              console.error("  Ollama auth proxy token is not set. Re-run onboard to initialize the proxy.");
-              process.exit(1);
-            }
-            await persistAndProbeOllamaProxy(proxyToken);
-          },
+          ...providerReviewDeps,
           promptValidatedSandboxName,
           assessHost,
           formatSandboxBuildEstimateNote,
@@ -4564,7 +4526,6 @@ module.exports = {
   shouldRunCompatibleEndpointSandboxSmoke,
   isNonInteractive,
   isOpenclawReady,
-  runOnboard,
   arePolicyPresetsApplied,
   getSuggestedPolicyPresets,
   computeSetupPresetSuggestions,
