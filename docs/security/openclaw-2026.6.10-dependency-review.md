@@ -394,7 +394,7 @@ No real Microsoft Teams tenant proof is included in this PR. The work remains tr
   The exact source shapes, replacement SRIs, tarball URLs, patched metadata, and provenance recipe fail closed on drift.
   The low `body-parser` and moderate Hono and `protobufjs` findings remain documented at the configured `high` threshold.
   Current NemoClaw closes the WeChat residual with `agents/openclaw/wechat-runtime/package-lock.json` and post-install graph verification.
-- `src/lib/messaging/channels/manifests.test.ts` remains below the shared `test-size:check` threshold and does not need extraction in this dependency bump.
+- `src/lib/messaging/channels/manifests.test.ts` remains within the repository test-file line budget, so this OpenClaw dependency upgrade does not split the file.
 - The npm audit result in this note remains a point-in-time snapshot.
   Default PR and main CI rematerialize the production-compatible graph from the reviewed local archives, audit it and the committed mcporter lock with `npm audit --omit=dev --json` through the reviewed evaluator, upload the raw reports and normalized policy results, and fail on unaccepted findings at the configured `high` threshold.
   The separate `wechat-runtime-audit` gate uses Node `22.19.0` and npm `10.9.4`, installs the committed WeChat production lock with scripts disabled, fails on any low-or-higher production advisory, verifies registry signatures, exercises the reviewed archive through a copied writable cache, and uploads its evidence.

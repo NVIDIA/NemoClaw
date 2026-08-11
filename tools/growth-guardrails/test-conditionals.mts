@@ -6,20 +6,23 @@
 // blobs as DATA only — blob text is PARSED with the TypeScript AST, never
 // executed.
 //
-// The `if`-statement count reuses scanTextForTestConditionals from the local
-// scanner (scripts/find-test-conditionals.mts) so the workflow and
-// `npm run test-conditionals:scan` agree by construction. No second lexer lives
-// in workflow YAML.
+// The `if`-statement count reuses the repository contract scanner so local
+// Vitest feedback and the trusted PR assertion use one parser.
 
 import { scanTextForTestConditionals } from "../../scripts/find-test-conditionals.mts";
 import {
   assertRepositoryName,
   type BlobMap,
-  createPrBlobClient,
   type PrBlobClient,
+  type PullRequestFile,
 } from "./pr-blob-client.mts";
 
 const TEST_FILE_RE = /^(test|src|nemoclaw\/src)\/.*\.(test|spec)\.(?:[cm]?[jt]s)$/;
+
+
+export function isTestFilePath(file: string): boolean {
+  return TEST_FILE_RE.test(file);
+}
 
 /** Count `if` statements in test source using the shared TypeScript AST scanner. */
 export function countIfStatements(file: string, text: string): number {
@@ -87,11 +90,12 @@ export type ConditionalResult = ConditionalEvaluation & { readonly ok: boolean }
 export async function runTestConditionals(
   client: PrBlobClient,
   env: ConditionalEnv,
+  pullFiles?: readonly PullRequestFile[],
 ): Promise<ConditionalResult> {
   assertRepositoryName(env.REPO, "REPO");
   assertRepositoryName(env.HEAD_REPO, "HEAD_REPO");
 
-  const files = await client.getPullFiles(env.REPO, env.PR_NUMBER);
+  const files = pullFiles ?? (await client.getPullFiles(env.REPO, env.PR_NUMBER));
   const changedTests = files.filter(
     ({ filename, previous_filename }) =>
       TEST_FILE_RE.test(filename) || TEST_FILE_RE.test(previous_filename ?? ""),
@@ -118,46 +122,4 @@ export async function runTestConditionals(
 
   const evaluation = evaluateConditionalViolations(changes, baseBlobs, headBlobs);
   return { ...evaluation, ok: evaluation.details.length === 0 };
-}
-
-function readEnv(): ConditionalEnv & { GH_TOKEN: string } {
-  const { BASE_SHA, GH_TOKEN, HEAD_REPO, HEAD_SHA, PR_NUMBER, REPO } = process.env;
-  if (!BASE_SHA || !GH_TOKEN || !HEAD_REPO || !HEAD_SHA || !PR_NUMBER || !REPO) {
-    throw new Error(
-      "Missing required environment: BASE_SHA GH_TOKEN HEAD_REPO HEAD_SHA PR_NUMBER REPO",
-    );
-  }
-  return { BASE_SHA, GH_TOKEN, HEAD_REPO, HEAD_SHA, PR_NUMBER, REPO };
-}
-
-async function main(): Promise<void> {
-  const env = readEnv();
-  const client = createPrBlobClient({ token: env.GH_TOKEN });
-  const result = await runTestConditionals(client, env);
-  if (!result.ok) {
-    console.error("FAIL: changed test files add if statements.");
-    console.error(
-      `Changed test files contain ${result.headTotal} if statement(s) at PR head vs ${result.baseTotal} at base.`,
-    );
-    console.error("");
-    console.error(
-      "Test bodies should stay linear. Split conditional behavior into separate test cases, use it.skipIf/it.runIf for platform or environment gates, or move non-asserting setup branches into named helpers.",
-    );
-    console.error("");
-    console.error("Files with increased if counts:");
-    for (const detail of result.details) console.error(`- ${detail}`);
-    console.error("");
-    console.error("Run locally: npm run test-conditionals:scan -- --top 25");
-    process.exit(1);
-  }
-  console.log(
-    `PASS: changed test files did not add if statements (${result.headTotal} at PR head vs ${result.baseTotal} at base).`,
-  );
-}
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
 }
