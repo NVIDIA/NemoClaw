@@ -212,12 +212,9 @@ projects. Reviewed condition-only jobs may be skipped when the empty-selector di
 select them, including Launchable, Jetson, DGX Spark, retired-selector compatibility, reporting,
 and scorecard jobs.
 
-The managed image lifecycle job is not a required PR check and does not gate or roll back promotion.
-When the base-image workflow publishes managed images from `main`, this job runs after `promote` moves the OpenClaw cohort pointer.
-It exercises each published `linux/amd64` digest reference through onboarding, agent turns, gateway restart recovery, and destroy.
-The references cover OpenClaw, Hermes, and LangChain Deep Agents Code.
-If verification fails, the workflow does not roll back the promoted cohort pointer.
-Changes that can affect rootless Podman still require the latest PR commit's rootless Podman CPU lifecycle check with Docker disabled.
+Changes that can affect managed activation also require the current head's exact all-agent managed
+runtime activation check. Changes that can affect rootless Podman also require the current head's
+rootless Podman CPU lifecycle check with Docker disabled.
 
 The gate fails closed for missing, expired, duplicate, or malformed evidence. It also rejects a
 stale head or base, a workflow mismatch, nonempty selectors, an unreviewed skipped job, an
