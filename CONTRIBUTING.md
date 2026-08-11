@@ -272,7 +272,7 @@ Install the GNU utilities before you run the test suite on macOS, then put their
 
 ```bash
 brew install bash coreutils fd gawk ripgrep
-export PATH="$(brew --prefix coreutils)/libexec/gnubin:$(brew --prefix gawk)/libexec/gnubin:$PATH"
+export PATH="$(brew --prefix bash)/bin:$(brew --prefix coreutils)/libexec/gnubin:$(brew --prefix gawk)/libexec/gnubin:$PATH"
 ```
 
 The `macos-vitest` job in [`.github/workflows/platform-vitest-main.yaml`](.github/workflows/platform-vitest-main.yaml) installs these utilities and owns the authoritative list.
