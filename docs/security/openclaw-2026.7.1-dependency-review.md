@@ -650,10 +650,12 @@ locks the pinned OpenClaw check IDs and details.
 bind leaves the device-auth, insecure-auth, and Host-header fallback findings
 active.
 
-Remove these suppressions only after the pinned OpenClaw audit contract proves
-that OpenClaw natively classifies intentional loopback development HTTP without
-them, or after NemoClaw onboarding defaults `CHAT_UI_URL` to
-`https://localhost` with a generated local certificate.
+Remove the `allowInsecureAuth` suppressions only after the pinned OpenClaw audit
+contract proves that OpenClaw natively classifies intentional loopback
+development HTTP without them, or after NemoClaw onboarding defaults
+`CHAT_UI_URL` to `https://localhost` with a generated local certificate.
+Remove the device-auth suppressions only after managed onboarding no longer
+applies the loopback device-auth compatibility opt-out.
 
 ## Existing security and runtime contracts
 
