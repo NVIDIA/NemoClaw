@@ -63,4 +63,31 @@ describe("agent ids in NemoClaw documentation and CLI examples (#8706)", () => {
     const offenders = auditCommandExampleAgentIds(commands, bakedAgentIds);
     expect(offenders).toEqual([]);
   });
+
+  it("reports unsupported dotted agent ids in flag and canonical-key examples", () => {
+    const examples = [
+      "nemoclaw sandbox sessions list --agent agent-42.beta",
+      "nemoclaw sandbox sessions reset agent:agent-42.beta:main",
+    ];
+    const offenders = auditCommandExampleAgentIds(
+      [{ id: "scanner-fixture", examples }],
+      bakedAgentIds,
+    );
+    expect(offenders).toEqual(examples.map((example) => `scanner-fixture: ${example}`));
+  });
+
+  it("reports unsupported agent ids in tilde-fenced documentation examples", () => {
+    const docsRoot = path.join(tmpDir, "docs");
+    const commandReference = path.join(docsRoot, "reference", "commands.mdx");
+    fs.mkdirSync(path.dirname(commandReference), { recursive: true });
+    fs.writeFileSync(
+      commandReference,
+      "~~~sh\nnemoclaw sandbox sessions list --agent agent-42.beta\n~~~\n",
+    );
+
+    const audit = auditDocumentationAgentIds(docsRoot, commandReference, bakedAgentIds);
+    expect(audit.commandReferenceOffenders).toEqual([
+      "reference/commands.mdx:2 (any) -> nemoclaw sandbox sessions list --agent agent-42.beta",
+    ]);
+  });
 });

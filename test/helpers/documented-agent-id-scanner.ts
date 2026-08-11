@@ -4,8 +4,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const FLAG_ID = /--agent(?:=|\s+)([a-z][a-z0-9_-]*)/g;
-const CANONICAL_KEY_ID = /\bagent:([a-z][a-z0-9_-]*):/g;
+import { AGENT_ID_PATTERN } from "../../src/lib/actions/sandbox/sessions/paths";
+
+const FLAG_ID = new RegExp(String.raw`--agent(?:=|\s+)(${AGENT_ID_PATTERN})`, "g");
+const CANONICAL_KEY_ID = new RegExp(String.raw`\bagent:(${AGENT_ID_PATTERN}):`, "g");
 const HERMES_ALIAS = "hermes";
 
 type Usage = { id: string; line: number; text: string };
@@ -53,7 +55,7 @@ function scanDoc(file: string): Map<string, Usage[]> {
         variants.pop();
         return;
       }
-      if (line.trimStart().startsWith("```")) {
+      if (/^\s*(?:`{3,}|~{3,})/.test(line)) {
         inFence = !inFence;
         return;
       }

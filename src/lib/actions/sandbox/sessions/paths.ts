@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const AGENT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+export const AGENT_ID_PATTERN = String.raw`[A-Za-z0-9][A-Za-z0-9._-]{0,63}`;
+
+const AGENT_ID_RE = new RegExp(`^${AGENT_ID_PATTERN}$`);
 
 export function validateAgentId(agentId: string): string {
   const trimmed = agentId.trim();
