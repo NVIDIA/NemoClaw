@@ -455,17 +455,19 @@ environment approval. The job uses the non-cancelling
 runs remain queued instead of replacing one another.
 
 The Jetson nvmap and DGX Spark llama.cpp jobs remain excluded from ordinary and
-full runs unless their independent runner-queue flags are `true`.
-A user permitted to dispatch this workflow may set either flag, but only after
-a repository administrator confirms the corresponding runner is online in the
-authoritative repository runner inventory.
-Set `allow_jetson_runner_queue=true` to select `jetson-nvmap-gpu`.
+full runs unless their independent opt-in flags are `true`.
+Set `allow_jetson_dispatch=true` to select `jetson-nvmap-gpu` only after every
+deployment check in
+[Jetson Dispatch Through Colossus](docs/jetson-colossus-dispatch.md) passes.
+The Colossus lifecycle removes and verifies only the fixed job-owned cleanup
+allowlist. Its cleanup evidence does not attest that every possible candidate
+host change was reversed.
 Set `allow_dgx_spark_runner_queue=true` to select both
 `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`.
 GitHub can pause the qualification job for the
 `approve-dgx-spark-image-qualification` environment before it reaches the DGX
 Spark runner.
-Pre-tag evidence requires both runner-queue flags to remain `false`.
+Pre-tag evidence requires both hardware opt-in flags to remain `false`.
 Results from opt-in hardware runs do not enter the required pre-tag E2E
 denominator.
 
@@ -796,9 +798,9 @@ For a PR revision run, a repository maintainer or administrator leaves `jobs` an
 - every shared credential-free test; and
 - these controller-selected registry targets: `ubuntu-policy-custom-missing-presets-negative`, `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and `ubuntu-repo-docker-post-reboot-recovery`.
 
-The run skips `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and
-`llama-cpp-dgx-spark-qualification` unless their separate runner-queue flags
-are `true`.
+The run skips `jetson-nvmap-gpu` unless its Colossus dispatch flag is `true`.
+It skips `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`
+unless their runner-queue flag is `true`.
 The trusted workflow definition remains on `main` and binds the candidate head to the current PR base SHA.
 It does not run GitHub's synthetic merge commit.
 
@@ -827,7 +829,7 @@ For `managed-image-protected-runtime`, the workflow supplies the long-lived `NVI
 
 For a manual PR run, provide the current PR number, lowercase 40-character head SHA, head repository, lowercase 40-character base SHA, trusted `main` workflow SHA, and a review reason containing 10 to 500 printable characters.
 Leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false` to use this PR revision selection.
-Keep `allow_jetson_runner_queue=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
+Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
 If `allow_dgx_spark_runner_queue=true`, GitHub can pause the qualification job for the `approve-dgx-spark-image-qualification` environment.
 An authorized environment reviewer must approve it before qualification starts.
 To select the protected managed-image runtime qualification, set `jobs=managed-image-protected-runtime`.
