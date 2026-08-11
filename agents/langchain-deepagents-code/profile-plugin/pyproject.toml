@@ -13,7 +13,7 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
     "deepagents-code==0.1.54",
-    "deepagents==0.7.0a6",
+    "deepagents==0.7.5",
 ]
 
 [project.entry-points."deepagents.harness_profiles"]
