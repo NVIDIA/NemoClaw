@@ -706,7 +706,7 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
     lines.push(
       "",
       `**Manual-only E2E:** ${renderE2eIds(manualOnlyE2e) || "_None_"}${hiddenManualText}`,
-      "_The manual PR workflow cannot grant the required credential or runner access to the commit under review. Run these jobs from reviewed code on `main`._",
+      "_The manual PR workflow does not run these selectors for the commit under review. Run them from reviewed code on `main`._",
     );
   }
 
@@ -756,7 +756,7 @@ function trustedTargetIds(
   inventory: TrustedE2eRecommendationInventory,
   changedCredentialFreeJobIds: ReadonlySet<string>,
 ): string[] {
-  const allowedJobs = new Set(inventory.allowedJobIds);
+  const allowedJobs = new Set([...inventory.allowedJobIds, ...inventory.manualOnlyJobIds]);
   const allowedTargets = new Set(inventory.liveSupportedTargetIds);
   const allowedSelectorTypes = new Set<string>(inventory.selectorTypes);
   const seen = new Set<string>();

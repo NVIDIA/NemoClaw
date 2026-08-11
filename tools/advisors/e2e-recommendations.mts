@@ -359,12 +359,11 @@ function buildE2eTargetNormalizationContext(
   const trustedWorkflowText = readTrustedE2eWorkflowText();
   const trustedCredentialFreeTests = discoverTrustedCredentialFreeTests();
   const allowedJobIds = new Set(
-    extractAllowedE2eJobIds(trustedWorkflowText, trustedCredentialFreeTests).filter(
-      isPrE2ePlanningJob,
-    ),
+    extractAllowedE2eJobIds(trustedWorkflowText, trustedCredentialFreeTests),
   );
-  // The analyzed workflow is untrusted input. It may explain why a changed test is
-  // unwired, but it must never introduce a selector that CI could later dispatch.
+  // The analyzed workflow is untrusted input. It may explain why a changed test has
+  // no trusted workflow job, but it must never introduce a selector absent from the
+  // trusted workflow.
   const freeStandingJobs = extractFreeStandingE2eJobs(trustedWorkflowText).filter((job) =>
     allowedJobIds.has(job.id),
   );

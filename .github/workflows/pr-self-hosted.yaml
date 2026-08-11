@@ -65,6 +65,7 @@ jobs:
               | any(
                   .filename == ".github/workflows/e2e.yaml"
                   or .filename == ".github/workflows/pr-self-hosted.yaml"
+                  or .filename == "scripts/install.sh"
                   or .filename == "test/e2e/live/llama-cpp-generic-gpu.test.ts"
                   or .filename == "test/e2e/live/gpu-e2e-helpers.ts"
                   or .filename == "test/e2e/mock-parity.json"
@@ -73,6 +74,10 @@ jobs:
                   or (.filename | startswith("managed-inference/presets/llama-cpp."))
                   or (.filename | startswith("managed-inference/recipes/llama-cpp."))
                   or (.filename | startswith("src/lib/inference/llama-cpp/"))
+                  or (.filename | startswith("src/lib/readiness/"))
+                  or .filename == "src/lib/onboard/fatal-runtime-preflight.ts"
+                  or .filename == "src/lib/onboard/overlayfs-auto-fix.ts"
+                  or .filename == "src/lib/onboard/preflight.ts"
                   or (.filename | startswith("src/lib/onboard/runtime-provider/docker-llama-cpp"))
                 )
             ' >/dev/null; then

@@ -179,8 +179,12 @@ describe("PR review advisor", () => {
             classifiedDomains: [],
             requiredTests: [
               {
+                id: "inference-routing",
+                reason: "The controller can run this job for the commit under review.",
+              },
+              {
                 id: "security-posture",
-                reason: "The combined advisor path needs end-to-end regression coverage.",
+                reason: "This job must run from reviewed code on main.",
               },
             ],
             optionalTests: [],
@@ -201,7 +205,9 @@ describe("PR review advisor", () => {
     );
 
     const comment = buildComment({ summary: renderSummary(result), result });
-    expect(comment).toContain("**Recommended E2E:** <code>security-posture</code>");
+    expect(comment).toContain("**Recommended E2E:** <code>inference-routing</code>");
+    expect(comment).toContain("**Manual-only E2E:** <code>security-posture</code>");
+    expect(comment.match(/<code>inference-routing<\/code>/gu)).toHaveLength(1);
     expect(comment.match(/<code>security-posture<\/code>/gu)).toHaveLength(1);
 
     const noE2eResult = normalizeReviewResult(validResult(), metadata());
@@ -238,7 +244,7 @@ describe("PR review advisor", () => {
       .find((line) => line.startsWith("**Recommended E2E:**"));
     expect(recommendedLine).not.toContain("<code>network-policy</code>");
     expect(comment).toContain(
-      "The manual PR workflow cannot grant the required credential or runner access to the commit under review.",
+      "The manual PR workflow does not run these selectors for the commit under review.",
     );
   });
 

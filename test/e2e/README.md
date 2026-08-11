@@ -871,7 +871,8 @@ deterministic floor. PR Review Advisor recommendations remain advisory.
 A maintainer decides whether to dispatch this trusted selection for the current PR
 revision. The manual PR controller accepts the credential-free
 `inference-routing` job; secret-backed jobs such as `network-policy` remain
-manual-only trusted-main evidence and are labeled that way in the Advisor comment.
+available only through manual dispatch from reviewed code on `main` and are
+labeled that way in the Advisor comment.
 No PR E2E controller dispatches the risk plan.
 
 The `full-e2e` target enforces a separate hard acceptance contract for the
