@@ -189,7 +189,7 @@ function fullApi(files = [prFile("scripts/install-openshell.sh")]): GitHubReader
     [
       (apiPath) => apiPath.includes(`/commits/${HEAD_SHA}/check-runs?`),
       () => {
-        const names = [REQUIRED_PROOF_CHECKS.rootless];
+        const names = [REQUIRED_PROOF_CHECKS.managed, REQUIRED_PROOF_CHECKS.rootless];
         return {
           check_runs: names.map((name, index) => ({
             conclusion: "success",
@@ -268,7 +268,7 @@ describe("OpenShell qualification-sensitive path detection", () => {
     expect(isOpenShellQualificationSensitivePath("docs/index.mdx")).toBe(false);
   });
 
-  it("does not require managed-image activation before merge and retains the rootless lifecycle check", () => {
+  it("uses both sides of a rename and aligns separate proof requirements with workflow filters", () => {
     const renamed = validatePullRequestFile({
       filename: "docs/retired.mdx",
       previous_filename: "scripts/install-openshell.sh",
@@ -276,18 +276,18 @@ describe("OpenShell qualification-sensitive path detection", () => {
     });
     expect(classifyQualification([renamed])).toEqual({
       required: true,
-      requiredProofChecks: [REQUIRED_PROOF_CHECKS.rootless],
+      requiredProofChecks: [REQUIRED_PROOF_CHECKS.managed, REQUIRED_PROOF_CHECKS.rootless],
       sensitivePaths: ["scripts/install-openshell.sh"],
     });
     expect(
       classifyQualification([validatePullRequestFile(prFile("agents/hermes/manifest.yaml"))])
         .requiredProofChecks,
-    ).toEqual([]);
+    ).toEqual([REQUIRED_PROOF_CHECKS.managed]);
     expect(
       classifyQualification([
         validatePullRequestFile(prFile("scripts/checks/verify-openshell-e2e-qualification.mts")),
       ]).requiredProofChecks,
-    ).toEqual([]);
+    ).toEqual([REQUIRED_PROOF_CHECKS.managed]);
   });
 
   it.each([
@@ -442,6 +442,7 @@ describe("qualification orchestration", () => {
     });
     expect(evidence.e2e?.runId).toBe(RUN_ID);
     expect(evidence.proofChecks.map((check) => check.name)).toEqual([
+      REQUIRED_PROOF_CHECKS.managed,
       REQUIRED_PROOF_CHECKS.rootless,
     ]);
   });

