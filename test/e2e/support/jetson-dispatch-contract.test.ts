@@ -62,6 +62,10 @@ function temporaryDirectory(): string {
   return directory;
 }
 
+function failTest(message: string): never {
+  throw new Error(message);
+}
+
 function claims(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     iss: "https://token.actions.githubusercontent.com",
@@ -394,12 +398,11 @@ describe("Jetson single-device lifecycle", () => {
   it("does not start the worker when state directory persistence fails (#8142)", async () => {
     const stateDirectory = temporaryDirectory();
     const fsyncSync = fs.fsyncSync.bind(fs);
-    vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) => {
-      if (fs.fstatSync(descriptor).isDirectory()) {
-        throw new Error("state directory persistence failed");
-      }
-      fsyncSync(descriptor);
-    });
+    vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) =>
+      fs.fstatSync(descriptor).isDirectory()
+        ? failTest("state directory persistence failed")
+        : fsyncSync(descriptor),
+    );
     const run = vi.fn(worker().run);
     const cleanup = vi.fn(async () => {});
     const dispatch = coordinator(stateDirectory, worker({ cleanup, run }));
@@ -496,13 +499,11 @@ describe("Jetson single-device lifecycle", () => {
     const fsyncSync = fs.fsyncSync.bind(fs);
     let directorySyncCount = 0;
     vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) => {
-      if (fs.fstatSync(descriptor).isDirectory()) {
-        directorySyncCount += 1;
-        if (directorySyncCount === 2) {
-          throw new Error("lock directory persistence failed");
-        }
-      }
-      fsyncSync(descriptor);
+      const isDirectory = fs.fstatSync(descriptor).isDirectory();
+      directorySyncCount += Number(isDirectory);
+      return isDirectory && directorySyncCount === 2
+        ? failTest("lock directory persistence failed")
+        : fsyncSync(descriptor);
     });
     const dispatch = coordinator(stateDirectory, worker({ cleanup }));
     await dispatch.initialize();
