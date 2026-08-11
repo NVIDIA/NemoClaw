@@ -442,6 +442,7 @@ describe("onboard shared gateway route containment", () => {
       preferredInferenceApi: null,
       gatewayName: "nemoclaw",
       reservationSessionId: undefined,
+      hostLocalInferenceReceipt: null,
     });
     expect(reservations).toHaveLength(2);
     expect(updateSandbox).toHaveBeenCalledTimes(2);

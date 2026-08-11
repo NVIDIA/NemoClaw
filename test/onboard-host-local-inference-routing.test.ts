@@ -109,6 +109,43 @@ function managedVllmRequest() {
 }
 
 describe("setupInference host-local runtime integration", () => {
+  it("explicitly clears stale host-local ownership for a remote route", async () => {
+    const harness = createHarness({
+      overrides: {
+        isRoutedInferenceProvider: () => true,
+        reconcileModelRouter: vi.fn(async () => undefined),
+        routedInference: {
+          upsertRoutedProvider: vi.fn(() => ({
+            ok: true,
+            endpointUrl: "https://api.example.test/v1",
+            result: { message: "configured" },
+          })),
+        },
+      },
+    });
+
+    await expect(
+      harness.setupInference(
+        "sandbox-a",
+        "remote-model",
+        "nvidia-router",
+        "https://api.example.test/v1",
+        "REMOTE_API_KEY",
+        null,
+        [],
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(harness.updateSandbox).toHaveBeenCalledWith(
+      "sandbox-a",
+      expect.objectContaining({
+        provider: "nvidia-router",
+        model: "remote-model",
+        hostLocalInferenceReceipt: null,
+      }),
+    );
+  });
+
   it.each([
     "openclaw",
     "hermes",

@@ -168,6 +168,43 @@ describe("sandbox inference route reservation", () => {
     }
   });
 
+  it("removes a persisted host-local receipt when reserving a remote route", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const receipt = serializedHostLocalInferenceReceipt("docker");
+      registry.registerSandbox({
+        name: "alpha",
+        provider: "ollama-local",
+        model: "local-model",
+        hostLocalInferenceReceipt: receipt,
+      });
+
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: "compatible-endpoint",
+        model: "remote-model",
+        endpointUrl: "https://api.example.test/v1",
+        credentialEnv: "REMOTE_API_KEY",
+        preferredInferenceApi: "openai-responses",
+        gatewayName: "nemoclaw",
+        hostLocalInferenceReceipt: null,
+      });
+
+      expect(registry.getSandbox("alpha")).toMatchObject({
+        provider: "compatible-endpoint",
+        model: "remote-model",
+        hostLocalInferenceReceipt: null,
+      });
+      vi.resetModules();
+      const reloadedRegistry = await import("./registry");
+      expect(reloadedRegistry.getSandbox("alpha")?.hostLocalInferenceReceipt).toBeNull();
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("stamps the owning onboard session on the reservation (#6562)", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
     vi.stubEnv("HOME", home);
