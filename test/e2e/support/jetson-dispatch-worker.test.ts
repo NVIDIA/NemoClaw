@@ -142,6 +142,7 @@ if [ "${"${DISAPPEAR_PROC_FILE:-}"}" = "$input" ]; then rm -rf -- "${"${input%/*
     .slice(functionsStart, functionsEnd)
     .replace('proc_dir="/proc/$pid"', 'proc_dir="$PROC_ROOT/$pid"');
   return {
+    binDirectory,
     environment: {
       ...process.env,
       DENY_PROC_FILE: options.deny ? path.join(procDirectory, options.deny) : "",
@@ -1089,6 +1090,48 @@ validate_recorded_pid 1234 ollama-auth-proxy.
     );
 
     expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("completes the destructive cleanup phase when a process disappears during inspection (#8142)", () => {
+    const fixture = cleanupProcessFixture({ disappear: "environ" });
+    fs.writeFileSync(path.join(fixture.binDirectory, "docker"), "#!/bin/sh\nexit 0\n", {
+      mode: 0o700,
+    });
+    const marker = "<<'JETSON_CLEANUP'\n";
+    const phaseStart = cleanupProgram.indexOf(marker);
+    const phaseEnd = cleanupProgram.indexOf("\nJETSON_CLEANUP", phaseStart + marker.length);
+    assert.ok(phaseStart >= 0 && phaseEnd >= 0, "destructive cleanup phase is absent");
+    const script = cleanupProgram
+      .slice(phaseStart + marker.length, phaseEnd)
+      .replace("set -euo pipefail", "set -eo pipefail")
+      .replace(
+        "workspace_root=/var/tmp/nemoclaw-jetson-e2e",
+        'workspace_root="$TEST_WORKSPACE_ROOT"',
+      )
+      .replace(
+        'service_directory="/tmp/nemoclaw-services-$sandbox_name"',
+        'service_directory="$TEST_SERVICE_DIRECTORY"',
+      )
+      .replace("for proc_dir in /proc/[0-9]*; do", 'for proc_dir in "$PROC_ROOT"/*; do')
+      .replace(
+        'remaining_job_images="$(list_test_owned_images)"',
+        "printf 'destructive-phase-complete\\n'\nexit 0\nremaining_job_images=\"$(list_test_owned_images)\"",
+      );
+    const evidence = Buffer.from(
+      JSON.stringify({ schemaVersion: 1, volumes: [], processIds: [] }),
+    ).toString("base64");
+    const result = spawnSync("/bin/bash", ["-s", "--", "b".repeat(64), evidence], {
+      encoding: "utf8",
+      env: {
+        ...fixture.environment,
+        TEST_SERVICE_DIRECTORY: path.join(fixture.procRoot, "service"),
+        TEST_WORKSPACE_ROOT: path.join(fixture.procRoot, "workspace"),
+      },
+      input: script,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("destructive-phase-complete\n");
   });
 
   it("rejects a live recorded PID whose owner cannot be verified (#8142)", () => {

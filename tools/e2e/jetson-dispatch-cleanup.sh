@@ -400,6 +400,24 @@ read_proc_command() {
   dd if="$1/cmdline" status=none 2>/dev/null | tr '\000' ' '
 }
 
+handle_proc_read_failure() {
+  local proc_dir="$1" field="$2" process_uid directory_uid
+  [ -d "$proc_dir" ] || return 0
+  if process_uid="$(read_proc_uid "$proc_dir")"; then
+    [ "$process_uid" = "$(id -u)" ] || return 0
+  else
+    [ -d "$proc_dir" ] || return 0
+    if ! directory_uid="$(stat -c %u "$proc_dir" 2>/dev/null)"; then
+      [ -d "$proc_dir" ] || return 0
+      echo "Unable to verify the owner of a live process after a failed $field read" >&2
+      exit 1
+    fi
+    [ "$directory_uid" = "$(id -u)" ] || return 0
+  fi
+  echo "Unable to inspect $field for a live same-user process" >&2
+  exit 1
+}
+
 stop_recorded_pid() {
   local pid="$1"
   kill -0 "$pid" 2>/dev/null || return 0
