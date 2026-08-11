@@ -85,9 +85,12 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
     try {
       const fakeMcporter = path.join(temp, "mcporter");
       const configState = path.join(temp, "config.json");
+      const configJsoncState = `${configState}c`;
       const homeConfigState = path.join(temp, "xdg", "mcporter", "mcporter.json");
+      const homeConfigJsoncState = `${homeConfigState}c`;
       const defaultXdgConfigState = path.join(temp, "home", ".config", "mcporter", "mcporter.json");
       const legacyConfigState = path.join(temp, "legacy", "mcporter.json");
+      const legacyConfigJsoncState = `${legacyConfigState}c`;
       const argvLog = path.join(temp, "argv.jsonl");
       const removeMarker = path.join(temp, "removed");
       fs.writeFileSync(
@@ -260,6 +263,49 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
         "absent",
       );
 
+      for (const jsoncState of [configJsoncState, homeConfigJsoncState, legacyConfigJsoncState]) {
+        fs.mkdirSync(path.dirname(jsoncState), { recursive: true });
+        fs.writeFileSync(
+          jsoncState,
+          JSON.stringify({
+            name: "github",
+            transport: "http",
+            baseUrl: "https://api.githubcopilot.com/mcp/",
+            headers: normalizedHeaders,
+          }),
+        );
+      }
+      const layeredJsoncRemove = run(buildOpenClawMcporterRemoveCommand(baseEntry));
+      expect(layeredJsoncRemove.status).toBe(0);
+      expectFileAbsent(configJsoncState);
+      expectFileAbsent(homeConfigJsoncState);
+      expectFileAbsent(legacyConfigJsoncState);
+
+      fs.writeFileSync(
+        configState,
+        JSON.stringify({
+          name: "github",
+          transport: "http",
+          baseUrl: "https://api.githubcopilot.com/mcp/",
+          headers: normalizedHeaders,
+        }),
+      );
+      fs.writeFileSync(
+        homeConfigJsoncState,
+        JSON.stringify({
+          name: "github",
+          transport: "http",
+          baseUrl: "https://user.example.test/mcp",
+          headers: normalizedHeaders,
+        }),
+      );
+      const driftedJsonc = run(buildOpenClawMcporterRemoveCommand(baseEntry));
+      expect(driftedJsonc.status).toBe(2);
+      expectFilePresent(configState);
+      expectFilePresent(homeConfigJsoncState);
+      fs.rmSync(configState);
+      fs.rmSync(homeConfigJsoncState);
+
       fs.mkdirSync(path.dirname(defaultXdgConfigState), { recursive: true });
       fs.writeFileSync(
         defaultXdgConfigState,
@@ -344,6 +390,15 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
         "config",
         "--config",
         `${OPENCLAW_MCPORTER_ROOT}/config/mcporter.json`,
+        "remove",
+        "github",
+      ]);
+      expect(observedArgs).toContainEqual([
+        "--root",
+        OPENCLAW_MCPORTER_ROOT,
+        "config",
+        "--config",
+        `${OPENCLAW_MCPORTER_ROOT}/config/mcporter.jsonc`,
         "remove",
         "github",
       ]);
