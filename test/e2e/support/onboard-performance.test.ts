@@ -269,6 +269,32 @@ describe("onboard performance evidence", () => {
     });
   });
 
+  it("does not double-count one hosted first-turn tail as a cold-path regression (#6660)", () => {
+    const trace = readOnboardTraceWindow(traceArtifact());
+    const budget = readColdOnboardPerformanceBudget({
+      fullE2eColdPath: {
+        authoritativeLocalBaseBuildAllowanceMs: 0,
+        rootStartToFirstTurnCompletionBudgetMs: 6_000,
+        rootEndToFirstTurnCompletionBudgetMs: 1_000,
+        phaseBudgetsMs: completePhaseBudgets(),
+      },
+    });
+
+    expect(evaluateColdOnboardPerformance(trace, 7_500, budget)).toMatchObject({
+      anomalies: [
+        {
+          budgetMs: 1_000,
+          kind: "first-turn-latency-tail",
+          measurementMs: 1_500,
+          overageMs: 500,
+        },
+      ],
+      passed: true,
+      rootStartToFirstTurnCompletionMs: 6_500,
+      violations: [],
+    });
+  });
+
   it("keeps a first-turn overage blocking when another cold-path budget also fails (#6660)", () => {
     const trace = readOnboardTraceWindow(traceArtifact());
     trace.phaseDurationsMs[ONBOARD_PHASE_NAMES[4]] = 1_501;
