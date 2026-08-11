@@ -59,7 +59,7 @@ function psResponses(
   },
 ): [string, RunResult | ((args: string[]) => RunResult)][] {
   return [
-    [`ps -p ${pid} -o pid=`, () => (opts.exited.has(pid) ? notFound() : ok(`${pid}\n`))],
+    [`ps -p ${pid} -o stat=`, () => (opts.exited.has(pid) ? notFound() : ok("S\n"))],
     [`ps -p ${pid} -o user=`, ok(`${opts.owner ?? "tester"}\n`)],
     [
       `ps -p ${pid} -o args=`,
@@ -130,6 +130,23 @@ describe("host gateway cleanup boundaries", () => {
 });
 
 describe("stopHostGatewayProcesses", () => {
+  it("treats a zombie gateway as stopped without signaling its PID (#7744)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-zombie-"));
+    const pidFile = path.join(stateDir, "openshell-gateway.pid");
+    fs.writeFileSync(pidFile, "9999886\n");
+    const { run } = makeRun(new Map([["ps -p 9999886 -o stat=", ok("Z\n")]]));
+    const kill = vi.fn<HostGatewayProcessDeps["kill"]>(() => true);
+
+    const result = stopHostGatewayProcesses(
+      { run, kill, env: {} },
+      { stateDir, usePgrepFallback: false },
+    );
+
+    expect(result.skippedDeadPids).toEqual([9999886]);
+    expect(kill).not.toHaveBeenCalled();
+    expect(fs.existsSync(pidFile)).toBe(false);
+  });
+
   it("uses pgrep fallback when the Docker-driver gateway PID file is missing", () => {
     const exited = new Set<number>();
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
@@ -162,10 +179,10 @@ describe("stopHostGatewayProcesses", () => {
       [`ps -p ${pid} -o user=`, ok("tester\n")],
       [`ps -p ${pid} -o args=`, ok("/home/test/.local/bin/openshell-gateway --port 8080\n")],
       [
-        `ps -p ${pid} -o pid=`,
+        `ps -p ${pid} -o stat=`,
         () => {
           pidChecks += 1;
-          return pidChecks >= 3 ? notFound() : ok(`${pid}\n`);
+          return pidChecks >= 3 ? notFound() : ok("S\n");
         },
       ],
     ]);
@@ -404,7 +421,7 @@ describe("stopHostGatewayProcesses", () => {
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
       [PGREP_KEY, ok("9999456\n")],
       ...(psResponses(9999123, { exited: new Set() }).map(([key, value]) =>
-        key === "ps -p 9999123 -o pid=" ? [key, notFound()] : [key, value],
+        key === "ps -p 9999123 -o stat=" ? [key, notFound()] : [key, value],
       ) as [string, RunResult | ((args: string[]) => RunResult)][]),
       ...psResponses(9999456, { exited }),
     ]);
