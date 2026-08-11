@@ -669,6 +669,7 @@ describe("source registry fingerprint", () => {
         preferredInferenceApi: "openai-responses",
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
+        hostLocalInferenceReceipt: null,
       });
       const journaled = fingerprintSandboxRegistryEntry(
         registry.getSandbox("alpha") as SandboxEntry,
@@ -684,6 +685,7 @@ describe("source registry fingerprint", () => {
           preferredInferenceApi: "openai-responses",
           gatewayName: "nemoclaw",
           reservationSessionId: "session-9",
+          hostLocalInferenceReceipt: null,
         }),
       ).toBe(true);
       expect(fingerprintSandboxRegistryEntry(registry.getSandbox("alpha") as SandboxEntry)).toBe(

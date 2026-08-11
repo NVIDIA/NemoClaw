@@ -175,12 +175,16 @@ describe("runtime provider activation catalog", () => {
     "workload-cleanup",
   ] as const)("rejects a bundle missing the %s container-engine scope", (operation) => {
     const bundle = completeBundle();
-    if (!bundle.containerEngine.supported) throw new Error("complete fixture must support engines");
+    expect(bundle.containerEngine.supported).toBe(true);
+    const containerEngine = bundle.containerEngine as Extract<
+      RuntimeProviderBundle["containerEngine"],
+      { supported: true }
+    >;
     const incomplete = {
       ...bundle,
       containerEngine: {
-        ...bundle.containerEngine,
-        identities: bundle.containerEngine.identities.filter(
+        ...containerEngine,
+        identities: containerEngine.identities.filter(
           (identity) => identity.operation !== operation,
         ),
       },
