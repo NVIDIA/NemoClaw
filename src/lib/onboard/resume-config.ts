@@ -18,7 +18,11 @@ export interface ResumeSessionLike {
   observabilityEnabled?: boolean;
   metadata?: { fromDockerfile?: string | null } | null;
   steps?: { sandbox?: { status?: string | null } | null } | null;
-  checkpoint?: { sandboxIdentity?: import("../state/onboard-checkpoint-types").CheckpointDecision<import("../state/onboard-checkpoint-types").CheckpointSandboxIdentity> } | null;
+  checkpoint?: {
+    sandboxIdentity?: import("../state/onboard-checkpoint-types").CheckpointDecision<
+      import("../state/onboard-checkpoint-types").CheckpointSandboxIdentity
+    >;
+  } | null;
 }
 
 export interface ResumeConfigConflict {
@@ -59,7 +63,8 @@ export function getResumeSandboxConflict(
     checkpointIdentity && isDecisionSelected(checkpointIdentity)
       ? checkpointIdentity.value.name
       : null;
-  const recordedSandboxName = checkpointedSandboxName ??
+  const recordedSandboxName =
+    checkpointedSandboxName ??
     (session?.steps?.sandbox?.status === "complete" ? (session?.sandboxName ?? null) : null);
   if (!requestedSandboxName || !recordedSandboxName) {
     return null;

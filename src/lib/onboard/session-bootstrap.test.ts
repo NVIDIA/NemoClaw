@@ -506,12 +506,16 @@ describe("prepareOnboardSession", () => {
       release = resolve;
     });
     let completed = false;
-    const checkpoint = checkpointSandboxName("review-race", { name: "openclaw" }, async (mutator) => {
-      await writeStarted;
-      const next = mutator(session) ?? session;
-      completed = true;
-      return next;
-    });
+    const checkpoint = checkpointSandboxName(
+      "review-race",
+      { name: "openclaw" },
+      async (mutator) => {
+        await writeStarted;
+        const next = mutator(session) ?? session;
+        completed = true;
+        return next;
+      },
+    );
 
     await Promise.resolve();
     expect(completed).toBe(false);

@@ -72,11 +72,7 @@ export async function checkpointSandboxName(
     const checkpointAgent = agent?.name ?? current.agent ?? "openclaw";
     current.sandboxName = sandboxName;
     current.sandboxPromptProgress.sandboxName = true;
-    recordCheckpointSandboxIdentity(
-      current,
-      sandboxName,
-      checkpointAgent,
-    );
+    recordCheckpointSandboxIdentity(current, sandboxName, checkpointAgent);
     return current;
   });
 }

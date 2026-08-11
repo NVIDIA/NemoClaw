@@ -39,7 +39,9 @@ describe("authoritative rebuild resume config", () => {
         {
           sandboxName: "review-sandbox",
           steps: { sandbox: { status: "pending" } },
-          checkpoint: { sandboxIdentity: decisionSelected({ name: "review-sandbox", agent: "openclaw" }) },
+          checkpoint: {
+            sandboxIdentity: decisionSelected({ name: "review-sandbox", agent: "openclaw" }),
+          },
         },
         { sandboxName: "other-sandbox" },
       ),

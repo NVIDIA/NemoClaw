@@ -210,7 +210,10 @@ describe("OnboardRuntimeBoundary", () => {
       provider: "ollama-local",
       model: "qwen3.5:9b",
     });
-    await boundary.recordStepFailed("provider_selection", "Onboarding exited before the step completed.");
+    await boundary.recordStepFailed(
+      "provider_selection",
+      "Onboarding exited before the step completed.",
+    );
 
     expect(harness.getSession()).toMatchObject({
       sandboxName: "review-interrupted",
