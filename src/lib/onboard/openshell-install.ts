@@ -150,14 +150,17 @@ export function areRequiredDockerDriverBinariesPresent(
   return true;
 }
 
-export function ensureOpenshellForOnboard(deps: OpenShellInstallDeps): OpenShellInstallResult {
+export function ensureOpenshellForOnboard(
+  deps: OpenShellInstallDeps,
+  options: { afterSuccessfulInstall?(): void } = {},
+): OpenShellInstallResult {
   const platform = deps.platform ?? process.platform;
   const arch = deps.arch ?? process.arch;
   let openshellInstall: OpenShellInstallResult = {
     localBin: null,
     futureShellPathHint: null,
   };
-  const minOpenshellVersion = deps.getBlueprintMinOpenshellVersion() ?? "0.0.99";
+  const minOpenshellVersion = deps.getBlueprintMinOpenshellVersion() ?? "0.0.101";
 
   if (!deps.isOpenshellInstalled()) {
     deps.log("  openshell CLI not found. Installing...");
@@ -286,5 +289,6 @@ export function ensureOpenshellForOnboard(deps: OpenShellInstallDeps): OpenShell
       "  Add that export to your shell profile, or open a new terminal before running openshell directly.",
     );
   }
+  if (openshellInstall.installed === true) options.afterSuccessfulInstall?.();
   return openshellInstall;
 }

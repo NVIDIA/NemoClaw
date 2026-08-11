@@ -15,6 +15,7 @@ const TARGET_IDENTITY = "target-identity";
 function entry(imageTag: string, generation: string): SandboxEntry {
   return {
     name: "alpha",
+    openshellDriver: "docker",
     imageTag,
     workload: {
       schemaVersion: 1,
@@ -149,6 +150,37 @@ describe("same-name replacement workload cleanup", () => {
         { runtimeProviders: providers(removeImage) },
       ),
     ).toEqual({ status: "skipped", reason: "replacement-unproven" });
+    expect(removeImage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["provider identity", ({ openshellDriver: _provider, ...source }: SandboxEntry) => source],
+    ["workload receipt", ({ workload: _workload, ...source }: SandboxEntry) => source],
+    [
+      "matching workload receipt",
+      (source: SandboxEntry) => ({
+        ...source,
+        workload: {
+          schemaVersion: 1 as const,
+          kind: "legacy-dockerfile" as const,
+          reference: "openshell/sandbox-from:foreign",
+          shared: false as const,
+        },
+      }),
+    ],
+  ] as const)("does not remove the source image without its durable %s", (_field, mutate) => {
+    const removeImage = vi.fn(() => ({ status: 0 }));
+
+    expect(
+      retireReplacedSandboxWorkload(
+        "alpha",
+        "target",
+        TARGET_IDENTITY,
+        mutate(entry(SOURCE_IMAGE, "source")),
+        entry(REPLACEMENT_IMAGE, "target"),
+        { runtimeProviders: providers(removeImage) },
+      ),
+    ).toEqual({ status: "skipped", reason: "authority-unproven" });
     expect(removeImage).not.toHaveBeenCalled();
   });
 

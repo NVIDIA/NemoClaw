@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   detectOpenShellStateRpcResultIssue,
   type OpenShellStateRpcIssue,
@@ -8,6 +9,13 @@ import {
 import { captureOpenshellForStatus, isCommandTimeout } from "../../adapters/openshell/runtime";
 import { type AgentDefinition, getAgentRuntimeKind, loadAgent } from "../../agent/defs";
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
+import type { CuaAppliedPolicyIdentity } from "../../cua/contract";
+import {
+  type CuaStateValidationDeps,
+  getObservedValidatedCuaState,
+  isCuaPublicStateEnabled,
+  type ObservedCuaInferenceRoute,
+} from "../../cua/state";
 import {
   type GatewayInference,
   parseGatewayInference,
@@ -55,6 +63,10 @@ type ProbeProviderHealth = (
   options?: ProviderHealthProbeOptions,
 ) => ProviderHealthStatus | null;
 type ProbeSandboxInferenceGatewayHealth = typeof probeSandboxInferenceGatewayHealth;
+type DelayInferenceRecoveryProbe = (delayMs: number) => Promise<void>;
+
+const RECOVERED_INFERENCE_PROBE_ATTEMPTS = 3;
+const RECOVERED_INFERENCE_PROBE_DELAY_MS = 2_000;
 
 /**
  * Honest serving-process state while the self-report response and probe
@@ -170,6 +182,8 @@ export interface SandboxStatusReport {
   openshellDriver: string;
   openshellVersion: string;
   policies: string[];
+  /** Current, validated, credential-free CUA candidate runtime readiness. */
+  cuaRuntime?: registry.SandboxEntry["cuaRuntimeReadiness"] | null;
   /** Baseline network policy keys the operator has excluded, replayed on rebuild. */
   baselineExclusions: string[];
   /** Observed enforcement state for each recorded baseline exclusion. */
@@ -285,10 +299,14 @@ function loadRecoverSandboxProcesses(): RecoverSandboxProcesses {
 
 interface CollectSandboxStatusSnapshotDeps {
   getSandbox?: typeof registry.getSandbox;
+  observeCuaLiveInference?: (entry: registry.SandboxEntry) => ObservedCuaInferenceRoute;
+  observeCuaLiveAppliedPolicy?: (entry: registry.SandboxEntry) => CuaAppliedPolicyIdentity;
+  validateCuaRuntimeReadiness?: CuaStateValidationDeps["validateRuntimeReadiness"];
   listSandboxes?: typeof registry.listSandboxes;
   captureOpenshellForStatusImpl?: typeof captureOpenshellForStatus;
   probeProviderHealthImpl?: ProbeProviderHealth;
   probeSandboxInferenceGatewayHealthImpl?: ProbeSandboxInferenceGatewayHealth;
+  delayInferenceRecoveryProbe?: DelayInferenceRecoveryProbe;
   reportInferenceProbeError?: (message: string) => void;
   probeTerminalRuntimeHealth?: ProbeTerminalRuntimeHealth;
   recoverSandboxProcesses?: RecoverSandboxProcesses;
@@ -422,6 +440,7 @@ export async function collectSandboxStatusSnapshot(
     (sb.agent ?? "openclaw") === "openclaw" &&
     parseSandboxPhase(lookup.output || "") === "Ready" &&
     !opts.preflight?.failure;
+  let recoveredManagedGateway = false;
   if (
     lookup.state === "present" &&
     (lookup.recoveredSandbox || managedOpenClawDeliveryMustBeProven)
@@ -438,6 +457,8 @@ export async function collectSandboxStatusSnapshot(
         },
       );
       failure = processRecoveryFailure(recovery);
+      recoveredManagedGateway =
+        failure === null && recovery.wasRunning === false && recovery.recovered === true;
     } catch (error) {
       failure = {
         layer: "recovery-error",
@@ -559,9 +580,14 @@ export async function collectSandboxStatusSnapshot(
   if (!suppressInferenceProbe && lookup.state === "present") {
     let gatewayChain: Awaited<ReturnType<ProbeSandboxInferenceGatewayHealth>> = null;
     try {
-      gatewayChain = await (
-        opts.deps?.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth
-      )(sandboxName);
+      const probe =
+        opts.deps?.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth;
+      const attempts = recoveredManagedGateway ? RECOVERED_INFERENCE_PROBE_ATTEMPTS : 1;
+      for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        gatewayChain = await probe(sandboxName);
+        if (gatewayChain?.ok || attempt === attempts) break;
+        await (opts.deps?.delayInferenceRecoveryProbe ?? sleep)(RECOVERED_INFERENCE_PROBE_DELAY_MS);
+      }
     } catch (error) {
       // This is a permanent fail-closed runtime boundary, but unexpected
       // OpenShell/transport exceptions must remain observable for diagnosis.
@@ -661,6 +687,13 @@ async function buildSandboxStatusReport(
       }
     : null;
   const agent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
+  const cua = getObservedValidatedCuaState(sb, process.env, {
+    observeLiveInference: deps.observeCuaLiveInference,
+    observeLiveAppliedPolicy: deps.observeCuaLiveAppliedPolicy,
+    ...(deps.validateCuaRuntimeReadiness
+      ? { validation: { validateRuntimeReadiness: deps.validateCuaRuntimeReadiness } }
+      : {}),
+  });
   return {
     schemaVersion: 1,
     name: sandboxName,
@@ -692,6 +725,7 @@ async function buildSandboxStatusReport(
     openshellDriver: (sb && sb.openshellDriver) || "unknown",
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies,
+    ...(isCuaPublicStateEnabled() ? { cuaRuntime: cua.readiness } : {}),
     baselineExclusions,
     baselineExclusionStates,
     baselineExclusionTransition,

@@ -119,7 +119,11 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   updateSandbox: typeof import("../state/registry").reserveSandboxInferenceRoute;
   localInferenceTimeoutSecs: number;
   vllmLocalCredentialEnv: string;
-  getManagedVllmProviderBinding?: () => { baseUrl: string; apiKey: string } | null;
+  getManagedVllmProviderBinding?: () => {
+    baseUrl: string;
+    validationBaseUrl?: string;
+    apiKey: string;
+  } | null;
   ollamaProxyCredentialEnv: string;
   isRoutedInferenceProvider: (provider: string) => boolean;
   applyLocalInferenceRoute?: VllmDeps["applyLocalInferenceRoute"];

@@ -8,8 +8,14 @@ import path from "node:path";
 import { dockerCapture } from "../../adapters/docker/local-model-runtime";
 import { writeLocalAdapterJsonFile } from "../local-adapter-lifecycle";
 import { loadManagedVllmApiKey, managedVllmStateDir } from "../vllm-api-key";
-import { buildVllmDockerEnv } from "../vllm-docker-env";
+import { buildLocalManagedVllmDockerEnv } from "../vllm-docker-env";
 import { runtimeAuthFingerprint } from "./runtime-auth-fingerprint";
+import {
+  resolveManagedVllmBridgeHost,
+  validateManagedVllmBridgeHost,
+} from "./vllm-host-local-network";
+
+export { resolveManagedVllmBridgeHost };
 
 export const HOST_LOCAL_VLLM_CONTAINER_NAME = "nemoclaw-vllm" as const;
 export const HOST_LOCAL_VLLM_MANAGED_LABEL = "com.nvidia.nemoclaw.managed-vllm" as const;
@@ -50,9 +56,11 @@ interface HostLocalVllmRuntimeReceipt {
 }
 
 export interface RecoverHostLocalManagedVllmOptions {
+  dockerCapture?: typeof dockerCapture;
   dockerInspect?: () => string;
   loadApiKey?: () => string | null;
   onManagedContainerObserved?: () => void;
+  resolveBridgeHost?: () => string;
   stateDir?: string;
 }
 
@@ -254,19 +262,26 @@ function equalHex(left: string, right: string): boolean {
   return timingSafeEqual(Buffer.from(left, "hex"), Buffer.from(right, "hex"));
 }
 
-function inspectHostLocalContainer(): string {
-  return dockerCapture(["container", "inspect", HOST_LOCAL_VLLM_CONTAINER_NAME], {
-    env: buildVllmDockerEnv(),
+function inspectHostLocalContainer(
+  capture: typeof dockerCapture,
+  dockerEnv: Record<string, string>,
+): string {
+  return capture(["container", "inspect", HOST_LOCAL_VLLM_CONTAINER_NAME], {
+    env: dockerEnv,
     ignoreError: true,
     timeout: 10_000,
   });
 }
 
-/** Recover only the exact authenticated, loopback-published host-local container. */
+/** Recover only the exact authenticated host-local container with bounded host bindings. */
 export function recoverHostLocalManagedVllmEndpoint(
   options: RecoverHostLocalManagedVllmOptions = {},
 ): { baseUrl: string; apiKey: string } | null {
-  const source = (options.dockerInspect ?? inspectHostLocalContainer)().trim();
+  const capture = options.dockerCapture ?? dockerCapture;
+  const dockerEnv = buildLocalManagedVllmDockerEnv();
+  const source = (
+    options.dockerInspect ?? (() => inspectHostLocalContainer(capture, dockerEnv))
+  )().trim();
   if (!source) return null;
 
   let parsed: unknown;
@@ -295,7 +310,24 @@ export function recoverHostLocalManagedVllmEndpoint(
     ports && typeof ports === "object" && !Array.isArray(ports)
       ? (ports as Record<string, unknown>)["8000/tcp"]
       : null;
-  const binding = Array.isArray(portBindings) && portBindings.length === 1 ? portBindings[0] : null;
+  const bindings = Array.isArray(portBindings) ? portBindings : [];
+  const loopbackBinding = bindings.find(
+    (binding) =>
+      binding &&
+      typeof binding === "object" &&
+      (binding as { HostIp?: unknown }).HostIp === "127.0.0.1",
+  );
+  const expectedBridgeHost = validateManagedVllmBridgeHost(
+    options.resolveBridgeHost
+      ? options.resolveBridgeHost()
+      : resolveManagedVllmBridgeHost(capture, dockerEnv),
+  );
+  const bridgeBinding = bindings.find(
+    (binding) =>
+      binding &&
+      typeof binding === "object" &&
+      (binding as { HostIp?: unknown }).HostIp === expectedBridgeHost,
+  );
   const env = Array.isArray(row.Config?.Env) ? row.Config.Env : [];
   const configuredKeyRows = env.filter(
     (value): value is string => typeof value === "string" && value.startsWith("VLLM_API_KEY="),
@@ -306,10 +338,11 @@ export function recoverHostLocalManagedVllmEndpoint(
     !/^[a-f0-9]{12,64}$/.test(row.Id) ||
     row.Name !== `/${HOST_LOCAL_VLLM_CONTAINER_NAME}` ||
     row.State?.Running !== true ||
-    !binding ||
-    typeof binding !== "object" ||
-    (binding as { HostIp?: unknown }).HostIp !== "127.0.0.1" ||
-    (binding as { HostPort?: unknown }).HostPort !== String(HOST_LOCAL_VLLM_PORT) ||
+    bindings.length !== 2 ||
+    !loopbackBinding ||
+    !bridgeBinding ||
+    (loopbackBinding as { HostPort?: unknown }).HostPort !== String(HOST_LOCAL_VLLM_PORT) ||
+    (bridgeBinding as { HostPort?: unknown }).HostPort !== String(HOST_LOCAL_VLLM_PORT) ||
     configuredKeyRows.length !== 1 ||
     typeof authFingerprint !== "string"
   ) {

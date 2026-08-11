@@ -16,6 +16,7 @@ import {
   expectedRegistryName,
   expectedRegistryOwner,
   hashModelFile,
+  insertQualificationLoopbackPublishArgv,
   parseNvidiaSmi,
   parseQualificationInvocation,
   type QualificationInvocation,
@@ -282,7 +283,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
-  it("constructs a read-only bounded one-GPU server without putting the key on argv (#8260)", () => {
+  it("publishes the recipe-selected request guard on the loopback address without putting the API key in Docker arguments (#8667)", () => {
     const content = Buffer.from("qualification model fixture\n", "utf8");
     const testPlan = qualificationPlanForModel(content);
     const modelRoot = fs.realpathSync(
@@ -300,24 +301,24 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         mtimeNs: modelStatus.mtimeNs,
         size: modelStatus.size,
       });
-      const argv = buildServerContainerArgv(testPlan, {
+      const imageReference = `localhost:5000/repo@sha256:${"d".repeat(64)}`;
+      const containerOptions = {
         apiKeyHostPath: "/work/tmp/api-key",
         containerName: "qualified-server",
-        imageReference: `localhost:5000/repo@sha256:${"d".repeat(64)}`,
+        imageReference,
         model,
         networkName: "qualified-internal",
         registryOwner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
         runtimeGid: 1001,
         runtimeUid: 1001,
-      });
+      } as const;
+      const argv = buildServerContainerArgv(testPlan, containerOptions);
       expect(argv).toEqual(
         expect.arrayContaining([
           "--read-only",
           "--cap-drop",
           "ALL",
           "no-new-privileges=true",
-          "--gpus",
-          "1",
           "--gpu-layers",
           "all",
           "--ctx-size",
@@ -339,21 +340,74 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
           "--no-agent",
         ]),
       );
-      expect(valuesAfter(argv, "--publish")).toEqual([]);
+      const publishMappings = valuesAfter(argv, "--publish");
+      expect(publishMappings).toEqual([`127.0.0.1::${String(testPlan.recipe.serve.port)}`]);
+      expect(publishMappings.some((mapping) => mapping.startsWith("0.0.0.0:"))).toBe(false);
+      const imageIndex = argv.indexOf(imageReference);
+      expect(argv.slice(imageIndex - 2, imageIndex + 1)).toEqual([
+        "--publish",
+        publishMappings[0],
+        imageReference,
+      ]);
+      expect(valuesAfter(argv, "--entrypoint")).toEqual([
+        "/usr/local/bin/nemoclaw-llama-cpp-request-guard",
+      ]);
+      expect(valuesAfter(argv, "--listen-port")).toEqual([String(testPlan.recipe.serve.port)]);
+      expect(valuesAfter(argv, "--upstream-port")).toEqual([
+        String(testPlan.recipe.serve.requestGuard.upstreamPort),
+      ]);
+      expect(valuesAfter(argv, "--max-request-body-bytes")).toEqual([
+        String(testPlan.recipe.serve.limits.maxRequestBodyBytes),
+      ]);
+      expect(valuesAfter(argv, "--max-request-header-bytes")).toEqual([
+        String(testPlan.recipe.serve.limits.maxRequestHeaderBytes),
+      ]);
+      expect(valuesAfter(argv, "--max-output-tokens")).toEqual([
+        String(testPlan.recipe.serve.limits.maxOutputTokens),
+      ]);
+      expect(valuesAfter(argv, "--request-timeout-seconds")).toEqual([
+        String(testPlan.recipe.serve.limits.requestTimeoutSeconds),
+      ]);
+      expect(valuesAfter(argv, "--shutdown-timeout-seconds")).toEqual([
+        String(testPlan.recipe.serve.limits.shutdownTimeoutSeconds),
+      ]);
+      const separator = argv.indexOf("--");
+      expect(argv[separator + 1]).toBe("/usr/local/bin/llama-server");
+      expect(valuesAfter(argv.slice(separator), "--host")).toEqual(["127.0.0.1"]);
+      expect(valuesAfter(argv.slice(separator), "--port")).toEqual([
+        String(testPlan.recipe.serve.requestGuard.upstreamPort),
+      ]);
+      expect(valuesAfter(argv.slice(separator), "--n-predict")).toEqual([
+        String(testPlan.recipe.serve.limits.maxOutputTokens),
+      ]);
       const agentQualificationArgv = buildServerContainerArgv(testPlan, {
-        apiKeyHostPath: "/work/tmp/api-key",
-        containerName: "qualified-server",
-        hostPort: 8081,
-        imageReference: `localhost:5000/repo@sha256:${"d".repeat(64)}`,
-        model,
-        networkName: "qualified-internal",
-        registryOwner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
-        runtimeGid: 1001,
-        runtimeUid: 1001,
+        ...containerOptions,
+        hostPort: testPlan.recipe.serve.port,
       });
-      expect(valuesAfter(agentQualificationArgv, "--publish")).toEqual([]);
+      expect(valuesAfter(agentQualificationArgv, "--publish")).toEqual([
+        `127.0.0.1:${String(testPlan.recipe.serve.port)}:${String(testPlan.recipe.serve.port)}`,
+      ]);
+      const alternateContainerPort = 9_081;
+      // The adapter must use its validated plan input instead of duplicating the current recipe port.
+      const alternatePortPlan = {
+        ...testPlan,
+        recipe: {
+          ...testPlan.recipe,
+          serve: { ...testPlan.recipe.serve, port: alternateContainerPort },
+        },
+      } as unknown as QualificationPlan;
+      const alternatePortArgv = buildServerContainerArgv(alternatePortPlan, containerOptions);
+      expect(valuesAfter(alternatePortArgv, "--publish")).toEqual([
+        `127.0.0.1::${String(alternateContainerPort)}`,
+      ]);
+      expect(valuesAfter(alternatePortArgv, "--listen-port")).toEqual([
+        String(alternateContainerPort),
+      ]);
       expect(valuesAfter(argv, "--network")).toEqual(["qualified-internal"]);
       expect(valuesAfter(argv, "--user")).toEqual(["1001:1001"]);
+      expect(valuesAfter(argv, "--gpus")).toEqual(["driver=nvidia,count=1"]);
+      expect(valuesAfter(argv, "--cap-drop")).toEqual(["ALL"]);
+      expect(valuesAfter(argv, "--security-opt")).toEqual(["no-new-privileges=true"]);
       expect(valuesAfter(argv, "--api-key-file")).toEqual(["/run/secrets/llama-cpp-api-key"]);
       expect(argv).not.toContain("--api-key");
       expect(valuesAfter(argv, "--mount")).toEqual([
@@ -387,6 +441,49 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     } finally {
       fs.rmSync(modelRoot, { force: true, recursive: true });
     }
+  });
+
+  it("rejects Docker publish aliases before inserting one loopback mapping at the image boundary (#8667)", () => {
+    const imageReference = `localhost:5000/repo@sha256:${"d".repeat(64)}`;
+    const containerPort = 9_081;
+    const options = { containerPort, imageReference };
+
+    expect(insertQualificationLoopbackPublishArgv(["run", imageReference], options)).toEqual([
+      "run",
+      "--publish",
+      `127.0.0.1::${String(containerPort)}`,
+      imageReference,
+    ]);
+    expect(() => insertQualificationLoopbackPublishArgv(["run"], options)).toThrow(
+      /exactly one Docker image reference/u,
+    );
+    expect(() =>
+      insertQualificationLoopbackPublishArgv(["run", imageReference, imageReference], options),
+    ).toThrow(/exactly one Docker image reference/u);
+    for (const publishArgv of [
+      ["--publish", "0.0.0.0:8081:8081"],
+      ["--publish=0.0.0.0:8081:8081"],
+      ["-p", "0.0.0.0:8081:8081"],
+      ["-p0.0.0.0:8081:8081"],
+      ["--publish-all"],
+      ["--publish-all=true"],
+      ["-P"],
+      ["-P=true"],
+    ]) {
+      expect(() =>
+        insertQualificationLoopbackPublishArgv(["run", ...publishArgv, imageReference], options),
+      ).toThrow(/must not publish/u);
+    }
+    expect(
+      insertQualificationLoopbackPublishArgv(["run", imageReference, "-p", "guard-value"], options),
+    ).toEqual([
+      "run",
+      "--publish",
+      `127.0.0.1::${String(containerPort)}`,
+      imageReference,
+      "-p",
+      "guard-value",
+    ]);
   });
 
   it("accepts only the exact NVIDIA OpenClaw ARM64 managed-image labels", () => {

@@ -4532,7 +4532,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     `matrix='[${defaultMappings}]'`,
     `test_matrix='[${defaultTestMappings}]'`,
     ";;",
-    "managed-image-protected-runtime:)",
+    "inference-routing: | managed-image-protected-runtime:)",
     "matrix='[]'",
     ";;",
     `:${deepAgentsTarget})`,
