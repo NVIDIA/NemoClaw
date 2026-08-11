@@ -566,8 +566,19 @@ export async function collectSandboxStatusSnapshot(
     // describes.
     const invocationRoute =
       live?.provider && live.model
-        ? { provider: live.provider, model: live.model }
-        : { provider: currentProvider, model: currentModel };
+        ? {
+            provider: live.provider,
+            model: live.model,
+            // The live gateway RPC does not expose a stored API override. Do
+            // not combine its provider/model with the recorded sandbox's API
+            // family; resolve the live route's compatible default instead.
+            preferredInferenceApi: null,
+          }
+        : {
+            provider: currentProvider,
+            model: currentModel,
+            preferredInferenceApi: sb?.preferredInferenceApi ?? null,
+          };
     const invocationModel = (invocationRoute.model || "").trim();
     const invocationProvider = (invocationRoute.provider || "").trim();
     const invocation =
@@ -577,7 +588,7 @@ export async function collectSandboxStatusSnapshot(
               sandboxName,
               provider: invocationProvider,
               model: invocationModel,
-              preferredInferenceApi: sb?.preferredInferenceApi ?? null,
+              preferredInferenceApi: invocationRoute.preferredInferenceApi,
             },
             opts.deps?.probeSandboxInferenceInvocationImpl,
             (error) =>

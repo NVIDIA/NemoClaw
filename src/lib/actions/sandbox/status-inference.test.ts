@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { buildSandboxInferenceInvocationCommand } from "./inference-invocation-probe";
 import {
   collectSandboxStatusSnapshot,
   getSandboxStatusInferenceHealth,
@@ -15,6 +16,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
     provider?: string;
     liveProvider?: string;
     liveModel?: string;
+    preferredInferenceApi?: string;
     providerHealth?: ReturnType<typeof getSandboxStatusInferenceHealth>;
     providerProbeThrows?: boolean;
     routeHealth: {
@@ -32,6 +34,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
       agent: options.agent ?? "openclaw",
       model: "nvidia/nemotron",
       provider,
+      preferredInferenceApi: options.preferredInferenceApi,
     };
     return {
       getSandbox: () => sandbox,
@@ -204,6 +207,41 @@ describe("sandbox status inference.local route health (#6192)", () => {
     expect(deps.probeProviderHealthImpl).toHaveBeenCalledWith("openai-api", {
       model: "gpt-5.2",
     });
+  });
+
+  it("does not apply the recorded API family to a different live route", async () => {
+    const deps = snapshotDeps({
+      provider: "compatible-endpoint",
+      preferredInferenceApi: "openai-responses",
+      liveProvider: "openai-api",
+      liveModel: "gpt-5.2",
+      routeHealth: {
+        ok: true,
+        endpoint: "https://inference.local/v1/models",
+        httpStatus: 200,
+        detail: "route reachable",
+      },
+    });
+    deps.probeSandboxInferenceInvocationImpl.mockImplementation((input) => {
+      const command = buildSandboxInferenceInvocationCommand(input);
+      expect(command).toContain("https://inference.local/v1/chat/completions");
+      expect(command).not.toContain("https://inference.local/v1/responses");
+      return { ok: true };
+    });
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
+
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
+    expect(deps.probeSandboxInferenceInvocationImpl).toHaveBeenCalledWith(
+      {
+        sandboxName: "alpha",
+        provider: "openai-api",
+        model: "gpt-5.2",
+        preferredInferenceApi: null,
+      },
+      {},
+      30_000,
+    );
   });
 
   it("keeps inference.local authoritative when the upstream diagnostic throws (#6192)", async () => {
