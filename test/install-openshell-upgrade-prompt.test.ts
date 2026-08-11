@@ -106,8 +106,9 @@ function runPreinstallUpgradeGuard(
     currentCliAvailable?: boolean;
     currentMaxOpenshellVersion?: string;
     currentMinOpenshellVersion?: string;
+    finishDeferAsPlain?: boolean;
+    finishInstallMode?: "managed" | "source" | "unset";
     finishPreparedInstallSucceeds?: boolean;
-    finishSourceInstall?: boolean;
     gatewayDestroySucceeds?: boolean;
     gatewayProcessStopSucceeds?: boolean;
     gatewayRemoveSucceeds?: boolean;
@@ -146,7 +147,8 @@ function runPreinstallUpgradeGuard(
   const gatewayProcessStopSucceeds = options.gatewayProcessStopSucceeds === false ? "0" : "1";
   const gatewayRemoveSucceeds = options.gatewayRemoveSucceeds === false ? "0" : "1";
   const gatewayServiceStopSucceeds = options.gatewayServiceStopSucceeds === true ? "1" : "0";
-  const finishSourceInstall = options.finishSourceInstall === true ? "1" : "0";
+  const finishDeferAsPlain = options.finishDeferAsPlain === true ? "1" : "0";
+  const finishInstallMode = options.finishInstallMode ?? "";
   const finishPreparedInstallSucceeds = options.finishPreparedInstallSucceeds === false ? "0" : "1";
   const openshellVersionCommandFails = options.openshellVersionCommandFails === true ? "1" : "0";
   const installedOpenshellVersionOverride =
@@ -228,9 +230,16 @@ exit 0
       _CLI_PATH="${currentCli}"
       return 0
     }
+    if [ "${finishDeferAsPlain}" = "1" ] && [[ -n "\${NEMOCLAW_DEFER_OPENSHELL_INSTALL+1}" ]]; then
+      export -n NEMOCLAW_DEFER_OPENSHELL_INSTALL
+    fi
     preinstall_backup_and_retire_legacy_gateway
-    if [ "${finishSourceInstall}" = "1" ]; then
-      _NEMOCLAW_CLI_INSTALL_MODE=source
+    if [ -n "${finishInstallMode}" ]; then
+      if [ "${finishInstallMode}" = "unset" ]; then
+        unset _NEMOCLAW_CLI_INSTALL_MODE
+      else
+        _NEMOCLAW_CLI_INSTALL_MODE="${finishInstallMode}"
+      fi
       maybe_install_openshell_during_install() {
         printf 'openshell install-mode %s defer=%s\n' "$1" "\${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}" >> "${openshellLog}"
         [ "${finishPreparedInstallSucceeds}" = "1" ]
@@ -240,6 +249,10 @@ exit 0
       finish_nemoclaw_install
     fi
     printf 'DEFER=%s\\n' "\${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"
+    case "$(declare -p NEMOCLAW_DEFER_OPENSHELL_INSTALL 2>/dev/null || true)" in
+      "declare -x "*) printf 'DEFER_EXPORTED=1\\n' ;;
+      *) printf 'DEFER_EXPORTED=0\\n' ;;
+    esac
     printf 'RESTORE=%s\\n' "\${NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE:-}"
     printf 'CONFIRMED_NAMES=%s\\n' "\${_LEGACY_MANAGED_RECOVERY_NAMES_JSON:-}"
   `;
@@ -481,6 +494,61 @@ maybe_install_openshell_during_install force`,
     expect(fs.existsSync(sideEffectLog)).toBe(false);
   });
 
+  it.each([
+    {
+      expectedExported: "0",
+      expectedSet: "",
+      expectedValue: "",
+      initialState: "unset",
+      setup: "unset NEMOCLAW_DEFER_OPENSHELL_INSTALL",
+    },
+    {
+      expectedExported: "0",
+      expectedSet: "1",
+      expectedValue: "plain",
+      initialState: "plain",
+      setup: "NEMOCLAW_DEFER_OPENSHELL_INSTALL=plain",
+    },
+    {
+      expectedExported: "1",
+      expectedSet: "1",
+      expectedValue: "exported",
+      initialState: "exported",
+      setup: "export NEMOCLAW_DEFER_OPENSHELL_INSTALL=exported",
+    },
+  ])("restores an $initialState deferral variable after CLI backup preparation (#8800)", ({
+    expectedExported,
+    expectedSet,
+    expectedValue,
+    setup,
+  }) => {
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+info() { :; }
+install_nemoclaw() { [ "\${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}" = "1" ]; }
+verify_nemoclaw() { :; }
+_CLI_DISPLAY=NemoClaw
+${setup}
+prepare_current_cli_for_preupgrade_backup
+printf 'DEFER_SET=%s\\n' "\${NEMOCLAW_DEFER_OPENSHELL_INSTALL+1}"
+printf 'DEFER_VALUE=%s\\n' "\${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"
+case "$(declare -p NEMOCLAW_DEFER_OPENSHELL_INSTALL 2>/dev/null || true)" in
+  "declare -x "*) printf 'DEFER_EXPORTED=1\\n' ;;
+  *) printf 'DEFER_EXPORTED=0\\n' ;;
+esac`,
+      ],
+      { encoding: "utf-8", env: process.env },
+    );
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain(`DEFER_SET=${expectedSet}\n`);
+    expect(result.stdout).toContain(`DEFER_VALUE=${expectedValue}\n`);
+    expect(result.stdout).toContain(`DEFER_EXPORTED=${expectedExported}\n`);
+  });
+
   it("aborts non-interactive legacy gateway upgrades without explicit opt-in", () => {
     const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard({
       NON_INTERACTIVE: "1",
@@ -718,7 +786,7 @@ maybe_install_openshell_during_install force`,
     const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
-        finishSourceInstall: true,
+        finishInstallMode: "source",
         hasOldCli: false,
         openshellVersion: "0.0.85",
         registryJson:
@@ -729,6 +797,33 @@ maybe_install_openshell_during_install force`,
     expect(result.status).toBe(0);
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(openshellLog).toBe("openshell install-mode if-missing defer=\n");
+  });
+
+  it("forces OpenShell installation for a managed CLI install mode (#8800)", () => {
+    const { result, openshellLog } = runPreinstallUpgradeGuard(
+      { NON_INTERACTIVE: "1" },
+      {
+        finishInstallMode: "managed",
+        registryJson: '{"sandboxes":{}}',
+      },
+    );
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(openshellLog).toBe("openshell install-mode force defer=\n");
+  });
+
+  it("rejects a prepared CLI that has no install mode (#8800)", () => {
+    const { result, openshellLog } = runPreinstallUpgradeGuard(
+      { NON_INTERACTIVE: "1" },
+      {
+        finishInstallMode: "unset",
+        registryJson: '{"sandboxes":{}}',
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain("has no installation mode");
+    expect(openshellLog).toBe("");
   });
 
   it("retires a backed-up gateway whose OpenShell version is above the supported range", () => {
@@ -753,7 +848,7 @@ maybe_install_openshell_during_install force`,
       {
         currentMaxOpenshellVersion: "0.0.101",
         currentMinOpenshellVersion: "0.0.101",
-        finishSourceInstall: true,
+        finishInstallMode: "source",
         gatewayDestroySucceeds: false,
         gatewayProcessStopSucceeds: false,
         gatewayServiceStopSucceeds: true,
@@ -779,7 +874,30 @@ maybe_install_openshell_during_install force`,
       openshellLog.indexOf("openshell install-mode force defer="),
     );
     expect(result.stdout).toContain("DEFER=1");
+    expect(result.stdout).toContain("DEFER_EXPORTED=1");
     expect(openshellLog).not.toContain("gateway process-stop");
+  });
+
+  it("restores a plain OpenShell installation deferral as a plain variable (#8800)", () => {
+    const { result, openshellLog } = runPreinstallUpgradeGuard(
+      {
+        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
+        NEMOCLAW_OPENSHELL_UPGRADE_PREPARED: "1",
+        NON_INTERACTIVE: "1",
+      },
+      {
+        finishDeferAsPlain: true,
+        finishInstallMode: "source",
+        hasOldCli: false,
+        openshellVersion: "0.0.85",
+      },
+    );
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain("DEFER=1");
+    expect(result.stdout).toContain("DEFER_EXPORTED=0");
+    expect(openshellLog).toBe("openshell install-mode force defer=\n");
   });
 
   it("preserves prepared backups when the required OpenShell install fails after retirement (#8800)", () => {
@@ -789,7 +907,7 @@ maybe_install_openshell_during_install force`,
         currentMaxOpenshellVersion: "0.0.101",
         currentMinOpenshellVersion: "0.0.101",
         finishPreparedInstallSucceeds: false,
-        finishSourceInstall: true,
+        finishInstallMode: "source",
         gatewayDestroySucceeds: false,
         gatewayProcessStopSucceeds: false,
         gatewayServiceStopSucceeds: true,
@@ -1206,7 +1324,7 @@ maybe_install_openshell_during_install force`,
       {
         currentMaxOpenshellVersion: "0.0.101",
         currentMinOpenshellVersion: "0.0.101",
-        finishSourceInstall: true,
+        finishInstallMode: "source",
         hasOldCli: false,
         openshellVersion: "0.0.85",
       },
@@ -1228,7 +1346,7 @@ maybe_install_openshell_during_install force`,
         NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
       },
       {
-        finishSourceInstall: true,
+        finishInstallMode: "source",
         hasOldCli: false,
         openshellOnPath: false,
         registryJson:

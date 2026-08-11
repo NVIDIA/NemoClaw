@@ -2097,11 +2097,17 @@ finish_nemoclaw_install() {
   if [[ "${_OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY:-false}" == true ]]; then
     local old_defer="${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"
     local defer_was_set="${NEMOCLAW_DEFER_OPENSHELL_INSTALL+1}"
+    local defer_declaration="" defer_was_exported=false
+    if [[ -n "$defer_was_set" ]]; then
+      defer_declaration="$(declare -p NEMOCLAW_DEFER_OPENSHELL_INSTALL 2>/dev/null || true)"
+      [[ "$defer_declaration" == declare\ -x* ]] && defer_was_exported=true
+    fi
     local openshell_install_status=0
     unset NEMOCLAW_DEFER_OPENSHELL_INSTALL
     maybe_install_openshell_during_install force || openshell_install_status=$?
     if [[ -n "$defer_was_set" ]]; then
-      export NEMOCLAW_DEFER_OPENSHELL_INSTALL="$old_defer"
+      NEMOCLAW_DEFER_OPENSHELL_INSTALL="$old_defer"
+      [[ "$defer_was_exported" == true ]] && export NEMOCLAW_DEFER_OPENSHELL_INSTALL
     fi
     if [[ "$openshell_install_status" -ne 0 ]]; then
       error "Could not install the OpenShell version pinned by the prepared source after retiring the gateway. The installer preserved the sandbox backups and did not start recovery. Rerun the installer with NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 to reuse the prepared upgrade state and retry the OpenShell install."
@@ -2461,14 +2467,20 @@ resolve_existing_cli_runner() {
 }
 
 prepare_current_cli_for_preupgrade_backup() {
-  local old_defer="${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-__unset__}"
+  local old_defer="${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"
+  local defer_was_set="${NEMOCLAW_DEFER_OPENSHELL_INSTALL+1}"
+  local defer_declaration="" defer_was_exported=false
+  if [[ -n "$defer_was_set" ]]; then
+    defer_declaration="$(declare -p NEMOCLAW_DEFER_OPENSHELL_INSTALL 2>/dev/null || true)"
+    [[ "$defer_declaration" == declare\ -x* ]] && defer_was_exported=true
+  fi
   info "Preparing current ${_CLI_DISPLAY} CLI for pre-upgrade backup…"
   export NEMOCLAW_DEFER_OPENSHELL_INSTALL=1
   install_nemoclaw
-  if [[ "$old_defer" == "__unset__" ]]; then
-    unset NEMOCLAW_DEFER_OPENSHELL_INSTALL
-  else
-    export NEMOCLAW_DEFER_OPENSHELL_INSTALL="$old_defer"
+  unset NEMOCLAW_DEFER_OPENSHELL_INSTALL
+  if [[ -n "$defer_was_set" ]]; then
+    NEMOCLAW_DEFER_OPENSHELL_INSTALL="$old_defer"
+    [[ "$defer_was_exported" == true ]] && export NEMOCLAW_DEFER_OPENSHELL_INSTALL
   fi
   verify_nemoclaw
 }
@@ -2850,11 +2862,11 @@ stop_nemoclaw_openshell_gateway_user_service() {
   systemctl --user is-active --quiet "$service_name" 2>/dev/null || return 1
 
   fragment_path="$(systemctl --user show "$service_name" --property=FragmentPath --value 2>/dev/null)" \
-    || error "Could not inspect the active NemoClaw OpenShell gateway user service."
+    || return 1
   [ "$fragment_path" = "$service_path" ] \
     || error "Refusing to retire the OpenShell gateway because the active user service does not match ${service_path}."
   gateway_bin="$(resolve_openshell_gateway_bin_for_user_service "$service_name")" \
-    || error "Could not resolve the OpenShell gateway binary from the active NemoClaw user service."
+    || return 1
   trusted_openshell_gateway_bin_for_service "$gateway_bin" \
     || error "Refusing to retire an OpenShell gateway user service with an untrusted binary: ${gateway_bin}"
 

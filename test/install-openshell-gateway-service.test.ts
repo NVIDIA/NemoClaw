@@ -80,7 +80,7 @@ function writeSystemctlStub(
   home: string,
   unitPath: string,
   gatewayBin: string,
-  options: { fragmentPath?: string } = {},
+  options: { failedMetadataProperty?: "ExecStart" | "FragmentPath"; fragmentPath?: string } = {},
 ) {
   const bin = path.join(home, "systemctl-bin");
   const log = path.join(home, "systemctl.log");
@@ -97,10 +97,14 @@ function writeSystemctlStub(
       `    test -f ${JSON.stringify(active)}`,
       "    ;;",
       '  "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --value")',
-      `    printf '%s\\n' ${JSON.stringify(options.fragmentPath ?? unitPath)}`,
+      options.failedMetadataProperty === "FragmentPath"
+        ? "    exit 98"
+        : `    printf '%s\\n' ${JSON.stringify(options.fragmentPath ?? unitPath)}`,
       "    ;;",
       '  "--user show nemoclaw-openshell-gateway.service --property=ExecStart --value")',
-      `    printf '{ path=%s ; argv[]=%s ; ignore_errors=no ; }\\n' ${JSON.stringify(gatewayBin)} ${JSON.stringify(gatewayBin)}`,
+      options.failedMetadataProperty === "ExecStart"
+        ? "    exit 98"
+        : `    printf '{ path=%s ; argv[]=%s ; ignore_errors=no ; }\\n' ${JSON.stringify(gatewayBin)} ${JSON.stringify(gatewayBin)}`,
       "    ;;",
       '  "--user stop nemoclaw-openshell-gateway.service")',
       `    rm -f ${JSON.stringify(active)}`,
@@ -288,6 +292,31 @@ describe("install.sh OpenShell gateway service", () => {
       "--user stop nemoclaw-openshell-gateway.service",
       "--user is-active --quiet nemoclaw-openshell-gateway.service",
     ]);
+  });
+
+  it.each([
+    "FragmentPath",
+    "ExecStart",
+  ] as const)("continues to the PID-file fallback when %s service metadata is unavailable (#8800)", (failedMetadataProperty) => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const staged = stageService(home, gatewayBin);
+    const systemctl = writeSystemctlStub(home, servicePath(home), gatewayBin, {
+      failedMetadataProperty,
+    });
+
+    expect(staged.status, staged.stdout + staged.stderr).toBe(0);
+
+    const result = runInstallHelper(
+      home,
+      "stop_nemoclaw_openshell_gateway_user_service || printf 'pid-file-fallback\\n'",
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+    const calls = fs.readFileSync(systemctl.log, "utf-8");
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain("pid-file-fallback");
+    expect(calls).not.toContain("--user stop nemoclaw-openshell-gateway.service");
   });
 
   it("does not stop a user service whose active fragment differs from the trusted unit (#8800)", () => {
