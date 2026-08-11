@@ -286,15 +286,15 @@ The Dockerfile removes compilers and network probes from the runtime image.
 
 ## Image Digest Pinning
 
-The blueprint references the sandbox image by an immutable `@sha256:` digest instead of a mutable tag such as `:latest`.
-A registry compromise or accidental force-push cannot silently swap the sandbox image.
+The managed blueprint references the sandbox image by an immutable `@sha256:` digest instead of a mutable tag such as `:latest`.
+A registry-side tag change cannot silently select another managed sandbox image.
 
 | Aspect | Detail |
 |---|---|
-| Default | `nemoclaw-blueprint/blueprint.yaml` pins the sandbox image by digest. A CI regression test blocks any mutable-tag reference from merging. |
-| What you can change | Contributors bumping the sandbox image must update the digest in `blueprint.yaml`. Release tooling should rewrite the digest automatically. |
+| Default | NemoClaw selects the managed sandbox image by its exact digest. |
+| What you can change | Use the onboarding `--from` path when you need to build from a reviewed custom image. Locally built custom images do not use the managed registry digest. |
 | Risk if relaxed | Reverting to a mutable tag (`:latest`) allows a registry-side change to replace the sandbox image without any blueprint update, which is a supply-chain risk. |
-| Recommendation | Always reference the sandbox image by digest. If you build a custom image with the onboarding `--from` path, the digest constraint does not apply to your local build. |
+| Recommendation | Keep the managed digest-pinned image unless you need a reviewed custom image. Pin the custom image's base and dependencies before you build it. |
 
 <AgentOnly variant="openclaw">
 
