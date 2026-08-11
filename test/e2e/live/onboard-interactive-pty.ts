@@ -144,6 +144,7 @@ export function driveInteractiveCommand(
   return new Promise((resolve, reject) => {
     let output = "";
     const firedTriggers: string[] = [];
+    let stderrRest = "";
     let timedOut = false;
     let settled = false;
 
@@ -168,7 +169,9 @@ export function driveInteractiveCommand(
       output += chunk.toString("utf-8");
     });
     child.stderr?.on("data", (chunk: Buffer) => {
-      for (const line of chunk.toString("utf-8").split("\n")) {
+      const lines = (stderrRest + chunk.toString("utf-8")).split("\n");
+      stderrRest = lines.pop() ?? "";
+      for (const line of lines) {
         const fired = line.match(/^FIRED\t(.*)$/);
         if (fired) firedTriggers.push(fired[1]);
       }
@@ -183,6 +186,8 @@ export function driveInteractiveCommand(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      const fired = stderrRest.match(/^FIRED\t(.*)$/);
+      if (fired) firedTriggers.push(fired[1]);
       resolve({
         exitCode: timedOut ? 124 : (code ?? 1),
         output,

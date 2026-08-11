@@ -90,7 +90,7 @@ test("interactive onboard wizard reaches Policy presets in step order (#6042)", 
     activityLabel: "command: onboard-interactive-pty",
     progress,
     cmd: [
-      "node",
+      process.execPath,
       CLI_ENTRYPOINT,
       "onboard",
       "--fresh",
@@ -112,8 +112,9 @@ test("interactive onboard wizard reaches Policy presets in step order (#6042)", 
       // "Other OpenAI-compatible endpoint" — position depends on
       // src/lib/onboard/providers.ts's provider list for the openclaw agent.
       { trigger: "Select your inference provider:", response: "4\n" },
+      { trigger: "Other OpenAI-compatible endpoint", response: "" },
       { trigger: "OpenAI-compatible base URL", response: `${fake.baseUrl}\n` },
-      { trigger: "API key:", response: `${apiKey}\n` },
+      { trigger: "Other OpenAI-compatible endpoint API key:", response: `${apiKey}\n` },
       { trigger: "endpoint model", response: `${MODEL}\n` },
       { trigger: "Apply this configuration?", response: "y\n" },
       { trigger: "Enable web search", response: "1\n" },
@@ -133,6 +134,18 @@ test("interactive onboard wizard reaches Policy presets in step order (#6042)", 
   });
   await artifacts.writeText("onboard-transcript.txt", result.output);
 
+  const redactedTranscript = redactString(result.output, [apiKey]);
+  expect(
+    result.timedOut,
+    `onboard command timed out; see onboard-transcript.txt:\n${redactedTranscript}`,
+  ).toBe(false);
+  expect(
+    result.exitCode,
+    `onboard command exited non-zero; see onboard-transcript.txt:\n${redactedTranscript}`,
+  ).toBe(0);
+  expect(result.firedTriggers).toContain("Other OpenAI-compatible endpoint");
+  expect(result.firedTriggers).toContain("Policy tier");
+
   progress.phase("confirm every ordered onboarding step appears in order");
   let searchFrom = 0;
   for (const marker of ORDERED_STEP_MARKERS) {
@@ -147,18 +160,9 @@ test("interactive onboard wizard reaches Policy presets in step order (#6042)", 
   progress.phase("confirm Policy presets is reached before completion");
   const policyIndex = result.output.indexOf("[8/8] Policy presets");
   const abortedIndex = result.output.search(/Onboarding did not finish/i);
-  const redactedTranscript = redactString(result.output, [apiKey]);
   expect(policyIndex, "Policy presets step must be observed").toBeGreaterThanOrEqual(0);
   expect(
     abortedIndex,
     `onboarding must not abort after reaching Policy presets; see onboard-transcript.txt:\n${redactedTranscript}`,
   ).not.toBeGreaterThanOrEqual(0);
-  expect(
-    result.timedOut,
-    `onboard command timed out; see onboard-transcript.txt:\n${redactedTranscript}`,
-  ).toBe(false);
-  expect(
-    result.exitCode,
-    `onboard command exited non-zero; see onboard-transcript.txt:\n${redactedTranscript}`,
-  ).toBe(0);
 });
