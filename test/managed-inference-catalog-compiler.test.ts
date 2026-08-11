@@ -21,6 +21,8 @@ const LLAMA_CPP_IMAGE =
   "ghcr.io/ggml-org/llama.cpp@sha256:866ad568474de9e835e487ae841ad6ace1a494b5eab4f292cbd45adb6180f711";
 const LLAMA_CPP_MODEL_DIGEST =
   "sha256:627f5b04aedc97f967332f331bd75b7a4ed2f33ca83e6ee74b44235cc1887890";
+const LIGHTNING_PROFILE_ID = "vllm.dgx-spark-gb10.single.nemotron-3.5-lightning-30b-a3b-nvfp4";
+const LIGHTNING_RECIPE_ID = "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.spark-single.v1";
 
 function catalogSources(): ServingCatalogSource[] {
   return (["presets", "recipes"] as const).flatMap((kind) => {
@@ -140,6 +142,65 @@ describe("managed inference YAML profile contract", () => {
     });
   });
 
+  it("compiles the explicit DGX Spark Lightning 3.5 vLLM profile from YAML (#8385)", () => {
+    const catalog = compile(catalogSources());
+    const preset = catalog.presets.find(({ metadata }) => metadata.id === LIGHTNING_PROFILE_ID);
+    const recipe = catalog.recipes.find(({ metadata }) => metadata.id === LIGHTNING_RECIPE_ID);
+
+    expect(preset?.metadata.supportState).toBe("experimental");
+    expect(preset?.spec).toMatchObject({
+      selection: "explicit-only",
+      plan: { backend: "vllm", recipeRef: LIGHTNING_RECIPE_ID },
+    });
+    expect(recipe?.spec).toMatchObject({
+      backend: "vllm",
+      model: {
+        id: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+        revision: "0dcd680e5585c791728c83342b311d0a0026dbeb",
+        servedName: "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4",
+      },
+      runtime: {
+        architecture: "arm64",
+        image:
+          "vllm/vllm-openai@sha256:3af90144a0926e5c5fe46ee16e5201e763dd854538b9d7ce433755f11dadaf78",
+        environment: { VLLM_USE_RUST_FRONTEND: "0" },
+      },
+      execution: {
+        materializerRef: "vllm.host-local/v1",
+        lifecycleRef: "vllm.host-local.lifecycle/v1",
+      },
+      serve: {
+        arguments: expect.arrayContaining([
+          { name: "--tool-call-parser", value: "step3p5" },
+          { name: "--reasoning-parser", value: "step3p5" },
+          {
+            name: "--speculative-config",
+            value: '{"method":"mtp","num_speculative_tokens":1,"moe_backend":"flashinfer_cutlass"}',
+          },
+        ]),
+      },
+    });
+  });
+
+  it("documents the Experimental Lightning support boundary (#8385)", () => {
+    const setupGuide = readFileSync(
+      path.join(REPOSITORY_ROOT, "docs", "inference", "set-up-vllm.mdx"),
+      "utf8",
+    );
+    const warning = setupGuide.match(
+      /<Warning title="Experimental Nemotron 3\.5 Lightning vLLM Profile">([\s\S]*?)<\/Warning>/u,
+    )?.[1];
+
+    expect(warning).toBeDefined();
+    expect(warning).toContain(
+      "This profile is an explicit opt-in for one DGX Spark and remains Experimental.",
+    );
+    expect(warning).toContain(
+      "Promotion requires broader validation of the pinned Python frontend and the `step3p5` reasoning and tool-call parsers.",
+    );
+    expect(warning).not.toContain("qualified for broader support");
+  });
+
   it("keeps vLLM automatic while llama.cpp remains explicit-only (#8173)", () => {
     const catalog = compile(catalogSources());
     const vllmPreset = catalog.presets.find(({ metadata }) => metadata.id === PROFILE_ID);
@@ -177,5 +238,7 @@ describe("managed inference YAML profile contract", () => {
     expect(productionSources).not.toContain(RECIPE_ID);
     expect(productionSources).not.toContain(LLAMA_CPP_PROFILE_ID);
     expect(productionSources).not.toContain(LLAMA_CPP_RECIPE_ID);
+    expect(productionSources).not.toContain(LIGHTNING_PROFILE_ID);
+    expect(productionSources).not.toContain(LIGHTNING_RECIPE_ID);
   });
 });
