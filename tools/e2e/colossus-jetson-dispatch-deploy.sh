@@ -421,10 +421,12 @@ public_ingress_is_disabled() {
 }
 
 require_bootstrap_destinations_absent() {
-  [ ! -e "$environment_file" ] && [ ! -L "$environment_file" ] \
-    || fail "$environment_file exists while $service_name is not loaded"
-  [ ! -e "$unit_file" ] && [ ! -L "$unit_file" ] \
-    || fail "$unit_file exists while $service_name is not loaded"
+  if [ -e "$environment_file" ] || [ -L "$environment_file" ]; then
+    fail "$environment_file exists while $service_name is not loaded"
+  fi
+  if [ -e "$unit_file" ] || [ -L "$unit_file" ]; then
+    fail "$unit_file exists while $service_name is not loaded"
+  fi
 }
 
 atomic_install_cleanup_link() {
