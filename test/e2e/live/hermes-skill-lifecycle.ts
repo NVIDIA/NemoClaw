@@ -92,7 +92,10 @@ export async function assertHermesSkillLifecycle({
     ["test", "-f", `/sandbox/.hermes/skills/${HERMES_SKILL_ID}/SKILL.md`],
     "phase-4-hermes-skill-disk-check",
   );
-  const skillList = await exec(["hermes", "skills", "list"], "phase-4-hermes-skills-list");
+  const skillList = await exec(
+    ["env", "COLUMNS=240", "hermes", "skills", "list"],
+    "phase-4-hermes-skills-list",
+  );
   expect(stripAnsi(resultText(skillList))).toContain(HERMES_SKILL_ID);
 
   const sessionsBeforeSkill = await exec(
