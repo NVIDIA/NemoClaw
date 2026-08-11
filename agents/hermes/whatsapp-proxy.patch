@@ -2,8 +2,22 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Routes the pinned Hermes v2026.7.20 WhatsApp bridge through the OpenShell
-# proxy. Remove this patch when the minimum supported Hermes release passes
-# an HTTPS proxy agent to Baileys natively.
+# proxy and keeps dashboard pairing state in the gateway's session directory.
+# Remove the web_server.py hunk when the minimum supported Hermes release stores
+# Dashboard pairing state in the gateway session directory natively.
+# Remove the scripts/whatsapp-bridge hunks when that release routes the WhatsApp
+# bridge through HTTPS_PROXY natively.
+diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
+index d0c78a6b3..5f6d801b5 100644
+--- a/hermes_cli/web_server.py
++++ b/hermes_cli/web_server.py
+@@ -8110,5 +8110,3 @@ def _normalize_whatsapp_allowed_users(value: Any) -> str:
+ def _whatsapp_session_path() -> Path:
+-    from hermes_constants import get_hermes_dir
+-
+-    return get_hermes_dir("platforms/whatsapp/session", "whatsapp/session")
++    return Path("/sandbox/.hermes/platforms/whatsapp/session")
+
 diff --git a/scripts/whatsapp-bridge/bridge.js b/scripts/whatsapp-bridge/bridge.js
 index 4b5733d16..22f1ec3e1 100644
 --- a/scripts/whatsapp-bridge/bridge.js
