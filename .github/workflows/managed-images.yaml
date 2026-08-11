@@ -366,8 +366,13 @@ jobs:
         with:
           node-version: 22.19.0
 
-      - name: Log in to GHCR for exact Deep Agents PR base
-        if: matrix.agent == 'langchain-deepagents-code' && github.event.pull_request.head.repo.full_name == github.repository
+      - name: Validate exact Deep Agents PR base build args
+        if: matrix.agent == 'langchain-deepagents-code'
+        shell: bash
+        run: scripts/check-production-build-args.sh -f agents/langchain-deepagents-code/Dockerfile.base
+
+      - name: Log in to GHCR for exact same-repository PR digest
+        if: github.event.pull_request.head.repo.full_name == github.repository
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -411,8 +416,39 @@ jobs:
           printf 'ref=%s\n' "$reference" >> "$GITHUB_OUTPUT"
           printf '### Deep Agents exact PR base\n\n`%s`\n' "$reference" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Build exact Deep Agents fork PR base locally
+        id: candidate-base-local-build
+        if: matrix.agent == 'langchain-deepagents-code' && github.event.pull_request.head.repo.full_name != github.repository
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: agents/langchain-deepagents-code/Dockerfile.base
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: nemoclaw-pr-base/${{ matrix.agent }}:${{ github.event.pull_request.head.sha }}
+          cache-from: type=registry,ref=${{ matrix.base_repository }}:buildcache-linux-amd64
+          provenance: false
+          sbom: false
+
+      - name: Bind exact Deep Agents fork PR base
+        id: candidate-base-local
+        if: matrix.agent == 'langchain-deepagents-code' && github.event.pull_request.head.repo.full_name != github.repository
+        shell: bash
+        env:
+          REFERENCE: nemoclaw-pr-base/${{ matrix.agent }}:${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          image_id="$(docker image inspect --format '{{.Id}}' "$REFERENCE")"
+          if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: exact Deep Agents fork PR base did not resolve to an immutable local image ID." >&2
+            exit 1
+          fi
+          printf 'ref=%s\n' "$REFERENCE" >> "$GITHUB_OUTPUT"
+          printf '### Deep Agents exact fork PR base\n\n`%s` (`%s`)\n' "$REFERENCE" "$image_id" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Resolve exact linux/amd64 PR base
-        if: matrix.agent != 'langchain-deepagents-code' || github.event.pull_request.head.repo.full_name != github.repository
+        if: matrix.agent != 'langchain-deepagents-code'
         id: base
         shell: bash
         env:
@@ -464,7 +500,7 @@ jobs:
       - name: Validate PR managed-image build args
         shell: bash
         env:
-          BASE_REFERENCE: ${{ steps.candidate-base.outputs.ref || steps.base.outputs.ref }}
+          BASE_REFERENCE: ${{ steps.candidate-base.outputs.ref || steps.candidate-base-local.outputs.ref || steps.base.outputs.ref }}
           DOCKERFILE: ${{ matrix.dockerfile }}
         run: |
           set -euo pipefail
@@ -475,6 +511,7 @@ jobs:
             --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
 
       - name: Build PR managed image locally
+        if: matrix.agent != 'langchain-deepagents-code' || github.event.pull_request.head.repo.full_name == github.repository
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
@@ -493,12 +530,41 @@ jobs:
             io.nvidia.nemoclaw.managed-image.capabilities=1
             io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
           build-args: |
-            BASE_IMAGE=${{ steps.candidate-base.outputs.ref || steps.base.outputs.ref }}
+            BASE_IMAGE=${{ steps.candidate-base.outputs.ref || steps.candidate-base-local.outputs.ref || steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
             NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
           cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-amd64
           provenance: false
           sbom: false
+
+      - name: Build fork PR managed image locally from exact Deep Agents base
+        if: matrix.agent == 'langchain-deepagents-code' && github.event.pull_request.head.repo.full_name != github.repository
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
+          BASE_REFERENCE: ${{ steps.candidate-base-local.outputs.ref }}
+          COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          IMAGE_REFERENCE: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
+          REVISION: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          docker buildx build --builder default --load \
+            --platform linux/amd64 \
+            --file "$DOCKERFILE" \
+            --tag "$IMAGE_REFERENCE" \
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --label "org.opencontainers.image.revision=$REVISION" \
+            --label "io.nvidia.nemoclaw.agent=$AGENT" \
+            --label "io.nvidia.nemoclaw.managed-image.contract=1" \
+            --label "io.nvidia.nemoclaw.managed-image.platform=linux/amd64" \
+            --label "io.nvidia.nemoclaw.managed-image.startup-profile=1" \
+            --label "io.nvidia.nemoclaw.managed-image.capabilities=1" \
+            --label "io.nvidia.nemoclaw.managed-image.cohort=$COHORT" \
+            --build-arg "BASE_IMAGE=$BASE_REFERENCE" \
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root" \
+            .
 
       - name: Validate exact PR managed image contract
         id: contract
@@ -646,14 +712,6 @@ jobs:
             --image "$IMAGE_REFERENCE" \
             --platform linux/amd64
 
-      - name: Log in to GHCR for exact same-repository PR digest
-        if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       # Publish by digest only. No candidate tag, cohort tag, or release alias is
       # created, so this proof cannot expose an incomplete all-agent cohort.
       - name: Publish exact same-repository PR managed image by digest
@@ -675,7 +733,7 @@ jobs:
             io.nvidia.nemoclaw.managed-image.capabilities=1
             io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
           build-args: |
-            BASE_IMAGE=${{ steps.candidate-base.outputs.ref || steps.base.outputs.ref }}
+            BASE_IMAGE=${{ steps.candidate-base.outputs.ref || steps.candidate-base-local.outputs.ref || steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
             NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
           cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-amd64
