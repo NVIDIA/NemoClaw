@@ -267,6 +267,8 @@ Use these details when your first-run path needs more control.
     ```
 
     The onboard flow starts both port forwards automatically.
+    If OpenShell reports `sandbox is not ready`, NemoClaw waits 5 seconds and retries the affected forward up to three times.
+    These retries preserve the existing sandbox and selected host port.
     The Hermes dashboard URL does not include an OpenClaw `#token=` fragment.
     `nemohermes my-hermes dashboard-url --quiet` returns `http://127.0.0.1:18789/` when the default local forward is active.
     Check the API health endpoint from the host.

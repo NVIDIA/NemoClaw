@@ -11,7 +11,7 @@ const captureSandboxSshConfig = vi.hoisted(() => vi.fn());
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
-  return { ...actual, spawnSync: vi.fn() };
+  return { ...actual, spawnSync: vi.fn(actual.spawnSync) };
 });
 
 vi.mock("../../adapters/openshell/runtime", () => ({

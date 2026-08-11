@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   configureDcodeSession,
   makeDcodeSandboxEntry,
@@ -9,13 +9,11 @@ import {
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
-  resetRebuildFlowTestEnvironment,
-  restoreRebuildFlowTestEnvironment,
-} from "../../../../test/helpers/rebuild-flow-harness";
+  installRebuildFlowTestHooks,
+} from "../../../../test/helpers/rebuild-flow-dcode-harness";
 
 describe("rebuildSandbox DCode flow: mutation edge", () => {
-  beforeEach(resetRebuildFlowTestEnvironment);
-  afterEach(restoreRebuildFlowTestEnvironment);
+  installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
 
   it("finishes DCode preparation and recheck before backup, delete, and recreate (#6195)", async () => {
     const mcpEntry = { server: "search", providerName: "mcp-search" };

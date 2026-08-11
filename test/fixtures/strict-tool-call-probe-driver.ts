@@ -366,10 +366,12 @@ function assertChatCompletionRequests(requests, expectedCount) {
     const result = await validate(endpoint, recoveryCalls);
     assert.deepEqual(result, { ok: false, retry: "retry" });
     const requests = readRequests();
-    assert.equal(requests.length, 2);
-    assertChatCompletionRequests(requests, 1);
+    assert.equal(requests.length, 5);
+    assertChatCompletionRequests(requests, 4);
     assert.equal(recoveryCalls.length, 1);
-    console.log("[PASS] strict validation fails closed when no structured tool_call is returned");
+    console.log(
+      "[PASS] strict validation retries three times and stops after four responses omit structured tool calls",
+    );
   });
 })().catch((error) => {
   console.error(error && error.stack ? error.stack : error);

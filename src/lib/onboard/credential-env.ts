@@ -4,8 +4,8 @@
 import { resolveProviderCredential } from "../credentials/store";
 
 /**
- * Resolve a credential into process.env[envName] so subsequent gateway upserts
- * can read it via `--credential <ENV>`.
+ * Resolve and return a credential for host-side callers. Scoped overrides are
+ * returned without exporting them to `process.env`.
  */
 export function hydrateCredentialEnv(
   envName: string | null | undefined,
