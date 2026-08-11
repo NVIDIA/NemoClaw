@@ -664,6 +664,27 @@ describe("CLI dispatch", () => {
     );
   });
 
+  it("omits route-only reservations from unknown-command diagnostics (#8801)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, stderr }) => {
+        await expect(dispatchCli(["stail-reservation", "unknownaction"])).rejects.toThrow(
+          "process.exit:1",
+        );
+
+        const output = stderr.join("\n");
+        expect(output).toContain("Unknown command: stail-reservation");
+        expect(output).not.toContain("Did you mean: nemoclaw stale-reservation connect?");
+        expect(output).not.toContain("Registered sandboxes: stale-reservation");
+        expect(output).toContain("Run 'nemoclaw help' for usage.");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+      {
+        sandboxNames: ["stale-reservation"],
+        pendingSandboxNames: ["stale-reservation"],
+      },
+    );
+  });
+
   it("suggests a created sandbox when its reservation flag remains pending (#8801)", async () => {
     await withDirectPublicDispatch(
       async ({ dispatchCli, exitSpy, sandboxes, stderr }) => {
