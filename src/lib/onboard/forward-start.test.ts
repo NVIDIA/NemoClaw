@@ -937,6 +937,41 @@ describe("runDetachedForwardStartWithRetries", () => {
     expect(spawn).toHaveBeenCalledTimes(2);
   });
 
+  it("retries an OpenShell sandbox readiness rejection after a bounded settle delay", () => {
+    const fetchList = vi
+      .fn()
+      .mockReturnValueOnce(forwardListWith([]))
+      .mockReturnValue(forwardListWith([{ sandbox: "my-sandbox", port: 18789 }]));
+    const spawn = vi
+      .fn()
+      .mockImplementationOnce(({ stderr }: { stderr: number }) => {
+        fs.writeSync(
+          stderr,
+          "Error: code: 'The system is not in a state required for the operation's execution', message: \"sandbox is not ready\"\n",
+        );
+        return { pid: 784 };
+      })
+      .mockReturnValueOnce({ pid: 785 });
+    const beforeRetry = vi.fn();
+    const sleep = vi.fn();
+
+    const result = runDetachedForwardStartWithRetries(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      beforeRetry,
+      {
+        sleepMs: sleep,
+        isPortListening: vi.fn().mockReturnValue(false),
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(beforeRetry).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(5_000);
+  });
+
   it("preserves a ControlMaster listener created by the current attempt (#6099)", () => {
     const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
     const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
