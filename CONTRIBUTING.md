@@ -264,11 +264,15 @@ audited subprocess boundaries.
 
 ### macOS Test Dependencies
 
-Some tests run GNU utilities that macOS does not ship. `src/lib/shields/state-dir-lock.test.ts` runs `timeout`.
-On a macOS host that does not provide `timeout`, the process spawn fails, the result has no `stdout`, and the test reports `TypeError: Cannot read properties of undefined (reading 'split')`.
-The error names neither the missing utility nor macOS.
+Some tests run GNU utilities that macOS does not ship.
+`src/lib/shields/state-dir-lock.test.ts` runs `timeout`.
+On a macOS host that does not provide `timeout`, the process spawn fails.
+The result has no `stdout`.
+The test then reports `TypeError: Cannot read properties of undefined (reading 'split')`.
+The error does not identify the missing utility or macOS.
 
-Install the GNU utilities before you run the test suite on macOS, then put their directories first on `PATH`:
+Install the GNU utilities before you run the test suite on macOS.
+Put their directories first on `PATH`:
 
 ```bash
 brew install bash coreutils fd gawk ripgrep
@@ -276,7 +280,8 @@ export PATH="$(brew --prefix bash)/bin:$(brew --prefix coreutils)/libexec/gnubin
 ```
 
 The `macos-vitest` job in [`.github/workflows/platform-vitest-main.yaml`](.github/workflows/platform-vitest-main.yaml) installs these utilities and owns the authoritative list.
-That job runs on a push to `main` and on manual dispatch, so a pull request does not report a macOS-only failure.
+The job runs after a push to `main` and during a manual dispatch.
+It does not run for pull requests.
 
 ### Test Declarative Behavior
 
