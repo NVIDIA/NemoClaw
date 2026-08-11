@@ -1114,7 +1114,12 @@ def _expected_file_mode(policy: Policy, action: Action, old_mode: int) -> int:
         return (old_mode & 0o700) | 0o060 | (0o010 if old_mode & 0o111 else 0)
     if policy == "confidentiality":
         return old_mode & 0o700
-    return old_mode & ~0o022
+    # High-risk files move from the sandbox UID to root while retaining the
+    # sandbox group. Mirror the original owner's read/execute access onto that
+    # group before removing every group/world write bit; otherwise an
+    # owner-private 0600 runtime file becomes root:sandbox 0600 and the
+    # gateway loses the access it had before Shields went up (#8304).
+    return (old_mode & ~0o022) | ((old_mode & 0o500) >> 3)
 
 
 def _freeze_dir_for_lock(dir_fd: int) -> None:

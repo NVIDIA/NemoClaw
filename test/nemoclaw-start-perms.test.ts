@@ -458,6 +458,35 @@ describe("nemoclaw-start mutable config startup ordering", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("repairs a legacy owner-private device journal before gateway startup (#8304)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-startup-journal-repair-"));
+    const events = path.join(root, "events");
+    const script = [
+      "set -euo pipefail",
+      `events=${JSON.stringify(events)}`,
+      "_OPENCLAW_STATE_DIR_GUARD=/tmp/state-dir-guard.py",
+      'run_openclaw_config_guard() { printf "guard:%s\\n" "$1" >>"$events"; }',
+      'openclaw_config_dir_owner() { printf "root\\n"; }',
+      "classify_openclaw_config_seal() { return 0; }",
+      "stat() {",
+      '  if [ "${*: -1}" = "/sandbox/.openclaw" ]; then printf "755 root:root\\n"; else printf "8180 root:sandbox\\n"; fi',
+      "}",
+      'timeout() { printf "state:%s\\n" "$7" >>"$events"; }',
+      prepareStartupFunction,
+      "prepare_openclaw_config_startup",
+    ].join("\n");
+    try {
+      expect(runBash(script).status).toBe(0);
+      expect(fs.readFileSync(events, "utf-8").trim().split("\n")).toEqual([
+        "guard:revoke-startup-ready",
+        "guard:recover",
+        "state:lock",
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("nemoclaw-start mutable config seal classification", () => {
