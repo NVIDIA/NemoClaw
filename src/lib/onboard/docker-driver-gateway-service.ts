@@ -25,6 +25,8 @@ export const OPENSHELL_GATEWAY_USER_SERVICE = "openshell-gateway";
 export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE = "nemoclaw-openshell-gateway";
 export const OPENSHELL_GATEWAY_HOMEBREW_SERVICE = "openshell";
 export const OPENSHELL_GATEWAY_HOMEBREW_TAP = "nvidia/openshell";
+export const OPENSHELL_GATEWAY_HOMEBREW_FORMULA_SHA256 =
+  "87fadc7b0c854aa44f71d5b3a206865070117cd27825d59c61da252a99f402a2";
 export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER =
   "NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1";
 export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE = `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}`;
@@ -33,7 +35,8 @@ export interface OpenShellGatewayUserServiceOptions {
   commandExists?: (command: string) => boolean;
   env?: NodeJS.ProcessEnv;
   existsSync?: (filePath: string) => boolean;
-  getuid?: () => number;
+  /** Test seam for the checksum-verified, temporary formula trust boundary. */
+  homebrewFormulaOperation?: (args: string[]) => SpawnSyncLikeResult;
   /** Test seam: read the version output of the package-managed gateway binary. */
   getUpstreamGatewayVersion?: (binaryPath: string) => string | null;
   /** Test seam: the blueprint version window the gateway binary must satisfy. */
@@ -94,6 +97,16 @@ export interface SpawnSyncLikeResult {
   status: number | null;
   stderr?: Buffer | string | null;
   stdout?: Buffer | string | null;
+}
+
+interface CommandResult {
+  ok: boolean;
+  rawStderr: string;
+  rawStdout: string;
+  reason?: string;
+  spawnError?: Error;
+  status: number | null;
+  stdout?: string;
 }
 
 export type SpawnSyncLike = (
@@ -347,20 +360,16 @@ function runCommand(
   command: string,
   args: string[],
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
-): {
-  ok: boolean;
-  rawStderr: string;
-  rawStdout: string;
-  reason?: string;
-  spawnError?: Error;
-  status: number | null;
-  stdout?: string;
-} {
+): CommandResult {
   const result = opts.spawnSyncImpl(command, args, {
     encoding: "utf-8",
     env: opts.env,
     stdio: ["ignore", "pipe", "pipe"],
   } satisfies SpawnSyncOptions);
+  return commandResult(result);
+}
+
+function commandResult(result: SpawnSyncLikeResult): CommandResult {
   const rawStderr = text(result.stderr);
   const rawStdout = text(result.stdout);
   const rawResult = { rawStderr, rawStdout, status: result.status };
@@ -384,19 +393,70 @@ function runSystemctlUser(
   return runCommand("systemctl", ["--user", ...args], opts);
 }
 
-function runBrew(
+const OPENSHELL_HOMEBREW_FORMULA_ABSENT = 65;
+const OPENSHELL_HOMEBREW_FORMULA_REPAIR = 66;
+const OPENSHELL_HOMEBREW_TRUST_FAILED = 67;
+const OPENSHELL_HOMEBREW_UNTRUST_FAILED = 68;
+const OPENSHELL_HOMEBREW_OPERATION_FAILED = 69;
+
+function homebrewFormulaOperationScript(): string {
+  return path.resolve(__dirname, "../../../scripts/install-openshell.sh");
+}
+
+function runTrustedHomebrewFormulaOperation(
   args: string[],
-  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
-) {
-  return runCommand("brew", args, opts);
+  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">> &
+    Pick<OpenShellGatewayUserServiceOptions, "homebrewFormulaOperation">,
+): CommandResult {
+  if (opts.homebrewFormulaOperation) {
+    return commandResult(opts.homebrewFormulaOperation(args));
+  }
+  return runCommand(
+    "bash",
+    [
+      homebrewFormulaOperationScript(),
+      "--homebrew-formula-operation",
+      OPENSHELL_GATEWAY_HOMEBREW_FORMULA_SHA256,
+      "--",
+      "brew",
+      ...args,
+    ],
+    opts,
+  );
+}
+
+const HOMEBREW_FORMULA_REPAIR_GUIDANCE =
+  "OpenShell's Homebrew formula is installed but cannot satisfy NemoClaw's pinned checksum and temporary trust contract. " +
+  "Rerun scripts/install-openshell.sh, then rerun onboarding.";
+
+function throwHomebrewFormulaOperationFailure(operation: string, result: CommandResult): never {
+  if (result.status === OPENSHELL_HOMEBREW_FORMULA_REPAIR) {
+    throw new OpenShellGatewayServiceTrustError(HOMEBREW_FORMULA_REPAIR_GUIDANCE);
+  }
+  if (result.status === OPENSHELL_HOMEBREW_TRUST_FAILED) {
+    throw new OpenShellGatewayServiceTrustError(
+      `Homebrew could not grant temporary trust for the checksum-verified OpenShell formula during ${operation}. ` +
+        "No service operation was performed.",
+    );
+  }
+  if (result.status === OPENSHELL_HOMEBREW_UNTRUST_FAILED) {
+    throw new OpenShellGatewayServiceTrustError(
+      `Homebrew could not remove temporary trust for the OpenShell formula after ${operation}. ` +
+        "Stop and repair Homebrew trust before continuing.",
+    );
+  }
+  throw new OpenShellGatewayServiceTrustError(
+    `OpenShell Homebrew ${operation} failed inside the checksum-verified temporary trust boundary.`,
+  );
 }
 
 function runStopService(
   service: OpenShellGatewayUserServiceTarget,
-  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
+  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">> &
+    Pick<OpenShellGatewayUserServiceOptions, "homebrewFormulaOperation">,
 ) {
   return service.manager === "homebrew"
-    ? runBrew(["services", "stop", service.serviceName], opts)
+    ? runTrustedHomebrewFormulaOperation(["services", "stop", service.serviceName], opts)
     : runSystemctlUser(["stop", service.serviceName], opts);
 }
 
@@ -443,106 +503,10 @@ function hasUpstreamOpenShellGatewayUserService(
   return getOpenShellGatewayUserServicePaths().some(existsSync);
 }
 
-const warnedHomebrewIdentityCheckReasons = new Set<string>();
-
-const HOMEBREW_PINNED_TAP_LOAD_REFUSAL =
-  `Error: Refusing to load formula ${OPENSHELL_GATEWAY_HOMEBREW_TAP}/${OPENSHELL_GATEWAY_HOMEBREW_SERVICE} ` +
-  `from untrusted tap ${OPENSHELL_GATEWAY_HOMEBREW_TAP}.`;
-const HOMEBREW_OPENSHELL_NOT_INSTALLED = `Error: No such keg: /opt/homebrew/Cellar/${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`;
-
-function isHomebrewFormulaNotInstalled(result: ReturnType<typeof runBrew>): boolean {
-  return (
-    !result.ok &&
-    !result.spawnError &&
-    typeof result.status === "number" &&
-    result.status !== 0 &&
-    result.rawStdout === "" &&
-    result.rawStderr === HOMEBREW_OPENSHELL_NOT_INSTALLED
-  );
-}
-
-// Only the complete Homebrew 6.x refusal for the pinned formula can relax the
-// identity check. Changed or additional diagnostic text fails closed (#7707).
-// Remove this compatibility path when the minimum supported Homebrew version
-// can inspect the pinned formula without trusting or loading its tap.
-function isPinnedTapLoadRefusal(result: ReturnType<typeof runBrew>): boolean {
-  return (
-    !result.ok &&
-    !result.spawnError &&
-    typeof result.status === "number" &&
-    result.status !== 0 &&
-    result.rawStdout === "" &&
-    result.rawStderr === HOMEBREW_PINNED_TAP_LOAD_REFUSAL
-  );
-}
-
-// `launchctl` must prove that the exact managed unit is absent before
-// standalone ownership is selected. Every other outcome leaves authority
-// unknown and fails closed.
-function readHomebrewGatewayLaunchdUnitState(
-  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">> &
-    Pick<OpenShellGatewayUserServiceOptions, "getuid">,
-): "loaded" | "not-loaded" | "unknown" {
-  const getuid = opts.getuid ?? process.getuid;
-  const uid = getuid?.();
-  if (typeof uid !== "number" || !Number.isSafeInteger(uid) || uid < 0) return "unknown";
-  const unit = `homebrew.mxcl.${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`;
-  const result = opts.spawnSyncImpl("launchctl", ["print", `gui/${String(uid)}/${unit}`], {
-    encoding: "utf-8",
-    env: opts.env,
-    stdio: ["ignore", "pipe", "pipe"],
-  } satisfies SpawnSyncOptions);
-  if (result.error || typeof result.status !== "number") return "unknown";
-  if (result.status === 0) return "loaded";
-  const missingUnitError = [
-    "Bad request.",
-    `Could not find service "${unit}" in domain for user gui: ${String(uid)}`,
-  ].join("\n");
-  return result.status === 113 &&
-    text(result.stdout) === "" &&
-    text(result.stderr) === missingUnitError
-    ? "not-loaded"
-    : "unknown";
-}
-
-function warnHomebrewIdentityCheckUnavailable(): void {
-  const warningKey = HOMEBREW_PINNED_TAP_LOAD_REFUSAL;
-  if (warnedHomebrewIdentityCheckReasons.has(warningKey)) return;
-  warnedHomebrewIdentityCheckReasons.add(warningKey);
-  console.warn(
-    "  Homebrew could not confirm the OpenShell formula identity; " +
-      `using the standalone gateway fallback.\n  ${HOMEBREW_PINNED_TAP_LOAD_REFUSAL}`,
-  );
-}
-
-function allowStandaloneForPinnedTapLoadRefusal(
-  result: ReturnType<typeof runBrew>,
-  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">> &
-    Pick<OpenShellGatewayUserServiceOptions, "getuid">,
-): boolean {
-  if (!isPinnedTapLoadRefusal(result)) return false;
-  const launchdState = readHomebrewGatewayLaunchdUnitState(opts);
-  if (launchdState !== "not-loaded") {
-    const unit = `homebrew.mxcl.${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`;
-    const situation =
-      launchdState === "loaded"
-        ? `its launchd service ${unit} is loaded`
-        : `NemoClaw could not determine whether its launchd service ${unit} is loaded`;
-    throw new OpenShellGatewayServiceTrustError(
-      `Homebrew refused to load the pinned OpenShell formula and ${situation}. ` +
-        `NemoClaw will not manage or replace a service that launchd owns. ` +
-        `Stop it with launchctl bootout gui/$(id -u)/${unit}, and rerun onboarding. ` +
-        `Homebrew reported: ${HOMEBREW_PINNED_TAP_LOAD_REFUSAL}`,
-    );
-  }
-  warnHomebrewIdentityCheckUnavailable();
-  return true;
-}
-
 function hasOfficialHomebrewFormula(
   opts: Pick<
     OpenShellGatewayUserServiceOptions,
-    "commandExists" | "env" | "getuid" | "platform" | "spawnSyncImpl"
+    "commandExists" | "env" | "homebrewFormulaOperation" | "platform" | "spawnSyncImpl"
   >,
 ): boolean {
   if ((opts.platform ?? process.platform) !== "darwin") return false;
@@ -550,44 +514,28 @@ function hasOfficialHomebrewFormula(
   const commandExists = opts.commandExists ?? ((command) => defaultCommandExists(command, env));
   if (!commandExists("brew")) return false;
   const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
-  const listed = runBrew(["list", "--formula", OPENSHELL_GATEWAY_HOMEBREW_SERVICE], {
+  const operationOptions = {
     env,
+    homebrewFormulaOperation: opts.homebrewFormulaOperation,
     spawnSyncImpl,
-  });
+  };
+  const listed = runTrustedHomebrewFormulaOperation(
+    ["list", "--formula", OPENSHELL_GATEWAY_HOMEBREW_SERVICE],
+    operationOptions,
+  );
   if (!listed.ok) {
-    if (isHomebrewFormulaNotInstalled(listed)) return false;
-    if (
-      allowStandaloneForPinnedTapLoadRefusal(listed, {
-        env,
-        getuid: opts.getuid,
-        spawnSyncImpl,
-      })
-    ) {
-      return false;
+    if (listed.status === OPENSHELL_HOMEBREW_FORMULA_ABSENT) return false;
+    if (listed.status === OPENSHELL_HOMEBREW_OPERATION_FAILED) {
+      throw new OpenShellGatewayServiceTrustError(HOMEBREW_FORMULA_REPAIR_GUIDANCE);
     }
-    throw new OpenShellGatewayServiceTrustError(
-      "OpenShell Homebrew formula identity check failed; " +
-        "the unrecognized Homebrew diagnostic was omitted.",
-    );
+    throwHomebrewFormulaOperationFailure("installation inspection", listed);
   }
-  const info = runBrew(["info", "--json=v2", OPENSHELL_GATEWAY_HOMEBREW_SERVICE], {
-    env,
-    spawnSyncImpl,
-  });
+  const info = runTrustedHomebrewFormulaOperation(
+    ["info", "--json=v2", OPENSHELL_GATEWAY_HOMEBREW_SERVICE],
+    operationOptions,
+  );
   if (!info.ok) {
-    if (
-      allowStandaloneForPinnedTapLoadRefusal(info, {
-        env,
-        getuid: opts.getuid,
-        spawnSyncImpl,
-      })
-    ) {
-      return false;
-    }
-    throw new OpenShellGatewayServiceTrustError(
-      "OpenShell Homebrew formula identity check failed; " +
-        "the unrecognized Homebrew diagnostic was omitted.",
-    );
+    throwHomebrewFormulaOperationFailure("formula identity inspection", info);
   }
   try {
     const parsed = JSON.parse(info.stdout ?? "") as {
@@ -777,9 +725,13 @@ export interface TrustedActiveOpenShellGatewayUserServiceIdentity {
 }
 
 function resolveOfficialHomebrewGatewayBinary(
-  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "existsSync" | "spawnSyncImpl">>,
+  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "existsSync" | "spawnSyncImpl">> &
+    Pick<OpenShellGatewayUserServiceOptions, "homebrewFormulaOperation">,
 ): string | null {
-  const prefix = runBrew(["--prefix", OPENSHELL_GATEWAY_HOMEBREW_SERVICE], opts);
+  const prefix = runTrustedHomebrewFormulaOperation(
+    ["--prefix", OPENSHELL_GATEWAY_HOMEBREW_SERVICE],
+    opts,
+  );
   if (!prefix.ok) return null;
   const value = prefix.stdout?.trim() ?? "";
   if (!path.isAbsolute(value)) return null;
@@ -805,10 +757,14 @@ export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
   if (!service) return null;
   if (service.manager === "homebrew") {
     if (!commandExists("brew")) return null;
-    const result = runBrew(["services", "info", service.serviceName, "--json"], {
-      env,
-      spawnSyncImpl,
-    });
+    const result = runTrustedHomebrewFormulaOperation(
+      ["services", "info", service.serviceName, "--json"],
+      {
+        env,
+        homebrewFormulaOperation: opts.homebrewFormulaOperation,
+        spawnSyncImpl,
+      },
+    );
     if (!result.ok) return null;
     try {
       const records = JSON.parse(result.stdout ?? "") as Array<{
@@ -836,6 +792,7 @@ export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
         executablePath: resolveOfficialHomebrewGatewayBinary({
           env,
           existsSync: opts.existsSync ?? fs.existsSync,
+          homebrewFormulaOperation: opts.homebrewFormulaOperation,
           spawnSyncImpl,
         }),
       };
@@ -906,7 +863,7 @@ function removeCompetingNemoclawUnit(
 function serviceFailure(
   service: OpenShellGatewayUserServiceTarget,
   reason: string,
-  standaloneFallbackBlocked = false,
+  standaloneFallbackBlocked = service.manager === "homebrew",
 ): OpenShellGatewayUserServiceStartResult {
   return {
     attempted: true,
@@ -1040,7 +997,11 @@ export function startOpenShellGatewayUserService(
   );
   if (envFailure) return envFailure;
 
-  const stop = runStopService(service, { env, spawnSyncImpl });
+  const stop = runStopService(service, {
+    env,
+    homebrewFormulaOperation: opts.homebrewFormulaOperation,
+    spawnSyncImpl,
+  });
   if (!stop.ok) {
     const prefix = service.manager === "homebrew" ? "brew services stop" : "systemctl --user stop";
     return serviceFailure(service, `${prefix} ${service.serviceName} failed: ${stop.reason}`);
@@ -1064,7 +1025,11 @@ export function startOpenShellGatewayUserService(
   for (const args of commands) {
     const result =
       service.manager === "homebrew"
-        ? runBrew(args, { env, spawnSyncImpl })
+        ? runTrustedHomebrewFormulaOperation(args, {
+            env,
+            homebrewFormulaOperation: opts.homebrewFormulaOperation,
+            spawnSyncImpl,
+          })
         : runSystemctlUser(args, { env, spawnSyncImpl });
     if (!result.ok) {
       const prefix = service.manager === "homebrew" ? "brew" : "systemctl --user";
@@ -1112,21 +1077,25 @@ export function stopOpenShellGatewayUserService(
     stopped: boolean,
     reason?: string,
     standaloneFallbackBlocked = false,
-  ): OpenShellGatewayUserServiceStopResult => ({
-    attempted: true,
-    standaloneFallbackAllowed:
-      !stopped &&
-      !standaloneFallbackBlocked &&
-      service.manager === "systemd" &&
-      userManagerLooksUnavailable(reason ?? "") &&
-      !hasSystemdUserServiceActivationLink(service, home, env, existsSync),
-    manager: service.manager,
-    serviceName: service.serviceName,
-    ...(standaloneFallbackBlocked ? { standaloneFallbackBlocked: true } : {}),
-    statusCommand: service.statusCommand,
-    stopped,
-    ...(reason === undefined ? {} : { reason }),
-  });
+  ): OpenShellGatewayUserServiceStopResult => {
+    const fallbackBlocked =
+      standaloneFallbackBlocked || (!stopped && service.manager === "homebrew");
+    return {
+      attempted: true,
+      standaloneFallbackAllowed:
+        !stopped &&
+        !fallbackBlocked &&
+        service.manager === "systemd" &&
+        userManagerLooksUnavailable(reason ?? "") &&
+        !hasSystemdUserServiceActivationLink(service, home, env, existsSync),
+      manager: service.manager,
+      serviceName: service.serviceName,
+      ...(fallbackBlocked ? { standaloneFallbackBlocked: true } : {}),
+      statusCommand: service.statusCommand,
+      stopped,
+      ...(reason === undefined ? {} : { reason }),
+    };
+  };
   const command = stopServiceCommandName(service);
   if (!commandExists(command)) return describe(false, `${command} is not available`);
   if (service.manager === "systemd") {
@@ -1139,7 +1108,11 @@ export function stopOpenShellGatewayUserService(
       );
     }
   }
-  const stop = runStopService(service, { env, spawnSyncImpl });
+  const stop = runStopService(service, {
+    env,
+    homebrewFormulaOperation: opts.homebrewFormulaOperation,
+    spawnSyncImpl,
+  });
   if (stop.ok) return describe(true);
   const prefix = service.manager === "homebrew" ? "brew services stop" : "systemctl --user stop";
   return describe(false, `${prefix} ${service.serviceName} failed: ${stop.reason}`);
@@ -1228,7 +1201,7 @@ export async function startPackageManagedDockerDriverGateway({
   };
   if (!serviceStart.started) {
     const detail = serviceStart.reason ? ` (${serviceStart.reason})` : "";
-    if (serviceStart.standaloneFallbackBlocked) {
+    if (serviceStart.standaloneFallbackBlocked || serviceStart.manager === "homebrew") {
       const message = `OpenShell gateway managed service failed to start${detail}.`;
       console.error(`  ${message}`);
       if (exitOnFailure) process.exit(1);
@@ -1284,6 +1257,14 @@ export async function startPackageManagedDockerDriverGateway({
     `  Last readiness check: endpoint registered=${lastReadiness.registered ? "yes" : "no"}, OpenShell CLI health=${lastReadiness.cliHealthy ? "yes" : "no"}, direct gRPC health=${lastReadiness.grpcHealthy ? "yes" : "no"}.`,
   );
   reportLogs();
+  if (serviceStart.manager === "homebrew") {
+    stopBeforeStandaloneFallback();
+    const authorityMessage =
+      "The installed OpenShell Homebrew formula remains lifecycle authority; " +
+      "repair its service or rerun scripts/install-openshell.sh before retrying onboarding.";
+    if (exitOnFailure) process.exit(1);
+    throw new OpenShellGatewayServiceTrustError(authorityMessage);
+  }
   if (serviceStart.attempted) stopBeforeStandaloneFallback();
   return false;
 }

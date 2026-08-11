@@ -104,15 +104,14 @@ NemoClaw preserves unrelated environment entries, accepts `DOCKER_HOST` only for
 If the selected systemd user service fails inspection, startup, or its health check, NemoClaw prints its `journalctl` log command and attempts the standalone fallback.
 
 On Apple Silicon macOS, Homebrew makes the official OpenShell formula authoritative.
-The installer stages the formula and onboarding starts its `openshell` service.
-If the service fails inspection, startup, or its health check, NemoClaw prints the formula log command and attempts the standalone fallback.
-A host without Homebrew, or with no installed OpenShell formula, also uses the standalone macOS gateway.
-Homebrew 6.x can return a pinned-formula untrusted-tap refusal from `brew list --formula openshell` or `brew info --json=v2 openshell`.
-Only the complete refusal for `nvidia/openshell/openshell` from `nvidia/openshell` can select the standalone macOS gateway fallback.
-Before the fallback, `launchctl print` must return the exact missing-service result for `homebrew.mxcl.openshell`.
-Onboarding prints the recognized diagnostic one time without repeating raw Homebrew output when both conditions match.
-Every other `brew info` identity failure or unrecognized `launchctl` result stops onboarding.
-A loaded `homebrew.mxcl.openshell` service remains under launchd lifecycle authority, so onboarding does not stop, replace, or adopt its process.
+The installer stages the checksum-pinned formula and runs installation inside a formula-scoped Homebrew trust boundary.
+Onboarding uses the same boundary for formula inspection and each service start or stop operation.
+Each operation verifies the staged formula, removes any inherited formula trust, grants temporary trust only to `nvidia/openshell/openshell`, and removes that trust when the operation finishes.
+An inability to grant or remove trust is a hard failure.
+If the service fails inspection, startup, shutdown, or its health check, NemoClaw prints the formula log command and stops so Homebrew remains lifecycle authority.
+A host without Homebrew, or with no staged formula and no installed OpenShell keg, uses the standalone macOS gateway.
+A legacy installation, missing pin, changed formula, failed Homebrew operation, or invalid official-tap identity stops with repair guidance instead of changing lifecycle authority.
+Rerunning `scripts/install-openshell.sh` downloads and stages the pinned formula before onboarding is retried.
 On both platforms, standalone startup requires exclusive ownership of the gateway port.
 A positively untrusted upstream package service is declined as described above.
 Trust failures in a marked NemoClaw service or Homebrew formula, and unsafe environment configuration, remain hard failures.
