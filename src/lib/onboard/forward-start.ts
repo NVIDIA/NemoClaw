@@ -24,7 +24,12 @@ import { cleanupTempDir, secureTempFile } from "./temp-files";
 // The CLI's exit code is no longer the success signal — the appearance of
 // the live forward in the list is.
 
-export type ForwardListFetcher = () => string;
+/**
+ * Returns the serialized forward list on success. An empty string means the
+ * list query succeeded with no entries; `null` means ownership is unknown
+ * because the query did not return a result.
+ */
+export type ForwardListFetcher = () => string | null;
 
 export type DetachedForwardSpawnRunner = (stdio: { stdout: number; stderr: number }) => {
   pid?: number;
@@ -378,11 +383,16 @@ export function runDetachedForwardStartWithDiagnostics(
     while (Date.now() < deadline) {
       let list = "";
       try {
-        list = fetchForwardList() || "";
-        // Clear the cached transient error so a recovered gateway does not
-        // leave a stale "openshell forward list failed: …" suffix on the
-        // eventual timeout diagnostic.
-        lastFetchError = null;
+        const fetchedList = fetchForwardList();
+        if (fetchedList === null) {
+          lastFetchError = "OpenShell returned no forward list result";
+        } else {
+          list = fetchedList;
+          // Clear the cached transient error so a recovered gateway does not
+          // leave a stale "openshell forward list failed: …" suffix on the
+          // eventual timeout diagnostic.
+          lastFetchError = null;
+        }
       } catch (err) {
         lastFetchError = err instanceof Error ? err.message : String(err);
       }
