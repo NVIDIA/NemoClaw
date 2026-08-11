@@ -7,11 +7,7 @@ import path from "node:path";
 
 import { expect, type MockInstance, vi } from "vitest";
 
-type RequireSource = {
-  (id: string): unknown;
-  cache: NodeJS.Require["cache"];
-  resolve: (id: string) => string;
-};
+type RequireSource = NodeJS.Require;
 
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
 const HERMES_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py";
