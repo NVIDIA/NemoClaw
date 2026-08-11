@@ -306,18 +306,27 @@ export function evaluateColdOnboardPerformance(
     }
   }
 
-  const soleFinding = findings.length === 1 ? findings[0] : null;
-  const anomalies: ColdOnboardPerformanceAnomaly[] =
-    soleFinding?.kind === "root-end-to-first-turn"
-      ? [
-          {
-            budgetMs: budget.rootEndToFirstTurnCompletionBudgetMs,
-            kind: "first-turn-latency-tail",
-            measurementMs: rootEndToFirstTurnCompletionMs,
-            overageMs: rootEndToFirstTurnCompletionMs - budget.rootEndToFirstTurnCompletionBudgetMs,
-          },
-        ]
-      : [];
+  const firstTurnTailFinding = findings.find(
+    (finding) => finding.kind === "root-end-to-first-turn",
+  );
+  const onlyFirstTurnTailExceeded =
+    firstTurnTailFinding !== undefined &&
+    findings.every(
+      (finding) =>
+        finding.kind === "root-start-to-first-turn" || finding.kind === "root-end-to-first-turn",
+    ) &&
+    trace.finishedAtMs - trace.startedAtMs <=
+      rootStartBudgetMs - budget.rootEndToFirstTurnCompletionBudgetMs;
+  const anomalies: ColdOnboardPerformanceAnomaly[] = onlyFirstTurnTailExceeded
+    ? [
+        {
+          budgetMs: budget.rootEndToFirstTurnCompletionBudgetMs,
+          kind: "first-turn-latency-tail",
+          measurementMs: rootEndToFirstTurnCompletionMs,
+          overageMs: rootEndToFirstTurnCompletionMs - budget.rootEndToFirstTurnCompletionBudgetMs,
+        },
+      ]
+    : [];
   const violations = anomalies.length === 0 ? findings.map((finding) => finding.message) : [];
 
   return {
