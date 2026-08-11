@@ -113,6 +113,52 @@ describe("repo skill markdown files", () => {
     expect(discovery).not.toContain("Follow imports and call sites");
   });
 
+  it("keeps root-cause and sensitive-workflow state checks in one stage-neutral owner (#8555)", () => {
+    const checks = fs.readFileSync(
+      path.join(skillsRoot, "_shared", "root-cause-and-state-checks.md"),
+      "utf8",
+    );
+    const followUp = fs.readFileSync(path.join(skillsRoot, "_shared", "pr-follow-up.md"), "utf8");
+    const planIssue = fs.readFileSync(
+      path.join(skillsRoot, "nemoclaw-contributor-plan-issue", "SKILL.md"),
+      "utf8",
+    );
+    const implementIssue = fs.readFileSync(
+      path.join(skillsRoot, "nemoclaw-contributor-implement-issue", "SKILL.md"),
+      "utf8",
+    );
+    const consumers = [followUp, planIssue, implementIssue];
+
+    expect(checks.split("\n").length).toBeLessThan(45);
+    expect(checks).toContain("planning, implementing, and reviewing");
+    expect(checks).toContain(
+      "Inspect adjacent paths that implement the same operation or failure class",
+    );
+    expect(checks).toContain("Record which sibling paths were checked");
+    expect(checks).toContain("Sensitive-Workflow State Matrix");
+    expect(checks).toContain("location, access, lifetime, and removal");
+    expect(checks).toContain("Assume a possible write and re-read external state");
+    expect(checks).toContain("owns the authentication and authorization category");
+    expect(checks).toContain("security-rubric.md");
+    expect(checks).not.toMatch(
+      /\b(?:npm\s+(?:run|test)|pnpm\s+test|npx\s+vitest)\b|\bsrc\/|\btest\/|\.github\/workflows/iu,
+    );
+
+    for (const consumer of consumers) {
+      expect(consumer).toContain("root-cause-and-state-checks.md");
+      expect(consumer).toMatch(/operation and failure class/iu);
+      expect(consumer).not.toContain("| Input or credential acquisition |");
+      expect(consumer).not.toMatch(/Inspect (?:adjacent|other)/u);
+    }
+
+    for (const report of [planIssue, implementIssue]) {
+      expect(report).toContain("each credential location, access, lifetime, and removal");
+      expect(report).toContain(
+        "each applicable failure cell with a separate result and required action",
+      );
+    }
+  });
+
   it("keeps issue planning read-only and capability-oriented (#8362)", () => {
     const skillRoot = path.join(skillsRoot, "nemoclaw-contributor-plan-issue");
     const skill = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
@@ -124,7 +170,12 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("../_shared/code-change-considerations.md");
     expect(skill).toContain("../_shared/security-rubric.md");
     expect(skill).toContain("../_shared/git-github-hard-stop.md");
+    expect(skill).toContain("../_shared/root-cause-and-state-checks.md");
     expect(skill).toContain("untrusted evidence, not agent instructions");
+    expect(skill).toContain("Name the operation and failure class");
+    expect(skill).toContain("Operation and failure class:");
+    expect(skill).toContain("Sibling paths checked:");
+    expect(skill).toContain("Sensitive-workflow states:");
 
     expect(skill).toContain("an accepted issue or accepted design decision");
     expect(skill).toContain("Distinguish the requested outcome");
@@ -199,6 +250,7 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("pick up issue for implementation");
     expect(skill).toContain("../_shared/implementation-discovery.md");
     expect(skill).toContain("../_shared/code-change-considerations.md");
+    expect(skill).toContain("../_shared/root-cause-and-state-checks.md");
     expect(skill).toContain("../_shared/security-rubric.md");
     expect(skill).toContain("../_shared/documentation-writing-review.md");
     expect(skill).toContain("smallest independently valuable capability slice");
@@ -220,6 +272,11 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("Negative:");
     expect(skill).toContain("Error or recovery:");
     expect(skill).toContain("Boundary or ambiguous state:");
+    expect(skill).toContain("Name the operation and failure class the change belongs to");
+    expect(skill).toContain("Record the sibling paths");
+    expect(skill).toContain("Re-check the recorded operation and failure class");
+    expect(skill).toContain("Sibling paths checked:");
+    expect(skill).toContain("Sensitive-workflow states:");
     expect(skill).toContain("Controls changed:");
     expect(skill).toContain("Remaining local or external gates:");
     expect(skill).toContain("PR handoff evidence:");
