@@ -61,6 +61,8 @@ const OPAQUE_INPUTS = [
   "agents/hermes/mcp-config-transaction.py",
   "test/e2e/lib/ci-compatible-inference.sh",
   "scripts/setup-jetson.sh",
+  "tools/e2e/jetson-dispatch-cleanup.sh",
+  "tools/e2e/colossus-jetson-dispatch-deploy.sh",
   ".github/workflows/base-image.yaml",
   "scripts/export-managed-base-image-contract.sh",
   "scripts/checks/validate-managed-base-index.sh",
@@ -68,8 +70,12 @@ const OPAQUE_INPUTS = [
   "test/e2e/manifests/openclaw-nvidia.yaml",
   "test/e2e/docs/parity-inventory.generated.json",
   ".github/workflows/e2e.yaml",
+  ".github/actions/docker-auth-setup/action.yaml",
+  ".github/actions/docker-auth-cleanup/action.yaml",
+  ".github/scripts/docker-auth-setup.sh",
+  ".github/scripts/docker-auth-cleanup.sh",
+  ".github/workflows/sandbox-images-and-e2e.yaml",
   ".github/workflows/code-scanning.yaml",
-  ".github/workflows/approve-maintainer-pr-workflow-runs.yaml",
   ".github/workflows/pr-review-advisor.yaml",
   "tools/pr-review-advisor/openshell-policy.yaml",
   ".github/workflows/hosted-runner-recovery.yaml",
@@ -126,6 +132,12 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/hosted-inference.test.ts",
     ]);
     expect(triggeredBy("scripts/setup-jetson.sh")).toEqual(["test/setup-jetson.test.ts"]);
+    expect(triggeredBy("tools/e2e/jetson-dispatch-cleanup.sh")).toEqual([
+      "test/e2e/support/jetson-dispatch-worker.test.ts",
+    ]);
+    expect(triggeredBy("tools/e2e/colossus-jetson-dispatch-deploy.sh")).toEqual([
+      "test/e2e/support/colossus-jetson-dispatch-deploy.test.ts",
+    ]);
     expect(triggeredBy(".github/workflows/base-image.yaml")).toEqual([
       "test/managed-base-image-contract.test.ts",
       "test/managed-image-publication-workflow.test.ts",
@@ -139,6 +151,12 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("scripts/checks/validate-managed-base-index.sh")).toEqual([
       "test/validate-managed-base-index.test.ts",
     ]);
+    expect(triggeredBy("scripts/checks/retry-docker-imagetools-inspect.sh")).toEqual([
+      "test/retry-docker-imagetools-inspect.test.ts",
+      "test/validate-managed-base-index.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+      "test/dcode-base-image-workflow.test.ts",
+    ]);
     expect(triggeredBy("scripts/e2e/sanitize-trace-timing.py")).toEqual([
       "test/e2e/support/e2e-scorecard.test.ts",
       "test/e2e/support/sanitize-trace-timing.test.ts",
@@ -151,11 +169,21 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/e2e-migration-policy.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual(E2E_WORKFLOW_CONTRACTS);
+    for (const authPath of [
+      ".github/actions/docker-auth-setup/action.yaml",
+      ".github/actions/docker-auth-cleanup/action.yaml",
+      ".github/scripts/docker-auth-setup.sh",
+      ".github/scripts/docker-auth-cleanup.sh",
+    ]) {
+      expect(triggeredBy(authPath)).toEqual([
+        "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
+      ]);
+    }
+    expect(triggeredBy(".github/workflows/sandbox-images-and-e2e.yaml")).toEqual([
+      "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
+    ]);
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
       "test/code-scanning-workflow.test.ts",
-    ]);
-    expect(triggeredBy(".github/workflows/approve-maintainer-pr-workflow-runs.yaml")).toEqual([
-      "test/maintainer-pr-workflow-approval.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
       "test/pr-review-advisor-workflow-boundary.test.ts",
@@ -209,7 +237,6 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("scripts/unrelated.py")).toEqual([]);
     expect(triggeredBy("test/e2e/lib/unrelated.sh")).toEqual([]);
     expect(triggeredBy("agents/hermes/hermes-wrapper.py")).toEqual([]);
-    expect(triggeredBy(".github/workflows/regression-e2e.yaml")).toEqual([]);
   });
 
   it("normalizes Windows-style paths before matching (#6692)", () => {

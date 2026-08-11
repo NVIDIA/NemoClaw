@@ -50,6 +50,26 @@ describe("protected managed-image runtime workflow boundary", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toEqual([]);
   });
 
+  it("binds protected risk evidence to the isolated exact candidate checkout", () => {
+    const value = workflow();
+    const jobEnv = runtimeJob(value).env as Record<string, unknown>;
+    jobEnv.NEMOCLAW_E2E_TESTED_ROOT = "${{ github.workspace }}";
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime env must bind NEMOCLAW_E2E_TESTED_ROOT to ${{ github.workspace }}/.candidate-runtime",
+    );
+  });
+
+  it("does not activate protected PR risk reporting for ordinary main runs (#8664)", () => {
+    const value = workflow();
+    const jobEnv = runtimeJob(value).env as Record<string, unknown>;
+    jobEnv.NEMOCLAW_E2E_EXPECTED_SHA = "${{ inputs.checkout_sha || github.sha }}";
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime env must bind NEMOCLAW_E2E_EXPECTED_SHA to ${{ inputs.checkout_sha }}",
+    );
+  });
+
   it("does not record manual PR risk signals on main pushes", () => {
     const value = workflow();
     const jobEnv = multiarchJob(value).env as Record<string, unknown>;
@@ -57,6 +77,16 @@ describe("protected managed-image runtime workflow boundary", () => {
 
     expect(validateManagedImageMultiarchWorkflow(value)).toContain(
       "managed-image-multiarch-startup env must bind NEMOCLAW_E2E_EXPECTED_SHA to ${{ inputs.checkout_sha }}",
+    );
+  });
+
+  it("binds protected candidate identity on ordinary main runs", () => {
+    const value = workflow();
+    const jobEnv = multiarchJob(value).env as Record<string, unknown>;
+    jobEnv.NEMOCLAW_PROTECTED_MANAGED_IMAGE_HEAD_SHA = "${{ inputs.checkout_sha }}";
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup env must bind NEMOCLAW_PROTECTED_MANAGED_IMAGE_HEAD_SHA to ${{ inputs.checkout_sha || github.sha }}",
     );
   });
 
@@ -200,16 +230,16 @@ describe("protected managed-image runtime workflow boundary", () => {
     );
   }, 15_000);
 
-  it("rejects a GPU rebuild that can reach the network on a cache miss", () => {
+  it("rejects a GPU rebuild that omits the exact hosted cache import", () => {
     const value = workflow();
     const build = namedStep(value, "Build exact all-agent protected runtime images");
     build.run = String(build.run).replace(
-      '--offline-cache "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE"',
+      '--cache-from "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE"',
       "",
     );
 
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
-      "managed-image-protected-runtime step 'Build exact all-agent protected runtime images' must include --offline-cache \"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE\"",
+      "managed-image-protected-runtime step 'Build exact all-agent protected runtime images' must include --cache-from \"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE\"",
     );
   });
 

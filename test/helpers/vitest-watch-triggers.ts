@@ -93,6 +93,22 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/setup-jetson.test.ts"),
   },
   {
+    pattern: /(?:^|\/)tools\/e2e\/jetson-dispatch-cleanup\.sh$/,
+    testsToRun: runTests("test/e2e/support/jetson-dispatch-worker.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)tools\/e2e\/colossus-jetson-dispatch-deploy\.sh$/,
+    testsToRun: runTests("test/e2e/support/colossus-jetson-dispatch-deploy.test.ts"),
+  },
+  {
+    pattern:
+      /(?:^|\/)tools\/e2e\/(?:colossus-jetson-dispatch\.environment|nemoclaw-jetson-dispatch\.service)$/,
+    testsToRun: runTests(
+      "test/e2e/support/colossus-jetson-dispatch-deploy.test.ts",
+      "test/e2e/support/jetson-dispatch-worker.test.ts",
+    ),
+  },
+  {
     pattern:
       /(?:^|\/)(?:\.github\/workflows\/base-image\.yaml|scripts\/export-managed-base-image-contract\.sh)$/,
     testsToRun: runTests(
@@ -104,6 +120,15 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)scripts\/checks\/validate-managed-base-index\.sh$/,
     testsToRun: runTests("test/validate-managed-base-index.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/checks\/retry-docker-imagetools-inspect\.sh$/,
+    testsToRun: runTests(
+      "test/retry-docker-imagetools-inspect.test.ts",
+      "test/validate-managed-base-index.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+      "test/dcode-base-image-workflow.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)scripts\/e2e\/sanitize-trace-timing\.py$/,
@@ -125,12 +150,17 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests(...E2E_WORKFLOW_CONTRACTS),
   },
   {
-    pattern: /(?:^|\/)\.github\/workflows\/code-scanning\.yaml$/,
-    testsToRun: runTests("test/code-scanning-workflow.test.ts"),
+    pattern:
+      /(?:^|\/)\.github\/(?:actions\/docker-auth-(?:cleanup|setup)\/action\.yaml|scripts\/docker-auth-(?:cleanup|setup)\.sh)$/,
+    testsToRun: runTests("test/e2e/support/dockerhub-auth-workflow-boundary.test.ts"),
   },
   {
-    pattern: /(?:^|\/)\.github\/workflows\/approve-maintainer-pr-workflow-runs\.yaml$/,
-    testsToRun: runTests("test/maintainer-pr-workflow-approval.test.ts"),
+    pattern: /(?:^|\/)\.github\/workflows\/sandbox-images-and-e2e\.yaml$/,
+    testsToRun: runTests("test/e2e/support/sandbox-images-workflow-boundary.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/workflows\/code-scanning\.yaml$/,
+    testsToRun: runTests("test/code-scanning-workflow.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-merge-conflict-fixer\.yaml$/,

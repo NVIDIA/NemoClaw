@@ -38,7 +38,11 @@ Managed provider defaults that do not provide an explicit custom endpoint throug
 
 Custom endpoint onboarding has one narrower operator-controlled exception for corporate inference gateways.
 Set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of exact hostnames or IP literals to admit an endpoint on RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local address space.
-NemoClaw still resolves DNS, pins the validation connection, and rejects wildcard or suffix matches, link-local metadata, reserved destinations, and resolver failures.
+NemoClaw still resolves DNS and pins outbound validation to the complete canonical address set.
+An exact trusted host can return both public and supported private addresses.
+NemoClaw pins every canonical answer.
+If any answer is a disallowed private, reserved, or special-purpose address, validation rejects the endpoint instead of discarding that answer.
+Wildcard or suffix matches and resolver failures also remain blocked.
 This allowlist does not relax direct blueprint, `config set`, or unrelated persisted-URL validation.
 
 `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` remains an inference-only compatibility alias.

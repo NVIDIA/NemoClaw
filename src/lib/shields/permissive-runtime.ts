@@ -41,6 +41,11 @@ const TEMP_FILE_PREFIX = "nemoclaw-permissive-runtime";
  * the bug class this helper exists for is path removal on a live sandbox,
  * not policy shape changes.
  *
+ * The live `landlock` stanza is carried through as well when the live policy
+ * has one (#8461). OpenShell applies Landlock at startup and rejects any
+ * later policy that changes it, so the emitted document must restate the
+ * value the sandbox is already running rather than the static base's.
+ *
  * Background (#3942, #3957, #3168): OpenShell refuses to remove a
  * `filesystem_policy.read_only` or `filesystem_policy.read_write` entry
  * on a live sandbox. The static `openclaw-sandbox-permissive.yaml`
@@ -62,9 +67,9 @@ const TEMP_FILE_PREFIX = "nemoclaw-permissive-runtime";
  *   path is not already granted `read_write` (either by base or by live).
  *
  * Returns the path to a freshly created temp YAML file when the live
- * policy carries a filesystem section that needs merging. Falls back to
- * the static base path when the live policy is empty / has no filesystem
- * lists, when the base YAML cannot be parsed, or when temp-file I/O
+ * policy carries filesystem paths or a Landlock stanza that must be
+ * preserved. Falls back to the static base path when the live policy has
+ * neither, when the base YAML cannot be parsed, or when temp-file I/O
  * fails — degrading to the existing static apply path rather than
  * aborting shields-down with an I/O error.
  */
@@ -97,10 +102,15 @@ export function buildRuntimePermissivePolicy(
   const liveRo = readStringList(live, "read_only");
   const managedMcpPolicies = deps.managedMcpPolicies ?? [];
 
-  // No live filesystem section to merge — keep the static path so the
-  // caller's apply path is unchanged unless exact managed MCP entries must
-  // survive the complete-policy replacement.
-  if (liveRw.length === 0 && liveRo.length === 0 && managedMcpPolicies.length === 0) {
+  // No live startup-sealed or filesystem state to carry forward — keep the
+  // static path so the caller's apply path is unchanged unless exact managed
+  // MCP entries must survive the complete-policy replacement.
+  if (
+    liveRw.length === 0 &&
+    liveRo.length === 0 &&
+    live?.landlock === undefined &&
+    managedMcpPolicies.length === 0
+  ) {
     return basePermissivePath;
   }
 
@@ -143,6 +153,17 @@ export function buildRuntimePermissivePolicy(
 
   fsPolicy.read_write = [...baseRw];
   fsPolicy.read_only = [...baseRo];
+
+  // OpenShell applies Landlock at sandbox startup and rejects a policy whose
+  // stanza differs from the one the sandbox started with. An agent that ships
+  // no permissive policy of its own falls back to the OpenClaw document. Its
+  // `best_effort` then contradicts a baseline such as Deep Agents Code's
+  // `strict`, and OpenShell refuses the policy (#8461). Carry the live stanza
+  // through so the emitted document proposes no Landlock change. This can only
+  // ever restate what the sandbox is already running.
+  if (live?.landlock !== undefined) {
+    base.landlock = live.landlock;
+  }
 
   const yaml = composeManagedMcpPolicies(YAML.stringify(base), managedMcpPolicies);
   if (deps.writeTempPolicy) {

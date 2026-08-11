@@ -22,7 +22,7 @@ import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 // upsert, registry credential-hash, sandbox rebuild, and reuse assertions.
 
 const REGISTRY_FILE = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "sandboxes.json");
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-token-rotation-${process.pid}`;
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-tok-${process.pid}`;
 validateSandboxName(SANDBOX_NAME);
 
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;

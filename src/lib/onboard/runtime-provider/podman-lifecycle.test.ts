@@ -10,14 +10,25 @@ import {
   PODMAN_SANDBOX_CONTAINER_PREFIX,
   PODMAN_SANDBOX_ID_LABEL,
   PODMAN_SANDBOX_NAME_LABEL,
+  PODMAN_SANDBOX_NAMESPACE,
   PODMAN_SANDBOX_NAMESPACE_LABEL,
+  PODMAN_SANDBOX_WORKSPACE,
+  PODMAN_SANDBOX_WORKSPACE_LABEL,
   startPodmanSandbox,
   stopPodmanSandbox,
 } from "./podman-lifecycle";
 
 const SANDBOX_NAME = "alpha";
+const SANDBOX_ID = "sandbox-id";
 const CONTAINER_ID = "a".repeat(64);
-const CONTAINER_NAME = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${SANDBOX_NAME}`;
+const CONTAINER_NAME = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${SANDBOX_NAME}-${SANDBOX_ID}`;
+const SANDBOX_LABELS = Object.freeze({
+  [PODMAN_MANAGED_LABEL]: "true",
+  [PODMAN_SANDBOX_ID_LABEL]: SANDBOX_ID,
+  [PODMAN_SANDBOX_NAME_LABEL]: SANDBOX_NAME,
+  [PODMAN_SANDBOX_NAMESPACE_LABEL]: PODMAN_SANDBOX_NAMESPACE,
+  [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
+});
 
 interface HarnessState {
   readonly running: boolean;
@@ -25,18 +36,21 @@ interface HarnessState {
   readonly paused?: boolean;
 }
 
-function inspect(running: boolean, status: string, paused = false): string {
+function inspect(
+  running: boolean,
+  status: string,
+  paused = false,
+  overrides: {
+    readonly labels?: Readonly<Record<string, string>>;
+    readonly name?: string;
+  } = {},
+): string {
   return JSON.stringify([
     {
       Id: CONTAINER_ID,
-      Name: CONTAINER_NAME,
+      Name: overrides.name ?? CONTAINER_NAME,
       Config: {
-        Labels: {
-          [PODMAN_MANAGED_LABEL]: "true",
-          [PODMAN_SANDBOX_ID_LABEL]: "sandbox-id",
-          [PODMAN_SANDBOX_NAME_LABEL]: SANDBOX_NAME,
-          [PODMAN_SANDBOX_NAMESPACE_LABEL]: "default",
-        },
+        Labels: overrides.labels ?? SANDBOX_LABELS,
       },
       State: { Running: running, Paused: paused, Status: status },
     },
@@ -56,7 +70,7 @@ function harness(initial: HarnessState) {
     const operation = String(args[0]);
     switch (operation) {
       case "ps":
-        return { status: 0, stdout: `${CONTAINER_ID}\t${CONTAINER_NAME}\n`, stderr: "" };
+        return { status: 0, stdout: `${CONTAINER_ID}\n`, stderr: "" };
       case "container":
         return { status: 0, stdout: inspect(running, status, paused), stderr: "" };
       case "start":
@@ -104,6 +118,19 @@ describe("Podman basic CPU lifecycle", () => {
       "30",
       CONTAINER_ID,
     ]);
+    expect(stopped.capture.mock.calls[0]?.[0]).toEqual([
+      "ps",
+      "--all",
+      "--no-trunc",
+      "--filter",
+      `label=${PODMAN_MANAGED_LABEL}=true`,
+      "--filter",
+      `label=${PODMAN_SANDBOX_NAME_LABEL}=${SANDBOX_NAME}`,
+      "--filter",
+      `label=${PODMAN_SANDBOX_WORKSPACE_LABEL}=${PODMAN_SANDBOX_WORKSPACE}`,
+      "--format",
+      "{{.ID}}",
+    ]);
 
     const started = harness({ running: false, status: "exited" });
     expect(startPodmanSandbox(started.input, started.engine)).toEqual({ exitCode: 0 });
@@ -134,7 +161,7 @@ describe("Podman basic CPU lifecycle", () => {
     const ambiguous = harness({ running: true, status: "running" });
     ambiguous.capture.mockImplementationOnce(() => ({
       status: 0,
-      stdout: `${CONTAINER_ID}\t${CONTAINER_NAME}\n` + `${"b".repeat(64)}\t${CONTAINER_NAME}\n`,
+      stdout: `${CONTAINER_ID}\n${"b".repeat(64)}\n`,
       stderr: "",
     }));
     const ambiguousHook = vi.fn();
@@ -168,12 +195,83 @@ describe("Podman basic CPU lifecycle", () => {
     expect(runtime.capture).not.toHaveBeenCalled();
   });
 
+  it("rejects a sandbox outside NemoClaw's default OpenShell workspace before mutation", () => {
+    const runtime = harness({ running: false, status: "exited" });
+    runtime.capture
+      .mockImplementationOnce(() => ({ status: 0, stdout: `${CONTAINER_ID}\n`, stderr: "" }))
+      .mockImplementationOnce(() => ({
+        status: 0,
+        stdout: inspect(false, "exited", false, {
+          labels: { ...SANDBOX_LABELS, [PODMAN_SANDBOX_WORKSPACE_LABEL]: "another-workspace" },
+        }),
+        stderr: "",
+      }));
+
+    expect(startPodmanSandbox(runtime.input, runtime.engine)).toMatchObject({
+      exitCode: 1,
+      message: expect.stringContaining(
+        `${PODMAN_SANDBOX_WORKSPACE_LABEL}=${PODMAN_SANDBOX_WORKSPACE}`,
+      ),
+    });
+    expect(runtime.capture.mock.calls.map(([args]) => args)).not.toContainEqual([
+      "start",
+      CONTAINER_ID,
+    ]);
+  });
+
+  it("rejects a container name that does not encode the inspected sandbox ID", () => {
+    const runtime = harness({ running: false, status: "exited" });
+    runtime.capture
+      .mockImplementationOnce(() => ({ status: 0, stdout: `${CONTAINER_ID}\n`, stderr: "" }))
+      .mockImplementationOnce(() => ({
+        status: 0,
+        stdout: inspect(false, "exited", false, { name: `openshell-sandbox-${SANDBOX_NAME}` }),
+        stderr: "",
+      }));
+
+    expect(startPodmanSandbox(runtime.input, runtime.engine)).toMatchObject({
+      exitCode: 1,
+      message: expect.stringContaining("does not match its exact OpenShell identity"),
+    });
+    expect(runtime.capture.mock.calls.map(([args]) => args)).not.toContainEqual([
+      "start",
+      CONTAINER_ID,
+    ]);
+  });
+
+  it("rejects ownership-label drift after mutating the pinned container", () => {
+    const runtime = harness({ running: false, status: "exited" });
+    runtime.capture
+      .mockImplementationOnce(() => ({ status: 0, stdout: `${CONTAINER_ID}\n`, stderr: "" }))
+      .mockImplementationOnce(() => ({
+        status: 0,
+        stdout: inspect(false, "exited"),
+        stderr: "",
+      }))
+      .mockImplementationOnce(() => {
+        runtime.setState({ running: true, status: "running" });
+        return { status: 0, stdout: CONTAINER_ID, stderr: "" };
+      })
+      .mockImplementationOnce(() => ({
+        status: 0,
+        stdout: inspect(true, "running", false, {
+          labels: { ...SANDBOX_LABELS, "test.identity-drift": "true" },
+        }),
+        stderr: "",
+      }));
+
+    expect(startPodmanSandbox(runtime.input, runtime.engine)).toMatchObject({
+      exitCode: 1,
+      message: expect.stringContaining("ownership changed after it was pinned"),
+    });
+  });
+
   it("converges on retry after start succeeds but final inspection fails", () => {
     const runtime = harness({ running: false, status: "exited" });
     runtime.capture
       .mockImplementationOnce(() => ({
         status: 0,
-        stdout: `${CONTAINER_ID}\t${CONTAINER_NAME}\n`,
+        stdout: `${CONTAINER_ID}\n`,
         stderr: "",
       }))
       .mockImplementationOnce(() => ({
@@ -207,7 +305,7 @@ describe("Podman basic CPU lifecycle", () => {
     runtime.capture
       .mockImplementationOnce(() => ({
         status: 0,
-        stdout: `${CONTAINER_ID}\t${CONTAINER_NAME}\n`,
+        stdout: `${CONTAINER_ID}\n`,
         stderr: "",
       }))
       .mockImplementationOnce(() => ({

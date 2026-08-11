@@ -44,3 +44,4 @@ runs:
         name: reviewed-npm-audit
         path: ${{ inputs.target-root }}/${{ inputs.report-dir }}/*.json
         if-no-files-found: error
+        retention-days: 14

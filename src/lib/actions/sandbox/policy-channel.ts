@@ -278,7 +278,7 @@ async function addSandboxPolicyUnlocked(
   const applied = policies.getAppliedPresets(sandboxName);
 
   let answer = null;
-  let reapplyState: "drift" | "absent" | null = null;
+  let reapplyState: policies.PresetPolicyState | null = null;
   if (presetArg) {
     const normalized = presetArg.trim().toLowerCase();
     const preset = allPresets.find((item: { name: string }) => item.name === normalized);
@@ -314,13 +314,35 @@ async function addSandboxPolicyUnlocked(
       }
       const appliedState = policies.getPresetContentGatewayState(sandboxName, appliedContent);
       if (appliedState === "match") {
-        // The desired state already holds: exit 0 so converging scripts can
-        // call `policy add` idempotently, mirroring how applyPreset treats a
-        // byte-identical re-application as a successful no-op.
-        console.log(
-          `  Preset '${preset.name}' is already applied and matches the live policy; nothing to do.`,
-        );
-        return;
+        const needsOpenClawNpmCheck =
+          preset.name === "npm" && (sandboxAgent === null || sandboxAgent === "openclaw");
+        const npmCompatibilityState = needsOpenClawNpmCheck
+          ? policies.getOpenClawNpmCompatibilityState(sandboxName)
+          : "match";
+        if (npmCompatibilityState === "repair") {
+          reapplyState = "drift";
+          console.log(
+            "  Preset 'npm' matches the live policy, but its OpenClaw compatibility overlay requires repair.",
+          );
+        } else if (npmCompatibilityState === "drift" || npmCompatibilityState === null) {
+          console.error(
+            npmCompatibilityState === null
+              ? "  Could not verify the live OpenClaw npm compatibility overlay."
+              : "  The live OpenClaw npm compatibility overlay has drifted from its reviewed state.",
+          );
+          console.error(
+            "  No policy changes were made; inspect the live npm policy before retrying.",
+          );
+          process.exit(1);
+        } else {
+          // The desired state already holds: exit 0 so converging scripts can
+          // call `policy add` idempotently, mirroring how applyPreset treats a
+          // byte-identical re-application as a successful no-op.
+          console.log(
+            `  Preset '${preset.name}' is already applied and matches the live policy; nothing to do.`,
+          );
+          return;
+        }
       }
       if (appliedState === null) {
         // Live policy unreadable: drift is unverifiable, so refuse rather
@@ -331,14 +353,16 @@ async function addSandboxPolicyUnlocked(
         );
         process.exit(1);
       }
-      // State-only notice: the downstream flow reports the dry-run,
-      // confirmation, and apply outcomes.
-      reapplyState = appliedState;
-      console.log(
-        appliedState === "drift"
-          ? `  Preset '${preset.name}' no longer matches the live policy.`
-          : `  Preset '${preset.name}' is recorded as applied but missing from the live policy.`,
-      );
+      if (appliedState !== "match") {
+        // State-only notice: the downstream flow reports the dry-run,
+        // confirmation, and apply outcomes.
+        reapplyState = appliedState;
+        console.log(
+          appliedState === "drift"
+            ? `  Preset '${preset.name}' no longer matches the live policy.`
+            : `  Preset '${preset.name}' is recorded as applied but missing from the live policy.`,
+        );
+      }
     }
     answer = preset.name;
   } else {
@@ -359,6 +383,14 @@ async function addSandboxPolicyUnlocked(
     policies.logPresetScopeForState(answer, presetContent, reapplyState);
   } else {
     policies.logPresetScope(presetContent);
+  }
+  const needsOpenClawNpmDisclosure =
+    answer === "npm" && (sandboxAgent === null || sandboxAgent === "openclaw");
+  const npmBaselineExcluded =
+    needsOpenClawNpmDisclosure &&
+    registry.getBaselineExclusions(sandboxName).some((entry) => entry.key === "npm_registry");
+  if (needsOpenClawNpmDisclosure && !npmBaselineExcluded) {
+    policies.logOpenClawNpmCompatibilityDisclosure();
   }
 
   const presetWarning = policies.getPresetValidationWarning(answer);
@@ -2113,11 +2145,10 @@ async function restoreSandboxBaselineUnlocked(
   const dryRun = Boolean(options.dryRun);
   const explicitAck = Boolean(options.yes || options.force);
   const key = options.key?.trim();
+  const usage = `  Usage: ${CLI_NAME} <sandbox> policy restore <key> [--yes|-y] [--force] [--dry-run]`;
   if (!key) {
     console.error("  A baseline key is required.");
-    console.error(
-      `  Usage: ${CLI_NAME} <sandbox> policy restore <key> [--yes|-y] [--force] [--dry-run]`,
-    );
+    console.error(usage);
     process.exit(1);
   }
 
@@ -2158,6 +2189,7 @@ async function restoreSandboxBaselineUnlocked(
     console.error(
       "  Non-interactive restore requires explicit acknowledgement: pass --force (or --yes).",
     );
+    console.error(usage);
     process.exit(1);
   }
   if (!explicitAck) {
@@ -2168,12 +2200,13 @@ async function restoreSandboxBaselineUnlocked(
       const code = (error as NodeJS.ErrnoException | null)?.code;
       if (code !== "EOF") throw error;
       console.error("  No input available on stdin, so policy restore cannot prompt.");
-      console.error(
-        `  Usage: ${CLI_NAME} <sandbox> policy restore <key> [--yes|-y] [--force] [--dry-run]`,
-      );
+      console.error(usage);
       process.exit(1);
     }
-    if (!confirm.trim().toLowerCase().startsWith("y")) return;
+    if (!confirm.trim().toLowerCase().startsWith("y")) {
+      console.log("  Cancelled.");
+      return;
+    }
   }
 
   if (!policies.restoreBaselineEntry(sandboxName, key, { expectedTargetDigest })) {

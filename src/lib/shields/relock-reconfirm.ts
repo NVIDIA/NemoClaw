@@ -27,6 +27,8 @@
 
 import { sleepMs } from "../core/wait";
 
+export { waitForHermesInferenceRouteConvergence } from "./inference-convergence";
+
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_SETTLE_MS = 750;
 const MIN_SETTLE_MS = 0;

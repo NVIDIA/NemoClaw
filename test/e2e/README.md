@@ -8,8 +8,10 @@ Direct E2E coverage runs through Vitest.
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
-- `.github/workflows/e2e.yaml` selects every workflow E2E on each push to `main`
-  and supports trusted manual dispatches for specific PR head commits.
+- `.github/workflows/e2e.yaml` selects the default workflow E2E jobs on each push
+  to `main` and supports trusted manual dispatches for specific PR head commits.
+  Push runs skip the Jetson nvmap and DGX Spark llama.cpp jobs because their
+  required workflow dispatch flags cannot be set by a push event.
 - `.github/workflows/hosted-runner-recovery.yaml` evaluates first-attempt
   failures from approved `main` workflows and requests one full rerun only when
   every non-passing job has authenticated GitHub-hosted runner-loss evidence.
@@ -17,9 +19,10 @@ before those targets run; local runners must provide it themselves.
   attempts, requests at most two failed-job reruns, and uploads attempt evidence.
 - The `staging-brev-launchable` job in `.github/workflows/e2e.yaml` validates
   the baked candidate without installing or copying NemoClaw source.
-- Platform workflows such as macOS, WSL, sandbox image, and regression E2E
-  call their target E2E tests directly. The Ollama auth proxy target is
-  selected through `.github/workflows/e2e.yaml`.
+- `.github/workflows/macos-e2e.yaml`, `.github/workflows/wsl-e2e.yaml`, and
+  `.github/workflows/sandbox-images-and-e2e.yaml` call focused E2E targets directly.
+  `.github/workflows/e2e.yaml` selects free-standing jobs, including
+  `whatsapp-qr-compact` and `ollama-auth-proxy`.
 
 ## CI execution shape
 
@@ -28,10 +31,10 @@ before those targets run; local runners must provide it themselves.
 The candidate CLI comes from the source commit that an E2E run tests.
 The `generate-matrix` job builds it once.
 The job publishes root `dist/` and `nemoclaw/dist/shared/` in one content-addressed artifact.
-The workflow has 62 artifact-using job definitions.
-Each selected job execution restores the artifact instead of running `npm run build:cli`.
-Each selected job still runs the pinned preparation action to install Node.js and project dependencies.
-It sets `build-cli: "false"` so the preparation action does not rebuild the CLI.
+The boundary validator derives artifact consumers from jobs that use the pinned preparation action.
+It excludes `generate-matrix` and the no-build and trusted-build jobs in `E2E_JOB_POLICY`.
+Each selected consumer restores the artifact instead of running `npm run build:cli`.
+Each consumer runs the pinned preparation action with `build-cli: "false"` to install Node.js and project dependencies.
 The `managed-image-protected-runtime` qualification does not use this artifact.
 It builds the CLI from the trusted workflow checkout and never executes or restores the candidate CLI.
 
@@ -160,7 +163,7 @@ and exact-staging Launchable job own its product coverage:
 | `gpu` | Unified E2E | `gpu-e2e` runs on the dedicated GPU runner. |
 | `all` | Retired | The selector only duplicated `credential-sanitization` and `telegram-injection`. |
 
-The retired nightly caller no longer runs. Each push to `main` starts a workflow that selects every workflow E2E.
+The retired nightly caller no longer runs. Each push to `main` starts a workflow that selects the default workflow E2E jobs.
 Manual GPU validation must use `gpu-e2e`.
 It must not provision a generic Brev VM.
 
@@ -296,6 +299,11 @@ the workspace marker. The job also keeps the test-only tmpfs mount, unchanged
 stock policy-source bytes, and the distinct-device and source-side `EXDEV`
 checks. The duplicate v3 rebuild is removed from this job. The
 `rebuild-openclaw` job remains the canonical live rebuild coverage.
+
+The current-checkout fixture locally prebuilds its repository-controlled v1
+and v2 Dockerfiles with BuildKit, then hands only those local image references
+to OpenShell. User-supplied `--from` Dockerfiles retain the gateway-builder
+trust boundary and are never host-prebuilt by this fixture.
 
 The runtime target for `openclaw-plugin-runtime-exdev` is 16–17 minutes.
 Push-run timing for the reduced lifecycle has not yet been measured.
@@ -435,7 +443,7 @@ A manual run with `jobs=staging-brev-launchable` runs only `Exact staging Brev
 Launchable`. Each push run also selects this job as part of the complete main run.
 
 A manual run with `include_staging_brev_launchable=true` and empty `jobs` and
-`targets` selectors runs every workflow E2E, including the Launchable E2E job.
+`targets` selectors runs the default workflow E2E selection plus the Launchable E2E job.
 This is the full run required for pre-tag evidence. Each full dispatch uses
 `github.run_id` in its workflow concurrency identity, so another full dispatch
 cannot supersede it while it waits. The trusted `main` workflow dispatch
@@ -445,6 +453,23 @@ role check authorizes `staging-brev-launchable`; the job does not use GitHub
 environment approval. The job uses the non-cancelling
 `staging-brev-launchable-cpu` group with `queue: max`, so pending Launchable E2E
 runs remain queued instead of replacing one another.
+
+The Jetson nvmap and DGX Spark llama.cpp jobs remain excluded from ordinary and
+full runs unless their independent opt-in flags are `true`.
+Set `allow_jetson_dispatch=true` to select `jetson-nvmap-gpu` only after every
+deployment check in
+[Jetson Dispatch Through Colossus](docs/jetson-colossus-dispatch.md) passes.
+The Colossus lifecycle removes and verifies only the fixed job-owned cleanup
+allowlist. Its cleanup evidence does not attest that every possible candidate
+host change was reversed.
+Set `allow_dgx_spark_runner_queue=true` to select both
+`llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`.
+GitHub can pause the qualification job for the
+`approve-dgx-spark-image-qualification` environment before it reaches the DGX
+Spark runner.
+Pre-tag evidence requires both hardware opt-in flags to remain `false`.
+Results from opt-in hardware runs do not enter the required pre-tag E2E
+denominator.
 
 ### Hosted-Runner Recovery
 
@@ -509,7 +534,8 @@ larger runner.
 Each execution writes one bounded, ordered v2 time series to the canonical
 `runner-comparison.jsonl` ledger. It contains:
 
-- an `initialize` endpoint after exact-commit artifact restoration, or after workspace preparation for `security-posture`; the rebuild jobs initialize after their fixed-capacity swap;
+- an `initialize` endpoint after exact-commit artifact restoration; the rebuild
+  jobs initialize after their fixed-capacity swap;
 - a distinct `scenario-start` for every test handled by the execution;
 - a `periodic` sample on an approximately 15-second fixed cadence for
   `rebuild-hermes` and `rebuild-hermes-stale-base`, and an approximately
@@ -564,10 +590,10 @@ following procfs observation and may differ when a live process changes memory.
 
 The finalizer validates the complete ledger before writing
 `runner-comparison-summary.json`. The v2 summary reports the sampled window from
-`initialize` until immediately before artifact scanning or upload. For artifact-using
-jobs, initialization follows artifact restoration and any required rebuild swap. For
-the Hermes `security-posture` shard, initialization follows workspace preparation,
-so the window includes OpenShell installation and installer-backed NemoClaw setup.
+`initialize` until immediately before artifact scanning or upload. Initialization
+follows artifact restoration and any required rebuild swap. For the Hermes
+`security-posture` shard, the window includes OpenShell installation and
+installer-backed NemoClaw setup, but not workspace preparation or artifact restoration.
 The summary reports CPU average and busiest interval; one-minute load;
 available, cached, reclaimable, swap, root-cgroup current/peak/limit, and
 endpoint OOM-counter evidence; memory and I/O pressure; workspace bytes and
@@ -682,6 +708,32 @@ Validate phase coverage without executing test bodies with:
 npm run test:e2e-phases:check
 ```
 
+### DGX Spark Express vLLM
+
+`spark-express-vllm.test.ts` is a physical-host qualification for the second DGX Spark Express inference option, the catalog-backed fixed vLLM profile.
+It requires a qualified NVIDIA DGX Spark with Docker, NVIDIA Container Toolkit, OpenShell prerequisites, enough storage for the pinned image and model, and no unrelated `nemoclaw-vllm` container.
+The target accepts only a local Docker socket and the default Docker context, rejects remote selectors, and treats Docker inspection errors as preflight failures instead of absent resources.
+The target sources `scripts/install.sh` from the candidate checkout, calls the Express option-selection functions with option 2, and invokes the candidate CLI directly for onboarding.
+It does not run the hosted installer bootstrap, clone or ref selection, dependency installation, CLI exposure, or the real terminal prompt.
+Separate installer tests own those earlier boundaries.
+The live target refuses to replace a pre-existing sandbox or `nemoclaw-vllm` container.
+It preserves the shared Hugging Face cache, records the created sandbox and container identities, and revalidates each identity before cleanup.
+If onboarding exits nonzero, the target captures the managed-container log tail and sandbox details before cleanup.
+The standard E2E artifacts retain bounded command output.
+
+Run the target from a clean candidate checkout on the Spark host:
+
+```bash
+E2E_JOB=1 \
+E2E_TARGET_ID=spark-express-vllm \
+NEMOCLAW_RUN_LIVE_E2E=1 \
+NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm \
+npx tsx tools/e2e/live-vitest-invocation.mts run \
+  --test-path test/e2e/live/spark-express-vllm.test.ts
+```
+
+A passing target establishes that the source-checkout option-2 path selects the fixed vLLM preset and recipe, the managed container carries exact catalog provenance and the exact catalog-derived serve command, `inference.local` completes a chat request, and unrelated sandbox egress receives an HTTP `403` response.
+
 The checker preserves coverage for every file under `test/e2e/live/` and adds
 workflow-selected integration files from the authoritative shared-job planner.
 Live modules import `fixtures/e2e-test.ts`; selected integration modules import
@@ -699,7 +751,8 @@ a custom, copied, or no-op adapter.
 
 E2E does not run automatically for pull requests.
 Pull requests retain deterministic CI, including the `e2e-support` Vitest project.
-Each push to `main` selects every workflow E2E. A selected job can remain queued until its configured runner is available.
+Each push to `main` selects the default workflow E2E jobs.
+The central workflow skips the Jetson nvmap and DGX Spark llama.cpp jobs on push.
 The central workflow has no scheduled trigger.
 
 The main-push selection includes:
@@ -708,14 +761,12 @@ The main-push selection includes:
 - the OpenShell gateway authentication contract;
 - the development MCP bridge;
 - managed-image startup on AMD64 and ARM64;
-- llama.cpp qualification on NVIDIA DGX Spark;
 - managed-image GPU, Ollama, NVIDIA NIM, and vLLM behavior;
-- Hermes GPU startup; and
-- Jetson nvmap behavior.
+- Hermes GPU startup.
 
-These jobs retain their runner, credential, evidence, and cleanup boundaries. A
-main push can queue repository-owned GPU and Jetson runners and can create Brev
-resources. The retry workflow reruns failed jobs at most twice.
+These jobs retain their runner, credential, evidence, and cleanup boundaries.
+A main push can queue repository-owned GPU runners and can create Brev resources.
+The retry workflow reruns failed jobs at most twice.
 
 Each trusted push to `main` selects `Exact staging Brev Launchable`. The job reads
 these credentials from repository Actions secrets:
@@ -743,9 +794,13 @@ The controller does not retry manual PR runs or a run superseded by a newer `mai
 
 For a PR revision run, a repository maintainer or administrator leaves `jobs` and `targets` empty. The run selects:
 
-- every free-standing workflow E2E except `Exact staging Brev Launchable`;
+- every default-selected free-standing workflow E2E except `Exact staging Brev Launchable`;
 - every shared credential-free test; and
 - these controller-selected registry targets: `ubuntu-policy-custom-missing-presets-negative`, `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and `ubuntu-repo-docker-post-reboot-recovery`.
+
+The run skips `jetson-nvmap-gpu` unless its Colossus dispatch flag is `true`.
+It skips `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`
+unless their runner-queue flag is `true`.
 The trusted workflow definition remains on `main` and binds the candidate head to the current PR base SHA.
 It does not run GitHub's synthetic merge commit.
 
@@ -774,7 +829,9 @@ For `managed-image-protected-runtime`, the workflow supplies the long-lived `NVI
 
 For a manual PR run, provide the current PR number, lowercase 40-character head SHA, head repository, lowercase 40-character base SHA, trusted `main` workflow SHA, and a review reason containing 10 to 500 printable characters.
 Leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false` to use this PR revision selection.
-The empty-selector run selects `llama-cpp-dgx-spark-qualification`. If GitHub pauses the job for the `approve-dgx-spark-image-qualification` environment, an authorized environment reviewer must approve it before qualification starts.
+Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
+If `allow_dgx_spark_runner_queue=true`, GitHub can pause the qualification job for the `approve-dgx-spark-image-qualification` environment.
+An authorized environment reviewer must approve it before qualification starts.
 To select the protected managed-image runtime qualification, set `jobs=managed-image-protected-runtime`.
 Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
@@ -814,7 +871,11 @@ classify that guidance as required, but rendered advisor guidance remains
 non-authoritative. Model advice is additive and cannot downgrade the
 deterministic floor. PR Review Advisor recommendations remain advisory.
 A maintainer decides whether to dispatch this trusted selection for the current PR
-revision. No PR E2E controller dispatches the risk plan.
+revision. The manual PR controller accepts the credential-free
+`inference-routing` job; secret-backed jobs such as `network-policy` remain
+available only through manual dispatch from reviewed code on `main` and are
+labeled that way in the Advisor comment.
+No PR E2E controller dispatches the risk plan.
 
 The `full-e2e` target enforces a separate hard acceptance contract for the
 first fresh onboarding path in that job. It measures from the onboard root span

@@ -24,7 +24,12 @@ import { cleanupTempDir, secureTempFile } from "./temp-files";
 // The CLI's exit code is no longer the success signal — the appearance of
 // the live forward in the list is.
 
-export type ForwardListFetcher = () => string;
+/**
+ * Returns the serialized forward list on success. An empty string means the
+ * list query succeeded with no entries; `null` means ownership is unknown
+ * because the query did not return a result.
+ */
+export type ForwardListFetcher = () => string | null;
 
 export type DetachedForwardSpawnRunner = (stdio: { stdout: number; stderr: number }) => {
   pid?: number;
@@ -110,8 +115,8 @@ export function looksLikeUntrackedForward(diagnostic: string): boolean {
  * (#6099).
  *
  * Compatibility boundary: these exact diagnostics are emitted by the pinned
- * OpenShell 0.0.85 forward-start path tracked in #7266. Reassess this matcher
- * when NemoClaw's supported OpenShell range moves beyond 0.0.85, and remove it
+ * OpenShell 0.0.101 forward-start path tracked in #7266. Reassess this matcher
+ * when NemoClaw's supported OpenShell range moves beyond 0.0.101, and remove it
  * once OpenShell either keeps the attempt alive until the listener is ready or
  * exposes a structured retryable outcome. Keep the fragments narrow so an
  * unrelated SSH or gateway failure cannot enter the listener-retry path.
@@ -378,11 +383,16 @@ export function runDetachedForwardStartWithDiagnostics(
     while (Date.now() < deadline) {
       let list = "";
       try {
-        list = fetchForwardList() || "";
-        // Clear the cached transient error so a recovered gateway does not
-        // leave a stale "openshell forward list failed: …" suffix on the
-        // eventual timeout diagnostic.
-        lastFetchError = null;
+        const fetchedList = fetchForwardList();
+        if (fetchedList === null) {
+          lastFetchError = "OpenShell returned no forward list result";
+        } else {
+          list = fetchedList;
+          // Clear the cached transient error so a recovered gateway does not
+          // leave a stale "openshell forward list failed: …" suffix on the
+          // eventual timeout diagnostic.
+          lastFetchError = null;
+        }
       } catch (err) {
         lastFetchError = err instanceof Error ? err.message : String(err);
       }

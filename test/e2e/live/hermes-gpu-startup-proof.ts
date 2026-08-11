@@ -237,8 +237,8 @@ raise SystemExit(1)`,
   );
   expect(dockerCommandBoundary.exitCode, resultText(dockerCommandBoundary)).toBe(0);
   const commandBoundary = JSON.parse(dockerCommandBoundary.stdout);
-  expect([null, []]).toContainEqual(commandBoundary.cmd);
   expect(commandBoundary).toMatchObject({
+    cmd: ["--workdir", "/sandbox"],
     entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
     has_openshell_sandbox_command: true,
   });

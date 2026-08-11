@@ -232,10 +232,11 @@ describe("effective built-in policy contracts", () => {
   });
 
   it("keeps mutable web APIs on their reviewed hosts, methods, and paths", () => {
-    const effective = composePresets(["tavily", "outlook", "openclaw-pricing"]);
+    const effective = composePresets(["tavily", "outlook", "openclaw-pricing", "teams"]);
     const tavily = requireNetworkPolicy(effective, "tavily");
     const outlook = requireNetworkPolicy(effective, "outlook_graph");
     const pricing = requireNetworkPolicy(effective, "openclaw-pricing");
+    const teams = requireNetworkPolicy(effective, "teams");
 
     expect(tavily.endpoints).toEqual([
       {
@@ -276,6 +277,12 @@ describe("effective built-in policy contracts", () => {
       "outlook.office365.com",
     ]);
     expect(methods(graph)).toEqual(["GET", "PATCH", "POST"]);
+    for (const host of ["graph.microsoft.com", "login.microsoftonline.com"]) {
+      expect(requireEndpoint(outlook, host).request_body_credential_rewrite).toBe(true);
+      expect(requireEndpoint(outlook, host).request_body_credential_rewrite).toBe(
+        requireEndpoint(teams, host).request_body_credential_rewrite,
+      );
+    }
     for (const host of [
       "login.microsoftonline.com",
       "outlook.office365.com",
@@ -504,6 +511,17 @@ describe("effective built-in policy contracts", () => {
         "/usr/local/bin/brew",
       ].sort(),
     );
+    for (const host of ["github.com", "raw.githubusercontent.com"]) {
+      const endpoint = requireEndpoint(brew, host);
+      expect(endpoint).toMatchObject({ port: 443, access: "full" });
+      expect(endpoint).not.toHaveProperty("protocol");
+      expect(endpoint).not.toHaveProperty("tls");
+    }
+    for (const endpoint of (brew.endpoints ?? []).filter(
+      (candidate) => !["github.com", "raw.githubusercontent.com"].includes(candidate.host ?? ""),
+    )) {
+      expect(endpoint).toMatchObject({ access: "full", tls: "skip" });
+    }
     expect((claude.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual([
       "api.anthropic.com",
       "platform.claude.com",

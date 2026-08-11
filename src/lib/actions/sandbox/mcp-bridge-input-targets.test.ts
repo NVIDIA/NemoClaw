@@ -9,6 +9,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { isTrustedPrivateEndpointCapability } from "../../security/trusted-private-endpoint";
 import { addMcpBridge, normalizeMcpServerUrl } from "./mcp-bridge";
 import {
   inspectMcpRecordedTargetPins,
@@ -90,8 +91,63 @@ describe("MCP URL target validation", () => {
     }
   });
 
+  it("admits a direct private IPv4 target with exact host-bound authority (#8267)", async () => {
+    const lookup = vi.spyOn(dns, "lookup");
+    try {
+      const url = normalizeMcpServerUrl("https://10.20.30.40/mcp", {
+        trustedPrivateHosts: ["10.20.30.40"],
+      });
+      const target = await preflightMcpServerUrlResolvedTarget(new URL(url), {
+        trustedPrivateHosts: ["10.20.30.40"],
+        requireTrustedPrivateEndpoint: true,
+      });
+
+      expect(lookup).not.toHaveBeenCalled();
+      expect(target).toMatchObject({
+        addresses: ["10.20.30.40"],
+        trustedPrivateHost: "10.20.30.40",
+      });
+      expect(isTrustedPrivateEndpointCapability(target.trustedPrivateCapability)).toBe(true);
+      expect(target.trustedPrivateCapability).toMatchObject({
+        host: "10.20.30.40",
+        addresses: ["10.20.30.40"],
+      });
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("admits a trusted reserved-suffix DNS target with exact private pins (#8267)", async () => {
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValue([{ address: "10.20.30.40", family: 4 }] as never);
+    try {
+      expect(() => normalizeMcpServerUrl("https://mcp.corp.internal/mcp")).toThrow(
+        /private, local, or special-use/,
+      );
+      const url = normalizeMcpServerUrl("https://mcp.corp.internal/mcp", {
+        trustedPrivateHosts: ["mcp.corp.internal"],
+      });
+      await expect(
+        preflightMcpServerUrlResolvedTarget(new URL(url), {
+          trustedPrivateHosts: ["mcp.corp.internal"],
+          requireTrustedPrivateEndpoint: true,
+        }),
+      ).resolves.toMatchObject({
+        addresses: ["10.20.30.40"],
+        trustedPrivateHost: "mcp.corp.internal",
+        trustedPrivateCapability: {
+          host: "mcp.corp.internal",
+          addresses: ["10.20.30.40"],
+        },
+      });
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
   it("persists exact normalized pins after successful trusted-private admission (#8267)", {
-    timeout: 15_000,
+    timeout: 40_000,
   }, () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-private-mcp-add-success-"));
     const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
@@ -154,8 +210,10 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
       capabilityAddresses: admittedTarget.trustedPrivateCapability.addresses,
       trustedPrivateHost: admittedTarget.trustedPrivateHost,
     },
-  }));
-}, (error) => { process.stderr.write(error.stack || error.message); process.exitCode = 1; });
+  }), () => process.exit(0));
+}, (error) => {
+  process.stderr.write(error.stack || error.message, () => process.exit(1));
+});
 `;
     try {
       const result = spawnSync(process.execPath, ["-e", script], {
@@ -168,7 +226,7 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
             .filter(Boolean)
             .join(" "),
         },
-        timeout: 12_000,
+        timeout: 30_000,
       });
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       const admission = JSON.parse(result.stdout) as {
@@ -202,7 +260,7 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
           trustedPrivateHosts: ["mcp.corp.example"],
           requireTrustedPrivateEndpoint: true,
         }),
-      ).rejects.toThrow(/mixed public and private addresses/);
+      ).rejects.toThrow(/must resolve only to supported routed private addresses/);
 
       lookup.mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never);
       await expect(

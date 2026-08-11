@@ -18,7 +18,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { packReviewedNpmArchive } from "./reviewed-npm-archive.mts";
 
@@ -926,6 +926,31 @@ function packReplacement(
   workingDirectory: string,
   env: NodeJS.ProcessEnv,
 ) {
+  const localArchiveDirectory = env.NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR;
+  if (localArchiveDirectory) {
+    const archiveRoot = resolve(localArchiveDirectory);
+    const archiveName = basename(new URL(tarballUrl).pathname);
+    const archivePath = resolve(archiveRoot, archiveName);
+    if (!archivePath.startsWith(`${archiveRoot}${sep}`)) {
+      throw new Error(`OpenClaw npm remediation archive escaped its reviewed root: ${packageSpec}`);
+    }
+    const descriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const archive = fstatSync(descriptor);
+      if (!archive.isFile()) {
+        throw new Error(`OpenClaw npm remediation archive is not a regular file: ${packageSpec}`);
+      }
+      const actualIntegrity = `sha512-${createHash("sha512").update(readFileSync(descriptor)).digest("base64")}`;
+      if (actualIntegrity !== expectedIntegrity) {
+        throw new Error(
+          `OpenClaw npm remediation archive integrity mismatch for ${packageSpec}\nExpected: ${expectedIntegrity}\nActual:   ${actualIntegrity}`,
+        );
+      }
+    } finally {
+      closeSync(descriptor);
+    }
+    return { archivePath, rootDirectory: archiveRoot };
+  }
   return packReviewedNpmArchive({
     env,
     expectedIntegrity,

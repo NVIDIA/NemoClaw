@@ -5,8 +5,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
-import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+import { describe, expect, it, onTestFinished } from "vitest";
+import { runInstallerSourcedBody } from "./helpers/installer-run-fixture";
+import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
@@ -27,26 +28,16 @@ function runSourced(body: string) {
   return { home, result, output: `${result.stdout}${result.stderr}` };
 }
 
-function runInstallerBody(body: string, extraEnv: Record<string, string> = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-migration-"));
-  const result = spawnSync(
-    "bash",
-    ["--noprofile", "--norc", "-c", `source "$INSTALLER_UNDER_TEST" >/dev/null\n${body}`],
-    {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-      env: {
-        HOME: home,
-        PATH: `${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
-        INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-        ...extraEnv,
-      },
-      timeout: 15_000,
-      killSignal: "SIGKILL",
-    },
-  );
-  return { home, result, output: `${result.stdout}${result.stderr}` };
-}
+const runInstallerBody = (body: string, extraEnv: Record<string, string> = {}) => {
+  const run = runInstallerSourcedBody(body, {
+    homePrefix: "nemoclaw-station-migration-",
+    extraEnv,
+    includeNodeOnPath: true,
+    timeoutMs: 15_000,
+  });
+  onTestFinished(run.remove);
+  return run;
+};
 
 function runInstallerOrderHarness(onboardStatus: 0 | 1) {
   return runInstallerBody(

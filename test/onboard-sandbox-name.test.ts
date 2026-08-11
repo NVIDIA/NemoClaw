@@ -97,15 +97,15 @@ describe("onboard sandbox naming helpers", () => {
 
   it("exposes the full allowed sandbox name format", () => {
     expect(NAME_ALLOWED_FORMAT).toBe(
-      "1-63 characters, lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number",
+      "1-19 characters, lowercase, starts with a letter, letters/numbers/single internal hyphens only, ends with letter/number",
     );
   });
 
   it("explains sandbox name length and allowed format violations", () => {
     expect(getNameValidationGuidance("sandbox name", "a".repeat(64))).toEqual([
-      "Sandbox names must be 63 characters or fewer.",
+      "Sandbox names must be 19 characters or fewer.",
       `Allowed format: ${NAME_ALLOWED_FORMAT}.`,
-      `Try: ${"a".repeat(63)}`,
+      `Try: ${"a".repeat(19)}`,
     ]);
     expect(
       getNameValidationGuidance("sandbox name", "bad name", { includeAllowedFormat: false }),
@@ -128,8 +128,8 @@ describe("onboard sandbox naming helpers", () => {
       expect(suggestNameSlug("foo  bar")).toBe("foo-bar");
     });
 
-    it("returns null for inputs that are already valid even with internal hyphen runs", () => {
-      expect(suggestNameSlug("a---b")).toBeNull();
+    it("collapses consecutive hyphens that OpenShell reserves for routed names (#8497)", () => {
+      expect(suggestNameSlug("a---b")).toBe("a-b");
     });
 
     it("prefixes 's-' when the slug would otherwise start with a digit", () => {
@@ -139,8 +139,8 @@ describe("onboard sandbox naming helpers", () => {
 
     it("truncates over-length inputs to the max name length", () => {
       const slug = suggestNameSlug("a".repeat(80));
-      expect(slug).toBe("a".repeat(63));
-      expect(slug!.length).toBe(63);
+      expect(slug).toBe("a".repeat(19));
+      expect(slug!.length).toBe(19);
     });
 
     it("returns null when the input is already a valid name", () => {

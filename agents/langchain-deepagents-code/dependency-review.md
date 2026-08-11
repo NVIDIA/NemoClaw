@@ -134,7 +134,8 @@ aliases. They are not a new provider profile and do not modify the reviewed
 canonical NVIDIA profile.
 
 The two managed model IDs remain language-local constants in the TypeScript
-config generator and the isolated Python image/plugin validators. NemoClaw
+config generator, the managed package patch, and the isolated Python
+image/plugin validators. NemoClaw
 registers both IDs under the managed OpenAI adapter and the managed OpenRouter
 adapter because Deep Agents Code applies provider-native request shaping before
 it reaches the shared `inference.local` route. Those components run on opposite
@@ -147,17 +148,22 @@ another mutable build artifact.
 For `force_nonempty_content`, the invalid state originates in the NVIDIA Ultra
 chat template/serving path: a Chat Completions response that combines reasoning
 and tool calls can otherwise carry empty assistant content. That response shape
-is outside NemoClaw; this repository owns only the generated DCode provider
-configuration, so `generate-config.ts` supplies the model-specific template
-argument at that request boundary. Fixing the serving template, model, or
-third-party client in this repository would require vendoring an upstream
+is outside NemoClaw; this repository owns the generated DCode provider
+configuration and the managed package patch, so each supplies the model-specific
+template argument at its own boundary. `generate-config.ts` writes the per-model
+`config.toml` entry. The patched `_get_provider_kwargs` resolver derives the
+same argument from its language-local ID set because it never consumes the
+mutable `config.toml` params table (#7441). Fixing the serving template, model,
+or third-party client in this repository would require vendoring an upstream
 component and would violate the released-dependency boundary. The focused config
-tests prove both managed Ultra IDs receive the argument and unrelated models do
-not; the Deep Agents E2E verifies the installed request shape. Remove this
-argument only after a reviewed serving-template or client update produces
-nonempty assistant content for reasoning-plus-tool-call turns without it, and
-the live DCode Ultra E2E passes for both managed model IDs with the override
-deleted.
+tests verify that both managed Ultra IDs receive the argument and unrelated
+models do not. The focused managed-model-params patch test verifies that the
+managed provider resolver supplies it only for those IDs, and the Deep Agents
+E2E test verifies the installed request settings.
+Remove this argument only after a reviewed serving-template or client update
+produces nonempty assistant content for reasoning-plus-tool-call turns without
+it, and the live DCode Ultra E2E passes for both managed model IDs with both
+supply points deleted.
 
 For the `[content]` guard, the invalid state is a model-produced tool call whose
 complete `execute.command` is the placeholder, ignoring case and whitespace

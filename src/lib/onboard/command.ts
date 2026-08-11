@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { formatAgentAliasSuffix, resolveAgentNameAlias } from "../agent/aliases";
+import { withCredentialOverrides } from "../credentials/scoped-overrides";
 import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import { NEMOCLAW_SERVING_PRESET_ENV } from "../inference/serving/managed-cluster-discovery";
 import {
@@ -30,8 +31,19 @@ import {
   type ExperimentalOnboardProfile,
   PORTABLE_EXPERIMENTAL_PROFILE,
 } from "./docker-driver-platform";
+import {
+  loadPortableInferenceDescriptor,
+  PORTABLE_INFERENCE_CREDENTIAL_ENV,
+  type PortableInferenceActivation,
+  PortableInferenceDescriptorError,
+} from "./experimental/portable-inference-descriptor";
 import { GatewayManagementDeclarationError } from "./gateway-management";
 import { GatewayAuthorityError, gatewayAuthorityFailureLines } from "./gateway-teardown-authority";
+import {
+  LOCAL_MODEL_PROFILE_ENABLED_ENV,
+  LOCAL_MODEL_PROFILE_RUNTIME_ENV,
+  resolveLocalModelProfilePlan,
+} from "./local-model-profile/plan";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
@@ -59,6 +71,7 @@ export interface OnboardCommandOptions {
   autoYes: boolean;
   noOllamaAutostart: boolean;
   experimentalProfile: ExperimentalOnboardProfile | null;
+  portableInferenceActivation: PortableInferenceActivation | null;
   servingProfile: string | null;
   servingProfileProvenance: ServingProfileProvenance | null;
 }
@@ -76,6 +89,7 @@ export interface ResolveOnboardOptionsDeps {
 export interface RunOnboardCommandDeps extends ResolveOnboardOptionsDeps {
   flags: OnboardFlags;
   runOnboard: (options: OnboardCommandOptions) => Promise<void>;
+  loadPortableInferenceDescriptor?: typeof loadPortableInferenceDescriptor;
 }
 
 function fail(deps: ResolveOnboardOptionsDeps, message: string): never {
@@ -224,13 +238,48 @@ function resolveServingProfile(
   return servingProfileProvenance(catalog, selectedProfileId);
 }
 
+function resolveInstallerServingProfile(
+  deps: ResolveOnboardOptionsDeps,
+): ServingProfileProvenance | null {
+  const hasInstallerProfileIntent =
+    String(deps.env[LOCAL_MODEL_PROFILE_ENABLED_ENV] ?? "").trim() !== "" ||
+    String(deps.env[LOCAL_MODEL_PROFILE_RUNTIME_ENV] ?? "").trim() !== "";
+  if (!hasInstallerProfileIntent) return null;
+  try {
+    const catalog = (deps.loadServingCatalog ?? loadServingCatalog)();
+    const plan = resolveLocalModelProfilePlan(catalog, deps.env);
+    if (!plan) return null;
+    validateServingProfileConflicts(plan.preset.metadata.id, deps);
+    return servingProfileProvenance(catalog, plan.preset.metadata.id);
+  } catch (error) {
+    fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 function resolveServingProfileLifecycle(
   flags: OnboardFlags,
   deps: ResolveOnboardOptionsDeps,
 ): ServingProfileProvenance | null {
-  const requested = resolveServingProfile(flags.profile, deps);
+  const explicit = resolveServingProfile(flags.profile, deps);
+  const installerProfile = resolveInstallerServingProfile(deps);
+  if (
+    explicit &&
+    installerProfile &&
+    JSON.stringify(explicit) !== JSON.stringify(installerProfile)
+  ) {
+    fail(
+      deps,
+      `  --profile ${explicit.preset.id} conflicts with installer local model profile ${installerProfile.preset.id}.`,
+    );
+  }
+  const requested = explicit ?? installerProfile;
   if (flags.resume !== true) return requested;
   return resolveResumedServingProfile(requested, deps);
+}
+
+function activeServingProfileId(provenance: ServingProfileProvenance | null): string | null {
+  if (!provenance || provenance.preset.supportState === "disabled") return null;
+  return provenance.preset.id;
 }
 
 function resolveResumedServingProfile(
@@ -326,7 +375,8 @@ export function resolveOnboardOptions(
     autoYes: withPortableDefault(flags.yes, experimentalProfile),
     noOllamaAutostart: withPortableDefault(flags["no-ollama-autostart"], experimentalProfile),
     experimentalProfile,
-    servingProfile: servingProfileProvenance?.preset.id ?? null,
+    portableInferenceActivation: null,
+    servingProfile: activeServingProfileId(servingProfileProvenance),
     servingProfileProvenance,
   };
 }
@@ -356,6 +406,9 @@ function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps):
   if (error instanceof GatewayManagementDeclarationError) {
     fail(deps, `  ${error.message}`);
   }
+  if (error instanceof PortableInferenceDescriptorError) {
+    fail(deps, `  ${error.message}`);
+  }
   // Gateway-authority refusals are reported, never rethrown. Recreation is not
   // selected in one place: `--recreate-sandbox` sets the flag, but `runOnboard`
   // independently honours NEMOCLAW_RECREATE_SANDBOX and reaches the same
@@ -378,11 +431,14 @@ function applyPortableEnvironment(
   env: NodeJS.ProcessEnv,
 ): () => void {
   if (!options.experimentalProfile) return () => {};
+  const activation = options.portableInferenceActivation;
   const portableEnvDefaults = {
     [EXPERIMENTAL_PROFILE_ENV]: options.experimentalProfile ?? undefined,
     [TOOL_DISCLOSURE_ENV]: "direct",
-    NEMOCLAW_PROVIDER: "ollama",
-    NEMOCLAW_MODEL: "qwen3-vl:4b",
+    NEMOCLAW_PROVIDER: activation ? "custom" : "ollama",
+    NEMOCLAW_MODEL: activation?.model ?? "qwen3-vl:4b",
+    NEMOCLAW_ENDPOINT_URL: activation?.baseUrl,
+    NEMOCLAW_PREFERRED_API: activation ? "openai-completions" : undefined,
     NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
     NEMOCLAW_POLICY_MODE: "suggested",
     NEMOCLAW_POLICY_TIER: "personal",
@@ -428,13 +484,43 @@ function toolDisclosureEnvironmentOverride(
   return flags["tool-disclosure"] !== undefined ? options.toolDisclosure : null;
 }
 
+async function activatePortableInference(
+  options: OnboardCommandOptions,
+  deps: RunOnboardCommandDeps,
+  env: NodeJS.ProcessEnv,
+): Promise<{
+  options: OnboardCommandOptions;
+  credentialOverrides: Readonly<Record<string, string>>;
+}> {
+  if (!options.experimentalProfile) return { options, credentialOverrides: {} };
+  const descriptor = await (
+    deps.loadPortableInferenceDescriptor ?? loadPortableInferenceDescriptor
+  )({ env });
+  if (!descriptor) return { options, credentialOverrides: {} };
+  return {
+    options: {
+      ...options,
+      portableInferenceActivation: {
+        schemaVersion: descriptor.schemaVersion,
+        baseUrl: descriptor.baseUrl,
+        model: descriptor.model,
+        expiresAt: descriptor.expiresAt,
+      },
+    },
+    credentialOverrides: { [PORTABLE_INFERENCE_CREDENTIAL_ENV]: descriptor.apiKey },
+  };
+}
+
 export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<void> {
-  const options = resolveOnboardOptions(deps.flags, deps);
+  const resolvedOptions = resolveOnboardOptions(deps.flags, deps);
   const env = deps.env ?? process.env;
   let restorePortableEnvironment = () => {};
   let restoreServingProfileEnvironment = () => {};
   const previousAgentsManifest = env.NEMOCLAW_EXTRA_AGENTS_JSON;
+  let options = resolvedOptions;
   try {
+    const activation = await activatePortableInference(resolvedOptions, deps, env);
+    options = activation.options;
     restorePortableEnvironment = applyPortableEnvironment(options, env);
     restoreServingProfileEnvironment = applyServingProfileEnvironment(options, env);
     if (options.noOllamaAutostart) env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
@@ -444,7 +530,7 @@ export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<vo
     const toolDisclosure = toolDisclosureEnvironmentOverride(options, deps.flags);
     if (toolDisclosure) env[TOOL_DISCLOSURE_ENV] = toolDisclosure;
     if (options.agentsManifest) applyAgentsManifestEnv(options.agentsManifest, env);
-    await deps.runOnboard(options);
+    await withCredentialOverrides(activation.credentialOverrides, () => deps.runOnboard(options));
   } catch (error) {
     handleOnboardCommandError(error, deps);
   } finally {

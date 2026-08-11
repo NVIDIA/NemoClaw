@@ -34,10 +34,14 @@ export function isInstallerManagedWrapperContents(contents: string, binName = "n
   const lines = normalized.split("\n");
   if (lines.length !== 3) return false;
   const [shebang, pathLine, execLine] = lines;
+  const legacyPathLine = pathLine.startsWith('export PATH="') && pathLine.endsWith(':$PATH"');
+  const stablePathLine =
+    /^\[\[ "\$\(command -v node 2>\/dev\/null\)" == "(.+)\/node" \]\] \|\| export PATH="\1:\$PATH"$/u.test(
+      pathLine,
+    );
   return (
     shebang === "#!/usr/bin/env bash" &&
-    pathLine.startsWith('export PATH="') &&
-    pathLine.endsWith(':$PATH"') &&
+    (legacyPathLine || stablePathLine) &&
     execLine.startsWith('exec "') &&
     execLine.endsWith(`/${binName}" "$@"`)
   );

@@ -57,7 +57,7 @@ import {
 // `from(env) → from(state, instance)` model.
 const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
 
-const SANDBOX_NAME = "e2e-openclaw-tui-corr";
+const SANDBOX_NAME = "e2e-oc-tui-corr";
 // OpenClaw 2026.7.1 is the post-fix regression-guard version for #2603 + #3145.
 // Historical buggy builds were older; this live guard asserts the fixed
 // protocol/history contract stays stable on the pinned OpenClaw version.

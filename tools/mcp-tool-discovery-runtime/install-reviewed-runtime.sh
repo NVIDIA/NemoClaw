@@ -14,8 +14,10 @@ cd "$script_dir"
 # Self-hosted GPU builders can have a much smaller connection budget than
 # hosted builders, while dual-stack DNS can add a second failure path. Keep the
 # reviewed install deterministic while bounding each registry attempt and the
-# number of sockets npm can consume. These settings do not weaken lockfile or
-# registry-signature verification below.
+# number of sockets npm can consume. The image build verifies the committed
+# lock and archive integrity locally; the trusted reviewed-npm-audit CI gate
+# verifies registry signatures for this exact lock before main or tag
+# production image publication and before mutable cohort promotion.
 export NODE_OPTIONS="${NODE_OPTIONS:---dns-result-order=ipv4first}"
 export NPM_CONFIG_MAXSOCKETS="${NPM_CONFIG_MAXSOCKETS:-4}"
 export NPM_CONFIG_FETCH_RETRIES="${NPM_CONFIG_FETCH_RETRIES:-5}"
@@ -57,7 +59,6 @@ if [ -n "${NEMOCLAW_CORPORATE_CA_B64:-}" ]; then
 fi
 
 ./npm-ci-locked.sh --ignore-scripts --no-audit --no-fund --no-progress
-npm audit signatures
 npm test
 npm run typecheck
 npm run bundle

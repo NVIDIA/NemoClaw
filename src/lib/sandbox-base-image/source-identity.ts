@@ -16,7 +16,6 @@ export const BASE_IMAGE_INPUT_PATHS = [
   "scripts/security/build-perl-security-packages.sh",
   "scripts/lib/openclaw-npm-remediation.mts",
   "scripts/lib/reviewed-npm-archive.mts",
-  "scripts/checks/node-tar-image-scan.mts",
   "scripts/patch-bundled-npm-brace-expansion.mts",
   "scripts/lib/patch-bundled-npm-ip-address.mts",
   "scripts/patch-bundled-npm-tar.mts",

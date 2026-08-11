@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   assertEndpointResolvesPublic,
+  assertTrustedPrivateEndpointCapability,
+  canonicalizeTrustedPrivateEndpointPins,
   type EndpointDnsLookupFn,
   isOperatorTrustablePrivateIp,
   isTrustedPrivateEndpointCapability,
@@ -95,9 +97,45 @@ describe("trusted private endpoint preflight", () => {
       addresses: ["10.0.0.8"],
       trustedPrivateEndpoint: true,
     });
+    expect(result.trustedPrivateCapability?.host).toBe("mcp.corp.example");
     expect(result.trustedPrivateCapability?.addresses).toEqual(["10.0.0.8"]);
     expect(isTrustedPrivateEndpointCapability(result.trustedPrivateCapability)).toBe(true);
-    expect(isTrustedPrivateEndpointCapability({ addresses: ["10.0.0.8"] })).toBe(false);
+    expect(
+      isTrustedPrivateEndpointCapability({ host: "mcp.corp.example", addresses: ["10.0.0.8"] }),
+    ).toBe(false);
+  });
+
+  it("pins every accepted mixed public and trusted-private answer (#8176)", async () => {
+    const result = await assertEndpointResolvesPublic(
+      "https://mcp.corp.example/mcp",
+      vi.fn(async () => [
+        { address: "93.184.216.34", family: 4 },
+        { address: "10.0.0.8", family: 4 },
+      ]),
+      { trustedPrivateHosts: ["mcp.corp.example"] },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      addresses: ["10.0.0.8", "93.184.216.34"],
+      trustedPrivateEndpoint: true,
+    });
+    expect(result.trustedPrivateCapability).toMatchObject({
+      host: "mcp.corp.example",
+      addresses: ["10.0.0.8", "93.184.216.34"],
+    });
+  });
+
+  it.each([
+    "http://127.0.0.1:8000/v1",
+    "https://inference.local/v1",
+    "http://host.openshell.internal:8000/v1",
+  ])("rejects the generic local endpoint %s before resolution (#8176)", async (endpointUrl) => {
+    const lookup = vi.fn<EndpointDnsLookupFn>();
+    const result = await assertEndpointResolvesPublic(endpointUrl, lookup);
+
+    expect(result).toMatchObject({ ok: false, reasonCode: "rejected" });
+    expect(lookup).not.toHaveBeenCalled();
   });
 
   it("rejects a private result for a different exact host (#8176)", async () => {
@@ -133,6 +171,40 @@ describe("trusted private endpoint preflight", () => {
 });
 
 describe("trusted private endpoint replay", () => {
+  it("uses one canonical pin contract for durable and capability authority (#8176)", async () => {
+    const result = await assertEndpointResolvesPublic(
+      "https://mcp.corp.example/mcp",
+      async () => [
+        { address: "93.184.216.34", family: 4 },
+        { address: "10.0.0.8", family: 4 },
+      ],
+      { trustedPrivateHosts: ["mcp.corp.example"] },
+    );
+    const canonical = canonicalizeTrustedPrivateEndpointPins("MCP.CORP.EXAMPLE.", [
+      "93.184.216.34",
+      "10.0.0.8",
+    ]);
+
+    expect(canonical).toEqual({
+      host: "mcp.corp.example",
+      addresses: ["10.0.0.8", "93.184.216.34"],
+    });
+    expect(
+      assertTrustedPrivateEndpointCapability(
+        canonical.host,
+        canonical.addresses,
+        result.trustedPrivateCapability,
+      ).addresses,
+    ).toEqual(canonical.addresses);
+    expect(() =>
+      assertTrustedPrivateEndpointCapability(
+        canonical.host,
+        ["10.0.0.8"],
+        result.trustedPrivateCapability,
+      ),
+    ).toThrow(/exact pins/);
+  });
+
   it("reissues capability authority from exact durable pins without DNS (#8267)", () => {
     const replay = replayTrustedPrivateEndpoint("MCP.CORP.EXAMPLE.", [
       "fd00:0:0:0:0:0:0:10",
@@ -141,8 +213,26 @@ describe("trusted private endpoint replay", () => {
 
     expect(replay.host).toBe("mcp.corp.example");
     expect(replay.addresses).toEqual(["10.0.0.8", "fd00::10"]);
+    expect(replay.trustedPrivateCapability.host).toBe("mcp.corp.example");
     expect(replay.trustedPrivateCapability.addresses).toEqual(replay.addresses);
     expect(isTrustedPrivateEndpointCapability(replay.trustedPrivateCapability)).toBe(true);
+  });
+
+  it("replays complete mixed pins for consumers that allow them (#8176)", () => {
+    const replay = replayTrustedPrivateEndpoint("mcp.corp.example", ["93.184.216.34", "10.0.0.8"]);
+
+    expect(replay.trustedPrivateCapability).toMatchObject({
+      host: "mcp.corp.example",
+      addresses: ["10.0.0.8", "93.184.216.34"],
+    });
+  });
+
+  it("rejects mixed durable pins for consumers that require routed-private pins (#8267)", () => {
+    expect(() =>
+      replayTrustedPrivateEndpoint("mcp.corp.example", ["10.0.0.8", "93.184.216.34"], {
+        requireAllPrivate: true,
+      }),
+    ).toThrow(/outside the supported private ranges/);
   });
 
   it.each([

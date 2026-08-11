@@ -31,6 +31,7 @@ export function dockerRunCommandBetween(startMarker: string, endMarker: string):
     .slice(runIndex, end)
     .trim()
     .replace(/^RUN\s+/, "")
+    .replace(/^(?:--[a-z-]+=[^\s]+\s+)+/u, "")
     .split("\n")
     .filter((line) => !line.trimStart().startsWith("#"))
     .join("\n")

@@ -16,6 +16,7 @@ import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
 import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 import {
   DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   prepareDockerDriverGatewayConfigEnv,
 } from "./docker-driver-gateway-config";
 import { buildDockerDriverGatewayLocalTlsEnv } from "./docker-driver-gateway-local-tls";
@@ -31,6 +32,11 @@ import {
 import { isPortableExperimentalProfile, PORTABLE_HOST_GATEWAY_IP } from "./docker-driver-platform";
 
 export { getGatewayHttpsEndpoint, startPackageManagedDockerDriverGateway };
+
+/** Return the configured gateway port used by Docker-driver runtime helpers. */
+export function getConfiguredGatewayPort(): number {
+  return GATEWAY_PORT;
+}
 
 export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "CONTAINERS_CONF",
@@ -48,9 +54,11 @@ export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "OPENSHELL_DOCKER_NETWORK_NAME",
   "OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
   "OPENSHELL_DOCKER_SUPERVISOR_BIN",
+  "OPENSHELL_PODMAN_SOCKET",
   "OPENSHELL_GATEWAY_CONFIG",
   "OPENSHELL_VM_DRIVER_STATE_DIR",
   "OPENSHELL_DRIVER_DIR",
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   "NETAVARK_FW",
 ] as const;
 
@@ -59,6 +67,7 @@ export interface BuildDockerDriverGatewayEnvOptions {
   gatewayPort?: number;
   stateDir: string;
   dockerNetworkName?: string;
+  podmanSocketPath?: string;
   getDockerSupervisorImage: () => string;
   resolveSandboxBin: () => string | null;
 }
@@ -222,6 +231,7 @@ export function buildDockerDriverGatewayEnv({
   gatewayPort = GATEWAY_PORT,
   stateDir,
   dockerNetworkName = "openshell-docker",
+  podmanSocketPath,
   getDockerSupervisorImage,
   resolveSandboxBin,
 }: BuildDockerDriverGatewayEnvOptions): Record<string, string> {
@@ -239,6 +249,20 @@ export function buildDockerDriverGatewayEnv({
   };
   if (portable) {
     env.NETAVARK_FW = "iptables";
+    if (podmanSocketPath !== undefined) {
+      const rawSocketPath = String(podmanSocketPath);
+      const normalizedSocketPath = rawSocketPath.trim();
+      if (
+        normalizedSocketPath === "" ||
+        rawSocketPath !== normalizedSocketPath ||
+        /[\0\r\n]/u.test(rawSocketPath) ||
+        !path.isAbsolute(normalizedSocketPath) ||
+        path.normalize(normalizedSocketPath) !== normalizedSocketPath
+      ) {
+        throw new Error("OpenShell Podman gateway socket must be a safe normalized absolute path.");
+      }
+      env.OPENSHELL_PODMAN_SOCKET = normalizedSocketPath;
+    }
     const containersConf = process.env.CONTAINERS_CONF?.trim();
     if (containersConf) env.CONTAINERS_CONF = containersConf;
   }

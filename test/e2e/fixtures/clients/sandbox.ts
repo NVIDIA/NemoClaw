@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as importedSandboxNameContract from "../../../../nemoclaw/src/shared/sandbox-name.cts";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../shell-probe.ts";
 import { trustedShellCommand } from "../shell-probe.ts";
@@ -11,6 +12,13 @@ import {
   outputContainsSandbox,
   resultText,
 } from "./command.ts";
+
+const sandboxNameContract = (
+  "default" in importedSandboxNameContract && importedSandboxNameContract.default
+    ? importedSandboxNameContract.default
+    : importedSandboxNameContract
+) as typeof import("../../../../nemoclaw/src/shared/sandbox-name.cts");
+const { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } = sandboxNameContract;
 
 const SANDBOX_ALREADY_ABSENT =
   /\bNotFound\b|\bNot Found\b|sandbox[^\n]*(?:not found|not present|does not exist)|no such sandbox/i;
@@ -222,8 +230,10 @@ export class SandboxClient {
 }
 
 export function validateSandboxName(name: string): void {
-  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name)) {
-    throw new Error(`sandbox name is invalid for fixture client: ${name}`);
+  if (!isValidName(name)) {
+    throw new Error(
+      `sandbox name is invalid for fixture client: ${diagnosticPreview(name)}. Allowed format: ${NAME_ALLOWED_FORMAT}.`,
+    );
   }
 }
 

@@ -223,7 +223,7 @@ describe("compatible-endpoint context window", () => {
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
   });
 
-  it("does not probe an allowlisted endpoint with mixed private and public DNS answers (#8176)", async () => {
+  it("probes an allowlisted endpoint with every mixed private and public DNS pin (#8176)", async () => {
     const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }));
     const messages: string[] = [];
     const env: NodeJS.ProcessEnv = {
@@ -239,9 +239,17 @@ describe("compatible-endpoint context window", () => {
       logger: { log: (m) => messages.push(m), warn: (m) => messages.push(m) },
     });
 
-    expect(fetchModels).not.toHaveBeenCalled();
-    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
-    expect(messages.some((message) => message.includes("93.184.216.34"))).toBe(true);
+    expect(fetchModels).toHaveBeenCalledWith(
+      "https://llm.corp.example/v1",
+      "",
+      ["10.0.0.8", "93.184.216.34"],
+      expect.objectContaining({
+        host: "llm.corp.example",
+        addresses: ["10.0.0.8", "93.184.216.34"],
+      }),
+    );
+    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
+    expect(messages).toEqual(["  ✓ Using endpoint max_model_len: 65536 tokens"]);
   });
 
   it.each([

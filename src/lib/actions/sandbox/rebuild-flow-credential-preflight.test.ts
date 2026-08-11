@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
-} from "../../../../test/helpers/rebuild-flow-test-harness";
+  snapshotEnv,
+} from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
 
 type Harness = ReturnType<typeof createRebuildFlowHarness>;
@@ -57,26 +59,11 @@ function diagnostics(harness: Harness): string {
   return harness.errorSpy.mock.calls.flat().map(String).join("\n");
 }
 
-function makeMessagingPlan() {
-  return {
-    schemaVersion: 1,
+function makeStagedHermesMessagingPlan() {
+  return makeMessagingPlan({
     sandboxName: "alpha",
     agent: "hermes",
-    workflow: "onboard",
-    channels: [
-      {
-        channelId: "discord",
-        displayName: "discord",
-        authMode: "token-paste",
-        active: true,
-        selected: true,
-        configured: true,
-        disabled: false,
-        inputs: [],
-        hooks: [],
-      },
-    ],
-    disabledChannels: [],
+    channels: ["discord"],
     credentialBindings: [
       {
         channelId: "discord",
@@ -89,12 +76,7 @@ function makeMessagingPlan() {
         credentialHash: "discord-bot-token-hash",
       },
     ],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
+  });
 }
 
 describe("rebuildSandbox flow: credential preflight", () => {
@@ -124,6 +106,8 @@ describe("rebuildSandbox flow: credential preflight", () => {
     expect(output).toContain("Sandbox is untouched");
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
   });
 
   it("continues when canonical hydration supplies a saved provider credential", async () => {
@@ -349,7 +333,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
   });
 
   it("copies the staged Hermes messaging plan into the rebuild resume session", async () => {
-    const plan = makeMessagingPlan();
+    const plan = makeStagedHermesMessagingPlan();
     const harness = createRebuildFlowHarness({
       sandboxEntry: {
         agent: "hermes",
@@ -557,6 +541,53 @@ describe("rebuildSandbox flow: credential preflight", () => {
 
     expect(diagnostics(harness)).toContain("Sandbox is untouched");
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+  });
+
+  it("registers an exported Hermes API key before backup without logging it", async () => {
+    const restoreEnv = snapshotEnv(["NOUS_API_KEY"]);
+    process.env.NOUS_API_KEY = "nous-key-from-env";
+
+    try {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          agent: "hermes",
+          provider: "hermes-provider",
+          model: MODEL,
+          credentialEnv: "NOUS_API_KEY",
+          hermesAuthMethod: "api_key",
+        },
+        hermesProviderExists: false,
+      });
+      configureSession(harness, "hermes-provider", "NOUS_API_KEY", {
+        agent: "hermes",
+        hermesAuthMethod: "api_key",
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(harness.registerHermesInferenceProviderSpy).toHaveBeenCalledWith(
+        "nous-key-from-env",
+        expect.any(Function),
+        "NOUS_API_KEY",
+      );
+      const output = [...harness.logSpy.mock.calls, ...harness.errorSpy.mock.calls]
+        .flat()
+        .map(String)
+        .join("\n");
+      expect(output).toContain(
+        "Hermes Provider is not registered in OpenShell; registering it from the configured exported API-key environment variable before rebuild.",
+      );
+      expect(output).not.toContain("NOUS_API_KEY");
+      expect(output).not.toContain("nous-key-from-env");
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+      expect(harness.registerHermesInferenceProviderSpy.mock.invocationCallOrder[0]!).toBeLessThan(
+        harness.backupSandboxStateSpy.mock.invocationCallOrder[0]!,
+      );
+    } finally {
+      restoreEnv();
+    }
   });
 
   it("rejects missing Hermes OAuth state before backup", async () => {

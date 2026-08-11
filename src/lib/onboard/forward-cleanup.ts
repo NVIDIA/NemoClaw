@@ -10,10 +10,15 @@ export type ForwardStopRunner = (
   opts: { ignoreError?: boolean; suppressOutput?: boolean },
 ) => unknown;
 
+/**
+ * Returns the serialized forward list on success. An empty string means the
+ * list query succeeded with no entries; `null` means ownership is unknown
+ * because the query did not return a result.
+ */
 export type ForwardListRunner = (
   args: string[],
   opts: { ignoreError?: boolean; timeout?: number },
-) => string;
+) => string | null;
 
 /**
  * `openshell forward stop <port>` — port-scoped, kills whatever forward is
@@ -64,17 +69,22 @@ export function bestEffortForwardStopForSandbox(
   port: string | number,
   sandboxName: string,
 ): "stopped" | "owned-other" | "no-entry" | "list-failed" {
-  // Let runCaptureOpenshell throw on failure/timeout so the catch branch
-  // returns "list-failed". With ignoreError: true the runner would swallow
-  // the error and return "", which getOccupiedPorts parses as an empty map
-  // and the "no-entry" branch below would still run the stop — exactly the
-  // collateral-damage case this helper exists to avoid.
-  let listOutput = "";
+  // A runner reports failure either by throwing or by returning null; both
+  // mean "list-failed" here. Do not pass either result to getOccupiedPorts,
+  // which parses an empty string into an empty map, so the "no-entry" branch
+  // below would still run the stop against this sandbox's own live forward
+  // without any ownership evidence. A runner that ignores the command failure
+  // itself must convert it to null, never to an empty string, which is
+  // indistinguishable from a genuinely empty forward list.
+  let listOutput: string | null = null;
   try {
     listOutput = runCaptureOpenshell(["forward", "list"], {
       timeout: OPENSHELL_PROBE_TIMEOUT_MS,
     });
   } catch {
+    return "list-failed";
+  }
+  if (listOutput === null) {
     return "list-failed";
   }
   const owner = getOccupiedPorts(listOutput).get(String(port)) ?? null;

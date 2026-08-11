@@ -92,13 +92,15 @@ describe("setupNim vLLM route containment", () => {
       ok: true,
       api: "openai-completions",
     }));
+    const selection = state(null);
     const handler = createSetupNimVllmHandler(
       deps({
         runCapture,
-        getLocalProviderBaseUrl: () => "http://10.40.0.1:8000/v1",
+        getLocalProviderBaseUrl: () => "http://host.openshell.internal:8000/v1",
         getLocalProviderValidationBaseUrl: () => "http://10.40.0.1:8000/v1",
         getManagedVllmProviderBinding: () => ({
-          baseUrl: "http://10.40.0.1:8000/v1",
+          baseUrl: "http://host.openshell.internal:8000/v1",
+          validationBaseUrl: "http://10.40.0.1:8000/v1",
           apiKey,
         }),
         queryVllmModels,
@@ -106,7 +108,8 @@ describe("setupNim vLLM route containment", () => {
       }),
     );
 
-    await expect(handler(state(null))).resolves.toBe("selected");
+    await expect(handler(selection)).resolves.toBe("selected");
+    expect(selection.endpointUrl).toBe("http://host.openshell.internal:8000/v1");
     expect(runCapture).not.toHaveBeenCalled();
     expect(queryVllmModels).toHaveBeenCalledWith("http://10.40.0.1:8000/v1", apiKey);
     expect(validateOpenAiLikeSelection).toHaveBeenCalledWith(
@@ -132,6 +135,62 @@ describe("setupNim vLLM route containment", () => {
     expect(renderedOutput).not.toContain(apiKey);
     expect(renderedOutput).toContain("Using managed vLLM endpoint");
     expect(renderedOutput).not.toContain("localhost:8000");
+  });
+
+  it("authorizes a managed loopback endpoint without a trusted-private capability (#8539)", async () => {
+    const apiKey = "a".repeat(64);
+    const queryVllmModels = vi.fn(() => JSON.stringify({ data: [{ id: "served/model" }] }));
+    const validateOpenAiLikeSelection = vi.fn(async () => ({
+      ok: true,
+      api: "openai-completions",
+    }));
+    const handler = createSetupNimVllmHandler(
+      deps({
+        getLocalProviderBaseUrl: () => "http://127.0.0.1:8000/v1",
+        getLocalProviderValidationBaseUrl: () => "http://127.0.0.1:8000/v1",
+        getManagedVllmProviderBinding: () => ({
+          baseUrl: "http://127.0.0.1:8000/v1",
+          apiKey,
+        }),
+        queryVllmModels,
+        validateOpenAiLikeSelection,
+      }),
+    );
+
+    await expect(handler(state(null))).resolves.toBe("selected");
+    expect(validateOpenAiLikeSelection).toHaveBeenCalledWith(
+      "Local vLLM",
+      "http://127.0.0.1:8000/v1",
+      "served/model",
+      null,
+      undefined,
+      undefined,
+      { apiKey, pinnedAddresses: [], trustedPrivateCapability: undefined },
+    );
+  });
+
+  it("fails closed for a managed endpoint that is neither loopback nor operator-trusted private", async () => {
+    const queryVllmModels = vi.fn(() => JSON.stringify({ data: [{ id: "served/model" }] }));
+    const validateOpenAiLikeSelection = vi.fn(async () => ({ ok: true }));
+    const handler = createSetupNimVllmHandler(
+      deps({
+        getLocalProviderBaseUrl: () => "http://93.184.216.34:8000/v1",
+        getLocalProviderValidationBaseUrl: () => "http://93.184.216.34:8000/v1",
+        getManagedVllmProviderBinding: () => ({
+          baseUrl: "http://93.184.216.34:8000/v1",
+          apiKey: "a".repeat(64),
+        }),
+        queryVllmModels,
+        validateOpenAiLikeSelection,
+      }),
+    );
+
+    await expect(handler(state(null))).rejects.toThrow("exit 1");
+    expect(queryVllmModels).not.toHaveBeenCalled();
+    expect(validateOpenAiLikeSelection).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      "  Managed vLLM endpoint authorization could not be verified.",
+    );
   });
 
   it("rejects a root-matched alias with topology-neutral recovery for a managed dual endpoint", async () => {

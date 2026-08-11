@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { validateFullE2eEvidence } from "../.agents/skills/nemoclaw-maintainer-e2e/scripts/validate-full-e2e-evidence.mts";
 
 const candidateSha = "a".repeat(40);
+const workflowSha = "b".repeat(40);
 
 function validEvidence() {
   return {
@@ -18,6 +19,9 @@ function validEvidence() {
       workspaceName: "nclaw-e2e-100-2",
     },
     dispatch: {
+      allowDgxSparkRunnerQueue: false,
+      allowJetsonDispatch: false,
+      allowJetsonRunnerQueue: false,
       candidateSha,
       emptySelectors: true,
       eventName: "workflow_dispatch",
@@ -65,6 +69,44 @@ function validEvidence() {
   };
 }
 
+function validV2Evidence() {
+  const evidence = validEvidence();
+  return {
+    ...evidence,
+    dispatch: {
+      ...evidence.dispatch,
+      baseSha: "c".repeat(40),
+      candidateRepository: "NVIDIA/NemoClaw",
+      kind: "nemoclaw-e2e-dispatch-v2",
+      prNumber: 8583,
+      repository: "NVIDIA/NemoClaw",
+      workflowSha,
+    },
+    run: {
+      ...evidence.run,
+      head_sha: workflowSha,
+    },
+  };
+}
+
+function validDirectMainV2Evidence() {
+  const evidence = validV2Evidence();
+  return {
+    ...evidence,
+    dispatch: {
+      ...evidence.dispatch,
+      baseSha: candidateSha,
+      candidateRepository: "NVIDIA/NemoClaw",
+      prNumber: null,
+      workflowSha: candidateSha,
+    },
+    run: {
+      ...evidence.run,
+      head_sha: candidateSha,
+    },
+  };
+}
+
 describe("nemoclaw-maintainer-e2e evidence validation", () => {
   it("returns exact-candidate job, Launchable E2E, and cleanup evidence (#7487)", () => {
     expect(validateFullE2eEvidence(validEvidence())).toEqual({
@@ -77,6 +119,9 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
         workspaceName: "nclaw-e2e-100-2",
       },
       dispatch: {
+        allowDgxSparkRunnerQueue: false,
+        allowJetsonDispatch: false,
+        allowJetsonRunnerQueue: false,
         emptySelectors: true,
         includeStagingBrevLaunchable: true,
       },
@@ -90,6 +135,53 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
       },
       runUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/100",
     });
+  });
+
+  it("accepts a v2 receipt bound to the candidate and trusted workflow SHAs (#8497)", () => {
+    expect(validateFullE2eEvidence(validV2Evidence())).toMatchObject({
+      attempt: 2,
+      candidateSha,
+      runUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/100",
+    });
+  });
+
+  it("accepts a direct-main v2 receipt with identical repository and SHA identities (#8497)", () => {
+    expect(validateFullE2eEvidence(validDirectMainV2Evidence())).toMatchObject({
+      candidateSha,
+      runUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/100",
+    });
+  });
+
+  it.each([
+    ["candidateRepository", "contributor/NemoClaw", "dispatch.candidateRepository"],
+    ["baseSha", "c".repeat(40), "dispatch.baseSha"],
+    ["workflowSha", workflowSha, "dispatch.workflowSha"],
+  ])("rejects a direct-main v2 receipt with a mismatched %s identity (#8497)", (field, value, message) => {
+    const evidence = validDirectMainV2Evidence();
+    (evidence.dispatch as Record<string, unknown>)[field] = value;
+
+    expect(() => validateFullE2eEvidence(evidence)).toThrow(message);
+  });
+
+  it.each([
+    ["repository", "other/NemoClaw", "dispatch.repository"],
+    ["prNumber", 0, "dispatch.prNumber"],
+    ["candidateRepository", "not-a-repository", "dispatch.candidateRepository"],
+    ["candidateSha", "d".repeat(40), "dispatch.candidateSha"],
+    ["baseSha", "short", "dispatch.baseSha"],
+    ["workflowSha", "short", "dispatch.workflowSha"],
+  ])("rejects a v2 receipt with a mismatched %s (#8497)", (field, value, message) => {
+    const evidence = validV2Evidence();
+    (evidence.dispatch as Record<string, unknown>)[field] = value;
+
+    expect(() => validateFullE2eEvidence(evidence)).toThrow(message);
+  });
+
+  it("rejects a v2 run whose head is the candidate instead of the trusted workflow (#8497)", () => {
+    const evidence = validV2Evidence();
+    evidence.run.head_sha = candidateSha;
+
+    expect(() => validateFullE2eEvidence(evidence)).toThrow("run.head_sha");
   });
 
   it("accepts successful Launchable evidence from an earlier attempt of the same run (#7487)", () => {
@@ -128,6 +220,27 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
         evidence.dispatch.jobs = "staging-brev-launchable";
       },
       "dispatch.jobs",
+    ],
+    [
+      "a full dispatch that opts into Colossus Jetson execution",
+      (evidence: ReturnType<typeof validEvidence>) => {
+        evidence.dispatch.allowJetsonDispatch = true;
+      },
+      "dispatch.allowJetsonDispatch",
+    ],
+    [
+      "a full dispatch that enables the retired Jetson runner receipt field",
+      (evidence: ReturnType<typeof validEvidence>) => {
+        evidence.dispatch.allowJetsonRunnerQueue = true;
+      },
+      "dispatch.allowJetsonRunnerQueue",
+    ],
+    [
+      "a full dispatch that opts into the DGX Spark runner queue",
+      (evidence: ReturnType<typeof validEvidence>) => {
+        evidence.dispatch.allowDgxSparkRunnerQueue = true;
+      },
+      "dispatch.allowDgxSparkRunnerQueue",
     ],
     [
       "a skipped Launchable E2E job",

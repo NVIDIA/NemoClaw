@@ -1,0 +1,23 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "name": "nemoclaw-managed-image-messaging-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Locked production dependency graph for the managed OpenClaw messaging capability union",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@openclaw/discord": "2026.7.1",
+    "@openclaw/googlechat": "2026.7.1",
+    "@openclaw/msteams": "2026.7.1",
+    "@openclaw/slack": "2026.7.1",
+    "@openclaw/whatsapp": "2026.7.1",
+    "@tencent-weixin/openclaw-weixin": "2.4.3",
+    "agent-base": "6.0.2",
+    "axios": "1.18.0",
+    "https-proxy-agent": "5.0.1",
+    "undici": "8.10.0"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

@@ -11,13 +11,13 @@ import path from "node:path";
 
 import { redirectInheritedChildStdoutToStderr } from "./cli/stdout-guard";
 import { shellQuote } from "./core/shell-quote";
+import { detectDockerHost } from "./platform";
 import {
   diagnosticPreview,
   NAME_ALLOWED_FORMAT,
   NAME_MAX_LENGTH,
   NAME_VALID_PATTERN,
-} from "./name-validation";
-import { detectDockerHost } from "./platform";
+} from "./sandbox-name-contract";
 import { redact, redactError, writeRedactedResult } from "./security/redact";
 import { buildSubprocessEnv } from "./subprocess-env";
 
@@ -376,7 +376,8 @@ function runCaptureEx(
 }
 
 /**
- * Validate a name (sandbox, instance, container) against RFC 1123 label rules.
+ * Validate a name (sandbox, instance, container) against the canonical
+ * OpenShell-compatible label rules.
  * Rejects shell metacharacters, path traversal, and empty/overlength names.
  */
 function validateName(name: string, label = "name"): string {

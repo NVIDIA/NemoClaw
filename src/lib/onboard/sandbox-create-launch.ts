@@ -26,6 +26,12 @@ import {
 type OpenshellShellCommand = (args: string[]) => string;
 type OpenshellArgv = (args: string[]) => string[];
 
+export const OPENSHELL_SANDBOX_SUPERVISOR_ARGV = Object.freeze([
+  "/opt/openshell/bin/openshell-sandbox",
+  "--workdir",
+  "/sandbox",
+] as const);
+
 // These non-secret scheduler controls are intentionally forwarded for bounded
 // live-test and operator tuning. Keep this as an exact allowlist: the host's
 // broader NEMOCLAW_* environment must not become sandbox runtime input.
@@ -338,9 +344,13 @@ export async function prepareSandboxCreateLaunchWithPrebuild(
   input: SandboxCreateLaunchWithPrebuildInput,
 ): Promise<SandboxCreateLaunchWithPrebuild> {
   const { prebuild: prebuildInput, ...launchInput } = input;
+  const requiresLocalBuildKit =
+    prebuildInput.origin === "generated" &&
+    (input.agent == null || input.agent.name === "openclaw" || input.agent.name === "hermes");
   const prebuild = await prebuildSandboxImageIfEligible({
     ...prebuildInput,
     createArgs: input.createArgs,
+    requiresLocalBuildKit,
     sandboxName: input.sandboxName,
   });
   return {

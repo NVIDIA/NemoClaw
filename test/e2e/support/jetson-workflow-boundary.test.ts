@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   validateE2eWorkflowBoundary,
-  validateJetsonRunnerDispatchBoundary,
+  validateJetsonDispatchBoundary,
 } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract.ts";
 
@@ -13,87 +13,126 @@ function validateWorkflowMutation(
 ): string[] {
   const workflow = readWorkflow();
   mutate(workflow);
-  return validateJetsonRunnerDispatchBoundary(workflow);
+  return validateJetsonDispatchBoundary(workflow);
 }
 
 describe("Jetson nvmap GPU E2E workflow boundary", () => {
-  it("rejects unsafe runner opt-in, routing, and guard ordering drift (#6430)", () => {
+  it("rejects a permissive Colossus dispatch opt-in (#8142)", () => {
     const inputErrors = validateWorkflowMutation((workflow) => {
       const triggers = (workflow.on ?? workflow[true as unknown as string]) as {
         workflow_dispatch?: {
           inputs?: Record<string, { default?: unknown; description?: string; type?: string }>;
         };
       };
-      const input = triggers.workflow_dispatch!.inputs!.allow_jetson_runner_queue;
+      const input = triggers.workflow_dispatch!.inputs!.allow_jetson_dispatch;
       input.type = "string";
       input.default = true;
-      input.description = "Queue the runner";
+      input.description = "Dispatch the Jetson";
     });
     expect(inputErrors).toEqual(
       expect.arrayContaining([
-        "workflow_dispatch allow_jetson_runner_queue input must be boolean",
-        "workflow_dispatch allow_jetson_runner_queue input must default to false",
-        "workflow_dispatch allow_jetson_runner_queue input must identify repository administrators and NVIDIA/NemoClaw Settings -> Actions -> Runners as the authoritative runner inventory, and document queued timeout behavior",
-      ]),
-    );
-
-    const guardErrors = validateWorkflowMutation((workflow) => {
-      const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {
-        "runs-on"?: string;
-        if?: string;
-        steps?: Array<{ if?: string; name?: string; uses?: string }>;
-      };
-      job["runs-on"] = "self-hosted";
-      job.if = "${{ true }}";
-      const steps = job.steps!;
-      const guardIndex = steps.findIndex((step) => step.name === "Guard Jetson runner dispatch");
-      const [guard] = steps.splice(guardIndex, 1);
-      guard!.if = "always()";
-      const authIndex = steps.findIndex((step) => step.name === "Authenticate to Docker Hub");
-      steps.splice(authIndex + 1, 0, guard!);
-    });
-    expect(guardErrors).toEqual(
-      expect.arrayContaining([
-        "jetson-nvmap-gpu job must queue the configured runner for main and default manual runs",
-        "jetson-nvmap-gpu job must use the trusted-main selector condition",
-        "jetson-nvmap-gpu dispatch guard must run before Docker Hub auth",
-        "jetson-nvmap-gpu dispatch guard must reject unconfirmed selective queueing",
+        "workflow_dispatch allow_jetson_dispatch input must be boolean",
+        "workflow_dispatch allow_jetson_dispatch input must default to false",
+        "workflow_dispatch allow_jetson_dispatch input must require the Colossus dispatcher, tunnel, cleanup helper, repository URL variable, and deployment checks",
       ]),
     );
   });
 
-  it("rejects a Jetson guard that only prints the fallback runner label (#6430)", () => {
+  it("keeps opt-in and trusted selectors before controller assignment (#8142)", () => {
     const errors = validateWorkflowMutation((workflow) => {
       const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {
-        steps?: Array<{
-          env?: Record<string, string>;
-          name?: string;
-          run?: string;
-        }>;
+        if?: string;
       };
-      const guard = job.steps?.find((step) => step.name === "Guard Jetson runner dispatch");
-      expect(guard).toBeDefined();
-      guard!.env = {
-        JETSON_E2E_RUNNER_LABEL: "linux-arm64-gpu-jetson-orin-latest-1",
+      job.if = "${{ true }}";
+    });
+
+    expect(errors).toContain(
+      "jetson-nvmap-gpu job must require the dispatch opt-in, trusted main workflow dispatch, same-repository candidate, and target selectors",
+    );
+  });
+
+  it("queues every Jetson dispatch on one fixed device without cancellation (#8142)", () => {
+    const workflow = readWorkflow();
+    const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {
+      concurrency?: Record<string, unknown>;
+    };
+    job.concurrency = {
+      group: "jetson-${{ github.ref }}",
+      queue: 1,
+      "cancel-in-progress": true,
+    };
+    expect(validateJetsonDispatchBoundary(workflow)).toContain(
+      "jetson-nvmap-gpu concurrency must queue every dispatch on one fixed device without cancellation",
+    );
+  });
+
+  it("rejects candidate execution or credential-bearing controller steps (#8142)", () => {
+    const errors = validateWorkflowMutation((workflow) => {
+      const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {
+        permissions?: Record<string, string>;
+        steps?: Array<{ name?: string; run?: string; with?: Record<string, unknown> }>;
       };
-      guard!.run = guard!.run?.replace(
-        "${JETSON_E2E_RUNNER_LABEL}",
-        "linux-arm64-gpu-jetson-orin-latest-1",
-      );
+      job.permissions!.contents = "write";
+      const checkout = job.steps!.find(
+        (step) => step.name === "Check out trusted Jetson controller",
+      )!;
+      checkout.with!.ref = "${{ inputs.checkout_sha }}";
+      const dispatch = job.steps!.find(
+        (step) => step.name === "Dispatch exact commit to Jetson through Colossus",
+      )!;
+      dispatch.run = "bash candidate-script.sh";
     });
 
     expect(errors).toEqual(
       expect.arrayContaining([
-        "jetson-nvmap-gpu dispatch guard must receive the configured Jetson runner label",
-        "step 'Guard Jetson runner dispatch' run script must include ${JETSON_E2E_RUNNER_LABEL}",
-        "step 'Guard Jetson runner dispatch' run script must not include linux-arm64-gpu-jetson-orin-latest-1",
+        "jetson-nvmap-gpu controller must grant only contents:read and id-token:write",
+        "jetson-nvmap-gpu checkout must use the trusted workflow SHA without credentials",
+        "jetson-nvmap-gpu controller must dispatch only the exact candidate and configured URL",
       ]),
     );
   });
 
-  it("accepts the real workflow without Jetson queue contract errors (#6430)", () => {
-    const errors = validateE2eWorkflowBoundary();
-    expect(errors.filter((error) => /jetson|allow_jetson_runner_queue/iu.test(error))).toEqual([]);
-    expect(errors).toEqual([]);
+  it("rejects a direct OpenShell installer step in the Jetson controller (#8142)", () => {
+    const errors = validateWorkflowMutation((workflow) => {
+      const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {
+        steps?: Array<{ name?: string; run?: string }>;
+      };
+      job.steps!.push({
+        name: "Install OpenShell directly",
+        run: "bash scripts/install-openshell.sh",
+      });
+    });
+
+    expect(errors).toContain(
+      "jetson-nvmap-gpu controller must contain only checkout, Node setup, dispatch, and upload",
+    );
+  });
+
+  it("keeps the runner temporary artifact path on the dispatch step (#8142)", () => {
+    const errors = validateWorkflowMutation((workflow) => {
+      const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {
+        env?: Record<string, string>;
+        steps?: Array<{ env?: Record<string, string>; name?: string }>;
+      };
+      job.env = {
+        E2E_ARTIFACT_DIR: "${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu",
+      };
+      const dispatch = job.steps!.find(
+        (step) => step.name === "Dispatch exact commit to Jetson through Colossus",
+      )!;
+      dispatch.env!.E2E_ARTIFACT_DIR = "${{ github.workspace }}/e2e-artifacts";
+    });
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "jetson-nvmap-gpu controller must not define a job-level environment",
+        "jetson-nvmap-gpu controller must dispatch only the exact candidate and configured URL",
+      ]),
+    );
+  });
+
+  it("accepts the real workflow without Jetson dispatch errors (#8142)", () => {
+    expect(validateJetsonDispatchBoundary(readWorkflow())).toEqual([]);
+    expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 });

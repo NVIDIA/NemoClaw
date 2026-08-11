@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // sourceOfTruth: These are the canonical blueprint sandbox and provider name
-// grammars. Sandbox names are RFC 1035 labels; provider names mirror the
-// existing NemoClaw provider contract. This module is compiled to generated
-// .cjs/.d.cts files by build:cli before both the plugin and root CLI are built.
+// grammars. Sandbox names use NemoClaw's OpenShell-compatible label subset;
+// provider names mirror the existing NemoClaw provider contract. This module
+// is compiled to generated .cjs/.d.cts files by build:cli before both the
+// plugin and root CLI are built.
 // consumers: The ESM plugin runner (nemoclaw/src/blueprint/runner.ts) and
 // migration snapshot (nemoclaw/src/blueprint/snapshot.ts) import the generated
 // .cjs directly; the root CLI re-exports the sandbox constants through
@@ -22,17 +23,21 @@
 // or provider identifier, or both grammars are enforced by shared upstream
 // contracts.
 
-export const NAME_MAX_LENGTH = 63;
+// OpenShell v0.0.99 routes sandbox and workspace identities through labels
+// capped at 19 characters. Keep NemoClaw's canonical sandbox-name boundary at
+// that upstream limit so invalid creates fail before any gateway mutation.
+export const NAME_MAX_LENGTH = 19;
 export const PROVIDER_NAME_MAX_LENGTH = 128;
 
-// RFC 1035 label: starts with a lowercase letter, then lowercase
-// letters/digits/internal hyphens, ends with a letter or digit.
-export const NAME_VALID_PATTERN = /^[a-z]([a-z0-9-]*[a-z0-9])?$/;
+// NemoClaw label: starts with a lowercase letter, then lowercase
+// letters/digits/single internal hyphens, and ends with a letter or digit.
+// OpenShell v0.0.99 reserves `--` as a routed-name segment delimiter.
+export const NAME_VALID_PATTERN = /^(?!.*--)[a-z]([a-z0-9-]*[a-z0-9])?$/;
 export const PROVIDER_NAME_VALID_PATTERN = /^[A-Za-z][A-Za-z0-9._-]{0,127}$/;
 
 export const NAME_ALLOWED_FORMAT =
   `1-${NAME_MAX_LENGTH} characters, lowercase, starts with a letter, ` +
-  "letters/numbers/internal hyphens only, ends with letter/number";
+  "letters/numbers/single internal hyphens only, ends with letter/number";
 export const PROVIDER_NAME_ALLOWED_FORMAT =
   `1-${PROVIDER_NAME_MAX_LENGTH} characters, starts with a letter, ` +
   "letters/numbers/dots/underscores/hyphens only";
@@ -65,8 +70,8 @@ export function diagnosticPreview(value: unknown): string {
 }
 
 /**
- * True when `value` is a well-formed sandbox name: a non-empty RFC 1035 label
- * no longer than NAME_MAX_LENGTH characters.
+ * True when `value` is a well-formed sandbox name under NemoClaw's
+ * OpenShell-compatible label contract.
  */
 export function isValidName(value: unknown): value is string {
   return (

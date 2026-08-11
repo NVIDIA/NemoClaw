@@ -15,7 +15,11 @@ import {
 } from "../../adapters/docker/run";
 import { parseOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import { hasZeroDockerExitStatus } from "../docker-command-result";
-import { buildDockerGpuCloneRunArgs, dockerContainerName } from "../docker-gpu-patch-clone";
+import {
+  buildDockerGpuCloneRunArgs,
+  dockerContainerName,
+  shouldOmitOpenShellOciImageUser,
+} from "../docker-gpu-patch-clone";
 import {
   DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
   DOCKER_GPU_PATCH_TIMEOUT_MS,
@@ -395,9 +399,13 @@ function assertImage(
   }
   const expectedReference = expectedImageReference(image.repository, image.manifestDigest);
   const configuredImage = String(inspect.Config?.Image ?? "").trim();
-  if (configuredImage !== expectedReference) {
+  // OpenShell's Docker driver creates the sandbox from the inspected immutable image ID, so
+  // Docker records that ID in Config.Image. NemoClaw-created replacements retain the exact
+  // repository@manifestDigest instead. Accept only those two immutable spellings; the image
+  // inspection below still proves that the reviewed manifest resolves to this runtime content.
+  if (configuredImage !== expectedReference && configuredImage !== runtimeContentId) {
     throw new Error(
-      "Managed bootstrap Docker configured image is not the exact repository@manifestDigest.",
+      "Managed bootstrap Docker configured image is neither the exact repository@manifestDigest nor its immutable runtime content ID.",
     );
   }
   const imageOutput = deps.dockerCapture(["image", "inspect", expectedReference], {
@@ -809,6 +817,7 @@ function assertExactEnvironmentDelta(
   replacement: Record<string, unknown>,
   mode: DockerGpuPatchMode,
   intendedSandboxCommand: string,
+  omitOciImageUser: boolean,
 ): void {
   const gpuAugment = mode.kind !== "startup-command";
   const originalEnv = exactStringArray(original.Env ?? [], "original environment");
@@ -816,6 +825,7 @@ function assertExactEnvironmentDelta(
     ...modeEnvironment(mode),
     ...originalEnv
       .filter((entry) => !gpuAugment || !REPLACED_GPU_ENV_KEYS.has(entry.split("=", 1)[0] ?? ""))
+      .filter((entry) => !omitOciImageUser || !entry.startsWith("OPENSHELL_OCI_IMAGE_USER="))
       .map((entry) =>
         entry.startsWith("OPENSHELL_SANDBOX_COMMAND=")
           ? `OPENSHELL_SANDBOX_COMMAND=${intendedSandboxCommand}`
@@ -992,6 +1002,7 @@ function assertReplacementMatchesIntent(
     readonly extraGroupGids: readonly string[];
   },
   intendedSandboxCommand: string,
+  omitOciImageUser: boolean,
 ): string {
   const original = canonicalObject(originalCanonicalJson);
   const originalInspect = objectField(original, "inspect");
@@ -1006,7 +1017,13 @@ function assertReplacementMatchesIntent(
   const observedConfig = objectField(observedInspect, "Config");
   const observedHost = objectField(observedInspect, "HostConfig");
   const gpuAugment = plan.mode.kind !== "startup-command";
-  assertExactEnvironmentDelta(originalConfig, observedConfig, plan.mode, intendedSandboxCommand);
+  assertExactEnvironmentDelta(
+    originalConfig,
+    observedConfig,
+    plan.mode,
+    intendedSandboxCommand,
+    omitOciImageUser,
+  );
   const originalCapabilities = capabilitySet(originalHost.CapAdd, "original capability additions");
   assertExactCapabilitySet(
     observedHost.CapAdd,
@@ -3231,6 +3248,10 @@ export function createDockerManagedBootstrapAdapter(
         });
       }
       const trampolineCommand = replacementCommand(handle, snapshot);
+      const omitOciImageUser = shouldOmitOpenShellOciImageUser(
+        parsed.inspect,
+        handle.intendedWorkloadArgv,
+      );
       const cloneArgs = buildDockerGpuCloneRunArgs(parsed.inspect, plan.mode, {
         image: expectedImageReference(snapshot.image.repository, snapshot.image.manifestDigest),
         openshellSandboxCommand: handle.intendedWorkloadArgv,
@@ -3299,6 +3320,7 @@ export function createDockerManagedBootstrapAdapter(
           originalName,
           plan,
           intendedSandboxCommand,
+          omitOciImageUser,
         );
         const preparedSpec = normalizeDockerManagedBootstrapLaunchSpec(createdInspect);
         const expectedActivatedSpec = normalizeDockerManagedBootstrapLaunchSpec({

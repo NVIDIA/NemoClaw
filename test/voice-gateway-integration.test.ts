@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createVoiceGatewayServer } from "../src/lib/adapters/http/voice-gateway-server";
 import type { AgentTurnClient, AgentTurnEvent } from "../src/lib/voice-gateway/contracts";
+import { OpenClawVoiceClient } from "../src/lib/voice-gateway/openclaw-client";
 import { VoiceSessionService } from "../src/lib/voice-gateway/session-service";
+import { PinnedOpenClawGateway } from "./fixtures/voice-gateway/pinned-openclaw-gateway";
 import { PinnedVoiceRuntimeAdapter } from "./fixtures/voice-gateway/pinned-runtime-adapter";
 
 const DEPLOYMENT_BEARER = "deployment-bearer-for-voice-gateway-tests";
@@ -117,6 +119,63 @@ afterEach(async () => {
 });
 
 describe("experimental voice gateway composed boundary", () => {
+  it("recovers an omitted OpenClaw delta before completing the pinned runtime turn (#8482)", async () => {
+    let pinnedOpenClaw: PinnedOpenClawGateway | undefined;
+    const diagnostics: object[] = [];
+    const ids = ["voice-session", "agent-session", "turn", "response"];
+    const service = new VoiceSessionService({
+      runtimeIdentity: "voiceclaw-local",
+      runtimeProfile: "voiceclaw-pinned",
+      sandbox: "repository-fixture",
+      agent: "main",
+      createClient: () =>
+        new OpenClawVoiceClient({
+          gatewayUrl: "ws://127.0.0.1:18789/ws",
+          credential: OPENCLAW_CREDENTIAL,
+          webSocketFactory: () => {
+            pinnedOpenClaw = new PinnedOpenClawGateway();
+            return pinnedOpenClaw;
+          },
+        }),
+      diagnostic: (entry) => diagnostics.push(entry),
+      randomId: () => ids.shift() ?? "extra",
+      randomGrant: () => Buffer.alloc(32, 9),
+    });
+    const port = await listen(
+      createVoiceGatewayServer({
+        deploymentCredential: DEPLOYMENT_BEARER,
+        service,
+      }),
+    );
+    const output: string[] = [];
+    const runtime = new PinnedVoiceRuntimeAdapter(port, DEPLOYMENT_BEARER, (text) =>
+      output.push(text),
+    );
+
+    const session = await runtime.createSession("runtime-conversation");
+    const events = await runtime.commitTurn(session, "runtime-commit", "repository status");
+    await runtime.closeSession(session);
+
+    expect(output).toEqual(["Hello world"]);
+    expect(events.map((event) => (event as { type: string }).type)).toEqual([
+      "response.started",
+      "response.text.delta",
+      "response.completed",
+    ]);
+    expect(
+      events.filter((event) => (event as { type: string }).type === "response.completed"),
+    ).toHaveLength(1);
+    expect(
+      events.filter((event) => (event as { type: string }).type === "response.failed"),
+    ).toHaveLength(0);
+    const runtimeVisible = JSON.stringify({ session, events, output, diagnostics });
+    expect(runtimeVisible).not.toContain(OPENCLAW_CREDENTIAL);
+    expect(runtimeVisible).not.toContain("pinned-openclaw-run");
+    expect(runtimeVisible).not.toContain("must-not-cross");
+    expect(runtimeVisible).not.toContain("repository status");
+    expect(pinnedOpenClaw?.closed).toBe(true);
+  });
+
   it("routes one committed turn into the pinned runtime output without exposing OpenClaw authority (#8378)", async () => {
     const fakeOpenClaw = new FakeOpenClawGatewayClient(OPENCLAW_CREDENTIAL);
     const ids = ["voice-session", "agent-session", "turn", "response"];

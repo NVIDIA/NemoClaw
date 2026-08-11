@@ -99,6 +99,16 @@ function stubRecreateJournal(): RebuildRecreateJournal {
     id: "journal-1",
     acceptedTarget: false,
     sourceConfirmedAbsent: false,
+    gatewayAuthority: {
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    },
     targetGeneration: "generation-1",
     targetIntentFingerprint: "intent-1",
     markDeleting: vi.fn(),
@@ -108,7 +118,7 @@ function stubRecreateJournal(): RebuildRecreateJournal {
   };
 }
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.85");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.101");
 
 const bridgeEntries: Record<"github" | "slack", McpBridgeEntry> = {
   github: {
@@ -149,12 +159,9 @@ function ownedPolicy(
   const resolvedAddresses = options.resolvedAddresses ?? [new URL(entry.url).hostname];
   return {
     name: entry.policyName,
-    content: bridge.buildMcpBridgePolicyYaml(
-      entry.server,
-      entry.url,
-      adapter as AgentMcpAdapter,
-      resolvedAddresses,
-    ),
+    content: bridge.buildMcpBridgePolicyYaml(entry.server, entry.url, adapter as AgentMcpAdapter, {
+      addresses: [...resolvedAddresses],
+    }),
     sourcePath: "generated:nemoclaw-mcp-bridge",
   };
 }

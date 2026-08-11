@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.85");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.101");
 
 describe("MCP restart policy ordering", () => {
   it("rejects a foreign attached credential key before policy or provider mutation", () => {
@@ -93,7 +93,9 @@ registry.registerSandbox({
 });
 registry.addCustomPolicy("alpha", {
   name: entry.policyName,
-  content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, ["8.8.8.8"]),
+  content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, {
+    addresses: ["8.8.8.8"],
+  }),
   sourcePath: "generated:nemoclaw-mcp-bridge",
 });
 
@@ -220,7 +222,9 @@ registry.registerSandbox({
 });
 registry.addCustomPolicy("alpha", {
   name: entry.policyName,
-  content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, ["8.8.8.8"]),
+  content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, {
+    addresses: ["8.8.8.8"],
+  }),
   sourcePath: "generated:nemoclaw-mcp-bridge",
 });
 

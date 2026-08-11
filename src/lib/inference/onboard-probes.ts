@@ -229,6 +229,20 @@ function hasChatCompletionsToolCallLeak(body) {
   return false;
 }
 
+function explainDisabledToolParsing(result) {
+  const detail = `${result.message ?? ""}\n${result.body ?? ""}`;
+  if (!/tool parsing is disabled by frontend configuration/i.test(detail)) {
+    return result;
+  }
+  return {
+    ...result,
+    message:
+      `HTTP ${result.httpStatus}: Chat Completions tool parsing is disabled. ` +
+      "Start vLLM with --enable-auto-tool-choice and a --tool-call-parser " +
+      "that the selected frontend registers for this model.",
+  };
+}
+
 function shouldRequireResponsesToolCalling(provider) {
   return (
     provider === "nvidia-prod" || provider === "gemini-api" || provider === "compatible-endpoint"
@@ -422,7 +436,10 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
     }
 
     if (!result.ok) {
-      return reasoningRetryAttempted ? { ...result, reasoningRetryAttempted: true } : result;
+      const explainedResult = explainDisabledToolParsing(result);
+      return reasoningRetryAttempted
+        ? { ...explainedResult, reasoningRetryAttempted: true }
+        : explainedResult;
     }
     if (hasChatCompletionsToolCall(result.body)) {
       return result;
@@ -447,6 +464,8 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
       curlStatus: result.curlStatus,
       body: result.body,
       stderr: result.stderr,
+      diagnosticCodes: ["openai-chat-missing-structured-tool-call"],
+
       message: `HTTP ${result.httpStatus}: Chat Completions did not return a tool call`,
       ...(reasoningRetryAttempted ? { reasoningRetryAttempted: true } : {}),
     };
@@ -803,6 +822,15 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     const chatCompletionsProbe = {
       name: "Chat Completions API",
       api: "openai-completions",
+      retryReason: (result) =>
+        options.retryChatCompletionsToolReadiness === true &&
+        result.reasoningRetryAttempted !== true &&
+        result.curlStatus === 0 &&
+        result.httpStatus === 200 &&
+        result.diagnosticCodes?.includes("openai-chat-missing-structured-tool-call")
+          ? "did not return a structured tool call"
+          : null,
+
       execute: () =>
         options.requireChatCompletionsToolCalling === true
           ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
@@ -935,6 +963,8 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
         curlStatus: result.curlStatus,
         message: result.message,
         body: result.body,
+        diagnosticCodes: result.diagnosticCodes,
+
         reasoningRetryAttempted: result.reasoningRetryAttempted === true,
       });
     }

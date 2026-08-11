@@ -3,3 +3,4 @@
 
 /skills/nemoclaw/** linguist-generated=true
 /skills/nemoclaw/**/*.md diff=markdown
+/tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/**/*.bundle linguist-generated=true -diff

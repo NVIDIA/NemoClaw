@@ -48,7 +48,10 @@ export function createBuiltInMessagingHookRegistrations(
     ),
     ...createGooglechatHookRegistrations(options.googlechat),
     ...createSlackHookRegistrations(
-      withOpenClawBridgeHealthOptions(options.slack, options.openclawBridgeHealth),
+      withStatusHealthOptions(
+        withOpenClawBridgeHealthOptions(options.slack, options.openclawBridgeHealth),
+        options.statusHealth,
+      ),
     ),
     ...createTeamsHookRegistrations(options.teams),
     ...createTelegramHookRegistrations(

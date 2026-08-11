@@ -12,6 +12,7 @@ import {
   removeReviewedNpmArchive,
   resolveReviewedNpmArchivePath,
   verifyReviewedNpmCache,
+  verifyReviewedNpmLockPackages,
   verifyReviewedNpmMetadata,
 } from "../scripts/lib/reviewed-npm-archive.mts";
 
@@ -232,6 +233,24 @@ describe("reviewed npm archive", () => {
       PACKAGE_SPEC,
       PACKAGE_SPEC,
       PACKAGE_SPEC,
+    ]);
+  });
+
+  it("allows nested shrinkwrap metadata only for explicit cache-seed inspection", () => {
+    const reviewed = cacheRequest();
+    const lock = JSON.parse(fs.readFileSync(WECHAT_LOCK, "utf-8"));
+    lock.packages["node_modules/@tencent-weixin/openclaw-weixin"].hasShrinkwrap = true;
+    const lockfilePath = path.join(reviewed.tempDirectory as string, "shrinkwrap-seed-lock.json");
+    fs.writeFileSync(lockfilePath, `${JSON.stringify(lock, null, 2)}\n`);
+    const request = { lockfilePath, registryOrigin: "https://registry.npmjs.org/" };
+
+    expect(() => verifyReviewedNpmLockPackages(request)).toThrow(
+      "must not delegate to nested shrinkwrap",
+    );
+    expect(verifyReviewedNpmLockPackages({ ...request, allowNestedShrinkwrap: true })).toEqual([
+      "@tencent-weixin/openclaw-weixin@2.4.3",
+      "qrcode-terminal@0.12.0",
+      "zod@4.4.3",
     ]);
   });
 
