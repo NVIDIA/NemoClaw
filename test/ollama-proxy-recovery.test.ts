@@ -742,12 +742,14 @@ describe("ollama auth proxy state across gateway ports", () => {
     readonly gatewayScopedPort?: number;
     readonly otherGatewayScopedToken?: string;
     readonly prefix: string;
+    readonly proxyPort?: number;
     readonly recover?: boolean;
     readonly sharedBackend?: string;
     readonly sharedToken?: string;
     readonly gatewayScopedToken?: string;
   }): {
     readonly spawnedBackends: Array<string | null>;
+    readonly spawnedProxyPorts: string[];
     readonly spawnedTokens: string[];
     readonly activeToken: string | null;
     readonly sharedBackend: string | null;
@@ -755,6 +757,7 @@ describe("ollama auth proxy state across gateway ports", () => {
     readonly gatewayScopedBackend: string | null;
     readonly gatewayScopedToken: string | null;
     readonly operationError: string | null;
+    readonly routeUrl: string | null;
   } {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), options.prefix));
@@ -764,6 +767,7 @@ describe("ollama auth proxy state across gateway ports", () => {
     );
     const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
     const waitPath = JSON.stringify(path.join(repoRoot, "src", "lib", "core", "wait.ts"));
+    const localPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "local.ts"));
 
     const sharedDir = path.join(tmpDir, ".nemoclaw");
     const gatewayScopedPort = options.gatewayScopedPort ?? 8990;
@@ -797,9 +801,11 @@ wait.waitForPort = () => true;
 
 const spawnedTokens = [];
 const spawnedBackends = [];
+const spawnedProxyPorts = [];
 childProcess.spawn = (_cmd, _args, opts = {}) => {
   spawnedTokens.push(opts.env && opts.env.OLLAMA_PROXY_TOKEN);
   spawnedBackends.push((opts.env && opts.env.OLLAMA_BACKEND_URL) || null);
+  spawnedProxyPorts.push(opts.env && opts.env.OLLAMA_PROXY_PORT);
   return { pid: 4242, unref() {} };
 };
 runner.runCapture = (command) => {
@@ -820,6 +826,7 @@ childProcess.spawnSync = (...args) => {
 };
 
 const proxy = require(${proxyPath});
+const local = require(${localPath});
 let operationError = null;
 try {
   if (${JSON.stringify(options.recover === true)}) proxy.ensureOllamaAuthProxy();
@@ -832,6 +839,7 @@ const readToken = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8")
 const sharedDir = path.join(process.env.HOME, ".nemoclaw");
 console.log(JSON.stringify({
   spawnedBackends,
+  spawnedProxyPorts,
   spawnedTokens,
   activeToken: operationError ? null : proxy.getOllamaProxyToken(),
   sharedBackend: readToken(path.join(sharedDir, "ollama-backend")),
@@ -843,6 +851,7 @@ console.log(JSON.stringify({
     path.join(sharedDir, "gateways", ${JSON.stringify(String(options.gatewayScopedPort ?? 8990))}, "ollama-proxy-token"),
   ),
   operationError,
+  routeUrl: local.getLocalProviderBaseUrl("ollama-local"),
 }));
 `;
     fs.writeFileSync(scriptPath, script);
@@ -854,6 +863,7 @@ console.log(JSON.stringify({
         ...process.env,
         HOME: tmpDir,
         NEMOCLAW_GATEWAY_PORT: String(options.callingGatewayPort ?? 8990),
+        NEMOCLAW_OLLAMA_PROXY_PORT: String(options.proxyPort ?? 11435),
       },
     });
 
@@ -875,6 +885,20 @@ console.log(JSON.stringify({
     assert.equal(payload.activeToken, "first-gateway-token");
     assert.equal(payload.sharedToken, "first-gateway-token");
     assert.equal(payload.gatewayScopedToken, null);
+  });
+
+  it.each([
+    8990, 9000,
+  ])("keeps the configured proxy port host-wide for gateway %i (#8704)", (callingGatewayPort) => {
+    const payload = runSecondGatewayProxyStart({
+      callingGatewayPort,
+      prefix: `nemoclaw-ollama-proxy-port-${String(callingGatewayPort)}-`,
+      proxyPort: 12000,
+      sharedToken: "shared-token",
+    });
+
+    assert.deepEqual(payload.spawnedProxyPorts, ["12000"]);
+    assert.equal(payload.routeUrl, "http://host.openshell.internal:12000/v1");
   });
 
   it("adopts a token an earlier gateway-scoped run left behind (#8704)", () => {
@@ -1051,6 +1075,8 @@ if (mode === "start" || mode === "start-peer") {
 
       const spawnRecords = fs.readFileSync(spawnLogPath, "utf8").trim().split("\n");
       const spawnedTokens = spawnRecords.map((record) => record.split(":")[1]);
+      // start launches once, start-peer restarts with that token, and ensure
+      // observes the accepted live proxy without spawning a third process.
       assert.equal(spawnRecords[0]?.split(":")[0], "start");
       assert.equal(spawnRecords.length, 2);
       assert.match(spawnedTokens[0] || "", /^[0-9a-f]{48}$/);
