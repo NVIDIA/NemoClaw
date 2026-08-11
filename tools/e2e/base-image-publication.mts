@@ -37,6 +37,10 @@ const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
   ["nemoclaw-blueprint/**", /^nemoclaw-blueprint\/.+$/u],
   ["scripts/**", /^scripts\/.+$/u],
   [
+    "test/e2e/live/managed-image-activation-e2e*.ts",
+    /^test\/e2e\/live\/managed-image-activation-e2e[^/]*[.]ts$/u,
+  ],
+  [
     "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
     /^src\/lib\/actions\/sandbox\/openshell-child-visible-credentials[.]v[^/]*[.]json$/u,
   ],

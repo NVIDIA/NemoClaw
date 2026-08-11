@@ -17,6 +17,9 @@ Use the built-in uninstall command when the installed CLI is available.
 $$nemoclaw uninstall
 ```
 
+Full uninstall does not remove a Docker container or image only because its name or image reference contains `openclaw`.
+It preserves resources from a separate OpenClaw installation while continuing to remove NemoClaw and OpenShell Docker resources.
+
 | Flag | Effect |
 |---|---|
 | `--yes` | Skip the confirmation prompt. |
