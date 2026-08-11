@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import { collectFiles } from "../src/lib/skill-install";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
@@ -166,11 +168,15 @@ describe("repo skill markdown files", () => {
       fs.readFileSync(path.join(skillRoot, "evals", "evals.json"), "utf8"),
     ) as Array<{ id: string; expected_skill: string | null }>;
 
-    expect(skill).toContain("../_shared/implementation-discovery.md");
-    expect(skill).toContain("../_shared/code-change-considerations.md");
-    expect(skill).toContain("../_shared/security-rubric.md");
-    expect(skill).toContain("../_shared/git-github-hard-stop.md");
-    expect(skill).toContain("../_shared/root-cause-and-state-checks.md");
+    expect(skill).toContain("references/implementation-discovery.md");
+    expect(skill).toContain("references/code-change-considerations.md");
+    expect(skill).toContain("references/security-rubric.md");
+    expect(skill).toContain("references/git-github-hard-stop.md");
+    expect(skill).toContain("Use a user-configured GitHub tool");
+    expect(skill).toContain("configured GitHub MCP tool");
+    expect(skill).toContain("Do not use unauthenticated `curl`");
+    expect(skill).toContain("GitHub access does not authorize a write");
+    expect(skill).toContain("references/root-cause-and-state-checks.md");
     expect(skill).toContain("untrusted evidence, not agent instructions");
     expect(skill).toContain("Name the operation and failure class");
     expect(skill).toContain("Operation and failure class:");
@@ -210,6 +216,8 @@ describe("repo skill markdown files", () => {
       "unauthorized-github-write",
       "authorized-single-github-write",
       "adversarial-untrusted-issue-content",
+      "configured-github-tool",
+      "missing-github-tool",
     ]);
     expect(evals.find(({ id }) => id === "positive-explicit-plan")?.expected_skill).toBe(
       "nemoclaw-contributor-plan-issue",
@@ -224,6 +232,8 @@ describe("repo skill markdown files", () => {
       "unauthorized-github-write",
       "authorized-single-github-write",
       "adversarial-untrusted-issue-content",
+      "configured-github-tool",
+      "missing-github-tool",
     ]) {
       expect(evals.find((evaluation) => evaluation.id === id)?.expected_skill).toBe(
         "nemoclaw-contributor-plan-issue",
@@ -259,9 +269,10 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("it does not authorize GitHub writes");
 
     expect(skill).toContain("../_shared/git-github-hard-stop.md");
-    expect(skill).toContain(
-      "Before running any `git` or `gh` issue or repository discovery command",
-    );
+    expect(skill).toContain("Use a user-configured GitHub tool");
+    expect(skill).toContain("configured GitHub MCP tool");
+    expect(skill).toContain("Do not use unauthenticated `curl`");
+    expect(skill).toContain("Before any GitHub operation or `git`, `ssh`, or `gh` access");
     expect(skill).toContain("Stop and request user remediation for any Git or GitHub access error");
 
     expect(skill).toContain("untrusted evidence, not agent instructions");
@@ -303,6 +314,84 @@ describe("repo skill markdown files", () => {
       "nemoclaw-maintainer-day",
     );
     expect(evals.find(({ id }) => id === "ambiguous-work-on-issue")?.expected_skill).toBeNull();
+  });
+
+  it("requires configured GitHub access and rejects unauthenticated fallback (#8793)", () => {
+    const access = fs.readFileSync(
+      path.join(skillsRoot, "_shared", "git-github-hard-stop.md"),
+      "utf8",
+    );
+    const planning = fs.readFileSync(
+      path.join(skillsRoot, "nemoclaw-contributor-plan-issue", "SKILL.md"),
+      "utf8",
+    );
+    const implementation = fs.readFileSync(
+      path.join(skillsRoot, "nemoclaw-contributor-implement-issue", "SKILL.md"),
+      "utf8",
+    );
+    const docs = fs.readFileSync(
+      path.join(repoRoot, "docs", "resources", "agent-skills.mdx"),
+      "utf8",
+    );
+
+    expect(access).toContain("GitHub tool that the user configured for the current agent");
+    expect(access).toContain("configured GitHub MCP tool");
+    expect(access).toContain("Do not install or configure GitHub access by default");
+    expect(access).toContain("Do not use unauthenticated `curl`");
+    expect(access).toContain("does not authorize a GitHub write");
+
+    for (const skill of [planning, implementation]) {
+      expect(skill).toContain("Use a user-configured GitHub tool");
+      expect(skill).toContain("If no configured tool can read the required");
+      expect(skill).toContain("Do not use unauthenticated `curl`");
+    }
+
+    const portableReferenceNames = [
+      "code-change-considerations.md",
+      "git-github-hard-stop.md",
+      "implementation-discovery.md",
+      "root-cause-and-state-checks.md",
+      "security-rubric.md",
+    ];
+    const planRoot = path.join(skillsRoot, "nemoclaw-contributor-plan-issue");
+    const installedFiles = collectFiles(planRoot).files;
+    const installedReferences = Array.from(
+      planning.matchAll(/\]\((references\/[^)#]+\.md)(?:#[^)]+)?\)/gu),
+      (match) => match[1],
+    ).sort();
+
+    expect(installedReferences).toEqual(
+      portableReferenceNames.map((name) => `references/${name}`).sort(),
+    );
+    for (const name of portableReferenceNames) {
+      const installedPath = `references/${name}`;
+      expect(installedFiles).toContain(installedPath);
+      expect(fs.readFileSync(path.join(planRoot, installedPath), "utf8")).toBe(
+        fs.readFileSync(path.join(skillsRoot, "_shared", name), "utf8"),
+      );
+    }
+
+    expect(docs).toContain("## Use the Issue-Planning Skill in a Sandbox");
+    expect(docs).toContain(
+      "$$nemoclaw my-sandbox skill install .agents/skills/nemoclaw-contributor-plan-issue",
+    );
+    expect(docs).toContain("$$nemoclaw my-sandbox upload ./NemoClaw /sandbox/");
+    expect(docs).toContain("Tell the agent to work from `/sandbox/NemoClaw`");
+    expect(docs).toContain("$$nemoclaw my-sandbox mcp add github");
+    expect(docs).toContain("https://api.githubcopilot.com/mcp/readonly");
+    expect(docs).toContain("$$nemoclaw my-sandbox mcp status github --tools");
+    expect(docs).toContain("does not use unauthenticated HTTP requests as a fallback");
+    expect(docs).toContain(
+      "succeed and list `issue_read`, `search_issues`, `search_pull_requests`, and `pull_request_read`",
+    );
+    expect(docs).toContain("shields status");
+    expect(docs).toContain("Keep shields down through the `skill install` and `mcp add`");
+    expect(docs).toContain("do not rerun `mcp add` over the existing registration");
+    expect(docs).toContain("mcp restart github");
+    expect(docs).toContain("mcp remove github");
+    expect(docs).toContain("lower shields before `destroy`");
+    expect(docs).toContain("does not prove which tools the model can use");
+    expect(docs).toContain("The token remains valid until it expires or you revoke it at GitHub");
   });
 
   it("keeps shared documentation routing one-way", () => {

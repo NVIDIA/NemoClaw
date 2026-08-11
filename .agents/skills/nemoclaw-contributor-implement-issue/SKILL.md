@@ -54,10 +54,20 @@ changes and validation; it does not authorize GitHub writes, a push, or pull req
 
 ## Discover the current implementation
 
-Before running any `git` or `gh` issue or repository discovery command, follow
-[Stop for Git and GitHub Access Errors](../_shared/git-github-hard-stop.md).
-Stop and request user remediation for any Git or GitHub access error. Do not attempt a credential,
-remote, protocol, or permission bypass. Then follow
+Use a user-configured GitHub tool to read the accepted issue and related GitHub context.
+The tool can be an agent-provided GitHub tool, a configured GitHub MCP tool, or an installed and
+authenticated `gh` CLI.
+If no configured tool can read the required context, stop and ask the user to configure GitHub
+access for the current environment.
+Do not use unauthenticated `curl`, another HTTP client, web search, or a different remote endpoint as
+a fallback.
+GitHub access does not authorize a write, push, or pull request publication.
+
+Before any GitHub operation or `git`, `ssh`, or `gh` access, follow
+[Use Configured GitHub Access and Stop on Access Errors](../_shared/git-github-hard-stop.md).
+Stop and request user remediation for any Git or GitHub access error.
+Do not attempt a credential, remote, protocol, or permission bypass.
+Then follow
 [Discover the Current Implementation](../_shared/implementation-discovery.md). Apply the shared
 [Code Change Considerations](../_shared/code-change-considerations.md),
 [Root-Cause and Sensitive-Workflow State Checks](../_shared/root-cause-and-state-checks.md),
