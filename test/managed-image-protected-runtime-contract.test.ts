@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,6 +18,8 @@ import {
   withManagedImageLocalInferenceProfile,
 } from "../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
+  assertExactSandboxImage,
+  assertFailedBootstrapContainerCleanup,
   createProtectedManagedImageBootstrapInput,
   MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV,
   managedImageLocalInferenceBaseUrl,
@@ -125,6 +128,52 @@ describe("protected managed-image runtime contract", () => {
       removeManagedImageGatewayStateIfSafe(stateDir, { failed: [], ownershipFailures: [] }, 0),
     ).toBe(true);
     expect(fs.existsSync(stateDir)).toBe(false);
+  });
+
+  it("qualifies only the running exact image and retains stopped rollback cleanup evidence (#7744)", () => {
+    const calls: string[][] = [];
+    const contentId = `sha256:${"b".repeat(64)}`;
+    const containerId = "c".repeat(64);
+    const input = parseManagedImageOpenShellE2eInputs([
+      "--agent",
+      "openclaw",
+      "--image",
+      IMAGE,
+      "--sandbox",
+      VALID_SANDBOX,
+    ]);
+    const runCommand = (argv: readonly string[]) => {
+      calls.push([...argv]);
+      if (argv[1] === "image") return { status: 0, stdout: `${contentId}\n`, stderr: "" };
+      if (argv[1] === "ps") {
+        return {
+          status: 0,
+          stdout: argv[2] === "-q" ? `${containerId}\n` : "",
+          stderr: "",
+        };
+      }
+      return {
+        status: 0,
+        stdout: `${JSON.stringify([
+          {
+            Config: {
+              Labels: {
+                "openshell.ai/managed-by": "openshell",
+                "openshell.ai/sandbox-name": VALID_SANDBOX,
+              },
+            },
+            Image: contentId,
+            NetworkSettings: { Networks: { "managed-network": {} } },
+          },
+        ])}\n`,
+        stderr: "",
+      };
+    };
+
+    expect(assertExactSandboxImage(input, "managed-network", {}, runCommand)).toBe(containerId);
+    assertFailedBootstrapContainerCleanup(input, "managed-network", {}, runCommand);
+
+    expect(calls.filter((argv) => argv[1] === "ps").map((argv) => argv[2])).toEqual(["-q", "-aq"]);
   });
 
   it("assigns every protected agent and route a unique OpenShell-compatible sandbox name (#8497)", () => {
@@ -254,7 +303,22 @@ describe("protected managed-image runtime contract", () => {
       sandbox: managedImageProtectedSandboxName(agent, "nim"),
     });
     expect(path.isAbsolute(managedImageOpenShellBasePolicyPath(agent))).toBe(true);
-    expect(managedImageOpenShellProbe(agent)).toContain("managed-startup-complete.json");
+    const probe = managedImageOpenShellProbe(agent);
+    const syntax = spawnSync("/bin/sh", ["-n", "-c", probe], { encoding: "utf8" });
+    expect(syntax.status, syntax.stderr).toBe(0);
+    expect(probe).toContain("managed-startup-complete.json");
+    expect(probe).toContain(
+      `managed-image startup probe failed: ${
+        agent === "openclaw"
+          ? "OpenClaw health endpoint"
+          : agent === "hermes"
+            ? "Hermes health endpoint"
+            : "LangChain Deep Agents Code version command"
+      }`,
+    );
+    expect(probe).toContain(
+      "managed-image startup probe failed: managed startup completion owner, group, and mode must equal 0:0:444",
+    );
   });
 
   it("rewrites only the inference route while preserving the managed agent profile", () => {
