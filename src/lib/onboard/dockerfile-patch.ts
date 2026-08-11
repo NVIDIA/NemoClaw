@@ -116,9 +116,10 @@ function openClawRootStartupArg(dockerfile: string): DockerfileInstruction | nul
     -1,
   );
   const finalStage = instructions.slice(finalFromIndex + 1);
-  const runtimeUserArgs = finalStage.filter((instruction) =>
-    /^ARG\s+NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER\s*=/.test(instruction.text),
-  );
+  const runtimeUserArgs = finalStage.filter((instruction) => {
+    const match = /^(\S+)\s+NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER\s*=/.exec(instruction.text);
+    return match?.[1]?.toUpperCase() === "ARG";
+  });
   if (runtimeUserArgs.length !== 1) return null;
 
   const runtimeUserArg = runtimeUserArgs[0]!;
@@ -133,10 +134,23 @@ function openClawRootStartupArg(dockerfile: string): DockerfileInstruction | nul
   );
   const finalUser = finalStage[finalUserIndex]?.text ?? "";
   const finalUserMatch = /^USER\s+(.+)$/i.exec(finalUser);
+  const finalEntrypoint = finalStage[finalEntrypointIndex]?.text ?? "";
+  const finalEntrypointMatch = /^ENTRYPOINT\s+(.+)$/i.exec(finalEntrypoint);
+  let trustedEntrypoint = false;
+  try {
+    const entrypoint = JSON.parse(finalEntrypointMatch?.[1] ?? "");
+    trustedEntrypoint =
+      Array.isArray(entrypoint) &&
+      entrypoint.length === 1 &&
+      entrypoint[0] === "/usr/local/bin/nemoclaw-start";
+  } catch {
+    // Root startup requires the trusted exec-form entrypoint.
+  }
   const runtimeUserControlsStartup =
     runtimeUserArgIndex < finalUserIndex &&
     finalUserIndex < finalEntrypointIndex &&
-    finalUserMatch?.[1] === "${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}";
+    finalUserMatch?.[1] === "${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}" &&
+    trustedEntrypoint;
   return runtimeUserControlsStartup ? runtimeUserArg : null;
 }
 
@@ -566,8 +580,9 @@ export function patchStagedDockerfile(
       }
       throw new Error(
         "Custom OpenClaw Dockerfile must declare exactly one final-stage ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER. " +
-          "It must set USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER} before ENTRYPOINT. " +
-          "Cannot bake the corporate CA from NEMOCLAW_CORPORATE_CA_BUNDLE.",
+          "It must set USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER} before " +
+          'ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]. ' +
+          "NemoClaw cannot bake the corporate CA from NEMOCLAW_CORPORATE_CA_BUNDLE.",
       );
     }
     // An OpenClaw fallback source stays a no-op when a custom Dockerfile lacks

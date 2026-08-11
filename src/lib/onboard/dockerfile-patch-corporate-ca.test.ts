@@ -223,6 +223,41 @@ describe("dockerfile patch — corporate CA baking (#6210)", () => {
     );
   });
 
+  it("rejects an explicit corporate CA when ENTRYPOINT bypasses the trusted startup script (#8803)", () => {
+    process.env.NEMOCLAW_CORPORATE_CA_BUNDLE = writeCa();
+    const dockerfilePath = dockerfileWith([
+      ...BASE_ARGS,
+      "ARG NEMOCLAW_CORPORATE_CA_B64=",
+      "USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}",
+      'ENTRYPOINT ["/usr/local/bin/custom-start"]',
+    ]);
+
+    expect(() => patch(dockerfilePath)).toThrow(
+      /ENTRYPOINT \["\/usr\/local\/bin\/nemoclaw-start"\]/,
+    );
+    expect(corporateCaArgLine(dockerfilePath)).toBe("ARG NEMOCLAW_CORPORATE_CA_B64=");
+    expect(runtimeUserArgLine(dockerfilePath)).toBe(
+      "ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
+    );
+  });
+
+  it("accepts a lowercase ARG instruction for the exact runtime-user argument (#8803)", () => {
+    process.env.NEMOCLAW_CORPORATE_CA_BUNDLE = writeCa();
+    const dockerfilePath = dockerfileWith([
+      ...BASE_ARGS.filter((line) => !line.startsWith("ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=")),
+      "arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
+      "ARG NEMOCLAW_CORPORATE_CA_B64=",
+      ...OPENCLAW_STARTUP,
+    ]);
+
+    patch(dockerfilePath);
+
+    expect(
+      corporateCaArgLine(dockerfilePath)?.slice("ARG NEMOCLAW_CORPORATE_CA_B64=".length),
+    ).not.toBe("");
+    expect(runtimeUserArgLine(dockerfilePath)).toBe("ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root");
+  });
+
   it("rejects an explicit corporate CA when USER references a differently cased argument (#8803)", () => {
     process.env.NEMOCLAW_CORPORATE_CA_BUNDLE = writeCa();
     const dockerfilePath = dockerfileWith([
