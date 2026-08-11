@@ -555,7 +555,6 @@ export function createSetupInference(
             );
             if (hostLocalRoute) {
               try {
-                hostLocalRollbackAttempted = true;
                 await rollbackHostLocalInferenceStartup(
                   options.hostLocalInference.runtimeProviderId,
                   hostLocalRoute,
@@ -837,7 +836,6 @@ export function createSetupInference(
             !hostLocalRollbackAttempted
           ) {
             try {
-              hostLocalRollbackAttempted = true;
               await rollbackHostLocalInferenceStartup(
                 hostLocalSelection.runtimeProviderId,
                 hostLocalRoute,
