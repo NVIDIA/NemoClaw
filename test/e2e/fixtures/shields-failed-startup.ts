@@ -27,19 +27,19 @@ export function failedStartupProcessControlCommands(
     throw new Error("startup child pid must be a safe integer greater than 1");
   }
 
-  const signal = (name: "CONT" | "STOP" | "TERM", pid: number): string[] => [
-    "exec",
-    "--user",
-    "0",
-    containerId,
-    "kill",
-    `-${name}`,
-    String(pid),
-  ];
-
   return {
-    pauseSupervisor: signal("STOP", 1),
-    resumeSupervisor: signal("CONT", 1),
-    terminateStartupChild: signal("TERM", startupPid),
+    // Send supervisor stop/continue signals from Docker's host-side daemon.
+    // Linux delivers SIGSTOP to PID-namespace init only from an ancestor namespace.
+    pauseSupervisor: ["kill", "--signal", "SIGSTOP", containerId],
+    resumeSupervisor: ["kill", "--signal", "SIGCONT", containerId],
+    terminateStartupChild: [
+      "exec",
+      "--user",
+      "0",
+      containerId,
+      "kill",
+      "-TERM",
+      String(startupPid),
+    ],
   };
 }

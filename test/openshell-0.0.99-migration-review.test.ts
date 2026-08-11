@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import { parseGatewayInference } from "../src/lib/inference/config.js";
 import { resolveOnboardManagedBootstrapLaunch } from "../src/lib/onboard/managed-workload/onboard-orchestration.js";
@@ -149,6 +150,30 @@ function parseDigestTable(start: string, end: string): DigestMatrix {
 }
 
 describe("OpenShell 0.0.99 migration review", () => {
+  // source-shape-contract: security -- Every shipped managed Docker policy must select sandbox:sandbox so suppressing OCI workspace preparation preserves the protected /sandbox owner
+  it("keeps every managed Docker policy identity explicit for workspace compatibility (#8662)", () => {
+    const ROOT = path.resolve(import.meta.dirname, "..");
+    const policyPaths = [
+      "nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+      "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+      "agents/openclaw/policy-permissive.yaml",
+      "agents/hermes/policy-additions.yaml",
+      "agents/hermes/policy-permissive.yaml",
+      "agents/langchain-deepagents-code/policy-additions.yaml",
+    ];
+
+    for (const policyPath of policyPaths) {
+      const policySource = fs.readFileSync(path.join(ROOT, policyPath), "utf8");
+      const policy = YAML.parse(policySource) as {
+        process?: { run_as_user?: unknown; run_as_group?: unknown };
+      };
+      expect(policy.process, policyPath).toEqual({
+        run_as_user: "sandbox",
+        run_as_group: "sandbox",
+      });
+    }
+  });
+
   it("binds managed Docker activation to the v0.0.99 supervisor workdir argv (#8497)", () => {
     const authorityStore = {};
     const launch = resolveOnboardManagedBootstrapLaunch({
