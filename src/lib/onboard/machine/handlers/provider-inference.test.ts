@@ -39,9 +39,8 @@ describe("handleProviderInferenceState", () => {
     const { deps, calls } = createDeps();
     const session = createSession();
     calls.complete.mockImplementation(async (...args: unknown[]) => {
-      if (args[0] === "provider_selection") {
-        session.steps.provider_selection.status = "complete";
-      }
+      session.steps.provider_selection.status =
+        args[0] === "provider_selection" ? "complete" : session.steps.provider_selection.status;
       return session;
     });
 
