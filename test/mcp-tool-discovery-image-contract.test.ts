@@ -184,7 +184,7 @@ describe("MCP tool discovery image contract", () => {
       integrity: reviewedSdk.integrity,
       tarballUrl: reviewedSdk.resolved,
       directory: "tools/mcp-tool-discovery-runtime",
-      lockSha256: "b1d5f21eb3a7efabcd43d162f3d4a0ca9edfb7355b4e17615c88d592d3232878",
+      lockSha256: "bc7e34d9eb1f72cf3016c8b88c72d3b7682a4f234903cb93b9476b10d7e954eb",
     });
     expect(installer).toContain(
       'export NODE_OPTIONS="${NODE_OPTIONS:---dns-result-order=ipv4first}"',
@@ -312,11 +312,11 @@ describe("MCP tool discovery image contract", () => {
       "managed-startup-image-runtime.bundle":
         "96f6175f3cda6eefecf658c59e36cadecae5a27e93b9a4bdcd927a0bdd05446c",
       "mcp-tool-discovery/BUNDLED_PACKAGES.json":
-        "b8998561edb6059e45a84173acb1d1020f3a147d7ee3f55103e052e74600ca9a",
+        "df5dc8f167101085a8e73c444aa56854b2a4716a0bb7de9886fec4e50f402601",
       "mcp-tool-discovery/THIRD_PARTY_LICENSES.txt":
-        "7dff35b09c877fa9f5c715b2093af52b96114e984e9bc9ababac813c26fc8eab",
+        "ae0820debd0e33a10baa3a9c6c7ea831e8ad32a43f8500d52c7dc961ba5513a5",
       "mcp-tool-discovery/mcp-tool-discovery.bundle":
-        "e0b34146c983afb1a666610e9e216113ef865207c1d2912543b65377f2814ac0",
+        "defdba693829bfdfad16ce2edaad6b0a454388a32f15113854850e652a950012",
     } as const;
 
     for (const [relativePath, expectedHash] of Object.entries(expectedHashes)) {

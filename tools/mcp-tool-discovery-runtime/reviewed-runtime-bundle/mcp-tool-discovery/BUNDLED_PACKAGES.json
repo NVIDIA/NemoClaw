@@ -47,11 +47,6 @@
       "license": "MIT"
     },
     {
-      "name": "undici",
-      "version": "8.10.0",
-      "license": "MIT"
-    },
-    {
       "name": "zod",
       "version": "4.4.3",
       "license": "MIT"
