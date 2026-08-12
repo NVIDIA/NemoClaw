@@ -106,6 +106,13 @@ export function looksLikeUntrackedForward(diagnostic: string): boolean {
   );
 }
 
+const OPENSHELL_SANDBOX_NOT_READY_DIAGNOSTIC =
+  /^Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"$/i;
+
+function looksLikeSandboxNotReadyForwardStart(diagnostic: string): boolean {
+  return OPENSHELL_SANDBOX_NOT_READY_DIAGNOSTIC.test(diagnostic);
+}
+
 /**
  * True only after openshell reports that the SSH process has definitively
  * stopped waiting for its local listener. Unlike the broader untracked-
@@ -125,7 +132,7 @@ export function looksLikeUntrackedForward(diagnostic: string): boolean {
  * the retry wrapper below gives the OpenShell gateway a bounded settle interval.
  */
 export function looksLikeForwardListenerStartFailure(diagnostic: string): boolean {
-  if (/\bsandbox is not ready\b/i.test(diagnostic)) return true;
+  if (looksLikeSandboxNotReadyForwardStart(diagnostic)) return true;
   return /ssh exited before local forward listener opened|local forward listener did not open\b/i.test(
     diagnostic,
   );
@@ -534,7 +541,7 @@ export function runDetachedForwardStartWithRetries(
       if (looksLikeForwardPortConflict(attempt.diagnostic)) {
         beforeRetryCleanup();
       }
-      if (/\bsandbox is not ready\b/i.test(attempt.diagnostic)) {
+      if (looksLikeSandboxNotReadyForwardStart(attempt.diagnostic)) {
         // Keep the existing sandbox and port ownership intact while the
         // OpenShell gateway finishes the readiness handoff.
         sleepImpl(SANDBOX_READY_RETRY_SETTLE_MS);

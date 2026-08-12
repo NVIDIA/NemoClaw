@@ -4534,6 +4534,37 @@ def _recover_config_write_transaction(hermes_dir: str, state_file: str) -> None:
     _write_restart_state(state_file, state_data, create=False)
 
 
+def _validate_hermes_config_candidate(config_bytes: bytes) -> None:
+    """Parse a candidate with Hermes' own config model before any mutation.
+
+    The guard owns the sealed write transaction, while Hermes owns the schema.
+    Loading the candidate into the bundled model catches incomplete nested objects
+    such as ``platforms.teams.home_channel`` without maintaining a second schema.
+    This function does not read or write sandbox state.
+    """
+    try:
+        config_text = config_bytes.decode("utf-8")
+        parsed = yaml.safe_load(config_text)
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise UnsafePathError("Hermes configuration is not valid YAML") from exc
+    if not isinstance(parsed, dict):
+        raise UnsafePathError("Hermes configuration must be a mapping")
+    try:
+        from gateway.config import GatewayConfig
+
+        GatewayConfig.from_dict(parsed)
+    except UnsafePathError:
+        raise
+    except Exception as exc:
+        # Configuration values can contain credentials. KeyError identifies a
+        # missing field without echoing the candidate; other parser failures
+        # report only their exception type.
+        detail = str(exc)[:300] if isinstance(exc, KeyError) else type(exc).__name__
+        raise UnsafePathError(
+            f"Hermes schema validation rejected the candidate: {detail}"
+        ) from exc
+
+
 def write_config_transaction(
     hermes_dir: str,
     hash_file: str,
@@ -4546,6 +4577,14 @@ def write_config_transaction(
     if len(config_bytes) > MAX_CONFIG_INPUT_BYTES:
         raise UnsafePathError("refusing oversized Hermes config input")
 
+    # Validate before `seal_restart` writes the restart state or opens mutable
+    # inputs. A rejected candidate must leave config, env, and both hash anchors
+    # byte-for-byte unchanged. The established exact-size boundary runs its
+    # filesystem check first when the config path is absent.
+    config_path = os.path.join(hermes_dir, "config.yaml")
+    if os.path.exists(config_path):
+        _validate_hermes_config_candidate(config_bytes)
+
     seal_restart(
         hermes_dir,
         hash_file,
@@ -4554,7 +4593,6 @@ def write_config_transaction(
         expected_config_sha256=expected_config_sha256,
     )
     committed = False
-    config_path = os.path.join(hermes_dir, "config.yaml")
     try:
         state_data = _load_restart_state(state_file)
         if _restart_state_was_locked(state_data):

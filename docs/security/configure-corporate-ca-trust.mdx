@@ -36,6 +36,9 @@ This lets the in-sandbox OpenShell proxy validate TLS when it opens the upstream
 <AgentOnly variant="openclaw">
 
 It sets `NODE_EXTRA_CA_CERTS` before build-time Node.js dependency verification, including `npm audit signatures` requests that cross a TLS-inspecting proxy.
+When NemoClaw selects a corporate CA, it sets `NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root` for the image build.
+The OpenClaw entrypoint creates `/tmp/nemoclaw-ca-bundle.pem` as `root:root` with mode `0444` before it starts agent commands as the `sandbox` user.
+The `sandbox` user can read the merged bundle but cannot modify or replace it.
 
 </AgentOnly>
 
@@ -93,8 +96,24 @@ A custom Dockerfile must declare `ARG NEMOCLAW_CORPORATE_CA_B64`, validate and d
 Decoding only the application bundle is insufficient for OpenShell-inspected HTTPS because the proxy verifies the upstream TLS connection itself.
 If its build needs network access behind the corporate proxy, establish build-time trust before the dependency operations that require TLS.
 
-Automatic fallback and host-store sources are a no-op when a custom Dockerfile omits that argument.
-The explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` path fails onboarding when the argument is absent so the requested trust change cannot silently disappear.
+<AgentOnly variant="openclaw">
+
+In the final image stage, an OpenClaw custom Dockerfile must declare exactly one build argument named `NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER` with default `sandbox`.
+Dockerfile instruction keywords are case-insensitive, but the argument name must match exactly.
+Before the final entrypoint, the stage must set `USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}`.
+The final entrypoint must use the trusted exec form `ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]`.
+NemoClaw selects `root` when it bakes the corporate CA so the entrypoint can create the root-owned merged bundle before it starts agent commands.
+Automatic fallback and host-store sources are a no-op unless the Dockerfile declares `NEMOCLAW_CORPORATE_CA_B64` and meets this startup contract.
+The explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` path fails onboarding if either condition is not met.
+
+</AgentOnly>
+
+<AgentOnly variant="hermes,deepagents">
+
+Automatic fallback and host-store sources are a no-op when a custom Dockerfile omits `NEMOCLAW_CORPORATE_CA_B64`.
+The explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` path fails onboarding when that argument is absent so the requested trust change cannot silently disappear.
+
+</AgentOnly>
 
 ## Review the Trust Boundary
 
