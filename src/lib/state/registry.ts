@@ -42,6 +42,7 @@ export {
 } from "./registry-entry-view";
 
 import { isDcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
+import { cloneSandboxHostMounts, hasUnsafeHostMountTerminalText } from "./registry/host-mount";
 import type {
   BaselineExclusionEntry,
   BaselineExclusionTransition,
@@ -79,12 +80,11 @@ export type {
   SandboxEntry,
   SandboxGpuProofResult,
   SandboxGpuProofStatus,
+  SandboxHostMount,
   SandboxRegistry,
   SandboxWorkloadReceipt,
 } from "./registry/types";
 export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
-export { normalizeCustomPolicyEntries };
-
 export {
   getConfiguredMessagingChannelsFromEntry,
   getDisabledMessagingChannelsFromEntry,
@@ -92,6 +92,7 @@ export {
   getMessagingPlanFromEntry,
   type SandboxMessagingState,
 } from "./registry-messaging";
+export { hasUnsafeHostMountTerminalText, normalizeCustomPolicyEntries };
 
 export type SandboxRemovalReceipt = reversibleRemoval.RegistryRemovalReceipt<SandboxEntry>;
 
@@ -135,6 +136,10 @@ export function registerSandbox(entry: SandboxEntry): void {
       sandboxGpuMode: entry.sandboxGpuMode || null,
       sandboxGpuDevice: entry.sandboxGpuDevice || null,
       sandboxGpuProof: entry.sandboxGpuProof ?? null,
+      hostMounts:
+        Array.isArray(entry.hostMounts) && entry.hostMounts.length > 0
+          ? cloneSandboxHostMounts(entry.hostMounts)
+          : undefined,
       openshellDriver: entry.openshellDriver || null,
       openshellVersion: entry.openshellVersion || null,
       policies: entry.policies || [],
