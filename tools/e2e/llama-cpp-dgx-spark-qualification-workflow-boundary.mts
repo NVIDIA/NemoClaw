@@ -132,7 +132,9 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
     errors.push(`${PLAN_JOB_ID} must depend on generate-matrix`);
   }
   if (planJob.if !== SELECTOR)
-    errors.push(`${PLAN_JOB_ID} must require ${RUNNER_QUEUE_INPUT} and retain manual selectors`);
+    errors.push(
+      `${PLAN_JOB_ID} must require ${RUNNER_QUEUE_INPUT} and the trusted execution plan selector`,
+    );
   if (planJob["runs-on"] !== "ubuntu-24.04") {
     errors.push(`${PLAN_JOB_ID} must run on a standard trusted planner`);
   }

@@ -4,11 +4,14 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { validateStandardProfileWorkflowBoundary } from "../../../tools/e2e/standard-profile-workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
+
+const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 describe("standard E2E execution profile boundary", () => {
   it("accepts the catalogue callers and reusable profile", () => {
@@ -32,7 +35,7 @@ describe("standard E2E execution profile boundary", () => {
     const profilePath = path.join(tmp, "profile.yaml");
     const profile = YAML.parse(
       fs.readFileSync(
-        path.join(process.cwd(), ".github/workflows/e2e-standard-profile.yaml"),
+        path.join(REPO_ROOT, ".github", "workflows", "e2e-standard-profile.yaml"),
         "utf8",
       ),
     ) as {
@@ -40,6 +43,7 @@ describe("standard E2E execution profile boundary", () => {
         run: {
           steps: Array<{
             if?: string;
+            env?: Record<string, unknown>;
             name?: string;
             run?: string;
             uses?: string;
@@ -53,9 +57,13 @@ describe("standard E2E execution profile boundary", () => {
     checkout.uses = "actions/checkout@v7";
     checkout.with!["persist-credentials"] = true;
     const auth = steps.find((step) => step.name === "Authenticate to Docker Hub")!;
-    auth.with!["auth-required"] = "1";
+    auth.with!["auth-required"] = "${{ !inputs.trusted_main && '1' || '0' }}";
     const execute = steps.find((step) => step.name === "Run catalogue E2E target")!;
     execute.run = "npm test";
+    execute.env = {
+      ...execute.env,
+      NVIDIA_API_KEY: "${{ !inputs.trusted_main && secrets.NVIDIA_API_KEY || '' }}",
+    };
     const cleanup = steps.pop()!;
     steps.unshift(cleanup);
     fs.writeFileSync(profilePath, YAML.stringify(profile));

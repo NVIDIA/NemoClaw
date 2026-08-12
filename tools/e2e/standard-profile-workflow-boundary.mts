@@ -152,7 +152,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     Object.keys(declaredSecrets).sort().join(",") !== acceptedSecrets.sort().join(",") ||
     acceptedSecrets.some((name) => record(declaredSecrets[name]).required !== false)
   ) {
-    errors.push("standard E2E profile must accept only the three profile credential groups");
+    errors.push("standard E2E profile must accept only its four optional profile secrets");
   }
   if (record(profile.permissions).contents !== "read") {
     errors.push("standard E2E profile permissions must be contents: read");
@@ -193,8 +193,13 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     errors.push("standard E2E profile must use the reviewed Docker Hub authentication action");
   }
   const authInputs = record(auth?.with);
-  for (const name of ["auth-required", "username", "token"]) {
-    if (!String(authInputs[name] ?? "").includes("inputs.trusted_main")) {
+  const expectedAuthInputs = {
+    "auth-required": "${{ inputs.trusted_main && '1' || '0' }}",
+    username: "${{ inputs.trusted_main && secrets.DOCKERHUB_USERNAME || '' }}",
+    token: "${{ inputs.trusted_main && secrets.DOCKERHUB_TOKEN || '' }}",
+  };
+  for (const [name, expected] of Object.entries(expectedAuthInputs)) {
+    if (authInputs[name] !== expected) {
       errors.push(`standard E2E profile Docker Hub ${name} must be guarded by trusted_main`);
     }
   }
@@ -244,11 +249,14 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     !String(execute?.run).includes('OPENSHELL_BIN="$(command -v openshell)"') ||
     !String(execute?.run).includes('"$OPENSHELL_BIN" --version') ||
     !String(execute?.run).includes(
-      'npx tsx tools/e2e/target-catalogue.mts run "${{ inputs.target_id }}" "${{ inputs.test_file }}"',
+      'npx tsx tools/e2e/target-catalogue.mts run "$TARGET_ID" "$TEST_FILE"',
     ) ||
     executeEnv.INSTALL_MODE !== "${{ inputs.install_mode }}" ||
-    !String(executeEnv.NVIDIA_API_KEY).includes("inputs.trusted_main") ||
-    !String(executeEnv.NVIDIA_INFERENCE_API_KEY).includes("inputs.trusted_main")
+    executeEnv.TARGET_ID !== "${{ inputs.target_id }}" ||
+    executeEnv.TEST_FILE !== "${{ inputs.test_file }}" ||
+    executeEnv.NVIDIA_API_KEY !== "${{ inputs.trusted_main && secrets.NVIDIA_API_KEY || '' }}" ||
+    executeEnv.NVIDIA_INFERENCE_API_KEY !==
+      "${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}"
   ) {
     errors.push("standard E2E profile must run the planned catalogue target with guarded secrets");
   }

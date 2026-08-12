@@ -23,6 +23,7 @@ import {
   type E2eCatalogueMatrixRow,
   type E2eCatalogueTarget,
   type E2eExecutionProfile,
+  pathMatches,
 } from "./target-catalogue.mts";
 import {
   focusedE2eJobsForChangedFiles,
@@ -221,13 +222,9 @@ function catalogueMatrices(
   ) as Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>;
 }
 
-function pathMatchesPrefix(file: string, prefix: string): boolean {
-  return prefix.endsWith("/") ? file.startsWith(prefix) : file === prefix;
-}
-
 function registryTargetsForChangedFiles(changedFiles: readonly string[]): LiveTargetMatrixEntry[] {
   return changedFiles.some((file) =>
-    REGISTRY_OWNING_PATHS.some((prefix) => pathMatchesPrefix(file, prefix)),
+    REGISTRY_OWNING_PATHS.some((owner) => pathMatches(file, owner)),
   )
     ? buildLiveTargetMatrix()
     : [];
@@ -235,7 +232,11 @@ function registryTargetsForChangedFiles(changedFiles: readonly string[]): LiveTa
 
 function changedFilesFromEnvironment(environment: NodeJS.ProcessEnv): string[] | undefined {
   if (environment.EVENT_NAME !== "push") return undefined;
-  return [...new Set((environment.CHANGED_FILES ?? "").split("\n").filter(Boolean))].sort();
+  const declared = environment.CHANGED_FILES;
+  if (declared === undefined) {
+    throw new Error("E2E planner requires CHANGED_FILES for a push event");
+  }
+  return [...new Set(declared.split("\n").filter(Boolean))].sort();
 }
 
 function selectorIds(value: string | undefined, label: "jobs" | "targets"): string[] {
@@ -411,9 +412,7 @@ export function buildE2eWorkflowPlan(
   if (options.changedFiles) {
     const changedFiles = [...options.changedFiles];
     if (
-      changedFiles.some((file) =>
-        FULL_SUITE_OWNING_PATHS.some((owner) => pathMatchesPrefix(file, owner)),
-      )
+      changedFiles.some((file) => FULL_SUITE_OWNING_PATHS.some((owner) => pathMatches(file, owner)))
     ) {
       return buildE2eWorkflowPlan(selectors);
     }
@@ -426,7 +425,7 @@ export function buildE2eWorkflowPlan(
         ...focusedLegacyJobs,
         ...directlySelectedCatalogueTargets.map((target) => {
           const matchedFiles = changedFiles.filter((file) =>
-            target.owningPaths.some((owner) => pathMatchesPrefix(file, owner)),
+            target.owningPaths.some((owner) => pathMatches(file, owner)),
           );
           return {
             id: target.id,

@@ -27,7 +27,7 @@ const CREDENTIAL_WINDOW_FILE = `test/e2e/live/${CREDENTIAL_WINDOW_ID}.test.ts`;
 const CREDENTIAL_WINDOW_ARTIFACT_DIR = "e2e-artifacts/live/openshell-credential-generation-window";
 const CREDENTIAL_WINDOW_RUN_STEP = "Run OpenShell credential generation-window live test";
 const CREDENTIAL_WINDOW_JOB_CONDITION =
-  '${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "openshell-credential-generation-window") }}';
+  "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}";
 const STABLE_RELEASE_SOURCE_SHA = "8ddd98c3dff62619a3963f99ba1e055b67650e72";
 const STABLE_RELEASE_SUPERVISOR_INDEX =
   "b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb";
@@ -198,7 +198,7 @@ function validateJobIdentity(
     requireEqual(
       errors,
       job.if,
-      '${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "mcp-bridge") }}',
+      "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge') }}",
       "mcp-bridge must use the trusted execution plan",
     );
   } else {
@@ -217,7 +217,7 @@ function validateJobIdentity(
     requireEqual(
       errors,
       job.if,
-      '${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "mcp-bridge-dev") }}',
+      "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}",
       "mcp-bridge-dev must use the trusted execution plan",
     );
   }

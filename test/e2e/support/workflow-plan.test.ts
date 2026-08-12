@@ -161,6 +161,12 @@ describe("E2E workflow plan", () => {
     expect(plan.testMatrix).toEqual([]);
   });
 
+  it("selects every catalogue target when its shared installer changes", () => {
+    expect(catalogueTargetsForChangedFiles(["scripts/install-openshell.sh"])).toEqual(
+      E2E_TARGET_CATALOGUE,
+    );
+  });
+
   it("uses the PR risk rules to select catalogue targets for changed runtime code", () => {
     const plan = buildE2eWorkflowPlan({}, { changedFiles: ["src/lib/onboard.ts"] });
     const targetIds = Object.values(plan.catalogueMatrices)
@@ -511,6 +517,18 @@ describe("E2E workflow plan", () => {
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
+  });
+
+  it("requires changed-file evidence for push planning", () => {
+    expect(() =>
+      writeE2eWorkflowPlanCiOutput(
+        {},
+        {
+          EVENT_NAME: "push",
+          INFERENCE_MODE: "mock",
+        },
+      ),
+    ).toThrow("E2E planner requires CHANGED_FILES for a push event");
   });
 
   it("emits one compact JSON line with the deterministic workflow-output schema", () => {

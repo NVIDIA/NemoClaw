@@ -368,16 +368,18 @@ function validateConsumer(
     errors.push(`${jobName} must use the immutable complete CLI artifact restore contract`);
   }
   const restoreIndex = jobSteps.indexOf(restore);
-  const preRestoreSteps = jobSteps.slice(0, restoreIndex + 1);
+  const stepsThroughRestore = jobSteps.slice(0, restoreIndex + 1);
   const jobEnv = record(job.env);
   const defaultShell = record(record(job.defaults).run).shell;
-  const unsafePreRestoreStep = preRestoreSteps.some(
+  const unsafePreRestoreStep = stepsThroughRestore.some(
     (step) =>
       hasUnsafeShellHook(step.env) ||
       step.uses?.startsWith("./") ||
       (jobName !== "hermes-gpu-startup" &&
         (/GITHUB_WORKSPACE/u.test(step.run ?? "") ||
-          /(?:^|\s)bash\s+(?:[.]\/)?install[.]sh\b/u.test(step.run ?? ""))),
+          /(?:^|\s)(?:(?:ba|da|z)?sh\s+(?:-\S+\s+)*)?(?:[.]?\/|\S*\/)?install[.]sh\b/u.test(
+            step.run ?? "",
+          ))),
   );
   if (hasUnsafeShellHook(jobEnv) || defaultShell !== undefined || unsafePreRestoreStep) {
     errors.push(

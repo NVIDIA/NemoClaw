@@ -830,6 +830,18 @@ describe("exact-commit CLI artifact workflow boundary", () => {
         expectedErrors: [preRestoreError],
       },
       {
+        name: "nested installer script",
+        mutate: (workflow) => {
+          const steps = workflow.jobs["sandbox-operations"].steps!;
+          const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+          steps.splice(prepareIndex, 0, {
+            name: "Run nested installer",
+            run: "bash scripts/install.sh",
+          });
+        },
+        expectedErrors: [preRestoreError],
+      },
+      {
         name: "delayed restore",
         mutate: (workflow) => {
           const steps = workflow.jobs["sandbox-operations"].steps!;

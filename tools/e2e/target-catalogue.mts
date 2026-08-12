@@ -431,6 +431,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
 
 export const E2E_CATALOGUE_SHARED_PATHS = [
   ".github/workflows/e2e-standard-profile.yaml",
+  "scripts/install-openshell.sh",
   "tools/e2e/target-catalogue.mts",
 ] as const;
 
@@ -438,7 +439,7 @@ const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const TEST_FILE_PATTERN = /^test\/e2e\/live\/[A-Za-z0-9._-]+[.]test[.]ts$/u;
 const ENVIRONMENT_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/u;
 
-function pathMatches(file: string, owner: string): boolean {
+export function pathMatches(file: string, owner: string): boolean {
   return owner.endsWith("/") ? file.startsWith(owner) : file === owner;
 }
 
@@ -533,5 +534,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   if (command !== "run" || !id || !testFile) {
     throw new Error("Usage: target-catalogue.mts run <target-id> <test-file>");
   }
-  process.exit(await runCatalogueTarget(id, testFile));
+  void runCatalogueTarget(id, testFile).then((exitCode) => process.exit(exitCode));
 }

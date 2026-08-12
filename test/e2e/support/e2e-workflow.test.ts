@@ -79,6 +79,18 @@ describe("e2e workflow boundary", () => {
     );
   });
 
+  it("rejects an inverted selected-jobs condition", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { if?: string }>;
+    };
+    workflow.jobs["hermes-discord"]!.if =
+      "${{ !contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'hermes-discord') }}";
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "hermes-discord job must use the shared jobs selector condition",
+    );
+  });
+
   it("selects Launchable E2E only for trusted manual dispatches (#7487)", () => {
     expect(
       evaluateStagingBrevLaunchableDispatch({

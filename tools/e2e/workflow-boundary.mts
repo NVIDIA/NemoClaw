@@ -1084,6 +1084,10 @@ function requireNoDispatchInputInterpolation(
   }
 }
 
+function selectedJobsCondition(jobName: string): string {
+  return `\${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${jobName}') }}`;
+}
+
 function validateFreeStandingJobSelector(
   errors: string[],
   jobs: WorkflowRecord,
@@ -1095,11 +1099,7 @@ function validateFreeStandingJobSelector(
   if (job.needs !== "generate-matrix") {
     errors.push(`${jobName} job must depend on generate-matrix`);
   }
-  const condition = stringValue(job.if);
-  if (
-    !condition.includes("fromJSON(needs.generate-matrix.outputs.selected_jobs)") ||
-    (!condition.includes(`'${jobName}'`) && !condition.includes(`"${jobName}"`))
-  ) {
+  if (job.if !== selectedJobsCondition(jobName)) {
     errors.push(`${jobName} job must use the shared jobs selector condition`);
   }
 }
@@ -1271,9 +1271,13 @@ function validateFreeStandingInventoryCoverage(
     const job = asRecord(jobs[jobId]);
     if (Object.keys(job).length === 0) continue;
     const jobIf = stringValue(job.if);
+    const specialSelector =
+      FREE_STANDING_SELECTOR_SPECIAL_CASES.has(jobId) &&
+      jobIf.includes("fromJSON(needs.generate-matrix.outputs.selected_jobs)") &&
+      jobIf.includes(`'${jobId}'`);
     const mappingIsRepresented =
-      (jobIf.includes("fromJSON(needs.generate-matrix.outputs.selected_jobs)") &&
-        (jobIf.includes(`'${jobId}'`) || jobIf.includes(`"${jobId}"`))) ||
+      jobIf === selectedJobsCondition(jobId) ||
+      specialSelector ||
       (jobId === "hermes-e2e" && jobIf.includes("needs.generate-matrix.outputs.hermes_selected"));
     if (!mappingIsRepresented) {
       errors.push(

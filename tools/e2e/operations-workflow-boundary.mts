@@ -565,18 +565,25 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
   }
   const checkout = findStep(job, "Check out the E2E result evaluator");
   const requireResults = findStep(job, "Require every selected E2E result");
+  const steps = job.steps ?? [];
   requirePinnedAction(errors, checkout, "relevant-e2e checkout");
   if (
+    steps.length !== 3 ||
+    steps[0] !== checkout ||
+    steps[1] !== requireResults ||
     checkout.with?.ref !== "${{ github.workflow_sha }}" ||
     checkout.with?.["persist-credentials"] !== false ||
-    checkout.with?.["sparse-checkout"] !== "tools/e2e/release-qualification.mts"
+    checkout.with?.["sparse-checkout"] !== "tools/e2e/release-qualification.mts" ||
+    checkout.with?.["sparse-checkout-cone-mode"] !== false
   ) {
     errors.push("relevant-e2e must check out only the trusted evaluator");
   }
   if (
     requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
     requireResults.env?.RELEASE_REQUIRED_JOBS !==
-      "${{ needs.generate-matrix.outputs.selected_workflow_jobs }}"
+      "${{ needs.generate-matrix.outputs.selected_workflow_jobs }}" ||
+    requireResults.run !==
+      "node --experimental-strip-types --no-warnings tools/e2e/release-qualification.mts"
   ) {
     errors.push("relevant-e2e must evaluate planner-selected jobs from needs");
   }

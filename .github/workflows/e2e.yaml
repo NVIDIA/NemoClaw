@@ -1076,7 +1076,7 @@ jobs:
 
   openshell-gateway-auth-contract:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "openshell-gateway-auth-contract") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-gateway-auth-contract') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -1149,7 +1149,7 @@ jobs:
 
   mcp-bridge:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "mcp-bridge") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('mcp-bridge-{0}', matrix.agent)] }}
     permissions:
       contents: read
@@ -1476,7 +1476,7 @@ jobs:
 
   openshell-credential-generation-window:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "openshell-credential-generation-window") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1594,7 +1594,7 @@ jobs:
 
   mcp-bridge-dev:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "mcp-bridge-dev") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1714,7 +1714,7 @@ jobs:
   # Live skill injection and real OpenClaw agent-turn contract.
   skill-agent:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "skill-agent") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'skill-agent') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -1795,7 +1795,7 @@ jobs:
 
   inference-routing:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "inference-routing") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'inference-routing') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -1870,7 +1870,7 @@ jobs:
 
   gpu-e2e:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "gpu-e2e") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'gpu-e2e') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     # The 55 minute install command includes a cold 40 minute model pull;
     # 35 minutes remain for runner setup, assertions, artifacts, and cleanup.
@@ -1936,7 +1936,7 @@ jobs:
 
   llama-cpp-generic-gpu:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "llama-cpp-generic-gpu") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'llama-cpp-generic-gpu') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 120
     env:
@@ -2908,7 +2908,7 @@ jobs:
 
   agent-turn-latency:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "agent-turn-latency") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'agent-turn-latency') }}
     runs-on: ubuntu-latest
     timeout-minutes: 110
     env:
@@ -3011,7 +3011,7 @@ jobs:
 
   hermes-inference-switch:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "hermes-inference-switch") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'hermes-inference-switch') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-inference-switch'] }}
     permissions:
       contents: read
@@ -3111,7 +3111,7 @@ jobs:
 
   brave-search:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "brave-search") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'brave-search') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -3178,7 +3178,7 @@ jobs:
 
   issue-4434-tui-unreachable-inference:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "issue-4434-tui-unreachable-inference") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'issue-4434-tui-unreachable-inference') }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -3256,7 +3256,7 @@ jobs:
 
   hermes-slack:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "hermes-slack") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'hermes-slack') }}
     runs-on: linux-amd64-cpu4
     timeout-minutes: 75
     env:
@@ -3677,7 +3677,7 @@ jobs:
 
   hermes-discord:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "hermes-discord") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'hermes-discord') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-discord'] }}
     timeout-minutes: 90
     env:
@@ -3768,7 +3768,7 @@ jobs:
   network-policy:
     name: Network policy (${{ matrix.scenario }})
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "network-policy") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'network-policy') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
@@ -3854,7 +3854,7 @@ jobs:
   common-egress-agent:
     name: Common egress agent (${{ matrix.scenario }})
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "common-egress-agent") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'common-egress-agent') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['common-egress-agent'] }}
     timeout-minutes: 60
     strategy:
@@ -3979,7 +3979,7 @@ jobs:
 
   hermes-shields-config:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "hermes-shields-config") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'hermes-shields-config') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-shields-config'] }}
     timeout-minutes: 60
     env:
@@ -4061,7 +4061,7 @@ jobs:
 
   rebuild-hermes:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "rebuild-hermes") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'rebuild-hermes') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['rebuild-hermes'] }}
     timeout-minutes: 90
     env:
@@ -4182,7 +4182,7 @@ jobs:
 
   rebuild-hermes-stale-base:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "rebuild-hermes-stale-base") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'rebuild-hermes-stale-base') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['rebuild-hermes-stale-base'] }}
     timeout-minutes: 90
     env:
@@ -4345,7 +4345,7 @@ jobs:
     permissions:
       contents: read
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "security-posture") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'security-posture') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('security-posture-{0}', matrix.agent)] }}
     timeout-minutes: 75
     strategy:
@@ -4452,7 +4452,7 @@ jobs:
 
   cloud-onboard:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "cloud-onboard") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'cloud-onboard') }}
     runs-on: ubuntu-latest
     timeout-minutes: 70
     env:
@@ -4572,7 +4572,7 @@ jobs:
 
   gpu-double-onboard:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "gpu-double-onboard") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'gpu-double-onboard') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 100
     env:
@@ -4636,7 +4636,7 @@ jobs:
 
   token-rotation:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "token-rotation") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'token-rotation') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -4694,7 +4694,7 @@ jobs:
   openshell-gateway-upgrade:
     name: OpenShell gateway upgrade (${{ matrix.id }})
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "openshell-gateway-upgrade") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-gateway-upgrade') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 70
     strategy:
@@ -4812,7 +4812,7 @@ jobs:
 
   messaging-providers:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "messaging-providers") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'messaging-providers') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -4875,7 +4875,7 @@ jobs:
 
   bootstrap-install-smoke:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "bootstrap-install-smoke") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'bootstrap-install-smoke') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -4927,7 +4927,7 @@ jobs:
 
   sandbox-operations:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "sandbox-operations") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'sandbox-operations') }}
     runs-on: ubuntu-latest
     # The live test receives 45 minutes for two onboards plus process/gateway
     # recovery. The remaining 15 minutes cover checkout, build, OpenShell setup,
@@ -4999,7 +4999,7 @@ jobs:
 
   openclaw-plugin-runtime-exdev-release:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "openclaw-plugin-runtime-exdev-release") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openclaw-plugin-runtime-exdev-release') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -5069,7 +5069,7 @@ jobs:
   # replacement across devices without waiting for the release baseline.
   openclaw-plugin-runtime-exdev:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "openclaw-plugin-runtime-exdev") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openclaw-plugin-runtime-exdev') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -5139,7 +5139,7 @@ jobs:
   # The #2603/#3145 OpenClaw websocket protocol/history contract.
   openclaw-tui-chat-correlation:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "openclaw-tui-chat-correlation") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openclaw-tui-chat-correlation') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -5223,7 +5223,7 @@ jobs:
 
   gateway-guard-recovery:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "gateway-guard-recovery") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'gateway-guard-recovery') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -5309,7 +5309,7 @@ jobs:
 
   openclaw-inference-switch:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "openclaw-inference-switch") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openclaw-inference-switch') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -5382,7 +5382,7 @@ jobs:
   # Bedrock Runtime compatible Anthropic endpoint contract.
   bedrock-runtime-compatible-anthropic:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "bedrock-runtime-compatible-anthropic") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'bedrock-runtime-compatible-anthropic') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -5467,7 +5467,7 @@ jobs:
 
   channels-stop-start:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "channels-stop-start") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'channels-stop-start') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('channels-stop-start-{0}', matrix.agent)] }}
     timeout-minutes: 90
     strategy:
@@ -5591,7 +5591,7 @@ jobs:
 
   tunnel-lifecycle:
     needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), "tunnel-lifecycle") }}
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'tunnel-lifecycle') }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:

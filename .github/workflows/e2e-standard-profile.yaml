@@ -96,6 +96,8 @@ jobs:
       - name: Run catalogue E2E target
         env:
           INSTALL_MODE: ${{ inputs.install_mode }}
+          TARGET_ID: ${{ inputs.target_id }}
+          TEST_FILE: ${{ inputs.test_file }}
           NVIDIA_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_API_KEY || '' }}
           NVIDIA_INFERENCE_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
@@ -113,7 +115,7 @@ jobs:
             export OPENSHELL_BIN
             "$OPENSHELL_BIN" --version
           fi
-          npx tsx tools/e2e/target-catalogue.mts run "${{ inputs.target_id }}" "${{ inputs.test_file }}"
+          npx tsx tools/e2e/target-catalogue.mts run "$TARGET_ID" "$TEST_FILE"
 
       - name: Upload E2E artifacts
         if: always()

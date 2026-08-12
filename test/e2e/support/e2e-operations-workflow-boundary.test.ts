@@ -84,6 +84,32 @@ describe("E2E operations workflow boundary", testTimeoutOptions(15_000), () => {
     );
   });
 
+  it("pins the relevant E2E aggregate to the trusted push result set (#7912)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const job = workflow.jobs["relevant-e2e"];
+    job.if = "${{ always() }}";
+    job.needs = ["generate-matrix"];
+    job.permissions = { contents: "write" };
+    const checkout = job.steps!.find((step) => step.name === "Check out the E2E result evaluator")!;
+    checkout.uses = "actions/checkout@v7";
+    checkout.with!["sparse-checkout-cone-mode"] = true;
+    const requireResults = job.steps!.find(
+      (step) => step.name === "Require every selected E2E result",
+    )!;
+    requireResults.run = "true";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "relevant-e2e needs must exactly match report-to-pr needs",
+        "relevant-e2e must be the stable aggregate check for main pushes",
+        "relevant-e2e permissions must be contents: read",
+        "relevant-e2e checkout must pin its action to a full SHA",
+        "relevant-e2e must check out only the trusted evaluator",
+        "relevant-e2e must evaluate planner-selected jobs from needs",
+      ]),
+    );
+  });
+
   it("rejects missing NEEDS_JSON environment data (#6952)", () => {
     const workflow = readE2eOperationsWorkflow();
     const report = workflow.jobs["report-to-pr"].steps!.find(
