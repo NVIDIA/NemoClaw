@@ -8,7 +8,7 @@ import { selectAuthorizedChatModel } from "../lib/select-authorized-chat-model.m
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 
 describe("authorized alternate chat model selection", () => {
-  it("uses the first listed chat model that the credential can invoke", async () => {
+  it("tries preferred chat models in order until the credential can invoke one", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
