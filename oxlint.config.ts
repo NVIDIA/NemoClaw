@@ -61,7 +61,7 @@ export default defineConfig({
     node: true,
   },
   extends: [core],
-  ignorePatterns: [...core.ignorePatterns, ".claude", ".pi", "tools/oxlint/anti-slop"],
+  ignorePatterns: [...(core.ignorePatterns ?? []), ".claude", ".pi", "tools/oxlint/anti-slop"],
   jsPlugins: [
     {
       name: "anti-slop",
