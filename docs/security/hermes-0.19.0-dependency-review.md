@@ -368,7 +368,7 @@ The review records the following source and test evidence.
 The review records the following publication and registry evidence.
 
 - Hermes CI run `29768400292`, PyPI publication run `29768427462`, and Docker publication run `29768440304` completed successfully.
-- GitHub Actions workflow `.github/workflows/base-image.yaml` run `31031662054`, attempt 1, published the selected patched `linux/amd64` and `linux/arm64` base images; run `31006872948`, attempt 1, published the preceding security-refreshed index.
+- GitHub Actions workflow `.github/workflows/base-image.yaml` run `31636995117`, attempt 1, published the selected patched `linux/amd64` and `linux/arm64` base images and OCI index `sha256:4295138eb70f938189430f8dc7b3cd5db0aa762234e64e398a6a5ef60803126c`; run `31031662054`, attempt 1, published the superseded patched index, and run `31006872948`, attempt 1, published the preceding security-refreshed index.
 - PyPI Trusted Publisher attestations bind both `hermes-agent==0.19.0` artifacts to source commit `3ef6bbd201263d354fd83ec55b3c306ded2eb72a`.
 - The npm registry-integrity check matches the `hermes-agent==0.19.0` cross-check value recorded in this review.
 - OCI inspection records the immutable index, both child manifests, image-configuration source and revision labels, per-platform SLSA provenance, and build histories.
