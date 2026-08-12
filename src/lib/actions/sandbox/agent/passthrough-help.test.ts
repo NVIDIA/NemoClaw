@@ -109,7 +109,13 @@ describe("writeSilentAgentDispatchFailure", () => {
       "use sk-ant-api03-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH",
     ]);
 
-    expect(lines.join("")).not.toContain("sk-ant-api03-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH");
+    const output = lines.join("");
+    expect(output).not.toContain("sk-ant-api03-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH");
+    // Pin the surviving command, not just the absent token: a bare negative
+    // assertion also passes if the recovery command is dropped entirely.
+    expect(output).toContain(
+      "nemoclaw 'my-assistant' exec -- 'openclaw' 'agent' '--agent' 'main' '-m' 'use <REDACTED>'",
+    );
   });
 
   it("leaves ordinary turn text runnable rather than redacting it", () => {
