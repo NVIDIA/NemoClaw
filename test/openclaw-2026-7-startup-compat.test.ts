@@ -153,6 +153,10 @@ describe("OpenClaw 2026.7 startup compatibility", () => {
       { mode: 0o700 },
     );
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const launchProcess = extractShellFunction(
+      source,
+      "launch_openclaw_gateway_process",
+    ).replaceAll("/tmp/gateway.log", gatewayLog);
     const launch = extractShellFunction(source, "launch_openclaw_gateway").replaceAll(
       "/tmp/gateway.log",
       gatewayLog,
@@ -171,6 +175,7 @@ describe("OpenClaw 2026.7 startup compatibility", () => {
         "mark_in_container_gateway() { :; }",
         "capture_openclaw_pid_start_identity() { printf -v \"$2\" '%s' test-identity; }",
         "record_gateway_pid() { :; }",
+        launchProcess,
         launch,
         "launch_openclaw_gateway",
         'wait "$GATEWAY_PID"',

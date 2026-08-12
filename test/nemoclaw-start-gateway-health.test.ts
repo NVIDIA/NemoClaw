@@ -32,6 +32,10 @@ function rootGatewayLifecycleFunctions(src: string, gatewayLog: string): string 
   return [
     pidIdentityFunctions(src),
     extractShellFunction(src, "arm_openclaw_gateway_supervisor_cleanup"),
+    extractShellFunction(src, "launch_openclaw_gateway_process").replaceAll(
+      "/tmp/gateway.log",
+      gatewayLog,
+    ),
     extractShellFunction(src, "launch_openclaw_gateway").replaceAll("/tmp/gateway.log", gatewayLog),
     extractShellFunction(src, "openclaw_supervised_aux_pid_is_live"),
     extractShellFunction(src, "stop_openclaw_supervised_gateway"),
