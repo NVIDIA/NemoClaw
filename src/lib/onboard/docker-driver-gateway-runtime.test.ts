@@ -430,6 +430,21 @@ describe("docker-driver gateway runtime helpers", () => {
     ).toBe(`executable=${replacementGatewayBin} (expected ${identityGatewayBin})`);
   });
 
+  it("rejects a mount-enabled process when the desired capability is disabled", () => {
+    const { helpers } = makeHelpers();
+    expect(
+      helpers.getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: {
+          OPENSHELL_DRIVERS: "docker",
+          NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS: "1",
+        },
+        processExe: "/usr/bin/openshell-gateway",
+        desiredEnv: { OPENSHELL_DRIVERS: "docker" },
+        gatewayBin: "/usr/bin/openshell-gateway",
+      })?.reason,
+    ).toBe("NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS=1 (expected <unset>)");
+  });
+
   it("reuses a systemd-owned gateway without detached cleanup identity (#6903)", () => {
     const pid = 12_350;
     const gatewayBin = "/usr/bin/openshell-gateway";

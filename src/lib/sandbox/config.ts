@@ -99,6 +99,7 @@ interface DnsValidatedUrl {
 interface ConfigUrlValidationOptions {
   allowOpenShellBridge?: boolean;
   allowOpenShellBridgePath?: (path: readonly string[]) => boolean;
+  allowPrivateUrls?: boolean;
 }
 
 type ManagedGatewayRestart = (sandboxName: string) => { ok: boolean };
@@ -143,7 +144,13 @@ function restartSandboxAgentAfterConfigSet(
 }
 
 function buildConfigSetRestartGuidance(sandboxName: string, agentName: string): string[] {
-  if (agentName === "openclaw" || agentName === "hermes") {
+  if (agentName === "hermes") {
+    return [
+      "  Note: Hermes may restart its gateway when it applies this configuration.",
+      `  Use --restart to request and verify a restart, or run: nemoclaw ${shellQuote(sandboxName)} gateway restart`,
+    ];
+  }
+  if (agentName === "openclaw") {
     return [
       "  Note: Some config changes require a sandbox restart to take effect.",
       `  Re-run with --restart or run: nemoclaw ${shellQuote(sandboxName)} gateway restart`,
@@ -494,6 +501,19 @@ type ValidatedOpenClawCandidate = {
   privileged: import("../shields/state-dir-lock").PrivilegedExec;
 };
 
+function isHermesCompatHashRecoveryError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /compat hash (does not match frozen Hermes inputs|verification failed)/iu.test(message);
+}
+
+function hermesCompatHashRecoveryError(sandboxName: string): SandboxConfigError {
+  return new SandboxConfigError([
+    "  Hermes integrity metadata is not ready for a configuration write.",
+    `  Run: nemoclaw ${shellQuote(sandboxName)} recover`,
+    "  The configuration write was not applied.",
+  ]);
+}
+
 function writeSandboxConfig(
   sandboxName: string,
   target: AgentConfigTarget,
@@ -512,28 +532,35 @@ function writeSandboxConfig(
         "Refusing Hermes config write without the digest from the matching sandbox read.",
       );
     }
-    privilegedSandboxExec(
-      sandboxName,
-      [
-        "timeout",
-        "--signal=TERM",
-        "--kill-after=5s",
-        "2m",
-        HERMES_PYTHON,
-        "-I",
-        HERMES_RUNTIME_CONFIG_GUARD,
-        "write-config",
-        "--hermes-dir",
-        target.configDir,
-        "--hash-file",
-        HERMES_STRICT_HASH_FILE,
-        "--state-file",
-        HERMES_RESTART_SEAL_STATE,
-        "--expected-config-sha256",
-        expectedConfigSha256,
-      ],
-      { input: content, timeout: HERMES_CONFIG_GUARD_TIMEOUT_MS },
-    );
+    try {
+      privilegedSandboxExec(
+        sandboxName,
+        [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "2m",
+          HERMES_PYTHON,
+          "-I",
+          HERMES_RUNTIME_CONFIG_GUARD,
+          "write-config",
+          "--hermes-dir",
+          target.configDir,
+          "--hash-file",
+          HERMES_STRICT_HASH_FILE,
+          "--state-file",
+          HERMES_RESTART_SEAL_STATE,
+          "--expected-config-sha256",
+          expectedConfigSha256,
+        ],
+        { input: content, timeout: HERMES_CONFIG_GUARD_TIMEOUT_MS },
+      );
+    } catch (error) {
+      if (isHermesCompatHashRecoveryError(error)) {
+        throw hermesCompatHashRecoveryError(sandboxName);
+      }
+      throw error;
+    }
     return;
   }
   if (target.agentName === "openclaw") {
@@ -849,6 +876,7 @@ function validateUrlValue(
 ): void {
   const parsed = parseHttpUrl(value);
   if (!parsed) return;
+  if (options.allowPrivateUrls && isPrivateHostname(parsed.hostname)) return;
   if (
     (options.allowOpenShellBridge || options.allowOpenShellBridgePath?.(pathSegments)) &&
     isAllowedOpenShellSandboxBridgeUrl(parsed)
@@ -869,6 +897,13 @@ async function validateUrlValueWithDnsResult(
   if (!parsed) return null;
 
   const hostname = parsed.hostname;
+  if (options.allowPrivateUrls && isPrivateHostname(hostname)) {
+    return {
+      protocol: parsed.protocol as "http:" | "https:",
+      originalUrl,
+      pinnedUrl: originalUrl,
+    };
+  }
   if (
     (options.allowOpenShellBridge || options.allowOpenShellBridgePath?.(pathSegments)) &&
     isAllowedOpenShellSandboxBridgeUrl(parsed)
@@ -960,6 +995,11 @@ function redactConfigValueForPreview(value: ConfigValue): ConfigValue {
 function formatConfigValueForLogs(value: ConfigValue | undefined): string {
   if (value === undefined) return "(not set)";
   return JSON.stringify(redactConfigValueForPreview(value));
+}
+
+function hermesConfigAllowsPrivateUrls(config: ConfigObject): boolean {
+  const security = config.security;
+  return isConfigObject(security) && security.allow_private_urls === true;
 }
 
 function configSetAllowsOpenShellBridge(
@@ -1264,6 +1304,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
   let safeValue: ConfigValue;
   try {
     safeValue = await rewriteConfigUrlsWithDnsPinning(parsedValue, dnsPromises.lookup as LookupFn, {
+      allowPrivateUrls: target.agentName === "hermes" && hermesConfigAllowsPrivateUrls(config),
       allowOpenShellBridgePath: (relativePath) =>
         configSetAllowsOpenShellBridge(target.agentName, configKey, relativePath),
     });
@@ -1515,6 +1556,9 @@ export {
   configRotateToken,
   configSet,
   configSetAllowsOpenShellBridge,
+  hermesConfigAllowsPrivateUrls,
+  hermesCompatHashRecoveryError,
+  isHermesCompatHashRecoveryError,
   DEFAULT_AGENT_CONFIG,
   extractDotpath,
   findClobberingAncestor,

@@ -34,6 +34,7 @@ export interface OnboardRuntimeDeps {
   markStepStarted(stepName: string): Session;
   markStepComplete(stepName: string, updates?: SessionUpdates): Session;
   markStepSkipped(stepName: string): Session;
+  markStepRejected?(stepName: string): Session;
   markStepFailed(stepName: string, message?: string | null): Session;
   completeSession(updates?: SessionUpdates, options?: CompleteSessionOptions): Session;
   filterSafeUpdates(updates: SessionUpdates): Partial<Session>;
@@ -76,6 +77,7 @@ function defaultDeps(): OnboardRuntimeDeps {
     markStepStarted: onboardSession.markStepStarted,
     markStepComplete: onboardSession.markStepComplete,
     markStepSkipped: onboardSession.markStepSkipped,
+    markStepRejected: onboardSession.markStepRejected,
     markStepFailed: onboardSession.markStepFailed,
     completeSession: onboardSession.completeSession,
     filterSafeUpdates: onboardSession.filterSafeUpdates,
@@ -167,6 +169,10 @@ export class OnboardRuntime {
       });
     }
     return updated;
+  }
+
+  async markStepRejected(stepName: string): Promise<Session> {
+    return this.deps.markStepRejected?.(stepName) ?? this.deps.markStepSkipped(stepName);
   }
 
   async markStepSkipped(stepName: string): Promise<Session> {
