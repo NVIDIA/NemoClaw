@@ -3677,18 +3677,13 @@ async function preflightAuthoritativeRebuildTarget(
         resolveBaselinePolicy: resolveSandboxBaselinePolicy,
         bindGatewayAuthority: () => bindGatewayOwner(getGatewayOwner()),
         runFatalRuntimePreflight: async () =>
-          fatalRuntimePreflight.runReadinessGatedRuntimePreflight(
+          onboardPreflightGatewayAuthority.runRuntimePreflight(
             {
               sandboxGpu: opts.sandboxGpu,
               sandboxGpuDevice: opts.sandboxGpuDevice,
               noGpu: opts.noGpu,
             },
-            {
-              nonInteractive: true,
-              collectGatewayReadiness: onboardPreflightGatewayAuthority.collectGatewayReadiness,
-              exitProcess: (code) =>
-                fail(`onboard runtime preflight exited with code ${String(code)}`),
-            },
+            (code) => fail(`onboard runtime preflight exited with code ${String(code)}`),
           ),
         ensureOpenshell: () =>
           ensureOpenshellForOnboard((code) =>

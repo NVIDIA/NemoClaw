@@ -107,14 +107,18 @@ describe("preflight gateway authority", () => {
     const runRuntimePreflight = vi
       .spyOn(fatalRuntimePreflight, "runReadinessGatedRuntimePreflight")
       .mockImplementation(async () => ({}) as never);
+    const exitProcess = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
 
-    await authority.runRuntimePreflight({});
+    await authority.runRuntimePreflight({}, exitProcess);
 
     expect(runRuntimePreflight).toHaveBeenCalledWith(
       {},
       {
         nonInteractive: true,
         collectGatewayReadiness: authority.collectGatewayReadiness,
+        exitProcess,
       },
     );
 

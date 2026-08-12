@@ -78,10 +78,14 @@ export function createOnboardPreflightGatewayAuthority(deps: OnboardPreflightGat
     collectGatewayReadiness,
     runRuntimePreflight: (
       options: Parameters<typeof fatalRuntimePreflight.runReadinessGatedRuntimePreflight>[0],
+      exitProcess?: NonNullable<
+        Parameters<typeof fatalRuntimePreflight.runReadinessGatedRuntimePreflight>[1]["exitProcess"]
+      >,
     ) =>
       fatalRuntimePreflight.runReadinessGatedRuntimePreflight(options, {
         nonInteractive: deps.isNonInteractive(),
         collectGatewayReadiness,
+        ...(exitProcess ? { exitProcess } : {}),
       }),
     prepareGatewayAuthority: () =>
       preparePreflightGatewayAuthority({
