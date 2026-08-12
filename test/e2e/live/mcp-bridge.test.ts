@@ -8,6 +8,7 @@ import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
   buildOpenClawMcporterInspectCommand,
+  OPENCLAW_MCPORTER_ROOT,
 } from "../../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import type { McpBridgeEntry } from "../../../src/lib/state/registry";
@@ -820,7 +821,10 @@ test("mcp-bridge", {
   const mcporterList = await sandbox.execShell(
     OPENCLAW_SANDBOX_NAME,
     trustedSandboxShellScript(
-      ["set -eu", `nemoclaw-start mcporter list ${SERVER_NAME} --json`].join("\n"),
+      [
+        "set -eu",
+        `nemoclaw-start mcporter --root ${shellQuote(OPENCLAW_MCPORTER_ROOT)} list ${SERVER_NAME} --json`,
+      ].join("\n"),
     ),
     {
       artifactName: "mcp-mcporter-list-tools",
