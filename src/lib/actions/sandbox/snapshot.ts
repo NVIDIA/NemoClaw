@@ -33,7 +33,10 @@ import {
   withDashboardPortReservationLock,
 } from "../../onboard/dashboard-port";
 import { isValidForwardPort } from "../../onboard/dashboard-runtime";
-import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import {
+  resolveGatewayPortFromName,
+  resolveSandboxGatewayName,
+} from "../../onboard/gateway-binding";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
 import {
   isDcodeAgent,
@@ -366,6 +369,13 @@ async function autoCreateSandboxFromSource(
   const openshellBin = getOpenshellBinary();
   const sourceObservabilityEnabled =
     (srcEntry as { observabilityEnabled?: boolean }).observabilityEnabled === true;
+  const sourceGatewayName = resolveSandboxGatewayName(
+    srcEntry as { gatewayName?: string | null; gatewayPort?: number | null },
+  );
+  const sourceGatewayPort = resolveGatewayPortFromName(sourceGatewayName);
+  if (sourceGatewayPort === null) {
+    throw new Error(`Cannot resolve gateway port for snapshot source '${srcName}'.`);
+  }
   const startupCommand = [
     "env",
     `NEMOCLAW_OBSERVABILITY=${sourceObservabilityEnabled ? "1" : "0"}`,
@@ -453,6 +463,11 @@ async function autoCreateSandboxFromSource(
       (srcEntry as SandboxEntry).hermesDashboardEnabled === true
         ? dstDashboardPort
         : (srcEntry as SandboxEntry).hermesDashboardPort,
+    // A legacy source may have only a gateway name (or neither binding
+    // field). Register the new clone with the complete canonical binding so
+    // stop/start, recovery, and later snapshots can address its gateway.
+    gatewayName: sourceGatewayName,
+    gatewayPort: sourceGatewayPort,
   });
 
   const sourceAgent = (srcEntry as SandboxEntry).agent || "openclaw";

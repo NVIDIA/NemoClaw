@@ -27,7 +27,7 @@ vi.mock("../../onboard/dashboard-port", () => ({
 beforeEach(f.resetSnapshotRestoreMocks);
 afterEach(f.cleanupSnapshotRestoreMocks);
 describe("runSandboxSnapshot restore: clone dashboard port identity", () => {
-  it("allocates the auto-created clone its own dashboard port instead of inheriting the source's (#6746)", async () => {
+  it("registers a legacy source clone with complete dashboard and gateway ports (#7227)", async () => {
     let registeredClone: f.SandboxRecord | null = null;
     f.registerSandboxMock.mockImplementation(
       (entry) => (registeredClone = entry as f.SandboxRecord),
@@ -75,6 +75,8 @@ describe("runSandboxSnapshot restore: clone dashboard port identity", () => {
       expect.objectContaining({
         name: "beta",
         dashboardPort: 18901,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
       }),
     );
   });
