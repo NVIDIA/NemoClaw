@@ -818,6 +818,7 @@ function waitForRecreatedSandboxOpenShellReadyResult(
       ? Math.max(1, Math.floor(timeoutSeconds / intervalSeconds) + 1)
       : Math.max(1, Math.floor(timeoutSeconds) + 1);
   let lastOpenshellError: string | undefined;
+  let observedRetryableReRegistrationState = false;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const preGuardRemainingMs = deadlineMs - now();
@@ -861,8 +862,25 @@ function waitForRecreatedSandboxOpenShellReadyResult(
     // mutation outcome to reconcile. Treat that exact timeout as inconclusive
     // and retry behind the pinned managed-health guard on the next iteration.
     // All other unexpected OpenShell failures remain definitive.
+    const retryableReRegistrationState = isRetryableOpenshellReRegistrationState(
+      result,
+      sandboxName,
+    );
+    if (retryableReRegistrationState) observedRetryableReRegistrationState = true;
+    const emptyReadOnlyProbeAfterReRegistration =
+      observedRetryableReRegistrationState &&
+      result.status === 1 &&
+      !result.error &&
+      String(result.stdout ?? "").trim() === "" &&
+      String(result.stderr ?? "").trim() === "";
+    // OpenShell can briefly return an empty exit-1 result after first exposing
+    // the exact replacement re-registration state. Keep that result
+    // inconclusive only inside the same bounded wait and behind the pinned
+    // managed-health guard. It is never accepted as Ready, and an empty first
+    // failure or any diagnostic-bearing unknown failure remains terminal.
     if (
-      !isRetryableOpenshellReRegistrationState(result, sandboxName) &&
+      !retryableReRegistrationState &&
+      !emptyReadOnlyProbeAfterReRegistration &&
       !isCommandTimeout(result)
     ) {
       return {

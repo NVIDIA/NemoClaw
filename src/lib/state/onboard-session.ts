@@ -55,10 +55,15 @@ import {
   type ToolDisclosure,
 } from "./onboard-session-tool-disclosure";
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
+import type { SandboxHostMount } from "./registry/types";
+import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
 import { nemoclawStateRoot } from "./state-root";
+
+export { normalizePersistedSandboxHostMounts } from "./registry/host-mount";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;
+const INVALID_HOST_MOUNT_SESSIONS = new WeakSet<object>();
 export const SESSION_DIR = nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT);
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
@@ -99,6 +104,38 @@ export interface SessionFailure {
 export interface SessionMetadata {
   gatewayName: string;
   fromDockerfile: string | null;
+  hostMounts?: SandboxHostMount[];
+}
+
+function structurallyInvalidHostMounts(source: unknown): boolean {
+  if (typeof source !== "object" || source === null) return false;
+  const metadata = (source as { metadata?: unknown }).metadata;
+  if (typeof metadata !== "object" || metadata === null) return false;
+  const hostMounts = (metadata as { hostMounts?: unknown }).hostMounts;
+  if (hostMounts === undefined) return false;
+  return (
+    !Array.isArray(hostMounts) ||
+    hostMounts.some(
+      (candidate) =>
+        !isObject(candidate) ||
+        typeof candidate.source !== "string" ||
+        typeof candidate.target !== "string" ||
+        hasUnsafeHostMountTerminalText(candidate.source) ||
+        hasUnsafeHostMountTerminalText(candidate.target) ||
+        candidate.readOnly !== true,
+    )
+  );
+}
+
+export function hasInvalidSessionHostMounts(session: unknown): boolean {
+  return (
+    (typeof session === "object" && session !== null && INVALID_HOST_MOUNT_SESSIONS.has(session)) ||
+    structurallyInvalidHostMounts(session)
+  );
+}
+
+function preserveInvalidSessionHostMounts(source: unknown, target: object): void {
+  if (hasInvalidSessionHostMounts(source)) INVALID_HOST_MOUNT_SESSIONS.add(target);
 }
 
 export type SessionRecoveryReceiptReason =
@@ -472,9 +509,29 @@ function parseWechatConfig(value: unknown): WechatConfig | null {
 
 function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetadata | undefined {
   if (!isObject(value)) return undefined;
+  const hostMounts =
+    Array.isArray(value.hostMounts) &&
+    value.hostMounts.every(
+      (candidate) =>
+        isObject(candidate) &&
+        typeof candidate.source === "string" &&
+        typeof candidate.target === "string" &&
+        !hasUnsafeHostMountTerminalText(candidate.source) &&
+        !hasUnsafeHostMountTerminalText(candidate.target) &&
+        candidate.readOnly === true,
+    )
+      ? value.hostMounts.map(
+          (candidate): SandboxHostMount => ({
+            source: (candidate as { source: string }).source,
+            target: (candidate as { target: string }).target,
+            readOnly: true,
+          }),
+        )
+      : [];
   return {
     gatewayName: readString(value.gatewayName) ?? "nemoclaw",
     fromDockerfile: readString(value.fromDockerfile),
+    ...(hostMounts.length > 0 ? { hostMounts } : {}),
   };
 }
 
@@ -710,6 +767,9 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     metadata: {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
+      ...(overrides.metadata?.hostMounts?.length
+        ? { hostMounts: overrides.metadata.hostMounts.map((mount) => ({ ...mount })) }
+        : {}),
     },
     machine:
       parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined, sessionId) ??
@@ -718,6 +778,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     steps,
   };
   preserveInvalidSessionToolDisclosure(overrides, session);
+  preserveInvalidSessionHostMounts(overrides, session);
   return session;
 }
 
@@ -851,6 +912,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   normalized.machine =
     parseMachineSnapshot(data.machine, normalized.sessionId) ?? inferMachineSnapshot(normalized);
   preserveInvalidSessionToolDisclosure(data, normalized);
+  preserveInvalidSessionHostMounts(data, normalized);
 
   return normalized;
 }
