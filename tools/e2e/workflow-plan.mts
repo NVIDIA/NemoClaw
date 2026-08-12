@@ -17,12 +17,14 @@ import { selectedRetiredControllerJobs } from "./retired-selector-compatibility.
 import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import {
   catalogueMatrix,
+  catalogueTarget,
   catalogueTargetsForChangedFiles,
   E2E_EXECUTION_PROFILES,
   E2E_TARGET_CATALOGUE,
   type E2eCatalogueMatrixRow,
   type E2eCatalogueTarget,
   type E2eExecutionProfile,
+  isPrCandidateCatalogueTarget,
   pathMatches,
 } from "./target-catalogue.mts";
 import {
@@ -529,13 +531,16 @@ function expectedHermesSelection(
 }
 
 function withoutCredentialedCatalogueProfiles(plan: E2eWorkflowPlan): E2eWorkflowPlan {
+  const eligibleRows = (rows: E2eCatalogueMatrixRow[]) =>
+    rows.filter((row) => isPrCandidateCatalogueTarget(catalogueTarget(row.id)));
   return {
     ...plan,
-    catalogueMatrices: {
-      standard: plan.catalogueMatrices.standard,
-      "nvidia-api": [],
-      "nvidia-inference": [],
-    },
+    catalogueMatrices: Object.fromEntries(
+      E2E_EXECUTION_PROFILES.map((profile) => [
+        profile,
+        eligibleRows(plan.catalogueMatrices[profile]),
+      ]),
+    ) as Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>,
   };
 }
 

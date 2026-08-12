@@ -13,6 +13,7 @@ import { RETIRED_CONTROLLER_SELECTOR_IDS } from "../../../tools/e2e/retired-sele
 import {
   catalogueTargetsForChangedFiles,
   E2E_TARGET_CATALOGUE,
+  isPrCandidateCatalogueTarget,
 } from "../../../tools/e2e/target-catalogue.mts";
 import { readFreeStandingJobsInventory } from "../../../tools/e2e/workflow-boundary.mts";
 import {
@@ -115,6 +116,17 @@ describe("E2E workflow plan", () => {
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
+  });
+
+  it("defines PR candidate eligibility once for every catalogue profile", () => {
+    expect(
+      Object.fromEntries(
+        E2E_TARGET_CATALOGUE.map((target) => [
+          target.profile,
+          isPrCandidateCatalogueTarget(target),
+        ]),
+      ),
+    ).toEqual({ standard: true, "nvidia-api": false, "nvidia-inference": false });
   });
 
   it("selects only catalogue targets that own changed files", () => {

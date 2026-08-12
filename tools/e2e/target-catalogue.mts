@@ -489,6 +489,10 @@ export function catalogueTarget(id: string): E2eCatalogueTarget {
   return entry;
 }
 
+export function isPrCandidateCatalogueTarget(target: E2eCatalogueTarget): boolean {
+  return target.profile === "standard";
+}
+
 export function catalogueTargetsForChangedFiles(
   changedFiles: readonly string[],
 ): E2eCatalogueTarget[] {
