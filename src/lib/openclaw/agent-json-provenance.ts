@@ -285,3 +285,68 @@ export function openClawAgentJsonProvenanceLines(raw: string): string[] {
     ...docs.flatMap(collectToolFailureProvenance),
   ]);
 }
+
+// Turn-level completion markers (#8796).
+//
+// Read ONLY from the run-metadata record the envelope declares, never from
+// arbitrary descendants. Tool results and tool-call arguments are untrusted
+// data: a successful turn whose tool output merely CONTAINS
+// {"replayInvalid": true} must not be reported as a failure, because callers
+// would then retry a turn that already completed and repeat its side effects.
+//
+// Accepted paths, from the OpenClaw 2026.7.1 type declarations
+// (dist/types-*.d.ts, dist/agent-runtime-*.d.ts):
+//   EmbeddedAgentRunResult = { payloads?, meta: EmbeddedAgentRunMeta, ... }
+//   agentCommandInternal() -> { payloads, meta: EmbeddedAgentRunMeta & ... }
+// so run metadata is a sibling of `payloads`, reachable only as `<root>.meta`
+// or `<root>.result.meta`. Tool results live under `result.messages[].content`
+// and are therefore never consulted.
+//
+// The markers themselves, all declared on EmbeddedAgentRunMeta:
+//   replayInvalid?: boolean
+//   livenessState?: "working" | "paused" | "blocked" | "abandoned"
+//   error?: { kind: ... | "incomplete_turn" | ... }
+const ABANDONED_LIVENESS_VALUE = "abandoned";
+// Compared after `normalized()`, which lowercases and maps `_` to `-`.
+const INCOMPLETE_TURN_ERROR_KIND = "incomplete-turn";
+
+export type OpenClawIncompleteTurnSignal = {
+  /** Human-readable `field=value` markers, deduped. */
+  markers: string[];
+};
+
+/** The declared run-metadata records, and nothing else. */
+function turnMetaRecords(doc: unknown): UnknownRecord[] {
+  const metas: UnknownRecord[] = [];
+  if (!isObjectRecord(doc)) return metas;
+  if (isObjectRecord(doc.meta)) metas.push(doc.meta);
+  const result = doc.result;
+  if (isObjectRecord(result) && isObjectRecord(result.meta)) metas.push(result.meta);
+  return metas;
+}
+
+function turnMetaMarkers(meta: UnknownRecord): string[] {
+  const markers: string[] = [];
+  if (meta.replayInvalid === true) markers.push("replayInvalid=true");
+  if (normalized(meta.livenessState) === ABANDONED_LIVENESS_VALUE) {
+    markers.push(`livenessState=${String(meta.livenessState)}`);
+  }
+  const error = meta.error;
+  if (isObjectRecord(error) && normalized(error.kind) === INCOMPLETE_TURN_ERROR_KIND) {
+    markers.push(`error.kind=${String(error.kind)}`);
+  }
+  return markers;
+}
+
+/**
+ * Detect a turn the run metadata itself marks incomplete or abandoned. Returns
+ * null when no marker is present, so a healthy turn is never reclassified.
+ */
+export function openClawAgentIncompleteTurnSignal(
+  raw: string,
+): OpenClawIncompleteTurnSignal | null {
+  const docs = parseOpenClawJsonDocs(raw);
+  if (docs.length === 0) return null;
+  const markers = dedupe(docs.flatMap(turnMetaRecords).flatMap(turnMetaMarkers));
+  return markers.length > 0 ? { markers } : null;
+}

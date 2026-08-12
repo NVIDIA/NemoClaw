@@ -235,6 +235,143 @@ describe("runAgentJsonPassthrough", () => {
     expect(spawnSync.mock.calls[0]?.[2].stdio).toEqual(["ignore", "pipe", "pipe"]);
   });
 
+  it("exits non-zero for a turn the payload marks incomplete, after preserving the trace", () => {
+    const payload = JSON.stringify({
+      status: "ok",
+      summary: "completed",
+      result: {
+        messages: [{ role: "toolResult", toolName: "write_file", toolCallId: "c1" }],
+        meta: {
+          error: { kind: "incomplete_turn" },
+          livenessState: "abandoned",
+          replayInvalid: true,
+        },
+      },
+    });
+    const spawnSync = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      stdout: payload,
+      stderr: "openclaw warning\n",
+      pid: 123,
+      output: [null, payload, "openclaw warning\n"],
+    }));
+    const { exit, proc, stderr, stdout } = makeProc();
+
+    expect(() =>
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: () => "openshell",
+        spawnSync,
+        stdinIsTty: () => false,
+      }),
+    ).toThrow("__exit:1");
+
+    expect(stdout.join("")).toBe(payload);
+    expect(stderr.join("")).toContain("did not complete");
+    expect(stderr.join("")).toContain("error.kind=incomplete_turn");
+    expect(stderr.join("")).toContain("livenessState=abandoned");
+    expect(stderr.join("")).toContain("replayInvalid=true");
+    expect(stderr.join("")).toContain("nemoclaw 'alpha' sessions list");
+    expect(stderr.join("")).toContain("nemoclaw 'alpha' sessions export <key>");
+    expect(stderr.join("")).toContain(
+      "Inspect the partial JSON trace, exported transcript, and affected resources before retrying",
+    );
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("keeps a completed turn at exit 0 so the incomplete-turn check does not misfire", () => {
+    const payload = JSON.stringify({
+      status: "ok",
+      summary: "completed",
+      result: { payloads: [{ text: "PONG" }], meta: { livenessState: "working" } },
+    });
+    const spawnSync = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      stdout: payload,
+      stderr: "",
+      pid: 123,
+      output: [null, payload, ""],
+    }));
+    const { exit, proc } = makeProc();
+
+    expect(() =>
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: () => "openshell",
+        spawnSync,
+        stdinIsTty: () => false,
+      }),
+    ).toThrow("__exit:0");
+
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("keeps a completed turn at exit 0 when a tool result merely contains marker fields", () => {
+    const payload = JSON.stringify({
+      status: "ok",
+      result: {
+        messages: [
+          {
+            role: "toolResult",
+            content: {
+              replayInvalid: true,
+              livenessState: "abandoned",
+              error: { kind: "incomplete_turn" },
+            },
+          },
+        ],
+        payloads: [{ text: "done" }],
+      },
+    });
+    const spawnSync = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      stdout: payload,
+      stderr: "",
+      pid: 123,
+      output: [null, payload, ""],
+    }));
+    const { exit, proc, stdout } = makeProc();
+
+    expect(() =>
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: () => "openshell",
+        spawnSync,
+        stdinIsTty: () => false,
+      }),
+    ).toThrow("__exit:0");
+
+    expect(stdout.join("")).toBe(payload);
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("preserves an upstream non-zero code instead of relabelling an incomplete turn", () => {
+    const payload = JSON.stringify({ result: { meta: { error: { kind: "incomplete_turn" } } } });
+    const spawnSync = vi.fn(() => ({
+      status: 7,
+      signal: null,
+      stdout: payload,
+      stderr: "",
+      pid: 123,
+      output: [null, payload, ""],
+    }));
+    const { exit, proc } = makeProc();
+
+    expect(() =>
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: () => "openshell",
+        spawnSync,
+        stdinIsTty: () => false,
+      }),
+    ).toThrow("__exit:7");
+
+    expect(exit).toHaveBeenCalledWith(7);
+  });
+
   it("fails loud and keeps stdout empty when the dispatch delivers nothing", () => {
     const spawnSync = vi.fn(() => ({
       status: 0,
