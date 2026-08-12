@@ -58,9 +58,10 @@ jobs:
       contents: read
     env:
       CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
-      STAGING_PRODUCER_SHA: cd0cb2b89965d57cd3d7d97a30d4bdab26781b61
-      STAGING_QA_SOURCE_SHA: d097a22145859102c0495b0310de264b7a27624f
-      STAGING_QA_RECORDED_INDEX_DIGEST: sha256:ceaa94a895ba5cb3f231074b97f9910df3ce9d375802cb1d21c777691e0feb43
+      # Retains the reviewed discovery-permission repair and the current
+      # managed-image security inventory. The original staging source pinned
+      # Expat 2.8.2, which cannot satisfy the candidate's 2.8.3 contract.
+      STAGING_QA_SOURCE_SHA: 250d4abd2d602f864659c06d170699347b5d38bc
       STAGING_QA_BASE_IMAGE: nemoclaw-deepagents-code-base:staging-31396519688
       STAGING_QA_FINAL_IMAGE: nemoclaw-managed-pr/langchain-deepagents-code-staging-qa
     steps:
@@ -71,9 +72,8 @@ jobs:
           path: candidate
           persist-credentials: false
 
-      # Run 31396519688 built this source locally and never published it. Keep
-      # the recorded local-only index digest as provenance. Rebuild the base from
-      # the exact source with Dockerfile.base and its repository build context.
+      # Rebuild a security-compatible base from the exact source that retains
+      # the reviewed discovery-permission repair.
       - name: Checkout exact staging QA base source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,7 +86,7 @@ jobs:
         with:
           node-version: 22.19.0
 
-      - name: Validate staging QA source and recorded digest format
+      - name: Validate staging QA source
         shell: bash
         run: |
           set -euo pipefail
@@ -96,19 +96,11 @@ jobs:
             echo "ERROR: staging QA base source does not match the recorded NemoClaw commit." >&2
             exit 1
           fi
-          if [[ ! "$STAGING_QA_RECORDED_INDEX_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "ERROR: staging QA base provenance has an invalid recorded index digest." >&2
-            exit 1
-          fi
-          printf '### Staging run 31396519688 Deep Agents Code QA base\n\n'
-          printf 'Producer commit: %s\n\n' "$STAGING_PRODUCER_SHA"
-          printf 'NemoClaw source commit: %s\n\n' "$STAGING_QA_SOURCE_SHA"
-          printf 'Recorded local-only index digest: %s\n' "$STAGING_QA_RECORDED_INDEX_DIGEST"
+          printf '### Staging QA Deep Agents Code base\n\n'
+          printf 'NemoClaw source commit: %s\n' "$STAGING_QA_SOURCE_SHA"
           {
-            printf '### Staging run 31396519688 Deep Agents Code QA base\n\n'
-            printf 'Producer commit: %s\n\n' "$STAGING_PRODUCER_SHA"
-            printf 'NemoClaw source commit: %s\n\n' "$STAGING_QA_SOURCE_SHA"
-            printf 'Recorded local-only index digest: %s\n' "$STAGING_QA_RECORDED_INDEX_DIGEST"
+            printf '### Staging QA Deep Agents Code base\n\n'
+            printf 'NemoClaw source commit: %s\n' "$STAGING_QA_SOURCE_SHA"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Reproduce staging discovery permission drift
