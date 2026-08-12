@@ -1215,6 +1215,27 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "custom base reference",
           { baseProvenance: openClawBaseProvenance(), baseImage: "registry.example/base:custom" },
         ],
+        [
+          "local base without independent CI attestation",
+          {
+            baseProvenance: openClawBaseProvenance(),
+            baseImage: "nemoclaw-sandbox-base-local:current",
+          },
+        ],
+        [
+          "bare local base without independent CI attestation",
+          {
+            baseProvenance: openClawBaseProvenance(),
+            baseImage: "nemoclaw-sandbox-base-local",
+          },
+        ],
+        [
+          "mutable official base tag without immutable publication identity",
+          {
+            baseProvenance: openClawBaseProvenance(),
+            baseImage: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+          },
+        ],
       ])("falls back to the reviewed archive for %s", (_label, overrides) => {
         const { result, calls, provenanceExists } = runInstallBlock(
           extractRunBlock(
@@ -1239,6 +1260,11 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(calls).toMatch(/npm --prefix \S+\/openclaw-runtime ci /u);
         expect(calls).toContain("--verify-installed-lock");
         expect(calls).toContain("postinstall-bundled-plugins.mjs");
+        expect(result.stdout).not.toContain("Reusing reviewed base");
+        expect(result.stdout).toContain(
+          `Installing locked mcporter ${PINNED_MCPORTER_VERSION} dependency graph`,
+        );
+        expect(calls).toMatch(/npm --prefix \S+\/mcporter-runtime ci /u);
         expect(provenanceExists).toBe(false);
       });
 

@@ -479,7 +479,7 @@ describe("complete managed-image publication workflow", () => {
       "runs-on": "ubuntu-latest",
       "timeout-minutes": 15,
     });
-    const candidateCheckout = step(reviewedAudit, "Checkout exact PR head");
+    const candidateCheckout = step(reviewedAudit, "Checkout commit under review");
     expect(candidateCheckout.with).toMatchObject({
       ref: "${{ github.event.pull_request.head.sha }}",
       path: "candidate",

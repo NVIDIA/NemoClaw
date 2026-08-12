@@ -67,13 +67,18 @@ The lock records the exact version, registry URL, and integrity for every transi
 - `whyNotSourceFix`: a repository note cannot make external registry state trustworthy, so the required `reviewed-npm-audit` CI check materializes the exact locked production graph and verifies its registry signatures.
 - `imageBuildBoundary`: image builds verify the committed lock, registry origin, tarball integrity, installed graph, lifecycle suppression, and reviewed advisory policy without connecting to Sigstore.
   The `schema=4` and `mcporter-recipe=locked-ci+reviewed-audit-v3` provenance values record this boundary.
+  They do not attest that trusted CI verified registry signatures.
 - `enforcementBoundary`: any nonzero `npm audit signatures` status fails the required CI check.
   The PR workflow requires this check before merge.
-  The `pr-reviewed-npm-audit` job loads its audit implementation from the base SHA and evaluates the exact PR-head tree.
+  The `pr-reviewed-npm-audit` job loads its audit implementation from the base branch revision and evaluates the dependency files from the commit under review.
   The managed-image build job requires that result before local builds and same-repository digest publication.
   The base-image workflow requires its audit result before it builds or publishes any base image.
   It also requires the result before it invokes managed-image publication.
-- `regressionTest`: `test/mcporter-supply-chain.test.ts` keeps the version, integrity, lock metadata, Docker install flags, image-build audit boundary, trusted CI signature check, and this review synchronized.
-  `test/managed-image-publication-workflow.test.ts` verifies the base-SHA audit implementation, exact PR-head input, and publication dependency.
+  Final OpenClaw images reuse a matching installed runtime only from a digest-pinned base in the official GHCR namespace.
+  The publication workflow gates that base on the check.
+  A matching marker from a local base or mutable tag is package metadata without independent CI attestation.
+  It cannot authorize reuse; the existing version checks reinstall the locked runtime or reject a newer base.
+- `regressionTest`: `test/mcporter-supply-chain.test.ts` keeps the version, integrity, lock metadata, Docker install flags, image-build audit boundary, `reviewed-npm-audit` CI check, and this review synchronized.
+  `test/managed-image-publication-workflow.test.ts` verifies that the base branch supplies the audit implementation, the commit under review supplies the input, and publication depends on the audit.
   `test/reviewed-npm-audit.test.ts` proves exact matching and fail-closed exception validation.
 - `removalCondition`: remove this runtime dependency and review when OpenClaw provides the required authenticated Streamable HTTP client lifecycle without mcporter, or repeat the independent review for a newly pinned version.
