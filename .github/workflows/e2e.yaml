@@ -1031,7 +1031,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.101"
-      DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba"
+      DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -6233,7 +6233,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker pull node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
+          docker pull node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c
 
       - name: Remove Docker auth before release-pinned fixture
         if: always()

@@ -95,7 +95,7 @@ const NEMOCLAW_SOURCE_REPOSITORY = "https://github.com/NVIDIA/NemoClaw.git";
 const RELEASE_BUILDER_IMAGE_REF =
   "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d";
 const CURRENT_BUILDER_IMAGE_REF =
-  "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba";
+  "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
 const TOOL_DISCLOSURE_ENV_REFERENCE = "${NEMOCLAW_TOOL_DISCLOSURE}";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-exdev";
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;

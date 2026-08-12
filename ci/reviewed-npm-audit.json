@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "nodeVersion": "22.23.1",
+  "nodeVersion": "22.23.2",
   "registryOrigin": "https://registry.npmjs.org/",
   "severityThreshold": "high",
   "exceptionFile": "ci/npm-audit-exceptions.json",
