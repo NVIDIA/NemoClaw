@@ -485,6 +485,36 @@ describe("setupMessagingChannels", () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
+  it("validates a completed non-interactive selection when its credential is supplied (#3631)", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123456:replacement-telegram-token";
+    process.env.SLACK_BOT_TOKEN = "xoxb-ambient-slack-token";
+    process.env.SLACK_APP_TOKEN = "xapp-ambient-slack-token";
+    const note = vi.fn();
+
+    const result = await setupMessagingChannels(null, ["telegram"], {
+      sandboxName: "tm",
+      selectionCompleted: true,
+      isNonInteractive: () => true,
+      note,
+    });
+
+    expect(result).toEqual(["telegram"]);
+    expect(note).toHaveBeenCalledWith(
+      "  [non-interactive] Messaging channel inputs detected: telegram",
+    );
+    expect(MessagingSetupApplier.requirePlanFromEnv()).toMatchObject({
+      sandboxName: "tm",
+      channels: [
+        expect.objectContaining({
+          channelId: "telegram",
+          active: true,
+          disabled: false,
+        }),
+      ],
+    });
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
   it("reuses a completed channel selection while reacquiring only its missing credential (#6743)", async () => {
     delete process.env.TELEGRAM_BOT_TOKEN;
     delete process.env.TELEGRAM_ALLOWED_IDS;
