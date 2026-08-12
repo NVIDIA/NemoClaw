@@ -170,6 +170,9 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(dockerfile).toContain(
       `test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750"`,
     );
+    expect(dockerfile).toContain(
+      `test "$(stat -c '%U:%G %a' /sandbox/.hermes)" = "sandbox:sandbox 3770"`,
+    );
     expect(dockerfileBase).toContain("uv pip check --python /opt/hermes/.venv/bin/python");
     expect(arg("NODE_VERSION")).toBe("24.18.1");
     expect(arg("UV_VERSION")).toBe("0.11.33");

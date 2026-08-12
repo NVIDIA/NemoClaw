@@ -1180,7 +1180,10 @@ RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandb
     && test -f /sandbox/.hermes/lazy-packages/.nemoclaw-sandbox-unlock-probe \
     && rm -rf /sandbox/.hermes/lazy-packages \
     && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages \
-    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750"
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
+    && chown sandbox:sandbox /sandbox/.hermes \
+    && chmod 3770 /sandbox/.hermes \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes)" = "sandbox:sandbox 3770"
 
 # Prove the cron execution ledger contract across the real image identities.
 # Hermes' gateway-side scheduler creates the live WAL-backed database in the
