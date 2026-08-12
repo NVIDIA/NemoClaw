@@ -192,6 +192,8 @@ const {
 const { requireValue }: typeof import("./core/require-value") = require("./core/require-value");
 const buildCredentialReuse: typeof import("./onboard/build-credential-reuse") = require("./onboard/build-credential-reuse");
 const recoveredProviderReuse: typeof import("./onboard/recovered-provider-reuse") = require("./onboard/recovered-provider-reuse");
+const loadDeploymentVerification = (): typeof import("./verify-deployment") =>
+  require("./verify-deployment");
 
 type RunnerOptions = {
   env?: NodeJS.ProcessEnv;
@@ -787,6 +789,7 @@ const { refreshDockerDriverGatewayReuseState } =
 const { getSandboxReuseState, getSandboxRecreateObservation, waitForSandboxRecreateDeleteAbsence } = sandboxReuse.createSandboxReuseHelpers({ runCaptureOpenshell, captureOpenshell, getSandboxStateFromOutputs, getGatewayName: () => GATEWAY_NAME, waitUntil });
 const {
   executeSandboxCommandForVerification,
+  probeHostPortForVerification,
 }: typeof import("./onboard/sandbox-verification-exec") =
   require("./onboard/sandbox-verification-exec");
 
@@ -2646,8 +2649,12 @@ async function createSandboxWithBaseImageResolution(
       preferredInferenceApi,
     },
     {
-      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-      discoverFreshOpenClawImagePluginInstalls: (name) => openClawPluginRestore.discoverFreshOpenClawImagePluginInstalls(name, sandboxState, agent?.configPaths.dir),
+      discoverFreshOpenClawImagePluginInstalls: (name) =>
+        openClawPluginRestore.discoverFreshOpenClawImagePluginInstalls(
+          name,
+          sandboxState,
+          agent?.configPaths.dir,
+        ),
       restoreRecreatedSandboxState: sandboxState.restoreRecreatedSandboxState,
       getDcodeSelectionDrift: (name, selectedProvider, selectedModel, selectedApi) =>
         getDcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, {
@@ -4326,38 +4333,27 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
           buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress(), dashboardHealthEndpoint: agent?.dashboard.healthPath, gatewayPort: agent?.healthProbe?.port, gatewayHealthEndpoint: agent?.healthProbe?.url }),
         verifyDeployment: async (name, chain) => {
-          const verifyDeploymentModule: typeof import("./verify-deployment") =
-            require("./verify-deployment");
-          // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-          return verifyDeploymentModule.verifyDeployment(name, chain, {
-            executeSandboxCommand: (sandbox: string, script: string) =>
-              executeSandboxCommandForVerification(sandbox, script),
-            probeHostPort: (port: number, probePath: string) => {
-              const result = runCapture(
-                [
-                  "curl",
-                  "-so",
-                  "/dev/null",
-                  "-w",
-                  "%{http_code}",
-                  "--max-time",
-                  "3",
-                  `http://127.0.0.1:${port}${probePath}`,
-                ],
-                { ignoreError: true },
-              );
-              return parseInt(result.trim(), 10) || 0;
-            },
-            captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
+          const verifyDeploymentModule = loadDeploymentVerification();
+          const deps = {
+            executeSandboxCommand: executeSandboxCommandForVerification,
+            probeHostPort: (port: number, path: string) =>
+              probeHostPortForVerification(port, path, runCapture),
+            captureForwardList: () =>
+              runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
             getMessagingChannels: () => liveFinalFlowContext.selectedMessagingChannels || [],
-            providerExistsInGateway: (providerName: string) => providerExistsInGateway(providerName),
-          }, { diagnoseCustomOpenClawRuntime: verifyDeploymentModule.shouldDiagnoseCustomOpenClawRuntime(liveFinalFlowContext.fromDockerfile, agent?.name) });
+            providerExistsInGateway,
+          };
+          const diagnoseCustomOpenClawRuntime =
+            verifyDeploymentModule.shouldDiagnoseCustomOpenClawRuntime(
+              liveFinalFlowContext.fromDockerfile,
+              agent?.name,
+            );
+          return verifyDeploymentModule.verifyDeployment(name, chain, deps, {
+            diagnoseCustomOpenClawRuntime,
+          });
         },
-        formatVerificationDiagnostics: (result) => {
-          const verifyDeploymentModule: typeof import("./verify-deployment") =
-            require("./verify-deployment");
-          return verifyDeploymentModule.formatVerificationDiagnostics(result);
-        },
+        formatVerificationDiagnostics: (result) =>
+          loadDeploymentVerification().formatVerificationDiagnostics(result),
         printDashboard,
         error: (message) => console.error(message),
         log: (message) => console.log(message),

@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import { getOpenshellBinary } from "../adapters/openshell/runtime";
 
 const SANDBOX_EXEC_TIMEOUT_MS = 15000;
+type Capture = (cmd: readonly string[], options: { ignoreError: boolean }) => string;
 
 export function executeSandboxCommandForVerification(
   sandboxName: string,
@@ -33,4 +34,21 @@ export function executeSandboxCommandForVerification(
   } catch {
     return null;
   }
+}
+
+export function probeHostPortForVerification(port: number, path: string, capture: Capture): number {
+  const result = capture(
+    [
+      "curl",
+      "-so",
+      "/dev/null",
+      "-w",
+      "%{http_code}",
+      "--max-time",
+      "3",
+      `http://127.0.0.1:${port}${path}`,
+    ],
+    { ignoreError: true },
+  );
+  return parseInt(result.trim(), 10) || 0;
 }

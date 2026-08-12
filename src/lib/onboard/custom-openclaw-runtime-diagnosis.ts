@@ -1,10 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export type SandboxCommandExecutor = (
-  name: string,
-  script: string,
-) => { status: number; stdout: string; stderr: string } | null;
+type SandboxCommandResult = { status: number; stdout: string; stderr: string };
+export type SandboxCommandExecutor = (name: string, script: string) => SandboxCommandResult | null;
 
 export type OpenClawRuntimeFailureKind =
   | "normal_runtime"
@@ -19,10 +17,9 @@ export interface OpenClawRuntimeFailureDiagnosis {
   configPresent: boolean | null;
 }
 
-export interface CustomOpenClawRuntimeFailureHints {
-  gateway: string;
-  dashboard: string;
-}
+export type CustomOpenClawRuntimeFailureHints = { gateway: string; dashboard: string };
+
+const emptyEvidence = { gatewayLogPresent: null, startupScriptPresent: null, configPresent: null };
 
 const OPENCLAW_RUNTIME_PROBE =
   "printf 'nemoclaw-runtime-probe-v1 '; " +
@@ -59,35 +56,22 @@ export function classifyOpenClawRuntimeFailure(
 ): OpenClawRuntimeFailureDiagnosis {
   const result = executeSandboxCommand(sandboxName, OPENCLAW_RUNTIME_PROBE);
   if (!result) {
-    return {
-      kind: "sandbox_unreachable",
-      gatewayLogPresent: null,
-      startupScriptPresent: null,
-      configPresent: null,
-    };
+    return { kind: "sandbox_unreachable", ...emptyEvidence };
   }
 
   const match = result.stdout.match(
     /(?:^|\n)[ ]*(?:(?:\[stdout\]|stdout:)[ ]*)?nemoclaw-runtime-probe-v1 log=([01]) start=([01]) config=([01])(?:\r?\n|$)/,
   );
   if (result.status !== 0 || !match) {
-    return {
-      kind: "inconclusive",
-      gatewayLogPresent: null,
-      startupScriptPresent: null,
-      configPresent: null,
-    };
+    return { kind: "inconclusive", ...emptyEvidence };
   }
 
   const gatewayLogPresent = match[1] === "1";
   const startupScriptPresent = match[2] === "1";
   const configPresent = match[3] === "1";
-  let kind: OpenClawRuntimeFailureKind = "inconclusive";
-  if (!gatewayLogPresent && !startupScriptPresent && !configPresent) {
-    kind = "base_only_image";
-  } else if (startupScriptPresent && configPresent) {
-    kind = "normal_runtime";
-  }
+  const baseOnly = !gatewayLogPresent && !startupScriptPresent && !configPresent;
+  const complete = startupScriptPresent && configPresent;
+  const kind = baseOnly ? "base_only_image" : complete ? "normal_runtime" : "inconclusive";
   return { kind, gatewayLogPresent, startupScriptPresent, configPresent };
 }
 
