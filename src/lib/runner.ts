@@ -43,13 +43,29 @@ type SpawnResult = SpawnSyncReturns<string | Buffer>;
 const dockerHost = detectDockerHost();
 if (dockerHost) {
   process.env.DOCKER_HOST = dockerHost.dockerHost;
+  if (dockerHost.source === "socket") {
+    delete process.env.DOCKER_CONTEXT;
+  }
 }
 
-function buildRunnerEnv(extraEnv?: NodeJS.ProcessEnv): Record<string, string> {
+function buildRunnerEnv(extraEnv?: NodeJS.ProcessEnv, executable?: string): Record<string, string> {
   const normalizedExtra: Record<string, string> = {};
   if (extraEnv) {
     for (const [key, value] of Object.entries(extraEnv)) {
       if (value !== undefined) normalizedExtra[key] = value;
+    }
+  }
+  const usesDockerDefaultAuthority =
+    executable !== undefined &&
+    path.basename(executable) === "docker" &&
+    normalizedExtra.DOCKER_HOST === undefined &&
+    process.env.DOCKER_HOST === undefined;
+  if (usesDockerDefaultAuthority) {
+    if (normalizedExtra.DOCKER_CONFIG === undefined && process.env.DOCKER_CONFIG !== undefined) {
+      normalizedExtra.DOCKER_CONFIG = process.env.DOCKER_CONFIG;
+    }
+    if (normalizedExtra.DOCKER_CONTEXT === undefined && process.env.DOCKER_CONTEXT !== undefined) {
+      normalizedExtra.DOCKER_CONTEXT = process.env.DOCKER_CONTEXT;
     }
   }
   return buildSubprocessEnv(normalizedExtra);
@@ -118,7 +134,7 @@ function spawnAndHandle(
     shell: false,
     stdio: effectiveStdio,
     cwd: ROOT,
-    env: buildRunnerEnv(opts.env),
+    env: buildRunnerEnv(opts.env, safeFile),
   });
   if (!opts.suppressOutput) {
     writeRedactedResult(result, effectiveStdio);
@@ -192,7 +208,7 @@ function runArrayCmd(
     shell: false,
     stdio,
     cwd: ROOT,
-    env: buildRunnerEnv(extraEnv),
+    env: buildRunnerEnv(extraEnv, exe),
   });
   if (!suppressOutput) {
     writeRedactedResult(result, stdio);
@@ -293,7 +309,7 @@ function runCapture(cmd: readonly string[], opts: CaptureOptions = {}): string {
       ...spawnOpts,
       shell: false,
       cwd: ROOT,
-      env: buildRunnerEnv(extraEnv),
+      env: buildRunnerEnv(extraEnv, exe),
       stdio: ["pipe", "pipe", "pipe"],
       encoding: "utf-8",
     });
@@ -357,7 +373,7 @@ function runCaptureEx(
       // NO_PROXY=localhost,127.0.0.1 is injected when HTTP_PROXY is set.
       // Otherwise curl probes against localhost (Ollama validation, etc.)
       // tunnel through the user's host proxy and fail with HTTP 500.
-      env: buildRunnerEnv(extraEnv),
+      env: buildRunnerEnv(extraEnv, exe),
       stdio: ["pipe", "pipe", "pipe"],
       encoding: "utf-8",
     });

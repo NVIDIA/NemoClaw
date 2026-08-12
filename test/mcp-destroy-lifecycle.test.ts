@@ -301,10 +301,10 @@ beforeEach(() => {
       case command.includes("'config' 'add'"):
         testState.adapterRegistered = true;
         return { status: 0, stdout: "", stderr: "" };
-      case command.includes('["config", "remove"'):
+      case command.includes('"config", "--config"') && command.includes('"remove"'):
         testState.adapterRegistered = false;
         return { status: 0, stdout: "", stderr: "" };
-      case command.includes('["config", "get"'):
+      case command.includes('"config", "get"'):
         return {
           status: 0,
           stdout: testState.adapterRegistered ? "registered\n" : "absent\n",
