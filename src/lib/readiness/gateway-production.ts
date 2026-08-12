@@ -303,24 +303,31 @@ export function classifyManagedGatewayEndpointBinding(
   outputs: readonly string[],
   expectedGatewayPort: number,
 ): Exclude<ManagedGatewayEndpointBinding, "not-applicable"> {
+  let observedEndpoint = false;
   for (const output of outputs) {
-    const match = stripAnsi(output).match(/^\s*Gateway endpoint:\s+(\S+)\s*$/m);
-    if (!match?.[1]) continue;
-    try {
-      const endpoint = new URL(match[1]);
-      const localHost =
-        endpoint.hostname === "127.0.0.1" ||
-        endpoint.hostname === "localhost" ||
-        endpoint.hostname === "[::1]";
-      const endpointPort =
-        endpoint.port ||
-        (endpoint.protocol === "https:" ? "443" : endpoint.protocol === "http:" ? "80" : "");
-      return localHost && endpointPort === String(expectedGatewayPort) ? "match" : "mismatch";
-    } catch {
-      return "mismatch";
+    for (const match of stripAnsi(output).matchAll(/^\s*(?:Gateway endpoint|Server):(.*)$/gm)) {
+      observedEndpoint = true;
+      const endpointText = match[1]?.trim() ?? "";
+      if (!endpointText || /\s/u.test(endpointText)) return "mismatch";
+      try {
+        const endpoint = new URL(endpointText);
+        const localProtocol = endpoint.protocol === "https:" || endpoint.protocol === "http:";
+        const localHost =
+          endpoint.hostname === "127.0.0.1" ||
+          endpoint.hostname === "localhost" ||
+          endpoint.hostname === "[::1]";
+        const endpointPort =
+          endpoint.port ||
+          (endpoint.protocol === "https:" ? "443" : endpoint.protocol === "http:" ? "80" : "");
+        if (!localProtocol || !localHost || endpointPort !== String(expectedGatewayPort)) {
+          return "mismatch";
+        }
+      } catch {
+        return "mismatch";
+      }
     }
   }
-  return "unknown";
+  return observedEndpoint ? "match" : "unknown";
 }
 
 function observeReuseState(
@@ -331,7 +338,7 @@ function observeReuseState(
 ): { endpointBinding: ManagedGatewayEndpointBinding; reuseState: GatewayReuseState | "unknown" } {
   if (!openshell) return { endpointBinding: "not-applicable", reuseState: "missing" };
 
-  const status = captureReadonly([openshell, "status"], env);
+  const status = captureReadonly([openshell, "status", "-g", gatewayName], env);
   const named = captureReadonly([openshell, "gateway", "info", "-g", gatewayName], env);
   const active = captureReadonly([openshell, "gateway", "info"], env);
   if ([status, named, active].some(({ exitCode, timedOut }) => timedOut || exitCode === null)) {
@@ -343,6 +350,7 @@ function observeReuseState(
     statusOutput,
     combinedOutput(named),
     combinedOutput(active),
+    gatewayName,
     gatewayName,
   );
   if (status.exitCode !== 0 && reuseState === "missing") {
@@ -369,7 +377,7 @@ function inspectLegacyCluster(
   env: NodeJS.ProcessEnv,
 ): { active: boolean; imageRef: string | null } {
   if (!openshell) return { active: false, imageRef: null };
-  const status = captureReadonly([openshell, "status"], env);
+  const status = captureReadonly([openshell, "status", "-g", gatewayName], env);
   const named = captureReadonly([openshell, "gateway", "info", "-g", gatewayName], env);
   const active = captureReadonly([openshell, "gateway", "info"], env);
   if (

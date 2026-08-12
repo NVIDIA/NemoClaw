@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { GatewayOwner } from "./gateway-ownership";
+
 export type OpenShellInstallResult = {
   installed?: boolean;
   localBin: string | null;
@@ -100,6 +102,38 @@ export type DockerDriverBinaryOverrides = {
   sandboxBin?: string | null;
   vmDriverBin?: string | null;
 };
+
+export interface OnboardOpenShellInstallBindingDeps {
+  getInstallDeps(exitProcess?: (code: number) => never): OpenShellInstallDeps;
+  afterSuccessfulInstall(persistTrustedGatewayOwner?: (owner: GatewayOwner) => void): void;
+}
+
+export function createOnboardOpenShellInstallBindings(deps: OnboardOpenShellInstallBindingDeps): {
+  areRequiredDockerDriverBinariesPresent(
+    platform?: NodeJS.Platform,
+    binaries?: DockerDriverBinaryOverrides,
+    arch?: NodeJS.Architecture,
+  ): boolean;
+  ensureOpenshellForOnboard(
+    exitProcess?: (code: number) => never,
+    persistTrustedGatewayOwner?: (owner: GatewayOwner) => void,
+  ): OpenShellInstallResult;
+} {
+  return {
+    areRequiredDockerDriverBinariesPresent: (
+      platform = process.platform,
+      binaries = {},
+      arch = process.arch,
+    ) => areRequiredDockerDriverBinariesPresent(deps.getInstallDeps(), platform, binaries, arch),
+    ensureOpenshellForOnboard: (
+      exitProcess = (code) => process.exit(code),
+      persistTrustedGatewayOwner,
+    ) =>
+      ensureOpenshellForOnboard(deps.getInstallDeps(exitProcess), {
+        afterSuccessfulInstall: () => deps.afterSuccessfulInstall(persistTrustedGatewayOwner),
+      }),
+  };
+}
 
 export type OpenShellInstallDeps = {
   isLinuxDockerDriverGatewayEnabled: (

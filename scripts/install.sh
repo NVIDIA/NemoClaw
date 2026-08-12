@@ -1131,6 +1131,7 @@ ONBOARD_RAN=false
 _CLI_PATH=""
 _NEMOCLAW_CLI_INSTALL_PREPARED=false
 _NEMOCLAW_CLI_INSTALL_MODE=""
+_OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY=false
 _PREEXISTING_SANDBOX_COUNT=0
 _PREEXISTING_SANDBOX_RECOVERY_RAN=false
 # #6520: set when the automatic recovery pass exited 0 but skipped recorded
@@ -1310,7 +1311,9 @@ prefer_user_local_openshell() {
   local openshell_bin="${local_bin}/openshell"
   if [[ -x "$openshell_bin" ]]; then
     export NEMOCLAW_OPENSHELL_BIN="$openshell_bin"
-    export PATH="$local_bin:$PATH"
+    if [[ ":$PATH:" != *":$local_bin:"* ]]; then
+      export PATH="$local_bin:$PATH"
+    fi
   fi
 }
 
@@ -1325,10 +1328,14 @@ upstream_openshell_gateway_user_service_installed() {
     || [[ -f /lib/systemd/user/openshell-gateway.service ]]
 }
 
-resolve_upstream_openshell_gateway_bin_for_service() {
-  local exec_start gateway_bin
+resolve_openshell_gateway_bin_for_user_service() {
+  local service_name="${1:-}" exec_start gateway_bin
   local -a gateway_bins=()
-  exec_start="$(systemctl --user show openshell-gateway.service --property=ExecStart --value 2>/dev/null)" \
+  case "$service_name" in
+    openshell-gateway.service | "${NEMOCLAW_GATEWAY_SERVICE_NAME}.service") ;;
+    *) return 1 ;;
+  esac
+  exec_start="$(systemctl --user show "$service_name" --property=ExecStart --value 2>/dev/null)" \
     || return 1
   while IFS= read -r gateway_bin; do
     gateway_bins+=("$gateway_bin")
@@ -1342,6 +1349,10 @@ resolve_upstream_openshell_gateway_bin_for_service() {
   gateway_bin="${gateway_bins[0]}"
   [[ "$gateway_bin" == /*/openshell-gateway && -x "$gateway_bin" ]] || return 1
   printf '%s\n' "$gateway_bin"
+}
+
+resolve_upstream_openshell_gateway_bin_for_service() {
+  resolve_openshell_gateway_bin_for_user_service openshell-gateway.service
 }
 
 openshell_binary_version() {
@@ -1601,7 +1612,9 @@ maybe_install_openshell_during_install() {
       return 0
     fi
   fi
-  spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
+  if ! spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
+    return 1
+  fi
   prefer_user_local_openshell
   install_nemoclaw_openshell_gateway_user_service
 }
@@ -1640,7 +1653,7 @@ ensure_cli_shim() {
   expected_shim="$(
     cat <<EOF
 #!/usr/bin/env bash
-export PATH="$node_dir:\$PATH"
+[[ "\$(command -v node 2>/dev/null)" == "$node_path" ]] || export PATH="$node_dir:\$PATH"
 exec "$cli_path" "\$@"
 EOF
   )"
@@ -1885,7 +1898,9 @@ fix_npm_permissions() {
     fi
   done
 
-  export PATH="$HOME/.npm-global/bin:$PATH"
+  if [[ ":$PATH:" != *":$HOME/.npm-global/bin:"* ]]; then
+    export PATH="$HOME/.npm-global/bin:$PATH"
+  fi
   ok "npm configured for user-local installs (~/.npm-global)"
 }
 
@@ -2073,11 +2088,37 @@ restore_managed_source_lockfile() {
 finish_nemoclaw_install() {
   # A backup-preparation pass defers OpenShell but still prepares the CLI. The
   # later install pass completes only the OpenShell policy for that source mode.
+  # Once an out-of-range gateway has been retired, install its replacement
+  # before recovery can restart the service, including from a source checkout.
   case "${_NEMOCLAW_CLI_INSTALL_MODE:-}" in
-    source) maybe_install_openshell_during_install if-missing ;;
-    managed) maybe_install_openshell_during_install force ;;
+    source | managed) ;;
     *) error "The prepared ${_CLI_DISPLAY} CLI has no installation mode." ;;
   esac
+  if [[ "${_OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY:-false}" == true ]]; then
+    local old_defer="${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"
+    local defer_was_set="${NEMOCLAW_DEFER_OPENSHELL_INSTALL+1}"
+    local defer_declaration="" defer_was_exported=false
+    if [[ -n "$defer_was_set" ]]; then
+      defer_declaration="$(declare -p NEMOCLAW_DEFER_OPENSHELL_INSTALL 2>/dev/null || true)"
+      [[ "$defer_declaration" == declare\ -x* ]] && defer_was_exported=true
+    fi
+    local openshell_install_status=0
+    unset NEMOCLAW_DEFER_OPENSHELL_INSTALL
+    maybe_install_openshell_during_install force || openshell_install_status=$?
+    if [[ -n "$defer_was_set" ]]; then
+      NEMOCLAW_DEFER_OPENSHELL_INSTALL="$old_defer"
+      [[ "$defer_was_exported" == true ]] && export NEMOCLAW_DEFER_OPENSHELL_INSTALL
+    fi
+    if [[ "$openshell_install_status" -ne 0 ]]; then
+      error "Could not install the OpenShell version pinned by the prepared source after retiring the gateway. The installer preserved the sandbox backups and did not start recovery. Rerun the installer with NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 to reuse the prepared upgrade state and retry the OpenShell install."
+    fi
+    _OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY=false
+  else
+    case "${_NEMOCLAW_CLI_INSTALL_MODE:-}" in
+      source) maybe_install_openshell_during_install if-missing ;;
+      managed) maybe_install_openshell_during_install force ;;
+    esac
+  fi
   refresh_path
   ensure_nemoclaw_shim || true
 }
@@ -2122,7 +2163,10 @@ install_nemoclaw() {
     # Clone first so we can pre-extract openclaw before npm install (GH-503).
     # npm install -g git+https://... does this internally but we can't hook
     # into its extraction pipeline, so we do it ourselves.
-    local nemoclaw_src="${HOME}/.nemoclaw/source"
+    local nemoclaw_src
+    ensure_nemoclaw_state_dir >/dev/null \
+      || error "Could not prepare owner-only NemoClaw state for the managed CLI installation."
+    nemoclaw_src="$(nemoclaw_state_root)/source"
     NEMOCLAW_SOURCE_ROOT="$nemoclaw_src"
     if is_reusable_managed_nemoclaw_install "$nemoclaw_src"; then
       info "Reusing the installed ${_CLI_DISPLAY} CLI at the selected revision."
@@ -2426,14 +2470,20 @@ resolve_existing_cli_runner() {
 }
 
 prepare_current_cli_for_preupgrade_backup() {
-  local old_defer="${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-__unset__}"
+  local old_defer="${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"
+  local defer_was_set="${NEMOCLAW_DEFER_OPENSHELL_INSTALL+1}"
+  local defer_declaration="" defer_was_exported=false
+  if [[ -n "$defer_was_set" ]]; then
+    defer_declaration="$(declare -p NEMOCLAW_DEFER_OPENSHELL_INSTALL 2>/dev/null || true)"
+    [[ "$defer_declaration" == declare\ -x* ]] && defer_was_exported=true
+  fi
   info "Preparing current ${_CLI_DISPLAY} CLI for pre-upgrade backup…"
   export NEMOCLAW_DEFER_OPENSHELL_INSTALL=1
   install_nemoclaw
-  if [[ "$old_defer" == "__unset__" ]]; then
-    unset NEMOCLAW_DEFER_OPENSHELL_INSTALL
-  else
-    export NEMOCLAW_DEFER_OPENSHELL_INSTALL="$old_defer"
+  unset NEMOCLAW_DEFER_OPENSHELL_INSTALL
+  if [[ -n "$defer_was_set" ]]; then
+    NEMOCLAW_DEFER_OPENSHELL_INSTALL="$old_defer"
+    [[ "$defer_was_exported" == true ]] && export NEMOCLAW_DEFER_OPENSHELL_INSTALL
   fi
   verify_nemoclaw
 }
@@ -2796,6 +2846,40 @@ stop_legacy_openshell_gateway_process() {
   rm -f "$pid_file"
 }
 
+stop_nemoclaw_openshell_gateway_user_service() {
+  [ "$(uname -s)" = "Linux" ] || return 1
+
+  local gateway_port service_name service_path fragment_path gateway_bin
+  gateway_port="$(resolve_nemoclaw_gateway_port)" || return 1
+  [ "$gateway_port" -eq 8080 ] || return 1
+  command_exists systemctl || return 1
+
+  service_name="${NEMOCLAW_GATEWAY_SERVICE_NAME}.service"
+  service_path="$(openshell_user_config_home)/systemd/user/${service_name}"
+  [ -f "$service_path" ] || return 1
+  if [ -L "$service_path" ] || ! [ -O "$service_path" ]; then
+    error "Refusing to retire the OpenShell gateway from an untrusted user service: ${service_path}"
+  fi
+  is_nemoclaw_openshell_gateway_user_service "$service_path" \
+    || error "Refusing to retire the OpenShell gateway from a non-NemoClaw user service: ${service_path}"
+  systemctl --user is-active --quiet "$service_name" 2>/dev/null || return 1
+
+  fragment_path="$(systemctl --user show "$service_name" --property=FragmentPath --value 2>/dev/null)" \
+    || return 1
+  [ "$fragment_path" = "$service_path" ] \
+    || error "Refusing to retire the OpenShell gateway because the active user service does not match ${service_path}."
+  gateway_bin="$(resolve_openshell_gateway_bin_for_user_service "$service_name")" \
+    || return 1
+  trusted_openshell_gateway_bin_for_service "$gateway_bin" \
+    || error "Refusing to retire an OpenShell gateway user service with an untrusted binary: ${gateway_bin}"
+
+  systemctl --user stop "$service_name" \
+    || error "Could not stop the trusted NemoClaw OpenShell gateway user service. Run 'systemctl --user status ${service_name}' for details."
+  systemctl --user is-active --quiet "$service_name" 2>/dev/null \
+    && error "The trusted NemoClaw OpenShell gateway user service remained active after the stop command."
+  return 0
+}
+
 preinstall_backup_and_retire_legacy_gateway() {
   local reg_file gateway_name
   reg_file="$(nemoclaw_state_dir)/sandboxes.json"
@@ -2812,6 +2896,16 @@ preinstall_backup_and_retire_legacy_gateway() {
   _PREEXISTING_SANDBOX_COUNT="$sandbox_count"
   [ "$sandbox_count" -gt 0 ] 2>/dev/null || return 0
   require_openshell_compatible_sandbox_names "$reg_file"
+  if truthy_env "${NEMOCLAW_OPENSHELL_UPGRADE_PREPARED:-}"; then
+    if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
+      error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with '${_CLI_BIN} <name> destroy' before reinstalling."
+    fi
+    confirm_legacy_managed_image_recovery "$reg_file"
+    info "Using manually prepared OpenShell gateway upgrade state."
+    _OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY=true
+    export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
+    return 0
+  fi
   if ! command_exists openshell; then
     # NemoClaw v0.0.55's OpenShell 0.0.44 layout could install this binary
     # without persisting ~/.local/bin on PATH. Retain this fallback while direct
@@ -2827,13 +2921,6 @@ preinstall_backup_and_retire_legacy_gateway() {
 
   local old_openshell_version=""
   old_openshell_version="$(installed_openshell_version || true)"
-  if legacy_openshell_gateway_upgrade_needed "$old_openshell_version" && truthy_env "${NEMOCLAW_OPENSHELL_UPGRADE_PREPARED:-}"; then
-    confirm_legacy_managed_image_recovery "$reg_file"
-    info "Using manually prepared OpenShell gateway upgrade state."
-    export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
-    return 0
-  fi
-
   if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
     if ! confirm_experimental_openshell_gateway_upgrade "$sandbox_count" "$old_openshell_version"; then
       return 0
@@ -2869,17 +2956,20 @@ preinstall_backup_and_retire_legacy_gateway() {
     if [ "$gateway_name" = "nemoclaw" ]; then
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
         || openshell gateway destroy >/dev/null 2>&1 \
-        || { stop_legacy_openshell_gateway_process \
+        || { { stop_nemoclaw_openshell_gateway_user_service \
+          || stop_legacy_openshell_gateway_process; } \
           && { openshell gateway remove "$gateway_name" >/dev/null 2>&1 \
             || warn "The legacy gateway process stopped, but its OpenShell registration could not be removed; onboarding will replace the stale registration."; }; } \
-        || error "Could not retire the legacy OpenShell gateway after backup. The installer stopped with the sandbox backups preserved."
+        || error "Could not retire the legacy OpenShell gateway after backup. Installed OpenShell lifecycle commands failed, and no trusted active user service or PID-file gateway could be stopped. The installer stopped with the sandbox backups preserved."
     else
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
-        || { stop_legacy_openshell_gateway_process \
+        || { { stop_nemoclaw_openshell_gateway_user_service \
+          || stop_legacy_openshell_gateway_process; } \
           && { openshell gateway remove "$gateway_name" >/dev/null 2>&1 \
             || warn "Legacy gateway ${gateway_name} stopped, but its OpenShell registration could not be removed; onboarding will replace only that stale registration."; }; } \
-        || error "Could not retire legacy gateway ${gateway_name} after backup. The installer stopped with the sandbox backups preserved."
+        || error "Could not retire legacy gateway ${gateway_name} after backup. Installed OpenShell lifecycle commands failed, and no trusted active user service or PID-file gateway could be stopped. The installer stopped with the sandbox backups preserved."
     fi
+    _OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY=true
   fi
 }
 
@@ -3030,10 +3120,12 @@ repair_installer_nvidia_cdi_spec() {
 
 run_installer_host_preflight() {
   local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/preflight.js"
+  local gateway_management_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/gateway-management.js"
   local host_readiness_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/host.js"
   local onboard_admission_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/onboard-admission.js"
   if ! command_exists node \
     || [[ ! -f "$preflight_module" ]] \
+    || [[ ! -f "$gateway_management_module" ]] \
     || [[ ! -f "$host_readiness_module" ]] \
     || [[ ! -f "$onboard_admission_module" ]]; then
     return 0
@@ -3048,12 +3140,19 @@ run_installer_host_preflight() {
       const preflightPath = process.argv[1];
       const hostReadinessPath = process.argv[2];
       const onboardAdmissionPath = process.argv[3];
+      const gatewayManagementPath = process.argv[4];
       try {
         const { assessHost, planHostAdvisories } = require(preflightPath);
         const { createHostReadinessReport } = require(hostReadinessPath);
         const { evaluateOnboardReadinessAdmission } = require(onboardAdmissionPath);
+        const { loadGatewayManagementDeclaration } = require(gatewayManagementPath);
         const host = assessHost();
         const actions = planHostAdvisories(host);
+        const gatewayManagement = loadGatewayManagementDeclaration();
+        const allowStorageRemediation =
+          gatewayManagement.ok &&
+          (gatewayManagement.declaration === null ||
+            gatewayManagement.declaration?.mode === "nemoclaw-managed");
         const readiness = createHostReadinessReport(
           { nemoclawVersion: "installer", sourceRevision: "installer" },
           {
@@ -3067,20 +3166,65 @@ run_installer_host_preflight() {
         const admission = evaluateOnboardReadinessAdmission(readiness, {
           explicitlyOptedOutGpuPassthrough: false,
           allowUnsupportedRuntime: false,
-          allowStorageRemediation: false,
+          // The installer starts a NemoClaw-managed onboarding flow. Let the
+          // authoritative onboarding gate apply supported storage remediation,
+          // but only when the gateway declaration confirms NemoClaw ownership.
+          allowStorageRemediation,
         });
         const infoLines = [];
         const actionLines = [];
+        const stableIdPattern = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$/;
+        const stableIds = (values) => [
+          ...new Set(
+            (Array.isArray(values) ? values : []).filter(
+              (value) =>
+                typeof value === "string" &&
+                value.length <= 128 &&
+                stableIdPattern.test(value)
+            )
+          ),
+        ];
+        const findingIds = admission.admitted ? [] : stableIds(admission.findingIds);
+        const capabilityIds = admission.admitted ? [] : stableIds(admission.capabilityIds);
         if (host.runtime && host.runtime !== "unknown") {
           infoLines.push(`Detected container runtime: ${host.runtime}`);
         }
         if (host.isWsl) {
           infoLines.push("Running under WSL");
         }
+        if (!admission.admitted) {
+          if (findingIds.length > 0) {
+            actionLines.push(`Admission finding IDs: ${findingIds.join(", ")}`);
+          }
+          if (capabilityIds.length > 0) {
+            actionLines.push(`Admission capability IDs: ${capabilityIds.join(", ")}`);
+          }
+        }
         for (const action of actions) {
           actionLines.push(`- ${action.title}: ${action.reason}`);
           for (const command of action.commands || []) {
             actionLines.push(`  ${command}`);
+          }
+        }
+        if (!admission.admitted) {
+          const findingById = new Map(
+            (Array.isArray(readiness.findings) ? readiness.findings : []).map((finding) => [
+              finding.id,
+              finding,
+            ])
+          );
+          for (const findingId of findingIds) {
+            const finding = findingById.get(findingId);
+            actionLines.push(
+              finding?.summary
+                ? `- ${finding.summary}`
+                : `- Readiness finding: ${findingId}`
+            );
+          }
+          for (const capabilityId of capabilityIds) {
+            actionLines.push(
+              `- NemoClaw could not confirm the required readiness capability ${capabilityId}.`
+            );
           }
         }
         if (infoLines.length > 0) {
@@ -3093,7 +3237,7 @@ run_installer_host_preflight() {
       } catch {
         process.exit(0);
       }
-    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module"
+    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module" "$gateway_management_module"
   )"; then
     status=0
   else

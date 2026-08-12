@@ -306,13 +306,18 @@ test/e2e/
   `ubuntu-policy-custom-missing-presets-negative`,
   `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and
   `ubuntu-repo-docker-post-reboot-recovery`. Keep
-  `allow_jetson_runner_queue=false` and `allow_dgx_spark_runner_queue=false` for
+  `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for
   this default selection. If the DGX Spark flag is `true`, GitHub can pause the
   qualification job for the `approve-dgx-spark-image-qualification` environment.
   An authorized environment reviewer must approve it before qualification starts.
   The only accepted nonempty
   `jobs` value is `managed-image-protected-runtime`; `targets` must remain empty.
   Refer to [NemoClaw E2E CI](../README.md).
+
+- [Jetson dispatch controller](jetson-dispatch.md) defines the NemoClaw-owned
+  HTTP contract, trusted GitHub controller, repository configuration, and
+  evidence for `jetson-nvmap-gpu`. The service behind that contract is
+  operator-owned infrastructure.
 
 - `.github/workflows/e2e.yaml` runs selected or all supported
   live E2E targets and uploads an explicit artifact allowlist with

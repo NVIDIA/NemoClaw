@@ -129,11 +129,17 @@ NemoClaw also records an owner-only, credential-free runtime receipt that binds 
 
 If an existing `nemoclaw-vllm` container does not carry that label, NemoClaw preserves it and asks you to remove or rename it before installing managed vLLM.
 If another vLLM server already occupies port `8000`, NemoClaw selects the existing-server path and applies the model-identity checks described above.
+If another process holds the configured single-host port, NemoClaw stops the managed install before it persists a bearer key or records the selected model.
+NemoClaw also stops before storage prompts, cache creation, image pull, or container start.
+Stop the process, then run onboarding again.
+Docker reports a bind failure if another process claims the port after this preflight.
 Managed profiles and model-specific recipes use immutable image digests:
 
 - DGX Spark and DGX Station models without a model-specific runtime use the `linux/arm64` digest `sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2` with a compressed layer size of `9.60 GB` under `nvcr.io/nvidia/vllm:26.05.post1-py3`.
 - The DGX Spark Muse Glimmer recipe uses the `linux/arm64` digest `sha256:ab0f5fc3bb81b9257a9aee801abcb0eeb94bb0523b57b2bb79349dc61e7c1e25` with a compressed layer size of `10.51 GB` under `vllm/vllm-openai`.
   It pins Hugging Face revision `d35cb79050f419c457611b1cee5c5d15b176f285` for the approximately `25.45 GB` model download.
+- The DGX Spark Nemotron 3.5 Lightning recipe uses the `linux/arm64` digest `sha256:3af90144a0926e5c5fe46ee16e5201e763dd854538b9d7ce433755f11dadaf78` with a compressed layer size of approximately `12.69 GB` under `vllm/vllm-openai`.
+  It pins Hugging Face revision `0dcd680e5585c791728c83342b311d0a0026dbeb` for the approximately `21.56 GB` model download.
 - The DGX Station Nemotron 3 Ultra express recipe uses the multi-platform index digest `sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416` under `vllm/vllm-openai:v0.22.0`; on DGX Station, that index selects a `linux/arm64` manifest with a compressed layer size of `10.67 GB`.
   It also pins Hugging Face revision `183968f87ae4cedce3039313cac1fd43d112c578` for the approximately `352.38 GB` model download.
 - Generic Linux `arm64` hosts use `sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4` with a compressed layer size of `9.28 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
@@ -263,14 +269,53 @@ When you start managed vLLM outside the installer express flow, NemoClaw uses th
 For the managed single-node DGX Spark `nvidia/Qwen3.6-35B-A3B-NVFP4` profile, NemoClaw enables async scheduling and does not enable multi-token prediction (MTP) speculative decoding.
 The profile retains `--gpu-memory-utilization 0.4`, a `262144`-token context window, `4` concurrent sequences, an `8192`-token batch limit, chunked prefill, prefix caching, and its registered parsers and acceleration backends.
 
+NVIDIA Nemotron 3.5 Lightning is an additional explicit-only single-DGX Spark profile and does not change the Qwen default.
+Select its stable catalog ID after confirming that `$$nemoclaw profiles list` reports it as compatible.
+
+```bash
+$$nemoclaw onboard --profile vllm.dgx-spark-gb10.single.nemotron-3.5-lightning-30b-a3b-nvfp4
+```
+
+The profile serves the public [`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) checkpoint through a pinned ARM64 vLLM image.
+Its profile limits for one concurrent sequence are a 65,536-token context window, a 4,096-token batch limit, 0.65 GPU-memory utilization, FP8 KV cache, and one-token MTP speculative decoding.
+It uses vLLM's Python frontend because the pinned runtime's Rust frontend does not register the required `step3p5` reasoning and tool-call parsers.
+Physical single-DGX Spark validation of public revision `0dcd680e5585c791728c83342b311d0a0026dbeb` covered direct chat, automatic and named structured tool calls, a ten-request release workload with input lengths from 32,768 through 41,984 tokens and 2,048 output tokens per request, OpenClaw chat and file tools, and a cached restart.
+Requests 2 through 10 averaged about 102 output tokens/s.
+At 0.65 utilization, the workload completed with about 33 GiB of host memory available and no NVIDIA kernel errors.
+
+<Warning title="Experimental Nemotron 3.5 Lightning vLLM Profile">
+This profile is an explicit opt-in for one DGX Spark and remains Experimental.
+Promotion requires broader validation of the pinned Python frontend and the `step3p5` reasoning and tool-call parsers.
+The fixed recipe intentionally rejects model and serve-argument overrides; use another catalog profile instead of modifying its validated resource boundary.
+</Warning>
+
+<Note title="Reading Reasoning and Sizing max_tokens for Direct Callers">
+Nemotron 3.5 Lightning is a reasoning model that emits a hidden reasoning trace before its answer.
+Two behaviors surprise direct callers of the managed vLLM endpoint; the OpenClaw agent path is unaffected because it already requests a large budget.
+
+- **Read reasoning from `reasoning`, not `reasoning_content`.**
+  The pinned vLLM runtime renamed the deprecated `reasoning_content` response field to `reasoning`, so `choices[].message.reasoning_content` is `null` even for prompts that reasoned heavily.
+  The reasoning is not discarded — read `choices[].message.reasoning` (and the `delta.reasoning` field when streaming).
+- **Send a generous `max_tokens` (at least `1024`, and more for hard prompts).**
+  The reasoning trace counts against `max_tokens`.
+  With a modest budget the model can spend the entire budget on reasoning before it reaches the answer, returning an empty `content` with `finish_reason=length`.
+  A larger budget lets the answer follow the reasoning.
+</Note>
+
 Muse Glimmer is an additional single-DGX Spark choice and does not change the Qwen default.
-Select `muse-glimmer-30b` to serve `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` with the `muse-glimmer` alias.
+Select its stable catalog ID after confirming that `$$nemoclaw profiles list` reports it as compatible.
+
+```bash
+$$nemoclaw onboard --profile vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4
+```
+
+The profile serves `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` with the `muse-glimmer` alias.
 The registered recipe configures a 32,768-token context window, 1 concurrent sequence, a 4,096-token batch limit, and 0.75 GPU-memory utilization.
 It uses `muse_glimmer` for reasoning and tool-call parsing and sets `--generation-config auto`.
 The pinned model and runtime were validated on one physical DGX Spark for a direct chat request, separated reasoning, a required structured tool call, and an OpenClaw TUI chat turn without fallback.
 Vision was not part of that validation.
-The registered defaults do not enable DFlash, pass `--quantization` or `--trust-remote-code`, or install `fastsafetensors`.
-Advanced operator arguments from `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` remain authoritative.
+The fixed profile does not enable DFlash, pass `--quantization` or `--trust-remote-code`, or install `fastsafetensors`.
+It rejects model and serve-argument overrides so its validated resource boundary remains reproducible.
 
 <Warning title="Experimental Muse Glimmer vLLM Profile">
 This profile uses a candidate runtime image that contains Muse Glimmer changes not yet merged into upstream vLLM.

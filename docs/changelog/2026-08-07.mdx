@@ -5,13 +5,9 @@
 
 ## v0.0.105
 
-NemoClaw v0.0.105 upgrades the managed OpenShell runtime to v0.0.99 and adds its sandbox-name, credential, policy, and migration contracts.
-It restores local and managed inference paths across Windows, Linux ARM64, DGX Spark, Ollama, vLLM, and managed llama.cpp.
-It also improves Shields recovery, uninstall ownership, Hermes operations, network-policy feedback, remote dashboard guidance, and agent output integrity.
+NemoClaw v0.0.105 restores local and managed inference paths across Windows, Linux ARM64, DGX Spark, Ollama, vLLM, and managed llama.cpp.
+It also improves Shields recovery, uninstall ownership, Hermes operations, network-policy feedback, remote dashboard guidance, agent output integrity, and cold container compatibility probing.
 
-- The managed OpenShell runtime now uses v0.0.99 across installation, gateways, sandboxes, supervisors, and managed agent images.
-  NemoClaw enforces the new routable sandbox-name contract before destructive upgrade work, updates managed MCP and network-policy behavior, and retries a cold empty glibc probe only after it confirms cleanup of the first probe container.
-  For more information, refer to [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes), [Configure Runtime Identity](/user-guide/openclaw/reference/configure-runtime-identity), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
 - Strict local-provider validation now retries one reasoning-only tool-call truncation with a larger token budget and still fails unless the retry returns a structured tool call.
   vLLM parser errors now identify the required automatic tool-choice and parser settings, while Windows-host Ollama readiness runs from the Docker Desktop network context that reaches `host.docker.internal`.
   For more information, refer to [Understand Provider Validation](/user-guide/openclaw/inference/validate-inference/understand-provider-validation), [Use Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama), and [Additional Setup for Windows Machines](/user-guide/openclaw/get-started/additional-setup/windows-preparation).

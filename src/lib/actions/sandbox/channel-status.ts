@@ -20,7 +20,10 @@ import {
 } from "../../messaging";
 import {
   type ChannelHealthReport,
+  type ChannelReadiness,
+  type ChannelReadinessCategory,
   channelHealthProbeInputs,
+  DEFAULT_CHANNEL_STATUS_HEALTH_TIMEOUT_MS,
   type DiagnosticSeverity,
   type DiagnosticSignal,
 } from "../../messaging/channels/channel-health";
@@ -60,15 +63,20 @@ type StatusDeps = {
   loadAgent?: (name: string) => AgentDefinition;
   getSandbox?: typeof registry.getSandbox;
   getAppliedPresets?: (sandboxName: string) => string[];
-  getGatewayPresets?: (sandboxName: string) => string[] | null;
+  getGatewayPresets?: (sandboxName: string, timeoutMs?: number) => string[] | null;
   execSandbox?: ExecRunner;
   now?: () => Date;
+  nowMs?: () => number;
+  sleep?: (milliseconds: number) => Promise<void>;
   out?: (line: string) => void;
 };
 
 export type ChannelStatusOptions = {
   channel?: string;
   asJson?: boolean;
+  wait?: boolean;
+  timeoutSeconds?: number;
+  pollIntervalMs?: number;
   // When true the action returns the report instead of printing JSON to
   // stdout. The oclif wrapper sets this so the framework's --json handler
   // owns serialization; without it we would print JSON twice.
@@ -91,7 +99,7 @@ type ChannelStatusSingleReport =
       signals: DiagnosticSignal[];
     };
 
-export type ChannelStatusReport =
+type ChannelStatusSnapshotReport =
   | ChannelStatusSingleReport
   | {
       schemaVersion: 1;
@@ -99,8 +107,35 @@ export type ChannelStatusReport =
       channels: ChannelStatusSingleReport[];
     };
 
+export type ChannelStatusWaitState = "ready" | "terminal" | "timeout";
+
+export type ChannelStatusWaitReport = {
+  schemaVersion: 1;
+  sandbox: string;
+  channel: string;
+  status: ChannelStatusSingleReport;
+  readiness: {
+    state: ChannelStatusWaitState;
+    category: ChannelReadinessCategory | "timeout" | null;
+    reason: string;
+    retryable: boolean;
+    attempts: number;
+    elapsedMs: number;
+    lastTransitionAt: string | null;
+    lastObserved: ChannelReadiness;
+  };
+};
+
+export type ChannelStatusReport = ChannelStatusSnapshotReport | ChannelStatusWaitReport;
+
+const DEFAULT_WAIT_TIMEOUT_SECONDS = 180;
+const DEFAULT_WAIT_POLL_INTERVAL_MS = 5_000;
 const CHANNEL_STATUS_DIAGNOSTICS = collectBuiltInMessagingChannelDiagnostics();
 const channelManifestRegistry = createBuiltInChannelManifestRegistry();
+
+function positiveNumber(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
 
 function severityLabel(severity: DiagnosticSeverity): string {
   switch (severity) {
@@ -132,6 +167,10 @@ function defaultDeps(deps: StatusDeps | undefined): Required<StatusDeps> {
     getGatewayPresets: deps?.getGatewayPresets ?? policies.getGatewayPresets,
     execSandbox: deps?.execSandbox ?? defaultExec,
     now: deps?.now ?? (() => new Date()),
+    nowMs: deps?.nowMs ?? Date.now,
+    sleep:
+      deps?.sleep ??
+      ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))),
     out: deps?.out ?? ((line: string) => console.log(line)),
   };
 }
@@ -155,6 +194,10 @@ function renderReport(
     deps.out(JSON.stringify(report, null, 2));
     return;
   }
+  if ("readiness" in report) {
+    renderWaitReport(report, deps);
+    return;
+  }
   if ("channels" in report) {
     renderAllChannelReport(report, deps);
     return;
@@ -162,6 +205,20 @@ function renderReport(
   deps.out("");
   deps.out(`  ${B}${CLI_DISPLAY_NAME} channels status:${R} ${report.sandbox} / ${report.channel}`);
   renderSingleChannelSignals(report, deps, { includeDeepDiagnostics: true });
+}
+
+function renderWaitReport(report: ChannelStatusWaitReport, deps: Required<StatusDeps>): void {
+  deps.out("");
+  deps.out(
+    `  ${B}${CLI_DISPLAY_NAME} channels readiness:${R} ${report.sandbox} / ${report.channel}`,
+  );
+  renderSingleChannelSignals(report.status, deps, { includeDeepDiagnostics: true });
+  const color = report.readiness.state === "ready" ? G : RD;
+  deps.out(`  Readiness: ${color}${report.readiness.state}${R}`);
+  deps.out(
+    `    ${D}${report.readiness.reason}; attempts=${report.readiness.attempts}; elapsedMs=${report.readiness.elapsedMs}${R}`,
+  );
+  deps.out("");
 }
 
 function renderAllChannelReport(
@@ -216,7 +273,8 @@ function renderSingleChannelSignals(
   deps.out("");
 }
 
-function exitCodeFor(report: ChannelStatusReport): number {
+export function exitCodeFor(report: ChannelStatusReport): number {
+  if ("readiness" in report) return report.readiness.state === "ready" ? 0 : 1;
   if ("channels" in report) return 0;
   if ("report" in report) {
     switch (report.report.verdict) {
@@ -336,17 +394,15 @@ function channelSupportedByAgent(channelName: string, agent: AgentDefinition): b
     .some((manifest) => manifest.id === channelName);
 }
 
-// Manifest-first gate for `runChannelHealthHook`: returns true when the
-// channel declares a `phase: "status"` hook that emits a `channelHealth`
-// output. That is the output id `readChannelHealthOutputs` looks for, so
-// keying the gate off it keeps orchestration + hook wiring in sync without
-// hard-coding channel names or `deepProbe` strings.
-function channelHasChannelHealthStatusHook(channelName: string): boolean {
-  const manifest = channelManifestRegistry.get(channelName);
-  if (!manifest) return false;
-  return manifest.hooks.some(
+function channelHealthStatusHook(channelName: string, agent: AgentDefinition) {
+  const agentId = agent.name === "hermes" ? "hermes" : "openclaw";
+  const manifest = channelManifestRegistry
+    .listAvailable(getMessagingManifestAvailabilityContext(agent, channelManifestRegistry.list()))
+    .find((candidate) => candidate.id === channelName);
+  return manifest?.hooks.find(
     (hook) =>
       hook.phase === "status" &&
+      (!hook.agents || hook.agents.includes(agentId)) &&
       hook.outputs?.some((output) => output.id === "channelHealth") === true,
   );
 }
@@ -365,6 +421,7 @@ function runChannelHealthHook(
   agent: AgentDefinition,
   deps: Required<StatusDeps>,
   diagnostic: MessagingChannelDiagnosticSpec,
+  probeTimeoutMs?: number,
 ): ChannelHealthReport | undefined {
   const entry = deps.getSandbox(sandboxName);
   const channelEnabledInRegistry = registry
@@ -390,7 +447,10 @@ function runChannelHealthHook(
     channels: new Set([channelName]),
     currentSandbox: sandboxName,
     hookRegistry: createBuiltInMessagingHookRegistry({
-      statusHealth: { executeSandboxCommand: deps.execSandbox },
+      statusHealth: {
+        executeSandboxCommand: deps.execSandbox,
+        timeoutMs: probeTimeoutMs,
+      },
     }),
     extraInputs: channelHealthProbeInputs({
       currentSandbox: sandboxName,
@@ -402,6 +462,142 @@ function runChannelHealthHook(
     }),
   });
   return results.flatMap(readChannelHealthOutputs)[0];
+}
+
+function collectChannelReport(
+  sandboxName: string,
+  channelName: string,
+  agent: AgentDefinition,
+  deps: Required<StatusDeps>,
+  diagnostic: MessagingChannelDiagnosticSpec,
+  hasHealthHook: boolean,
+  deadlineMs?: number,
+): ChannelStatusSingleReport {
+  const collectionDeps = deadlineMs === undefined ? deps : withStatusDeadline(deps, deadlineMs);
+  const probeTimeoutMs =
+    deadlineMs === undefined
+      ? undefined
+      : Math.max(1, Math.min(DEFAULT_CHANNEL_STATUS_HEALTH_TIMEOUT_MS, deadlineMs - deps.nowMs()));
+  const disabledChannels = new Set(
+    registry.getDisabledMessagingChannelsFromEntry(collectionDeps.getSandbox(sandboxName)),
+  );
+  const channelIsPaused = disabledChannels.has(channelName);
+  const healthReport =
+    hasHealthHook && !channelIsPaused
+      ? runChannelHealthHook(
+          sandboxName,
+          channelName,
+          agent,
+          collectionDeps,
+          diagnostic,
+          probeTimeoutMs,
+        )
+      : undefined;
+  if (!healthReport) {
+    return buildBasicChannelReport(sandboxName, channelName, agent, collectionDeps, diagnostic, {
+      channelPaused: channelIsPaused,
+    });
+  }
+  const configSignals = buildConfigStatusSignals(
+    sandboxName,
+    channelName,
+    collectionDeps.getSandbox(sandboxName),
+    agent,
+    collectionDeps,
+  );
+  return {
+    schemaVersion: 1,
+    sandbox: sandboxName,
+    channel: channelName,
+    report: { ...healthReport, signals: [...healthReport.signals, ...configSignals] },
+  };
+}
+
+function withStatusDeadline(deps: Required<StatusDeps>, deadlineMs: number): Required<StatusDeps> {
+  const boundedTimeoutMs = (requestedTimeoutMs?: number): number | null => {
+    const remainingMs = deadlineMs - deps.nowMs();
+    if (remainingMs <= 0) return null;
+    return Math.min(requestedTimeoutMs ?? remainingMs, remainingMs);
+  };
+  return {
+    ...deps,
+    getGatewayPresets: (sandboxName, requestedTimeoutMs) => {
+      const timeoutMs = boundedTimeoutMs(requestedTimeoutMs);
+      return timeoutMs === null ? null : deps.getGatewayPresets(sandboxName, timeoutMs);
+    },
+    execSandbox: (sandboxName, command, requestedTimeoutMs) => {
+      const timeoutMs = boundedTimeoutMs(requestedTimeoutMs);
+      return timeoutMs === null ? null : deps.execSandbox(sandboxName, command, timeoutMs);
+    },
+  };
+}
+
+async function waitForChannelReadiness(
+  sandboxName: string,
+  channelName: string,
+  readinessSupported: boolean,
+  collect: (deadlineMs?: number) => ChannelStatusSingleReport,
+  options: ChannelStatusOptions,
+  deps: Required<StatusDeps>,
+): Promise<ChannelStatusWaitReport> {
+  const startedAt = deps.nowMs();
+  const timeoutMs = positiveNumber(options.timeoutSeconds, DEFAULT_WAIT_TIMEOUT_SECONDS) * 1_000;
+  const deadlineMs = startedAt + timeoutMs;
+  const pollIntervalMs = positiveNumber(options.pollIntervalMs, DEFAULT_WAIT_POLL_INTERVAL_MS);
+  const channelPaused = registry
+    .getDisabledMessagingChannelsFromEntry(deps.getSandbox(sandboxName))
+    .includes(channelName);
+  const pausedReadiness: ChannelReadiness | undefined =
+    channelPaused && readinessSupported
+      ? {
+          state: "terminal",
+          category: "runtime",
+          reason: "channel_paused",
+          retryable: false,
+          lastTransitionAt: null,
+        }
+      : undefined;
+  const readReadiness = (status: ChannelStatusSingleReport): ChannelReadiness =>
+    pausedReadiness ??
+    ("report" in status ? status.report.readiness : undefined) ?? {
+      state: "terminal",
+      category: "runtime",
+      reason: "readiness_not_supported",
+      retryable: false,
+      lastTransitionAt: null,
+    };
+
+  let attempts = 1;
+  let status = collect(deadlineMs);
+  let lastObserved = readReadiness(status);
+  let elapsedMs = Math.max(0, deps.nowMs() - startedAt);
+  while (lastObserved.state === "waiting" && elapsedMs < timeoutMs) {
+    await deps.sleep(Math.min(pollIntervalMs, timeoutMs - elapsedMs));
+    elapsedMs = Math.max(0, deps.nowMs() - startedAt);
+    if (elapsedMs >= timeoutMs) break;
+    attempts += 1;
+    status = collect(deadlineMs);
+    lastObserved = readReadiness(status);
+    elapsedMs = Math.max(0, deps.nowMs() - startedAt);
+  }
+  const state: ChannelStatusWaitState =
+    lastObserved.state === "waiting" ? "timeout" : lastObserved.state;
+  return {
+    schemaVersion: 1,
+    sandbox: sandboxName,
+    channel: channelName,
+    status,
+    readiness: {
+      state,
+      category: state === "timeout" ? "timeout" : lastObserved.category,
+      reason: state === "timeout" ? "timeout" : lastObserved.reason,
+      retryable: lastObserved.retryable,
+      attempts,
+      elapsedMs,
+      lastTransitionAt: lastObserved.lastTransitionAt,
+      lastObserved,
+    },
+  };
 }
 
 /**
@@ -475,44 +671,27 @@ export async function showSandboxChannelStatus(
     process.exit(1);
   }
 
-  const disabledChannels = new Set(registry.getDisabledMessagingChannelsFromEntry(entry));
-  const channelIsPaused = disabledChannels.has(channelName);
-
-  // Manifest-first gating: a channel opts into a deep runtime probe by
-  // declaring a `phase: "status"` hook whose output includes a
-  // `channelHealth`-shaped status. The generic status-hook runner then owns
-  // dispatch, and this orchestrator stays channel-agnostic. Keeping the
-  // check tied to the `channelHealth` output id (rather than "any status
-  // hook") preserves the existing target set — whatsapp and telegram — so
-  // slack/teams status hooks that produce different output kinds do not get
-  // pulled in here.
-  const healthReport =
-    channelHasChannelHealthStatusHook(channelName) && !channelIsPaused
-      ? runChannelHealthHook(sandboxName, channelName, agent, deps, diagnostic)
-      : undefined;
-  let report: ChannelStatusReport;
-  if (healthReport) {
-    // Append the config-value signals (#5691/#5695: group policy, mention mode,
-    // allowed IDs) the basic report shows, so `--channel <ch>` reports both the
-    // channel config and live runtime health.
-    const configSignals = buildConfigStatusSignals(
+  const statusHook = channelHealthStatusHook(channelName, agent);
+  const collect = (deadlineMs?: number) =>
+    collectChannelReport(
       sandboxName,
       channelName,
-      deps.getSandbox(sandboxName),
       agent,
       deps,
+      diagnostic,
+      Boolean(statusHook),
+      deadlineMs,
     );
-    report = {
-      schemaVersion: 1,
-      sandbox: sandboxName,
-      channel: channelName,
-      report: { ...healthReport, signals: [...healthReport.signals, ...configSignals] },
-    };
-  } else {
-    report = buildBasicChannelReport(sandboxName, channelName, agent, deps, diagnostic, {
-      channelPaused: channelIsPaused,
-    });
-  }
+  const report: ChannelStatusReport = options.wait
+    ? await waitForChannelReadiness(
+        sandboxName,
+        channelName,
+        statusHook?.providesReadiness === true,
+        collect,
+        options,
+        deps,
+      )
+    : collect();
 
   if (!(asJson && quietJson)) {
     renderReport(report, asJson, deps);

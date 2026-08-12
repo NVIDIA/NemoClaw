@@ -233,7 +233,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       `  ${err instanceof Error ? err.message : String(err)}`,
     ];
     if (deleteSucceeded) {
-      lines.push("  The orphaned sandbox has been removed — you can safely retry.");
+      lines.push(
+        "  The orphaned sandbox has been removed. Resolve the error above before retrying.",
+      );
     } else {
       lines.push("  Could not remove the orphaned sandbox. Manual cleanup:");
       lines.push(`    openshell sandbox delete "${sandboxName}"`);
@@ -326,9 +328,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       buildDetachedForwardStartSpawn(
         deps.openshellArgv(["forward", "start", "--background", actualTarget, sandboxName]),
       ),
-      () =>
-        (deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }) ??
-          "") as string,
+      () => deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }),
       { port: actualPort, sandboxName },
       () => {
         deps.sleep(1);

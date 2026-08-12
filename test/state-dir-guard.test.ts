@@ -676,6 +676,36 @@ describe("state-dir-guard", () => {
     expect(fs.readFileSync(runtimeLedger, "utf8")).toContain("still writable");
   });
 
+  it("keeps owner-private high-risk state readable after transferring ownership (#8304)", () => {
+    const { configDir } = fixture();
+    const devicesDir = path.join(configDir, "devices");
+    const journalPath = path.join(devicesDir, "pending.json.nemoclaw-self-approval-journal");
+    const helperPath = path.join(devicesDir, "refresh-device-state");
+    fs.mkdirSync(devicesDir);
+    fs.writeFileSync(journalPath, "{}\n", { mode: 0o600 });
+    fs.writeFileSync(helperPath, "#!/bin/sh\n", { mode: 0o700 });
+    fs.chmodSync(journalPath, 0o600);
+    fs.chmodSync(helperPath, 0o700);
+    const oldJournalInode = fs.statSync(journalPath).ino;
+    const oldHelperInode = fs.statSync(helperPath).ino;
+    const plan = {
+      version: 1,
+      readOnlyRoots: ["devices"],
+      confidentialRoots: [],
+      readOnlyPrefixes: [],
+      confidentialPrefixes: [],
+      writableSubpaths: [],
+    };
+    const locked = runGuard("lock", configDir, {}, plan);
+    expect(locked.status, `${locked.stderr}\n${locked.stdout}`).toBe(0);
+    expect(fs.statSync(journalPath).ino).not.toBe(oldJournalInode);
+    expect(fs.statSync(helperPath).ino).not.toBe(oldHelperInode);
+    expect(mode(journalPath)).toBe(0o640);
+    expect(mode(helperPath)).toBe(0o750);
+    expect(mode(journalPath) & 0o022).toBe(0);
+    expect(mode(helperPath) & 0o022).toBe(0);
+  });
+
   it("rejects a nested symlink target replaced during unlock ownership change", () => {
     const { root, configDir } = fixture();
     const pluginsDir = path.join(configDir, "plugins");

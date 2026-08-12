@@ -3,12 +3,73 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Understand Sandbox State"
 sidebar-title: "Understand Sandbox State"
-description: "What agent workspace and state files are, where they live, and how they persist across sandbox restarts."
-description-agent: "Explains what OpenClaw workspace files, Hermes state, and Deep Agents state are, where they live, and how they persist. Use when preparing to edit, snapshot, or transfer sandbox state."
-keywords: ["nemoclaw workspace files", "deepagents state", "soul.md", "agents.md", "sandbox persistence"]
+description: "What agent workspace, sandbox state, and read-only host mounts are, where they live, and how they persist."
+description-agent: "Explains OpenClaw workspace files, Hermes state, Deep Agents state, and read-only host mounts. Use when preparing to edit, mount, snapshot, or transfer sandbox state."
+keywords: ["nemoclaw workspace files", "deepagents state", "soul.md", "agents.md", "sandbox persistence", "read-only host mount"]
 content:
   type: "concept"
 ---
+NemoClaw sandboxes keep agent workspace and state files across ordinary restarts.
+You can also expose selected host directories for live, read-only access when copying files into the sandbox is not appropriate.
+
+## Mount a Host Directory for Read-Only Access
+
+On Linux and Windows Subsystem for Linux 2 (WSL2), onboarding can expose an existing host directory inside a sandbox.
+This operation is supported only with a NemoClaw-managed Docker-driver gateway.
+The same command works with OpenClaw, Hermes, and LangChain Deep Agents Code sandboxes.
+
+<Warning>
+The mount crosses the sandbox boundary and gives every sandbox process read access to the complete host directory tree.
+Read-only access prevents sandbox writes, but it does not protect confidential host files from being read.
+Do not mount a directory that contains credentials, private keys, or other files the agent must not read.
+</Warning>
+
+Before onboarding, confirm that each source is an existing absolute host directory with no symbolic link in any path component.
+Choose a normalized absolute target strictly below `/sandbox`, such as `/sandbox/project`.
+
+Repeat `--host-mount` to expose more than one directory:
+
+```bash
+$$nemoclaw onboard \
+  --host-mount /home/user/project:/sandbox/project \
+  --host-mount /home/user/reference:/sandbox/reference
+```
+
+Onboarding rejects relative paths, missing source directories, symbolic link path components, targets outside `/sandbox`, duplicate sources, and duplicate targets.
+NemoClaw rejects a mount declaration that contains control characters, Unicode formatting controls, or Unicode line and paragraph separators.
+This validation happens before onboarding or a diagnostic report displays either path.
+Every accepted host mount is read-only, and the command does not provide a read-write option.
+
+The sandbox reads the live host directory instead of a copied snapshot.
+Host-side file changes remain visible inside the sandbox while the mount exists.
+
+Onboarding enables the OpenShell Docker bind-mount capability only when a requested or registered host mount requires it.
+NemoClaw stores accepted mount declarations in the sandbox registry and reuses them during `$$nemoclaw <name> rebuild`.
+If onboarding stops before sandbox creation, `$$nemoclaw onboard --resume` reuses the recorded declarations.
+Destroying the sandbox removes its registry entry and the corresponding mount declaration, but it does not delete host files.
+
+After onboarding, inspect the registered host mounts:
+
+```bash
+$$nemoclaw <name> status
+```
+
+The `Host mounts` section lists each source and target with `(read-only)`.
+Connect to the sandbox:
+
+```bash
+$$nemoclaw <name> connect
+```
+
+At the sandbox prompt, inspect the mount options from the Linux mount table:
+
+```bash
+awk '$2 == "/sandbox/project" { print $2, $4 }' /proc/mounts
+```
+
+The mount is active when the output includes `/sandbox/project` and the `ro` option.
+Read a known file under `/sandbox/project` to confirm that the expected host directory is visible.
+
 <AgentOnly variant="openclaw">
 
 OpenClaw stores its personality, user context, and behavioral configuration in a set of Markdown files inside the sandbox.

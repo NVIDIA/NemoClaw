@@ -85,7 +85,7 @@ export interface SandboxInventoryRow {
   openshellDriver: string | null;
   openshellVersion: string | null;
   policies: string[];
-  agent: string | null;
+  agent: string;
   dashboardPort?: number | null;
   isDefault: boolean;
   activeSessionCount: number | null;
@@ -166,7 +166,7 @@ export interface StatusSandboxRow {
   openshellDriver: string | null;
   openshellVersion: string | null;
   policies: string[];
-  agent: string | null;
+  agent: string;
   dashboardPort?: number | null;
   isDefault: boolean;
 }
@@ -193,6 +193,21 @@ export interface StatusReport {
 function safeStatusString(value: string | null | undefined): string | null {
   if (typeof value !== "string" || value.length === 0) return null;
   return redactFull(value);
+}
+
+/**
+ * Resolve the agent every inventory surface reports. The registry stores `null`
+ * or omits `agent` for an OpenClaw sandbox, so text and JSON must resolve that
+ * marker here or they report different agents for the same sandbox.
+ *
+ * #5714: a sandbox recovered display-only from the live gateway has an unknown
+ * agent (the gateway sandbox list does not expose it). Surface "unknown" rather
+ * than the OpenClaw default, which would misrepresent a Hermes or Deep Agents
+ * Code sandbox as OpenClaw.
+ */
+function resolveDisplayAgent(sandbox: SandboxEntry): string {
+  if (sandbox.agent) return sandbox.agent;
+  return sandbox.recoveredFromGateway ? "unknown" : "openclaw";
 }
 
 /**
@@ -224,11 +239,7 @@ function buildSandboxInventoryRow(
     openshellDriver: safeStatusString(sandbox.openshellDriver || null),
     openshellVersion: safeStatusString(sandbox.openshellVersion || null),
     policies: Array.isArray(sandbox.policies) ? sandbox.policies : [],
-    // #5714: a sandbox recovered display-only from the live gateway has an
-    // unknown agent (the gateway sandbox list does not expose it). Surface
-    // "unknown" instead of letting the renderer's `|| "openclaw"` default
-    // misrepresent a Deep Agents/Hermes sandbox as OpenClaw.
-    agent: sandbox.agent || (sandbox.recoveredFromGateway ? "unknown" : null),
+    agent: resolveDisplayAgent(sandbox),
     ...(sandbox.dashboardPort != null ? { dashboardPort: sandbox.dashboardPort } : {}),
     isDefault: sandbox.name === defaultSandbox,
     activeSessionCount,
@@ -345,7 +356,7 @@ export function renderSandboxInventoryText(
         : "CPU sandbox";
     const presets = sandbox.policies.length > 0 ? sandbox.policies.join(", ") : "none";
     const sessionDot = (sandbox.activeSessionCount ?? 0) > 0 ? " ●" : "";
-    const agent = sandbox.agent || "openclaw";
+    const agent = sandbox.agent;
     // #5714: for a gateway-recovered row, surface the trusted live PHASE
     // (e.g. Ready) from `openshell sandbox list` so `list` agrees with
     // `nemoclaw <name> status`; normal registry rows have no live phase.
@@ -409,7 +420,7 @@ function buildStatusSandboxRow(
           .filter((policy): policy is string => typeof policy === "string")
           .map((policy) => safeStatusString(policy) || policy)
       : [],
-    agent: safeStatusString(sandbox.agent || null),
+    agent: redactFull(resolveDisplayAgent(sandbox)),
     ...(dashboardPort != null ? { dashboardPort } : {}),
     isDefault,
   };

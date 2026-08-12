@@ -4,6 +4,7 @@
 import path from "node:path";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
+const canonicalBannerBoundary = path.resolve(import.meta.dirname, "src/shared/banner-boundary.cts");
 const canonicalOpenShellPolicyBoundary = path.resolve(
   import.meta.dirname,
   "src/shared/openshell-policy-boundary.cts",
@@ -43,6 +44,10 @@ const pluginVitestProjectOptions = {
     // plugin tests exercise the single source of truth rather than a
     // possibly-stale build artifact.
     alias: [
+      {
+        find: /^.*banner-boundary\.cjs$/,
+        replacement: canonicalBannerBoundary,
+      },
       {
         find: /^.*openshell-policy-boundary\.cjs$/,
         replacement: canonicalOpenShellPolicyBoundary,

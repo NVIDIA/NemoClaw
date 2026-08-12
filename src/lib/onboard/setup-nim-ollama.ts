@@ -31,7 +31,6 @@ type SetupNimOllamaDeps = {
     contextWindowFloor?: number;
   }) => OllamaStartupOutcome;
   shouldFrontOllamaWithProxy: () => boolean;
-  startOllamaAuthProxy: () => boolean;
   getLocalProviderBaseUrl: (provider: string) => string | null;
   selectAndValidateOllamaModel: (
     gpu: any,
@@ -91,6 +90,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     recoveredModel: string | null,
     ollamaRunning: boolean,
     state: SetupNimSelectionState,
+    isWindowsHostOllama?: boolean,
   ) => Promise<SetupNimSelectionResult>;
   handleInstallOllamaSelection: (
     gpu: any,
@@ -133,9 +133,8 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     return "selected";
   }
 
-  function startProxyOrAnnounceDirect(): void {
+  function announceOllamaRoute(): void {
     if (deps.shouldFrontOllamaWithProxy()) {
-      if (!deps.startOllamaAuthProxy()) deps.process.exit(1);
       console.log(
         `  ✓ Using Ollama on localhost:${deps.OLLAMA_PORT} (proxy on :${deps.OLLAMA_PROXY_PORT})`,
       );
@@ -260,6 +259,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     recoveredModel: string | null,
     ollamaRunning: boolean,
     state: SetupNimSelectionState,
+    isWindowsHostOllama = false,
   ): Promise<SetupNimSelectionResult> {
     if (!deps.checkOllamaPortsOrWarn({ isNonInteractive: deps.isNonInteractive })) {
       return "retry-selection";
@@ -267,17 +267,22 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     const initialState = { ...state, hermesToolGateways: [...state.hermesToolGateways] };
     const lockedModel = preflightOllamaRoute(state, requestedModel, recoveredModel);
     let ollamaReady = ollamaRunning;
-    const overrideState = deps.ensureOllamaLoopbackSystemdOverride({
-      isNonInteractive: deps.isNonInteractive,
-      contextWindowFloor: state.ollamaContextWindowFloor,
-    });
-    if (overrideState === "ready") {
-      ollamaReady = true;
-    } else if (overrideState === "failed") {
-      console.error(
-        "  Ollama systemd restart did not recover after applying the loopback override.",
-      );
-      deps.process.exit(1);
+    // A Windows-host Ollama daemon reached at host.docker.internal is not a
+    // Linux systemd service. Applying the loopback override targets an
+    // unrelated local ollama.service and exits 1 (#8596, regression of #4208).
+    if (!isWindowsHostOllama) {
+      const overrideState = deps.ensureOllamaLoopbackSystemdOverride({
+        isNonInteractive: deps.isNonInteractive,
+        contextWindowFloor: state.ollamaContextWindowFloor,
+      });
+      if (overrideState === "ready") {
+        ollamaReady = true;
+      } else if (overrideState === "failed") {
+        console.error(
+          "  Ollama systemd restart did not recover after applying the loopback override.",
+        );
+        deps.process.exit(1);
+      }
     }
     const startup = deps.runOllamaStartupOrGate({
       ollamaReady,
@@ -299,7 +304,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
         state.assertRouteCompatible?.();
         return "selected";
       case "ready":
-        startProxyOrAnnounceDirect();
+        announceOllamaRoute();
         return selectModel(gpu, state, requestedModel, recoveredModel, lockedModel);
       default: {
         const kind = (startup as { kind?: unknown }).kind;
@@ -345,7 +350,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
       if (deps.isNonInteractive()) deps.process.exit(1);
       return "retry-selection";
     }
-    startProxyOrAnnounceDirect();
+    announceOllamaRoute();
     return selectModel(gpu, state, requestedModel, recoveredModel, lockedModel);
   }
 

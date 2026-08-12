@@ -10,7 +10,7 @@ const fernConfig = JSON.parse(
   readFileSync(path.join(repoRoot, "fern", "fern.config.json"), "utf8"),
 ) as { version: string };
 const review = readFileSync(
-  path.join(repoRoot, "docs", "security", "fern-5.80.1-dependency-review.md"),
+  path.join(repoRoot, "docs", "security", "fern-5.92.4-dependency-review.md"),
   "utf8",
 );
 
@@ -32,24 +32,24 @@ function tableRows(sectionName: string): string[][] {
 describe("Fern dependency review", () => {
   it("binds the production pin to the reviewed target artifact", () => {
     const identities = Object.fromEntries(
-      tableRows("Reviewed identities").map(([label, value]) => [label, value]),
+      tableRows("Reviewed Identities").map(([label, value]) => [label, value]),
     );
 
-    expect(fernConfig.version).toBe("5.80.1");
-    expect(identities["Target package"]).toBe("`fern-api@5.80.1`");
-    expect(identities["Target source commit"]).toBe("`76de91e1216afbdb56a36d3389ee6b91d3e59a9e`");
+    expect(fernConfig.version).toBe("5.92.4");
+    expect(identities["Target package"]).toBe("`fern-api@5.92.4`");
+    expect(identities["Target source commit"]).toBe("`f501eb09d3a31776d54beaa70346af4174d09664`");
     expect(identities["Target integrity"]).toBe(
-      "`sha512-1GZglZnA8T1JogREverqNwIY5G9e3e6uRHv1bpMjX0iIJVr+Dh+5MMPSBq6NegTmBjppqRHF6PVNbnuuO9VfRA==`",
+      "`sha512-+vOR7M+G98poLJTSnyx2gw3Si+5AT/cTF7yRAdFst+977+DsTxWmUDx4RtajvR75EFqEOERwUcmDDUa2vCUerw==`",
     );
-    expect(identities["Target SHA-1"]).toBe("`a06a295390f91b8bbd42de56d0d481f545642595`");
+    expect(identities["Target SHA-1"]).toBe("`fd89c28f9f72d41be7d0a021da3a0136f88027c9`");
   });
 
   it("records complete range, closure, and concern dispositions", () => {
-    const ranges = tableRows("Complete source range ledger");
-    const concerns = tableRows("Concern ledger");
+    const ranges = tableRows("Complete Source Range Ledger");
+    const concerns = tableRows("Concern Ledger");
 
-    expect(ranges).toHaveLength(21);
-    expect(ranges.reduce((total, [, commits]) => total + Number(commits), 0)).toBe(225);
+    expect(ranges).toHaveLength(5);
+    expect(ranges.reduce((total, [, commits]) => total + Number(commits), 0)).toBe(194);
     expect(review).toMatch(/Each\s+graph contains 11 packages/);
     expect(review).toContain("zero info, low, moderate, high, or critical findings");
     expect(review).toContain("Unresolved high-severity concerns: `0`");

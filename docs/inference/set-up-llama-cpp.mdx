@@ -83,6 +83,9 @@ The default recipe serves NVIDIA Nemotron 3 Nano 30B-A3B through the OpenAI Chat
 <Note>
 This path is an experimental implementation.
 It does not establish a supported agent, model, and runtime tuple until the protected qualification and activation gates pass.
+The protected qualification runner requires Docker Engine `28.3.3` or newer and the trusted daemon's default protected NAT and firewall behavior; it re-queries the live daemon and consumes a fresh single-use authority immediately before each temporary loopback publication.
+That requirement supersedes older Docker 27 qualification evidence.
+Ordinary managed onboarding does not publish a Docker port: it retains its no-publication container contract and uses the host-owned private bridge, so this runner-specific version floor does not apply to onboarding.
 </Note>
 
 Before you start, confirm these prerequisites:
@@ -135,7 +138,7 @@ Onboarding performs these actions:
 - Reuses a verified GGUF from the shared `~/.cache/huggingface/` cache, or acquires the exact file through the existing Hugging Face mechanism when it is absent or invalid.
 - Verifies the GGUF size and SHA-256 digest before it starts the runtime.
 - Runs the authenticated container as the current non-root user with one NVIDIA GPU and no CPU fallback.
-- Starts a private host bridge on `127.0.0.1:8081` and connects the container to a Docker internal network without publishing a container port.
+- Starts a host-owned private bridge on `127.0.0.1:8081` and connects the container to a Docker internal network without a Docker-published port.
 - Registers `llama-cpp-local` and routes agent traffic through `https://inference.local/v1`.
 
 The runtime cannot download a model and has no egress on its internal Docker network.
@@ -147,14 +150,17 @@ Selecting either runtime fails before model acquisition or runtime mutation and 
 
 ## Verify the Managed Runtime
 
-Run the managed runtime and route checks:
+Run the managed runtime, route, and host-port checks:
 
 ```bash
 $$nemoclaw my-assistant status
 $$nemoclaw my-assistant doctor
+docker inspect --format '{{json .HostConfig.PortBindings}}' nemoclaw-llama-cpp
 ```
 
 Accept the result when `status` reports `Managed llama.cpp: running`, the inference route is `reachable`, and `doctor` exits with status `0`.
+The Docker inspection output must be `{}`, confirming that the container has no Docker-published port.
+The host-owned private bridge still listens on loopback.
 These checks do not establish agent and model qualification.
 
 `status` reports the recipe ID, model digest, image reference, endpoint, and lifecycle state without exposing the API key.

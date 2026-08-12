@@ -44,7 +44,9 @@ describe("ghost-sandbox rollback message (#2174)", () => {
     expect(lines[0]).toBe("");
     expect(lines).toContain("  Could not allocate a dashboard port for 'alpha'.");
     expect(lines).toContain("  All dashboard ports in range 18789-18798 are occupied");
-    expect(lines).toContain("  The orphaned sandbox has been removed — you can safely retry.");
+    expect(lines).toContain(
+      "  The orphaned sandbox has been removed. Resolve the error above before retrying.",
+    );
     expect(lines.some((l: string) => l.includes("Manual cleanup"))).toBeFalsy();
   });
 

@@ -61,6 +61,7 @@ const OPAQUE_INPUTS = [
   "agents/hermes/mcp-config-transaction.py",
   "test/e2e/lib/ci-compatible-inference.sh",
   "scripts/setup-jetson.sh",
+  "tools/e2e/contracts/v1/jetson-dispatch.json",
   ".github/workflows/base-image.yaml",
   "scripts/export-managed-base-image-contract.sh",
   "scripts/checks/validate-managed-base-index.sh",
@@ -68,6 +69,11 @@ const OPAQUE_INPUTS = [
   "test/e2e/manifests/openclaw-nvidia.yaml",
   "test/e2e/docs/parity-inventory.generated.json",
   ".github/workflows/e2e.yaml",
+  ".github/actions/docker-auth-setup/action.yaml",
+  ".github/actions/docker-auth-cleanup/action.yaml",
+  ".github/scripts/docker-auth-setup.sh",
+  ".github/scripts/docker-auth-cleanup.sh",
+  ".github/workflows/sandbox-images-and-e2e.yaml",
   ".github/workflows/code-scanning.yaml",
   ".github/workflows/pr-review-advisor.yaml",
   "tools/pr-review-advisor/openshell-policy.yaml",
@@ -125,6 +131,9 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/hosted-inference.test.ts",
     ]);
     expect(triggeredBy("scripts/setup-jetson.sh")).toEqual(["test/setup-jetson.test.ts"]);
+    expect(triggeredBy("tools/e2e/contracts/v1/jetson-dispatch.json")).toEqual([
+      "test/e2e/support/jetson-dispatch-client.test.ts",
+    ]);
     expect(triggeredBy(".github/workflows/base-image.yaml")).toEqual([
       "test/managed-base-image-contract.test.ts",
       "test/managed-image-publication-workflow.test.ts",
@@ -156,6 +165,19 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/e2e-migration-policy.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual(E2E_WORKFLOW_CONTRACTS);
+    for (const authPath of [
+      ".github/actions/docker-auth-setup/action.yaml",
+      ".github/actions/docker-auth-cleanup/action.yaml",
+      ".github/scripts/docker-auth-setup.sh",
+      ".github/scripts/docker-auth-cleanup.sh",
+    ]) {
+      expect(triggeredBy(authPath)).toEqual([
+        "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
+      ]);
+    }
+    expect(triggeredBy(".github/workflows/sandbox-images-and-e2e.yaml")).toEqual([
+      "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
+    ]);
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
       "test/code-scanning-workflow.test.ts",
     ]);

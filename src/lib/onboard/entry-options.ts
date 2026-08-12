@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isNonInteractiveEnv } from "../core/non-interactive";
+import { getNameValidationGuidance } from "../name-validation";
+import { cliDisplayName } from "./branding";
+import { RESERVED_SANDBOX_NAMES } from "./sandbox-agent";
 import {
   requireStationExpressResumeIntent,
   type StationExpressSessionLike,
@@ -51,6 +55,76 @@ export interface ResolvedOnboardEntryOptions {
 
 type NonInteractiveEntryOptions = { nonInteractive?: boolean };
 type ResumableEntryOptions = NonInteractiveEntryOptions & { resume?: boolean; fresh?: boolean };
+
+export function resolveOnboardRunOptions(
+  options: OnboardEntryOptionsInput["opts"] & { autoYes?: boolean; nonInteractive?: boolean },
+  env: NodeJS.ProcessEnv,
+  persistedSessionStatus: string | null,
+  isNonInteractiveEnv: () => boolean,
+  terminal: { stdinIsTty: boolean; stdoutIsTty: boolean } = {
+    stdinIsTty: Boolean(process.stdin?.isTTY),
+    stdoutIsTty: Boolean(process.stdout?.isTTY),
+  },
+) {
+  const resume =
+    options.resume === true || (options.fresh !== true && persistedSessionStatus === "in_progress");
+  const nonInteractive =
+    options.nonInteractive === true ||
+    ((options.autoYes === true || env.NEMOCLAW_YES === "1") && resume && !terminal.stdinIsTty) ||
+    isNonInteractiveEnv();
+  return {
+    resume,
+    nonInteractive,
+    entryOptionsInput: { opts: options, env, ...terminal, persistedSessionStatus },
+  };
+}
+
+export function resolveOnboardRunEntryOptions(
+  options: OnboardEntryOptionsInput["opts"] & { autoYes?: boolean; nonInteractive?: boolean },
+  env: NodeJS.ProcessEnv,
+  persistedSessionStatus: string | null,
+  isNonInteractiveEnv: () => boolean,
+  deps: Omit<OnboardEntryOptionsDeps, "isNonInteractive">,
+) {
+  const context = resolveOnboardRunOptions(
+    options,
+    env,
+    persistedSessionStatus,
+    isNonInteractiveEnv,
+  );
+  return {
+    ...context,
+    ...resolveOnboardEntryOptions(context.entryOptionsInput, {
+      ...deps,
+      isNonInteractive: () => context.nonInteractive,
+    }),
+  };
+}
+
+export function resolveDefaultRunEntryOptions(
+  options: OnboardEntryOptionsInput["opts"] & { autoYes?: boolean; nonInteractive?: boolean },
+  persistedSessionStatus: string | null,
+  validateSandboxName: OnboardEntryOptionsDeps["validateName"],
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return resolveOnboardRunEntryOptions(options, env, persistedSessionStatus, isNonInteractiveEnv, {
+    validateName: validateSandboxName,
+    reservedSandboxNames: RESERVED_SANDBOX_NAMES,
+    cliDisplayName,
+    getNameValidationGuidance,
+    error: (message) => console.error(message),
+    exitProcess: (code) => process.exit(code),
+  });
+}
+
+export function assertDefaultSandboxNameAllowed(sandboxName: string): void {
+  if (!RESERVED_SANDBOX_NAMES.has(sandboxName)) return;
+  console.error(
+    `  Reserved name in resumed session: '${sandboxName}' is a ${cliDisplayName()} CLI command.`,
+  );
+  console.error("  Start a fresh onboard with --name <sandbox> to choose a different name.");
+  process.exit(1);
+}
 interface StationExpressSessionLifecycle {
   loadSession(): StationExpressSessionLike | null;
   reconcileStationExpressReceiptRetirement(generation: string): void;

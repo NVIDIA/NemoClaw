@@ -705,7 +705,7 @@ export function detectNvidiaDriverVersion(
     .filter(Boolean);
   if (
     versions.length === 0 ||
-    versions.some((value) => !/^[0-9]{3,4}\.[0-9]{1,3}\.[0-9]{1,3}$/u.test(value)) ||
+    versions.some((value) => !/^[0-9]{3,4}(?:\.[0-9]{1,3}){1,2}$/u.test(value)) ||
     new Set(versions).size !== 1
   ) {
     return undefined;

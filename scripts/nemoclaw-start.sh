@@ -837,8 +837,22 @@ prepare_openclaw_config_startup() {
   fi
 
   run_openclaw_config_guard recover --startup-owner || return 1
-  if [ "$(stat -c '%a %U:%G' /sandbox/.openclaw 2>/dev/null || true)" = "500 root:root" ]; then
-    echo "[config-guard] resuming interrupted recursive OpenClaw state lock" >&2
+  local config_posture journal_posture state_lock_reason=""
+  config_posture="$(stat -c '%a %U:%G' /sandbox/.openclaw 2>/dev/null || true)"
+  journal_posture="$(stat -c '%f %U:%G' \
+    /sandbox/.openclaw/devices/pending.json.nemoclaw-self-approval-journal \
+    2>/dev/null || true)"
+  if [ "$config_posture" = "500 root:root" ]; then
+    state_lock_reason="resuming interrupted recursive OpenClaw state lock"
+  elif [ "$journal_posture" = "8180 root:sandbox" ]; then
+    # Shields created before the #8304 mode correction can retain this exact
+    # unreadable regular-file posture (GNU stat %f: 0x8000 | 0600). Re-run the
+    # descriptor-safe lock before the gateway reads it; current and future
+    # locks publish it group-readable.
+    state_lock_reason="repairing legacy unreadable OpenClaw state"
+  fi
+  if [ -n "$state_lock_reason" ]; then
+    printf '[config-guard] %s\n' "$state_lock_reason" >&2
     timeout --signal=TERM --kill-after=5s 12m \
       python3 -I "$_OPENCLAW_STATE_DIR_GUARD" lock \
       --config-dir /sandbox/.openclaw \
@@ -3435,6 +3449,31 @@ _RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL
 
 write_runtime_shell_env() {
   _PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
+  _emit_gateway_token_reconcile() {
+    local _escaped_intended_gateway_token="$1"
+    cat <<'GATEWAYTOKENRECONCILESTART'
+# nemoclaw-gateway-token-reconcile start
+# The proxy-env file is the trust anchor for OPENCLAW_GATEWAY_TOKEN. Probe
+# writability in a subshell so a readonly pin cannot abort sourcing: advance the
+# anchor when writable (also the fresh-source and repeated-source paths), stay
+# silent when it already holds the intended value, and otherwise emit a
+# controlled conflict diagnostic that never echoes the trusted token.
+GATEWAYTOKENRECONCILESTART
+    printf "if ( OPENCLAW_GATEWAY_TOKEN='%s' ) 2>/dev/null; then\n" \
+      "$_escaped_intended_gateway_token"
+    printf "  OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_intended_gateway_token"
+    printf "else\n  case \"\${OPENCLAW_GATEWAY_TOKEN-}\" in\n"
+    printf "    '%s') : ;;\n" "$_escaped_intended_gateway_token"
+    cat <<'GATEWAYTOKENRECONCILEEND'
+    *)
+      /usr/bin/printf '%s\n' 'Error: conflicting trust anchor' >&2
+      /usr/bin/false
+      ;;
+  esac
+fi
+# nemoclaw-gateway-token-reconcile end
+GATEWAYTOKENRECONCILEEND
+  }
   {
     cat <<PROXYEOF
 # Proxy configuration (overrides narrow OpenShell defaults on connect)
@@ -4121,11 +4160,19 @@ GUARDENVEOF
       # URL, including loopback, while WhatsApp revalidates its local override
       # immediately at the specialized exec boundary.
       printf 'export OPENCLAW_GATEWAY_TOKEN\n'
+      # Bake the intended value into each URL-case arm, then reconcile it against
+      # any pre-existing value. Avoiding a caller-visible temporary variable is
+      # required because the sourcing shell can already have any variable name
+      # pinned readonly. A blind assignment would abort sourcing with the shell's
+      # raw readonly error (exit 2) — and could echo the failing assignment line
+      # — when OPENCLAW_GATEWAY_TOKEN is already readonly and conflicting (#8428).
       cat <<'GATEWAYTOKENENVEOF'
 case "${OPENCLAW_GATEWAY_URL:-}" in
   *@*)
-    OPENCLAW_GATEWAY_TOKEN=
-    ;;
+GATEWAYTOKENENVEOF
+      _emit_gateway_token_reconcile ""
+      printf '    ;;\n'
+      cat <<'GATEWAYTOKENENVEOF'
   '' | ws://127.0.0.1 | ws://127.0.0.1:* | ws://127.0.0.1/* | \
     wss://127.0.0.1 | wss://127.0.0.1:* | wss://127.0.0.1/* | \
     ws://localhost | ws://localhost:* | ws://localhost/* | \
@@ -4133,10 +4180,10 @@ case "${OPENCLAW_GATEWAY_URL:-}" in
     "ws://[::1]" | "ws://[::1]:"* | "ws://[::1]/"* | \
     "wss://[::1]" | "wss://[::1]:"* | "wss://[::1]/"*)
 GATEWAYTOKENENVEOF
-      printf "    OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_gateway_token"
+      _emit_gateway_token_reconcile "$_escaped_gateway_token"
       printf '    ;;\n'
       printf '  *)\n'
-      printf '    OPENCLAW_GATEWAY_TOKEN=\n'
+      _emit_gateway_token_reconcile ""
       printf '    ;;\n'
       printf 'esac\n'
     fi
@@ -5115,6 +5162,24 @@ arm_openclaw_gateway_supervisor_cleanup() {
   trap clear_in_container_gateway_marker EXIT
 }
 
+launch_openclaw_gateway_process() {
+  local log_mode="$1"
+  shift
+  case "$log_mode" in
+    append)
+      nohup /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN "$@" >>/tmp/gateway.log 2>&1 &
+      ;;
+    truncate)
+      nohup /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN "$@" >/tmp/gateway.log 2>&1 &
+      ;;
+    *)
+      echo "[gateway] invalid gateway log mode: $log_mode" >&2
+      return 1
+      ;;
+  esac
+  GATEWAY_PID=$!
+}
+
 launch_openclaw_gateway() {
   # Drop the gateway marker whenever this supervisor exits -- clean gateway
   # exit (`exit 0` below), a forwarded signal (cleanup_openclaw_on_signal ends
@@ -5127,10 +5192,10 @@ launch_openclaw_gateway() {
   # script -- keeps it in place.
   arm_openclaw_gateway_supervisor_cleanup
   mark_in_container_gateway
-  nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" env HOME=/sandbox sh -c \
+  launch_openclaw_gateway_process truncate \
+    "${STEP_DOWN_PREFIX_GATEWAY[@]}" env HOME=/sandbox sh -c \
     'umask 0007; exec "$@" >>/tmp/gateway.log 2>&1' sh \
-    "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" &
-  GATEWAY_PID=$!
+    "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}"
   if ! capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY; then
     # An uncaptured numeric PID is never safe to signal: Bash may already have
     # reaped the short-lived child and the kernel may have reused its PID. Fail
@@ -5150,8 +5215,8 @@ launch_openclaw_gateway() {
 launch_openclaw_gateway_non_root() {
   arm_openclaw_gateway_supervisor_cleanup
   mark_in_container_gateway
-  nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
-  GATEWAY_PID=$!
+  launch_openclaw_gateway_process truncate \
+    "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}"
   capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY || exit 1
   record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
@@ -5821,8 +5886,8 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[gateway] pid $EXITED_GATEWAY_PID exited (rc=$RC); respawning (#$RESPAWN_COUNT in 60s window) in 2s" >&2
     sleep 2
     prepare_openclaw_automatic_respawn || exit 1
-    nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >>/tmp/gateway.log 2>&1 &
-    GATEWAY_PID=$!
+    launch_openclaw_gateway_process append \
+      "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}"
     capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY || exit 1
     record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
     # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
