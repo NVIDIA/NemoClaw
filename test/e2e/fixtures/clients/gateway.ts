@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomBytes } from "node:crypto";
+
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import type { NemoClawInstance } from "../phases/onboarding.ts";
+import { pollUntil } from "../polling.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../shell-probe.ts";
 import { assertExitZero } from "./command.ts";
 import type { HostCliClient } from "./host.ts";
@@ -68,6 +71,14 @@ export interface ExpectPidStableOptions extends ShellProbeRunOptions {
   pollIntervalSeconds?: number;
 }
 
+export interface WaitForMissingManagedSupervisorOptions {
+  attempts?: number;
+  delayMs?: number;
+  settleMs?: number;
+  sleep?: (milliseconds: number) => Promise<void>;
+  onRetry?: (attempt: number) => void;
+}
+
 export interface GatewayProcessIdentity {
   pid: number;
   startIdentity: string;
@@ -76,6 +87,21 @@ export interface GatewayProcessIdentity {
 export interface HostGatewayRuntime {
   kind: "pid" | "container";
   id: string;
+}
+
+function isMissingManagedSupervisorProof(result: ShellProbeResult): boolean {
+  const stderrLines = result.stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return (
+    result.exitCode === 1 &&
+    result.timedOut === false &&
+    result.signal === null &&
+    result.stdout.trim() === "" &&
+    stderrLines.length === 1 &&
+    stderrLines[0] === "SUPERVISOR_NOT_RUNNING"
+  );
 }
 
 export class GatewayClient {
@@ -166,6 +192,68 @@ export class GatewayClient {
       throw new Error(`openshell status did not report connected gateway '${gatewayName}'.`);
     }
     return result;
+  }
+
+  /**
+   * Wait until the trusted root controller proves that a restarted legacy
+   * container has no managed supervisor. This keeps the live E2E recovery test
+   * out of the brief process-churn window after OpenShell becomes reachable.
+   * The fixture owns this wait because Docker restart and OpenShell readiness
+   * can complete before the container process table settles, while production
+   * recovery must keep treating uncertain controller output as terminal. Remove
+   * the wait when OpenShell readiness guarantees the controller absence proof
+   * remains stable across the settle interval.
+   */
+  async waitForMissingManagedSupervisor(
+    containerId: string,
+    options: WaitForMissingManagedSupervisorOptions = {},
+  ): Promise<void> {
+    const attempts = options.attempts ?? 12;
+    const delayMs = options.delayMs ?? 3_000;
+    const settleMs = options.settleMs ?? delayMs;
+    const sleep =
+      options.sleep ??
+      ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+
+    await pollUntil({
+      artifactPrefix: "legacy-restart-supervisor-absent",
+      attempts,
+      delayMs,
+      sleep,
+      probe: async (_attempt, artifactName) => {
+        const runProbe = async (name: string) =>
+          await this.host.command(
+            "docker",
+            [
+              "exec",
+              "--env",
+              "LD_PRELOAD=",
+              "--env",
+              "PYTHONPATH=",
+              "--user",
+              "root",
+              containerId,
+              "/usr/local/bin/nemoclaw-gateway-control",
+              "probe",
+              randomBytes(32).toString("hex"),
+            ],
+            {
+              artifactName: name,
+              env: probeEnv(),
+              timeoutMs: 30_000,
+            },
+          );
+        const initial = await runProbe(artifactName);
+        if (!isMissingManagedSupervisorProof(initial) || settleMs <= 0) return initial;
+        await sleep(settleMs);
+        return await runProbe(`${artifactName}-after-settle`);
+      },
+      accept: (result, attempt) => {
+        if (isMissingManagedSupervisorProof(result)) return true;
+        options.onRetry?.(attempt);
+        return false;
+      },
+    });
   }
 
   // ─── Guard-chain recovery probes (#2478, #2701) ────────────────────

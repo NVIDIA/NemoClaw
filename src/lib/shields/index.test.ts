@@ -68,6 +68,7 @@ vi.mock("../sandbox/agent-config", () => ({
 
 vi.mock("../adapters/docker/exec", () => ({
   dockerExecFileSync: vi.fn((_argv: string[]) => ""),
+  dockerSpawnSync: vi.fn(() => ({ status: 1, stdout: "", stderr: "" })),
 }));
 
 vi.mock("./audit", () => ({
