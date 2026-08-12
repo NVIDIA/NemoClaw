@@ -3,6 +3,7 @@
 
 import { CLI_NAME } from "../../../cli/branding";
 import { shellQuote } from "../../../core/shell-quote";
+import { redactFull } from "../../../security/redact";
 
 /** Stderr sink for the passthrough's operator-facing failure text. */
 export type AgentPassthroughDiagnosticProcess = {
@@ -23,9 +24,19 @@ export function writeSilentAgentDispatchFailure(
   // an invocation without a target selector and the original arguments exits 2
   // on the selector guard instead of running anything. Sandbox name and
   // forwarded argv are user-controlled command text and stay shell-quoted.
-  const directRun = [CLI_NAME, shellQuote(sandboxName), "exec", "--", ...command.map(shellQuote)]
-    .join(" ")
-    .trimEnd();
+  //
+  // The forwarded argv can carry message text and session identifiers, and
+  // stderr is captured by CI logs and automation that may never log the
+  // invocation itself. Redact before emitting so a credential pasted into
+  // `-m` is not amplified into a log it would not otherwise reach. Redaction
+  // is pattern-based, so ordinary prompt text is unchanged and the command
+  // stays runnable; a command that does get masked is one nobody should
+  // replay verbatim anyway.
+  const directRun = redactFull(
+    [CLI_NAME, shellQuote(sandboxName), "exec", "--", ...command.map(shellQuote)]
+      .join(" ")
+      .trimEnd(),
+  );
   proc.stderr.write(
     `  The agent dispatch for sandbox '${sandboxName}' exited 0 without producing any output, so the turn was not delivered.\n`,
   );

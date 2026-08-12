@@ -97,6 +97,36 @@ describe("writeSilentAgentDispatchFailure", () => {
     expect(lines.join("")).toContain(String.raw`'a'\''b $(x)'`);
   });
 
+  it("redacts a credential pasted into the turn arguments", () => {
+    const { lines, proc } = collectStderr();
+
+    writeSilentAgentDispatchFailure(proc, "my-assistant", [
+      "openclaw",
+      "agent",
+      "--agent",
+      "main",
+      "-m",
+      "use sk-ant-api03-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH",
+    ]);
+
+    expect(lines.join("")).not.toContain("sk-ant-api03-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH");
+  });
+
+  it("leaves ordinary turn text runnable rather than redacting it", () => {
+    const { lines, proc } = collectStderr();
+
+    writeSilentAgentDispatchFailure(proc, "my-assistant", [
+      "openclaw",
+      "agent",
+      "--agent",
+      "main",
+      "-m",
+      "Summarise README.md",
+    ]);
+
+    expect(lines.join("")).toContain("'-m' 'Summarise README.md'");
+  });
+
   it("offers the documented recovery paths", () => {
     const { lines, proc } = collectStderr();
 
