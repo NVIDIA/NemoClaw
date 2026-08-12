@@ -109,6 +109,7 @@ describe("agent state directory contract", () => {
         readOnlyRoots: [
           "cron",
           "hooks",
+          "lazy-packages",
           "platforms",
           "plugins",
           "profiles",
@@ -117,7 +118,7 @@ describe("agent state directory contract", () => {
           "weixin",
           "workspace",
         ],
-        confidentialRoots: ["lazy-packages", "pairing"],
+        confidentialRoots: ["pairing"],
         readOnlyPrefixes: [],
         confidentialPrefixes: [],
         writableSubpaths: ["profiles/dashboard-home"],

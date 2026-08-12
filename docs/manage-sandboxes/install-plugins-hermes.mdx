@@ -28,7 +28,7 @@ Do not replace or remove `/sandbox/.hermes/plugins/nemoclaw` when you add your o
 
 The stock Hermes image provides a durable lazy-install directory at `/sandbox/.hermes/lazy-packages`.
 Hermes installs the bundled Hindsight plugin dependency in this directory as the sandbox user.
-The image keeps the root virtual environment and sealed configuration unchanged.
+The dependency does not modify the root virtual environment, and the managed target is not declared in the sealed `.env` file.
 
 NemoClaw supports `hindsight-client==0.6.1` for this workflow.
 Hermes checks this exact version before it loads the plugin.
@@ -36,13 +36,25 @@ This version uses the OpenShell proxy path.
 Do not replace it with a `0.8.x` client because those releases do not use the proxy environment.
 
 Start the self-hosted Hindsight service on the host before you configure the plugin.
-The `local-memory` preset permits the Hermes Python runtime to call `host.openshell.internal` on port `8888`.
+The `local-memory` preset permits only `GET` and `POST` requests from the Hermes Python runtime to `host.openshell.internal` on port `8888`.
 The preset does not permit another private host or port.
 
 Add the preset to the sandbox:
 
 ```bash
 nemohermes <name> policy add local-memory --yes
+```
+
+Check the current Shields posture:
+
+```bash
+nemohermes <name> shields status
+```
+
+If Shields are up, open a timed maintenance window before setup changes the Hermes configuration and lazy dependency directory:
+
+```bash
+nemohermes <name> shields down --timeout 15m --reason "Configure Hindsight memory"
 ```
 
 Run the Hermes setup command through the NemoClaw CLI:
@@ -61,7 +73,15 @@ After the setup command finishes, restart the gateway:
 nemohermes <name> gateway restart
 ```
 
-The first plugin load installs `hindsight-client==0.6.1` under `/sandbox/.hermes/lazy-packages`.
+If you lowered Shields for setup, restore them after the restart:
+
+```bash
+nemohermes <name> shields up
+```
+
+The setup command installs `hindsight-client==0.6.1` under `/sandbox/.hermes/lazy-packages` as the sandbox user.
+When `memory.provider` is `hindsight`, gateway startup repairs a missing approved dependency before it launches.
+After Shields lock the directory, the gateway can import the client, but neither the gateway nor the sandbox user can modify the dependency tree.
 The directory is outside the integrity-sealed `.env`, `config.yaml`, and `.config-hash` files.
 It is part of the Hermes durable state plan, so the dependency remains available after a gateway restart.
 
@@ -82,8 +102,8 @@ If an earlier root install changed `/opt/hermes/.venv`, rebuild the sandbox befo
 nemohermes <name> rebuild --yes
 ```
 
-A rebuild recreates the lazy-install directory.
-The first Hindsight plugin load after the rebuild reinstalls the supported client in that directory.
+A rebuild replaces the root virtual environment and preserves any captured lazy-install directory as declared Hermes state.
+If the dependency is absent from the restored directory, the next setup or gateway start reinstalls the supported client as the sandbox user.
 
 Do not edit `/sandbox/.hermes/.env` to set `HERMES_LAZY_INSTALL_TARGET`.
 Do not install the dependency into `/opt/hermes/.venv`.

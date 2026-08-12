@@ -73,7 +73,7 @@ state_dirs:
   - memories
   # Hermes lazy dependency installs persist here outside sealed configuration.
   - path: lazy-packages
-    shields: confidential
+    shields: read-only
   - sessions
   - path: skills
     shields: read-only

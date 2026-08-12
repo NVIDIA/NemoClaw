@@ -170,6 +170,30 @@ FROM ${BASE_IMAGE}
 # Dockerfile.base. The final stage also creates and verifies the directory.
 ENV HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages
 
+# A published base can lag the source patch in Dockerfile.base. Apply only the
+# two Hindsight compatibility hunks when needed, then verify the final source
+# contract. This remains idempotent once the published base contains them.
+COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch
+RUN if ! grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py; then \
+        git -C /opt/hermes apply --check \
+            --include=hermes_cli/memory_setup.py \
+            /tmp/hermes-security-dependencies.patch; \
+        git -C /opt/hermes apply \
+            --include=hermes_cli/memory_setup.py \
+            /tmp/hermes-security-dependencies.patch; \
+    fi \
+    && if ! grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml; then \
+        git -C /opt/hermes apply --check \
+            --include=plugins/memory/hindsight/plugin.yaml \
+            /tmp/hermes-security-dependencies.patch; \
+        git -C /opt/hermes apply \
+            --include=plugins/memory/hindsight/plugin.yaml \
+            /tmp/hermes-security-dependencies.patch; \
+    fi \
+    && grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py \
+    && grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml \
+    && rm /tmp/hermes-security-dependencies.patch
+
 # Base64-encoded host corporate-proxy CA bundle (#6210). Empty by default. When
 # onboard detects an operator-supplied corporate CA on the host it bakes it
 # here; the RUN below decodes it to a root-owned file that the entrypoint
@@ -632,7 +656,7 @@ RUN node --experimental-strip-types \
 ARG NEMOCLAW_HERMES_WRAPPER_SHA256=f4276e9833638b7a620176c88bd329d6b6d4948538a3227b727a1397146a0e0e
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=989edf54a8c09c6efb348600a8aa2f264c0b71408eb9d7bcd579b92cbeccf9b1
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=db4046e79e513eab67b069a8eda20167b8b65529cf26842531d2ad673c670330
-ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=a56ef2dcb9b704b2afa1e4522bb846890d72de4f563e07d1aa452ecbd71ad60a
+ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=a0c87387c0a00e7aad5892375303115577d72293ea6af7d15d1861e6a02c62c6
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
 ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=e8593cf1580bffa4663e91c079ba0ce31c3d26391f5b1718872701138ce250b0
 # hadolint ignore=DL4006
@@ -1115,23 +1139,47 @@ RUN set -eu; \
     && chown sandbox:sandbox /sandbox/.hermes/.hermes_history \
     && chmod 660 /sandbox/.hermes/.hermes_history
 
-# The Hermes lazy installer uses this sandbox-owned directory instead of the
-# sealed root venv. Sandbox can install packages; gateway can import them through
-# its supplementary sandbox group but cannot modify the dependency tree.
+# Exercise the real reviewed lazy installer under the sandbox identity, then
+# perform the same read-only state-guard transition used by Shields Up. The
+# gateway must retain import access after the lock while both runtime identities
+# remain unable to mutate the dependency tree. Remove the probe install so the
+# published image still performs installation only when Hindsight is selected.
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
-    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
-        sh -c 'umask 0027; printf "%s\n" "VALUE = 8613" > /sandbox/.hermes/lazy-packages/nemoclaw_lazy_probe.py' \
-    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages/nemoclaw_lazy_probe.py)" = "sandbox:sandbox 640" \
-    && /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
+    && HOME=/sandbox \
+        UV_CACHE_DIR=/sandbox/.hermes/cache/uv \
+        UV_NO_CACHE=1 \
+        HERMES_HOME=/sandbox/.hermes \
+        HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
+        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
         /opt/hermes/.venv/bin/python -I -c \
-        "import sys; sys.path.append('/sandbox/.hermes/lazy-packages'); import nemoclaw_lazy_probe; assert nemoclaw_lazy_probe.VALUE == 8613" \
+        "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)" \
+    && HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
+        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        /opt/hermes/.venv/bin/python -I -c \
+        "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import importlib.metadata as m; assert m.version('hindsight-client') == '0.6.1'" \
+    && lazy_plan='{"version":1,"readOnlyRoots":["lazy-packages"],"confidentialRoots":[],"readOnlyPrefixes":[],"confidentialPrefixes":[],"writableSubpaths":[]}' \
+    && /usr/local/lib/nemoclaw/state-dir-guard.py lock \
+        --config-dir /sandbox/.hermes --plan-json "$lazy_plan" \
+    && /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
+        env HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
+        /opt/hermes/.venv/bin/python -I -c \
+        "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import hindsight_client" \
     && if /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
         sh -c ': > /sandbox/.hermes/lazy-packages/.nemoclaw-gateway-write-probe' 2>/dev/null; then \
-        echo "ERROR: gateway can modify Hermes lazy packages" >&2; exit 1; \
+        echo "ERROR: gateway can modify locked Hermes lazy packages" >&2; exit 1; \
+    fi \
+    && if /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        sh -c ': > /sandbox/.hermes/lazy-packages/.python-abi' 2>/dev/null; then \
+        echo "ERROR: sandbox can modify locked Hermes lazy packages" >&2; exit 1; \
     fi \
     && test ! -e /sandbox/.hermes/lazy-packages/.nemoclaw-gateway-write-probe \
+    && /usr/local/lib/nemoclaw/state-dir-guard.py unlock \
+        --config-dir /sandbox/.hermes --plan-json "$lazy_plan" \
     && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
-        rm /sandbox/.hermes/lazy-packages/nemoclaw_lazy_probe.py
+        find /sandbox/.hermes/lazy-packages -mindepth 1 -delete \
+    && test -z "$(find /sandbox/.hermes/lazy-packages -mindepth 1 -print -quit)" \
+    && chmod 750 /sandbox/.hermes/lazy-packages \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750"
 
 # Prove the cron execution ledger contract across the real image identities.
 # Hermes' gateway-side scheduler creates the live WAL-backed database in the

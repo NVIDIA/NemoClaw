@@ -486,7 +486,9 @@ def validate_env_file(path: str) -> int:
     _emit_violations(
         "[SECURITY] Refusing Hermes startup because /sandbox/.hermes/.env "
         "contains raw secret-shaped values or OpenShell supervisor-only identity "
-        "variables. Store credentials in OpenShell providers and keep only "
+        "variables, or declares HERMES_LAZY_INSTALL_TARGET. Store credentials "
+        "in OpenShell providers, keep the managed lazy-install target outside "
+        "the sealed env file, and keep only "
         "openshell resolver placeholders in the sandbox.",
         violations,
         violation_count - len(violations),
@@ -530,7 +532,8 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
     _emit_violations(
         "[SECURITY] Refusing Hermes startup because the process environment "
         "contains raw secret-shaped values or OpenShell supervisor-only identity "
-        "variables. Store credentials in OpenShell providers and keep only "
+        "variables, or does not use the managed HERMES_LAZY_INSTALL_TARGET. "
+        "Store credentials in OpenShell providers and keep only "
         "openshell resolver placeholders in the sandbox.",
         violations,
         violation_count - len(violations),

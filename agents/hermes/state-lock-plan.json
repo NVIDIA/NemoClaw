@@ -4,6 +4,7 @@
   "readOnlyRoots": [
     "cron",
     "hooks",
+    "lazy-packages",
     "platforms",
     "plugins",
     "profiles",
@@ -13,7 +14,6 @@
     "workspace"
   ],
   "confidentialRoots": [
-    "lazy-packages",
     "pairing"
   ],
   "readOnlyPrefixes": [],

@@ -1371,7 +1371,7 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-  it("keeps Hermes lazy dependencies sandbox-owned outside the sealed configuration (#8613)", () => {
+  it("creates the Hermes lazy dependency target with sandbox ownership (#8613)", () => {
     const layout = runHermesLayoutBlock(
       HERMES_DOCKERFILE_BASE,
       "# Create .hermes with mutable integration dirs",
@@ -1385,8 +1385,6 @@ describe("Hermes sandbox provisioning", () => {
       expect(layout.calls).toContain(
         `chown -R sandbox:sandbox ${path.join(layout.sandboxRoot, ".hermes")}`,
       );
-      fs.writeFileSync(path.join(lazyPackages, "restart-marker"), "durable\n");
-      expect(fs.readFileSync(path.join(lazyPackages, "restart-marker"), "utf-8")).toBe("durable\n");
     } finally {
       fs.rmSync(layout.tmp, { recursive: true, force: true });
     }
