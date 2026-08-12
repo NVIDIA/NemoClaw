@@ -56,7 +56,7 @@ spec:
       - name: --max-num-seqs
         value: 1
       - name: --gpu-memory-utilization
-        value: 0.7
+        value: 0.65
       - name: --kv-cache-dtype
         value: fp8
       - name: --moe-backend

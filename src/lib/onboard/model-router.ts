@@ -29,6 +29,7 @@ import {
   doesModelRouterProcessOwnPort,
   findModelRouterPidForPort,
   isRouterHealthy,
+  ROUTER_HEALTH_TIMEOUT_MS as ROUTER_HEALTH_REQUEST_TIMEOUT_MS,
   stopModelRouterProcess,
 } from "./model-router-process";
 import { prepareModelRouterVenv } from "./model-router-python";
@@ -40,10 +41,12 @@ export {
   type ModelRouterCommandProvisioner,
 } from "./model-router-command";
 
-// The prefill router loads its routing model before it serves /health.
-// Allow that model load to finish while keeping the startup wait bounded.
-const ROUTER_HEALTH_RETRIES = 60;
+// The prefill router downloads and loads its routing model before it serves
+// /health. Allow a cold host to finish while bounding both elapsed time and
+// the number of health checks.
+const ROUTER_HEALTH_RETRIES = 300;
 const ROUTER_HEALTH_INTERVAL_MS = 2000;
+const ROUTER_STARTUP_TIMEOUT_MS = 10 * 60_000;
 const MODEL_ROUTER_RELATIVE_DIR = path.join("nemoclaw-blueprint", "router", "llm-router");
 const MODEL_ROUTER_VENV_DIR = path.join(
   nemoclawStateRoot(os.homedir(), GATEWAY_PORT),
@@ -102,8 +105,9 @@ export type StartModelRouterDeps = {
   ) => ModelRouterSpawnedProcess;
   resolveProviderCredential: (name: string) => string | null;
   buildSubprocessEnv: (extra: Record<string, string>) => Record<string, string>;
-  isRouterHealthy: (port: number) => Promise<boolean>;
+  isRouterHealthy: (port: number, timeoutMs?: number) => Promise<boolean>;
   sleep: (milliseconds: number) => Promise<void>;
+  now: () => number;
   isProcessAlive: (pid: number) => boolean;
   terminateProcess: (pid: number) => void;
   getProviderKey: () => string;
@@ -207,6 +211,7 @@ function createStartModelRouterDeps(): StartModelRouterDeps {
     buildSubprocessEnv,
     isRouterHealthy,
     sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+    now: () => performance.now(),
     isProcessAlive: (pid) => {
       try {
         process.kill(pid, 0);
@@ -313,10 +318,20 @@ export async function startModelRouter(
     );
   }
 
-  for (let attempt = 0; attempt < ROUTER_HEALTH_RETRIES; attempt++) {
-    await deps.sleep(ROUTER_HEALTH_INTERVAL_MS);
+  const startupDeadline = deps.now() + ROUTER_STARTUP_TIMEOUT_MS;
+  let healthAttempts = 0;
+  while (healthAttempts < ROUTER_HEALTH_RETRIES && deps.now() < startupDeadline) {
+    const delayMs = Math.min(ROUTER_HEALTH_INTERVAL_MS, startupDeadline - deps.now());
+    await deps.sleep(delayMs);
     if (childExited) break;
-    const healthy = await deps.isRouterHealthy(port);
+    const remainingMs = startupDeadline - deps.now();
+    if (remainingMs <= 0) break;
+    const healthTimeoutMs = Math.max(
+      1,
+      Math.min(ROUTER_HEALTH_REQUEST_TIMEOUT_MS, Math.ceil(remainingMs)),
+    );
+    healthAttempts += 1;
+    const healthy = await deps.isRouterHealthy(port, healthTimeoutMs);
     const processAlive = deps.isProcessAlive(pid);
     if (healthy && processAlive) return pid;
     if (!processAlive) {
@@ -331,7 +346,7 @@ export async function startModelRouter(
     // already dead
   }
   throw new Error(
-    `Model router failed to become healthy on port ${port} after ${ROUTER_HEALTH_RETRIES} attempts` +
+    `Model Router failed to become healthy on port ${port} within ${ROUTER_STARTUP_TIMEOUT_MS / 1000} seconds (completed health checks: ${healthAttempts})` +
       (childExitDetail ? ` (${childExitDetail})` : ""),
   );
 }
