@@ -9,6 +9,11 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+  V00103_SANDBOX_BUILD_DIGESTS,
+  V00103_SUPERVISOR_MANIFEST_DIGEST,
+} from "./helpers/openshell-release-fixtures";
+
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const PARSER = path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts");
 const INSTALLER_TEMPLATE = fs.readFileSync(
@@ -27,12 +32,6 @@ const SUPERVISOR_RUNTIME_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "src/lib/onboard/docker-driver-gateway-runtime.ts"),
   "utf8",
 );
-const V00103_SUPERVISOR_MANIFEST_DIGEST =
-  "sha256:96228f110362ffd415bb12d3b7f584063c3c52c0c93f3ccf59faada1dc2dd5d3";
-const V00103_SANDBOX_BUILD_DIGESTS = [
-  "412dc28fa288938373aca0a95c6be3f890066c377992bb75b3ca078d92dbef00",
-  "fc1454705fad9cc0890297a84d2b7869670a364d01d5398685e3c987d2b6c123",
-] as const;
 const REPLACEMENT_SUPERVISOR_MANIFEST_DIGEST = `sha256:${"a".repeat(64)}`;
 const tempDirs: string[] = [];
 
