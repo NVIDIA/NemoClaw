@@ -99,7 +99,7 @@ describe("sandbox connect inference route probe argv", () => {
   it.each([
     "OK 200",
     "BROKEN 503",
-  ])("does not run hostile DCode startup or curl config for a %s spoof (#6192)", (spoof) => {
+  ])("managed launcher does not run hostile DCode startup or curl config for a %s spoof (#6192)", (spoof) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-probe-"));
     const profileMarker = path.join(home, "profile-ran");
     try {

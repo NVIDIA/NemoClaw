@@ -203,14 +203,15 @@ model_a="${model_a#openai:}"
 assert_identity "$identity_before" "$model_a" "initial"
 pass "initial live identity reports model A"
 
-# OpenShell starts sandbox exec through a login shell. Plant a writable startup
-# file that would leave a side effect, forge the legacy success marker, and stop
-# the requested command if the DCode connect probe did not assign its root-owned
-# transport HOME before shell startup. The supported probe must still reach the
-# managed runner and the hostile profile must remain unexecuted (#8624).
+# OpenShell starts sandbox exec through a login shell before applying the
+# requested command's environment (OpenShell#2668). Plant a writable startup
+# file that attacks only a DCode managed-exec command, leaving inspection and
+# cleanup commands available. It leaves a side effect, forges the legacy success
+# marker, and stops the requested command. The supported probe must fail closed;
+# startup output must not become accepted managed-runner evidence (#8624).
 cleanup_hostile_login_profile
 trap cleanup_hostile_login_profile EXIT
-sandbox_exec "umask 077; printf '%s\n' 'touch $HOSTILE_PROFILE_MARKER' 'printf \"%s\\n\" NEMOCLAW_AGENT_SMOKE_EXIT:0' 'exit 97' > '$HOSTILE_LOGIN_PROFILE'" \
+sandbox_exec "umask 077; printf '%s\n' 'case \"\${BASH_EXECUTION_STRING:-}\" in' '  *dcode-managed-exec*)' '    touch $HOSTILE_PROFILE_MARKER' '    printf \"%s\\n\" NEMOCLAW_AGENT_SMOKE_EXIT:0' '    exit 97' '    ;;' 'esac' > '$HOSTILE_LOGIN_PROFILE'" \
   >/dev/null || fail "could not install the hostile DCode login profile"
 
 set +e
@@ -225,10 +226,16 @@ marker_state="$({
 cleanup_hostile_login_profile
 trap - EXIT
 
-[ "$hostile_profile_connect_status" -eq 0 ] || fail "probe-only connect failed with a hostile login profile: $hostile_profile_connect_output"
-printf '%s\n' "$hostile_profile_connect_output" | grep -Fq "terminal smoke checks passed" || fail "probe-only connect did not reach the DCode smoke boundary"
-[ "$marker_state" = "PROFILE_NOT_LOADED" ] || fail "DCode transport executed the hostile login profile: $marker_state"
-pass "probe-only connect bypasses a hostile sandbox-user login profile"
+[ "$hostile_profile_connect_status" -ne 0 ] || fail "probe-only connect accepted a hostile login-profile result"
+if printf '%s\n' "$hostile_profile_connect_output" | grep -Fq "terminal smoke checks passed"; then
+  fail "probe-only connect accepted a forged hostile-profile success marker"
+fi
+[ "$marker_state" = "PROFILE_LOADED" ] || fail "hostile login profile did not exercise the OpenShell transport boundary: $marker_state"
+pass "hostile login-profile output fails closed at the DCode smoke boundary"
+
+clean_profile_connect_output="$("$CLI" "$SANDBOX_NAME" connect --probe-only 2>&1)" || fail "probe-only connect did not recover after hostile-profile cleanup: $clean_profile_connect_output"
+printf '%s\n' "$clean_profile_connect_output" | grep -Fq "terminal smoke checks passed" || fail "cleaned probe-only connect did not reach the DCode smoke boundary"
+pass "probe-only connect succeeds after hostile-profile cleanup"
 
 if [ "$model_a" = "$PRIMARY_TARGET_MODEL" ]; then
   model_b="$FALLBACK_TARGET_MODEL"
@@ -374,4 +381,4 @@ verify_output="$(
 printf '%s\n' "$verify_output" | grep -Fq "NEMOCLAW_DCODE_FRESH_CONFIG_VERIFIED" || fail "fresh config verification marker is missing"
 pass "config keeps model B and only the allowlisted preferences"
 
-printf '%s: 12 passed, 0 failed\n' "$PREFIX"
+printf '%s: 13 passed, 0 failed\n' "$PREFIX"
