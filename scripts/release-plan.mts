@@ -4,9 +4,9 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
+import { isCanonicalNemoClawRemote } from "./release/remote.mts";
 
 type Bump = "patch" | "minor" | "major";
 
@@ -39,11 +39,6 @@ type ReleasePlan = {
   operations: string[];
   forbiddenOperations: string[];
   planHash: string;
-};
-
-const require = createRequire(import.meta.url);
-const { isCanonicalNemoClawRemote } = require("./release/remote.js") as {
-  isCanonicalNemoClawRemote: (remote: string) => boolean;
 };
 
 function run(command: string, args: string[], options: { allowFailure?: boolean } = {}): string {

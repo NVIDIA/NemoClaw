@@ -4,15 +4,10 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-
-const require = createRequire(import.meta.url);
-const { isCanonicalNemoClawRemote } = require("../scripts/release/remote.js") as {
-  isCanonicalNemoClawRemote: (remote: string) => boolean;
-};
+import { isCanonicalNemoClawRemote } from "../scripts/release/remote.mts";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const latestScriptPath = path.join(repoRoot, "scripts", "release-latest-tag.sh");

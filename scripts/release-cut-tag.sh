@@ -94,7 +94,7 @@ git merge-base --is-ancestor "$target" origin/main || fail "Target commit is not
 
 verify_release_qualification() {
   local remote_kind
-  remote_kind="$(node "$SCRIPT_DIR/release/remote.js" "$origin_remote")" || fail "Could not validate origin remote"
+  remote_kind="$(node "$SCRIPT_DIR/release/remote.mts" "$origin_remote")" || fail "Could not validate origin remote"
   if [[ "$remote_kind" == "noncanonical" && "${NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL:-}" == "1" ]]; then
     printf 'release-cut-tag: skipped GitHub qualification for an explicitly allowed noncanonical test remote %s\n' "$origin_remote"
     return
