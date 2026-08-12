@@ -164,9 +164,7 @@ export function prepareSessionInput<RuntimeControlRequests extends object>(
   runtimeControlRequests: RuntimeControlRequests,
   sandboxName: string | null,
   resume: boolean,
-  preflight: () => void,
 ) {
-  preflight();
   return {
     ...runtimeControlRequests,
     stationExpressIntent: requireStationExpressResumeIntent(process.env, sandboxName, resume),

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { GatewayOwner } from "./gateway-ownership";
+import { hasRequiredOpenshellMessagingFeatures } from "./openshell-feature-gate";
 
 export type OpenShellInstallResult = {
   installed?: boolean;
@@ -142,6 +143,7 @@ export type OpenShellInstallDeps = {
   ) => boolean;
   resolveOpenShellGatewayBinary: () => string | null;
   resolveOpenShellSandboxBinary: () => string | null;
+  resolveOpenshell: () => string | null;
   isOpenshellInstalled: () => boolean;
   installOpenshell: () => OpenShellInstallResult;
   getInstalledOpenshellVersion: (versionOutput?: string | null) => string | null;
@@ -151,7 +153,7 @@ export type OpenShellInstallDeps = {
   shouldUseOpenshellDevChannel: () => boolean;
   isOpenshellDevVersion: (versionOutput: string | null) => boolean;
   versionGte: (a: string, b: string) => boolean;
-  hasRequiredOpenshellMessagingFeatures: () => boolean;
+  hasRequiredOpenshellMessagingFeatures?: () => boolean;
   shouldAllowOpenshellAboveBlueprintMax: (versionOutput: string | null) => boolean;
   cliDisplayName: () => string;
   log: (message: string) => void;
@@ -160,6 +162,21 @@ export type OpenShellInstallDeps = {
   platform?: NodeJS.Platform;
   arch?: NodeJS.Architecture;
 };
+
+function hasRequiredMessagingFeatures(deps: OpenShellInstallDeps): boolean {
+  if (deps.hasRequiredOpenshellMessagingFeatures) {
+    return deps.hasRequiredOpenshellMessagingFeatures();
+  }
+  const externalSandboxBin = process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN?.trim();
+  return hasRequiredOpenshellMessagingFeatures({
+    openshellBin: deps.resolveOpenshell(),
+    gatewayBin: deps.resolveOpenShellGatewayBinary(),
+    sandboxBin: deps.resolveOpenShellSandboxBinary(),
+    allowExternalGatewayBin: Boolean(process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN?.trim()),
+    allowExternalSandboxBin: Boolean(externalSandboxBin),
+    requireSandboxBin: process.platform !== "darwin" || Boolean(externalSandboxBin),
+  });
+}
 
 export function areRequiredDockerDriverBinariesPresent(
   deps: Pick<
@@ -225,7 +242,7 @@ export function ensureOpenshellForOnboard(
       const needsDockerDriverBinaries =
         deps.isLinuxDockerDriverGatewayEnabled(platform, arch) &&
         !areRequiredDockerDriverBinariesPresent(deps, platform, {}, arch);
-      const needsMessagingFeatures = !deps.hasRequiredOpenshellMessagingFeatures();
+      const needsMessagingFeatures = !hasRequiredMessagingFeatures(deps);
       const needsUpgrade =
         !deps.versionGte(currentVersion, minOpenshellVersion) ||
         needsDevChannel ||
@@ -280,7 +297,7 @@ export function ensureOpenshellForOnboard(
     deps.exit(1);
   }
 
-  if (!deps.hasRequiredOpenshellMessagingFeatures()) {
+  if (!hasRequiredMessagingFeatures(deps)) {
     deps.error("");
     deps.error(
       "  \u2717 openshell is missing provider credential rewrite or MCP L7 policy support.",

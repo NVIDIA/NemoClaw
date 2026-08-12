@@ -1112,6 +1112,7 @@ function getOpenShellInstallDeps(
     isLinuxDockerDriverGatewayEnabled,
     resolveOpenShellGatewayBinary,
     resolveOpenShellSandboxBinary,
+    resolveOpenshell,
     isOpenshellInstalled,
     installOpenshell,
     getInstalledOpenshellVersion,
@@ -1121,9 +1122,6 @@ function getOpenShellInstallDeps(
     shouldUseOpenshellDevChannel,
     isOpenshellDevVersion,
     versionGte,
-    hasRequiredOpenshellMessagingFeatures: () =>
-      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-      (require("./onboard/openshell-feature-gate") as typeof import("./onboard/openshell-feature-gate")).hasRequiredOpenshellMessagingFeatures({ openshellBin: resolveOpenshell(), gatewayBin: resolveOpenShellGatewayBinary(), sandboxBin: resolveOpenShellSandboxBinary(), allowExternalGatewayBin: Boolean(process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN?.trim()), allowExternalSandboxBin: Boolean(process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN?.trim()), requireSandboxBin: process.platform !== "darwin" || Boolean(process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN?.trim()) }),
     shouldAllowOpenshellAboveBlueprintMax,
     cliDisplayName,
     log: console.log,
@@ -3752,9 +3750,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   if (!noticeAccepted) {
     process.exit(1);
   }
-  // Validate provider/model hints before preflight so configuration errors are not reported as Docker failures.
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const stationSessionInput = onboardEntryOptions.prepareSessionInput(runtimeControlRequests, requestedSandboxName, resume, () => resumeConfig.preflightEarlyOnboardEnvForResume(isNonInteractive(), opts.authoritativeResumeConfig === true));
+  const isAuthoritativeResume = () => opts.authoritativeResumeConfig === true;
+  resumeConfig.preflightEarlyOnboardEnvForResume(isNonInteractive(), isAuthoritativeResume());
+  const stationSessionInput = onboardEntryOptions.prepareSessionInput(
+    runtimeControlRequests,
+    requestedSandboxName,
+    resume,
+  );
   const ownsOnboardLock = opts.onboardLockAlreadyHeld !== true;
   const lockResult = ownsOnboardLock
     ? onboardSession.acquireOnboardLock(
@@ -3843,7 +3845,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         requestedSandboxName,
         cannotPrompt,
         nonInteractive: isNonInteractive(),
-        authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
+        authoritativeResumeConfig: isAuthoritativeResume(),
         servingProfileProvenance: opts.servingProfileProvenance ?? null,
         agentFlag: opts.agent || null,
         envAgent: process.env.NEMOCLAW_AGENT || null,
@@ -4148,9 +4150,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       },
       sandbox: {
         gatewayName: GATEWAY_NAME,
-        authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
-        authoritativePolicyTier:
-          opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
+        authoritativeResumeConfig: isAuthoritativeResume(),
+        authoritativePolicyTier: isAuthoritativeResume() ? (opts.policyTier ?? null) : undefined,
         recreateJournalTargetIntentFingerprint: opts.recreateJournalTargetIntentFingerprint ?? null,
         resumeAgentChanged,
         requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
@@ -4256,8 +4257,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       import("./verify-deployment").VerifyDeploymentResult
     >({
       branchState: agent ? "agent_setup" : "openclaw",
-      authoritativePolicyTier:
-        opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
+      authoritativePolicyTier: isAuthoritativeResume() ? (opts.policyTier ?? null) : undefined,
       agentSetupDeps: {
         handleAgentSetup: agentOnboard.handleAgentSetup,
         agentSetupContext: () => ({

@@ -20,6 +20,7 @@ function makeDeps(overrides: Partial<OpenShellInstallDeps> = {}) {
     isLinuxDockerDriverGatewayEnabled: () => false,
     resolveOpenShellGatewayBinary: () => "/tmp/openshell-gateway",
     resolveOpenShellSandboxBinary: () => "/tmp/openshell-sandbox",
+    resolveOpenshell: () => "/tmp/openshell",
     isOpenshellInstalled: () => true,
     installOpenshell: vi.fn(() => installResult),
     getInstalledOpenshellVersion: () => "0.0.72",
