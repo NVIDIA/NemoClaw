@@ -22,7 +22,6 @@ function executable(file: string, source: string): void {
 
 function fixture(
   options: {
-    blockRefresh?: boolean;
     bootImage?: string;
     deleteFails?: boolean;
     e2eFails?: boolean;
@@ -40,6 +39,7 @@ function fixture(
     sshReadyAfter?: number;
     sourceRepository?: string;
     sourcePath?: string;
+    timeoutBlockCommand?: "brev refresh" | "ssh -T";
   } = {},
 ) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launchable-e2e-"));
@@ -61,7 +61,7 @@ set -euo pipefail
 duration="$1"
 shift
 printf 'timeout %s %s\n' "$duration" "$*" >> "$FAKE_CALLS"
-if [ -f "$FAKE_TIMEOUT_BLOCK" ] && [ "\${1:-} \${2:-}" = "brev refresh" ]; then
+if [ -f "$FAKE_TIMEOUT_BLOCK" ] && [ "\${1:-} \${2:-}" = "$FAKE_TIMEOUT_BLOCK_COMMAND" ]; then
   rm -f "$FAKE_TIMEOUT_BLOCK"
   /bin/sleep "\${duration%s}"
   exit 124
@@ -151,12 +151,11 @@ esac
     `#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${*: -1}" = true ]; then
-  expected=(-T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 -o NumberOfPasswordPrompts=0 -o RequestTTY=no -o LogLevel=ERROR "$INSTANCE_NAME-host" true)
-  [ "$#" -eq "\${#expected[@]}" ]
-  received=("$@")
-  for index in "\${!expected[@]}"; do
-    [ "\${received[$index]}" = "\${expected[$index]}" ]
+  required=(-T "-o BatchMode=yes" "-o ConnectTimeout=10" "-o ConnectionAttempts=1" "-o NumberOfPasswordPrompts=0" "-o RequestTTY=no" "-o LogLevel=ERROR")
+  for argument in "\${required[@]}"; do
+    [[ " $* " == *" $argument "* ]]
   done
+  [ "\${*: -2:1}" = "$INSTANCE_NAME-host" ]
   attempts=0
   [ ! -f "$FAKE_SSH_ATTEMPTS" ] || attempts="$(cat "$FAKE_SSH_ATTEMPTS")"
   attempts=$((attempts + 1))
@@ -205,7 +204,10 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_SOURCE_REPOSITORY: options.sourceRepository ?? "NVIDIA/NemoClaw",
     FAKE_SOURCE_PATH: options.sourcePath ?? "/opt/nemoclaw-image/NemoClaw",
     FAKE_STATE: state,
-    FAKE_TIMEOUT_BLOCK: options.blockRefresh ? timeoutBlock : path.join(root, "timeout-disabled"),
+    FAKE_TIMEOUT_BLOCK: options.timeoutBlockCommand
+      ? timeoutBlock
+      : path.join(root, "timeout-disabled"),
+    FAKE_TIMEOUT_BLOCK_COMMAND: options.timeoutBlockCommand ?? "",
     GH_TOKEN: "github-test-token",
     GITHUB_RUN_ATTEMPT: "1",
     GITHUB_RUN_ID: "789",
@@ -235,9 +237,23 @@ describe("focused staging Brev Launchable lane", () => {
     );
     expect(commands).toContain("create nclaw-e2e-test-1 --launchable env-staging123");
     expect(commands.match(/ssh host readiness attempt/gu)).toHaveLength(3);
-    expect(commands).toContain(
-      "ssh host readiness attempt 1: -T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 -o NumberOfPasswordPrompts=0 -o RequestTTY=no -o LogLevel=ERROR nclaw-e2e-test-1-host true",
+    const readinessCall = commands
+      .split("\n")
+      .find((line) => line.startsWith("ssh host readiness attempt 1: "));
+    expect(readinessCall).toBeDefined();
+    const readinessArgs = readinessCall?.split(": ").at(1)?.split(" ") ?? [];
+    expect(readinessArgs).toEqual(
+      expect.arrayContaining([
+        "-T",
+        "BatchMode=yes",
+        "ConnectTimeout=10",
+        "ConnectionAttempts=1",
+        "NumberOfPasswordPrompts=0",
+        "RequestTTY=no",
+        "LogLevel=ERROR",
+      ]),
     );
+    expect(readinessArgs.slice(-2)).toEqual(["nclaw-e2e-test-1-host", "true"]);
     expect(fs.readFileSync(sshAttempts, "utf8").trim()).toBe("3");
     expect(commands).toContain("ssh preinstalled full-e2e.test.ts");
     expect(commands).not.toContain("nvapi-test-value");
@@ -349,7 +365,7 @@ describe("focused staging Brev Launchable lane", () => {
   });
 
   it("caps a blocking refresh by the host SSH deadline and deletes the workspace", () => {
-    const { calls, env, state, workDir } = fixture({ blockRefresh: true });
+    const { calls, env, state, workDir } = fixture({ timeoutBlockCommand: "brev refresh" });
     const startedAt = performance.now();
     const result = run({ ...env, BREV_HOST_SSH_TIMEOUT_SECONDS: "1" });
     const elapsedMs = performance.now() - startedAt;
@@ -357,6 +373,22 @@ describe("focused staging Brev Launchable lane", () => {
     expect(result.stderr).toContain("host SSH readiness timed out");
     expect(elapsedMs).toBeLessThan(10_000);
     expect(fs.readFileSync(calls, "utf8")).toContain("timeout 1s brev refresh");
+    expect(fs.readFileSync(calls, "utf8")).not.toMatch(/brev exec|full-e2e\.test\.ts/u);
+    expect(fs.existsSync(state)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  }, 90_000);
+
+  it("caps a blocking SSH probe by the host SSH deadline and deletes the workspace", () => {
+    const { calls, env, state, workDir } = fixture({ timeoutBlockCommand: "ssh -T" });
+    const startedAt = performance.now();
+    const result = run({ ...env, BREV_HOST_SSH_TIMEOUT_SECONDS: "2" });
+    const elapsedMs = performance.now() - startedAt;
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("host SSH readiness timed out");
+    expect(elapsedMs).toBeLessThan(10_000);
+    expect(fs.readFileSync(calls, "utf8")).toContain("timeout 2s ssh -T");
     expect(fs.readFileSync(calls, "utf8")).not.toMatch(/brev exec|full-e2e\.test\.ts/u);
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
