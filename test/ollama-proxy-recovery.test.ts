@@ -974,7 +974,7 @@ console.log(JSON.stringify({
     assert.match(payload.operationError || "", /reconcile or remove the stale files/);
   });
 
-  it("serializes concurrent startup and recovery around one shared proxy (#8704)", {
+  it("serializes startup, compatible-endpoint commit, and recovery (#8704)", {
     timeout: 15_000,
   }, async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
@@ -1045,15 +1045,28 @@ childProcess.spawnSync = (...args) => {
 };
 
 const proxy = require(${proxyPath});
-if (mode === "start" || mode === "start-peer") {
-  if (!proxy.startOllamaAuthProxy()) process.exitCode = 1;
-} else {
-  proxy.ensureOllamaAuthProxy();
-}
+const execute = async () => {
+  if (mode === "start" || mode === "start-peer") {
+    if (!proxy.startOllamaAuthProxy()) process.exitCode = 1;
+  } else if (mode === "transaction") {
+    await proxy.withOllamaProxyLifecycleTransaction(async () => {
+      const prepared = proxy.noAuthProxy("http://127.0.0.1:8000/v1");
+      fs.writeFileSync(enteredPath, "entered\n");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      prepared.persist();
+    });
+  } else {
+    proxy.ensureOllamaAuthProxy();
+  }
+};
+execute().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
 `;
     fs.writeFileSync(scriptPath, script);
 
-    const runChild = (mode: "start" | "start-peer" | "ensure") =>
+    const runChild = (mode: "start" | "start-peer" | "transaction" | "ensure") =>
       new Promise<{ stderr: string; stdout: string }>((resolve, reject) => {
         const child = spawn(process.execPath, [scriptPath, mode], {
           cwd: repoRoot,
@@ -1107,6 +1120,31 @@ if (mode === "start" || mode === "start-peer") {
         "4242",
       );
       assert.equal(fs.readFileSync(activeTokenPath, "utf8").trim(), spawnedTokens[0]);
+
+      fs.rmSync(enteredPath, { force: true });
+      fs.writeFileSync(path.join(stateDir, "ollama-proxy-token"), "old-token\n", { mode: 0o600 });
+      fs.writeFileSync(path.join(stateDir, "ollama-backend"), "http://127.0.0.1:11434\n", {
+        mode: 0o600,
+      });
+      fs.writeFileSync(spawnLogPath, "");
+
+      const transaction = runChild("transaction");
+      await waitForStartupEntry();
+      const concurrentRecovery = runChild("ensure");
+      await Promise.all([transaction, concurrentRecovery]);
+
+      const transactionSpawns = fs.readFileSync(spawnLogPath, "utf8").trim().split("\n");
+      const committedToken = fs
+        .readFileSync(path.join(stateDir, "ollama-proxy-token"), "utf8")
+        .trim();
+      assert.equal(transactionSpawns.length, 1);
+      assert.equal(transactionSpawns[0]?.split(":")[0], "transaction");
+      assert.match(committedToken, /^[0-9a-f]{48}$/);
+      assert.equal(fs.readFileSync(activeTokenPath, "utf8").trim(), committedToken);
+      assert.equal(
+        fs.readFileSync(path.join(stateDir, "ollama-backend"), "utf8").trim(),
+        "http://127.0.0.1:8000",
+      );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

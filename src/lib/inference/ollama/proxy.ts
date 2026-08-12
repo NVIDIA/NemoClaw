@@ -49,7 +49,10 @@ const { buildSubprocessEnv } = require("../../subprocess-env");
 const { prompt } = require("../../credentials/store");
 const { promptManualModelId } = require("../model-prompts");
 const { listGatewayStateRoots } = require("../../state/gateway-registry");
-const { withMcpLifecycleLockSync } = require("../../state/mcp-lifecycle-lock");
+const {
+  withMcpLifecycleLock,
+  withMcpLifecycleLockSync,
+} = require("../../state/mcp-lifecycle-lock");
 const { openRegularFileNoFollow } = require("../../adapters/fs/regular-file");
 const {
   formatOllamaProxyUnreachableMessage,
@@ -96,6 +99,14 @@ function withOllamaProxyLifecycleLock<T>(operation: () => T): T {
   // host-global lifecycle locks. An empty lock directory does not masquerade
   // as a default-port gateway during scoped uninstall discovery.
   return withMcpLifecycleLockSync(OLLAMA_PROXY_LIFECYCLE_LOCK, operation, {
+    stateDir: path.join(PROXY_STATE_DIR, "state"),
+  });
+}
+
+function withOllamaProxyLifecycleTransaction<T>(operation: () => Promise<T> | T): Promise<T> {
+  // Async setup steps can call the synchronous helpers below while retaining
+  // this lock through the shared re-entrant lifecycle-lock context.
+  return withMcpLifecycleLock(OLLAMA_PROXY_LIFECYCLE_LOCK, operation, {
     stateDir: path.join(PROXY_STATE_DIR, "state"),
   });
 }
@@ -1219,4 +1230,5 @@ export {
   pullOllamaModel,
   startOllamaAuthProxy,
   unloadOllamaModels,
+  withOllamaProxyLifecycleTransaction,
 };
