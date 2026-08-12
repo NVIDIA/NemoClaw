@@ -222,11 +222,20 @@ async function expectStopStartRecovery(
       .join("\n"),
   ).toBe(0);
 
-  const status = await runNemoclaw(host, [SANDBOX_NAME, "status"], {
-    artifactName: `${artifactPrefix}-status`,
-    redactionValues,
-    timeoutMs: 5 * 60_000,
+  const statusAttempt = await pollUntil({
+    artifactPrefix: `${artifactPrefix}-status`,
+    attempts: 5,
+    delayMs: 5_000,
+    probe: async (_attempt, artifactName) =>
+      await runNemoclaw(host, [SANDBOX_NAME, "status"], {
+        artifactName,
+        redactionValues,
+        timeoutMs: 60_000,
+      }),
+    accept: (result) =>
+      result.exitCode === 0 && /Phase:\s*Ready/i.test(stripAnsi(resultText(result))),
   });
+  const status = statusAttempt.value;
   expect(status.exitCode, resultText(status)).toBe(0);
   expect(stripAnsi(resultText(status))).toMatch(/Phase:\s*Ready/i);
 
@@ -409,27 +418,84 @@ async function waitForChildlessStartup(host: HostCliClient, containerId: string)
   });
 }
 
-async function waitForStoppedSupervisor(host: HostCliClient, containerId: string): Promise<void> {
-  const script = [
-    "from pathlib import Path",
-    "lines = Path('/proc/1/status').read_text(encoding='ascii').splitlines()",
-    "print(next((line.split()[1] for line in lines if line.startswith('State:')), ''))",
+function createPolicySetChildlessBoundaryShim(
+  realOpenshellPath: string,
+  containerId: string,
+  startupPid: number,
+): { directory: string; executable: string; receipt: string } {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-openshell-"));
+  const executable = path.join(directory, "openshell-childless-boundary.cjs");
+  const receipt = path.join(directory, "childless-boundary.json");
+  const processControl = failedStartupProcessControlCommands(containerId, startupPid);
+  const childlessCensusScript = [
+    "import runpy, sys, time",
+    `guard = runpy.run_path(${JSON.stringify(CONFIG_GUARD_PATH)})`,
+    "identity = guard['_production_identity']()",
+    "for _ in range(100):",
+    "    census = guard['_openshell_supervised_nonroot_start_census'](identity.root_uid, identity.sandbox_uid)",
+    "    if census is not None and census[0] == 0:",
+    "        sys.exit(0)",
+    "    time.sleep(0.1)",
+    "sys.exit(1)",
   ].join("\n");
-  await pollUntil({
-    artifactPrefix: "phase-12-stopped-supervisor",
-    attempts: 20,
-    delayMs: 100,
-    probe: async (_attempt, artifactName) => {
-      const result = await docker(
-        host,
-        ["exec", "--user", "0", containerId, "python3", "-I", "-c", script],
-        { artifactName, timeoutMs: 30_000 },
-      );
-      expect(result.exitCode, resultText(result)).toBe(0);
-      return result.stdout.trim();
-    },
-    accept: (state) => state === "T" || state === "t",
-  });
+  const shimSource = `#!${process.execPath}
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+
+const args = process.argv.slice(2);
+const delegated = spawnSync(${JSON.stringify(realOpenshellPath)}, args, {
+  env: process.env,
+  stdio: "inherit",
+});
+if (delegated.error || delegated.status !== 0) {
+  if (delegated.error) console.error(delegated.error.message);
+  process.exit(delegated.status ?? 1);
+}
+
+const isTargetPolicySet =
+  args[0] === "policy" &&
+  args[1] === "set" &&
+  args.includes("--wait") &&
+  args.at(-1) === ${JSON.stringify(SANDBOX_NAME)};
+if (!isTargetPolicySet || fs.existsSync(${JSON.stringify(receipt)})) process.exit(0);
+
+fs.writeFileSync(${JSON.stringify(receipt)}, JSON.stringify({ status: "arming" }), {
+  encoding: "utf8",
+  flag: "wx",
+  mode: 0o600,
+});
+const pause = spawnSync("docker", ${JSON.stringify(processControl.pauseSupervisor)}, {
+  env: process.env,
+  stdio: "inherit",
+});
+if (pause.error || pause.status !== 0) process.exit(pause.status ?? 1);
+const terminate = spawnSync("docker", ${JSON.stringify(processControl.terminateStartupChild)}, {
+  env: process.env,
+  stdio: "inherit",
+});
+if (terminate.error || terminate.status !== 0) process.exit(terminate.status ?? 1);
+const childless = spawnSync(
+  "docker",
+  [
+    "exec",
+    "--user",
+    "0",
+    ${JSON.stringify(containerId)},
+    "python3",
+    "-I",
+    "-c",
+    ${JSON.stringify(childlessCensusScript)},
+  ],
+  { env: process.env, stdio: "inherit" },
+);
+if (childless.error || childless.status !== 0) process.exit(childless.status ?? 1);
+fs.writeFileSync(${JSON.stringify(receipt)}, JSON.stringify({ status: "childless" }), {
+  encoding: "utf8",
+  mode: 0o600,
+});
+`;
+  fs.writeFileSync(executable, shimSource, { encoding: "utf8", mode: 0o700 });
+  return { directory, executable, receipt };
 }
 
 async function readOriginalConfig(
@@ -483,7 +549,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
       "restart OpenClaw with shields down",
       "recover shields after a dead restore timer",
       "reject duplicate shields transitions",
-      "prove installed failed-startup recovery refuses a live child and unlocks childless state",
+      "prove installed failed-startup guard refuses a live child and supported shields down unlocks childless state",
       "record shields contract evidence",
     ],
   },
@@ -505,7 +571,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
       "start restores a stopped OpenClaw sandbox while shields are down",
       "dead auto-restore timer inline recovery re-locks config and .config-hash",
       "double shields-up/down operations are rejected",
-      "installed failed-startup recovery refuses a live supervised child and atomically unlocks childless state",
+      "installed failed-startup guard refuses a live child and supported shields down atomically unlocks childless state",
     ],
   });
 
@@ -1074,7 +1140,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   expect(resultText(finalUp)).toContain("Lockdown active");
 
   progress.phase(
-    "prove installed failed-startup recovery refuses a live child and unlocks childless state",
+    "prove installed failed-startup guard refuses a live child and supported shields down unlocks childless state",
   );
   const recoveryContainerId = await findSandboxContainer(host);
   const removeMarkers = await docker(
@@ -1091,6 +1157,10 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   );
   expect(liveCensus).toMatchObject({ count: 1, pid: expect.any(Number) });
   expect(liveCensus.pid).not.toBeNull();
+  // OpenShell's supervised non-root compatibility path legitimately permits
+  // ordinary Shields changes while its startup child is healthy. Exercise the
+  // failed-startup admission boundary through the installed guard, then prove
+  // the supported host command owns the terminal childless recovery below.
   const liveChildRefusal = await runInstalledFailedStartupUnlock(
     host,
     recoveryContainerId,
@@ -1104,53 +1174,76 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   });
 
   // A running OpenShell PID 1 can restart its child while the recovery guard
-  // scans procfs. Register the fail-safe first so every later assertion can
-  // leave the sandbox supervisor runnable for cleanup.
+  // scans procfs, but pausing PID 1 before `policy set --wait` also prevents
+  // OpenShell from acknowledging the policy version. A one-shot executable
+  // shim delegates the real policy update first, then pauses the supervisor
+  // and removes the exact live child before the public command reaches its
+  // guarded config transition.
   let supervisorPaused = false;
+  const processControl = failedStartupProcessControlCommands(
+    recoveryContainerId,
+    liveCensus.pid ?? 0,
+  );
   cleanup.trackDisposable(`resume stopped supervisor for ${SANDBOX_NAME}`, async () => {
     await resumeSupervisorIfPaused(supervisorPaused, async () => {
-      const resume = await docker(host, supervisorControl.resumeSupervisor, {
+      const resume = await docker(host, processControl.resumeSupervisor, {
         artifactName: "cleanup-phase-12-resume-startup-supervisor",
         timeoutMs: 30_000,
       });
       expect(resume.exitCode, resultText(resume)).toBe(0);
     });
   });
-  const supervisorControl = failedStartupProcessControlCommands(recoveryContainerId, 2);
-  const pauseSupervisor = await docker(host, supervisorControl.pauseSupervisor, {
-    artifactName: "phase-12-pause-startup-supervisor",
-    timeoutMs: 30_000,
+  const openshellResolution = await host.command(
+    "bash",
+    ["-lc", 'command -v "$1"', "resolve-openshell", host.openshellCommandPath],
+    {
+      artifactName: "phase-12-resolve-openshell",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(openshellResolution.exitCode, resultText(openshellResolution)).toBe(0);
+  const realOpenshellPath = openshellResolution.stdout.trim();
+  expect(path.isAbsolute(realOpenshellPath), realOpenshellPath).toBe(true);
+  const policyBoundary = createPolicySetChildlessBoundaryShim(
+    realOpenshellPath,
+    recoveryContainerId,
+    liveCensus.pid ?? 0,
+  );
+  cleanup.trackDisposable("remove phase-12 OpenShell boundary shim", () => {
+    fs.rmSync(policyBoundary.directory, { force: true, recursive: true });
   });
-  expect(pauseSupervisor.exitCode, resultText(pauseSupervisor)).toBe(0);
+
+  // The shim may have paused PID 1 even if a later assertion fails. Arm the
+  // cleanup before starting the public transition; SIGCONT is harmless if the
+  // policy command fails before the shim reaches the test boundary.
   supervisorPaused = true;
-  await waitForStoppedSupervisor(host, recoveryContainerId);
-
-  const pausedCensus = await installedStartupCensus(
+  const childlessRecovery = await runNemoclaw(
     host,
-    recoveryContainerId,
-    "phase-12-paused-startup-census",
+    [
+      SANDBOX_NAME,
+      "shields",
+      "down",
+      "--timeout",
+      "5m",
+      "--reason",
+      "Supported failed-startup recovery E2E",
+    ],
+    {
+      artifactName: "phase-12-childless-shields-down",
+      env: commandEnv({ NEMOCLAW_OPENSHELL_BIN: policyBoundary.executable }),
+      timeoutMs: 16 * 60_000,
+    },
   );
-  expect(pausedCensus).toMatchObject({ count: 1, pid: expect.any(Number) });
-  expect(pausedCensus.pid).not.toBeNull();
-  const processControl = failedStartupProcessControlCommands(
-    recoveryContainerId,
-    pausedCensus.pid ?? 0,
+  expect(childlessRecovery.exitCode, resultText(childlessRecovery)).toBe(0);
+  expect(resultText(childlessRecovery)).toContain(
+    "Lowered shields on a sandbox whose startup never completed.",
   );
-  const terminateChild = await docker(host, processControl.terminateStartupChild, {
-    artifactName: "phase-12-terminate-startup-child",
-    timeoutMs: 30_000,
+  expect(resultText(childlessRecovery)).toContain("Sandbox is in default (mutable) state.");
+  expect(JSON.parse(fs.readFileSync(policyBoundary.receipt, "utf8"))).toEqual({
+    status: "childless",
   });
-  expect(terminateChild.exitCode, resultText(terminateChild)).toBe(0);
-
   await waitForChildlessStartup(host, recoveryContainerId);
-  const childlessUnlock = await runInstalledFailedStartupUnlock(
-    host,
-    recoveryContainerId,
-    "phase-12-childless-unlock",
-  );
-  expect(childlessUnlock.exitCode, resultText(childlessUnlock)).toBe(0);
-  expect(resultText(childlessUnlock)).toContain('"action": "unlock-failed-startup"');
-  expect(resultText(childlessUnlock)).toContain('"status": "ok"');
   const unlockedPaths = await docker(
     host,
     [
@@ -1179,22 +1272,9 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   expect(resumeSupervisor.exitCode, resultText(resumeSupervisor)).toBe(0);
   supervisorPaused = false;
 
-  // Reconcile the host-side Shields receipt after the direct installed-guard
-  // proof, then restart the failed sandbox and return cleanup to lockdown.
-  const reconcileDown = await runNemoclaw(
-    host,
-    [
-      SANDBOX_NAME,
-      "shields",
-      "down",
-      "--timeout",
-      "5m",
-      "--reason",
-      "Installed failed-startup recovery E2E",
-    ],
-    { artifactName: "phase-12-reconcile-shields-down", timeoutMs: 16 * 60_000 },
-  );
-  expect(reconcileDown.exitCode, resultText(reconcileDown)).toBe(0);
+  // The supported host command owns the policy receipt and config mutation as
+  // one transition. Resume only after it commits the mutable posture, then
+  // prove ordinary stop/start recovery remains available before relocking.
   await expectStopStartRecovery(host, sandbox, "DOWN", "phase-12-restart-after-recovery", [apiKey]);
   const relockAfterRecovery = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
     artifactName: "phase-12-relock-after-recovery",
@@ -1219,7 +1299,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
       deadTimerInlineAutoRestore: true,
       doubleOperationRejection: true,
       installedFailedStartupLiveChildRefusal: true,
-      installedFailedStartupChildlessUnlock: true,
+      supportedShieldsDownChildlessRecovery: true,
       inheritedMutationLockAcceptedByStateGuard: true,
     },
   });
