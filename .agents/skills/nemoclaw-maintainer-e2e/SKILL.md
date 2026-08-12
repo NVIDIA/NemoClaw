@@ -9,7 +9,7 @@ description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw mai
 # Run Maintainer E2E
 
 Use `.github/workflows/e2e.yaml` from trusted `main`.
-Every push to `main` selects the default workflow E2E jobs.
+Each push to `main` selects catalogue targets and retained workflow jobs that own changed files.
 Push runs skip `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification` because push events cannot set the required workflow dispatch flags.
 Push runs publish `Relevant E2E` and do not publish `Release qualification`.
 Only the full `workflow_dispatch` mode described below publishes `Release qualification`.
