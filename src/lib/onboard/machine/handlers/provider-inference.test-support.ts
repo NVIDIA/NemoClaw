@@ -101,6 +101,7 @@ export function createDeps(
     setupInference: vi.fn(async () => ({ ok: true as const })),
     startStep: vi.fn(async () => undefined),
     complete: vi.fn(async () => createSession()),
+    rejected: vi.fn(async () => createSession()),
     skipped: vi.fn(),
     recoverProvider: vi.fn(
       async (
@@ -133,6 +134,8 @@ export function createDeps(
     ),
     reserveRoute: vi.fn(() => true),
     updateSandbox: vi.fn(),
+    checkpointSandboxIdentity: vi.fn(async () => undefined),
+    prepareLocalProviderForInference: vi.fn(async () => null),
     promptName: vi.fn(async () => "my-assistant"),
     promptYesNo: vi.fn(async () => true),
     log: vi.fn(),
@@ -158,6 +161,7 @@ export function createDeps(
       setupInference: calls.setupInference,
       startRecordedStep: calls.startStep,
       recordStepComplete: calls.complete,
+      recordStepRejected: calls.rejected,
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
       skippedStepMessage: calls.skipped,
       ensureManagedLlamaCppResumeReady: calls.recoverManagedLlamaCpp,
@@ -195,6 +199,8 @@ export function createDeps(
       reupsertRoutedProvider: calls.reupsertRoutedProvider,
       reserveSandboxInferenceRoute: calls.reserveRoute,
       registryUpdateSandbox: calls.updateSandbox,
+      checkpointSandboxIdentity: calls.checkpointSandboxIdentity,
+      prepareLocalProviderForInference: calls.prepareLocalProviderForInference,
       promptValidatedSandboxName: calls.promptName,
       assessHost: () => ({ cpus: 8 }),
       formatSandboxBuildEstimateNote: () => "estimate",

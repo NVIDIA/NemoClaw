@@ -22,8 +22,44 @@ import {
   type OpenShellGatewayEndpointEnvironment,
 } from "../openshell-gateway-endpoint-guard";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
+import type { Session } from "../state/onboard-session";
 
 export { assertNoOpenShellGatewayEndpointOverride };
+
+export function createProviderReviewDeps(
+  updateSession: (mutator: (session: Session) => Session | void) => Session | Promise<Session>,
+  checkpointSandboxName: (
+    sandboxName: string,
+    agent: { name?: string } | null,
+    updateSession: (mutator: (session: Session) => Session | void) => Session | Promise<Session>,
+  ) => Promise<void>,
+  localProvider: {
+    shouldFrontOllamaWithProxy: () => boolean;
+    startOllamaAuthProxy: () => boolean;
+    getOllamaProxyToken: () => string | null;
+    persistAndProbeOllamaProxy: (token: string) => Promise<void>;
+  },
+  exitProcess: (code: number) => never,
+  writeError: (message: string) => void,
+) {
+  return {
+    checkpointSandboxIdentity: (sandboxName: string, agent: { name?: string } | null) =>
+      checkpointSandboxName(sandboxName, agent, updateSession),
+    prepareLocalProviderForInference: async (providerName: string) => {
+      if (providerName !== "ollama-local" || !localProvider.shouldFrontOllamaWithProxy()) {
+        return null;
+      }
+      if (!localProvider.startOllamaAuthProxy()) exitProcess(1);
+      const proxyToken = localProvider.getOllamaProxyToken();
+      if (!proxyToken) {
+        writeError("  Ollama auth proxy token is not set. Re-run onboard to initialize the proxy.");
+        exitProcess(1);
+      }
+      await localProvider.persistAndProbeOllamaProxy(proxyToken);
+      return proxyToken;
+    },
+  };
+}
 
 import type { HermesAuthMethod } from "./hermes-auth";
 
@@ -451,7 +487,12 @@ export function createSetupInference(
           if (outcome.done) return outcome.result;
         } else if (provider === "ollama-local") {
           const outcome = await inferenceProviders.setupOllamaLocalInference(
-            { model, provider, allowToolsIncompatible: options.allowToolsIncompatible === true },
+            {
+              model,
+              provider,
+              allowToolsIncompatible: options.allowToolsIncompatible === true,
+              preparedProxyToken: options.preparedOllamaProxyToken,
+            },
             {
               ...commonDeps,
               validateLocalProvider: deps.validateLocalProvider,

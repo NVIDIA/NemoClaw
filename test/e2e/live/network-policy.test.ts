@@ -242,8 +242,10 @@ async function expectEncodedSlashConfinedToClawHub(
     `https://openclaw.ai${encodedPath}`,
     "tc-net-permissive-non-clawhub-encoded-slash",
   );
+  // Undici can report the same denied CONNECT as `UND_ERR_SOCKET` or `fetch failed`.
+  // The OpenShell gateway log below provides the authoritative denial evidence.
   expect(nonClawhubStatus, `encoded slashes must fail closed outside ClawHub`).toMatch(
-    /^(?:STATUS_403|ERROR_UND_ERR_SOCKET)/,
+    /^(?:STATUS_403|ERROR_(?:UND_ERR_SOCKET|fetch failed))/,
   );
   const denial = await waitForDeniedReasonLog(host, {
     endpoint: ENCODED_SLASH_DENIED_ENDPOINT,

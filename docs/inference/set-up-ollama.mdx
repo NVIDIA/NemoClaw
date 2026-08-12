@@ -170,7 +170,7 @@ The agent inside the sandbox never receives the token directly because the OpenS
 The wizard manages the proxy lifecycle:
 
 - It generates a random 24-byte token and stores it in `~/.nemoclaw/ollama-proxy-token` with `0600` permissions.
-- It starts and verifies the proxy after Ollama.
+- It starts and verifies the proxy only after you accept the onboarding configuration.
 - It removes stale matching proxy processes from previous runs.
 - It probes the sandbox Docker network path before saving the inference route.
 - It stops matching proxy processes during uninstall.

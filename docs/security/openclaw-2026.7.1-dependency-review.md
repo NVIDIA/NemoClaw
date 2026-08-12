@@ -5,7 +5,7 @@
 
 Review date: 2026-07-21
 
-Last updated: 2026-08-07
+Last updated: 2026-08-11
 
 ## Decision
 
@@ -637,6 +637,25 @@ Regression coverage lives in `test/openclaw-2026-7-startup-compat.test.ts` and
 Remove the legacy cache repair after every supported upgrade source stops
 seeding the file or OpenClaw can migrate it across split users and a protected
 parent without a warning.
+
+## Gateway Security Audit Suppression Boundary
+
+NemoClaw's generated OpenClaw audit configuration keeps intentional loopback
+`allowInsecureAuth` findings and provenance-known loopback device-auth opt-out
+findings visible as accepted findings.
+`test/generate-openclaw-config-security-audit.test.ts` locks the generated
+suppression scope, and `test/openclaw-security-audit-suppressions-real.test.ts`
+locks the pinned OpenClaw check IDs and details.
+`test/e2e/live/dashboard-remote-bind.test.ts` proves that a clean-host remote
+bind leaves the device-auth, insecure-auth, and Host-header fallback findings
+active.
+
+Remove the `allowInsecureAuth` suppressions only after the pinned OpenClaw audit
+contract proves that OpenClaw natively classifies intentional loopback
+development HTTP without them, or after NemoClaw onboarding defaults
+`CHAT_UI_URL` to `https://localhost` with a generated local certificate.
+Remove the device-auth suppressions only after managed onboarding no longer
+applies the loopback device-auth compatibility opt-out.
 
 ## Existing security and runtime contracts
 

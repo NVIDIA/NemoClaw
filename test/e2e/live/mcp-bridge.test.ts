@@ -47,7 +47,10 @@ import {
   requireMcpBridgeTlsCaCert,
 } from "./mcp-bridge-onboard-env.ts";
 import { MCP_BRIDGE_PHASES } from "./mcp-bridge-phases.ts";
-import { retryAfterHermesRestartTransportFailure } from "./mcp-bridge-reliability.ts";
+import {
+  retryAfterHermesRestartTransportFailure,
+  retryHermesGatewayDraining,
+} from "./mcp-bridge-reliability.ts";
 import {
   buildMcpDnsRebindingProbeScript,
   captureManagedMcpPolicy,
@@ -567,17 +570,28 @@ async function assertRealAdapterToolCall(
             buildHermesMcpChatProbeScript(hermesPayload, options.resultToken),
           ].join("\n")
         : `nemoclaw-start dcode -n ${JSON.stringify(prompt)}`;
-  const result = await sandbox.execShell(
-    options.sandboxName,
-    trustedSandboxShellScript(["set -eu", command].join("\n")),
-    {
-      artifactName: options.artifactName,
-      env: buildAvailabilityProbeEnv(),
-      captureLimitBytes: options.agent === "hermes" ? HERMES_MCP_FAILURE_CAPTURE_BYTES : undefined,
-      redactionValues: options.agent === "hermes" ? hermesRedactionValues : [],
-      timeoutMs: 5 * 60_000,
-    },
-  );
+  const runToolCall = (artifactName: string) =>
+    sandbox.execShell(
+      options.sandboxName,
+      trustedSandboxShellScript(["set -eu", command].join("\n")),
+      {
+        artifactName,
+        env: buildAvailabilityProbeEnv(),
+        captureLimitBytes:
+          options.agent === "hermes" ? HERMES_MCP_FAILURE_CAPTURE_BYTES : undefined,
+        redactionValues: options.agent === "hermes" ? hermesRedactionValues : [],
+        timeoutMs: 5 * 60_000,
+      },
+    );
+  const initialResult = await runToolCall(options.artifactName);
+  const result =
+    options.agent === "hermes"
+      ? await retryHermesGatewayDraining({
+          initialResult,
+          retry: (attempt) =>
+            runToolCall(`${options.artifactName}-gateway-draining-retry-${attempt}`),
+        })
+      : initialResult;
   const assertResponse =
     options.agent === "hermes"
       ? () => assertHermesMcpHttpResponse(result, hermesRedactionValues)
