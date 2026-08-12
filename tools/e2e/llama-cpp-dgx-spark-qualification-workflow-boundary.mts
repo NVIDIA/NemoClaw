@@ -252,6 +252,7 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
   }
   const jobEnv = record(qualificationJob.env);
   requireValues(errors, `${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID} env`, jobEnv, {
+    E2E_DEFAULT_ENABLED: "0",
     E2E_JOB: "1",
     E2E_TARGET_ID: LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID,
     RELEASE_E2E_ACTIVATION_PATH: LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,

@@ -31,7 +31,7 @@ If any merge lands after `release:plan`, generate a fresh plan before cutting th
 
 ## Cutoff
 
-The daily cutoff is 4 PM America/Los_Angeles, when the release agent prepares the current `main` commit for an authorized maintainer to confirm and sign locally. Merging does not stop for cutoff, E2E, or overnight stabilization.
+The daily cutoff is the maintainer-defined point where the release tag is prepared.
 
 At cutoff:
 
@@ -40,18 +40,31 @@ At cutoff:
 3. List open PRs and issues still carrying the target label as post-tag stragglers.
 4. Confirm the merged release-note docs PR contains the dated changelog entry for the target version, or record an explicit waiver that names the missing entry.
 5. Generate QA handoff from merged PRs.
-6. Generate the release plan for current `origin/main`, exercise the maintainer's local signer, and show the exact confirmation phrase. If `main` moves before confirmation, regenerate the plan rather than stopping merges.
-7. After explicit maintainer confirmation, cut the locally signed tag regardless of E2E state. Never put the release signing key in GitHub Actions or use a release bot to sign it.
-8. After the tag and workflow-managed `latest` are verified, automatically move every open straggler to the next patch label, verify none remain, and delete the released version label.
-9. From 4 PM through 8 AM, continue merging while agents consolidate failures, remove redundant coverage, and fix broken or flaky E2Es.
+6. Generate the release plan to capture the candidate commit. Merges may continue; a late drift check advances the candidate and invalidates evidence for the older SHA.
+7. Review the candidate commit's pre-tag E2E evidence.
+8. Cut the release tag only with explicit maintainer confirmation.
+9. After the tag and workflow-managed `latest` are verified, automatically move every open straggler to the next patch label, verify none remain, and delete the released version label.
 
-## Asynchronous E2E Stabilization
+## Pre-Tag E2E Evidence
 
-Every push to `main` starts the complete E2E workflow. Each run is bound to that push SHA, so a later merge does not cancel or replace the earlier result.
+The release candidate is the full `origin/main` commit SHA captured by the generated release plan. At that commit, `.github/workflows/e2e.yaml` is the sole source of truth for the release E2E test set. Do not maintain a separate release-gating test list.
 
-E2E results are advisory release-health signals. They never block merging, select the release candidate, delay the 4 PM tag, or require a maintainer exception. Keep failed results attached to their workflow runs for asynchronous triage.
+Before asking for the release confirmation phrase, require a completed, successful `Release qualification` check at that SHA.
 
-From 4 PM through 8 AM, agents work the accumulated results methodically: group duplicate failures, remove redundant tests, repair broken or flaky tests, and merge fixes normally. At 8 AM, hand the remaining state to the next release doula. The daytime merge window continues from 8 AM through the next 4 PM tag.
+- `.github/workflows/e2e.yaml` derives the release-required jobs from its E2E metadata. Do not copy them into a second release test list.
+- The check runs for trusted pushes to `main` and full manual runs dispatched against `main`.
+- The check requires every default-required workflow E2E result to succeed, including `Exact staging Brev Launchable`.
+- `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification` remain separate opt-in work and do not block this check.
+- The successful Launchable job proves the candidate checkout, in-guest full E2E result, and cleanup. Its artifacts are diagnostic evidence, not a second status ledger.
+- A skipped, queued, in-progress, cancelled, or failed `Release qualification` check is not release evidence.
+- A check from another commit SHA is not release evidence.
+- Run `nemoclaw-maintainer-e2e` in full mode only when the candidate SHA has no passing check.
+
+Record the workflow and `Release qualification` job URLs.
+Immediately before confirmation, compare `origin/main` with the planned SHA.
+If the candidate SHA changes, discard the earlier check, regenerate the release plan, and require a passing check for the new SHA.
+This does not freeze `main` or prevent merges.
+No release-note-only delta exception is currently defined.
 
 ## Carry Forward
 

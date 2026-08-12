@@ -4,6 +4,8 @@
 import { createHash } from "node:crypto";
 
 export const JETSON_DISPATCH_CONTRACT_VERSION = "1.0.0";
+export const JETSON_DISPATCH_V1_SHA256 =
+  "d50e381860ec131e92f78c25272bfdcbacb790adc9552c3aaf0778427171314c";
 export const JETSON_DISPATCH_AUDIENCE = "nemoclaw-jetson-dispatch";
 export const JETSON_DISPATCH_TARGET = "jetson-nvmap-gpu";
 
