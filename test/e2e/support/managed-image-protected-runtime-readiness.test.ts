@@ -748,4 +748,58 @@ printf 'vllm-stalled-probe-diagnostic\\n'`,
     expect(result.stderr).toContain("vllm-stalled-probe-diagnostic");
     expect(result.stderr).toContain("managed-image-vllm-not-ready attempts=1");
   });
+
+  it("bounds a connected-but-stalled NIM probe and redacts its diagnostics", async () => {
+    const fixture = createReadinessFixture();
+    const sensitiveValue = "protected-nim-stalled-probe-api-key";
+    const command = protectedNimReadinessCommand(
+      protectedProviderContainerName("nim", PROVIDER_COHORT),
+    );
+    const curlArgvLog = path.join(fixture.root, "nim-curl-argv.log");
+    writeCommand(
+      fixture.binDir,
+      "curl",
+      `printf '%s\\n' "$@" >>"$FAKE_CURL_ARGV_LOG"
+/bin/sleep 0.2
+exit 28`,
+    );
+    writeCommand(fixture.binDir, "sleep", "exit 0");
+    writeCommand(
+      fixture.binDir,
+      "docker",
+      `if [ "$1" = "container" ]; then
+  printf 'false\\n'
+  exit 0
+fi
+printf 'nim-stalled-probe-diagnostic key=%s\\n' "$FAKE_NIM_API_KEY"`,
+    );
+
+    const result = await fixture.host.command(command.command, command.args, {
+      artifactName: "nim-readiness-stalled-probe",
+      captureLimitBytes: command.captureLimitBytes,
+      env: {
+        ...fixture.env,
+        FAKE_CURL_ARGV_LOG: curlArgvLog,
+        FAKE_NIM_API_KEY: sensitiveValue,
+      },
+      redactionValues: [sensitiveValue],
+      timeoutMs: 5_000,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.timedOut).toBe(false);
+    expect(fs.readFileSync(curlArgvLog, "utf8").trim().split("\n")).toEqual([
+      "-fsS",
+      "--connect-timeout",
+      "5",
+      "--max-time",
+      "5",
+      "http://127.0.0.1:8000/v1/models",
+    ]);
+    expect(result.stderr).toContain("nim-stalled-probe-diagnostic key=[REDACTED]");
+    expect(result.stderr).toContain("managed-image-nim-not-ready attempts=1");
+    expect(result.stderr).not.toContain(sensitiveValue);
+    expect(fs.readFileSync(result.artifacts.stderr, "utf8")).not.toContain(sensitiveValue);
+    expect(fs.readFileSync(result.artifacts.result, "utf8")).not.toContain(sensitiveValue);
+  });
 });
