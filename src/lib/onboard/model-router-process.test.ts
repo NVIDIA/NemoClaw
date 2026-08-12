@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { findModelRouterPidForPort, stopModelRouterProcess } from "./model-router-process";
 
@@ -69,6 +69,36 @@ describe("findModelRouterPidForPort", () => {
 });
 
 describe("stopModelRouterProcess", () => {
+  it("returns when the recorded PID and health endpoint have stopped", async () => {
+    const isHealthy = vi.fn(async () => false);
+    const kill = vi.fn();
+
+    await expect(
+      stopModelRouterProcess(123, 4000, {
+        isRunning: () => false,
+        isHealthy,
+        kill,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(isHealthy).toHaveBeenCalledWith(4000, 1000);
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  it("refuses replacement when the recorded PID stops but the health endpoint remains healthy", async () => {
+    const kill = vi.fn();
+
+    await expect(
+      stopModelRouterProcess(123, 4000, {
+        isRunning: () => false,
+        isHealthy: async () => true,
+        kill,
+      }),
+    ).rejects.toThrow("PID 123 exited but port 4000 remains healthy");
+
+    expect(kill).not.toHaveBeenCalled();
+  });
+
   it("returns only after the owned process and health endpoint stop", async () => {
     let running = true;
     let healthy = true;

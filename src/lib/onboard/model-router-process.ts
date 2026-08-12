@@ -125,10 +125,11 @@ export function doesModelRouterProcessOwnPort(
 }
 
 /**
- * Stop the exact router process and return only after both its PID and health
- * endpoint disappear. The session stores a numeric PID, not a PID-stable OS
- * handle. Never escalate with SIGKILL because the PID can be reused between an
- * ownership check and the signal.
+ * Stop the recorded Model Router process and return only after its PID no
+ * longer exists and its health endpoint is not healthy. The session stores a
+ * numeric PID, not a PID-stable OS handle. Ownership validation and SIGTERM
+ * delivery are separate OS operations, so PID reuse can still redirect
+ * SIGTERM. Never send SIGKILL without a PID-stable handle.
  */
 export async function stopModelRouterProcess(
   pid: number,
