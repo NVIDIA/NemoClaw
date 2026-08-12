@@ -1653,6 +1653,8 @@ Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-ga
 `inferenceHealth.ok` reports whether the inference route served one inference request sent from inside the sandbox, not whether that route answered an HTTP request.
 The route probe treats any final HTTP status from `200` through `499` as reachable, so a route with an invalidated provider credential answers HTTP `401` while the route is up.
 The request uses the live gateway route's provider and model, and falls back to the recorded values when the live route is unreadable.
+When the live provider and model match the recorded route, the request also uses the sandbox's recorded API family, including `openai-responses`.
+During route drift, NemoClaw does not carry the sandbox's recorded API family to the live provider and model.
 Each run sends one 16-token request through the stored provider credential, so `status` waits up to 30 seconds for it and consumes provider tokens on a hosted route.
 When NemoClaw sends an inference request, `inferenceHealth.subprobes` reports the route probe result as the `route reachability` hop, so a failing verdict still shows that the route itself answered.
 `inferenceHealth.failureLabel` reports why the inference request failed:
