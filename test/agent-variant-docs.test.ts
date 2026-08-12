@@ -32,6 +32,45 @@ Use \`$$nemoclaw\` for the current variant.
 `;
 
 describe("agent variant docs", () => {
+  // source-shape-contract: compatibility -- OpenClaw workspace documentation must list every runtime-seeded template so generated variants cannot omit operator-visible files.
+  it("keeps the OpenClaw workspace inventory aligned with seeded runtime templates", () => {
+    const workspaceFiles = readFileSync(
+      new URL("../docs/manage-sandboxes/workspace-files.mdx", import.meta.url),
+      "utf8",
+    );
+    const startScript = readFileSync(
+      new URL("../scripts/nemoclaw-start.sh", import.meta.url),
+      "utf8",
+    );
+    const seedFunction = startScript.slice(
+      startScript.indexOf("seed_default_workspace_templates()"),
+    );
+    const seededFiles = seedFunction
+      .match(/for file in ([^;]+); do/)?.[1]
+      .trim()
+      .split(/\s+/);
+
+    expect(seededFiles).toEqual([
+      "AGENTS.md",
+      "SOUL.md",
+      "IDENTITY.md",
+      "USER.md",
+      "TOOLS.md",
+      "HEARTBEAT.md",
+    ]);
+
+    const rendered = renderAgentVariantPage(workspaceFiles, "openclaw", {
+      sourcePath: "/repo/docs/manage-sandboxes/workspace-files.mdx",
+    });
+    for (const file of seededFiles ?? []) {
+      expect(rendered).toContain(`| \`${file}\` |`);
+      expect(rendered).toMatch(new RegExp(`[├└]── ${file.replace(".", "\\.")}`));
+    }
+    expect(rendered).toContain(
+      "`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `TOOLS.md`, and `HEARTBEAT.md`",
+    );
+  });
+
   it("renders OpenClaw placeholder code and content", () => {
     const rendered = renderAgentVariantPage(source, "openclaw");
 
