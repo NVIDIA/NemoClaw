@@ -113,7 +113,7 @@ const {
   getSelectionDrift,
 }: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
 const {
-  getDcodeSelectionDrift,
+  getDcodeSelectionDrift: dcodeSelectionDrift,
   requiresSelectionRecreate,
   usesManagedDcodeIdentity,
 }: typeof import("./onboard/dcode-selection-drift") = require("./onboard/dcode-selection-drift");
@@ -998,6 +998,7 @@ const { inspectSandboxForCreate, confirmRecreateForSelectionDrift, isOpenclawRea
     prompt,
     isAffirmativeAnswer,
   });
+const dcodeDeps = { runCaptureOpenshell, getGatewayName: () => GATEWAY_NAME };
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const { ensureValidatedWebSearchCredential, ensureValidatedBraveSearchCredential, configureWebSearch, verifyWebSearchInsideSandbox, webSearchProviderForConfig } = createWebSearchFlowHelpers({ prompt, note, isNonInteractive, cliName, runCaptureOpenshell });
@@ -2308,9 +2309,7 @@ async function createSandboxWithBaseImageResolution(
       hasMessagingTokens &&
       messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
     const selectionDrift = isManagedDcodeAgent
-      ? getDcodeSelectionDrift(sandboxName, provider, model, preferredInferenceApi, {
-          runCaptureOpenshell,
-        })
+      ? dcodeSelectionDrift(sandboxName, provider, model, preferredInferenceApi, dcodeDeps)
       : getSelectionDrift(sandboxName, provider, model, { runOpenshell });
     const actionableSelectionDrift = requiresSelectionRecreate(selectionDrift, isManagedDcodeAgent);
     const sandboxGpuDrift = hasSandboxGpuDrift(sandboxName, effectiveSandboxGpuConfig);
@@ -2666,9 +2665,7 @@ async function createSandboxWithBaseImageResolution(
       discoverFreshOpenClawImagePluginInstalls: (name) => openClawPluginRestore.discoverFreshOpenClawImagePluginInstalls(name, sandboxState, agent?.configPaths.dir),
       restoreRecreatedSandboxState: sandboxState.restoreRecreatedSandboxState,
       getDcodeSelectionDrift: (name, selectedProvider, selectedModel, selectedApi) =>
-        getDcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, {
-          runCaptureOpenshell,
-        }),
+        dcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, dcodeDeps),
       note,
       error: console.error,
       exitProcess: (code) => process.exit(code),
@@ -4198,9 +4195,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           getSandboxReuseState,
           getSandboxRecreateObservation,
           getDcodeSelectionDrift: (name, selectedProvider, selectedModel, selectedApi) =>
-            getDcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, {
-              runCaptureOpenshell,
-            }),
+            dcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, dcodeDeps),
           hasSandboxGpuDrift,
           getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
           getSandboxRegistryEntry: registry.getSandbox,

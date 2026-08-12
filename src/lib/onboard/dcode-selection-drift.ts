@@ -12,6 +12,7 @@ export type DcodeInferenceIdentity = {
 };
 
 export type DcodeSelectionDriftDeps = {
+  getGatewayName(): string;
   runCaptureOpenshell(
     args: string[],
     options?: { ignoreError?: boolean },
@@ -112,7 +113,17 @@ export function getDcodeSelectionDrift(
   let output: string | null | undefined;
   try {
     output = deps.runCaptureOpenshell(
-      ["sandbox", "exec", "-n", sandboxName, "--", "dcode", "identity"],
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        sandboxName,
+        "--gateway",
+        deps.getGatewayName(),
+        "--",
+        "/usr/local/bin/dcode",
+        "identity",
+      ],
       { ignoreError: true },
     );
   } catch {
