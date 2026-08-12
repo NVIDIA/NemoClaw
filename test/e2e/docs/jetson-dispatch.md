@@ -155,7 +155,7 @@ A successful run requires these results:
   `/opt/nvidia`.
 - `/dev/nvmap` is absent from inside the sandbox, including as a symbolic link.
 
-The target does not run an in-sandbox CUDA proof or exercise the OpenClaw
-Jetson device-group preservation path. A successful result does not establish
-that `cuInit(0)` works through OpenShell or that issue #7610 is resolved. The
-test records phase evidence through the shared live E2E artifact fixtures.
+The target does not run an in-sandbox CUDA proof or verify the OpenClaw Jetson
+device-group preservation result. A successful result does not establish that
+`cuInit(0)` works through OpenShell or that issue #7610 is resolved. The test
+records phase evidence through the shared live E2E artifact fixtures.
