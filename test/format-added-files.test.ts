@@ -18,7 +18,7 @@ afterEach(() => {
 });
 
 describe("added-file Oxfmt selection", () => {
-  it("selects added and untracked source when origin main is unavailable", () => {
+  it("selects added and untracked source files when origin/main is unavailable", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-added-format-"));
     roots.add(root);
     const git = (...args: string[]) =>

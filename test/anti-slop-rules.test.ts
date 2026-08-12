@@ -99,16 +99,19 @@ describe("vendored anti-slop rules", () => {
     expect(registered).toEqual(configured);
   });
 
-  it.each(ruleCases)("rejects prohibited $name source and accepts its replacement", (testCase) => {
-    const rule = antiSlopPlugin.rules[testCase.name];
-    if (!rule) throw new Error(`Missing anti-slop rule: ${testCase.name}`);
-    const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
+  it.each(ruleCases)(
+    "rejects source that violates $name and accepts source that satisfies $name",
+    (testCase) => {
+      const rule = antiSlopPlugin.rules[testCase.name];
+      if (!rule) throw new Error(`Missing anti-slop rule: ${testCase.name}`);
+      const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
 
-    tester.run(`anti-slop/${testCase.name}`, rule, {
-      invalid: [{ code: testCase.invalid, errors: 1 }],
-      valid: [testCase.valid],
-    });
+      tester.run(`anti-slop/${testCase.name}`, rule, {
+        invalid: [{ code: testCase.invalid, errors: 1 }],
+        valid: [testCase.valid],
+      });
 
-    expect(rule).toBeDefined();
-  });
+      expect(rule).toBeDefined();
+    },
+  );
 });
