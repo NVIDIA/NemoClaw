@@ -83,6 +83,40 @@ describe("authoritative rebuild resume config", () => {
     });
   });
 
+  it("rejects changed or malformed read-only host mounts during resume", () => {
+    const recorded = {
+      metadata: {
+        fromDockerfile: null,
+        hostMounts: [
+          { source: "/srv/project", target: "/sandbox/project", readOnly: true as const },
+        ],
+      },
+    };
+    expect(
+      getResumeConfigConflicts(recorded, {
+        hostMounts: [{ source: "/srv/reference", target: "/sandbox/reference", readOnly: true }],
+      }),
+    ).toContainEqual(expect.objectContaining({ field: "host mounts" }));
+    expect(
+      getResumeConfigConflicts(
+        { metadata: { fromDockerfile: null, hostMounts: [{ source: 7 }] } } as never,
+        {},
+      ),
+    ).toContainEqual({ field: "host mounts", requested: null, recorded: "invalid" });
+  });
+
+  it("treats reordered distinct Unicode host paths as the same mount set", () => {
+    const first = { source: "/srv/ñ", target: "/sandbox/é", readOnly: true as const };
+    const second = { source: "/srv/ñ", target: "/sandbox/é", readOnly: true as const };
+
+    expect(
+      getResumeConfigConflicts(
+        { metadata: { fromDockerfile: null, hostMounts: [first, second] } },
+        { hostMounts: [second, first] },
+      ),
+    ).toEqual([]);
+  });
+
   it("allows explicit observability changes to reach sandbox drift reconciliation", () => {
     const session = {
       sandboxName: "demo",

@@ -12,6 +12,13 @@ import { checkpointProvesSandboxStepComplete } from "./checkpoint-replay";
 import type { ResumeConfigConflict } from "./resume-config";
 import type { StationExpressResumeIntent } from "./station-express-resume";
 
+export {
+  beginHostMountScope,
+  isDockerBindMountsEnabled,
+  reportReadOnlyHostMounts,
+  verifyReadOnlyHostMountSources,
+} from "./host-mount";
+
 export interface OnboardSessionBootstrapInput {
   resume: boolean;
   fresh: boolean;
@@ -25,6 +32,7 @@ export interface OnboardSessionBootstrapInput {
   requestedToolDisclosure?: ToolDisclosure | null;
   requestedObservabilityEnabled?: boolean | null;
   stationExpressIntent?: StationExpressResumeIntent | null;
+  requestedHostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
   servingProfileProvenance?: ServingProfileProvenance | null;
 }
 
@@ -45,6 +53,7 @@ export interface OnboardSessionBootstrapDeps {
       agent?: string | null;
       toolDisclosure?: ToolDisclosure | null;
       observabilityEnabled?: boolean | null;
+      hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
       authoritativeResumeConfig?: boolean;
     },
   ): ResumeConfigConflict[];
@@ -248,6 +257,7 @@ async function prepareResumeSession(
     agent: input.agentFlag || null,
     toolDisclosure: input.requestedToolDisclosure ?? null,
     observabilityEnabled: input.requestedObservabilityEnabled ?? null,
+    hostMounts: input.requestedHostMounts,
     authoritativeResumeConfig: input.authoritativeResumeConfig,
   });
   if (resumeConflicts.length > 0) {
@@ -288,7 +298,13 @@ function prepareFreshSession(
       observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
       stationExpressIntent: input.stationExpressIntent ?? null,
       servingProfileProvenance: input.servingProfileProvenance ?? null,
-      metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
+      metadata: {
+        gatewayName: "nemoclaw",
+        fromDockerfile: fromDockerfile || null,
+        ...(input.requestedHostMounts && input.requestedHostMounts.length > 0
+          ? { hostMounts: input.requestedHostMounts.map((mount) => ({ ...mount })) }
+          : {}),
+      },
     }),
   );
   return { session, fromDockerfile };

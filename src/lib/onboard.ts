@@ -329,6 +329,7 @@ const {
 }: typeof import("./onboard/local-inference-topology") = require("./onboard/local-inference-topology");
 const {
   formatGatewayHealthWaitLimit,
+  getGatewayHealthWaitConfig,
   waitForGatewayHealth,
 }: typeof import("./onboard/gateway-health-wait") = require("./onboard/gateway-health-wait");
 const {
@@ -656,6 +657,7 @@ const {
   runCaptureEx,
   shouldUseOpenshellDevChannel,
   supportedOpenshellFallbackVersion: SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+  enableBindMounts: onboardSessionBootstrap.isDockerBindMountsEnabled,
 });
 
 import type { JsonObject as LooseObject } from "./core/json-types";
@@ -1279,26 +1281,6 @@ function getGatewayClusterContainerState(): string {
     .trim()
     .toLowerCase();
   return state || "missing";
-}
-
-function getGatewayHealthWaitConfig(_startStatus = 0, containerState = "") {
-  const isArm64 = process.arch === "arm64";
-  const standardCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", isArm64 ? 30 : 12);
-  const standardInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", isArm64 ? 10 : 5);
-  const extendedCount = envInt("NEMOCLAW_GATEWAY_START_POLL_COUNT", standardCount);
-  const extendedInterval = envInt("NEMOCLAW_GATEWAY_START_POLL_INTERVAL", standardInterval);
-  const normalizedState = String(containerState || "")
-    .trim()
-    .toLowerCase();
-  const normalizedContainerState = normalizedState || "missing";
-  const useExtendedWait = normalizedContainerState !== "missing";
-
-  return {
-    count: useExtendedWait ? extendedCount : standardCount,
-    interval: useExtendedWait ? extendedInterval : standardInterval,
-    extended: useExtendedWait,
-    containerState: normalizedContainerState,
-  };
 }
 
 function buildGatewayClusterExecArgv(script: string): string[] {
@@ -2536,6 +2518,7 @@ async function createSandboxWithBaseImageResolution(
   });
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
+  onboardSessionBootstrap.verifyReadOnlyHostMountSources(resolvedCreateIntent.hostMounts);
   recreateRuntime.advance("creating");
   const managedBootstrap = managedWorkloadOnboard.resolveOnboardManagedBootstrapLaunch({
     runtime: managedWorkloadRuntime,
@@ -2699,6 +2682,7 @@ async function createSandboxWithBaseImageResolution(
           ...recreateRuntime.registrationFields,
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
+          hostMounts: resolvedCreateIntent.hostMounts,
         }),
     },
   );
@@ -3739,6 +3723,7 @@ async function preflightAuthoritativeRebuildTarget(
 // ── Main ─────────────────────────────────────────────────────────
 const onboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
+  const hostMountScope = onboardSessionBootstrap.beginHostMountScope(opts.hostMounts);
   resetGatewayOwnerBinding();
   setupInferenceFactory.assertNoOpenShellGatewayEndpointOverride();
   const runtimeControlRequests = runtimeControlFlow.applyOnboardRuntimeControlRequests(opts);
@@ -3872,6 +3857,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         servingProfileProvenance: opts.servingProfileProvenance ?? null,
         agentFlag: opts.agent || null,
         envAgent: process.env.NEMOCLAW_AGENT || null,
+        requestedHostMounts: opts.hostMounts,
         ...stationSessionInput,
       },
       {
@@ -3890,6 +3876,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         exitProcess: (code) => process.exit(code),
       },
     );
+    const effectiveHostMounts = hostMountScope.activate(session?.metadata.hostMounts);
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
     // Resume backstop: a session may exist without a sandboxName if sandbox
     // creation failed before that step. Non-interactive --from cannot infer a
@@ -3956,6 +3943,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     if (isNonInteractive()) note("  (non-interactive mode)");
     if (resume) note("  (resume mode)");
     console.log("  ===================");
+    onboardSessionBootstrap.reportReadOnlyHostMounts(effectiveHostMounts, note);
     const explicitSandboxGpuFlag = resolveSandboxGpuFlagFromOptions(opts);
     const recordedGpuPassthroughBeforePreflight = session?.gpuPassthrough === true;
     type InitialOnboardFlowContext =
@@ -4034,6 +4022,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       },
       gatewayName: GATEWAY_NAME,
       recreateSandbox: isRecreateSandbox,
+      requiresBindMounts: effectiveHostMounts.length > 0,
       gatewayDeps: {
         ...machineGatewayOwnerDeps,
         refreshDockerDriverGatewayReuseState,
@@ -4179,6 +4168,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
         requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
         rebuildPreservedEnv: opts.rebuildPreservedEnv,
+        hostMounts: effectiveHostMounts,
         endpointProvenance,
         recreateSandbox: isRecreateSandbox,
         controlUiPort: _preflightDashboardPort,
@@ -4397,16 +4387,20 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     completed = true;
     traceCompleted = finalFlowResult.session.machine.state === "complete";
   } finally {
-    releaseOnboardLock();
-    onboardRuntimeBoundary.clear();
-    onboardTracing.finishOnboardTrace(onboardTrace, traceCompleted);
-    GATEWAY_NAME = previousGatewayBinding.name;
-    GATEWAY_PORT = previousGatewayBinding.port;
-    if (previousOpenshellGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
-    else process.env.OPENSHELL_GATEWAY = previousOpenshellGateway;
-    if (previousOpenshellLocalTlsDir === undefined) delete process.env.OPENSHELL_LOCAL_TLS_DIR;
-    else process.env.OPENSHELL_LOCAL_TLS_DIR = previousOpenshellLocalTlsDir;
-    resetGatewayOwnerBinding();
+    try {
+      releaseOnboardLock();
+      onboardRuntimeBoundary.clear();
+      onboardTracing.finishOnboardTrace(onboardTrace, traceCompleted);
+      GATEWAY_NAME = previousGatewayBinding.name;
+      GATEWAY_PORT = previousGatewayBinding.port;
+      if (previousOpenshellGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
+      else process.env.OPENSHELL_GATEWAY = previousOpenshellGateway;
+      if (previousOpenshellLocalTlsDir === undefined) delete process.env.OPENSHELL_LOCAL_TLS_DIR;
+      else process.env.OPENSHELL_LOCAL_TLS_DIR = previousOpenshellLocalTlsDir;
+      resetGatewayOwnerBinding();
+    } finally {
+      hostMountScope.restore();
+    }
   }
 }
 

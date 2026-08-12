@@ -293,10 +293,27 @@ export function gatewayIntegrityRepairLines(
   ];
 }
 
+const HERMES_GATEWAY_LOG_TAIL_LINES = 12;
+const HERMES_GATEWAY_LOG_TAIL_COMMAND =
+  `tail -n ${String(HERMES_GATEWAY_LOG_TAIL_LINES)} /tmp/gateway.log 2>/dev/null || true`;
+
+function hermesGatewayLogTail(
+  sandboxName: string,
+  exec: (sandboxName: string, command: string) => GatewayRestartCommandResult | null,
+): string[] {
+  const result = exec(sandboxName, HERMES_GATEWAY_LOG_TAIL_COMMAND);
+  if (!result || result.status !== 0) return [];
+  return sanitizeGatewayRestartFailureDetail(result.stdout)
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .slice(-HERMES_GATEWAY_LOG_TAIL_LINES);
+}
+
 export function printGatewayRestartFailure(
   sandboxName: string,
   layer: GatewayRestartFailureLayer,
   detail: string,
+  gatewayLogTail: readonly string[] = [],
 ): void {
   console.error(`  Failure layer: ${layer} - gateway restart failed for '${sandboxName}'.`);
   if (detail.trim()) {
@@ -315,6 +332,10 @@ export function printGatewayRestartFailure(
     for (const line of hermesMcpReconciliationRemediationLines(sandboxName)) {
       console.error(`  ${line}`);
     }
+  }
+  if (gatewayLogTail.length > 0) {
+    console.error("  Hermes gateway log tail (sanitized):");
+    for (const line of gatewayLogTail) console.error(`  ${line}`);
   }
   if (isGatewayIntegrityRepairLayer(layer)) {
     for (const line of gatewayIntegrityRepairLines(sandboxName, layer)) {
@@ -414,7 +435,11 @@ export function restartSandboxGatewayWithDeps(
     restartResult.stdout.split(/\r?\n/).some((line) => line.startsWith("GATEWAY_PID="));
   if (!hasRestartMarker) {
     const failure = classifyGatewayRestartFailure(restartResult);
-    printGatewayRestartFailure(sandboxName, failure.layer, failure.detail);
+    const gatewayLogTail =
+      agentName === "hermes"
+        ? hermesGatewayLogTail(sandboxName, deps.executeSandboxExecCommand)
+        : [];
+    printGatewayRestartFailure(sandboxName, failure.layer, failure.detail, gatewayLogTail);
     return { ok: false, failureLayer: failure.layer, detail: failure.detail };
   }
 

@@ -98,6 +98,21 @@ Install the following before you begin.
 - Docker (running)
 - [hadolint](https://github.com/hadolint/hadolint) (Dockerfile linter — `brew install hadolint` on macOS)
 
+### Windows Line Endings
+
+`.gitattributes` pins the files whose exact bytes the repository checks assert, so a new clone keeps LF even when `core.autocrlf` is `true`.
+
+Git does not rewrite a file that is already in your working tree.
+If you cloned before that rule existed, the file keeps CRLF, `git status` reports no change, and `npm run checks:repository` reports `use LF line endings`.
+
+Commit or stash your work first, because the next commands discard uncommitted changes.
+Then normalize the checkout once:
+
+```bash
+git rm --cached -r .
+git reset --hard
+```
+
 ## Getting Started
 
 From the repository root, prepare the checkout with one command:

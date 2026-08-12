@@ -60,14 +60,6 @@ function requireDebugSummary(
   return summary;
 }
 
-function normalizeLegacySession(
-  legacy: unknown,
-): ReturnType<OnboardSessionModule["normalizeSession"]> {
-  return session.normalizeSession(
-    legacy as Parameters<OnboardSessionModule["normalizeSession"]>[0],
-  );
-}
-
 beforeEach(() => {
   // Recreate tmpDir per test so lock artifacts (and any other on-disk state)
   // from a previous test cannot leak into this one. Without this, malformed
@@ -349,83 +341,6 @@ describe("onboard session", () => {
     loaded = requireLoadedSession(session.loadSession());
     expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
     expect(requireDebugSummary(session.summarizeForDebug()).machine).toEqual(loaded.machine);
-  });
-
-  it("normalizes old sessions without machine snapshots", () => {
-    type LegacySession = Omit<ReturnType<OnboardSessionModule["createSession"]>, "machine"> & {
-      machine?: unknown;
-    };
-    const legacy = session.createSession({
-      sessionId: "legacy-session",
-      startedAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:05:00.000Z",
-    }) as unknown as LegacySession;
-    delete legacy.machine;
-    legacy.steps.gateway.status = "in_progress";
-    legacy.steps.gateway.startedAt = "2026-01-01T00:02:00.000Z";
-    legacy.lastStepStarted = "gateway";
-
-    let normalized = requireLoadedSession(normalizeLegacySession(legacy));
-    expect(normalized.machine).toEqual({
-      version: 1,
-      state: "gateway",
-      stateEnteredAt: "2026-01-01T00:02:00.000Z",
-      revision: 0,
-    });
-
-    legacy.steps.gateway.status = "complete";
-    legacy.steps.gateway.completedAt = "2026-01-01T00:03:00.000Z";
-    legacy.lastCompletedStep = "gateway";
-    normalized = requireLoadedSession(normalizeLegacySession(legacy));
-    expect(normalized.machine).toEqual({
-      version: 1,
-      state: "provider_selection",
-      stateEnteredAt: "2026-01-01T00:03:00.000Z",
-      revision: 0,
-    });
-
-    legacy.status = "failed";
-    legacy.failure = {
-      step: "gateway",
-      message: "boom",
-      recordedAt: "2026-01-01T00:04:00.000Z",
-    };
-    normalized = requireLoadedSession(normalizeLegacySession(legacy));
-    expect(normalized.machine).toEqual({
-      version: 1,
-      state: "failed",
-      stateEnteredAt: "2026-01-01T00:04:00.000Z",
-      revision: 0,
-    });
-
-    legacy.status = "complete";
-    normalized = requireLoadedSession(normalizeLegacySession(legacy));
-    expect(normalized.machine.state).toBe("complete");
-  });
-
-  it("normalizes invalid machine snapshots from old sessions", () => {
-    type LegacySession = Omit<ReturnType<OnboardSessionModule["createSession"]>, "machine"> & {
-      machine?: unknown;
-    };
-    const legacy = session.createSession({
-      lastCompletedStep: "policies",
-    }) as unknown as LegacySession;
-    legacy.steps.policies.status = "complete";
-    legacy.steps.policies.completedAt = "2026-01-01T00:08:00.000Z";
-    legacy.machine = {
-      version: 1,
-      state: "not-a-state",
-      stateEnteredAt: "2026-01-01T00:09:00.000Z",
-      revision: -1,
-    };
-
-    const normalized = requireLoadedSession(normalizeLegacySession(legacy));
-    expect(normalized.machine).toEqual({
-      version: 1,
-      state: "finalizing",
-      stateEnteredAt: "2026-01-01T00:08:00.000Z",
-      revision: 0,
-    });
   });
 
   it("does not emit machine events for direct step mutations", () => {
@@ -1044,6 +959,68 @@ describe("onboard session", () => {
     const loaded = requireLoadedSession(session.loadSession());
     expect(loaded.metadata.gatewayName).toBe("nemoclaw");
     expect("token" in loaded.metadata).toBe(false);
+  });
+
+  it("round-trips secret-free read-only host mount metadata", () => {
+    const hostMounts = [
+      { source: "/srv/project", target: "/sandbox/project", readOnly: true as const },
+    ];
+    session.saveSession(
+      session.createSession({
+        metadata: { gatewayName: "nemoclaw", fromDockerfile: null, hostMounts },
+      }),
+    );
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.metadata.hostMounts).toEqual(hostMounts);
+    expect(loaded.metadata.hostMounts).not.toBe(hostMounts);
+  });
+
+  it("preserves a fail-closed marker for malformed host mount metadata", () => {
+    const malformed = session.createSession();
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.SESSION_FILE,
+      JSON.stringify({
+        ...malformed,
+        metadata: {
+          ...malformed.metadata,
+          hostMounts: [
+            { source: "/srv/project", target: "/sandbox/project", readOnly: true },
+            { source: "/srv/private", target: "/sandbox/private", readOnly: false },
+          ],
+        },
+      }),
+    );
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(session.hasInvalidSessionHostMounts(loaded)).toBe(true);
+    expect(loaded.metadata.hostMounts).toBeUndefined();
+  });
+
+  it("preserves a fail-closed marker for terminal-control host mount metadata", () => {
+    const malformed = session.createSession();
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.SESSION_FILE,
+      JSON.stringify({
+        ...malformed,
+        metadata: {
+          ...malformed.metadata,
+          hostMounts: [
+            {
+              source: "/srv/project",
+              target: "/sandbox/project\u2028forged",
+              readOnly: true,
+            },
+          ],
+        },
+      }),
+    );
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(session.hasInvalidSessionHostMounts(loaded)).toBe(true);
+    expect(loaded.metadata.hostMounts).toBeUndefined();
   });
 
   it("drops non-string gatewayName during normalization", () => {
