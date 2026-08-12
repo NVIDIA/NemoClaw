@@ -309,6 +309,71 @@ export function buildLlamaCppHostLocalDockerArgv(
   ];
 }
 
+const dockerLoopbackPublishAuthorityBrand = Symbol("DockerLoopbackPublishAuthority");
+const issuedDockerLoopbackPublishAuthorities = new WeakSet<object>();
+const consumedDockerLoopbackPublishAuthorities = new WeakSet<object>();
+const MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION = [28, 3, 3] as const;
+
+export interface DockerLoopbackPublishAuthority {
+  readonly serverVersion: string;
+  readonly [dockerLoopbackPublishAuthorityBrand]: true;
+}
+
+/**
+ * Admit Docker loopback publishing only after querying the live server through the launch endpoint.
+ * The trusted qualification host must retain Docker's default protected NAT and firewall behavior.
+ */
+export function qualifyDockerLoopbackPublishAuthority(
+  serverVersionOutput: string,
+): DockerLoopbackPublishAuthority {
+  const serverVersion = serverVersionOutput.trim();
+  const match = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z.-]+)?$/u.exec(
+    serverVersion,
+  );
+  const version = match?.slice(1, 4).map(Number);
+  const meetsMinimum =
+    version !== undefined &&
+    (version[0]! > MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION[0] ||
+      (version[0] === MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION[0] &&
+        (version[1]! > MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION[1] ||
+          (version[1] === MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION[1] &&
+            version[2]! >= MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION[2]))));
+  if (
+    !version ||
+    version.length !== 3 ||
+    version.some((part) => !Number.isSafeInteger(part)) ||
+    !meetsMinimum
+  ) {
+    throw new Error(
+      "llama.cpp qualification requires Docker Engine 28.3.3 or newer for loopback publishing.",
+    );
+  }
+  const authority = Object.freeze({
+    serverVersion,
+    [dockerLoopbackPublishAuthorityBrand]: true as const,
+  });
+  issuedDockerLoopbackPublishAuthorities.add(authority);
+  return authority;
+}
+
+/** Consume a single-use authority immediately before one Docker loopback publication. */
+export function consumeDockerLoopbackPublishAuthority(
+  authority: DockerLoopbackPublishAuthority,
+): void {
+  if (
+    typeof authority !== "object" ||
+    authority === null ||
+    authority[dockerLoopbackPublishAuthorityBrand] !== true ||
+    !issuedDockerLoopbackPublishAuthorities.has(authority)
+  ) {
+    throw new Error("llama.cpp Docker loopback publishing authority is invalid.");
+  }
+  if (consumedDockerLoopbackPublishAuthorities.has(authority)) {
+    throw new Error("llama.cpp Docker loopback publishing authority was already consumed.");
+  }
+  consumedDockerLoopbackPublishAuthorities.add(authority);
+}
+
 /** Activate the request guard only for an image that declares the owned guard artifact. */
 export function buildLlamaCppRequestGuardDockerArgv(
   contract: LlamaCppHostLocalLaunchContract,
@@ -380,6 +445,7 @@ function buildLlamaCppHostLocalDockerRunArgv(
     "ALL",
     "--security-opt",
     "no-new-privileges=true",
+    "--no-healthcheck",
     "--memory",
     `${String(resources.memoryBytes)}b`,
     "--memory-swap",

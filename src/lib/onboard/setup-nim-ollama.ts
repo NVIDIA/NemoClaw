@@ -31,7 +31,6 @@ type SetupNimOllamaDeps = {
     contextWindowFloor?: number;
   }) => OllamaStartupOutcome;
   shouldFrontOllamaWithProxy: () => boolean;
-  startOllamaAuthProxy: () => boolean;
   getLocalProviderBaseUrl: (provider: string) => string | null;
   selectAndValidateOllamaModel: (
     gpu: any,
@@ -134,9 +133,8 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     return "selected";
   }
 
-  function startProxyOrAnnounceDirect(): void {
+  function announceOllamaRoute(): void {
     if (deps.shouldFrontOllamaWithProxy()) {
-      if (!deps.startOllamaAuthProxy()) deps.process.exit(1);
       console.log(
         `  ✓ Using Ollama on localhost:${deps.OLLAMA_PORT} (proxy on :${deps.OLLAMA_PROXY_PORT})`,
       );
@@ -306,7 +304,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
         state.assertRouteCompatible?.();
         return "selected";
       case "ready":
-        startProxyOrAnnounceDirect();
+        announceOllamaRoute();
         return selectModel(gpu, state, requestedModel, recoveredModel, lockedModel);
       default: {
         const kind = (startup as { kind?: unknown }).kind;
@@ -352,7 +350,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
       if (deps.isNonInteractive()) deps.process.exit(1);
       return "retry-selection";
     }
-    startProxyOrAnnounceDirect();
+    announceOllamaRoute();
     return selectModel(gpu, state, requestedModel, recoveredModel, lockedModel);
   }
 

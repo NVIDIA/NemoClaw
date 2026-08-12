@@ -341,6 +341,16 @@ For a profile-backed session, resume requires the same catalog, preset, and reci
 Omit `--profile` to reuse that recorded selection, or pass the same profile explicitly; use `--fresh` to adopt a changed catalog definition.
 Legacy sessions without a profile-provenance record continue to resume normally, but cannot acquire a new `--profile` selection during resume.
 
+Before the configuration review, NemoClaw records the sandbox name and the selected provider and model as an incomplete choice.
+If onboarding stops at the review prompt, an interactive `--resume` run shows the prompt again.
+A non-interactive `--resume` run reuses the recorded choice and continues to inference setup.
+After you accept the review, NemoClaw records the choice before inference setup starts.
+If inference setup fails, `--resume` reuses the accepted provider, model, and sandbox name.
+If you reject the review, onboarding exits with a nonzero status and clears those recorded choices.
+Run `$$nemoclaw onboard` to make new choices after rejection.
+During a resume without terminal input, `--yes` or `NEMOCLAW_YES=1` also selects non-interactive resume behavior.
+For a new or fresh session, `--yes` and `NEMOCLAW_YES=1` accept supported confirmations but do not replace `--non-interactive`.
+
 <AgentOnly variant="openclaw">
 
 OpenClaw sessions also record the web search selection, messaging selection and non-secret settings, and resource profile.
@@ -1351,6 +1361,30 @@ Host-side config and inference writes, snapshot mutation, sandbox destruction, a
 <AgentOnly variant="openclaw,hermes">
 
 Host-side gateway recovery uses the same per-sandbox serialization.
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
+For a current NemoClaw-managed Hermes image on the Docker driver, `shields status` is a recovery and reconciliation command, not only a display command.
+It first recovers any retained exact runtime provider state mutation, then applies and verifies the declared recursive posture.
+A result exits with status `0` only after the command verifies that posture.
+A status check can therefore complete work retained by an interrupted host process.
+
+If provider recovery restores lockdown while the persisted Shields posture still says mutable, status prints `ERROR (runtime-provider recovery restored lockdown)`, exits with status `2`, and tells you to retry the intended Shields transition.
+If live verification of a mutable default or timed Shields down posture fails, status prints `NOT CONFIGURED (DRIFTED...)` or `DOWN (DRIFTED...)`, exits with status `2`, and directs you to run `$$nemoclaw <name> shields up` to reconcile and verify lockdown.
+Status does not report `UP`, `DOWN`, or mutable-default with exit status `0` when the provider cannot verify the exact recursive posture.
+
+While an exact provider fence is active, ordinary direct-container, SSH, and OpenShell command transports are refused before a sandbox process starts.
+They report `Runtime provider state mutation owns direct-container execution for sandbox '<name>'; retry after the provider fence is released.`
+Recover and retry as follows:
+
+1. Let the active Shields or recovery command finish.
+2. Run `$$nemoclaw <name> shields status`.
+3. Retry the original command only after provider verification completes and the command exits with status `0`.
+
+Older managed Hermes images use the sealed-plan transition only when the current provider capability is proved absent.
+Custom images and legacy Dockerfile workflows remain on their existing transition contract and do not use `provider-state-mutation-v2`.
 
 </AgentOnly>
 
@@ -2520,7 +2554,16 @@ It reads the gateway's own startup and poll log breadcrumbs rather than issuing 
 The verdict reflects the most recent evidence in the log window, so a bridge that recovered after a blocked start reports `healthy` while one blocked again reports `unreachable`.
 Telegram health is probed only for OpenClaw sandboxes; a Hermes Telegram sandbox uses the basic config report.
 
-For registered non-WhatsApp channel details and the compact summary, the status output compares non-secret config inputs from the sandbox registry against the values rendered into the agent config, such as Telegram group policy in `openclaw.json` or mention mode in Hermes config.
+For OpenClaw Slack, `--channel slack` reports registration, policy coverage, the account runtime, Socket Mode transport, and the account probe.
+Add `--wait` to poll these conditions until Slack becomes operational, a terminal error occurs, or the timeout expires.
+The default timeout is 180 seconds, and `--timeout <seconds>` requires `--wait`.
+NemoClaw treats the timeout as the total budget for polling and live probes, limits each live probe to the remaining budget, and starts no probe at or after the deadline.
+Use `--json` with `--wait` for a structured readiness result with `readiness.state`, `readiness.category`, `readiness.reason`, `readiness.retryable`, `readiness.attempts`, `readiness.elapsedMs`, `readiness.lastTransitionAt`, and `readiness.lastObserved`.
+Slack `--wait` applies only to OpenClaw sandboxes and uses its manifest-defined check; other channel manifests return `readiness_not_supported` until they define one.
+For an OpenClaw sandbox, if Slack is paused with `channels stop`, the command skips the live probe and returns one terminal result with `readiness.reason` set to `channel_paused`.
+On timeout, the command exits nonzero with `readiness.state`, `readiness.category`, and `readiness.reason` set to `timeout`; its `readiness.retryable` mirrors the last observed state, whose category and reason preserve the underlying cause.
+
+For registered channel details and the compact summary, the status output compares non-secret config inputs from the sandbox registry against the values rendered into the agent config, such as Telegram group policy in `openclaw.json` or mention mode in Hermes config.
 Secret inputs, including tokens, are not printed.
 If the registry contains a non-secret expected value but NemoClaw cannot read or check the rendered source, the comparison is a warning and the detail includes `(not checked)`.
 Optional unset inputs remain informational.
@@ -2529,17 +2572,22 @@ Optional unset inputs remain informational.
 $$nemoclaw my-assistant channels status
 $$nemoclaw my-assistant channels status --channel whatsapp
 $$nemoclaw my-assistant channels status --channel telegram
+$$nemoclaw my-assistant channels status --channel slack --wait --timeout 180 --json
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--channel <channel>` | Channel to inspect in detail |
-| `--json` | Emit the status report as JSON (for an available detailed WhatsApp or Telegram probe, exit non-zero when the verdict is not `healthy` or `unknown`) |
+| `--wait` | Wait for the selected channel's manifest-defined readiness check (requires `--channel`) |
+| `--timeout <seconds>` | Stop waiting after this number of seconds (default: `180`; requires `--wait`) |
+| `--json` | Emit the status or readiness report as JSON; non-ready terminal and timeout results exit nonzero |
 
 Each live probe is bounded by an in-sandbox `openshell sandbox exec` with a hard timeout.
 The WhatsApp probe returns strict OpenClaw status JSON to the host, where NemoClaw allowlists pairing, liveness, connection-state, and timestamp fields before rendering the report and discards phone-number and free-text error fields.
 The Hermes WhatsApp probe returns only fixed session-path booleans to the host.
 The Telegram probe returns only matched gateway log lines to the host, where NemoClaw reduces them to fixed classifications without rendering the raw lines, message bodies, or tokens.
+The Slack probe returns OpenClaw status JSON to the host.
+NemoClaw reduces it to allowlisted account booleans, credential availability, probe success, fixed error categories, and timestamps; the rendered and JSON readiness reports omit tokens and free-text errors.
 
 </AgentOnly>
 
@@ -2755,6 +2803,8 @@ OpenClaw caches skill content per session, so the command also refreshes the Ope
 
 Hermes plugins are different from NemoClaw skills.
 `skill install` uploads agent skills, while Hermes plugin configuration is managed by the Hermes runtime and the NemoClaw Hermes plugin baked into the sandbox image.
+The NemoClaw Hermes plugin reloads installed skills when a new chat session starts.
+Start a new Hermes chat session after an install or update; a gateway restart is not required.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -2801,7 +2851,8 @@ For OpenClaw, the command also removes the OpenClaw home-directory mirror when p
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Run `$$nemoclaw <name> gateway restart` if prompted so the removal takes effect.
+Start a new Hermes chat session for the removal to take effect.
+A gateway restart is not required.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">

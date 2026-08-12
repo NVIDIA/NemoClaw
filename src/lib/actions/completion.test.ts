@@ -151,15 +151,24 @@ describe("completion actions", () => {
     expect(written[0]).toContain("#compdef nemoclaw");
   });
 
-  it("emits sorted registry names without running the full list command", () => {
+  it("emits sorted registered sandbox names without route-only reservations (#8801)", () => {
     const written: string[] = [];
     runCompletionSandboxNamesAction({
       listRegisteredSandboxes: () => ({
         defaultSandbox: "beta",
-        sandboxes: [{ name: "beta" }, { name: "alpha" }],
+        sandboxes: [
+          { name: "beta" },
+          { name: "stale", pendingRouteReservation: true },
+          {
+            name: "created",
+            pendingRouteReservation: true,
+            createdAt: "2026-01-01T00:00:00Z",
+          },
+          { name: "alpha" },
+        ],
       }),
       write: (output) => written.push(output),
     });
-    expect(written).toEqual(["alpha\nbeta\n"]);
+    expect(written).toEqual(["alpha\nbeta\ncreated\n"]);
   });
 });

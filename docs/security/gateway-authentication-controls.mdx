@@ -97,12 +97,6 @@ openclaw security audit --json | jq '.suppressedFindings'
 
 Remove the underlying risky condition when dashboard compatibility no longer requires it.
 
-Remove these suppressions only after the pinned OpenClaw audit contract test proves that OpenClaw natively classifies intentional loopback development HTTP without them, or after NemoClaw onboarding defaults `CHAT_UI_URL` to `https://localhost` with a generated local certificate.
-
-Regression contracts: `test/generate-openclaw-config-security-audit.test.ts` locks generated suppression scope, `test/openclaw-security-audit-suppressions-real.test.ts` locks the pinned OpenClaw check IDs and details, and `test/e2e/live/dashboard-remote-bind.test.ts` proves a clean-host remote bind leaves all three risky findings active.
-
-The preceding removal condition applies to all three contracts.
-
 ## Auto-Pair Client Allowlist
 
 The auto-pair watcher automatically approves device pairing requests from recognized clients, so you do not need to manually approve the Control UI.
