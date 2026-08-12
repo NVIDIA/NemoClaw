@@ -171,33 +171,6 @@ FROM ${BASE_IMAGE}
 # Dockerfile.base. The final stage also creates and verifies the directory.
 ENV HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages
 
-# Cross-stage root copies are accepted by Docker's legacy builder and create
-# one final-image layer while preserving metadata on existing parent paths.
-COPY --from=hermes-npm-patch-payload / /
-
-# A published base can lag the source patch in Dockerfile.base. Apply only the
-# two Hindsight compatibility hunks when needed, then verify the final source
-# contract. This remains idempotent once the published base contains them.
-RUN if ! grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py; then \
-        git -C /opt/hermes apply --check \
-            --include=hermes_cli/memory_setup.py \
-            /scripts/hermes-security-dependencies.patch; \
-        git -C /opt/hermes apply \
-            --include=hermes_cli/memory_setup.py \
-            /scripts/hermes-security-dependencies.patch; \
-    fi \
-    && if ! grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml; then \
-        git -C /opt/hermes apply --check \
-            --include=plugins/memory/hindsight/plugin.yaml \
-            /scripts/hermes-security-dependencies.patch; \
-        git -C /opt/hermes apply \
-            --include=plugins/memory/hindsight/plugin.yaml \
-            /scripts/hermes-security-dependencies.patch; \
-    fi \
-    && grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py \
-    && grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml \
-    && rm /scripts/hermes-security-dependencies.patch
-
 # Base64-encoded host corporate-proxy CA bundle (#6210). Empty by default. When
 # onboard detects an operator-supplied corporate CA on the host it bakes it
 # here; the RUN below decodes it to a root-owned file that the entrypoint
@@ -234,6 +207,33 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
 # ignores the path when no CA was baked. At runtime, nemoclaw-start replaces it
 # with the merged OpenShell and corporate bundle.
 ENV NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem
+
+# Cross-stage root copies are accepted by Docker's legacy builder and create
+# one final-image layer while preserving metadata on existing parent paths.
+COPY --from=hermes-npm-patch-payload / /
+
+# A published base can lag the source patch in Dockerfile.base. Apply only the
+# two Hindsight compatibility hunks when needed, then verify the final source
+# contract. This remains idempotent once the published base contains them.
+RUN if ! grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py; then \
+        git -C /opt/hermes apply --check \
+            --include=hermes_cli/memory_setup.py \
+            /scripts/hermes-security-dependencies.patch; \
+        git -C /opt/hermes apply \
+            --include=hermes_cli/memory_setup.py \
+            /scripts/hermes-security-dependencies.patch; \
+    fi \
+    && if ! grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml; then \
+        git -C /opt/hermes apply --check \
+            --include=plugins/memory/hindsight/plugin.yaml \
+            /scripts/hermes-security-dependencies.patch; \
+        git -C /opt/hermes apply \
+            --include=plugins/memory/hindsight/plugin.yaml \
+            /scripts/hermes-security-dependencies.patch; \
+    fi \
+    && grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py \
+    && grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml \
+    && rm /scripts/hermes-security-dependencies.patch
 
 # The final Hermes image owns the shipped dependency boundary independently of
 # base freshness. Reassert the idempotent npm-private node-tar fix here. When
