@@ -209,6 +209,7 @@ exit 0
       const maxTimes = [1, 2, 3].map((n) =>
         Number(fs.readFileSync(path.join(tmpDir, `maxtime-${n}`), "utf8")),
       );
+      expect(maxTimes[0]).toBeGreaterThan(0);
       expect(maxTimes[2]).toBe(maxTimes[0] * 2);
       const ladderFailure = result.failures.find(
         (failure: { reasoningRetryAttempted?: boolean }) =>
