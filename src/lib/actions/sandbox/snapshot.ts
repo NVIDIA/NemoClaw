@@ -34,7 +34,10 @@ import {
   withDashboardPortReservationLock,
 } from "../../onboard/dashboard-port";
 import { isValidForwardPort } from "../../onboard/dashboard-runtime";
-import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import {
+  resolveGatewayPortFromName,
+  resolveSandboxGatewayName,
+} from "../../onboard/gateway-binding";
 import { findAvailableHermesApiPort, HERMES_API_PORT_ENV } from "../../onboard/hermes-api-port";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
 import {
@@ -387,6 +390,8 @@ async function autoCreateSandboxFromSource(
   srcName: string,
   dstName: string,
   srcEntry: SandboxEntry | { name: string },
+  sourceGatewayName: string,
+  sourceGatewayPort: number,
   fromImage: string,
   createPolicyPath: string,
   dstDashboardPort: number | null,
@@ -486,6 +491,11 @@ async function autoCreateSandboxFromSource(
       (srcEntry as SandboxEntry).hermesDashboardEnabled === true
         ? dstDashboardPort
         : (srcEntry as SandboxEntry).hermesDashboardPort,
+    // A legacy source may have only a gateway name (or neither binding
+    // field). Register the new clone with the complete canonical binding so
+    // stop/start, recovery, and later snapshots can address its gateway.
+    gatewayName: sourceGatewayName,
+    gatewayPort: sourceGatewayPort,
   });
 
   const sourceAgent = (srcEntry as SandboxEntry).agent || "openclaw";
@@ -1306,6 +1316,13 @@ async function runSnapshotRestoreUnlocked(
         );
         snapshotExit(1);
       }
+      const lockedGatewayPort = resolveGatewayPortFromName(lockedGatewayName);
+      if (lockedGatewayPort === null) {
+        console.error(
+          `  Cannot resolve the gateway port for source sandbox '${sandboxName}' — aborting before changing '${targetSandbox}'.`,
+        );
+        snapshotExit(1);
+      }
       const compatibility = checkGatewayRouteCompatibility({
         gatewayName: sourceGatewayName,
         sandboxName: targetSandbox,
@@ -1339,6 +1356,8 @@ async function runSnapshotRestoreUnlocked(
           sandboxName,
           targetSandbox,
           lockedSourceEntry,
+          lockedGatewayName,
+          lockedGatewayPort,
           lockedFromImage,
           clonePolicy.policyPath,
           dstDashboardPort,

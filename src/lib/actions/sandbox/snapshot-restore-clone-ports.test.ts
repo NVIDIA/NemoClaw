@@ -87,8 +87,40 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
       expect.objectContaining({
         name: "beta",
         dashboardPort: 18901,
+        gatewayName: "nemoclaw-18080",
+        gatewayPort: 18080,
       }),
     );
+  });
+
+  it("keeps a --force destination when the source gateway binding is invalid (#7227)", async () => {
+    f.getSandboxMock.mockImplementation((name) => ({
+      name: name ?? "alpha",
+      agent: "openclaw",
+      imageTag: `nemoclaw-${name}:test`,
+      openshellDriver: "docker",
+      provider: "nvidia-nim",
+      model: "nvidia/model-a",
+      dashboardPort: 18790,
+      gatewayName: name === "alpha" ? "other-8080" : "nemoclaw",
+    }));
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta", force: true, yes: true }),
+    ).rejects.toThrow("Invalid persisted sandbox gateway binding");
+
+    expect(f.lifecycleMock.events).not.toContain("delete");
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(f.registerSandboxMock).not.toHaveBeenCalled();
   });
 
   it("gives a Hermes clone its own API port instead of the source's (#8543)", async () => {
