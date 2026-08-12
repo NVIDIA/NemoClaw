@@ -1232,7 +1232,8 @@ Both captured paths pin the sandbox's owning gateway with an explicit `-g`, and 
 When the top-level OpenClaw `--json` output flag is present, the wrapper uses a captured no-TTY path with a `64 MiB` buffer so `stdout` stays parseable JSON.
 Raw `stderr`, including structured JSON diagnostics, is forwarded unchanged.
 NemoClaw appends failed-tool or untrusted-child provenance only from the `stdout` JSON.
-The wrapper reads completion markers only from declared run metadata at `<root>.meta` or `<root>.result.meta`.
+The wrapper reads completion markers only from the final matching OpenClaw response envelope: a local `{ payloads, meta }` response or a gateway `{ status, result: { payloads, meta } }` response.
+It ignores earlier JSON progress or log records.
 It exits with status `1` when that metadata contains `error.kind: "incomplete_turn"`, `livenessState: "abandoned"`, or `replayInvalid: true`, even when the envelope reports success.
 Marker-shaped values inside tool results, tool-call arguments, or other descendants do not change the exit status.
 A turn can run every tool successfully and still become abandoned before it produces a reply.
