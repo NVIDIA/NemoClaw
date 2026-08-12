@@ -282,6 +282,10 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("GHSA-mwp4-54f8-5fhr");
     expect(review).toContain("ip-address@^10.2.0");
     expect(review).toContain("ip-address@10.3.1");
+    expect(review).toContain("hono@4.12.34");
+    expect(review).toContain("GHSA-54fx-42gc-7vw4");
+    expect(review).toContain("GHSA-f23p-vx2j-j53r");
+    expect(review).toContain("GHSA-79qm-7rj5-m7r9");
   });
 
   it("keeps advisor disposition evidence in the dependency review note", () => {
