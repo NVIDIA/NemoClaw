@@ -98,10 +98,14 @@ export function createDeps(
       requiredInferenceApi: null,
     })),
     setupNim: vi.fn(async () => ({ ...baseSelection })),
-    setupInference: vi.fn(async () => ({ ok: true as const })),
+    setupInference: vi.fn<
+      ProviderInferenceStateOptions<Gpu, Agent, Host>["deps"]["setupInference"]
+    >(async () => ({ ok: true as const })),
     resolveHostLocalInferenceStartupSelection: vi.fn(() => null),
     startStep: vi.fn(async () => undefined),
-    complete: vi.fn(async () => createSession()),
+    complete: vi.fn<ProviderInferenceStateOptions<Gpu, Agent, Host>["deps"]["recordStepComplete"]>(
+      async () => createSession(),
+    ),
     rejected: vi.fn(async () => createSession()),
     skipped: vi.fn(),
     recoverProvider: vi.fn(

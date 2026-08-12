@@ -17,8 +17,9 @@ describe("provider inference review recovery", () => {
 
     await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow("exit 1");
 
-    const completeCalls = calls.complete.mock.calls as unknown as readonly (readonly unknown[])[];
-    expect(completeCalls.some(([stepName]) => stepName === "provider_selection")).toBe(false);
+    expect(calls.complete.mock.calls.some(([stepName]) => stepName === "provider_selection")).toBe(
+      false,
+    );
     expect(calls.checkpointSandboxIdentity).toHaveBeenCalledWith("my-assistant", null);
     expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
       provider: "nvidia-prod",
@@ -53,10 +54,8 @@ describe("provider inference review recovery", () => {
     expect(calls.setupNim).toHaveBeenCalled();
     expect(calls.setupInference).toHaveBeenCalled();
     expect(result).toMatchObject({ provider: "nvidia-prod", model: "nvidia/test" });
-    const setupInferenceCalls = calls.setupInference.mock
-      .calls as unknown as readonly (readonly unknown[])[];
     expect(
-      setupInferenceCalls.some(
+      calls.setupInference.mock.calls.some(
         ([sandboxName, selectedModel, selectedProvider]) =>
           sandboxName === "rejected-review" &&
           selectedModel === "qwen3.5:9b" &&
