@@ -423,8 +423,8 @@ const { onboard } = require(${onboardPath});
     assert.ok(!payload.commands.some((entry) => /provider (create|update)/.test(entry.command)));
     assert.equal(
       payload.inferenceSessionSandboxName,
-      null,
-      "resume inference must not persist sandboxName before sandbox creation",
+      "hermes-resume",
+      "resume inference persists the canonical sandbox identity before sandbox creation",
     );
     assert.ok(
       payload.registryUpdates.some(

@@ -115,6 +115,13 @@ export function replacesSameNameSandbox(decision: SandboxResumeDecision): boolea
   return decision.kind === "recreate" && decision.removeRegistryEntry;
 }
 
+export function requiresSandboxRecreation(
+  decision: Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>,
+  explicitlyRequested: boolean,
+): boolean {
+  return explicitlyRequested || decision.kind !== "create";
+}
+
 export function mcpRegistryRemovalBlockReason(
   decision: SandboxResumeDecision,
   sandboxName: string | null,
