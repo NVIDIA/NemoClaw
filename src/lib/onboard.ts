@@ -168,8 +168,6 @@ const {
   runSandboxProviderPreDeleteCleanup,
 } =
   require("./onboard/sandbox-provider-cleanup") as typeof import("./onboard/sandbox-provider-cleanup");
-const nameValidation: typeof import("./name-validation") = require("./name-validation");
-const { getNameValidationGuidance } = nameValidation;
 const docker: typeof import("./adapters/docker") = require("./adapters/docker");
 const {
   dockerContainerInspectFormat,
@@ -238,7 +236,6 @@ const {
   prepareOllamaModel,
   printOllamaExposureWarning,
   promptOllamaModel,
-  startOllamaAuthProxy,
 } = require("./inference/ollama/proxy");
 const {
   installOllamaOnWindowsHost,
@@ -441,7 +438,6 @@ const sandboxRecreateTransaction: typeof import("./onboard/sandbox-recreate-tran
 const sandboxRegistration: typeof import("./onboard/sandbox-registration") =
   require("./onboard/sandbox-registration");
 const {
-  RESERVED_SANDBOX_NAMES,
   formatSandboxAgentName,
   getAgentInferenceProviderOptions,
   getDefaultSandboxNameForAgent,
@@ -576,8 +572,7 @@ import {
   type MessagingChannelConfig,
 } from "./messaging-channel-config";
 import { streamGatewayStart } from "./onboard/gateway";
-// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-import { adoptPackagedGatewayAuthorityAfterTrustedInstall, bindGatewayAuthorityToCheckpoint, checkpointGatewayAuthority } from "./onboard/gateway-authority-checkpoint";
+import * as gatewayAuthorityCheckpoint from "./onboard/gateway-authority-checkpoint";
 import { createGatewayHostRuntime } from "./onboard/gateway-host-runtime";
 import {
   mergeRequiredHermesToolGatewayPolicyPresets,
@@ -590,11 +585,7 @@ import { getValidatedMessagingTokenByEnvKey } from "./onboard/messaging-token";
 import * as ollamaFlow from "./onboard/ollama-probe-failure";
 import { runOllamaStartupOrGate } from "./onboard/ollama-startup";
 import * as recreateJournal from "./onboard/onboard-recreate-journal";
-import type {
-  DockerDriverBinaryOverrides,
-  OpenShellInstallDeps,
-  OpenShellInstallResult,
-} from "./onboard/openshell-install";
+import type { OpenShellInstallDeps, OpenShellInstallResult } from "./onboard/openshell-install";
 import { createOnboardPolicyApplication } from "./onboard/policy-selection";
 import {
   printLowMemoryWarning,
@@ -1107,26 +1098,12 @@ function installOpenshell(): OpenShellInstallResult {
     log: console.log,
   });
 }
-function areRequiredDockerDriverBinariesPresent(
-  platform: NodeJS.Platform = process.platform,
-  binaries: DockerDriverBinaryOverrides = {},
-  arch: NodeJS.Architecture = process.arch,
-): boolean {
-  return openshellInstallFlow.areRequiredDockerDriverBinariesPresent(
-    getOpenShellInstallDeps(),
-    platform,
-    binaries,
-    arch,
-  );
-}
-
-function ensureOpenshellForOnboard(
-  exitProcess: (code: number) => never = (code) => process.exit(code),
-  persistTrustedGatewayOwner?: (owner: import("./onboard/gateway-ownership").GatewayOwner) => void,
-): OpenShellInstallResult {
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  return openshellInstallFlow.ensureOpenshellForOnboard(getOpenShellInstallDeps(exitProcess), { afterSuccessfulInstall: () => adoptPackagedGatewayOwnerAfterTrustedInstall(persistTrustedGatewayOwner) });
-}
+const { areRequiredDockerDriverBinariesPresent, ensureOpenshellForOnboard } =
+  openshellInstallFlow.createOnboardOpenShellInstallBindings({
+    getInstallDeps: getOpenShellInstallDeps,
+    afterSuccessfulInstall: (persistTrustedGatewayOwner) =>
+      adoptPackagedGatewayOwnerAfterTrustedInstall(persistTrustedGatewayOwner),
+  });
 
 function getOpenShellInstallDeps(
   exitProcess: (code: number) => never = (code) => process.exit(code),
@@ -1384,15 +1361,31 @@ function attachGatewayMetadataIfNeeded({
 // ── Step 1: Preflight ────────────────────────────────────────────
 
 type PreflightOptions = import("./onboard/fatal-runtime-preflight").FatalRuntimePreflightOptions;
-// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-async function collectOnboardGatewayReadiness() { return preflightGatewayAuthority.collectOnboardGatewayReadiness({ gatewayName: () => GATEWAY_NAME, gatewayPort: () => GATEWAY_PORT, resolveOwner: getGatewayOwner, probeAttachment: machineGatewayOwnerDeps.probeGatewayAttachment }); }
+const onboardPreflightGatewayAuthority =
+  preflightGatewayAuthority.createOnboardPreflightGatewayAuthority({
+    gatewayName: () => GATEWAY_NAME,
+    gatewayPort: () => GATEWAY_PORT,
+    collectGatewayReadiness: (deps) =>
+      preflightGatewayAuthority.collectOnboardGatewayReadiness(deps),
+    getGatewayOwnerDeps: () => machineGatewayOwnerDeps,
+    isNonInteractive,
+    ensureOpenshellForOnboard,
+    updateSession: onboardSession.updateSession,
+    adoptPackagedGatewayAuthorityAfterTrustedInstall:
+      gatewayAuthorityCheckpoint.adoptPackagedGatewayAuthorityAfterTrustedInstall,
+    checkPortAvailable,
+    isDockerDriverGatewayPortListener,
+    getGatewayReuseSnapshot,
+    selectNamedGatewayForReuseIfNeeded,
+    refreshDockerDriverGatewayReuseState,
+  });
 
 async function preflight(
   preflightOpts: PreflightOptions = {},
 ): Promise<ReturnType<typeof nim.detectGpu>> {
   step(1, 8, "Preflight checks");
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const { gpu, host, sandboxGpuConfig } = await fatalRuntimePreflight.runReadinessGatedRuntimePreflight(preflightOpts, { nonInteractive: isNonInteractive(), collectGatewayReadiness: collectOnboardGatewayReadiness });
+  const { gpu, host, sandboxGpuConfig } =
+    await onboardPreflightGatewayAuthority.runRuntimePreflight(preflightOpts);
 
   await preflightUtils.checkContainerRuntimeResources(host, {
     ignored: process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1",
@@ -1400,8 +1393,10 @@ async function preflight(
     confirm: () => promptYesNoOrDefault("  Continue with onboarding?", null, false),
   });
 
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const { externallySupervised: gatewayExternallySupervised, gatewayReuseState: initialGatewayReuseState } = await preflightGatewayAuthority.preparePreflightGatewayAuthority({ collectGatewayReadiness: collectOnboardGatewayReadiness, ensureOpenshell: (persistTrustedGatewayOwner) => ensureOpenshellForOnboard((code) => process.exit(code), persistTrustedGatewayOwner), persistTrustedGatewayOwner: (owner) => { onboardSession.updateSession((session) => { adoptPackagedGatewayAuthorityAfterTrustedInstall(session, owner); }); }, gatewayPort: GATEWAY_PORT, portConflict: { checkPortAvailable, getGatewayPortCheckOptions: dockerDriverGatewayEnv.getGatewayPortCheckOptions, isDockerDriverGatewayPortListener, exitProcess: (code) => process.exit(code) }, getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded, refreshDockerDriverGatewayReuseState });
+  const {
+    externallySupervised: gatewayExternallySupervised,
+    gatewayReuseState: initialGatewayReuseState,
+  } = await onboardPreflightGatewayAuthority.prepareGatewayAuthority();
   let gatewayReuseState = initialGatewayReuseState;
 
   // Verify the legacy gateway container is actually running — openshell CLI
@@ -3682,30 +3677,25 @@ async function preflightAuthoritativeRebuildTarget(
         resolveBaselinePolicy: resolveSandboxBaselinePolicy,
         bindGatewayAuthority: () => bindGatewayOwner(getGatewayOwner()),
         runFatalRuntimePreflight: async () =>
-          fatalRuntimePreflight.runReadinessGatedRuntimePreflight(
+          onboardPreflightGatewayAuthority.runRuntimePreflight(
             {
               sandboxGpu: opts.sandboxGpu,
               sandboxGpuDevice: opts.sandboxGpuDevice,
               noGpu: opts.noGpu,
             },
-            {
-              nonInteractive: true,
-              collectGatewayReadiness: collectOnboardGatewayReadiness,
-              exitProcess: (code) =>
-                fail(`onboard runtime preflight exited with code ${String(code)}`),
-            },
+            (code) => fail(`onboard runtime preflight exited with code ${String(code)}`),
           ),
         ensureOpenshell: () =>
           ensureOpenshellForOnboard((code) =>
             fail(`OpenShell component preflight exited with code ${String(code)}`),
           ),
-        assertGatewayReadiness: collectOnboardGatewayReadiness,
+        assertGatewayReadiness: onboardPreflightGatewayAuthority.collectGatewayReadiness,
         inferenceRouteReady: (p, m) => isInferenceRouteReady(authoritativeGateway.name, p, m),
         captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
         checkPort: (port) => checkPortAvailable(port),
       },
     );
-    return checkpointGatewayAuthority(getGatewayOwner());
+    return gatewayAuthorityCheckpoint.checkpointGatewayAuthority(getGatewayOwner());
   } finally {
     resetGatewayOwnerBinding();
     GATEWAY_NAME = previous.gatewayName;
@@ -3733,8 +3723,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   );
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const { fresh, nonInteractive, requestedFromDockerfile, requestedSandboxName, cannotPrompt, resume } = onboardEntryOptions.resolveOnboardRunEntryOptions(opts, process.env, onboardSession.loadSession()?.status ?? null, isNonInteractiveEnv, { validateName, reservedSandboxNames: RESERVED_SANDBOX_NAMES, cliDisplayName, getNameValidationGuidance, error: (message) => console.error(message), exitProcess: (code) => process.exit(code) });
+  const entryOptions = onboardEntryOptions.resolveDefaultRunEntryOptions(
+    opts,
+    onboardSession.loadSession()?.status ?? null,
+    validateName,
+  );
+  const { fresh, nonInteractive, cannotPrompt, resume } = entryOptions;
+  const { requestedFromDockerfile, requestedSandboxName } = entryOptions;
   NON_INTERACTIVE = nonInteractive;
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   _preflightDashboardPort =
@@ -3916,7 +3911,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     const resolvedGatewayOwner = getGatewayOwner();
     let checkpointedGatewayOwner = resolvedGatewayOwner;
     session = onboardSession.updateSession((currentSession) => {
-      checkpointedGatewayOwner = bindGatewayAuthorityToCheckpoint(
+      checkpointedGatewayOwner = gatewayAuthorityCheckpoint.bindGatewayAuthorityToCheckpoint(
         currentSession,
         resolvedGatewayOwner,
       );
@@ -4013,7 +4008,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       getInitialGatewayReuseState: () =>
         selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot()).gatewayReuseState,
       assertGatewayReadiness: async () => {
-        await collectOnboardGatewayReadiness();
+        await onboardPreflightGatewayAuthority.collectGatewayReadiness();
       },
       gatewayName: GATEWAY_NAME,
       recreateSandbox: isRecreateSandbox,
@@ -4064,24 +4059,22 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       requestedSandboxName,
       checkpointedSandboxName,
       selectedMessagingChannels,
-      assertSandboxNameAllowed: (sandboxName) => {
-        if (!RESERVED_SANDBOX_NAMES.has(sandboxName)) return;
-        console.error(
-          `  Reserved name in resumed session: '${sandboxName}' is a ${cliDisplayName()} CLI command.`,
-        );
-        console.error("  Start a fresh onboard with --name <sandbox> to choose a different name.");
-        process.exit(1);
-      },
+      assertSandboxNameAllowed: onboardEntryOptions.assertDefaultSandboxNameAllowed,
     });
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const runCoreGatewayOpenshell = setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, GATEWAY_NAME);
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const endpointProvenance = { endpointSource: opts.endpointSource, endpointSourceProvider: opts.rebuildRegistryInferenceRoute?.route.provider ?? null, endpointSourceEndpointUrl: opts.rebuildRegistryInferenceRoute?.route.endpointUrl ?? null, getSandboxRegistryEntry: registry.getSandbox };
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    const providerReviewDeps = setupInferenceFactory.createProviderReviewDeps(onboardSession.updateSession, onboardSessionBootstrap.checkpointSandboxName, { shouldFrontOllamaWithProxy, startOllamaAuthProxy, getOllamaProxyToken, persistAndProbeOllamaProxy }, process.exit, console.error);
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    const coreFlowPhases = createCoreOnboardFlowPhases<InitialOnboardFlowContext, unknown, MessagingChannelConfig, import("./resources-cmd").ResourceProfile>({
+    const providerReviewDeps = setupInferenceFactory.createDefaultProviderReviewDeps(
+      onboardSession.updateSession,
+      onboardSessionBootstrap.checkpointSandboxName,
+    );
+    const coreFlowPhases = createCoreOnboardFlowPhases<
+      InitialOnboardFlowContext,
+      unknown,
+      MessagingChannelConfig,
+      import("./resources-cmd").ResourceProfile
+    >({
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
       resumeProvider: { isNonInteractive, isRoutedInferenceProvider, providerExistsInGateway, replaceNamedCredential, resumeManagedLlamaCppRuntime: (sandboxName) => setupNimFlow.resumeManagedLlamaCppRuntime(sandboxName, { gatewayPort: GATEWAY_PORT, runtimeProvider: setupNimFlow.resolveCurrentRuntimeProviderBundle() }) },
       providerInference: {
@@ -4220,19 +4213,18 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           planRegisteredExtraProviders: (gatewayName) =>
             planRegisteredExtraProviders(gatewayName, { runOpenshell }),
           resolveSandboxCreateIntent: sandboxCreateIntentResolver.resolve,
-          createSandbox: preparedDcodeRuntime.bindCreateSandbox(
-            (...createArgs) =>
-              withDashboardPortReservationScope((dashboardPortReservationScope) =>
-                createSandboxWithBaseImageResolution(
-                  baseImageResolutionContext,
-                  onboardingComputePlan,
-                  opts.managedWorkloadRebuild ?? null,
-                  opts.tempManagedRuntime === true,
-                  opts.tempManagedRuntimeCatalog ?? null,
-                  dashboardPortReservationScope,
-                  ...createArgs,
-                ),
+          createSandbox: preparedDcodeRuntime.bindCreateSandbox((...createArgs) =>
+            withDashboardPortReservationScope((dashboardPortReservationScope) =>
+              createSandboxWithBaseImageResolution(
+                baseImageResolutionContext,
+                onboardingComputePlan,
+                opts.managedWorkloadRebuild ?? null,
+                opts.tempManagedRuntime === true,
+                opts.tempManagedRuntimeCatalog ?? null,
+                dashboardPortReservationScope,
+                ...createArgs,
               ),
+            ),
           ),
           updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
           getSandboxAgentRegistryFields,
