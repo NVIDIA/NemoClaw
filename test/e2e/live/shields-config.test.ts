@@ -994,10 +994,8 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   expect(statusTimer.exitCode, resultText(statusTimer)).toBe(0);
 
   let lastTimerStatus = resultText(statusTimer);
+  expect(statusTimer.stdout).toMatch(/Shields: (?:UP|DOWN)/);
   let restored = statusTimer.stdout.includes("Shields: UP");
-  if (!restored) {
-    expect(statusTimer.stdout).toContain("Shields: DOWN");
-  }
 
   const deadline = Date.now() + TIMER_POLL_TIMEOUT_MS;
   for (let attempt = 1; !restored && Date.now() < deadline; attempt += 1) {
