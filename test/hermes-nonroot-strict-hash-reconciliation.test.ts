@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { gatewayConfigStubRoot } from "./helpers/hermes-restart-config-seal-fixture";
 const RUNTIME_CONFIG_GUARD = path.join(
   import.meta.dirname,
   "..",
@@ -81,11 +82,30 @@ function writeConfigArgs(fixture: ReconciliationFixture, expectedDigest: string)
 }
 
 function runSourceWrite(fixture: ReconciliationFixture, expectedDigest: string, content: string) {
-  return spawnSync("python3", [RUNTIME_CONFIG_GUARD, ...writeConfigArgs(fixture, expectedDigest)], {
-    encoding: "utf-8",
-    input: content,
-    timeout: 5000,
-  });
+  const wrapper = String.raw`
+import sys
+
+source_path = sys.argv[1]
+sys.path.insert(0, sys.argv[2])
+sys.argv = [source_path, *sys.argv[3:]]
+with open(source_path, "rb") as source:
+    exec(compile(source.read(), source_path, "exec"), {"__name__": "__main__", "__file__": source_path})
+`;
+  return spawnSync(
+    "python3",
+    [
+      "-c",
+      wrapper,
+      RUNTIME_CONFIG_GUARD,
+      gatewayConfigStubRoot(fixture.root),
+      ...writeConfigArgs(fixture, expectedDigest),
+    ],
+    {
+      encoding: "utf-8",
+      input: content,
+      timeout: 5000,
+    },
+  );
 }
 
 function runManagedNonrootWrite(
@@ -99,6 +119,7 @@ import os
 import sys
 
 source = sys.argv[1]
+sys.path.insert(0, sys.argv[2])
 spec = importlib.util.spec_from_file_location("nemoclaw_runtime_config_guard_fixture", source)
 if spec is None or spec.loader is None:
     raise SystemExit("could not load runtime guard fixture")
@@ -107,13 +128,23 @@ sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 module._managed_nonroot_reconciliation_is_allowed = lambda: True
 module._sandbox_identity = lambda: (os.geteuid(), os.getegid())
-sys.argv = [source, *sys.argv[2:]]
+sys.argv = [source, *sys.argv[3:]]
 raise SystemExit(module.main())
 `;
   return spawnSync(
     "python3",
-    ["-c", wrapper, RUNTIME_CONFIG_GUARD, ...writeConfigArgs(fixture, expectedDigest)],
-    { encoding: "utf-8", input: content, timeout: 5000 },
+    [
+      "-c",
+      wrapper,
+      RUNTIME_CONFIG_GUARD,
+      gatewayConfigStubRoot(fixture.root),
+      ...writeConfigArgs(fixture, expectedDigest),
+    ],
+    {
+      encoding: "utf-8",
+      input: content,
+      timeout: 5000,
+    },
   );
 }
 
@@ -123,6 +154,7 @@ import importlib.util
 import sys
 
 source = sys.argv[1]
+sys.path.insert(0, sys.argv[2])
 spec = importlib.util.spec_from_file_location("nemoclaw_runtime_config_guard_shields_fixture", source)
 if spec is None or spec.loader is None:
     raise SystemExit("could not load runtime guard fixture")
@@ -130,7 +162,7 @@ module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 module._managed_nonroot_reconciliation_is_allowed = lambda: True
-sys.argv = [source, *sys.argv[2:]]
+sys.argv = [source, *sys.argv[3:]]
 raise SystemExit(module.main())
 `;
   return spawnSync(
@@ -139,6 +171,7 @@ raise SystemExit(module.main())
       "-c",
       wrapper,
       RUNTIME_CONFIG_GUARD,
+      gatewayConfigStubRoot(fixture.root),
       "begin-shields-transition",
       "--hermes-dir",
       fixture.hermesDir,

@@ -262,7 +262,8 @@ RUN apt-get update \
 
 # setpriv runtime contract for gateway and sandbox privilege separation.
 RUN test -x /usr/bin/setpriv \
-    && /usr/bin/setpriv --version
+    && /usr/bin/setpriv --version \
+    && ! command -v gosu
 
 # Create sandbox user (matches OpenShell convention) and gateway user.
 # The gateway runs as 'gateway' so the 'sandbox' user (agent) cannot

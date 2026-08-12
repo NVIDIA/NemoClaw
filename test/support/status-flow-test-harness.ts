@@ -13,7 +13,7 @@ import type {
 } from "../../src/lib/actions/sandbox/status-snapshot";
 import type { ProviderHealthStatus } from "../../src/lib/inference/health";
 import type { BaselineExclusionRuntimeStatus } from "../../src/lib/policy/baseline-exclusion";
-import type { BaselineExclusionTransition } from "../../src/lib/state/registry";
+import type { BaselineExclusionTransition, SandboxHostMount } from "../../src/lib/state/registry";
 
 type ShowSandboxStatus = typeof import("../../src/lib/actions/sandbox/status")["showSandboxStatus"];
 
@@ -77,6 +77,7 @@ export type StatusFlowHarnessOptions = {
     baselineExclusionTransition?: BaselineExclusionTransition;
     preferredInferenceApi?: string | null;
     compatibleEndpointReasoningEffort?: "low" | "medium" | "high" | null;
+    hostMounts?: SandboxHostMount[];
     dashboardRemoteBindPrepared?: boolean;
   };
   shieldsPosture?: {
