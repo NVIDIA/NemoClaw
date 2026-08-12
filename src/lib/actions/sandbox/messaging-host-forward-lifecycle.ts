@@ -18,7 +18,9 @@ import { parseForwardList } from "../../state/sandbox-session";
 import { classifyForwardHealthWithReachability, isLocalForwardReachable } from "./forward-health";
 
 function captureOpenShellOutput(args: string[], opts: Record<string, unknown> = {}): string | null {
-  const result = captureOpenshell(args, opts as Parameters<typeof captureOpenshell>[1]);
+  const result = captureOpenshell(args, { ...opts, ignoreError: true } as Parameters<
+    typeof captureOpenshell
+  >[1]);
   return result.status === 0 ? result.output : null;
 }
 

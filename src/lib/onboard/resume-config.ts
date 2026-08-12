@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
+import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import { hasInvalidSessionToolDisclosure } from "../state/onboard-session";
 import { normalizeToolDisclosure, type ToolDisclosure } from "../tool-disclosure";
 import { preflightVllmModelEnvOrExit } from "./vllm-model-preflight";
@@ -17,6 +18,11 @@ export interface ResumeSessionLike {
   observabilityEnabled?: boolean;
   metadata?: { fromDockerfile?: string | null } | null;
   steps?: { sandbox?: { status?: string | null } | null } | null;
+  checkpoint?: {
+    sandboxIdentity?: import("../state/onboard-checkpoint-types").CheckpointDecision<
+      import("../state/onboard-checkpoint-types").CheckpointSandboxIdentity
+    >;
+  } | null;
 }
 
 export interface ResumeConfigConflict {
@@ -52,8 +58,14 @@ export function getResumeSandboxConflict(
   // is supplying precisely to recover from the phantom.
   const raw = typeof opts.sandboxName === "string" ? opts.sandboxName.trim().toLowerCase() : "";
   const requestedSandboxName = raw || null;
+  const checkpointIdentity = session?.checkpoint?.sandboxIdentity;
+  const checkpointedSandboxName =
+    checkpointIdentity && isDecisionSelected(checkpointIdentity)
+      ? checkpointIdentity.value.name
+      : null;
   const recordedSandboxName =
-    session?.steps?.sandbox?.status === "complete" ? (session?.sandboxName ?? null) : null;
+    checkpointedSandboxName ??
+    (session?.steps?.sandbox?.status === "complete" ? (session?.sandboxName ?? null) : null);
   if (!requestedSandboxName || !recordedSandboxName) {
     return null;
   }

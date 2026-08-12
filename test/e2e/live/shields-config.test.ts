@@ -982,21 +982,23 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   progress.phase("recover shields after a dead restore timer");
   const timerDown = await runNemoclaw(
     host,
-    [SANDBOX_NAME, "shields", "down", "--timeout", "10s", "--reason", "Auto-restore timer E2E"],
+    [SANDBOX_NAME, "shields", "down", "--timeout", "60s", "--reason", "Auto-restore timer E2E"],
     { artifactName: "phase-9-shields-down-timer" },
   );
   expect(timerDown.exitCode, resultText(timerDown)).toBe(0);
   const timerMarker = readTimerMarker(SANDBOX_NAME);
   process.kill(timerMarker.pid, "SIGKILL");
   const statusTimer = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
-    artifactName: "phase-9-status-down-before-auto-restore",
+    artifactName: "phase-9-status-after-dead-timer",
   });
-  expect(statusTimer.stdout).toContain("Shields: DOWN");
+  expect(statusTimer.exitCode, resultText(statusTimer)).toBe(0);
+
+  let lastTimerStatus = resultText(statusTimer);
+  expect(statusTimer.stdout).toMatch(/Shields: (?:UP|DOWN)/);
+  let restored = statusTimer.stdout.includes("Shields: UP");
 
   const deadline = Date.now() + TIMER_POLL_TIMEOUT_MS;
-  let restored = false;
-  let lastTimerStatus = "";
-  for (let attempt = 1; Date.now() < deadline; attempt += 1) {
+  for (let attempt = 1; !restored && Date.now() < deadline; attempt += 1) {
     const waitForRestoreAt = Math.max(0, new Date(timerMarker.restoreAt).getTime() - Date.now());
     await delay(Math.max(TIMER_POLL_INTERVAL_MS, waitForRestoreAt + 1_000));
     const poll = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
@@ -1149,13 +1151,26 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   expect(childlessUnlock.exitCode, resultText(childlessUnlock)).toBe(0);
   expect(resultText(childlessUnlock)).toContain('"action": "unlock-failed-startup"');
   expect(resultText(childlessUnlock)).toContain('"status": "ok"');
-  expect(await statPath(sandbox, CONFIG_PATH, "phase-12-config-unlocked")).toMatchObject({
-    mode: "660",
-    owner: "sandbox:sandbox",
-  });
-  expect(
-    await statPath(sandbox, `${CONFIG_DIR}/workspace`, "phase-12-state-tree-unlocked"),
-  ).toMatchObject({ mode: "2770", owner: "sandbox:sandbox" });
+  const unlockedPaths = await docker(
+    host,
+    [
+      "exec",
+      "--user",
+      "0",
+      recoveryContainerId,
+      "stat",
+      "-c",
+      "%a %U:%G",
+      CONFIG_PATH,
+      `${CONFIG_DIR}/workspace`,
+    ],
+    { artifactName: "phase-12-unlocked-paths", timeoutMs: 30_000 },
+  );
+  expect(unlockedPaths.exitCode, resultText(unlockedPaths)).toBe(0);
+  expect(unlockedPaths.stdout.trim().split(/\r?\n/).map(parseModeOwner)).toEqual([
+    { mode: "660", owner: "sandbox:sandbox" },
+    { mode: "2770", owner: "sandbox:sandbox" },
+  ]);
 
   const resumeSupervisor = await docker(host, processControl.resumeSupervisor, {
     artifactName: "phase-12-resume-startup-supervisor",

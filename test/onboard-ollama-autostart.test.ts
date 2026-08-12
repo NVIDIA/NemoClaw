@@ -28,9 +28,9 @@ type ScenarioOptions = {
   // When true, stub waitForHttp to return false. Only used to verify that the
   // gated path does not even reach waitForHttp.
   waitForHttpReturnsFalse?: boolean;
-  // When true, allow the wizard to reach selectAndValidateOllamaModel by
-  // stubbing startOllamaAuthProxy to a no-op success rather than the bail-out
-  // sentinel. Used by the #4365 runner-crash escape scenarios.
+  // When true, allow the wizard to reach selectAndValidateOllamaModel rather
+  // than stopping at its prompt boundary. Used by the #4365 runner-crash
+  // escape scenarios.
   proceedToModelSelection?: boolean;
   // Body returned by the fake curl for `/api/generate` probes (used by
   // validateOllamaModel). Defaults to a healthy response. Set to a runner-
@@ -235,20 +235,20 @@ localInference.resetOllamaHostCache();
 // onboard require() below.
 localInference.findReachableOllamaHost = () => (ollamaRunning ? "127.0.0.1" : null);
 
-// Sentinel: startOllamaAuthProxy is called downstream of the Ollama branch
-// (after either the spawn path or the "already running" path). Throwing a
-// sentinel here bails out of the wizard once it has done everything that
-// matters for the gated-vs-spawn assertions. The fallback branch breaks out
-// of selectionLoop BEFORE this is reached, so Scenarios A and D never see
-// the sentinel — only B and C do. The #4365 scenarios opt out so the wizard
-// can reach selectAndValidateOllamaModel.
+// Keep the proxy process inert. Proxy preparation now occurs only after the
+// configuration review is accepted, outside setupNim's selection boundary.
 const proxy = require(${proxyPath});
 class OllamaAutostartSentinel extends Error {}
 const proceedToModelSelection = ${JSON.stringify(opts.proceedToModelSelection === true)};
-if (proceedToModelSelection) {
-  proxy.startOllamaAuthProxy = () => true;
-} else {
-  proxy.startOllamaAuthProxy = () => {
+proxy.startOllamaAuthProxy = () => true;
+
+// promptOllamaModel is reached after either the spawn path or the
+// already-running path. Throwing here stops the wizard once it has done
+// everything needed for the gated-vs-spawn assertions. The fallback branch
+// exits selectionLoop before this boundary, so Scenarios A and D do not see
+// the sentinel. The #4365 scenarios continue into model validation.
+if (!proceedToModelSelection) {
+  proxy.promptOllamaModel = () => {
     throw new OllamaAutostartSentinel("ollama-autostart-test-sentinel");
   };
 }
@@ -394,13 +394,9 @@ describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
     );
     // selectAndValidateOllamaModel is intentionally bypassed.
     assert.equal(payload.selectAndValidateOllamaModelCalled, false);
-    // The fallback `break` exits selectionLoop BEFORE startOllamaAuthProxy is
-    // reached — sentinel must not have tripped.
-    assert.equal(
-      payload.sentinelTripped,
-      false,
-      "gated fallback must not reach startOllamaAuthProxy",
-    );
+    // The fallback `break` exits selectionLoop before model selection, so the
+    // sentinel must not have tripped.
+    assert.equal(payload.sentinelTripped, false, "gated fallback must not reach model selection");
   });
 
   it("preserves the existing spawn path for stopped Ollama without the flag in scenario B", {
@@ -427,12 +423,11 @@ describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
       "gate warning must not fire when the flag is unset",
     );
     // Sentinel tripped — proves the wizard exited the !ollamaReady block via
-    // the spawn-then-proxy path (i.e. moved on to startOllamaAuthProxy), NOT
-    // via the gated `break` that fallback uses.
+    // the spawn path and reached model selection, not the gated fallback.
     assert.equal(
       payload.sentinelTripped,
       true,
-      `expected wizard to reach the post-spawn proxy step; lines:\n${payload.lines.join("\n")}`,
+      `expected wizard to reach model selection after spawning; lines:\n${payload.lines.join("\n")}`,
     );
   });
 
@@ -460,8 +455,8 @@ describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
       !payload.lines.some((line) => line.includes("--no-ollama-autostart is set")),
       "gate warning must not fire when daemon is already up",
     );
-    // Wizard should have reached the proxy step (post-readiness), not the
-    // gated `break` path.
+    // Wizard should have reached model selection after readiness, not the
+    // gated fallback path.
     assert.equal(payload.sentinelTripped, true);
   });
 
@@ -481,8 +476,8 @@ describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
       !payload.lines.some((line) => line.includes("--no-ollama-autostart is set")),
       "gate warning must not fire when daemon is already up — flag is orthogonal",
     );
-    // Flag is irrelevant here: the wizard still proceeds via the proxy path,
-    // not the fallback break.
+    // Flag is irrelevant here: the wizard still reaches model selection,
+    // rather than taking the fallback path.
     assert.equal(payload.sentinelTripped, true);
   });
 
@@ -522,7 +517,7 @@ describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
     );
     assert.equal(payload.result!.model, DEFAULT_OLLAMA_MODEL);
     assert.equal(payload.result!.provider, "ollama-local");
-    // Non-interactive gate path must not reach the proxy stage either.
+    // Non-interactive gate path must not reach model selection either.
     assert.equal(payload.sentinelTripped, false);
   });
 
@@ -622,13 +617,13 @@ describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
       ),
       `expected pinned-provider abort message; lines:\n${payload.lines.join("\n")}`,
     );
-    // Sentinel guards the post-spawn proxy step. If selectionLoop had looped
-    // and a future iteration reached the proxy, the sentinel would have
-    // tripped. With the fix, we exit before that.
+    // The sentinel guards model selection. If selectionLoop had looped and a
+    // future iteration reached it, the sentinel would have tripped. With the
+    // fix, we exit before that.
     assert.equal(
       payload.sentinelTripped,
       false,
-      "abort must happen before reaching the proxy stage",
+      "abort must happen before reaching model selection",
     );
   });
 });

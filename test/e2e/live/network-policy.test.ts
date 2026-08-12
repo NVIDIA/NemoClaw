@@ -189,7 +189,7 @@ async function curlStatus(
 async function expectScopedClawHubPluginLifecycle(sandbox: SandboxClient): Promise<void> {
   const install = await sandboxBash(
     sandbox,
-    "HOME=/sandbox openclaw plugins install 'clawhub:@openclaw/sherpa-onnx-tts@2026.6.8' 2>&1",
+    "HOME=/sandbox openclaw plugins install 'clawhub:@openclaw/kitchen-sink@0.2.14' 2>&1",
     {
       artifactName: "tc-net-restricted-clawhub-scoped-plugin-install",
       timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
@@ -203,12 +203,12 @@ async function expectScopedClawHubPluginLifecycle(sandbox: SandboxClient): Promi
   });
   expect(list.exitCode, text(list)).toBe(0);
   expect(text(list), "the installed scoped ClawHub plugin must be enabled").toMatch(
-    /Sherpa ONNX TTS[^\r\n]*enabled/i,
+    /OpenClaw Kitchen Sink[^\r\n]*enabled/i,
   );
 
   const inspect = await sandboxBash(
     sandbox,
-    "HOME=/sandbox openclaw plugins inspect sherpa-onnx-tts --runtime 2>&1",
+    "HOME=/sandbox openclaw plugins inspect openclaw-kitchen-sink-fixture --runtime 2>&1",
     {
       artifactName: "tc-net-restricted-clawhub-scoped-plugin-runtime-inspect",
       timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
@@ -242,8 +242,10 @@ async function expectEncodedSlashConfinedToClawHub(
     `https://openclaw.ai${encodedPath}`,
     "tc-net-permissive-non-clawhub-encoded-slash",
   );
+  // Undici can report the same denied CONNECT as `UND_ERR_SOCKET` or `fetch failed`.
+  // The OpenShell gateway log below provides the authoritative denial evidence.
   expect(nonClawhubStatus, `encoded slashes must fail closed outside ClawHub`).toMatch(
-    /^(?:STATUS_403|ERROR_UND_ERR_SOCKET)/,
+    /^(?:STATUS_403|ERROR_(?:UND_ERR_SOCKET|fetch failed))/,
   );
   const denial = await waitForDeniedReasonLog(host, {
     endpoint: ENCODED_SLASH_DENIED_ENDPOINT,

@@ -116,6 +116,7 @@ import {
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   mcpRegistryRemovalBlockReason,
   replacesSameNameSandbox,
+  requiresSandboxRecreation,
   resolveToolDisclosureResumeSignals,
   type SandboxResumeDecision,
 } from "./sandbox-resume";
@@ -1456,7 +1457,7 @@ class SandboxStateFlow<
     });
     return {
       resolved,
-      recreate: decision.kind !== "create",
+      recreate: requiresSandboxRecreation(decision, this.options.recreateSandbox(false)),
       toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
       observabilityEnabled: state.session?.observabilityEnabled === true,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
