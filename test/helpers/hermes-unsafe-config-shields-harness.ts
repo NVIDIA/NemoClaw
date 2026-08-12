@@ -46,6 +46,7 @@ const hermesTarget = {
 export type HermesUnsafeConfigScenario =
   | "preflight-symlink"
   | "preflight-dir-symlink"
+  | "preflight-missing-config"
   | "preflight-sensitive-file-symlink"
   | "unlock-symlink"
   | "unlock-partial-rollback-symlink"
@@ -200,6 +201,9 @@ export function createHermesUnsafeConfigHarness(
       const replacementDir = path.join(homeDir, "replacement-hermes");
       fs.renameSync(configFixtureDir, replacementDir);
       fs.symlinkSync(replacementDir, configFixtureDir, "dir");
+    }
+    if (scenario === "preflight-missing-config") {
+      fs.rmSync(path.join(configFixtureDir, "config.yaml"));
     }
     if (scenario === "preflight-sensitive-file-symlink") {
       const target = path.join(homeDir, "real-env");

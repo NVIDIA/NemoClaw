@@ -820,6 +820,26 @@ describe("Hermes Shields down unsafe config path (#8804)", () => {
     });
   });
 
+  it("rejects a missing Hermes config before Shields down weakens posture (#8804)", () => {
+    const stateDir = harness.seedLockedState("hermes-shields");
+    harness.setScenario("preflight-missing-config");
+
+    expect(() =>
+      harness.shields.shieldsDown("hermes-shields", {
+        reason: "missing-config",
+        throwOnError: true,
+      }),
+    ).toThrow(/missing config path: .*config\.yaml/);
+
+    expect(harness.runSpy).not.toHaveBeenCalled();
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+    expectHermesShieldsUpRecord(stateDir, "hermes-shields", harness.shields);
+    expect(harness.shields.getShieldsPosture("hermes-shields", false)).toMatchObject({
+      locked: true,
+      mutable: false,
+    });
+  });
+
   it("rejects a Hermes sensitive-file symlink before Shields down weakens posture (#8804)", () => {
     const stateDir = harness.seedLockedState("hermes-shields");
     harness.setScenario("preflight-sensitive-file-symlink");
