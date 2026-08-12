@@ -331,6 +331,7 @@ function agentResponseMetaRecord(doc: unknown): UnknownRecord | null {
   }
 
   if (
+    !Object.hasOwn(doc, "event") &&
     (!Object.hasOwn(doc, "payloads") || Array.isArray(doc.payloads)) &&
     isObjectRecord(doc.meta)
   ) {

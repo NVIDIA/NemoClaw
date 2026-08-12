@@ -312,6 +312,15 @@ describe("openClawAgentIncompleteTurnSignal", () => {
     expect(openClawAgentIncompleteTurnSignal(raw)).toBeNull();
   });
 
+  it("ignores a trailing JSON progress record after a healthy local response", () => {
+    const raw = [
+      JSON.stringify({ payloads: [{ text: "done" }], meta: { livenessState: "working" } }),
+      JSON.stringify({ event: "progress", meta: { replayInvalid: true } }),
+    ].join("\n");
+
+    expect(openClawAgentIncompleteTurnSignal(raw)).toBeNull();
+  });
+
   it("returns null when stdout carries no JSON at all", () => {
     expect(openClawAgentIncompleteTurnSignal("not json")).toBeNull();
   });
