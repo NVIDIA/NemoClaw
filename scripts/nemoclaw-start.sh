@@ -5162,6 +5162,24 @@ arm_openclaw_gateway_supervisor_cleanup() {
   trap clear_in_container_gateway_marker EXIT
 }
 
+launch_openclaw_gateway_process() {
+  local log_mode="$1"
+  shift
+  case "$log_mode" in
+    append)
+      nohup /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN "$@" >>/tmp/gateway.log 2>&1 &
+      ;;
+    truncate)
+      nohup /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN "$@" >/tmp/gateway.log 2>&1 &
+      ;;
+    *)
+      echo "[gateway] invalid gateway log mode: $log_mode" >&2
+      return 1
+      ;;
+  esac
+  GATEWAY_PID=$!
+}
+
 launch_openclaw_gateway() {
   # Drop the gateway marker whenever this supervisor exits -- clean gateway
   # exit (`exit 0` below), a forwarded signal (cleanup_openclaw_on_signal ends
@@ -5174,10 +5192,10 @@ launch_openclaw_gateway() {
   # script -- keeps it in place.
   arm_openclaw_gateway_supervisor_cleanup
   mark_in_container_gateway
-  nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" env HOME=/sandbox sh -c \
+  launch_openclaw_gateway_process truncate \
+    "${STEP_DOWN_PREFIX_GATEWAY[@]}" env HOME=/sandbox sh -c \
     'umask 0007; exec "$@" >>/tmp/gateway.log 2>&1' sh \
-    "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" &
-  GATEWAY_PID=$!
+    "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}"
   if ! capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY; then
     # An uncaptured numeric PID is never safe to signal: Bash may already have
     # reaped the short-lived child and the kernel may have reused its PID. Fail
@@ -5197,8 +5215,8 @@ launch_openclaw_gateway() {
 launch_openclaw_gateway_non_root() {
   arm_openclaw_gateway_supervisor_cleanup
   mark_in_container_gateway
-  nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
-  GATEWAY_PID=$!
+  launch_openclaw_gateway_process truncate \
+    "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}"
   capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY || exit 1
   record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
@@ -5868,8 +5886,8 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[gateway] pid $EXITED_GATEWAY_PID exited (rc=$RC); respawning (#$RESPAWN_COUNT in 60s window) in 2s" >&2
     sleep 2
     prepare_openclaw_automatic_respawn || exit 1
-    nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >>/tmp/gateway.log 2>&1 &
-    GATEWAY_PID=$!
+    launch_openclaw_gateway_process append \
+      "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}"
     capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY || exit 1
     record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
     # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
