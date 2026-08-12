@@ -117,6 +117,7 @@ const HERMES_DASHBOARD_SESSION_DIR =
 
 function hermesExec(options: {
   readonly configuredSessionPath?: unknown;
+  readonly configuredSessionProbeFails?: boolean;
   readonly configProbeStdout?: string;
   readonly credsDirs: readonly string[];
 }) {
@@ -133,14 +134,17 @@ function hermesExec(options: {
               stdout: `NEMOCLAW_HERMES_WHATSAPP_CONFIG_V1\n${JSON.stringify(options.configuredSessionPath)}`,
               stderr: "",
             }
-      : {
-          status: 0,
-          stdout: hermesSessionProbeOutput({
-            gatewaySessionCreds: hasCreds(/gateway='([^']*)'/.exec(command)?.[1] ?? ""),
-            dashboardSessionCreds: hasCreds(/dashboard='([^']*)'/.exec(command)?.[1] ?? ""),
-          }),
-          stderr: "",
-        };
+      : options.configuredSessionProbeFails &&
+          command.includes(`gateway='${HERMES_DASHBOARD_SESSION_DIR}/creds.json'`)
+        ? { status: 1, stdout: "", stderr: "configured session probe unavailable" }
+        : {
+            status: 0,
+            stdout: hermesSessionProbeOutput({
+              gatewaySessionCreds: hasCreds(/gateway='([^']*)'/.exec(command)?.[1] ?? ""),
+              dashboardSessionCreds: hasCreds(/dashboard='([^']*)'/.exec(command)?.[1] ?? ""),
+            }),
+            stderr: "",
+          };
   });
 }
 
@@ -517,6 +521,39 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     expect(exec.mock.calls.map((call) => String(call[1] ?? "")).join("\n")).not.toContain(
       "cat /sandbox/.hermes/config.yaml",
     );
+  });
+
+  it("keeps default diagnostics when the configured Hermes session probe fails (#8718)", () => {
+    const exec = hermesExec({
+      configuredSessionPath: HERMES_DASHBOARD_SESSION_DIR,
+      configuredSessionProbeFails: true,
+      credsDirs: [HERMES_DASHBOARD_SESSION_DIR],
+    });
+    const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
+      context({ ...BASE_INPUTS, agent: "hermes" }),
+    );
+    const report = reportOf(result);
+
+    expect(report?.verdict).toBe("unpaired");
+    expect(report?.signals.find((s) => s.label === "Session path override")).toBeUndefined();
+    expect(report?.signals.find((s) => s.label === "Session location")?.hint).toContain(
+      "channels add whatsapp",
+    );
+    expect(exec).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps Hermes fallback probes within one timeout budget (#8718)", () => {
+    const exec = hermesExec({
+      configuredSessionPath: HERMES_DASHBOARD_SESSION_DIR,
+      credsDirs: [HERMES_DASHBOARD_SESSION_DIR],
+    });
+    createWhatsappStatusHealthHook({ executeSandboxCommand: exec, timeoutMs: 8_000 })(
+      context({ ...BASE_INPUTS, agent: "hermes" }),
+    );
+    const probeTimeouts = exec.mock.calls.map((call) => Number(call[2]));
+
+    expect(probeTimeouts).toEqual([4_000, 2_000, 2_000]);
+    expect(probeTimeouts.reduce((total, timeout) => total + timeout, 0)).toBeLessThanOrEqual(8_000);
   });
 
   it("rejects a config probe response that carries unrelated values (#8718)", () => {

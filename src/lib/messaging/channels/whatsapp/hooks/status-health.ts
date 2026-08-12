@@ -244,19 +244,27 @@ function runHermesSessionProbe(
   sandboxName: string,
   timeoutMs: number,
 ): ProbeResult {
+  const configuredProbeTimeoutMs = Math.floor(timeoutMs / 4);
+  const configProbeTimeoutMs = Math.floor(timeoutMs / 4);
+  const defaultProbeTimeoutMs = timeoutMs - configProbeTimeoutMs - configuredProbeTimeoutMs;
   const defaultLocations = probeHermesSessionDirs(
     execute,
     sandboxName,
     HERMES_DEFAULT_SESSION_DIR,
-    timeoutMs,
+    defaultProbeTimeoutMs,
   );
   if (!defaultLocations) return PROBE_UNREACHABLE;
   if (defaultLocations.gatewaySessionCreds !== false) {
     return hermesProbeResult(defaultLocations, "default");
   }
 
-  const fallbackTimeoutMs = Math.max(1, Math.floor(timeoutMs / 2));
-  const configured = readHermesConfiguredSessionDir(execute, sandboxName, fallbackTimeoutMs);
+  // The default-path check, config read, and configured-path check share one
+  // caller-supplied timeout budget. For sub-millisecond fallback budgets, keep
+  // the successful default result instead of starting an unbounded extra probe.
+  if (configProbeTimeoutMs < 1 || configuredProbeTimeoutMs < 1) {
+    return hermesProbeResult(defaultLocations, "default");
+  }
+  const configured = readHermesConfiguredSessionDir(execute, sandboxName, configProbeTimeoutMs);
   if (configured.source !== "config") {
     return hermesProbeResult(defaultLocations, configured.source);
   }
@@ -264,7 +272,7 @@ function runHermesSessionProbe(
     execute,
     sandboxName,
     configured.dir,
-    fallbackTimeoutMs,
+    configuredProbeTimeoutMs,
   );
   if (!configuredLocations) return hermesProbeResult(defaultLocations, "default");
   return hermesProbeResult(configuredLocations, "config", configured.dir);
