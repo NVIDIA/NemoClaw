@@ -39,4 +39,19 @@ describe("policy and channel sandbox mutation locking", () => {
     expect(lockMocks.withSandboxMutationLock).toHaveBeenCalledOnce();
     expect(lockMocks.withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function));
   });
+
+  it("previews a channel removal without taking the lock (#8877)", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      await removeSandboxChannel("alpha", { channel: "slack", dryRun: true });
+
+      expect(lockMocks.withSandboxMutationLock).not.toHaveBeenCalled();
+      expect(log.mock.calls.map((call) => call.map(String).join(" ")).join("\n")).toContain(
+        "--dry-run: would remove channel 'slack'",
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
 });

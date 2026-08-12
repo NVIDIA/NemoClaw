@@ -845,6 +845,20 @@ function ownedLifecycleGateMustRemainClosedSync(lockPath: string): boolean {
   }
 }
 
+function releaseOwnedGenerationOnProcessExit(lockPath: string, token: string): () => void {
+  const release = (): void => {
+    try {
+      safelyReleaseMcpLifecycleLockSync(lockPath, token);
+    } catch {
+      return;
+    }
+  };
+  process.on("exit", release);
+  return () => {
+    process.removeListener("exit", release);
+  };
+}
+
 async function retainOwnedLifecycleGateAfterFailure(
   error: unknown,
   lockPath: string,
@@ -1672,6 +1686,7 @@ export function withMcpLifecycleLockSync<T>(
   const context = new Map(inherited ?? []);
   context.set(lockPath, lease);
   let retainOwnedGate = false;
+  const cancelExitRelease = releaseOwnedGenerationOnProcessExit(acquired.lockPath, acquired.token);
   try {
     return heldLocks.run(context, () => {
       acquired.assertBeforeDeadline();
@@ -1683,6 +1698,7 @@ export function withMcpLifecycleLockSync<T>(
       retainOwnedLifecycleGateAfterFailureSync(error, lockPath);
     throw error;
   } finally {
+    cancelExitRelease();
     lease.active = false;
     if (!retainOwnedGate && acquired.shieldsTakeoverToken && lease.retainForDurableContainment) {
       retainOwnedGate = ownedLifecycleGateMustRemainClosedSync(lockPath);
@@ -1726,6 +1742,7 @@ export async function withMcpLifecycleLock<T>(
   };
   const context = new Map(inherited ?? []);
   context.set(lockKey, lease);
+  const cancelExitRelease = releaseOwnedGenerationOnProcessExit(acquired.lockPath, acquired.token);
   return heldLocks.run(context, async () => {
     let retainOwnedGate = false;
     try {
@@ -1737,6 +1754,7 @@ export async function withMcpLifecycleLock<T>(
         (await retainOwnedLifecycleGateAfterFailure(error, lockKey));
       throw error;
     } finally {
+      cancelExitRelease();
       // Async resources created by the callback retain their ALS store. Mark
       // the lease inactive before releasing so a detached/later promise cannot
       // mistake an ended parent operation for a still-held reentrant lock.

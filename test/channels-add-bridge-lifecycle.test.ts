@@ -228,6 +228,17 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     expect(printedText()).toContain("Registered googlechat bridge");
   });
 
+  it("queues the rebuild instead of prompting when the session has no terminal (#8877)", async () => {
+    delete process.env.NEMOCLAW_NON_INTERACTIVE;
+    const promptSpy = vi.spyOn(store, "prompt");
+
+    await addSandboxChannel("test-sb", { channel: "googlechat" });
+
+    expect(promptSpy).not.toHaveBeenCalled();
+    expect(policyChannelDependencies.rebuildSandbox).not.toHaveBeenCalled();
+    expect(printedText()).toContain("Change queued.");
+  });
+
   it("fails loudly at add time when the bridge secret is not resolvable", async () => {
     delete process.env.GOOGLECHAT_SERVICE_ACCOUNT;
 

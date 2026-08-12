@@ -2182,6 +2182,9 @@ $$nemoclaw my-assistant policy add pypi --yes
 
 The positional form is required in scripted workflows.
 Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` if you want the same behavior from an environment variable.
+Without a preset name, a run with `NEMOCLAW_NON_INTERACTIVE=1` reports that non-interactive mode requires a preset name.
+A run without a terminal on stdin instead reports that no input is available on stdin.
+Both exit non-zero rather than open the picker.
 If the preset name is unknown, the command exits non-zero with a clear error.
 If a named preset is already applied, the command compares the preset content with the live policy.
 When the content matches, the command reports no changes and exits zero.
@@ -2295,6 +2298,7 @@ $$nemoclaw my-assistant policy remove pypi --yes
 ```
 
 Set `NEMOCLAW_NON_INTERACTIVE=1` as an alternative to `--yes`.
+Without a preset name, `policy remove` reports the same two picker errors as `policy add` and exits non-zero.
 If the preset is unknown or not currently applied, the command exits non-zero with a clear error.
 
 | Flag | Description |
@@ -2314,6 +2318,7 @@ If the active agent or entry changes, rebuild fails closed until you clear or re
 The command refuses to exclude a key that an applied preset already owns, because removing that live key would also remove the preset's access.
 The critical `managed_inference` entry cannot currently be excluded pending product direction.
 Use `--force` or `--yes` for explicit non-interactive acknowledgement, or `--dry-run` to preview without changing the sandbox.
+A run with `NEMOCLAW_NON_INTERACTIVE=1`, or a run without a terminal on stdin, does not prompt and requires one of those acknowledgement flags.
 
 ```bash
 $$nemoclaw my-assistant policy exclude nous_research --dry-run
@@ -2334,6 +2339,7 @@ After you review the output, `--force` allows that egress again and clears the e
 When the baseline no longer defines the entry, `--dry-run` states that restoration will clear only the stale exclusion record.
 After you review the output, `--force` clears that record without changing live egress.
 Both paths require explicit acknowledgement unless you use `--dry-run`; use `--force` or `--yes` for non-interactive acknowledgement.
+As with `policy exclude`, a run with `NEMOCLAW_NON_INTERACTIVE=1`, or a run without a terminal on stdin, does not prompt.
 If a restore is interrupted, NemoClaw finalizes it only when the durable exclusion still exactly matches the staged exclusion and the current release baseline still exactly matches the journaled live target.
 If either value changed or the current baseline is unreadable, the journal remains in `repair required` state so you can inspect and re-review the current scope instead of silently accepting a different entry.
 
@@ -2488,8 +2494,9 @@ Run only one active Slack sandbox on each OpenShell gateway, and use distinct Sl
 Optional Slack allowlists come from `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` at rebuild time.
 Telegram and Discord mention mode default to `1` when no environment, session, or saved state value exists for that setting.
 Discord applies that default only when a server ID is configured.
-When `NEMOCLAW_NON_INTERACTIVE=1` is set, any missing token fails fast and no rebuild prompt is shown.
+A run with `NEMOCLAW_NON_INTERACTIVE=1`, or a run without a terminal on stdin, fails fast on any missing token and shows no rebuild prompt.
 Instead, the change is queued and you are told to run `$$nemoclaw <name> rebuild` manually.
+An SSH command without `-t`, a service unit, or a CI job has no terminal on stdin, so it does not need `NEMOCLAW_NON_INTERACTIVE=1` to reach this path.
 If you omit the required `<channel>` argument, the CLI prints the `channels add <channel>` usage with the supported channel list instead of falling back to top-level help.
 
 ### `$$nemoclaw <name> channels remove <channel>`
@@ -2516,7 +2523,8 @@ $$nemoclaw my-assistant channels remove telegram
 |------|-------------|
 | `--dry-run` | Report the channel that would be removed without clearing credentials or rebuilding |
 
-As with `channels add`, `NEMOCLAW_NON_INTERACTIVE=1` skips the rebuild prompt and queues the change for a manual `$$nemoclaw <name> rebuild`.
+As with `channels add`, `NEMOCLAW_NON_INTERACTIVE=1` or a run without a terminal on stdin skips the rebuild prompt and queues the change for a manual `$$nemoclaw <name> rebuild`.
+`channels start` and `channels stop` follow the same rule.
 If you omit the required `<channel>` argument, the CLI prints the `channels remove <channel>` usage with the supported channel list.
 
 Host-side removal is the supported path because agent channel config is baked into the container image at build time (`/sandbox/.openclaw/openclaw.json` for OpenClaw and `/sandbox/.hermes/.env` for Hermes); agent-specific channel removals inside the sandbox would modify the running config but not persist changes across rebuilds.

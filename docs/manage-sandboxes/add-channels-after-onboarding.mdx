@@ -80,6 +80,8 @@ $$nemoclaw my-assistant rebuild
 ## Add a Channel Non-Interactively
 
 Set required environment variables before running `channels add`.
+A run without a terminal on stdin is non-interactive even when `NEMOCLAW_NON_INTERACTIVE=1` is unset.
+An SSH command without `-t`, a service unit, and a CI job all run without a terminal.
 Missing credentials fail fast, and the command queues the change for a manual rebuild:
 
 ```bash
@@ -122,7 +124,7 @@ The login has an eight-minute deadline and refreshes the QR up to three times on
 Keep the terminal in the foreground until you see `✓ WeChat login confirmed`.
 
 The command requires an interactive terminal.
-`NEMOCLAW_NON_INTERACTIVE=1` fails fast because the QR handshake needs a paired phone.
+`NEMOCLAW_NON_INTERACTIVE=1`, or a run without a terminal on stdin, fails fast because the QR handshake needs a paired phone.
 
 ```bash
 $$nemoclaw my-assistant channels add wechat

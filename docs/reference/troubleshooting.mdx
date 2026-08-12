@@ -2173,7 +2173,7 @@ $$nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>
 
 `channels add` registers credentials with the OpenShell gateway and `channels remove` clears them.
 Both offer to rebuild the sandbox so the image reflects the new channel set.
-In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `$$nemoclaw <sandbox> rebuild`.
+In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`, or any run without a terminal on stdin), the commands stage the change and leave the rebuild to a follow-up `$$nemoclaw <sandbox> rebuild`.
 WeChat and WhatsApp are experimental.
 Review [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) before enabling them.
 

@@ -367,6 +367,10 @@ Snapshot restore and rebuild replay that recorded preset even when the original 
 Keep the source YAML in your configuration repository so operators can review and change it.
 For the preset schema and removal workflow, refer to [Network Policies](../reference/network-policies).
 
+An SSH command without `-t`, a service unit, and a CI job have no terminal on stdin, so the preset picker cannot run there.
+Pass the preset name, `--from-file`, or `--from-dir` in such a session.
+`policy add` and `policy remove` skip their confirmation prompts without a terminal on stdin, so neither needs `--yes` or `NEMOCLAW_NON_INTERACTIVE=1`.
+
 ## Plan for Updates and Rebuilds
 
 Create a named snapshot before host maintenance or a manual update:

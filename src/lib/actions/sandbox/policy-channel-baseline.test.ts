@@ -60,8 +60,19 @@ async function captureExit(action: () => Promise<void>): Promise<number | undefi
   throw new Error("Expected process.exit to be called");
 }
 
+let stdinIsTty: PropertyDescriptor | undefined;
+
+function arrangeTerminal(present: boolean): void {
+  Object.defineProperty(process.stdin, "isTTY", {
+    configurable: true,
+    value: present ? true : undefined,
+  });
+}
+
 beforeEach(() => {
   delete process.env.NEMOCLAW_NON_INTERACTIVE;
+  stdinIsTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  arrangeTerminal(true);
   vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
@@ -89,6 +100,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.NEMOCLAW_NON_INTERACTIVE;
+  if (stdinIsTty) Object.defineProperty(process.stdin, "isTTY", stdinIsTty);
 });
 
 describe("excludeSandboxBaseline (#7178)", () => {
