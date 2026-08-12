@@ -43,6 +43,7 @@ export type SandboxRecord = {
   }>;
   fromDockerfile?: string | null;
   gatewayName?: string | null;
+  gatewayPort?: number | null;
   imageTag?: string | null;
   workload?: SandboxWorkloadReceipt;
   openshellDriver?: string | null;

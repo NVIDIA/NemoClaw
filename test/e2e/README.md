@@ -8,8 +8,9 @@ Direct E2E coverage runs through Vitest.
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
-- `.github/workflows/e2e.yaml` selects the default workflow E2E jobs on each push
-  to `main` and supports trusted manual dispatches for specific PR head commits.
+- `.github/workflows/e2e.yaml` selects the default workflow E2E jobs on each push to `main`.
+  It also supports trusted manual dispatches for the latest PR commit.
+  Trusted pushes to `main` and full manual runs dispatched against `main` publish the `Release qualification` check for the candidate commit SHA.
   Push runs skip the Jetson nvmap and DGX Spark llama.cpp jobs because their
   required workflow dispatch flags cannot be set by a push event.
 - `.github/workflows/hosted-runner-recovery.yaml` evaluates first-attempt
@@ -444,7 +445,8 @@ Launchable`. Each push run also selects this job as part of the complete main ru
 
 A manual run with `include_staging_brev_launchable=true` and empty `jobs` and
 `targets` selectors runs the default workflow E2E selection plus the Launchable E2E job.
-This is the full run required for pre-tag evidence. Each full dispatch uses
+This selection is the full manual `main` run for pre-tag release evidence.
+Each full dispatch uses
 `github.run_id` in its workflow concurrency identity, so another full dispatch
 cannot supersede it while it waits. The trusted `main` workflow dispatch
 verifies that the dispatching and rerunning actors have repository `maintain` or
@@ -454,14 +456,21 @@ environment approval. The job uses the non-cancelling
 `staging-brev-launchable-cpu` group with `queue: max`, so pending Launchable E2E
 runs remain queued instead of replacing one another.
 
+For a trusted push to `main` or full manual run dispatched against `main`, `Release qualification` waits for every E2E job that does not require a separate opt-in.
+The check requires each of those jobs to pass, including `Exact staging Brev Launchable`.
+A passing check at the candidate commit SHA is the pre-tag release E2E evidence.
+If the candidate commit SHA has a passing `main` push check, use that check.
+If the candidate commit SHA has no passing check, dispatch the full manual `main` run.
+Maintainers do not build a local evidence ledger or revalidate GitHub job status from an artifact.
+The Launchable job retains its test and cleanup artifacts for diagnosis.
+
 The Jetson nvmap and DGX Spark llama.cpp jobs remain excluded from ordinary and
 full runs unless their independent opt-in flags are `true`.
-Set `allow_jetson_dispatch=true` to select `jetson-nvmap-gpu` only after every
-deployment check in
-[Jetson Dispatch Through Colossus](docs/jetson-colossus-dispatch.md) passes.
-The Colossus lifecycle removes and verifies only the fixed job-owned cleanup
-allowlist. Its cleanup evidence does not attest that every possible candidate
-host change was reversed.
+Set `allow_jetson_dispatch=true` to select `jetson-nvmap-gpu` after the
+operator-owned dispatch service is available at the repository variable
+`JETSON_DISPATCH_URL`. Refer to the
+[Jetson dispatch controller](docs/jetson-dispatch.md) for the trusted workflow,
+HTTP contract, and evidence boundary that NemoClaw owns.
 Set `allow_dgx_spark_runner_queue=true` to select both
 `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`.
 GitHub can pause the qualification job for the
@@ -798,11 +807,14 @@ For a PR revision run, a repository maintainer or administrator leaves `jobs` an
 - every shared credential-free test; and
 - these controller-selected registry targets: `ubuntu-policy-custom-missing-presets-negative`, `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and `ubuntu-repo-docker-post-reboot-recovery`.
 
-The run skips `jetson-nvmap-gpu` unless its Colossus dispatch flag is `true`.
+The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
 It skips `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`
 unless their runner-queue flag is `true`.
 The trusted workflow definition remains on `main` and binds the candidate head to the current PR base SHA.
 It does not run GitHub's synthetic merge commit.
+Before candidate execution, the workflow uploads a `nemoclaw-e2e-dispatch-v2` receipt for the trusted manual run.
+OpenShell PR qualification uses that receipt to bind the candidate repository, candidate commit SHA, base SHA, workflow SHA, run, and selectors.
+The pre-tag `Release qualification` check does not use this receipt.
 
 PR Review Advisor maps changes to either of these shared journaled-recreation handlers to recommended E2E coverage:
 

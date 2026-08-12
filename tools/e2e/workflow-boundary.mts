@@ -3968,14 +3968,12 @@ function validateAllowJetsonDispatchInput(errors: string[], dispatchInputs: Work
   }
   const description = stringValue(input.description);
   if (
-    !description.includes("Colossus dispatcher") ||
-    !description.includes("Cloudflare Tunnel") ||
-    !description.includes("cleanup helper") ||
+    !description.includes("operator-owned dispatch backend") ||
     !description.includes("JETSON_DISPATCH_URL") ||
-    !description.includes("test/e2e/docs/jetson-colossus-dispatch.md")
+    !description.includes("test/e2e/docs/jetson-dispatch.md")
   ) {
     errors.push(
-      "workflow_dispatch allow_jetson_dispatch input must require the Colossus dispatcher, tunnel, cleanup helper, repository URL variable, and deployment checks",
+      "workflow_dispatch allow_jetson_dispatch input must require the operator-owned backend, repository URL variable, and controller documentation",
     );
   }
 }
@@ -3999,13 +3997,13 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
     errors.push("jetson-nvmap-gpu controller timeout must be 60 minutes");
   if (
     !isDeepStrictEqual(asRecord(job.concurrency), {
-      group: "jetson-nvmap-gpu-colossus",
+      group: "jetson-nvmap-gpu-dispatch",
       queue: "max",
       "cancel-in-progress": false,
     })
   ) {
     errors.push(
-      "jetson-nvmap-gpu concurrency must queue every dispatch on one fixed device without cancellation",
+      "jetson-nvmap-gpu concurrency must queue every operator-backend dispatch without cancellation",
     );
   }
   if (!isDeepStrictEqual(asRecord(job.permissions), { contents: "read", "id-token": "write" })) {
@@ -4042,7 +4040,7 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
       errors.push("jetson-nvmap-gpu controller must use Node.js 22");
     }
   }
-  const dispatch = namedStep(steps, "Dispatch exact commit to Jetson through Colossus");
+  const dispatch = namedStep(steps, "Dispatch exact commit to Jetson through operator backend");
   if (
     dispatch?.run !==
       "node --experimental-strip-types --no-warnings tools/e2e/jetson-dispatch-client.mts" ||
@@ -4208,52 +4206,9 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
   const steps = asSteps(job.steps);
   const prepare = requireStep(errors, steps, "Prepare the trusted lane");
   const prepareEnv = asRecord(prepare?.env);
-  const dispatchIdentity = requireStep(errors, steps, "Record E2E dispatch identity");
-  const dispatchEnv = asRecord(dispatchIdentity?.env);
-  for (const [key, expected] of [
-    ["CANDIDATE_SHA", "${{ env.CANDIDATE_SHA }}"],
-    ["DISPATCH_JOBS", "${{ inputs.jobs }}"],
-    ["DISPATCH_TARGETS", "${{ inputs.targets }}"],
-    ["EVENT_NAME", "${{ github.event_name }}"],
-    [
-      "INCLUDE_STAGING_BREV_LAUNCHABLE",
-      "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
-    ],
-    ["RUN_ATTEMPT", "${{ github.run_attempt }}"],
-    ["RUN_ID", "${{ github.run_id }}"],
-    ["WORK_DIR", "${{ steps.workspace.outputs.work_dir }}"],
-  ] as const) {
-    if (dispatchEnv[key] !== expected) {
-      errors.push(`staging-brev-launchable dispatch identity must bind ${key}`);
-    }
-  }
-  for (const required of [
-    'kind: "nemoclaw-e2e-dispatch-v1"',
-    "candidateSha: $candidateSha",
-    "eventName: $eventName",
-    "workflowRunId: $workflowRunId",
-    "workflowRunAttempt: $workflowRunAttempt",
-    "jobs: $jobs",
-    "targets: $targets",
-    "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",
-    'emptySelectors: ($jobs == "" and $targets == "")',
-    '>"$WORK_DIR/dispatch.json"',
-  ]) {
-    requireRunContains(errors, dispatchIdentity, required);
-  }
   const run = requireStep(errors, steps, "Build, deploy, verify, test, and clean up");
-  if (
-    prepare &&
-    dispatchIdentity &&
-    run &&
-    !(
-      steps.indexOf(prepare) < steps.indexOf(dispatchIdentity) &&
-      steps.indexOf(dispatchIdentity) < steps.indexOf(run)
-    )
-  ) {
-    errors.push(
-      "staging-brev-launchable must record dispatch identity after preparation and before the Launchable E2E run",
-    );
+  if (prepare && run && steps.indexOf(prepare) >= steps.indexOf(run)) {
+    errors.push("staging-brev-launchable must prepare the workspace before the Launchable E2E run");
   }
   const runEnv = asRecord(run?.env);
   for (const [env, key, secret] of [
@@ -4544,6 +4499,11 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   if (generateOutputs.explicit_only_jobs !== "${{ steps.matrix.outputs.explicit_only_jobs }}") {
     errors.push("generate-matrix job must expose explicit_only_jobs output");
+  }
+  if (
+    generateOutputs.release_required_jobs !== "${{ steps.matrix.outputs.release_required_jobs }}"
+  ) {
+    errors.push("generate-matrix job must expose release_required_jobs output");
   }
   const generateSteps = asSteps(generateMatrix.steps);
   requireNoDispatchInputInterpolation(errors, generateSteps);

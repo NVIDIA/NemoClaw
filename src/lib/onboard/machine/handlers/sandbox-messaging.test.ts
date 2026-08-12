@@ -3,6 +3,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { AgentDefinition } from "../../../agent/defs";
+import { MessagingSetupApplier } from "../../../messaging/applier/setup-applier";
+import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../../../messaging/applier/types";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import type { RegistryMessagingAuthority } from "../../../messaging/plan-authority";
 import { hashCredential } from "../../../security/credential-hash";
@@ -12,7 +15,12 @@ import {
   type OnboardCheckpoint,
 } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session } from "../../../state/onboard-session";
-import { reconcileReusedSandboxMessaging, reconcileSandboxMessaging } from "./sandbox-messaging";
+import { setupMessagingChannels } from "../../messaging-channel-setup";
+import {
+  hasMessagingCredentialDrift,
+  reconcileReusedSandboxMessaging,
+  reconcileSandboxMessaging,
+} from "./sandbox-messaging";
 
 const channelIds = ["telegram", "unsupported"];
 
@@ -147,25 +155,80 @@ function telegramPlan(credentialHash: string): SandboxMessagingPlan {
   };
 }
 
-function slackPlan(credentialHash: string): SandboxMessagingPlan {
-  const plan = telegramPlan(credentialHash);
+function slackPlan(
+  botCredentialHash: string,
+  appCredentialHash?: string,
+  agent: SandboxMessagingPlan["agent"] = "openclaw",
+): SandboxMessagingPlan {
+  const appBinding = appCredentialHash
+    ? [
+        {
+          channelId: "slack",
+          credentialId: "slackAppToken",
+          sourceInput: "appToken",
+          providerName: "alpha-slack-app",
+          providerEnvKey: "SLACK_APP_TOKEN",
+          placeholder: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+          credentialAvailable: true,
+          credentialHash: appCredentialHash,
+        },
+      ]
+    : [];
   return {
-    ...plan,
-    channels: plan.channels.map((channel) => ({
-      ...channel,
-      channelId: "slack",
-      displayName: "Slack",
-    })),
-    credentialBindings: plan.credentialBindings.map((binding) => ({
-      ...binding,
-      channelId: "slack",
-      providerName: "alpha-slack-bridge",
-      providerEnvKey: "SLACK_BOT_TOKEN",
-      placeholder: "openshell:resolve:env:SLACK_BOT_TOKEN",
-    })),
+    ...telegramPlan(botCredentialHash),
+    agent,
+    channels: [
+      {
+        channelId: "slack",
+        displayName: "Slack",
+        authMode: "token-paste",
+        active: true,
+        selected: true,
+        configured: true,
+        disabled: false,
+        inputs: [],
+        hooks: [],
+      },
+    ],
+    credentialBindings: [
+      {
+        channelId: "slack",
+        credentialId: "slackBotToken",
+        sourceInput: "botToken",
+        providerName: "alpha-slack-bridge",
+        providerEnvKey: "SLACK_BOT_TOKEN",
+        placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        credentialAvailable: true,
+        credentialHash: botCredentialHash,
+      },
+      ...appBinding,
+    ],
   };
 }
 
+describe("hasMessagingCredentialDrift", () => {
+  const oldToken = "123456:old-telegram-token";
+  const plan = telegramPlan(hashCredential(oldToken) ?? "");
+
+  it("detects only an explicitly supplied replacement credential", () => {
+    expect(hasMessagingCredentialDrift(plan, {})).toBe(false);
+    expect(hasMessagingCredentialDrift(plan, { TELEGRAM_BOT_TOKEN: oldToken })).toBe(false);
+    expect(
+      hasMessagingCredentialDrift(plan, {
+        TELEGRAM_BOT_TOKEN: "123456:new-telegram-token",
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores replacement credentials for disabled channels", () => {
+    const disabledPlan = mixedChannelPlan();
+    expect(
+      hasMessagingCredentialDrift(disabledPlan, {
+        UNSUPPORTED_TOKEN: "replacement-disabled-channel-token",
+      }),
+    ).toBe(false);
+  });
+});
 function completedCheckpointSession(
   plan: SandboxMessagingPlan,
   stagedCredentialProviders: string[] = [],
@@ -242,6 +305,21 @@ afterEach(() => {
 });
 
 describe("reconcileReusedSandboxMessaging", () => {
+  it("does not clear an equal recorded plan from a different authority", () => {
+    const plan = telegramPlan(hashCredential("123456:registry-token") ?? "");
+    const clearPlanEnv = vi.fn();
+
+    const result = reconcileReusedSandboxMessaging(
+      structuredClone(plan),
+      { name: "openclaw" },
+      { clearPlanEnv },
+      plan,
+    );
+
+    expect(result).toEqual({ plan, selectedChannels: ["telegram"], changed: false });
+    expect(clearPlanEnv).not.toHaveBeenCalled();
+  });
+
   it("removes every unsupported channel artifact from a reused plan", () => {
     const result = reconcileReusedSandboxMessaging(
       mixedChannelPlan(),
@@ -448,7 +526,63 @@ describe("reconcileSandboxMessaging completed checkpoint credentials", () => {
       { selectionCompleted: true },
     );
     expect(deps.writePlanToEnv).toHaveBeenCalledWith(persistedPlan);
-    expect(result).toEqual({ plan: validatedPlan, selectedChannels: ["telegram"] });
+    expect(result.plan).toMatchObject(validatedPlan);
+    expect(result.selectedChannels).toEqual(["telegram"]);
+  });
+
+  it("validates only the channel whose supplied credential changed (#3631)", async () => {
+    const previousTelegramToken = "123456:previous-telegram-token";
+    const changedTelegramToken = "123456:changed-telegram-token";
+    const telegram = telegramPlan(hashCredential(previousTelegramToken) ?? "");
+    const slack = slackPlan(
+      hashCredential("xoxb-existing-slack-bot-token") ?? "",
+      hashCredential("xapp-existing-slack-app-token") ?? "",
+    );
+    const persistedPlan: SandboxMessagingPlan = {
+      ...telegram,
+      channels: [...telegram.channels, ...slack.channels],
+      credentialBindings: [...telegram.credentialBindings, ...slack.credentialBindings],
+    };
+    const validatedTelegramPlan = telegramPlan(hashCredential(changedTelegramToken) ?? "");
+    const deps = reconcileDeps([persistedPlan, validatedTelegramPlan]);
+    deps.setupMessagingChannels.mockResolvedValueOnce(["telegram"]);
+    deps.providerMatchesGatewayCredential.mockReturnValue(true);
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", changedTelegramToken);
+    vi.stubEnv("SLACK_BOT_TOKEN", "");
+    vi.stubEnv("SLACK_APP_TOKEN", "");
+
+    const result = await reconcileSandboxMessaging({
+      resume: true,
+      session: completedCheckpointSession(persistedPlan, [
+        "alpha-telegram-bridge",
+        "alpha-slack-bridge",
+        "alpha-slack-app",
+      ]),
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.setupMessagingChannels).toHaveBeenCalledWith(
+      { name: "openclaw" },
+      ["telegram"],
+      "alpha",
+      { selectionCompleted: true },
+    );
+    expect([...result.selectedChannels].sort()).toEqual(["slack", "telegram"]);
+    expect(result.plan?.credentialBindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          channelId: "telegram",
+          credentialHash: hashCredential(changedTelegramToken),
+        }),
+        expect.objectContaining({
+          channelId: "slack",
+          providerEnvKey: "SLACK_BOT_TOKEN",
+          credentialHash: hashCredential("xoxb-existing-slack-bot-token"),
+        }),
+      ]),
+    );
   });
 
   it("propagates Telegram rejection instead of refreshing the persisted hash", async () => {
@@ -481,11 +615,29 @@ describe("reconcileSandboxMessaging completed checkpoint credentials", () => {
     expect(persistedPlan.credentialBindings[0]?.credentialHash).toBe(hashCredential(previousToken));
   });
 
-  it("runs existing setup validation when the checkpointed credential lacks a staging receipt", async () => {
-    const persistedPlan = telegramPlan(hashCredential("123456:previous-token") ?? "");
+  it("stops forced validation when the real compiler skips an active Slack channel (#3631)", async () => {
+    const persistedPlan = slackPlan(
+      hashCredential("xoxb-previous-slack-bot-token") ?? "",
+      hashCredential("xapp-previous-slack-app-token") ?? "",
+    );
     const deps = reconcileDeps([persistedPlan]);
-    deps.providerMatchesGatewayCredential.mockReturnValueOnce(true);
-    deps.setupMessagingChannels.mockRejectedValueOnce(new Error("Telegram token is required"));
+    vi.stubEnv(MESSAGING_SETUP_APPLIER_ENV_KEY, "");
+    vi.stubEnv("SLACK_BOT_TOKEN", "invalid-replacement-bot-token");
+    vi.stubEnv("SLACK_APP_TOKEN", "invalid-replacement-app-token");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    MessagingSetupApplier.writePlanToEnv(persistedPlan);
+    deps.readMessagingPlanFromEnv.mockImplementation(() => MessagingSetupApplier.readPlanFromEnv());
+    deps.writePlanToEnv.mockImplementation((plan) => MessagingSetupApplier.writePlanToEnv(plan));
+    deps.clearPlanEnv.mockImplementation(() => MessagingSetupApplier.clearPlanEnv());
+    deps.setupMessagingChannels.mockImplementation(
+      async (agent, existingChannels, sandboxName, setupOptions) =>
+        setupMessagingChannels(agent as AgentDefinition, existingChannels, {
+          sandboxName,
+          selectionCompleted: setupOptions?.selectionCompleted,
+          isNonInteractive: () => true,
+          note: () => {},
+        }),
+    );
 
     await expect(
       reconcileSandboxMessaging({
@@ -493,17 +645,152 @@ describe("reconcileSandboxMessaging completed checkpoint credentials", () => {
         session: completedCheckpointSession(persistedPlan),
         sandboxName: "alpha",
         agent: { name: "openclaw" },
+        credentialValidationPlan: persistedPlan,
+        forceCredentialValidation: true,
         deps,
       }),
-    ).rejects.toThrow("Telegram token is required");
+    ).rejects.toThrow(
+      "Credential validation did not complete for active messaging channels: slack. The existing sandbox was not changed.",
+    );
+
+    expect(MessagingSetupApplier.requirePlanFromEnv()).toEqual(persistedPlan);
+  });
+
+  it("keeps checkpoint-disabled channels disabled while validating registry hashes (#3631)", async () => {
+    const oldSlackBotHash = hashCredential("xoxb-previous-slack-bot-token") ?? "";
+    const oldSlackAppHash = hashCredential("xapp-previous-slack-app-token") ?? "";
+    const replacementSlackBotHash = hashCredential("xoxb-replacement-slack-bot-token") ?? "";
+    const replacementSlackAppHash = hashCredential("xapp-replacement-slack-app-token") ?? "";
+    const replacementHashesByProviderEnvKey: Readonly<Record<string, string>> = {
+      SLACK_BOT_TOKEN: replacementSlackBotHash,
+      SLACK_APP_TOKEN: replacementSlackAppHash,
+    };
+    const telegram = telegramPlan(hashCredential("123456:telegram-token") ?? "");
+    const slack = slackPlan(oldSlackBotHash, oldSlackAppHash);
+    const registryPlan: SandboxMessagingPlan = {
+      ...slack,
+      channels: [
+        ...telegram.channels.map((channel) => ({
+          ...channel,
+          active: false,
+          disabled: true,
+        })),
+        ...slack.channels,
+      ],
+      disabledChannels: ["telegram"],
+      credentialBindings: [...telegram.credentialBindings, ...slack.credentialBindings],
+    };
+    const sessionPlan: SandboxMessagingPlan = {
+      ...registryPlan,
+      credentialBindings: registryPlan.credentialBindings.map((binding) => ({
+        ...binding,
+        credentialHash:
+          replacementHashesByProviderEnvKey[binding.providerEnvKey] ?? binding.credentialHash,
+      })),
+    };
+    const validatedSlackPlan = slackPlan(replacementSlackBotHash, replacementSlackAppHash);
+    const deps = reconcileDeps([validatedSlackPlan]);
+    deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
+      authoritative: true,
+      plan: registryPlan,
+    });
+    deps.setupMessagingChannels.mockResolvedValueOnce(["slack"]);
+    const session = withMessagingCheckpoint(
+      completedCheckpointSession(sessionPlan),
+      ["telegram", "slack"],
+      ["telegram"],
+    );
+    vi.stubEnv("SLACK_BOT_TOKEN", "xoxb-replacement-slack-bot-token");
+    vi.stubEnv("SLACK_APP_TOKEN", "xapp-replacement-slack-app-token");
+
+    const result = await reconcileSandboxMessaging({
+      resume: true,
+      session,
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      credentialValidationPlan: registryPlan,
+      forceCredentialValidation: true,
+      deps,
+    });
 
     expect(deps.setupMessagingChannels).toHaveBeenCalledWith(
       { name: "openclaw" },
-      ["telegram"],
+      ["slack"],
       "alpha",
       { selectionCompleted: true },
     );
-    expect(deps.providerMatchesGatewayCredential).not.toHaveBeenCalled();
+    expect(result.selectedChannels).toEqual(["slack"]);
+    expect(result.plan?.disabledChannels).toContain("telegram");
+    expect(result.plan?.channels).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ channelId: "telegram", active: false, disabled: true }),
+        expect.objectContaining({ channelId: "slack", active: true, disabled: false }),
+      ]),
+    );
+    expect(
+      result.plan?.credentialBindings.find(
+        (binding) => binding.providerEnvKey === "SLACK_BOT_TOKEN",
+      )?.credentialHash,
+    ).toBe(replacementSlackBotHash);
+  });
+
+  it("does not reuse a refreshed Hermes process plan before forced validation (#3631)", async () => {
+    const registryPlan = slackPlan(
+      hashCredential("xoxb-previous-slack-bot-token") ?? "",
+      hashCredential("xapp-previous-slack-app-token") ?? "",
+      "hermes",
+    );
+    const refreshedPlan = slackPlan(
+      hashCredential("xoxb-replacement-slack-bot-token") ?? "",
+      hashCredential("xapp-replacement-slack-app-token") ?? "",
+      "hermes",
+    );
+    const deps = reconcileDeps([refreshedPlan, null]);
+    deps.setupMessagingChannels.mockResolvedValueOnce([]);
+
+    await expect(
+      reconcileSandboxMessaging({
+        resume: true,
+        session: completedCheckpointSession(refreshedPlan),
+        sandboxName: "alpha",
+        agent: { name: "hermes" },
+        credentialValidationPlan: registryPlan,
+        forceCredentialValidation: true,
+        deps,
+      }),
+    ).rejects.toThrow(
+      "Credential validation did not complete for active messaging channels: slack. The existing sandbox was not changed.",
+    );
+
+    expect(deps.setupMessagingChannels).toHaveBeenCalledWith(
+      { name: "hermes" },
+      ["slack"],
+      "alpha",
+      { selectionCompleted: true },
+    );
+    expect(deps.writePlanToEnv).toHaveBeenLastCalledWith(registryPlan);
+  });
+
+  it("adopts a live provider when its durable effect receipt is missing", async () => {
+    const persistedPlan = telegramPlan(hashCredential("123456:previous-token") ?? "");
+    const deps = reconcileDeps([persistedPlan]);
+    deps.providerMatchesGatewayCredential.mockReturnValueOnce(true);
+
+    const result = await reconcileSandboxMessaging({
+      resume: true,
+      session: completedCheckpointSession(persistedPlan),
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "alpha-telegram-bridge",
+      "generic",
+      "TELEGRAM_BOT_TOKEN",
+    );
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(result).toEqual({ plan: persistedPlan, selectedChannels: ["telegram"] });
   });
 
   it("reuses an exact OpenShell provider when the raw credential is unavailable (#6743)", async () => {
