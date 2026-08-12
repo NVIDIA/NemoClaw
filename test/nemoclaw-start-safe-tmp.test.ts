@@ -8,6 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { extractShellFunctionFromSource } from "./support/shell-function-extractor";
+
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 
 function safeTmpHelpers(src: string): string {
@@ -44,6 +46,41 @@ describe("nemoclaw-start safe tmp file creation", () => {
       expect((fs.statSync(pidFile).mode & 0o777).toString(8)).toBe("600");
       expect(fs.readFileSync(pidFile, "utf-8")).toBe("12345\n");
       expect(fs.readdirSync(tmpDir).filter((entry) => entry.includes(".tmp."))).toEqual([]);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("replaces a planted gateway-log symlink before the initial launch", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-safe-tmp-"));
+    const gatewayLog = path.join(tmpDir, "gateway.log");
+    const symlinkTarget = path.join(tmpDir, "symlink-target.log");
+    const launch = extractShellFunctionFromSource(
+      src,
+      "launch_openclaw_gateway_process",
+    ).replaceAll("/tmp/gateway.log", gatewayLog);
+
+    try {
+      fs.writeFileSync(symlinkTarget, "do not overwrite\n");
+      fs.symlinkSync(symlinkTarget, gatewayLog);
+      const script = [
+        "set -euo pipefail",
+        safeTmpHelpers(src),
+        launch,
+        `_nemoclaw_safe_create_tmp_file ${JSON.stringify(gatewayLog)} 644`,
+        "export OPENCLAW_GATEWAY_TOKEN=gateway-secret",
+        `launch_openclaw_gateway_process truncate printf '%s\\n' 'gateway started'`,
+        'wait "$GATEWAY_PID"',
+      ].join("\n");
+      const result = spawnSync("bash", ["-c", script], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.lstatSync(gatewayLog).isSymbolicLink()).toBe(false);
+      expect(fs.readFileSync(gatewayLog, "utf-8")).toBe("gateway started\n");
+      expect(fs.readFileSync(symlinkTarget, "utf-8")).toBe("do not overwrite\n");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

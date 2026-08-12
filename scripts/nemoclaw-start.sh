@@ -2337,6 +2337,11 @@ try {
   const gateway = cfg.gateway && typeof cfg.gateway === "object" ? cfg.gateway : (cfg.gateway = {});
   const auth = gateway.auth && typeof gateway.auth === "object" ? gateway.auth : (gateway.auth = {});
   auth.token = tokenUrlSafe(32);
+  const meta = cfg.meta && typeof cfg.meta === "object" ? cfg.meta : (cfg.meta = {});
+  // Record OpenClaw's configuration-write metadata. Without this field,
+  // OpenClaw 2026.7 can classify the authenticated configuration as overwritten
+  // and restore the tokenless build-time backup before gateway authentication resolves.
+  meta.lastTouchedAt = new Date().toISOString();
 
   const dirPath = pathModule.dirname(path);
   let fd;
