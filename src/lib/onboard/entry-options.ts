@@ -92,11 +92,22 @@ export function resolveOnboardRunEntryOptions(
     persistedSessionStatus,
     isNonInteractiveEnv,
   );
+  const entryOptions = resolveOnboardEntryOptions(context.entryOptionsInput, {
+    ...deps,
+    isNonInteractive: () => context.nonInteractive,
+  });
   return {
     ...context,
-    ...resolveOnboardEntryOptions(context.entryOptionsInput, {
-      ...deps,
-      isNonInteractive: () => context.nonInteractive,
+    ...entryOptions,
+    getSessionInput: <RuntimeControlRequests extends object>(
+      runtimeControlRequests: RuntimeControlRequests,
+    ) => ({
+      ...runtimeControlRequests,
+      stationExpressIntent: requireStationExpressResumeIntent(
+        env,
+        entryOptions.requestedSandboxName,
+        entryOptions.resume,
+      ),
     }),
   };
 }
@@ -158,19 +169,6 @@ export function wrapOnboard<Options extends ResumableEntryOptions>(
     session.loadSession,
     session.reconcileStationExpressReceiptRetirement,
   );
-}
-
-export function prepareSessionInput<RuntimeControlRequests extends object>(
-  runtimeControlRequests: RuntimeControlRequests,
-  sandboxName: string | null,
-  resume: boolean,
-  preflight: () => void,
-) {
-  preflight();
-  return {
-    ...runtimeControlRequests,
-    stationExpressIntent: requireStationExpressResumeIntent(process.env, sandboxName, resume),
-  };
 }
 
 export function resolveOnboardEntryOptions(

@@ -3706,7 +3706,6 @@ async function preflightAuthoritativeRebuildTarget(
 }
 
 // ── Main ─────────────────────────────────────────────────────────
-const onboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   const hostMountScope = onboardSessionBootstrap.beginHostMountScope(opts.hostMounts);
   resetGatewayOwnerBinding();
@@ -3754,7 +3753,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   }
   // Validate provider/model hints before preflight so configuration errors are not reported as Docker failures.
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const stationSessionInput = onboardEntryOptions.prepareSessionInput(runtimeControlRequests, requestedSandboxName, resume, () => resumeConfig.preflightEarlyOnboardEnvForResume(isNonInteractive(), opts.authoritativeResumeConfig === true));
+  resumeConfig.preflightEarlyOnboardEnvForResume(isNonInteractive(), opts.authoritativeResumeConfig === true);
+  const stationSessionInput = entryOptions.getSessionInput(runtimeControlRequests);
   const ownsOnboardLock = opts.onboardLockAlreadyHeld !== true;
   const lockResult = ownsOnboardLock
     ? onboardSession.acquireOnboardLock(
@@ -4464,7 +4464,7 @@ module.exports = {
   isSandboxReady,
   isLoopbackHostname,
   normalizeProviderBaseUrl,
-  onboard,
+  onboard: onboardEntryOptions.wrapOnboard(runOnboard, onboardSession),
   onboardSession,
   printSandboxCreateRecoveryHints,
   promptYesNoOrDefault,

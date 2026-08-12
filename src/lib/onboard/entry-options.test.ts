@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   type OnboardEntryOptionsDeps,
   resolveOnboardEntryOptions,
+  resolveOnboardRunEntryOptions,
   resolveOnboardRunOptions,
   withNonInteractiveEnvironment,
 } from "./entry-options";
@@ -63,6 +64,24 @@ describe("resolveOnboardRunOptions", () => {
         stdoutIsTty: false,
       }).nonInteractive,
     ).toBe(false);
+  });
+});
+
+describe("resolveOnboardRunEntryOptions", () => {
+  it("prepares session input from the resolved resume state", () => {
+    const runtimeControlRequests = { requestedObservabilityEnabled: true };
+    const result = resolveOnboardRunEntryOptions(
+      { resume: true, sandboxName: "demo" },
+      {},
+      null,
+      () => false,
+      createDeps(),
+    );
+
+    expect(result.getSessionInput(runtimeControlRequests)).toEqual({
+      ...runtimeControlRequests,
+      stationExpressIntent: null,
+    });
   });
 });
 
