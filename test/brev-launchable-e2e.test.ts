@@ -36,6 +36,7 @@ function fixture(
     repoSha?: string;
     runtimeOverrides?: boolean;
     schemaVersion?: number;
+    sshReadyAfter?: number;
     sourceRepository?: string;
     sourcePath?: string;
   } = {},
@@ -46,6 +47,7 @@ function fixture(
   const workDir = path.join(root, "evidence");
   const state = path.join(root, "workspace.json");
   const calls = path.join(root, "calls.log");
+  const sshAttempts = path.join(root, "ssh-attempts");
   fs.mkdirSync(bin);
   fs.mkdirSync(workDir);
 
@@ -131,6 +133,15 @@ esac
     path.join(bin, "ssh"),
     `#!/usr/bin/env bash
 set -euo pipefail
+if [ "\${*: -1}" = true ]; then
+  attempts=0
+  [ ! -f "$FAKE_SSH_ATTEMPTS" ] || attempts="$(cat "$FAKE_SSH_ATTEMPTS")"
+  attempts=$((attempts + 1))
+  printf '%s\n' "$attempts" > "$FAKE_SSH_ATTEMPTS"
+  printf 'ssh host readiness attempt %s\n' "$attempts" >> "$FAKE_CALLS"
+  [ "$attempts" -ge "$FAKE_SSH_READY_AFTER" ]
+  exit
+fi
 script="$(cat)"
 grep -q 'NEMOCLAW_E2E_SETUP_MODE=preinstalled-launchable' <<<"$script"
 grep -q 'NEMOCLAW_SOURCE_PATH=/opt/nemoclaw-image/NemoClaw' <<<"$script"
@@ -166,6 +177,8 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_REPO_SHA: options.repoSha ?? candidateSha,
     FAKE_RUNTIME_OVERRIDES: options.runtimeOverrides ? "true" : "false",
     FAKE_SCHEMA_VERSION: String(options.schemaVersion ?? 1),
+    FAKE_SSH_ATTEMPTS: sshAttempts,
+    FAKE_SSH_READY_AFTER: String(options.sshReadyAfter ?? 1),
     FAKE_SOURCE_REPOSITORY: options.sourceRepository ?? "NVIDIA/NemoClaw",
     FAKE_SOURCE_PATH: options.sourcePath ?? "/opt/nemoclaw-image/NemoClaw",
     FAKE_STATE: state,
@@ -178,7 +191,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     RUNNER_TEMP: root,
     WORK_DIR: workDir,
   };
-  return { calls, env, state, workDir };
+  return { calls, env, sshAttempts, state, workDir };
 }
 
 function run(env: NodeJS.ProcessEnv) {
@@ -187,7 +200,7 @@ function run(env: NodeJS.ProcessEnv) {
 
 describe("focused staging Brev Launchable lane", () => {
   it("binds the producer run, verifies the clean booted SHA, runs E2E, and deletes (#6943)", () => {
-    const { calls, env, state, workDir } = fixture();
+    const { calls, env, sshAttempts, state, workDir } = fixture({ sshReadyAfter: 3 });
     const result = run(env);
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const commands = fs.readFileSync(calls, "utf8");
@@ -197,6 +210,8 @@ describe("focused staging Brev Launchable lane", () => {
       commands.indexOf("create nclaw-e2e-test-1 --launchable env-staging123"),
     );
     expect(commands).toContain("create nclaw-e2e-test-1 --launchable env-staging123");
+    expect(commands.match(/ssh host readiness attempt/gu)).toHaveLength(3);
+    expect(fs.readFileSync(sshAttempts, "utf8").trim()).toBe("3");
     expect(commands).toContain("ssh preinstalled full-e2e.test.ts");
     expect(commands).not.toContain("nvapi-test-value");
     expect(commands).not.toMatch(/rsync|install\.sh|npm (?:ci|install)|git clone/u);
@@ -281,13 +296,25 @@ describe("focused staging Brev Launchable lane", () => {
       expect(fs.readFileSync(boot.calls, "utf8")).not.toContain("full-e2e.test.ts");
       expect(fs.existsSync(boot.state)).toBe(false);
     }
-  });
+  }, 90_000);
 
   it("reports E2E failure only after verified workspace cleanup", () => {
     const { env, state, workDir } = fixture({ e2eFails: true });
     const result = run(env);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("full E2E failed");
+    expect(fs.existsSync(state)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
+  it("fails after host SSH readiness times out and deletes the workspace", () => {
+    const { calls, env, state, workDir } = fixture({ sshReadyAfter: Number.MAX_SAFE_INTEGER });
+    const result = run({ ...env, BREV_HOST_SSH_TIMEOUT_SECONDS: "1" });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("host SSH readiness timed out");
+    expect(fs.readFileSync(calls, "utf8")).not.toMatch(/brev exec|full-e2e\.test\.ts/u);
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
