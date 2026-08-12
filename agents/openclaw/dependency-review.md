@@ -23,7 +23,7 @@ Update it and `agents/openclaw/mcporter-runtime/package*.json` together whenever
 - Security override: `hono@4.12.34` (`sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==`) replaces the SDK's vulnerable `4.12.27` resolution.
   `GHSA-8j4g-w8fx-2239`, `GHSA-54fx-42gc-7vw4`, `GHSA-f23p-vx2j-j53r`, and `GHSA-79qm-7rj5-m7r9` are fixed in `4.12.34`.
   The replacement remains within the SDK's declared `^4.11.4` range and preserves Hono's Node.js `>=16.9.0` contract.
-  Remove the override when the declared graph resolves to `4.12.34` or later.
+  Before removing or advancing the override, review the replacement and update the exact-version source-of-truth boundary, lock digests, and regression tests together.
 - Security override: `ip-address@10.3.1` (`sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==`) replaces `express-rate-limit`'s vulnerable `10.2.0` resolution. `GHSA-mwp4-54f8-5fhr` affects releases through `10.3.0`; the replacement remains within the declared `^10.2.0` range, adds the leading-zero IPv4 rejection and host-only subnet classification required for trust-boundary checks, and preserves Node `>= 12`. Remove the override when the declared graph resolves to a reviewed release outside the affected range.
 
 Both image paths install the committed graph with `npm ci --ignore-scripts --omit=dev` because the published package declares no install-time lifecycle script and NemoClaw needs only its already-built CLI.

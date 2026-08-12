@@ -21,7 +21,6 @@ const INTEGRITY =
 const TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz";
 const LOCK_SHA256 = "a814d82a36046bd7819d222337809ce80ccfd76b553cd17265ff64a527d3d095";
 const MCPORTER_PACKAGE_SPEC = "mcporter@0.7.3";
-const MCPORTER_LOCK_SHA256 = "17f2372a0a6949df928333a2f98862ae563013a7682b19a8ce63825c4696a064";
 const MCP_TOOL_DISCOVERY_PACKAGE_SPEC = "@modelcontextprotocol/sdk@1.30.0";
 const MCP_TOOL_DISCOVERY_LOCK_SHA256 =
   "bc7e34d9eb1f72cf3016c8b88c72d3b7682a4f234903cb93b9476b10d7e954eb";
