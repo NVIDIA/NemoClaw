@@ -29,6 +29,42 @@ describe("installer N1x Express preview", () => {
     );
   });
 
+  it("stops before onboarding when the Deferred preview is declined (#8574)", () => {
+    const result = runExpressPromptWithTty("n\n", "pipe", "N1x");
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(1);
+    expect(output).toMatch(/N1x onboarding currently requires the Deferred managed-vLLM preview/);
+    expect(output).toMatch(/accept the preview, or set NEMOCLAW_PROVIDER=install-vllm/);
+    expect(output).not.toMatch(/Continuing with interactive flow/);
+    expect(output).not.toMatch(/RESULT /);
+  });
+
+  it("rejects NEMOCLAW_NO_EXPRESS without explicit managed-vLLM intent (#8574)", () => {
+    const result = runExpressPromptWithTty("", "pipe", "N1x", {
+      NEMOCLAW_NO_EXPRESS: "1",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(1);
+    expect(output).toMatch(/explicit Deferred managed-vLLM preview intent/);
+    expect(output).toMatch(/Remove NEMOCLAW_NO_EXPRESS=1 and accept the preview/);
+    expect(output).toMatch(/set NEMOCLAW_PROVIDER=install-vllm/);
+    expect(output).not.toMatch(/RESULT /);
+  });
+
+  it("allows the N1x prompt bypass with explicit managed-vLLM intent (#8574)", () => {
+    const result = runExpressPromptWithTty("", "pipe", "N1x", {
+      NEMOCLAW_NO_EXPRESS: "1",
+      NEMOCLAW_PROVIDER: "install-vllm",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Skipping express prompt \(NEMOCLAW_NO_EXPRESS=1\)/);
+    expect(output).toMatch(/RESULT .*PROVIDER=install-vllm/);
+  });
+
   it("detects N1x only when FastOS and PCI identity both qualify (#8574)", () => {
     const detectN1x = (fastOsQualified: boolean, pciQualified: boolean) =>
       runInstallerSourced(`
@@ -59,22 +95,42 @@ detect_express_platform
 
   it("validates bounded root-owned FastOS metadata (#8574)", () => {
     const accepted = runInstallerSourced(
-      `n1x_fastos_release_metadata_is_trusted "regular file:0:0:644:116:1:2"`,
+      `n1x_fastos_release_metadata_is_trusted "81a4:0:0:644:116:1:2"`,
     );
     expect(accepted.result.status, accepted.output).toBe(0);
 
     for (const metadata of [
-      "symbolic link:0:0:777:24:1:2",
-      "regular file:1000:0:644:116:1:2",
-      "regular file:0:1000:644:116:1:2",
-      "regular file:0:0:666:116:1:2",
-      "regular file:0:0:644:4097:1:2",
+      "a1ff:0:0:777:24:1:2",
+      "81a4:1000:0:644:116:1:2",
+      "81a4:0:1000:644:116:1:2",
+      "81b6:0:0:666:116:1:2",
+      "81a4:0:0:644:4097:1:2",
     ]) {
       const rejected = runInstallerSourced(
         `if n1x_fastos_release_metadata_is_trusted "${metadata}"; then exit 9; fi`,
       );
       expect(rejected.result.status, `${metadata}: ${rejected.output}`).toBe(0);
     }
+  });
+
+  it("collects numeric FastOS metadata under a non-C locale (#8574)", () => {
+    const result = runInstallerSourced(`
+test_marker="$HOME/n1x-fastos-release"
+printf 'NAME="N1x FASTOS"\\n' >"$test_marker"
+n1x_fastos_release_path() { printf "%s" "$test_marker"; }
+stat() {
+  [ "\${LC_ALL:-}" = "de_DE.UTF-8" ] || return 96
+  [ "\${2:-}" = '%f:%u:%g:%a:%s:%d:%i' ] || return 97
+  case "\${1:-}:\${3:-}" in
+    -c:"$test_marker"|-Lc:/proc/self/fd/9) ;;
+    *) return 98 ;;
+  esac
+  printf '81a4:0:0:644:18:1:2'
+}
+LC_ALL=de_DE.UTF-8 n1x_fastos_release_is_trusted
+`);
+
+    expect(result.result.status, result.output).toBe(0);
   });
 
   it("parses the FastOS name without executing marker text (#8574)", () => {

@@ -3784,9 +3784,11 @@ n1x_pci_devices_path() {
 
 n1x_fastos_release_metadata_is_trusted() {
   local metadata=${1:-}
-  local file_type="" uid="" gid="" mode="" size="" device="" inode=""
-  IFS=: read -r file_type uid gid mode size device inode <<<"$metadata"
-  [[ "$file_type" = "regular file" && "$uid" = "0" && "$gid" = "0" ]] || return 1
+  local file_mode_hex="" uid="" gid="" mode="" size="" device="" inode=""
+  IFS=: read -r file_mode_hex uid gid mode size device inode <<<"$metadata"
+  [[ "$file_mode_hex" =~ ^[0-9a-fA-F]+$ ]] || return 1
+  (((16#$file_mode_hex & 16#f000) == 16#8000)) || return 1
+  [[ "$uid" = "0" && "$gid" = "0" ]] || return 1
   [[ "$mode" =~ ^[0-7]{3,4}$ && "$size" =~ ^[0-9]+$ ]] || return 1
   ((10#$size > 0 && 10#$size <= N1X_FASTOS_RELEASE_MAX_BYTES)) || return 1
   ((8#$mode & 022)) && return 1
@@ -3821,14 +3823,14 @@ n1x_fastos_release_is_trusted() {
   local marker="" before="" opened="" after="" contents=""
   marker="$(n1x_fastos_release_path)"
   [ -e "$marker" ] && [ ! -L "$marker" ] || return 1
-  before="$(stat -c '%F:%u:%g:%a:%s:%d:%i' "$marker" 2>/dev/null)" || return 1
+  before="$(stat -c '%f:%u:%g:%a:%s:%d:%i' "$marker" 2>/dev/null)" || return 1
   n1x_fastos_release_metadata_is_trusted "$before" || return 1
   exec 9<"$marker" || return 1
-  opened="$(stat -Lc '%F:%u:%g:%a:%s:%d:%i' /proc/self/fd/9 2>/dev/null)" || {
+  opened="$(stat -Lc '%f:%u:%g:%a:%s:%d:%i' /proc/self/fd/9 2>/dev/null)" || {
     exec 9<&-
     return 1
   }
-  after="$(stat -c '%F:%u:%g:%a:%s:%d:%i' "$marker" 2>/dev/null)" || {
+  after="$(stat -c '%f:%u:%g:%a:%s:%d:%i' "$marker" 2>/dev/null)" || {
     exec 9<&-
     return 1
   }
@@ -3845,11 +3847,11 @@ n1x_fastos_release_is_trusted() {
   fi
   exec 9<&-
   exec 9<"$marker" || return 1
-  opened="$(stat -Lc '%F:%u:%g:%a:%s:%d:%i' /proc/self/fd/9 2>/dev/null)" || {
+  opened="$(stat -Lc '%f:%u:%g:%a:%s:%d:%i' /proc/self/fd/9 2>/dev/null)" || {
     exec 9<&-
     return 1
   }
-  after="$(stat -c '%F:%u:%g:%a:%s:%d:%i' "$marker" 2>/dev/null)" || {
+  after="$(stat -c '%f:%u:%g:%a:%s:%d:%i' "$marker" 2>/dev/null)" || {
     exec 9<&-
     return 1
   }
@@ -5354,6 +5356,9 @@ maybe_offer_express_install() {
   # On a detected Express platform but a skip condition applies — explain why so
   # the user understands they could have gotten express otherwise.
   if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
+    if [ "$platform" = "N1x" ] && [ "${NEMOCLAW_PROVIDER:-}" != "install-vllm" ]; then
+      error "N1x onboarding currently requires explicit Deferred managed-vLLM preview intent. Remove NEMOCLAW_NO_EXPRESS=1 and accept the preview, or set NEMOCLAW_PROVIDER=install-vllm."
+    fi
     if [ "$platform" = "DGX Station" ]; then
       station_dual_pair_resume_pending \
         && error "A dual-DGX Station pair resume is pending; finish exact pair revalidation before disabling Station setup."
@@ -5363,6 +5368,9 @@ maybe_offer_express_install() {
     return 0
   fi
   if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
+    if [ "$platform" = "N1x" ] && [ "$NEMOCLAW_PROVIDER" != "install-vllm" ]; then
+      error "N1x onboarding currently accepts only the Deferred managed-vLLM preview. Set NEMOCLAW_PROVIDER=install-vllm or use another host for provider ${NEMOCLAW_PROVIDER}."
+    fi
     if [ "$platform" = "DGX Station" ] && [ "$NEMOCLAW_PROVIDER" = "install-vllm" ]; then
       # An explicit managed-vLLM provider selects the same Station host/pair
       # preparation boundary without forcing the rest of the express policy.
@@ -5451,6 +5459,9 @@ maybe_offer_express_install() {
       activate_express_install "$platform"
       ;;
     *)
+      if [ "$platform" = "N1x" ]; then
+        error "N1x onboarding currently requires the Deferred managed-vLLM preview. Re-run the installer and accept the preview, or set NEMOCLAW_PROVIDER=install-vllm."
+      fi
       info "Skipping express install. Continuing with interactive flow."
       ;;
   esac

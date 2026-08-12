@@ -352,8 +352,9 @@ The classifier does not pin a FastOS version, kernel version, driver version, fi
 Generic DMI values, such as `SKU 1` and `JMJWOA-Generic`, do not establish N1x identity by themselves.
 
 N1x Express does not activate DGX Spark cluster discovery, the fixed catalog path, managed llama.cpp, or NVIDIA NIM.
-Set `NEMOCLAW_NO_EXPRESS=1` to skip the Express prompt and select an inference provider interactively.
 Accepting the preview prompt sets explicit managed-vLLM intent for the narrow pending-validation readiness exception.
+Declining the prompt or setting only `NEMOCLAW_NO_EXPRESS=1` stops the installer before onboarding; neither path opens interactive provider selection.
+Set `NEMOCLAW_PROVIDER=install-vllm` when you need to bypass the prompt with the same explicit preview intent.
 
 <Warning title="N1x Express Qualification Pending">
 Physical CUDA and CDI checks passed on one N1x host.
