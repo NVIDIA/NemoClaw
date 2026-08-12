@@ -11,7 +11,7 @@ description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw mai
 Use `.github/workflows/e2e.yaml` from trusted `main`.
 Every push to `main` selects the default workflow E2E jobs.
 Push runs skip `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification` because push events cannot set the required workflow dispatch flags.
-Pre-tag evidence still requires the full `workflow_dispatch` mode described below.
+A successful push run publishes the same `Release qualification` check as the full `workflow_dispatch` mode described below.
 Do not substitute local `npm run test:live-e2e` unless the maintainer explicitly requests local execution.
 
 ## Manual PR E2E
@@ -304,17 +304,7 @@ gh api "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID/jobs?filter=latest&per_page=1
   >"$EVIDENCE_DIR/jobs-latest-$RUN_ID.json"
 ```
 
-For full-mode or release evidence, collect every attempt for the matrix-preserving ledger:
-
-```bash
-gh api --paginate --slurp \
-  "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" \
-  >"$EVIDENCE_DIR/jobs-$RUN_ID.json"
-```
-
-Reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json` as the `nemoclaw-maintainer-cut-release-tag` manifest inputs and as the full-mode validator inputs. Do not fetch the same run again. `jobs-latest-$RUN_ID.json` is only for ordinary and Launchable modes.
-
-For ordinary and Launchable modes, require `run-$RUN_ID.json` to report:
+Require `run-$RUN_ID.json` to report:
 
 - `head_sha` equal to `CANDIDATE_SHA`;
 - `status` equal to `completed`; and
@@ -323,47 +313,13 @@ For ordinary and Launchable modes, require `run-$RUN_ID.json` to report:
 For Launchable mode, also require `jobs-latest-$RUN_ID.json` to contain one completed, successful
 `Exact staging Brev Launchable` job. Return the workflow and job URLs.
 
-For full mode, select and download the Launchable E2E artifact for the latest successful Launchable job attempt:
-
-```bash
-EVIDENCE_ATTEMPT="$(jq -er '
-  [.[] | .jobs[] |
-   select(.name == "Exact staging Brev Launchable" and
-          .status == "completed" and
-          .conclusion == "success" and
-          (.run_attempt | type) == "number") |
-   .run_attempt] | unique | sort | last // error("no successful Launchable attempt")
-' "$EVIDENCE_DIR/jobs-$RUN_ID.json")"
-FULL_E2E_DIR="$EVIDENCE_DIR/full-$EVIDENCE_ATTEMPT"
-install -d -m 0700 "$FULL_E2E_DIR"
-gh run download "$RUN_ID" --repo NVIDIA/NemoClaw \
-  --name "staging-brev-launchable-${CANDIDATE_SHA}-${RUN_ID}-${EVIDENCE_ATTEMPT}" \
-  --dir "$FULL_E2E_DIR"
-node --experimental-strip-types --no-warnings \
-  .agents/skills/nemoclaw-maintainer-e2e/scripts/validate-full-e2e-evidence.mts \
-  --candidate-sha "$CANDIDATE_SHA" \
-  --run-json "$EVIDENCE_DIR/run-$RUN_ID.json" \
-  --jobs-json "$EVIDENCE_DIR/jobs-$RUN_ID.json" \
-  --dispatch-json "$FULL_E2E_DIR/dispatch.json" \
-  --launchable-e2e-json "$FULL_E2E_DIR/launchable-e2e.json" \
-  --cleanup-json "$FULL_E2E_DIR/cleanup.json"
-```
-
-The validator requires:
-
-- the workflow run to succeed for the selected SHA;
-- `dispatch.json` to bind the same run, empty selectors, `include_staging_brev_launchable=true`, `allowJetsonRunnerQueue: false`, `allowDgxSparkRunnerQueue: false`, and the selected successful Launchable job attempt;
-- `allowJetsonDispatch: false` in every v2 `dispatch.json` receipt;
-- `allowJetsonDispatch` to be absent or `false` in every v1 `dispatch.json` receipt;
-- `Exact staging Brev Launchable` to conclude `success` in the selected current or earlier attempt of the same workflow run;
-- `launchable-e2e.json` to identify the selected SHA in the repository and provision records;
-- the booted repository to be unmodified;
-- the in-guest full E2E to pass; and
-- `cleanup.json` to report the same workspace as `ABSENT`.
-
-A skipped, cancelled, queued, or failed Launchable E2E job is not evidence.
-A Launchable-mode run is not full-mode or pre-tag release evidence.
-A missing, mismatched, or failed cleanup receipt is not evidence.
+For full mode, require `jobs-latest-$RUN_ID.json` to contain one completed, successful
+`Release qualification` job. Return its job URL with the workflow URL.
+That job waits for every default-required E2E result, including `Exact staging Brev Launchable`.
+The Launchable job directly verifies the candidate checkout, in-guest full E2E result, and workspace cleanup before it succeeds.
+Its `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json` artifacts remain available for diagnosis.
+A skipped, cancelled, queued, or failed `Release qualification` job is not evidence.
+A Launchable-only run is not full-mode or pre-tag release evidence.
 
 ## Bind Release Evidence
 
@@ -372,20 +328,14 @@ Return:
 
 - candidate SHA;
 - workflow run URL and conclusion;
-- `Exact staging Brev Launchable` job URL;
-- selected successful Launchable job attempt;
-- Launchable E2E identity; and
-- cleanup result.
+- `Release qualification` job URL; and
+- workflow run attempt.
 
 If the release candidate SHA changes, discard the earlier full run and dispatch full mode for the new SHA.
 No release-note-only delta exception is currently defined.
 
-When `nemoclaw-maintainer-cut-release-tag` invokes this skill, return the validated fields for its pre-tag E2E evidence ledger.
-The trusted `dispatch.json` receipt proves that full mode used empty selectors and included `Exact staging Brev Launchable`.
-For Jetson dispatch, a v2 receipt requires `allowJetsonDispatch: false`.
-A v1 receipt may omit `allowJetsonDispatch`, but it must be `false` when present.
-Both receipt versions require the optional DGX Spark runner path to be disabled.
-The release evidence ledger proves the result of each workflow E2E.
+When `nemoclaw-maintainer-cut-release-tag` invokes this skill, return the exact-SHA workflow and `Release qualification` job URLs.
+The stable check is the pre-tag E2E evidence; do not build a second status ledger from artifacts.
 Do not ask for the release confirmation phrase in this skill.
 
 ## Access Failures
