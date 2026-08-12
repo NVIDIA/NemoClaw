@@ -40,7 +40,6 @@ const CONFIG_PATH = "/sandbox/.openclaw/openclaw.json";
 const CONFIG_DIR = path.dirname(CONFIG_PATH);
 const CONFIG_HASH_PATH = `${CONFIG_DIR}/.config-hash`;
 const CONFIG_GUARD_PATH = "/usr/local/lib/nemoclaw/openclaw-config-guard.py";
-const STATE_LOCK_PLAN_PATH = "/usr/local/share/nemoclaw/state-lock-plan.json";
 const STARTUP_MARKER_PATHS = [
   "/run/nemoclaw/openclaw-config-ready-v1.capability.json",
   "/run/nemoclaw/openclaw-config-ready.json",
@@ -380,22 +379,6 @@ async function installedStartupCensus(
   );
   expect(result.exitCode, resultText(result)).toBe(0);
   return JSON.parse(result.stdout.trim()) as StartupCensus;
-}
-
-async function runInstalledFailedStartupUnlock(
-  host: HostCliClient,
-  containerId: string,
-  artifactName: string,
-): Promise<ShellProbeResult> {
-  const script = [
-    "set -eu",
-    `plan_json=$(cat ${STATE_LOCK_PLAN_PATH})`,
-    `exec timeout --signal=TERM --kill-after=5s 25m python3 -I ${CONFIG_GUARD_PATH} unlock-failed-startup --config-dir ${CONFIG_DIR} --plan-json "$plan_json"`,
-  ].join("\n");
-  return docker(host, ["exec", "--user", "0", containerId, "sh", "-c", script], {
-    artifactName,
-    timeoutMs: 26 * 60_000,
-  });
 }
 
 async function waitForChildlessStartup(host: HostCliClient, containerId: string): Promise<void> {
@@ -1091,13 +1074,14 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   );
   expect(liveCensus).toMatchObject({ count: 1, pid: expect.any(Number) });
   expect(liveCensus.pid).not.toBeNull();
-  const liveChildRefusal = await runInstalledFailedStartupUnlock(
+  const liveChildRefusal = await runNemoclaw(
     host,
-    recoveryContainerId,
-    "phase-12-live-child-refusal",
+    [SANDBOX_NAME, "shields", "down", "--timeout", "5m", "--reason", "Live-child refusal E2E"],
+    { artifactName: "phase-12-live-child-refusal", timeoutMs: 16 * 60_000 },
   );
   expect(liveChildRefusal.exitCode, resultText(liveChildRefusal)).not.toBe(0);
-  expect(resultText(liveChildRefusal)).toContain('"code": "startup-not-ready"');
+  expect(resultText(liveChildRefusal)).toContain("Failed-startup shields recovery failed");
+  expect(resultText(liveChildRefusal)).toContain("startup-not-ready");
   expect(await statPath(sandbox, CONFIG_PATH, "phase-12-config-still-locked")).toMatchObject({
     mode: "444",
     owner: "root:root",
