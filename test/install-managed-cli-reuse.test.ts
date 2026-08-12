@@ -59,20 +59,41 @@ function writeManagedSource(root: string, revision: string) {
   );
 }
 
+type InitialStateSetup = (fixture: {
+  fakeBin: string;
+  home: string;
+  sourceRoot: string;
+  tmp: string;
+  revision: string;
+}) => void;
+
+function setupManagedSource({ fakeBin, sourceRoot, revision }: Parameters<InitialStateSetup>[0]) {
+  writeManagedSource(sourceRoot, revision);
+  fs.symlinkSync(path.join(sourceRoot, "bin", "nemoclaw.js"), path.join(fakeBin, "nemoclaw"));
+}
+
+function setupCleanState(_fixture: Parameters<InitialStateSetup>[0]) {}
+
+function setupSymlinkStateRoot({ home, tmp }: Parameters<InitialStateSetup>[0]) {
+  fs.mkdirSync(home, { recursive: true });
+  fs.mkdirSync(path.join(tmp, "controlled"));
+  fs.symlinkSync(path.join(tmp, "controlled"), path.join(home, ".nemoclaw"));
+}
+
 function runManagedCliInstallTwice({
   initialRevision = INSTALL_REUSE_REVISION,
   forceCliReinstall = false,
   separateInstallerRuns = false,
   failLockfileRestore = false,
   installUmask,
-  symlinkStateRoot = false,
+  setupInitialState = setupManagedSource,
 }: {
-  initialRevision?: string | null;
+  initialRevision?: string;
   forceCliReinstall?: boolean;
   separateInstallerRuns?: boolean;
   failLockfileRestore?: boolean;
   installUmask?: string;
-  symlinkStateRoot?: boolean;
+  setupInitialState?: InitialStateSetup;
 } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-reuse-"));
   const home = path.join(tmp, "home");
@@ -86,15 +107,7 @@ function runManagedCliInstallTwice({
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
   fs.mkdirSync(payloadScripts, { recursive: true });
-  if (symlinkStateRoot) {
-    fs.mkdirSync(home, { recursive: true });
-    fs.mkdirSync(path.join(tmp, "controlled"));
-    fs.symlinkSync(path.join(tmp, "controlled"), path.join(home, ".nemoclaw"));
-  }
-  if (initialRevision !== null) {
-    writeManagedSource(sourceRoot, initialRevision);
-    fs.symlinkSync(path.join(sourceRoot, "bin", "nemoclaw.js"), path.join(fakeBin, "nemoclaw"));
-  }
+  setupInitialState({ fakeBin, home, sourceRoot, tmp, revision: initialRevision });
   writeNodeStub(fakeBin);
 
   writeExecutable(
@@ -235,8 +248,8 @@ printf 'PREPARED=%s MODE=%s SOURCE=%s\n' \
 describe("installer-managed CLI reuse", () => {
   it("creates owner-only managed state under an account umask of 0002 (#8795)", () => {
     const { result, stateMode } = runManagedCliInstallTwice({
-      initialRevision: null,
       installUmask: "0002",
+      setupInitialState: setupCleanState,
     });
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
@@ -245,8 +258,7 @@ describe("installer-managed CLI reuse", () => {
 
   it("rejects a symbolic-link managed state root before cloning source (#8795)", () => {
     const { result, gitLog } = runManagedCliInstallTwice({
-      initialRevision: null,
-      symlinkStateRoot: true,
+      setupInitialState: setupSymlinkStateRoot,
     });
 
     expect(result.status).not.toBe(0);
