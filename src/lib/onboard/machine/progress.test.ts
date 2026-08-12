@@ -1,10 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { step } from "../prompt-helpers";
+import { skippedStepMessage } from "../skipped-step-message";
 import { ONBOARD_MACHINE_STATE_DEFINITIONS } from "./definition";
 import { getOnboardProgressStep, ONBOARD_PROGRESS_STEPS } from "./progress";
+
+vi.mock("../prompt-helpers", () => ({ step: vi.fn() }));
 
 describe("onboard progress metadata", () => {
   it("derives state-backed progress labels from machine definitions", () => {
@@ -36,10 +40,15 @@ describe("onboard progress metadata", () => {
     expect(getOnboardProgressStep("not-a-step")).toBeNull();
   });
 
-  it("uses provider-neutral copy when resume returns to Ollama selection (#8853)", () => {
-    const providerSelection = getOnboardProgressStep("provider_selection");
+  it("renders provider-neutral copy when resume skips Ollama selection (#8853)", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    expect(providerSelection?.title).toBe("Configuring inference provider");
-    expect(providerSelection?.title).not.toContain("NIM");
+    skippedStepMessage("provider_selection", "ollama-local / qwen3.5:9b");
+
+    expect(step).toHaveBeenCalledWith(3, 8, "Configuring inference provider");
+    expect(step).not.toHaveBeenCalledWith(3, 8, expect.stringContaining("NIM"));
+    expect(log).toHaveBeenCalledWith(
+      "  [resume] Skipping provider_selection (ollama-local / qwen3.5:9b)",
+    );
   });
 });
