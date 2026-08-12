@@ -6,12 +6,15 @@ import http from "node:http";
 import path from "node:path";
 
 import { compactText } from "../core/url-utils";
-import { OPENROUTER_DEFAULT_HEADERS, OPENROUTER_ENDPOINT_URL } from "./openrouter";
 import {
-  DEFAULT_LOCAL_ADAPTER_STATE_DIR,
+  type AdapterLogFields,
+  type AdapterLogger,
   appendLocalAdapterJsonLine,
+  createAdapterLogger,
+  DEFAULT_LOCAL_ADAPTER_STATE_DIR,
   type JsonObject,
 } from "./local-adapter-lifecycle";
+import { OPENROUTER_DEFAULT_HEADERS, OPENROUTER_ENDPOINT_URL } from "./openrouter";
 
 export const STATE_DIR = DEFAULT_LOCAL_ADAPTER_STATE_DIR;
 export const PID_PATH = path.join(STATE_DIR, "openrouter-runtime-adapter.pid");
@@ -22,8 +25,7 @@ export const ADAPTER_NAME = "openrouter-runtime";
 export const OPENROUTER_RUNTIME_ADAPTER_AUTHORIZATION_HASH_ENV =
   "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_AUTHORIZATION_HASH";
 
-export type AdapterLogFields = Record<string, string | number | boolean | null | undefined>;
-export type AdapterLogger = (event: string, fields?: AdapterLogFields) => void;
+export type { AdapterLogFields, AdapterLogger };
 
 function normalizeLogField(
   value: string | number | boolean | null | undefined,
@@ -33,21 +35,10 @@ function normalizeLogField(
   return value;
 }
 
-export function defaultAdapterLogger(event: string, fields: AdapterLogFields = {}): void {
-  try {
-    const payload: Record<string, string | number | boolean | null> = {
-      ts: new Date().toISOString(),
-      event: normalizeLogField(event) as string,
-    };
-    for (const [key, value] of Object.entries(fields)) {
-      payload[key] = normalizeLogField(value);
-    }
-    appendLocalAdapterJsonLine(LOG_PATH, payload);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`OpenRouter Runtime adapter log write failed: ${compactText(message)}`);
-  }
-}
+export const defaultAdapterLogger = createAdapterLogger(LOG_PATH, normalizeLogField, (error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`OpenRouter Runtime adapter log write failed: ${compactText(message)}`);
+});
 
 export function logAdapterEvent(
   logger: AdapterLogger,

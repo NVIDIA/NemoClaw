@@ -111,6 +111,38 @@ export function appendLocalAdapterJsonLine(filePath: string, value: unknown): vo
   writePrivateLocalAdapterFile(filePath, `${JSON.stringify(value)}\n`, true);
 }
 
+export type AdapterLogFields = Record<string, string | number | boolean | null | undefined>;
+export type AdapterLogger = (event: string, fields?: AdapterLogFields) => void;
+
+/**
+ * Build the default JSON-line logger for a local inference adapter. Each
+ * adapter owns its log path, its field normalizer, and whether a failed write
+ * is reported, so all three come from the caller. A logger never throws,
+ * because diagnostics must not break the request path.
+ */
+export function createAdapterLogger(
+  logPath: string,
+  normalizeLogField: (
+    value: string | number | boolean | null | undefined,
+  ) => string | number | boolean | null,
+  reportWriteFailure: (error: unknown) => void = () => {},
+): AdapterLogger {
+  return (event: string, fields: AdapterLogFields = {}): void => {
+    try {
+      const payload: Record<string, string | number | boolean | null> = {
+        ts: new Date().toISOString(),
+        event: normalizeLogField(event) as string,
+      };
+      for (const [key, value] of Object.entries(fields)) {
+        payload[key] = normalizeLogField(value);
+      }
+      appendLocalAdapterJsonLine(logPath, payload);
+    } catch (error) {
+      reportWriteFailure(error);
+    }
+  };
+}
+
 export function readLocalAdapterJsonFile(filePath: string): JsonObject | null {
   const raw = readLocalAdapterTextFile(filePath);
   if (!raw) return null;

@@ -83,7 +83,10 @@ import {
   sendForwardError,
 } from "./https-pin-runtime-adapter-forward";
 import {
+  type AdapterLogFields,
+  type AdapterLogger,
   appendLocalAdapterJsonLine,
+  createAdapterLogger,
   DEFAULT_LOCAL_ADAPTER_STATE_DIR,
   ensureLocalAdapterStateDir,
   isLocalAdapterProcess,
@@ -162,9 +165,6 @@ const ORPHANED_ROUTE_RECOVERY_BOUNDARY = {
     "Retire orphaning/manual re-registration only when a reviewed secure recovery source or capability can rehydrate every registered route after respawn without persisting plaintext credentials, exposing them to OpenShell or a sandbox, or weakening per-route token and pinned-address isolation.",
 } as const;
 
-type AdapterLogFields = Record<string, string | number | boolean | null | undefined>;
-type AdapterLogger = (event: string, fields?: AdapterLogFields) => void;
-
 function normalizeLogField(
   value: string | number | boolean | null | undefined,
 ): string | number | boolean | null {
@@ -173,20 +173,7 @@ function normalizeLogField(
   return value;
 }
 
-function defaultAdapterLogger(event: string, fields: AdapterLogFields = {}): void {
-  try {
-    const payload: Record<string, string | number | boolean | null> = {
-      ts: new Date().toISOString(),
-      event: normalizeLogField(event) as string,
-    };
-    for (const [key, value] of Object.entries(fields)) {
-      payload[key] = normalizeLogField(value);
-    }
-    appendLocalAdapterJsonLine(LOG_PATH, payload);
-  } catch {
-    /* best-effort diagnostics only */
-  }
-}
+const defaultAdapterLogger = createAdapterLogger(LOG_PATH, normalizeLogField);
 
 function logAdapterEvent(
   logger: AdapterLogger,

@@ -23,9 +23,21 @@ import {
   resolveBedrockRuntimeRegion,
 } from "./bedrock-runtime";
 import {
-  DEFAULT_LOCAL_ADAPTER_STATE_DIR,
+  AdapterHttpError,
+  type BedrockRuntimeClientLike,
+  createOpenAiChatCompletion,
+  type OpenAiChatRequest,
+  parseJsonObject,
+  streamOpenAiChatCompletion,
+} from "./bedrock-runtime-translation";
+import {
+  type AdapterLogFields,
+  type AdapterLogger,
   appendLocalAdapterJsonLine,
+  createAdapterLogger,
+  DEFAULT_LOCAL_ADAPTER_STATE_DIR,
   isLocalAdapterProcess,
+  type JsonObject,
   killLocalAdapterPid,
   loadLocalAdapterPid,
   localAdapterTokenHash,
@@ -37,16 +49,7 @@ import {
   waitForLocalAdapterHealth,
   writeLocalAdapterJsonFile,
   writeLocalAdapterSecretFile,
-  type JsonObject,
 } from "./local-adapter-lifecycle";
-import {
-  AdapterHttpError,
-  createOpenAiChatCompletion,
-  parseJsonObject,
-  streamOpenAiChatCompletion,
-  type BedrockRuntimeClientLike,
-  type OpenAiChatRequest,
-} from "./bedrock-runtime-translation";
 
 export {
   AdapterHttpError,
@@ -64,9 +67,6 @@ const STATE_PATH = path.join(STATE_DIR, "bedrock-runtime-adapter.json");
 export const LOG_PATH = path.join(STATE_DIR, "bedrock-runtime-adapter.log");
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 
-type AdapterLogFields = Record<string, string | number | boolean | null | undefined>;
-type AdapterLogger = (event: string, fields?: AdapterLogFields) => void;
-
 function normalizeLogField(
   value: string | number | boolean | null | undefined,
 ): string | number | boolean | null {
@@ -75,20 +75,7 @@ function normalizeLogField(
   return value;
 }
 
-function defaultAdapterLogger(event: string, fields: AdapterLogFields = {}): void {
-  try {
-    const payload: Record<string, string | number | boolean | null> = {
-      ts: new Date().toISOString(),
-      event: normalizeLogField(event) as string,
-    };
-    for (const [key, value] of Object.entries(fields)) {
-      payload[key] = normalizeLogField(value);
-    }
-    appendLocalAdapterJsonLine(LOG_PATH, payload);
-  } catch {
-    /* best-effort diagnostics only */
-  }
-}
+const defaultAdapterLogger = createAdapterLogger(LOG_PATH, normalizeLogField);
 
 function logAdapterEvent(
   logger: AdapterLogger,
