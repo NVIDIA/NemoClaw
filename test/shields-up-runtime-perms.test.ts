@@ -132,6 +132,9 @@ Module._load = function patchedLoad(request, parent, isMain) {
       privilegedSandboxExecArgv(_sandboxName, cmd) {
         return [...cmd];
       },
+      withPrivilegedSandboxExecutionLease(_sandboxName, _operation, fn) {
+        return fn();
+      },
     };
   }
   return originalLoad.call(this, request, parent, isMain);
