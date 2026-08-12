@@ -78,7 +78,7 @@ describe("E2E operations workflow boundary", testTimeoutOptions(15_000), () => {
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "release-qualification needs must exactly match report-to-pr needs",
-        "release-qualification must run only for trusted pushes or full manual runs against main",
+        "release-qualification must run only for a full manual run against main",
         "release-qualification must evaluate planner-selected jobs from needs",
       ]),
     );
