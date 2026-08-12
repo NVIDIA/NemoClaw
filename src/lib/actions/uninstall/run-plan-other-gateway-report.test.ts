@@ -41,6 +41,7 @@ function uninstallOutputFor(
   liveGatewayNames: readonly string[],
   retainedGatewayPorts: readonly number[] = [],
   env: NodeJS.ProcessEnv = { NO_COLOR: "1" },
+  stderrIsTty = false,
 ): { logs: string[]; warnings: string[] } {
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-report-"));
   const logs: string[] = [];
@@ -69,6 +70,7 @@ function uninstallOutputFor(
         log: (message: string) => logs.push(message),
         retainedGatewayPorts,
         rmSync: fs.rmSync,
+        stderrIsTty,
         run: (command, args) =>
           command === "openshell" && args.join(" ") === "gateway list -o json"
             ? ok(gatewayList)
@@ -106,35 +108,34 @@ describe("uninstall reporting for other gateway-port environments (#7791)", () =
     );
   });
 
-  it("colors the retained gateway warning only when NO_COLOR is absent (#8797)", () => {
+  it("colors the retained gateway warning only for interactive stderr without NO_COLOR (#8797)", () => {
     vi.stubEnv("NO_COLOR", undefined);
-    Object.defineProperty(process.stderr, "getColorDepth", {
-      configurable: true,
-      value: () => 8,
-    });
+    const { warnings } = uninstallOutputFor(null, ["nemoclaw", "nemoclaw-9000"], [], {}, true);
+    const { warnings: redirectedWarnings } = uninstallOutputFor(
+      null,
+      ["nemoclaw", "nemoclaw-9000"],
+      [],
+      {},
+    );
+    const { warnings: noColorWarnings } = uninstallOutputFor(
+      null,
+      ["nemoclaw", "nemoclaw-9000"],
+      [],
+      { NO_COLOR: "" },
+      true,
+    );
 
-    try {
-      const { warnings } = uninstallOutputFor(null, ["nemoclaw", "nemoclaw-9000"], [], {});
-      const { warnings: noColorWarnings } = uninstallOutputFor(
-        null,
-        ["nemoclaw", "nemoclaw-9000"],
-        [],
-        { NO_COLOR: "" },
-      );
-
-      expect(warnings).toContainEqual(
-        "\x1b[33m  ⚠ Other NemoClaw gateway-port environments remain on this host and are outside this uninstall:\x1b[39m",
-      );
-      expect(warnings).toContainEqual(
-        "\x1b[33m  Remove every gateway port: nemoclaw uninstall --all-gateway-ports\x1b[39m",
-      );
-      expect(noColorWarnings).toContainEqual(
-        "  ⚠ Other NemoClaw gateway-port environments remain on this host and are outside this uninstall:",
-      );
-      expect(noColorWarnings).not.toContainEqual(expect.stringContaining("\x1b[33m"));
-    } finally {
-      Reflect.deleteProperty(process.stderr, "getColorDepth");
-    }
+    expect(warnings).toContainEqual(
+      "\x1b[33m  ⚠ Other NemoClaw gateway-port environments remain on this host and are outside this uninstall:\x1b[39m",
+    );
+    expect(warnings).toContainEqual(
+      "\x1b[33m  Remove every gateway port: nemoclaw uninstall --all-gateway-ports\x1b[39m",
+    );
+    expect(redirectedWarnings).not.toContainEqual(expect.stringContaining("\x1b[33m"));
+    expect(noColorWarnings).toContainEqual(
+      "  ⚠ Other NemoClaw gateway-port environments remain on this host and are outside this uninstall:",
+    );
+    expect(noColorWarnings).not.toContainEqual(expect.stringContaining("\x1b[33m"));
   });
 
   it("stays silent about other gateway ports when this host has none", () => {
