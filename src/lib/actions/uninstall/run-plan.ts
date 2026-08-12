@@ -631,6 +631,32 @@ function runOptional(
   return false;
 }
 
+// scripts/install-openshell.sh installs OpenShell on macOS through this
+// Homebrew formula, so the executables in the Homebrew prefix are formula
+// symlinks rather than files NemoClaw wrote. Deleting those paths would leave
+// the formula registered and the Cellar populated, so remove the formula. The
+// fully qualified name keeps an OpenShell from any other tap untouched. (#8882)
+const OPENSHELL_HOMEBREW_FORMULA = "nvidia/openshell/openshell";
+
+function removeHomebrewOpenShellFormula(runtime: UninstallRuntime): void {
+  if (runtime.platform !== "darwin") return;
+  if (!runtime.commandExists("brew")) return;
+  const installed = runtime.run("brew", ["list", "--formula", OPENSHELL_HOMEBREW_FORMULA], {
+    env: runtime.env,
+    stdio: "ignore",
+  });
+  if (installed.status !== 0) return;
+  const removed = runtime.run("brew", ["uninstall", "--formula", OPENSHELL_HOMEBREW_FORMULA], {
+    env: runtime.env,
+    stdio: "ignore",
+  });
+  if (removed.status === 0) runtime.log(`Removed Homebrew formula ${OPENSHELL_HOMEBREW_FORMULA}`);
+  else
+    runtime.warn(
+      `Failed to remove Homebrew formula ${OPENSHELL_HOMEBREW_FORMULA}; run: brew uninstall ${OPENSHELL_HOMEBREW_FORMULA}`,
+    );
+}
+
 function deleteSelectedGatewaySandbox(runtime: UninstallRuntime, sandboxName: string): boolean {
   const result = runtime.run("openshell", ["sandbox", "delete", sandboxName], {
     env: runtime.env,
@@ -2209,6 +2235,7 @@ function executePlan(
         } else if (GATEWAY_PORT !== DEFAULT_GATEWAY_PORT) {
           runtime.log("Keeping OpenShell binaries used by the default gateway service.");
         } else {
+          removeHomebrewOpenShellFormula(runtime);
           for (const target of paths.openshellInstallPaths)
             removeFileWithOptionalSudo(target, runtime);
         }
