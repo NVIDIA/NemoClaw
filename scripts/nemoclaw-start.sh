@@ -5166,15 +5166,31 @@ launch_openclaw_gateway_process() {
   local log_mode="$1"
   shift
   case "$log_mode" in
-    append)
-      nohup /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN "$@" >>/tmp/gateway.log 2>&1 &
-      ;;
-    truncate)
-      nohup /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN "$@" >/tmp/gateway.log 2>&1 &
-      ;;
+    append | truncate) ;;
     *)
       echo "[gateway] invalid gateway log mode: $log_mode" >&2
       return 1
+      ;;
+  esac
+
+  # OpenClaw startup repair can restore a tokenless build-time config backup
+  # before gateway authentication resolves. Pass the runtime gateway token
+  # through the supported --token option and remove OPENCLAW_GATEWAY_TOKEN from
+  # the gateway process environment. This keeps the gateway authenticated
+  # without passing the credential to child processes through environment
+  # inheritance (#8693).
+  local gateway_token="${OPENCLAW_GATEWAY_TOKEN:-}"
+  local -a gateway_auth_args=()
+  if [ -n "$gateway_token" ]; then
+    gateway_auth_args=(--token "$gateway_token")
+  fi
+
+  case "$log_mode" in
+    append)
+      nohup /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN "$@" "${gateway_auth_args[@]}" >>/tmp/gateway.log 2>&1 &
+      ;;
+    truncate)
+      nohup /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN "$@" "${gateway_auth_args[@]}" >/tmp/gateway.log 2>&1 &
       ;;
   esac
   GATEWAY_PID=$!

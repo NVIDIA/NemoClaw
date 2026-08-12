@@ -16,26 +16,34 @@ describe("OpenClaw gateway credential environment", () => {
   it.each([
     "truncate",
     "append",
-  ])("removes the dashboard token from a %s gateway launch (#8693)", (logMode) => {
+  ])("passes --token and removes OPENCLAW_GATEWAY_TOKEN when the log mode is %s (#8693)", (logMode) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-token-env-"));
     const gatewayLog = path.join(tmpDir, "gateway.log");
+    const seed = "existing gateway output\n";
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const launch = extractShellFunctionFromSource(
       source,
       "launch_openclaw_gateway_process",
     ).replaceAll("/tmp/gateway.log", gatewayLog);
+    fs.writeFileSync(gatewayLog, seed);
     const script = [
       "set -euo pipefail",
       launch,
-      "export OPENCLAW_GATEWAY_TOKEN=dashboard-secret",
-      `launch_openclaw_gateway_process ${logMode} sh -c 'printf "%s\\n" "\${OPENCLAW_GATEWAY_TOKEN-unset}"'`,
+      "export OPENCLAW_GATEWAY_TOKEN=gateway-secret",
+      `launch_openclaw_gateway_process ${logMode} sh -c 'printf "ENV=%s\\nARGS=%s\\n" "\${OPENCLAW_GATEWAY_TOKEN-unset}" "$*"' sh`,
       'wait "$GATEWAY_PID"',
     ].join("\n");
 
     try {
-      const result = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5000 });
+      const result = spawnSync("bash", ["-c", script], {
+        encoding: "utf8",
+        timeout: 5000,
+      });
       expect(result.status, result.stderr).toBe(0);
-      expect(fs.readFileSync(gatewayLog, "utf8")).toBe("unset\n");
+      const expectedOutput = "ENV=unset\nARGS=--token gateway-secret\n";
+      expect(fs.readFileSync(gatewayLog, "utf8")).toBe(
+        logMode === "append" ? `${seed}${expectedOutput}` : expectedOutput,
+      );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
