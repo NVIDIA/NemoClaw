@@ -12,8 +12,7 @@ type LegacySession = Omit<ReturnType<typeof createSession>, "machine"> & {
 function requireNormalizedSession(legacy: LegacySession) {
   const normalized = normalizeSession(legacy as Parameters<typeof normalizeSession>[0]);
   expect(normalized).not.toBeNull();
-  if (!normalized) throw new Error("Expected onboard session to normalize");
-  return normalized;
+  return normalized!;
 }
 
 describe("onboard session normalization", () => {
