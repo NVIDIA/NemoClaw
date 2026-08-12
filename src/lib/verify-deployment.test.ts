@@ -577,6 +577,30 @@ describe("verifyDeployment", () => {
     expect(sleepCalls).toEqual([10, 10]);
   });
 
+  it("keeps polling through a cold OpenClaw gateway startup before verification (#8901)", async () => {
+    let elapsedMs = 0;
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) => {
+        if (script.includes("openclaw --version")) {
+          return { status: 0, stdout: "2026.5.27", stderr: "" };
+        }
+        if (script.includes("inference.local")) {
+          return { status: 0, stdout: "200", stderr: "" };
+        }
+        return { status: 0, stdout: elapsedMs >= 60_000 ? "200" : "000", stderr: "" };
+      },
+    });
+
+    const result = await verifyDeployment("my-sandbox", chain, deps, {
+      sleep: async (ms: number) => {
+        elapsedMs += ms;
+      },
+    });
+
+    expect(result.healthy).toBe(true);
+    expect(elapsedMs).toBe(60_000);
+  });
+
   it("retries the dashboard probe and recovers when the port forward comes up late (#3563)", async () => {
     let dashboardCalls = 0;
     const deps = makeDeps({
