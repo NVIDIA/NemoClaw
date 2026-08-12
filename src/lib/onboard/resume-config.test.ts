@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { decisionSelected } from "../state/onboard-checkpoint-decision";
 import { normalizeSession } from "../state/onboard-session";
 import { getResumeConfigConflicts } from "./resume-config";
 
@@ -30,6 +31,25 @@ describe("authoritative rebuild resume config", () => {
     expect(process.env.NEMOCLAW_PROVIDER).toBe("");
     expect(process.env.NEMOCLAW_MODEL).toBe("");
     expect(process.env.COMPATIBLE_API_KEY).toBe("");
+  });
+
+  it("rejects --resume --name that conflicts with an incomplete canonical sandbox identity (#8687)", () => {
+    expect(
+      getResumeConfigConflicts(
+        {
+          sandboxName: "review-sandbox",
+          steps: { sandbox: { status: "pending" } },
+          checkpoint: {
+            sandboxIdentity: decisionSelected({ name: "review-sandbox", agent: "openclaw" }),
+          },
+        },
+        { sandboxName: "other-sandbox" },
+      ),
+    ).toContainEqual({
+      field: "sandbox",
+      requested: "other-sandbox",
+      recorded: "review-sandbox",
+    });
   });
 
   it("reports an explicit tool-disclosure mismatch against recorded resume state", () => {
