@@ -40,8 +40,11 @@ const CONFIG_PATH = "/sandbox/.openclaw/openclaw.json";
 const CONFIG_DIR = path.dirname(CONFIG_PATH);
 const CONFIG_HASH_PATH = `${CONFIG_DIR}/.config-hash`;
 const CONFIG_GUARD_PATH = "/usr/local/lib/nemoclaw/openclaw-config-guard.py";
-const STARTUP_CAPABILITY_PATH = "/run/nemoclaw/openclaw-config-ready-v1.capability.json";
-const STARTUP_READY_PATH = "/run/nemoclaw/openclaw-config-ready.json";
+const STATE_LOCK_PLAN_PATH = "/usr/local/share/nemoclaw/state-lock-plan.json";
+const STARTUP_MARKER_PATHS = [
+  "/run/nemoclaw/openclaw-config-ready-v1.capability.json",
+  "/run/nemoclaw/openclaw-config-ready.json",
+] as const;
 const AUDIT_FILE = path.join(os.homedir(), ".nemoclaw", "state", "shields-audit.jsonl");
 const STATE_FILE = (sandboxName: string) =>
   path.join(os.homedir(), ".nemoclaw", "state", `shields-${sandboxName}.json`);
@@ -379,6 +382,22 @@ async function installedStartupCensus(
   return JSON.parse(result.stdout.trim()) as StartupCensus;
 }
 
+async function runInstalledFailedStartupUnlock(
+  host: HostCliClient,
+  containerId: string,
+  artifactName: string,
+): Promise<ShellProbeResult> {
+  const script = [
+    "set -eu",
+    `plan_json=$(cat ${STATE_LOCK_PLAN_PATH})`,
+    `exec timeout --signal=TERM --kill-after=5s 25m python3 -I ${CONFIG_GUARD_PATH} unlock-failed-startup --config-dir ${CONFIG_DIR} --plan-json "$plan_json"`,
+  ].join("\n");
+  return docker(host, ["exec", "--user", "0", containerId, "sh", "-c", script], {
+    artifactName,
+    timeoutMs: 26 * 60_000,
+  });
+}
+
 async function waitForChildlessStartup(host: HostCliClient, containerId: string): Promise<void> {
   await pollUntil({
     artifactPrefix: "phase-12-childless-census",
@@ -464,7 +483,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
       "restart OpenClaw with shields down",
       "recover shields after a dead restore timer",
       "reject duplicate shields transitions",
-      "prove supported shields down recovery refuses a live child and unlocks childless state",
+      "prove installed recovery refuses a live child and supported shields down unlocks childless state",
       "record shields contract evidence",
     ],
   },
@@ -486,7 +505,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
       "start restores a stopped OpenClaw sandbox while shields are down",
       "dead auto-restore timer inline recovery re-locks config and .config-hash",
       "double shields-up/down operations are rejected",
-      "supported shields down recovery refuses a live child and atomically unlocks childless state",
+      "installed recovery refuses a live child and supported shields down atomically unlocks childless state",
     ],
   });
 
@@ -1055,15 +1074,15 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   expect(resultText(finalUp)).toContain("Lockdown active");
 
   progress.phase(
-    "prove supported shields down recovery refuses a live child and unlocks childless state",
+    "prove installed recovery refuses a live child and supported shields down unlocks childless state",
   );
   const recoveryContainerId = await findSandboxContainer(host);
-  const removeReadyMarker = await docker(
+  const removeMarkers = await docker(
     host,
-    ["exec", "--user", "0", recoveryContainerId, "rm", "-f", STARTUP_READY_PATH],
-    { artifactName: "phase-12-remove-startup-ready", timeoutMs: 30_000 },
+    ["exec", "--user", "0", recoveryContainerId, "rm", "-f", ...STARTUP_MARKER_PATHS],
+    { artifactName: "phase-12-remove-startup-markers", timeoutMs: 30_000 },
   );
-  expect(removeReadyMarker.exitCode, resultText(removeReadyMarker)).toBe(0);
+  expect(removeMarkers.exitCode, resultText(removeMarkers)).toBe(0);
 
   const liveCensus = await installedStartupCensus(
     host,
@@ -1072,13 +1091,17 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   );
   expect(liveCensus).toMatchObject({ count: 1, pid: expect.any(Number) });
   expect(liveCensus.pid).not.toBeNull();
-  const liveChildRefusal = await runNemoclaw(
+  // OpenShell's supervised non-root compatibility path legitimately permits
+  // ordinary Shields changes while its startup child is healthy. Exercise the
+  // failed-startup admission boundary through the installed guard, then prove
+  // the supported host command owns the terminal childless recovery below.
+  const liveChildRefusal = await runInstalledFailedStartupUnlock(
     host,
-    [SANDBOX_NAME, "shields", "down", "--timeout", "5m", "--reason", "Live-child refusal E2E"],
-    { artifactName: "phase-12-live-child-refusal", timeoutMs: 16 * 60_000 },
+    recoveryContainerId,
+    "phase-12-live-child-refusal",
   );
   expect(liveChildRefusal.exitCode, resultText(liveChildRefusal)).not.toBe(0);
-  expect(resultText(liveChildRefusal)).toContain("startup-not-ready");
+  expect(resultText(liveChildRefusal)).toContain('"code": "startup-not-ready"');
   expect(await statPath(sandbox, CONFIG_PATH, "phase-12-config-still-locked")).toMatchObject({
     mode: "444",
     owner: "root:root",
@@ -1124,12 +1147,6 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   expect(terminateChild.exitCode, resultText(terminateChild)).toBe(0);
 
   await waitForChildlessStartup(host, recoveryContainerId);
-  const removeCapability = await docker(
-    host,
-    ["exec", "--user", "0", recoveryContainerId, "rm", "-f", STARTUP_CAPABILITY_PATH],
-    { artifactName: "phase-12-remove-startup-capability", timeoutMs: 30_000 },
-  );
-  expect(removeCapability.exitCode, resultText(removeCapability)).toBe(0);
   const childlessRecovery = await runNemoclaw(
     host,
     [
