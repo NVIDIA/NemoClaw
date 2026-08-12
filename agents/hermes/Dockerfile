@@ -72,6 +72,7 @@ COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch
 
 FROM scratch AS hermes-agent-payload
 
@@ -173,7 +174,6 @@ ENV HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages
 # A published base can lag the source patch in Dockerfile.base. Apply only the
 # two Hindsight compatibility hunks when needed, then verify the final source
 # contract. This remains idempotent once the published base contains them.
-COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch
 RUN if ! grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py; then \
         git -C /opt/hermes apply --check \
             --include=hermes_cli/memory_setup.py \
@@ -1178,10 +1178,8 @@ RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandb
     && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
         sh -c ': > /sandbox/.hermes/lazy-packages/.nemoclaw-sandbox-unlock-probe' \
     && test -f /sandbox/.hermes/lazy-packages/.nemoclaw-sandbox-unlock-probe \
-    && find /sandbox/.hermes/lazy-packages -mindepth 1 -delete \
-    && test -z "$(find /sandbox/.hermes/lazy-packages -mindepth 1 -print -quit)" \
-    && chown sandbox:sandbox /sandbox/.hermes/lazy-packages \
-    && chmod 750 /sandbox/.hermes/lazy-packages \
+    && rm -rf /sandbox/.hermes/lazy-packages \
+    && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages \
     && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750"
 
 # Prove the cron execution ledger contract across the real image identities.
