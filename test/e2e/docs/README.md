@@ -314,10 +314,10 @@ test/e2e/
   `jobs` value is `managed-image-protected-runtime`; `targets` must remain empty.
   Refer to [NemoClaw E2E CI](../README.md).
 
-- [Jetson Dispatch Through Colossus](jetson-colossus-dispatch.md) defines how
-  maintainers deploy and verify the temporary authenticated controller,
-  dispatcher, SSH, bounded cleanup, and stale-lock recovery path for
-  `jetson-nvmap-gpu`.
+- [Jetson dispatch controller](jetson-dispatch.md) defines the NemoClaw-owned
+  HTTP contract, trusted GitHub controller, repository configuration, and
+  evidence for `jetson-nvmap-gpu`. The service behind that contract is
+  operator-owned infrastructure.
 
 - `.github/workflows/e2e.yaml` runs selected or all supported
   live E2E targets and uploads an explicit artifact allowlist with

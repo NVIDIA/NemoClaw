@@ -168,8 +168,6 @@ const {
   runSandboxProviderPreDeleteCleanup,
 } =
   require("./onboard/sandbox-provider-cleanup") as typeof import("./onboard/sandbox-provider-cleanup");
-const nameValidation: typeof import("./name-validation") = require("./name-validation");
-const { getNameValidationGuidance } = nameValidation;
 const docker: typeof import("./adapters/docker") = require("./adapters/docker");
 const {
   dockerContainerInspectFormat,
@@ -238,7 +236,6 @@ const {
   prepareOllamaModel,
   printOllamaExposureWarning,
   promptOllamaModel,
-  startOllamaAuthProxy,
 } = require("./inference/ollama/proxy");
 const {
   installOllamaOnWindowsHost,
@@ -441,7 +438,6 @@ const sandboxRecreateTransaction: typeof import("./onboard/sandbox-recreate-tran
 const sandboxRegistration: typeof import("./onboard/sandbox-registration") =
   require("./onboard/sandbox-registration");
 const {
-  RESERVED_SANDBOX_NAMES,
   formatSandboxAgentName,
   getAgentInferenceProviderOptions,
   getDefaultSandboxNameForAgent,
@@ -3733,8 +3729,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   );
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const { fresh, nonInteractive, requestedFromDockerfile, requestedSandboxName, cannotPrompt, resume } = onboardEntryOptions.resolveOnboardRunEntryOptions(opts, process.env, onboardSession.loadSession()?.status ?? null, isNonInteractiveEnv, { validateName, reservedSandboxNames: RESERVED_SANDBOX_NAMES, cliDisplayName, getNameValidationGuidance, error: (message) => console.error(message), exitProcess: (code) => process.exit(code) });
+  const entryOptions = onboardEntryOptions.resolveDefaultRunEntryOptions(
+    opts,
+    onboardSession.loadSession()?.status ?? null,
+    validateName,
+  );
+  const { fresh, nonInteractive, cannotPrompt, resume } = entryOptions;
+  const { requestedFromDockerfile, requestedSandboxName } = entryOptions;
   NON_INTERACTIVE = nonInteractive;
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   _preflightDashboardPort =
@@ -4064,24 +4065,22 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       requestedSandboxName,
       checkpointedSandboxName,
       selectedMessagingChannels,
-      assertSandboxNameAllowed: (sandboxName) => {
-        if (!RESERVED_SANDBOX_NAMES.has(sandboxName)) return;
-        console.error(
-          `  Reserved name in resumed session: '${sandboxName}' is a ${cliDisplayName()} CLI command.`,
-        );
-        console.error("  Start a fresh onboard with --name <sandbox> to choose a different name.");
-        process.exit(1);
-      },
+      assertSandboxNameAllowed: onboardEntryOptions.assertDefaultSandboxNameAllowed,
     });
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const runCoreGatewayOpenshell = setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, GATEWAY_NAME);
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const endpointProvenance = { endpointSource: opts.endpointSource, endpointSourceProvider: opts.rebuildRegistryInferenceRoute?.route.provider ?? null, endpointSourceEndpointUrl: opts.rebuildRegistryInferenceRoute?.route.endpointUrl ?? null, getSandboxRegistryEntry: registry.getSandbox };
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    const providerReviewDeps = setupInferenceFactory.createProviderReviewDeps(onboardSession.updateSession, onboardSessionBootstrap.checkpointSandboxName, { shouldFrontOllamaWithProxy, startOllamaAuthProxy, getOllamaProxyToken, persistAndProbeOllamaProxy }, process.exit, console.error);
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    const coreFlowPhases = createCoreOnboardFlowPhases<InitialOnboardFlowContext, unknown, MessagingChannelConfig, import("./resources-cmd").ResourceProfile>({
+    const providerReviewDeps = setupInferenceFactory.createDefaultProviderReviewDeps(
+      onboardSession.updateSession,
+      onboardSessionBootstrap.checkpointSandboxName,
+    );
+    const coreFlowPhases = createCoreOnboardFlowPhases<
+      InitialOnboardFlowContext,
+      unknown,
+      MessagingChannelConfig,
+      import("./resources-cmd").ResourceProfile
+    >({
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
       resumeProvider: { isNonInteractive, isRoutedInferenceProvider, providerExistsInGateway, replaceNamedCredential, resumeManagedLlamaCppRuntime: (sandboxName) => setupNimFlow.resumeManagedLlamaCppRuntime(sandboxName, { gatewayPort: GATEWAY_PORT, runtimeProvider: setupNimFlow.resolveCurrentRuntimeProviderBundle() }) },
       providerInference: {
@@ -4220,19 +4219,18 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           planRegisteredExtraProviders: (gatewayName) =>
             planRegisteredExtraProviders(gatewayName, { runOpenshell }),
           resolveSandboxCreateIntent: sandboxCreateIntentResolver.resolve,
-          createSandbox: preparedDcodeRuntime.bindCreateSandbox(
-            (...createArgs) =>
-              withDashboardPortReservationScope((dashboardPortReservationScope) =>
-                createSandboxWithBaseImageResolution(
-                  baseImageResolutionContext,
-                  onboardingComputePlan,
-                  opts.managedWorkloadRebuild ?? null,
-                  opts.tempManagedRuntime === true,
-                  opts.tempManagedRuntimeCatalog ?? null,
-                  dashboardPortReservationScope,
-                  ...createArgs,
-                ),
+          createSandbox: preparedDcodeRuntime.bindCreateSandbox((...createArgs) =>
+            withDashboardPortReservationScope((dashboardPortReservationScope) =>
+              createSandboxWithBaseImageResolution(
+                baseImageResolutionContext,
+                onboardingComputePlan,
+                opts.managedWorkloadRebuild ?? null,
+                opts.tempManagedRuntime === true,
+                opts.tempManagedRuntimeCatalog ?? null,
+                dashboardPortReservationScope,
+                ...createArgs,
               ),
+            ),
           ),
           updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
           getSandboxAgentRegistryFields,
