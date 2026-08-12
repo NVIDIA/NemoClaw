@@ -130,7 +130,7 @@
   },
   {
     "id": "missing-github-tool",
-    "question": "I explicitly installed the NemoClaw issue-planning skill in Hermes, but this agent has no GitHub MCP tool and no authenticated gh CLI. Plan NVIDIA/NemoClaw issue #8378.",
+    "question": "I explicitly installed the NemoClaw issue-planning skill in Hermes, but this agent has no agent-provided GitHub tool, no GitHub MCP tool, and no authenticated gh CLI. Plan NVIDIA/NemoClaw issue #8378.",
     "expected_skill": "nemoclaw-contributor-plan-issue",
     "ground_truth": "The workflow cannot obtain the required issue context through configured GitHub access, so it stops with setup guidance and does not improvise an unauthenticated fallback.",
     "expected_behavior": [

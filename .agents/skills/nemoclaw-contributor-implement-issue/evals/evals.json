@@ -131,7 +131,7 @@
   },
   {
     "id": "missing-github-tool",
-    "question": "I explicitly installed the NemoClaw implementation skill in Deep Agents Code, but this agent has no GitHub MCP tool and no authenticated gh CLI. Implement NVIDIA/NemoClaw issue #8378.",
+    "question": "I explicitly installed the NemoClaw implementation skill in Deep Agents Code, but this agent has no agent-provided GitHub tool, no GitHub MCP tool, and no authenticated gh CLI. Implement NVIDIA/NemoClaw issue #8378.",
     "expected_skill": "nemoclaw-contributor-implement-issue",
     "ground_truth": "The workflow cannot confirm accepted issue scope without configured GitHub access, so it stops before editing and rejects unauthenticated fallback access.",
     "expected_behavior": [
