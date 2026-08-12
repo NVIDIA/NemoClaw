@@ -133,6 +133,16 @@ describe("rebuild backup credential sanitization", () => {
     expect(existsSync(lockPath)).toBe(false);
   });
 
+  it("removes a recognized lockfile that cannot be inspected", () => {
+    const backupPath = createBackup();
+    const lockPath = join(backupPath, "state", "package-lock.json");
+    writeFileSync(lockPath, '{"token":"123456789"', { mode: 0o600 });
+
+    sanitizeBackupDirectory(backupPath);
+
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
   // source-shape-contract: security -- Package names inside an installed manifest are the exact bytes the credential key matcher would rewrite, so only the unmodified content proves the dependency-tree exclusion holds.
   it("leaves an installed package manifest that names a credential-shaped dependency", () => {
     const backupPath = createBackup();

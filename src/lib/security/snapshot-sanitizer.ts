@@ -92,7 +92,10 @@ function dependencyLockfileContainsCredential(raw: string): boolean {
     try {
       return dependencyValueContainsCredential(parseYaml(raw));
     } catch {
-      return false;
+      // Preserve a recognized lockfile only after structured inspection. An
+      // invalid document could otherwise carry an opaque credential that the
+      // bounded text detectors do not recognize.
+      return true;
     }
   }
 }

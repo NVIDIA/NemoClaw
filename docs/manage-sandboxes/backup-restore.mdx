@@ -49,7 +49,7 @@ Store them as `$OPENCLAW_WORKSPACE_DIR/USER.md` and `$OPENCLAW_WORKSPACE_DIR/SOU
 Before NemoClaw marks a snapshot complete, it strips recognized credential values from copied JSON, YAML, and `.env` files.
 It preserves recognized dependency lockfiles byte for byte when they contain only dependency metadata.
 This behavior includes installed npm `.package-lock.json` files.
-It omits a recognized lockfile when the file contains any of these values:
+It omits a recognized lockfile when the file is invalid or contains any of these values:
 
 - A credential field.
 - A provider-shaped secret outside a dependency URL.
