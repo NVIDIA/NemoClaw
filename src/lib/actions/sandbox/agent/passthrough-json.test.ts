@@ -241,6 +241,7 @@ describe("runAgentJsonPassthrough", () => {
       summary: "completed",
       result: {
         messages: [{ role: "toolResult", toolName: "write_file", toolCallId: "c1" }],
+        payloads: [],
         meta: {
           error: { kind: "incomplete_turn" },
           livenessState: "abandoned",
@@ -305,6 +306,37 @@ describe("runAgentJsonPassthrough", () => {
       }),
     ).toThrow("__exit:0");
 
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("keeps a healthy response at exit 0 after a marker-bearing JSON log record", () => {
+    const payload = [
+      JSON.stringify({ event: "progress", meta: { replayInvalid: true } }),
+      JSON.stringify({
+        status: "ok",
+        result: { payloads: [{ text: "done" }], meta: { livenessState: "working" } },
+      }),
+    ].join("\n");
+    const spawnSync = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      stdout: payload,
+      stderr: "",
+      pid: 123,
+      output: [null, payload, ""],
+    }));
+    const { exit, proc, stdout } = makeProc();
+
+    expect(() =>
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: () => "openshell",
+        spawnSync,
+        stdinIsTty: () => false,
+      }),
+    ).toThrow("__exit:0");
+
+    expect(stdout.join("")).toBe(payload);
     expect(exit).toHaveBeenCalledWith(0);
   });
 

@@ -298,9 +298,10 @@ export function openClawAgentJsonProvenanceLines(raw: string): string[] {
 // (dist/types-*.d.ts, dist/agent-runtime-*.d.ts):
 //   EmbeddedAgentRunResult = { payloads?, meta: EmbeddedAgentRunMeta, ... }
 //   agentCommandInternal() -> { payloads, meta: EmbeddedAgentRunMeta & ... }
-// so run metadata is a sibling of `payloads`, reachable only as `<root>.meta`
-// or `<root>.result.meta`. Tool results live under `result.messages[].content`
-// and are therefore never consulted.
+// so run metadata is a sibling of `payloads`, reachable only in a local
+// `{ payloads, meta }` response or a gateway
+// `{ status, result: { payloads, meta } }` response. Tool results live under
+// `result.messages[].content` and are therefore never consulted.
 //
 // The markers themselves, all declared on EmbeddedAgentRunMeta:
 //   replayInvalid?: boolean
@@ -315,14 +316,31 @@ export type OpenClawIncompleteTurnSignal = {
   markers: string[];
 };
 
-/** The declared run-metadata records, and nothing else. */
-function turnMetaRecords(doc: unknown): UnknownRecord[] {
-  const metas: UnknownRecord[] = [];
-  if (!isObjectRecord(doc)) return metas;
-  if (isObjectRecord(doc.meta)) metas.push(doc.meta);
+/** The declared run-metadata record from an agent response envelope. */
+function agentResponseMetaRecord(doc: unknown): UnknownRecord | null {
+  if (!isObjectRecord(doc)) return null;
+
   const result = doc.result;
-  if (isObjectRecord(result) && isObjectRecord(result.meta)) metas.push(result.meta);
-  return metas;
+  if (
+    typeof doc.status === "string" &&
+    isObjectRecord(result) &&
+    Array.isArray(result.payloads) &&
+    isObjectRecord(result.meta)
+  ) {
+    return result.meta;
+  }
+
+  if (Array.isArray(doc.payloads) && isObjectRecord(doc.meta)) return doc.meta;
+  return null;
+}
+
+/** Select the final agent response without treating JSON log records as responses. */
+function finalAgentResponseMetaRecord(docs: unknown[]): UnknownRecord | null {
+  for (let index = docs.length - 1; index >= 0; index -= 1) {
+    const meta = agentResponseMetaRecord(docs[index]);
+    if (meta) return meta;
+  }
+  return null;
 }
 
 function turnMetaMarkers(meta: UnknownRecord): string[] {
@@ -347,6 +365,8 @@ export function openClawAgentIncompleteTurnSignal(
 ): OpenClawIncompleteTurnSignal | null {
   const docs = parseOpenClawJsonDocs(raw);
   if (docs.length === 0) return null;
-  const markers = dedupe(docs.flatMap(turnMetaRecords).flatMap(turnMetaMarkers));
+  const meta = finalAgentResponseMetaRecord(docs);
+  if (!meta) return null;
+  const markers = dedupe(turnMetaMarkers(meta));
   return markers.length > 0 ? { markers } : null;
 }
