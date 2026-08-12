@@ -304,7 +304,9 @@ describe("Hermes routing topology probe", () => {
     withFakeProcRoot((procRoot) => {
       const processRoot = path.join(procRoot, "700");
       fs.mkdirSync(processRoot);
-      fs.mkdirSync(path.join(processRoot, "cmdline"));
+      const cmdlinePath = path.join(processRoot, "cmdline");
+      fs.writeFileSync(cmdlinePath, Buffer.from("nemo-relay\0serve\0"));
+      fs.chmodSync(cmdlinePath, 0o000);
       fs.writeFileSync(
         path.join(processRoot, "status"),
         ["Name:\tnemo-relay", "PPid:\t1", "Uid:\t1000\t1000\t1000\t1000", ""].join("\n"),
@@ -313,6 +315,6 @@ describe("Hermes routing topology probe", () => {
       const result = spawnTopologyProbe(procRoot);
 
       expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("IsADirectoryError");
+      expect(result.stderr).toContain("permission denied reading process metadata");
     }));
 });
