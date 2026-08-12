@@ -39,7 +39,7 @@
       "status": "caveated",
       "prd_priority": "P0",
       "ci_tested": true,
-      "notes": "Start the container runtime (Colima or Docker Desktop) before installing; NemoClaw verifies the pinned official OpenShell formula and grants formula-scoped trust only around each Homebrew install, inspection, start, or stop operation, requires a legacy or changed formula to be repaired by rerunning the pinned installer, uses the standalone gateway only when Homebrew or the formula is genuinely absent, requires Homebrew Colima users to install both Colima and the Docker CLI (`brew install colima docker`) before `docker info` can work, and recommends Xcode Command Line Tools (`xcode-select --install`) for Node native modules."
+      "notes": "Start the container runtime (Colima or Docker Desktop) before installing; NemoClaw verifies the pinned official OpenShell formula and grants formula-scoped trust only around each Homebrew install, inspection, start, or stop operation, requires a legacy or changed formula to be repaired by rerunning the pinned installer, uses the standalone gateway only when Homebrew is absent or both the staged formula and installed keg are absent, requires Homebrew Colima users to install both Colima and the Docker CLI (`brew install colima docker`) before `docker info` can work, and recommends Xcode Command Line Tools (`xcode-select --install`) for Node native modules."
     },
     {
       "name": "DGX OS (Spark)",
