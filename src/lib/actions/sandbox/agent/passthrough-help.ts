@@ -32,11 +32,11 @@ export function writeSilentAgentDispatchFailure(
   // is pattern-based, so ordinary prompt text is unchanged and the command
   // stays runnable; a command that does get masked is one nobody should
   // replay verbatim anyway.
-  const directRun = redactFull(
-    [CLI_NAME, shellQuote(sandboxName), "exec", "--", ...command.map(shellQuote)]
-      .join(" ")
-      .trimEnd(),
-  );
+  const rawDirectRun = [CLI_NAME, shellQuote(sandboxName), "exec", "--", ...command.map(shellQuote)]
+    .join(" ")
+    .trimEnd();
+  const directRun = redactFull(rawDirectRun);
+  const directRunWasRedacted = directRun !== rawDirectRun;
   proc.stderr.write(
     `  The agent dispatch for sandbox '${sandboxName}' exited 0 without producing any output, so the turn was not delivered.\n`,
   );
@@ -45,7 +45,11 @@ export function writeSilentAgentDispatchFailure(
   );
   proc.stderr.write("  Documented recovery paths:\n");
   proc.stderr.write(`    ${directRun}\n`);
-  proc.stderr.write("      — run this exact turn directly inside the sandbox\n");
+  proc.stderr.write(
+    directRunWasRedacted
+      ? "      — sensitive values were redacted; do not replay this command\n"
+      : "      — run this turn directly inside the sandbox\n",
+  );
   proc.stderr.write(
     `    ${CLI_NAME} ${shellQuote(sandboxName)} status    — confirm gateway and inference health\n`,
   );

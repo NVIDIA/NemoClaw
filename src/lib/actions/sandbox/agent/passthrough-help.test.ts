@@ -116,6 +116,8 @@ describe("writeSilentAgentDispatchFailure", () => {
     expect(output).toContain(
       "nemoclaw 'my-assistant' exec -- 'openclaw' 'agent' '--agent' 'main' '-m' 'use <REDACTED>'",
     );
+    expect(output).toContain("sensitive values were redacted; do not replay this command");
+    expect(output).not.toContain("run this turn directly inside the sandbox");
   });
 
   it("leaves ordinary turn text runnable rather than redacting it", () => {
@@ -130,7 +132,10 @@ describe("writeSilentAgentDispatchFailure", () => {
       "Summarise README.md",
     ]);
 
-    expect(lines.join("")).toContain("'-m' 'Summarise README.md'");
+    const output = lines.join("");
+    expect(output).toContain("'-m' 'Summarise README.md'");
+    expect(output).toContain("run this turn directly inside the sandbox");
+    expect(output).not.toContain("do not replay this command");
   });
 
   it("offers the documented recovery paths", () => {
