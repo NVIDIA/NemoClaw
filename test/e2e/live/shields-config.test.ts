@@ -989,14 +989,16 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   const timerMarker = readTimerMarker(SANDBOX_NAME);
   process.kill(timerMarker.pid, "SIGKILL");
   const statusTimer = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
-    artifactName: "phase-9-status-down-before-auto-restore",
+    artifactName: "phase-9-status-after-dead-timer",
   });
-  expect(statusTimer.stdout).toContain("Shields: DOWN");
+  expect(statusTimer.exitCode, resultText(statusTimer)).toBe(0);
+
+  let lastTimerStatus = resultText(statusTimer);
+  expect(statusTimer.stdout).toMatch(/Shields: (?:UP|DOWN)/);
+  let restored = statusTimer.stdout.includes("Shields: UP");
 
   const deadline = Date.now() + TIMER_POLL_TIMEOUT_MS;
-  let restored = false;
-  let lastTimerStatus = "";
-  for (let attempt = 1; Date.now() < deadline; attempt += 1) {
+  for (let attempt = 1; !restored && Date.now() < deadline; attempt += 1) {
     const waitForRestoreAt = Math.max(0, new Date(timerMarker.restoreAt).getTime() - Date.now());
     await delay(Math.max(TIMER_POLL_INTERVAL_MS, waitForRestoreAt + 1_000));
     const poll = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {

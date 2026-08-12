@@ -56,6 +56,34 @@ print(json.dumps(guard.SEALED_FILE_NAMES))
   });
 });
 
+describe("Hermes candidate schema validation (#8614)", () => {
+  it("rejects an incomplete home_channel before a sealed write transaction starts", () => {
+    const result = runPythonHarness(`${loadGuardModule}
+import json
+import types
+
+guard.seal_restart = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not seal"))
+guard.os.path.exists = lambda value: value.endswith("config.yaml")
+class GatewayConfig:
+    @classmethod
+    def from_dict(cls, value):
+        home_channel = value["platforms"]["teams"]["home_channel"]
+        if "platform" not in home_channel:
+            raise KeyError("platforms.teams.home_channel.platform")
+sys.modules["gateway.config"] = types.SimpleNamespace(GatewayConfig=GatewayConfig)
+try:
+    guard.write_config_transaction(
+        "/unused", "/unused-hash", "/unused-state", "a" * 64,
+        b"platforms:\\n  teams:\\n    home_channel:\\n      chat_id: 19:triage8614\\n",
+    )
+except guard.UnsafePathError as exc:
+    print(json.dumps(str(exc)))
+`);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toContain("platforms.teams.home_channel.platform");
+  });
+});
+
 describe("Hermes runtime config hash refresh race protection", () => {
   it("creates an absent private runtime directory through its pinned parent", () => {
     const result = runPythonHarness(`${loadGuardModule}

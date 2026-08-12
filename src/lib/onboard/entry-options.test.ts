@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   type OnboardEntryOptionsDeps,
   resolveOnboardEntryOptions,
+  resolveOnboardRunOptions,
   withNonInteractiveEnvironment,
 } from "./entry-options";
 
@@ -29,6 +30,41 @@ function createDeps(overrides: Partial<OnboardEntryOptionsDeps> = {}): OnboardEn
     ...overrides,
   };
 }
+
+describe("resolveOnboardRunOptions", () => {
+  it.each([
+    [false, true],
+    [false, false],
+  ])("treats auto-yes resume as non-interactive when stdin=%s and stdout=%s", (stdinIsTty, stdoutIsTty) => {
+    expect(
+      resolveOnboardRunOptions({ autoYes: true, resume: true }, {}, null, () => false, {
+        stdinIsTty,
+        stdoutIsTty,
+      }).nonInteractive,
+    ).toBe(true);
+  });
+
+  it.each([
+    [true, true],
+    [true, false],
+  ])("keeps auto-yes resume interactive when stdin=%s and stdout=%s", (stdinIsTty, stdoutIsTty) => {
+    expect(
+      resolveOnboardRunOptions({ autoYes: true, resume: true }, {}, null, () => false, {
+        stdinIsTty,
+        stdoutIsTty,
+      }).nonInteractive,
+    ).toBe(false);
+  });
+
+  it("keeps fresh no-TTY auto-yes interactive", () => {
+    expect(
+      resolveOnboardRunOptions({ autoYes: true }, {}, null, () => false, {
+        stdinIsTty: false,
+        stdoutIsTty: false,
+      }).nonInteractive,
+    ).toBe(false);
+  });
+});
 
 describe("resolveOnboardEntryOptions", () => {
   it("rejects mutually exclusive resume and fresh flags", () => {
@@ -155,6 +191,23 @@ describe("resolveOnboardEntryOptions", () => {
 
     expect(result.resume).toBe(true);
     expect(deps.error).not.toHaveBeenCalled();
+  });
+
+  it("does not auto-resume a rejected non-resumable session", () => {
+    const deps = createDeps();
+
+    const result = resolveOnboardEntryOptions(
+      {
+        opts: {},
+        env: {},
+        stdinIsTty: true,
+        stdoutIsTty: true,
+        persistedSessionStatus: "failed",
+      },
+      deps,
+    );
+
+    expect(result.resume).toBe(false);
   });
 
   it("does not auto-resume when --fresh is set even with an in_progress session (#5470)", () => {
