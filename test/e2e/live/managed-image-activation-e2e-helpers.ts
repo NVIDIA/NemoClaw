@@ -38,6 +38,9 @@ const ONBOARD_TIMEOUT_MS = 20 * 60_000;
 const ONBOARD_FAILURE_STARTUP_SIGNALS = {
   environmentWrapperMissing: "[SECURITY] Required entrypoint env-wrapper normalizer is missing.",
   foreignPidOneBoundary: "Hermes runtime config guard refuses mutation under a foreign PID 1",
+  hermesApiPortRejected: "[SECURITY] Invalid NEMOCLAW_HERMES_API_PORT=",
+  hermesRuntimeDirRefused: "[SECURITY] Refusing Hermes startup because /run/nemoclaw",
+  hermesRuntimeMarkerRefused: "could not be published atomically",
   runtimeMutationCheckpointRefused:
     "[SECURITY] Runtime state mutation startup checkpoint was refused; holding startup.",
   runtimeMutationGateFailed: "[SECURITY] Runtime state mutation startup gate failed.",

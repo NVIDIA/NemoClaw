@@ -3084,6 +3084,14 @@ prepare_hermes_root_runtime_dir() {
     return 1
   }
   if [ "$runtime_metadata" != "0:0:755" ]; then
+    # The managed runtime can present this directory before the root-separated
+    # gateway starts. Restore the trust boundary from root, and refuse when the
+    # restore is not permitted.
+    chown root:root -- "$HERMES_RUNTIME_DIR" 2>/dev/null
+    chmod 0755 -- "$HERMES_RUNTIME_DIR" 2>/dev/null
+    runtime_metadata="$(stat -c '%u:%g:%a' -- "$HERMES_RUNTIME_DIR" 2>/dev/null)" || runtime_metadata=""
+  fi
+  if [ "$runtime_metadata" != "0:0:755" ]; then
     echo "[SECURITY] Refusing Hermes startup because $HERMES_RUNTIME_DIR must be root-owned with mode 0755" >&2
     return 1
   fi
