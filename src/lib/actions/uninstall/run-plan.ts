@@ -525,7 +525,7 @@ function runtimeBranding(runtime: UninstallRuntime): AgentBranding {
 
 function yellowWarningText(message: string, runtime: UninstallRuntime): string {
   // Use stderr's color capability so redirected stderr does not contain ANSI codes.
-  if (runtime.env.NO_COLOR) return message;
+  if (runtime.env.NO_COLOR !== undefined) return message;
   const colorDepth = process.stderr.getColorDepth?.(runtime.env) ?? 1;
   if (colorDepth <= 1) return message;
   return `\x1b[33m${message}\x1b[39m`;

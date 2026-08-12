@@ -106,16 +106,20 @@ describe("uninstall reporting for other gateway-port environments (#7791)", () =
     );
   });
 
-  it("colors the retained gateway warning and uninstall commands yellow (#8797)", () => {
+  it("colors the retained gateway warning only when NO_COLOR is absent (#8797)", () => {
     Object.defineProperty(process.stderr, "getColorDepth", {
       configurable: true,
       value: () => 8,
     });
 
     try {
-      const { warnings } = uninstallOutputFor(null, ["nemoclaw", "nemoclaw-9000"], [], {
-        NO_COLOR: "",
-      });
+      const { warnings } = uninstallOutputFor(null, ["nemoclaw", "nemoclaw-9000"], [], {});
+      const { warnings: noColorWarnings } = uninstallOutputFor(
+        null,
+        ["nemoclaw", "nemoclaw-9000"],
+        [],
+        { NO_COLOR: "" },
+      );
 
       expect(warnings).toContainEqual(
         "\x1b[33m  ⚠ Other NemoClaw gateway-port environments remain on this host and are outside this uninstall:\x1b[39m",
@@ -123,6 +127,10 @@ describe("uninstall reporting for other gateway-port environments (#7791)", () =
       expect(warnings).toContainEqual(
         "\x1b[33m  Remove every gateway port: nemoclaw uninstall --all-gateway-ports\x1b[39m",
       );
+      expect(noColorWarnings).toContainEqual(
+        "  ⚠ Other NemoClaw gateway-port environments remain on this host and are outside this uninstall:",
+      );
+      expect(noColorWarnings).not.toContainEqual(expect.stringContaining("\x1b[33m"));
     } finally {
       Reflect.deleteProperty(process.stderr, "getColorDepth");
     }
