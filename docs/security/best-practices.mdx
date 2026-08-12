@@ -329,7 +329,9 @@ Review the data policies of any cloud provider you use.
 
 The `NEMOCLAW_EXPERIMENTAL=1` environment variable gates local NVIDIA NIM on eligible hosts other than N1x and generic Linux managed vLLM install/start.
 DGX Spark and DGX Station managed vLLM entries appear by default.
-N1x omits local NVIDIA NIM and offers the Deferred managed-vLLM preview instead.
+N1x omits local NVIDIA NIM, and N1x Express offers only the Deferred managed-vLLM preview.
+N1x remains outside the supported-platform set because its physical NemoClaw Express E2E validation is incomplete.
+After NemoClaw qualifies the N1x identity, you must provide explicit managed-vLLM preview intent before onboarding can use this path.
 An already-running vLLM server on `localhost:8000` also appears in the menu without a flag because selecting it is an explicit user action.
 
 | Aspect | Detail |
