@@ -44,7 +44,7 @@ describe("read-only host mount validation", () => {
     );
   });
 
-  it("rejects missing, relative, symlinked, and non-normalized paths", () => {
+  it("rejects missing, relative, symlinked, non-normalized, and terminal-control paths", () => {
     const source = workspaceTempDir();
     const symlink = `${source}-link`;
     fs.symlinkSync(source, symlink);
@@ -62,9 +62,16 @@ describe("read-only host mount validation", () => {
     expect(() => parseReadOnlyHostMount(`${source}:/sandbox/../project`)).toThrow(
       "normalized absolute path below /sandbox",
     );
-    expect(() => parseReadOnlyHostMount(`${source}:/sandbox/project\nforged`)).toThrow(
-      "must not contain control characters",
-    );
+    for (const terminalControl of ["\u001b[31m", "\u202e", "\u2028", "\u2029"]) {
+      let message = "";
+      try {
+        parseReadOnlyHostMount(`${source}:/sandbox/project${terminalControl}forged`);
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      expect(message).toContain("must not contain terminal control characters");
+      expect(message).not.toContain(terminalControl);
+    }
   });
 
   it("rejects duplicate host and sandbox directories", () => {
@@ -168,5 +175,22 @@ describe("read-only host mount validation", () => {
 
     scope.restore();
     expect(isDockerBindMountsEnabled()).toBe(false);
+  });
+
+  it("rejects terminal-control mount text before capability changes or onboarding output", () => {
+    const source = workspaceTempDir();
+    const unsafeMount = {
+      source,
+      target: "/sandbox/project\u2028forged",
+      readOnly: true as const,
+    };
+    const messages: string[] = [];
+
+    expect(() => beginHostMountScope([unsafeMount])).toThrow("terminal control characters");
+    expect(isDockerBindMountsEnabled()).toBe(false);
+    expect(() =>
+      reportReadOnlyHostMounts([unsafeMount], (message) => messages.push(message)),
+    ).toThrow("terminal control characters");
+    expect(messages).toEqual([]);
   });
 });

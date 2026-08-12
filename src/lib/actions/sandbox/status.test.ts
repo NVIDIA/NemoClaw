@@ -111,7 +111,7 @@ describe("sandbox status host mounts", () => {
     }
   });
 
-  it("rejects malformed and control-character host mounts before JSON rendering", async () => {
+  it("rejects malformed and terminal-control host mounts before JSON rendering", async () => {
     const reportFor = (hostMounts: unknown) =>
       getSandboxStatusReport("alpha", {
         getSandbox: () => ({ name: "alpha", hostMounts }) as never,
@@ -124,7 +124,7 @@ describe("sandbox status host mounts", () => {
     await expect(
       reportFor([
         {
-          source: "/srv/project\u001b[31m",
+          source: "/srv/project\u202e",
           target: "/sandbox/project",
           readOnly: true,
         },

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  hasUnsafeHostMountTerminalText,
   normalizePersistedSandboxHostMounts,
   parseReadOnlyHostMount,
   parseReadOnlyHostMounts,
@@ -10,6 +11,7 @@ import {
 import type { SandboxHostMount } from "../../state/registry/types";
 
 export {
+  hasUnsafeHostMountTerminalText,
   normalizePersistedSandboxHostMounts,
   parseReadOnlyHostMount,
   parseReadOnlyHostMounts,
@@ -27,10 +29,13 @@ export function beginHostMountScope(requested: readonly SandboxHostMount[] | und
   restore(): void;
 } {
   const previous = dockerBindMountsEnabled;
+  const validatedRequested = requested?.length
+    ? normalizePersistedSandboxHostMounts(requested)
+    : null;
   return {
     activate(persisted) {
-      const mounts = requested?.length
-        ? normalizePersistedSandboxHostMounts(requested)
+      const mounts = validatedRequested
+        ? validatedRequested.map((mount) => ({ ...mount }))
         : normalizePersistedSandboxHostMounts(persisted);
       dockerBindMountsEnabled = mounts.length > 0;
       return mounts;
@@ -46,6 +51,14 @@ export function reportReadOnlyHostMounts(
   note: (message: string) => void,
 ): void {
   if (mounts.length === 0) return;
+  if (
+    mounts.some(
+      ({ source, target }) =>
+        hasUnsafeHostMountTerminalText(source) || hasUnsafeHostMountTerminalText(target),
+    )
+  ) {
+    throw new Error("Cannot report a host mount that contains terminal control characters.");
+  }
   note("  Host directory access requested (read-only):");
   for (const mount of mounts) note(`    ${mount.source} -> ${mount.target}`);
   note("  Files remain on the host, and host-side changes are visible inside the sandbox.");

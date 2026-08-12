@@ -36,6 +36,8 @@ $$nemoclaw onboard \
 ```
 
 Onboarding rejects relative paths, missing source directories, symbolic link path components, targets outside `/sandbox`, duplicate sources, and duplicate targets.
+NemoClaw rejects a mount declaration that contains control characters, Unicode formatting controls, or Unicode line and paragraph separators.
+This validation happens before onboarding or a diagnostic report displays either path.
 Every accepted host mount is read-only, and the command does not provide a read-write option.
 
 The sandbox reads the live host directory instead of a copied snapshot.

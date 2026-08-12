@@ -42,7 +42,7 @@ export {
 } from "./registry-entry-view";
 
 import { isDcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
-import { cloneSandboxHostMounts } from "./registry/host-mount";
+import { cloneSandboxHostMounts, hasUnsafeHostMountTerminalText } from "./registry/host-mount";
 import type {
   BaselineExclusionEntry,
   BaselineExclusionTransition,
@@ -85,8 +85,6 @@ export type {
   SandboxWorkloadReceipt,
 } from "./registry/types";
 export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
-export { normalizeCustomPolicyEntries };
-
 export {
   getConfiguredMessagingChannelsFromEntry,
   getDisabledMessagingChannelsFromEntry,
@@ -94,6 +92,7 @@ export {
   getMessagingPlanFromEntry,
   type SandboxMessagingState,
 } from "./registry-messaging";
+export { hasUnsafeHostMountTerminalText, normalizeCustomPolicyEntries };
 
 export type SandboxRemovalReceipt = reversibleRemoval.RegistryRemovalReceipt<SandboxEntry>;
 

@@ -143,7 +143,10 @@ export function normalizeSandboxStatusHostMounts(value: unknown): registry.Sandb
       );
     }
     const { source, target } = candidate as { source: string; target: string };
-    if (/[\p{Cc}\p{Zl}\p{Zp}]/u.test(source) || /[\p{Cc}\p{Zl}\p{Zp}]/u.test(target)) {
+    if (
+      registry.hasUnsafeHostMountTerminalText(source) ||
+      registry.hasUnsafeHostMountTerminalText(target)
+    ) {
       throw new Error(
         "Persisted state contains a host mount with unsafe terminal control characters; repair the local state first.",
       );
