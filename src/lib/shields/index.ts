@@ -910,6 +910,21 @@ function assertShieldsDownConfigPathsSafe(sandboxName: string, target: AgentConf
   }
 }
 
+function requireShieldsDownConfigPathsSafe(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  throwOnError?: boolean,
+): void {
+  try {
+    assertShieldsDownConfigPathsSafe(sandboxName, target);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`  ERROR: ${message}`);
+    console.error("  Shields down did not take effect. `shields status` continues to report `UP`.");
+    failShieldsCommand(message, throwOnError);
+  }
+}
+
 function hermesShieldsGuardArgs(
   action: string,
   target: AgentConfigTarget,
@@ -4800,14 +4815,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   // Otherwise unlock rejects the path after the provisional DOWN/permissive
   // record is already live, and status integrity fails when re-lock cannot
   // reseal the same unsafe path (#8804).
-  try {
-    assertShieldsDownConfigPathsSafe(sandboxName, target);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`  ERROR: ${message}`);
-    console.error("  Shields down did not take effect. `shields status` continues to report `UP`.");
-    return failShieldsCommand(message, opts.throwOnError);
-  }
+  requireShieldsDownConfigPathsSafe(sandboxName, target, opts.throwOnError);
 
   // Kill stale auto-restore markers only when this command will actually
   // transition into shields-down. A repeated shields-down must not cancel the
