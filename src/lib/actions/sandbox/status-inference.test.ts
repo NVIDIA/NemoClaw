@@ -247,6 +247,41 @@ describe("sandbox status inference.local route health (#6192)", () => {
     );
   });
 
+  it("preserves the recorded Responses API for an unchanged live route (#8731)", async () => {
+    const deps = snapshotDeps({
+      provider: "compatible-endpoint",
+      preferredInferenceApi: "openai-responses",
+      liveProvider: "compatible-endpoint",
+      liveModel: "nvidia/nemotron",
+      routeHealth: {
+        ok: true,
+        endpoint: "https://inference.local/v1/models",
+        httpStatus: 200,
+        detail: "route reachable",
+      },
+    });
+    deps.probeSandboxInferenceInvocationImpl.mockImplementation((input) => {
+      const command = buildSandboxInferenceInvocationCommand(input);
+      expect(command).toContain("https://inference.local/v1/responses");
+      expect(command).not.toContain("https://inference.local/v1/chat/completions");
+      return { ok: true };
+    });
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
+
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
+    expect(deps.probeSandboxInferenceInvocationImpl).toHaveBeenCalledWith(
+      {
+        sandboxName: "alpha",
+        provider: "compatible-endpoint",
+        model: "nvidia/nemotron",
+        preferredInferenceApi: "openai-responses",
+      },
+      {},
+      30_000,
+    );
+  });
+
   it("keeps inference.local authoritative when the upstream diagnostic throws (#6192)", async () => {
     const deps = snapshotDeps({
       providerProbeThrows: true,

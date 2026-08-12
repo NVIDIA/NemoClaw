@@ -602,9 +602,10 @@ export async function collectSandboxStatusSnapshot(
             provider: live.provider,
             model: live.model,
             // The live gateway RPC does not expose a stored API override. Do
-            // not combine its provider/model with the recorded sandbox's API
-            // family; resolve the live route's compatible default instead.
-            preferredInferenceApi: null,
+            // not carry an API family across route drift. When the live pair
+            // is unchanged, the recorded family still describes that route.
+            preferredInferenceApi:
+              routeDriftPlan?.kind === "aligned" ? (sb?.preferredInferenceApi ?? null) : null,
           }
         : {
             provider: currentProvider,
