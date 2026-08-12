@@ -52,7 +52,7 @@ function fixture(
   const timeoutBlock = path.join(root, "timeout-block");
   fs.mkdirSync(bin);
   fs.mkdirSync(workDir);
-  if (options.blockRefresh) fs.writeFileSync(timeoutBlock, "block\n");
+  fs.writeFileSync(timeoutBlock, "block\n");
 
   executable(
     path.join(bin, "timeout"),
@@ -205,7 +205,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_SOURCE_REPOSITORY: options.sourceRepository ?? "NVIDIA/NemoClaw",
     FAKE_SOURCE_PATH: options.sourcePath ?? "/opt/nemoclaw-image/NemoClaw",
     FAKE_STATE: state,
-    FAKE_TIMEOUT_BLOCK: timeoutBlock,
+    FAKE_TIMEOUT_BLOCK: options.blockRefresh ? timeoutBlock : path.join(root, "timeout-disabled"),
     GH_TOKEN: "github-test-token",
     GITHUB_RUN_ATTEMPT: "1",
     GITHUB_RUN_ID: "789",
