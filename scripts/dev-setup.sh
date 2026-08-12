@@ -232,8 +232,16 @@ check_quiet_command() {
   local remediation="$2"
   shift 2
 
-  if "$@" >/dev/null 2>&1; then
+  # Capture output to classify the failure. Only match against it; never print
+  # it, because a failing command can name paths the report should not carry.
+  local output
+  if output="$("$@" 2>&1)"; then
     pass "${label}"
+  elif printf '%s' "${output}" | grep -q 'JavaScript heap out of memory'; then
+    # Node.js derives its default old-space limit from host memory, so this
+    # reports the host size rather than a fault in the checked sources.
+    fail "${label}: ran out of Node.js heap" \
+      "Raise the limit, then rerun: export NODE_OPTIONS=--max-old-space-size=5120"
   else
     fail "${label}: failed" "${remediation}"
   fi
