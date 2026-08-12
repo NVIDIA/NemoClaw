@@ -529,7 +529,7 @@ describe("DGX Station Express resume (#7048)", () => {
     fs.chmodSync(stateDir, 0o777);
 
     try {
-      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow("non-owner-only");
+      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow("expected 0700");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
@@ -558,7 +558,7 @@ describe("DGX Station Express resume (#7048)", () => {
     fs.writeFileSync(receipt, receiptText(), { mode: 0o600 });
 
     try {
-      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow("non-owner-only");
+      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow("expected 0700");
       expect(fs.readFileSync(receipt, "utf8")).toBe(receiptText());
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
@@ -577,7 +577,7 @@ describe("DGX Station Express resume (#7048)", () => {
 
     try {
       expect(() => cleanupStationExpressReceiptRetirementClaims({ HOME: home })).toThrow(
-        "non-owner-only",
+        "expected 0700",
       );
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
@@ -610,7 +610,9 @@ describe("DGX Station Express resume (#7048)", () => {
     ).rejects.toThrow("exit 1");
 
     expect(run).not.toHaveBeenCalled();
-    expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("unsafe receipt"));
+    expect(deps.error).toHaveBeenCalledWith(
+      "  Could not discard NemoClaw installer resume state: unsafe receipt",
+    );
   });
 
   it("refuses a symbolic-link Station installer resume receipt", () => {
@@ -639,9 +641,41 @@ describe("DGX Station Express resume (#7048)", () => {
     fs.chmodSync(stateDir, 0o750);
 
     try {
-      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow("non-owner-only");
+      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow("expected 0700");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a non-directory NemoClaw state path before receipt cleanup (#8795)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-receipt-file-"));
+    const statePath = path.join(home, ".nemoclaw");
+    fs.writeFileSync(statePath, "keep", { mode: 0o755 });
+
+    try {
+      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow(
+        `Refusing NemoClaw installer resume path that is not a directory: ${statePath}`,
+      );
+      expect(fs.readFileSync(statePath, "utf8")).toBe("keep");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("reports the required mode and recovery command for unsafe fresh cleanup (#8795)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fresh-state-mode-"));
+    const home = path.join(root, "home-$(touch injected)");
+    const stateDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(stateDir, 0o775);
+
+    try {
+      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow(
+        `NemoClaw installer resume directory has mode 0775; expected 0700: ${stateDir}. ` +
+          'After you verify ownership, run `chmod 700 -- "$HOME/.nemoclaw"` for the default state directory.',
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
