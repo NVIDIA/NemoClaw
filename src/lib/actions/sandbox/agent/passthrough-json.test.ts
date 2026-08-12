@@ -281,6 +281,34 @@ describe("runAgentJsonPassthrough", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
+  it("exits non-zero when an incomplete response omits optional payloads", () => {
+    const payload = JSON.stringify({
+      status: "ok",
+      result: { meta: { error: { kind: "incomplete_turn" } } },
+    });
+    const spawnSync = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      stdout: payload,
+      stderr: "",
+      pid: 123,
+      output: [null, payload, ""],
+    }));
+    const { exit, proc, stdout } = makeProc();
+
+    expect(() =>
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: () => "openshell",
+        spawnSync,
+        stdinIsTty: () => false,
+      }),
+    ).toThrow("__exit:1");
+
+    expect(stdout.join("")).toBe(payload);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
   it("keeps a completed turn at exit 0 so the incomplete-turn check does not misfire", () => {
     const payload = JSON.stringify({
       status: "ok",

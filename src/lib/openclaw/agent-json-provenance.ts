@@ -324,13 +324,18 @@ function agentResponseMetaRecord(doc: unknown): UnknownRecord | null {
   if (
     typeof doc.status === "string" &&
     isObjectRecord(result) &&
-    Array.isArray(result.payloads) &&
+    (!Object.hasOwn(result, "payloads") || Array.isArray(result.payloads)) &&
     isObjectRecord(result.meta)
   ) {
     return result.meta;
   }
 
-  if (Array.isArray(doc.payloads) && isObjectRecord(doc.meta)) return doc.meta;
+  if (
+    (!Object.hasOwn(doc, "payloads") || Array.isArray(doc.payloads)) &&
+    isObjectRecord(doc.meta)
+  ) {
+    return doc.meta;
+  }
   return null;
 }
 
