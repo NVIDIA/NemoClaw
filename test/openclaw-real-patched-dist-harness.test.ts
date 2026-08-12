@@ -175,7 +175,7 @@ function resolveRealOpenClawNodeRuntime(
   supportedNode22 ||
     runtimeMismatch(
       version,
-      "Node >=22.22.3 <23 (the Dockerfile runtime is Node 22.23.1)",
+      "Node >=22.22.3 <23 (the Dockerfile runtime is Node 22.23.2)",
       REAL_OPENCLAW_NODE_ENV,
     );
 
@@ -317,11 +317,11 @@ describe("OpenClaw real patched-dist materialization guard", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-node-runtime-"));
     try {
       const fakeNode = path.join(tmp, "node");
-      fs.writeFileSync(fakeNode, "#!/bin/sh\nprintf 'v22.23.1\\n'\n", { mode: 0o700 });
+      fs.writeFileSync(fakeNode, "#!/bin/sh\nprintf 'v22.23.2\\n'\n", { mode: 0o700 });
 
       expect(resolveRealOpenClawNodeRuntime({ [REAL_OPENCLAW_NODE_ENV]: fakeNode })).toEqual({
         executable: fakeNode,
-        version: "v22.23.1",
+        version: "v22.23.2",
       });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

@@ -39,10 +39,10 @@ Set `NEMOCLAW_PREFERRED_API=openai-responses` before onboarding to select `/v1/r
 Set `NEMOCLAW_PREFERRED_API=openai-completions` to skip the Responses probe and validate Chat Completions only.
 The Responses streaming check waits up to 5 seconds for `response.output_text.delta` before onboarding falls back to Chat Completions.
 Some Chat Completions validation requests require a structured tool call.
-If such a request reaches the output-token limit after producing only reasoning content, NemoClaw retries once with a larger token budget.
+If such a request reaches the output-token limit after producing only reasoning content, NemoClaw retries with a 1024-token output limit and then, when reasoning still uses the full limit, with a 4096-token output limit and a doubled request deadline.
 This applies to local runtimes such as Ollama and vLLM.
-Onboarding continues only when the retry returns a structured tool call.
-If the retry fails or times out, validation stops without another Chat Completions attempt.
+Onboarding continues only when a retry returns a structured tool call.
+If the last retry fails or times out, validation stops without another Chat Completions attempt.
 
 <AgentOnly variant="deepagents">
 
@@ -73,7 +73,7 @@ This is the API surface that the managed OpenAI frontend uses at runtime.
 ## Compatible Endpoint Probes
 
 Compatible endpoint validation sends a real inference request because many proxies do not expose `/models`.
-For an OpenAI-compatible endpoint, a reasoning model that returns only reasoning content can receive a retry with a larger response budget before NemoClaw reports failure.
+For an OpenAI-compatible endpoint, a reasoning model that returns only reasoning content can receive retries with larger output token limits before NemoClaw reports failure.
 Route, configuration, and authentication failures still fail immediately.
 
 During one onboarding invocation, NemoClaw can reuse one successful Chat Completions validation instead of sending the same immediate host-side request.
