@@ -29,6 +29,33 @@ function sandboxCommandFailure(
 ): Error {
   return Object.assign(new Error(message), { stderr, stdout });
 }
+
+function deferredPolicyRunner(hash: string): NonNullable<ShieldsFlowHarnessOptions["run"]> {
+  const results = new Map<string, ReturnType<NonNullable<ShieldsFlowHarnessOptions["run"]>>>([
+    [
+      "get",
+      {
+        status: 0,
+        stdout: `Version: 11\nHash: ${hash}\nStatus: pending\n---\nversion: 1\nnetwork_policies: {}\n`,
+        stderr: "",
+      },
+    ],
+    [
+      "set",
+      {
+        status: 1,
+        stdout: `Policy version 11 submitted (hash: ${hash})\n`,
+        stderr: "Timeout waiting for policy version 11 to load\n",
+      },
+    ],
+  ]);
+  return (cmd) => {
+    const args = Array.isArray(cmd) ? cmd.map(String) : [];
+    const operation = args.find((arg) => arg === "get" || arg === "set") ?? "unknown";
+    return results.get(operation) ?? { status: 0 };
+  };
+}
+
 const TRANSITION_LOCK_MODULE = "./transition-lock.js";
 
 describe("shields policy transition", () => {
@@ -154,24 +181,7 @@ describe("shields down policy rejection", () => {
     const harness = createShieldsFlowHarness(requireSource, tmpDir, {
       deferredPolicyContainerMissing: true,
       initialOpenClawPosture: "locked",
-      run: (cmd) => {
-        const args = Array.isArray(cmd) ? cmd.map(String) : [];
-        if (args.includes("policy") && args.includes("get")) {
-          return {
-            status: 0,
-            stdout: `Version: 11\nHash: ${hash}\nStatus: pending\n---\nversion: 1\nnetwork_policies: {}\n`,
-            stderr: "",
-          };
-        }
-        if (args.includes("policy") && args.includes("set")) {
-          return {
-            status: 1,
-            stdout: `Policy version 11 submitted (hash: ${hash})\n`,
-            stderr: "Timeout waiting for policy version 11 to load\n",
-          };
-        }
-        return { status: 0 };
-      },
+      run: deferredPolicyRunner(hash),
     });
 
     expect(() =>
