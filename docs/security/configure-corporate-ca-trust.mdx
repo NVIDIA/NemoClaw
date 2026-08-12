@@ -49,8 +49,9 @@ The final image reuses those runtimes only from a digest-pinned base in the offi
 A locally built base or mutable tag does not provide independent CI publication evidence.
 Its marker cannot authorize reuse; the existing version checks reinstall the locked OpenClaw and mcporter runtimes or reject a newer base.
 When NemoClaw selects a corporate CA, it sets `NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root` for the image build.
-The OpenClaw entrypoint creates `/tmp/nemoclaw-ca-bundle.pem` as `root:root` with mode `0444` before it starts agent commands as the `sandbox` user.
+The OpenClaw managed startup runtime creates `/run/nemoclaw/managed-startup-ca-bundle.pem` as `root:root` with mode `0444` before it starts agent commands as the `sandbox` user.
 The `sandbox` user can read the merged bundle but cannot modify or replace it.
+Sandboxes still using the staged legacy direct-start path create `/tmp/nemoclaw-ca-bundle.pem` with mode `0444` as the same `sandbox` identity that runs the entrypoint and agent, so that compatibility path is read-only by mode but is not a privilege boundary.
 
 </AgentOnly>
 

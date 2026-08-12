@@ -119,7 +119,7 @@ describe("sandbox create intent machine boundary", () => {
 
   it("carries an explicit recreate request through a fresh sandbox decision (#8847)", async () => {
     const session = createSession({ sandboxName: "same-sandbox" });
-    const { deps, calls } = createDeps();
+    const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
 
     await handleSandboxState({
       ...baseOptions(deps, session),
@@ -128,6 +128,7 @@ describe("sandbox create intent machine boundary", () => {
       sandboxName: "same-sandbox",
     });
 
+    expect(calls.recordSkip).not.toHaveBeenCalled();
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({ recreate: true });
   });
 

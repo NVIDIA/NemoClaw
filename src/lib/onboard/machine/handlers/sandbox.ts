@@ -165,8 +165,15 @@ function shouldForceMessagingProviderRegistration(
   return credentialChanged || messagingCredentialBindingsChanged(baseline, reconciled);
 }
 
-function shouldApplyCheckpointCrashRecovery(decision: SandboxResumeDecision): boolean {
-  return decision.kind === "create" && decision.validateMessagingCredentialsBeforeMutation !== true;
+function shouldApplyCheckpointCrashRecovery(
+  decision: SandboxResumeDecision,
+  recreateRequested: boolean,
+): boolean {
+  return (
+    !recreateRequested &&
+    decision.kind === "create" &&
+    decision.validateMessagingCredentialsBeforeMutation !== true
+  );
 }
 
 export interface SandboxStateOptions<
@@ -768,7 +775,9 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     sandboxReuseState: string,
   ): SandboxResumeDecision {
-    if (!shouldApplyCheckpointCrashRecovery(decision)) return decision;
+    if (!shouldApplyCheckpointCrashRecovery(decision, this.options.recreateSandbox(false))) {
+      return decision;
+    }
     const checkpoint = state.session?.checkpoint;
     const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
     const identity =

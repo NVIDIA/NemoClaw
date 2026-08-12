@@ -140,6 +140,22 @@ describe("getRegistrySandboxMessagingAuthority", () => {
       }),
     ).toEqual({ source: "registry", plan: registryPlan });
   });
+
+  it("keeps a registered sandbox authoritative while its route update is pending", () => {
+    const entry = {
+      name: "alpha",
+      createdAt: "2026-08-12T00:00:00.000Z",
+      pendingRouteReservation: true,
+    } as const;
+    const registryPlan = messagingPlan("alpha", "rebuild");
+    vi.spyOn(registry, "getSandbox").mockReturnValue(entry);
+    vi.spyOn(registry, "getHydratedMessagingPlanFromEntry").mockReturnValue(registryPlan);
+
+    expect(getRegistrySandboxMessagingAuthority("alpha")).toEqual({
+      authoritative: true,
+      plan: registryPlan,
+    });
+  });
 });
 
 describe("setupSelectedMessagingChannels", () => {
