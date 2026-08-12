@@ -136,15 +136,26 @@ archive.
 
 ## Live Target
 
-`test/e2e/live/jetson-nvmap-gpu.test.ts` runs a temporary CPU-only Jetson
-fallback while issue #7610 blocks CUDA qualification through OpenShell. It
-verifies the Jetson hardware gate, the host `/dev/nvmap` character device,
-Docker NVIDIA runtime, real noninteractive NemoClaw installation, and
-job-local installed commands. Onboarding sets `NEMOCLAW_SANDBOX_GPU=0`, so a
-successful run proves CPU-only onboarding rather than sandbox GPU access or
-CUDA initialization.
+`test/e2e/live/jetson-nvmap-gpu.test.ts` runs the Jetson hardware target
+against the candidate checkout. The target keeps its fixed dispatch ID, but
+uses a CPU-only fallback while [issue #7610](https://github.com/NVIDIA/NemoClaw/issues/7610)
+remains open. It verifies the Jetson hardware gate, the host `/dev/nvmap`
+character device, Docker NVIDIA runtime, real noninteractive NemoClaw
+installation, and job-local installed commands.
 
-The target also requires CPU-only status output that excludes `/dev/nvmap`
-and `/opt/nvidia`, then verifies from inside the sandbox that `/dev/nvmap` is
-absent, including as a symbolic link. The test records phase evidence through
-the shared live E2E artifact fixtures.
+The live test runs `bash install.sh --non-interactive` with
+`NEMOCLAW_SANDBOX_GPU=0`. `install.sh` does not accept `--no-gpu`, so this
+setting is equivalent to `nemoclaw onboard --no-gpu`.
+
+A successful run requires these results:
+
+- Installation reports that sandbox GPU access is disabled by configuration.
+- `nemoclaw e2e-jetson-nvmap status` reports `Sandbox GPU: disabled`.
+- Status does not report a CUDA verification result, `/dev/nvmap`, or
+  `/opt/nvidia`.
+- `/dev/nvmap` is absent from inside the sandbox, including as a symbolic link.
+
+The target does not run an in-sandbox CUDA proof or exercise the OpenClaw
+Jetson device-group preservation path. A successful result does not establish
+that `cuInit(0)` works through OpenShell or that issue #7610 is resolved. The
+test records phase evidence through the shared live E2E artifact fixtures.

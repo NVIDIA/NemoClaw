@@ -112,6 +112,7 @@ export function createSandboxGpuCreateAttemptRunner(
             : {}),
           route,
           persistStartupCommand: input.persistStartupCommand === true,
+          preserveJetsonDeviceGroupMembership: input.preserveJetsonDeviceGroupMembership === true,
           sandboxName: input.sandboxName,
           sandboxGpuConfig: input.sandboxGpuConfig,
           requiredLimits: input.requiredUlimits ?? [],

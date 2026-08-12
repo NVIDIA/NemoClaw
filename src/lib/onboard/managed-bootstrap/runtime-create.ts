@@ -73,6 +73,7 @@ export interface ManagedBootstrapRuntimeCreateLifecycleInput {
   readonly adapterOverride?: ManagedBootstrapAdapter;
   readonly route: ManagedBootstrapRuntimeRoute;
   readonly persistStartupCommand: boolean;
+  readonly preserveJetsonDeviceGroupMembership?: boolean;
   readonly sandboxName: string;
   readonly sandboxGpuConfig: SandboxGpuConfig;
   readonly requiredLimits: readonly ManagedBootstrapRuntimeLimit[];

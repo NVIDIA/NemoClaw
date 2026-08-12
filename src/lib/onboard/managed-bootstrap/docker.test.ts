@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { assert, describe, expect, it, vi } from "vitest";
-
+import { JETSON_DEVICE_GROUP_BOOTSTRAP } from "../docker-gpu-patch-clone";
 import {
   MANAGED_BOOTSTRAP_IDENTITY_ENV,
   ManagedBootstrapDurableCommitCleanupPendingError,
@@ -215,6 +215,71 @@ describe("Docker managed bootstrap adapter", () => {
       { Name: "memlock", Soft: -1, Hard: -1 },
       { Name: "nproc", Soft: 512, Hard: 512 },
     ]);
+  });
+
+  it("preserves Jetson device groups through the managed supervisor handoff (#7610)", async () => {
+    const fake = fixture({ agent: "openclaw" });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request } = authority("openclaw");
+    const discovered = await adapter.discoverHeldWorkload({
+      sandbox: handle.sandbox,
+      bootstrapIdentity: handle.bootstrapIdentity,
+      expectedImage: handle.plan.image,
+      metadata: handle.plan.metadata,
+    });
+    const snapshot = await adapter.inspectHeldWorkload({ handle, discovered });
+
+    await expect(
+      adapter.prepareBootstrapReplacement({
+        handle,
+        snapshot,
+        request,
+        replacementOptions: {
+          values: {
+            extraGroupGids: ["44", "110"],
+            preserveJetsonDeviceGroupMembership: true,
+          },
+        },
+      }),
+    ).resolves.toMatchObject({ preparedRuntimeId: NEW_ID });
+    expect(fake.replacement?.HostConfig?.GroupAdd).toEqual(["44", "110"]);
+    expect(fake.replacement?.Config?.Cmd?.slice(-7)).toEqual([
+      JETSON_DEVICE_GROUP_BOOTSTRAP,
+      "--device-group-gids",
+      "44,110",
+      "--",
+      "/opt/openshell/bin/openshell-sandbox",
+      "--workdir",
+      "/sandbox",
+    ]);
+    expect(fake.events).not.toContain(`stop:${OLD_ID}`);
+  });
+
+  it("rejects a non-boolean Jetson group-preservation option before replacement creation (#7610)", async () => {
+    const fake = fixture({ agent: "openclaw" });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request } = authority("openclaw");
+    const discovered = await adapter.discoverHeldWorkload({
+      sandbox: handle.sandbox,
+      bootstrapIdentity: handle.bootstrapIdentity,
+      expectedImage: handle.plan.image,
+      metadata: handle.plan.metadata,
+    });
+    const snapshot = await adapter.inspectHeldWorkload({ handle, discovered });
+
+    await expect(
+      adapter.prepareBootstrapReplacement({
+        handle,
+        snapshot,
+        request,
+        replacementOptions: {
+          values: { preserveJetsonDeviceGroupMembership: "true" },
+        },
+      }),
+    ).rejects.toThrow(
+      "Managed bootstrap Docker Jetson device-group preservation must be a boolean.",
+    );
+    expect(fake.events).not.toContain("create:replacement");
   });
 
   it("accepts equivalent Engine API and Docker CLI create metadata before cutover", async () => {

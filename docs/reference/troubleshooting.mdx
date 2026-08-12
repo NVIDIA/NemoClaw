@@ -2887,12 +2887,13 @@ To skip GPU passthrough entirely, rerun with `--no-gpu` or set `NEMOCLAW_SANDBOX
 #### Jetson and Tegra compatibility default
 
 Automatic GPU onboarding uses the compatibility path directly; it does not make a native attempt first.
-The path recreates the OpenShell-managed Docker container with NVIDIA GPU flags and propagates eligible host group IDs for the supported Jetson GPU device nodes.
-Docker passes those group IDs through `--group-add`.
+The compatibility path recreates the OpenShell-managed Docker container with NVIDIA GPU flags.
+For OpenClaw, both that compatibility recreation and a managed native recreation propagate eligible host group IDs for the supported Jetson GPU device nodes.
+Docker passes those group IDs through `--group-add` in both replacements.
 OpenShell calls `initgroups()` before it starts processes as the sandbox account.
 That call reloads supplementary groups from the container group database and can replace the inherited Docker memberships.
 
-Before the replacement starts the OpenShell supervisor, NemoClaw runs a root-owned helper from the OpenClaw sandbox image.
+Before either replacement starts the OpenShell supervisor, NemoClaw runs a root-owned helper from the OpenClaw sandbox image.
 The helper validates the complete detected group-ID list before it changes the sandbox account's group database.
 It then verifies the resulting memberships and can hand off only to `/opt/openshell/bin/openshell-sandbox`.
 If validation or membership verification fails, the replacement container stops.
@@ -2902,7 +2903,8 @@ It grants read-only access to the injected NVIDIA libraries under `/opt/nvidia`.
 It grants read-write access only to existing, non-symlink character devices from the eligible Tegra GPU path list.
 Generic GPU and CPU-only policies do not receive these Jetson entries.
 
-Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses that group propagation and CUDA may not initialize.
+`NEMOCLAW_DOCKER_GPU_PATCH=0` selects the native route instead of the default Jetson compatibility path.
+Use it only for troubleshooting because preserving the device groups does not establish that the native route initializes CUDA.
 
 These controls address NVIDIA library visibility, eligible device access, and supplementary group preservation.
 They do not establish successful `cuInit(0)` on IGX Orin with JetPack 6.2.

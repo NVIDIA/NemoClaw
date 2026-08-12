@@ -330,6 +330,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
     recoverUnfinished.mockClear();
     createLifecycle.mockClear();
+    input.preserveJetsonDeviceGroupMembership = true;
     mocks.streamSandboxCreate.mockResolvedValueOnce({
       status: 23,
       output: "Created sandbox: alpha",
@@ -340,7 +341,11 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
 
     expect(result).toMatchObject({ route: "none", runtimePatch: patch });
     expect(createLifecycle).toHaveBeenCalledWith(
-      expect.objectContaining({ providerId: "mxc", route: "none" }),
+      expect.objectContaining({
+        providerId: "mxc",
+        preserveJetsonDeviceGroupMembership: true,
+        route: "none",
+      }),
     );
     expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
       "mxc-launch",
