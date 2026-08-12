@@ -80,6 +80,17 @@ import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:ch
 //    coverage live in `ollama-restart-recovery.ts` and
 //    `passthrough-ollama-recovery.ts`.
 //
+// 6. Dispatch delivery contract and stdin posture. Both captured transports
+//    fail loud when the exec returns success with no bytes on either stream,
+//    and neither hands an interactive terminal to the non-interactive
+//    dispatch. Both transports also pin the sandbox's owning gateway with an
+//    explicit `-g`, restoring the per-subprocess authority #7113 established
+//    for `execSandbox`; PR #8191 dropped it here when it moved this path off
+//    `execSandbox`, and the JSON path never had it. The source-boundary
+//    analysis and the classifier live in `passthrough-dispatch.ts`; the
+//    operator-facing failure text lives beside the help copy in
+//    `passthrough-help.ts`.
+//
 // Regression tests: `passthrough.test.ts` covers the Hermes redirect, the
 // forwarded argv, the registry-miss fallback to OpenClaw, registry and
 // manifest-resolution fail-closed paths, quoted manifest command rejection,
@@ -105,6 +116,7 @@ import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:ch
 
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";
+import { isStdinTty } from "../../../core/stdin";
 import { requireCuaLifecycleReadiness } from "../../../cua/lifecycle-readiness";
 import { resolveSandboxGatewayName } from "../../../gateway-runtime-action";
 import { withGatewayRouteMutationLock } from "../../../inference/gateway-route-mutation-lock";
@@ -119,7 +131,17 @@ import {
   wrapExecCommandWithRuntimeEnv,
 } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
-import { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
+import { getKnownSandboxTargetGatewayName } from "../gateway-target";
+import {
+  agentDispatchStdio,
+  isSilentAgentDispatch,
+  SILENT_AGENT_DISPATCH_EXIT_CODE,
+} from "./passthrough-dispatch";
+import {
+  hasAgentPassthroughHelpToken,
+  printAgentPassthroughHelp,
+  writeSilentAgentDispatchFailure,
+} from "./passthrough-help";
 import {
   type AgentJsonPassthroughProcess,
   defaultGetOpenshellBinary,
@@ -168,6 +190,8 @@ function nonJsonAsText(value: string | Buffer | null | undefined): string {
 
 export type AgentNonJsonPassthroughDeps = {
   getOpenshellBinary?: () => string;
+  getGatewayName?: (sandboxName: string) => string | null;
+  stdinIsTty?: () => boolean;
   spawnSync?: (
     command: string,
     args: readonly string[],
@@ -185,15 +209,25 @@ export function runAgentNonJsonPassthrough(
   const spawnSyncImpl = deps.spawnSync ?? spawnSync;
   const result = spawnSyncImpl(
     binary,
-    buildOpenshellExecArgs(sandboxName, wrapExecCommandWithRuntimeEnv(command), { tty: false }),
+    buildOpenshellExecArgs(
+      sandboxName,
+      wrapExecCommandWithRuntimeEnv(command),
+      { tty: false },
+      (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName) ?? undefined,
+    ),
     {
       encoding: "utf-8",
       maxBuffer: AGENT_NON_JSON_MAX_BUFFER_BYTES,
-      stdio: ["inherit", "pipe", "pipe"],
+      stdio: agentDispatchStdio((deps.stdinIsTty ?? isStdinTty)()),
     },
   );
   const stdout = nonJsonAsText(result.stdout);
   const stderr = nonJsonAsText(result.stderr);
+
+  if (isSilentAgentDispatch(result, stdout, stderr)) {
+    writeSilentAgentDispatchFailure(proc, sandboxName, command);
+    return proc.exit(SILENT_AGENT_DISPATCH_EXIT_CODE);
+  }
 
   if (OPENCLAW_EMBEDDED_FALLBACK_PATTERN.test(`${stdout}\n${stderr}`)) {
     proc.stderr.write(
