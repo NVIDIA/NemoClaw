@@ -177,9 +177,6 @@ describe("runner env merging", () => {
   it("preserves Docker context only for Docker subprocesses (#8816)", () => {
     const calls: SpawnCall[] = [];
     const originalSpawnSync = childProcess.spawnSync;
-    const originalDockerContext = process.env.DOCKER_CONTEXT;
-    const originalDockerHost = process.env.DOCKER_HOST;
-    const originalApiKey = process.env.NVIDIA_INFERENCE_API_KEY;
     // @ts-expect-error — intentional partial mock for testing
     childProcess.spawnSync = captureSpawnCall(calls, {
       status: 0,
@@ -188,29 +185,15 @@ describe("runner env merging", () => {
     });
 
     try {
-      process.env.DOCKER_CONTEXT = "healthy-context";
-      delete process.env.DOCKER_HOST;
-      process.env.NVIDIA_INFERENCE_API_KEY = "test-secret-must-not-cross-runner-boundary";
+      vi.stubEnv("DOCKER_CONTEXT", "healthy-context");
+      vi.stubEnv("DOCKER_HOST", undefined);
+      vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "test-secret-must-not-cross-runner-boundary");
       delete require.cache[require.resolve(runnerPath)];
       const { run } = require(runnerPath);
       run(["docker", "ps"]);
       run(["echo", "test"]);
     } finally {
-      if (originalDockerContext === undefined) {
-        delete process.env.DOCKER_CONTEXT;
-      } else {
-        process.env.DOCKER_CONTEXT = originalDockerContext;
-      }
-      if (originalDockerHost === undefined) {
-        delete process.env.DOCKER_HOST;
-      } else {
-        process.env.DOCKER_HOST = originalDockerHost;
-      }
-      if (originalApiKey === undefined) {
-        delete process.env.NVIDIA_INFERENCE_API_KEY;
-      } else {
-        process.env.NVIDIA_INFERENCE_API_KEY = originalApiKey;
-      }
+      vi.unstubAllEnvs();
       childProcess.spawnSync = originalSpawnSync;
       delete require.cache[require.resolve(runnerPath)];
     }
@@ -228,8 +211,6 @@ describe("runner env merging", () => {
   it("keeps Docker host precedence over an ambient Docker context (#8816)", () => {
     const calls: SpawnCall[] = [];
     const originalSpawnSync = childProcess.spawnSync;
-    const originalDockerContext = process.env.DOCKER_CONTEXT;
-    const originalDockerHost = process.env.DOCKER_HOST;
     // @ts-expect-error — intentional partial mock for testing
     childProcess.spawnSync = captureSpawnCall(calls, {
       status: 0,
@@ -238,24 +219,15 @@ describe("runner env merging", () => {
     });
 
     try {
-      process.env.DOCKER_CONTEXT = "ambient-context";
-      delete process.env.DOCKER_HOST;
+      vi.stubEnv("DOCKER_CONTEXT", "ambient-context");
+      vi.stubEnv("DOCKER_HOST", undefined);
       delete require.cache[require.resolve(runnerPath)];
       const { run } = require(runnerPath);
       run(["docker", "ps"], { env: { DOCKER_HOST: "unix:///explicit.sock" } });
-      process.env.DOCKER_HOST = "unix:///selected-fallback.sock";
+      vi.stubEnv("DOCKER_HOST", "unix:///selected-fallback.sock");
       run(["docker", "ps"]);
     } finally {
-      if (originalDockerContext === undefined) {
-        delete process.env.DOCKER_CONTEXT;
-      } else {
-        process.env.DOCKER_CONTEXT = originalDockerContext;
-      }
-      if (originalDockerHost === undefined) {
-        delete process.env.DOCKER_HOST;
-      } else {
-        process.env.DOCKER_HOST = originalDockerHost;
-      }
+      vi.unstubAllEnvs();
       childProcess.spawnSync = originalSpawnSync;
       delete require.cache[require.resolve(runnerPath)];
     }
