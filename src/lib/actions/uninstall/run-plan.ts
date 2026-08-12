@@ -523,6 +523,14 @@ function runtimeBranding(runtime: UninstallRuntime): AgentBranding {
   return getAgentBranding(runtime.env.NEMOCLAW_AGENT);
 }
 
+function yellowWarningText(message: string, runtime: UninstallRuntime): string {
+  // Use stderr's color capability so redirected stderr does not contain ANSI codes.
+  if (runtime.env.NO_COLOR) return message;
+  const colorDepth = process.stderr.getColorDepth?.(runtime.env) ?? 1;
+  if (colorDepth <= 1) return message;
+  return `\x1b[33m${message}\x1b[39m`;
+}
+
 function planStepDisplayName(stepName: string, branding: AgentBranding): string {
   return stepName === "NemoClaw CLI" ? `${branding.display} CLI` : stepName;
 }
@@ -1917,22 +1925,25 @@ function reportOtherGatewayEnvironments(
 ): void {
   if (!inspection.otherGatewayEnvironmentsRemain) return;
   const branding = runtimeBranding(runtime);
-  runtime.log(
-    `Other ${branding.display} gateway-port environments remain on this host and are outside this uninstall:`,
-  );
-  for (const port of inspection.otherGatewayPorts) {
-    runtime.log(`  · gateway '${resolveGatewayName(port)}' on port ${String(port)}`);
-  }
-  if (inspection.unidentifiedOtherGateways) {
-    runtime.log("  · one or more gateway environments whose port could not be read");
-  }
   const [firstPort] = inspection.otherGatewayPorts;
-  if (firstPort !== undefined) {
-    runtime.log(
-      `  Remove one of them: NEMOCLAW_GATEWAY_PORT=${String(firstPort)} ${branding.cli} uninstall`,
-    );
+  const warningLines = [
+    `  ⚠ Other ${branding.display} gateway-port environments remain on this host and are outside this uninstall:`,
+    ...inspection.otherGatewayPorts.map(
+      (port) => `  · gateway '${resolveGatewayName(port)}' on port ${String(port)}`,
+    ),
+    ...(inspection.unidentifiedOtherGateways
+      ? ["  · one or more gateway environments whose port could not be read"]
+      : []),
+    ...(firstPort !== undefined
+      ? [
+          `  Remove one of them: NEMOCLAW_GATEWAY_PORT=${String(firstPort)} ${branding.cli} uninstall`,
+        ]
+      : []),
+    `  Remove every gateway port: ${branding.cli} uninstall --all-gateway-ports`,
+  ];
+  for (const line of warningLines) {
+    runtime.warn(yellowWarningText(line, runtime));
   }
-  runtime.log(`  Remove every gateway port: ${branding.cli} uninstall --all-gateway-ports`);
 }
 
 function removeManagedSwap(
