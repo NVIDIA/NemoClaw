@@ -111,7 +111,7 @@ export function runAgentSmokeCommands(
     const requireManagedBoundary = agent.name === "langchain-deepagents-code";
     const exitCode = getSmokeExitCode(output, requireManagedBoundary);
     const transportFailed =
-      requireManagedBoundary && typeof result !== "string" && result?.status !== 0;
+      requireManagedBoundary && (typeof result === "string" || result?.status !== 0);
     if (exitCode !== 0 || transportFailed) {
       return { ok: false, command, output };
     }

@@ -65,6 +65,16 @@ describe("terminal agent smoke command invocation", () => {
     expect(result).toMatchObject({ ok: false, command: "dcode --version" });
   });
 
+  it("rejects string-only managed smoke evidence without transport status (#8624)", () => {
+    const result = runAgentSmokeCommands(
+      "probe-box",
+      agent("langchain-deepagents-code"),
+      () => "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
+    );
+
+    expect(result).toMatchObject({ ok: false, command: "dcode --version" });
+  });
+
   it("rejects extra marker evidence around the managed runner boundary (#8624)", () => {
     const result = runAgentSmokeCommands("probe-box", agent("langchain-deepagents-code"), () => ({
       status: 0,

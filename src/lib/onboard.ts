@@ -4263,6 +4263,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         agentSetupContext: () => ({
           step,
           runCaptureOpenshell,
+          captureOpenshell,
           openshellShellCommand,
           openshellBinary: getOpenshellBinary(),
           buildSandboxConfigSyncScript,

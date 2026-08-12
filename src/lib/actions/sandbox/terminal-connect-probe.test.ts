@@ -87,9 +87,10 @@ describe("terminal-agent connect inference route", () => {
   });
 
   it("lets dcode continue to terminal smoke checks when its route probe is inconclusive (#6191)", () => {
-    const capture = vi.fn(
-      () => "NEMOCLAW_AGENT_SMOKE_BEGIN\ndcode 0.1.12\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
-    );
+    const capture = vi.fn(() => ({
+      status: 0,
+      output: "NEMOCLAW_AGENT_SMOKE_BEGIN\ndcode 0.1.12\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
+    }));
     const ensureInferenceRoute = vi.fn(() => ({ routeHealthy: null }));
 
     expect(() =>
