@@ -125,10 +125,12 @@ type E2eTargetNormalizationContext = {
 };
 
 export function trustedE2eRecommendationInventory(): TrustedE2eRecommendationInventory {
-  const allJobIds = trustedAllJobIds();
-  const candidateJobIds = new Set(
-    extractAllowedE2eJobIds(readTrustedE2eWorkflowText(), discoverTrustedCredentialFreeTests()),
-  );
+  const workflowText = readTrustedE2eWorkflowText();
+  const credentialFreeTests = discoverTrustedCredentialFreeTests();
+  const candidateJobIds = new Set(extractAllowedE2eJobIds(workflowText, credentialFreeTests));
+  const allJobIds = [
+    ...new Set([...candidateJobIds, ...E2E_TARGET_CATALOGUE.map(({ id }) => id)]),
+  ].sort();
   return {
     workflow: E2E_WORKFLOW,
     fanoutId: E2E_ALL_ID,
@@ -466,18 +468,6 @@ function discoverTrustedCredentialFreeTests(): E2eChangedCredentialFreeTest[] {
     }
   }
   return rows.sort((left, right) => left.id.localeCompare(right.id));
-}
-
-function trustedAllJobIds(): string[] {
-  return [
-    ...new Set([
-      ...extractAllowedE2eJobIds(
-        readTrustedE2eWorkflowText(),
-        discoverTrustedCredentialFreeTests(),
-      ),
-      ...E2E_TARGET_CATALOGUE.map(({ id }) => id),
-    ]),
-  ].sort();
 }
 
 function extractAllowedE2eJobIds(
