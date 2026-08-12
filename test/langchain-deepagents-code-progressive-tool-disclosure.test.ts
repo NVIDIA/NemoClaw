@@ -178,9 +178,13 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
     kwargs.pop("rubric_model", None)
     kwargs.pop("async_subagents", None)
     graph_config = kwargs.pop("graph_config", None)
+    subagents = kwargs.pop(
+        "subagents",
+        [{"name": "first", "middleware": []}, {"name": "second", "middleware": []}],
+    )
     graph = create_deep_agent(
         middleware=[],
-        subagents=[{"name": "first", "middleware": []}, {"name": "second", "middleware": []}],
+        subagents=subagents,
         **kwargs,
     )
     if graph_config is not None:
@@ -458,6 +462,15 @@ def counts(result):
     )
     return len(instances), len({id(item) for item in instances})
 
+def disclosure_instances(result):
+    graph, backend = result
+    assert backend == "fixture-backend"
+    middleware_type = middleware.ProgressiveToolDisclosureMiddleware
+    return [
+        [item for item in stack if isinstance(item, middleware_type)][0]
+        for stack in [graph.main, *graph.subagents]
+    ]
+
 def observability_counts(result):
     graph, backend = result
     assert backend == "fixture-backend"
@@ -488,6 +501,43 @@ os.environ.pop("NEMOCLAW_TOOL_DISCLOSURE", None)
 no_mcp = counts(agent.create_cli_agent(None, "assistant"))
 empty_mcp = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(())]))
 active = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(("mcp_echo",))]))
+parent_only = harness.BaseTool("parent_only", "Parent graph tool")
+subagent_only = harness.BaseTool("subagent_only", "Subagent graph tool")
+subagent_result = agent.create_cli_agent(
+    None,
+    "assistant",
+    tools=[parent_only],
+    mcp_server_info=[Info(("mcp_echo",))],
+    subagents=[
+        {"name": "inherits", "middleware": []},
+        {"name": "overrides", "middleware": [], "tools": [subagent_only]},
+        {"name": "empty", "middleware": [], "tools": []},
+    ],
+)
+(
+    main_disclosure,
+    inherited_disclosure,
+    overridden_disclosure,
+    empty_disclosure,
+) = disclosure_instances(subagent_result)
+subagent_search = overridden_disclosure.tools[0].func(
+    query="subagent",
+    runtime=harness.ToolRuntime({}, tools=[overridden_disclosure.tools[0]]),
+)
+subagent_visible = overridden_disclosure._prepare_request(
+    harness.ModelRequest(
+        [subagent_only, overridden_disclosure.tools[0]],
+        {"discovered_tools": subagent_search.update["discovered_tools"]},
+    )
+)
+subagent_catalogs = {
+    "main": [tool.name for tool in main_disclosure._registered_tools],
+    "inherited": [tool.name for tool in inherited_disclosure._registered_tools],
+    "overridden": [tool.name for tool in overridden_disclosure._registered_tools],
+    "empty": [tool.name for tool in empty_disclosure._registered_tools],
+    "search_result": subagent_search.update["discovered_tools"],
+    "visible": [tool.name for tool in subagent_visible.tools],
+}
 os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = "direct"
 direct = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(("mcp_echo",))]))
 
@@ -577,6 +627,7 @@ print(json.dumps({
     "no_mcp": no_mcp,
     "empty_mcp": empty_mcp,
     "active": active,
+    "subagent_catalogs": subagent_catalogs,
     "progressive_collisions": progressive_collisions,
     "direct_collisions": direct_collisions,
     "reached_original": reached_original,
@@ -711,7 +762,9 @@ describe("Deep Agents 0.1.54 progressive-disclosure build patch", () => {
       firstBytes[fixture.agentPath].match(
         /ProgressiveToolDisclosureMiddleware\(\s*registered_tools=kwargs\.get\("tools"\)\s*\)/g,
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
+    expect(firstBytes[fixture.agentPath]).toContain('subagent["tools"]');
+    expect(firstBytes[fixture.agentPath]).toContain('if "tools" in subagent');
     expect(firstBytes[fixture.modulePath]).toBe(fs.readFileSync(middlewarePath, "utf8"));
     expect(firstBytes[fixture.observabilityModulePath]).toBe(
       fs.readFileSync(observabilityPath, "utf8"),
@@ -753,6 +806,14 @@ describe("Deep Agents 0.1.54 progressive-disclosure build patch", () => {
     });
     expect(wiring.observability_prebound_list).toEqual(wiring.observability_active);
     expect(wiring.observability_prebound_manager).toEqual(wiring.observability_active);
+    expect(wiring.subagent_catalogs).toEqual({
+      main: ["parent_only"],
+      inherited: ["parent_only"],
+      overridden: ["subagent_only"],
+      empty: [],
+      search_result: ["subagent_only"],
+      visible: ["subagent_only", "search_tools"],
+    });
     expect(wiring.progressive_collisions).toEqual({
       regular_regular: expect.stringContaining("multiple registered implementations"),
       regular_mcp: expect.stringContaining("MCP metadata owners"),

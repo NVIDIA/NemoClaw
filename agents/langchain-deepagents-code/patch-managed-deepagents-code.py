@@ -670,9 +670,14 @@ def _nemoclaw_create_deep_agent(*args, **kwargs):
             if isinstance(subagent, dict):
                 subagent_middleware = list(subagent.get("middleware") or ())
                 if progressive_active:
+                    registered_tools = (
+                        subagent["tools"]
+                        if "tools" in subagent
+                        else kwargs.get("tools")
+                    )
                     subagent_middleware.append(
                         ProgressiveToolDisclosureMiddleware(
-                            registered_tools=kwargs.get("tools")
+                            registered_tools=registered_tools
                         )
                     )
                 if observability_active:

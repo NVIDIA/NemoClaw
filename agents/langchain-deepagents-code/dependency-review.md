@@ -36,7 +36,10 @@ Deep Agents Code `0.1.54` with LangChain `1.3.14` can supply `search_tools` with
 The next model request can still expose those tools, but a search against only the middleware runtime view reports no match and cannot disclose them.
 
 NemoClaw owns the progressive-disclosure middleware injection at graph construction.
-Each main-agent and local-subagent middleware instance therefore retains the registered tool tuple from that boundary.
+The main-agent middleware retains the parent graph's registered tool tuple.
+A declarative local subagent that defines `tools` retains that catalog, including an explicit empty list.
+A declarative local subagent that omits `tools` inherits the parent graph's catalog.
+An explicit subagent catalog therefore cannot search or expose a parent-only tool.
 At search time, the middleware combines that tuple with `ToolRuntime.tools` by object identity and applies the existing name, result, state, and schema limits to the combined catalog.
 Model requests still use their request-time tool view, and the existing callable-name validation still rejects ambiguous or reserved owners before graph construction.
 
@@ -51,6 +54,9 @@ After a valid search, the fixture reports a rejected or incorrect target result 
 
 The focused fixture and installed-image validator give `search_tools` a runtime view that contains only itself.
 They require a registered hidden MCP tool to appear in the search response and in the next model tool list.
+The focused fixture also assigns separate tools to the parent and one subagent.
+It requires an omitted subagent catalog to inherit the parent tool and an explicit subagent catalog to retain only the subagent tool.
+The same fixture requires the subagent tool to remain searchable and to appear in the next model request when `ToolRuntime.tools` contains only `search_tools`.
 The live Deep Agents MCP E2E test separately requires the tool to be hidden initially, returned by `search_tools`, exposed on the next model request, and invoked through the authenticated managed MCP path.
 Remove the retained catalog only after the pinned Deep Agents and LangChain runtime supplies every registered searchable tool to middleware calls and both evidence paths pass without it.
 
