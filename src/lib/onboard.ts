@@ -991,6 +991,7 @@ const { verifyInferenceRoute, isInferenceRouteReady, checkGatewayRouteCompatibil
 const { inspectSandboxForCreate, confirmRecreateForSelectionDrift, isOpenclawReady } =
   sandboxLifecycle.createSandboxLifecycleHelpers({
     runCaptureOpenshell,
+    getGatewayName: () => GATEWAY_NAME,
     fetchGatewayAuthTokenFromSandbox: (sandboxName: string) =>
       fetchGatewayAuthTokenFromSandbox(sandboxName),
     agentProductName,

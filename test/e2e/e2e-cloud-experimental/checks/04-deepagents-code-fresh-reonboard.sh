@@ -268,8 +268,14 @@ if ! reonboard_output="$(
 )"; then
   fail "same-name --fresh re-onboard failed: $reonboard_output"
 fi
-printf '%s\n' "$reonboard_output" | grep -Fq "Backing up workspace state before recreating sandbox..." || fail "re-onboard did not take the pre-recreate backup path"
-printf '%s\n' "$reonboard_output" | grep -Fq "Restoring workspace state from pre-recreate backup..." || fail "re-onboard did not take the restore path"
+if ! printf '%s\n' "$reonboard_output" | grep -Fq "Backing up workspace state before recreating sandbox..."; then
+  printf '%s: diagnostic: same-name re-onboard output:\n%s\n' "$PREFIX" "${reonboard_output:-<no output captured>}"
+  fail "re-onboard did not take the pre-recreate backup path"
+fi
+if ! printf '%s\n' "$reonboard_output" | grep -Fq "Restoring workspace state from pre-recreate backup..."; then
+  printf '%s: diagnostic: same-name re-onboard output:\n%s\n' "$PREFIX" "${reonboard_output:-<no output captured>}"
+  fail "re-onboard did not take the restore path"
+fi
 pass "same-name --fresh re-onboard crossed backup and restore boundaries"
 
 sandbox_list="$(openshell sandbox list 2>&1)" || fail "could not list sandbox after re-onboard"
