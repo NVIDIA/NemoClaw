@@ -176,13 +176,13 @@ describe("docker-driver-gateway compatibility container", () => {
 
   it("requires digest-pinned compatibility gateway image overrides", () => {
     withTempBinaries(({ dir, gatewayBin, sandboxBin }) => {
-      const stateDir = path.join(dir, "state");
-      fs.mkdirSync(stateDir);
+      const invalidStateDir = path.join(dir, "invalid-state");
+      fs.mkdirSync(invalidStateDir);
       expect(() =>
         buildDockerDriverGatewayLaunch({
           gatewayBin,
           sandboxBin,
-          stateDir,
+          stateDir: invalidStateDir,
           platform: "linux",
           env: {
             NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH: "1",
@@ -194,6 +194,8 @@ describe("docker-driver-gateway compatibility container", () => {
         }),
       ).toThrow(/must include an immutable @sha256/);
 
+      const stateDir = path.join(dir, "state");
+      fs.mkdirSync(stateDir);
       const launch = buildDockerDriverGatewayLaunch({
         gatewayBin,
         sandboxBin,

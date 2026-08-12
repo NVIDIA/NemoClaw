@@ -7,7 +7,13 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  buildDockerDriverGatewayConfigToml,
+  ensureDockerDriverGatewayJwtBundle,
+  gatewayIdForStateDir,
+} from "../../onboard/docker-driver-gateway-config";
 import { NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE } from "../../onboard/docker-driver-gateway-service";
+import { resolveGatewayStateDirName } from "../../onboard/gateway-binding";
 import { readGatewayRegistryFile } from "../../state/gateway-registry";
 import { migrateLegacyPortState } from "../../state/legacy-port-migration";
 import {
@@ -19,6 +25,29 @@ import {
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
+}
+
+function writeScopedGatewayState(home: string, port = 8080): string {
+  const stateDir = path.join(home, ".local", "state", "nemoclaw", resolveGatewayStateDirName(port));
+  const configPath = path.join(stateDir, "openshell-gateway.toml");
+  const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+  fs.writeFileSync(
+    configPath,
+    buildDockerDriverGatewayConfigToml(
+      {
+        OPENSHELL_GRPC_ENDPOINT: `https://127.0.0.1:${String(port)}`,
+        OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+        OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+        OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+      },
+      "/usr/bin/openshell-sandbox",
+      jwtBundle,
+      gatewayIdForStateDir(stateDir),
+    ),
+    { mode: 0o600 },
+  );
+  fs.chmodSync(configPath, 0o600);
+  return configPath;
 }
 
 function withManagedGatewayAuthority(deps: UninstallRunDeps): UninstallRunDeps {
@@ -60,18 +89,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-external-"));
     try {
       const stateDir = path.join(tmpHome, ".nemoclaw");
-      const gatewayStatePath = path.join(
-        tmpHome,
-        ".local",
-        "state",
-        "nemoclaw",
-        "openshell-docker-gateway",
-        "openshell-gateway.toml",
-      );
-      const gatewayState = 'listen_address = "127.0.0.1:8080"\n';
+      const gatewayStatePath = writeScopedGatewayState(tmpHome);
+      const gatewayState = fs.readFileSync(gatewayStatePath, "utf-8");
       fs.mkdirSync(stateDir, { recursive: true });
-      fs.mkdirSync(path.dirname(gatewayStatePath), { recursive: true });
-      fs.writeFileSync(gatewayStatePath, gatewayState);
       const prepareScope = {
         full: () => undefined,
         scoped: () =>
@@ -90,6 +110,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const calls: Array<{ args: string[]; command: string }> = [];
       const dockerCalls: string[][] = [];
       const kill = vi.fn(() => true);
+      const externalPid = 4242;
+      const externalStateDir = path.dirname(gatewayStatePath);
 
       const result = runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: false },
@@ -106,7 +128,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
             mode: "externally-supervised",
             source: "declared",
             endpoint: `http://127.0.0.1:${String(gatewayPort)}`,
-            stateDir: "/var/lib/openshell/gateway",
+            stateDir: externalStateDir,
             supervisor: {
               kind,
               serviceName: "openshell-gateway.service",
@@ -114,9 +136,18 @@ describe("uninstall gateway-port segregation (#3053)", () => {
             },
             requiredCapabilities: [],
           }),
+          readProcessEnvironment: () => ({
+            NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(externalStateDir),
+          }),
           rmSync: fs.rmSync,
           run: (command, args) => {
             calls.push({ args, command });
+            if (command === "systemctl" && args.includes("--property=MainPID")) {
+              return ok(`${String(externalPid)}\n`);
+            }
+            if (command === "ps" && args.includes("uid=")) {
+              return ok(`${String(process.getuid?.() ?? -1)}\n`);
+            }
             return ok();
           },
           runDocker: (args) => {
@@ -132,7 +163,12 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         .map(({ args }) => args);
       expect(openshellCalls).toContainEqual(["gateway", "remove", "nemoclaw"]);
       expect(openshellCalls).not.toContainEqual(["gateway", "destroy", "-g", "nemoclaw"]);
-      expect(calls.some(({ args }) => args.join(" ").includes("openshell-gateway"))).toBe(false);
+      expect(
+        calls.some(
+          ({ command, args }) =>
+            command !== "systemctl" && args.join(" ").includes("openshell-gateway"),
+        ),
+      ).toBe(false);
       expect(kill).not.toHaveBeenCalled();
       expect(dockerCalls).toEqual([]);
       expect(
@@ -301,6 +337,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         path.join(stateDir, "sandboxes.json"),
         JSON.stringify({ defaultSandbox: null, sandboxes: {} }),
       );
+      writeScopedGatewayState(tmpHome);
       const adapterStateEntries = [
         "https-pin-runtime-adapter.pid",
         "https-pin-runtime-adapter-token",
@@ -358,6 +395,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const stateDir = path.join(tmpHome, ".nemoclaw");
       fs.mkdirSync(path.join(stateDir, "gateways", "8091"), { recursive: true });
       fs.writeFileSync(path.join(stateDir, "managed_swap"), "/swapfile");
+      writeScopedGatewayState(tmpHome);
       const logs: string[] = [];
       const runCalls: string[][] = [];
       const result = runUninstallPlan(
@@ -409,6 +447,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       fs.writeFileSync(path.join(stateDir, "managed_swap"), "/swapfile");
       const defaultSession = path.join(stateDir, "onboard-session.json");
       fs.writeFileSync(defaultSession, "{}");
+      writeScopedGatewayState(tmpHome, port);
       const runCalls: string[][] = [];
 
       const deps = {
@@ -468,6 +507,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       fs.mkdirSync(selectedEnv, { recursive: true });
       fs.mkdirSync(siblingEnv, { recursive: true });
       fs.writeFileSync(path.join(stateDir, "managed_swap"), "/swapfile");
+      writeScopedGatewayState(tmpHome, port);
       const runCalls: string[][] = [];
 
       const result = runPortUninstall(
@@ -528,6 +568,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         }),
       );
       fs.writeFileSync(path.join(shared, "managed_swap"), "/swapfile");
+      writeScopedGatewayState(tmpHome, port);
       const runCalls: string[][] = [];
 
       const result = runPortUninstall(
@@ -599,6 +640,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         home: tmpHome,
       });
       expect(migration.migratedSandboxNames).toEqual(["selected-box"]);
+      writeScopedGatewayState(tmpHome, selectedPort);
       const calls: Array<{ command: string; args: string[] }> = [];
       const result = runPortUninstall(
         {
@@ -681,6 +723,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
+      writeScopedGatewayState(tmpHome);
       const calls: Array<{ command: string; args: string[] }> = [];
 
       const result = runDefaultUninstall(
@@ -786,6 +829,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
+      writeScopedGatewayState(tmpHome, port);
 
       const runCalls: Array<{ command: string; args: string[] }> = [];
       const dockerCalls: string[][] = [];
@@ -863,6 +907,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
+      writeScopedGatewayState(tmpHome);
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
       const result = runUninstallPlan(
@@ -912,6 +957,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
+      writeScopedGatewayState(tmpHome);
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
       const result = runUninstallPlan(
@@ -959,6 +1005,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
+      writeScopedGatewayState(tmpHome);
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
       const result = runUninstallPlan(
@@ -1085,6 +1132,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       fs.mkdirSync(discoveryBinding, { mode: 0o700 });
       fs.writeFileSync(path.join(runtimeBinding, "known_hosts"), "host-key\n", { mode: 0o600 });
       fs.writeFileSync(managedApiKey, `${"a".repeat(64)}\n`, { mode: 0o600 });
+      writeScopedGatewayState(tmpHome);
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
       const result = runUninstallPlan(
@@ -1136,6 +1184,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       fs.writeFileSync(runtimeReceipt, "{}\n", { mode: 0o600 });
       fs.mkdirSync(runtimeBinding, { mode: 0o700 });
       fs.writeFileSync(path.join(runtimeBinding, "known_hosts"), "host-key\n", { mode: 0o600 });
+      writeScopedGatewayState(tmpHome);
       const openshellCalls: string[][] = [];
       const warnings: string[] = [];
       let gatewayListCalls = 0;
@@ -1192,6 +1241,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
+      writeScopedGatewayState(tmpHome);
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
       const result = runUninstallPlan(
@@ -1242,6 +1292,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
+      writeScopedGatewayState(tmpHome);
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
       const result = runUninstallPlan(
@@ -1289,6 +1340,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
+      writeScopedGatewayState(tmpHome);
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
       const result = runUninstallPlan(
@@ -1352,6 +1404,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
+      writeScopedGatewayState(tmpHome, port);
       const calls: string[][] = [];
 
       const result = runPortUninstall(

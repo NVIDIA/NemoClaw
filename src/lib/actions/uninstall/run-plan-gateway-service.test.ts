@@ -7,7 +7,11 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { gatewayIdForStateDir } from "../../onboard/docker-driver-gateway-config";
+import {
+  buildDockerDriverGatewayConfigToml,
+  ensureDockerDriverGatewayJwtBundle,
+  gatewayIdForStateDir,
+} from "../../onboard/docker-driver-gateway-config";
 import {
   getNemoclawOpenShellGatewayUserServicePath,
   getOpenShellUserConfigHome,
@@ -88,11 +92,23 @@ function writeSelectedSandboxRegistry(test: Fixture, sandboxName: string): strin
 function writeGatewayState(test: Fixture): string {
   const stateDir = path.join(test.home, ".local", "state", "nemoclaw", "openshell-docker-gateway");
   const configPath = path.join(stateDir, "openshell-gateway.toml");
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
   fs.writeFileSync(
     configPath,
-    `[openshell.drivers.docker]\nsandbox_namespace = "${gatewayIdForStateDir(stateDir)}"\n`,
+    buildDockerDriverGatewayConfigToml(
+      {
+        OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
+        OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+        OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+        OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+      },
+      "/usr/bin/openshell-sandbox",
+      jwtBundle,
+      gatewayIdForStateDir(stateDir),
+    ),
+    { mode: 0o600 },
   );
+  fs.chmodSync(configPath, 0o600);
   return configPath;
 }
 
@@ -125,12 +141,20 @@ function uninstall(
       runDocker: () => ok(),
       ...overrides,
       commandExists: (command) => command === "openshell" || commandExists(command),
-      run: (command, args, options) =>
-        command === "openshell" && args[0] === "gateway" && args[1] === "list"
-          ? ok(JSON.stringify(gateways))
-          : command === "systemctl" && args.includes("--property=MainPID")
-            ? ok("0\n")
-            : run(command, args, options),
+      run: (command, args, options) => {
+        const delegated = run(command, args, options);
+        if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
+          return ok(JSON.stringify(gateways));
+        }
+        if (
+          command === "systemctl" &&
+          args.includes("--property=MainPID") &&
+          delegated.stdout === ""
+        ) {
+          return ok("0\n");
+        }
+        return delegated;
+      },
     },
   );
 }
@@ -173,6 +197,8 @@ describe("uninstall OpenShell gateway user service", () => {
   it("keeps selected gateway state during scoped cleanup under external supervision (#6576)", () => {
     const test = fixture(true);
     const gatewayStatePath = writeGatewayState(test);
+    const stateDir = path.dirname(gatewayStatePath);
+    const pid = 4242;
 
     const result = uninstall(
       test,
@@ -185,7 +211,7 @@ describe("uninstall OpenShell gateway user service", () => {
           mode: "externally-supervised",
           source: "declared",
           endpoint: `http://127.0.0.1:${String(gatewayPort)}`,
-          stateDir: path.dirname(gatewayStatePath),
+          stateDir,
           supervisor: {
             kind: "systemd-user",
             serviceName: "external-openshell.service",
@@ -193,12 +219,132 @@ describe("uninstall OpenShell gateway user service", () => {
           },
           requiredCapabilities: [],
         }),
+        readProcessEnvironment: () => ({
+          NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(stateDir),
+        }),
+        run: (command, args) =>
+          command === "systemctl" && args.includes("--property=MainPID")
+            ? ok(`${String(pid)}\n`)
+            : command === "ps" && args.includes("uid=")
+              ? ok(`${String(process.getuid?.() ?? -1)}\n`)
+              : ok(),
       },
       [{ name: "nemoclaw" }, { name: "sibling" }],
     );
 
     expect(result.exitCode).toBe(0);
     expect(fs.existsSync(gatewayStatePath)).toBe(true);
+  });
+
+  it("does not mutate scoped resources when an external authority names another state root", () => {
+    const test = fixture(true);
+    const localConfigPath = writeGatewayState(test);
+    const registryPath = writeSelectedSandboxRegistry(test, "my-assistant");
+    const registryBefore = fs.readFileSync(registryPath, "utf-8");
+    const calls: string[][] = [];
+    const errors: string[] = [];
+
+    const result = uninstall(
+      test,
+      false,
+      {
+        commandExists: () => true,
+        error: (message) => errors.push(message),
+        resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+          gatewayName,
+          gatewayPort,
+          mode: "externally-supervised",
+          source: "declared",
+          endpoint: `http://127.0.0.1:${String(gatewayPort)}`,
+          stateDir: path.join(test.root, "external-gateway-state"),
+          supervisor: {
+            kind: "systemd-user",
+            serviceName: "external-openshell.service",
+            execPath: "/usr/local/bin/openshell-gateway",
+          },
+          requiredCapabilities: [],
+        }),
+        run: (command, args) => {
+          calls.push([command, ...args]);
+          return ok();
+        },
+      },
+      [{ name: "nemoclaw" }, { name: "sibling" }],
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(fs.existsSync(localConfigPath)).toBe(true);
+    expect(fs.readFileSync(registryPath, "utf-8")).toBe(registryBefore);
+    expect(
+      calls.some(([command, resource]) => command === "openshell" && resource === "sandbox"),
+    ).toBe(false);
+    expect(errors).toContain(
+      "Refusing scoped gateway cleanup because the externally supervised process's loaded sandbox namespace cannot be proven.",
+    );
+  });
+
+  it("does not delete a sandbox when an external service changes namespace after selection", () => {
+    const test = fixture(true);
+    const configPath = writeGatewayState(test);
+    const stateDir = path.dirname(configPath);
+    const registryPath = writeSelectedSandboxRegistry(test, "my-assistant");
+    const registryBefore = fs.readFileSync(registryPath, "utf-8");
+    const pid = 4242;
+    let namespaceReads = 0;
+    const calls: string[][] = [];
+
+    const result = uninstall(
+      test,
+      false,
+      {
+        commandExists: () => true,
+        readProcessEnvironment: () => {
+          namespaceReads += 1;
+          return {
+            NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE:
+              namespaceReads <= 2 ? gatewayIdForStateDir(stateDir) : "default",
+          };
+        },
+        resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+          gatewayName,
+          gatewayPort,
+          mode: "externally-supervised",
+          source: "declared",
+          endpoint: `http://127.0.0.1:${String(gatewayPort)}`,
+          stateDir,
+          supervisor: {
+            kind: "systemd-user",
+            serviceName: "external-openshell.service",
+            execPath: "/usr/local/bin/openshell-gateway",
+          },
+          requiredCapabilities: [],
+        }),
+        run: (command, args) => {
+          calls.push([command, ...args]);
+          if (command === "systemctl" && args.includes("--property=MainPID")) {
+            return ok(`${String(pid)}\n`);
+          }
+          if (command === "ps" && args.includes("uid=")) {
+            return ok(`${String(process.getuid?.() ?? -1)}\n`);
+          }
+          return ok();
+        },
+      },
+      [{ name: "nemoclaw" }, { name: "sibling" }],
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(namespaceReads).toBe(3);
+    expect(
+      calls.some(
+        ([command, resource, action]) =>
+          command === "openshell" && resource === "gateway" && action === "select",
+      ),
+    ).toBe(true);
+    expect(
+      calls.some(([command, resource]) => command === "openshell" && resource === "sandbox"),
+    ).toBe(false);
+    expect(fs.readFileSync(registryPath, "utf-8")).toBe(registryBefore);
   });
 
   it("deletes the selected sandbox before it disables the marked Linux unit on scoped uninstall (#8220)", () => {
@@ -247,28 +393,76 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(fs.existsSync(servicePath)).toBe(false);
   });
 
-  it("does not signal a scoped service whose sandbox namespace is unproven (#8663)", () => {
+  it.each([
+    { externallySupervised: false, keepOpenShell: false, mode: "managed cleanup" },
+    { externallySupervised: false, keepOpenShell: true, mode: "--keep-openshell" },
+    { externallySupervised: true, keepOpenShell: false, mode: "external supervision" },
+  ])("does not mutate scoped resources with an unproven sandbox namespace under $mode (#8663)", ({
+    externallySupervised,
+    keepOpenShell,
+  }) => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
-    fs.writeFileSync(writeGatewayState(test), "[openshell.drivers.docker]\n");
+    const configPath = writeGatewayState(test);
+    const registryPath = writeSelectedSandboxRegistry(test, "my-assistant");
+    const registryBefore = fs.readFileSync(registryPath, "utf-8");
+    fs.writeFileSync(configPath, '[openshell.drivers.docker]\nsandbox_namespace = "default"\n');
     const calls: string[][] = [];
+    const errors: string[] = [];
 
-    const result = uninstall(
-      test,
-      false,
-      {
-        commandExists: (command) => command === "systemctl",
-        run: (command, args) => {
-          calls.push([command, ...args]);
-          return ok();
-        },
+    const deps: Partial<UninstallRunDeps> = {
+      commandExists: (command) => command === "systemctl",
+      run: (command, args) => {
+        calls.push([command, ...args]);
+        return ok();
       },
-      [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
-    );
+      error: (message) => errors.push(message),
+    };
+    if (externallySupervised) {
+      deps.resolveGatewayTeardownAuthority = ({ gatewayName, gatewayPort }) => ({
+        gatewayName,
+        gatewayPort,
+        mode: "externally-supervised",
+        source: "declared",
+        endpoint: `http://127.0.0.1:${String(gatewayPort)}`,
+        stateDir: path.dirname(configPath),
+        supervisor: {
+          kind: "systemd-user",
+          serviceName: "external-openshell.service",
+          execPath: "/usr/local/bin/openshell-gateway",
+        },
+        requiredCapabilities: [],
+      });
+    }
+
+    const result = uninstall(test, keepOpenShell, deps, [
+      { name: "nemoclaw" },
+      { name: "nemoclaw-8081" },
+    ]);
 
     expect(result.exitCode).toBe(1);
     expect(fs.existsSync(servicePath)).toBe(true);
-    expect(calls.some(([command]) => command === "systemctl")).toBe(false);
+    expect(fs.existsSync(configPath)).toBe(true);
+    expect(fs.readFileSync(registryPath, "utf-8")).toBe(registryBefore);
+    expect(
+      calls.some(([command, resource]) => command === "openshell" && resource === "sandbox"),
+    ).toBe(false);
+    expect(
+      calls.some(
+        ([command, resource, action]) =>
+          command === "openshell" && resource === "gateway" && action === "remove",
+      ),
+    ).toBe(false);
+    expect(
+      calls.some(
+        ([command, ...args]) => command === "systemctl" && !args.includes("--property=MainPID"),
+      ),
+    ).toBe(false);
+    expect(errors).toContain(
+      externallySupervised
+        ? "Refusing scoped gateway cleanup because the externally supervised process's loaded sandbox namespace cannot be proven."
+        : "Refusing scoped gateway cleanup because its sandbox namespace cannot be proven.",
+    );
   });
 
   it("preserves the marked Linux unit when scoped sandbox deletion fails (#8220)", () => {

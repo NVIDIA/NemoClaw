@@ -8,6 +8,8 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  buildDockerDriverGatewayConfigToml,
+  ensureDockerDriverGatewayJwtBundle,
   gatewayIdForStateDir,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
 } from "./docker-driver-gateway-config";
@@ -84,9 +86,21 @@ function stopScopedTarget(
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-scoped-target-"));
   const pidFile = path.join(stateDir, "openshell-gateway.pid");
   fs.writeFileSync(pidFile, `${String(pid)}\n`);
+  const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
   fs.writeFileSync(
     path.join(stateDir, "openshell-gateway.toml"),
-    `[openshell.drivers.docker]\nsandbox_namespace = "${gatewayIdForStateDir(stateDir)}"\n`,
+    buildDockerDriverGatewayConfigToml(
+      {
+        OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:18080",
+        OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+        OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+        OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+      },
+      "/usr/bin/openshell-sandbox",
+      jwtBundle,
+      gatewayIdForStateDir(stateDir),
+    ),
+    { mode: 0o600 },
   );
   writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
     desiredEnv: {},

@@ -88,14 +88,27 @@ It also preserves the gateway process, supervisor resources, marked Linux unit, 
 A custom-port uninstall does not stop or remove the default gateway service or its environment file.
 Before scoped cleanup stops a Docker gateway process, including a managed default gateway service, NemoClaw requires two Docker namespace proofs.
 The selected Docker gateway configuration and any running gateway process must use the state-root-specific OpenShell sandbox namespace that NemoClaw generated.
+When NemoClaw can prove an owner-private, generated configuration and complete JWT bundle that predate state-root scoping, restart keeps the legacy gateway ID, JWT bundle, and Docker driver's `default` namespace.
+That compatibility keeps the gateway able to find existing containers and keeps their non-expiring sandbox JWT issuer valid.
+NemoClaw regenerates the other gateway settings from the current runtime configuration.
+For a proven legacy Podman gateway, NemoClaw preserves the gateway ID that existing sandbox JWTs use; the supported Podman schema has no `sandbox_namespace` setting to preserve.
+If the existing identity is ambiguous or unsafe, or durable gateway state remains without its configuration, restart fails closed without rewriting the configuration or JWT bundle.
+Fresh state roots and already scoped configurations continue to use the state-root-specific identity.
+The legacy `default` namespace is not isolated across gateways, so it cannot satisfy the scoped-uninstall proof while sibling gateways remain.
+Scoped uninstall stops before it deletes a sandbox, registry row, or gateway registration and preserves the selected gateway's runtime evidence and local state.
 Because the supported OpenShell Podman schema does not expose `sandbox_namespace`, scoped Podman uninstall fails closed before signaling and preserves the gateway runtime evidence and local state.
 Full single-gateway Podman uninstall continues to use normal graceful teardown.
 For Docker, if either proof is absent, uninstall exits nonzero before it signals the host gateway.
 NemoClaw preserves the gateway runtime evidence and local state.
 Keep that state intact.
-Restore the selected Docker gateway through the supported install or onboarding recovery flow so it restarts with the generated configuration.
+For an already scoped gateway with stale runtime evidence, restore it through the supported install or onboarding recovery flow, verify the generated identity, and retry.
+A proven legacy gateway is not silently converted by onboarding.
+To retire one, first remove sibling gateways through their own proven scoped cleanup, verify that only the legacy gateway remains, and then use the full single-gateway uninstall path.
+For an ambiguous or incomplete identity, stop the gateway and restore the exact generated `openshell-gateway.toml` and complete `jwt/` directory from a trusted host-level backup.
+The default gateway stores them under `~/.local/state/nemoclaw/openshell-docker-gateway/`; a non-default gateway uses `~/.local/state/nemoclaw/openshell-docker-gateway-<port>/`.
+Restore them as the owning user, keep both directories private, and do not grant group or other access to the configuration or JWT files.
+NemoClaw does not reconstruct gateway identity from sandbox snapshots or `backup-all`; if no matching gateway-state backup exists, keep the state intact rather than attempting a scoped cleanup.
 Verify every gateway with `openshell gateway list`.
-Retry the scoped uninstall.
 Do not add `sandbox_namespace` manually to a live gateway configuration because the running process can still be using its previous namespace.
 
 <Note>
