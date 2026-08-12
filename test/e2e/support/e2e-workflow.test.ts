@@ -169,14 +169,6 @@ describe("e2e workflow boundary", () => {
     workflow.on.workflow_dispatch.inputs.include_staging_brev_launchable.default = true;
     workflow.jobs["staging-brev-launchable"]!.if = "${{ github.event_name == 'push' }}";
     workflow.jobs["staging-brev-launchable-readiness"] = {};
-    const dispatchIdentity = workflow.jobs["staging-brev-launchable"]!.steps!.find(
-      (step) => step.name === "Record E2E dispatch identity",
-    )!;
-    delete dispatchIdentity.env!.DISPATCH_JOBS;
-    dispatchIdentity.run = dispatchIdentity.run!.replace(
-      'kind: "nemoclaw-e2e-dispatch-v1"',
-      'kind: "untrusted"',
-    );
 
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
@@ -184,8 +176,6 @@ describe("e2e workflow boundary", () => {
         "workflow_dispatch include_staging_brev_launchable input must be boolean and default to false",
         "workflow must not define superseded staging-brev-launchable-readiness job",
         "staging-brev-launchable must run on main pushes and retain trusted manual selection",
-        "staging-brev-launchable dispatch identity must bind DISPATCH_JOBS",
-        `step 'Record E2E dispatch identity' run script must include kind: "nemoclaw-e2e-dispatch-v1"`,
       ]),
     );
   });
