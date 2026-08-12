@@ -748,22 +748,27 @@ function renderBrevTemplate(openshellVersion: string, pinFunction: string): stri
 }
 
 function renderSupervisorRuntime(openshellVersion: string): string {
-  if (SUPERVISOR_RUNTIME_TEMPLATE.includes(`  "${openshellVersion}": "sha256:`)) {
-    return SUPERVISOR_RUNTIME_TEMPLATE;
-  }
+  const hasManifestIdentity = SUPERVISOR_RUNTIME_TEMPLATE.includes(
+    `  "${openshellVersion}": "sha256:`,
+  );
   const manifestDigest =
     openshellVersion === "0.0.103"
       ? V00103_SUPERVISOR_MANIFEST_DIGEST
       : openshellVersion === "9.9.9"
         ? SYNTHETIC_SUPERVISOR_MANIFEST_DIGEST
         : undefined;
-  expect(manifestDigest, `supervisor fixture ${openshellVersion}`).toBeTruthy();
-  return SUPERVISOR_RUNTIME_TEMPLATE.replace(
-    "const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {\n",
-    `const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {
+  expect(
+    hasManifestIdentity || manifestDigest,
+    `supervisor fixture ${openshellVersion}`,
+  ).toBeTruthy();
+  return hasManifestIdentity
+    ? SUPERVISOR_RUNTIME_TEMPLATE
+    : SUPERVISOR_RUNTIME_TEMPLATE.replace(
+        "const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {\n",
+        `const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {
   "${openshellVersion}": "${manifestDigest}",
 `,
-  );
+      );
 }
 
 function createFixture(

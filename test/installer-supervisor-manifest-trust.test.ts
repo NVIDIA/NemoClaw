@@ -102,6 +102,16 @@ type RunOptions = {
   transformSupervisor?: (source: string) => string;
 };
 
+function writeRegularSupervisorRuntime(runtimePath: string, source: string): void {
+  fs.writeFileSync(runtimePath, source);
+}
+
+function writeSymlinkedSupervisorRuntime(runtimePath: string, source: string): void {
+  const realRuntime = path.join(path.dirname(runtimePath), "real-runtime.ts");
+  fs.writeFileSync(realRuntime, source);
+  fs.symlinkSync(realRuntime, runtimePath);
+}
+
 function runParser(options: RunOptions = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-supervisor-trust-"));
   const scriptsDir = path.join(root, "scripts");
@@ -129,13 +139,10 @@ function runParser(options: RunOptions = {}) {
   fs.writeFileSync(blueprint, selected.blueprint);
   const supervisorSource =
     options.transformSupervisor?.(SUPERVISOR_RUNTIME_TEMPLATE) ?? SUPERVISOR_RUNTIME_TEMPLATE;
-  if (options.supervisorSymlink) {
-    const realRuntime = path.join(supervisorRuntimeDir, "real-runtime.ts");
-    fs.writeFileSync(realRuntime, supervisorSource);
-    fs.symlinkSync(realRuntime, supervisorRuntime);
-  } else {
-    fs.writeFileSync(supervisorRuntime, supervisorSource);
-  }
+  const writeSupervisorRuntime = options.supervisorSymlink
+    ? writeSymlinkedSupervisorRuntime
+    : writeRegularSupervisorRuntime;
+  writeSupervisorRuntime(supervisorRuntime, supervisorSource);
   fs.writeFileSync(
     path.join(checksDir, "extract-installer-pins.mts"),
     options.candidateParserBypass
