@@ -71,6 +71,12 @@ NemoClaw treats an active or uninspectable `earlyoom` service as an unmet two-no
 It does not stop, disable, or reconfigure that service.
 An explicit pair or preset stops when this requirement is not met.
 
+NemoClaw treats the Docker readiness requirement as met only when `host.docker.storage_incompatible` is the host's sole blocking finding.
+The report must contain no fatal finding.
+The host must also report `host.docker.storage_remediation_available`.
+Every other required capability must have the `present` state.
+For these capability definitions, refer to [System Readiness](../../reference/system-readiness).
+
 Refer to the [NVIDIA DGX Spark clustering guide](https://docs.nvidia.com/dgx/dgx-spark/spark-clustering.html) for the physical connection workflow.
 The NemoClaw checks above remain the exact profile requirements.
 
