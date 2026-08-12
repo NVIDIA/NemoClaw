@@ -235,6 +235,7 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
         HOME: tmpDir,
         PATH: process.env.PATH ?? "",
         _HERMES_BOUNDARY_VALIDATOR: SECRET_BOUNDARY_VALIDATOR_SCRIPT,
+        HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
         ...envOverrides,
       },
     });

@@ -75,7 +75,7 @@ function runStartEnvValidation(hermesDir: string) {
   }
 }
 
-function runRuntimeEnvValidation(envOverrides: Record<string, string>) {
+function runRuntimeEnvValidation(envOverrides: Record<string, string | undefined>) {
   const source = fs.readFileSync(START_SCRIPT, "utf-8");
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-env-check-"));
   const script = path.join(runDir, "run.sh");
@@ -98,15 +98,20 @@ function runRuntimeEnvValidation(envOverrides: Record<string, string>) {
       ].join("\n"),
       { mode: 0o700 },
     );
+    const env: NodeJS.ProcessEnv = {
+      HOME: os.tmpdir(),
+      PATH: process.env.PATH ?? "",
+      _HERMES_BOUNDARY_VALIDATOR: VALIDATOR,
+      HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
+      ...envOverrides,
+    };
+    for (const [key, value] of Object.entries(envOverrides)) {
+      if (value === undefined) delete env[key];
+    }
     return spawnSync("bash", [script], {
       encoding: "utf-8",
       timeout: 5000,
-      env: {
-        HOME: os.tmpdir(),
-        PATH: process.env.PATH ?? "",
-        _HERMES_BOUNDARY_VALIDATOR: VALIDATOR,
-        ...envOverrides,
-      },
+      env,
     });
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });
@@ -440,13 +445,29 @@ describe("Hermes durable lazy-install target", () => {
     expect(result.stderr).toBe("");
   });
 
-  it("rejects a lazy target override that could import sandbox code into the gateway (#8613)", () => {
-    const result = runRuntimeEnvValidation({
-      HERMES_LAZY_INSTALL_TARGET: "/tmp/untrusted-packages",
-    });
+  it.each([
+    ["missing", undefined],
+    ["overridden", "/tmp/untrusted-packages"],
+  ])("rejects a %s lazy target that could mutate or import through the sealed gateway (#8613)", (_case, value) => {
+    const result = runRuntimeEnvValidation({ HERMES_LAZY_INSTALL_TARGET: value });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("HERMES_LAZY_INSTALL_TARGET");
+  });
+
+  it("rejects the lazy target in the sealed env file even when its value is canonical (#8613)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-lazy-target-"));
+    const envPath = path.join(root, ".env");
+    try {
+      fs.writeFileSync(envPath, "HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages\n", {
+        mode: 0o640,
+      });
+      const result = runValidator(envPath);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("HERMES_LAZY_INSTALL_TARGET");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

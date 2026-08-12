@@ -632,7 +632,7 @@ RUN node --experimental-strip-types \
 ARG NEMOCLAW_HERMES_WRAPPER_SHA256=f4276e9833638b7a620176c88bd329d6b6d4948538a3227b727a1397146a0e0e
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=989edf54a8c09c6efb348600a8aa2f264c0b71408eb9d7bcd579b92cbeccf9b1
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=db4046e79e513eab67b069a8eda20167b8b65529cf26842531d2ad673c670330
-ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=240ed41e79d8ab4239bbd8f01dcff6ffc7ad0d9329f703704198ceb8a48cb904
+ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=a56ef2dcb9b704b2afa1e4522bb846890d72de4f563e07d1aa452ecbd71ad60a
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
 ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=e8593cf1580bffa4663e91c079ba0ce31c3d26391f5b1718872701138ce250b0
 # hadolint ignore=DL4006
@@ -1093,7 +1093,7 @@ RUN set -eu; \
         /sandbox/.hermes/weixin/accounts \
         /sandbox/.hermes/runtime \
         /sandbox/.hermes/profiles/dashboard-home \
-    && chmod 700 /sandbox/.hermes/lazy-packages \
+    && chmod 750 /sandbox/.hermes/lazy-packages \
     && chmod 2770 \
         /sandbox/.hermes/logs \
         /sandbox/.hermes/logs/curator \
@@ -1116,11 +1116,22 @@ RUN set -eu; \
     && chmod 660 /sandbox/.hermes/.hermes_history
 
 # The Hermes lazy installer uses this sandbox-owned directory instead of the
-# sealed root venv. The directory is not part of the sealed configuration.
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 700" \
+# sealed root venv. Sandbox can install packages; gateway can import them through
+# its supplementary sandbox group but cannot modify the dependency tree.
+RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
     && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        sh -c 'umask 0027; printf "%s\n" "VALUE = 8613" > /sandbox/.hermes/lazy-packages/nemoclaw_lazy_probe.py' \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages/nemoclaw_lazy_probe.py)" = "sandbox:sandbox 640" \
+    && /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
         /opt/hermes/.venv/bin/python -I -c \
-        "from pathlib import Path; target = Path('/sandbox/.hermes/lazy-packages'); marker = target / '.nemoclaw-write-probe'; marker.write_text('ok'); assert marker.read_text() == 'ok'; marker.unlink()"
+        "import sys; sys.path.append('/sandbox/.hermes/lazy-packages'); import nemoclaw_lazy_probe; assert nemoclaw_lazy_probe.VALUE == 8613" \
+    && if /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
+        sh -c ': > /sandbox/.hermes/lazy-packages/.nemoclaw-gateway-write-probe' 2>/dev/null; then \
+        echo "ERROR: gateway can modify Hermes lazy packages" >&2; exit 1; \
+    fi \
+    && test ! -e /sandbox/.hermes/lazy-packages/.nemoclaw-gateway-write-probe \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        rm /sandbox/.hermes/lazy-packages/nemoclaw_lazy_probe.py
 
 # Prove the cron execution ledger contract across the real image identities.
 # Hermes' gateway-side scheduler creates the live WAL-backed database in the
@@ -1210,6 +1221,8 @@ RUN chown root:root /sandbox/.nemoclaw \
 RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod -R a+rwX /sandbox/.hermes; \
         find /sandbox/.hermes -type d -exec chmod a+rwx {} +; \
+        find /sandbox/.hermes/lazy-packages -type d -exec chmod 750 {} +; \
+        find /sandbox/.hermes/lazy-packages -type f -exec chmod 640 {} +; \
         for p in /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging; do \
             chmod a+rwx "$p"; \
         done; \

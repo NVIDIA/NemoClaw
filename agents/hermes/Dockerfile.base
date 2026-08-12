@@ -352,7 +352,7 @@ RUN mkdir -p /sandbox/.hermes/memories \
         /sandbox/.hermes/platforms/whatsapp/session \
         /sandbox/.hermes/gateway \
         /sandbox/.hermes/runtime \
-    && chmod 700 /sandbox/.hermes/lazy-packages \
+    && chmod 750 /sandbox/.hermes/lazy-packages \
     && chmod 2770 \
         /sandbox/.hermes/logs \
         /sandbox/.hermes/logs/curator \

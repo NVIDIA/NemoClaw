@@ -463,6 +463,11 @@ def validate_env_file(path: str) -> int:
             if len(violations) < MAX_VIOLATIONS:
                 violations.append(f"{key} (line {lineno})")
             continue
+        if key == "HERMES_LAZY_INSTALL_TARGET":
+            violation_count += 1
+            if len(violations) < MAX_VIOLATIONS:
+                violations.append(f"{key} (line {lineno})")
+            continue
         if key in ENV_FILE_ALLOWED_NONSECRET_KEYS:
             continue
         if key in ENV_FILE_ALLOWED_RAW_SECRET_KEYS and is_allowed_raw_secret_value(
@@ -493,6 +498,10 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
     source = os.environ if env is None else env
     violations: list[str] = []
     violation_count = 0
+    if source.get("HERMES_LAZY_INSTALL_TARGET") != "/sandbox/.hermes/lazy-packages":
+        violation_count += 1
+        if len(violations) < MAX_VIOLATIONS:
+            violations.append("HERMES_LAZY_INSTALL_TARGET")
     for key, value in sorted(source.items()):
         if key in OPENSHELL_SUPERVISOR_ONLY_ENV_KEYS:
             violation_count += 1
@@ -500,11 +509,6 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
                 violations.append(key)
             continue
         if key == "HERMES_LAZY_INSTALL_TARGET":
-            if value == "/sandbox/.hermes/lazy-packages":
-                continue
-            violation_count += 1
-            if len(violations) < MAX_VIOLATIONS:
-                violations.append(key)
             continue
         if key in RUNTIME_ALLOWED_NONSECRET_KEYS:
             continue
