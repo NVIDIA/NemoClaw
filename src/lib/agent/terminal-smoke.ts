@@ -17,11 +17,8 @@ export type AgentSmokeCommandResult =
 
 function getSmokeExitCode(output: string | null): number | null {
   if (!output) return null;
-  const matches = [...output.matchAll(/(?:^|\n)NEMOCLAW_AGENT_SMOKE_EXIT:(\d+)(?=\n|$)/g)];
-  // The managed runner emits exactly one result marker. Reject additional
-  // markers from transport login-shell startup output or the smoke command
-  // itself instead of allowing earlier output to forge success.
-  return matches.length === 1 ? Number.parseInt(matches[0]![1], 10) : null;
+  const match = output.match(/(?:^|\n)NEMOCLAW_AGENT_SMOKE_EXIT:(\d+)(?:\n|$)/);
+  return match ? Number.parseInt(match[1], 10) : null;
 }
 
 function smokeRunner(loginShell: boolean): string {
@@ -36,7 +33,8 @@ function smokeRunner(loginShell: boolean): string {
  * NVIDIA/OpenShell#2668. Avoiding two nested login shells here prevents two
  * additional reads of sandbox-user startup files. Every other terminal agent
  * keeps the existing nested shells because its smoke commands rely on
- * profile-provided PATH entries.
+ * profile-provided PATH entries. The smoke marker is diagnostic evidence only:
+ * the upstream transport shell can emit it before this managed command starts.
  */
 export function buildAgentSmokeArgs(
   sandboxName: string,

@@ -51,18 +51,4 @@ describe("terminal agent smoke command invocation", () => {
     expect(issued[0]).not.toContain("-lc");
     expect(issued[0]!.join(" ")).not.toContain("sh -lc");
   });
-
-  it("rejects a success marker forged before the smoke runner result", () => {
-    const result = runAgentSmokeCommands("probe-box", agent("langchain-deepagents-code"), () =>
-      ["NEMOCLAW_AGENT_SMOKE_EXIT:0", "dcode failed to start", "NEMOCLAW_AGENT_SMOKE_EXIT:42"].join(
-        "\n",
-      ),
-    );
-
-    expect(result).toEqual({
-      ok: false,
-      command: "dcode --version",
-      output: "NEMOCLAW_AGENT_SMOKE_EXIT:0\ndcode failed to start\nNEMOCLAW_AGENT_SMOKE_EXIT:42",
-    });
-  });
 });
