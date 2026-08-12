@@ -40,6 +40,15 @@ Each main-agent and local-subagent middleware instance therefore retains the reg
 At search time, the middleware combines that tuple with `ToolRuntime.tools` by object identity and applies the existing name, result, state, and schema limits to the combined catalog.
 Model requests still use their request-time tool view, and the existing callable-name validation still rejects ambiguous or reserved owners before graph construction.
 
+Deep Agents Code `0.1.54` also derives MCP approval from protocol annotations.
+Its headless guard permits an MCP call without an approval UI only when `readOnlyHint` is literally `true`, `destructiveHint` is not `true`, and every supplied standard hint has a Boolean value.
+The guard rejects unannotated, malformed, contradictory, or mutating tools instead of treating them as read-only.
+NemoClaw retains that fail-closed behavior.
+
+The live E2E `fake_echo` and `fake_status` tools perform only read-only proof and status operations, so their `tools/list` definitions declare `readOnlyHint: true`.
+The compatible-model fixture reports a search failure only when the `search_tools` result omits the target.
+After a valid search, the fixture reports a rejected or incorrect target result as an invocation failure.
+
 The focused fixture and installed-image validator give `search_tools` a runtime view that contains only itself.
 They require a registered hidden MCP tool to appear in the search response and in the next model tool list.
 The live Deep Agents MCP E2E test separately requires the tool to be hidden initially, returned by `search_tools`, exposed on the next model request, and invoked through the authenticated managed MCP path.
