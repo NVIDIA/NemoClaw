@@ -33,6 +33,16 @@ export function getSandboxAgent(sandbox: SandboxEntry): AgentDefinition {
   return loadAgent(getSandboxAgentName(sandbox));
 }
 
+/** Return the configured state directory for a registered agent. */
+export function getAgentConfigDir(agentName: string, defaultConfigDir?: string): string {
+  try {
+    return loadAgent(agentName).configPaths.dir;
+  } catch (error) {
+    if (defaultConfigDir) return defaultConfigDir;
+    throw error;
+  }
+}
+
 function unsupportedMessage(agent: AgentDefinition): string {
   const reason = agent.mcpCapability.reason
     ? ` ${agent.mcpCapability.reason}`

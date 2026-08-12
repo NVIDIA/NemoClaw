@@ -375,6 +375,16 @@ function validateOpenShellOciIdentityMetadata(environment: readonly string[]): b
     // OpenShell through v0.0.85 did not publish OCI identity metadata.
     return false;
   }
+  if (
+    ociUsers.length === 0 &&
+    sandboxUids.length === 1 &&
+    sandboxUids[0] === `${OPENSHELL_SANDBOX_UID_ENV}=` &&
+    sandboxGids.length === 1 &&
+    sandboxGids[0] === `${OPENSHELL_SANDBOX_GID_ENV}=`
+  ) {
+    // A prior reviewed recreation already removed only the OCI-user marker.
+    return false;
+  }
   const ociUserPrefix = `${OPENSHELL_OCI_IMAGE_USER_ENV}=`;
   if (
     ociUsers.length !== 1 ||

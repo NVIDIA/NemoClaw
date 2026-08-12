@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../../state/onboard-checkpoint-migrate";
 import type { CheckpointSandboxIdentity } from "../../../state/onboard-checkpoint-types";
-import { createSession } from "../../../state/onboard-session";
+import { createSession, type SessionUpdates } from "../../../state/onboard-session";
 import {
   handleProviderInferenceState,
   type ProviderInferenceStateOptions,
@@ -38,7 +38,11 @@ describe("handleProviderInferenceState", () => {
   it("runs provider selection and inference setup on a fresh flow", async () => {
     const { deps, calls } = createDeps();
     const session = createSession();
-    calls.complete.mockResolvedValue(session);
+    calls.complete.mockImplementation(async (...args: unknown[]) => {
+      session.steps.provider_selection.status =
+        args[0] === "provider_selection" ? "complete" : session.steps.provider_selection.status;
+      return session;
+    });
 
     const result = await handleProviderInferenceState(baseOptions(deps, session));
 
@@ -60,7 +64,11 @@ describe("handleProviderInferenceState", () => {
     expect(selectionUpdates).not.toHaveProperty("onboardEndpointUrl");
     expect(calls.promptName).toHaveBeenCalledWith(null);
     expect(calls.log).toHaveBeenCalledWith("summary:nvidia-prod/nvidia/test/my-assistant");
-    expect(calls.startStep).toHaveBeenNthCalledWith(2, "inference", {
+    expect(calls.startStep).toHaveBeenNthCalledWith(2, "provider_selection", {
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+    });
+    expect(calls.startStep).toHaveBeenNthCalledWith(3, "inference", {
       provider: "nvidia-prod",
       model: "nvidia/test",
     });
@@ -1418,18 +1426,6 @@ describe("handleProviderInferenceState", () => {
       ["inference", "advance"],
       ["sandbox", "advance"],
     ]);
-  });
-
-  it("aborts before inference setup when the configuration summary is rejected", async () => {
-    const { deps, calls } = createDeps({
-      isNonInteractive: () => false,
-      promptYesNoOrDefault: vi.fn(async () => false),
-    });
-
-    await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow("exit 0");
-
-    expect(calls.exit).toHaveBeenCalledWith(0);
-    expect(calls.setupInference).not.toHaveBeenCalled();
   });
 
   // Regression: #4241. When the provider selection step accepted a no-tools

@@ -203,6 +203,24 @@ describe("buildRebuildRecreateOnboardOpts", () => {
     expect(opts.toolDisclosure).toBe("direct");
   });
 
+  it("carries durable read-only host mounts into authoritative recreation", () => {
+    const hostMounts = [
+      { source: process.cwd(), target: "/sandbox/project", readOnly: true as const },
+    ];
+    const opts = buildRebuildRecreateOnboardOpts({
+      ...baseArgs,
+      sb: { ...dashboard, hostMounts },
+    });
+
+    expect(opts.hostMounts).toEqual([
+      {
+        ...hostMounts[0],
+        sourceIdentity: { device: expect.any(String), inode: expect.any(String) },
+      },
+    ]);
+    expect(opts.hostMounts).not.toBe(hostMounts);
+  });
+
   it("preserves only recognized endpoint provenance across authoritative rebuild", () => {
     const onboard = buildRebuildRecreateOnboardOpts({
       ...baseArgs,
