@@ -43,15 +43,16 @@ function smokeRunner(loginShell: boolean): string {
  * Deep Agents Code smoke commands run through the same image-baked launcher the
  * managed route probe uses, without adding another login shell (#8624). The
  * OpenShell transport still starts its own login shell before this command; see
- * NVIDIA/OpenShell#2668. That transport shell can read the sandbox-user profile
- * before these requested-command environment assignments apply. Using the
- * image-baked root-owned NemoClaw HOME and avoiding two nested login shells
- * prevents additional startup-file reads. The managed runner's single ordered
- * begin/exit pair remains diagnostic rather than a trust boundary; when the
- * caller preserves OpenShell's process status, a nonzero transport exit cannot
- * be hidden by forged marker output. Every other terminal agent keeps the
- * existing nested shells because its smoke commands rely on profile-provided
- * PATH entries and retains its legacy diagnostic marker.
+ * NVIDIA/OpenShell#2668. Rebuilt managed DCode images reserve that shell's
+ * first-match profile as a root-owned file which skips sandbox startup state
+ * for the image-baked launcher. Older images can still read a sandbox-user
+ * profile before these requested-command environment assignments apply, so the
+ * managed runner's single ordered begin/exit pair remains diagnostic rather
+ * than a trust boundary. When the caller preserves OpenShell's process status,
+ * a nonzero transport exit cannot be hidden by forged marker output. Every
+ * other terminal agent keeps the existing nested shells because its smoke
+ * commands rely on profile-provided PATH entries and retain legacy diagnostic
+ * markers.
  */
 export function buildAgentSmokeArgs(
   sandboxName: string,

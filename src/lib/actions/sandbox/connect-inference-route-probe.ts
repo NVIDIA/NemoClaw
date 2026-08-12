@@ -38,14 +38,15 @@ export const INFERENCE_ROUTE_PROBE_SCRIPT = [
   INFERENCE_ROUTE_CA_VALIDATION,
   INFERENCE_ROUTE_PROBE_CORE_SCRIPT,
 ].join("; ");
-// Invalid state: OpenShell currently starts sandbox exec through a login shell
-// before the requested command, so sandbox-user startup files can emit output
-// and create side effects before this probe begins (#8624; OpenShell#2668).
-// NemoClaw cannot prevent that transport behavior. The image-baked launcher
-// reconstructs the managed proxy from root-owned, mode-0444 files without
-// adding another profile-sourcing shell, and the parser rejects inherited
-// stderr or extra stdout so startup output cannot become accepted probe
-// evidence. Regression: hostile-profile tests cover contaminated output and
+// Invalid state: OpenShell starts sandbox exec through a login shell before the
+// requested command (#8624; OpenShell#2668). Rebuilt DCode images reserve that
+// shell's first-match profile as a root-owned file which skips sandbox startup
+// state for the image-baked launcher. Older images can still emit output and
+// create side effects before this probe begins. The launcher reconstructs the
+// managed proxy from root-owned, mode-0444 files without adding another
+// profile-sourcing shell, and the parser rejects inherited stderr or extra
+// stdout so startup output cannot become accepted probe evidence. Regression:
+// protected- and hostile-profile tests cover both image generations plus
 // inherited descriptors. Removal condition: use a raw probe only when OpenShell
 // provides both a non-login exec path and the trusted proxy environment to every
 // sandbox exec process.
