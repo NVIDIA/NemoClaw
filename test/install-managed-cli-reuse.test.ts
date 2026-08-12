@@ -74,6 +74,11 @@ function setupManagedSource({ fakeBin, sourceRoot, revision }: Parameters<Initia
 
 function setupCleanState(_fixture: Parameters<InitialStateSetup>[0]) {}
 
+function setupGroupAccessibleStateRoot({ home }: Parameters<InitialStateSetup>[0]) {
+  fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
+  fs.chmodSync(path.join(home, ".nemoclaw"), 0o775);
+}
+
 function setupSymlinkStateRoot({ home, tmp }: Parameters<InitialStateSetup>[0]) {
   fs.mkdirSync(home, { recursive: true });
   fs.mkdirSync(path.join(tmp, "controlled"));
@@ -139,6 +144,7 @@ case "\${1:-}" in
     esac
     ;;
   init)
+    node -e 'const assert = require("node:assert/strict"); const fs = require("node:fs"); assert.equal(fs.statSync(process.argv[1]).mode & 0o777, 0o700)' "$NEMOCLAW_STATE_ROOT"
     target="\${@: -1}"
     mkdir -p "$target/.git" "$target/bin" "$target/dist/lib/onboard" "$target/node_modules" \
       "$target/nemoclaw/dist" "$target/nemoclaw/node_modules"
@@ -226,6 +232,7 @@ printf 'PREPARED=%s MODE=%s SOURCE=%s\n' \
         INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
         MANAGED_SOURCE: sourceRoot,
         NEMOCLAW_REINSTALL_CLI: forceCliReinstall ? "1" : "",
+        NEMOCLAW_STATE_ROOT: path.join(home, ".nemoclaw"),
         NPM_LOG_PATH: npmLogPath,
         NPM_PREFIX: prefix,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
@@ -254,6 +261,16 @@ describe("installer-managed CLI reuse", () => {
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(stateMode).toBe(0o700);
+  });
+
+  it("repairs an existing group-accessible managed state root before cloning source (#8795)", () => {
+    const { result, gitLog, stateMode } = runManagedCliInstallTwice({
+      setupInitialState: setupGroupAccessibleStateRoot,
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(stateMode).toBe(0o700);
+    expect(gitLog).toMatch(/^init\b/m);
   });
 
   it("rejects a symbolic-link managed state root before cloning source (#8795)", () => {
