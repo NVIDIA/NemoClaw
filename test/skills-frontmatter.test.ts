@@ -333,12 +333,18 @@ describe("repo skill markdown files", () => {
       path.join(repoRoot, "docs", "resources", "agent-skills.mdx"),
       "utf8",
     );
+    const mcpServerDocs = fs.readFileSync(
+      path.join(repoRoot, "docs", "manage-sandboxes", "add-mcp-server.mdx"),
+      "utf8",
+    );
 
     expect(access).toContain("GitHub tool that the user configured for the current agent");
     expect(access).toContain("configured GitHub MCP tool");
     expect(access).toContain("Do not install or configure GitHub access by default");
     expect(access).toContain("Do not use unauthenticated `curl`");
     expect(access).toContain("does not authorize a GitHub write");
+    expect(access).toContain("command, error, or tool output");
+    expect(access).toContain("Report only the redacted command and error");
 
     for (const skill of [planning, implementation]) {
       expect(skill).toContain("Use a user-configured GitHub tool");
@@ -399,7 +405,10 @@ describe("repo skill markdown files", () => {
     expect(docs).toContain("$$nemoclaw my-sandbox upload ./NemoClaw /sandbox/");
     expect(docs).toContain("Tell the agent to work from `/sandbox/NemoClaw`");
     expect(docs).toContain("$$nemoclaw my-sandbox mcp add github");
-    expect(docs).toContain("https://api.githubcopilot.com/mcp/readonly");
+    const supportedGithubMcpUrl = "https://api.githubcopilot.com/mcp/";
+    expect(mcpServerDocs).toContain(supportedGithubMcpUrl);
+    expect(docs).toContain(supportedGithubMcpUrl);
+    expect(docs).not.toContain("https://api.githubcopilot.com/mcp/readonly");
     expect(docs).toContain("$$nemoclaw my-sandbox mcp status github --tools");
     expect(docs).toContain("does not use unauthenticated HTTP requests as a fallback");
     expect(docs).toContain(

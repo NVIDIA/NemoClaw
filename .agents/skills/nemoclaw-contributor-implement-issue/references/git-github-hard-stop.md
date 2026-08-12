@@ -29,7 +29,10 @@ Do not try to bypass an access error. Do not:
 - rewrite remotes to bypass permissions
 - force-push or bypass branch protections or required checks.
 
-Report the command and the error. Tell the user which action is necessary. Then, wait.
+Before placing a command, error, or tool output in a report or other model-visible context, redact
+credentials, tokens, authentication headers, credential-bearing URLs, credential paths, and other
+sensitive output. Report only the redacted command and error. Tell the user which action is
+necessary. Then, wait.
 
 This rule applies only to access errors.
 Handle merge conflicts, stale branches, dirty worktrees, and rebase conflicts in the related workflow.

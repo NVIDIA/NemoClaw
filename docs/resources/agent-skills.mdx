@@ -91,13 +91,13 @@ Refer to the [commands reference](../reference/commands#nemoclaw-name-upload-hos
 
 The planning skill requires a user-configured GitHub tool with read access to issue context.
 For a NemoClaw-managed credential boundary, register a GitHub Model Context Protocol (MCP) server from the host.
-Use a GitHub credential with read access only and GitHub's read-only MCP endpoint.
+Use a GitHub credential with read access only and GitHub's supported MCP endpoint.
 The `mcp add` command durably creates an OpenShell provider, generated network policy, and agent adapter registration.
 After committing that state, it sends authenticated credential-resolution probe traffic to the endpoint by default.
 
 ```bash
 export GITHUB_MCP_TOKEN='<LOAD_FROM_SECRET_MANAGER>'
-$$nemoclaw my-sandbox mcp add github --url https://api.githubcopilot.com/mcp/readonly --env GITHUB_MCP_TOKEN
+$$nemoclaw my-sandbox mcp add github --url https://api.githubcopilot.com/mcp/ --env GITHUB_MCP_TOKEN
 unset GITHUB_MCP_TOKEN
 ```
 
