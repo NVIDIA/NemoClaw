@@ -135,6 +135,7 @@ export function applyDockerGpuPatchOrExit(
     // `ensureApplied` fallback path would recreate the container without
     // /dev/nvmap group access.
     backend?: DockerGpuPatchBackend;
+    preserveJetsonDeviceGroupMembership?: boolean;
     openshellSandboxCommand?: readonly string[] | null;
     dockerDesktopWsl?: boolean;
   },

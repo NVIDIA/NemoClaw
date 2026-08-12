@@ -359,6 +359,56 @@ network_policies: {}
     }
   });
 
+  it("moves detected Jetson devices to read-write and adds libraries as read-only (#7610)", () => {
+    const gpuPolicy = buildDirectGpuPolicyYaml(
+      `
+version: 1
+filesystem_policy:
+  read_only:
+    - /usr
+    - /dev/nvmap
+  read_write:
+    - /tmp
+    - /dev/nvhost-gpu
+network_policies: {}
+`,
+      { jetsonGpuDevicePaths: ["/dev/nvmap", "/dev/nvhost-gpu", "/dev/nvmap"] },
+    );
+    const gpuDoc = YAML.parse(gpuPolicy);
+
+    expect(gpuDoc.filesystem_policy.read_only).toContain("/opt/nvidia");
+    expect(gpuDoc.filesystem_policy.read_only).not.toContain("/dev/nvmap");
+    expectSingleOccurrence(gpuDoc.filesystem_policy.read_write, "/dev/nvmap");
+    expectSingleOccurrence(gpuDoc.filesystem_policy.read_write, "/dev/nvhost-gpu");
+  });
+
+  it("keeps Jetson filesystem grants scoped to OpenClaw direct GPU policy (#7610)", () => {
+    const basePolicyPath = tmpPolicy(BASE_POLICY_FIXTURE);
+    const devicePaths = ["/dev/nvmap", "/dev/nvhost-gpu"];
+    const defaultOpenclaw = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+      directGpu: true,
+      jetsonGpuDevicePaths: devicePaths,
+      stationGb300SysfsReadOnlyPaths: [],
+    });
+    const hermes = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+      directGpu: true,
+      agentName: "hermes",
+      jetsonGpuDevicePaths: devicePaths,
+      stationGb300SysfsReadOnlyPaths: [],
+    });
+    const defaultOpenclawDoc = YAML.parse(fs.readFileSync(defaultOpenclaw.policyPath, "utf-8"));
+    const hermesDoc = YAML.parse(fs.readFileSync(hermes.policyPath, "utf-8"));
+
+    expect(defaultOpenclawDoc.filesystem_policy.read_only).toContain("/opt/nvidia");
+    expect(defaultOpenclawDoc.filesystem_policy.read_write).toEqual(
+      expect.arrayContaining(devicePaths),
+    );
+    expect(hermesDoc.filesystem_policy.read_only).not.toContain("/opt/nvidia");
+    expect(hermesDoc.filesystem_policy.read_write).not.toEqual(expect.arrayContaining(devicePaths));
+    expect(defaultOpenclaw.cleanup?.()).toBe(true);
+    expect(hermes.cleanup?.()).toBe(true);
+  });
+
   it("keeps non-Station direct GPU policies at the pre-issue sysfs boundary (#7103)", () => {
     const gpuPolicy = buildDirectGpuPolicyYaml(BASE_POLICY_FIXTURE);
     const gpuDoc = YAML.parse(gpuPolicy);

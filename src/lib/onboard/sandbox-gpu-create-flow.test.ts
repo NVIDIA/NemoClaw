@@ -565,16 +565,21 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(createHandoff).toEqual(["poll", "create-complete", "ensure-applied"]);
   });
 
-  it("does not replace a native GPU container solely to persist its startup command", async () => {
+  it("threads OpenClaw Jetson group preservation without forcing native recreation (#7610)", async () => {
     const input = createInput();
     input.persistStartupCommand = true;
+    input.preserveJetsonDeviceGroupMembership = true;
 
     await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
       route: "native",
     });
 
     expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
-      expect.objectContaining({ route: "native", persistStartupCommand: false }),
+      expect.objectContaining({
+        route: "native",
+        persistStartupCommand: false,
+        preserveJetsonDeviceGroupMembership: true,
+      }),
     );
   });
 

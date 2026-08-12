@@ -147,6 +147,7 @@ export function createSandboxGpuCreateAttemptRunner(
         requiredUlimits: input.requiredUlimits,
         timeoutSecs: input.sandboxReadyTimeoutSecs,
         backend: input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
+        preserveJetsonDeviceGroupMembership: input.preserveJetsonDeviceGroupMembership === true,
         deps,
       });
     const recovery = await managedLifecycle?.recoverUnfinished();

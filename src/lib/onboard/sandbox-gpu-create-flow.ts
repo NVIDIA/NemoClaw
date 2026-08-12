@@ -86,6 +86,7 @@ export interface SandboxGpuCreateFlowInput {
   restoreBackupPath: string | null;
   terminalAgent: boolean;
   persistStartupCommand?: boolean;
+  preserveJetsonDeviceGroupMembership?: boolean;
   managedBootstrap?: {
     readonly bootstrapIdentity: string;
     readonly stateRoot: string;

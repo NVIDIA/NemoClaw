@@ -11,6 +11,9 @@ import { openshellSandboxCommandEnvValue } from "./docker-startup-command-env";
 
 const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
 const OPENSHELL_SANDBOX_ENTRYPOINT = "/opt/openshell/bin/openshell-sandbox";
+export const JETSON_DEVICE_GROUP_BOOTSTRAP =
+  "/usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh";
+const MAX_JETSON_DEVICE_GROUPS = 16;
 const OPENSHELL_V0_0_99_WORKDIR_COMMAND = ["--workdir", "/sandbox"] as const;
 const OPENSHELL_OCI_IMAGE_USER_ENV = "OPENSHELL_OCI_IMAGE_USER";
 const OPENSHELL_SANDBOX_UID_ENV = "OPENSHELL_SANDBOX_UID";
@@ -465,6 +468,20 @@ export function buildDockerGpuCloneRunArgs(
   }
   const args: string[] = ["--name", containerName, ...mode.args];
   const gpuAugment = mode.kind !== "startup-command";
+  const extraGroupGids = (options.extraGroupGids ?? []).map((gid) => String(gid).trim());
+  if (
+    extraGroupGids.length > MAX_JETSON_DEVICE_GROUPS ||
+    new Set(extraGroupGids).size !== extraGroupGids.length ||
+    extraGroupGids.some((gid) => {
+      if (!/^[1-9][0-9]*$/u.test(gid)) return true;
+      const parsed = Number(gid);
+      return !Number.isSafeInteger(parsed) || parsed > 2_147_483_647;
+    })
+  ) {
+    throw new Error("Docker clone received invalid or excessive supplementary group IDs.");
+  }
+  const preserveJetsonGroups =
+    options.preserveJetsonDeviceGroupMembership === true && extraGroupGids.length > 0;
 
   // Startup-command recreation must retain OpenShell's native CDI attachment.
   if (!gpuAugment) {
@@ -546,11 +563,10 @@ export function buildDockerGpuCloneRunArgs(
   for (const hostEntry of stringArray(host.ExtraHosts)) args.push("--add-host", hostEntry);
   const groupAdds = new Set(stringArray(host.GroupAdd));
   for (const group of groupAdds) args.push("--group-add", group);
-  for (const gid of options.extraGroupGids ?? []) {
-    const normalized = String(gid).trim();
-    if (normalized && !groupAdds.has(normalized)) {
-      groupAdds.add(normalized);
-      args.push("--group-add", normalized);
+  for (const gid of extraGroupGids) {
+    if (!groupAdds.has(gid)) {
+      groupAdds.add(gid);
+      args.push("--group-add", gid);
     }
   }
   for (const ulimit of dockerUlimits(inspect, options.requiredUlimits)) {
@@ -584,17 +600,32 @@ export function buildDockerGpuCloneRunArgs(
 
   const entrypoint = stringArray(config.Entrypoint);
   const replacementEntrypoint = String(options.containerEntrypoint ?? "").trim();
-  if (replacementEntrypoint) {
+  const groupBootstrapTarget = replacementEntrypoint || entrypoint[0] || "";
+  if (preserveJetsonGroups && groupBootstrapTarget !== OPENSHELL_SANDBOX_ENTRYPOINT) {
+    throw new Error("Jetson device-group bootstrap requires the OpenShell supervisor entrypoint.");
+  }
+  if (preserveJetsonGroups) {
+    args.push("--entrypoint", JETSON_DEVICE_GROUP_BOOTSTRAP);
+  } else if (replacementEntrypoint) {
     args.push("--entrypoint", replacementEntrypoint);
   } else if (entrypoint.length > 0) {
     args.push("--entrypoint", entrypoint[0]);
   }
-  const commandArgs = dockerContainerCommandArgs(
+  const targetCommandArgs = dockerContainerCommandArgs(
     entrypoint,
     stringArray(config.Cmd),
     sandboxCommand,
     options.containerCommand,
   );
+  const commandArgs = preserveJetsonGroups
+    ? [
+        "--device-group-gids",
+        extraGroupGids.join(","),
+        "--",
+        groupBootstrapTarget,
+        ...targetCommandArgs,
+      ]
+    : targetCommandArgs;
   args.push(image, ...commandArgs);
   return args;
 }

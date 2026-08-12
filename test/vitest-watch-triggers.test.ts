@@ -61,6 +61,7 @@ const OPAQUE_INPUTS = [
   "agents/hermes/mcp-config-transaction.py",
   "test/e2e/lib/ci-compatible-inference.sh",
   "scripts/setup-jetson.sh",
+  "scripts/jetson-device-group-bootstrap.sh",
   "tools/e2e/jetson-dispatch-cleanup.sh",
   "tools/e2e/colossus-jetson-dispatch-deploy.sh",
   ".github/workflows/base-image.yaml",
@@ -132,6 +133,9 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/hosted-inference.test.ts",
     ]);
     expect(triggeredBy("scripts/setup-jetson.sh")).toEqual(["test/setup-jetson.test.ts"]);
+    expect(triggeredBy("scripts/jetson-device-group-bootstrap.sh")).toEqual([
+      "test/jetson-device-group-bootstrap.test.ts",
+    ]);
     expect(triggeredBy("tools/e2e/jetson-dispatch-cleanup.sh")).toEqual([
       "test/e2e/support/jetson-dispatch-worker.test.ts",
     ]);

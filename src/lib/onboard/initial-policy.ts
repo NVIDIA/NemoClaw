@@ -23,6 +23,7 @@ import {
   isStationGb300ProductName,
   type StationProfile,
 } from "../readiness/station-qualification";
+import { detectTegraGpuDevicePaths } from "./docker-gpu-jetson-groups";
 import {
   allMessagingChannelPolicyPresets,
   requiredMessagingChannelPolicyPresets,
@@ -46,6 +47,7 @@ export function discloseInitialSandboxPolicy(policy: InitialSandboxPolicy): void
 const HERMES_MESSAGING_POLICY_KEYS = getMessagingPolicyKeysByChannel({ agent: "hermes" });
 
 const PROC_PATH = "/proc";
+const JETSON_GPU_LIBRARY_ROOT = "/opt/nvidia";
 const PROC_COMM_READ_WRITE_PATHS = ["/proc/self/comm", "/proc/self/task/*/comm"];
 const SYSFS_PATH = "/sys";
 const PCI_BDF_PATTERN = /^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$/iu;
@@ -77,6 +79,7 @@ function deduplicateDirectGpuSysfsEntries(
 type DirectGpuPolicyOptions = {
   procReadWrite?: boolean;
   sysfsReadOnlyPaths?: readonly string[];
+  jetsonGpuDevicePaths?: readonly string[];
 };
 
 export { isStationGb300ProductName };
@@ -221,6 +224,23 @@ export function buildDirectGpuPolicyYaml(
         fsPolicy.read_only.push(candidate);
         readOnlySet.add(candidate);
       }
+    }
+  }
+  const jetsonGpuDevicePaths = [...new Set(options.jetsonGpuDevicePaths ?? [])];
+  if (jetsonGpuDevicePaths.length > 0) {
+    if (
+      !fsPolicy.read_only.includes(JETSON_GPU_LIBRARY_ROOT) &&
+      !fsPolicy.read_write.includes(JETSON_GPU_LIBRARY_ROOT)
+    ) {
+      fsPolicy.read_only.push(JETSON_GPU_LIBRARY_ROOT);
+    }
+
+    const jetsonGpuDevicePathSet = new Set(jetsonGpuDevicePaths);
+    fsPolicy.read_only = fsPolicy.read_only.filter(
+      (entry: string) => !jetsonGpuDevicePathSet.has(entry),
+    );
+    for (const devicePath of jetsonGpuDevicePaths) {
+      if (!fsPolicy.read_write.includes(devicePath)) fsPolicy.read_write.push(devicePath);
     }
   }
   if (options.procReadWrite && !fsPolicy.read_write.includes(PROC_PATH)) {
@@ -383,6 +403,7 @@ export function prepareInitialSandboxCreatePolicy(
     dockerGpuPatch?: boolean;
     hostGpuAvailable?: boolean;
     stationGb300SysfsReadOnlyPaths?: readonly string[];
+    jetsonGpuDevicePaths?: readonly string[];
     additionalPresets?: string[];
     agentName?: string | null;
     policyTier?: string | null;
@@ -397,6 +418,10 @@ export function prepareInitialSandboxCreatePolicy(
           discoverHostStationGb300SysfsReadOnlyPaths({
             hasNvidiaGpu: options.hostGpuAvailable,
           }),
+        jetsonGpuDevicePaths:
+          (options.agentName ?? "openclaw") === "openclaw"
+            ? (options.jetsonGpuDevicePaths ?? detectTegraGpuDevicePaths())
+            : [],
       })
     : null;
   let effectiveBasePolicyPath = directGpuPolicy?.policyPath || basePolicyPath;

@@ -131,6 +131,11 @@ export type DockerGpuCloneRunOptions = {
    * denied` (#4231, #7610).
    */
   extraGroupGids?: readonly string[] | null;
+  /**
+   * Run the fixed OpenShell supervisor through the root-owned Jetson helper so
+   * `initgroups()` rebuilds the sandbox account with the detected device GIDs.
+   */
+  preserveJetsonDeviceGroupMembership?: boolean;
 };
 
 export type DockerGpuPatchDiagnostics = {
