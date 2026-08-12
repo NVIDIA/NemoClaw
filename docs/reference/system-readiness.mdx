@@ -117,7 +117,7 @@ Use `host.docker.storage_compatible` when a consumer requires compatibility befo
 The strict internal readiness report remains `incompatible` with exit code `2` until a consumer applies its operation-specific admission policy.
 Public NemoClaw lifecycle admission can accept either `host.docker.storage_compatible` or `host.docker.storage_remediation_available`.
 When remediation is available, `host.docker.storage_compatible` remains `absent`.
-If `host.docker.storage_incompatible` is the sole blocking finding, `host probe` publishes status `supported` and exit code `0`.
+If `host.docker.storage_incompatible` is the sole blocking finding and `host.docker.storage_remediation_available` is `present`, `host probe` publishes status `supported` and exit code `0`.
 The public report retains `host.docker.storage_incompatible` as a warning.
 Any other blocking or fatal finding prevents this public projection.
 The public status indicates a supported remediation path, not that the current Docker storage configuration is compatible.
