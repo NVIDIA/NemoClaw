@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   collectN1xIdentity,
@@ -24,6 +25,11 @@ function trustedMarker(
 }
 
 function n1xFixture(overrides: Parameters<typeof collectN1xIdentity>[0] = {}) {
+  const pciFields: Readonly<Record<string, string>> = {
+    vendor: "0x10de\n",
+    device: "0x2e2a\n",
+    class: "0x030000\n",
+  };
   return collectN1xIdentity({
     fastOsReleasePath: "/fixtures/fastos-release",
     pciDevicesPath: "/fixtures/pci",
@@ -34,13 +40,15 @@ function n1xFixture(overrides: Parameters<typeof collectN1xIdentity>[0] = {}) {
     closeFileDescriptor: () => undefined,
     readdir: () => ["000f:01:00.0"],
     readFile: (filePath) => {
-      if (filePath.endsWith("/vendor")) return "0x10de\n";
-      if (filePath.endsWith("/device")) return "0x2e2a\n";
-      if (filePath.endsWith("/class")) return "0x030000\n";
-      throw new Error(`unexpected path: ${filePath}`);
+      const field = filePath.split("/").at(-1) ?? "";
+      return pciFields[field] ?? unexpectedFixturePath(filePath);
     },
     ...overrides,
   });
+}
+
+function unexpectedFixturePath(filePath: string): never {
+  throw new Error(`unexpected path: ${filePath}`);
 }
 
 describe("N1x identity", () => {
@@ -90,12 +98,14 @@ describe("N1x identity", () => {
   });
 
   it("opens the marker without following a symbolic link and reads the opened descriptor (#8574)", () => {
-    const openFile = vi.fn(() => 17);
+    const openFile = vi.fn((_filePath: string, _flags: number) => 17);
     const readFileDescriptor = vi.fn(() => 'NAME="N1x FASTOS"\n');
     const closeFileDescriptor = vi.fn();
 
     expect(n1xFixture({ openFile, readFileDescriptor, closeFileDescriptor }).qualified).toBe(true);
-    expect(openFile).toHaveBeenCalledWith("/fixtures/fastos-release", expect.any(Number));
+    const [markerPath, flags] = openFile.mock.calls[0] as [string, number];
+    expect(markerPath).toBe("/fixtures/fastos-release");
+    expect(flags & fs.constants.O_NOFOLLOW).toBe(fs.constants.O_NOFOLLOW);
     expect(readFileDescriptor).toHaveBeenCalledWith(17, 4096);
     expect(closeFileDescriptor).toHaveBeenCalledWith(17);
   });

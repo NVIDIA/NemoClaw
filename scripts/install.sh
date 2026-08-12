@@ -3879,7 +3879,9 @@ n1x_has_pci_gpu() {
     vendor="$(head -c 65 "$pci_device/vendor" 2>/dev/null)" || continue
     device="$(head -c 65 "$pci_device/device" 2>/dev/null)" || continue
     pci_class="$(head -c 65 "$pci_device/class" 2>/dev/null)" || continue
-    [ "${#vendor}" -le 64 ] && [ "${#device}" -le 64 ] && [ "${#pci_class}" -le 64 ] || continue
+    if [ "${#vendor}" -gt 64 ] || [ "${#device}" -gt 64 ] || [ "${#pci_class}" -gt 64 ]; then
+      continue
+    fi
     vendor="${vendor//[[:space:]]/}"
     device="${device//[[:space:]]/}"
     pci_class="${pci_class//[[:space:]]/}"

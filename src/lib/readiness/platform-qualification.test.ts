@@ -41,6 +41,10 @@ function qualification(result: ReturnType<typeof projectPlatformQualification>, 
   return result.qualifications.find((entry) => entry.id === id)?.status;
 }
 
+function unexpectedFixturePath(filePath: string): never {
+  throw new Error(`unexpected path: ${filePath}`);
+}
+
 function stationFixtureReadFile(path: string): string {
   const values = new Map([
     ["product_name", "NVIDIA DGX Station GB300\n"],
@@ -241,16 +245,19 @@ describe("platform readiness qualification (#7410)", () => {
   });
 
   it("collects and qualifies the accepted N1x identity boundary (#8574)", () => {
+    const identityFiles: Readonly<Record<string, string>> = {
+      product_name: "SKU 1\n",
+      vendor: "0x10de\n",
+      device: "0x2e2a\n",
+      class: "0x030000\n",
+    };
     const identity = collectPlatformIdentity({
       productNamePath: "/fixtures/product_name",
       fastOsReleasePath: "/fixtures/fastos-release",
       pciDevicesPath: "/fixtures/pci",
       readFile: (filePath) => {
-        if (filePath.endsWith("product_name")) return "SKU 1\n";
-        if (filePath.endsWith("vendor")) return "0x10de\n";
-        if (filePath.endsWith("device")) return "0x2e2a\n";
-        if (filePath.endsWith("class")) return "0x030000\n";
-        throw new Error(`unexpected path: ${filePath}`);
+        const field = filePath.split("/").at(-1) ?? "";
+        return identityFiles[field] ?? unexpectedFixturePath(filePath);
       },
       readdir: () => ["000f:01:00.0"],
       openFile: () => 19,
@@ -324,9 +331,9 @@ describe("platform readiness qualification (#7410)", () => {
   });
 
   it.each([
-    ["untrusted", false, "unqualified", "host.platform.n1x_unqualified"],
-    ["unreadable", undefined, "unknown", "host.platform.n1x_inconclusive"],
-  ] as const)("fails closed for an %s N1x FastOS marker (#8574)", (_scenario, n1xFastOsMarker, expectedStatus, expectedFinding) => {
+    ["untrusted", false, "unqualified", "absent", "host.platform.n1x_unqualified"],
+    ["unreadable", undefined, "unknown", "unknown", "host.platform.n1x_inconclusive"],
+  ] as const)("fails closed for an %s N1x FastOS marker (#8574)", (_scenario, n1xFastOsMarker, expectedStatus, expectedCapability, expectedFinding) => {
     const result = projectPlatformQualification(
       input({
         architecture: "arm64",
@@ -337,9 +344,7 @@ describe("platform readiness qualification (#7410)", () => {
       }),
     );
 
-    expect(capability(result, "host.platform.n1x")).toBe(
-      expectedStatus === "unqualified" ? "absent" : "unknown",
-    );
+    expect(capability(result, "host.platform.n1x")).toBe(expectedCapability);
     expect(capability(result, "host.platform.supported")).toBe("absent");
     expect(qualification(result, "host.platform.n1x")).toBe(expectedStatus);
     expect(result.findings.map(({ id }) => id)).toContain(expectedFinding);

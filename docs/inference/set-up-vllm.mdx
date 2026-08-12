@@ -46,7 +46,8 @@ $$nemoclaw onboard
 
 Select **Local vLLM**.
 On generic hosts, the entry includes an experimental label.
-On N1x, the entry includes a **Deferred preview** label.
+On N1x, the entry for an already-running server has no status label.
+Only the managed **Install vLLM** or **Start vLLM** entry carries the **Deferred preview** label.
 NemoClaw validates the detected endpoint and records the model reported by `/v1/models`.
 
 When an install request encounters an already-running server, NemoClaw selects that server instead of starting another container.

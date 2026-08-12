@@ -101,7 +101,7 @@ describe("buildVllmMenuEntries", () => {
     assert.equal(entries[0].label, "Start vLLM (DGX Station)");
   });
 
-  it("labels the N1x managed-vLLM entries as a Deferred preview (#8574)", () => {
+  it("labels only the N1x managed install entry as a Deferred preview (#8574)", () => {
     const install = buildVllmMenuEntries({
       vllmRunning: false,
       vllmProfile: { name: "N1x" },
@@ -122,7 +122,8 @@ describe("buildVllmMenuEntries", () => {
     });
 
     assert.equal(install[0].label, "Install vLLM (N1x) [Deferred preview]");
-    assert.match(running[0].label, /Local vLLM \[Deferred preview\]/);
+    assert.equal(running[0].label, "Local vLLM (localhost:8000) — running");
+    assert.doesNotMatch(running[0].label, /Deferred preview/);
     assert.doesNotMatch(running[0].label, /suggested/);
   });
 

@@ -309,6 +309,29 @@ function qualification(
   return { id, status, capabilityIds };
 }
 
+function deriveN1xQualification(input: Readonly<PlatformQualificationInput>): {
+  identity: boolean;
+  qualified: boolean;
+  status: QualificationStatus;
+} {
+  const identity =
+    input.nvidiaPlatform === "n1x" || input.n1xCandidate === true || input.n1xFastOsMarker === true;
+  const qualified =
+    input.nvidiaPlatform === "n1x" &&
+    input.n1xFastOsMarker === true &&
+    input.n1xPciGpu === true &&
+    input.platform === "linux" &&
+    input.architecture === "arm64" &&
+    input.hasNvidiaGpu;
+  let status: QualificationStatus = "unknown";
+  if (identity && input.n1xFastOsMarker === false) {
+    status = "unqualified";
+  } else if (identity && input.n1xFastOsMarker === true && input.n1xPciGpu !== undefined) {
+    status = qualified ? "qualified" : "unqualified";
+  }
+  return { identity, qualified, status };
+}
+
 export function projectPlatformQualification(
   input: Readonly<PlatformQualificationInput>,
 ): PlatformQualificationProjection {
@@ -364,27 +387,12 @@ export function projectPlatformQualification(
         : "unqualified";
   const sparkIdentity = input.nvidiaPlatform === "spark";
   const sparkQualified = sparkIdentity && input.architecture === "arm64" && input.hasNvidiaGpu;
-  const n1xIdentity =
-    input.nvidiaPlatform === "n1x" || input.n1xCandidate === true || input.n1xFastOsMarker === true;
-  const n1xQualified =
-    n1xIdentity &&
-    input.nvidiaPlatform === "n1x" &&
-    input.n1xFastOsMarker === true &&
-    input.n1xPciGpu === true &&
-    input.platform === "linux" &&
-    input.architecture === "arm64" &&
-    input.hasNvidiaGpu;
-  let n1xStatus: QualificationStatus = "unknown";
-  if (n1xIdentity && input.n1xFastOsMarker === false) {
-    n1xStatus = "unqualified";
-  } else if (n1xIdentity && input.n1xFastOsMarker === true && input.n1xPciGpu !== undefined) {
-    n1xStatus = n1xQualified ? "qualified" : "unqualified";
-  }
+  const n1x = deriveN1xQualification(input);
   const platformSupported =
     (linuxSupported || macosSupported) &&
     (!stationIdentity || stationQualified) &&
     (!sparkIdentity || sparkQualified) &&
-    !n1xIdentity &&
+    !n1x.identity &&
     (!input.isWsl || dockerDesktop);
   const evidence: ReadinessEvidence[] = [];
   if (
@@ -434,11 +442,11 @@ export function projectPlatformQualification(
     capability("host.platform.dgx_spark", sparkQualified ? "present" : "absent"),
     capability(
       "host.platform.n1x",
-      !n1xIdentity
+      !n1x.identity
         ? "absent"
-        : n1xStatus === "qualified"
+        : n1x.status === "qualified"
           ? "present"
-          : n1xStatus === "unqualified"
+          : n1x.status === "unqualified"
             ? "absent"
             : "unknown",
     ),
@@ -481,8 +489,8 @@ export function projectPlatformQualification(
       ]),
     );
   }
-  if (n1xIdentity) {
-    qualifications.push(qualification("host.platform.n1x", n1xStatus, ["host.platform.n1x"]));
+  if (n1x.identity) {
+    qualifications.push(qualification("host.platform.n1x", n1x.status, ["host.platform.n1x"]));
   }
   if (stationIdentity) {
     qualifications.push(
@@ -560,7 +568,7 @@ export function projectPlatformQualification(
       ...(evidence.length ? { evidenceIds: ["host.platform.identity"] } : {}),
     });
   }
-  if (n1xStatus === "qualified") {
+  if (n1x.status === "qualified") {
     findings.push({
       id: "host.platform.n1x_validation_pending",
       severity: "blocking",
@@ -568,7 +576,7 @@ export function projectPlatformQualification(
       capabilityIds: ["host.platform.n1x", "host.platform.supported"],
       ...(evidence.length ? { evidenceIds: ["host.platform.identity"] } : {}),
     });
-  } else if (n1xStatus === "unqualified") {
+  } else if (n1x.status === "unqualified") {
     findings.push({
       id: "host.platform.n1x_unqualified",
       severity: "blocking",
@@ -577,7 +585,7 @@ export function projectPlatformQualification(
       capabilityIds: ["host.platform.n1x", "host.platform.supported"],
       ...(evidence.length ? { evidenceIds: ["host.platform.identity"] } : {}),
     });
-  } else if (n1xIdentity && n1xStatus === "unknown") {
+  } else if (n1x.identity && n1x.status === "unknown") {
     findings.push({
       id: "host.platform.n1x_inconclusive",
       severity: "blocking",

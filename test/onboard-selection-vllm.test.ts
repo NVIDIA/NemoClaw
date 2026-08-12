@@ -343,6 +343,7 @@ const { setupNim } = require(${onboardPath});
           gpu: { type: string; platform: string };
           vllmExpected: true;
           platformLabel: string;
+          deferredPreviewExpected: boolean;
         }
       | {
           name: string;
@@ -355,18 +356,21 @@ const { setupNim } = require(${onboardPath});
         gpu: { type: "nvidia", platform: "spark" },
         vllmExpected: true,
         platformLabel: "DGX Spark",
+        deferredPreviewExpected: false,
       },
       {
         name: "station",
         gpu: { type: "nvidia", platform: "station" },
         vllmExpected: true,
         platformLabel: "DGX Station",
+        deferredPreviewExpected: false,
       },
       {
         name: "n1x",
         gpu: { type: "nvidia", platform: "n1x" },
         vllmExpected: true,
         platformLabel: "N1x",
+        deferredPreviewExpected: true,
       },
       {
         name: "linux",
@@ -496,9 +500,11 @@ async function runScenario(scenario) {
             menuOutput.includes(`Start vLLM (${scenario.platformLabel})`),
           scenario.name,
         );
-        if (scenario.name === "n1x") {
-          assert.match(menuOutput, /\[Deferred preview\]/);
-        }
+        assert.equal(
+          /\[Deferred preview\]/.test(menuOutput),
+          scenario.deferredPreviewExpected,
+          scenario.name,
+        );
       } else {
         assert.doesNotMatch(menuOutput, /Install vLLM \(/);
         assert.doesNotMatch(menuOutput, /Start vLLM \(/);

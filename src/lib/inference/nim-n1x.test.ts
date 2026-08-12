@@ -7,10 +7,14 @@ import { detectNvidiaPlatform } from "./nim";
 
 function withFirmwareModel(model: string, fn: () => void): void {
   const originalReadFileSync = fs.readFileSync;
+  const firmwareFiles = new Map<fs.PathOrFileDescriptor, string>([
+    ["/sys/class/dmi/id/product_name", model],
+    ["/sys/firmware/devicetree/base/model", ""],
+  ]);
   fs.readFileSync = ((filePath: fs.PathOrFileDescriptor, ...args: unknown[]) => {
-    if (filePath === "/sys/class/dmi/id/product_name") return model;
-    if (filePath === "/sys/firmware/devicetree/base/model") return "";
-    return Reflect.apply(originalReadFileSync, fs, [filePath, ...args]);
+    return (
+      firmwareFiles.get(filePath) ?? Reflect.apply(originalReadFileSync, fs, [filePath, ...args])
+    );
   }) as typeof fs.readFileSync;
   try {
     fn();

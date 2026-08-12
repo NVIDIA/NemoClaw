@@ -12,7 +12,7 @@ export interface NimImageCompatibilityWarningInput {
   platform?: NodeJS.Platform;
 }
 
-const ARM64_DGX_NIM_PLATFORMS = new Set(["spark", "station"]);
+const ARM64_NVIDIA_NIM_PLATFORMS = new Set(["spark", "station", "n1x"]);
 
 export function shouldWarnAboutArm64NimImageCompatibility({
   arch = process.arch,
@@ -21,18 +21,21 @@ export function shouldWarnAboutArm64NimImageCompatibility({
   platform = process.platform,
 }: NimImageCompatibilityWarningInput): boolean {
   if (!nimLocalAvailable || platform !== "linux" || arch !== "arm64") return false;
-  return gpu?.spark === true || (gpu?.platform ? ARM64_DGX_NIM_PLATFORMS.has(gpu.platform) : false);
+  return (
+    gpu?.spark === true || (gpu?.platform ? ARM64_NVIDIA_NIM_PLATFORMS.has(gpu.platform) : false)
+  );
 }
 
-function dgxPlatformLabel(gpu: NimImageCompatibilityWarningInput["gpu"]): string {
+function nvidiaPlatformLabel(gpu: NimImageCompatibilityWarningInput["gpu"]): string {
   if (gpu?.platform === "station") return "DGX Station";
+  if (gpu?.platform === "n1x") return "N1x";
   return "DGX Spark";
 }
 
 export function formatArm64NimImageCompatibilityWarning(
   input: Pick<NimImageCompatibilityWarningInput, "gpu">,
 ): string[] {
-  const hostLabel = dgxPlatformLabel(input.gpu);
+  const hostLabel = nvidiaPlatformLabel(input.gpu);
   return [
     `  Warning: Local NVIDIA NIM is experimental on Linux arm64 ${hostLabel} hosts.`,
     "  Some NIM images may not publish linux/arm64 manifests.",

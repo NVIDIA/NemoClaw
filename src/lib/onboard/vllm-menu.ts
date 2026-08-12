@@ -26,6 +26,9 @@
 import { VLLM_PORT } from "../core/ports";
 import type { NvidiaPlatform } from "../inference/nim";
 
+/** Provider key for a NemoClaw-managed local vLLM install or start. */
+export const MANAGED_VLLM_PROVIDER_KEY = "install-vllm";
+
 interface VllmProfileShape {
   name: string;
 }
@@ -60,19 +63,14 @@ export function buildVllmMenuEntries(opts: BuildVllmMenuOptions): VllmMenuEntry[
   // hint is null outside non-interactive mode.
   const env = opts.env ?? process.env;
   const userChoseManagedVllm =
-    (env.NEMOCLAW_PROVIDER || "").trim().toLowerCase() === "install-vllm";
+    (env.NEMOCLAW_PROVIDER || "").trim().toLowerCase() === MANAGED_VLLM_PROVIDER_KEY;
   if (opts.vllmRunning) {
     if (userChoseManagedVllm) {
       log(
         `  Note: NEMOCLAW_PROVIDER=install-vllm requested, but vLLM is already running on localhost:${VLLM_PORT} — selecting the running instance.`,
       );
     }
-    const experimentalLabel =
-      opts.platform === "n1x"
-        ? " [Deferred preview]"
-        : isManagedVllmDefaultPlatform(opts.platform)
-          ? ""
-          : " [experimental]";
+    const experimentalLabel = isManagedVllmDefaultPlatform(opts.platform) ? "" : " [experimental]";
     return [
       {
         key: "vllm",
