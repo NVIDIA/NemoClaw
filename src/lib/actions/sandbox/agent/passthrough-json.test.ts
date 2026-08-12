@@ -272,7 +272,11 @@ describe("runAgentJsonPassthrough", () => {
     expect(stderr.join("")).toContain("error.kind=incomplete_turn");
     expect(stderr.join("")).toContain("livenessState=abandoned");
     expect(stderr.join("")).toContain("replayInvalid=true");
-    expect(stderr.join("")).toContain("Verify what the turn already changed before retrying");
+    expect(stderr.join("")).toContain("nemoclaw 'alpha' sessions list");
+    expect(stderr.join("")).toContain("nemoclaw 'alpha' sessions export <key>");
+    expect(stderr.join("")).toContain(
+      "Inspect the partial JSON trace, exported transcript, and affected resources before retrying",
+    );
     expect(exit).toHaveBeenCalledWith(1);
   });
 

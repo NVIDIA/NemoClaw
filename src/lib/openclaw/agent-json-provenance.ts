@@ -294,7 +294,7 @@ export function openClawAgentJsonProvenanceLines(raw: string): string[] {
 // {"replayInvalid": true} must not be reported as a failure, because callers
 // would then retry a turn that already completed and repeat its side effects.
 //
-// Accepted paths, from the openclaw 2026.7.1 type declarations
+// Accepted paths, from the OpenClaw 2026.7.1 type declarations
 // (dist/types-*.d.ts, dist/agent-runtime-*.d.ts):
 //   EmbeddedAgentRunResult = { payloads?, meta: EmbeddedAgentRunMeta, ... }
 //   agentCommandInternal() -> { payloads, meta: EmbeddedAgentRunMeta & ... }

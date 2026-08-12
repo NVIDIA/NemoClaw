@@ -75,11 +75,11 @@ export function writeIncompleteAgentTurnFailure(
   proc.stderr.write(
     "  The output above is a partial trace. Tool calls in it may have already applied side effects.\n",
   );
+  proc.stderr.write("  Locate the session key, then export its transcript:\n");
+  proc.stderr.write(`    ${CLI_NAME} ${shellQuote(sandboxName)} sessions list\n`);
+  proc.stderr.write(`    ${CLI_NAME} ${shellQuote(sandboxName)} sessions export <key>\n`);
   proc.stderr.write(
-    "  Verify what the turn already changed before retrying, or the retry may repeat those side effects.\n",
-  );
-  proc.stderr.write(
-    `    ${CLI_NAME} ${sandboxName} sessions list             — locate the session and inspect its transcript\n`,
+    "  Inspect the partial JSON trace, exported transcript, and affected resources before retrying.\n",
   );
 }
 
