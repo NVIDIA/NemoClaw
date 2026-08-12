@@ -143,6 +143,27 @@ describe("rebuild backup credential sanitization", () => {
     expect(existsSync(lockPath)).toBe(false);
   });
 
+  it("removes a JSON lockfile with syntax that YAML would accept", () => {
+    const backupPath = createBackup();
+    const lockPath = join(backupPath, "state", "package-lock.json");
+    writeFileSync(lockPath, '{"lockfileVersion":3,}', { mode: 0o600 });
+
+    sanitizeBackupDirectory(backupPath);
+
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
+  it("preserves a credential-free YAML lockfile byte for byte", () => {
+    const backupPath = createBackup();
+    const lockPath = join(backupPath, "state", "pnpm-lock.yaml");
+    const contents = "lockfileVersion: '9.0'\npackages:\n  cookie@0.7.1:\n    resolution: {}\n";
+    writeFileSync(lockPath, contents, { mode: 0o600 });
+
+    sanitizeBackupDirectory(backupPath);
+
+    expect(readFileSync(lockPath, "utf-8")).toBe(contents);
+  });
+
   // source-shape-contract: security -- Package names inside an installed manifest are the exact bytes the credential key matcher would rewrite, so only the unmodified content proves the dependency-tree exclusion holds.
   it("leaves an installed package manifest that names a credential-shaped dependency", () => {
     const backupPath = createBackup();

@@ -84,20 +84,18 @@ function dependencyValueContainsCredential(value: unknown, parentField?: string)
   return false;
 }
 
-function dependencyLockfileContainsCredential(raw: string): boolean {
+function dependencyLockfileContainsCredential(name: string, raw: string): boolean {
   if (dependencyStringContainsCredential(raw)) return true;
+  let parsed: unknown;
   try {
-    return dependencyValueContainsCredential(JSON.parse(raw));
+    parsed = name.endsWith(".json") ? JSON.parse(raw) : parseYaml(raw);
   } catch {
-    try {
-      return dependencyValueContainsCredential(parseYaml(raw));
-    } catch {
-      // Preserve a recognized lockfile only after structured inspection. An
-      // invalid document could otherwise carry an opaque credential that the
-      // bounded text detectors do not recognize.
-      return true;
-    }
+    // Preserve a recognized lockfile only after inspection with the parser for
+    // its format. Invalid content could otherwise carry an opaque credential
+    // that the bounded text detectors do not recognize.
+    return true;
   }
+  return dependencyValueContainsCredential(parsed);
 }
 
 function dependencyManifestContainsCredential(raw: string): boolean {
@@ -140,7 +138,7 @@ function actionForScannedFile(file: SnapshotScannedFile): SnapshotSanitizationAc
   }
 
   if (isDependencyLockfile(name)) {
-    return dependencyLockfileContainsCredential(raw)
+    return dependencyLockfileContainsCredential(name, raw)
       ? { kind: "remove", path: file.path, metadata: file.metadata }
       : null;
   }
