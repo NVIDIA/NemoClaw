@@ -429,7 +429,7 @@ export function getRegistrySandboxMessagingAuthority(
   sandboxName: string,
 ): RegistryMessagingAuthority {
   const entry = registry.getSandbox(sandboxName);
-  if (!entry || entry.pendingRouteReservation === true) {
+  if (!entry || registry.isRouteOnlySandboxReservation(entry)) {
     return { authoritative: false, plan: null };
   }
   return {

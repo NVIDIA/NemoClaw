@@ -215,6 +215,27 @@ describe("onboard dashboard helpers", () => {
     ).toBe(false);
   });
 
+  it("uses the default dashboard URL when an empty environment override is passed", () => {
+    const forwardList =
+      "SANDBOX BIND PORT PID STATUS\n" + "my-sandbox 127.0.0.1 18789 12345 running";
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      runCaptureOpenshell: vi.fn(() => forwardList),
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+
+    expect(helpers.ensureDashboardForward("my-sandbox", "")).toBe(18789);
+  });
+
   it("retries dashboard forward cleanup when the first owner lookup fails", () => {
     const forwardList =
       "SANDBOX BIND PORT PID STATUS\n" + "my-sandbox 127.0.0.1 18789 12345 running";
