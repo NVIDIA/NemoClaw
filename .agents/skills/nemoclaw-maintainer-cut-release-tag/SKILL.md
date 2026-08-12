@@ -29,6 +29,9 @@ gh run view <source-run-id> --repo NVIDIA/NemoClaw --log
 
 Extract the exact `https://github.com/brevdev/nemoclaw-image/actions/runs/<run-id>` URL printed by the source run, give that link to the maintainer immediately, and tell them to follow it to terminal success.
 Treat dispatch acceptance as an intermediate state, not proof of production image promotion: the downstream run must succeed and its summary must show successful runtime E2E validation and promotion of the `nemoclaw-brev-cpu` image family.
+A selected staging image remains an evidence handoff until the downstream workflow accepts immutable
+image identity. The current downstream workflow accepts only the semver tag and rebuilds the production
+image. Do not report the selected staging image as promoted.
 A rejected dispatch fails the trigger run but does not move or roll back `lkg`.
 Deleting `lkg` does not dispatch an image build.
 The downstream scheduled reconciliation remains available if the event-driven dispatch fails or is delayed.
@@ -40,7 +43,10 @@ The downstream scheduled reconciliation remains available if the event-driven di
 - Treat the dated MDX entry as the canonical release history. A conventional Release Notes page or post-tag Announcement draft cannot replace it.
 - If `origin/main` changes after plan generation, regenerate the plan before cutting the tag.
 - Before asking for release confirmation, satisfy the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence) for that commit.
-- Run full mode unless one existing full run for the candidate SHA contains complete workflow E2E and `Exact staging Brev Launchable` evidence.
+- Run ordinary mode for the exact-candidate release ledger when complete default E2E evidence does
+  not already exist. Qualify the release image separately.
+- Show the newest qualified GCP image candidate before asking whether to select it for a future
+  exact-image handoff or run the selective Launchable test again.
 - Ask the maintainer to paste the confirmation phrase from the plan before cutting the tag.
 - Push only the semver tag (`vX.Y.Z`) from the agent-controlled step.
 - Never push `latest` or `lkg` from this skill.
@@ -108,6 +114,19 @@ The script writes a plan outside the checkout root, for example:
 ../nemoclaw-release-v0.0.58/plan.json
 ```
 
+Keep the plan and evidence paths explicit so evidence returned by `nemoclaw-maintainer-e2e`
+survives that skill's invocation:
+
+```bash
+PLAN_JSON="<generated-plan-path>"
+RELEASE_DIR="$(dirname "$PLAN_JSON")"
+export EVIDENCE_DIR="$RELEASE_DIR/e2e-evidence"
+install -d -m 0700 "$EVIDENCE_DIR"
+```
+
+Pass this exported absolute path into every `nemoclaw-maintainer-e2e` evidence collection and
+validation invocation. Do not let that skill replace it with a temporary directory.
+
 ### Step 2: Show Plan, E2E Evidence, and Ask for Confirmation
 
 Read the generated `plan.json` and show the maintainer:
@@ -135,32 +154,36 @@ npm run release:e2e-evidence -- \
 ```
 
 The preflight derives every required execution from one empty-selector dispatch.
-The full run includes every default-selected workflow E2E plus `Exact staging Brev Launchable`.
+The ordinary run includes every default-selected workflow E2E and does not build a Launchable image.
 Accepted release evidence requires `allowJetsonDispatch: false`, `allowJetsonRunnerQueue: false`, and `allowDgxSparkRunnerQueue: false`.
 The required denominator excludes `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification`.
 Each job that declares `RELEASE_E2E_ACTIVATION_PATH` requires that path at the candidate SHA.
 A missing activation path is a preflight failure.
 
-Check whether one existing full run for the candidate SHA contains complete evidence. If it does not, load `nemoclaw-maintainer-e2e` and dispatch one full run. Do not combine evidence from different workflow run IDs. Do not substitute a selective run for full-run evidence.
+Check whether one existing ordinary run for the candidate SHA contains complete default E2E
+evidence. If it does not, load `nemoclaw-maintainer-e2e` and dispatch one ordinary run. Do not combine
+evidence from different workflow run IDs. Image qualification remains a separate decision below.
 
 Monitor the dispatched correlation ID with one bounded status query.
 
-Before accepting full-mode exact Brev evidence, require:
+Before accepting exact-candidate release-ledger evidence, require:
 
 - the workflow `head_sha` to equal the plan candidate SHA;
-- the trusted dispatch receipt to prove empty selectors, `include_staging_brev_launchable=true`, `allowJetsonRunnerQueue: false`, and `allowDgxSparkRunnerQueue: false`; a v1 receipt may omit `allowJetsonDispatch` but must set it to `false` when present, while a v2 receipt must include `allowJetsonDispatch: false`;
+- a v2 trusted dispatch receipt with `prNumber: null`, repository and candidate repository both
+  `NVIDIA/NemoClaw`, and base, workflow, and candidate SHAs all equal to the plan candidate SHA;
+- the receipt to prove empty selectors, `include_staging_brev_launchable=false`,
+  `allowJetsonDispatch: false`, `allowJetsonRunnerQueue: false`, and
+  `allowDgxSparkRunnerQueue: false`;
 - the workflow conclusion to be `success`;
-- the `Exact staging Brev Launchable` job conclusion to be `success`;
-- the job URL and selected successful Launchable job attempt;
-- Launchable E2E identity for the same SHA; and
-- cleanup evidence that reports the qualified workspace as `ABSENT`.
+- every default-selected workflow execution to have successful evidence or an itemized exception.
 
 Treat a skipped job as missing evidence even when the workflow concludes `success`.
-If the plan candidate SHA changes, discard the run and Launchable E2E evidence.
-Run full mode again for the new candidate SHA.
+If the plan candidate SHA changes, discard the run and release ledger.
+Run ordinary mode again for the new candidate SHA.
 No release-note-only delta exception is currently defined.
 
-For the accepted full run, reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json` returned by `nemoclaw-maintainer-e2e`, and collect the workflow-produced dispatch receipt.
+For the accepted ordinary run, reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json` returned by
+`nemoclaw-maintainer-e2e`, and collect the workflow-produced dispatch receipt.
 If those files were not returned, collect them once:
 
 ```bash
@@ -183,7 +206,8 @@ gh run download "$RUN_ID" \
 
 Use the latest existing receipt artifact, not the run's latest attempt number. A partial rerun can leave `generate-matrix` successful and therefore reuse its earlier receipt; the ledger permits that earlier receipt only when it binds the same run and its attempt does not exceed the run's latest attempt.
 
-Successful workflow E2E and `Exact staging Brev Launchable` evidence may accumulate across rerun attempts of that workflow run. Evidence from another workflow run does not satisfy the ledger.
+Successful default E2E evidence may accumulate across rerun attempts of that workflow run. Evidence
+from another workflow run does not satisfy the ledger.
 
 Create `manifest.json` in the private evidence directory:
 
@@ -203,21 +227,95 @@ Create `manifest.json` in the private evidence directory:
 Do not type empty-selector claims or selector lists into the manifest. The helper derives them from the workflow-produced receipt and rejects a receipt whose selector fields disagree with its empty-selector flag.
 Build the ledger with `npm run release:e2e-evidence -- --manifest "$EVIDENCE_DIR/manifest.json"`.
 The helper derives the denominator from the workflow, preserves matrix rows as separate semantic identifiers, binds every run and its actual dispatch inputs to the candidate SHA, and keeps an earlier successful attempt when a later attempt fails.
-The manifest and helper cover the workflow-derived test execution ledger only. They do not replace exact Brev Launchable E2E acceptance: keep the raw `dispatch.json`, `launchable-e2e.json`, and `cleanup.json` validation in `nemoclaw-maintainer-e2e`, and carry its validated return beside this ledger or record the required Launchable E2E exception.
+The manifest and helper cover the exact-candidate release ledger only. Image qualification separately
+validates `dispatch.json`, `launchable-e2e.json`, and `cleanup.json` through
+`nemoclaw-maintainer-e2e`.
 
 Reject a failed workflow run before presenting the ledger. Rerun its failed jobs until the same workflow run concludes with `success`. Exceptions apply only to missing or skipped executions in that otherwise successful run.
+
+Keep the exact-candidate release ledger separate from the image choice. An itemized exception can
+allow release-ledger review, but it never qualifies an image.
+
+Load `nemoclaw-maintainer-e2e` to discover the newest historically validated image whose candidate SHA is
+an ancestor of the release SHA. Eligible evidence can come from a trusted `main` push, selective
+Launchable run, or full run. It must include a successful `Exact staging Brev Launchable` job,
+`fullE2e: passed`, valid immutable image identity in `brevdevprod`, and verified cleanup. Reject
+expired, missing, invalid, PR-shaped, and non-ancestor evidence. Select the newest qualified result by
+`jobCompletedAt`, not by workflow creation time. Keep its `validated.json` under `EVIDENCE_DIR`.
+
+When a qualified candidate exists, set `VALIDATED_JSON` to the validator output for the newest qualified
+ancestor. Before the image-choice prompt, calculate its commit distance:
+
+```bash
+VALIDATED_JSON="<validated-json-path-returned-by-nemoclaw-maintainer-e2e>"
+test -f "$VALIDATED_JSON"
+VALIDATED_SHA="$(jq -er .candidateSha "$VALIDATED_JSON")"
+RELEASE_SHA="$(jq -er .originMainCommit "$PLAN_JSON")"
+git merge-base --is-ancestor "$VALIDATED_SHA" "$RELEASE_SHA"
+COMMIT_DISTANCE="$(git rev-list --count "$VALIDATED_SHA..$RELEASE_SHA")"
+```
+
+Reject a selected image when the ancestry check fails. A nonzero distance is allowed only for a
+historically validated ancestor and requires explicit maintainer confirmation in the image-choice prompt.
+
+If no qualified ancestor image exists, tell the maintainer that no prior image can be selected and ask
+whether to dispatch a fresh selective Launchable run or stop. Do not read `VALIDATED_JSON` or calculate a
+distance until that run succeeds and its evidence validates. After success, set `VALIDATED_JSON`, run
+the ancestry and distance commands, present the fresh image evidence, and continue with that image
+selected. Skip the prior-or-fresh choice below.
+
+When a qualified ancestor image exists, show the maintainer:
+
+- the planned release tag and commit SHA;
+- the exact GCP image URI, numeric ID, and self-link;
+- the source image family, image-repository SHA, image creation timestamp, build or reuse result,
+  and origin workflow run and attempt;
+- the E2E workflow URL, `runCreatedAt`, selected job `jobCompletedAt`, job URL, and selected attempt;
+  and
+- `COMMIT_DISTANCE` as the number of commits between the validated image and release commit.
+
+Then ask the maintainer to choose one action:
+
+1. Select this exact validated image as the proposed production-image handoff.
+2. Dispatch another selective `Exact staging Brev Launchable` run for the release commit and wait
+   for its result.
+
+This is an evidence-only selection. It does not persist an authenticated handoff in the semver tag,
+change the current `lkg` dispatch, or cause image reuse; the current downstream workflow still
+rebuilds. Do not describe either choice as a promotion. A future exact-image promotion workflow must
+re-describe the selected image immediately before mutation and require `READY` status plus exact
+project, name, numeric ID, and self-link matches. Historical artifacts alone do not prove that the
+image still exists.
+
+If the maintainer chooses a fresh run, load `nemoclaw-maintainer-e2e`, dispatch Launchable mode, and
+wait. Replace the selected image with that run's evidence; do not change or combine the separate
+exact-candidate release ledger. Set `VALIDATED_JSON` to the fresh validator output, rerun the ancestry
+and commit-distance commands above, and present all replacement image fields and timestamps before
+continuing.
+If the fresh run fails, report the failure. Ask whether to rerun it or return to the prior validated
+image when one was qualified; otherwise offer only rerun or stop. Do not select a prior image without
+confirmation.
 
 Before showing the confirmation prompt, present:
 
 - the candidate SHA;
 - the number of tests with successful evidence out of the number required by the workflow;
 - each required test mapped to a successful run or job URL and attempt; and
-- when accepted full-mode exact Brev evidence exists, its workflow URL, `Exact staging Brev Launchable` job URL, selected evidence attempt, Launchable E2E identity, and cleanup result; and
-- a separate itemized maintainer exception for each missing or skipped execution in the accepted successful workflow run, including its test identifier, run links, current result, and rationale; and
-- a separate itemized maintainer exception for missing or invalid exact Brev Launchable E2E evidence in the accepted successful workflow run, including run and job URLs, the missing or invalid receipt, and rationale.
+- the separate qualified image evidence's workflow URL, `Exact staging Brev Launchable` job URL,
+  selected evidence attempt, Launchable E2E identity, and cleanup result; and
+- the maintainer's validated-image choice, exact GCP image identity, image and workflow timestamps,
+  selected job completion timestamp, and commit distance; and
+- a separate itemized maintainer exception for each missing or skipped execution in the accepted
+  successful workflow run, including its test identifier, run links, current result, and rationale.
 
-Do not ask for the phrase until the workflow run concludes with `success` and each test and the exact Brev Launchable E2E job has successful evidence or its own permitted itemized exception.
-Immediately before asking, refresh `origin/main` once and compare its full SHA with the plan. If it moved, discard all prior candidate-bound evidence, regenerate the plan, rerun preflight and the full E2E workflow for the new SHA, capture a new manifest, and rebuild the ledger before requesting confirmation.
+Do not ask for the phrase until the ordinary workflow concludes with `success`, each default E2E has
+successful evidence or its own permitted itemized exception, and the maintainer has selected a fully
+validated image. Immediately before asking, refresh `origin/main` once and compare its full SHA with
+the plan. If it moved, discard all prior candidate-bound release-ledger evidence, regenerate the plan,
+rerun preflight and ordinary E2E for the new SHA, capture a new manifest, and rebuild the ledger.
+Discard the prior image decision too. Repeat the image discovery and selection procedure above for
+the new release SHA: find the newest qualified ancestor, present its evidence and recalculated
+distance, and obtain the maintainer's prior-or-fresh choice again before requesting confirmation.
 
 Exercise the configured Git signing backend before asking for confirmation:
 
@@ -359,10 +457,13 @@ If the Announcement is valid, return its URL with the release artifacts and mark
 
 - Plan generation fails: fix the named precondition, then regenerate the plan.
 - Planned changelog entry is missing or malformed: stop before plan generation and run the pre-tag `nemoclaw-contributor-update-docs` workflow. Use post-release recovery only when the tag already exists.
-- Full-mode E2E waits in the Launchable concurrency queue: keep the run pending until the earlier Launchable E2E job finishes.
-- Full-mode E2E ran for another SHA: reject the run and dispatch full mode for the plan candidate SHA.
-- `Exact staging Brev Launchable` was skipped in an otherwise successful candidate run: dispatch full mode again or record the required itemized maintainer exception.
-- Launchable E2E or cleanup evidence is missing or invalid in an otherwise successful candidate run: dispatch full mode again or record the separate itemized maintainer exception. Do not infer Launchable E2E success from the workflow conclusion.
+- Ordinary release-ledger E2E ran for another SHA: reject the run and dispatch ordinary mode for the
+  plan candidate SHA.
+- A fresh Launchable image run waits in the non-cancelling concurrency queue: keep it pending until
+  the earlier Launchable job finishes.
+- Launchable E2E or cleanup evidence is missing or invalid: choose another historically validated ancestor
+  image or dispatch Launchable mode again. Do not infer image qualification from a workflow
+  conclusion.
 - `origin/main` moved after plan generation: regenerate the plan and ask for the new confirmation phrase.
 - Remote semver tag already exists: stop; do not retag unless the maintainer explicitly starts protected-tag remediation.
 - Signing preflight fails: fix the reported Git signer or signing-key failure. Run the preflight again before requesting confirmation.

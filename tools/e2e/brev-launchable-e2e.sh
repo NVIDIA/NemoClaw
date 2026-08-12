@@ -138,17 +138,31 @@ jq -e --arg sha "$CANDIDATE_SHA" --arg correlation "$CORRELATION_ID" \
   --arg requester "$GITHUB_RUN_ID" --argjson attempt "$GITHUB_RUN_ATTEMPT" --arg run "$producer_run" '
   .kind == "nemoclaw-exact-image-manifest" and .nemoclawSha == $sha and
   .correlationId == $correlation and .requesterWorkflowRunId == $requester and
-  .requesterWorkflowRunAttempt == $attempt and .imageRepository == "brevdev/nemoclaw-image" and
+  .requesterWorkflowRunAttempt == $attempt and .requesterRepository == "NVIDIA/NemoClaw" and
+  .imageRepository == "brevdev/nemoclaw-image" and
   .producerWorkflow == ".github/workflows/build-launchable-e2e-image.yml" and
   .workflowRunId == $run and .workflowRunAttempt == 1 and .status == "READY" and
-  .channel == "staging" and .variant == "cpu" and
+  .channel == "staging" and .variant == "cpu" and .imageKind == "compute#image" and
   .observedFamily == "nemoclaw-brev-staging-cpu" and
-  (.project | type) == "string" and (.project | length) > 0 and
-  (.imageName | type) == "string" and (.imageName | length) > 0 and
+  .project == "brevdevprod" and
+  (.imageName | test("^[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?$")) and
+  (.imageId | test("^[1-9][0-9]*$")) and
+  .imageSelfLink == ("https://www.googleapis.com/compute/v1/projects/" + .project + "/global/images/" + .imageName) and
+  (.imageCreationTimestamp | type == "string" and
+    test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$")) and
+  (.imageOriginWorkflowRunId | test("^[1-9][0-9]*$")) and
+  (.imageOriginWorkflowRunAttempt | type == "number" and . >= 1 and floor == .) and
+  (.result == "built" or .result == "reused") and
+  (if .result == "built" then
+    .imageOriginWorkflowRunId == $run and .imageOriginWorkflowRunAttempt == 1
+  else true end) and
   (.imageRepositorySha | test("^[0-9a-f]{40}$"))' \
   "$manifest" >/dev/null || die "producer receipt does not match the candidate"
 expected_boot_image="projects/$(jq -er .project "$manifest")/global/images/$(jq -er .imageName "$manifest")"
 image_repository_sha="$(jq -er .imageRepositorySha "$manifest")"
+image="$(jq -c \
+  '{project,imageName,imageId,imageSelfLink,imageCreationTimestamp,imageRepositorySha,
+    imageOriginWorkflowRunId,imageOriginWorkflowRunAttempt,observedFamily,result}' "$manifest")"
 rm -rf "$WORK_DIR/handoff"
 
 # The standing Launchable resolves the staging family. Give that reference time to
@@ -188,9 +202,9 @@ boot_image="$(timeout 300s brev exec "$INSTANCE_NAME" 'set -euo pipefail
   | sed -n 's/^NEMOCLAW_BOOT_IMAGE=//p' | tail -n 1)"
 [ -n "$boot_image" ] || die "booted image identity is missing"
 
-jq -n --arg candidateSha "$CANDIDATE_SHA" --arg producerRun "$producer_run" \
+jq -n --arg candidateSha "$CANDIDATE_SHA" --arg producerRun "$producer_run" --argjson image "$image" \
   --arg bootImage "$boot_image" --arg workspaceName "$INSTANCE_NAME" --arg workspaceId "$workspace_id" \
-  '{candidateSha:$candidateSha,producer:{runId:$producerRun,status:"success"},boot:{bootImage:$bootImage},workspace:{name:$workspaceName,id:$workspaceId},fullE2e:"pending"}' \
+  '{candidateSha:$candidateSha,producer:{runId:$producerRun,status:"success"},image:$image,boot:{bootImage:$bootImage},workspace:{name:$workspaceName,id:$workspaceId},fullE2e:"pending"}' \
   >"$WORK_DIR/launchable-e2e.json"
 
 [ "$boot_image" = "$expected_boot_image" ] \

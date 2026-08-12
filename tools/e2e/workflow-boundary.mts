@@ -4211,6 +4211,12 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
   const dispatchIdentity = requireStep(errors, steps, "Record E2E dispatch identity");
   const dispatchEnv = asRecord(dispatchIdentity?.env);
   for (const [key, expected] of [
+    [
+      "ALLOW_DGX_SPARK_RUNNER_QUEUE",
+      "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
+    ],
+    ["ALLOW_JETSON_DISPATCH", "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}"],
+    ["ALLOW_JETSON_RUNNER_QUEUE", "false"],
     ["CANDIDATE_SHA", "${{ env.CANDIDATE_SHA }}"],
     ["DISPATCH_JOBS", "${{ inputs.jobs }}"],
     ["DISPATCH_TARGETS", "${{ inputs.targets }}"],
@@ -4233,6 +4239,9 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     "eventName: $eventName",
     "workflowRunId: $workflowRunId",
     "workflowRunAttempt: $workflowRunAttempt",
+    "allowDgxSparkRunnerQueue: $allowDgxSparkRunnerQueue",
+    "allowJetsonDispatch: $allowJetsonDispatch",
+    "allowJetsonRunnerQueue: $allowJetsonRunnerQueue",
     "jobs: $jobs",
     "targets: $targets",
     "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",

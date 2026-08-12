@@ -11,7 +11,8 @@ description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw mai
 Use `.github/workflows/e2e.yaml` from trusted `main`.
 Every push to `main` selects the default workflow E2E jobs.
 Push runs skip `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification` because push events cannot set the required workflow dispatch flags.
-Pre-tag evidence still requires the full `workflow_dispatch` mode described below.
+Pre-tag release-ledger evidence uses ordinary `workflow_dispatch` mode. Release-image evidence uses
+the separate fully validated Launchable result described below.
 Do not substitute local `npm run test:live-e2e` unless the maintainer explicitly requests local execution.
 
 ## Manual PR E2E
@@ -154,7 +155,7 @@ A changed head repository, head SHA, or base SHA invalidates the evidence and re
 | “Run the full E2E suite” | Full | empty | `true` |
 | “deploy pre-release full E2E” | Full | empty | `true` |
 | “run pre-tag full E2E” | Full | empty | `true` |
-| “run release-candidate E2E” | Full | empty | `true` |
+| “run release-candidate E2E” | Ordinary | empty | `false` |
 
 A generic E2E request must not authorize the Brev Launchable path.
 Do not infer full mode from words such as “all” or “complete.”
@@ -294,18 +295,23 @@ Queued, waiting, or accepted dispatch state is not success.
 
 ## Verify the Result
 
-Create a private temporary evidence directory:
+Create a private evidence directory. A release caller sets `EVIDENCE_DIR` to its durable private
+release directory; a standalone invocation removes its temporary directory on exit:
 
 ```bash
-EVIDENCE_DIR="$(mktemp -d)"
+if [ -z "${EVIDENCE_DIR:-}" ]; then
+  EVIDENCE_DIR="$(mktemp -d)"
+  trap 'rm -rf "$EVIDENCE_DIR"' EXIT
+else
+  install -d -m 0700 "$EVIDENCE_DIR"
+fi
 chmod 700 "$EVIDENCE_DIR"
-trap 'rm -rf "$EVIDENCE_DIR"' EXIT
 gh api "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID" >"$EVIDENCE_DIR/run-$RUN_ID.json"
 gh api "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" \
   >"$EVIDENCE_DIR/jobs-latest-$RUN_ID.json"
 ```
 
-For full-mode or release evidence, collect every attempt for the matrix-preserving ledger:
+For release-ledger evidence and every Launchable image-evidence validation, collect every attempt:
 
 ```bash
 gh api --paginate --slurp \
@@ -313,7 +319,10 @@ gh api --paginate --slurp \
   >"$EVIDENCE_DIR/jobs-$RUN_ID.json"
 ```
 
-Reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json` as the `nemoclaw-maintainer-cut-release-tag` manifest inputs and as the full-mode validator inputs. Do not fetch the same run again. `jobs-latest-$RUN_ID.json` is only for ordinary and Launchable modes.
+Reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json` as the
+`nemoclaw-maintainer-cut-release-tag` manifest inputs when building a release ledger and as validator
+inputs when validating image evidence. Do not fetch the same run again. Use
+`jobs-latest-$RUN_ID.json` only for an ordinary status report that does not validate image evidence.
 
 For ordinary and Launchable modes, require `run-$RUN_ID.json` to report:
 
@@ -324,7 +333,8 @@ For ordinary and Launchable modes, require `run-$RUN_ID.json` to report:
 For Launchable mode, also require `jobs-latest-$RUN_ID.json` to contain one completed, successful
 `Exact staging Brev Launchable` job. Return the workflow and job URLs.
 
-For full mode, select and download the Launchable E2E artifact for the latest successful Launchable job attempt:
+For full mode, selective Launchable mode, or a trusted `main` push selected for an image handoff,
+download the artifact for the latest successful Launchable job attempt:
 
 ```bash
 EVIDENCE_ATTEMPT="$(jq -er '
@@ -335,57 +345,99 @@ EVIDENCE_ATTEMPT="$(jq -er '
           (.run_attempt | type) == "number") |
    .run_attempt] | unique | sort | last // error("no successful Launchable attempt")
 ' "$EVIDENCE_DIR/jobs-$RUN_ID.json")"
-FULL_E2E_DIR="$EVIDENCE_DIR/full-$EVIDENCE_ATTEMPT"
+FULL_E2E_DIR="$EVIDENCE_DIR/image-$RUN_ID-$EVIDENCE_ATTEMPT"
 install -d -m 0700 "$FULL_E2E_DIR"
 gh run download "$RUN_ID" --repo NVIDIA/NemoClaw \
   --name "staging-brev-launchable-${CANDIDATE_SHA}-${RUN_ID}-${EVIDENCE_ATTEMPT}" \
   --dir "$FULL_E2E_DIR"
+VALIDATOR_MODE_ARGS=()
+if [ -n "${EVIDENCE_MODE:-}" ]; then
+  VALIDATOR_MODE_ARGS=(--mode "$EVIDENCE_MODE")
+fi
 node --experimental-strip-types --no-warnings \
   .agents/skills/nemoclaw-maintainer-e2e/scripts/validate-full-e2e-evidence.mts \
+  "${VALIDATOR_MODE_ARGS[@]}" \
   --candidate-sha "$CANDIDATE_SHA" \
   --run-json "$EVIDENCE_DIR/run-$RUN_ID.json" \
   --jobs-json "$EVIDENCE_DIR/jobs-$RUN_ID.json" \
   --dispatch-json "$FULL_E2E_DIR/dispatch.json" \
   --launchable-e2e-json "$FULL_E2E_DIR/launchable-e2e.json" \
-  --cleanup-json "$FULL_E2E_DIR/cleanup.json"
+  --cleanup-json "$FULL_E2E_DIR/cleanup.json" \
+  >"$FULL_E2E_DIR/validated.json"
 ```
 
-The validator requires:
+Leave `EVIDENCE_MODE` unset for the legacy full-run validator path. For a release-image evidence
+candidate, set it to `full`, `launchable`, or `push`. That stricter path rejects PR-shaped evidence.
+
+Every validator mode requires:
 
 - the workflow run to succeed for the selected SHA;
-- `dispatch.json` to bind the same run, empty selectors, `include_staging_brev_launchable=true`, `allowJetsonRunnerQueue: false`, `allowDgxSparkRunnerQueue: false`, and the selected successful Launchable job attempt;
+- `dispatch.json` to bind the same run and selected successful Launchable job attempt;
 - `allowJetsonDispatch: false` in every v2 `dispatch.json` receipt;
 - `allowJetsonDispatch` to be absent or `false` in every v1 `dispatch.json` receipt;
+- `allowJetsonRunnerQueue: false` and `allowDgxSparkRunnerQueue: false`;
 - `Exact staging Brev Launchable` to conclude `success` in the selected current or earlier attempt of the same workflow run;
 - `launchable-e2e.json` to identify the selected SHA in the repository and provision records;
+- `launchable-e2e.json` to bind the booted GCP image URI to its project, name, numeric ID,
+  self-link, source family, image origin, creation time, and image-repository SHA;
+- the source project to equal trusted project `brevdevprod`;
 - the booted repository to be unmodified;
 - the in-guest full E2E to pass; and
 - `cleanup.json` to report the same workspace as `ABSENT`.
 
+The selector contract is mode-specific: `full` requires empty selectors and
+`include_staging_brev_launchable=true`; `launchable` requires
+`jobs=staging-brev-launchable`, empty targets, and the opt-in false; `push` requires empty selectors
+and the opt-in false.
+
 A skipped, cancelled, queued, or failed Launchable E2E job is not evidence.
-A Launchable-mode run is not full-mode or pre-tag release evidence.
+A Launchable-mode run is not release-ledger evidence. It is qualified historical image evidence after
+the stricter direct `main` validator succeeds.
 A missing, mismatched, or failed cleanup receipt is not evidence.
+
+## Select Release Image Evidence
+
+When `nemoclaw-maintainer-cut-release-tag` requests an image choice, list successful E2E workflow
+runs on `main` newest first. Inspect each run's `Exact staging Brev Launchable` job and artifact by
+using the collection and validator steps above. Derive `EVIDENCE_MODE` from the trusted receipt:
+
+- use `push` for a `push` event with empty selectors and no Launchable opt-in;
+- use `launchable` for `workflow_dispatch` with `jobs=staging-brev-launchable`; and
+- use `full` for `workflow_dispatch` with empty selectors and
+  `include_staging_brev_launchable=true`.
+
+Reject an expired or missing artifact, a failed or skipped job, invalid evidence, and PR-shaped
+evidence. An itemized release-ledger exception is not image evidence. Return every valid candidate
+needed for the caller's ancestry check, sorted by `jobCompletedAt` newest first. The caller chooses
+the newest historically validated ancestor of the release SHA and keeps its `validated.json` in the private
+release evidence directory.
 
 ## Bind Release Evidence
 
-If no release plan exists, label a successful full run against `origin/main` as provisional release evidence.
+If no release plan exists, label a successful ordinary run against `origin/main` as provisional
+release-ledger evidence. Return validated Launchable evidence separately when available.
 Return:
 
+- the exact `validated.json` path;
 - candidate SHA;
 - workflow run URL and conclusion;
+- workflow run ID, creation timestamp, and selected job completion timestamp;
 - `Exact staging Brev Launchable` job URL;
 - selected successful Launchable job attempt;
-- Launchable E2E identity; and
+- exact GCP image and Launchable E2E identity; and
 - cleanup result.
 
-If the release candidate SHA changes, discard the earlier full run and dispatch full mode for the new SHA.
+If the release candidate SHA changes, discard the earlier release ledger and dispatch ordinary mode
+for the new SHA. Discard the prior image decision, rediscover the newest qualified ancestor for the
+new SHA, present its evidence, and obtain the image choice again.
 No release-note-only delta exception is currently defined.
 
 When `nemoclaw-maintainer-cut-release-tag` invokes this skill, return the validated fields for its pre-tag E2E evidence ledger.
-The trusted `dispatch.json` receipt proves that full mode used empty selectors and included `Exact staging Brev Launchable`.
-For Jetson dispatch, a v2 receipt requires `allowJetsonDispatch: false`.
-A v1 receipt may omit `allowJetsonDispatch`, but it must be `false` when present.
-Both receipt versions require the optional DGX Spark runner path to be disabled.
+The release-ledger `dispatch.json` is a v2 direct `main` receipt. It proves ordinary mode used empty
+selectors and excluded `Exact staging Brev Launchable`; `prNumber` is null, both repositories are
+`NVIDIA/NemoClaw`, and its base, workflow, and candidate SHAs are identical. It also requires
+`allowJetsonDispatch: false` and both optional runner queues disabled. Image qualification validates
+its own mode-specific v1 or v2 receipt.
 The release evidence ledger proves the result of each workflow E2E.
 Do not ask for the release confirmation phrase in this skill.
 

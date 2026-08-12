@@ -25,9 +25,20 @@ function fixture(
     bootImage?: string;
     deleteFails?: boolean;
     e2eFails?: boolean;
+    imageId?: string;
+    imageProject?: string;
     imageRepositorySha?: string;
+    imageSelfLink?: string;
     missingProvisionReceipt?: boolean;
-    omitReceiptField?: "imageName" | "imageRepositorySha" | "project";
+    omitReceiptField?:
+      | "imageCreationTimestamp"
+      | "imageId"
+      | "imageName"
+      | "imageOriginWorkflowRunId"
+      | "imageRepositorySha"
+      | "imageSelfLink"
+      | "project"
+      | "result";
     provisionImageRepositorySha?: string;
     provisionSha?: string;
     ready?: boolean;
@@ -75,14 +86,21 @@ elif [ "$1 $2" = 'run download' ]; then
   done
   mkdir -p "$directory"
   jq -n --arg sha "$FAKE_RECEIPT_SHA" --arg correlation "$CORRELATION_ID" \
+    --arg imageCreationTimestamp "$FAKE_IMAGE_CREATION_TIMESTAMP" \
+    --arg imageId "$FAKE_IMAGE_ID" \
+    --arg imageProject "$FAKE_IMAGE_PROJECT" \
     --arg imageRepositorySha "$FAKE_IMAGE_REPOSITORY_SHA" \
+    --arg imageSelfLink "$FAKE_IMAGE_SELF_LINK" \
     --arg omit "$FAKE_OMIT_RECEIPT_FIELD" '{
     kind:"nemoclaw-exact-image-manifest",nemoclawSha:$sha,correlationId:$correlation,
-    requesterWorkflowRunId:"789",requesterWorkflowRunAttempt:1,
+    requesterRepository:"NVIDIA/NemoClaw",requesterWorkflowRunId:"789",requesterWorkflowRunAttempt:1,
     imageRepository:"brevdev/nemoclaw-image",producerWorkflow:".github/workflows/build-launchable-e2e-image.yml",
-    workflowRunId:"123",workflowRunAttempt:1,
-    status:"READY",channel:"staging",variant:"cpu",observedFamily:"nemoclaw-brev-staging-cpu",
-    project:"brevdevprod",imageName:"nemoclaw-test-image",imageRepositorySha:$imageRepositorySha
+    workflowRunId:"123",workflowRunAttempt:1,imageOriginWorkflowRunId:"123",imageOriginWorkflowRunAttempt:1,
+    imageKind:"compute#image",status:"READY",channel:"staging",variant:"cpu",
+    observedFamily:"nemoclaw-brev-staging-cpu",result:"built",
+    project:$imageProject,imageName:"nemoclaw-test-image",imageId:$imageId,
+    imageSelfLink:$imageSelfLink,imageCreationTimestamp:$imageCreationTimestamp,
+    imageRepositorySha:$imageRepositorySha
   } | if $omit == "" then . else del(.[$omit]) end' > "$directory/nemoclaw-image-manifest.v1.json"
 else
   exit 2
@@ -154,7 +172,13 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_CALLS: calls,
     FAKE_DELETE_FAILS: options.deleteFails ? "1" : "0",
     FAKE_E2E_FAILS: options.e2eFails ? "1" : "0",
+    FAKE_IMAGE_CREATION_TIMESTAMP: "2026-08-11T20:00:00Z",
+    FAKE_IMAGE_ID: options.imageId ?? "5831758261704356816",
+    FAKE_IMAGE_PROJECT: options.imageProject ?? "brevdevprod",
     FAKE_IMAGE_REPOSITORY_SHA: options.imageRepositorySha ?? "b".repeat(40),
+    FAKE_IMAGE_SELF_LINK:
+      options.imageSelfLink ??
+      "https://www.googleapis.com/compute/v1/projects/brevdevprod/global/images/nemoclaw-test-image",
     FAKE_MISSING_PROVISION_RECEIPT: options.missingProvisionReceipt ? "1" : "0",
     FAKE_OMIT_RECEIPT_FIELD: options.omitReceiptField ?? "",
     FAKE_PROVISION_IMAGE_REPOSITORY_SHA:
@@ -216,6 +240,19 @@ describe("focused staging Brev Launchable lane", () => {
       candidateSha,
       fullE2e: "passed",
       producer: { runId: "123", status: "success" },
+      image: {
+        imageCreationTimestamp: "2026-08-11T20:00:00Z",
+        imageId: "5831758261704356816",
+        imageName: "nemoclaw-test-image",
+        imageOriginWorkflowRunAttempt: 1,
+        imageOriginWorkflowRunId: "123",
+        imageRepositorySha: "b".repeat(40),
+        imageSelfLink:
+          "https://www.googleapis.com/compute/v1/projects/brevdevprod/global/images/nemoclaw-test-image",
+        observedFamily: "nemoclaw-brev-staging-cpu",
+        project: "brevdevprod",
+        result: "built",
+      },
       boot: {
         bootImage: "projects/brevdevprod/global/images/nemoclaw-test-image",
         sourcePath: "/opt/nemoclaw-image/NemoClaw",
@@ -228,7 +265,7 @@ describe("focused staging Brev Launchable lane", () => {
     });
   });
 
-  it("blocks E2E for a wrong receipt, incomplete readiness, or booted checkout mismatch", () => {
+  it("blocks deployment when producer evidence does not match the candidate", () => {
     const receipt = fixture({ receiptSha: "b".repeat(40) });
     const receiptResult = run(receipt.env);
     expect(receiptResult.status).not.toBe(0);
@@ -238,6 +275,9 @@ describe("focused staging Brev Launchable lane", () => {
     for (const malformed of [
       fixture({ omitReceiptField: "project" }),
       fixture({ omitReceiptField: "imageName" }),
+      fixture({ omitReceiptField: "imageCreationTimestamp" }),
+      fixture({ omitReceiptField: "imageOriginWorkflowRunId" }),
+      fixture({ omitReceiptField: "result" }),
       fixture({ imageRepositorySha: "not-a-sha" }),
     ]) {
       const malformedResult = run(malformed.env);
@@ -247,7 +287,9 @@ describe("focused staging Brev Launchable lane", () => {
         /brev create|full-e2e\.test\.ts/u,
       );
     }
+  });
 
+  it("blocks E2E when the workspace is not ready or boots another image", () => {
     const unready = fixture({ ready: false });
     const unreadyResult = run({ ...unready.env, BREV_READY_TIMEOUT_SECONDS: "1" });
     expect(unreadyResult.status).not.toBe(0);
@@ -262,7 +304,9 @@ describe("focused staging Brev Launchable lane", () => {
     expect(wrongImageResult.stderr).toContain("booted image does not match the producer handoff");
     expect(fs.readFileSync(wrongImage.calls, "utf8")).not.toContain("full-e2e.test.ts");
     expect(fs.existsSync(wrongImage.state)).toBe(false);
+  });
 
+  it("blocks E2E when the booted runtime differs from the producer evidence", () => {
     for (const boot of [
       fixture({ repoSha: "b".repeat(40) }),
       fixture({ provisionSha: "b".repeat(40) }),
@@ -280,6 +324,29 @@ describe("focused staging Brev Launchable lane", () => {
       );
       expect(fs.readFileSync(boot.calls, "utf8")).not.toContain("full-e2e.test.ts");
       expect(fs.existsSync(boot.state)).toBe(false);
+    }
+  }, 30_000);
+
+  it("rejects producer evidence that cannot identify one GCP image", () => {
+    for (const malformed of [
+      fixture({ omitReceiptField: "imageId" }),
+      fixture({ imageId: "not-an-id" }),
+      fixture({
+        imageProject: "other-project",
+        imageSelfLink:
+          "https://www.googleapis.com/compute/v1/projects/other-project/global/images/nemoclaw-test-image",
+      }),
+      fixture({
+        imageSelfLink:
+          "https://www.googleapis.com/compute/v1/projects/brevdevprod/global/images/other",
+      }),
+    ]) {
+      const result = run(malformed.env);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("producer receipt does not match the candidate");
+      expect(fs.readFileSync(malformed.calls, "utf8")).not.toMatch(
+        /brev create|full-e2e\.test\.ts/u,
+      );
     }
   });
 
@@ -305,6 +372,11 @@ describe("focused staging Brev Launchable lane", () => {
     ).toMatchObject({
       candidateSha,
       boot: { bootImage: "projects/brevdevprod/global/images/nemoclaw-test-image" },
+      image: {
+        imageId: "5831758261704356816",
+        imageSelfLink:
+          "https://www.googleapis.com/compute/v1/projects/brevdevprod/global/images/nemoclaw-test-image",
+      },
       fullE2e: "pending",
     });
   });

@@ -27,9 +27,9 @@ export type ReleaseE2ePreflight = {
   candidateSha: string;
   dispatches: {
     completeRun: {
-      includeStagingBrevLaunchable: true;
+      includeStagingBrevLaunchable: false;
       jobs: "";
-      mode: "full";
+      mode: "ordinary";
       targets: "";
     };
   };
@@ -156,24 +156,18 @@ function validateDispatchIdentity(
 ): string {
   requireEqual(dispatch.candidateSha, candidateSha, `${label}.candidateSha`);
   const kind = stringField(dispatch, "kind", label);
-  if (kind === "nemoclaw-e2e-dispatch-v1") return candidateSha;
   if (kind !== "nemoclaw-e2e-dispatch-v2") {
-    throw new Error(
-      `${label}.kind must equal "nemoclaw-e2e-dispatch-v1" or "nemoclaw-e2e-dispatch-v2"`,
-    );
+    throw new Error(`${label}.kind must equal "nemoclaw-e2e-dispatch-v2"`);
   }
 
   requireEqual(dispatch.repository, "NVIDIA/NemoClaw", `${label}.repository`);
   const candidateRepository = requireRepository(dispatch, "candidateRepository", label);
   const baseSha = requireSha(dispatch, "baseSha", label);
   const workflowSha = requireSha(dispatch, "workflowSha", label);
-  if (dispatch.prNumber === null) {
-    requireEqual(candidateRepository, "NVIDIA/NemoClaw", `${label}.candidateRepository`);
-    requireEqual(baseSha, candidateSha, `${label}.baseSha`);
-    requireEqual(workflowSha, candidateSha, `${label}.workflowSha`);
-  } else {
-    numberField(dispatch, "prNumber", label);
-  }
+  requireEqual(dispatch.prNumber, null, `${label}.prNumber`);
+  requireEqual(candidateRepository, "NVIDIA/NemoClaw", `${label}.candidateRepository`);
+  requireEqual(baseSha, candidateSha, `${label}.baseSha`);
+  requireEqual(workflowSha, candidateSha, `${label}.workflowSha`);
   return workflowSha;
 }
 
@@ -352,9 +346,17 @@ export function buildReleaseE2ePreflight(input: {
   const inventory = readFreeStandingJobsInventory(workflowPath);
   const plan = input.plan ?? buildE2eWorkflowPlan();
   const pathExists = input.candidatePathExists ?? candidatePathExists;
-  const defaultJobIds = inventory.workflowJobs.filter(
+  const workflowJobIds = inventory.workflowJobs.filter(
     (jobId) => jobId !== "shared-e2e" && !OPT_IN_HARDWARE_JOB_IDS.has(jobId),
   );
+  const launchableE2eJobs = workflowJobIds.filter((jobId) =>
+    isLaunchableE2eJob(jobId, record(jobs[jobId], `workflow.jobs.${jobId}`)),
+  );
+  if (launchableE2eJobs.length !== 1) {
+    throw new Error(`expected exactly one Launchable E2E job, found ${launchableE2eJobs.length}`);
+  }
+  const launchableE2eJobId = launchableE2eJobs[0]!;
+  const defaultJobIds = workflowJobIds.filter((jobId) => jobId !== launchableE2eJobId);
   for (const jobId of defaultJobIds) {
     const activationPath = releaseActivationPath(
       record(jobs[jobId], `workflow.jobs.${jobId}`),
@@ -366,13 +368,6 @@ export function buildReleaseE2ePreflight(input: {
       );
     }
   }
-  const launchableE2eJobs = defaultJobIds.filter((jobId) =>
-    isLaunchableE2eJob(jobId, record(jobs[jobId], `workflow.jobs.${jobId}`)),
-  );
-  if (launchableE2eJobs.length !== 1) {
-    throw new Error(`expected exactly one Launchable E2E job, found ${launchableE2eJobs.length}`);
-  }
-  const launchableE2eJobId = launchableE2eJobs[0]!;
   const executions = [
     ...defaultJobIds.flatMap((jobId) =>
       jobExecutions(jobId, record(jobs[jobId], `workflow.jobs.${jobId}`), "default", plan),
@@ -398,9 +393,9 @@ export function buildReleaseE2ePreflight(input: {
     candidateSha: input.candidateSha,
     dispatches: {
       completeRun: {
-        includeStagingBrevLaunchable: true,
+        includeStagingBrevLaunchable: false,
         jobs: "",
-        mode: "full",
+        mode: "ordinary",
         targets: "",
       },
     },
@@ -476,7 +471,7 @@ export function buildReleaseE2eLedger(
     );
     requireEqual(
       booleanField(dispatch, "includeStagingBrevLaunchable", `${label}.dispatch`),
-      true,
+      false,
       `${label}.dispatch.includeStagingBrevLaunchable`,
     );
     requireEqual(

@@ -723,6 +723,9 @@ jobs:
 
       - name: Record E2E dispatch identity
         env:
+          ALLOW_DGX_SPARK_RUNNER_QUEUE: ${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}
+          ALLOW_JETSON_DISPATCH: ${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}
+          ALLOW_JETSON_RUNNER_QUEUE: "false"
           CANDIDATE_SHA: ${{ env.CANDIDATE_SHA }}
           DISPATCH_JOBS: ${{ inputs.jobs }}
           DISPATCH_TARGETS: ${{ inputs.targets }}
@@ -738,6 +741,9 @@ jobs:
             --arg jobs "$DISPATCH_JOBS" \
             --arg targets "$DISPATCH_TARGETS" \
             --arg workflowRunId "$RUN_ID" \
+            --argjson allowDgxSparkRunnerQueue "$ALLOW_DGX_SPARK_RUNNER_QUEUE" \
+            --argjson allowJetsonDispatch "$ALLOW_JETSON_DISPATCH" \
+            --argjson allowJetsonRunnerQueue "$ALLOW_JETSON_RUNNER_QUEUE" \
             --argjson includeStagingBrevLaunchable "$INCLUDE_STAGING_BREV_LAUNCHABLE" \
             --argjson workflowRunAttempt "$RUN_ATTEMPT" \
             '{
@@ -746,6 +752,9 @@ jobs:
               eventName: $eventName,
               workflowRunId: $workflowRunId,
               workflowRunAttempt: $workflowRunAttempt,
+              allowDgxSparkRunnerQueue: $allowDgxSparkRunnerQueue,
+              allowJetsonDispatch: $allowJetsonDispatch,
+              allowJetsonRunnerQueue: $allowJetsonRunnerQueue,
               jobs: $jobs,
               targets: $targets,
               includeStagingBrevLaunchable: $includeStagingBrevLaunchable,

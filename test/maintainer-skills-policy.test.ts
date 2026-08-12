@@ -210,8 +210,8 @@ describe("maintainer skills follow canonical workflow policy", () => {
     );
     expect(policy).toContain("itemized maintainer exception");
     expect(policy).toContain("If the candidate SHA changes");
-    expect(policy).toContain("This does not freeze `main` or prevent merges");
-    expect(policy).toContain("Require one completed, successful full workflow run");
+    expect(policy).toMatch(/This does not freeze `main` or\s+prevent merges/u);
+    expect(policy).toContain("Require one completed, successful ordinary workflow run");
     expect(policy).toContain("discard the ledger and its exceptions");
     expect(policy).toContain("selector inputs");
     expect(release).toContain('"dispatchJson"');
@@ -222,8 +222,10 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(release).toContain("actions/runs/$RUN_ID/artifacts");
     expect(release).toContain("sort_by(.created_at)");
     expect(release).not.toContain("RECEIPT_ATTEMPT");
-    expect(release).toContain("rerun preflight and the full E2E workflow");
+    expect(release).toContain("rerun preflight and ordinary E2E");
     expect(release).toContain("Immediately before asking, refresh `origin/main` once");
+    expect(release).toContain("Discard the prior image decision too");
+    expect(release).toContain("obtain the maintainer's prior-or-fresh choice again");
     const evidenceSummary = release.indexOf("Before showing the confirmation prompt");
     const confirmationPrompt = release.indexOf(
       "Ask the maintainer to paste this phrase",
@@ -234,9 +236,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(evening).toContain(
       "Each missing or skipped execution in that successful run requires its own itemized maintainer exception",
     );
-    expect(evening).toContain(
-      "Missing or invalid Launchable E2E evidence in that successful run requires a separate",
-    );
+    expect(evening).toContain("An exception never qualifies an image");
     expect(evening).toContain("Tag the confirmed release commit with `vX.Y.Z`");
     expect(evening).not.toContain("tag `main`");
     expect(dailyFlow).toContain("capture the candidate SHA and review every E2E test");
@@ -247,7 +247,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(priorities).toContain("Record the release SHA and required E2E evidence");
   });
 
-  it("requires full-mode exact Brev Launchable evidence before release confirmation (#7487)", () => {
+  it("keeps the exact release ledger separate from qualified Brev image evidence (#7487)", () => {
     const e2e = read(".agents/skills/nemoclaw-maintainer-e2e/SKILL.md");
     const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
     const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
@@ -263,44 +263,70 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(e2e).toContain("jobs?filter=all&per_page=100");
     expect(e2e).toContain("Reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json`");
     expect(release).toContain("reuse `run-$RUN_ID.json` and `jobs-$RUN_ID.json`");
-    expect(release).toContain("load `nemoclaw-maintainer-e2e` and dispatch one full run");
+    expect(release).toContain("load `nemoclaw-maintainer-e2e` and dispatch one ordinary run");
     expect(release).toContain("Treat a skipped job as missing evidence");
-    expect(release).toContain("include_staging_brev_launchable=true");
-    expect(release).toContain("cleanup evidence that reports the qualified workspace as `ABSENT`");
+    expect(release).toContain("include_staging_brev_launchable=false");
     expect(release).toContain(
       "a separate itemized maintainer exception for each missing or skipped execution",
     );
-    expect(release).toContain(
-      "a separate itemized maintainer exception for missing or invalid exact Brev Launchable E2E evidence",
-    );
-    expect(release).toContain("when accepted full-mode exact Brev evidence exists");
+    expect(release).toContain("the separate qualified image evidence's workflow URL");
+    expect(release).toContain("Select this exact validated image as the proposed");
+    expect(release).toContain("Dispatch another selective `Exact staging Brev Launchable` run");
+    expect(release).toContain("runCreatedAt");
+    expect(release).toContain("jobCompletedAt");
+    expect(release).toContain("git rev-list --count");
+    expect(release).toContain("git merge-base --is-ancestor");
+    expect(release).toContain("number of commits between the validated image and release commit");
+    expect(release).not.toContain('test "$VALIDATED_SHA" = "$RELEASE_SHA"');
+    expect(release).toContain("A nonzero distance is allowed");
+    expect(release).toContain("If no qualified ancestor image exists");
+    expect(release).toContain("Do not read `VALIDATED_JSON` or calculate a");
+    expect(release).toContain("rerun the ancestry");
+    expect(release).toContain("present all replacement image fields and timestamps");
+    expect(release).toContain("An itemized exception can");
+    expect(release).toContain("it never qualifies an image");
+    expect(release).toContain('export EVIDENCE_DIR="$RELEASE_DIR/e2e-evidence"');
+    expect(release).toContain("Pass this exported absolute path into every");
+    expect(release).toContain("Do not report the selected staging image as promoted");
+    expect(release).toContain("This is an evidence-only selection");
+    expect(release).toContain("Historical artifacts alone do not prove that the");
     expect(
-      release.indexOf("load `nemoclaw-maintainer-e2e` and dispatch one full run"),
+      release.indexOf("load `nemoclaw-maintainer-e2e` and dispatch one ordinary run"),
     ).toBeLessThan(release.indexOf("Ask the maintainer to paste this phrase"));
     expect(evening).toContain("load `nemoclaw-maintainer-e2e`");
     expect(evening).toContain(
-      "Run full mode unless one existing full run for the candidate SHA contains complete workflow E2E",
+      "Run ordinary mode unless one existing ordinary run for the candidate SHA contains complete default",
     );
     expect(release).toContain(
-      "Run full mode unless one existing full run for the candidate SHA contains complete workflow E2E",
+      "Run ordinary mode for the exact-candidate release ledger when complete default E2E evidence",
     );
     expect(policy).toContain("A failed workflow run cannot supply the release ledger");
     expect(release).toContain("Reject a failed workflow run before presenting the ledger");
     expect(evening).not.toContain("readiness variable");
-    expect(policy).toContain("Require one completed, successful full workflow run");
+    expect(policy).toContain("Require one completed, successful ordinary workflow run");
     expect(policy).toContain(
-      "Run `nemoclaw-maintainer-e2e` in full mode when the ledger lacks complete evidence",
+      "Run `nemoclaw-maintainer-e2e` in ordinary mode when the ledger lacks complete evidence",
     );
-    expect(policy).toContain("including `Exact staging Brev Launchable`");
-    expect(policy).toContain("cleanup receipt");
+    expect(policy).toContain("Qualify the release image separately");
+    expect(policy).toContain("complete Launchable E2E and cleanup evidence");
     expect(policy).toContain("trusted dispatch receipt");
     expect(policy).toContain(
       "Each missing or skipped execution in the accepted successful workflow run",
     );
+    expect(policy).toContain("workflow creation time");
+    expect(policy).toMatch(/commit\s+distance/u);
     expect(policy).toContain(
-      "Missing or invalid exact Brev Launchable E2E evidence in the accepted successful workflow run",
+      "newest historically validated image whose candidate SHA is an ancestor",
     );
-    expect(policy).toContain("No release-note-only delta exception is currently defined");
+    expect(policy).toContain("selected job completion time");
+    expect(policy).toContain("An itemized exception never qualifies an image");
+    expect(policy).toMatch(
+      /select that image as the\s+proposed exact-image handoff or run the selective Launchable test again/u,
+    );
+    expect(policy).toMatch(/it does not by\s+itself promote a GCP image family/u);
+    expect(policy).toContain("current `lkg` path does not consume it and still rebuilds");
+    expect(policy).toContain("Discard the prior image decision");
+    expect(policy).toMatch(/No release-note-only delta exception is\s+currently defined/u);
     expect(skillsGuide).toContain("`nemoclaw-maintainer-e2e`");
   });
 

@@ -4,9 +4,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { validateFullE2eEvidence } from "../.agents/skills/nemoclaw-maintainer-e2e/scripts/validate-full-e2e-evidence.mts";
+import {
+  validateBrevImageEvidence,
+  validateFullE2eEvidence,
+} from "../.agents/skills/nemoclaw-maintainer-e2e/scripts/validate-full-e2e-evidence.mts";
 
 const candidateSha = "a".repeat(40);
+const imageRepositorySha = "d".repeat(40);
 const workflowSha = "b".repeat(40);
 
 function validEvidence() {
@@ -35,6 +39,7 @@ function validEvidence() {
     jobs: {
       jobs: [
         {
+          completed_at: "2026-07-24T11:30:00Z",
           conclusion: "success",
           html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/100/job/200",
           name: "Exact staging Brev Launchable",
@@ -46,17 +51,33 @@ function validEvidence() {
     },
     launchableE2e: {
       boot: {
+        bootImage: "projects/brevdevprod/global/images/nemoclaw-test-image",
+        imageRepositorySha,
         provisionSha: candidateSha,
         repoClean: true,
         repoSha: candidateSha,
       },
       candidateSha,
       fullE2e: "passed",
+      image: {
+        imageCreationTimestamp: "2026-07-24T09:30:00Z",
+        imageId: "5831758261704356816",
+        imageName: "nemoclaw-test-image",
+        imageOriginWorkflowRunAttempt: 1,
+        imageOriginWorkflowRunId: "99",
+        imageRepositorySha,
+        imageSelfLink:
+          "https://www.googleapis.com/compute/v1/projects/brevdevprod/global/images/nemoclaw-test-image",
+        observedFamily: "nemoclaw-brev-staging-cpu",
+        project: "brevdevprod",
+        result: "built",
+      },
       producer: { runId: "99", status: "success" },
       workspace: { id: "workspace-123", name: "nclaw-e2e-100-2" },
     },
     run: {
       conclusion: "success",
+      created_at: "2026-07-24T10:00:00Z",
       event: "workflow_dispatch",
       head_branch: "main",
       head_sha: candidateSha,
@@ -125,14 +146,31 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
         emptySelectors: true,
         includeStagingBrevLaunchable: true,
       },
+      evidenceMode: "full",
+      jobCompletedAt: "2026-07-24T11:30:00Z",
       jobUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/100/job/200",
       launchableE2e: {
         fullE2e: "passed",
+        image: {
+          imageCreationTimestamp: "2026-07-24T09:30:00Z",
+          imageId: "5831758261704356816",
+          imageName: "nemoclaw-test-image",
+          imageOriginWorkflowRunAttempt: 1,
+          imageOriginWorkflowRunId: "99",
+          imageRepositorySha,
+          imageSelfLink:
+            "https://www.googleapis.com/compute/v1/projects/brevdevprod/global/images/nemoclaw-test-image",
+          observedFamily: "nemoclaw-brev-staging-cpu",
+          project: "brevdevprod",
+          result: "built",
+        },
         producerRunId: "99",
         provisionSha: candidateSha,
         repoClean: true,
         repoSha: candidateSha,
       },
+      runCreatedAt: "2026-07-24T10:00:00Z",
+      runId: 100,
       runUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/100",
     });
   });
@@ -150,6 +188,52 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
       candidateSha,
       runUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/100",
     });
+  });
+
+  it("accepts image evidence from direct main full, selective, and push runs (#7487)", () => {
+    const full = validDirectMainV2Evidence();
+    expect(validateBrevImageEvidence(full, "full")).toMatchObject({
+      evidenceMode: "full",
+      jobCompletedAt: "2026-07-24T11:30:00Z",
+    });
+
+    const launchable = validEvidence();
+    launchable.dispatch.emptySelectors = false;
+    launchable.dispatch.includeStagingBrevLaunchable = false;
+    launchable.dispatch.jobs = "staging-brev-launchable";
+    expect(validateBrevImageEvidence(launchable, "launchable")).toMatchObject({
+      dispatch: { emptySelectors: false, includeStagingBrevLaunchable: false },
+      evidenceMode: "launchable",
+    });
+
+    const push = validEvidence();
+    push.dispatch.eventName = "push";
+    push.dispatch.includeStagingBrevLaunchable = false;
+    push.run.event = "push";
+    expect(validateBrevImageEvidence(push, "push")).toMatchObject({
+      dispatch: { emptySelectors: true, includeStagingBrevLaunchable: false },
+      evidenceMode: "push",
+    });
+
+    const reused = validEvidence();
+    reused.launchableE2e.image.result = "reused";
+    reused.launchableE2e.image.imageOriginWorkflowRunId = "77";
+    reused.launchableE2e.image.imageOriginWorkflowRunAttempt = 3;
+    expect(validateBrevImageEvidence(reused, "full")).toMatchObject({
+      launchableE2e: {
+        image: {
+          imageOriginWorkflowRunAttempt: 3,
+          imageOriginWorkflowRunId: "77",
+          result: "reused",
+        },
+      },
+    });
+  });
+
+  it("rejects PR-shaped release image evidence (#7487)", () => {
+    expect(() => validateBrevImageEvidence(validV2Evidence(), "full")).toThrow(
+      "dispatch.prNumber must be null",
+    );
   });
 
   it.each([
@@ -257,6 +341,70 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
       "launchableE2e.boot.repoSha",
     ],
     [
+      "a boot URI that does not identify the producer image",
+      (evidence: ReturnType<typeof validEvidence>) => {
+        evidence.launchableE2e.boot.bootImage = "projects/brevdevprod/global/images/another-image";
+      },
+      "launchableE2e.boot.bootImage",
+    ],
+    [
+      "an image ID that is not decimal",
+      (evidence: ReturnType<typeof validEvidence>) => {
+        evidence.launchableE2e.image.imageId = "not-an-id";
+      },
+      "launchableE2e.image.imageId",
+    ],
+    [
+      "an image outside the trusted GCP project",
+      (evidence: ReturnType<typeof validEvidence>) => {
+        evidence.launchableE2e.image.project = "other-project";
+      },
+      "launchableE2e.image.project",
+    ],
+    [
+      "a malformed image creation timestamp",
+      (evidence: ReturnType<typeof validEvidence>) => {
+        evidence.launchableE2e.image.imageCreationTimestamp = "not-a-timestamp";
+      },
+      "launchableE2e.image.imageCreationTimestamp",
+    ],
+    [
+      "a built image whose origin does not match the producer",
+      (evidence: ReturnType<typeof validEvidence>) => {
+        evidence.launchableE2e.image.imageOriginWorkflowRunId = "98";
+      },
+      "launchableE2e.image.imageOriginWorkflowRunId",
+    ],
+    [
+      "an image self-link that does not identify the producer image",
+      (evidence: ReturnType<typeof validEvidence>) => {
+        evidence.launchableE2e.image.imageSelfLink =
+          "https://www.googleapis.com/compute/v1/projects/brevdevprod/global/images/another-image";
+      },
+      "launchableE2e.image.imageSelfLink",
+    ],
+    [
+      "an image-repository SHA that does not match the boot receipt",
+      (evidence: ReturnType<typeof validEvidence>) => {
+        evidence.launchableE2e.boot.imageRepositorySha = "e".repeat(40);
+      },
+      "launchableE2e.boot.imageRepositorySha",
+    ],
+    [
+      "a malformed workflow timestamp",
+      (evidence: ReturnType<typeof validEvidence>) => {
+        evidence.run.created_at = "not-a-timestamp";
+      },
+      "run.created_at",
+    ],
+    [
+      "a malformed selected-job timestamp",
+      (evidence: ReturnType<typeof validEvidence>) => {
+        evidence.jobs.jobs[0]!.completed_at = "not-a-timestamp";
+      },
+      "Exact staging Brev Launchable.completed_at",
+    ],
+    [
       "a cleanup receipt without verified absence",
       (evidence: ReturnType<typeof validEvidence>) => {
         evidence.cleanup.status = "PRESENT";
@@ -313,7 +461,9 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(skill).toContain("run pre-tag full E2E");
     expect(skill).toContain("run release-candidate E2E");
     expect(skill).toContain("must not authorize the Brev Launchable path");
-    expect(skill).toContain("Pre-tag evidence still requires the full `workflow_dispatch` mode");
+    expect(skill).toContain(
+      "Pre-tag release-ledger evidence uses ordinary `workflow_dispatch` mode",
+    );
     expect(skill).toContain(
       "an authorized environment reviewer must approve it before qualification starts",
     );
@@ -332,8 +482,25 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(skill).toContain("cleanup.json");
     expect(skill).toContain("dispatch.json");
     expect(skill).toContain("validate-full-e2e-evidence.mts");
-    expect(skill).toContain("provisional release evidence");
+    expect(skill).toContain('>"$FULL_E2E_DIR/validated.json"');
+    expect(skill).toContain(
+      "workflow run ID, creation timestamp, and selected job completion timestamp",
+    );
+    expect(skill).toContain("exact GCP image and Launchable E2E identity");
+    expect(skill).toMatch(/provisional\s+release-ledger evidence/u);
     expect(skill).toContain("If the release candidate SHA changes");
     expect(skill).toContain("nemoclaw-maintainer-cut-release-tag");
+  });
+
+  it("selects only direct main, historically validated release image evidence (#7487)", () => {
+    expect(skill).toContain("## Select Release Image Evidence");
+    expect(skill).toContain("trusted `main` push");
+    expect(skill).toContain("jobs=staging-brev-launchable");
+    expect(skill).toContain("include_staging_brev_launchable=true");
+    expect(skill).toContain("rejects PR-shaped evidence");
+    expect(skill).toContain("An itemized release-ledger exception is not image evidence");
+    expect(skill).toContain("sorted by `jobCompletedAt` newest first");
+    expect(skill).toContain("The selector contract is mode-specific");
+    expect(skill).toContain("A Launchable-mode run is not release-ledger evidence");
   });
 });

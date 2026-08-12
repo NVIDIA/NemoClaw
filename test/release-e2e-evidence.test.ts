@@ -37,7 +37,7 @@ function runEvidence(
 ): ReleaseE2eRunEvidence {
   const attempt = options.attempt ?? 1;
   const runId = 1001;
-  const receiptVersion = options.receiptVersion ?? 1;
+  const receiptVersion = options.receiptVersion ?? 2;
   const executions = plan.executions.filter(
     (execution) => execution.group === group && (options.only?.(execution) ?? true),
   );
@@ -49,11 +49,11 @@ function runEvidence(
       allowJetsonRunnerQueue: false,
       ...(receiptVersion === 2
         ? {
-            baseSha: "c".repeat(40),
+            baseSha: candidateSha,
             candidateRepository: "NVIDIA/NemoClaw",
-            prNumber: 8583,
+            prNumber: null,
             repository: "NVIDIA/NemoClaw",
-            workflowSha,
+            workflowSha: candidateSha,
           }
         : {}),
       candidateSha,
@@ -84,7 +84,7 @@ function runEvidence(
       status: "completed",
       conclusion: "success",
       run_attempt: attempt,
-      head_sha: options.sha ?? (receiptVersion === 2 ? workflowSha : candidateSha),
+      head_sha: options.sha ?? candidateSha,
       html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}`,
     },
   };
@@ -105,14 +105,28 @@ function directMainV2Evidence(
   return evidence;
 }
 
+function prV2Evidence(
+  plan: ReleaseE2ePreflight,
+  group: ReleaseE2eExecution["group"],
+): ReleaseE2eRunEvidence {
+  const evidence = directMainV2Evidence(plan, group);
+  Object.assign(evidence.dispatch as Record<string, unknown>, {
+    baseSha: "c".repeat(40),
+    prNumber: 8583,
+    workflowSha,
+  });
+  (evidence.run as Record<string, unknown>).head_sha = workflowSha;
+  return evidence;
+}
+
 describe("release E2E evidence", () => {
   it("derives one complete release E2E run from the workflow", () => {
     const plan = preflight();
 
     expect(plan.dispatches.completeRun).toEqual({
-      includeStagingBrevLaunchable: true,
+      includeStagingBrevLaunchable: false,
       jobs: "",
-      mode: "full",
+      mode: "ordinary",
       targets: "",
     });
     expect(plan.launchableE2eJobId).toBe("staging-brev-launchable");
@@ -126,17 +140,15 @@ describe("release E2E evidence", () => {
     );
   });
 
-  it("accepts v2 evidence bound to the candidate and trusted workflow SHAs", () => {
+  it("rejects PR-shaped v2 evidence from the release ledger", () => {
     const plan = preflight();
-    const ledger = buildReleaseE2eLedger(plan, [
-      runEvidence(plan, "default", { receiptVersion: 2 }),
-    ]);
 
-    expect(ledger.successfulCount).toBe(ledger.requiredCount);
-    expect(ledger.missingCount).toBe(0);
+    expect(() => buildReleaseE2eLedger(plan, [prV2Evidence(plan, "default")])).toThrow(
+      "runs[0].dispatch.prNumber must equal null",
+    );
   });
 
-  it("accepts direct-main v2 evidence with identical repository and SHA identities", () => {
+  it("accepts direct main v2 evidence with identical repository and SHA identities", () => {
     const plan = preflight();
     const ledger = buildReleaseE2eLedger(plan, [directMainV2Evidence(plan, "default")]);
 
@@ -148,7 +160,7 @@ describe("release E2E evidence", () => {
     ["candidateRepository", "contributor/NemoClaw", "runs[0].dispatch.candidateRepository"],
     ["baseSha", "c".repeat(40), "runs[0].dispatch.baseSha"],
     ["workflowSha", workflowSha, "runs[0].dispatch.workflowSha"],
-  ])("rejects direct-main v2 evidence with a mismatched %s identity", (field, value, message) => {
+  ])("rejects direct main v2 evidence with a mismatched %s identity", (field, value, message) => {
     const plan = preflight();
     const evidence = directMainV2Evidence(plan, "default");
     (evidence.dispatch as Record<string, unknown>)[field] = value;
@@ -165,20 +177,20 @@ describe("release E2E evidence", () => {
     ["workflowSha", "short", "runs[0].dispatch.workflowSha"],
   ])("rejects v2 evidence with a mismatched %s", (field, value, message) => {
     const plan = preflight();
-    const evidence = runEvidence(plan, "default", { receiptVersion: 2 });
+    const evidence = directMainV2Evidence(plan, "default");
     (evidence.dispatch as Record<string, unknown>)[field] = value;
 
     expect(() => buildReleaseE2eLedger(plan, [evidence])).toThrow(message);
   });
 
-  it("rejects a v2 run whose head is the candidate instead of the trusted workflow", () => {
+  it("rejects a direct main v2 run whose head differs from the candidate", () => {
     const plan = preflight();
+    const evidence = directMainV2Evidence(plan, "default");
+    (evidence.run as Record<string, unknown>).head_sha = workflowSha;
 
-    expect(() =>
-      buildReleaseE2eLedger(plan, [
-        runEvidence(plan, "default", { receiptVersion: 2, sha: candidateSha }),
-      ]),
-    ).toThrow("runs[0].run.head_sha must equal");
+    expect(() => buildReleaseE2eLedger(plan, [evidence])).toThrow(
+      "runs[0].run.head_sha must equal",
+    );
   });
 
   it("rejects a missing activation path for a default E2E", () => {
@@ -265,42 +277,34 @@ describe("release E2E evidence", () => {
     ).toThrow("release E2E evidence requires exactly one workflow run, received 2");
   });
 
-  it("requires the full run to include staging Brev Launchable", () => {
+  it("keeps image-building Launchable work out of the release ledger run", () => {
     const plan = preflight();
     const evidence = runEvidence(plan, "default");
-    (evidence.dispatch as Record<string, unknown>).includeStagingBrevLaunchable = false;
+    (evidence.dispatch as Record<string, unknown>).includeStagingBrevLaunchable = true;
     expect(() => buildReleaseE2eLedger(plan, [evidence])).toThrow(
-      "runs[0].dispatch.includeStagingBrevLaunchable must equal true",
+      "runs[0].dispatch.includeStagingBrevLaunchable must equal false",
     );
   });
 
   it.each([
-    [2 as const, "allowJetsonDispatch", "runs[0].dispatch.allowJetsonDispatch must equal false"],
-    [1 as const, "allowJetsonDispatch", "runs[0].dispatch.allowJetsonDispatch must equal false"],
-    [
-      1 as const,
-      "allowJetsonRunnerQueue",
-      "runs[0].dispatch.allowJetsonRunnerQueue must equal false",
-    ],
-    [
-      1 as const,
-      "allowDgxSparkRunnerQueue",
-      "runs[0].dispatch.allowDgxSparkRunnerQueue must equal false",
-    ],
-  ])("rejects v%s release evidence that opts into %s", (receiptVersion, field, message) => {
+    ["allowJetsonDispatch", "runs[0].dispatch.allowJetsonDispatch must equal false"],
+    ["allowJetsonRunnerQueue", "runs[0].dispatch.allowJetsonRunnerQueue must equal false"],
+    ["allowDgxSparkRunnerQueue", "runs[0].dispatch.allowDgxSparkRunnerQueue must equal false"],
+  ])("rejects v2 release evidence that opts into %s", (field, message) => {
     const plan = preflight();
-    const evidence = runEvidence(plan, "default", { receiptVersion });
+    const evidence = directMainV2Evidence(plan, "default");
     (evidence.dispatch as Record<string, unknown>)[field] = true;
 
     expect(() => buildReleaseE2eLedger(plan, [evidence])).toThrow(message);
   });
 
-  it("keeps allowJetsonDispatch optional for v1 release evidence", () => {
+  it("rejects v1 release-ledger evidence", () => {
     const plan = preflight();
     const evidence = runEvidence(plan, "default", { receiptVersion: 1 });
-    delete (evidence.dispatch as Record<string, unknown>).allowJetsonDispatch;
 
-    expect(buildReleaseE2eLedger(plan, [evidence]).missingCount).toBe(0);
+    expect(() => buildReleaseE2eLedger(plan, [evidence])).toThrow(
+      'runs[0].dispatch.kind must equal "nemoclaw-e2e-dispatch-v2"',
+    );
   });
 
   it("reports a failed matrix row without collapsing its successful siblings", () => {

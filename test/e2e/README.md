@@ -444,7 +444,10 @@ Launchable`. Each push run also selects this job as part of the complete main ru
 
 A manual run with `include_staging_brev_launchable=true` and empty `jobs` and
 `targets` selectors runs the default workflow E2E selection plus the Launchable E2E job.
-This is the full run required for pre-tag evidence. Each full dispatch uses
+This is full mode for an explicitly combined request. The pre-tag release ledger uses ordinary mode
+with empty selectors and `include_staging_brev_launchable=false`; release image qualification
+separately uses a historically validated Launchable result from a qualified ancestor or a fresh selective run.
+Each full dispatch uses
 `github.run_id` in its workflow concurrency identity, so another full dispatch
 cannot supersede it while it waits. The trusted `main` workflow dispatch
 verifies that the dispatching and rerunning actors have repository `maintain` or
