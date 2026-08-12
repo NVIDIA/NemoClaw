@@ -308,7 +308,8 @@ function runHermesRuntimeProviderPlaceholderRefresh(opts: {
   opts.hashFileContent === undefined
     ? writeHermesHash(hashPath, configPath, envPath)
     : fs.writeFileSync(hashPath, opts.hashFileContent);
-  if (opts.locked) fs.chmodSync(envPath, 0o444);
+  const lockEnvFile = opts.locked === true ? () => fs.chmodSync(envPath, 0o444) : undefined;
+  lockEnvFile?.();
   const runtimePlanText = `${JSON.stringify(opts.runtimePlan, null, 2)}\n`;
   const writeRuntimePlanPath = {
     regular: () => fs.writeFileSync(runtimePlanPath, runtimePlanText),
