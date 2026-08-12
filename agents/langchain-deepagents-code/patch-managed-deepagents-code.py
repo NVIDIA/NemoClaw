@@ -106,6 +106,11 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
     )
 
     nemoclaw_auto_approval_enabled = _nemoclaw_managed_auto_approval_enabled()
+    nemoclaw_thread_auto_approval_requested = bool(
+        getattr(args, "auto_approve", False)
+        and nemoclaw_auto_approval_enabled
+        and not getattr(args, "non_interactive_message", None)
+    )
 
     blocked_command = getattr(args, "command", None)
     if blocked_command == "mcp":
@@ -175,13 +180,17 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         args.startup_mode = "manual"
     if hasattr(args, "approval_mode"):
         args.approval_mode = "manual"
+    # Deep Agents Code 0.1.54 changed -y/--auto-approve from unrestricted
+    # thread approval to classifier-backed Auto mode. Preserve NemoClaw's
+    # explicitly enabled thread-opt-in contract by routing that flag to the
+    # upstream unrestricted mode.
+    if nemoclaw_thread_auto_approval_requested:
+        args.auto_approve = False
+        if hasattr(args, "yolo"):
+            args.yolo = True
 
     _nemoclaw_assert_safe_runtime()
-    if (
-        getattr(args, "auto_approve", False)
-        and nemoclaw_auto_approval_enabled
-        and not getattr(args, "non_interactive_message", None)
-    ):
+    if nemoclaw_thread_auto_approval_requested:
         print(
             "WARNING: Auto-approval is enabled for this thread. Tool calls, "
             "including shell commands, may execute without further confirmation "
@@ -210,12 +219,6 @@ _nemoclaw_original_restart_server_for_agent_swap = (
     DeepAgentsApp._restart_server_for_agent_swap
 )
 _nemoclaw_original_switch_model = DeepAgentsApp._switch_model
-_nemoclaw_original_on_auto_approve_enabled = (
-    DeepAgentsApp._on_auto_approve_enabled
-)
-_nemoclaw_original_action_toggle_auto_approve = (
-    DeepAgentsApp.action_toggle_auto_approve
-)
 _nemoclaw_original_absolutize_launch_relative_path = (
     DeepAgentsApp._absolutize_launch_relative_path
 )
@@ -336,10 +339,14 @@ def _nemoclaw_auto_approval_is_allowed() -> bool:
 
 
 def _nemoclaw_reset_thread_auto_approval(self) -> None:
+    from deepagents_code.approval_mode import ApprovalMode
+
+    self._approval_mode = ApprovalMode.MANUAL
     self._auto_approve = False
     if getattr(self, "_status_bar", None) is not None:
-        self._status_bar.set_auto_approve(enabled=False)
+        self._status_bar.set_approval_mode(ApprovalMode.MANUAL.value)
     if getattr(self, "_session_state", None) is not None:
+        self._session_state.approval_mode = ApprovalMode.MANUAL
         self._session_state.auto_approve = False
         self._session_state.approval_mode_key = None
 
@@ -361,22 +368,32 @@ def _nemoclaw_notify_auto_approval_warning(self) -> None:
     )
 
 
-async def _nemoclaw_on_auto_approve_enabled(self) -> None:
+async def _nemoclaw_on_auto_approve_enabled(self) -> bool:
     if not _nemoclaw_auto_approval_is_allowed():
         await _nemoclaw_block_auto_approve(self)
-        return
-    await _nemoclaw_original_on_auto_approve_enabled(self)
-    if getattr(self, "_auto_approve", False):
+        return False
+    from deepagents_code.approval_mode import ApprovalMode
+
+    enabled = await self._set_approval_mode(ApprovalMode.YOLO)
+    if enabled:
         _nemoclaw_notify_auto_approval_warning(self)
+    return enabled
 
 
 async def _nemoclaw_action_toggle_auto_approve(self) -> None:
     if not _nemoclaw_auto_approval_is_allowed():
         await _nemoclaw_block_auto_approve(self)
         return
-    was_enabled = bool(getattr(self, "_auto_approve", False))
-    await _nemoclaw_original_action_toggle_auto_approve(self)
-    if not was_enabled and getattr(self, "_auto_approve", False):
+    from deepagents_code.approval_mode import ApprovalMode
+
+    target = (
+        ApprovalMode.MANUAL
+        if getattr(self, "_approval_mode", ApprovalMode.MANUAL)
+        is ApprovalMode.YOLO
+        else ApprovalMode.YOLO
+    )
+    changed = await self._set_approval_mode(target)
+    if changed and target is ApprovalMode.YOLO:
         _nemoclaw_notify_auto_approval_warning(self)
 
 
@@ -1333,7 +1350,24 @@ APPROVAL_PATCH = r'''
 _NEMOCLAW_AUTO_APPROVAL_DISABLED_MESSAGE = (
     "Auto-approval is disabled in NemoClaw-managed sandboxes."
 )
+_nemoclaw_original_approval_options = ApprovalMenu._build_options
 _nemoclaw_original_approval_selection = ApprovalMenu._handle_selection
+
+
+def _nemoclaw_build_approval_options(self) -> list[tuple[str, str]]:
+    """Keep the managed unrestricted action's label truthful in 0.1.54."""
+    options = _nemoclaw_original_approval_options(self)
+    if not self._is_auto_fallback:
+        options = [
+            (
+                "Auto-approve for this thread (a)"
+                if decision == "auto_approve_all"
+                else label,
+                decision,
+            )
+            for label, decision in options
+        ]
+    return options
 
 
 def _nemoclaw_handle_approval_selection(
@@ -1359,6 +1393,7 @@ def _nemoclaw_handle_approval_selection(
     )
 
 
+ApprovalMenu._build_options = _nemoclaw_build_approval_options
 ApprovalMenu._handle_selection = _nemoclaw_handle_approval_selection
 '''
 
@@ -1983,6 +2018,7 @@ def main() -> None:
             "_switch_model",
             "_absolutize_launch_relative_path",
             "_set_rubric_model",
+            "_set_approval_mode",
             "_on_auto_approve_enabled",
             "action_toggle_auto_approve",
         },
@@ -2063,7 +2099,7 @@ def main() -> None:
         paths["approval"],
         texts["approval"],
         "ApprovalMenu",
-        {"_handle_selection"},
+        {"_build_options", "_handle_selection"},
     )
     _require_methods(
         paths["status"],

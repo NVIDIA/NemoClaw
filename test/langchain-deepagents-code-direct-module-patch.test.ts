@@ -109,7 +109,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     ],
     ["server override", "client/launch/server.py", 'env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["server", "client/launch/server.py", "env = _nemoclaw_original_build_server_env()"],
-    ["app", "app.py", "_nemoclaw_original_on_auto_approve_enabled"],
+    ["app", "app.py", "async def _nemoclaw_on_auto_approve_enabled"],
     ["approval", "tui/widgets/approval.py", "if managed_auto_approval_enabled():"],
   ])("rejects a fully marked package with a corrupt %s patch", (boundary, relativePath, anchor) => {
     const tempDir = createPackageFixture();
@@ -240,7 +240,7 @@ else:
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("managed-posture-ok auto_approve=True");
+    expect(result.stdout).toContain("managed-posture-ok auto_approve=False yolo=True");
     expect(result.stderr).toContain("Auto-approval is enabled for this thread");
     expect(result.stderr).toContain("shell commands");
   });
@@ -881,7 +881,7 @@ async def validate():
     instance._auto_approve = True
     instance._status_bar.set_auto_approve(enabled=True)
     instance._session_state.auto_approve = True
-    await instance._on_auto_approve_enabled()
+    assert await instance._on_auto_approve_enabled() is False
     assert instance._auto_approve is False
     assert instance._status_bar.auto_approve is False
     assert instance._session_state.auto_approve is False
@@ -1237,17 +1237,20 @@ spec.loader.exec_module(progressive_disclosure_harness)
 progressive_disclosure_harness._install_stubs()
 
 from deepagents_code import _nemoclaw_managed, agent, app, main as dcode_main
+from deepagents_code.approval_mode import ApprovalMode
 from deepagents_code.client import non_interactive
 from deepagents_code.tui.widgets.approval import ApprovalMenu
 
 WARNING = "Tool calls, including shell commands, may execute without further confirmation"
 
 def set_auto(instance, enabled):
+    mode = ApprovalMode.YOLO if enabled else ApprovalMode.MANUAL
+    instance._approval_mode = mode
     instance._auto_approve = enabled
-    instance._status_bar.set_auto_approve(enabled=enabled)
     instance._session_state.auto_approve = enabled
 
 def assert_auto(instance, enabled):
+    assert instance._approval_mode is (ApprovalMode.YOLO if enabled else ApprovalMode.MANUAL)
     assert instance._auto_approve is enabled
     assert instance._status_bar.auto_approve is enabled
     assert instance._session_state.auto_approve is enabled
@@ -1293,7 +1296,7 @@ async def validate():
     instance = app.DeepAgentsApp()
 
     set_auto(instance, False)
-    await instance._on_auto_approve_enabled()
+    assert await instance._on_auto_approve_enabled() is True
     assert_auto(instance, True)
     assert WARNING in instance.notifications[-1][0]
 
@@ -1308,6 +1311,7 @@ async def validate():
     assert len(instance.notifications) == warning_count + 1
 
     approval = ApprovalMenu()
+    assert approval._options[1][0] == "Auto-approve for this thread (a)"
     approval._handle_selection(1)
     assert approval.decisions == [("auto_approve_all", None)]
     assert approval.notifications == []
