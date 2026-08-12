@@ -22,6 +22,7 @@ describe("terminal agent smoke command invocation", () => {
     expect(args).not.toContain("-lc");
     expect(args.join(" ")).not.toContain("sh -lc");
     expect(args).toContain(DCODE_MANAGED_EXEC_LAUNCHER);
+    expect(args).toContain("HOME=/usr/local/lib/nemoclaw");
     expect(args).toContain("BASH_ENV=");
     expect(args).toContain("ENV=");
     expect(args.at(-1)).toBe("dcode --version");
@@ -42,7 +43,7 @@ describe("terminal agent smoke command invocation", () => {
       agent("langchain-deepagents-code"),
       (args) => {
         issued.push(args);
-        return `NEMOCLAW_AGENT_SMOKE_EXIT:0\n`;
+        return `NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n`;
       },
     );
 
@@ -50,5 +51,26 @@ describe("terminal agent smoke command invocation", () => {
     expect(issued).toHaveLength(1);
     expect(issued[0]).not.toContain("-lc");
     expect(issued[0]!.join(" ")).not.toContain("sh -lc");
+  });
+
+  it("rejects a forged success marker emitted before the managed runner starts (#8624)", () => {
+    const result = runAgentSmokeCommands(
+      "probe-box",
+      agent("langchain-deepagents-code"),
+      () => "NEMOCLAW_AGENT_SMOKE_EXIT:0\n",
+    );
+
+    expect(result).toMatchObject({ ok: false, command: "dcode --version" });
+  });
+
+  it("rejects extra marker evidence around the managed runner boundary (#8624)", () => {
+    const result = runAgentSmokeCommands(
+      "probe-box",
+      agent("langchain-deepagents-code"),
+      () =>
+        "NEMOCLAW_AGENT_SMOKE_EXIT:0\nNEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:42\n",
+    );
+
+    expect(result).toMatchObject({ ok: false, command: "dcode --version" });
   });
 });

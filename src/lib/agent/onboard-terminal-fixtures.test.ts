@@ -152,7 +152,9 @@ describe("Deep Agents Code terminal onboard fixtures", () => {
       calls,
     );
 
-    expect(output).toBe("NEMOCLAW_DEEPAGENTS_CONFIG_OK\nNEMOCLAW_AGENT_SMOKE_EXIT:0");
+    expect(output).toBe(
+      "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_DEEPAGENTS_CONFIG_OK\nNEMOCLAW_AGENT_SMOKE_EXIT:0",
+    );
   });
 
   it("can model a nonzero terminal smoke command", () => {

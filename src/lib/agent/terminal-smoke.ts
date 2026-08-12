@@ -10,20 +10,33 @@ type RunCaptureOpenshell = (
 ) => string | { output?: string | null } | null;
 
 const SMOKE_EXIT_MARKER = "NEMOCLAW_AGENT_SMOKE_EXIT:";
+const SMOKE_BEGIN_MARKER = "NEMOCLAW_AGENT_SMOKE_BEGIN";
 
 export type AgentSmokeCommandResult =
   | { ok: true }
   | { ok: false; command: string; output: string | null };
 
-function getSmokeExitCode(output: string | null): number | null {
+function getSmokeExitCode(output: string | null, requireManagedBoundary: boolean): number | null {
   if (!output) return null;
-  const match = output.match(/(?:^|\n)NEMOCLAW_AGENT_SMOKE_EXIT:(\d+)(?:\n|$)/);
-  return match ? Number.parseInt(match[1], 10) : null;
+  const exitMatches = [...output.matchAll(/(?:^|\n)NEMOCLAW_AGENT_SMOKE_EXIT:(\d+)(?=\n|$)/g)];
+  if (!requireManagedBoundary) {
+    const match = exitMatches[0];
+    return match ? Number.parseInt(match[1]!, 10) : null;
+  }
+  const beginMatches = [...output.matchAll(/(?:^|\n)NEMOCLAW_AGENT_SMOKE_BEGIN(?=\n|$)/g)];
+  if (
+    beginMatches.length !== 1 ||
+    exitMatches.length !== 1 ||
+    beginMatches[0]!.index >= exitMatches[0]!.index
+  ) {
+    return null;
+  }
+  return Number.parseInt(exitMatches[0]![1]!, 10);
 }
 
 function smokeRunner(loginShell: boolean): string {
   const shell = loginShell ? "sh -lc" : "sh -c";
-  return `${shell} "$1"; rc=$?; printf '\\n${SMOKE_EXIT_MARKER}%s\\n' "$rc"; exit 0`;
+  return `printf '${SMOKE_BEGIN_MARKER}\\n'; ${shell} "$1"; rc=$?; printf '\\n${SMOKE_EXIT_MARKER}%s\\n' "$rc"; exit 0`;
 }
 
 /**
@@ -31,10 +44,11 @@ function smokeRunner(loginShell: boolean): string {
  * managed route probe uses, without adding another login shell (#8624). The
  * OpenShell transport still starts its own login shell before this command; see
  * NVIDIA/OpenShell#2668. Avoiding two nested login shells here prevents two
- * additional reads of sandbox-user startup files. Every other terminal agent
- * keeps the existing nested shells because its smoke commands rely on
- * profile-provided PATH entries. The smoke marker is diagnostic evidence only:
- * the upstream transport shell can emit it before this managed command starts.
+ * additional reads of sandbox-user startup files. The transport HOME is the
+ * image-baked root-owned NemoClaw directory, and the managed runner emits one
+ * ordered begin/exit evidence pair. Every other terminal agent keeps the
+ * existing nested shells because its smoke commands rely on profile-provided
+ * PATH entries and retains its legacy diagnostic marker.
  */
 export function buildAgentSmokeArgs(
   sandboxName: string,
@@ -48,6 +62,8 @@ export function buildAgentSmokeArgs(
       "-n",
       sandboxName,
       "--no-tty",
+      "--env",
+      "HOME=/usr/local/lib/nemoclaw",
       "--env",
       "BASH_ENV=",
       "--env",
@@ -88,7 +104,7 @@ export function runAgentSmokeCommands(
       ignoreError: true,
     });
     const output = typeof result === "string" ? result : (result?.output ?? null);
-    const exitCode = getSmokeExitCode(output);
+    const exitCode = getSmokeExitCode(output, agent.name === "langchain-deepagents-code");
     if (exitCode !== 0) {
       return { ok: false, command, output };
     }
