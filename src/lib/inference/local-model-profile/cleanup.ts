@@ -63,13 +63,17 @@ interface CleanupDeps {
 }
 
 export interface LocalModelRuntimeCleanupOptions {
-  deleteModels: boolean;
   gatewayPort?: number;
   homeDir?: string;
   sandboxName?: string;
   env?: NodeJS.ProcessEnv;
   engine?: ContainerEngine;
   deps?: Partial<CleanupDeps>;
+}
+
+export interface HuggingFaceCacheDataCleanupOptions {
+  homeDir?: string;
+  currentUserId?: number | null;
 }
 
 export type LocalModelRuntimeCleanupResult =
@@ -721,11 +725,28 @@ export function cleanupLocalModelRuntimes(
         engine: options.engine,
       });
     }
-    if (options.deleteModels) {
-      removeSharedHuggingFaceCacheData(homeDir, deps.currentUserId, removed, preserved);
-    } else {
-      preserveSharedHuggingFaceCache(homeDir, preserved);
-    }
+    preserveSharedHuggingFaceCache(homeDir, preserved);
+    return { ok: true, removed, preserved };
+  } catch (error) {
+    return { ok: false, reason: (error as Error).message, removed, preserved };
+  }
+}
+
+/** Remove non-credential Hugging Face cache data after model runtimes have stopped. */
+export function cleanupHuggingFaceCacheData(
+  options: HuggingFaceCacheDataCleanupOptions = {},
+): LocalModelRuntimeCleanupResult {
+  const removed: string[] = [];
+  const preserved: string[] = [];
+  try {
+    const homeDir = canonicalCleanupHomeDir(options.homeDir ?? os.homedir());
+    const currentUserId =
+      options.currentUserId === undefined
+        ? typeof process.getuid === "function"
+          ? process.getuid()
+          : null
+        : options.currentUserId;
+    removeSharedHuggingFaceCacheData(homeDir, currentUserId, removed, preserved);
     return { ok: true, removed, preserved };
   } catch (error) {
     return { ok: false, reason: (error as Error).message, removed, preserved };

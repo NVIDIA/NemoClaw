@@ -169,10 +169,11 @@ describe("uninstall local model profile cleanup", () => {
     expect(logs).toContain("Aborted.");
   });
 
-  it("requests shared Hugging Face cache-data cleanup when no managed runtime state remains", () => {
+  it("requests shared Hugging Face cache-data cleanup during Model stores", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-llama-cache-"));
     const cacheDir = path.join(tmpHome, ".cache", "huggingface");
-    const runLocalModelRuntimeCleanup = vi.fn(() => ok());
+    const log = vi.fn();
+    const runHuggingFaceCacheDataCleanup = vi.fn(() => ok());
     try {
       const result = runUninstallPlan(
         { assumeYes: true, deleteModels: true, keepOpenShell: true },
@@ -181,16 +182,22 @@ describe("uninstall local model profile cleanup", () => {
           env: { HOME: tmpHome } as NodeJS.ProcessEnv,
           existsSync: (target) => target === cacheDir,
           isTty: false,
-          log: () => {},
+          log,
           run: vi.fn(okWithKnownGatewayList),
-          runLocalModelRuntimeCleanup,
+          runHuggingFaceCacheDataCleanup,
         },
       );
 
       expect(result.exitCode).toBe(0);
-      expect(runLocalModelRuntimeCleanup).toHaveBeenCalledWith(
-        true,
+      expect(runHuggingFaceCacheDataCleanup).toHaveBeenCalledWith(
         expect.objectContaining({ stdio: "inherit" }),
+      );
+      const modelStoresLogIndex = log.mock.calls.findIndex(
+        ([line]) => line === "[5/6] Model stores",
+      );
+      expect(modelStoresLogIndex).toBeGreaterThanOrEqual(0);
+      expect(log.mock.invocationCallOrder[modelStoresLogIndex]).toBeLessThan(
+        runHuggingFaceCacheDataCleanup.mock.invocationCallOrder[0],
       );
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
@@ -488,7 +495,7 @@ describe("uninstall local model profile cleanup", () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(errors.join("\n")).toContain("Host-local model and cache cleanup did not complete");
+    expect(errors.join("\n")).toContain("Host-local model runtime cleanup did not complete");
     expect(runDocker.mock.calls.some(([args]) => args[0] === "rm")).toBe(false);
   });
 });

@@ -54,17 +54,21 @@ describe("uninstall plan", () => {
     const stoppingServicesStep = plan.steps.find((step) => step.name === "Stopping services");
     expect(stoppingServicesStep).toBeTruthy();
     expect(stoppingServicesStep?.actions).toEqual(
-      expect.arrayContaining([
-        { kind: "stop-ollama-auth-proxy" },
-        { kind: "stop-model-router" },
-        {
-          kind: "preserve-hugging-face-cache-data",
-          path: path.join("/home/test", ".cache", "huggingface"),
-        },
-      ]),
+      expect.arrayContaining([{ kind: "stop-ollama-auth-proxy" }, { kind: "stop-model-router" }]),
     );
+    expect(
+      stoppingServicesStep?.actions.some(
+        (action) => action.kind === "preserve-hugging-face-cache-data",
+      ),
+    ).toBe(false);
     const modelStoresStep = plan.steps.find((step) => step.name === "Model stores");
-    expect(modelStoresStep?.actions).toEqual([{ kind: "preserve-ollama-models" }]);
+    expect(modelStoresStep?.actions).toEqual([
+      { kind: "preserve-ollama-models" },
+      {
+        kind: "preserve-hugging-face-cache-data",
+        path: path.join("/home/test", ".cache", "huggingface"),
+      },
+    ]);
   });
 
   it("respects delete-models, keep-openshell, custom gateway, and foreign shim decisions", () => {
@@ -93,17 +97,18 @@ describe("uninstall plan", () => {
         },
       ]),
     );
-    expect(plan.steps.find((step) => step.name === "Stopping services")?.actions).toEqual(
-      expect.arrayContaining([
-        {
-          kind: "delete-hugging-face-cache-data",
-          path: path.join("/home/test", ".cache", "huggingface"),
-        },
-      ]),
-    );
     expect(plan.steps.find((step) => step.name === "Model stores")?.actions).toEqual([
       { kind: "delete-all-ollama-models" },
+      {
+        kind: "delete-hugging-face-cache-data",
+        path: path.join("/home/test", ".cache", "huggingface"),
+      },
     ]);
+    expect(
+      plan.steps
+        .find((step) => step.name === "Stopping services")
+        ?.actions.some((action) => action.kind === "delete-hugging-face-cache-data"),
+    ).toBe(false);
     expect(actions).toEqual(
       expect.arrayContaining([
         {

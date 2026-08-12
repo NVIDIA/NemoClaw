@@ -141,7 +141,7 @@ The shared Hugging Face cache used by managed vLLM and managed llama.cpp remains
 With `--delete-models`, full uninstall deletes every model in the local Ollama inventory and all non-credential data in the current user's shared Hugging Face cache.
 The flag can delete cached files that other applications installed or use.
 It preserves the Hugging Face `token` and `stored_tokens` authentication files.
-NemoClaw deletes the cache only after managed model runtimes stop and only when no sibling gateway remains.
+NemoClaw deletes the non-credential cache data only after managed model runtimes stop and only when no sibling gateway remains.
 An Ollama inventory error, model deletion error, unsafe cache path, or cache-data deletion error makes uninstall exit nonzero.
 
 For operational uninstall steps, refer to:

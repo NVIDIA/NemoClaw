@@ -7,7 +7,11 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { cleanupLocalModelRuntimes, type LocalModelRuntimeCleanupOptions } from "./cleanup";
+import {
+  cleanupHuggingFaceCacheData,
+  cleanupLocalModelRuntimes,
+  type LocalModelRuntimeCleanupOptions,
+} from "./cleanup";
 
 const temporaryDirectories: string[] = [];
 
@@ -45,7 +49,7 @@ describe("host-local model cleanup path safety", () => {
       fs.mkdirSync(target);
       fs.symlinkSync(target, path.join(cacheParent, "huggingface"), "dir");
 
-      expect(cleanupLocalModelRuntimes({ deleteModels: true, homeDir })).toMatchObject({
+      expect(cleanupHuggingFaceCacheData({ homeDir })).toMatchObject({
         ok: false,
         reason: expect.stringContaining("model cache is a symlink"),
       });
@@ -62,10 +66,9 @@ describe("host-local model cleanup path safety", () => {
       const observedOwner = fs.lstatSync(cache).uid;
 
       expect(
-        cleanupLocalModelRuntimes({
-          deleteModels: true,
+        cleanupHuggingFaceCacheData({
           homeDir,
-          deps: dockerDeps({ currentUserId: observedOwner + 1 }),
+          currentUserId: observedOwner + 1,
         }),
       ).toMatchObject({
         ok: false,
@@ -83,7 +86,7 @@ describe("host-local model cleanup path safety", () => {
       fs.mkdirSync(cache, { recursive: true });
       fs.chmodSync(cache, 0o770);
 
-      expect(cleanupLocalModelRuntimes({ deleteModels: true, homeDir })).toMatchObject({
+      expect(cleanupHuggingFaceCacheData({ homeDir })).toMatchObject({
         ok: false,
         reason: expect.stringContaining("model cache is not current-user filesystem authority"),
       });
@@ -102,7 +105,7 @@ describe("host-local model cleanup path safety", () => {
       fs.symlinkSync(target, path.join(stateRoot, "managed-llama-cpp"), "dir");
       const deps = dockerDeps();
 
-      expect(cleanupLocalModelRuntimes({ deleteModels: false, homeDir, deps })).toMatchObject({
+      expect(cleanupLocalModelRuntimes({ homeDir, deps })).toMatchObject({
         ok: false,
         reason: expect.stringContaining("symlink"),
       });
@@ -120,7 +123,7 @@ describe("host-local model cleanup path safety", () => {
       const observedOwner = fs.lstatSync(stateDir).uid;
       const deps = dockerDeps({ currentUserId: observedOwner + 1 });
 
-      expect(cleanupLocalModelRuntimes({ deleteModels: false, homeDir, deps })).toMatchObject({
+      expect(cleanupLocalModelRuntimes({ homeDir, deps })).toMatchObject({
         ok: false,
         reason: expect.stringContaining("not owned by the current user"),
       });
@@ -136,7 +139,7 @@ describe("host-local model cleanup path safety", () => {
     fs.writeFileSync(path.join(stateRoot, "managed-llama-cpp"), "unexpected\n");
     const deps = dockerDeps();
 
-    expect(cleanupLocalModelRuntimes({ deleteModels: false, homeDir, deps })).toMatchObject({
+    expect(cleanupLocalModelRuntimes({ homeDir, deps })).toMatchObject({
       ok: false,
       reason: expect.stringContaining("not a directory"),
     });

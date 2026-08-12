@@ -115,7 +115,8 @@ export interface UninstallRunDeps {
   run?: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
   runDocker?: (args: string[], options?: SpawnSyncOptions) => RunResult;
   runDualStationRuntimeCleanup?: (receiptPath: string, options?: SpawnSyncOptions) => RunResult;
-  runLocalModelRuntimeCleanup?: (deleteModels: boolean, options?: SpawnSyncOptions) => RunResult;
+  runHuggingFaceCacheDataCleanup?: (options?: SpawnSyncOptions) => RunResult;
+  runLocalModelRuntimeCleanup?: (options?: SpawnSyncOptions) => RunResult;
   runManagedLlamaCppRuntimeCleanup?: (sandboxName: string, gatewayPort: number) => RunResult;
 }
 
@@ -425,7 +426,8 @@ interface UninstallRuntime {
   run: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
   runDocker: (args: string[], options?: SpawnSyncOptions) => RunResult;
   runDualStationRuntimeCleanup: (receiptPath: string, options?: SpawnSyncOptions) => RunResult;
-  runLocalModelRuntimeCleanup: (deleteModels: boolean, options?: SpawnSyncOptions) => RunResult;
+  runHuggingFaceCacheDataCleanup: (options?: SpawnSyncOptions) => RunResult;
+  runLocalModelRuntimeCleanup: (options?: SpawnSyncOptions) => RunResult;
   runManagedLlamaCppRuntimeCleanup: (sandboxName: string, gatewayPort: number) => RunResult;
   warn: (message: string) => void;
 }
@@ -481,9 +483,9 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
           ],
           options,
         )),
-    runLocalModelRuntimeCleanup:
-      deps.runLocalModelRuntimeCleanup ??
-      ((deleteModels, options = {}) =>
+    runHuggingFaceCacheDataCleanup:
+      deps.runHuggingFaceCacheDataCleanup ??
+      ((options = {}) =>
         defaultRun(
           process.execPath,
           [
@@ -495,7 +497,25 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
               "local-model-profile",
               "cleanup-entry.js",
             ),
-            deleteModels ? "--delete-models" : "--keep-models",
+            "--delete-cache-data",
+          ],
+          options,
+        )),
+    runLocalModelRuntimeCleanup:
+      deps.runLocalModelRuntimeCleanup ??
+      ((options = {}) =>
+        defaultRun(
+          process.execPath,
+          [
+            path.resolve(
+              __dirname,
+              "..",
+              "..",
+              "inference",
+              "local-model-profile",
+              "cleanup-entry.js",
+            ),
+            "--clean-runtimes",
           ],
           options,
         )),
@@ -1511,11 +1531,7 @@ function removeManagedDistributedVllmRuntime(
   return false;
 }
 
-function removeHostLocalModelRuntimes(
-  paths: UninstallPaths,
-  deleteModels: boolean,
-  runtime: UninstallRuntime,
-): boolean {
+function removeHostLocalModelRuntimes(paths: UninstallPaths, runtime: UninstallRuntime): boolean {
   const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
   const hasLlamaState = runtime.existsSync(path.join(sharedRoot, "managed-llama-cpp"));
   const hasManagedKey = runtime.existsSync(path.join(sharedRoot, MANAGED_VLLM_API_KEY_FILE));
@@ -1523,21 +1539,16 @@ function removeHostLocalModelRuntimes(
     MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
     DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
   ].some((name) => runtime.existsSync(path.join(sharedRoot, name)));
-  const hasSharedModelCache = runtime.existsSync(paths.huggingFaceModelCacheDir);
-  if (
-    !hasLlamaState &&
-    (!hasManagedKey || hasDistributedReceipt) &&
-    (!deleteModels || !hasSharedModelCache)
-  ) {
+  if (!hasLlamaState && (!hasManagedKey || hasDistributedReceipt)) {
     return true;
   }
-  const result = runtime.runLocalModelRuntimeCleanup(deleteModels, {
+  const result = runtime.runLocalModelRuntimeCleanup({
     env: runtime.env,
     stdio: "inherit",
   });
   if (result.status === 0) return true;
   runtime.error(
-    "Host-local model and cache cleanup did not complete. NemoClaw did not start the remaining uninstall steps. Resolve the reported ownership, path, or Docker error and retry uninstall.",
+    "Host-local model runtime cleanup did not complete. NemoClaw did not start the remaining uninstall steps. Resolve the reported ownership or Docker error and retry uninstall.",
   );
   return false;
 }
@@ -1596,7 +1607,6 @@ function removeManagedLlamaCppRuntimes(
 
 function removeManagedModelRuntimes(
   paths: UninstallPaths,
-  deleteModels: boolean,
   runtime: UninstallRuntime,
   scopedToSelectedGateway: boolean,
 ): boolean {
@@ -1608,7 +1618,7 @@ function removeManagedModelRuntimes(
     DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
   ].some((name) => runtime.existsSync(path.join(sharedRoot, name)));
   if (!removeManagedDistributedVllmRuntime(paths, runtime, !hasDistributedReceipt)) return false;
-  if (!removeHostLocalModelRuntimes(paths, deleteModels, runtime)) return false;
+  if (!removeHostLocalModelRuntimes(paths, runtime)) return false;
   if (!hasDistributedReceipt) {
     removePath(path.join(sharedRoot, MANAGED_VLLM_API_KEY_FILE), runtime);
   }
@@ -1792,6 +1802,7 @@ function removeOllamaModels(options: UninstallRunOptions, runtime: UninstallRunt
 }
 
 function removeHostModelStores(
+  paths: UninstallPaths,
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
   scopedToSelectedGateway: boolean,
@@ -1802,7 +1813,24 @@ function removeHostModelStores(
     );
     return true;
   }
-  return removeOllamaModels(options, runtime);
+  const ollamaOk = removeOllamaModels(options, runtime);
+  if (!options.deleteModels) {
+    runtime.log("Keeping Hugging Face cache data as requested.");
+    return ollamaOk;
+  }
+  if (!runtime.existsSync(paths.huggingFaceModelCacheDir)) {
+    runtime.log("No Hugging Face cache data found.");
+    return ollamaOk;
+  }
+  const result = runtime.runHuggingFaceCacheDataCleanup({
+    env: runtime.env,
+    stdio: "inherit",
+  });
+  if (result.status === 0) return ollamaOk;
+  runtime.error(
+    "Hugging Face cache-data cleanup did not complete during Model stores. Resolve the reported ownership or path error and retry uninstall.",
+  );
+  return false;
 }
 
 interface OtherGatewayInspection {
@@ -2150,9 +2178,7 @@ function executePlan(
   for (const [index, step] of plan.steps.entries()) {
     runtime.log(`[${index + 1}/${plan.steps.length}] ${planStepDisplayName(step.name, branding)}`);
     if (step.name === "Stopping services") {
-      if (
-        !removeManagedModelRuntimes(paths, options.deleteModels, runtime, scopedToSelectedGateway)
-      ) {
+      if (!removeManagedModelRuntimes(paths, runtime, scopedToSelectedGateway)) {
         return { ok: false };
       }
       // #8220: a gateway-scoped uninstall still needs the selected OpenShell
@@ -2289,7 +2315,7 @@ function executePlan(
           if (action.kind === "delete-docker-volume") removeDockerVolume(action.name, runtime);
       }
     } else if (step.name === "Model stores") {
-      if (!removeHostModelStores(options, runtime, scopedToSelectedGateway)) ok = false;
+      if (!removeHostModelStores(paths, options, runtime, scopedToSelectedGateway)) ok = false;
     } else if (step.name === "State and binaries") {
       removeManagedSwap(paths, runtime, scopedToSelectedGateway);
       if (!scopedToSelectedGateway) {

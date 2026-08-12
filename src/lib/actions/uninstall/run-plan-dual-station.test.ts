@@ -102,7 +102,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     fs.mkdirSync(`${receiptPath}.ssh-binding`, { mode: 0o700 });
     fs.mkdirSync(cacheDir, { recursive: true });
     const runDualStationRuntimeCleanup = vi.fn(() => ok());
-    const runLocalModelRuntimeCleanup = vi.fn(() => ok());
+    const runHuggingFaceCacheDataCleanup = vi.fn(() => ok());
 
     try {
       const result = runUninstallPlan(
@@ -116,18 +116,17 @@ describe("managed distributed vLLM runtime uninstall", () => {
           rmSync: vi.fn(),
           run: okWithKnownGatewayList,
           runDualStationRuntimeCleanup,
-          runLocalModelRuntimeCleanup,
+          runHuggingFaceCacheDataCleanup,
         },
       );
 
       expect(result.exitCode).toBe(0);
       expect(runDualStationRuntimeCleanup).toHaveBeenCalledOnce();
-      expect(runLocalModelRuntimeCleanup).toHaveBeenCalledWith(
-        true,
+      expect(runHuggingFaceCacheDataCleanup).toHaveBeenCalledWith(
         expect.objectContaining({ stdio: "inherit" }),
       );
       expect(runDualStationRuntimeCleanup.mock.invocationCallOrder[0]).toBeLessThan(
-        runLocalModelRuntimeCleanup.mock.invocationCallOrder[0],
+        runHuggingFaceCacheDataCleanup.mock.invocationCallOrder[0],
       );
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
