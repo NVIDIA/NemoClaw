@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { globalRouteTokenVariants, sandboxRouteTokens } from "../cli/public-route-metadata";
-import { listSandboxes } from "../state/registry";
+import { isRouteOnlySandboxReservation, listSandboxes } from "../state/registry";
 
 export type CompletionShell = "bash" | "zsh" | "fish";
 
@@ -398,7 +398,8 @@ export function runCompletionSandboxNamesAction(deps: CompletionActionDeps = {})
   const write = deps.write ?? ((output: string) => process.stdout.write(output));
   const readRegistry = deps.listRegisteredSandboxes ?? listSandboxes;
   const names = readRegistry()
-    .sandboxes.map((sandbox) => sandbox.name)
+    .sandboxes.filter((sandbox) => !isRouteOnlySandboxReservation(sandbox))
+    .map((sandbox) => sandbox.name)
     .sort();
   write(names.length > 0 ? `${names.join("\n")}\n` : "");
 }

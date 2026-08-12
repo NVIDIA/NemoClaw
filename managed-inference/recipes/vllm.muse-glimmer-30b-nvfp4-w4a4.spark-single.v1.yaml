@@ -1,0 +1,69 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingRecipe
+
+metadata:
+  id: vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1
+  displayName: Muse Glimmer 30B NVFP4 W4A4 with vLLM
+
+spec:
+  backend: vllm
+
+  model:
+    id: Inferact/Muse-Glimmer-30B-NVFP4-W4A4
+    revision: d35cb79050f419c457611b1cee5c5d15b176f285
+    servedName: muse-glimmer
+    downloadSizeBytes: 25447097878
+    gated: false
+    installFastSafetensors: false
+    preparation:
+      ref: none/v1
+
+  runtime:
+    image: vllm/vllm-openai@sha256:ab0f5fc3bb81b9257a9aee801abcb0eeb94bb0523b57b2bb79349dc61e7c1e25
+    imageDownloadSizeBytes: 10507991780
+    pullTimeoutSeconds: 3600
+    architecture: arm64
+    networkMode: bridge
+    ipcMode: host
+    sharedMemoryBytes: 34359738368
+    gpuRequest: all
+    devices: []
+    ulimits:
+      memlock: -1
+      stackBytes: 67108864
+    modelCache:
+      source: huggingface-cache
+      target: /root/.cache/huggingface
+    temporaryFilesystems: []
+    environment: {}
+
+  execution:
+    materializerRef: vllm.host-local/v1
+    lifecycleRef: vllm.host-local.lifecycle/v1
+
+  serve:
+    authentication: bearer
+    executable: /usr/local/bin/vllm
+    arguments:
+      - name: --max-model-len
+        value: 32768
+      - name: --gpu-memory-utilization
+        value: 0.75
+      - name: --max-num-seqs
+        value: 1
+      - name: --max-num-batched-tokens
+        value: 4096
+      - name: --enable-auto-tool-choice
+      - name: --tool-call-parser
+        value: muse_glimmer
+      - name: --reasoning-parser
+        value: muse_glimmer
+      - name: --generation-config
+        value: auto
+
+  readiness:
+    timeoutSeconds: 1800
+    expectedModel: muse-glimmer

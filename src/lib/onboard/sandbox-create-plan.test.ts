@@ -312,6 +312,60 @@ describe("resolveSandboxCreateIntent", () => {
     expect(JSON.stringify(intent)).toBe(serializedIntent);
   });
 
+  it("materializes a read-only Docker bind beside the DCode tmpfs mount", () => {
+    const intent = resolveSandboxCreateIntent({
+      basePolicyPath: "/repo/policy.yaml",
+      sandboxName: "sandbox",
+      channels: [],
+      enabledChannels: [],
+      disabledChannelNames: new Set(),
+      messagingProviderRequests: [],
+      primaryMessagingCredentialEnvKeys: [],
+      reusableMessagingChannels: [],
+      reusableMessagingProviders: [],
+      hermesToolGateways: [],
+      sandboxGpuConfig,
+      gpuCreateArgs: [],
+      hostMounts: [{ source: "/srv/project", target: "/sandbox/project", readOnly: true }],
+      gpuRoutePlan: "native-only",
+      sandboxGpuLogMessage: null,
+      agentName: "langchain-deepagents-code",
+      policyTier: null,
+    });
+    const plan = materializeSandboxCreatePlan({
+      intent,
+      fromRef: "/tmp/nemoclaw-build-1/Dockerfile",
+      messagingTokenDefs: [],
+      prepareInitialSandboxCreatePolicy: vi.fn(() => ({
+        policyPath: "/tmp/policy.yaml",
+        appliedPresets: [],
+      })),
+      runProviderPreDeleteCleanup: vi.fn(),
+      upsertMessagingProviders: vi.fn(() => []),
+      getHermesToolGatewayProviderName: vi.fn(),
+    });
+    const configIndex = plan.createArgs.indexOf("--driver-config-json");
+    const driverConfig = JSON.parse(plan.createArgs[configIndex + 1]!);
+
+    expect(configIndex).toBeGreaterThan(-1);
+    expect(driverConfig.docker.mounts).toEqual([
+      {
+        type: "tmpfs",
+        target: "/run/nemoclaw-dcode-mcp",
+        options: ["noexec"],
+        size_bytes: 1_048_576,
+        mode: 0o1777,
+      },
+      {
+        type: "bind",
+        source: "/srv/project",
+        target: "/sandbox/project",
+        read_only: true,
+      },
+    ]);
+    expect(driverConfig.podman.mounts).toEqual([driverConfig.docker.mounts[0]]);
+  });
+
   it("cleans up the prepared policy when disclosure fails before provider effects (#7179)", () => {
     const intent = resolveSandboxCreateIntent({
       basePolicyPath: "/repo/policy.yaml",

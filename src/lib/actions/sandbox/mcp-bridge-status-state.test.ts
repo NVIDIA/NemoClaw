@@ -234,6 +234,71 @@ registry.registerSandbox({ name: "openclaw-sandbox", agent: "openclaw" });
     });
   });
 
+  it("uses the loaded OpenClaw configuration directory for status inspection", () => {
+    const home = createTempHome("nemoclaw-mcp-status-custom-root-");
+    const script = `
+process.env.HOME = ${JSON.stringify(home)};
+const registry = require("./src/lib/state/registry.js");
+const agentDefs = require("./src/lib/agent/defs.js");
+const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
+const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+agentDefs.loadAgent = () => ({
+  name: "openclaw",
+  displayName: "OpenClaw",
+  configPaths: { dir: "/sandbox/.custom-openclaw" },
+  mcpCapability: { support: "bridge", adapter: "mcporter" },
+});
+gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
+  recovered: true,
+  attempted: false,
+  before: { state: "healthy_named" },
+  after: { state: "healthy_named" },
+});
+let capturedCommand = "";
+processRecovery.executeSandboxCommand = (_sandboxName, command) => {
+  capturedCommand = command;
+  return { status: 0, stdout: "registered", stderr: "" };
+};
+registry.registerSandbox({
+  name: "custom-root-status",
+  agent: "openclaw",
+  mcp: { bridges: { github: {
+    server: "github",
+    agent: "openclaw",
+    adapter: "mcporter",
+    url: "https://mcp.example.test/github",
+    env: [],
+    policyName: "mcp-bridge-github",
+    addedAt: "2026-06-01T00:00:00.000Z",
+  } } },
+});
+const status = require("./src/lib/actions/sandbox/mcp-bridge-status.js");
+status.statusMcpBridge("custom-root-status", "github").then(
+  (bridges) => process.stdout.write(JSON.stringify({ bridges, capturedCommand })),
+  (error) => {
+    console.error(error);
+    process.exit(1);
+  },
+);
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      bridges: Array<{ adapter: { registered: boolean } }>;
+      capturedCommand: string;
+    };
+    expect(payload.bridges[0]?.adapter.registered).toBe(true);
+    expect(payload.capturedCommand).toContain(
+      '\\"root\\":\\"/sandbox/.custom-openclaw/workspace\\"',
+    );
+    expect(payload.capturedCommand).not.toContain('\\"root\\":\\"/sandbox/.openclaw/workspace\\"');
+  });
+
   it("reports each bridge from its persisted adapter or agent capability", () => {
     const home = createTempHome("nemoclaw-mcp-status-agent-");
     const script = `

@@ -19,6 +19,7 @@ import * as registry from "../state/registry";
 import { cloneSandboxWorkloadReceipt } from "../state/registry/workload";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
+import { cloneSandboxHostMounts } from "../state/registry/host-mount";
 import { resolveOnboardHermesApiPort } from "./hermes-api-port";
 import {
   getHermesDashboardRegistryFields,
@@ -80,6 +81,7 @@ export interface CreatedSandboxRegistryEntryInput {
   lifecycleLiveIdentityFingerprint?: string;
   gatewayName: string;
   gatewayPort: number;
+  hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
 }
 
 export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryEntryInput {
@@ -239,6 +241,9 @@ export function buildCreatedSandboxRegistryEntry(
     lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
+    ...(input.hostMounts && input.hostMounts.length > 0
+      ? { hostMounts: cloneSandboxHostMounts(input.hostMounts) }
+      : {}),
   };
 }
 

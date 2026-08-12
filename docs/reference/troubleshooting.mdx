@@ -62,6 +62,23 @@ nvm use 22
 
 Then re-run the installer.
 
+### Contributor Setup Fails with a JavaScript Heap Out-of-Memory Error
+
+This applies to a source checkout, not to an installed release.
+
+Node.js derives its default old-space limit from host memory.
+On a host with 8 GB of RAM, that limit is about 2.2 GB.
+The CLI type check needs more heap than that limit, so `./scripts/dev-setup.sh` stops at the type-check step and Node.js reports `JavaScript heap out of memory`.
+
+Raise the limit, then run setup again:
+
+```bash
+export NODE_OPTIONS=--max-old-space-size=5120
+./scripts/dev-setup.sh
+```
+
+Keep that variable set for later type-check, build, and test commands.
+
 ### Image push fails with out-of-memory errors
 
 The sandbox image is approximately 2.4 GB compressed.
