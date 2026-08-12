@@ -320,11 +320,33 @@ export function writeHealthyDockerStub(localBin: string): void {
  * probe, and that transport trusts stdout only after the exec marker.
  */
 export function inferenceInvocationStubLines(httpStatus = "200", exitCode = 0): string[] {
+  const bodyLines =
+    new Map<number, string[]>([
+      [
+        0,
+        [
+          '      case "$*" in',
+          `        *chat/completions*) printf '%s\\n' ${JSON.stringify(
+            JSON.stringify({ choices: [{ message: { role: "assistant", content: "OK" } }] }),
+          )} ;;`,
+          `        */v1/responses*) printf '%s\\n' ${JSON.stringify(
+            JSON.stringify({
+              output: [{ type: "message", content: [{ type: "output_text", text: "OK" }] }],
+            }),
+          )} ;;`,
+          `        */v1/messages*) printf '%s\\n' ${JSON.stringify(
+            JSON.stringify({ content: [{ type: "text", text: "OK" }] }),
+          )} ;;`,
+          "      esac",
+        ],
+      ],
+    ]).get(exitCode) ?? [];
   return [
     '  case "$*" in',
     "    *chat/completions*|*/v1/responses*|*/v1/messages*)",
     `      printf '%s\\n' '${SANDBOX_EXEC_STARTED_MARKER}'`,
     `      printf '%s\\n' ${JSON.stringify(httpStatus)}`,
+    ...bodyLines,
     `      exit ${String(exitCode)}`,
     "      ;;",
     "  esac",
