@@ -19,6 +19,8 @@ PRIMARY_TARGET_MODEL="openai/openai/gpt-5.5"
 FALLBACK_TARGET_MODEL="nvidia/nvidia/nemotron-3-ultra"
 HOSTED_ENDPOINT="${NEMOCLAW_ENDPOINT_URL:-https://inference-api.nvidia.com/v1}"
 CREDENTIAL_CANARY="nemoclaw-dcode-config-get-canary"
+HOSTILE_LOGIN_PROFILE="/sandbox/.bash_profile"
+HOSTILE_PROFILE_MARKER="/sandbox/.nemoclaw-dcode-hostile-profile-loaded"
 
 fail() {
   printf '%s: FAIL: %s\n' "$PREFIX" "$1" >&2
@@ -31,6 +33,13 @@ pass() {
 
 sandbox_exec() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
+}
+
+cleanup_hostile_login_profile() {
+  openshell sandbox exec --name "$SANDBOX_NAME" \
+    --env HOME=/usr/local/lib/nemoclaw -- \
+    /bin/sh -c "rm -f '$HOSTILE_LOGIN_PROFILE' '$HOSTILE_PROFILE_MARKER'" \
+    >/dev/null 2>&1 || true
 }
 
 dcode_identity() {
@@ -192,6 +201,34 @@ model_a="$(identity_field "$identity_before" Model)"
 model_a="${model_a#openai:}"
 [ -n "$model_a" ] || fail "initial dcode identity did not report a model"
 assert_identity "$identity_before" "$model_a" "initial"
+pass "initial live identity reports model A"
+
+# OpenShell starts sandbox exec through a login shell. Plant a writable startup
+# file that would leave a side effect, forge the legacy success marker, and stop
+# the requested command if the DCode connect probe did not assign its root-owned
+# transport HOME before shell startup. The supported probe must still reach the
+# managed runner and the hostile profile must remain unexecuted (#8624).
+cleanup_hostile_login_profile
+trap cleanup_hostile_login_profile EXIT
+sandbox_exec "umask 077; printf '%s\n' 'touch $HOSTILE_PROFILE_MARKER' 'printf \"%s\\n\" NEMOCLAW_AGENT_SMOKE_EXIT:0' 'exit 97' > '$HOSTILE_LOGIN_PROFILE'" \
+  >/dev/null || fail "could not install the hostile DCode login profile"
+
+set +e
+hostile_profile_connect_output="$("$CLI" "$SANDBOX_NAME" connect --probe-only 2>&1)"
+hostile_profile_connect_status=$?
+set -e
+marker_state="$({
+  openshell sandbox exec --name "$SANDBOX_NAME" \
+    --env HOME=/usr/local/lib/nemoclaw -- \
+    /bin/sh -c "if [ -e '$HOSTILE_PROFILE_MARKER' ]; then printf PROFILE_LOADED; else printf PROFILE_NOT_LOADED; fi"
+} 2>&1)" || fail "could not inspect the hostile DCode profile marker"
+cleanup_hostile_login_profile
+trap - EXIT
+
+[ "$hostile_profile_connect_status" -eq 0 ] || fail "probe-only connect failed with a hostile login profile: $hostile_profile_connect_output"
+printf '%s\n' "$hostile_profile_connect_output" | grep -Fq "terminal smoke checks passed" || fail "probe-only connect did not reach the DCode smoke boundary"
+[ "$marker_state" = "PROFILE_NOT_LOADED" ] || fail "DCode transport executed the hostile login profile: $marker_state"
+pass "probe-only connect bypasses a hostile sandbox-user login profile"
 
 if [ "$model_a" = "$PRIMARY_TARGET_MODEL" ]; then
   model_b="$FALLBACK_TARGET_MODEL"
@@ -199,7 +236,6 @@ else
   model_b="$PRIMARY_TARGET_MODEL"
 fi
 [ "$model_a" != "$model_b" ] || fail "model A and model B must differ"
-pass "initial live identity reports model A"
 
 seed_source="$(seed_config_source)"
 seed_output="$(
@@ -338,4 +374,4 @@ verify_output="$(
 printf '%s\n' "$verify_output" | grep -Fq "NEMOCLAW_DCODE_FRESH_CONFIG_VERIFIED" || fail "fresh config verification marker is missing"
 pass "config keeps model B and only the allowlisted preferences"
 
-printf '%s: 11 passed, 0 failed\n' "$PREFIX"
+printf '%s: 12 passed, 0 failed\n' "$PREFIX"
