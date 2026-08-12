@@ -362,6 +362,11 @@
       "category": "security"
     },
     {
+      "file": "test/node-tar-dockerfile-contract.test.ts",
+      "test": "rejects an isolated unreviewed Deep Agents Code Node base pin",
+      "category": "security"
+    },
+    {
       "file": "test/openclaw-dependency-review.test.ts",
       "test": "copies the legacy OpenClaw remediation helper before the base build invokes it",
       "category": "security"

@@ -54,8 +54,8 @@ const {
   isKimiK26Model,
   isReasoningOnlyLengthResponse,
   STRICT_TOOL_PROBE_INITIAL_TOKENS,
-  STRICT_TOOL_PROBE_REASONING_RETRY_MESSAGE,
-  STRICT_TOOL_PROBE_RETRY_TOKENS,
+  STRICT_TOOL_PROBE_RETRY_TOKEN_LADDER,
+  strictToolProbeReasoningRetryMessage,
 } = require("./openai-probe-models");
 const {
   buildValidationProbeTimingProfile,
@@ -404,11 +404,19 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
     const timingArgs =
       options.timingArgs ??
       getChatCompletionsProbeTimingArgs(model, getProbeTimingOptions(options));
-    const runToolProbe = (maxTokens) => {
+    // The calibrated deadline covers a 256-token generation. The final ladder
+    // rung generates up to 4096 tokens, so its request deadline doubles;
+    // otherwise a slow reasoning model turns the budget failure into curl
+    // exit 28. The connect timeout stays: the endpoint already answered the
+    // earlier rungs, and the native session doubles only the request deadline.
+    const doubledTimingArgs = timingArgs.map((arg, index) =>
+      timingArgs[index - 1] === "--max-time" ? String(Number(arg) * 2) : arg,
+    );
+    const runToolProbe = (maxTokens, timing = timingArgs) => {
       const args = [
         "-sS",
         ...buildResolvePinArgs(`${baseUrl}/chat/completions`, options.pinnedAddresses),
-        ...timingArgs,
+        ...timing,
         "-H",
         "Content-Type: application/json",
         ...authConfig.args,
@@ -425,20 +433,37 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
       });
     };
     let result = runToolProbe(STRICT_TOOL_PROBE_INITIAL_TOKENS);
-    if (result.ok && isReasoningOnlyLengthResponse(result.body)) {
+    let exhaustedTokens = STRICT_TOOL_PROBE_INITIAL_TOKENS;
+    for (const retryTokens of STRICT_TOOL_PROBE_RETRY_TOKEN_LADDER) {
+      if (!result.ok || !isReasoningOnlyLengthResponse(result.body)) break;
       reasoningRetryAttempted = true;
-      console.log(STRICT_TOOL_PROBE_REASONING_RETRY_MESSAGE);
+      console.log(strictToolProbeReasoningRetryMessage(exhaustedTokens, retryTokens));
       trace.addTraceEvent("tool_call_reasoning_retry", {
-        initial_max_tokens: STRICT_TOOL_PROBE_INITIAL_TOKENS,
-        retry_max_tokens: STRICT_TOOL_PROBE_RETRY_TOKENS,
+        initial_max_tokens: exhaustedTokens,
+        retry_max_tokens: retryTokens,
       });
-      result = runToolProbe(STRICT_TOOL_PROBE_RETRY_TOKENS);
+      result = runToolProbe(
+        retryTokens,
+        retryTokens === STRICT_TOOL_PROBE_RETRY_TOKEN_LADDER.at(-1)
+          ? doubledTimingArgs
+          : timingArgs,
+      );
+      exhaustedTokens = retryTokens;
     }
 
     if (!result.ok) {
       const explainedResult = explainDisabledToolParsing(result);
       return reasoningRetryAttempted
-        ? { ...explainedResult, reasoningRetryAttempted: true }
+        ? {
+            ...explainedResult,
+            diagnosticCodes: [
+              ...new Set([
+                "openai-chat-missing-structured-tool-call",
+                ...(explainedResult.diagnosticCodes ?? []),
+              ]),
+            ],
+            reasoningRetryAttempted: true,
+          }
         : explainedResult;
     }
     if (hasChatCompletionsToolCall(result.body)) {
@@ -451,6 +476,7 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
         curlStatus: result.curlStatus,
         body: result.body,
         stderr: result.stderr,
+        diagnosticCodes: ["openai-chat-tool-call-leak"],
         message:
           `HTTP ${result.httpStatus}: Chat Completions leaked tool calls into plain text content. ` +
           "Use an endpoint/runtime that returns structured tool_calls (for Hermes on local inference, " +
@@ -464,7 +490,9 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
       curlStatus: result.curlStatus,
       body: result.body,
       stderr: result.stderr,
-      diagnosticCodes: ["openai-chat-missing-structured-tool-call"],
+      diagnosticCodes: isReasoningOnlyLengthResponse(result.body)
+        ? ["openai-chat-missing-structured-tool-call", "openai-chat-reasoning-budget-exhausted"]
+        : ["openai-chat-missing-structured-tool-call"],
 
       message: `HTTP ${result.httpStatus}: Chat Completions did not return a tool call`,
       ...(reasoningRetryAttempted ? { reasoningRetryAttempted: true } : {}),
@@ -1005,6 +1033,8 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
           curlStatus: retryResult.curlStatus,
           message: retryResult.message,
           body: retryResult.body,
+          diagnosticCodes: retryResult.diagnosticCodes,
+          reasoningRetryAttempted: retryResult.reasoningRetryAttempted === true,
         });
       }
     }

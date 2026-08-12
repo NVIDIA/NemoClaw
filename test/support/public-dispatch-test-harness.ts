@@ -3,7 +3,7 @@
 
 import { vi } from "vitest";
 
-type SandboxStub = { name: string; pendingRouteReservation?: true };
+type SandboxStub = { name: string; pendingRouteReservation?: true; createdAt?: string };
 
 export type DirectPublicDispatchHarness = {
   dispatchCli: (argv: string[]) => Promise<void>;
@@ -83,6 +83,10 @@ export async function withDirectPublicDispatch(
     ]),
   );
   const getSandbox = vi.fn((name: string) => sandboxes.get(name) ?? null);
+  const isRouteOnlySandboxReservation = vi.fn(
+    (sandbox: SandboxStub) =>
+      sandbox.pendingRouteReservation === true && sandbox.createdAt === undefined,
+  );
   const getDefault = vi.fn(() => {
     const storedDefault = options.defaultSandbox ?? null;
     const stored = storedDefault ? sandboxes.get(storedDefault) : null;
@@ -127,7 +131,12 @@ export async function withDirectPublicDispatch(
     runOclifCommandById.mockClear();
   };
 
-  cacheModule(registryPath, { getDefault, getSandbox, listSandboxes });
+  cacheModule(registryPath, {
+    getDefault,
+    getSandbox,
+    isRouteOnlySandboxReservation,
+    listSandboxes,
+  });
   cacheModule(legacyPortMigrationPath, { migrateLegacyPortState });
   cacheModule(registryRecoveryPath, { recoverRegistryEntries });
   cacheModule(oclifRunnerPath, { runOclifArgv, runOclifCommandById });

@@ -197,6 +197,32 @@ describe("OnboardRuntimeBoundary", () => {
     });
   });
 
+  it("persists review-stage selection context without completing provider selection (#8686)", async () => {
+    const harness = createRuntimeHarness();
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await boundary.startRecordedStep("provider_selection", {
+      sandboxName: "review-interrupted",
+      provider: "ollama-local",
+      model: "qwen3.5:9b",
+    });
+    await boundary.recordStepFailed(
+      "provider_selection",
+      "Onboarding exited before the step completed.",
+    );
+
+    expect(harness.getSession()).toMatchObject({
+      sandboxName: "review-interrupted",
+      provider: "ollama-local",
+      model: "qwen3.5:9b",
+      steps: { provider_selection: { status: "failed" } },
+    });
+  });
+
   it("applies each explicit transition exactly once", async () => {
     const harness = createRuntimeHarness();
     const boundary = new OnboardRuntimeBoundary({

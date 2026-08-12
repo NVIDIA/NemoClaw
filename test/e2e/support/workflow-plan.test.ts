@@ -13,6 +13,7 @@ import { RETIRED_CONTROLLER_SELECTOR_IDS } from "../../../tools/e2e/retired-sele
 import { readFreeStandingJobsInventory } from "../../../tools/e2e/workflow-boundary.mts";
 import {
   buildE2eWorkflowPlan,
+  releaseRequiredWorkflowJobs,
   renderE2eWorkflowPlanSummary,
   runE2eWorkflowPlanCli,
   validateE2eWorkflowPlan,
@@ -46,7 +47,10 @@ describe("E2E workflow plan", () => {
       hermesSelected: true,
       explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
     });
-    expect(plan.explicitOnlyJobs).toEqual([]);
+    expect(plan.explicitOnlyJobs).toEqual(["llama-cpp-dgx-spark-qualification"]);
+    expect(releaseRequiredWorkflowJobs()).toContain("live");
+    expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");
+    expect(releaseRequiredWorkflowJobs()).not.toContain("llama-cpp-dgx-spark-qualification");
   });
 
   it("validates jobs and selects only matching credential-free tests", () => {
@@ -152,6 +156,7 @@ describe("E2E workflow plan", () => {
           `test_matrix=${JSON.stringify(plan.testMatrix)}`,
           `hermes_selected=${plan.hermesSelected}`,
           `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
+          `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
           "",
         ].join("\n"),
       );
@@ -190,6 +195,7 @@ describe("E2E workflow plan", () => {
           `test_matrix=${JSON.stringify(plan.testMatrix)}`,
           `hermes_selected=${plan.hermesSelected}`,
           `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
+          `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
           "",
         ].join("\n"),
       );
@@ -234,6 +240,7 @@ describe("E2E workflow plan", () => {
           "test_matrix=[]",
           "hermes_selected=false",
           `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
+          `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
           "",
         ].join("\n"),
       );
@@ -241,6 +248,18 @@ describe("E2E workflow plan", () => {
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
+  });
+
+  it.each([
+    "jobs",
+    "targets",
+  ] as const)("emits an empty shared plan for the Jetson dispatch %s selector (#8142)", (selector) => {
+    expect(buildE2eWorkflowPlan({ [selector]: "jetson-nvmap-gpu" })).toEqual({
+      matrix: [],
+      testMatrix: [],
+      hermesSelected: false,
+      explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
+    });
   });
 
   it("emits an empty matrix for retired free-standing rebuild selectors (#7615)", () => {
@@ -276,6 +295,7 @@ describe("E2E workflow plan", () => {
           "test_matrix=[]",
           "hermes_selected=false",
           `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
+          `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
           "",
         ].join("\n"),
       );
@@ -382,6 +402,7 @@ describe("E2E workflow plan", () => {
           `test_matrix=${JSON.stringify(plan.testMatrix)}`,
           "hermes_selected=false",
           `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
+          `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
           "",
         ].join("\n"),
       );
@@ -478,6 +499,7 @@ describe("E2E workflow plan", () => {
           `test_matrix=${JSON.stringify(plan.testMatrix)}`,
           `hermes_selected=${plan.hermesSelected}`,
           `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
+          `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
           "",
         ].join("\n"),
       );
@@ -515,6 +537,7 @@ describe("E2E workflow plan", () => {
           `test_matrix=${JSON.stringify(plan.testMatrix)}`,
           `hermes_selected=${plan.hermesSelected}`,
           `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
+          `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
           "",
         ].join("\n"),
       );
