@@ -30,6 +30,7 @@ describe("installer N1x Express preview", () => {
   });
 
   it("stops before onboarding when the Deferred preview is declined (#8574)", () => {
+    // Model curl | bash: stdin is the script pipe, while the reply reaches the controlling /dev/tty.
     const result = runExpressPromptWithTty("n\n", "pipe", "N1x");
     const output = `${result.stdout}${result.stderr}`;
 
@@ -122,7 +123,7 @@ stat() {
   [ "\${LC_ALL:-}" = "de_DE.UTF-8" ] || return 96
   [ "\${2:-}" = '%f:%u:%g:%a:%s:%d:%i' ] || return 97
   case "\${1:-}:\${3:-}" in
-    -c:"$test_marker"|-Lc:/proc/self/fd/9) ;;
+    -c:"$test_marker"|-Lc:/proc/self/fd/*) ;;
     *) return 98 ;;
   esac
   printf '81a4:0:0:644:18:1:2'

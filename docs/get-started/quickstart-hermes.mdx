@@ -52,7 +52,7 @@ Review the [Prerequisites](prerequisites) before you begin.
       This mode applies preset settings and runs the remaining onboarding non-interactively.
       Express install mode installs OpenClaw by default.
       If you accept, refer to [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart).
-      On platforms other than N1x, enter `n` if you want to select Hermes, a sandbox name, an inference provider, and a model interactively.
+      On supported non-N1x express platforms, enter `n` if you want to select Hermes, a sandbox name, an inference provider, and a model interactively.
       On N1x, entering `n` stops installation because the Deferred managed-vLLM preview is the only admitted onboarding path.
       Refer to [Use Docker and supported platforms](#use-docker-and-supported-platforms) for more information.
     </Note>
@@ -175,7 +175,7 @@ Use these details when your first-run path needs more control.
     N1x can offer a Deferred preview after the notice, but full physical NemoClaw Express E2E validation is pending.
     Press Enter at the express install prompt to apply preset settings, switch the remaining onboarding to non-interactive mode, and select the managed local inference path for that platform.
     On N1x, accept the preview prompt to apply those settings as explicit Deferred preview intent.
-    On platforms other than N1x, enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
+    On supported non-N1x express platforms, enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
     On N1x, declining the preview or setting only `NEMOCLAW_NO_EXPRESS=1` stops installation before onboarding.
     Accept the preview, or set `NEMOCLAW_PROVIDER=install-vllm` before installation to provide the required explicit managed-vLLM intent.
     The first Hermes build can take several minutes because NemoClaw builds the Hermes sandbox base image when it is not already cached.
