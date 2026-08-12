@@ -55,15 +55,18 @@ function buildRunnerEnv(extraEnv?: NodeJS.ProcessEnv, executable?: string): Reco
       if (value !== undefined) normalizedExtra[key] = value;
     }
   }
-  if (
+  const usesDockerDefaultAuthority =
     executable !== undefined &&
     path.basename(executable) === "docker" &&
-    normalizedExtra.DOCKER_CONTEXT === undefined &&
     normalizedExtra.DOCKER_HOST === undefined &&
-    process.env.DOCKER_HOST === undefined &&
-    process.env.DOCKER_CONTEXT !== undefined
-  ) {
-    normalizedExtra.DOCKER_CONTEXT = process.env.DOCKER_CONTEXT;
+    process.env.DOCKER_HOST === undefined;
+  if (usesDockerDefaultAuthority) {
+    if (normalizedExtra.DOCKER_CONFIG === undefined && process.env.DOCKER_CONFIG !== undefined) {
+      normalizedExtra.DOCKER_CONFIG = process.env.DOCKER_CONFIG;
+    }
+    if (normalizedExtra.DOCKER_CONTEXT === undefined && process.env.DOCKER_CONTEXT !== undefined) {
+      normalizedExtra.DOCKER_CONTEXT = process.env.DOCKER_CONTEXT;
+    }
   }
   return buildSubprocessEnv(normalizedExtra);
 }

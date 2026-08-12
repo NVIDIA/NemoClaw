@@ -229,7 +229,7 @@ describe("runner env merging", () => {
     expect(initializedContext).toBe("ambient-context");
   });
 
-  it("preserves Docker context only for Docker subprocesses (#8816)", () => {
+  it("preserves Docker context and config only for Docker subprocesses (#8816)", () => {
     const calls: SpawnCall[] = [];
     const originalSpawnSync = childProcess.spawnSync;
     // @ts-expect-error — intentional partial mock for testing
@@ -241,12 +241,15 @@ describe("runner env merging", () => {
 
     try {
       vi.stubEnv("DOCKER_CONTEXT", "healthy-context");
+      vi.stubEnv("DOCKER_CONFIG", "/tmp/docker-config");
       vi.stubEnv("DOCKER_HOST", undefined);
       vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "test-secret-must-not-cross-runner-boundary");
       delete require.cache[require.resolve(runnerPath)];
       const { run } = require(runnerPath);
       run(["docker", "ps"]);
       run(["echo", "test"]);
+      vi.stubEnv("DOCKER_CONTEXT", undefined);
+      run(["docker", "info"]);
     } finally {
       vi.unstubAllEnvs();
       childProcess.spawnSync = originalSpawnSync;
@@ -254,13 +257,18 @@ describe("runner env merging", () => {
     }
 
     const runnerCalls = withoutDockerAuthorityProbe(calls);
-    expect(runnerCalls).toHaveLength(2);
+    expect(runnerCalls).toHaveLength(3);
     const dockerEnv = requireCall(runnerCalls, 0)[2]?.env;
     const nonDockerEnv = requireCall(runnerCalls, 1)[2]?.env;
+    const configSelectedDockerEnv = requireCall(runnerCalls, 2)[2]?.env;
     expect(dockerEnv?.DOCKER_CONTEXT).toBe("healthy-context");
+    expect(dockerEnv?.DOCKER_CONFIG).toBe("/tmp/docker-config");
     expect(dockerEnv?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
     expect(nonDockerEnv?.DOCKER_CONTEXT).toBeUndefined();
+    expect(nonDockerEnv?.DOCKER_CONFIG).toBeUndefined();
     expect(nonDockerEnv?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(configSelectedDockerEnv?.DOCKER_CONTEXT).toBeUndefined();
+    expect(configSelectedDockerEnv?.DOCKER_CONFIG).toBe("/tmp/docker-config");
   });
 
   it("keeps Docker host precedence over an ambient Docker context (#8816)", () => {
@@ -275,6 +283,7 @@ describe("runner env merging", () => {
 
     try {
       vi.stubEnv("DOCKER_CONTEXT", "ambient-context");
+      vi.stubEnv("DOCKER_CONFIG", "/tmp/ambient-docker-config");
       vi.stubEnv("DOCKER_HOST", undefined);
       delete require.cache[require.resolve(runnerPath)];
       const { run } = require(runnerPath);
@@ -293,10 +302,12 @@ describe("runner env merging", () => {
       DOCKER_HOST: "unix:///explicit.sock",
     });
     expect(requireCall(runnerCalls, 0)[2]?.env?.DOCKER_CONTEXT).toBeUndefined();
+    expect(requireCall(runnerCalls, 0)[2]?.env?.DOCKER_CONFIG).toBeUndefined();
     expect(requireCall(runnerCalls, 1)[2]?.env).toMatchObject({
       DOCKER_HOST: "unix:///selected-fallback.sock",
     });
     expect(requireCall(runnerCalls, 1)[2]?.env?.DOCKER_CONTEXT).toBeUndefined();
+    expect(requireCall(runnerCalls, 1)[2]?.env?.DOCKER_CONFIG).toBeUndefined();
   });
 
   it("preserves process env when opts.env is provided to runCapture", () => {

@@ -133,8 +133,9 @@ function buildDockerProbeEnv(
     const value = source[name];
     if (value !== undefined) env[name] = value;
   }
-  if (dockerHost === undefined && source.DOCKER_CONTEXT !== undefined) {
-    env.DOCKER_CONTEXT = source.DOCKER_CONTEXT;
+  if (dockerHost === undefined) {
+    if (source.DOCKER_CONFIG !== undefined) env.DOCKER_CONFIG = source.DOCKER_CONFIG;
+    if (source.DOCKER_CONTEXT !== undefined) env.DOCKER_CONTEXT = source.DOCKER_CONTEXT;
   }
   if (dockerHost) {
     env.DOCKER_HOST = dockerHost;

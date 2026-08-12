@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -294,10 +294,16 @@ describe("platform helpers", () => {
       ).toBe(null);
     });
 
-    it("preserves a reachable Docker context before local socket fallbacks (#8816)", () => {
+    it("preserves a reachable Docker context and config before local socket fallbacks (#8816)", () => {
       const fixtureDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-authority-"));
       try {
         const docker = path.join(fixtureDir, "docker");
+        const dockerConfig = path.join(fixtureDir, "docker-config");
+        mkdirSync(dockerConfig);
+        writeFileSync(
+          path.join(dockerConfig, "config.json"),
+          JSON.stringify({ currentContext: "healthy-context" }),
+        );
         writeFileSync(
           docker,
           [
@@ -305,8 +311,11 @@ describe("platform helpers", () => {
             'test "$1" = "version" || exit 2',
             'if test -z "${DOCKER_HOST:-}"; then',
             '  test "${DOCKER_CONTEXT:-}" = "healthy-context" || exit 4',
+            `  test "\${DOCKER_CONFIG:-}" = "${dockerConfig}" || exit 7`,
+            '  test -f "$DOCKER_CONFIG/config.json" || exit 8',
             "else",
             '  test -z "${DOCKER_CONTEXT:-}" || exit 6',
+            '  test -z "${DOCKER_CONFIG:-}" || exit 9',
             "fi",
             'test -z "${NVIDIA_INFERENCE_API_KEY:-}" || exit 5',
             'printf \'%s\\n\' \'{"Server":{"Platform":{"Name":"Docker Engine - Community"}}}\'',
@@ -319,6 +328,7 @@ describe("platform helpers", () => {
             env: {
               HOME: fixtureDir,
               PATH: fixtureDir,
+              DOCKER_CONFIG: dockerConfig,
               DOCKER_CONTEXT: "healthy-context",
               NVIDIA_INFERENCE_API_KEY: "test-secret-must-not-cross-probe-boundary",
             },
