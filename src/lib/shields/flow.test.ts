@@ -990,8 +990,11 @@ describe("shields command flow", () => {
       },
       dockerExecFileSync: (argv: unknown) => {
         const args = Array.isArray(argv) ? argv.map(String) : [];
-        if (args.some((arg) => arg.includes("nemoclaw-shields-down-path-preflight"))) {
-          return "";
+        switch (true) {
+          case args.some((arg) => arg.includes("nemoclaw-shields-down-path-preflight")):
+            return "";
+          default:
+            break;
         }
         observedPreparingDuringUnlock ||= readOnlyTransition().phase === "preparing";
         switch (true) {
