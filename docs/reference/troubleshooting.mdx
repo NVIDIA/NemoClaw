@@ -1145,10 +1145,9 @@ Follow these steps to reconnect.
    NemoClaw verifies the staged formula checksum and temporarily trusts only `nvidia/openshell/openshell` around each Homebrew inspection, start, or stop operation.
    If formula verification fails or Homebrew cannot grant or remove temporary trust, rerun `scripts/install-openshell.sh` and then rerun onboarding.
    The standalone gateway is selected only when Homebrew or both the staged formula and installed keg are absent.
-   It selects the standalone fallback only when `launchctl print` also returns the exact missing-service result for `homebrew.mxcl.openshell`.
-   Every other `brew info` identity failure or unrecognized `launchctl` result stops onboarding.
-   A loaded `homebrew.mxcl.openshell` service remains under launchd lifecycle authority.
-   NemoClaw does not stop, replace, or adopt that process, and the error provides the `launchctl bootout` remediation command.
+   When the formula or keg exists, Homebrew remains the lifecycle authority.
+   NemoClaw does not switch to the standalone gateway after a Homebrew inspection, start, or stop failure.
+   Follow the reported repair guidance instead of changing service ownership manually.
    If the installed service fails inspection, startup, or its health check, NemoClaw prints this log command:
 
    ```bash
