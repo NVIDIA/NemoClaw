@@ -138,6 +138,7 @@ test.skipIf(overlayfsAutofixNotInRuntimePath())(
       e2ePhases: [
         "confirm Docker overlayfs eligibility",
         "enable containerd snapshotter mode",
+        "capture host-probe readiness before onboarding",
         "install with the overlayfs auto-fix enabled",
         "confirm patched cluster image reuse",
         "reproduce the failure with the auto-fix disabled",
@@ -154,6 +155,7 @@ test.skipIf(overlayfsAutofixNotInRuntimePath())(
       preservedBoundaries: [
         "real Docker daemon feature flip through sudo-managed /etc/docker/daemon.json",
         "real Docker daemon restart and docker info overlayfs/containerd-snapshotter probe",
+        "real node ./bin/nemoclaw.js host probe before onboarding",
         "real install.sh --non-interactive onboarding with hosted compatible inference",
         "real local nemoclaw-cluster:*fuse-overlayfs* Docker image build/cache check",
         "real OpenShell gateway container image/log inspection",
@@ -296,6 +298,21 @@ sudo systemctl restart docker`,
       skip("Docker overlayfs is active but DriverStatus does not advertise the v1 snapshotter"));
 
     await preCleanup(host, apiKey, "phase-2-pre-cleanup");
+
+    progress.phase("capture host-probe readiness before onboarding");
+    const hostProbe = await host.command("node", ["./bin/nemoclaw.js", "host", "probe"], {
+      artifactName: "phase-2-host-probe-before-onboard",
+      cwd: process.cwd(),
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    });
+    await artifacts.writeText("phase-2-host-probe-before-onboard.log", text(hostProbe));
+    expect(
+      hostProbe.exitCode,
+      `host probe must expose the current mismatch: ${text(hostProbe)}`,
+    ).toBe(2);
+    expect(text(hostProbe)).toContain("System readiness: incompatible");
+    expect(text(hostProbe)).toContain("host.docker.storage_incompatible");
 
     progress.phase("install with the overlayfs auto-fix enabled");
     const positive = await host.command("bash", ["install.sh", "--non-interactive"], {
