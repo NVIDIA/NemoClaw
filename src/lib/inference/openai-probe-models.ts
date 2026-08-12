@@ -4,10 +4,21 @@
 import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "./max-tokens-field";
 
 export const STRICT_TOOL_PROBE_INITIAL_TOKENS = 256;
-export const STRICT_TOOL_PROBE_RETRY_TOKENS = 1024;
-export const STRICT_TOOL_PROBE_REASONING_RETRY_MESSAGE =
-  `  Chat Completions tool-call validation exhausted ${STRICT_TOOL_PROBE_INITIAL_TOKENS} tokens in reasoning; ` +
-  `retrying with a ${STRICT_TOOL_PROBE_RETRY_TOKENS}-token output budget...`;
+// Reasoning-heavy models can spend the whole output budget on their reasoning
+// trace before emitting the structured tool call. nemotron-3-nano:30b fails at
+// 1024 and passes at 4096 on the same host (#8714), so the retry escalates
+// through this ladder instead of stopping at one larger budget.
+export const STRICT_TOOL_PROBE_RETRY_TOKEN_LADDER: readonly number[] = [1024, 4096];
+
+export function strictToolProbeReasoningRetryMessage(
+  exhaustedTokens: number,
+  retryTokens: number,
+): string {
+  return (
+    `  Chat Completions tool-call validation exhausted ${exhaustedTokens} tokens in reasoning; ` +
+    `retrying with a ${retryTokens}-token output budget...`
+  );
+}
 
 export function isDeepSeekV4ProModel(model: unknown): boolean {
   return String(model || "").toLowerCase() === "deepseek-ai/deepseek-v4-pro";
