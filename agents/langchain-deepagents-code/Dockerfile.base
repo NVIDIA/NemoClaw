@@ -94,6 +94,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         util-linux=2.41-5 \
         procps=2:4.0.4-9 \
         e2fsprogs=1.47.2-3+b11 \
+        "dos2unix=7.5.2-1*" \
         openssh-sftp-server=1:10.0p1-7+deb13u4 \
         ripgrep=14.1.1-1+b4 \
     && if [ -n "${NEMOCLAW_CORPORATE_CA_B64:-}" ]; then \
@@ -251,8 +252,13 @@ RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.m
 RUN node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-RUN groupadd -r sandbox \
-    && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
+# setpriv runtime contract for sandbox privilege separation.
+RUN test -x /usr/bin/setpriv \
+    && /usr/bin/setpriv --version \
+    && ! command -v gosu
+
+RUN groupadd -r -g 999 sandbox \
+    && useradd -r -u 999 -g sandbox -d /sandbox -s /bin/bash sandbox \
     && usermod -a -G sandbox root \
     && mkdir -p /sandbox/.nemoclaw \
         /sandbox/.deepagents/.state \
@@ -265,7 +271,9 @@ RUN groupadd -r sandbox \
     && printf '1\n' > /sandbox/.deepagents/.state/onboarding_complete \
     && chown -R sandbox:sandbox /sandbox \
     && chmod 2770 /sandbox/.deepagents \
-    && chmod 770 /sandbox/.deepagents/.state /sandbox/.deepagents/skills
+    && chmod 770 /sandbox/.deepagents/.state /sandbox/.deepagents/skills \
+    && test "$(id -u sandbox):$(id -g sandbox)" = "999:999" \
+    && test "$(getent passwd sandbox)" = "sandbox:x:999:999::/sandbox:/bin/bash"
 
 # Pre-create shell init files for the sandbox user. OpenShell/NemoClaw writes
 # /tmp/nemoclaw-proxy-env.sh at startup so interactive sessions and dcode share
@@ -336,11 +344,3 @@ ENV HOME=/sandbox \
     DEEPAGENTS_CODE_NO_UPDATE_CHECK=1
 
 WORKDIR /sandbox
-
-# Gate the exact completed base filesystem before it can be published.
-COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
-RUN install -d -m 0755 /usr/local/share/nemoclaw \
-    && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
-        --root / --image build:deepagents-code-base \
-        > /usr/local/share/nemoclaw/node-tar-inventory.json \
-    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json

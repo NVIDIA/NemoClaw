@@ -25,6 +25,8 @@
   },
   "scripts": {
     "bundle": "node --experimental-strip-types build-runtime.ts",
+    "bundle:reviewed": "node --experimental-strip-types build-reviewed-runtime.ts",
+    "bundle:reviewed:check": "node --experimental-strip-types build-reviewed-runtime.ts --check",
     "test": "node --experimental-strip-types --test streamable-http-client.test.ts",
     "typecheck": "tsc -p tsconfig.json"
   }

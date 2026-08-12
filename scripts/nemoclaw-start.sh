@@ -837,8 +837,22 @@ prepare_openclaw_config_startup() {
   fi
 
   run_openclaw_config_guard recover --startup-owner || return 1
-  if [ "$(stat -c '%a %U:%G' /sandbox/.openclaw 2>/dev/null || true)" = "500 root:root" ]; then
-    echo "[config-guard] resuming interrupted recursive OpenClaw state lock" >&2
+  local config_posture journal_posture state_lock_reason=""
+  config_posture="$(stat -c '%a %U:%G' /sandbox/.openclaw 2>/dev/null || true)"
+  journal_posture="$(stat -c '%f %U:%G' \
+    /sandbox/.openclaw/devices/pending.json.nemoclaw-self-approval-journal \
+    2>/dev/null || true)"
+  if [ "$config_posture" = "500 root:root" ]; then
+    state_lock_reason="resuming interrupted recursive OpenClaw state lock"
+  elif [ "$journal_posture" = "8180 root:sandbox" ]; then
+    # Shields created before the #8304 mode correction can retain this exact
+    # unreadable regular-file posture (GNU stat %f: 0x8000 | 0600). Re-run the
+    # descriptor-safe lock before the gateway reads it; current and future
+    # locks publish it group-readable.
+    state_lock_reason="repairing legacy unreadable OpenClaw state"
+  fi
+  if [ -n "$state_lock_reason" ]; then
+    printf '[config-guard] %s\n' "$state_lock_reason" >&2
     timeout --signal=TERM --kill-after=5s 12m \
       python3 -I "$_OPENCLAW_STATE_DIR_GUARD" lock \
       --config-dir /sandbox/.openclaw \
@@ -3188,6 +3202,17 @@ _nemoclaw_ca_merge_warn() {
   echo "[nemoclaw] WARNING: corporate proxy CA merge failed at ${1}; keeping OpenShell-only trust — external TLS through the corporate proxy may fail (#6210)" >&2
 }
 merge_corporate_proxy_ca() {
+  # Trust-anchor tampering (#8650): replacing the baked corporate CA file with a
+  # symlink makes the merge below read the link target instead, adding
+  # attacker-selected bytes to the trust bundle that curl, python, git, and node
+  # verify against. The image bakes this path as a root-owned 0444 regular file,
+  # so a symlink here is never a legitimate state. This is not the recoverable
+  # "merge failed" case below, which safely keeps OpenShell-only trust, so it
+  # fails closed instead of warning.
+  if [ -L "$_NEMOCLAW_CORPORATE_CA_FILE" ]; then
+    echo "[nemoclaw] refusing symlinked corporate CA at ${_NEMOCLAW_CORPORATE_CA_FILE}; expected a regular file (#8650)" >&2
+    exit 1
+  fi
   [ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0
   _base_bundle=""
   if [ -n "${SSL_CERT_FILE:-}" ] && [ -f "${SSL_CERT_FILE}" ]; then
@@ -3227,11 +3252,46 @@ merge_corporate_proxy_ca() {
       return 0
     }
   fi
-  cat "$_NEMOCLAW_CORPORATE_CA_FILE" >>"$_tmp" 2>/dev/null || {
+  # Append through a descriptor opened with O_NOFOLLOW and verified as a regular
+  # file (#8650). The check above rejects a planted symlink; this rejects one
+  # swapped in afterwards, because the type check and the read share one
+  # descriptor and no path is resolved twice. Status 2 means the source was
+  # rejected as a trust anchor; any other non-zero status is an ordinary read
+  # failure that keeps the existing warn-and-continue behavior.
+  _ca_append_status=0
+  python3 -I - "$_NEMOCLAW_CORPORATE_CA_FILE" "$_tmp" <<'PY_APPEND_CORPORATE_CA' || _ca_append_status=$?
+import errno
+import os
+import stat
+import sys
+
+source, target = sys.argv[1], sys.argv[2]
+try:
+    descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+except OSError as error:
+    raise SystemExit(2 if error.errno == errno.ELOOP else 3)
+try:
+    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        raise SystemExit(2)
+    with open(target, "ab") as merged:
+        while True:
+            chunk = os.read(descriptor, 65536)
+            if not chunk:
+                break
+            merged.write(chunk)
+finally:
+    os.close(descriptor)
+PY_APPEND_CORPORATE_CA
+  if [ "$_ca_append_status" -eq 2 ]; then
+    rm -f "$_tmp"
+    echo "[nemoclaw] refusing corporate CA at ${_NEMOCLAW_CORPORATE_CA_FILE}; expected a regular file, not a symlink (#8650)" >&2
+    exit 1
+  fi
+  if [ "$_ca_append_status" -ne 0 ]; then
     rm -f "$_tmp"
     _nemoclaw_ca_merge_warn "append corporate CA"
     return 0
-  }
+  fi
   chmod 0444 "$_tmp" 2>/dev/null || {
     rm -f "$_tmp"
     _nemoclaw_ca_merge_warn "set merged bundle permissions (${_merged})"
@@ -3389,6 +3449,31 @@ _RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL
 
 write_runtime_shell_env() {
   _PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
+  _emit_gateway_token_reconcile() {
+    local _escaped_intended_gateway_token="$1"
+    cat <<'GATEWAYTOKENRECONCILESTART'
+# nemoclaw-gateway-token-reconcile start
+# The proxy-env file is the trust anchor for OPENCLAW_GATEWAY_TOKEN. Probe
+# writability in a subshell so a readonly pin cannot abort sourcing: advance the
+# anchor when writable (also the fresh-source and repeated-source paths), stay
+# silent when it already holds the intended value, and otherwise emit a
+# controlled conflict diagnostic that never echoes the trusted token.
+GATEWAYTOKENRECONCILESTART
+    printf "if ( OPENCLAW_GATEWAY_TOKEN='%s' ) 2>/dev/null; then\n" \
+      "$_escaped_intended_gateway_token"
+    printf "  OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_intended_gateway_token"
+    printf "else\n  case \"\${OPENCLAW_GATEWAY_TOKEN-}\" in\n"
+    printf "    '%s') : ;;\n" "$_escaped_intended_gateway_token"
+    cat <<'GATEWAYTOKENRECONCILEEND'
+    *)
+      /usr/bin/printf '%s\n' 'Error: conflicting trust anchor' >&2
+      /usr/bin/false
+      ;;
+  esac
+fi
+# nemoclaw-gateway-token-reconcile end
+GATEWAYTOKENRECONCILEEND
+  }
   {
     cat <<PROXYEOF
 # Proxy configuration (overrides narrow OpenShell defaults on connect)
@@ -3454,7 +3539,7 @@ GATEWAYURLENVEOF
     # src/lib/onboard/sandbox-create-launch.ts) and is the only in-container
     # source of the name; capture it here for the renderer below.
     #
-    # Apply the same RFC-1123 allowlist the renderer uses (mirrors
+    # Apply the same canonical sandbox-name allowlist the renderer uses (mirrors
     # NAME_VALID_PATTERN in src/lib/name-validation.ts). Missing or invalid
     # values cannot reach a copyable command. An accepted value is limited to
     # [a-z0-9-] and needs no further escaping.
@@ -3467,9 +3552,9 @@ GATEWAYURLENVEOF
       _sandbox_label=""
       case "$_sandbox_label_src" in
         "" | 0 | 1 | true | TRUE | false | FALSE) ;;
-        [!a-z]* | *- | *[!a-z0-9-]*) ;;
+        [!a-z]* | *- | *--* | *[!a-z0-9-]*) ;;
         *)
-          if [ "${#_sandbox_label_src}" -le 63 ]; then
+          if [ "${#_sandbox_label_src}" -le 19 ]; then
             _sandbox_label="$_sandbox_label_src"
           fi
           ;;
@@ -3942,11 +4027,12 @@ _nemoclaw_valid_sandbox_label() {
   # The candidates are untrusted input interpolated into a copyable `nemoclaw …`
   # command, so allowlist rather than merely strip: only render a value that is
   # a valid sandbox name. This mirrors NAME_VALID_PATTERN in
-  # src/lib/name-validation.ts (/^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63): starts
-  # with a lowercase letter, then lowercase alphanumerics/hyphens, no trailing
-  # hyphen. Anything else (digit-leading labels, control characters, ANSI
-  # escapes, shell metacharacters, whitespace) is rejected, and the caller falls
-  # back to a placeholder the user resolves with `nemoclaw list`. Shell `case`
+  # src/lib/name-validation.ts (lowercase, max 19, no consecutive hyphens):
+  # starts with a lowercase letter, then lowercase alphanumerics/single internal
+  # hyphens, with no trailing hyphen. Anything else (digit-leading labels,
+  # control characters, ANSI escapes, shell metacharacters, whitespace) is
+  # rejected, and the caller falls back to a placeholder the user resolves with
+  # `nemoclaw list`. Shell `case`
   # globs match newlines as ordinary characters, so an embedded newline is
   # rejected by the metacharacter class. The boolean forms are OpenShell's older
   # "this is a sandbox" marker rather than a name.
@@ -3959,9 +4045,9 @@ _nemoclaw_valid_sandbox_label() {
   LC_ALL=C
   case "${1:-}" in
     "" | 0 | 1 | true | TRUE | false | FALSE) ;;
-    [!a-z]* | *- | *[!a-z0-9-]*) ;;
+    [!a-z]* | *- | *--* | *[!a-z0-9-]*) ;;
     *)
-      if [ "${#1}" -le 63 ]; then
+      if [ "${#1}" -le 19 ]; then
         printf '%s' "$1"
       fi
       ;;
@@ -4074,11 +4160,19 @@ GUARDENVEOF
       # URL, including loopback, while WhatsApp revalidates its local override
       # immediately at the specialized exec boundary.
       printf 'export OPENCLAW_GATEWAY_TOKEN\n'
+      # Bake the intended value into each URL-case arm, then reconcile it against
+      # any pre-existing value. Avoiding a caller-visible temporary variable is
+      # required because the sourcing shell can already have any variable name
+      # pinned readonly. A blind assignment would abort sourcing with the shell's
+      # raw readonly error (exit 2) — and could echo the failing assignment line
+      # — when OPENCLAW_GATEWAY_TOKEN is already readonly and conflicting (#8428).
       cat <<'GATEWAYTOKENENVEOF'
 case "${OPENCLAW_GATEWAY_URL:-}" in
   *@*)
-    OPENCLAW_GATEWAY_TOKEN=
-    ;;
+GATEWAYTOKENENVEOF
+      _emit_gateway_token_reconcile ""
+      printf '    ;;\n'
+      cat <<'GATEWAYTOKENENVEOF'
   '' | ws://127.0.0.1 | ws://127.0.0.1:* | ws://127.0.0.1/* | \
     wss://127.0.0.1 | wss://127.0.0.1:* | wss://127.0.0.1/* | \
     ws://localhost | ws://localhost:* | ws://localhost/* | \
@@ -4086,10 +4180,10 @@ case "${OPENCLAW_GATEWAY_URL:-}" in
     "ws://[::1]" | "ws://[::1]:"* | "ws://[::1]/"* | \
     "wss://[::1]" | "wss://[::1]:"* | "wss://[::1]/"*)
 GATEWAYTOKENENVEOF
-      printf "    OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_gateway_token"
+      _emit_gateway_token_reconcile "$_escaped_gateway_token"
       printf '    ;;\n'
       printf '  *)\n'
-      printf '    OPENCLAW_GATEWAY_TOKEN=\n'
+      _emit_gateway_token_reconcile ""
       printf '    ;;\n'
       printf 'esac\n'
     fi
@@ -5786,6 +5880,8 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # ── Root path (full privilege separation via setpriv) ──────────
+
+echo "[gateway] NEMOCLAW_ENTRYPOINT_MODE=root" >&2
 
 # Empty-config recovery runs before integrity check so a #3118 truncation
 # (openshell inference set inside the sandbox) is restored from baseline

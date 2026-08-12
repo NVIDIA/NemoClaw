@@ -3,13 +3,14 @@
 
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { redactFull } from "../security/redact";
-import type { SandboxGpuProofResult } from "../state/registry";
+import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch";
 import type { DockerGpuPatchDeps, DockerUlimit } from "./docker-gpu-patch-types";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
+import { installPortableDemoSandboxLifecycle } from "./experimental/portable-demo-lifecycle";
 import {
   type ManagedBootstrapAdapter,
   type ManagedBootstrapAgentIdentity,
@@ -65,6 +66,7 @@ function exitForManagedBootstrapRecovery(error: ManagedBootstrapRecoveryBlockedE
 type RunOpenshell = NonNullable<DockerGpuPatchDeps["runOpenshell"]>;
 type RunCaptureOpenshell = NonNullable<DockerGpuPatchDeps["runCaptureOpenshell"]>;
 type Sleep = NonNullable<DockerGpuPatchDeps["sleep"]>;
+type LifecycleRegistrationFields = Pick<SandboxEntry, "lifecycleGeneration">;
 
 export interface SandboxGpuCreateFlowInput {
   sandboxName: string;
@@ -79,6 +81,7 @@ export interface SandboxGpuCreateFlowInput {
   createArgv: string[];
   sandboxEnv: NodeJS.ProcessEnv;
   sandboxStartupCommand: string[];
+  lifecycleGeneration?: SandboxEntry["lifecycleGeneration"];
   prebuild: SandboxPrebuildResult;
   restoreBackupPath: string | null;
   terminalAgent: boolean;
@@ -105,6 +108,8 @@ export interface SandboxGpuCreateFlowDeps {
   sleep: Sleep;
   openshellArgv(args: string[]): string[];
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
+  /** Production callers configure the hidden portable lifecycle through the default implementation. */
+  installPortableDemoLifecycle?: typeof installPortableDemoSandboxLifecycle;
   /** Production callers omit this factory and use the runtime provider's adapter. */
   createManagedBootstrapAdapter?: () => ManagedBootstrapAdapter;
 }
@@ -116,6 +121,7 @@ export interface SandboxGpuCreateFlowResult {
   firstCreateOutput: string;
   /** Mutable tag/reference retained only for registry and image-GC bookkeeping. */
   registryImageRef: string | null;
+  lifecycleRegistrationFields: LifecycleRegistrationFields;
 }
 
 /**
@@ -247,10 +253,30 @@ export async function runSandboxGpuCreateFlow(
     process.exit(1);
   }
 
+  let portableLifecycleGeneration: string | null = null;
+  try {
+    portableLifecycleGeneration =
+      (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
+        input.sandboxName,
+        input.sandboxStartupCommand,
+        process.env,
+        {
+          ...(input.lifecycleGeneration ? { registryGeneration: input.lifecycleGeneration } : {}),
+        },
+      ) ?? null;
+  } catch (error) {
+    const detail = redactFull(error instanceof Error ? error.message : String(error)).slice(0, 500);
+    console.warn(`  Portable demo lifecycle setup did not complete: ${detail}`);
+  }
+
   return {
     ...gpuCreateOutcome.value,
     route: gpuCreateOutcome.route,
     firstCreateOutput: attemptRunner.state.firstCreateOutput,
     registryImageRef,
+    lifecycleRegistrationFields: {
+      ...(portableLifecycleGeneration ? { lifecycleGeneration: portableLifecycleGeneration } : {}),
+      ...(input.lifecycleGeneration ? { lifecycleGeneration: input.lifecycleGeneration } : {}),
+    },
   };
 }

@@ -26,9 +26,12 @@ import {
 } from "./podman-bootstrap-replacement";
 import {
   PODMAN_MANAGED_LABEL,
+  PODMAN_SANDBOX_CONTAINER_PREFIX,
   PODMAN_SANDBOX_ID_LABEL,
   PODMAN_SANDBOX_NAME_LABEL,
   PODMAN_SANDBOX_NAMESPACE_LABEL,
+  PODMAN_SANDBOX_WORKSPACE,
+  PODMAN_SANDBOX_WORKSPACE_LABEL,
   type PodmanHeldWorkloadObservation,
 } from "./podman-held-workload";
 import {
@@ -45,9 +48,9 @@ const REPLACEMENT_IMAGE_ID = `sha256:${"6".repeat(64)}`;
 const ENGINE_AUTHORITY_ID = `podman-sha256:${"7".repeat(64)}`;
 const SANDBOX_NAME = "alpha";
 const SANDBOX_ID = "sandbox-alpha";
-const ORIGINAL_NAME = `openshell-sandbox-${SANDBOX_NAME}`;
-const STAGING_NAME = "openshell-sandbox-alpha-nemoclaw-bootstrap-111111111111";
-const STATE_VOLUME_NAME = "openshell-sandbox-alpha-nemoclaw-state-111111111111";
+const ORIGINAL_NAME = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${SANDBOX_NAME}-${SANDBOX_ID}`;
+const STAGING_NAME = `${ORIGINAL_NAME}-nemoclaw-bootstrap-111111111111`;
+const STATE_VOLUME_NAME = `${ORIGINAL_NAME}-nemoclaw-state-111111111111`;
 const STATE_VOLUME_MOUNTPOINT = `/var/lib/containers/storage/volumes/${STATE_VOLUME_NAME}/_data`;
 const SUPERVISOR_ARGV = ["/opt/openshell/bin/supervisor", "--config", "/etc/openshell.toml"];
 const ENTRYPOINT_ARGV = ["/usr/local/bin/nemoclaw-managed-bootstrap"];
@@ -61,6 +64,7 @@ const LABELS = Object.freeze({
   [PODMAN_SANDBOX_ID_LABEL]: SANDBOX_ID,
   [PODMAN_SANDBOX_NAME_LABEL]: SANDBOX_NAME,
   [PODMAN_SANDBOX_NAMESPACE_LABEL]: "",
+  [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
 });
 const STATE_VOLUME_LABELS = Object.freeze({
   [PODMAN_BOOTSTRAP_IDENTITY_LABEL]: BOOTSTRAP_IDENTITY,
@@ -418,6 +422,49 @@ describe("Podman bootstrap stopped replacement", () => {
     expect(JSON.stringify(prepared.journal)).not.toContain("do-not-put-this-in-process-argv");
     expect(watcher.assertStillStopped.mock.calls.length).toBeGreaterThanOrEqual(6);
     expect(watcher.resumeAndProve).not.toHaveBeenCalled();
+  });
+
+  it("rejects a held workload outside NemoClaw's default OpenShell workspace", () => {
+    const harness = new PodmanHarness();
+    const store = journalStore();
+    const watcher = watcherLease();
+
+    expect(() =>
+      prepareStoppedPodmanBootstrapReplacement({
+        engine: harness.engine,
+        journalStore: store,
+        watcherLease: watcher.lease,
+        plan: {
+          ...plan,
+          heldWorkload: {
+            ...heldWorkload,
+            labels: { ...LABELS, [PODMAN_SANDBOX_WORKSPACE_LABEL]: "another-workspace" },
+          },
+        },
+      }),
+    ).toThrow("exact OpenShell ownership");
+    expect(store.load(BOOTSTRAP_IDENTITY)).toBeNull();
+    expect(harness.calls).toEqual([]);
+  });
+
+  it("rejects a held workload whose name does not encode its exact OpenShell identity", () => {
+    const harness = new PodmanHarness();
+    const store = journalStore();
+    const watcher = watcherLease();
+
+    expect(() =>
+      prepareStoppedPodmanBootstrapReplacement({
+        engine: harness.engine,
+        journalStore: store,
+        watcherLease: watcher.lease,
+        plan: {
+          ...plan,
+          heldWorkload: { ...heldWorkload, containerName: `openshell-sandbox-${SANDBOX_NAME}` },
+        },
+      }),
+    ).toThrow("container name does not match exact OpenShell ownership");
+    expect(store.load(BOOTSTRAP_IDENTITY)).toBeNull();
+    expect(harness.calls).toEqual([]);
   });
 
   it("accepts a stable Podman inspect with reordered environment entries", () => {

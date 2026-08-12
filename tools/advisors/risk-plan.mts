@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-
+import {
+  LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
+  LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,
+} from "../../scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts";
 import * as importedProtectedManagedImageContract from "../../scripts/checks/protected-managed-image-contract.ts";
 
 // The root TypeScript package is exposed as CJS under the exact
@@ -18,7 +21,7 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 16 as const;
+export const RISK_PLAN_VERSION = 17 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -27,6 +30,13 @@ export const PR_E2E_TYPED_TARGET_IDS = [
 
 const PR_E2E_TYPED_TARGET_ID_SET = new Set<string>(PR_E2E_TYPED_TARGET_IDS);
 const PR_E2E_PLANNING_OMITTED_JOB_IDS = new Set(["jetson-nvmap-gpu"]);
+export const PR_E2E_MANUAL_CONTROLLER_JOB_IDS = [
+  "inference-routing",
+  "managed-image-protected-runtime",
+] as const;
+const PR_E2E_MANUAL_CONTROLLER_JOB_ID_SET = new Set<string>(
+  PR_E2E_MANUAL_CONTROLLER_JOB_IDS,
+);
 const DEEPAGENTS_HEADLESS_INFERENCE_CHECK =
   "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh";
 const DEEPAGENTS_CODE_RUNTIME_ROOT = "agents/langchain-deepagents-code/";
@@ -96,7 +106,6 @@ const MANAGED_IMAGE_PROTECTED_RUNTIME_INPUT_PREFIXES = [
   "src/lib/onboard/workload/",
   "test/e2e/live/managed-image-protected-runtime.",
 ] as const;
-const LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION = "ci/llama-cpp-dgx-spark-qualification-v1.yaml";
 const LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID = "llama-cpp-dgx-spark-qualification" as const;
 // The activation-only phase is complete. Any input that can change bytes or
 // startup policy in a shipped managed image must requalify the exact all-agent
@@ -235,9 +244,13 @@ export function isPrE2eTypedTargetId(value: string): boolean {
 }
 
 export function isPrE2ePlanningJob(value: string): boolean {
-  // Automatic PR planning cannot confirm an online self-hosted Jetson runner.
-  // Remove this exclusion after the Colossus-backed runner path can make that confirmation.
+  // Automatic PR planning cannot attest the external Colossus dispatcher and cleanup path.
+  // Remove this exclusion after that hardware gate produces trusted planning evidence.
   return !PR_E2E_PLANNING_OMITTED_JOB_IDS.has(value);
+}
+
+export function isPrE2eManualControllerJob(value: string): boolean {
+  return PR_E2E_MANUAL_CONTROLLER_JOB_ID_SET.has(value);
 }
 
 export function focusedPrE2eTargetsForChangedFiles(
@@ -315,7 +328,10 @@ export function focusedPrE2eJobsForChangedFiles(
           },
         ]
       : []),
-    ...MANAGED_STARTUP_E2E_JOB_IDS.map((id) => ({ id, matchedFiles: managedStartupFiles })),
+    ...MANAGED_STARTUP_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: managedStartupFiles,
+    })),
     ...HERMES_CLI_ADAPTER_E2E_JOB_IDS.map((id) => ({
       id,
       matchedFiles: hermesCliAdapterFiles,
@@ -550,7 +566,9 @@ export const RISK_RULES: readonly RiskRule[] = [
     // The trusted workflow and validators land while dormant. A later YAML-only
     // activation candidate selects this protected lane after the Spark runner,
     // approval environment, and verified local model path are provisioned.
-    matches: (file) => file === LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION,
+    matches: (file) =>
+      file === LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH ||
+      file === LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
   },
   {
     id: "sandbox-boundary",

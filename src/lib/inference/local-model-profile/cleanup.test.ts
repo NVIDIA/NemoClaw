@@ -6,14 +6,9 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  MANAGED_LLAMA_CPP_AUTH_LABEL,
-  MANAGED_LLAMA_CPP_CONTAINER_NAME,
-  MANAGED_LLAMA_CPP_GENERATION_LABEL,
-  MANAGED_LLAMA_CPP_NETWORK_NAME,
-  MANAGED_LLAMA_CPP_OWNER_LABEL,
-  MANAGED_LLAMA_CPP_OWNER_VALUE,
-} from "../llama-cpp/managed-installer";
+
+import { createHostLocalCreateJournalStore } from "../../onboard/runtime-provider/host-local-create-journal";
+import { managedLlamaCppStatePaths } from "../llama-cpp/managed-state";
 import { runtimeAuthFingerprint } from "../serving/runtime-auth-fingerprint";
 import {
   HOST_LOCAL_VLLM_AUTH_LABEL,
@@ -27,44 +22,22 @@ import {
   HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
   persistHostLocalVllmRuntimeReceipt,
 } from "../serving/vllm-host-local-lifecycle";
-import { cleanupLocalModelRuntimes, type LocalModelRuntimeCleanupOptions } from "./cleanup";
+import { managedVllmStateDir } from "../vllm-api-key";
+import {
+  cleanupLocalModelRuntimes,
+  cleanupManagedLlamaCppRuntimeForSandbox,
+  resolveManagedLlamaCppCleanupTarget,
+} from "./cleanup";
+import {
+  createManagedState,
+  createPreStartManagedState,
+  engineHarness,
+  NETWORK_ID,
+  RUNTIME_ID,
+  TRANSACTION_ID,
+} from "./cleanup.test-support";
 
 const temporaryDirectories: string[] = [];
-
-function result(status = 0) {
-  return { status } as never;
-}
-
-function ownedContainer(
-  name: string,
-  id: string,
-  labels: Record<string, string>,
-  env: string[] = [],
-) {
-  return JSON.stringify([{ Id: id, Name: `/${name}`, Config: { Env: env, Labels: labels } }]);
-}
-
-function ownedNetwork(name: string, id: string, generation: string) {
-  return JSON.stringify([
-    {
-      Driver: "bridge",
-      Id: id,
-      Internal: true,
-      Name: name,
-      Scope: "local",
-      Labels: {
-        [MANAGED_LLAMA_CPP_OWNER_LABEL]: MANAGED_LLAMA_CPP_OWNER_VALUE,
-        [MANAGED_LLAMA_CPP_GENERATION_LABEL]: generation,
-      },
-    },
-  ]);
-}
-
-function home(): string {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-local-cleanup-"));
-  temporaryDirectories.push(directory);
-  return directory;
-}
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
@@ -72,110 +45,191 @@ afterEach(() => {
   }
 });
 
-describe("host-local model runtime cleanup", () => {
-  it("removes exact llama.cpp container and network IDs while preserving the cache", () => {
-    const homeDir = home();
-    const runtimeState = path.join(homeDir, ".nemoclaw", "managed-llama-cpp");
-    fs.mkdirSync(runtimeState, {
-      mode: 0o700,
-      recursive: true,
-    });
-    const generation = "9".repeat(32);
-    const apiKey = "8".repeat(64);
-    fs.writeFileSync(
-      path.join(runtimeState, "owner.json"),
-      `${JSON.stringify({ id: "nemoclaw-local-model-profile", generation })}\n`,
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(path.join(runtimeState, "api-key"), `${apiKey}\n`, { mode: 0o600 });
-    fs.writeFileSync(
-      path.join(runtimeState, "runtime.json"),
-      `${JSON.stringify({
-        schemaVersion: 1,
-        receiptRef: "llama-cpp.host-local.receipt/v1",
-        owner: { id: "nemoclaw-local-model-profile", generation },
-        authentication: {
-          fingerprint: runtimeAuthFingerprint(apiKey),
-        },
-        container: { name: MANAGED_LLAMA_CPP_CONTAINER_NAME, id: "a".repeat(64) },
-        network: { name: MANAGED_LLAMA_CPP_NETWORK_NAME, id: "b".repeat(64) },
-        runtime: { image: `example.invalid/runtime@sha256:${"c".repeat(64)}` },
-        model: { servedName: "catalog-model", digest: `sha256:${"d".repeat(64)}`, sizeBytes: 1 },
-      })}\n`,
-      { mode: 0o600 },
-    );
-    const cache = path.join(homeDir, ".cache", "nemoclaw", "llama-cpp");
-    fs.mkdirSync(cache, { mode: 0o700, recursive: true });
-    const forceRm = vi.fn(() => result());
-    const run = vi.fn(() => result());
-    const capture = vi.fn((argv: readonly string[]) => {
-      const llamaResult =
-        argv[0] === "container" && argv[2] === MANAGED_LLAMA_CPP_CONTAINER_NAME
-          ? ownedContainer(MANAGED_LLAMA_CPP_CONTAINER_NAME, "a".repeat(64), {
-              [MANAGED_LLAMA_CPP_OWNER_LABEL]: MANAGED_LLAMA_CPP_OWNER_VALUE,
-              [MANAGED_LLAMA_CPP_GENERATION_LABEL]: generation,
-              [MANAGED_LLAMA_CPP_AUTH_LABEL]: runtimeAuthFingerprint(apiKey),
-            })
-          : "";
-      const networkResult =
-        argv[0] === "network" && argv[2] === MANAGED_LLAMA_CPP_NETWORK_NAME
-          ? ownedNetwork(MANAGED_LLAMA_CPP_NETWORK_NAME, "b".repeat(64), generation)
-          : "";
-      return llamaResult || networkResult;
-    });
+function temporaryHome(): string {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-local-cleanup-"));
+  const canonicalHome = fs.realpathSync(home);
+  temporaryDirectories.push(canonicalHome);
+  return canonicalHome;
+}
 
-    expect(
-      cleanupLocalModelRuntimes({
-        deleteModels: false,
-        homeDir,
-        deps: { capture: capture as never, forceRm: forceRm as never, run: run as never },
-      }),
-    ).toEqual({
+function ownedContainer(
+  name: string,
+  id: string,
+  labels: Record<string, string>,
+  env: string[] = [],
+): string {
+  return JSON.stringify([{ Id: id, Name: `/${name}`, Config: { Env: env, Labels: labels } }]);
+}
+
+describe("host-local model cleanup", () => {
+  it("treats an absent home as no managed runtime state", () => {
+    const homeDir = path.join(temporaryHome(), "absent-home");
+
+    expect(resolveManagedLlamaCppCleanupTarget(homeDir, 8080)).toBeNull();
+    expect(cleanupManagedLlamaCppRuntimeForSandbox("sandbox", { homeDir })).toEqual({
       ok: true,
-      removed: [`container:${"a".repeat(64)}`, `network:${"b".repeat(64)}`],
-      preserved: [cache],
+      preserved: [],
+      removed: [],
     });
-    expect(forceRm).toHaveBeenCalledWith("a".repeat(64), expect.any(Object));
-    expect(run).toHaveBeenCalledWith(["network", "rm", "b".repeat(64)], expect.any(Object));
+    expect(cleanupLocalModelRuntimes({ deleteModels: false, homeDir })).toEqual({
+      ok: true,
+      preserved: [],
+      removed: [],
+    });
   });
 
-  it("removes authenticated host-local vLLM only when key and fingerprint match", () => {
-    const homeDir = home();
+  it("retires an interrupted pre-start owner only after proving both runtime names absent", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness({ containerPresent: false, networkPresent: false });
+    createPreStartManagedState(homeDir, harness.engine);
+
+    const result = cleanupLocalModelRuntimes({
+      deleteModels: false,
+      homeDir,
+      engine: harness.engine,
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(false);
+    expect(harness.capture.mock.calls.map((call) => call[0]?.slice(0, 2))).not.toContainEqual([
+      "rm",
+      "--force",
+    ]);
+    expect(harness.capture.mock.calls.map((call) => call[0]?.slice(0, 2))).not.toContainEqual([
+      "network",
+      "rm",
+    ]);
+  });
+
+  it("retains pre-start ownership when either fixed Docker name is present", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness({ containerPresent: true, networkPresent: false });
+    createPreStartManagedState(homeDir, harness.engine);
+
+    const result = cleanupLocalModelRuntimes({
+      deleteModels: false,
+      homeDir,
+      engine: harness.engine,
+    });
+
+    expect(result).toMatchObject({ ok: false });
+    expect(result.ok ? "" : result.reason).toContain("cannot prove its fixed runtime names absent");
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
+    expect(harness.capture.mock.calls.map((call) => call[0]?.slice(0, 2))).not.toContainEqual([
+      "rm",
+      "--force",
+    ]);
+  });
+
+  it("removes authenticated legacy host-local vLLM when key and fingerprint match", () => {
+    const homeDir = temporaryHome();
     const stateDir = path.join(homeDir, ".nemoclaw");
     fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
     const apiKey = "c".repeat(64);
+    const containerId = "d".repeat(64);
     fs.writeFileSync(path.join(stateDir, "dual-station-vllm-api-key"), `${apiKey}\n`, {
       mode: 0o600,
     });
-    const forceRm = vi.fn(() => result());
-    const capture = vi.fn((argv: readonly string[]) => {
-      return argv[0] === "container" && argv[2] === HOST_LOCAL_VLLM_CONTAINER_NAME
+    const forceRm = vi.fn(() => ({ status: 0 }) as never);
+    const capture = vi.fn((argv: readonly string[]) =>
+      argv[0] === "container" && argv[2] === HOST_LOCAL_VLLM_CONTAINER_NAME
         ? ownedContainer(
             HOST_LOCAL_VLLM_CONTAINER_NAME,
-            "d".repeat(64),
+            containerId,
             {
               [HOST_LOCAL_VLLM_MANAGED_LABEL]: "true",
               [HOST_LOCAL_VLLM_AUTH_LABEL]: runtimeAuthFingerprint(apiKey),
             },
             [`VLLM_API_KEY=${apiKey}`],
           )
-        : "";
-    });
-    const options: LocalModelRuntimeCleanupOptions = {
-      deleteModels: false,
-      homeDir,
-      deps: { capture: capture as never, forceRm: forceRm as never, run: vi.fn(() => result()) },
-    };
+        : "",
+    );
 
-    expect(cleanupLocalModelRuntimes(options)).toMatchObject({
-      ok: true,
-      removed: [`container:${"d".repeat(64)}`],
-    });
+    expect(
+      cleanupLocalModelRuntimes({
+        deleteModels: false,
+        homeDir,
+        deps: {
+          capture: capture as never,
+          forceRm: forceRm as never,
+          run: vi.fn(() => ({ status: 0 }) as never),
+        },
+      }),
+    ).toMatchObject({ ok: true, removed: [`container:${containerId}`] });
     expect(fs.existsSync(path.join(stateDir, "dual-station-vllm-api-key"))).toBe(false);
   });
 
+  it("removes exact host-global vLLM state when cleanup is requested for a nondefault gateway", () => {
+    const homeDir = temporaryHome();
+    const gatewayPort = 8091;
+    const stateDir = managedVllmStateDir(homeDir);
+    fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
+    const apiKey = "a".repeat(64);
+    const containerId = "b".repeat(64);
+    const serving = {
+      catalogDigest: `sha256:${"c".repeat(64)}`,
+      presetId: "vllm.dgx-spark-gb10.single.example",
+      presetDigest: `sha256:${"d".repeat(64)}`,
+      recipeId: "vllm.dgx-spark-gb10.single.example",
+      recipeDigest: `sha256:${"e".repeat(64)}`,
+    } as const;
+    fs.writeFileSync(path.join(stateDir, "dual-station-vllm-api-key"), `${apiKey}\n`, {
+      mode: 0o600,
+    });
+    persistHostLocalVllmRuntimeReceipt(
+      { containerId, authFingerprint: runtimeAuthFingerprint(apiKey), serving },
+      stateDir,
+    );
+    const forceRm = vi.fn(() => ({ status: 0 }) as never);
+    const capture = vi.fn((argv: readonly string[]) =>
+      argv[0] === "container" && argv[2] === HOST_LOCAL_VLLM_CONTAINER_NAME
+        ? ownedContainer(
+            HOST_LOCAL_VLLM_CONTAINER_NAME,
+            containerId,
+            {
+              [HOST_LOCAL_VLLM_MANAGED_LABEL]: "true",
+              [HOST_LOCAL_VLLM_AUTH_LABEL]: runtimeAuthFingerprint(apiKey),
+              [HOST_LOCAL_VLLM_CATALOG_LABEL]: serving.catalogDigest,
+              [HOST_LOCAL_VLLM_PRESET_LABEL]: serving.presetId,
+              [HOST_LOCAL_VLLM_PRESET_DIGEST_LABEL]: serving.presetDigest,
+              [HOST_LOCAL_VLLM_RECIPE_LABEL]: serving.recipeId,
+              [HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL]: serving.recipeDigest,
+            },
+            [`VLLM_API_KEY=${apiKey}`],
+          )
+        : "",
+    );
+
+    expect(
+      cleanupLocalModelRuntimes({
+        deleteModels: false,
+        gatewayPort,
+        homeDir,
+        deps: {
+          capture: capture as never,
+          forceRm: forceRm as never,
+          run: vi.fn(() => ({ status: 0 }) as never),
+        },
+      }),
+    ).toMatchObject({ ok: true, removed: [`container:${containerId}`] });
+    expect(forceRm).toHaveBeenCalledWith(containerId, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(fs.existsSync(path.join(stateDir, "dual-station-vllm-api-key"))).toBe(false);
+    expect(fs.existsSync(path.join(stateDir, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE))).toBe(false);
+    expect(
+      fs.existsSync(
+        path.join(
+          managedLlamaCppStatePaths(homeDir, gatewayPort).root,
+          "dual-station-vllm-api-key",
+        ),
+      ),
+    ).toBe(false);
+  });
+
   it("removes a profile-labeled vLLM and its exact ownership receipt", () => {
-    const homeDir = home();
+    const homeDir = temporaryHome();
     const stateDir = path.join(homeDir, ".nemoclaw");
     fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
     const apiKey = "1".repeat(64);
@@ -194,7 +248,7 @@ describe("host-local model runtime cleanup", () => {
       { containerId, authFingerprint: runtimeAuthFingerprint(apiKey), serving },
       stateDir,
     );
-    const forceRm = vi.fn(() => result());
+    const forceRm = vi.fn(() => ({ status: 0 }) as never);
     const capture = vi.fn((argv: readonly string[]) =>
       argv[0] === "container" && argv[2] === HOST_LOCAL_VLLM_CONTAINER_NAME
         ? ownedContainer(
@@ -218,14 +272,19 @@ describe("host-local model runtime cleanup", () => {
       cleanupLocalModelRuntimes({
         deleteModels: false,
         homeDir,
-        deps: { capture: capture as never, forceRm: forceRm as never, run: vi.fn(() => result()) },
+        deps: {
+          capture: capture as never,
+          forceRm: forceRm as never,
+          run: vi.fn(() => ({ status: 0 }) as never),
+        },
       }),
     ).toMatchObject({ ok: true, removed: [`container:${containerId}`] });
     expect(fs.existsSync(path.join(stateDir, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE))).toBe(false);
+    expect(fs.existsSync(path.join(stateDir, "dual-station-vllm-api-key"))).toBe(false);
   });
 
   it("refuses to remove a profile-labeled vLLM without its ownership receipt", () => {
-    const homeDir = home();
+    const homeDir = temporaryHome();
     const stateDir = path.join(homeDir, ".nemoclaw");
     fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
     const apiKey = "6".repeat(64);
@@ -241,28 +300,31 @@ describe("host-local model runtime cleanup", () => {
       [HOST_LOCAL_VLLM_RECIPE_LABEL]: "vllm.dgx-spark-gb10.single.example",
       [HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL]: `sha256:${"9".repeat(64)}`,
     };
-    const forceRm = vi.fn(() => result());
+    const forceRm = vi.fn(() => ({ status: 0 }) as never);
 
     expect(
       cleanupLocalModelRuntimes({
         deleteModels: false,
         homeDir,
         deps: {
-          capture: vi.fn(() =>
-            ownedContainer(HOST_LOCAL_VLLM_CONTAINER_NAME, "a".repeat(64), labels, [
-              `VLLM_API_KEY=${apiKey}`,
-            ]),
+          capture: vi.fn((argv: readonly string[]) =>
+            argv[0] === "container" && argv[2] === HOST_LOCAL_VLLM_CONTAINER_NAME
+              ? ownedContainer(HOST_LOCAL_VLLM_CONTAINER_NAME, "a".repeat(64), labels, [
+                  `VLLM_API_KEY=${apiKey}`,
+                ])
+              : "",
           ) as never,
           forceRm: forceRm as never,
-          run: vi.fn(() => result()),
+          run: vi.fn(() => ({ status: 0 }) as never),
         },
       }),
     ).toMatchObject({ ok: false, reason: expect.stringContaining("ownership receipt") });
     expect(forceRm).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(stateDir, "dual-station-vllm-api-key"))).toBe(true);
   });
 
   it("fails closed when the vLLM container name is foreign while local key state remains", () => {
-    const homeDir = home();
+    const homeDir = temporaryHome();
     const stateDir = path.join(homeDir, ".nemoclaw");
     fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
     fs.writeFileSync(path.join(stateDir, "dual-station-vllm-api-key"), `${"e".repeat(64)}\n`, {
@@ -273,27 +335,8 @@ describe("host-local model runtime cleanup", () => {
         ? ownedContainer(HOST_LOCAL_VLLM_CONTAINER_NAME, "f".repeat(64), {})
         : "";
     });
-    const forceRm = vi.fn(() => result());
+    const forceRm = vi.fn(() => ({ status: 0 }) as never);
 
-    expect(
-      cleanupLocalModelRuntimes({
-        deleteModels: false,
-        homeDir,
-        deps: { capture: capture as never, forceRm: forceRm as never, run: vi.fn(() => result()) },
-      }),
-    ).toMatchObject({ ok: false, reason: expect.stringContaining("container name is foreign") });
-    expect(forceRm).not.toHaveBeenCalled();
-    expect(fs.existsSync(path.join(stateDir, "dual-station-vllm-api-key"))).toBe(true);
-  });
-
-  it("fails closed when Docker is unavailable and managed llama.cpp state remains", () => {
-    const homeDir = home();
-    fs.mkdirSync(path.join(homeDir, ".nemoclaw", "managed-llama-cpp"), {
-      mode: 0o700,
-      recursive: true,
-    });
-    const capture = vi.fn(() => "");
-    const forceRm = vi.fn(() => result());
     expect(
       cleanupLocalModelRuntimes({
         deleteModels: false,
@@ -301,82 +344,240 @@ describe("host-local model runtime cleanup", () => {
         deps: {
           capture: capture as never,
           forceRm: forceRm as never,
-          run: vi.fn(() => result(1)),
+          run: vi.fn(() => ({ status: 0 }) as never),
         },
       }),
-    ).toMatchObject({ ok: false, reason: expect.stringContaining("Docker is unavailable") });
-    expect(capture).not.toHaveBeenCalled();
+    ).toMatchObject({ ok: false, reason: expect.stringContaining("container name is foreign") });
     expect(forceRm).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(stateDir, "dual-station-vllm-api-key"))).toBe(true);
   });
 
-  it("deletes only a receipt-bound managed llama.cpp cache", () => {
-    const homeDir = home();
-    const cacheRoot = path.join(homeDir, ".cache", "nemoclaw", "llama-cpp");
-    const entryName = `sha256-${"a".repeat(64)}`;
-    const entryDir = path.join(cacheRoot, entryName);
-    const owner = { id: "nemoclaw-local-model-profile", generation: "b".repeat(32) };
-    fs.mkdirSync(entryDir, { mode: 0o700, recursive: true });
-    fs.writeFileSync(path.join(cacheRoot, "owner.json"), `${JSON.stringify(owner)}\n`, {
-      mode: 0o600,
+  it("removes only exact receipt-owned llama.cpp resources through the qualified engine", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine);
+    const cache = path.join(homeDir, ".cache", "huggingface");
+    fs.mkdirSync(cache, { recursive: true });
+    fs.writeFileSync(path.join(cache, "shared-model"), "keep");
+    const ambientCapture = vi.fn(() => "") as never;
+    const ambientForceRm = vi.fn(() => ({ status: 0 })) as never;
+    const ambientRun = vi.fn(() => ({ status: 0 })) as never;
+
+    const result = cleanupLocalModelRuntimes({
+      deleteModels: true,
+      homeDir,
+      engine: harness.engine,
+      deps: {
+        capture: ambientCapture,
+        forceRm: ambientForceRm,
+        run: ambientRun,
+      },
     });
-    fs.writeFileSync(
-      path.join(entryDir, "receipt.json"),
-      `${JSON.stringify({
-        schemaVersion: 1,
-        receiptRef: "llama-cpp.gguf-cache-entry.receipt/v1",
-        cache: { ref: "llama-cpp.gguf-content-addressed/v1", key: entryName },
-        owner,
-      })}\n`,
-      { mode: 0o600 },
-    );
-
-    expect(
-      cleanupLocalModelRuntimes({
-        deleteModels: true,
-        homeDir,
-        deps: {
-          capture: vi.fn(() => ""),
-          forceRm: vi.fn() as never,
-          run: vi.fn(() => result()),
-        },
-      }),
-    ).toMatchObject({ ok: true, removed: [`cache:${cacheRoot}`] });
-    expect(fs.existsSync(cacheRoot)).toBe(false);
+    expect(result).toMatchObject({ ok: true });
+    expect(harness.capture).toHaveBeenCalledWith(["rm", "--force", RUNTIME_ID], expect.any(Number));
+    expect(harness.capture).toHaveBeenCalledWith(["network", "rm", NETWORK_ID], expect.any(Number));
+    expect(ambientCapture).not.toHaveBeenCalled();
+    expect(ambientForceRm).not.toHaveBeenCalled();
+    expect(ambientRun).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(cache, "shared-model"))).toBe(true);
+    expect(result.preserved).toContain(cache);
   });
 
-  it("preserves the cache when a receipt does not match its owner", () => {
-    const homeDir = home();
-    const cacheRoot = path.join(homeDir, ".cache", "nemoclaw", "llama-cpp");
-    const entryName = `sha256-${"c".repeat(64)}`;
-    const entryDir = path.join(cacheRoot, entryName);
-    fs.mkdirSync(entryDir, { mode: 0o700, recursive: true });
-    fs.writeFileSync(
-      path.join(cacheRoot, "owner.json"),
-      `${JSON.stringify({ id: "nemoclaw-local-model-profile", generation: "d".repeat(32) })}\n`,
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      path.join(entryDir, "receipt.json"),
-      `${JSON.stringify({
-        schemaVersion: 1,
-        receiptRef: "llama-cpp.gguf-cache-entry.receipt/v1",
-        cache: { ref: "llama-cpp.gguf-content-addressed/v1", key: entryName },
-        owner: { id: "nemoclaw-local-model-profile", generation: "e".repeat(32) },
-      })}\n`,
-      { mode: 0o600 },
-    );
+  it("canonicalizes a symlink HOME alias before exact managed llama.cpp cleanup", () => {
+    const homeDir = temporaryHome();
+    const homeAlias = path.join(homeDir, "home-alias");
+    fs.symlinkSync(homeDir, homeAlias, "dir");
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine);
 
-    expect(
-      cleanupLocalModelRuntimes({
-        deleteModels: true,
+    const result = cleanupLocalModelRuntimes({
+      deleteModels: false,
+      homeDir: homeAlias,
+      engine: harness.engine,
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(false);
+    expect(harness.capture).toHaveBeenCalledWith(["rm", "--force", RUNTIME_ID], expect.any(Number));
+    expect(harness.capture).toHaveBeenCalledWith(["network", "rm", NETWORK_ID], expect.any(Number));
+  });
+
+  it("rejects a final-component managed llama.cpp state-directory symlink", () => {
+    const homeDir = temporaryHome();
+    const paths = managedLlamaCppStatePaths(homeDir);
+    const symlinkTarget = path.join(homeDir, "foreign-managed-state");
+    fs.mkdirSync(paths.root, { mode: 0o700, recursive: true });
+    fs.mkdirSync(symlinkTarget, { mode: 0o700 });
+    fs.symlinkSync(symlinkTarget, paths.stateDir, "dir");
+    const harness = engineHarness();
+
+    const result = cleanupLocalModelRuntimes({
+      deleteModels: false,
+      homeDir,
+      engine: harness.engine,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("state directory is a symlink"),
+    });
+    expect(harness.capture).not.toHaveBeenCalled();
+    expect(fs.lstatSync(paths.stateDir).isSymbolicLink()).toBe(true);
+  });
+
+  it.each([
+    "network-creating",
+    "creating",
+    "created",
+    "started",
+    "receipt-prepared",
+  ] as const)("rolls back an unfinished %s create journal before deleting state", (phase) => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness({ containerPresent: phase !== "network-creating" });
+    createManagedState(homeDir, harness.engine, { phase });
+
+    const result = cleanupLocalModelRuntimes({
+      deleteModels: false,
+      homeDir,
+      engine: harness.engine,
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(false);
+  });
+
+  it("fails closed on a fresh uncertain create that has no exact container yet", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness({ containerPresent: false });
+    createManagedState(homeDir, harness.engine, {
+      phase: "creating",
+      createIntentUnixMs: Date.now(),
+    });
+
+    const result = cleanupLocalModelRuntimes({
+      deleteModels: false,
+      homeDir,
+      engine: harness.engine,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("grace period"),
+    });
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
+  });
+
+  it("refuses a changed engine authority before any Docker inspection", () => {
+    const homeDir = temporaryHome();
+    const original = engineHarness({ authorityId: "docker:original" });
+    const changed = engineHarness({ authorityId: "docker:changed" });
+    createManagedState(homeDir, original.engine);
+
+    const result = cleanupLocalModelRuntimes({
+      deleteModels: false,
+      homeDir,
+      engine: changed.engine,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("endpoint"),
+    });
+    expect(changed.capture).not.toHaveBeenCalled();
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
+  });
+
+  it("does not collapse a daemon inspection error into exact absence", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness({ daemonInspectFailure: true });
+    createManagedState(homeDir, harness.engine);
+
+    const result = cleanupLocalModelRuntimes({
+      deleteModels: false,
+      homeDir,
+      engine: harness.engine,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("absence proof"),
+    });
+    expect(harness.capture).not.toHaveBeenCalledWith(
+      ["rm", "--force", RUNTIME_ID],
+      expect.any(Number),
+    );
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
+  });
+
+  it("does not race cleanup against a live lifecycle execution lease", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine, { phase: "started" });
+    const store = createHostLocalCreateJournalStore(managedLlamaCppStatePaths(homeDir).stateDir);
+    const lease = store.acquireExecution(TRANSACTION_ID);
+    try {
+      const result = cleanupLocalModelRuntimes({
+        deleteModels: false,
         homeDir,
-        deps: {
-          capture: vi.fn(() => ""),
-          forceRm: vi.fn() as never,
-          run: vi.fn(() => result()),
-        },
-      }),
-    ).toMatchObject({ ok: false, reason: expect.stringContaining("does not match") });
-    expect(fs.existsSync(cacheRoot)).toBe(true);
+        engine: harness.engine,
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining("live process"),
+      });
+      expect(harness.capture).not.toHaveBeenCalledWith(
+        ["rm", "--force", RUNTIME_ID],
+        expect.any(Number),
+      );
+      expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
+    } finally {
+      store.releaseExecution(lease);
+    }
+  });
+
+  it("re-inspects after removal and retains authority when the container remains", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness({ removalLeavesContainer: true });
+    createManagedState(homeDir, harness.engine);
+
+    const result = cleanupLocalModelRuntimes({
+      deleteModels: false,
+      homeDir,
+      engine: harness.engine,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("not proven"),
+    });
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
+    expect(harness.capture).not.toHaveBeenCalledWith(
+      ["network", "rm", NETWORK_ID],
+      expect.any(Number),
+    );
+  });
+
+  it("uses gateway and sandbox scope and leaves a different owner untouched", () => {
+    const homeDir = temporaryHome();
+    const gatewayPort = 8091;
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine, { gatewayPort });
+
+    const skipped = cleanupManagedLlamaCppRuntimeForSandbox("different-sandbox", {
+      homeDir,
+      gatewayPort,
+      engine: harness.engine,
+    });
+    expect(skipped).toEqual({ ok: true, removed: [], preserved: [] });
+    expect(harness.capture).not.toHaveBeenCalled();
+
+    const removed = cleanupManagedLlamaCppRuntimeForSandbox("spark-agent", {
+      homeDir,
+      gatewayPort,
+      engine: harness.engine,
+    });
+    expect(removed).toMatchObject({ ok: true });
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir, gatewayPort).stateDir)).toBe(false);
   });
 });

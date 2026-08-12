@@ -18,6 +18,7 @@ import {
 import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
 import type { SandboxEntry, SandboxGpuProofResult } from "../../state/registry";
+import { normalizePersistedSandboxHostMounts } from "../../state/registry/host-mount";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
@@ -204,9 +205,10 @@ function printSandboxGpuStatus(sandbox: SandboxEntry): void {
 }
 
 function printSandboxHostMounts(sandbox: SandboxEntry): void {
-  if (!sandbox.hostMounts?.length) return;
+  const hostMounts = normalizePersistedSandboxHostMounts(sandbox.hostMounts);
+  if (hostMounts.length === 0) return;
   console.log("    Host mounts:");
-  for (const mount of sandbox.hostMounts) {
+  for (const mount of hostMounts) {
     console.log(`      ${mount.source} -> ${mount.target} (read-only)`);
   }
 }

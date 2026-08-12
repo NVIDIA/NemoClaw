@@ -76,6 +76,7 @@ export type StatusFlowHarnessOptions = {
     preferredInferenceApi?: string | null;
     compatibleEndpointReasoningEffort?: "low" | "medium" | "high" | null;
     hostMounts?: SandboxHostMount[];
+    dashboardRemoteBindPrepared?: boolean;
   };
   shieldsPosture?: {
     mode: "locked" | "mutable_default" | "mutable";

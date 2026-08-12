@@ -1225,17 +1225,22 @@ export function createFileDockerManagedBootstrapJournalStore(
     const decision = readPrivateFile(decisionPath(target), "decision");
     if (decision === null) return journal;
     const phase = decision.endsWith("\n") ? decision.slice(0, -1) : "";
+    const decisionMatchesJournal =
+      journal.phase === "cutover" ||
+      journal.phase === phase ||
+      (phase === "rollback-authorized" && journal.phase === "owner-cleanup-required");
     if (
       !DECISION_PHASES.has(phase as DockerManagedBootstrapJournalPhase) ||
-      (journal.phase !== "cutover" && journal.phase !== phase)
+      !decisionMatchesJournal
     ) {
       fail("decision does not match its cutover journal");
     }
     const decided = normalizeDockerManagedBootstrapJournal({ ...journal, phase });
     if (journal.phase === "cutover") {
       atomicWrite(directory, target, serializeDockerManagedBootstrapJournal(decided), false);
+      return decided;
     }
-    return decided;
+    return journal;
   };
   const loadFinalization = (
     bootstrapIdentity: string,

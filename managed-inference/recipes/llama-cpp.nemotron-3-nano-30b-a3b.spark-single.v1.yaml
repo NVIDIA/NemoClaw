@@ -31,20 +31,16 @@ spec:
         license: NVIDIA-Open-Model-License
     acquisition:
       ref: hugging-face-exact-file/v1
+      downloaderImage: nvcr.io/nvidia/vllm@sha256:94e21552f644e0c1627464ba89d2f7a4ce7442e196f72afa0bb5d7fba23cbb03
       authentication:
         mode: optional
         environment: HF_TOKEN
     cache:
-      ref: llama-cpp.gguf-content-addressed/v1
-      receiptRef: llama-cpp.gguf-cache-entry.receipt/v1
+      ref: hugging-face-shared-cache/v1
       root: user-cache
-      quotaBytes: 34359738368
-      stagingHeadroomBytes: 5368709120
-      staging: same-filesystem
-      publication: atomic-no-clobber
-      reuse: verified-only-offline
-      sharing: owner-only
-      cleanup: receipt-owner-only
+      reuse: verify-exact-file
+      sharing: host-user
+      cleanup: preserve
 
   runtime:
     image: ghcr.io/ggml-org/llama.cpp@sha256:866ad568474de9e835e487ae841ad6ace1a494b5eab4f292cbd45adb6180f711
@@ -54,6 +50,7 @@ spec:
       - linux/arm64
     containerRuntime: docker
     networkExposure: loopback
+    restartPolicy: unless-stopped
     hosts: 1
     cuda:
       baseImage: docker.io/nvidia/cuda@sha256:789e629e49401647e22b7054ae9c6c4f6427dba68010ba428deb4cc6b063676e
@@ -89,15 +86,19 @@ spec:
       value: f16
     speculativeDecoding: disabled
     limits:
-      maxRequestBodyBytes: 16777216
-      maxPromptTokens: 253952
-      maxCompletionTokens: 8192
+      maxRequestBodyBytes: 1048576
+      maxRequestHeaderBytes: 32768
+      maxOutputTokens: 4096
       requestTimeoutSeconds: 900
+      shutdownTimeoutSeconds: 25
+    requestGuard:
+      upstreamPort: 8082
 
   readiness:
     contractRef: llama-cpp.server-readiness/v1
     timeoutSeconds: 1800
     expectedModel: nvidia-nemotron-3-nano-30b-a3b
+    probeImage: nvcr.io/nvidia/vllm@sha256:94e21552f644e0c1627464ba89d2f7a4ce7442e196f72afa0bb5d7fba23cbb03
     probes:
       models: true
       health: true

@@ -390,6 +390,7 @@ describe("sandbox BuildKit prebuild", () => {
       createArgs,
       sandboxName: "alpha",
       dockerDriverGateway: true,
+      requiresLocalBuildKit: true,
       env: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
       buildImage,
       publishImage,
@@ -445,6 +446,131 @@ describe("sandbox BuildKit prebuild", () => {
       expect.arrayContaining(["build", "nemoclaw-sandbox-local:alpha-1234567890"]),
       expect.objectContaining({ shell: false, stdio: ["inherit", process.stderr, "inherit"] }),
     );
+  });
+
+  it("rejects disabling a required local BuildKit build", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        requiresLocalBuildKit: true,
+        env: { NEMOCLAW_SANDBOX_PREBUILD: "0" },
+        log: () => {},
+      }),
+    ).rejects.toThrow("Local BuildKit is required for this generated sandbox image");
+  });
+
+  it("rejects an untrusted context instead of handing a required build to the gateway", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    fs.chmodSync(buildCtx, 0o770);
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        requiresLocalBuildKit: true,
+        env: {},
+        log: () => {},
+      }),
+    ).rejects.toThrow("Local BuildKit rejected the staged build context trust boundary");
+  });
+
+  it("preserves a required staged-context inspection diagnosis", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    vi.spyOn(fs, "openSync").mockImplementation(() => {
+      throw new Error("descriptor limit reached");
+    });
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        requiresLocalBuildKit: true,
+        env: {},
+        log: () => {},
+      }),
+    ).rejects.toThrow(
+      "Local BuildKit could not inspect the staged build context: descriptor limit reached",
+    );
+  });
+
+  it("rejects mismatched create arguments for a required build", async () => {
+    const { buildCtx } = createBuildContext();
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs: ["--from", "/other/Dockerfile"],
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        requiresLocalBuildKit: true,
+        env: {},
+        log: () => {},
+      }),
+    ).rejects.toThrow("Local BuildKit requires the generated staged Dockerfile");
+  });
+
+  it.each([
+    ["a nonzero result", async () => 1, "Local BuildKit build failed (exit 1)"],
+    [
+      "a missing exit status",
+      async () => null,
+      "Local BuildKit build failed without an exit status",
+    ],
+  ])("fails closed after %s from a required build", async (_label, buildImage, message) => {
+    const { buildCtx, createArgs } = createBuildContext();
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        requiresLocalBuildKit: true,
+        env: {},
+        buildImage,
+        log: () => {},
+      }),
+    ).rejects.toThrow(message);
+  });
+
+  it("preserves a required builder startup diagnosis", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        requiresLocalBuildKit: true,
+        env: {},
+        buildImage: async () => {
+          throw new Error("builder unavailable");
+        },
+        log: () => {},
+      }),
+    ).rejects.toThrow("Local BuildKit build could not start: builder unavailable");
   });
 
   it.each([

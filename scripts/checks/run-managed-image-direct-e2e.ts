@@ -12,8 +12,9 @@ import {
 } from "../../src/lib/onboard/managed-bootstrap/adapter.ts";
 import {
   MANAGED_BOOTSTRAP_REQUEST_FILE,
-  serializeManagedBootstrapEnvelope,
+  serializeManagedBootstrapEnvelopeTar,
 } from "../../src/lib/onboard/managed-bootstrap/envelope.ts";
+import { managedImageRuntimeIdentity } from "../../src/lib/onboard/managed-image/contract.ts";
 import { MANAGED_STARTUP_EXECUTABLE } from "../../src/lib/onboard/managed-startup/hold.ts";
 import {
   encodeManagedStartupProfile,
@@ -109,7 +110,7 @@ function docker(
   args: readonly string[],
   options: {
     readonly ignoreError?: boolean;
-    readonly input?: string;
+    readonly input?: string | Buffer;
     readonly timeout?: number;
   } = {},
 ): CommandResult {
@@ -172,32 +173,100 @@ function stageManagedBootstrapEnvelope(
   bootstrapIdentity: string,
   request: ManagedStartupRootApplyRequest,
 ): void {
-  const envelope = serializeManagedBootstrapEnvelope({
-    bootstrapIdentity,
-    rootApplyRequest: request,
+  docker(["cp", "-", `${containerId}:/`], {
+    input: serializeManagedBootstrapEnvelopeTar({
+      bootstrapIdentity,
+      rootApplyRequest: request,
+    }),
   });
-  docker(
-    [
-      "exec",
-      "--interactive",
+}
+
+function verifyManagedBootstrapPidOneBoundary(
+  input: ManagedImageDirectE2eInputs,
+  request: ManagedStartupRootApplyRequest,
+  bootstrapIdentity: string,
+  sandboxUid: string,
+  sandboxGid: string,
+): void {
+  const marker = "/tmp/nemoclaw-managed-pid1-resumed";
+  let containerId = "";
+  try {
+    containerId = docker([
+      "create",
+      "--platform",
+      input.platform,
+      "--network",
+      "none",
       "--user",
-      "0:0",
-      containerId,
+      "root",
+      "--entrypoint",
+      MANAGED_BOOTSTRAP,
+      input.image,
+      "--agent",
+      input.agent,
+      "--profile-fingerprint",
+      request.profileFingerprint,
+      "--bootstrap-identity",
+      bootstrapIdentity,
+      "--agent-uid",
+      sandboxUid,
+      "--agent-gid",
+      sandboxGid,
+      "--agent-workdir",
+      "/sandbox",
+      "--request-file",
+      MANAGED_BOOTSTRAP_REQUEST_FILE,
+      "--",
       "/bin/sh",
       "-eu",
       "-c",
-      [
-        `test ! -e ${MANAGED_BOOTSTRAP_REQUEST_FILE}`,
-        `test ! -L ${MANAGED_BOOTSTRAP_REQUEST_FILE}`,
-        "umask 077",
-        `cat > ${MANAGED_BOOTSTRAP_REQUEST_FILE}`,
-        `chown 0:0 ${MANAGED_BOOTSTRAP_REQUEST_FILE}`,
-        `chmod 0400 ${MANAGED_BOOTSTRAP_REQUEST_FILE}`,
-        `test "$(stat -c '%u:%g:%a:%h' ${MANAGED_BOOTSTRAP_REQUEST_FILE})" = '0:0:400:1'`,
-      ].join("\n"),
-    ],
-    { input: envelope },
-  );
+      `printf 'resumed\\n' > ${marker}; exec /usr/bin/tail -f /dev/null`,
+    ]).stdout.trim();
+    if (!CONTAINER_ID_RE.test(containerId)) {
+      throw new Error("docker create did not return one exact PID 1 bootstrap container");
+    }
+    docker(["cp", "-", `${containerId}:/`], {
+      input: serializeManagedBootstrapEnvelopeTar({
+        bootstrapIdentity,
+        rootApplyRequest: request,
+      }),
+    });
+    docker(["start", containerId]);
+
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+      const resumed = docker(["exec", "--user", "0:0", containerId, "test", "-s", marker], {
+        ignoreError: true,
+        timeout: 15_000,
+      });
+      if (resumed.status === 0) {
+        process.stdout.write(
+          `Validated exact ${input.agent} managed image through stopped-container PID 1 bootstrap.\n`,
+        );
+        return;
+      }
+      const running = docker(["inspect", "--format", "{{.State.Running}}", containerId], {
+        ignoreError: true,
+        timeout: 15_000,
+      });
+      if (running.status !== 0 || running.stdout.trim() !== "true") {
+        const state = docker(["inspect", "--format", "{{json .State}}", containerId], {
+          ignoreError: true,
+          timeout: 15_000,
+        });
+        const logs = docker(["logs", containerId], { ignoreError: true, timeout: 15_000 });
+        throw new Error(
+          `managed bootstrap PID 1 exited before supervisor resume: ${commandDetail(state)} ${commandDetail(logs)}`,
+        );
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+    }
+    throw new Error("managed bootstrap PID 1 did not resume the supervisor");
+  } finally {
+    if (CONTAINER_ID_RE.test(containerId)) {
+      docker(["rm", "-f", containerId], { ignoreError: true, timeout: 30_000 });
+    }
+  }
 }
 
 function managedConfig(agent: ManagedStartupAgent): string {
@@ -442,6 +511,30 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
       "-g",
       "sandbox",
     ]).stdout.trim();
+    const expectedIdentity = managedImageRuntimeIdentity(input.agent);
+    const imageWorkdir = docker([
+      "image",
+      "inspect",
+      "--format",
+      "{{.Config.WorkingDir}}",
+      input.image,
+    ]).stdout.trim();
+    if (
+      sandboxUid !== String(expectedIdentity.uid) ||
+      sandboxGid !== String(expectedIdentity.gid) ||
+      imageWorkdir !== expectedIdentity.workdir
+    ) {
+      throw new Error(
+        `managed image runtime identity drifted: expected ${expectedIdentity.uid}:${expectedIdentity.gid}:${expectedIdentity.workdir}, received ${sandboxUid}:${sandboxGid}:${imageWorkdir}`,
+      );
+    }
+    verifyManagedBootstrapPidOneBoundary(
+      input,
+      request,
+      createManagedBootstrapIdentity(),
+      sandboxUid,
+      sandboxGid,
+    );
     stageManagedBootstrapEnvelope(containerId, bootstrapIdentity, request);
     const applied = docker(
       [

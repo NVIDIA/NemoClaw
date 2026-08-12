@@ -14,6 +14,7 @@ export interface ShieldsTimerMarker {
   snapshotPath: string;
   restoreAt: string;
   processToken?: string;
+  timerProcessStartIdentity?: string;
   allowLegacyHermesProtocol?: boolean;
   agentName?: string;
   configPath?: string;
@@ -33,6 +34,9 @@ function isShieldsTimerMarker(value: unknown): value is ShieldsTimerMarker {
     typeof value.snapshotPath === "string" &&
     typeof value.restoreAt === "string" &&
     (value.processToken === undefined || typeof value.processToken === "string") &&
+    (value.timerProcessStartIdentity === undefined ||
+      (typeof value.timerProcessStartIdentity === "string" &&
+        value.timerProcessStartIdentity.length > 0)) &&
     (value.allowLegacyHermesProtocol === undefined ||
       typeof value.allowLegacyHermesProtocol === "boolean") &&
     (value.agentName === undefined || typeof value.agentName === "string") &&

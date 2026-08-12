@@ -9,7 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { shellQuote } from "../src/lib/core/shell-quote";
-import { dockerRunCommandBetween } from "./helpers/hermes-dockerfile-run";
+import { dockerRunCommandBetween } from "./helpers/dockerfile-run-shell";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
 const HERMES_DOCKERFILE = path.join(import.meta.dirname, "..", "agents", "hermes", "Dockerfile");

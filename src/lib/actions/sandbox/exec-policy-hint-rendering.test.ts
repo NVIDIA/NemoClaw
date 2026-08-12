@@ -36,8 +36,8 @@ describe("buildPolicyDenialExecHint (#5978)", () => {
     "a-b-c",
     "valid-lowercase",
     "valid-with-hyphens",
-    "a".repeat(63),
-    `${"a".repeat(61)}-b`,
+    "a".repeat(19),
+    `${"a".repeat(17)}-b`,
   ])("renders a valid RFC-1123 sandbox name unchanged: %s", (valid) => {
     const hint = buildPolicyDenialExecHint("nemoclaw", valid, "example.com:443");
     expect(hint).toContain(`inside sandbox '${valid}'`);
@@ -48,7 +48,7 @@ describe("buildPolicyDenialExecHint (#5978)", () => {
     ["control characters / TTY escapes", "oc[31m\ninjected"],
     ["shell metacharacters", "oc; rm -rf /"],
     ["uppercase (not an RFC-1123 label)", "OC-Fresh"],
-    ["over-length label", "a".repeat(64)],
+    ["over-length label", "a".repeat(20)],
   ])("renders the <name> placeholder for an unsafe sandbox name: %s", (_label, unsafe) => {
     const hint = buildPolicyDenialExecHint("nemoclaw", unsafe, "example.com:443");
     expect(hint).toContain("nemoclaw <name> logs --tail 50");

@@ -288,7 +288,9 @@ const STOCK_RUNTIME_INPUT_AGENTS = {
   NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: ["hermes"],
   NEMOCLAW_HERMES_DASHBOARD_PORT: ["hermes"],
   NEMOCLAW_HERMES_DASHBOARD_TUI: ["hermes"],
+  NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: ["openclaw"],
   NEMOCLAW_MINIMAL_BOOTSTRAP: ["openclaw"],
+  NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS: ["openclaw"],
   NEMOCLAW_OBSERVABILITY: ["langchain-deepagents-code"],
   NEMOCLAW_PROXY_HOST: MANAGED_STARTUP_AGENTS,
   NEMOCLAW_PROXY_PORT: MANAGED_STARTUP_AGENTS,
@@ -535,14 +537,12 @@ describe("managed startup profile", () => {
   it.each(
     MANAGED_STARTUP_AGENTS,
   )("keeps deferred %s runtime inputs separate from typed profile intent", (agent) => {
+    const deferredInputs = MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS[agent];
     const profileInputs = new Set(
       MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(({ input }) => input),
     );
-    expect(
-      MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS[agent].filter(({ input }) =>
-        profileInputs.has(input),
-      ),
-    ).toEqual([]);
+    expect(deferredInputs.filter(({ input }) => profileInputs.has(input))).toEqual([]);
+    expect(new Set(deferredInputs.map(({ input }) => input)).size).toBe(deferredInputs.length);
   });
 
   it.each(MANAGED_STARTUP_AGENTS)("keeps the %s affordance inventory unambiguous", (agent) => {

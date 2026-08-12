@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -14,6 +15,7 @@ import {
   renderStarterPromptSnippet,
   runStarterPromptGenerator,
   STARTER_PROMPT_GENERATED_PATH,
+  STARTER_PROMPT_SOURCE_PATH,
 } from "../scripts/generate-starter-prompt.mts";
 import {
   createGitRunner,
@@ -30,7 +32,7 @@ const repoRoot = path.resolve(__dirname, "..");
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
 // CI resolves this Git commit and byte-compares its prompt-asset blobs with
 // the local files. The digests independently assert those same immutable bytes.
-const promptAssetRevision = "bf46e62f901825f19e570c17f8c870a0eae04fbc";
+const promptAssetRevision = "4394858b3bae38b04768619f99b9614161f1b565";
 
 type PromptAsset = {
   path: string;
@@ -49,7 +51,7 @@ function definePromptAsset(assetPath: string, pinnedSha256: string): PromptAsset
 const promptAssets = {
   dgxSpark: definePromptAsset(
     "docs/resources/prompt-assets/dgx-spark.md",
-    "806e87f2ae7e4a4be731c7ce3b1ecde9ff8be170563d4338a5f79f76ce25e034", // gitleaks:allow -- pinned prompt-asset SHA-256
+    "b0192f72e9a55349a7ca9c5ec3da639bd81a2c74b676f997b3e5193bc10053e1", // gitleaks:allow -- pinned prompt-asset SHA-256
   ),
   dgxStation: definePromptAsset(
     "docs/resources/prompt-assets/dgx-station.md",
@@ -815,7 +817,15 @@ describe("starter prompt docs CTA", () => {
     );
 
     expect(sparkSource).toContain("nvidia/Qwen3.6-35B-A3B-NVFP4");
-    expect(sparkSource).toContain("Leave `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_MODEL` unset");
+    expect(sparkSource).toContain(
+      "Managed vLLM with automatic serving-profile selection. This is the default",
+    );
+    expect(sparkSource).toContain(
+      "`nvidia/Qwen3.6-35B-A3B-NVFP4` with the fixed catalog-backed vLLM profile",
+    );
+    expect(sparkSource).toContain(
+      "Leave `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_VLLM_PORT`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` unset",
+    );
     expect(stationSource).toContain("`nemotron-3-ultra-550b-a55b`");
     expect(stationSource).toContain("`nemotron-ultra`");
     expect(stationSource).toContain("`deepseek-v4-flash`");
@@ -1267,5 +1277,70 @@ describe("starter prompt docs CTA", () => {
     );
     expect(promptSource).toContain("NEMOCLAW_AGENT=langchain-deepagents-code");
     expect(promptSource).toContain("nemo-deepagents onboard");
+  });
+});
+
+describe("starter prompt checkout line endings", () => {
+  // Point core.attributesFile at an absent path and set GIT_ATTR_NOSYSTEM so the
+  // result comes from the repository .gitattributes alone. Without that, a
+  // contributor's global "* text=auto" would decide the outcome.
+  const absentAttributesFile = path.join(os.tmpdir(), "nemoclaw-absent-gitattributes");
+
+  function checkoutEol(relativePath: string): string {
+    const result = spawnSync(
+      "git",
+      [
+        "-c",
+        `core.attributesFile=${absentAttributesFile}`,
+        "check-attr",
+        "eol",
+        "--",
+        relativePath,
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: { ...process.env, GIT_ATTR_NOSYSTEM: "1" },
+        timeout: 10_000,
+      },
+    );
+    const diagnostic = [
+      `git check-attr did not run for ${relativePath}:`,
+      `status=${result.status}`,
+      `signal=${result.signal}`,
+      result.error?.message ?? "",
+      result.stderr ?? "",
+    ]
+      .join(" ")
+      .trim();
+    expect(result.error, diagnostic).toBeUndefined();
+    expect(result.status, diagnostic).toBe(0);
+    return result.stdout;
+  }
+
+  // check-attr answers for any path, so require the file before trusting its
+  // attribute; otherwise a rename would leave these assertions passing.
+  function readCheckoutEol(relativePath: string): string {
+    expect(fs.existsSync(path.join(repoRoot, relativePath))).toBe(true);
+    return checkoutEol(relativePath);
+  }
+
+  // Every file whose exact working-tree bytes this suite asserts.
+  const bytePinnedPaths = [
+    STARTER_PROMPT_SOURCE_PATH,
+    ...Object.values(promptAssets).map((asset) => asset.path),
+    "docs/resources/local-credential-form.html",
+  ];
+
+  it.each(
+    bytePinnedPaths,
+  )("checks out %s with LF so an autocrlf clone keeps the bytes this suite asserts (#8648)", (relativePath) => {
+    expect(readCheckoutEol(relativePath)).toContain(`${relativePath}: eol: lf`);
+  });
+
+  // Asserts only the absence of the LF pin. Asserting "unspecified" would also
+  // forbid a repository-wide "* text=auto" rule, which is unrelated policy.
+  it("leaves a file without a byte-exact contract unpinned (#8648)", () => {
+    expect(readCheckoutEol("docs/resources/agent-skills.mdx")).not.toContain("eol: lf");
   });
 });

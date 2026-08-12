@@ -7,7 +7,7 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeAgent, withMockedDocker } from "../../../test/helpers/base-image-test-harness";
-import { dockerRunCommandBetween } from "../../../test/helpers/hermes-dockerfile-run";
+import { dockerRunCommandBetween } from "../../../test/helpers/dockerfile-run-shell";
 
 describe("agent base image provisioning", () => {
   beforeEach(() => {
@@ -49,12 +49,16 @@ describe("agent base image provisioning", () => {
     );
     expect(trackedRef).not.toBeNull();
     expect(trackedRef?.[1]).toBe(
-      "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96",
+      "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:3d54b928baef9df403227e846f73079d13ca8424a27cd5268ca97bac3f030b27",
     );
 
+    const messagingInstallIndex = dockerfile.indexOf("RUN unset SSL_CERT_FILE REQUESTS_CA_BUNDLE");
+    const managedInstallIndex = dockerfile.indexOf(
+      "RUN --network=none --mount=from=hermes-managed-teams-wheels",
+    );
     const installLayer = dockerRunCommandBetween(
       dockerfile,
-      "RUN unset SSL_CERT_FILE REQUESTS_CA_BUNDLE",
+      "RUN --network=none --mount=from=hermes-managed-teams-wheels",
       "WORKDIR /sandbox",
     ).replace(/\s+/gu, " ");
     const versionGuard =
@@ -62,6 +66,8 @@ describe("agent base image provisioning", () => {
     const versionGuardIndex = installLayer.indexOf(versionGuard);
     const finalConditionalEnd = [...installLayer.matchAll(/\bfi\b/gu)].at(-1)?.index ?? -1;
 
+    expect(messagingInstallIndex).toBeGreaterThanOrEqual(0);
+    expect(managedInstallIndex).toBeGreaterThan(messagingInstallIndex);
     expect(versionGuardIndex).toBeGreaterThan(finalConditionalEnd);
     expect(installLayer).not.toContain("'aiohttp': '3.14.1'");
     expect(installLayer).not.toContain("'cryptography': '48.0.1'");

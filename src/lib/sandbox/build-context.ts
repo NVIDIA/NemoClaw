@@ -5,6 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
+
 export const SANDBOX_BUILD_CONTEXT_PREFIX = "nemoclaw-build-";
 export type SandboxBuildContextOrigin = "custom" | "generated";
 
@@ -19,6 +21,8 @@ export interface BuildContextStats {
 }
 
 type BuildContextStatsFilter = (entryPath: string) => boolean;
+
+const MAX_REVIEWED_RUNTIME_ARTIFACT_BYTES = 8 * 1024 * 1024;
 
 function createBuildContextDir(tmpDir: string = os.tmpdir()): string {
   return fs.mkdtempSync(path.join(tmpDir, SANDBOX_BUILD_CONTEXT_PREFIX));
@@ -40,6 +44,27 @@ function normalizeReadModesForDockerCopy(rootDir: string): void {
   }
 }
 
+function copyReviewedRegularFileSync(
+  sourceRoot: string,
+  relativePath: string,
+  target: string,
+): void {
+  const source = path.join(sourceRoot, relativePath);
+  const opened = openRegularFileNoFollow(source);
+  try {
+    const bytes = opened.readBytes(MAX_REVIEWED_RUNTIME_ARTIFACT_BYTES);
+    const resolvedRoot = fs.realpathSync(sourceRoot);
+    const resolvedSource = fs.realpathSync(source);
+    if (path.relative(resolvedRoot, resolvedSource) !== path.normalize(relativePath)) {
+      throw new Error(`reviewed runtime artifact escapes its source directory: ${source}`);
+    }
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, bytes, { flag: "wx", mode: 0o644 });
+  } finally {
+    opened.close();
+  }
+}
+
 function stageOpenClawRuntimeGraphs(rootDir: string, buildCtx: string): void {
   const sourceAgentDir = path.join(rootDir, "agents", "openclaw");
   const stagedAgentDir = path.join(buildCtx, "agents", "openclaw");
@@ -48,7 +73,12 @@ function stageOpenClawRuntimeGraphs(rootDir: string, buildCtx: string): void {
     path.join(sourceAgentDir, "state-lock-plan.json"),
     path.join(stagedAgentDir, "state-lock-plan.json"),
   );
-  for (const runtimeName of ["mcporter-runtime", "openclaw-runtime", "wechat-runtime"]) {
+  for (const runtimeName of [
+    "managed-image-messaging-runtime",
+    "mcporter-runtime",
+    "openclaw-runtime",
+    "wechat-runtime",
+  ]) {
     const sourceDir = path.join(sourceAgentDir, runtimeName);
     const stagedDir = path.join(stagedAgentDir, runtimeName);
     fs.mkdirSync(stagedDir, { recursive: true });
@@ -56,6 +86,11 @@ function stageOpenClawRuntimeGraphs(rootDir: string, buildCtx: string): void {
       fs.copyFileSync(path.join(sourceDir, fileName), path.join(stagedDir, fileName));
     }
   }
+  fs.cpSync(
+    path.join(sourceAgentDir, "managed-image-messaging-runtime", "npm-cache-seed"),
+    path.join(stagedAgentDir, "managed-image-messaging-runtime", "npm-cache-seed"),
+    { mode: fs.constants.COPYFILE_FICLONE, recursive: true },
+  );
   normalizeReadModesForDockerCopy(path.join(buildCtx, "agents"));
 }
 
@@ -75,6 +110,22 @@ function stageMcpToolDiscoveryRuntime(rootDir: string, buildCtx: string): void {
     "tool-discovery-core.ts",
   ]) {
     fs.copyFileSync(path.join(sourceDir, fileName), path.join(stagedDir, fileName));
+  }
+  for (const seedDirectory of ["mcp-runtime-npm-cache-seed", "npm-cache-seed"]) {
+    fs.cpSync(path.join(sourceDir, seedDirectory), path.join(stagedDir, seedDirectory), {
+      mode: fs.constants.COPYFILE_FICLONE,
+      recursive: true,
+    });
+  }
+  for (const relativePath of [
+    "managed-startup-image-runtime.bundle",
+    path.join("mcp-tool-discovery", "BUNDLED_PACKAGES.json"),
+    path.join("mcp-tool-discovery", "THIRD_PARTY_LICENSES.txt"),
+    path.join("mcp-tool-discovery", "mcp-tool-discovery.bundle"),
+  ]) {
+    const reviewedRuntimeDir = path.join(sourceDir, "reviewed-runtime-bundle");
+    const target = path.join(stagedDir, "reviewed-runtime-bundle", relativePath);
+    copyReviewedRegularFileSync(reviewedRuntimeDir, relativePath, target);
   }
   normalizeReadModesForDockerCopy(path.join(buildCtx, "tools"));
 }
@@ -226,8 +277,8 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "checks", "verify-openshell-policy-boundary-dependencies.mts"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "checks", "node-tar-image-scan.mts"),
-    path.join(stagedScriptsDir, "checks", "node-tar-image-scan.mts"),
+    path.join(rootDir, "scripts", "checks", "materialize-locked-npm-cache-seed.mts"),
+    path.join(stagedScriptsDir, "checks", "materialize-locked-npm-cache-seed.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "nemoclaw-start.sh"),
@@ -333,6 +384,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "patch-openclaw-mcp-reliability.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-mcp-tools-list-timeout.mts"),
+    path.join(stagedScriptsDir, "patch-openclaw-mcp-tools-list-timeout.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-issue-4434-diagnostics.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-issue-4434-diagnostics.mts"),
   );
@@ -343,6 +398,11 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-device-self-approval.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-device-self-approval.mts"),
+  );
+  fs.mkdirSync(path.join(stagedScriptsDir, "openclaw"), { recursive: true });
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "openclaw", "patch-gateway-daemon-dialback.mts"),
+    path.join(stagedScriptsDir, "openclaw", "patch-gateway-daemon-dialback.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "extract-semver.sh"),
@@ -376,6 +436,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-archive.mts"),
     path.join(stagedScriptsDir, "lib", "reviewed-npm-archive.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "seed-reviewed-npm-cache.mts"),
+    path.join(stagedScriptsDir, "lib", "seed-reviewed-npm-cache.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-audit.mts"),

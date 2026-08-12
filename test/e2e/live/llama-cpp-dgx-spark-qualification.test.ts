@@ -38,12 +38,10 @@ test("binds the exact NemoClaw-built llama.cpp image candidate to protected NVID
     environment.planFile,
     path.dirname(environment.planFile),
   );
-  expect(() =>
-    parseLlamaCppDgxSparkExecutionPlan(
-      JSON.parse(plan.toString("utf8")) as unknown,
-      environment.planSha256,
-    ),
-  ).not.toThrow();
+  const parsedPlan = parseLlamaCppDgxSparkExecutionPlan(
+    JSON.parse(plan.toString("utf8")) as unknown,
+    environment.planSha256,
+  );
 
   progress.phase("validate exact DGX Spark execution and cleanup evidence");
   const evidence = readLlamaCppQualificationArtifact(
@@ -54,6 +52,7 @@ test("binds the exact NemoClaw-built llama.cpp image candidate to protected NVID
     parseLlamaCppDgxSparkQualificationReceipt(
       JSON.parse(evidence.toString("utf8")) as unknown,
       environment.identity,
+      parsedPlan,
     ),
   ).not.toThrow();
 });

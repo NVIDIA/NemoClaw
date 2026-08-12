@@ -17,9 +17,11 @@ repository. This guide is the NemoClaw source of truth.
 
 Apply this guide when you add or modify:
 
-- Code comments.
+- Agent responses, progress updates, and final reports.
+- Tool-call labels and descriptions.
+- GitHub issue, PR, review, and comment text.
+- Code comments and user-visible log or error messages.
 - Test titles.
-- PR descriptions and comments.
 - Changelog entries and Announcements.
 - Contributor guidance, agent guidance, and user documentation.
 
@@ -29,6 +31,30 @@ debt in a focused follow-up PR.
 Language findings are suggestions unless ambiguity can change behavior, security, data safety,
 test meaning, or release meaning. A blocking comment must name that effect. A suggestion should
 include a proposed rewrite.
+
+### Agent-Written Text
+
+An agent must apply this section before each action:
+
+- Send a message.
+- Publish text on GitHub.
+- Start a tool call with a visible label or description.
+
+The review policy above controls findings about existing text. It does not permit an agent to
+publish text that violates this guide.
+
+Before each action, the agent must apply these requirements to the text it produces:
+
+- Name the actor when it is not the agent or reader. Always name the action and object.
+- Replace internal workflow shorthand with repository terms that readers know.
+- When the text identifies a Git commit, do not use `head` as a general synonym.
+- Use `commit under review` for the commit whose diff and evidence the reviewer evaluates.
+- Use `latest PR commit` for the commit to which the PR source branch currently points.
+- Preserve literal identifiers such as `headRefOid` when the identifier itself matters.
+
+Before a tool call with a visible label or description, write that text as a concrete verb phrase that names the object.
+
+If the agent cannot satisfy the requirements that apply to the action, it must not perform the action.
 
 ### Full-Corpus Audits
 
@@ -103,6 +129,8 @@ These examples use recurring NemoClaw concepts. They show the required level of 
 | PR discussion | `Make this more robust.` | `Return a typed access error for EACCES and add a denial-path test.` |
 | PR discussion | `This is a small change.` | `This change updates one parser and does not change the policy schema.` |
 | PR discussion | `The PR is ready.` | `Required checks pass on 1a2b3c4, and GitHub reports MERGEABLE.` |
+| PR discussion | `The exact head changed.` | `The latest PR commit changed from 1a2b3c4 to 5d6e7f8.` |
+| Tool label | `Inspect exact-head delta` | `Compare latest PR commit 5d6e7f8 with commit 1a2b3c4 from the previous review` |
 | Announcement | `Improved onboarding.` | `Onboarding now resumes after provider selection fails.` |
 | Announcement | `Added more robust E2E handling.` | `The PR gate now retries evidence download after a child run is cancelled.` |
 | Release entry | `Fixed various issues.` | `The CLI now rejects a provider configuration that has no endpoint.` |

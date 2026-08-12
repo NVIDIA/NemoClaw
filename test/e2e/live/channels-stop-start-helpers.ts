@@ -32,8 +32,10 @@ const AGENT = (process.env.NEMOCLAW_CHANNELS_STOP_START_AGENT ??
 if (AGENT !== "openclaw" && AGENT !== "hermes") {
   throw new Error(`NEMOCLAW_CHANNELS_STOP_START_AGENT must be openclaw or hermes, got ${AGENT}`);
 }
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-channels-stop-start-${AGENT}`;
-assertChannelsStopStartSandboxName(SANDBOX_NAME);
+const SANDBOX_NAME =
+  process.env.NEMOCLAW_SANDBOX_NAME ??
+  (AGENT === "openclaw" ? "e2e-oc-ch-cycle" : "e2e-hm-ch-cycle");
+assertChannelsStopStartSandboxName(SANDBOX_NAME, AGENT);
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
 // Google Chat is OpenClaw-only; Teams remains supported on both agent arms.
 const BASE_CHANNELS = ["telegram", "discord", "wechat", "slack", "whatsapp", "teams"] as const;

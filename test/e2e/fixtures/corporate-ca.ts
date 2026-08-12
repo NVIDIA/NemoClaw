@@ -85,6 +85,7 @@ runtime_env='/tmp/nemoclaw-proxy-env.sh'
 [ -s "$corp" ] || probe_fail missing-corporate-ca
 [ -s "$bundle" ] || probe_fail missing-merged-bundle
 [ -s "$runtime_env" ] || probe_fail missing-runtime-env
+[ "$(stat -c '%u:%g:%a' "$bundle")" = '0:0:444' ] || probe_fail merged-bundle-owner-mode
 grep -F '${CORPORATE_CA_CANARY_LINE}' "$corp" >/dev/null || probe_fail corporate-canary-missing
 grep -F '${CORPORATE_CA_CANARY_LINE}' "$bundle" >/dev/null || probe_fail bundle-canary-missing
 set -- $(wc -c < "$corp")

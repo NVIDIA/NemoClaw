@@ -15,7 +15,11 @@ import {
 } from "../../adapters/docker/run";
 import { parseOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import { hasZeroDockerExitStatus } from "../docker-command-result";
-import { buildDockerGpuCloneRunArgs, dockerContainerName } from "../docker-gpu-patch-clone";
+import {
+  buildDockerGpuCloneRunArgs,
+  dockerContainerName,
+  shouldOmitOpenShellOciImageUser,
+} from "../docker-gpu-patch-clone";
 import {
   DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
   DOCKER_GPU_PATCH_TIMEOUT_MS,
@@ -98,14 +102,13 @@ import {
   MANAGED_BOOTSTRAP_COMPLETION_FILE,
   MANAGED_BOOTSTRAP_REQUEST_FILE,
   parseManagedBootstrapImageCompletion,
-  serializeManagedBootstrapEnvelope,
+  serializeManagedBootstrapEnvelopeTar,
 } from "./envelope";
 
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const FULL_SHA256_RE = /^sha256:[a-f0-9]{64}$/u;
 const MAX_ARGV_BYTES = 128 * 1024;
 const MAX_CONTAINER_NAME_LENGTH = 253;
-const REQUEST_TEMP_PREFIX = "nemoclaw-managed-bootstrap-request";
 const COMPLETION_TEMP_PREFIX = "nemoclaw-managed-bootstrap-completion";
 const COMPLETION_MAX_BYTES = 4096;
 const DOCKER_DRIVER_ID = "docker";
@@ -396,9 +399,13 @@ function assertImage(
   }
   const expectedReference = expectedImageReference(image.repository, image.manifestDigest);
   const configuredImage = String(inspect.Config?.Image ?? "").trim();
-  if (configuredImage !== expectedReference) {
+  // OpenShell's Docker driver creates the sandbox from the inspected immutable image ID, so
+  // Docker records that ID in Config.Image. NemoClaw-created replacements retain the exact
+  // repository@manifestDigest instead. Accept only those two immutable spellings; the image
+  // inspection below still proves that the reviewed manifest resolves to this runtime content.
+  if (configuredImage !== expectedReference && configuredImage !== runtimeContentId) {
     throw new Error(
-      "Managed bootstrap Docker configured image is not the exact repository@manifestDigest.",
+      "Managed bootstrap Docker configured image is neither the exact repository@manifestDigest nor its immutable runtime content ID.",
     );
   }
   const imageOutput = deps.dockerCapture(["image", "inspect", expectedReference], {
@@ -541,32 +548,11 @@ function replacementStagingName(originalName: string, bootstrapIdentity: string)
   return `${originalName.slice(0, Math.max(1, MAX_CONTAINER_NAME_LENGTH - suffix.length))}${suffix}`;
 }
 
-function writeProtectedEnvelope(
+function protectedEnvelopeArchive(
   bootstrapIdentity: string,
-  request: Parameters<typeof serializeManagedBootstrapEnvelope>[0]["rootApplyRequest"],
-): string {
-  const file = secureTempFile(REQUEST_TEMP_PREFIX, ".json");
-  try {
-    fs.writeFileSync(
-      file,
-      serializeManagedBootstrapEnvelope({ bootstrapIdentity, rootApplyRequest: request }),
-      { encoding: "utf8", flag: "wx", mode: 0o400 },
-    );
-    fs.chmodSync(file, 0o400);
-    const stat = fs.lstatSync(file);
-    if (
-      !stat.isFile() ||
-      stat.isSymbolicLink() ||
-      stat.nlink !== 1 ||
-      (stat.mode & 0o777) !== 0o400
-    ) {
-      throw new Error("Managed bootstrap request source is not one protected 0400 file.");
-    }
-    return file;
-  } catch (error) {
-    cleanupTempDir(file, REQUEST_TEMP_PREFIX);
-    throw error;
-  }
+  request: Parameters<typeof serializeManagedBootstrapEnvelopeTar>[0]["rootApplyRequest"],
+): Buffer {
+  return serializeManagedBootstrapEnvelopeTar({ bootstrapIdentity, rootApplyRequest: request });
 }
 
 function readProtectedImageCompletion(
@@ -831,6 +817,7 @@ function assertExactEnvironmentDelta(
   replacement: Record<string, unknown>,
   mode: DockerGpuPatchMode,
   intendedSandboxCommand: string,
+  omitOciImageUser: boolean,
 ): void {
   const gpuAugment = mode.kind !== "startup-command";
   const originalEnv = exactStringArray(original.Env ?? [], "original environment");
@@ -838,6 +825,7 @@ function assertExactEnvironmentDelta(
     ...modeEnvironment(mode),
     ...originalEnv
       .filter((entry) => !gpuAugment || !REPLACED_GPU_ENV_KEYS.has(entry.split("=", 1)[0] ?? ""))
+      .filter((entry) => !omitOciImageUser || !entry.startsWith("OPENSHELL_OCI_IMAGE_USER="))
       .map((entry) =>
         entry.startsWith("OPENSHELL_SANDBOX_COMMAND=")
           ? `OPENSHELL_SANDBOX_COMMAND=${intendedSandboxCommand}`
@@ -895,9 +883,7 @@ function expectedUlimits(original: unknown, required: readonly DockerUlimit[]): 
       Hard: requiredEntry.hard,
     });
   }
-  return JSON.stringify(
-    [...merged.values()].sort((left, right) => left.Name.localeCompare(right.Name)),
-  );
+  return canonicalUlimits([...merged.values()], "expected ulimits");
 }
 
 function assertExactDeviceRequests(
@@ -1016,6 +1002,7 @@ function assertReplacementMatchesIntent(
     readonly extraGroupGids: readonly string[];
   },
   intendedSandboxCommand: string,
+  omitOciImageUser: boolean,
 ): string {
   const original = canonicalObject(originalCanonicalJson);
   const originalInspect = objectField(original, "inspect");
@@ -1030,7 +1017,13 @@ function assertReplacementMatchesIntent(
   const observedConfig = objectField(observedInspect, "Config");
   const observedHost = objectField(observedInspect, "HostConfig");
   const gpuAugment = plan.mode.kind !== "startup-command";
-  assertExactEnvironmentDelta(originalConfig, observedConfig, plan.mode, intendedSandboxCommand);
+  assertExactEnvironmentDelta(
+    originalConfig,
+    observedConfig,
+    plan.mode,
+    intendedSandboxCommand,
+    omitOciImageUser,
+  );
   const originalCapabilities = capabilitySet(originalHost.CapAdd, "original capability additions");
   assertExactCapabilitySet(
     observedHost.CapAdd,
@@ -1067,11 +1060,12 @@ function assertReplacementMatchesIntent(
     ].filter((value, index, values) => values.indexOf(value) === index),
     "supplementary groups",
   );
-  if (
-    canonicalUlimits(observedHost.Ulimits, "replacement ulimits") !==
-    expectedUlimits(originalHost.Ulimits, plan.requiredUlimits)
-  ) {
-    throw new Error("Managed bootstrap Docker ulimits changed outside declared requirements.");
+  const observedUlimits = canonicalUlimits(observedHost.Ulimits, "replacement ulimits");
+  const intendedUlimits = expectedUlimits(originalHost.Ulimits, plan.requiredUlimits);
+  if (observedUlimits !== intendedUlimits) {
+    throw new Error(
+      `Managed bootstrap Docker ulimits changed outside declared requirements: expected ${intendedUlimits}, observed ${observedUlimits}.`,
+    );
   }
   const expectedPreserved = scrubVerifiedReplacementDeltas(originalCanonicalJson);
   const observedPreserved = scrubVerifiedReplacementDeltas(replacementSpec.canonicalJson);
@@ -3254,6 +3248,10 @@ export function createDockerManagedBootstrapAdapter(
         });
       }
       const trampolineCommand = replacementCommand(handle, snapshot);
+      const omitOciImageUser = shouldOmitOpenShellOciImageUser(
+        parsed.inspect,
+        handle.intendedWorkloadArgv,
+      );
       const cloneArgs = buildDockerGpuCloneRunArgs(parsed.inspect, plan.mode, {
         image: expectedImageReference(snapshot.image.repository, snapshot.image.manifestDigest),
         openshellSandboxCommand: handle.intendedWorkloadArgv,
@@ -3269,7 +3267,6 @@ export function createDockerManagedBootstrapAdapter(
         timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
       };
 
-      let requestFile = "";
       let replacementRuntimeId = "";
       let stagedAuthority: DockerBootstrapTransaction | null = null;
       try {
@@ -3323,6 +3320,7 @@ export function createDockerManagedBootstrapAdapter(
           originalName,
           plan,
           intendedSandboxCommand,
+          omitOciImageUser,
         );
         const preparedSpec = normalizeDockerManagedBootstrapLaunchSpec(createdInspect);
         const expectedActivatedSpec = normalizeDockerManagedBootstrapLaunchSpec({
@@ -3359,11 +3357,12 @@ export function createDockerManagedBootstrapAdapter(
           commitReceipt: null,
         });
 
-        requestFile = writeProtectedEnvelope(handle.bootstrapIdentity, request);
-        const copied = deps.dockerRun(
-          ["cp", requestFile, replacementRuntimeId + ":" + MANAGED_BOOTSTRAP_REQUEST_FILE],
-          options,
-        );
+        const requestArchive = protectedEnvelopeArchive(handle.bootstrapIdentity, request);
+        const copied = deps.dockerRun(["cp", "-", replacementRuntimeId + ":/"], {
+          ...options,
+          input: requestArchive,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
         assertZero(
           copied,
           "Managed bootstrap could not stage its protected root-owned 0400 envelope",
@@ -3429,8 +3428,6 @@ export function createDockerManagedBootstrapAdapter(
         const failure = error instanceof Error ? error : new Error(String(error));
         if (rollbackError) attachManagedBootstrapRollbackError(failure, rollbackError);
         throw failure;
-      } finally {
-        if (requestFile) cleanupTempDir(requestFile, REQUEST_TEMP_PREFIX);
       }
     },
     async activateBootstrapReplacement({ handle, snapshot, prepared, durablePreparation }) {

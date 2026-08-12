@@ -35,7 +35,7 @@ function positiveIntegerEnvironment(name: string): number {
 export function llamaCppDgxSparkQualificationEnvironment(): LlamaCppDgxSparkQualificationEnvironment {
   const identity = {
     baseSha: requiredEnvironment("NEMOCLAW_LLAMA_CPP_QUALIFICATION_BASE_SHA"),
-    headSha: requiredEnvironment("NEMOCLAW_E2E_EXPECTED_SHA"),
+    headSha: requiredEnvironment("NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA"),
     runAttempt: positiveIntegerEnvironment("GITHUB_RUN_ATTEMPT"),
     runId: positiveIntegerEnvironment("GITHUB_RUN_ID"),
     workflowSha: requiredEnvironment("NEMOCLAW_LLAMA_CPP_QUALIFICATION_WORKFLOW_SHA"),

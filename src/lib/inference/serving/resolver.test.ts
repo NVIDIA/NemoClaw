@@ -31,6 +31,7 @@ import type {
   ManagedInferenceServingPreset,
   ManagedInferenceServingRecipe,
   ManagedInferenceTopologyQualification,
+  ResolvedHostLocalInferenceSelection,
 } from "./types.js";
 
 const NOW = new Date("2026-08-02T18:00:00.000Z");
@@ -344,6 +345,9 @@ describe("managed inference resolver", () => {
     );
     expect(result.outcome).toBe("selected");
     expect(result).not.toHaveProperty("topologyQualification");
+    expect(result).toHaveProperty("recipe");
+    const selectedResult = result as ResolvedHostLocalInferenceSelection;
+    expect(isHostLocalInferenceServingRecipe(selectedResult.recipe)).toBe(true);
     const baseProfile = {
       name: "DGX Spark",
       platform: "spark",
@@ -355,12 +359,7 @@ describe("managed inference resolver", () => {
       pullTimeoutSec: 1,
       loadTimeoutSec: 1,
     } satisfies VllmProfile;
-    const selected = materializeHostLocalVllmSelection(
-      result as Extract<typeof result, { outcome: "selected" }> & {
-        topologyQualification?: never;
-      },
-      baseProfile,
-    );
+    const selected = materializeHostLocalVllmSelection(selectedResult, baseProfile);
 
     expect(selected).toMatchObject({
       presetId,
@@ -631,7 +630,7 @@ describe("managed inference resolver", () => {
       ["equals", "host.os.platform", "windows"],
       ["one-of", "host.os.architecture", "riscv64"],
       ["at-least", "host.gpu.count", 0],
-      ["version-at-least", "host.gpu.driver_version", "579.99.0"],
+      ["version-at-least", "host.gpu.driver_version", "580.65"],
       ["malformed version-at-least", "host.gpu.driver_version", "580.65.x"],
       [
         "version segment above Number.MAX_SAFE_INTEGER",

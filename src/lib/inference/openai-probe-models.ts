@@ -3,6 +3,12 @@
 
 import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "./max-tokens-field";
 
+export const STRICT_TOOL_PROBE_INITIAL_TOKENS = 256;
+export const STRICT_TOOL_PROBE_RETRY_TOKENS = 1024;
+export const STRICT_TOOL_PROBE_REASONING_RETRY_MESSAGE =
+  `  Chat Completions tool-call validation exhausted ${STRICT_TOOL_PROBE_INITIAL_TOKENS} tokens in reasoning; ` +
+  `retrying with a ${STRICT_TOOL_PROBE_RETRY_TOKENS}-token output budget...`;
+
 export function isDeepSeekV4ProModel(model: unknown): boolean {
   return String(model || "").toLowerCase() === "deepseek-ai/deepseek-v4-pro";
 }
@@ -39,4 +45,107 @@ export function getChatCompletionsProbePayload(model: string): Record<string, un
   }
 
   return payload;
+}
+
+export function getChatCompletionsToolProbePayload(
+  model: string,
+  maxTokens = STRICT_TOOL_PROBE_INITIAL_TOKENS,
+): Record<string, unknown> {
+  const maxTokensField = resolveMaxTokensField(model);
+  return {
+    model,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a tool-calling assistant. When tools are available and the user asks for an action, call a tool.",
+      },
+      {
+        role: "user",
+        content:
+          "Send hello to the current session. Use the sessions_send tool and do not answer in plain text.",
+      },
+    ],
+    tools: [
+      {
+        type: "function",
+        function: {
+          name: "sessions_send",
+          description: "Send a message to the active chat session.",
+          parameters: {
+            type: "object",
+            properties: { message: { type: "string" } },
+            required: ["message"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "memory_search",
+          description: "Search memory for relevant prior context.",
+          parameters: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "web_fetch",
+          description: "Fetch a URL and summarize the result.",
+          parameters: {
+            type: "object",
+            properties: { url: { type: "string" } },
+            required: ["url"],
+            additionalProperties: false,
+          },
+        },
+      },
+    ],
+    tool_choice: "required",
+    // GPT-5/o-series models reject custom sampling temperatures. Keep the
+    // deterministic setting for models that still use the legacy field.
+    ...(maxTokensField === "max_tokens" ? { temperature: 0 } : {}),
+    [maxTokensField]: maxTokens,
+    stream: false,
+  };
+}
+
+export function isReasoningOnlyLengthResponse(body: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return false;
+  }
+  if (!parsed || typeof parsed !== "object") return false;
+  const choice = (parsed as { choices?: unknown[] }).choices?.[0];
+  if (!choice || typeof choice !== "object") return false;
+  const typedChoice = choice as {
+    finish_reason?: unknown;
+    message?: {
+      content?: unknown;
+      reasoning?: unknown;
+      reasoning_content?: unknown;
+      tool_calls?: unknown;
+    };
+  };
+  const message = typedChoice.message;
+  if (typedChoice.finish_reason !== "length" || !message) return false;
+  const reasoning = [message.reasoning_content, message.reasoning].find(
+    (value): value is string => typeof value === "string" && value.trim().length > 0,
+  );
+  const contentIsEmpty =
+    message.content == null ||
+    (typeof message.content === "string" && message.content.trim().length === 0) ||
+    (Array.isArray(message.content) && message.content.length === 0);
+  const toolCallsAreEmpty =
+    message.tool_calls == null ||
+    (Array.isArray(message.tool_calls) && message.tool_calls.length === 0);
+  return Boolean(reasoning) && contentIsEmpty && toolCallsAreEmpty;
 }

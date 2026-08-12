@@ -18,8 +18,7 @@ network_policies:
           - 172.16.0.0/12
           - 192.168.0.0/16
         rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
+          - allow: { method: POST, path: "/v1/chat/completions" }
       - host: host.openshell.internal
         port: 11434
         protocol: rest

@@ -55,6 +55,7 @@ import {
 } from "./onboard-session-tool-disclosure";
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 import type { SandboxHostMount } from "./registry/types";
+import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
 import { nemoclawStateRoot } from "./state-root";
 
 export { normalizePersistedSandboxHostMounts } from "./registry/host-mount";
@@ -118,6 +119,8 @@ function structurallyInvalidHostMounts(source: unknown): boolean {
         !isObject(candidate) ||
         typeof candidate.source !== "string" ||
         typeof candidate.target !== "string" ||
+        hasUnsafeHostMountTerminalText(candidate.source) ||
+        hasUnsafeHostMountTerminalText(candidate.target) ||
         candidate.readOnly !== true,
     )
   );
@@ -512,6 +515,8 @@ function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetad
         isObject(candidate) &&
         typeof candidate.source === "string" &&
         typeof candidate.target === "string" &&
+        !hasUnsafeHostMountTerminalText(candidate.source) &&
+        !hasUnsafeHostMountTerminalText(candidate.target) &&
         candidate.readOnly === true,
     )
       ? value.hostMounts.map(

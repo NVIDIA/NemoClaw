@@ -1684,17 +1684,24 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     console.log(`[managed-startup] cleared ${agent} durable shared-state commit receipt`);
     return;
   }
-  if (argv.length === 7 && argv[0] === "--shared-state-transaction-status") {
+  if (
+    argv.length === 8 &&
+    argv[0] === "--shared-state-transaction-status" &&
+    argv[7] === "--read-only-receipt"
+  ) {
     requireRoot();
-    const agent = exactAgent(readCliAgent(argv, 7));
+    const agent = exactAgent(readCliAgent(argv, 8));
     const profileFingerprint = readCliFingerprint(argv);
     const bootstrapIdentity = readCliBootstrapIdentity(argv);
     process.stdout.write(
-      `${getManagedStartupSharedStateTransactionStatus({
-        agent,
-        profileFingerprint,
-        bootstrapIdentity,
-      })}\n`,
+      `${getManagedStartupSharedStateTransactionStatus(
+        {
+          agent,
+          profileFingerprint,
+          bootstrapIdentity,
+        },
+        { readOnlyReceipt: true },
+      )}\n`,
     );
     return;
   }

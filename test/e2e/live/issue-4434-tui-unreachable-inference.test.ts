@@ -31,7 +31,7 @@ import {
 
 const DOCKERFILE_BASE = path.join(REPO_ROOT, "Dockerfile.base");
 const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4434-tui-unreachable";
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4434";
 validateSandboxName(SANDBOX_NAME);
 
 const INFERENCE_MODELS_URL = "https://inference-api.nvidia.com/v1/models";

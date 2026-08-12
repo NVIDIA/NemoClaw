@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: publish-base-image-manifest
+description: Validate platform digests and publish one multi-platform base image manifest.
+
+inputs:
+  agent:
+    description: Agent identifier stored in the managed base image contract.
+    required: true
+  display-name:
+    description: Agent name used in validation errors.
+    required: true
+  image:
+    description: Image repository relative to the registry.
+    required: true
+  registry:
+    description: Container registry host.
+    required: true
+  registry-username:
+    description: Registry login user.
+    required: true
+  registry-password:
+    description: Registry login credential.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Download platform digests
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        pattern: ${{ inputs.agent }}-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-*
+        path: ${{ runner.temp }}/digests
+        merge-multiple: true
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+    - name: Log in to GHCR
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.registry-username }}
+        password: ${{ inputs.registry-password }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+      env:
+        DOCKER_METADATA_SHORT_SHA_LENGTH: 8
+      with:
+        images: ${{ inputs.registry }}/${{ inputs.image }}
+        tags: |
+          type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+          type=ref,event=tag
+          type=sha,prefix=,format=short
+
+    - name: Create and verify multi-platform manifest
+      id: manifest
+      shell: bash
+      env:
+        AGENT: ${{ inputs.agent }}
+        DISPLAY_NAME: ${{ inputs.display-name }}
+        IMAGE: ${{ inputs.registry }}/${{ inputs.image }}
+        TAGS: ${{ steps.meta.outputs.tags }}
+      run: bash "$GITHUB_ACTION_PATH/publish.sh"
+    - name: Upload managed base image contract
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: managed-base-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.agent }}
+        path: ${{ runner.temp }}/managed-base-contract/contract.json
+        if-no-files-found: error
+        retention-days: 1

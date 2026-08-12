@@ -24,6 +24,7 @@ export {
   requireRuntimeProviderDestructiveCleanupAuthority,
   requireRuntimeProviderMutationAuthority,
   requireRuntimeProviderReadOnlyHostMounts,
+  requireRuntimeProviderStateMutationSurface,
   resolveRuntimeProviderBundle,
   runtimeProviderContainerEngineIdentity,
 } from "./registry";

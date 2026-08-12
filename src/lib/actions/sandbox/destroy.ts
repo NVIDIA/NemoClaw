@@ -17,8 +17,11 @@ import {
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
-import { parseHttpsPinRouteId } from "../../inference/https-pin-runtime";
-import { revokeHttpsPinRuntimeAdapterRoute } from "../../inference/https-pin-runtime-adapter";
+import {
+  parseHttpsPinRouteId,
+  revokeHttpsPinRuntimeAdapterRoute,
+} from "../../inference/https-pin-runtime-adapter";
+import { cleanupManagedLlamaCppRuntimeForSandbox } from "../../inference/local-model-profile/cleanup";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   normalizeRuntimeProviderIdentity,
@@ -38,7 +41,11 @@ import * as onboardSession from "../../state/onboard-session";
 import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
 import { confirmSandboxDestroy } from "./destroy-confirmation";
-import { executeSandboxDestroy, redactDestroyError } from "./destroy-execution";
+import {
+  executeSandboxDestroy,
+  redactDestroyError,
+  retirePortableLifecycleAuthority,
+} from "./destroy-execution";
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
 import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
 import { prepareSandboxDestroy } from "./destroy-preflight";
@@ -142,8 +149,9 @@ export function cleanupSandboxServices(
   // Source boundary: this exported helper can be called independently of CLI
   // dispatch, including from forced local recovery. Validate once before every
   // host and provider cleanup side effect, then derive the PID path from that
-  // same RFC 1123 name. Remove only when the helper accepts a validated-name
-  // type that cannot be constructed from unchecked input.
+  // same canonical OpenShell-compatible name. Remove only when the helper
+  // accepts a validated-name type that cannot be constructed from unchecked
+  // input.
   const validatedSandboxName = validateName(sandboxName, "sandbox name");
   const servicesPidDir = path.resolve("/tmp", `nemoclaw-services-${validatedSandboxName}`);
   const getSandbox = deps.getSandbox ?? registry.getSandbox;
@@ -553,6 +561,18 @@ async function destroySandboxUnlocked(
   cleanupSandboxServices(sandboxName, {
     stopHostServices: shouldStopHostServices,
   });
+  if (deleteSucceededOrAlreadyGone) {
+    const managedLlamaCppCleanup = cleanupManagedLlamaCppRuntimeForSandbox(sandboxName, {
+      ...(typeof sandbox?.gatewayPort === "number" ? { gatewayPort: sandbox.gatewayPort } : {}),
+    });
+    if (!managedLlamaCppCleanup.ok) {
+      console.error(
+        `  Managed llama.cpp cleanup failed for '${sandboxName}': ${managedLlamaCppCleanup.reason}`,
+      );
+      console.error("  The sandbox registry entry was preserved so exact cleanup can be retried.");
+      process.exit(1);
+    }
+  }
   // The sandbox's gateway was captured before the registry entry is removed —
   // post-removal lookups return null and would collapse the cleanup target
   // back to the default gateway.
@@ -595,6 +615,15 @@ async function destroySandboxUnlocked(
       console.warn(`  ${YW}⚠${R}${message}`),
     );
     process.exit(1);
+  }
+  if (removed) {
+    try {
+      retirePortableLifecycleAuthority(sandboxName);
+    } catch (error) {
+      console.warn(
+        `  ${YW}⚠${R} Failed to retire portable lifecycle authority for '${sandboxName}': ${redactDestroyError(error)}`,
+      );
+    }
   }
   if (deleteSucceededOrAlreadyGone && removed && priorHttpsPinRouteId) {
     await revokeDestroyedSandboxHttpsPinRoute(cleanupGatewayName, priorHttpsPinRouteId);

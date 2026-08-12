@@ -41,7 +41,7 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   skipHostInferenceSmoke?: boolean;
   /** Public addresses approved for the selected custom endpoint. */
   endpointPinnedAddresses?: string[];
-  /** Non-forgeable proof of the exact private subset admitted by the selected preflight. */
+  /** Non-forgeable proof of the exact host and complete pins admitted by the selected preflight. */
   endpointTrustedPrivateCapability?: TrustedPrivateEndpointCapability;
   reuseGatewayCredentialWithoutLocalKey?: boolean;
   /** Ephemeral selection-to-smoke validation cache; never written to session state. */

@@ -49,8 +49,10 @@ export {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
   buildOpenClawMcporterInspectCommand,
+  DEFAULT_OPENCLAW_CONFIG_DIR,
   DEEPAGENTS_MCP_CONFIG_PATH,
   mcporterHeadersMatchExpected,
+  openClawMcporterRoot,
 } from "./mcp-bridge-adapter-status";
 
 export function inspectAgentAdapterRegistration(

@@ -24,7 +24,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 // onboard a Docker/OpenShell sandbox, execute OpenClaw's skills CLI inside the
 // sandbox, and verify install/list/info/check agree on the workspace skill path.
 
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-openclaw-skill-cli";
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-skill-cli";
 const SKILL_ID = "openclaw-skill-cli-fixture";
 const SKILL_DESCRIPTION = "E2E fixture proving openclaw skills install + list roundtrip";
 const REMOTE_SKILL_DIR = `/tmp/${SKILL_ID}`;

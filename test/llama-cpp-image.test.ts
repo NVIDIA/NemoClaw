@@ -20,12 +20,21 @@ const recipePath = path.join(
   "recipes",
   "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml",
 );
+const agentQualificationPath = path.join(
+  repoRoot,
+  "managed-inference",
+  "qualifications",
+  "llama-cpp.openclaw.spark-single.v1.yaml",
+);
 const exporterPath = path.join(repoRoot, "scripts", "checks", "export-llama-cpp-image-config.mts");
 
 type ImageManifest = {
   apiVersion?: string;
   kind?: string;
-  metadata?: { id?: string };
+  metadata?: {
+    annotations?: { "nemoclaw.nvidia.com/request-guard-state"?: string };
+    id?: string;
+  };
   spec?: {
     build?: {
       backendDirectory?: string;
@@ -68,6 +77,7 @@ type ImageManifest = {
         gpu?: { cpuFallback?: string; fullOffload?: boolean; vendor?: string };
         model?: { digest?: string; hostPath?: string | null; id?: string };
         platform?: string;
+        probeBounds?: Record<string, unknown>;
         probes?: string[];
         profile?: string;
         recipeRef?: string;
@@ -135,7 +145,22 @@ function configureQualification(
 }
 
 function enablePublication(source: string): string {
-  return configureQualification(source, { execution: "enabled", publicationEnabled: true });
+  return configureQualification(source, {
+    execution: "enabled",
+    publicationEnabled: true,
+  });
+}
+
+function configureManifestAnnotations(source: string, annotations: Record<string, string>): string {
+  const candidate = YAML.parse(source) as { metadata: { annotations?: Record<string, string> } };
+  candidate.metadata.annotations = annotations;
+  return YAML.stringify(candidate);
+}
+
+function removeManifestAnnotations(source: string): string {
+  const candidate = YAML.parse(source) as { metadata: { annotations?: Record<string, string> } };
+  delete candidate.metadata.annotations;
+  return YAML.stringify(candidate);
 }
 
 describe("declarative llama.cpp server image", () => {
@@ -148,7 +173,12 @@ describe("declarative llama.cpp server image", () => {
     expect(manifest).toMatchObject({
       apiVersion: "nemoclaw.nvidia.com/managed-inference/v1",
       kind: "ServerImageBuild",
-      metadata: { id: "llama-cpp-server.v1" },
+      metadata: {
+        id: "llama-cpp-server.v1",
+        annotations: {
+          "nemoclaw.nvidia.com/request-guard-state": "dormant",
+        },
+      },
       spec: {
         repository: "ghcr.io/nvidia/nemoclaw/llama-cpp-server",
         build: { backendDirectory: "/opt/llama.cpp/lib" },
@@ -159,6 +189,8 @@ describe("declarative llama.cpp server image", () => {
           requiredPaths: expect.arrayContaining([
             "/opt/llama.cpp/lib/libggml-cuda.so",
             "/usr/local/bin/llama-server",
+            "/usr/local/bin/nemoclaw-llama-cpp-request-guard",
+            "/usr/local/share/licenses/go/copyright",
             "/usr/local/share/licenses/llama.cpp/LICENSE",
           ]),
           writablePaths: ["/tmp"],
@@ -216,6 +248,25 @@ describe("declarative llama.cpp server image", () => {
       imageBuild: {
         platform: { cudaArchitectures: "121a-real", platform: "linux/arm64" },
         source: { revision: manifest.spec?.source?.revision },
+      },
+      qualification: {
+        agentQualification: {
+          execution: "enabled",
+          image: {
+            reference:
+              "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:3648441718cdd6c2bc4c8fe39fa0d04d3931656b2063af34215cc51841cd0d5e",
+            sourceRevision: "eb1d2f5700393892f227ac9fd56f485fc6718bce",
+          },
+          probes: [
+            "synchronous-chat",
+            "streaming-chat",
+            "agent-normal-turn",
+            "agent-tool-call",
+            "agent-tool-result-continuation",
+            "agent-multi-turn",
+          ],
+        },
+        requestGuard: "required",
       },
       recipe: {
         id: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
@@ -335,6 +386,20 @@ describe("declarative llama.cpp server image", () => {
       "an unexpected top-level field",
       manifestSource.replace("kind: ServerImageBuild", "kind: ServerImageBuild\nunexpected: true"),
     ],
+    ["a missing request guard state annotation", removeManifestAnnotations(manifestSource)],
+    [
+      "a non-dormant request guard state annotation",
+      configureManifestAnnotations(manifestSource, {
+        "nemoclaw.nvidia.com/request-guard-state": "active",
+      }),
+    ],
+    [
+      "an unexpected image annotation",
+      configureManifestAnnotations(manifestSource, {
+        "nemoclaw.nvidia.com/request-guard-state": "dormant",
+        "nemoclaw.nvidia.com/unexpected": "true",
+      }),
+    ],
   ])("rejects %s before exporting image build inputs (#8231)", (_case, candidate) => {
     expect(() => loadLlamaCppImageConfig(candidate)).toThrow();
   });
@@ -374,6 +439,12 @@ describe("declarative llama.cpp server image", () => {
     expect(() =>
       loadLlamaCppImageConfig(
         manifestSource,
+        recipeSource.replace("toolCalls: true", "toolCalls: false"),
+      ),
+    ).toThrow("capability claims are invalid");
+    expect(() =>
+      loadLlamaCppImageConfig(
+        manifestSource,
         recipeSource.replace("batchSize: 2048", "batchSize: 1024"),
       ),
     ).not.toThrow();
@@ -402,6 +473,40 @@ describe("declarative llama.cpp server image", () => {
     expect(reordered.publication_qualification_plan_sha256).toBe(
       baseline.publication_qualification_plan_sha256,
     );
+  });
+
+  it("uses only the strict agent-qualification YAML to activate OpenClaw probes", () => {
+    const recipeSource = fs.readFileSync(recipePath, "utf8");
+    const qualificationSource = fs.readFileSync(agentQualificationPath, "utf8");
+    const enabled = loadLlamaCppImageConfig(
+      manifestSource,
+      recipeSource,
+      undefined,
+      qualificationSource,
+    );
+
+    expect(JSON.parse(enabled.publication_qualification_plan)).toMatchObject({
+      qualification: { agentQualification: { execution: "enabled" } },
+    });
+    expect(() =>
+      loadLlamaCppImageConfig(
+        manifestSource,
+        recipeSource,
+        undefined,
+        qualificationSource.replace("provider: llama-cpp-local", "provider: vllm-local"),
+      ),
+    ).toThrow(/agent qualification is invalid/u);
+    expect(() =>
+      loadLlamaCppImageConfig(
+        manifestSource,
+        recipeSource,
+        undefined,
+        qualificationSource.replace(
+          "kind: AgentQualification",
+          "kind: AgentQualification\nextra: true",
+        ),
+      ),
+    ).toThrow(/agent qualification document fields/u);
   });
 
   it("rejects YAML parser warnings in image and recipe inputs (#8260)", () => {
@@ -591,6 +696,16 @@ describe("declarative llama.cpp server image", () => {
     expect(dockerfile).toContain("USER ${RUNTIME_UID}:${RUNTIME_GID}");
     expect(dockerfile).toContain('SHELL ["/bin/bash", "-o", "pipefail", "-c"]');
     expect(dockerfile).toContain('ENTRYPOINT ["/usr/local/bin/llama-server"]');
+    expect(dockerfile).toContain("go test ./...");
+    expect(dockerfile).toContain("CGO_ENABLED=0 go build");
+    expect(dockerfile).toContain("set -- /usr/share/doc/golang-[0-9]*-go/copyright");
+    expect(dockerfile).toContain('cp "$1" /opt/llama.cpp/licenses/go/copyright');
+    expect(dockerfile).toContain(
+      "COPY --from=build --chmod=0555 /opt/llama.cpp/bin/nemoclaw-llama-cpp-request-guard /usr/local/bin/nemoclaw-llama-cpp-request-guard",
+    );
+    expect(dockerfile).toContain(
+      "COPY --from=build /opt/llama.cpp/licenses/ /usr/local/share/licenses/",
+    );
     expect(dockerfile).toContain("ENV CC=${C_COMPILER}");
     expect(dockerfile).toContain("CXX=${CXX_COMPILER}");
     expect(dockerfile).toContain("CUDAHOSTCXX=${CUDA_HOST_CXX_COMPILER}");

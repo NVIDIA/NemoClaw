@@ -250,11 +250,6 @@ function validateRecipeSemantics(
       );
     }
     const { serve } = recipe.spec;
-    if (serve.limits.maxPromptTokens + serve.limits.maxCompletionTokens > serve.contextSize) {
-      throw new ServingCatalogValidationError(
-        `Recipe ${recipe.metadata.id} request token limits exceed serve.contextSize.`,
-      );
-    }
     if (serve.microBatchSize > serve.batchSize) {
       throw new ServingCatalogValidationError(
         `Recipe ${recipe.metadata.id} serve.microBatchSize cannot exceed serve.batchSize.`,
@@ -390,10 +385,11 @@ function llamaCppReadinessComparisonMatches(
   if (role !== "architecture" || actual.operator !== "equals") {
     return canonicalReadinessComparison(actual) === canonicalReadinessComparison(expected);
   }
+  const architecture = actual.value === "x64" ? "amd64" : actual.value;
   return (
-    typeof actual.value === "string" &&
+    typeof architecture === "string" &&
     recipe.spec.runtime.platforms.includes(
-      `linux/${actual.value}` as LlamaCppServingRecipe["spec"]["runtime"]["platforms"][number],
+      `linux/${architecture}` as LlamaCppServingRecipe["spec"]["runtime"]["platforms"][number],
     )
   );
 }

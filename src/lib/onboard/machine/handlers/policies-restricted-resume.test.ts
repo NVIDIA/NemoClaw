@@ -3,13 +3,13 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { makeMessagingPlan } from "../../../../../test/helpers/messaging-plan-fixtures";
 import { createSession } from "../../../state/onboard-session";
 import { handlePoliciesState } from "./policies";
 import {
   basePolicyHandlerOptions as baseOptions,
   createPolicyHandlerDeps as createDeps,
-  makeMessagingPlan,
-} from "./policies-test-fixtures";
+} from "./policies-test-fixture";
 
 // Handler-level fallback for the runtime check the advisor calls out: the
 // narrowest live assertion (read the actual OpenShell-applied preset list
@@ -41,7 +41,7 @@ describe("handlePoliciesState — restricted resume reconciliation", () => {
       preparePolicyPresetResumeSelection: prepareResume,
       arePolicyPresetsApplied: vi.fn(() => true),
       getActiveSandbox: vi.fn(() => ({
-        messaging: { plan: makeMessagingPlan("my-assistant", []) },
+        messaging: { plan: makeMessagingPlan() },
         policyTier: "restricted",
       })),
     });

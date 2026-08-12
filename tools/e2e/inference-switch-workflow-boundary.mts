@@ -59,7 +59,7 @@ function expectedModes(agent: JobSpec["agent"]): Array<Record<string, unknown>> 
   return [
     {
       mode: "anthropic",
-      sandbox_name: `e2e-${agent}-anthropic-inference-switch`,
+      sandbox_name: agent === "hermes" ? "e2e-hm-inf-switch" : "e2e-oc-inf-switch",
       switch_provider: "compatible-anthropic-endpoint",
       switch_model: "mock-anthropic-model",
       switch_inference_api: "anthropic-messages",

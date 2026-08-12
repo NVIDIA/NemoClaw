@@ -6,6 +6,7 @@ import {
   isDockerRuntimeDown,
   printDockerRuntimeDownGuidance,
 } from "../../actions/sandbox/gateway-failure-classifier";
+import { parseDockerDaemonObservation } from "../../domain/docker-host";
 import { cliName } from "../branding";
 import {
   findLabeledSandboxContainers,
@@ -33,6 +34,8 @@ import {
   type RuntimeProviderWorkloadCleanupResult,
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
+import { createDockerLlamaCppHostLocalOperation } from "./docker-llama-cpp-operation";
+import { createDockerStateMutationSurface } from "./docker-state-mutation";
 import { createDockerRuntimeProviderSnapshotSurface } from "./snapshot";
 
 type DockerOpResult = { status?: number | null };
@@ -102,21 +105,17 @@ function oneLine(value = ""): string {
 }
 
 function inspectDockerHost(deps: DockerRuntimeProviderDependencies): RuntimeProviderDoctorCheck {
-  const result = deps.captureHostCommand(
-    "docker",
-    ["info", "--format", "{{.ServerVersion}}"],
-    8000,
-  );
+  const result = deps.captureHostCommand("docker", ["info", "--format", "{{json .}}"], 8000);
+  const observation = parseDockerDaemonObservation(result.stdout);
+  const reachable = result.status === 0 && observation.reachable;
   return {
     group: "Host",
     label: "Docker daemon",
-    status: result.status === 0 ? "ok" : "fail",
-    detail:
-      result.status === 0
-        ? `server ${result.stdout.trim() || "unknown"}`
-        : oneLine(result.stderr || result.error?.message || "docker info failed"),
-    hint:
-      result.status === 0 ? undefined : "start Docker and verify your user can access the daemon",
+    status: reachable ? "ok" : "fail",
+    detail: reachable
+      ? `server ${observation.serverVersion ?? "unknown"}`
+      : oneLine(result.stderr || result.error?.message || "docker info failed"),
+    hint: reachable ? undefined : "start Docker and verify your user can access the daemon",
   };
 }
 
@@ -339,6 +338,12 @@ export function createDockerRuntimeProviderBundle(
       profile: COMPLETE_MANAGED_IMAGE_V1_PROFILE,
       acceptsReceipt: (receipt) => acceptsReceipt(COMPLETE_MANAGED_IMAGE_V1_PROFILE, receipt),
     },
+    hostLocalInference: {
+      providerId,
+      supported: true,
+      services: ["llama-cpp"],
+      createOperation: ({ env }) => createDockerLlamaCppHostLocalOperation(env),
+    },
     lifecycle: {
       providerId,
       supported: true,
@@ -362,6 +367,7 @@ export function createDockerRuntimeProviderBundle(
         "workload-cleanup",
       ],
     },
+    stateMutation: createDockerStateMutationSurface(),
     bootstrap: createDockerManagedBootstrapSurface(providerId),
     snapshot: createDockerRuntimeProviderSnapshotSurface(providerId, {
       captureHostCommand: deps.captureHostCommand,
@@ -381,6 +387,7 @@ export function createDockerRuntimeProviderBundle(
       identities: [
         { operation: "host-doctor", engineId: "docker", displayName: "Docker" },
         { operation: "gateway-inspection", engineId: "docker", displayName: "Docker" },
+        { operation: "host-local-inference", engineId: "docker", displayName: "Docker" },
         { operation: "sandbox-lifecycle", engineId: "docker", displayName: "Docker" },
         { operation: "workload-cleanup", engineId: "docker", displayName: "Docker" },
       ],
@@ -410,7 +417,7 @@ export function createKubernetesRuntimeProviderBundle(
     capabilities: {
       providerId,
       supported: true,
-      hostLocalInference: true,
+      hostLocalInference: false,
       directLifecycle: false,
       legacyGatewayContainerInspection: true,
       workloadImageCleanup: true,
@@ -438,6 +445,10 @@ export function createKubernetesRuntimeProviderBundle(
       profile,
       acceptsReceipt: (receipt) => acceptsReceipt(profile, receipt),
     },
+    hostLocalInference: unsupported(
+      providerId,
+      "Kubernetes does not provide the managed llama.cpp host-local-inference lifecycle.",
+    ),
     lifecycle: unsupported(
       providerId,
       "Direct local lifecycle control is unavailable for the Kubernetes provider.",
@@ -454,6 +465,7 @@ export function createKubernetesRuntimeProviderBundle(
         "workload-cleanup",
       ],
     },
+    stateMutation: unsupported(providerId, futureReason),
     bootstrap: unsupported(providerId, futureReason),
     snapshot: unsupported(providerId, futureReason),
     recovery: unsupported(providerId, futureReason),

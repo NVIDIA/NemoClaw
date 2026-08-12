@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -16,6 +16,7 @@ export { ensureDockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-
 // See docs/security/openshell-0.0.72-compatibility-review.mdx for the source-of-truth review.
 export const DOCKER_DRIVER_GATEWAY_CONFIG_NAME = "openshell-gateway.toml";
 export const DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS = 0;
+export const NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV = "NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE";
 
 function tomlString(value: string): string {
   return JSON.stringify(value);
@@ -55,9 +56,11 @@ function cleanupStaleAtomicFileTemps(dir: string, basename: string): void {
   }
 }
 
-function gatewayIdForStateDir(stateDir: string): string {
-  const leaf = path.basename(path.resolve(stateDir)).replace(/[^A-Za-z0-9_.-]/g, "-");
-  return leaf ? `nemoclaw-${leaf}` : "nemoclaw";
+export function gatewayIdForStateDir(stateDir: string): string {
+  const canonical = path.resolve(stateDir);
+  const digest = createHash("sha256").update(canonical).digest("hex").slice(0, 12);
+  const leaf = path.basename(canonical).replace(/[^A-Za-z0-9_.-]/g, "-");
+  return `nemoclaw-${leaf || "gateway"}-${digest}`;
 }
 
 function gatewayLocalTlsDir(gatewayEnv: Record<string, string>): string {
@@ -78,6 +81,7 @@ export function buildDockerDriverGatewayConfigToml(
   const localTlsDir = jwtBundle ? gatewayLocalTlsDir(gatewayEnv) : undefined;
   const dockerEntries: [string, string | boolean | undefined][] = [
     ["enable_bind_mounts", gatewayEnv.NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS === "1" || undefined],
+    ["sandbox_namespace", driver === "docker" ? gatewayId : undefined],
     ["grpc_endpoint", gatewayEnv.OPENSHELL_GRPC_ENDPOINT],
     ["host_gateway_ip", driver === "podman" ? PORTABLE_HOST_GATEWAY_IP : undefined],
     ["network_name", gatewayEnv.OPENSHELL_DOCKER_NETWORK_NAME],
@@ -173,5 +177,10 @@ export function prepareDockerDriverGatewayConfigEnv(
     gatewayEnv,
     sandboxBin,
   );
+  if (gatewayEnv.OPENSHELL_DRIVERS === "podman") {
+    delete gatewayEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV];
+  } else {
+    gatewayEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV] = gatewayIdForStateDir(stateDir);
+  }
   return gatewayEnv;
 }

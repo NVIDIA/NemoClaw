@@ -12,6 +12,16 @@ Produce an evidence-based issue plan before implementation starts. Refine the re
 an accepted issue or accepted design decision. Divide delivery into independently valuable capability
 slices. Do not edit source, implement a slice, push a branch, or publish a pull request in this workflow.
 
+## Required response contract
+
+For every successful issue-planning invocation, including the bare trigger `plan issue <issue-url>`,
+the final response must use the exact report structure in [Report the plan](#report-the-plan).
+Do not replace its headings with free-form prose, implementation code, "Safety Considerations," or
+"Next Steps." Complete research first, then render the report once. Start the final response with
+`# Issue #<number>: <title>` and include every defined top-level section through
+`## GitHub writes`. Keep an empty required section and report `none` or `none found`; only the
+acceptance categories may be omitted when they do not apply, with the reason stated.
+
 ## Route the request
 
 Use this workflow for an explicit request to plan, refine, scope, divide, or define acceptance for
@@ -47,7 +57,7 @@ related work. Do not assign an owner through GitHub unless the user authorizes t
 
 ## Discover the current implementation
 
-Before running any `git` or `gh` discovery command, follow [Stop for Git and GitHub Access Errors](../_shared/git-github-hard-stop.md). Then follow [Discover the Current Implementation](../_shared/implementation-discovery.md). Apply the shared [Code Change Considerations](../_shared/code-change-considerations.md) and [Security Rubric](../_shared/security-rubric.md) at the planning stage.
+Before running any `git` or `gh` discovery command, follow [Stop for Git and GitHub Access Errors](../_shared/git-github-hard-stop.md). Then follow [Discover the Current Implementation](../_shared/implementation-discovery.md). Apply the shared [Code Change Considerations](../_shared/code-change-considerations.md), [Root-Cause and Sensitive-Workflow State Checks](../_shared/root-cause-and-state-checks.md), and [Security Rubric](../_shared/security-rubric.md) at the planning stage.
 
 Read before proposing work:
 
@@ -57,8 +67,10 @@ Read before proposing work:
 - documentation only to locate claims and rationale, not as behavior authority.
 
 Identify the existing structure to extend. Report duplicate ownership, conflicting work, delivery
-order constraints, unresolved decisions, and trust boundaries. Stop discovery when the smallest
-coherent delivery plan is supported by current evidence.
+order constraints, unresolved decisions, and trust boundaries. Name the operation and failure class
+that the work belongs to, record the sibling paths checked, and record the sensitive-workflow state
+outcomes the plan must hold. Stop discovery when the smallest coherent delivery plan is supported by
+current evidence.
 
 ## Define observable acceptance
 
@@ -108,7 +120,8 @@ implementation or pull request publication.
 
 ## Report the plan
 
-Use this structure:
+Use this structure exactly. Keep the headings unchanged so users and automated checks can identify
+the planning result reliably:
 
 ```markdown
 # Issue #<number>: <title>
@@ -125,6 +138,9 @@ Use this structure:
 ## Current state and decisions
 - Existing structure to extend: <owner and evidence>
 - Unresolved product decisions: <decision or "none found">
+- Operation and failure class: <operation and failure class the work belongs to>
+- Sibling paths checked: <path and whether it needs the same change>
+- Sensitive-workflow states: <each applicable failure cell with a separate result and required action, plus each credential location, access, lifetime, and removal, or "not applicable" with the reason>
 - Security boundaries: <applicable risks, controls, and required negative evidence>
 
 ## Observable acceptance examples

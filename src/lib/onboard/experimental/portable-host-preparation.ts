@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
+import { hardenPodmanSocketDirectory, localPodmanEnvironment } from "../../adapters/podman";
 import { ensureConfigDir } from "../../state/config-io";
 import { isPortableExperimentalProfile, PORTABLE_LOCAL_REGISTRY } from "../docker-driver-platform";
 
@@ -37,6 +38,7 @@ export interface PortableHostPreparationDeps {
   systemctl?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
   podman?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
   docker?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
+  hardenSocketDirectory?: (socketPath: string, uid: number) => void;
 }
 
 function commandDetail(result: SpawnResult): string {
@@ -49,6 +51,28 @@ function commandDetail(result: SpawnResult): string {
 function requireCommand(result: SpawnResult, description: string): void {
   if (result.status === 0) return;
   throw new Error(`${description} failed: ${commandDetail(result)}`);
+}
+
+/**
+ * The portable profile points DOCKER_HOST at the rootless Podman socket but still
+ * drives the managed registry — and the rest of onboarding's runtime preflight —
+ * through the `docker` CLI. On a genuinely Podman-only host that CLI is absent,
+ * so the first docker spawn fails with a cryptic `spawnSync docker ENOENT`
+ * instead of an actionable message (#8453). Detect that up front and tell the
+ * user to install the docker-compatible shim the profile expects.
+ */
+function requireDockerCompatibleCli(
+  docker: NonNullable<PortableHostPreparationDeps["docker"]>,
+  env: NodeJS.ProcessEnv,
+): void {
+  const probe = docker(["--version"], env);
+  if ((probe.error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") return;
+  throw new Error(
+    "The portable experimental profile drives Podman through a docker-compatible CLI, but no " +
+      "`docker` command was found on PATH. On a Podman-only host, install the podman-docker shim " +
+      "(Debian/Ubuntu: `sudo apt install podman-docker`; Fedora: `sudo dnf install podman-docker`), " +
+      "then rerun `nemoclaw onboard --experimental-profile portable`.",
+  );
 }
 
 function resolvePodmanDockerHost(result: SpawnResult): string {
@@ -202,9 +226,14 @@ export function preparePortableExperimentalHost(
         env: childEnv,
         timeout: HOST_COMMAND_TIMEOUT_MS,
       }));
-  env.DOCKER_HOST = resolvePodmanDockerHost(
-    podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], env),
+  const podmanEnv = localPodmanEnvironment(env);
+  const dockerHost = resolvePodmanDockerHost(
+    podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], podmanEnv),
   );
+  const socketPath = dockerHost.slice("unix://".length);
+  (deps.hardenSocketDirectory ?? hardenPodmanSocketDirectory)(socketPath, Number(uid));
+  env.DOCKER_HOST = dockerHost;
+  podmanEnv.DOCKER_HOST = dockerHost;
 
   const docker =
     deps.docker ??
@@ -214,7 +243,8 @@ export function preparePortableExperimentalHost(
         env: childEnv,
         timeout: REGISTRY_COMMAND_TIMEOUT_MS,
       }));
-  ensureRegistryContainer(env, docker);
+  requireDockerCompatibleCli(docker, podmanEnv);
+  ensureRegistryContainer(podmanEnv, docker);
 }
 
 export const portableHostPreparationInternals = {

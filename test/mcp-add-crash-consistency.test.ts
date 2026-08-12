@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.85");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.101");
 
 type CrashBoundary =
   | "provider"
@@ -164,14 +164,17 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
     if (crashAfter === "adapter") process.exit(86);
     return { status: 0, stdout: "", stderr: "" };
   }
-  if (command.includes("config' 'remove") || command.includes('["config", "remove"')) {
+  if (
+    command.includes("config' 'remove") ||
+    (command.includes('spawnSync("mcporter"') && command.includes('"remove", expected.server'))
+  ) {
     fs.rmSync(marker("adapter"), { force: true });
     return { status: 0, stdout: "", stderr: "" };
   }
   if (
     crashAfter === "adapter-mismatch" &&
     marked("adapter") &&
-    command.includes('["config", "get"')
+    (command.includes('["config", "get"') || command.includes('"get", expected.server'))
   ) {
     return { status: 0, stdout: "mismatch\n", stderr: "" };
   }
@@ -282,13 +285,17 @@ providerCommands.runOpenshellProviderCommand = (args) => {
 };
 
 policies.getPresetContentGatewayState = () => marked("policy") ? "match" : "absent";
+policies.getLiveSandboxPolicyEntryDigest = () => marked("policy") ? "present" : null;
 policies.removePreset = () => {
   fs.rmSync(marker("policy"), { force: true });
   return true;
 };
 
 processRecovery.executeSandboxCommand = (_sandbox, command) => {
-  if (command.includes('["config", "remove"')) {
+  if (
+    command.includes('["config", "remove"') ||
+    (command.includes('spawnSync("mcporter"') && command.includes('"remove", expected.server'))
+  ) {
     fs.rmSync(marker("adapter"), { force: true });
   }
   return { status: 0, stdout: "", stderr: "" };

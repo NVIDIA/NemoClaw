@@ -157,7 +157,7 @@ async function hostSlackTokenStdin(options: {
       "-o UserKnownHostsFile=/dev/null",
       "-o ConnectTimeout=10",
       "-o LogLevel=ERROR",
-      shellQuote(`openshell-${SANDBOX_NAME}`),
+      shellQuote(`openshell-${SANDBOX_NAME}.default`),
       shellQuote(options.remoteCommand),
     ].join(" "),
   ].join("\n");

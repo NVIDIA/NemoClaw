@@ -14,6 +14,7 @@ const {
   NON_INTERACTIVE_PROVIDER_KEYS,
   REMOTE_PROVIDER_CONFIG,
   buildProviderArgs,
+  getNonInteractiveProvider,
   getNonInteractiveModel,
   getRequestedModelHint,
   getRequestedProviderHint,
@@ -42,6 +43,7 @@ const {
     credentialEnv: string,
     baseUrl: string | null,
   ) => string[];
+  getNonInteractiveProvider: (allowHostedInferenceStaging?: boolean) => string | null;
   getNonInteractiveModel: (
     providerKey: string,
     options?: { allowProviderModelFallback?: boolean },
@@ -120,6 +122,13 @@ function withProviderEnv(next: Record<string, string | undefined>, testBody: () 
 }
 
 describe("onboard provider helpers", () => {
+  it("keeps managed llama.cpp as a public non-interactive provider selector (#8433)", () => {
+    expect(NON_INTERACTIVE_PROVIDER_KEYS.has("install-llama-cpp")).toBe(true);
+    withProviderEnv({ NEMOCLAW_PROVIDER: "install-llama-cpp" }, () => {
+      expect(getNonInteractiveProvider(false)).toBe("install-llama-cpp");
+    });
+  });
+
   it("registers OpenRouter with an OpenAI-compatible provider profile and aliases (#5826)", () => {
     const provider = REMOTE_PROVIDER_CONFIG.openrouter;
 

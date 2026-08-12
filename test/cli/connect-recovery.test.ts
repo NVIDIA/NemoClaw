@@ -219,7 +219,12 @@ describe("CLI connect recovery process contracts", () => {
           "fi",
           'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
           '  cmd="$8"',
+          '  if [[ "$*" == *"inference.local/v1/models"* ]]; then echo "OK 200"; exit 0; fi',
           '  case "$cmd" in',
+          '    *"inference.local/v1/models"*)',
+          "      echo 'OK 200'",
+          "      exit 0",
+          "      ;;",
           "    *'curl -so'*)",
           "      echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
           '      if [ "$(cat "$state_file")" = recovered ]; then echo RUNNING; else echo STOPPED; fi',
@@ -250,7 +255,7 @@ describe("CLI connect recovery process contracts", () => {
           PATH: `${localBin}:${process.env.PATH || ""}`,
         });
 
-        expect(result.code).toBe(0);
+        expect(result.code, result.out).toBe(0);
         expect(result.out).toContain(expectedOutput);
         expect(result.out).not.toContain(unexpectedOutput);
         const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
@@ -300,6 +305,7 @@ describe("CLI connect recovery process contracts", () => {
           "fi",
           'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
           '  cmd="$8"',
+          '  if [[ "$*" == *"inference.local/v1/models"* ]]; then echo "OK 200"; exit 0; fi',
           '  if [[ "$cmd" == *"curl -so"* ]]; then',
           "    echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
           '    if [ "$(cat "$state_file")" = recovered ]; then echo RUNNING; else echo STOPPED; fi',
@@ -370,6 +376,7 @@ describe("CLI connect recovery process contracts", () => {
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
         '  cmd="$8"',
+        '  if [[ "$*" == *"inference.local/v1/models"* ]]; then echo "OK 200"; exit 0; fi',
         '  if [[ "$cmd" == *"curl -so"* ]]; then',
         "    echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
         '    if [ "$(cat "$state_file")" = recovered ]; then echo RUNNING; else echo STOPPED; fi',
@@ -397,7 +404,7 @@ describe("CLI connect recovery process contracts", () => {
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
 
-      expect(result.code).toBe(0);
+      expect(result.code, result.out).toBe(0);
       expect(result.out).toContain("Probe complete: recovered Hermes Agent gateway");
       const openshellLog = fs.readFileSync(openshellCalls, "utf8");
       expect(openshellLog).toContain("sandbox exec --name alpha -- sh -c");

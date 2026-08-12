@@ -50,7 +50,7 @@ import {
 export { REPO_ROOT };
 
 export const CLI = CLI_ENTRYPOINT;
-export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-inference-switch";
+export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hm-inf-switch";
 validateSandboxName(SANDBOX_NAME);
 const USE_COMPATIBLE_HOSTED = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1";
 export const SWITCH_PROVIDER =

@@ -51,17 +51,32 @@ function bundleMcpRuntimeFixture(): string {
 interface HelperHarness {
   wrap: (
     inner: typeof fetch,
-    serverUrl: string,
+    serverUrl:
+      | string
+      | {
+          serverName: string;
+          serverUrl: string;
+          connectionTimeoutMs: number;
+          requestTimeoutMs: number;
+          catalogListTimeoutMs: number;
+        },
   ) => (input: unknown, init?: RequestInit) => Promise<Response>;
   stderr: string[];
 }
 
-function loadHelper(env: Record<string, string> = { OPENSHELL_SANDBOX: "1" }): HelperHarness {
+function loadHelper(
+  env: Record<string, string> = { OPENSHELL_SANDBOX: "1" },
+  now: () => number = () => Date.now(),
+  runtime: {
+    crypto?: Pick<Crypto, "randomUUID">;
+    writeStderr?: (chunk: string) => void;
+  } = {},
+): HelperHarness {
   const stderr: string[] = [];
   const context = vm.createContext({
     Headers,
     URL,
-    Date,
+    Date: { now },
     TextDecoder,
     TextEncoder,
     Object,
@@ -71,14 +86,30 @@ function loadHelper(env: Record<string, string> = { OPENSHELL_SANDBOX: "1" }): H
     String,
     Set,
     clearTimeout,
-    crypto: webcrypto,
-    process: { env, stderr: { write: (chunk: string) => stderr.push(chunk) } },
+    crypto: runtime.crypto ?? webcrypto,
+    process: {
+      env,
+      stderr: { write: runtime.writeStderr ?? ((chunk: string) => stderr.push(chunk)) },
+    },
     setTimeout,
   });
-  const wrap = vm.runInContext(
+  const injectedWrap = vm.runInContext(
     `${INJECTED_DIAGNOSTIC_HELPER}\nnemoClawManagedTransportFetch;`,
     context,
   );
+  const wrap: HelperHarness["wrap"] = (inner, serverUrl) =>
+    injectedWrap(
+      inner,
+      typeof serverUrl === "string"
+        ? {
+            serverName: "remotedocs",
+            serverUrl,
+            connectionTimeoutMs: 30_000,
+            requestTimeoutMs: 60_000,
+            catalogListTimeoutMs: 1_500,
+          }
+        : serverUrl,
+    );
   return { wrap, stderr };
 }
 
@@ -93,6 +124,24 @@ function emittedEvent(stderr: string[]): Record<string, string> {
   );
 }
 
+function emittedEvents(stderr: string[]): Array<Record<string, string>> {
+  return stderr.map((chunk) => {
+    const lines = chunk
+      .split("\n")
+      .map((line) => line.replace(/^\[nemoclaw\] /, ""))
+      .filter(Boolean);
+    return {
+      event: lines[0],
+      ...Object.fromEntries(
+        lines
+          .slice(1)
+          .filter((line) => line.includes("="))
+          .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
+      ),
+    };
+  });
+}
+
 async function waitForDiagnostic(stderr: string[]): Promise<void> {
   await expect.poll(() => stderr.length, { interval: 5, timeout: 1000 }).toBeGreaterThan(0);
 }
@@ -103,9 +152,8 @@ describe("patchManagedTransportDiagnosticsText", () => {
 
     expect(result.status).toBe("patched");
     expect(result.text).toContain(MARKER);
-    expect(result.text).toContain(
-      "\t\t\tfetch: nemoClawManagedTransportFetch(httpFetch, resolved.url),",
-    );
+    expect(result.text).toContain("\t\t\tfetch: nemoClawManagedTransportFetch(httpFetch, {");
+    expect(result.text).toContain("\t\t\t\tcatalogListTimeoutMs: getCatalogListTimeoutMs(");
   });
 
   it("leaves the SSE transport boundary untouched (#7957)", () => {
@@ -158,6 +206,285 @@ describe("injected managed transport wrapper", () => {
     expect(stderr).toEqual([]);
   });
 
+  it("sends the request when diagnostic identifier generation fails (#7957)", async () => {
+    let randomUuidCalls = 0;
+    let innerCalls = 0;
+    const { wrap, stderr } = loadHelper({ OPENSHELL_SANDBOX: "1" }, () => Date.now(), {
+      crypto: {
+        randomUUID: () => {
+          randomUuidCalls += 1;
+          throw new Error("entropy unavailable");
+        },
+      },
+    });
+    const inner = async () => {
+      innerCalls += 1;
+      return new Response("ok", { status: 200 });
+    };
+
+    const response = await wrap(
+      inner as unknown as typeof fetch,
+      "https://mcp.test/rpc",
+    )("https://mcp.test/rpc");
+
+    expect(response.status).toBe(200);
+    expect(innerCalls).toBe(1);
+    expect(randomUuidCalls).toBeGreaterThan(0);
+    expect(stderr).toEqual([]);
+  });
+
+  it("returns a successful response when shadow diagnostic emission fails (#7957)", async () => {
+    let stderrWrites = 0;
+    let innerCalls = 0;
+    const { wrap } = loadHelper(
+      {
+        OPENSHELL_SANDBOX: "1",
+        NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: "1",
+      },
+      () => Date.now(),
+      {
+        writeStderr: () => {
+          stderrWrites += 1;
+          throw new Error("stderr unavailable");
+        },
+      },
+    );
+    const expected = new Response("ok", { status: 200 });
+    const inner = async () => {
+      innerCalls += 1;
+      return expected;
+    };
+
+    const response = await wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")(
+      "https://mcp.test/rpc",
+      {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      },
+    );
+
+    expect(response).toBe(expected);
+    expect(innerCalls).toBe(1);
+    expect(stderrWrites).toBeGreaterThan(0);
+  });
+
+  it("emits opt-in operation timing and a bounded shadow recommendation without changing responses (#7957)", async () => {
+    let now = 0;
+    const { wrap, stderr } = loadHelper(
+      {
+        OPENSHELL_SANDBOX: "1",
+        NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: "1",
+      },
+      () => now,
+    );
+    const delays = [1_000, 1_600, 3_000, 6_000, 1_200];
+    let call = 0;
+    const inner = async () => {
+      now += delays[call];
+      call += 1;
+      return new Response("ok", { status: 200 });
+    };
+    const wrapped = wrap(inner as unknown as typeof fetch, {
+      serverName: "gitlab",
+      serverUrl: "https://mcp.test/rpc",
+      connectionTimeoutMs: 30_000,
+      requestTimeoutMs: 60_000,
+      catalogListTimeoutMs: 1_500,
+    });
+
+    for (let index = 0; index < delays.length; index += 1) {
+      const response = await wrapped("https://mcp.test/rpc", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: index, method: "tools/list" }),
+      });
+      expect(response.status).toBe(200);
+    }
+
+    const events = emittedEvents(stderr);
+    expect(events).toHaveLength(5);
+    expect(events[0]).toMatchObject({
+      event: "managed_transport_shadow",
+      mcp_server: "gitlab",
+      operation: "tools/list",
+      transport_generation: "1",
+      request_sequence: "1",
+      connection_timeout_ms: "30000",
+      request_timeout_ms: "60000",
+      catalog_list_timeout_ms: "1500",
+      effective_timeout_ms: "1500",
+      elapsed_ms: "1000",
+      shadow_sample_count: "1",
+    });
+    expect(events[4]).toMatchObject({
+      request_sequence: "5",
+      shadow_sample_count: "5",
+      shadow_p95_ms: "6000",
+      shadow_recommended_timeout_ms: "9000",
+    });
+    for (const event of events.slice(0, 4)) {
+      expect(event.shadow_p95_ms).toBeUndefined();
+      expect(event.shadow_recommended_timeout_ms).toBeUndefined();
+    }
+  });
+
+  it("recommends a bounded larger catalog budget for an observed tools/list abort (#7957)", async () => {
+    let now = 0;
+    const { wrap, stderr } = loadHelper(
+      {
+        OPENSHELL_SANDBOX: "1",
+        NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: "1",
+      },
+      () => now,
+    );
+    const error = Object.assign(new Error("This operation was aborted"), {
+      name: "AbortError",
+      code: "UND_ERR_ABORTED",
+    });
+    const inner = async () => {
+      now += 1_500;
+      throw error;
+    };
+
+    await expect(
+      wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")("https://mcp.test/rpc", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      }),
+    ).rejects.toBe(error);
+
+    expect(emittedEvents(stderr)[0]).toMatchObject({
+      event: "managed_transport_failure",
+      operation: "tools/list",
+      elapsed_ms: "1500",
+      effective_timeout_ms: "1500",
+      shadow_sample_count: "0",
+      shadow_recommended_timeout_ms: "3000",
+    });
+  });
+
+  it("never recommends a timeout below the active catalog budget (#7957)", async () => {
+    let now = 0;
+    const { wrap, stderr } = loadHelper(
+      {
+        OPENSHELL_SANDBOX: "1",
+        NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: "1",
+      },
+      () => now,
+    );
+    const inner = async () => {
+      now += 1_000;
+      return new Response("ok", { status: 200 });
+    };
+    const wrapped = wrap(inner as unknown as typeof fetch, {
+      serverName: "jira",
+      serverUrl: "https://mcp.test/rpc",
+      connectionTimeoutMs: 30_000,
+      requestTimeoutMs: 60_000,
+      catalogListTimeoutMs: 5_000,
+    });
+
+    for (let id = 0; id < 5; id += 1) {
+      await wrapped("https://mcp.test/rpc", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id, method: "tools/list" }),
+      });
+    }
+
+    expect(emittedEvents(stderr)[4].shadow_recommended_timeout_ms).toBe("5000");
+  });
+
+  it("keeps an explicit 503 separate from timeout recommendations and observes a later success (#7957)", async () => {
+    let now = 0;
+    const { wrap, stderr } = loadHelper(
+      {
+        OPENSHELL_SANDBOX: "1",
+        NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: "1",
+      },
+      () => now,
+    );
+    let calls = 0;
+    const inner = async () => {
+      calls += 1;
+      now += 200;
+      return calls === 1
+        ? new Response("upstream reset", { status: 503 })
+        : new Response("ok", { status: 200 });
+    };
+    const wrapped = wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc");
+    const init = {
+      method: "POST",
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    };
+
+    expect((await wrapped("https://mcp.test/rpc", init)).status).toBe(503);
+    await waitForDiagnostic(stderr);
+    expect((await wrapped("https://mcp.test/rpc", init)).status).toBe(200);
+    const events = emittedEvents(stderr);
+
+    expect(calls).toBe(2);
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({
+      event: "managed_transport_failure",
+      http_status: "503",
+      request_sequence: "1",
+    });
+    expect(events[0].shadow_recommended_timeout_ms).toBeUndefined();
+    expect(events[1]).toMatchObject({
+      event: "managed_transport_shadow",
+      http_status: "200",
+      request_sequence: "2",
+    });
+    expect(events[0].diagnostic_id).not.toBe(events[1].diagnostic_id);
+  });
+
+  it("logs only the validated RPC method and omits tool names and arguments (#7957)", async () => {
+    const { wrap, stderr } = loadHelper({
+      OPENSHELL_SANDBOX: "1",
+      NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: "1",
+    });
+    const inner = async () => new Response("ok", { status: 200 });
+
+    await wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")("https://mcp.test/rpc", {
+      method: "POST",
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "search", arguments: { token: "secret-tool-argument" } },
+      }),
+    });
+
+    expect(emittedEvents(stderr)[0]).toMatchObject({
+      event: "managed_transport_shadow",
+      operation: "tools/call",
+      effective_timeout_ms: "60000",
+    });
+    expect(stderr.join("")).not.toContain("secret-tool-argument");
+    expect(stderr.join("")).not.toContain("search");
+  });
+
+  it("redacts a credential-shaped server name before emitting shadow timing (#7957)", async () => {
+    const { wrap, stderr } = loadHelper({
+      OPENSHELL_SANDBOX: "1",
+      NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: "1",
+    });
+    const inner = async () => new Response("ok", { status: 200 });
+
+    await wrap(inner as unknown as typeof fetch, {
+      serverName: "sk-proj-secret-server-name-1234567890",
+      serverUrl: "https://mcp.test/rpc",
+      connectionTimeoutMs: 30_000,
+      requestTimeoutMs: 60_000,
+      catalogListTimeoutMs: 1_500,
+    })("https://mcp.test/rpc", {
+      method: "POST",
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+
+    expect(emittedEvents(stderr)[0].mcp_server).toContain("<REDACTED>");
+    expect(stderr.join("")).not.toContain("secret-server-name");
+  });
+
   it("records a failed proxy response with the canonical safe headers (#7957)", async () => {
     const { wrap, stderr } = loadHelper();
     const inner = async () =>
@@ -182,6 +509,7 @@ describe("injected managed transport wrapper", () => {
     expect(event.transport_phase).toBe("response_headers");
     expect(event.http_status).toBe("503");
     expect(event.target).toBe("mcp.test:8443");
+    expect(event.mcp_server).toBe("remotedocs");
     expect(event.server).toContain("<REDACTED>");
     expect(event.x_request_id).toContain("<REDACTED>");
     expect(event.x_envoy_response_flags).toBe("UF,URX");

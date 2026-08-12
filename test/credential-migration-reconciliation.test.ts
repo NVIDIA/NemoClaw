@@ -65,6 +65,7 @@ async function finalizeMigration(
     stagedLegacyKeys,
     migratedLegacyKeys,
     webSearchEnabled: false,
+    webSearchProvider: null,
     deps: {
       ensureAgentDashboardForward: () => 0,
       persistDashboardPort: () => undefined,
@@ -81,7 +82,7 @@ async function finalizeMigration(
       formatVerificationDiagnostics: () => [],
       isDeploymentHealthy: () => true,
       reportDeploymentReadiness: () => undefined,
-      verifyWebSearchInsideSandbox: () => undefined,
+      verifyWebSearchInsideSandbox: () => true,
       printDashboard: () => undefined,
       error: () => undefined,
       log: () => undefined,

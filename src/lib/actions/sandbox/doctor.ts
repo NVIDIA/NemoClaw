@@ -12,6 +12,11 @@ import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
 import {
+  type CuaStateObservationDeps,
+  getObservedValidatedCuaState,
+  isCuaPublicStateEnabled,
+} from "../../cua/state";
+import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
@@ -20,9 +25,9 @@ import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  RuntimeProviderSelectionError,
   requireRuntimeProviderBundle,
   resolveCurrentRuntimeProviderBundle,
-  RuntimeProviderSelectionError,
 } from "../../onboard/runtime-provider/access";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { getBaselineExclusionRuntimeStatus } from "../../policy";
@@ -40,6 +45,7 @@ import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
 import { buildConfigPermsCheck } from "./doctor-config-perms";
 import {
   collectInferenceChecks,
+  collectManagedLlamaCppDoctorChecks,
   type DoctorInferenceRoute,
   resolveDoctorReasoningEffort,
 } from "./doctor-inference";
@@ -485,6 +491,34 @@ function collectRegisteredSandboxChecks(
   return checks;
 }
 
+/** Report candidate install readiness only while both exact CUA gates are enabled. */
+export function collectCuaRuntimeDoctorChecks(
+  sb: SandboxEntry | null | undefined,
+  deps: CuaStateObservationDeps = {},
+): DoctorCheck[] {
+  if (!isCuaPublicStateEnabled() || sb?.agent !== "nemocua") return [];
+  const observed = getObservedValidatedCuaState(sb, process.env, deps);
+  if (!observed.readiness) {
+    return [
+      {
+        group: "Sandbox",
+        label: "CUA runtime",
+        status: "fail",
+        detail: "candidate readiness is missing, invalid, stale, or unavailable",
+        hint: "rerun canonical onboarding with exact candidate qualification authority",
+      },
+    ];
+  }
+  return [
+    {
+      group: "Sandbox",
+      label: "CUA runtime",
+      status: "ok",
+      detail: `candidate; source=${observed.readiness.sourceRevision}; manifest=${observed.readiness.runtimeManifestDigest}`,
+    },
+  ];
+}
+
 function collectToolScopeChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
@@ -544,8 +578,12 @@ async function collectDoctorChecks(
     })),
     ...collectRegisteredSandboxChecks(sandboxName, sb, intent.wantsFix, sandbox.reachable),
     ...collectToolScopeChecks(sandboxName, sb, sandbox.reachable, intent.wantsFix),
+    ...collectManagedLlamaCppDoctorChecks(sandboxName, sb?.gatewayPort),
     ollamaDoctorCheck(route.provider),
     cloudflaredDoctorCheck(sandboxName),
+    // Keep this last because every asynchronous check above may race an
+    // authority-clearing registry write.
+    ...collectCuaRuntimeDoctorChecks(registry.getSandbox(sandboxName)),
   ];
 }
 

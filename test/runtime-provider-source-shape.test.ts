@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -21,6 +21,11 @@ function trackedPaths(...pathspecs: readonly string[]): string[] {
 }
 
 const read = (relativePath: string): string => readFileSync(join(repoRoot, relativePath), "utf8");
+const isTestOnlySource = (path: string): boolean =>
+  path.endsWith(".test.ts") ||
+  path.endsWith(".test-support.ts") ||
+  path.includes("/test/") ||
+  path.startsWith("test/");
 
 let productionPaths: string[] = [];
 let bootstrapProtocolPaths: string[] = [];
@@ -61,7 +66,7 @@ beforeAll(() => {
     (path) =>
       (path === "src/lib/onboard.ts" || path.startsWith("src/lib/onboard/")) &&
       path.endsWith(".ts") &&
-      !path.endsWith(".test.ts") &&
+      !isTestOnlySource(path) &&
       !path.startsWith("src/lib/onboard/managed-bootstrap/"),
   );
   providerPaths = activationPaths.filter((path) =>
@@ -163,39 +168,62 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/runtime-provider/contract.ts",
       "src/lib/onboard/runtime-provider/current.ts",
       "src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts",
+      "src/lib/onboard/runtime-provider/docker-llama-cpp-operation.ts",
+      "src/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge-process.ts",
+      "src/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge.ts",
+      "src/lib/onboard/runtime-provider/docker-operation-authority.ts",
+      "src/lib/onboard/runtime-provider/docker-state-mutation.ts",
       "src/lib/onboard/runtime-provider/docker.ts",
       "src/lib/onboard/runtime-provider/host-local-create-journal.ts",
       "src/lib/onboard/runtime-provider/host-local-inference.ts",
       "src/lib/onboard/runtime-provider/mxc.ts",
       "src/lib/onboard/runtime-provider/persisted-engine-authority.ts",
+      "src/lib/onboard/runtime-provider/persisted-engine-lifecycle.ts",
       "src/lib/onboard/runtime-provider/podman-lifecycle.ts",
       "src/lib/onboard/runtime-provider/podman-preflight.ts",
       "src/lib/onboard/runtime-provider/podman.ts",
       "src/lib/onboard/runtime-provider/registry.ts",
       "src/lib/onboard/runtime-provider/snapshot.ts",
+      "src/lib/onboard/runtime-provider/state-mutation.ts",
     ]);
   });
 
-  // source-shape-contract: security -- Production provider composition must keep the dormant llama.cpp controller unreachable until its activation boundary is crash safe
-  it("keeps Docker llama.cpp lifecycle authority dormant (#8395)", () => {
+  // source-shape-contract: security -- Managed llama.cpp activation must remain behind the exact receipt-backed controller and operation-scoped Docker authority
+  it("activates Docker llama.cpp only through its durable lifecycle controller (#8433)", () => {
     const docker = read("src/lib/onboard/runtime-provider/docker.ts");
     const adapter = read("src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts");
-    const productionComposition = trackedPaths(".")
+    const operation = read("src/lib/onboard/runtime-provider/docker-llama-cpp-operation.ts");
+    const hostLocalContract = read("src/lib/onboard/runtime-provider/host-local-inference.ts");
+    const podman = read("src/lib/onboard/runtime-provider/podman.ts");
+    const installer = read("src/lib/inference/llama-cpp/managed-installer.ts");
+    const localModelProfilePlan = read("src/lib/onboard/local-model-profile/plan.ts");
+    const allTrackedPaths = trackedPaths(".");
+    expect(allTrackedPaths.filter((path) => !existsSync(join(repoRoot, path)))).toEqual([]);
+    const productionComposition = allTrackedPaths
       .filter(
         (path) =>
           /\.[cm]?ts$/u.test(path) &&
-          !path.endsWith(".test.ts") &&
-          !path.includes("/test/") &&
-          !path.startsWith("test/") &&
+          !isTestOnlySource(path) &&
           path !== "src/lib/onboard/runtime-provider/docker-llama-cpp-managed-lifecycle.ts",
       )
       .map(read)
       .join("\n");
-    expect(docker).not.toContain("docker-llama-cpp-managed-lifecycle");
-    expect(docker).not.toMatch(/operation:\s*["']host-local-inference["']/u);
+    expect(docker).toContain("createDockerLlamaCppHostLocalOperation");
+    expect(docker).toMatch(/hostLocalInference:\s*\{[\s\S]*services:\s*\[["']llama-cpp["']\]/u);
     expect(adapter).toContain("createDockerLlamaCppManagedLifecycle");
-    expect(productionComposition).not.toContain("createDockerLlamaCppManagedLifecycle");
-    expect(productionComposition).not.toContain("docker-llama-cpp-managed-lifecycle");
+    expect(operation).toContain("createDockerLlamaCppManagedLifecycle");
+    expect(installer).toContain("requireRuntimeProviderHostLocalInferenceOperation");
+    expect(installer).not.toMatch(/(?:createDocker|docker-llama-cpp)/u);
+    expect(hostLocalContract).not.toMatch(/(?:Docker|Podman|createDocker)/u);
+    expect(podman).toMatch(/hostLocalInference:\s*unsupported\(/u);
+    expect(podman).not.toContain("createDockerLlamaCppHostLocalOperation");
+    expect(productionComposition).toContain("createDockerLlamaCppManagedLifecycle");
+    expect(productionComposition).toContain("docker-llama-cpp-managed-lifecycle");
+    expect(localModelProfilePlan).toContain(
+      'export const LOCAL_MODEL_PROFILE_ENABLED_ENV = "NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE"',
+    );
+    expect(localModelProfilePlan).toContain('export type LocalModelProfileRuntime = "vllm";');
+    expect(localModelProfilePlan).not.toMatch(/LocalModelProfileRuntime\s*=\s*[^;]*llama-cpp/u);
   });
 
   it("inventories every production Dockerfile", () => {
@@ -313,9 +341,10 @@ describe("runtime provider central source boundary", () => {
     expect(directE2e).toContain("renderManagedBootstrapHeldCommand(request, bootstrapIdentity");
     expect(directE2e).toContain("...heldWorkloadArgv.slice(1)");
     expect(directE2e).toContain(`"--interactive"`);
-    expect(directE2e).toContain("cat > ${MANAGED_BOOTSTRAP_REQUEST_FILE}");
-    expect(directE2e).toContain("chown 0:0 ${MANAGED_BOOTSTRAP_REQUEST_FILE}");
-    expect(directE2e).not.toContain(`docker(["cp"`);
+    expect(directE2e).toContain(`docker(["cp", "-"`);
+    expect(directE2e).toContain("input: serializeManagedBootstrapEnvelopeTar({");
+    expect(directE2e).not.toContain("cat > ${MANAGED_BOOTSTRAP_REQUEST_FILE}");
+    expect(directE2e).not.toContain("chown 0:0 ${MANAGED_BOOTSTRAP_REQUEST_FILE}");
     expect(directE2e).not.toMatch(/const HOLD\s*=/u);
     expect(bootstrapRuntime.match(/require\.main === module/gu)).toHaveLength(1);
     expect(startupRuntime).not.toMatch(/require\.main === module/u);

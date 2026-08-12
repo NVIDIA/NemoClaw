@@ -39,6 +39,7 @@ import {
   installHermesManagedPolicy,
   MANAGED_STARTUP_PROFILE_ENV,
   type ManagedStartupImageActionPlanInput,
+  main as mainManagedStartupImageRuntime,
 } from "./managed-startup/image-runtime";
 import {
   encodeManagedStartupProfile,
@@ -346,6 +347,40 @@ describe("managed startup image runtime", () => {
     }
   });
 
+  it("verifies copied transaction status only through a read-only receipt mount", async () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const profileFingerprint = fingerprintManagedStartupProfile(profile);
+    const bootstrapIdentity = "b".repeat(64);
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    const status = vi
+      .spyOn(sharedStateTransaction, "getManagedStartupSharedStateTransactionStatus")
+      .mockReturnValue("pending");
+    const write = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((() => true) as typeof process.stdout.write);
+
+    await mainManagedStartupImageRuntime([
+      "--shared-state-transaction-status",
+      "--agent",
+      profile.agent,
+      "--profile-fingerprint",
+      profileFingerprint,
+      "--bootstrap-identity",
+      bootstrapIdentity,
+      "--read-only-receipt",
+    ]);
+
+    expect(status).toHaveBeenCalledWith(
+      {
+        agent: profile.agent,
+        profileFingerprint,
+        bootstrapIdentity,
+      },
+      { readOnlyReceipt: true },
+    );
+    expect(write).toHaveBeenCalledWith("pending\n");
+  });
+
   function mockRootOwnedPolicyInstallPaths(
     source: string,
     shareDirectory: string,
@@ -408,6 +443,34 @@ describe("managed startup image runtime", () => {
     );
     expect(fs.readFileSync(source, "utf8")).toBe(`${policy}changed\n`);
     expect(fs.readFileSync(target, "utf8")).toBe(policy);
+  });
+
+  it("verifies a host-copied transaction only through the explicit read-only receipt mode", async () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const profileFingerprint = fingerprintManagedStartupProfile(profile);
+    const bootstrapIdentity = "b".repeat(64);
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    const status = vi
+      .spyOn(sharedStateTransaction, "getManagedStartupSharedStateTransactionStatus")
+      .mockReturnValue("pending");
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await mainManagedStartupImageRuntime([
+      "--shared-state-transaction-status",
+      "--agent",
+      profile.agent,
+      "--profile-fingerprint",
+      profileFingerprint,
+      "--bootstrap-identity",
+      bootstrapIdentity,
+      "--read-only-receipt",
+    ]);
+
+    expect(status).toHaveBeenCalledWith(
+      { agent: profile.agent, profileFingerprint, bootstrapIdentity },
+      { readOnlyReceipt: true },
+    );
+    expect(write).toHaveBeenCalledWith("pending\n");
   });
 
   it("rejects invalid OpenClaw launch controls before filesystem or coordinator mutation", async () => {

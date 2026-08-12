@@ -14,7 +14,7 @@ import {
   parseMcpAddArgs,
   resolveCredentialEnv,
 } from "./mcp-bridge";
-import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.85.json";
+import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.101.json";
 
 describe("MCP CLI input validation", () => {
   it("parses server, URL, and env references", () => {
@@ -302,6 +302,32 @@ describe("MCP CLI input validation", () => {
       expect(() => normalizeMcpServerUrl(`https://mcp.example.test${path}`)).toThrow(
         /literal and canonical/,
       );
+    }
+  });
+
+  it("rejects a malformed credential-bearing URL without echoing it (#8698)", () => {
+    const user = "qa-user";
+    const password = "qa-pass-123";
+    const captureMessage = (rawUrl: string): string => {
+      try {
+        normalizeMcpServerUrl(rawUrl);
+        return "";
+      } catch (error) {
+        return (error as Error).message;
+      }
+    };
+    for (const rawUrl of [
+      `https://${user}:${password}@/mcp`,
+      `//${user}:${password}@/mcp`,
+      `https:/${user}:${password}@/mcp`,
+      `https://${user}:${password} extra@/mcp`,
+      `https://${user}:${password}@/mcp/${password}`,
+    ]) {
+      const message = captureMessage(rawUrl);
+      expect(message).toMatch(/must be an absolute https:\/\/ URL/);
+      expect(message).not.toContain(user);
+      expect(message).not.toContain(password);
+      expect(message).not.toContain("/mcp");
     }
   });
 

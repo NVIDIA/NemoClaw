@@ -127,9 +127,15 @@ export function createMxcRuntimeProviderBundle({
       profile: MXC_NATIVE_ARTIFACT_PROFILE,
       acceptsReceipt: acceptsNativeArtifactReceipt,
     },
+    hostLocalInference: unsupported(
+      "OpenShell MXC does not provide a host-local-inference lifecycle.",
+    ),
     lifecycle: unsupported(lifecycleReason),
     mutationAuthority: unsupported(
       "MXC mutations remain disabled until lifecycle and cleanup pass live E2E.",
+    ),
+    stateMutation: unsupported(
+      "The MXC runtime provider state mutation surface remains disabled until lifecycle and cleanup pass live E2E.",
     ),
     bootstrap: unsupported(
       "The OpenShell MXC driver does not expose a per-sandbox native artifact launch contract.",

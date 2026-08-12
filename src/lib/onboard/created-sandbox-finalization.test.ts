@@ -146,7 +146,7 @@ exec(script, {"__name__": "__main__"})
   const openshell = path.join(bin, "openshell");
   executable(
     openshell,
-    '#!/usr/bin/env bash\nprintf "Host openshell-dcode\\n  HostName 127.0.0.1\\n  User sandbox\\n"\n',
+    '#!/usr/bin/env bash\nprintf "Host openshell-%s\\n  HostName 127.0.0.1\\n  User sandbox\\n" "${!#}"\n',
   );
   executable(
     path.join(bin, "ssh"),

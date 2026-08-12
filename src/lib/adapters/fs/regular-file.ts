@@ -5,6 +5,7 @@ import fs from "node:fs";
 
 export interface OpenRegularFile {
   close(): void;
+  readBytes(maxBytes: number): Buffer;
   readUtf8(maxBytes?: number): string;
   replaceUtf8(contents: string, mode: number): void;
 }
@@ -33,7 +34,7 @@ export function openRegularFileNoFollow(
     closed = true;
     fs.closeSync(descriptor);
   };
-  const assertPathIdentity = () => {
+  const assertPathIdentity = (): fs.Stats => {
     const descriptorStats = fs.fstatSync(descriptor);
     const pathStats = fs.lstatSync(target);
     if (
@@ -47,6 +48,7 @@ export function openRegularFileNoFollow(
     ) {
       throw new Error(`regular file changed during validation: ${target}`);
     }
+    return descriptorStats;
   };
   try {
     const descriptorStats = fs.fstatSync(descriptor);
@@ -61,8 +63,38 @@ export function openRegularFileNoFollow(
     close();
     throw error;
   }
+  const readBytes = (maxBytes: number): Buffer => {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+      throw new RangeError(`regular file read limit must be a non-negative integer: ${target}`);
+    }
+    const beforeRead = assertPathIdentity();
+    if (beforeRead.size > maxBytes) {
+      throw new RangeError(`regular file exceeds the ${maxBytes}-byte read limit: ${target}`);
+    }
+    const bytes = Buffer.alloc(beforeRead.size);
+    let offset = 0;
+    while (offset < beforeRead.size) {
+      const read = fs.readSync(descriptor, bytes, offset, beforeRead.size - offset, offset);
+      if (read === 0) throw new Error(`short read from regular file: ${target}`);
+      offset += read;
+    }
+    const afterRead = assertPathIdentity();
+    if (
+      beforeRead.dev !== afterRead.dev ||
+      beforeRead.ino !== afterRead.ino ||
+      beforeRead.nlink !== afterRead.nlink ||
+      beforeRead.mode !== afterRead.mode ||
+      beforeRead.size !== afterRead.size ||
+      beforeRead.mtimeMs !== afterRead.mtimeMs ||
+      beforeRead.ctimeMs !== afterRead.ctimeMs
+    ) {
+      throw new Error(`regular file changed while reading: ${target}`);
+    }
+    return bytes;
+  };
   return {
     close,
+    readBytes,
     readUtf8: (maxBytes) => {
       const size = fs.fstatSync(descriptor).size;
       if (maxBytes !== undefined && size > maxBytes) {

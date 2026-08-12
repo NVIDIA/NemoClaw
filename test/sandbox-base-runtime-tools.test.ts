@@ -5,11 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  BASE_APT_SECURITY_FUNCTIONS,
-  dockerRunCommandBetween,
-  runLoggedDockerShell,
-} from "./helpers/base-apt-security-functions";
+import { BASE_APT_SECURITY_FUNCTIONS } from "./helpers/base-apt-security-functions";
+import { dockerRunCommandBetween, runLoggedDockerShell } from "./helpers/dockerfile-run-shell";
 import { stageFixedParser, useRealPatchedParser } from "./helpers/python-parser-security-fixture";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -20,6 +17,48 @@ const MANAGED_BASE_DOCKERFILES = [
   path.join(ROOT, "agents", "langchain-deepagents-code", "Dockerfile.base"),
 ] as const;
 const fixtures: string[] = [];
+
+type RuntimeToolsFixture = "valid" | "missing-setpriv" | "gosu-present";
+
+function writeSetprivFixture(setpriv: string) {
+  fs.writeFileSync(setpriv, "#!/usr/bin/env bash\nprintf 'setpriv fixture\\n'\n", {
+    mode: 0o755,
+  });
+}
+
+const RUNTIME_TOOLS_FIXTURES: Record<
+  RuntimeToolsFixture,
+  (setpriv: string, fakeBin: string) => void
+> = {
+  valid: (setpriv) => writeSetprivFixture(setpriv),
+  "missing-setpriv": () => undefined,
+  "gosu-present": (setpriv, fakeBin) => {
+    writeSetprivFixture(setpriv);
+    fs.writeFileSync(path.join(fakeBin, "gosu"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+  },
+};
+
+function runRuntimeToolsContract(dockerfile: string, fixture: RuntimeToolsFixture) {
+  const source = fs.readFileSync(dockerfile, "utf-8");
+  const runtimeContract = dockerRunCommandBetween(
+    source,
+    "# setpriv runtime contract",
+    "RUN groupadd",
+  );
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-tools-"));
+  fixtures.push(tmp);
+  const fakeBin = path.join(tmp, "bin");
+  const setpriv = path.join(tmp, "usr", "bin", "setpriv");
+  fs.mkdirSync(fakeBin, { recursive: true });
+  fs.mkdirSync(path.dirname(setpriv), { recursive: true });
+  fs.symlinkSync("/bin/bash", path.join(fakeBin, "bash"));
+  RUNTIME_TOOLS_FIXTURES[fixture](setpriv, fakeBin);
+  return runLoggedDockerShell(runtimeContract.replaceAll("/usr/bin/setpriv", setpriv), tmp, [], {
+    env: { PATH: fakeBin },
+  }).result;
+}
 
 function runBaseAptLayer(prefix: string) {
   const source = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
@@ -53,13 +92,17 @@ function runBaseAptLayer(prefix: string) {
     .replaceAll("/usr/local/bin/python", fakePythonLink)
     .replaceAll("/usr/bin/python3", pythonShim)
     .replaceAll("/usr/lib/python3.13/html/parser.py", fixedParser);
-  const result = runLoggedDockerShell(command, tmp, [
-    'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
-    'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
-    'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
-    ...useRealPatchedParser(BASE_APT_SECURITY_FUNCTIONS, pythonShim),
-  ]);
-  const calls = fs.readFileSync(path.join(tmp, "calls.log"), "utf-8");
+  const { calls, result } = runLoggedDockerShell(
+    command,
+    tmp,
+    [
+      'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+      'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
+      'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
+      ...useRealPatchedParser(BASE_APT_SECURITY_FUNCTIONS, pythonShim),
+    ],
+    { timeoutMs: 15_000 },
+  );
   return { calls, fakePythonLink, pythonShim, result };
 }
 
@@ -72,11 +115,44 @@ afterEach(() => {
 describe("sandbox base runtime tools", () => {
   it.each(
     MANAGED_BASE_DOCKERFILES,
-  )("%s explicitly installs setpriv through pinned util-linux without gosu", (dockerfile) => {
+  )("%s declares the setpriv and gosu build contract (#8805)", (dockerfile) => {
     const source = fs.readFileSync(dockerfile, "utf-8");
+    const runtimeContract = dockerRunCommandBetween(
+      source,
+      "# setpriv runtime contract",
+      "RUN groupadd",
+    );
 
     expect(source).toContain("util-linux=2.41-5");
-    expect(source).not.toMatch(/\bgosu\b/u);
+    expect(runtimeContract).toContain("test -x /usr/bin/setpriv");
+    expect(runtimeContract).toContain("/usr/bin/setpriv --version");
+    expect(runtimeContract).toContain("! command -v gosu");
+  });
+
+  it.each(
+    MANAGED_BASE_DOCKERFILES,
+  )("%s accepts executable setpriv when gosu is absent (#8805)", (dockerfile) => {
+    const result = runRuntimeToolsContract(dockerfile, "valid");
+
+    expect({ status: result.status, stderr: result.stderr }).toEqual({
+      status: 0,
+      stderr: "",
+    });
+    expect(result.stdout).toContain("setpriv fixture");
+  });
+
+  it.each(
+    MANAGED_BASE_DOCKERFILES,
+  )("%s rejects a missing setpriv executable (#8805)", (dockerfile) => {
+    const result = runRuntimeToolsContract(dockerfile, "missing-setpriv");
+
+    expect(result.status).not.toBe(0);
+  });
+
+  it.each(MANAGED_BASE_DOCKERFILES)("%s rejects gosu on PATH (#8805)", (dockerfile) => {
+    const result = runRuntimeToolsContract(dockerfile, "gosu-present");
+
+    expect(result.status).not.toBe(0);
   });
 
   it("installs the required process, filesystem, and SFTP tools", () => {

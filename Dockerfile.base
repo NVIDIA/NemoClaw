@@ -262,7 +262,8 @@ RUN apt-get update \
 
 # setpriv runtime contract for gateway and sandbox privilege separation.
 RUN test -x /usr/bin/setpriv \
-    && /usr/bin/setpriv --version
+    && /usr/bin/setpriv --version \
+    && ! command -v gosu
 
 # Create sandbox user (matches OpenShell convention) and gateway user.
 # The gateway runs as 'gateway' so the 'sandbox' user (agent) cannot
@@ -276,12 +277,14 @@ RUN test -x /usr/bin/setpriv \
 # This replaces the previous EACCES-swallow approach for control-UI config
 # mutations — see #2681. UIDs stay distinct (security separation preserved);
 # the shared group only governs the mutable-default state directory.
-RUN groupadd -r gateway && useradd -r -g gateway -d /sandbox -s /usr/sbin/nologin gateway \
-    && groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
+RUN groupadd -r -g 999 gateway && useradd -r -u 999 -g gateway -d /sandbox -s /usr/sbin/nologin gateway \
+    && groupadd -r -g 998 sandbox && useradd -r -u 998 -g sandbox -d /sandbox -s /bin/bash sandbox \
     && usermod -aG sandbox gateway \
     && usermod -aG sandbox root \
     && mkdir -p /sandbox/.nemoclaw \
-    && chown -R sandbox:sandbox /sandbox
+    && chown -R sandbox:sandbox /sandbox \
+    && test "$(id -u sandbox):$(id -g sandbox)" = "998:998" \
+    && test "$(getent passwd sandbox)" = "sandbox:x:998:998::/sandbox:/bin/bash"
 
 # Create .openclaw with all state subdirs directly (mutable by default).
 # No separate .openclaw-data or symlink bridge — the production Dockerfile
@@ -665,11 +668,3 @@ RUN { \
     && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- env HOME=/sandbox bash -lc 'command -v brew' | grep -qx /usr/local/bin/brew \
     && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- env HOME=/sandbox bash -lc 'brew --prefix' | grep -qx /home/linuxbrew/.linuxbrew \
     && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- env HOME=/sandbox bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 0 ;; *) exit 1 ;; esac"
-
-# Gate the exact completed base filesystem before it can be published.
-COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
-RUN install -d -m 0755 /usr/local/share/nemoclaw \
-    && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
-        --root / --image build:openclaw-base \
-        > /usr/local/share/nemoclaw/node-tar-inventory.json \
-    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json

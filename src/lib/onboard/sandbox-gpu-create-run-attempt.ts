@@ -39,9 +39,10 @@ export type SandboxGpuCreateAttemptState = {
   nativeRuntimeSnapshot: NativeRuntimeSnapshot | null;
 };
 
-// A compatibility recreate can briefly observe the original container's stale
-// Ready row. Require one confirmation poll before advancing to the GPU proof.
-const COMPATIBILITY_STABLE_READY_POLLS = 2;
+// A runtime-managed container replacement can briefly observe the original
+// container's stale Ready row. Require one confirmation poll before advancing
+// to live validation or the GPU proof.
+const REPLACEMENT_STABLE_READY_POLLS = 2;
 
 class ManagedBootstrapCreateStreamFailure extends Error {
   constructor(readonly result: Awaited<ReturnType<typeof streamSandboxCreate>>) {
@@ -127,6 +128,10 @@ export function createSandboxGpuCreateAttemptRunner(
           },
         })
       : null;
+    const persistRestartSafeStartup =
+      input.persistStartupCommand === true && (route !== "native" || hasRequiredUlimits);
+    const deferRestartSafeCutover =
+      !managedLifecycle && !compatibility && persistRestartSafeStartup;
     const runtimePatch =
       managedLifecycle?.patch ??
       createDockerGpuSandboxCreatePatch({
@@ -134,8 +139,7 @@ export function createSandboxGpuCreateAttemptRunner(
         // The startup clone preserves native CDI devices, so DCode can apply its
         // exact required limits without replacing the native GPU envelope.
         // Other native routes are not swapped solely to persist a command.
-        persistStartupCommand:
-          input.persistStartupCommand === true && (route !== "native" || hasRequiredUlimits),
+        persistStartupCommand: persistRestartSafeStartup,
         externalRecreation: false,
         sandboxName: input.sandboxName,
         gpuDevice: input.sandboxGpuConfig.sandboxGpuDevice,
@@ -160,13 +164,16 @@ export function createSandboxGpuCreateAttemptRunner(
           const list = deps.runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
           return isSandboxReady(list, input.sandboxName);
         },
-        onPoll: () => runtimePatch.maybeApplyDuringCreate(),
+        onPoll: () => {
+          if (!deferRestartSafeCutover) runtimePatch.maybeApplyDuringCreate();
+        },
         readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent(
           input.terminalAgent,
           input.sandboxEnv,
         ),
         failureCheck: runtimePatch.createFailureMessage,
         traceEvent: addTraceEvent,
+        waitForReadyTermination: deferRestartSafeCutover,
         initialPhase:
           compatibility && (input.prebuild.imageRef || state.compatibilityArgv)
             ? "create"
@@ -200,7 +207,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 runCaptureOpenshell: deps.runCaptureOpenshell,
                 isSandboxReady,
                 getSandboxFailurePhase,
-                stableReadyPolls: 1,
+                stableReadyPolls: REPLACEMENT_STABLE_READY_POLLS,
                 sleep: deps.sleep,
               });
               if (!readiness.ready) {
@@ -336,7 +343,7 @@ export function createSandboxGpuCreateAttemptRunner(
       runCaptureOpenshell: deps.runCaptureOpenshell,
       isSandboxReady,
       getSandboxFailurePhase,
-      stableReadyPolls: compatibility ? COMPATIBILITY_STABLE_READY_POLLS : 1,
+      stableReadyPolls: compatibility || managedBootstrap ? REPLACEMENT_STABLE_READY_POLLS : 1,
       sleep: deps.sleep,
     });
     if (!readiness.ready) {

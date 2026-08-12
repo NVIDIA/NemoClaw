@@ -5,7 +5,7 @@
 
 Review date: 2026-07-21
 
-Last updated: 2026-08-03
+Last updated: 2026-08-11
 
 ## Decision
 
@@ -294,6 +294,30 @@ local `.tgz` path. Its locked-runtime
 checks bind the OpenClaw and mcporter installs to exact committed lock digests,
 the official registry origin, and post-install graph verification.
 
+The final OpenClaw image materializes its optional OTEL and Brave plugins, the
+WeChat runtime, the complete managed-messaging dependency graph, and
+`@zed-industries/codex-acp@0.11.1` without network access in any package-install
+instruction. For these components, BuildKit fetches every source archive
+through a checksum-addressed `ADD` instruction.
+The optional plugin boundary verifies the committed SHA-512 identities for `@openclaw/diagnostics-otel@2026.7.1` and `@openclaw/brave-plugin@2026.7.1`.
+Its diagnostics remediation consumes only the mounted, checksum-addressed `@opentelemetry/propagator-jaeger@2.9.0` and `@opentelemetry/core@2.9.0` archives.
+The WeChat dependencies `openclaw-weixin@2.4.3`, `qrcode-terminal@0.12.0`, and `zod@4.4.3` use committed SHA-256 source checksums and their lockfile SHA-512 identities.
+Codex ACP uses committed SHA-256 source checksums and SHA-512 identities for the common package and the selected `linux-x64` or `linux-arm64` native package.
+`scripts/lib/seed-reviewed-npm-cache.mts` rejects missing, extra, symlinked, off-registry, or integrity-mismatched archives before it creates the minimal npm resolver metadata.
+The managed-messaging lock selects 266 archives for each supported platform:
+264 common archives and two architecture-specific Davey archives for either
+`linux-x64` or `linux-arm64`. The Dockerfile selects that exact platform stage,
+verifies every archive again against the committed lockfile SHA-512 identity,
+and runs `npm ci` with `NPM_CONFIG_OFFLINE=true` under `RUN --network=none`.
+The WeChat stage runs `npm ci` and re-packs every locked archive with `NPM_CONFIG_OFFLINE=true`.
+The Codex ACP stage verifies both local archives and installs them with `npm install --offline`.
+Only the installed optional-plugin contents, root-owned WeChat cache, installed
+managed-messaging packages, and installed Codex ACP payload enter the final
+image. The mounted source archives do not enter the final image. Imported build
+cache remains an optimization, but the protected OpenClaw GPU rebuild no longer
+depends on it to supply the managed-messaging archive graph. Package
+materialization cannot fall back to the public registry.
+
 ## OpenClaw Compiled-Dist Patch Runtime Boundary
 
 `test/openclaw-real-patched-dist-harness.test.ts` materializes the exact public
@@ -301,11 +325,23 @@ archive under `NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1`, applies every current
 NemoClaw patch, verifies syntax, and exercises the live device self-approval
 proof. This is not a substitute for focused nightly E2E proof.
 
-The `2026.7.1` dist changed seven reviewed shapes:
+The `2026.7.1` dist changed eight reviewed shapes:
 
 - strict managed-proxy activation now uses `isStrictManagedProxyActive`; the
   patch still activates only inside OpenShell and only without an explicit
   dispatcher policy;
+- gateway daemon backend calls ignore the inherited `OPENCLAW_GATEWAY_URL` only
+  when `process.title === "openclaw-gateway"` and `OPENSHELL_SANDBOX=1`, so
+  gateway daemon self-dialback uses loopback. Descendant agents retain the
+  environment variable for private-interface routing. Explicit gateway URL
+  overrides, local port overrides, configured remote URLs, and behavior outside
+  this condition are unchanged.
+  `scripts/openclaw/patch-gateway-daemon-dialback.mts` is gated to the exact
+  `2026.7.1` version and rejects missing or ambiguous compiled-dist shapes. Its
+  regression test covers the daemon and descendant boundaries.
+  Remove the patch when upstream OpenClaw distinguishes gateway daemon
+  self-dialback from descendant agent routing without changing the inherited
+  gateway URL.
 - queued follow-up execution now resolves inbound context before allocating a
   run id; `scripts/patch-openclaw-chat-send.mts` preserves the submitted run id
   at that new boundary. It also suppresses the premature empty final event that
@@ -448,8 +484,12 @@ An unrecognized compiled shape fails the image build instead of silently skippin
 
 Reviewed behavior:
 
-- Failure-only.
-  A 2xx response returns untouched and emits nothing, so normal traffic produces no per-request logging.
+- Failure-only by default.
+  A 2xx response returns untouched and emits nothing unless the OpenClaw gateway process has `NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1`.
+- The opt-in shadow mode attempts to emit successful-request `managed_transport_shadow` timing events without reading their response bodies.
+  It does not change a timeout, retry a request, alter a response, or persist samples across an OpenClaw process restart.
+  Identifier generation, serialization, or standard-error output failure can omit an event without blocking the request or changing its response.
+  Sandbox creation forwards only the literal value `1`, and only for OpenClaw.
 - The wrapper never retries, never alters the request, never changes proxy selection, and never weakens TLS verification.
   It rethrows a transport error unchanged.
 - `route=proxy_configured` means that `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, or `http_proxy` was configured.
@@ -478,12 +518,26 @@ Reviewed behavior:
   That diagnostic has no response headers or `http_status` because `fetch` did not return a response.
 - A returned non-2xx response sets `transport_phase=response_headers`.
   It carries `http_status` and any allowlisted response headers that are present.
-- The fetch boundary does not expose the JSON-RPC operation, so the diagnostic records the endpoint without an `operation` field.
-- Each emitted diagnostic receives a local 32-character hexadecimal `diagnostic_id`.
+- The wrapper parses only a string request body of at most 16,384 characters to report a validated JSON-RPC method.
+  It never reports JSON-RPC parameters, tool names, tool arguments, or successful response bodies.
+  An unsupported request shape reports `rpc/unknown`, and known GET and DELETE transport actions report `transport/listen` and `transport/close`.
+- Each event reports the configured server name as `mcp_server` when validation and redaction retain it.
+  It also reports the transport generation, the request sequence, and the resolved connection, request, catalog-list, and effective timeout budgets.
+- Shadow recommendations apply only to `tools/list`.
+  The wrapper retains up to 64 successful elapsed-time samples per target host and port and reports p95 after five samples.
+  Different MCP URL paths on the same target host and port share this sample set because the wrapper does not retain URL paths.
+  It proposes p95 times 1.5, rounded up to 100 ms, with a 1,500 ms floor and a 10,000 ms ceiling.
+  A proposal cannot be less than the active catalog-list budget.
+  The wrapper emits no recommendation when that active budget already exceeds 10,000 ms.
+  A near-budget abort proposes twice the effective budget under the same constraints.
+  An explicit HTTP 503 produces no timeout recommendation.
+- The wrapper attempts to create a local 32-character hexadecimal `diagnostic_id` for each request before `fetch` starts.
+  If identifier generation fails, the wrapper omits the field and continues the request.
+  The wrapper does not add that identifier to the request.
 - The wrapper is inert unless `OPENSHELL_SANDBOX=1`, so it does not change host-side behavior.
 
 `diagnostic_id` is not a distributed trace identifier and does not correlate with an OpenShell audit event.
-`NVIDIA/OpenShell#2508` tracks span emission from the sandbox supervisor, and the OCSF `http_request` object in the pinned OpenShell `0.0.85` has no slot for a request-scoped correlation identifier, so a shared identifier is not representable today.
+`NVIDIA/OpenShell#2508` tracks span emission from the sandbox supervisor. The OCSF schema vendored by the pinned OpenShell `0.0.99` includes the optional `http_request.uid` field, but OpenShell's Rust `HttpRequest` object and current HTTP audit-event builders neither expose nor populate it. A shared request identifier is therefore not emitted today.
 The local identifier distinguishes application-side diagnostics, but operators still correlate each diagnostic with OpenShell audit events by endpoint and time.
 
 Managed transport diagnostics remains separate from `scripts/patch-openclaw-mcp-reliability.mts`.
@@ -494,10 +548,44 @@ The two patches compose independently.
 The injected helper in `scripts/patch-openclaw-managed-transport-diagnostics.mts` is the shipped runtime source of truth.
 `test/openclaw-managed-transport-diagnostics-patch.test.ts` executes that exact helper.
 It pins the compiled preimage, patch idempotence, fail-closed rejection of an unrecognized shape, and the untouched SSE boundary.
-It also covers failure-only emission, no-retry and unchanged-response contracts, asynchronous body sampling, byte and time bounds, redaction, the header allowlist, local diagnostic identifiers, session-presence reporting, transport-phase classification, route evidence, and sandbox gating.
+It also covers default failure-only emission, opt-in successful timing events, bounded shadow recommendations, explicit 503 exclusion, no-retry and unchanged-response contracts, validated operation reporting, asynchronous body sampling, byte and time bounds, redaction, the header allowlist, local diagnostic identifiers, session-presence reporting, transport-phase classification, route evidence, and sandbox gating.
 A reusable source schema is deferred until a production consumer requires one.
 
 Removal criterion: drop this patch when the reviewed OpenClaw release emits redacted diagnostics classified by transport phase for remote MCP fetch failures.
+
+## Bounded MCP Tool Discovery Timeout
+
+`scripts/patch-openclaw-mcp-tools-list-timeout.mts` is a version-scoped, fail-closed compatibility patch.
+The transport symptoms investigated in issue #7957 motivated this bounded follow-up; the patch does not change that issue's diagnostics acceptance criteria.
+OpenClaw `2026.7.1` gives `tools/list` 1,500 ms unless an MCP server configuration supplies a request timeout.
+The managed mcporter registration does not expose a tool-discovery-only timeout.
+
+The patch identifies the compiled target by the `"openclaw-bundle-mcp"` client identity.
+It requires the 1,500 ms constant and the complete catalog-timeout resolver to appear exactly once.
+An unrecognized compiled shape fails the image build.
+`--audit` re-verifies the applied state.
+
+Reviewed behavior:
+
+- An unset or blank `NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS` value adds no override.
+  OpenClaw then uses a server-specific request timeout when configured and otherwise uses its 1,500 ms fallback.
+- NemoClaw forwards the setting only to an OpenClaw sandbox.
+  Host-side validation trims surrounding whitespace, accepts the remaining canonical integer from 1,500 through 10,000 ms, forwards normalized digits, and rejects an invalid value before the sandbox create step, including the replacement create step during rebuild.
+- The injected runtime parser repeats the range and integer checks.
+  It ignores the host-side setting unless `OPENSHELL_SANDBOX=1` and stops module initialization for an invalid direct runtime value.
+- A valid override takes precedence over the server request timeout only for catalog `tools/list` requests.
+  It does not change the 30,000 ms connection timeout or the 60,000 ms default used by tool calls and other MCP requests.
+- OpenClaw writes one `mcp_tools_list_timeout_override_ms` line when the MCP runtime loads with an override.
+  The default path emits no additional log line.
+- The existing OpenClaw test-only timeout setter keeps first precedence so upstream runtime tests retain their isolation control.
+- The build patch runs only for OpenClaw `2026.7.1`.
+  It skips the reviewed `2026.3.11` and `2026.4.24` stale-upgrade E2E fixture versions before bundle discovery and rejects every other version.
+
+`test/openclaw-mcp-tools-list-timeout-patch.test.ts` executes the injected parser and pins the compiled preimage.
+It covers patch idempotence, fail-closed drift rejection, host and sandbox gates, bounds, invalid values, and composition with managed transport diagnostics.
+`src/lib/onboard/sandbox-create-launch.test.ts` covers canonical forwarding, range rejection, and exclusion from Hermes and Deep Agents Code sandboxes.
+
+Removal criterion: drop this patch when the reviewed OpenClaw release provides an equivalent bounded `tools/list`-only runtime setting.
 
 ## Gateway Startup Migration Compatibility
 
@@ -549,6 +637,25 @@ Regression coverage lives in `test/openclaw-2026-7-startup-compat.test.ts` and
 Remove the legacy cache repair after every supported upgrade source stops
 seeding the file or OpenClaw can migrate it across split users and a protected
 parent without a warning.
+
+## Gateway Security Audit Suppression Boundary
+
+NemoClaw's generated OpenClaw audit configuration keeps intentional loopback
+`allowInsecureAuth` findings and provenance-known loopback device-auth opt-out
+findings visible as accepted findings.
+`test/generate-openclaw-config-security-audit.test.ts` locks the generated
+suppression scope, and `test/openclaw-security-audit-suppressions-real.test.ts`
+locks the pinned OpenClaw check IDs and details.
+`test/e2e/live/dashboard-remote-bind.test.ts` proves that a clean-host remote
+bind leaves the device-auth, insecure-auth, and Host-header fallback findings
+active.
+
+Remove the `allowInsecureAuth` suppressions only after the pinned OpenClaw audit
+contract proves that OpenClaw natively classifies intentional loopback
+development HTTP without them, or after NemoClaw onboarding defaults
+`CHAT_UI_URL` to `https://localhost` with a generated local certificate.
+Remove the device-auth suppressions only after managed onboarding no longer
+applies the loopback device-auth compatibility opt-out.
 
 ## Existing security and runtime contracts
 

@@ -167,7 +167,7 @@ function exit143HostedRunnerLossJob(overrides: Record<string, unknown> = {}) {
   const tail = exit143ShutdownLogTail();
   return hostedRunnerLossJob({
     id: 89_271_065_810,
-    name: "security-posture (hermes, e2e-hermes-security-posture)",
+    name: "security-posture (hermes, e2e-hm-security)",
     runnerId: 1_021_384_642,
     runnerName: "GitHub Actions 1021384642",
     startedAt: "2026-07-23T16:41:05Z",

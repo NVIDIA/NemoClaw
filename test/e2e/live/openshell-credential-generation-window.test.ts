@@ -36,7 +36,7 @@ import {
   OPENSHELL_RETAINED_CREDENTIAL_GENERATIONS,
 } from "./openshell-credential-generation-window.ts";
 
-const SANDBOX_NAME = "e2e-mcp-credential-window";
+const SANDBOX_NAME = "e2e-cred-window";
 const SERVER_NAME = "fake";
 const COMPATIBLE_KEY = MCP_BRIDGE_TEST_CREDENTIALS.compatibleEndpoint;
 const COMPATIBLE_MODEL = "mock/mcp-credential-window";
@@ -434,7 +434,7 @@ test("openshell-credential-generation-window", {
   });
   expectExitZero(status, "inspect credential-window MCP bridge");
   const providerName = (JSON.parse(status.stdout) as { provider: { name: string } }).provider.name;
-  expect(providerName).toMatch(/^e2e-mcp-credential-window-mcp-fake-[a-f0-9]{16}$/u);
+  expect(providerName).toMatch(/^e2e-cred-window-mcp-fake-[a-f0-9]{16}$/u);
 
   const originalRevision = await observeFreshRevision(
     sandbox,

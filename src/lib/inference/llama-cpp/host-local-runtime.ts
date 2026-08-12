@@ -8,6 +8,9 @@ import { isSafeLlamaCppServedModelAlias } from "./contract";
 
 export const LLAMA_CPP_HOST_LOCAL_CONTAINER_API_KEY_PATH =
   "/run/secrets/llama-cpp-api-key" as const;
+export const LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH =
+  "/usr/local/bin/nemoclaw-llama-cpp-request-guard" as const;
+export const LLAMA_CPP_HOST_LOCAL_SERVER_PATH = "/usr/local/bin/llama-server" as const;
 
 const SAFE_HOST_PATH = /^\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/u;
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
@@ -34,6 +37,7 @@ export interface LlamaCppHostLocalLaunchContract {
     readonly modelSource: "verified-local";
   };
   readonly runtime: {
+    readonly restartPolicy: "unless-stopped";
     readonly gpu: {
       readonly count: 1;
       readonly cpuFallback: "reject";
@@ -49,6 +53,7 @@ export interface LlamaCppHostLocalLaunchContract {
   readonly serve: {
     readonly authentication: "bearer";
     readonly batchSize: number;
+    readonly chatTemplate: "nemotron-v3-embedded";
     readonly contextSize: number;
     readonly flashAttention: "enabled";
     readonly idleSleepSeconds: -1;
@@ -57,7 +62,14 @@ export interface LlamaCppHostLocalLaunchContract {
       readonly value: "f16" | "q8_0" | "q4_0";
     };
     readonly limits: {
+      readonly maxRequestBodyBytes: number;
+      readonly maxRequestHeaderBytes: number;
+      readonly maxOutputTokens: number;
       readonly requestTimeoutSeconds: number;
+      readonly shutdownTimeoutSeconds: number;
+    };
+    readonly requestGuard: {
+      readonly upstreamPort: number;
     };
     readonly microBatchSize: number;
     readonly port: number;
@@ -80,7 +92,7 @@ export interface LlamaCppHostLocalRuntimeBindings {
   readonly apiKeyHostPath: string;
   readonly containerName: string;
   readonly imageReference: string;
-  /** Fixed loopback host port for product installs; omitted only by isolated qualification. */
+  /** Fixed host bridge port for product installs; omitted only by isolated qualification. */
   readonly hostPort?: number;
   readonly model: VerifiedLocalModelArtifact;
   /** The caller must create this named Docker network with `--internal` before launch. */
@@ -140,6 +152,7 @@ function validateContract(contract: LlamaCppHostLocalLaunchContract): void {
     throw new Error("llama.cpp host-local model or offline policy is invalid");
   }
   if (
+    contract.runtime.restartPolicy !== "unless-stopped" ||
     contract.runtime.gpu.vendor !== "nvidia" ||
     contract.runtime.gpu.count !== 1 ||
     contract.runtime.gpu.offload !== "full" ||
@@ -157,12 +170,40 @@ function validateContract(contract: LlamaCppHostLocalLaunchContract): void {
   positiveInteger(contract.serve.contextSize, "llama.cpp context size");
   positiveInteger(contract.serve.batchSize, "llama.cpp batch size");
   positiveInteger(contract.serve.microBatchSize, "llama.cpp micro-batch size");
+  positiveInteger(
+    contract.serve.limits.maxRequestBodyBytes,
+    "llama.cpp maximum request body bytes",
+    64 * 1_024 * 1_024,
+  );
+  positiveInteger(
+    contract.serve.limits.maxRequestHeaderBytes,
+    "llama.cpp maximum request header bytes",
+    1_024 * 1_024,
+  );
+  positiveInteger(
+    contract.serve.limits.maxOutputTokens,
+    "llama.cpp maximum output tokens",
+    1_024 * 1_024,
+  );
   positiveInteger(contract.serve.limits.requestTimeoutSeconds, "llama.cpp request timeout", 86_400);
+  positiveInteger(
+    contract.serve.limits.shutdownTimeoutSeconds,
+    "llama.cpp shutdown timeout",
+    86_400,
+  );
+  positiveInteger(contract.serve.requestGuard.upstreamPort, "llama.cpp upstream port", 65_535);
+  if (
+    contract.serve.limits.maxOutputTokens > contract.serve.contextSize ||
+    contract.serve.requestGuard.upstreamPort === contract.serve.port
+  ) {
+    throw new Error("llama.cpp request-guard limits or ports are invalid");
+  }
   if (contract.serve.microBatchSize > contract.serve.batchSize) {
     throw new Error("llama.cpp micro-batch size exceeds the batch size");
   }
   if (
     contract.serve.authentication !== "bearer" ||
+    contract.serve.chatTemplate !== "nemotron-v3-embedded" ||
     contract.serve.protocol !== "openai-completions" ||
     contract.serve.slots !== 1 ||
     contract.serve.idleSleepSeconds !== -1 ||
@@ -261,6 +302,123 @@ export function buildLlamaCppHostLocalDockerArgv(
 ): string[] {
   validateContract(contract);
   validateBindings(contract, bindings);
+  return [
+    ...buildLlamaCppHostLocalDockerRunArgv(contract, bindings),
+    bindings.imageReference,
+    ...buildLlamaCppHostLocalServerArgv(contract),
+  ];
+}
+
+const dockerLoopbackPublishAuthorityBrand = Symbol("DockerLoopbackPublishAuthority");
+const issuedDockerLoopbackPublishAuthorities = new WeakSet<object>();
+const consumedDockerLoopbackPublishAuthorities = new WeakSet<object>();
+const MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION = [28, 3, 3] as const;
+
+export interface DockerLoopbackPublishAuthority {
+  readonly serverVersion: string;
+  readonly [dockerLoopbackPublishAuthorityBrand]: true;
+}
+
+/**
+ * Admit Docker loopback publishing only after querying the live server through the launch endpoint.
+ * The trusted qualification host must retain Docker's default protected NAT and firewall behavior.
+ */
+export function qualifyDockerLoopbackPublishAuthority(
+  serverVersionOutput: string,
+): DockerLoopbackPublishAuthority {
+  const serverVersion = serverVersionOutput.trim();
+  const match = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z.-]+)?$/u.exec(
+    serverVersion,
+  );
+  const version = match?.slice(1, 4).map(Number);
+  const meetsMinimum =
+    version !== undefined &&
+    (version[0]! > MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION[0] ||
+      (version[0] === MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION[0] &&
+        (version[1]! > MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION[1] ||
+          (version[1] === MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION[1] &&
+            version[2]! >= MINIMUM_SECURE_DOCKER_LOOPBACK_PUBLISH_VERSION[2]))));
+  if (
+    !version ||
+    version.length !== 3 ||
+    version.some((part) => !Number.isSafeInteger(part)) ||
+    !meetsMinimum
+  ) {
+    throw new Error(
+      "llama.cpp qualification requires Docker Engine 28.3.3 or newer for loopback publishing.",
+    );
+  }
+  const authority = Object.freeze({
+    serverVersion,
+    [dockerLoopbackPublishAuthorityBrand]: true as const,
+  });
+  issuedDockerLoopbackPublishAuthorities.add(authority);
+  return authority;
+}
+
+/** Consume a single-use authority immediately before one Docker loopback publication. */
+export function consumeDockerLoopbackPublishAuthority(
+  authority: DockerLoopbackPublishAuthority,
+): void {
+  if (
+    typeof authority !== "object" ||
+    authority === null ||
+    authority[dockerLoopbackPublishAuthorityBrand] !== true ||
+    !issuedDockerLoopbackPublishAuthorities.has(authority)
+  ) {
+    throw new Error("llama.cpp Docker loopback publishing authority is invalid.");
+  }
+  if (consumedDockerLoopbackPublishAuthorities.has(authority)) {
+    throw new Error("llama.cpp Docker loopback publishing authority was already consumed.");
+  }
+  consumedDockerLoopbackPublishAuthorities.add(authority);
+}
+
+/** Activate the request guard only for an image that declares the owned guard artifact. */
+export function buildLlamaCppRequestGuardDockerArgv(
+  contract: LlamaCppHostLocalLaunchContract,
+  bindings: LlamaCppHostLocalRuntimeBindings,
+): string[] {
+  validateContract(contract);
+  validateBindings(contract, bindings);
+  const { limits } = contract.serve;
+  return [
+    ...buildLlamaCppHostLocalDockerRunArgv(contract, bindings),
+    "--entrypoint",
+    LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
+    bindings.imageReference,
+    "--listen-host",
+    "0.0.0.0",
+    "--listen-port",
+    String(contract.serve.port),
+    "--upstream-host",
+    "127.0.0.1",
+    "--upstream-port",
+    String(contract.serve.requestGuard.upstreamPort),
+    "--max-request-body-bytes",
+    String(limits.maxRequestBodyBytes),
+    "--max-request-header-bytes",
+    String(limits.maxRequestHeaderBytes),
+    "--max-output-tokens",
+    String(limits.maxOutputTokens),
+    "--request-timeout-seconds",
+    String(limits.requestTimeoutSeconds),
+    "--shutdown-timeout-seconds",
+    String(limits.shutdownTimeoutSeconds),
+    "--",
+    LLAMA_CPP_HOST_LOCAL_SERVER_PATH,
+    ...buildLlamaCppHostLocalServerArgvForAddress(contract, {
+      host: "127.0.0.1",
+      maxOutputTokens: limits.maxOutputTokens,
+      port: contract.serve.requestGuard.upstreamPort,
+    }),
+  ];
+}
+
+function buildLlamaCppHostLocalDockerRunArgv(
+  contract: LlamaCppHostLocalLaunchContract,
+  bindings: LlamaCppHostLocalRuntimeBindings,
+): string[] {
   const { resources } = contract.runtime;
   const { serve } = contract;
   const containerModelPath = `/models/${contract.model.file.path}`;
@@ -278,15 +436,16 @@ export function buildLlamaCppHostLocalDockerArgv(
     ]),
     "--network",
     bindings.network.name,
+    "--restart",
+    contract.runtime.restartPolicy,
     "--user",
     runtimeIdentity,
-    "--publish",
-    `127.0.0.1:${bindings.hostPort === undefined ? "" : String(bindings.hostPort)}:${String(serve.port)}`,
     "--read-only",
     "--cap-drop",
     "ALL",
     "--security-opt",
     "no-new-privileges=true",
+    "--no-healthcheck",
     "--memory",
     `${String(resources.memoryBytes)}b`,
     "--memory-swap",
@@ -301,8 +460,6 @@ export function buildLlamaCppHostLocalDockerArgv(
     `type=bind,source=${bindings.model.hostPath},target=${containerModelPath},readonly`,
     "--mount",
     `type=bind,source=${bindings.apiKeyHostPath},target=${LLAMA_CPP_HOST_LOCAL_CONTAINER_API_KEY_PATH},readonly`,
-    bindings.imageReference,
-    ...buildLlamaCppHostLocalServerArgv(contract),
   ];
 }
 
@@ -310,7 +467,22 @@ export function buildLlamaCppHostLocalDockerArgv(
 export function buildLlamaCppHostLocalServerArgv(
   contract: LlamaCppHostLocalLaunchContract,
 ): readonly string[] {
+  return buildLlamaCppHostLocalServerArgvForAddress(contract, {
+    host: "0.0.0.0",
+    port: contract.serve.port,
+  });
+}
+
+function buildLlamaCppHostLocalServerArgvForAddress(
+  contract: LlamaCppHostLocalLaunchContract,
+  address: {
+    readonly host: "0.0.0.0" | "127.0.0.1";
+    readonly maxOutputTokens?: number;
+    readonly port: number;
+  },
+): readonly string[] {
   validateContract(contract);
+  positiveInteger(address.port, "llama.cpp command port", 65_535);
   const { serve } = contract;
   const containerModelPath = `/models/${contract.model.file.path}`;
   return Object.freeze([
@@ -319,9 +491,9 @@ export function buildLlamaCppHostLocalServerArgv(
     "--alias",
     contract.model.servedName,
     "--host",
-    "0.0.0.0",
+    address.host,
     "--port",
-    String(serve.port),
+    String(address.port),
     "--gpu-layers",
     "all",
     "--ctx-size",
@@ -342,6 +514,9 @@ export function buildLlamaCppHostLocalServerArgv(
     "on",
     "--timeout",
     String(serve.limits.requestTimeoutSeconds),
+    ...(address.maxOutputTokens === undefined
+      ? []
+      : ["--n-predict", String(address.maxOutputTokens)]),
     "--api-key-file",
     LLAMA_CPP_HOST_LOCAL_CONTAINER_API_KEY_PATH,
     "--metrics",

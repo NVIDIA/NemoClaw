@@ -41,4 +41,53 @@ describe("createResumeProviderShim", () => {
       expect.any(Function),
     );
   });
+
+  it("delegates only an exact managed llama.cpp sandbox to lifecycle recovery (#8144)", async () => {
+    const resumeManagedLlamaCppRuntime = vi
+      .fn(async (sandboxName: string) => sandboxName === "spark-agent")
+      .mockName("resumeManagedLlamaCppRuntime");
+    const shim = createResumeProviderShim({
+      isNonInteractive: () => true,
+      providerExistsInGateway: () => true,
+      isRoutedInferenceProvider: () => false,
+      replaceNamedCredential: vi.fn(async () => "unused"),
+      resumeManagedLlamaCppRuntime,
+    });
+
+    await expect(
+      shim.ensureManagedLlamaCppResumeReady("llama-cpp-local", "spark-agent"),
+    ).resolves.toBe(true);
+    await expect(
+      shim.ensureManagedLlamaCppResumeReady("llama-cpp-local", "operator-attached"),
+    ).resolves.toBe(false);
+    await expect(shim.ensureManagedLlamaCppResumeReady("vllm-local", "spark-agent")).resolves.toBe(
+      false,
+    );
+    await expect(shim.ensureManagedLlamaCppResumeReady("llama-cpp-local", null)).resolves.toBe(
+      false,
+    );
+
+    expect(resumeManagedLlamaCppRuntime).toHaveBeenCalledTimes(2);
+    expect(resumeManagedLlamaCppRuntime).toHaveBeenNthCalledWith(1, "spark-agent");
+    expect(resumeManagedLlamaCppRuntime).toHaveBeenNthCalledWith(2, "operator-attached");
+  });
+
+  it("propagates a conflicting managed llama.cpp owner instead of reusing its provider", async () => {
+    const ownershipConflict = new Error(
+      "Managed llama.cpp on this gateway is owned by sandbox 'first-sandbox'.",
+    );
+    const shim = createResumeProviderShim({
+      isNonInteractive: () => true,
+      providerExistsInGateway: () => true,
+      isRoutedInferenceProvider: () => false,
+      replaceNamedCredential: vi.fn(async () => "unused"),
+      resumeManagedLlamaCppRuntime: vi.fn(async () => {
+        throw ownershipConflict;
+      }),
+    });
+
+    await expect(
+      shim.ensureManagedLlamaCppResumeReady("llama-cpp-local", "second-sandbox"),
+    ).rejects.toBe(ownershipConflict);
+  });
 });

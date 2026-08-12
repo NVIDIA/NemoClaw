@@ -43,10 +43,15 @@ describe("preparePortableExperimentalHost", () => {
     );
     const docker = vi
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
-      .mockReturnValueOnce(result(1))
-      .mockReturnValueOnce(result());
+      .mockReturnValueOnce(result()) // --version probe: docker-compatible CLI present
+      .mockReturnValueOnce(result(1)) // inspect: registry not present yet
+      .mockReturnValueOnce(result()); // run
     const podman = vi.fn(() => result(0, "/run/user/1001/custom/podman.sock\n"));
+    const hardenSocketDirectory = vi.fn();
     const env: NodeJS.ProcessEnv = {
+      CONTAINER_CONNECTION: "attacker",
+      CONTAINER_HOST: "tcp://example.test:1234",
+      CONTAINER_SSHKEY: "/tmp/attacker-key",
       NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
     };
 
@@ -57,6 +62,7 @@ describe("preparePortableExperimentalHost", () => {
       systemctl,
       podman,
       docker,
+      hardenSocketDirectory,
     });
 
     expect(env).toMatchObject({
@@ -74,8 +80,24 @@ describe("preparePortableExperimentalHost", () => {
       ["--user", "try-restart", "podman.service"],
       ["--user", "enable", "--now", "podman.socket"],
     ]);
-    expect(podman).toHaveBeenCalledWith(["info", "--format", "{{.Host.RemoteSocket.Path}}"], env);
-    expect(docker.mock.calls[1]?.[0]).toEqual([
+    expect(podman).toHaveBeenCalledWith(
+      ["info", "--format", "{{.Host.RemoteSocket.Path}}"],
+      expect.not.objectContaining({
+        CONTAINER_CONNECTION: expect.anything(),
+        CONTAINER_HOST: expect.anything(),
+        CONTAINER_SSHKEY: expect.anything(),
+      }),
+    );
+    for (const [, commandEnv] of docker.mock.calls) {
+      expect(commandEnv).not.toHaveProperty("CONTAINER_CONNECTION");
+      expect(commandEnv).not.toHaveProperty("CONTAINER_HOST");
+      expect(commandEnv).not.toHaveProperty("CONTAINER_SSHKEY");
+      expect(commandEnv.DOCKER_HOST).toBe("unix:///run/user/1001/custom/podman.sock");
+    }
+    expect(env.CONTAINER_HOST).toBe("tcp://example.test:1234");
+    expect(hardenSocketDirectory).toHaveBeenCalledWith("/run/user/1001/custom/podman.sock", 1001);
+    expect(docker.mock.calls[0]?.[0]).toEqual(["--version"]);
+    expect(docker.mock.calls[2]?.[0]).toEqual([
       "run",
       "-d",
       "--name",
@@ -109,13 +131,22 @@ describe("preparePortableExperimentalHost", () => {
     );
     const docker = vi
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
-      .mockReturnValueOnce(result(1))
-      .mockReturnValueOnce(result());
+      .mockReturnValueOnce(result()) // --version probe: docker-compatible CLI present
+      .mockReturnValueOnce(result(1)) // inspect: registry not present yet
+      .mockReturnValueOnce(result()); // run
     const podman = vi.fn(() => result(0, "/run/user/1001/podman/podman.sock\n"));
 
     preparePortableExperimentalHost(
       { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-      { platform: "linux", home, uid: 1001, systemctl, podman, docker },
+      {
+        platform: "linux",
+        home,
+        uid: 1001,
+        systemctl,
+        podman,
+        docker,
+        hardenSocketDirectory: vi.fn(),
+      },
     );
 
     const dropIn = path.join(
@@ -141,6 +172,7 @@ describe("preparePortableExperimentalHost", () => {
         systemctl: () => result(),
         podman: () => result(0, "/run/user/1001/podman/podman.sock"),
         docker: () => result(0, "unexpected-owner"),
+        hardenSocketDirectory: vi.fn(),
       }),
     ).toThrow(/unmanaged container/);
   });
@@ -151,7 +183,7 @@ describe("preparePortableExperimentalHost", () => {
     const timeout = Object.assign(new Error("registry inspection timed out"), {
       code: "ETIMEDOUT",
     });
-    const docker = vi.fn(
+    const docker = vi.fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>(
       () =>
         ({
           error: timeout,
@@ -174,10 +206,12 @@ describe("preparePortableExperimentalHost", () => {
           systemctl: () => result(),
           podman: () => result(0, "/run/user/1001/podman/podman.sock"),
           docker,
+          hardenSocketDirectory: vi.fn(),
         },
       ),
     ).toThrow(/Inspecting the managed portable registry failed: registry inspection timed out/);
-    expect(docker).toHaveBeenCalledTimes(1);
+    // The --version probe tolerates a non-ENOENT error, then the inspect fails.
+    expect(docker).toHaveBeenCalledTimes(2);
   });
 
   it("fails closed when Podman does not report an absolute local socket", () => {
@@ -197,5 +231,49 @@ describe("preparePortableExperimentalHost", () => {
         },
       ),
     ).toThrow(/invalid socket path/);
+  });
+
+  it("names podman-docker and creates the registry only after a successful retry (#8453)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    // The `docker --version` probe returns a spawn ENOENT, i.e. no docker CLI.
+    const docker = vi
+      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
+      .mockReturnValueOnce({
+        error: Object.assign(new Error("spawnSync docker ENOENT"), { code: "ENOENT" }),
+        output: [null, "", ""],
+        pid: 0,
+        signal: null,
+        status: null,
+        stderr: "",
+        stdout: "",
+      } as SpawnResult)
+      .mockReturnValueOnce(result()) // retry probe: podman-docker is now present
+      .mockReturnValueOnce(result(1)) // inspect: registry was not created by the failed attempt
+      .mockReturnValueOnce(result()); // run
+    const env: NodeJS.ProcessEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
+    const deps = {
+      platform: "linux" as const,
+      home,
+      uid: 1001,
+      systemctl: () => result(),
+      podman: () => result(0, "/run/user/1001/podman/podman.sock"),
+      docker,
+      hardenSocketDirectory: vi.fn(),
+    };
+
+    expect(() => preparePortableExperimentalHost(env, deps)).toThrow(/podman-docker/);
+    // Fails on the CLI probe, before any registry inspect/run is attempted.
+    expect(docker).toHaveBeenCalledTimes(1);
+    expect(docker.mock.calls[0]?.[0]).toEqual(["--version"]);
+
+    preparePortableExperimentalHost(env, deps);
+
+    expect(docker.mock.calls.map(([args]) => args[0])).toEqual([
+      "--version",
+      "--version",
+      "inspect",
+      "run",
+    ]);
   });
 });

@@ -17,6 +17,29 @@ export const SHIPPED_MANAGED_IMAGE_AGENTS = [
 
 export type ShippedManagedImageAgent = (typeof SHIPPED_MANAGED_IMAGE_AGENTS)[number];
 
+export interface ManagedImageRuntimeIdentity {
+  readonly uid: number;
+  readonly gid: number;
+  readonly workdir: "/sandbox";
+}
+
+/**
+ * Numeric sandbox identities baked into the reviewed all-agent image bases.
+ * Runtime providers consume this workload contract without adding
+ * engine-specific agent switches to central orchestration.
+ */
+export const MANAGED_IMAGE_RUNTIME_IDENTITIES = Object.freeze({
+  openclaw: Object.freeze({ uid: 998, gid: 998, workdir: "/sandbox" }),
+  hermes: Object.freeze({ uid: 998, gid: 999, workdir: "/sandbox" }),
+  "langchain-deepagents-code": Object.freeze({ uid: 999, gid: 999, workdir: "/sandbox" }),
+} as const satisfies Record<ShippedManagedImageAgent, ManagedImageRuntimeIdentity>);
+
+export function managedImageRuntimeIdentity(
+  agent: ShippedManagedImageAgent,
+): ManagedImageRuntimeIdentity {
+  return MANAGED_IMAGE_RUNTIME_IDENTITIES[agent];
+}
+
 export const MANAGED_IMAGE_REPOSITORIES = {
   openclaw: "ghcr.io/nvidia/nemoclaw/openclaw-sandbox",
   hermes: "ghcr.io/nvidia/nemoclaw/hermes-sandbox",

@@ -35,7 +35,8 @@ export {
 } from "./registry-entry-view";
 
 import { isDcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
-import { cloneSandboxHostMounts } from "./registry/host-mount";
+import { cloneSandboxHostMounts, hasUnsafeHostMountTerminalText } from "./registry/host-mount";
+export { hasUnsafeHostMountTerminalText };
 import type {
   BaselineExclusionEntry,
   BaselineExclusionTransition,

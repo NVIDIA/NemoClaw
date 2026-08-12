@@ -98,6 +98,21 @@ Install the following before you begin.
 - Docker (running)
 - [hadolint](https://github.com/hadolint/hadolint) (Dockerfile linter — `brew install hadolint` on macOS)
 
+### Windows Line Endings
+
+`.gitattributes` pins the files whose exact bytes the repository checks assert, so a new clone keeps LF even when `core.autocrlf` is `true`.
+
+Git does not rewrite a file that is already in your working tree.
+If you cloned before that rule existed, the file keeps CRLF, `git status` reports no change, and `npm run checks:repository` reports `use LF line endings`.
+
+Commit or stash your work first, because the next commands discard uncommitted changes.
+Then normalize the checkout once:
+
+```bash
+git rm --cached -r .
+git reset --hard
+```
+
 ## Getting Started
 
 From the repository root, prepare the checkout with one command:
@@ -127,7 +142,8 @@ To drive the same workflow through a compatible coding agent, ask:
 
 > Set up this machine as a NemoClaw contributor and prepare it for a first PR.
 
-The `nemoclaw-contributor-onboard` skill invokes the setup script, pauses for user-controlled account or privileged changes, and explains the first-PR workflow.
+The `nemoclaw-contributor-onboard` skill invokes the setup script and pauses for user-controlled account or host changes.
+After the doctor passes, it routes planning, implementation, and PR publication to the owning contributor skills.
 Expose the development `nemoclaw` command only when you want an npm link or user-local shim:
 
 ```bash
@@ -261,6 +277,27 @@ artifact sink. Pass the auto fixture's frozen, canonical `progress` capability
 through unchanged; custom, copied, or no-op progress adapters are rejected at
 audited subprocess boundaries.
 
+### macOS Test Dependencies
+
+Some tests run command-line tools that macOS does not ship.
+`src/lib/shields/state-dir-lock.test.ts` runs `timeout`.
+On a macOS host that does not provide `timeout`, the process spawn fails.
+The result has no `stdout`.
+The test then reports `TypeError: Cannot read properties of undefined (reading 'split')`.
+The error does not identify the missing utility or macOS.
+
+Install these command-line tools before you run the test suite on macOS.
+Put the `bash`, `coreutils`, and `gawk` package directories first on `PATH`:
+
+```bash
+brew install bash coreutils fd gawk ripgrep
+export PATH="$(brew --prefix bash)/bin:$(brew --prefix coreutils)/libexec/gnubin:$(brew --prefix gawk)/libexec/gnubin:$PATH"
+```
+
+The `macos-vitest` job in [`.github/workflows/platform-vitest-main.yaml`](.github/workflows/platform-vitest-main.yaml) installs these utilities and owns the authoritative list.
+The job runs after a push to `main` and during a manual dispatch.
+It does not run for pull requests.
+
 ### Test Declarative Behavior
 
 Do not read a shipped YAML, JSON, manifest, workflow, or E2E runtime file only to assert its keys,
@@ -283,6 +320,13 @@ it("keeps both immutable image digests aligned", () => {
 exception whose file, test title, and category are not in the reviewed allowlist. It also
 rejects unused allowlist entries, so one exception cannot silently replace another. Its output and
 metrics list every accepted exception so these contracts remain visible during review.
+
+### Blueprint Image Pin Updates
+
+When the managed sandbox image changes, update both `digest` and `components.sandbox.image` in
+`nemoclaw-blueprint/blueprint.yaml` with the same SHA-256 digest. Release tooling should rewrite
+both fields together. `test/validate-blueprint.test.ts` rejects a mutable image tag or a mismatch
+between the two digest fields.
 
 ### Focused Vitest Feedback
 

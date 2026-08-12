@@ -161,6 +161,24 @@ describe("sandbox registry normalization", () => {
     });
   });
 
+  it("backfills a lifecycle generation only for the unchanged legacy Docker row (#8584)", async () => {
+    const registry = await loadRegistryWith({});
+    const { compareAndSetLegacySandboxLifecycleGeneration } = await import(
+      "./registry/lifecycle-generation"
+    );
+    registry.registerSandbox({ name: "portable", openshellDriver: "docker" });
+    const expected = registry.getSandbox("portable")!;
+
+    expect(compareAndSetLegacySandboxLifecycleGeneration(expected, "a".repeat(64))).toBe(true);
+    expect(registry.getSandbox("portable")?.lifecycleGeneration).toBe("a".repeat(64));
+    expect(compareAndSetLegacySandboxLifecycleGeneration(expected, "b".repeat(64))).toBe(false);
+
+    registry.registerSandbox({ name: "changed", openshellDriver: "docker" });
+    const stale = registry.getSandbox("changed")!;
+    registry.updateSandbox("changed", { model: "replacement" });
+    expect(compareAndSetLegacySandboxLifecycleGeneration(stale, "c".repeat(64))).toBe(false);
+  });
+
   it("round-trips immutable serving profile provenance while preserving legacy rows (#8246)", async () => {
     const registry = await loadRegistryWith({ legacy: { name: "legacy" } });
     expect(registry.getSandbox("legacy")?.servingProfileProvenance).toBeUndefined();

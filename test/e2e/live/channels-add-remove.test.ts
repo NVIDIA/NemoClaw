@@ -22,7 +22,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 // registry/gateway/policy/in-sandbox state, then remove Telegram and rebuild
 // back to a clean state.
 
-const TEST_SANDBOX_PREFIX = "e2e-channels-add-remove";
+const TEST_SANDBOX_PREFIX = "e2e-ch-add-remove";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? TEST_SANDBOX_PREFIX;
 validateSandboxName(SANDBOX_NAME);
 

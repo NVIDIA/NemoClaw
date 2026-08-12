@@ -8,6 +8,8 @@ import {
   getManagedInferenceRecipeRegistrationError,
   HOST_LOCAL_VLLM_LIFECYCLE_REF,
   HOST_LOCAL_VLLM_MATERIALIZER_REF,
+  LLAMA_CPP_HOST_LOCAL_LIFECYCLE_REF,
+  LLAMA_CPP_HOST_LOCAL_MATERIALIZER_REF,
   MANAGED_CLUSTER_VLLM_LIFECYCLE_REF,
   MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
 } from "./adapter-registry.js";
@@ -101,11 +103,13 @@ function isManagedInferenceRecipeCandidate(
     recipe.spec.execution.materializerRef === MANAGED_CLUSTER_VLLM_MATERIALIZER_REF ||
     recipe.spec.execution.lifecycleRef === MANAGED_CLUSTER_VLLM_LIFECYCLE_REF ||
     recipe.spec.execution.materializerRef === HOST_LOCAL_VLLM_MATERIALIZER_REF ||
-    recipe.spec.execution.lifecycleRef === HOST_LOCAL_VLLM_LIFECYCLE_REF
+    recipe.spec.execution.lifecycleRef === HOST_LOCAL_VLLM_LIFECYCLE_REF ||
+    recipe.spec.execution.materializerRef === LLAMA_CPP_HOST_LOCAL_MATERIALIZER_REF ||
+    recipe.spec.execution.lifecycleRef === LLAMA_CPP_HOST_LOCAL_LIFECYCLE_REF
   );
 }
 
-/** Project recipes backed by a registered NemoClaw-managed vLLM runtime. */
+/** Project recipes backed by a registered NemoClaw-managed runtime. */
 export function managedInferenceCatalogFromServingCatalog(
   catalog: CompiledServingCatalog,
 ): CompiledManagedInferenceCatalog {

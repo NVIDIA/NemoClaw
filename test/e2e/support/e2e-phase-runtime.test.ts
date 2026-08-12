@@ -4,16 +4,16 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
+  type CommandRunner,
   ProviderClient,
   SandboxClient,
   trustedProviderEndpoint,
-  type CommandRunner,
 } from "../fixtures/clients/index.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
 import {
   inferenceRouteUrl,
-  RuntimePhaseFixture,
   type NemoClawInstance,
+  RuntimePhaseFixture,
 } from "../fixtures/phases/index.ts";
 import type {
   ShellProbeResult,
@@ -73,7 +73,7 @@ class FakeRunner implements CommandRunner {
 function instance(overrides: Partial<NemoClawInstance> = {}): NemoClawInstance {
   return {
     onboarding: "cloud-openclaw",
-    sandboxName: "e2e-ubuntu-repo-cloud-openclaw",
+    sandboxName: "e2e-cloud-oc",
     agent: "openclaw",
     provider: "nvidia",
     providerEnv: "cloud",
@@ -116,7 +116,7 @@ describe("runtime phase fixture", () => {
           "sandbox",
           "exec",
           "-n",
-          "e2e-ubuntu-repo-cloud-openclaw",
+          "e2e-cloud-oc",
           "--",
           "curl",
           "-fsS",
@@ -176,7 +176,7 @@ describe("runtime phase fixture", () => {
       "sandbox",
       "exec",
       "-n",
-      "e2e-ubuntu-repo-cloud-openclaw",
+      "e2e-cloud-oc",
       "--",
       "curl",
       "-fsS",
@@ -241,7 +241,7 @@ describe("runtime phase fixture", () => {
         "sandbox",
         "exec",
         "-n",
-        "e2e-ubuntu-repo-cloud-openclaw",
+        "e2e-cloud-oc",
         "--",
         "curl",
         "-sS",

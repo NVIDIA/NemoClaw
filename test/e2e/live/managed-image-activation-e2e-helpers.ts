@@ -9,6 +9,7 @@ import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import {
   type ManagedImageContractCatalog,
   type ManagedImageContractV1,
+  managedImagePlatformForNodeArchitecture,
   parseManagedImageContractV1,
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ShippedManagedImageAgent,
@@ -35,9 +36,9 @@ const GATEWAY = "nemoclaw";
 const AGENT_TIMEOUT_MS = 3 * 60_000;
 const ONBOARD_TIMEOUT_MS = 20 * 60_000;
 const SANDBOX_NAMES: Record<ShippedManagedImageAgent, string> = {
-  openclaw: "managed-activation-openclaw",
-  hermes: "managed-activation-hermes",
-  "langchain-deepagents-code": "managed-activation-dcode",
+  openclaw: "mi-act-openclaw",
+  hermes: "mi-act-hermes",
+  "langchain-deepagents-code": "mi-act-dcode",
 };
 type RuntimeFixtures = {
   readonly artifacts: ArtifactSink;
@@ -70,11 +71,16 @@ function exactCatalog(
   catalogPath: string,
 ): ReadonlyMap<ShippedManagedImageAgent, ManagedImageContractV1> {
   const document = JSON.parse(fs.readFileSync(catalogPath, "utf8")) as ManagedImageContractCatalog;
+  const platform = managedImagePlatformForNodeArchitecture(process.arch);
+  expect(
+    platform,
+    `managed activation E2E does not support host architecture ${process.arch}`,
+  ).not.toBeNull();
   const contracts = new Map<ShippedManagedImageAgent, ManagedImageContractV1>();
   let revision: string | null = null;
   let cohort: string | null = null;
   for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
-    const contract = parseManagedImageContractV1(document[agent], agent, "linux/amd64");
+    const contract = parseManagedImageContractV1(document[agent], agent, platform!);
     revision ??= contract.source.revision;
     cohort ??= contract.source.cohort;
     if (contract.source.revision !== revision || contract.source.cohort !== cohort) {
@@ -149,6 +155,7 @@ function commandEnv(
     NEMOCLAW_PREFERRED_API: "openai-completions",
     NEMOCLAW_PROVIDER: "custom",
     NEMOCLAW_RECREATE_SANDBOX: "1",
+    OPENSHELL_DRIVERS: "docker",
     OPENSHELL_GATEWAY: GATEWAY,
   };
 }
@@ -221,6 +228,7 @@ async function runAgentTurn(
 
 async function preclean(
   host: HostCliClient,
+  lifecycle: LifecyclePhaseFixture,
   sandbox: SandboxClient,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
@@ -232,6 +240,12 @@ async function preclean(
   });
   await sandbox.cleanupSandbox(sandboxName, {
     artifactName: `pre-cleanup-openshell-${sandboxName}`,
+    env,
+    timeoutMs: 60_000,
+  });
+  await lifecycle.stopGatewayRuntime();
+  await host.cleanupGatewayRegistration(GATEWAY, {
+    artifactName: `pre-cleanup-gateway-${sandboxName}`,
     env,
     timeoutMs: 60_000,
   });
@@ -328,7 +342,7 @@ async function qualifyAgent(
     sandbox.cleanupSandbox(sandboxName, { env, timeoutMs: 60_000 }),
   );
   cleanup.trackSandbox(host, sandboxName, { env, timeoutMs: 3 * 60_000 });
-  await preclean(host, sandbox, sandboxName, env);
+  await preclean(host, lifecycle, sandbox, sandboxName, env);
 
   enterOnboardPhase(progress, agent);
   const onboard = await host.nemoclaw(
@@ -396,7 +410,7 @@ async function qualifyAgent(
   await runAgentTurn(sandbox, agent, sandboxName, "after", env);
 
   enterCleanupPhase(progress, agent);
-  const destroy = await host.destroySandbox(sandboxName, {
+  const destroy = await host.nemoclaw([sandboxName, "destroy", "--yes", "--no-cleanup-gateway"], {
     artifactName: `managed-activation-destroy-${agent}`,
     env,
     timeoutMs: 5 * 60_000,

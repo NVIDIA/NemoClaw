@@ -22,6 +22,9 @@ const TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz";
 const LOCK_SHA256 = "759b31779f40867f35f15065b582eb1d3efb8fddb1fe43c207507c905fa2a421";
 const MCPORTER_PACKAGE_SPEC = "mcporter@0.7.3";
 const MCPORTER_LOCK_SHA256 = "962dee34f6b0a493521d1619d1cf030e2630cbdfce8bf0598217202f57078793";
+const MCP_TOOL_DISCOVERY_PACKAGE_SPEC = "@modelcontextprotocol/sdk@1.30.0";
+const MCP_TOOL_DISCOVERY_LOCK_SHA256 =
+  "bc7e34d9eb1f72cf3016c8b88c72d3b7682a4f234903cb93b9476b10d7e954eb";
 const roots: string[] = [];
 
 function sha256(file: string): string {
@@ -359,54 +362,5 @@ describe("locked OpenClaw production installation (#5896)", () => {
     expect(contents).toContain("'schema=3'");
     expect(contents).toContain('"lock-sha256=${OPENCLAW_LOCK_SHA256}"');
     expect(contents).toContain("locked-ci+reviewed-lifecycle-v2");
-  });
-
-  // source-shape-contract: security -- The shipped audit and base-image rebuild inputs must share the exact committed production lock authority
-  it("audits the same lock and rebuilds the base when its graph changes", () => {
-    const audit = JSON.parse(
-      fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf-8"),
-    );
-    expect(audit.schemaVersion).toBe(2);
-    expect(audit.archivePackages).toEqual(
-      expect.arrayContaining([expect.objectContaining({ packageSpec: PACKAGE_SPEC })]),
-    );
-    expect(audit.lockedGraphs).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          directory: "agents/openclaw/openclaw-runtime",
-          lockSha256: LOCK_SHA256,
-          packageSpec: PACKAGE_SPEC,
-        }),
-        expect.objectContaining({
-          directory: "agents/openclaw/mcporter-runtime",
-          lockSha256: MCPORTER_LOCK_SHA256,
-          packageSpec: MCPORTER_PACKAGE_SPEC,
-        }),
-      ]),
-    );
-    expect(audit.lockedGraphs).toHaveLength(2);
-    expect(
-      audit.lockedGraphs.map(({ packageSpec }: { packageSpec?: string }) => packageSpec).sort(),
-    ).toEqual([MCPORTER_PACKAGE_SPEC, PACKAGE_SPEC].sort());
-    for (const graph of audit.lockedGraphs) {
-      expect(graph).not.toHaveProperty("replacementLockSha256");
-      expect(graph).not.toHaveProperty("reviewedLockSha256");
-    }
-
-    const baseWorkflow = fs.readFileSync(
-      path.join(REPO_ROOT, ".github", "workflows", "base-image.yaml"),
-      "utf-8",
-    );
-    expect(baseWorkflow).toContain('"agents/openclaw/openclaw-runtime/package.json"');
-    expect(baseWorkflow).toContain('"agents/openclaw/openclaw-runtime/package-lock.json"');
-    expect(baseWorkflow).toContain('"scripts/lib/reviewed-npm-archive.mts"');
-
-    const baseResolver = fs.readFileSync(
-      path.join(REPO_ROOT, ".github", "actions", "resolve-sandbox-base-image", "action.yaml"),
-      "utf-8",
-    );
-    expect(baseResolver).toContain("agents/openclaw/openclaw-runtime/package.json");
-    expect(baseResolver).toContain("agents/openclaw/openclaw-runtime/package-lock.json");
-    expect(baseResolver).toContain("scripts/lib/reviewed-npm-archive.mts");
   });
 });

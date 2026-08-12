@@ -12,6 +12,7 @@ import { VLLM_EXTRA_ARGS_ENV } from "../vllm-models.js";
 import {
   HOST_LOCAL_VLLM_LIFECYCLE_REF,
   HOST_LOCAL_VLLM_MATERIALIZER_REF,
+  isHostLocalInferenceServingRecipe,
 } from "./adapter-registry.js";
 import { resolveManagedInferenceServing } from "./resolver.js";
 import type {
@@ -78,7 +79,7 @@ function dockerRunArguments(recipe: HostLocalInferenceServingRecipe): string[] {
     "--ipc",
     recipe.spec.runtime.ipcMode,
     "--mount",
-    `type=bind,source=${path.join(os.homedir(), ".cache", "huggingface")},target=${recipe.spec.runtime.modelCache.target}`,
+    `type=bind,source=${path.join(os.homedir(), ".cache", "huggingface", "hub")},target=${recipe.spec.runtime.modelCache.target}/hub,readonly`,
     "--shm-size",
     `${String(sharedMemoryBytes)}b`,
     "--ulimit",
@@ -122,7 +123,12 @@ export function materializeHostLocalVllmSelection(
   ) {
     throw new Error("host-local vLLM recipe is missing required runtime or model fields");
   }
-  const serveEnvironment = { ...runtime.environment };
+  const serveEnvironment = {
+    ...runtime.environment,
+    HF_HOME: runtime.modelCache.target,
+    HF_HUB_OFFLINE: "1",
+    TRANSFORMERS_OFFLINE: "1",
+  };
   const model: VllmModelDef = {
     id: recipe.spec.model.id,
     label: recipe.metadata.displayName ?? recipe.metadata.id,
@@ -202,8 +208,23 @@ export function resolveHostLocalVllmSelection(
   if ("topologyQualification" in resolution) {
     return { kind: "rejected", reason: `Serving preset ${presetId} requires a managed topology.` };
   }
+  if (!isHostLocalInferenceServingRecipe(resolution.recipe)) {
+    return {
+      kind: "rejected",
+      reason: `Serving preset ${presetId} is not a host-local vLLM preset.`,
+    };
+  }
   try {
-    return { kind: "selected", ...materializeHostLocalVllmSelection(resolution, baseProfile) };
+    const vllmResolution: ResolvedHostLocalInferenceSelection = {
+      outcome: "selected",
+      selection: resolution.selection,
+      catalogDigest: resolution.catalogDigest,
+      presetDigest: resolution.presetDigest,
+      recipeDigest: resolution.recipeDigest,
+      preset: resolution.preset,
+      recipe: resolution.recipe,
+    };
+    return { kind: "selected", ...materializeHostLocalVllmSelection(vllmResolution, baseProfile) };
   } catch (error) {
     return { kind: "rejected", reason: (error as Error).message };
   }

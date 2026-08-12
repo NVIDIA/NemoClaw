@@ -33,6 +33,11 @@ import {
 import { GatewayManagementDeclarationError } from "./gateway-management";
 import { GatewayAuthorityError, gatewayAuthorityFailureLines } from "./gateway-teardown-authority";
 import { parseReadOnlyHostMounts, requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
+import {
+  LOCAL_MODEL_PROFILE_ENABLED_ENV,
+  LOCAL_MODEL_PROFILE_RUNTIME_ENV,
+  resolveLocalModelProfilePlan,
+} from "./local-model-profile/plan";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
@@ -180,6 +185,12 @@ function resolveHostMounts(
   deps: ResolveOnboardOptionsDeps,
   experimentalProfile: ExperimentalOnboardProfile | null,
 ): import("../state/registry/types").SandboxHostMount[] {
+  if ((values?.length ?? 0) > 0 && experimentalProfile === PORTABLE_EXPERIMENTAL_PROFILE) {
+    fail(
+      deps,
+      "  --host-mount requires the OpenShell Docker driver and cannot be used with --experimental-profile portable.",
+    );
+  }
   let mounts: import("../state/registry/types").SandboxHostMount[];
   try {
     mounts = parseReadOnlyHostMounts(values ?? []);

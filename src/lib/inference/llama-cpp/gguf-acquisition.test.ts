@@ -39,22 +39,18 @@ function plan(
     recipeId: "test.llama.recipe",
     acquisition: {
       ref: "hugging-face-exact-file/v1",
+      downloaderImage: `nvcr.io/nvidia/vllm@sha256:${"d".repeat(64)}`,
       url: `https://huggingface.co/${repository}/resolve/${revision}/${file.path}`,
       authentication: { mode: "optional", environment: "HF_TOKEN" },
       source: { repository, revision, file },
     },
     cache: {
-      ref: "llama-cpp.gguf-content-addressed/v1",
-      receiptRef: "llama-cpp.gguf-cache-entry.receipt/v1",
+      ref: "hugging-face-shared-cache/v1",
       root: "user-cache",
       key: `sha256-${"b".repeat(64)}`,
-      quotaBytes: 4096,
-      stagingHeadroomBytes: 1024,
-      staging: "same-filesystem",
-      publication: "atomic-no-clobber",
-      reuse: "verified-only-offline",
-      sharing: "owner-only",
-      cleanup: "receipt-owner-only",
+      reuse: "verify-exact-file",
+      sharing: "host-user",
+      cleanup: "preserve",
     },
     planDigest: `sha256:${"c".repeat(64)}`,
   };
@@ -112,6 +108,77 @@ afterEach(async () => {
 });
 
 describe("llama.cpp GGUF acquisition", () => {
+  it("revalidates Docker authority before and after forwarding Hugging Face credentials", async () => {
+    const cacheRoot = await temporaryCache();
+    await createSnapshot(cacheRoot);
+    const token = "hf_must_not_escape";
+    let guardCalls = 0;
+    const assertDockerAuthority = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        guardCalls += 1;
+      })
+      .mockImplementationOnce(() => {
+        guardCalls += 1;
+        throw new Error("Docker context endpoint changed after qualification");
+      });
+    const acquire = vi.fn().mockImplementation(async (request) => {
+      expect(guardCalls).toBe(1);
+      expect(request.credentialEnv).toMatchObject({ HF_TOKEN: token });
+      return { ok: true };
+    });
+    const execution = {
+      credentialEnv: { HF_TOKEN: token },
+      dockerEnv: {},
+      downloaderImage: `nvcr.io/nvidia/vllm@sha256:${"d".repeat(64)}`,
+      hostCacheDir: cacheRoot,
+      spawnDocker: vi.fn(),
+      userIdentity: "1001:1001",
+    } satisfies Omit<HuggingFaceModelAcquisitionRequest, "filename" | "repository" | "revision">;
+
+    const result = acquireVerifiedLlamaCppGguf(
+      {
+        assertDockerAuthority,
+        execution,
+        observer: { logLine: vi.fn(), onRateLimit: vi.fn() },
+        plan: plan(),
+      },
+      { acquireHuggingFaceModel: acquire },
+    );
+
+    await expect(result).rejects.toThrow("Docker context endpoint changed after qualification");
+    await expect(result).rejects.not.toThrow(token);
+    expect(assertDockerAuthority).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a changed Docker authority before forwarding Hugging Face credentials", async () => {
+    const cacheRoot = await temporaryCache();
+    const acquire = vi.fn();
+    const execution = {
+      credentialEnv: { HF_TOKEN: "hf_must_not_escape" },
+      dockerEnv: {},
+      downloaderImage: `nvcr.io/nvidia/vllm@sha256:${"d".repeat(64)}`,
+      hostCacheDir: cacheRoot,
+      spawnDocker: vi.fn(),
+      userIdentity: "1001:1001",
+    } satisfies Omit<HuggingFaceModelAcquisitionRequest, "filename" | "repository" | "revision">;
+
+    await expect(
+      acquireVerifiedLlamaCppGguf(
+        {
+          assertDockerAuthority: () => {
+            throw new Error("Docker context endpoint changed after qualification");
+          },
+          execution,
+          observer: { logLine: vi.fn(), onRateLimit: vi.fn() },
+          plan: plan(),
+        },
+        { acquireHuggingFaceModel: acquire },
+      ),
+    ).rejects.toThrow("Docker context endpoint changed after qualification");
+    expect(acquire).not.toHaveBeenCalled();
+  });
+
   it("passes the exact compiled repository, revision, and filename to Hugging Face (#8279)", async () => {
     const cacheRoot = await temporaryCache();
     const { blob } = await createSnapshot(cacheRoot);

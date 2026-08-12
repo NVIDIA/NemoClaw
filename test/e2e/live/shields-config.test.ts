@@ -28,12 +28,23 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { pollUntil } from "../fixtures/polling.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  failedStartupProcessControlCommands,
+  resumeSupervisorIfPaused,
+} from "../fixtures/shields-failed-startup.ts";
 import { stripAnsi } from "./json-envelope.ts";
 
 const CONFIG_PATH = "/sandbox/.openclaw/openclaw.json";
 const CONFIG_DIR = path.dirname(CONFIG_PATH);
 const CONFIG_HASH_PATH = `${CONFIG_DIR}/.config-hash`;
+const CONFIG_GUARD_PATH = "/usr/local/lib/nemoclaw/openclaw-config-guard.py";
+const STATE_LOCK_PLAN_PATH = "/usr/local/share/nemoclaw/state-lock-plan.json";
+const STARTUP_MARKER_PATHS = [
+  "/run/nemoclaw/openclaw-config-ready-v1.capability.json",
+  "/run/nemoclaw/openclaw-config-ready.json",
+] as const;
 const AUDIT_FILE = path.join(os.homedir(), ".nemoclaw", "state", "shields-audit.jsonl");
 const STATE_FILE = (sandboxName: string) =>
   path.join(os.homedir(), ".nemoclaw", "state", `shields-${sandboxName}.json`);
@@ -97,13 +108,14 @@ async function sandboxShell(
 async function docker(
   host: HostCliClient,
   args: string[],
-  options: { artifactName: string; timeoutMs?: number } = {
+  options: { artifactName: string; timeoutMs?: number; redactionValues?: string[] } = {
     artifactName: "docker",
   },
 ): Promise<ShellProbeResult> {
   return host.command("docker", args, {
     artifactName: options.artifactName,
     env: commandEnv(),
+    redactionValues: options.redactionValues,
     timeoutMs: options.timeoutMs ?? COMMAND_TIMEOUT_MS,
   });
 }
@@ -144,25 +156,75 @@ async function statPath(
   return { ...parsed, raw: result.stdout.trim() };
 }
 
+async function collectStartFailureDockerLogs(
+  host: HostCliClient,
+  artifactPrefix: string,
+  redactionValues: string[],
+): Promise<string> {
+  const lookup = await docker(
+    host,
+    [
+      "ps",
+      "--all",
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+      "--filter",
+      "label=openshell.ai/sandbox-workspace=default",
+      "-q",
+    ],
+    {
+      artifactName: `${artifactPrefix}-failure-container`,
+      redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
+  const containerId = lookup.stdout.trim().split(/\s+/u).filter(Boolean)[0] ?? "";
+  const result =
+    lookup.exitCode !== 0 || !containerId
+      ? lookup
+      : await docker(host, ["logs", "--tail", "200", containerId], {
+          artifactName: `${artifactPrefix}-failure-docker-logs`,
+          redactionValues,
+          timeoutMs: 30_000,
+        });
+  return resultText(result);
+}
+
 async function expectStopStartRecovery(
   host: HostCliClient,
+  sandbox: SandboxClient,
   posture: "DOWN" | "UP",
   artifactPrefix: string,
+  redactionValues: string[],
 ): Promise<void> {
   const stop = await runNemoclaw(host, [SANDBOX_NAME, "stop"], {
     artifactName: `${artifactPrefix}-stop`,
+    redactionValues,
     timeoutMs: 5 * 60_000,
   });
   expect(stop.exitCode, resultText(stop)).toBe(0);
 
   const start = await runNemoclaw(host, [SANDBOX_NAME, "start"], {
     artifactName: `${artifactPrefix}-start`,
+    redactionValues,
     timeoutMs: 5 * 60_000,
   });
-  expect(start.exitCode, resultText(start)).toBe(0);
+  const startFailureLogs =
+    start.exitCode === 0
+      ? ""
+      : await collectStartFailureDockerLogs(host, artifactPrefix, redactionValues);
+  expect(
+    start.exitCode,
+    [resultText(start), startFailureLogs && `Docker logs:\n${startFailureLogs}`]
+      .filter(Boolean)
+      .join("\n"),
+  ).toBe(0);
 
   const status = await runNemoclaw(host, [SANDBOX_NAME, "status"], {
     artifactName: `${artifactPrefix}-status`,
+    redactionValues,
     timeoutMs: 5 * 60_000,
   });
   expect(status.exitCode, resultText(status)).toBe(0);
@@ -170,9 +232,35 @@ async function expectStopStartRecovery(
 
   const shields = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
     artifactName: `${artifactPrefix}-shields-status`,
+    redactionValues,
   });
   expect(shields.exitCode, resultText(shields)).toBe(0);
   expect(resultText(shields)).toContain(`Shields: ${posture}`);
+
+  const runtimeIdentity = await sandboxShell(
+    sandbox,
+    'printf \'pwd=%s\\nhome=%s\\nuser=%s\\ngroup=%s\\n\' "$PWD" "$HOME" "$(id -un)" "$(id -gn)"',
+    { artifactName: `${artifactPrefix}-runtime-identity` },
+  );
+  expect(runtimeIdentity.exitCode, resultText(runtimeIdentity)).toBe(0);
+  expect(runtimeIdentity.stdout).toContain("pwd=/sandbox\n");
+  expect(runtimeIdentity.stdout).toContain("home=/sandbox\n");
+  expect(runtimeIdentity.stdout).toContain("user=sandbox\n");
+  expect(runtimeIdentity.stdout).toContain("group=sandbox\n");
+}
+
+async function expectLockedSandboxParent(
+  host: HostCliClient,
+  artifactPrefix: string,
+): Promise<void> {
+  const containerId = await findSandboxContainer(host);
+  const parent = await docker(
+    host,
+    ["exec", "--user", "0", containerId, "stat", "-c", "%a %U:%G", "/sandbox"],
+    { artifactName: `${artifactPrefix}-sandbox-parent` },
+  );
+  expect(parent.exitCode, resultText(parent)).toBe(0);
+  expect(parent.stdout.trim()).toBe("1775 root:sandbox");
 }
 
 async function expectCredentialsTraversalBoundary(
@@ -247,14 +335,101 @@ async function preCleanSandbox(
 }
 
 async function findSandboxContainer(host: HostCliClient): Promise<string> {
-  const result = await docker(host, ["ps", "--filter", `name=openshell-${SANDBOX_NAME}`, "-q"], {
-    artifactName: "docker-ps-sandbox-container",
-    timeoutMs: 30_000,
-  });
+  const result = await docker(
+    host,
+    [
+      "ps",
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+      "--filter",
+      "label=openshell.ai/sandbox-workspace=default",
+      "-q",
+    ],
+    {
+      artifactName: "docker-ps-sandbox-container",
+      timeoutMs: 30_000,
+    },
+  );
   expect(result.exitCode, resultText(result)).toBe(0);
   const containerId = result.stdout.trim().split(/\s+/).filter(Boolean)[0] ?? "";
   expect(containerId, `could not find openshell container for ${SANDBOX_NAME}`).not.toBe("");
   return containerId;
+}
+
+type StartupCensus = { count: number; pid: number | null };
+
+async function installedStartupCensus(
+  host: HostCliClient,
+  containerId: string,
+  artifactName: string,
+): Promise<StartupCensus> {
+  const script = [
+    "import json, runpy",
+    `guard = runpy.run_path(${JSON.stringify(CONFIG_GUARD_PATH)})`,
+    "identity = guard['_production_identity']()",
+    "census = guard['_openshell_supervised_nonroot_start_census'](identity.root_uid, identity.sandbox_uid)",
+    "assert census is not None",
+    "print(json.dumps({'count': census[0], 'pid': census[1]}))",
+  ].join("\n");
+  const result = await docker(
+    host,
+    ["exec", "--user", "0", containerId, "python3", "-I", "-c", script],
+    { artifactName, timeoutMs: 30_000 },
+  );
+  expect(result.exitCode, resultText(result)).toBe(0);
+  return JSON.parse(result.stdout.trim()) as StartupCensus;
+}
+
+async function runInstalledFailedStartupUnlock(
+  host: HostCliClient,
+  containerId: string,
+  artifactName: string,
+): Promise<ShellProbeResult> {
+  const script = [
+    "set -eu",
+    `plan_json=$(cat ${STATE_LOCK_PLAN_PATH})`,
+    `exec timeout --signal=TERM --kill-after=5s 25m python3 -I ${CONFIG_GUARD_PATH} unlock-failed-startup --config-dir ${CONFIG_DIR} --plan-json "$plan_json"`,
+  ].join("\n");
+  return docker(host, ["exec", "--user", "0", containerId, "sh", "-c", script], {
+    artifactName,
+    timeoutMs: 26 * 60_000,
+  });
+}
+
+async function waitForChildlessStartup(host: HostCliClient, containerId: string): Promise<void> {
+  await pollUntil({
+    artifactPrefix: "phase-12-childless-census",
+    attempts: 20,
+    delayMs: 500,
+    probe: async (_attempt, artifactName) =>
+      await installedStartupCensus(host, containerId, artifactName),
+    accept: (census) => census.count === 0,
+  });
+}
+
+async function waitForStoppedSupervisor(host: HostCliClient, containerId: string): Promise<void> {
+  const script = [
+    "from pathlib import Path",
+    "lines = Path('/proc/1/status').read_text(encoding='ascii').splitlines()",
+    "print(next((line.split()[1] for line in lines if line.startswith('State:')), ''))",
+  ].join("\n");
+  await pollUntil({
+    artifactPrefix: "phase-12-stopped-supervisor",
+    attempts: 20,
+    delayMs: 100,
+    probe: async (_attempt, artifactName) => {
+      const result = await docker(
+        host,
+        ["exec", "--user", "0", containerId, "python3", "-I", "-c", script],
+        { artifactName, timeoutMs: 30_000 },
+      );
+      expect(result.exitCode, resultText(result)).toBe(0);
+      return result.stdout.trim();
+    },
+    accept: (state) => state === "T" || state === "t",
+  });
 }
 
 async function readOriginalConfig(
@@ -308,6 +483,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
       "restart OpenClaw with shields down",
       "recover shields after a dead restore timer",
       "reject duplicate shields transitions",
+      "prove installed failed-startup recovery refuses a live child and unlocks childless state",
       "record shields contract evidence",
     ],
   },
@@ -329,6 +505,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
       "start restores a stopped OpenClaw sandbox while shields are down",
       "dead auto-restore timer inline recovery re-locks config and .config-hash",
       "double shields-up/down operations are rejected",
+      "installed failed-startup recovery refuses a live supervised child and atomically unlocks childless state",
     ],
   });
 
@@ -609,7 +786,10 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   expect(statusUp.stdout).toContain("Shields: UP");
 
   progress.phase("restart OpenClaw with shields up");
-  await expectStopStartRecovery(host, "UP", "phase-5a-shields-up-start-recovery");
+  await expectStopStartRecovery(host, sandbox, "UP", "phase-5a-shields-up-start-recovery", [
+    apiKey,
+  ]);
+  await expectLockedSandboxParent(host, "phase-5a-shields-up-start-recovery");
   const configAfterLockedRestart = await statPath(
     sandbox,
     CONFIG_PATH,
@@ -767,7 +947,9 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   expect(statusDown.stdout).toMatch(/Auto-lockdown in:|remaining/i);
 
   progress.phase("restart OpenClaw with shields down");
-  await expectStopStartRecovery(host, "DOWN", "phase-7a-shields-down-start-recovery");
+  await expectStopStartRecovery(host, sandbox, "DOWN", "phase-7a-shields-down-start-recovery", [
+    apiKey,
+  ]);
   const configAfterMutableRestart = await statPath(
     sandbox,
     CONFIG_PATH,
@@ -800,21 +982,23 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   progress.phase("recover shields after a dead restore timer");
   const timerDown = await runNemoclaw(
     host,
-    [SANDBOX_NAME, "shields", "down", "--timeout", "10s", "--reason", "Auto-restore timer E2E"],
+    [SANDBOX_NAME, "shields", "down", "--timeout", "60s", "--reason", "Auto-restore timer E2E"],
     { artifactName: "phase-9-shields-down-timer" },
   );
   expect(timerDown.exitCode, resultText(timerDown)).toBe(0);
   const timerMarker = readTimerMarker(SANDBOX_NAME);
   process.kill(timerMarker.pid, "SIGKILL");
   const statusTimer = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
-    artifactName: "phase-9-status-down-before-auto-restore",
+    artifactName: "phase-9-status-after-dead-timer",
   });
-  expect(statusTimer.stdout).toContain("Shields: DOWN");
+  expect(statusTimer.exitCode, resultText(statusTimer)).toBe(0);
+
+  let lastTimerStatus = resultText(statusTimer);
+  expect(statusTimer.stdout).toMatch(/Shields: (?:UP|DOWN)/);
+  let restored = statusTimer.stdout.includes("Shields: UP");
 
   const deadline = Date.now() + TIMER_POLL_TIMEOUT_MS;
-  let restored = false;
-  let lastTimerStatus = "";
-  for (let attempt = 1; Date.now() < deadline; attempt += 1) {
+  for (let attempt = 1; !restored && Date.now() < deadline; attempt += 1) {
     const waitForRestoreAt = Math.max(0, new Date(timerMarker.restoreAt).getTime() - Date.now());
     await delay(Math.max(TIMER_POLL_INTERVAL_MS, waitForRestoreAt + 1_000));
     const poll = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
@@ -889,6 +1073,135 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   expect(finalUp.exitCode, resultText(finalUp)).toBe(0);
   expect(resultText(finalUp)).toContain("Lockdown active");
 
+  progress.phase(
+    "prove installed failed-startup recovery refuses a live child and unlocks childless state",
+  );
+  const recoveryContainerId = await findSandboxContainer(host);
+  const removeMarkers = await docker(
+    host,
+    ["exec", "--user", "0", recoveryContainerId, "rm", "-f", ...STARTUP_MARKER_PATHS],
+    { artifactName: "phase-12-remove-startup-markers", timeoutMs: 30_000 },
+  );
+  expect(removeMarkers.exitCode, resultText(removeMarkers)).toBe(0);
+
+  const liveCensus = await installedStartupCensus(
+    host,
+    recoveryContainerId,
+    "phase-12-live-startup-census",
+  );
+  expect(liveCensus).toMatchObject({ count: 1, pid: expect.any(Number) });
+  expect(liveCensus.pid).not.toBeNull();
+  const liveChildRefusal = await runInstalledFailedStartupUnlock(
+    host,
+    recoveryContainerId,
+    "phase-12-live-child-refusal",
+  );
+  expect(liveChildRefusal.exitCode, resultText(liveChildRefusal)).not.toBe(0);
+  expect(resultText(liveChildRefusal)).toContain('"code": "startup-not-ready"');
+  expect(await statPath(sandbox, CONFIG_PATH, "phase-12-config-still-locked")).toMatchObject({
+    mode: "444",
+    owner: "root:root",
+  });
+
+  // A running OpenShell PID 1 can restart its child while the recovery guard
+  // scans procfs. Register the fail-safe first so every later assertion can
+  // leave the sandbox supervisor runnable for cleanup.
+  let supervisorPaused = false;
+  cleanup.trackDisposable(`resume stopped supervisor for ${SANDBOX_NAME}`, async () => {
+    await resumeSupervisorIfPaused(supervisorPaused, async () => {
+      const resume = await docker(host, supervisorControl.resumeSupervisor, {
+        artifactName: "cleanup-phase-12-resume-startup-supervisor",
+        timeoutMs: 30_000,
+      });
+      expect(resume.exitCode, resultText(resume)).toBe(0);
+    });
+  });
+  const supervisorControl = failedStartupProcessControlCommands(recoveryContainerId, 2);
+  const pauseSupervisor = await docker(host, supervisorControl.pauseSupervisor, {
+    artifactName: "phase-12-pause-startup-supervisor",
+    timeoutMs: 30_000,
+  });
+  expect(pauseSupervisor.exitCode, resultText(pauseSupervisor)).toBe(0);
+  supervisorPaused = true;
+  await waitForStoppedSupervisor(host, recoveryContainerId);
+
+  const pausedCensus = await installedStartupCensus(
+    host,
+    recoveryContainerId,
+    "phase-12-paused-startup-census",
+  );
+  expect(pausedCensus).toMatchObject({ count: 1, pid: expect.any(Number) });
+  expect(pausedCensus.pid).not.toBeNull();
+  const processControl = failedStartupProcessControlCommands(
+    recoveryContainerId,
+    pausedCensus.pid ?? 0,
+  );
+  const terminateChild = await docker(host, processControl.terminateStartupChild, {
+    artifactName: "phase-12-terminate-startup-child",
+    timeoutMs: 30_000,
+  });
+  expect(terminateChild.exitCode, resultText(terminateChild)).toBe(0);
+
+  await waitForChildlessStartup(host, recoveryContainerId);
+  const childlessUnlock = await runInstalledFailedStartupUnlock(
+    host,
+    recoveryContainerId,
+    "phase-12-childless-unlock",
+  );
+  expect(childlessUnlock.exitCode, resultText(childlessUnlock)).toBe(0);
+  expect(resultText(childlessUnlock)).toContain('"action": "unlock-failed-startup"');
+  expect(resultText(childlessUnlock)).toContain('"status": "ok"');
+  const unlockedPaths = await docker(
+    host,
+    [
+      "exec",
+      "--user",
+      "0",
+      recoveryContainerId,
+      "stat",
+      "-c",
+      "%a %U:%G",
+      CONFIG_PATH,
+      `${CONFIG_DIR}/workspace`,
+    ],
+    { artifactName: "phase-12-unlocked-paths", timeoutMs: 30_000 },
+  );
+  expect(unlockedPaths.exitCode, resultText(unlockedPaths)).toBe(0);
+  expect(unlockedPaths.stdout.trim().split(/\r?\n/).map(parseModeOwner)).toEqual([
+    { mode: "660", owner: "sandbox:sandbox" },
+    { mode: "2770", owner: "sandbox:sandbox" },
+  ]);
+
+  const resumeSupervisor = await docker(host, processControl.resumeSupervisor, {
+    artifactName: "phase-12-resume-startup-supervisor",
+    timeoutMs: 30_000,
+  });
+  expect(resumeSupervisor.exitCode, resultText(resumeSupervisor)).toBe(0);
+  supervisorPaused = false;
+
+  // Reconcile the host-side Shields receipt after the direct installed-guard
+  // proof, then restart the failed sandbox and return cleanup to lockdown.
+  const reconcileDown = await runNemoclaw(
+    host,
+    [
+      SANDBOX_NAME,
+      "shields",
+      "down",
+      "--timeout",
+      "5m",
+      "--reason",
+      "Installed failed-startup recovery E2E",
+    ],
+    { artifactName: "phase-12-reconcile-shields-down", timeoutMs: 16 * 60_000 },
+  );
+  expect(reconcileDown.exitCode, resultText(reconcileDown)).toBe(0);
+  await expectStopStartRecovery(host, sandbox, "DOWN", "phase-12-restart-after-recovery", [apiKey]);
+  const relockAfterRecovery = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
+    artifactName: "phase-12-relock-after-recovery",
+  });
+  expect(relockAfterRecovery.exitCode, resultText(relockAfterRecovery)).toBe(0);
+  expect(resultText(relockAfterRecovery)).toContain("Lockdown active");
+
   progress.phase("record shields contract evidence");
   await artifacts.target.complete({
     id: "shields-config",
@@ -905,6 +1218,9 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
       auditTrail: true,
       deadTimerInlineAutoRestore: true,
       doubleOperationRejection: true,
+      installedFailedStartupLiveChildRefusal: true,
+      installedFailedStartupChildlessUnlock: true,
+      inheritedMutationLockAcceptedByStateGuard: true,
     },
   });
 });

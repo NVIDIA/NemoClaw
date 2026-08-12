@@ -33,6 +33,7 @@ import {
 import {
   captureOpenshell,
   captureOpenshellForStatus,
+  getOpenshellBinary,
   getStatusProbeTimeoutMs,
   isCommandTimeout,
   runOpenshell,
@@ -46,6 +47,12 @@ import {
   type DockerDriverRecoveryResult,
   recoverDockerDriverSandbox,
 } from "../../onboard/docker-driver-sandbox-recovery";
+import {
+  type PortableDemoLifecycleRecoveryResult,
+  recoverPortableDemoSandboxLifecycle,
+} from "../../onboard/experimental/portable-demo-lifecycle";
+import { compareAndSetLegacySandboxLifecycleGeneration } from "../../state/registry/lifecycle-generation";
+import type { SandboxEntry } from "../../state/registry/types";
 import { getSandboxDockerRuntime } from "./docker-health";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 
@@ -80,6 +87,43 @@ type SandboxGatewayStateLookup = (
 function gatewayScopedArgs(args: string[], gatewayName?: string): string[] {
   if (!gatewayName) return args;
   return [...args.slice(0, 2), "-g", gatewayName, ...args.slice(2)];
+}
+
+/** Recover a receipt-bound portable sandbox before the live lookup rejects a stopped container. */
+export function recoverPortableDemoSandboxLifecycleForConnect(
+  sandboxName: string,
+  sandbox: SandboxEntry | null,
+  gatewayName: string,
+): PortableDemoLifecycleRecoveryResult {
+  if (!sandbox || sandbox.openshellDriver !== "docker") return { kind: "not-installed" };
+  return recoverPortableDemoSandboxLifecycle(
+    sandboxName,
+    {
+      agent: sandbox.agent,
+      gatewayName,
+      lifecycleGeneration: sandbox.lifecycleGeneration,
+      openshellDriver: sandbox.openshellDriver,
+      provider: sandbox.provider,
+    },
+    {
+      backfillRegistryGeneration: (generation) =>
+        compareAndSetLegacySandboxLifecycleGeneration(sandbox, generation),
+      openshellBinary: getOpenshellBinary(),
+      captureOpenshell: (args, timeoutMs) => {
+        const result = captureOpenshell([...args], {
+          ignoreError: true,
+          includeStreams: true,
+          timeout: timeoutMs,
+        });
+        return {
+          status: result.status,
+          stdout: result.stdout ?? result.output,
+          stderr: result.stderr,
+          error: result.error,
+        };
+      },
+    },
+  );
 }
 
 function gatewayEndpointOverrideState(): SandboxGatewayState | null {

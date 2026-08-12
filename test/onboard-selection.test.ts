@@ -123,7 +123,6 @@ type WindowsRequirement = ReturnType<typeof getWindowsHostOllamaDockerRequiremen
 type ProviderMenuOverrides = Partial<Parameters<typeof buildInferenceProviderMenu>[0]>;
 type SetupNimOllamaDeps = Parameters<typeof createSetupNimOllamaHandlers>[0];
 type RemoteModelValidatorDeps = Parameters<typeof createRemoteModelValidator>[0];
-
 function unexpected(name: string): never {
   throw new Error(`Unexpected ${name} call`);
 }
@@ -156,6 +155,8 @@ function makeSetupNimFlowDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupN
     experimental: false,
     ollamaPort: 11434,
     vllmPort: 8000,
+    getGatewayPort: () => 8080,
+    getRuntimeProvider: () => unexpected("runtime provider selection"),
     step: () => {},
     isNonInteractive: () => false,
     getNonInteractiveProvider: () => null,
@@ -449,7 +450,7 @@ function makeSetupNimOllamaDeps(overrides: Partial<SetupNimOllamaDeps> = {}): Se
     ensureOllamaLoopbackSystemdOverride: () => "not-applicable",
     runOllamaStartupOrGate: () => ({ kind: "ready" }),
     shouldFrontOllamaWithProxy: () => false,
-    startOllamaAuthProxy: () => true,
+    // Proxy startup is deferred until configuration review acceptance.
     getLocalProviderBaseUrl: () => "http://host.docker.internal:11434/v1",
     selectAndValidateOllamaModel: async () => ({
       outcome: "selected",
@@ -3013,7 +3014,6 @@ const { setupNim } = require(${onboardPath});
         validateCustomOpenAiLikeSelection: validation.validateCustomOpenAiLikeSelection,
       }),
     );
-
     try {
       const { result, lines } = await captureConsoleOutput(() =>
         validateSelectedRemoteModel({
@@ -4307,6 +4307,7 @@ const { setupNim } = require(${onboardPath});
           exitCode: 0,
           timedOut: false,
         }),
+        recordUserLocalOllamaOwnershipImpl: () => {},
         runShellImpl,
         waitForHttpImpl: () => true,
       }),
@@ -4723,7 +4724,6 @@ process.exit(0);
     const script = String.raw`
 const runner = require(${runnerPath});
 // Mock runCapture before onboard.js is required so the destructured reference picks up the mock.
-// Handles verifyInferenceRoute's "openshell inference get" call.
 runner.runCapture = (cmd) => {
   const args = Array.isArray(cmd) ? cmd : [];
   if (args[1] === "inference" && args[2] === "get") {

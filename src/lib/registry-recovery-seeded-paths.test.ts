@@ -303,4 +303,63 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
     expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
+
+  it("recovers only the targeted gateway's sandboxes, not a sibling gateway's (#7105)", async () => {
+    // An unscoped `sandbox list` returns every sandbox on the host. This stub
+    // answers as OpenShell does: unscoped lists both gateways' sandboxes, `-g`
+    // lists only the named gateway's. Registering the sibling gateway's sandbox
+    // here binds it to the wrong gateway, and every later status and exec
+    // command follows that binding.
+    vi.mocked(captureOpenshell).mockImplementation(
+      (args: string[]) =>
+        ({
+          output: args.includes("-g") ? "scoped-list" : "host-wide-list",
+          status: 0,
+        }) as never,
+    );
+    vi.mocked(parseLiveSandboxEntries).mockImplementation((output?: string) =>
+      output === "scoped-list" ? [] : [{ name: "hermes-station", phase: "Ready" }],
+    );
+    mockRegistryState.sandboxes.gamma = gammaEntry([]);
+    mockRegistryState.defaultSandbox = "gamma";
+
+    const result = await recoverRegistryEntries({ requestedSandboxName: "hermes-station" });
+
+    expect(mockRegistryState.sandboxes["hermes-station"]).toBeUndefined();
+    expect(result.recoveredFromGateway).toBe(0);
+    expect(captureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "list", "-g", "nemoclaw"],
+      expect.anything(),
+    );
+  });
+
+  it("scopes the unseeded display-only recovery to the resolved gateway too (#7105)", async () => {
+    // The unseeded #5714 `list` path reads the same list and must be scoped as
+    // well, or a plain `nemoclaw list` advertises a sibling gateway's sandbox
+    // that the next sandbox-scoped command cannot act on.
+    vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "healthy_named" } as never);
+    vi.mocked(captureOpenshell).mockImplementation(
+      (args: string[]) =>
+        ({
+          output: args.includes("-g") ? "scoped-list" : "host-wide-list",
+          status: 0,
+        }) as never,
+    );
+    vi.mocked(parseLiveSandboxEntries).mockImplementation((output?: string) =>
+      output === "scoped-list"
+        ? [{ name: "target-sandbox", phase: "Ready" }]
+        : [{ name: "sibling-sandbox", phase: "Ready" }],
+    );
+
+    const result = await recoverRegistryEntries();
+
+    expect(result.sandboxes.map((sandbox) => sandbox.name)).toEqual(["target-sandbox"]);
+    // Unseeded recovery is display-only, so neither name is persisted.
+    expect(mockRegistryState.sandboxes["target-sandbox"]).toBeUndefined();
+    expect(mockRegistryState.sandboxes["sibling-sandbox"]).toBeUndefined();
+    expect(captureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "list", "-g", "nemoclaw"],
+      expect.anything(),
+    );
+  });
 });

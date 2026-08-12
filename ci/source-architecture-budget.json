@@ -11,11 +11,11 @@
       "src/lib/adapters/openshell/runtime.ts": 52,
       "src/lib/adapters/openshell/timeouts.ts": 37,
       "src/lib/agent/defs.ts": 32,
-      "src/lib/cli/branding.ts": 87,
+      "src/lib/cli/branding.ts": 86,
       "src/lib/cli/nemoclaw-oclif-command.ts": 106,
-      "src/lib/cli/terminal-style.ts": 45,
+      "src/lib/cli/terminal-style.ts": 43,
       "src/lib/core/json-types.ts": 37,
-      "src/lib/core/ports.ts": 88,
+      "src/lib/core/ports.ts": 87,
       "src/lib/core/shell-quote.ts": 26,
       "src/lib/core/url-utils.ts": 28,
       "src/lib/core/wait.ts": 35,
@@ -27,8 +27,8 @@
       "src/lib/runner.ts": 88,
       "src/lib/security/redact.ts": 51,
       "src/lib/state/onboard-session.ts": 36,
-      "src/lib/state/registry.ts": 98,
-      "src/lib/state/state-root.ts": 22,
+      "src/lib/state/registry.ts": 97,
+      "src/lib/state/state-root.ts": 21,
       "src/lib/subprocess-env.ts": 24,
       "src/lib/validation.ts": 25
     }
@@ -39,15 +39,16 @@
       "src/lib/actions/inference-set.ts": 32,
       "src/lib/actions/sandbox/connect.ts": 38,
       "src/lib/actions/sandbox/destroy.ts": 29,
-      "src/lib/actions/sandbox/doctor.ts": 29,
+      "src/lib/actions/sandbox/doctor.ts": 30,
+      "src/lib/actions/sandbox/status-snapshot.ts": 21,
       "src/lib/actions/sandbox/policy-channel.ts": 29,
       "src/lib/actions/sandbox/process-recovery.ts": 21,
       "src/lib/actions/sandbox/rebuild-pipeline.ts": 28,
       "src/lib/actions/sandbox/snapshot.ts": 39,
       "src/lib/actions/uninstall/run-plan.ts": 26,
-      "src/lib/inference/onboard-probes.ts": 21,
+      "src/lib/inference/onboard-probes.ts": 20,
       "src/lib/inference/vllm.ts": 21,
-      "src/lib/onboard.ts": 219,
+      "src/lib/onboard.ts": 211,
       "src/lib/onboard/machine/handlers/sandbox.ts": 21,
       "src/lib/sandbox/config.ts": 22,
       "src/lib/shields/index.ts": 23
@@ -57,9 +58,9 @@
   "maxRootFiles": {
     "src/lib/onboard": 307,
     "src/lib/actions": 19,
-    "src/lib/actions/sandbox": 184,
+    "src/lib/actions/sandbox": 182,
     "src/lib/state": 37,
     "src/lib/inference": 63,
-    "scripts": 46
+    "scripts": 47
   }
 }

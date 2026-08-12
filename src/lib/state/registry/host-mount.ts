@@ -7,6 +7,11 @@ import path from "node:path";
 import type { SandboxHostMount } from "./types";
 
 const SANDBOX_MOUNT_PREFIX = "/sandbox/";
+const UNSAFE_TERMINAL_TEXT = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+
+export function hasUnsafeHostMountTerminalText(value: string): boolean {
+  return UNSAFE_TERMINAL_TEXT.test(value);
+}
 
 function failHostMount(value: string, detail: string): never {
   throw new Error(`Invalid --host-mount '${value}': ${detail}`);
@@ -30,15 +35,15 @@ function assertNoSymlinkComponents(source: string, original: string): void {
 }
 
 export function parseReadOnlyHostMount(value: string): SandboxHostMount {
+  if (hasUnsafeHostMountTerminalText(value)) {
+    throw new Error("Invalid --host-mount: paths must not contain terminal control characters");
+  }
   const separator = value.lastIndexOf(":/sandbox/");
   if (separator <= 0) {
     failHostMount(value, "expected HOST_DIRECTORY:/sandbox/DIRECTORY");
   }
   const requestedSource = value.slice(0, separator);
   const requestedTarget = value.slice(separator + 1);
-  if (/\p{Cc}/u.test(requestedSource) || /\p{Cc}/u.test(requestedTarget)) {
-    failHostMount(value, "paths must not contain control characters");
-  }
   if (!path.isAbsolute(requestedSource)) {
     failHostMount(value, "host directory must be an absolute path");
   }

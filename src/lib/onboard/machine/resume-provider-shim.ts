@@ -26,10 +26,21 @@ export type ResumeProviderShimDeps = {
   providerExistsInGateway(name: string, gatewayName: string): boolean;
   isRoutedInferenceProvider: ResumeProviderRecoveryDeps["isRoutedInferenceProvider"];
   replaceNamedCredential: ResumeProviderRecoveryDeps["replaceNamedCredential"];
+  /** Recover an exact gateway-scoped managed runtime; false means no managed owner state exists. */
+  resumeManagedLlamaCppRuntime?: (sandboxName: string) => Promise<boolean>;
 };
 
 export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
   return {
+    async ensureManagedLlamaCppResumeReady(
+      provider: string | null | undefined,
+      sandboxName: string | null | undefined,
+    ): Promise<boolean> {
+      if (provider !== "llama-cpp-local" || !sandboxName || !deps.resumeManagedLlamaCppRuntime) {
+        return false;
+      }
+      return deps.resumeManagedLlamaCppRuntime(sandboxName);
+    },
     async ensureResumeProviderReady(
       gatewayName: string,
       provider: string | null | undefined,

@@ -7,6 +7,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildRiskPlan,
+  isPrE2eManualControllerJob,
   PR_E2E_TYPED_TARGET_IDS,
   RISK_RULES,
   riskPlanRequiredJobIds,
@@ -81,12 +82,28 @@ function plan(...changedFiles: string[]) {
 }
 
 describe("deterministic PR risk plan", () => {
+  it.each([
+    "inference-routing",
+    "managed-image-protected-runtime",
+  ])("classifies the controller-accepted %s job for the commit under review", (jobId) => {
+    expect(isPrE2eManualControllerJob(jobId)).toBe(true);
+  });
+
+  it.each([
+    "cloud-inference",
+    "security-posture",
+    "network-policy",
+    "jetson-nvmap-gpu",
+  ])("classifies %s as manual-only when the controller rejects the job", (jobId) => {
+    expect(isPrE2eManualControllerJob(jobId)).toBe(false);
+  });
+
   it("emits a stable plan and digest for equivalent inputs", () => {
     const first = plan("src/lib/state/registry.ts", "src/lib/onboard.ts");
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(16);
+    expect(first.version).toBe(17);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -375,7 +392,7 @@ describe("deterministic PR risk plan", () => {
       "agents/hermes/Dockerfile",
       "agents/langchain-deepagents-code/Dockerfile",
       "scripts/checks/run-managed-image-direct-e2e.ts",
-      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.99.json",
+      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.101.json",
       "src/lib/onboard/managed-startup/image-runtime.ts",
     ];
     const result = plan(...managedImageInputs);
@@ -404,7 +421,7 @@ describe("deterministic PR risk plan", () => {
     "nemoclaw/src/index.ts",
     "nemoclaw-blueprint/blueprint.yaml",
     "scripts/checks/build-protected-managed-images.sh",
-    "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.99.json",
+    "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.101.json",
     "src/lib/core/json-types.ts",
     "src/lib/core/ports.ts",
     "src/lib/messaging/runtime.ts",
@@ -471,6 +488,8 @@ describe("deterministic PR risk plan", () => {
 
   it("keeps protected llama.cpp DGX Spark qualification activation-only until trusted (#8260)", () => {
     const activation = "ci/llama-cpp-dgx-spark-qualification-v1.yaml";
+    const agentQualification =
+      "managed-inference/qualifications/llama-cpp.openclaw.spark-single.v1.yaml";
     const result = plan(activation);
     const dormantImplementation = plan(
       "scripts/checks/run-llama-cpp-dgx-spark-qualification.mts",
@@ -485,6 +504,14 @@ describe("deterministic PR risk plan", () => {
       }),
     );
     expect(riskPlanRequiredJobIds(result)).toEqual(["llama-cpp-dgx-spark-qualification"]);
+    expect(riskPlanRequiredJobIds(plan(agentQualification))).toContain(
+      "llama-cpp-dgx-spark-qualification",
+    );
+    expect(
+      riskPlanRequiredJobIds(
+        plan("managed-inference/qualifications/llama-cpp.other.spark-single.v1.yaml"),
+      ),
+    ).not.toContain("llama-cpp-dgx-spark-qualification");
     expect(
       dormantImplementation.families.some(
         (family) => family.id === "llama-cpp-dgx-spark-qualification",

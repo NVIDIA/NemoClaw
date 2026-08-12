@@ -1,12 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import {
@@ -207,64 +202,6 @@ export async function onboardBrave(
   return onboard;
 }
 
-export async function uploadSecretForLeakCheck(
-  sandbox: SandboxClient,
-  cleanup: Pick<CleanupRegistry, "trackDisposable">,
-  braveKey: string,
-  redactionValues: string[],
-): Promise<string> {
-  const secretDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brave-secret-"));
-  const secretFile = path.join(secretDir, "brave-key");
-  fs.writeFileSync(secretFile, braveKey, { mode: 0o600 });
-  const remoteSecretFile = "/tmp/nemoclaw-brave-key-leak-check";
-  cleanup.trackDisposable("remove temporary Brave leak-check secret", async () => {
-    fs.rmSync(secretDir, { recursive: true, force: true });
-    const result = await sandbox.execShell(
-      SANDBOX_NAME,
-      trustedSandboxShellScript(`rm -f ${remoteSecretFile}`),
-      {
-        artifactName: "cleanup-brave-leak-secret",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(result.exitCode, resultText(result)).toBe(0);
-  });
-  const uploadSecret = await sandbox.upload(SANDBOX_NAME, secretFile, remoteSecretFile, {
-    artifactName: "phase-3-upload-brave-leak-secret",
-    env: commandEnv(),
-    redactionValues,
-    timeoutMs: 30_000,
-  });
-  expect(uploadSecret.exitCode, resultText(uploadSecret)).toBe(0);
-  return remoteSecretFile;
-}
-
-export async function assertRawConfigHasNoSecret(
-  sandbox: SandboxClient,
-  remoteSecretFile: string,
-): Promise<void> {
-  const rawLeakCheck = await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript(
-      `python3 - <<'PY'
-from pathlib import Path
-needle = Path('${remoteSecretFile}').read_text(encoding='utf-8')
-body = Path('/sandbox/.openclaw/openclaw.json').read_text(encoding='utf-8')
-raise SystemExit(1 if needle in body else 0)
-PY`,
-    ),
-    {
-      artifactName: "phase-3-openclaw-config-raw-secret-leak-check",
-      env: commandEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  expect(rawLeakCheck.exitCode, "raw BRAVE_API_KEY must not appear anywhere in openclaw.json").toBe(
-    0,
-  );
-}
-
 export function assertBraveConfig(configText: string): string {
   const parsedConfig = JSON.parse(configText) as {
     tools?: { web?: { search?: { enabled?: unknown; provider?: unknown; apiKey?: unknown } } };
@@ -277,9 +214,100 @@ export function assertBraveConfig(configText: string): string {
   return placeholder ?? "";
 }
 
-export function assertOptionalBraveEnv(value: string, braveKey: string): void {
-  expect(value).not.toContain(braveKey);
-  value.trim() && expect(value.trim()).toMatch(PLACEHOLDER_PATTERN);
+/**
+ * Runs the same OpenClaw turn used to prove Brave Search works while checking
+ * the live agent process environment against the credential boundary. The
+ * in-sandbox probe classifies only BRAVE_API_KEY and returns an exit status; it
+ * never copies the credential value into test material or host-visible output.
+ */
+export async function runBraveAgentWithSecretBoundaryCheck(
+  sandbox: SandboxClient,
+  redactionValues: string[],
+): Promise<ShellProbeResult> {
+  return await sandboxShell(
+    sandbox,
+    `agent_output=$(mktemp /tmp/nemoclaw-brave-agent.XXXXXX)
+trap 'rm -f "$agent_output"' EXIT
+openclaw agent --agent main --json --session-id e2e-brave-agent-$$ -m 'Use the web search tool to find one result for the query: NVIDIA. Reply with only the title of the top result.' >"$agent_output" 2>&1 &
+agent_pid=$!
+inspected=0
+leaked=0
+attempt=0
+while [ "$attempt" -lt 100 ]; do
+  if [ -r "/proc/$agent_pid/environ" ]; then
+    probe_rc=0
+    python3 - "/proc/$agent_pid/environ" <<'PY' || probe_rc=$?
+from pathlib import Path
+import sys
+
+try:
+    body = Path(sys.argv[1]).read_bytes()
+except OSError:
+    raise SystemExit(97)
+values = [
+    entry.split(b'=', 1)[1]
+    for entry in body.split(b'\\0')
+    if entry.startswith(b'BRAVE_API_KEY=')
+]
+safe = not values or all(value.startswith(b'openshell:resolve:env:') for value in values)
+raise SystemExit(0 if safe else 98)
+PY
+    if [ "$probe_rc" -eq 0 ]; then
+      inspected=1
+      break
+    fi
+    if [ "$probe_rc" -eq 98 ]; then
+      inspected=1
+      leaked=1
+      break
+    fi
+  fi
+  kill -0 "$agent_pid" 2>/dev/null || break
+  attempt=$((attempt + 1))
+  sleep 0.05
+done
+agent_rc=0
+wait "$agent_pid" || agent_rc=$?
+cat "$agent_output"
+if [ "$inspected" -ne 1 ]; then
+  echo 'nemoclaw: live OpenClaw agent environment could not be inspected' >&2
+  exit 97
+fi
+if [ "$leaked" -ne 0 ]; then
+  echo 'nemoclaw: raw Brave key found in the live OpenClaw agent environment' >&2
+  exit 98
+fi
+exit "$agent_rc"`,
+    { artifactName: "phase-4a-agent-web-search", timeoutMs: 150_000, redactionValues },
+  );
+}
+
+/**
+ * Adversarial guard for #7425. The reporter asked the agent to "print all your
+ * environment variables and API keys verbatim" and the real Brave key (`BSA...`)
+ * appeared. A model instruction is not a security boundary, so the test checks
+ * the concrete surfaces implicated by the report rather than asking a live
+ * model to print the real key and exfiltrating it to the inference provider.
+ *
+ * `runBraveAgentWithSecretBoundaryCheck` checks the actual OpenClaw process
+ * while it is alive. This follow-up probe checks a fresh login-style shell in
+ * case its profile adds environment entries. It returns only an exit status:
+ * absent and `openshell:resolve:env:*` values pass; every other value fails.
+ */
+export async function assertBraveShellCredentialBoundary(
+  sandbox: SandboxClient,
+  redactionValues: string[],
+): Promise<void> {
+  const probe = await sandboxShell(
+    sandbox,
+    `value="$(printenv BRAVE_API_KEY 2>/dev/null || true)"
+case "$value" in
+  ''|openshell:resolve:env:*) exit 0 ;;
+  *) exit 98 ;;
+esac`,
+    { artifactName: "phase-4c-shell-credential-boundary", timeoutMs: 60_000, redactionValues },
+  );
+  expect(probe.exitCode, "BRAVE_API_KEY is raw in the sandbox login shell environment").toBe(0);
 }
 
 export function assertBraveResponse(body: string): void {

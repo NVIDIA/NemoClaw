@@ -33,7 +33,7 @@ import {
 import { normalizeDockerManagedBootstrapLaunchSpec } from "./docker-spec";
 import {
   MANAGED_BOOTSTRAP_COMPLETION_FILE,
-  parseManagedBootstrapEnvelope,
+  serializeManagedBootstrapEnvelopeTar,
   serializeManagedBootstrapImageCompletion,
 } from "./envelope";
 
@@ -44,7 +44,7 @@ const CONFIG_ID = `sha256:${"4".repeat(64)}`;
 const MANIFEST = `sha256:${"5".repeat(64)}` as const;
 const REPOSITORY = "registry.example/nemoclaw/hermes";
 const IMAGE = `${REPOSITORY}@${MANIFEST}`;
-const SUPERVISOR = ["/opt/openshell/bin/openshell-sandbox", "supervise"] as const;
+const SUPERVISOR = ["/opt/openshell/bin/openshell-sandbox", "--workdir", "/sandbox"] as const;
 export const SUPPORTED_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 
 type FixtureCommandResult = {
@@ -70,6 +70,7 @@ export type DockerFixtureAcknowledgement =
 
 export type DockerFixtureOptions = {
   readonly agent?: ManagedStartupAgent;
+  readonly dockerCliSerializationDefaults?: boolean;
   readonly dockerRemoveFailures?: readonly Error[];
   readonly dockerRemoveResults?: readonly FixtureCommandResult[];
   readonly dockerInspectUnknownIds?: readonly string[];
@@ -129,6 +130,9 @@ function originalInspect(inputs = agentInputs()): DockerContainerInspect {
         "A=1",
         `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${IDENTITY}`,
         "OPENSHELL_SANDBOX_COMMAND=sleep infinity",
+        "OPENSHELL_OCI_IMAGE_USER=root",
+        "OPENSHELL_SANDBOX_UID=",
+        "OPENSHELL_SANDBOX_GID=",
       ],
       Labels: {
         "openshell.ai/managed-by": "openshell",
@@ -138,8 +142,8 @@ function originalInspect(inputs = agentInputs()): DockerContainerInspect {
       },
       Entrypoint: [SUPERVISOR[0]],
       Cmd: SUPERVISOR.slice(1),
-      User: "root",
-      WorkingDir: "/sandbox",
+      User: "0",
+      WorkingDir: "/",
       Hostname: "alpha",
     },
     State: { Running: true, Paused: false, Restarting: false, Dead: false },
@@ -200,28 +204,29 @@ function failFixture(message: string): never {
   throw new Error(message);
 }
 
-function readProtectedEnvelope(source: string): ReturnType<typeof parseManagedBootstrapEnvelope> {
-  const noFollow = fs.constants.O_NOFOLLOW;
-  if (typeof noFollow !== "number") throw new Error("test requires O_NOFOLLOW");
-  const descriptor = fs.openSync(source, fs.constants.O_RDONLY | noFollow);
-  try {
-    const before = fs.fstatSync(descriptor, { bigint: true });
-    expect(Number(before.mode & 0o777n)).toBe(0o400);
-    const parsed = parseManagedBootstrapEnvelope(fs.readFileSync(descriptor, "utf8"));
-    const after = fs.fstatSync(descriptor, { bigint: true });
-    expect(after.dev).toBe(before.dev);
-    expect(after.ino).toBe(before.ino);
-    expect(after.size).toBe(before.size);
-    expect(after.mtimeNs).toBe(before.mtimeNs);
-    expect(after.ctimeNs).toBe(before.ctimeNs);
-    return parsed;
-  } finally {
-    fs.closeSync(descriptor);
-  }
+export function parseFixtureDockerUlimits(
+  args: readonly string[],
+  imageIndex: number,
+): NonNullable<DockerContainerInspect["HostConfig"]>["Ulimits"] {
+  return args.slice(0, imageIndex).flatMap((value, index) => {
+    const match =
+      value === "--ulimit"
+        ? /^([a-z][a-z0-9_]*)=(-?\d+):(-?\d+)$/u.exec(String(args[index + 1] ?? ""))
+        : null;
+    return match ? [{ Name: match[1], Soft: Number(match[2]), Hard: Number(match[3]) }] : [];
+  });
 }
 
 export function fixture(options: DockerFixtureOptions = {}) {
   let original: DockerContainerInspect | null = originalInspect(agentInputs(options.agent));
+  if (options.dockerCliSerializationDefaults) {
+    Object.assign(original.Config!, {
+      AttachStdin: false,
+      AttachStdout: false,
+      AttachStderr: false,
+    });
+    Object.assign(original.HostConfig!, { PortBindings: null });
+  }
   let replacement: DockerContainerInspect | null = null;
   let journal: DockerManagedBootstrapJournal | null = null;
   let finalization: DockerManagedBootstrapFinalizationRecord | null = null;
@@ -345,7 +350,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
     }
   });
   const dockerRun: NonNullable<DockerManagedBootstrapDeps["dockerRun"]> = vi.fn(
-    (args: readonly string[]) => {
+    (args: readonly string[], commandOptions?: Record<string, unknown>) => {
       switch (args[0]) {
         case "create": {
           events.push("create:replacement");
@@ -354,9 +359,11 @@ export function fixture(options: DockerFixtureOptions = {}) {
           const name = String(args[args.indexOf("--name") + 1] ?? "");
           const entrypoint = String(args[args.indexOf("--entrypoint") + 1] ?? "");
           const imageIndex = args.indexOf(IMAGE);
-          const env = args.flatMap((value, index) =>
+          const dockerOptions = args.slice(0, imageIndex);
+          const env = dockerOptions.flatMap((value, index) =>
             value === "--env" ? [String(args[index + 1] ?? "")] : [],
           );
+          const ulimits = parseFixtureDockerUlimits(args, imageIndex);
           replacement = {
             ...structuredClone(source),
             Id: NEW_ID,
@@ -368,8 +375,20 @@ export function fixture(options: DockerFixtureOptions = {}) {
               Entrypoint: [entrypoint],
               Cmd: args.slice(imageIndex + 1),
             },
+            HostConfig: {
+              ...structuredClone(source.HostConfig),
+              Ulimits: ulimits,
+            },
             State: { Running: false, Paused: false, Restarting: false, Dead: false },
           };
+          if (options.dockerCliSerializationDefaults) {
+            Object.assign(replacement.Config!, {
+              AttachStdin: args.includes("stdin"),
+              AttachStdout: true,
+              AttachStderr: true,
+            });
+            Object.assign(replacement.HostConfig!, { PortBindings: {} });
+          }
           return losesAcknowledgement("container:create")
             ? { status: 1, stdout: "", stderr: "lost create acknowledgement" }
             : ok(NEW_ID);
@@ -394,7 +413,14 @@ export function fixture(options: DockerFixtureOptions = {}) {
           const destination = String(args[sourceIndex + 1] ?? "");
           const copyIntoContainer = () => {
             events.push("stage:envelope");
-            expect(readProtectedEnvelope(source).bootstrapIdentity).toBe(IDENTITY);
+            expect(args).toEqual(["cp", "-", `${NEW_ID}:/`]);
+            expect(commandOptions?.stdio).toEqual(["pipe", "pipe", "pipe"]);
+            expect(commandOptions?.input).toEqual(
+              serializeManagedBootstrapEnvelopeTar({
+                bootstrapIdentity: IDENTITY,
+                rootApplyRequest: agentInputs(options.agent).request,
+              }),
+            );
             return ok();
           };
           const copyFromContainer = () => {

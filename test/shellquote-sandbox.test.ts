@@ -49,7 +49,7 @@ describe("sandboxName command hardening in onboard.js", () => {
     };
 
     await expect(
-      createSandbox(null, "test-model", "nvidia-prod", null, "bad; touch /tmp/pwned"),
+      createSandbox(null, "test-model", "nvidia-prod", null, "bad;touch"),
     ).rejects.toThrow(/Invalid sandbox name/);
   });
 

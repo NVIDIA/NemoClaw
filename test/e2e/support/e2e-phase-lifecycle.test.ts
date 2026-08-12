@@ -93,7 +93,7 @@ class FakeCleanup implements LifecycleCleanup {
 function instance(overrides: Partial<NemoClawInstance> = {}): NemoClawInstance {
   return {
     onboarding: "cloud-openclaw",
-    sandboxName: "e2e-ubuntu-repo-cloud-openclaw",
+    sandboxName: "e2e-cloud-oc",
     agent: "openclaw",
     provider: "nvidia",
     providerEnv: "cloud",
@@ -160,7 +160,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     const runner = new FakeRunner();
     const cleanup = new FakeCleanup();
     const prepared = await preparedPostRebootFixture(runner, cleanup, "staged");
-    runner.enqueue(shellResult(0, "openshell-cluster-e2e-ubuntu-repo-cloud-openclaw\n")); // discover
+    runner.enqueue(shellResult(0, "openshell-cluster-e2e-cloud-oc\n")); // discover
     runner.enqueue(shellResult(0)); // docker stop
     runner.enqueue(shellResult(0)); // forward stop
     runner.enqueue(shellResult(0)); // gateway stop
@@ -169,38 +169,38 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     runner.enqueue(shellResult(0)); // user service restart
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
     runner.enqueue(shellResult(0)); // boot-owned docker start
-    runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-ubuntu-repo-cloud-openclaw  Ready\n"));
+    runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-cloud-oc  Ready\n"));
     runner.enqueue(shellResult(0)); // status proves recovered delivery readiness
 
     const result = await prepared.simulate("post-reboot-recovery", instance());
 
     expect(result.profile).toBe("post-reboot-recovery");
     expect(result.steps.map((step) => step.id)).toEqual([
-      "docker-stop:openshell-cluster-e2e-ubuntu-repo-cloud-openclaw",
+      "docker-stop:openshell-cluster-e2e-cloud-oc",
       "gateway-restart:user-service",
       "gateway-connected:nemoclaw",
-      "docker-boot-start:openshell-cluster-e2e-ubuntu-repo-cloud-openclaw",
-      "sandbox-ready-after-boot:e2e-ubuntu-repo-cloud-openclaw",
-      "nemoclaw-status:e2e-ubuntu-repo-cloud-openclaw",
+      "docker-boot-start:openshell-cluster-e2e-cloud-oc",
+      "sandbox-ready-after-boot:e2e-cloud-oc",
+      "nemoclaw-status:e2e-cloud-oc",
     ]);
     expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
       expect.stringContaining('bash -lc command -v "$1"'),
       expect.stringContaining("bash -lc set -eu"),
-      "docker ps -a --filter label=openshell.ai/sandbox-name=e2e-ubuntu-repo-cloud-openclaw --format {{.Names}}",
-      "docker stop openshell-cluster-e2e-ubuntu-repo-cloud-openclaw",
+      "docker ps -a --filter label=openshell.ai/sandbox-name=e2e-cloud-oc --format {{.Names}}",
+      "docker stop openshell-cluster-e2e-cloud-oc",
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell forward stop 18789 || true",
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true",
       expect.stringContaining("sh -lc pid_file="),
       expect.stringContaining("sh -lc cid="),
       expect.stringContaining('systemctl --user cat "$service"'),
       "openshell status",
-      "docker start openshell-cluster-e2e-ubuntu-repo-cloud-openclaw",
+      "docker start openshell-cluster-e2e-cloud-oc",
       "openshell sandbox list",
-      "nemoclaw e2e-ubuntu-repo-cloud-openclaw status",
+      "nemoclaw e2e-cloud-oc status",
     ]);
     expect(cleanup.calls.map((call) => call.name)).toEqual([
       "lifecycle.remove-staged-gateway-user-service",
-      "lifecycle.docker-start:openshell-cluster-e2e-ubuntu-repo-cloud-openclaw",
+      "lifecycle.docker-start:openshell-cluster-e2e-cloud-oc",
     ]);
   });
 
@@ -217,11 +217,11 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     runner.enqueue(shellResult(0)); // user service restart
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
     runner.enqueue(shellResult(0)); // boot-owned docker start
-    runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-ubuntu-repo-cloud-openclaw  Ready\n"));
+    runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-cloud-oc  Ready\n"));
     runner.enqueue(shellResult(1, "Removed stale local registry entry.\n")); // status non-zero
 
     await expect(prepared.simulate("post-reboot-recovery", instance())).rejects.toThrow(
-      /nemoclaw e2e-ubuntu-repo-cloud-openclaw status failed: Removed stale local registry entry/,
+      /nemoclaw e2e-cloud-oc status failed: Removed stale local registry entry/,
     );
   });
 
@@ -238,7 +238,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     runner.enqueue(shellResult(0)); // user service restart
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
     runner.enqueue(shellResult(0)); // boot-owned docker start
-    runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-ubuntu-repo-cloud-openclaw  Ready\n"));
+    runner.enqueue(shellResult(0, "NAME  PHASE\ne2e-cloud-oc  Ready\n"));
     runner.enqueue(shellResult(0)); // status restores the delivery chain
 
     const result = await prepared.simulate("post-reboot-recovery", instance());
@@ -250,17 +250,17 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
           (call) =>
             call === "docker start container-1" ||
             call === "openshell sandbox list" ||
-            call === "nemoclaw e2e-ubuntu-repo-cloud-openclaw status",
+            call === "nemoclaw e2e-cloud-oc status",
         ),
     ).toEqual([
       "docker start container-1",
       "openshell sandbox list",
-      "nemoclaw e2e-ubuntu-repo-cloud-openclaw status",
+      "nemoclaw e2e-cloud-oc status",
     ]);
     expect(result.steps.slice(-3).map((step) => step.id)).toEqual([
       "docker-boot-start:container-1",
-      "sandbox-ready-after-boot:e2e-ubuntu-repo-cloud-openclaw",
-      "nemoclaw-status:e2e-ubuntu-repo-cloud-openclaw",
+      "sandbox-ready-after-boot:e2e-cloud-oc",
+      "nemoclaw-status:e2e-cloud-oc",
     ]);
     expect(result.steps.at(-1)?.results[0]?.exitCode).toBe(0);
   });
@@ -560,7 +560,7 @@ describe("LifecyclePhaseFixture profile dispatch", () => {
 });
 
 describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
-  const sandboxName = "e2e-ubuntu-repo-cloud-langchain-deepagents-code";
+  const sandboxName = "e2e-dcode-cloud";
   const validCredential = "valid-fixture-credential";
   const options = dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
     {

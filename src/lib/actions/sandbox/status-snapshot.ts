@@ -30,6 +30,7 @@ import type { BaselineExclusionRuntimeStatus } from "../../policy/baseline-exclu
 import { redact } from "../../security/redact";
 import { parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
+import { normalizePersistedSandboxHostMounts } from "../../state/registry/host-mount";
 import {
   buildGatewayInferenceGetArgs,
   canSandboxGatewayRouteRealign,
@@ -49,6 +50,10 @@ import {
   probeTerminalRuntimeCgroupOom,
   type TerminalRuntimeOomProbeResult,
 } from "./terminal-runtime-health";
+
+function normalizeSandboxStatusHostMounts(hostMounts: unknown) {
+  return normalizePersistedSandboxHostMounts(hostMounts).map((mount) => ({ ...mount }));
+}
 
 type ProbeProviderHealth = (
   provider: string,
@@ -642,7 +647,7 @@ async function buildSandboxStatusReport(
     phase,
   );
   const sandboxGpuEnabled = sb ? (sb.sandboxGpuEnabled ?? sb.gpuEnabled === true) : false;
-  const hostMounts = sb?.hostMounts?.map((mount) => ({ ...mount })) ?? [];
+  const hostMounts = normalizeSandboxStatusHostMounts(sb?.hostMounts);
   const policies =
     sb && Array.isArray(sb.policies)
       ? sb.policies.filter((policy): policy is string => typeof policy === "string")

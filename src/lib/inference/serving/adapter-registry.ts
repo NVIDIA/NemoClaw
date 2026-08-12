@@ -8,6 +8,7 @@ import {
 } from "./managed-cluster-topology.js";
 import type {
   HostLocalInferenceServingRecipe,
+  LlamaCppServingRecipe,
   ManagedInferenceRuntimeServingRecipe,
   ManagedInferenceServingRecipe,
   ManagedInferenceTopologyQualification,
@@ -80,6 +81,10 @@ const STABLE_ID = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/u;
 const PINNED_IMAGE =
   /^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?\/)?(?:[a-z0-9]+(?:[._-][a-z0-9]+)*\/)*[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[0-9a-f]{64}$/u;
 const SAFE_ENVIRONMENT_NAME = /^[A-Z][A-Z0-9_]{0,127}$/u;
+// Structured vLLM flags are passed as individual argv values after shell
+// quoting. Keep the allowlist narrow while admitting JSON objects and arrays.
+const HOST_LOCAL_SAFE_ARGUMENT_VALUE = /^[A-Za-z0-9_@%+=:,./{}[\]"-]+$/u;
+const HOST_LOCAL_SAFE_ENVIRONMENT_VALUE = /^[A-Za-z0-9_@%+=:,./-]+$/u;
 const SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/u;
 const MANAGED_CLUSTER_MATERIALIZER_OWNED_ENVIRONMENT = new Set([
   "GLOO_SOCKET_IFNAME",
@@ -129,6 +134,16 @@ export function isHostLocalInferenceServingRecipe(
   return recipe.spec.execution.materializerRef === HOST_LOCAL_VLLM_MATERIALIZER_REF;
 }
 
+export function isLlamaCppServingRecipe(
+  recipe: ManagedInferenceRuntimeServingRecipe,
+): recipe is LlamaCppServingRecipe {
+  return (
+    recipe.spec.backend === "install-llama-cpp" &&
+    recipe.spec.execution.materializerRef === LLAMA_CPP_HOST_LOCAL_MATERIALIZER_REF &&
+    recipe.spec.execution.lifecycleRef === LLAMA_CPP_HOST_LOCAL_LIFECYCLE_REF
+  );
+}
+
 function managedClusterTopologyBinding(
   recipe: ManagedInferenceServingRecipe,
 ): ManagedInferenceServingRecipe["spec"]["bindings"][string] | undefined {
@@ -136,7 +151,7 @@ function managedClusterTopologyBinding(
 }
 
 function positiveIntegerArgument(
-  recipe: ManagedInferenceRuntimeServingRecipe,
+  recipe: ManagedInferenceServingRecipe | HostLocalInferenceServingRecipe,
   name: string,
   maximum = Number.MAX_SAFE_INTEGER,
 ): number | undefined {
@@ -399,13 +414,13 @@ function validateHostLocalVllmMaterializerRecipe(
         typeof value === "string" &&
         (Buffer.byteLength(value, "utf8") > 16_384 ||
           value.includes("\0") ||
-          !/^[A-Za-z0-9_@%+=:,./-]+$/u.test(value)),
+          !HOST_LOCAL_SAFE_ARGUMENT_VALUE.test(value)),
     ) ||
     Object.values(recipe.spec.runtime.environment).some(
       (value) =>
         Buffer.byteLength(value, "utf8") > 4_096 ||
         value.includes("\0") ||
-        !/^[A-Za-z0-9_@%+=:,./-]+$/u.test(value),
+        !HOST_LOCAL_SAFE_ENVIRONMENT_VALUE.test(value),
     )
   ) {
     return "host-local vLLM serving values must be bounded safe text";
@@ -673,6 +688,7 @@ export function getManagedInferencePreparationDescriptor(
 export function getManagedInferenceRecipeRegistrationError(
   recipe: ManagedInferenceRuntimeServingRecipe,
 ): string | undefined {
+  if (isLlamaCppServingRecipe(recipe)) return undefined;
   const materializer = getManagedInferenceMaterializerDescriptor(
     recipe.spec.execution.materializerRef,
   );
