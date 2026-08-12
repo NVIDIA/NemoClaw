@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GatewayReadinessProjection } from "../../readiness/gateway";
 import type { Session } from "../../state/onboard-session";
+import * as fatalRuntimePreflight from "../fatal-runtime-preflight";
 import type { GatewayOwner } from "../gateway-ownership";
 import {
   createOnboardPreflightGatewayAuthority,
@@ -103,6 +104,19 @@ describe("preflight gateway authority", () => {
       }),
     };
     const authority = createOnboardPreflightGatewayAuthority(deps);
+    const runRuntimePreflight = vi
+      .spyOn(fatalRuntimePreflight, "runReadinessGatedRuntimePreflight")
+      .mockImplementation(async () => ({}) as never);
+
+    await authority.runRuntimePreflight({});
+
+    expect(runRuntimePreflight).toHaveBeenCalledWith(
+      {},
+      {
+        nonInteractive: true,
+        collectGatewayReadiness: authority.collectGatewayReadiness,
+      },
+    );
 
     await expect(authority.prepareGatewayAuthority()).resolves.toEqual({
       externallySupervised: false,
