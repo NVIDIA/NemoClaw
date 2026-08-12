@@ -41,10 +41,10 @@ async function closeServer(server: Server): Promise<void> {
 async function unusedLoopbackPort(): Promise<number> {
   const server = await listenOnLoopback(0);
   const address = server.address();
-  if (!address || typeof address === "string") {
-    await closeServer(server);
-    throw new Error("loopback listener did not report a TCP address");
-  }
+  assert.ok(
+    address && typeof address !== "string",
+    "loopback listener did not report a TCP address",
+  );
   await closeServer(server);
   return address.port;
 }
@@ -292,16 +292,16 @@ describe("dashboard port reservation", () => {
         warn: (message) => warnings.push(message),
       },
       async (port) => {
+        const attempt = attempts.length;
         attempts.push(port);
-        if (attempts.length === 1) {
-          throw Object.assign(new Error("address in use"), { code: "EADDRINUSE" });
-        }
-        return {
-          port,
-          release: async () => {
-            released.push(port);
-          },
-        };
+        return attempt === 0
+          ? Promise.reject(Object.assign(new Error("address in use"), { code: "EADDRINUSE" }))
+          : Promise.resolve({
+              port,
+              release: async () => {
+                released.push(port);
+              },
+            });
       },
     );
 

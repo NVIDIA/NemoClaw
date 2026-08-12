@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import { createServer } from "node:net";
+import { type AddressInfo, createServer } from "node:net";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../src/lib/agent/defs";
@@ -125,10 +125,12 @@ describe("onboard dashboard helpers", () => {
       listener.listen(0, "127.0.0.1", resolve);
     });
     const address = listener.address();
-    if (!address || typeof address === "string") {
-      throw new Error("loopback listener did not report a TCP address");
-    }
+    expect(address && typeof address !== "string").toBe(true);
+    const targetPort = (address as AddressInfo).port;
     const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const openshellArgv = vi.fn(() => {
+      throw new Error("forward start must not run after host-bound port detection");
+    });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${String(code)})`);
@@ -136,7 +138,7 @@ describe("onboard dashboard helpers", () => {
     const helpers = createOnboardDashboardHelpers({
       runOpenshell,
       runCaptureOpenshell: vi.fn(() => ""),
-      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      openshellArgv,
       cliName: () => "nemoclaw",
       agentProductName: () => "NemoClaw",
       getProviderLabel: (provider: string) => provider,
@@ -150,14 +152,19 @@ describe("onboard dashboard helpers", () => {
 
     try {
       expect(() =>
-        helpers.ensureDashboardForward("my-sandbox", `http://127.0.0.1:${String(address.port)}`, {
+        helpers.ensureDashboardForward("my-sandbox", `http://127.0.0.1:${String(targetPort)}`, {
           rollbackSandboxOnFailure: true,
         }),
       ).toThrow("process.exit(1)");
+      expect(openshellArgv).not.toHaveBeenCalled();
       expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", "my-sandbox"], {
         ignoreError: true,
       });
-      expect(errorSpy.mock.calls.map(([line]) => String(line)).join("\n")).toContain(
+      const errorOutput = errorSpy.mock.calls.map(([line]) => String(line)).join("\n");
+      expect(errorOutput).toContain(
+        `Dashboard port ${String(targetPort)} became host-bound during sandbox build`,
+      );
+      expect(errorOutput).toContain(
         "The orphaned sandbox has been removed. Resolve the error above before retrying.",
       );
     } finally {
