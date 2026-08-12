@@ -111,4 +111,46 @@ describe("summarizeProbeForDisplay", () => {
     expect(summary).not.toContain("secret-key");
     expect(summary).not.toContain("raw provider response");
   });
+
+  it("surfaces an exhausted reasoning budget without raw provider text (#8714)", () => {
+    const summary = summarizeProbeForDisplay({
+      failures: [
+        {
+          name: "Chat Completions API",
+          httpStatus: 200,
+          curlStatus: 0,
+          message: "raw provider response with secret-key",
+          body: "raw provider response with secret-key",
+          diagnosticCodes: [
+            "openai-chat-missing-structured-tool-call",
+            "openai-chat-reasoning-budget-exhausted",
+          ],
+        },
+      ],
+    });
+
+    expect(summary).toBe(
+      "Chat Completions API: missing structured tool call; " +
+        "reasoning used the full output-token budget before a tool call",
+    );
+    expect(summary).not.toContain("secret-key");
+  });
+
+  it("surfaces a leaked plain-text tool call without raw provider text (#8714)", () => {
+    const summary = summarizeProbeForDisplay({
+      failures: [
+        {
+          name: "Chat Completions API",
+          httpStatus: 200,
+          curlStatus: 0,
+          message: "raw provider response with secret-key",
+          body: "raw provider response with secret-key",
+          diagnosticCodes: ["openai-chat-tool-call-leak"],
+        },
+      ],
+    });
+
+    expect(summary).toBe("Chat Completions API: tool call leaked into plain text content");
+    expect(summary).not.toContain("secret-key");
+  });
 });

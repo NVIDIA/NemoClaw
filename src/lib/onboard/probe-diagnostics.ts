@@ -10,6 +10,11 @@ const SAFE_PROBE_DIAGNOSTICS = new Map<string, string>([
   ["anthropic-streaming-missing-message-start", "missing message_start"],
   ["anthropic-streaming-missing-message-stop", "missing message_stop"],
   ["openai-chat-missing-structured-tool-call", "missing structured tool call"],
+  [
+    "openai-chat-reasoning-budget-exhausted",
+    "reasoning used the full output-token budget before a tool call",
+  ],
+  ["openai-chat-tool-call-leak", "tool call leaked into plain text content"],
 ]);
 
 function summarizeSafeProbeDiagnostics(value: unknown): string[] {

@@ -382,6 +382,7 @@ describe("nemoclaw-start in-container gateway healthcheck marker (#4503, #4710)"
         "set -euo pipefail",
         clearFn,
         extractShellFunctionFromSource(src, "arm_openclaw_gateway_supervisor_cleanup"),
+        extractShellFunctionFromSource(src, "launch_openclaw_gateway_process"),
         extractShellFunctionFromSource(src, launchFunction),
         `cleanup_openclaw_on_signal() { exit ${exitCode}; }`,
         `mark_in_container_gateway() { : > ${JSON.stringify(markerPath)}; kill -${signal} $$; }`,
