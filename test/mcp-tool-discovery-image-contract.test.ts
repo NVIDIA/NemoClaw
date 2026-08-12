@@ -237,7 +237,7 @@ describe("MCP tool discovery image contract", () => {
 
   it.each([
     {
-      archiveCount: 81,
+      archiveCount: 146,
       label: "NemoClaw CLI",
       lockfile: "nemoclaw/package-lock.json",
       seedDirectory: "tools/mcp-tool-discovery-runtime/npm-cache-seed",
