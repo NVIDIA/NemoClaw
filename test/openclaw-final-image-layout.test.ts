@@ -191,9 +191,9 @@ describe("OpenClaw final image layout", () => {
       finalStage,
       "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
     );
-    const pluginInstall = indexOfRequired(
+    const dependencyInstall = indexOfRequired(
       finalStage,
-      "RUN --network=default if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \\",
+      "NODE_OPTIONS=--dns-result-order=ipv4first \\\n        /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh --omit=dev",
     );
     const managedMessagingUnionInstall = indexOfRequired(
       finalStage,
@@ -232,7 +232,7 @@ describe("OpenClaw final image layout", () => {
     expect(dependency).toBeLessThan(tarPatch);
     expect(tarPatch).toBeLessThan(braceExpansionPatch);
     expect(braceExpansionPatch).toBeLessThan(ipAddressPatch);
-    expect(plugin).toBeGreaterThan(pluginInstall);
+    expect(plugin).toBeGreaterThan(dependencyInstall);
     expect(plugin).toBeLessThan(pluginChmod);
     expect(managedMessagingUnionInstall).toBeLessThan(messagingPostInstall);
     expect(messagingPostInstall).toBeLessThan(neutralConfigRegeneration);
