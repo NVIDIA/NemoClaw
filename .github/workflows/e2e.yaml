@@ -34,7 +34,7 @@ on:
           - internal-nvidia
           - public-nvidia
       allow_jetson_dispatch:
-        description: "Set true for jetson-nvmap-gpu only after the Colossus dispatcher, Cloudflare Tunnel, cleanup helper, and JETSON_DISPATCH_URL repository variable have passed the deployment checks in test/e2e/docs/jetson-colossus-dispatch.md."
+        description: "Set true for jetson-nvmap-gpu only after the operator-owned dispatch backend is available and JETSON_DISPATCH_URL contains its verified HTTPS origin. Refer to test/e2e/docs/jetson-dispatch.md."
         required: false
         default: false
         type: boolean
@@ -162,6 +162,7 @@ jobs:
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
       explicit_only_jobs: ${{ steps.matrix.outputs.explicit_only_jobs }}
+      release_required_jobs: ${{ steps.matrix.outputs.release_required_jobs }}
       runner_routing: ${{ steps.runner_routing.outputs.runner_routing }}
     steps:
       - id: controller_matrix
@@ -721,37 +722,6 @@ jobs:
           brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"
           printf 'work_dir=%s\n' "$work_dir" >> "$GITHUB_OUTPUT"
 
-      - name: Record E2E dispatch identity
-        env:
-          CANDIDATE_SHA: ${{ env.CANDIDATE_SHA }}
-          DISPATCH_JOBS: ${{ inputs.jobs }}
-          DISPATCH_TARGETS: ${{ inputs.targets }}
-          EVENT_NAME: ${{ github.event_name }}
-          INCLUDE_STAGING_BREV_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-          RUN_ID: ${{ github.run_id }}
-          WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
-        run: |
-          jq -n \
-            --arg candidateSha "$CANDIDATE_SHA" \
-            --arg eventName "$EVENT_NAME" \
-            --arg jobs "$DISPATCH_JOBS" \
-            --arg targets "$DISPATCH_TARGETS" \
-            --arg workflowRunId "$RUN_ID" \
-            --argjson includeStagingBrevLaunchable "$INCLUDE_STAGING_BREV_LAUNCHABLE" \
-            --argjson workflowRunAttempt "$RUN_ATTEMPT" \
-            '{
-              kind: "nemoclaw-e2e-dispatch-v1",
-              candidateSha: $candidateSha,
-              eventName: $eventName,
-              workflowRunId: $workflowRunId,
-              workflowRunAttempt: $workflowRunAttempt,
-              jobs: $jobs,
-              targets: $targets,
-              includeStagingBrevLaunchable: $includeStagingBrevLaunchable,
-              emptySelectors: ($jobs == "" and $targets == "")
-            }' >"$WORK_DIR/dispatch.json"
-
       - name: Build, deploy, verify, test, and clean up
         env:
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
@@ -767,7 +737,6 @@ jobs:
           name: staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ steps.workspace.outputs.work_dir }}/lane.log
-            ${{ steps.workspace.outputs.work_dir }}/dispatch.json
             ${{ steps.workspace.outputs.work_dir }}/launchable-e2e.json
             ${{ steps.workspace.outputs.work_dir }}/full-e2e.log
             ${{ steps.workspace.outputs.work_dir }}/cleanup.json
@@ -1031,7 +1000,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.101"
-      DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba"
+      DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2491,6 +2460,7 @@ jobs:
     permissions:
       contents: read
     env:
+      E2E_DEFAULT_ENABLED: "0"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-dgx-spark-qualification
       E2E_JOB: "1"
       E2E_TARGET_ID: "llama-cpp-dgx-spark-qualification"
@@ -4924,7 +4894,7 @@ jobs:
     needs: generate-matrix
     if: ${{ inputs.allow_jetson_dispatch && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}
     concurrency:
-      group: jetson-nvmap-gpu-colossus
+      group: jetson-nvmap-gpu-dispatch
       queue: max
       cancel-in-progress: false
     runs-on: ubuntu-latest
@@ -4945,7 +4915,7 @@ jobs:
         with:
           node-version: 22
 
-      - name: Dispatch exact commit to Jetson through Colossus
+      - name: Dispatch exact commit to Jetson through operator backend
         env:
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu
           JETSON_DISPATCH_CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
@@ -6233,7 +6203,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker pull node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
+          docker pull node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c
 
       - name: Remove Docker auth before release-pinned fixture
         if: always()
@@ -7465,6 +7435,28 @@ jobs:
               issue_number: prNumber,
               body: report.body,
             });
+
+  release-qualification:
+    name: Release qualification
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: *e2e-result-jobs
+    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.jobs == '' && inputs.targets == '' && inputs.include_staging_brev_launchable && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue)) }}
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the qualification evaluator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: tools/e2e/release-qualification.mts
+          sparse-checkout-cone-mode: false
+      - name: Require every release E2E result
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          RELEASE_REQUIRED_JOBS: ${{ needs.generate-matrix.outputs.release_required_jobs }}
+        run: node --experimental-strip-types --no-warnings tools/e2e/release-qualification.mts
 
   # ── Push/manual scorecard ─────────────────────────────────────────────────
   scorecard:

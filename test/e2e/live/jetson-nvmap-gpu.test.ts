@@ -10,7 +10,7 @@ import {
 } from "../fixtures/cleanup-resources.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
-import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
+import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -27,6 +27,7 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_PROVIDER: process.env.NEMOCLAW_PROVIDER ?? "ollama",
     NEMOCLAW_RECREATE_SANDBOX: "1",
+    NEMOCLAW_SANDBOX_GPU: "0",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
     PATH: process.env.PATH,
@@ -71,34 +72,28 @@ fi`,
   ).catch(() => undefined);
 }
 
-function expectGroupMembership(idGroupsOutput: string, gid: string): void {
-  expect(gid).toMatch(/^[0-9]+$/u);
-  expect(idGroupsOutput.trim().split(/\s+/u)).toContain(gid);
-}
-
-test("Jetson nvmap GPU onboard grants device-node group and reports verified CUDA", {
+test("Jetson onboarding disables sandbox GPU access (#7610)", {
   timeout: TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "detect Jetson hardware",
       "clear previous Jetson runtime state",
       "confirm nvmap and NVIDIA Docker runtime",
-      "install NemoClaw on the Jetson host",
-      "inspect sandbox nvmap access",
-      "prove CUDA initialization inside the sandbox",
-      "confirm verified GPU status",
+      "install NemoClaw with sandbox GPU access disabled",
+      "confirm sandbox GPU access is disabled",
+      "confirm the sandbox excludes /dev/nvmap",
     ],
   },
 }, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
   await artifacts.target.declare({
     id: "jetson-nvmap-gpu",
-    issue: 4231,
+    issue: 7610,
     boundary:
-      "Jetson/Tegra host + install.sh Ollama onboard + Docker NVIDIA runtime + OpenShell sandbox exec + CUDA cuInit proof + nemoclaw status",
+      "CPU-only Jetson/Tegra onboarding through install.sh, OpenShell, and nemoclaw status with NEMOCLAW_SANDBOX_GPU=0",
     sandboxName: SANDBOX_NAME,
   });
 
-  // A1: non-Jetson hosts skip cleanly before mutating Docker/OpenShell state.
+  // A1: Skip before changing Docker or OpenShell state when the host is not a Jetson device.
   const hardwareGate = await hostShell(
     host,
     String.raw`if [ -e /dev/nvmap ]; then
@@ -117,7 +112,7 @@ fi`,
   expect(hardwareGate.exitCode, resultText(hardwareGate)).toBe(0);
   hardwareGate.stdout.startsWith("jetson:") ||
     skip(
-      "Not a Jetson/Tegra host (/dev/nvmap absent) — reporter workflow requires Jetson hardware; hermetic #4231 coverage remains in src/lib/onboard/docker-gpu-patch.test.ts.",
+      "This test requires a Jetson/Tegra host with /dev/nvmap. Source tests cover Jetson GPU patch behavior in src/lib/onboard/docker-gpu-patch-jetson.test.ts.",
     );
 
   const gatewayCleanupOptions = {
@@ -185,18 +180,17 @@ fi`,
   progress.phase("confirm nvmap and NVIDIA Docker runtime");
   const hostNvmap = await hostShell(
     host,
-    "ls -l /dev/nvmap && stat -c 'gid=%g group=%G' /dev/nvmap",
+    "test -c /dev/nvmap && ls -l /dev/nvmap",
     "phase-0-host-nvmap",
   );
   expect(hostNvmap.exitCode, resultText(hostNvmap)).toBe(0);
   expect(hostNvmap.stdout).toContain("/dev/nvmap");
-  const hostNvmapGid = hostNvmap.stdout.match(/gid=([0-9]+)/u)?.[1] ?? "";
-  expect(hostNvmapGid).toMatch(/^[0-9]+$/u);
 
   expect(env().NEMOCLAW_NON_INTERACTIVE).toBe("1");
   expect(env().NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE).toBe("1");
+  expect(env().NEMOCLAW_SANDBOX_GPU).toBe("0");
 
-  // A2: Jetson prerequisites match the original lane: Docker and the NVIDIA runtime.
+  // A2: The Jetson test requires Docker and the NVIDIA runtime.
   const docker = await host.command("docker", ["info"], {
     artifactName: "phase-1-docker-info",
     env: env(),
@@ -211,8 +205,9 @@ fi`,
   expect(dockerRuntimes.exitCode, resultText(dockerRuntimes)).toBe(0);
   expect(resultText(dockerRuntimes)).toMatch(/"nvidia"|nvidia:/u);
 
-  // A3: preserve the reporter workflow by installing/running the real onboarding shell path.
-  progress.phase("install NemoClaw on the Jetson host");
+  // A3: install.sh does not accept --no-gpu. NEMOCLAW_SANDBOX_GPU=0 selects
+  // the same CPU-only behavior while #7610 blocks GPU verification through OpenShell.
+  progress.phase("install NemoClaw with sandbox GPU access disabled");
   const ollamaBaseline = await hostShell(
     host,
     "command -v ollama && ollama list",
@@ -251,46 +246,10 @@ done`,
   expect(installedBinaries.exitCode, resultText(installedBinaries)).toBe(0);
   expect(installedBinaries.stdout.trim().split("\n")).toHaveLength(4);
 
-  // A4: the Jetson recreate must grant Tegra device-node groups via --group-add.
-  expect(resultText(install)).toContain(
-    "Granting sandbox user the detected Jetson GPU device groups via --group-add",
-  );
+  expect(resultText(install)).toMatch(/Sandbox GPU(?::)? disabled by configuration/u);
 
-  // A5: the sandbox user must be in the host /dev/nvmap owning GID.
-  progress.phase("inspect sandbox nvmap access");
-  const sandboxId = await sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript("id -G"), {
-    artifactName: "phase-3-sandbox-id-groups",
-    env: env(),
-    timeoutMs: 60_000,
-  });
-  expect(sandboxId.exitCode, resultText(sandboxId)).toBe(0);
-  expectGroupMembership(resultText(sandboxId), hostNvmapGid);
-
-  // A6: /dev/nvmap must be mounted/present inside the sandbox.
-  const sandboxNvmap = await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript("ls -l /dev/nvmap"),
-    { artifactName: "phase-3-sandbox-nvmap", env: env(), timeoutMs: 60_000 },
-  );
-  expect(sandboxNvmap.exitCode, resultText(sandboxNvmap)).toBe(0);
-  expect(resultText(sandboxNvmap)).toContain("/dev/nvmap");
-
-  // A7: authoritative CUDA usability proof must succeed, not reproduce
-  // NvRmMemInitNvmap permission denial / cuInit(0)=999 from #4231.
-  progress.phase("prove CUDA initialization inside the sandbox");
-  const cudaProbe = await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript(
-      `python3 -c 'import ctypes; lib = ctypes.CDLL("libcuda.so.1"); rc = lib.cuInit(0); print(f"cuInit(0)={rc}"); raise SystemExit(0 if rc == 0 else 1)'`,
-    ),
-    { artifactName: "phase-3-sandbox-cuda-cuinit", env: env(), timeoutMs: 120_000 },
-  );
-  expect(resultText(cudaProbe)).not.toMatch(/NvRmMemInitNvmap|Permission denied/u);
-  expect(cudaProbe.exitCode, resultText(cudaProbe)).toBe(0);
-  expect(resultText(cudaProbe)).toContain("cuInit(0)=0");
-
-  // A8: status must say enabled with verified CUDA, never bare/unverified/failed.
-  progress.phase("confirm verified GPU status");
+  // A4: a passing live E2E result verifies CPU-only onboarding, not CUDA usability.
+  progress.phase("confirm sandbox GPU access is disabled");
   const status = await hostShell(
     host,
     `nemoclaw "$NEMOCLAW_SANDBOX_NAME" status`,
@@ -298,7 +257,26 @@ done`,
     120_000,
   );
   expect(status.exitCode, resultText(status)).toBe(0);
-  expect(resultText(status)).toContain("Sandbox GPU: enabled");
-  expect(resultText(status)).toContain("CUDA verified");
-  expect(resultText(status)).not.toMatch(/last CUDA proof failed|CUDA unverified/u);
+  expect(resultText(status)).toContain("Sandbox GPU: disabled");
+  expect(resultText(status)).not.toMatch(/CUDA verified|last CUDA proof failed|CUDA unverified/u);
+  expect(resultText(status)).not.toContain("/dev/nvmap");
+  expect(resultText(status)).not.toContain("/opt/nvidia");
+
+  progress.phase("confirm the sandbox excludes /dev/nvmap");
+  const sandboxNvmap = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(String.raw`if [ -e /dev/nvmap ] || [ -L /dev/nvmap ]; then
+  echo "CPU-only sandbox unexpectedly exposes /dev/nvmap" >&2
+  ls -ld /dev/nvmap >&2
+  exit 1
+fi
+printf 'absent:/dev/nvmap\n'`),
+    {
+      artifactName: "phase-5-sandbox-nvmap-absent",
+      env: env(),
+      timeoutMs: 60_000,
+    },
+  );
+  expect(sandboxNvmap.exitCode, resultText(sandboxNvmap)).toBe(0);
+  expect(sandboxNvmap.stdout.trim()).toBe("absent:/dev/nvmap");
 });

@@ -13,7 +13,7 @@ import { PR_E2E_MANUAL_CONTROLLER_JOB_IDS, RISK_RULES } from "../advisors/risk-p
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const DEFAULT_ADVISOR_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review-advisor.yaml");
-const META_JOBS = new Set(["report-to-pr", "scorecard"]);
+const META_JOBS = new Set(["release-qualification", "report-to-pr", "scorecard"]);
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const GITHUB_SCRIPT_NODE24_ACTION =
   "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3";
@@ -359,6 +359,10 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         jobName === "report-to-pr" &&
         step.name === "Check out the trusted E2E reporting helper" &&
         step.with?.ref === "${{ github.workflow_sha }}";
+      const trustedReleaseQualificationCheckout =
+        jobName === "release-qualification" &&
+        step.name === "Check out the qualification evaluator" &&
+        step.with?.ref === "${{ github.workflow_sha }}";
       const trustedLaunchableLaneCheckout =
         jobName === "staging-brev-launchable" &&
         step.name === "Checkout trusted Launchable lane" &&
@@ -391,6 +395,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       const trustedCheckout =
         trustedHermesFixtureCheckout ||
         trustedReportHelperCheckout ||
+        trustedReleaseQualificationCheckout ||
         trustedLaunchableLaneCheckout ||
         trustedPublicationCheckout ||
         trustedManagedImageRuntimeCheckout ||
@@ -526,6 +531,54 @@ function validateAggregation(errors: string[], workflow: OperationsWorkflow): vo
   if (!sameMembers(scorecardNeeds, reportNeeds)) {
     errors.push("scorecard needs must exactly match report-to-pr needs");
   }
+  const releaseQualificationNeeds = needs(workflow.jobs["release-qualification"] ?? {});
+  if (!sameMembers(releaseQualificationNeeds, reportNeeds)) {
+    errors.push("release-qualification needs must exactly match report-to-pr needs");
+  }
+}
+
+function validateReleaseQualification(errors: string[], workflow: OperationsWorkflow): void {
+  const job = workflow.jobs["release-qualification"] ?? {};
+  const expectedCondition =
+    "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.jobs == '' && inputs.targets == '' && inputs.include_staging_brev_launchable && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue)) }}";
+  if (job.if !== expectedCondition) {
+    errors.push(
+      "release-qualification must run only for trusted pushes or full manual runs against main",
+    );
+  }
+  if (job["timeout-minutes"] !== 5) {
+    errors.push("release-qualification must keep the 5-minute timeout");
+  }
+  if (!isDeepStrictEqual(permissionMap(job.permissions), { contents: "read" })) {
+    errors.push("release-qualification permissions must be contents: read");
+  }
+  if (job.env && Object.keys(job.env).length > 0) {
+    errors.push("release-qualification must not expose credentials at job scope");
+  }
+
+  const steps = job.steps ?? [];
+  const checkout = findStep(job, "Check out the qualification evaluator");
+  const requireResults = findStep(job, "Require every release E2E result");
+  requirePinnedAction(errors, checkout, "release-qualification checkout");
+  if (
+    steps.length !== 2 ||
+    steps[0] !== checkout ||
+    checkout.with?.ref !== "${{ github.workflow_sha }}" ||
+    checkout.with?.["persist-credentials"] !== false ||
+    checkout.with?.["sparse-checkout"] !== "tools/e2e/release-qualification.mts" ||
+    checkout.with?.["sparse-checkout-cone-mode"] !== false
+  ) {
+    errors.push("release-qualification must check out only the trusted evaluator");
+  }
+  if (
+    requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
+    requireResults.env?.RELEASE_REQUIRED_JOBS !==
+      "${{ needs.generate-matrix.outputs.release_required_jobs }}" ||
+    requireResults.run !==
+      "node --experimental-strip-types --no-warnings tools/e2e/release-qualification.mts"
+  ) {
+    errors.push("release-qualification must evaluate planner-selected jobs from needs");
+  }
 }
 
 function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWorkflow): void {
@@ -654,7 +707,7 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     job.if !==
     "${{ always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '')) }}"
   ) {
-    errors.push("scorecard must run after push and direct-main manual E2E executions");
+    errors.push("scorecard must run after pushes and manual E2E runs dispatched against main");
   }
   if (
     permissions.actions !== "read" ||
@@ -904,6 +957,7 @@ export function validateE2eOperationsWorkflow(
   validateManualPrDispatch(errors, workflow);
   validatePrGateEvidenceProducers(errors, workflow);
   validateAggregation(errors, workflow);
+  validateReleaseQualification(errors, workflow);
   validateIssueRoutingRetirement(errors, workflow);
   validateScorecard(errors, workflow);
   validateTraceTiming(errors, workflow);

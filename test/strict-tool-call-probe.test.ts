@@ -44,6 +44,7 @@ const EXPECTED_PASS_MARKERS = [
   "[PASS] strict validation succeeds with structured tool_calls",
   "[PASS] Local Ollama onboarding caller enforces strict Chat Completions validation",
   "[PASS] strict validation retries a transient 502 and keeps bounded payloads",
+  "[PASS] strict validation escalates the reasoning-only budget ladder to 4096 tokens",
   "[PASS] strict validation retries three times and stops after four responses omit structured tool calls",
 ];
 
