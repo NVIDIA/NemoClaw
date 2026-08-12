@@ -683,7 +683,7 @@ describe("sandbox messaging credential drift", () => {
     );
   });
 
-  it("aborts a late-named recreation when channel state changes before the sandbox lock (#7853)", async () => {
+  it("aborts a late-named recreation when channel state changes before the sandbox lock (#3631)", async () => {
     const activePlan = makeMinimalPlan("my-assistant", "openclaw", ["telegram"]);
     const stoppedPlan = {
       ...makeMinimalPlan("my-assistant", "openclaw", ["telegram"], ["telegram"]),

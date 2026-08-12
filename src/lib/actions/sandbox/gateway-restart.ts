@@ -294,8 +294,7 @@ export function gatewayIntegrityRepairLines(
 }
 
 const HERMES_GATEWAY_LOG_TAIL_LINES = 12;
-const HERMES_GATEWAY_LOG_TAIL_COMMAND =
-  `tail -n ${String(HERMES_GATEWAY_LOG_TAIL_LINES)} /tmp/gateway.log 2>/dev/null || true`;
+const HERMES_GATEWAY_LOG_TAIL_COMMAND = `tail -n ${String(HERMES_GATEWAY_LOG_TAIL_LINES)} /tmp/gateway.log 2>/dev/null || true`;
 
 function hermesGatewayLogTail(
   sandboxName: string,

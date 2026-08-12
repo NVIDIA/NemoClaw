@@ -486,9 +486,9 @@ describe("setupMessagingChannels", () => {
   });
 
   it("validates a completed non-interactive selection when its credential is supplied (#3631)", async () => {
-    process.env.TELEGRAM_BOT_TOKEN = "123456:replacement-telegram-token";
-    process.env.SLACK_BOT_TOKEN = "xoxb-ambient-slack-token";
-    process.env.SLACK_APP_TOKEN = "xapp-ambient-slack-token";
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", "123456:replacement-telegram-token");
+    vi.stubEnv("SLACK_BOT_TOKEN", "xoxb-ambient-slack-token");
+    vi.stubEnv("SLACK_APP_TOKEN", "xapp-ambient-slack-token");
     const note = vi.fn();
 
     const result = await setupMessagingChannels(null, ["telegram"], {
@@ -609,7 +609,7 @@ describe("setupMessagingChannels", () => {
         selectionCompleted: true,
       }),
     ).rejects.toThrow(
-      "Export the missing messaging credential environment variables, then run nemoclaw onboard --resume again.",
+      "A completed messaging selection is missing required credentials for these channels: telegram. Export the missing messaging credential environment variables, then run nemoclaw onboard --resume again.",
     );
 
     expect(note).toHaveBeenCalledWith(

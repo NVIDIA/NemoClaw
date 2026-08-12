@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+
 import { getCredential } from "../../../credentials/store";
 import {
   createBuiltInChannelManifestRegistry,
@@ -120,30 +122,6 @@ function refreshCredentialHashesFromEnv(plan: SandboxMessagingPlan): {
     return { ...binding, credentialHash };
   });
   return changed ? { plan: { ...plan, credentialBindings }, changed } : { plan, changed };
-}
-
-function credentialBindingKey(binding: SandboxMessagingPlan["credentialBindings"][number]): string {
-  return `${binding.channelId}\u0000${binding.credentialId}\u0000${binding.providerEnvKey}`;
-}
-
-function withCredentialValidationHashes(
-  selectionPlan: SandboxMessagingPlan | null,
-  credentialPlan: SandboxMessagingPlan | null | undefined,
-): SandboxMessagingPlan | null {
-  if (!selectionPlan || !credentialPlan || selectionPlan === credentialPlan) return selectionPlan;
-  const credentialBindings = new Map(
-    credentialPlan.credentialBindings.map((binding) => [credentialBindingKey(binding), binding]),
-  );
-  return {
-    ...selectionPlan,
-    credentialBindings: selectionPlan.credentialBindings.map((binding) => {
-      const authority = credentialBindings.get(credentialBindingKey(binding));
-      const { credentialHash: _selectionHash, ...withoutHash } = binding;
-      return authority?.credentialHash
-        ? { ...withoutHash, credentialHash: authority.credentialHash }
-        : withoutHash;
-    }),
-  };
 }
 
 function resolveCurrentMessagingAgent(agent: unknown): {
@@ -419,11 +397,12 @@ export function reconcileReusedSandboxMessaging<Agent>(
   recordedPlan: SandboxMessagingPlan | null = plan,
 ): SandboxMessagingSelection & { readonly changed: boolean } {
   const filtered = plan ? filterMessagingPlanForCurrentAgent(plan, agent) : null;
-  if (filtered !== recordedPlan) deps.clearPlanEnv();
+  const changed = !isDeepStrictEqual(filtered, recordedPlan);
+  if (changed) deps.clearPlanEnv();
   return {
     plan: filtered,
     selectedChannels: getActiveChannelsFromPlan(filtered),
-    changed: filtered !== recordedPlan,
+    changed,
   };
 }
 
@@ -513,9 +492,8 @@ async function selectionFromCompletedMessagingCheckpoint<Agent>(
   // After the checkpoint completes, the selected messaging plan is authoritative.
   // The process plan may already have refreshed hashes, so it cannot prove
   // that a newly exported credential passed the channel's validation hooks.
-  const validationPlan = options.forceCredentialValidation
-    ? withCredentialValidationHashes(durablePlan, options.credentialValidationPlan)
-    : durablePlan;
+  // Forced credential validation returns before this checkpoint path when a baseline exists.
+  const validationPlan = durablePlan;
   const diverged = reconcileCheckpoint
     ? divergedCheckpointChannels(options.session, validationPlan)
     : null;

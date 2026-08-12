@@ -163,8 +163,7 @@ export async function setupMessagingChannels(
       )
       .map((manifest) => manifest.id);
     if (nonInteractive && missingCredentialChannels.length > 0) {
-      const message =
-        "A completed messaging selection is missing required credentials. Export the missing messaging credential environment variables, then run nemoclaw onboard --resume again.";
+      const message = `A completed messaging selection is missing required credentials for these channels: ${missingCredentialChannels.join(", ")}. Export the missing messaging credential environment variables, then run nemoclaw onboard --resume again.`;
       note(`  [resume] ${message}`);
       throw new Error(message);
     }
@@ -192,13 +191,7 @@ export async function setupMessagingChannels(
     return Array.from(enabled);
   }
 
-  const enabled = new Set(
-    deps.selectionCompleted
-      ? (existingChannels ?? []).filter((channelId) =>
-          availableChannels.some((manifest) => manifest.id === channelId),
-        )
-      : seedFromState(true),
-  );
+  const enabled = new Set(deps.selectionCompleted ? completedSelection : seedFromState(true));
   const input = process.stdin as MessagingSelectorInput;
   const output = process.stderr as MessagingSelectorOutput;
   const statusForChannel = (manifest: ChannelManifest): string =>
