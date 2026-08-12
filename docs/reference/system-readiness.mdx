@@ -97,10 +97,14 @@ Do not use `observedAt` as build identity.
 
 ## Interpret Docker storage
 
-The report rejects an unsupported `DOCKER_HOST` before it uses Docker daemon evidence.
+The report rejects an unsupported explicit `DOCKER_HOST` before it uses Docker daemon evidence.
 `host.docker.host_invalid` records whether the configured endpoint is invalid, `host.docker.endpoint_supported` is absent when a configured endpoint is not an absolute local `unix://` socket, and the blocking `host.docker.host_invalid` finding identifies that condition.
 TCP, SSH, relative Unix socket, and unsafe path values do not fall back to the default Docker socket.
-Unset `DOCKER_HOST` continues to use Docker's default local socket.
+When `DOCKER_HOST` is unset, NemoClaw first probes the Docker CLI's selected authority, including `DOCKER_CONTEXT` and its `DOCKER_CONFIG` directory when set, without a host override.
+If that authority is unreachable, NemoClaw probes a bounded set of local Unix sockets and accepts only an endpoint with valid server-version evidence.
+When it selects a fallback socket, NemoClaw clears the unreachable `DOCKER_CONTEXT` so later Docker commands use the selected `DOCKER_HOST`.
+A mixed set of reachable Docker and Podman fallbacks, or a fallback with an unknown server identity, produces no automatic `DOCKER_HOST` override.
+A reachable Podman endpoint remains classified as Podman and does not satisfy the standard Docker runtime requirement.
 
 The Docker storage capabilities separate the current host configuration from NemoClaw's supported remediation path.
 

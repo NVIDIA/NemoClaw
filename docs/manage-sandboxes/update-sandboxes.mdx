@@ -70,11 +70,25 @@ If a support workflow asks you to pass the maintained tag explicitly, clear any 
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_INSTALL_TAG=lkg bash
 ```
 
-Before upgrade work, the installer prepares the current NemoClaw CLI without replacing OpenShell and requires a fresh backup of every registered sandbox.
+During the automatic upgrade path, the installer prepares the current NemoClaw CLI without replacing OpenShell and requires a fresh backup of every registered sandbox.
 If any sandbox is skipped or fails, the installer exits before it changes the gateway.
 After backup, the installer requires any existing OpenShell executable it will use to report a version, then compares that version with the supported range declared by the prepared current source.
 It retires the running gateway before replacing an out-of-range OpenShell installation, keeps the gateway when the installed version is supported, and stops without retiring it when the installed version or supported range cannot be validated.
-If the installed OpenShell release cannot retire its gateway through a supported lifecycle command or the verified NemoClaw-owned gateway PID, the installer also stops after backup with the sandbox backups preserved.
+On Linux, failed OpenShell lifecycle commands cause the installer to check a verified NemoClaw-managed gateway PID file for any configured gateway port.
+For the default gateway on port `8080`, the installer first checks a verified active `nemoclaw-openshell-gateway.service`, then checks the PID file.
+The service path requires an active `nemoclaw-openshell-gateway.service` with a trusted unit path, NemoClaw-managed marker, file owner, and `ExecStart` binary.
+After the service or PID-file check confirms the gateway process is stopped, the installer tries to remove the selected OpenShell registration.
+If registration removal fails, the installer warns that onboarding will replace the stale registration.
+If neither fallback can verify and stop the process, the installer stops after backup, preserves every sandbox backup, and reports the failed operation.
+After the automatic path retires an out-of-range gateway, it forces installation of the OpenShell version pinned by the prepared source before sandbox recovery.
+This mandatory installation applies to source and managed install modes and cannot remain deferred after gateway retirement.
+If the forced installation fails, the installer does not stage a gateway service or start sandbox recovery, preserves the backups, and reports how to retry.
+
+For any registered-sandbox upgrade that you already prepared manually, set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after you back up every registered sandbox and retire the gateway.
+This environment variable asserts that you completed those steps, so the installer skips the repeated backup and gateway-retirement phase before it checks whether OpenShell is installed or whether its version is in range.
+It reuses the latest backups, forces installation of the OpenShell version pinned by the prepared source, and starts recovery only after that installation succeeds.
+If the forced installation fails, rerun the installer with `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` to reuse the prepared state and retry the OpenShell installation.
+Outside these forced paths, an in-range source checkout preserves an existing OpenShell installation and installs OpenShell only when it is missing.
 
 After the host CLI and OpenShell update, the installer runs `$$nemoclaw upgrade-sandboxes --auto` to reconcile the existing sandboxes.
 

@@ -285,6 +285,47 @@ describe("onboard command options", () => {
     });
   });
 
+  it("maps repeated Linux host mounts and rejects unsupported host platforms", () => {
+    const first = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
+    const second = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
+    const values = [`${first}:/sandbox/project`, `${second}:/sandbox/reference`];
+    try {
+      expect(resolve({ "host-mount": values }, { platform: "linux" }).hostMounts).toEqual([
+        {
+          source: first,
+          target: "/sandbox/project",
+          readOnly: true,
+          sourceIdentity: { device: expect.any(String), inode: expect.any(String) },
+        },
+        {
+          source: second,
+          target: "/sandbox/reference",
+          readOnly: true,
+          sourceIdentity: { device: expect.any(String), inode: expect.any(String) },
+        },
+      ]);
+      expect(() => resolve({ "host-mount": values }, { platform: "darwin" })).toThrow("exit:1");
+    } finally {
+      fs.rmSync(first, { recursive: true, force: true });
+      fs.rmSync(second, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects host mounts for the portable Podman profile before path or runtime effects", () => {
+    const errors: string[] = [];
+
+    expect(() =>
+      resolve(
+        {
+          "experimental-profile": "portable",
+          "host-mount": ["/path/that/need/not/exist:/sandbox/project"],
+        },
+        { platform: "linux", error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("requires the OpenShell Docker driver");
+  });
+
   it("resolves the portable profile to deterministic unattended defaults", () => {
     expect(resolve({ "experimental-profile": "portable" })).toMatchObject({
       experimentalProfile: "portable",

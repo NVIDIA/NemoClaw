@@ -290,13 +290,19 @@ The fixed recipe intentionally rejects model and serve-argument overrides; use a
 </Warning>
 
 Muse Glimmer is an additional single-DGX Spark choice and does not change the Qwen default.
-Select `muse-glimmer-30b` to serve `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` with the `muse-glimmer` alias.
+Select its stable catalog ID after confirming that `$$nemoclaw profiles list` reports it as compatible.
+
+```bash
+$$nemoclaw onboard --profile vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4
+```
+
+The profile serves `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` with the `muse-glimmer` alias.
 The registered recipe configures a 32,768-token context window, 1 concurrent sequence, a 4,096-token batch limit, and 0.75 GPU-memory utilization.
 It uses `muse_glimmer` for reasoning and tool-call parsing and sets `--generation-config auto`.
 The pinned model and runtime were validated on one physical DGX Spark for a direct chat request, separated reasoning, a required structured tool call, and an OpenClaw TUI chat turn without fallback.
 Vision was not part of that validation.
-The registered defaults do not enable DFlash, pass `--quantization` or `--trust-remote-code`, or install `fastsafetensors`.
-Advanced operator arguments from `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` remain authoritative.
+The fixed profile does not enable DFlash, pass `--quantization` or `--trust-remote-code`, or install `fastsafetensors`.
+It rejects model and serve-argument overrides so its validated resource boundary remains reproducible.
 
 <Warning title="Experimental Muse Glimmer vLLM Profile">
 This profile uses a candidate runtime image that contains Muse Glimmer changes not yet merged into upstream vLLM.
