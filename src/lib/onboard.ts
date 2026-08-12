@@ -472,8 +472,8 @@ const {
   wasSandboxDefault,
   restoreDefaultAfterRecreate,
 }: typeof import("./onboard/cancel-rollback") = require("./onboard/cancel-rollback");
-// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-const { createCoreOnboardFlowPhases, prepareCoreOnboardFlowContext, prepareFinalOnboardFlowContext, runCoreOnboardFlowSlice }: typeof import("./onboard/machine/core-flow-composition") = require("./onboard/machine/core-flow-composition");
+const coreFlowComposition: typeof import("./onboard/machine/core-flow-composition") =
+  require("./onboard/machine/core-flow-composition");
 const {
   createFinalOnboardFlowPhases,
   finalizationHandlerDeps,
@@ -3905,7 +3905,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       : null;
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const onboardGateway = gatewayBinding.resolveCoreOnboardGatewayBinding({ authoritativeGateway, currentGateway: { name: GATEWAY_NAME, port: GATEWAY_PORT }, resume, sandbox: gatewaySandboxName ? registry.getSandbox(gatewaySandboxName) : null });
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     ({ name: GATEWAY_NAME, port: GATEWAY_PORT } = onboardGateway);
     process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
     const resolvedGatewayOwner = getGatewayOwner();
@@ -4053,7 +4052,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
 
     // #2753: for an unfinished sandbox, an explicit requested name precedes
     // the checkpointed name from the interrupted session.
-    const coreFlowContext = prepareCoreOnboardFlowContext({
+    const coreFlowContext = coreFlowComposition.prepareCoreOnboardFlowContext({
       initial: initialFlowResult,
       recordedSandboxName,
       requestedSandboxName,
@@ -4069,7 +4068,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       onboardSession.updateSession,
       onboardSessionBootstrap.checkpointSandboxName,
     );
-    const coreFlowPhases = createCoreOnboardFlowPhases<
+    const coreFlowPhases = coreFlowComposition.createCoreOnboardFlowPhases<
       InitialOnboardFlowContext,
       unknown,
       MessagingChannelConfig,
@@ -4240,7 +4239,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         },
       },
     });
-    const coreFlowResult = await runCoreOnboardFlowSlice({
+    const coreFlowResult = await coreFlowComposition.runCoreOnboardFlowSlice({
       context: coreFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: coreFlowPhases,
@@ -4248,7 +4247,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       recordRepairEvent,
     });
     setupInferenceFactory.selectGatewayForFollowupOrExit(GATEWAY_NAME, runOpenshell);
-    const finalFlowContext = prepareFinalOnboardFlowContext(coreFlowResult);
+    const finalFlowContext = coreFlowComposition.prepareFinalOnboardFlowContext(coreFlowResult);
     let liveFinalFlowContext: InitialOnboardFlowContext = finalFlowContext;
     const finalFlowPhases = createFinalOnboardFlowPhases<
       InitialOnboardFlowContext,
