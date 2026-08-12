@@ -58,17 +58,63 @@ describe("agent variant docs", () => {
       "TOOLS.md",
       "HEARTBEAT.md",
     ]);
+    const expectedSeededFiles = seededFiles ?? [];
+    const deferredFiles = ["MEMORY.md", "memory/"];
 
     const rendered = renderAgentVariantPage(workspaceFiles, "openclaw", {
       sourcePath: "/repo/docs/manage-sandboxes/workspace-files.mdx",
     });
-    for (const file of seededFiles ?? []) {
-      expect(rendered).toContain(`| \`${file}\` |`);
-      expect(rendered).toMatch(new RegExp(`[├└]── ${file.replace(".", "\\.")}`));
-    }
-    expect(rendered).toContain(
-      "`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `TOOLS.md`, and `HEARTBEAT.md`",
+    const fileReference = rendered.match(
+      /## File Reference\n\n([\s\S]*?)\n\n## Where They Live/,
+    )?.[1];
+    const tableFiles = Array.from(
+      fileReference?.matchAll(/^\| `([^`]+)` \|/gm) ?? [],
+      (match) => match[1],
     );
+    expect(tableFiles.filter((file) => !deferredFiles.includes(file)).sort()).toEqual(
+      [...expectedSeededFiles].sort(),
+    );
+    expect(tableFiles.filter((file) => deferredFiles.includes(file)).sort()).toEqual(
+      [...deferredFiles].sort(),
+    );
+
+    const workspaceTree = rendered.match(
+      /```text\n\/sandbox\/\.openclaw\/workspace\/\n([\s\S]*?)\n```/,
+    )?.[1];
+    const treeFiles = Array.from(
+      workspaceTree?.matchAll(/^[├└]── ([^\s]+)/gm) ?? [],
+      (match) => match[1],
+    );
+    for (const file of expectedSeededFiles) {
+      expect(tableFiles).toContain(file);
+      expect(treeFiles).toContain(file);
+    }
+    expect(treeFiles.filter((file) => !deferredFiles.includes(file)).sort()).toEqual(
+      [...expectedSeededFiles].sort(),
+    );
+    expect(treeFiles.filter((file) => deferredFiles.includes(file)).sort()).toEqual(
+      [...deferredFiles].sort(),
+    );
+
+    const multiAgentSection = rendered.match(
+      /## Multi-Agent Deployments\n\n([\s\S]*?)\n\n## Persistence Behavior/,
+    )?.[1];
+    const seededSummary = multiAgentSection?.match(
+      /same seeded Markdown file structure[^:]*: ([^\n]+)\n/,
+    )?.[1];
+    const deferredSummary = multiAgentSection?.match(
+      /OpenClaw creates ([^\n]+) separately in each workspace/,
+    )?.[1];
+    const summarySeededFiles = Array.from(
+      seededSummary?.matchAll(/`([^`]+)`/g) ?? [],
+      (match) => match[1],
+    );
+    const summaryDeferredFiles = Array.from(
+      deferredSummary?.matchAll(/`([^`]+)`/g) ?? [],
+      (match) => match[1],
+    );
+    expect(summarySeededFiles.sort()).toEqual([...expectedSeededFiles].sort());
+    expect(summaryDeferredFiles.sort()).toEqual([...deferredFiles].sort());
   });
 
   it("renders OpenClaw placeholder code and content", () => {
