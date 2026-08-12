@@ -145,7 +145,7 @@ function openClawBaseProvenance(
         ? "ignore-scripts+reviewed-lifecycle+transitive-remediation-v1"
         : "ignore-scripts+reviewed-lifecycle-v1";
   return [
-    "schema=3",
+    "schema=4",
     `package=openclaw@${version}`,
     `integrity=${integrity}`,
     `tarball=${tarball}`,
@@ -158,7 +158,7 @@ function openClawBaseProvenance(
     `mcporter-audit-policy-sha256=${auditPolicy.sha256}`,
     `mcporter-audit-status=${auditPolicy.status}`,
     `mcporter-audit-exceptions=${auditPolicy.exceptions}`,
-    "mcporter-recipe=locked-ci+reviewed-audit+signatures-v2",
+    "mcporter-recipe=locked-ci+reviewed-audit-v3",
     "",
   ].join("\n");
 }
@@ -1076,7 +1076,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         ["missing marker", { baseProvenance: null }],
         [
           "wrong schema",
-          { baseProvenance: openClawBaseProvenance().replace("schema=3", "schema=2") },
+          { baseProvenance: openClawBaseProvenance().replace("schema=4", "schema=3") },
         ],
         [
           "wrong version",
@@ -1154,7 +1154,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "wrong mcporter recipe",
           {
             baseProvenance: openClawBaseProvenance().replace(
-              "mcporter-recipe=locked-ci+reviewed-audit+signatures-v2",
+              "mcporter-recipe=locked-ci+reviewed-audit-v3",
               "mcporter-recipe=locked-ci-only-v1",
             ),
           },

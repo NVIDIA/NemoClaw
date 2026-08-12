@@ -677,9 +677,8 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
     fi
 
 # Anchor the corporate CA for build-time TLS too, not just runtime. The
-# OpenClaw/mcporter reinstall path runs npm audit signatures, which fetches the
-# sigstore TUF root over TLS; behind a TLS-intercepting corporate proxy that
-# fetch needs the operator CA or it fails with SELF_SIGNED_CERT_IN_CHAIN. Node
+# OpenClaw/mcporter reinstall path makes registry-backed npm requests; behind a
+# TLS-intercepting corporate proxy those requests need the operator CA. Node
 # ignores a missing file, so this is a no-op when no CA was baked; at runtime
 # nemoclaw-start overrides it with the merged OpenShell + corporate bundle.
 ENV NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem
@@ -875,7 +874,7 @@ RUN --network=default set -eu; \
     OPENCLAW_PROVENANCE_PATH=/usr/local/share/nemoclaw/openclaw-base-provenance-v1; \
     OPENCLAW_EXPECTED_PROVENANCE="$(mktemp)"; \
     printf '%s\n' \
-        'schema=3' \
+        'schema=4' \
         "package=openclaw@${OPENCLAW_VERSION}" \
         "integrity=${EXPECTED_INTEGRITY}" \
         "tarball=${EXPECTED_TARBALL}" \
@@ -888,7 +887,7 @@ RUN --network=default set -eu; \
         "mcporter-audit-policy-sha256=${MCPORTER_AUDIT_POLICY_SHA256}" \
         "mcporter-audit-status=${MCPORTER_EXPECTED_AUDIT_STATUS}" \
         "mcporter-audit-exceptions=${MCPORTER_EXPECTED_AUDIT_EXCEPTIONS}" \
-        'mcporter-recipe=locked-ci+reviewed-audit+signatures-v2' \
+        'mcporter-recipe=locked-ci+reviewed-audit-v3' \
         > "$OPENCLAW_EXPECTED_PROVENANCE"; \
     TRUSTED_BASE_IMAGE=0; \
     case "$BASE_IMAGE" in \
@@ -981,7 +980,6 @@ RUN --network=default set -eu; \
         node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
             --directory /usr/local/lib/nemoclaw/mcporter-runtime \
             --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high; \
-        npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit signatures; \
     fi
 
 # Patch OpenClaw media fetch for proxy-only sandbox (NVIDIA/NemoClaw#1755).

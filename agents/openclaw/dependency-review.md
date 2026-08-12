@@ -64,6 +64,16 @@ The lock records the exact version, registry URL, and integrity for every transi
 
 - `invalidState`: the image installs a package graph, tarball, license, or advisory state that differs from the independently queried npm registry records for `mcporter@0.7.3`, resolves `@hono/node-server` to any version other than exact `2.0.11`, resolves `fast-uri` to any version other than exact `3.1.5`, resolves `hono` to any version other than exact `4.12.34`, or resolves `ip-address` to any version other than exact `10.3.1`.
 - `sourceBoundary`: npm owns registry metadata, tarball integrity, provenance signatures, and advisory responses; NemoClaw owns the exact lock, script-disabled install, Docker integrity assertion, empty-by-default audit exception registry, and review record.
-- `whyNotSourceFix`: a repository note cannot make external registry state trustworthy, so image builds execute `npm audit` and `npm audit signatures` against the locked production graph and reviewers compare the lock with the registry response.
-- `regressionTest`: `test/mcporter-supply-chain.test.ts` keeps the version, integrity, lock metadata, Docker install flags, audit commands, and this review synchronized; `test/reviewed-npm-audit.test.ts` proves exact matching and fail-closed exception validation.
+- `whyNotSourceFix`: a repository note cannot make external registry state trustworthy, so the required `reviewed-npm-audit` CI check materializes the exact locked production graph and verifies its registry signatures.
+- `imageBuildBoundary`: image builds verify the committed lock, registry origin, tarball integrity, installed graph, lifecycle suppression, and reviewed advisory policy without connecting to Sigstore.
+  The `schema=4` and `mcporter-recipe=locked-ci+reviewed-audit-v3` provenance values record this boundary.
+- `enforcementBoundary`: any nonzero `npm audit signatures` status fails the required CI check.
+  The PR workflow requires this check before merge.
+  The `pr-reviewed-npm-audit` job loads its audit implementation from the base SHA and evaluates the exact PR-head tree.
+  The managed-image build job requires that result before local builds and same-repository digest publication.
+  The base-image workflow requires its audit result before it builds or publishes any base image.
+  It also requires the result before it invokes managed-image publication.
+- `regressionTest`: `test/mcporter-supply-chain.test.ts` keeps the version, integrity, lock metadata, Docker install flags, image-build audit boundary, trusted CI signature check, and this review synchronized.
+  `test/managed-image-publication-workflow.test.ts` verifies the base-SHA audit implementation, exact PR-head input, and publication dependency.
+  `test/reviewed-npm-audit.test.ts` proves exact matching and fail-closed exception validation.
 - `removalCondition`: remove this runtime dependency and review when OpenClaw provides the required authenticated Streamable HTTP client lifecycle without mcporter, or repeat the independent review for a newly pinned version.

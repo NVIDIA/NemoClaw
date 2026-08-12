@@ -161,6 +161,13 @@ function managedPrBuilder(workflow: Workflow): Job {
   );
 }
 
+function managedPrReviewedAudit(workflow: Workflow): Job {
+  return required(
+    workflow.jobs?.["pr-reviewed-npm-audit"],
+    "managed-image workflow is missing its exact PR reviewed npm audit",
+  );
+}
+
 function stagingQaDeepCodeBuilder(workflow: Workflow): Job {
   return required(
     workflow.jobs?.["pr-staging-qa-deep-code"],
@@ -452,6 +459,7 @@ describe("complete managed-image publication workflow", () => {
 
   it("builds and exercises every shipped agent from an exact PR image before merge (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
+    const reviewedAudit = managedPrReviewedAudit(workflow);
     const prBuilder = managedPrBuilder(workflow);
     const matrix = prBuilder.strategy?.matrix?.include ?? [];
     const steps = prBuilder.steps ?? [];
@@ -459,6 +467,58 @@ describe("complete managed-image publication workflow", () => {
     const build = step(prBuilder, "Build PR managed image locally");
     const contract = step(prBuilder, "Validate exact PR managed image contract");
 
+    expect(workflow.on?.pull_request?.paths).toEqual(
+      expect.arrayContaining([
+        ".github/actions/ci-reviewed-npm-audit/**",
+        "ci/reviewed-npm-audit.json",
+      ]),
+    );
+    expect(reviewedAudit).toMatchObject({
+      if: "github.event_name == 'pull_request'",
+      permissions: { contents: "read" },
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 15,
+    });
+    const candidateCheckout = step(reviewedAudit, "Checkout exact PR head");
+    expect(candidateCheckout.with).toMatchObject({
+      ref: "${{ github.event.pull_request.head.sha }}",
+      path: "candidate",
+      "persist-credentials": false,
+    });
+    const trustedCheckout = step(reviewedAudit, "Checkout trusted reviewed npm audit");
+    expect(trustedCheckout.with).toMatchObject({
+      ref: "${{ github.event.pull_request.base.sha }}",
+      path: ".trusted-reviewed-npm-audit",
+      "persist-credentials": false,
+      "sparse-checkout-cone-mode": false,
+    });
+    expect(trustedCheckout.with?.["sparse-checkout"]).toContain(
+      ".github/actions/ci-reviewed-npm-audit",
+    );
+    expect(trustedCheckout.with?.["sparse-checkout"]).toContain("ci/reviewed-npm-audit.json");
+    const verifyAuditIdentities = step(reviewedAudit, "Verify exact audit source and target");
+    expect(verifyAuditIdentities.env).toEqual({
+      BASE_SHA: "${{ github.event.pull_request.base.sha }}",
+      CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
+    });
+    expect(verifyAuditIdentities.run).toContain(
+      "git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD",
+    );
+    expect(verifyAuditIdentities.run).toContain("git -C candidate rev-parse --verify HEAD");
+    expect(step(reviewedAudit, "Audit exact PR production npm graphs")).toMatchObject({
+      uses: "./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit",
+      with: {
+        "report-dir": "artifacts/reviewed-npm-audit",
+        "target-root": "${{ github.workspace }}/candidate",
+      },
+    });
+    for (const action of reviewedAudit.steps?.filter((candidate) =>
+      candidate.uses?.startsWith("actions/"),
+    ) ?? []) {
+      expect(action.uses, action.name).toMatch(fullShaAction);
+    }
+
+    expect(prBuilder.needs).toBe("pr-reviewed-npm-audit");
     expect(prBuilder.if).toBe("github.event_name == 'pull_request'");
     expect(prBuilder["runs-on"]).toBe("ubuntu-24.04");
     expect(prBuilder["timeout-minutes"]).toBe(90);
