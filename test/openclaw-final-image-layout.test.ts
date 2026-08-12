@@ -131,7 +131,10 @@ describe("OpenClaw final image layout", () => {
     expectManagedBootstrapNativeImageContract(dockerfile);
     expect(finalStage).not.toMatch(/^\s*ENV\b[^\n]*(?:\\\n[^\n]*)*NODE_OPTIONS=/mu);
     expect(finalStage).toContain(
-      "RUN --network=default NODE_OPTIONS=--dns-result-order=ipv4first \\",
+      "RUN --network=default if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \\",
+    );
+    expect(finalStage).toContain(
+      "    NODE_OPTIONS=--dns-result-order=ipv4first \\\n        /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh --omit=dev",
     );
     expect(entrypoint).toContain('export NODE_OPTIONS="--dns-result-order=ipv4first"');
     expect(
@@ -178,11 +181,11 @@ describe("OpenClaw final image layout", () => {
     const runtime = indexOfRequired(finalStage, runtimeCopy);
     const tarPatch = indexOfRequired(
       finalStage,
-      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+      "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
     );
     const braceExpansionPatch = indexOfRequired(
       finalStage,
-      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
+      "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
     );
     const ipAddressPatch = indexOfRequired(
       finalStage,
@@ -190,7 +193,7 @@ describe("OpenClaw final image layout", () => {
     );
     const pluginInstall = indexOfRequired(
       finalStage,
-      "RUN --network=default NODE_OPTIONS=--dns-result-order=ipv4first \\",
+      "RUN --network=default if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \\",
     );
     const managedMessagingUnionInstall = indexOfRequired(
       finalStage,

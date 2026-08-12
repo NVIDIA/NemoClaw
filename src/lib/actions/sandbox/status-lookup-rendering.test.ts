@@ -84,6 +84,7 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     cap.restore();
 
     expect(text).toContain("Sandbox 'beta' is stopped.");
+    expect(text).toContain("Workspace state is preserved.");
     expect(text).toContain("nemoclaw beta start");
     expect(text).not.toContain("process crash");
     expect(text).not.toContain("is stuck");

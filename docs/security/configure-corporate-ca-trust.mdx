@@ -35,7 +35,9 @@ This lets the in-sandbox OpenShell proxy validate TLS when it opens the upstream
 
 <AgentOnly variant="openclaw">
 
-When onboarding supplies a corporate CA, the build sets `NODE_EXTRA_CA_CERTS` before build-time Node.js dependency verification, including `npm audit signatures` requests that cross a TLS-inspecting proxy.
+When onboarding supplies a corporate CA, the Dockerfile sets `NODE_EXTRA_CA_CERTS` and `CURL_CA_BUNDLE` in each final-stage build step that accesses the npm registry.
+This includes registry-backed npm remediation, runtime dependency installation, and `npm audit signatures` requests that cross a TLS-inspecting proxy.
+The build does not retain either variable in the image configuration.
 When NemoClaw selects a corporate CA, it sets `NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root` for the image build.
 The OpenClaw entrypoint creates `/tmp/nemoclaw-ca-bundle.pem` as `root:root` with mode `0444` before it starts agent commands as the `sandbox` user.
 The `sandbox` user can read the merged bundle but cannot modify or replace it.
@@ -46,7 +48,10 @@ The `sandbox` user can read the merged bundle but cannot modify or replace it.
 
 The Hermes discovery-runtime installer applies the corporate CA before its npm operations.
 The final Hermes image stage decodes the CA immediately after `FROM ${BASE_IMAGE}`.
-When the decoded CA file exists, each later Node.js registry remediation sets `NODE_EXTRA_CA_CERTS` and `CURL_CA_BUNDLE` before its npm operation.
+When the decoded CA file exists, the Dockerfile sets `NODE_EXTRA_CA_CERTS` and `CURL_CA_BUNDLE` in each later build step that accesses the npm registry.
+These operations include registry-backed npm remediation and the fallback Hermes dashboard build.
+The build does not retain either variable in the image configuration.
+When the decoded CA file does not exist, these operations use their default trust configuration.
 The Hermes package installer clears inherited `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` values before its build-time `uv pip install` commands.
 When the decoded CA exists, it sets both variables to that file for those commands.
 If the file does not exist, uv and Python use their default trust configuration.

@@ -170,7 +170,9 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
 
     const output = lines.join("\n");
     expect(output).toContain("Sandbox 'instance-a' is stopped.");
+    expect(output).toContain("Workspace state is preserved.");
     expect(output).toContain("nemoclaw instance-a start");
+    expect(output).not.toContain("rebuild --yes");
     expect(output).not.toContain("process crash");
     expect(output).not.toContain("stuck in 'Error'");
     expect(exitSpy).toHaveBeenCalledWith(1);

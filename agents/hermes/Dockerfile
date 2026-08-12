@@ -267,6 +267,10 @@ RUN chmod -R a+rX /opt/hermes/.venv \
 # the sandbox user account. Remove this fallback after all supported base image
 # tags are built from Dockerfile.base with HERMES_WEB_DIST prepopulated.
 RUN set -eu; \
+    if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
+        export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
+        export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
+    fi; \
     hermes_web_dist=/opt/hermes/hermes_cli/web_dist; \
     hermes_web_dir=/opt/hermes/web; \
     if [ ! -d "$hermes_web_dist" ]; then \
