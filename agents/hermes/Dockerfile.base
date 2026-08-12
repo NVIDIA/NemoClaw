@@ -81,8 +81,9 @@ ARG UV_VERSION=0.11.33
 # build-essential: hermes-agent >= 0.16.0 ships npm dependencies that need a
 # node-gyp native build during `npm ci`; the runtime Dockerfile purges build
 # tools again after install.
-# Install the reviewed libexpat, jq, and Vim packages from the same immutable,
-# checksum-bound Debian snapshot used by the OpenClaw base image.
+# Install the reviewed libexpat, jq, and Vim packages from immutable Debian
+# snapshots: Expat from 20260811T082421Z and jq and Vim from 20260724T000000Z,
+# matching the checksum-bound OpenClaw base image packages.
 # hadolint ignore=DL3001,DL4006
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential=12.12 \
