@@ -15,7 +15,6 @@ function expectRunUsesConditionalNodeAndCurlTrust(stage: string, commandMarker: 
   );
   expect(matches, commandMarker).toHaveLength(1);
   const instruction = matches[0];
-  if (!instruction) throw new Error(`Missing RUN instruction for ${commandMarker}`);
 
   const guardIndex = instruction.text.indexOf(`if [ -f ${CORPORATE_CA_PATH} ]; then`);
   const curlIndex = instruction.text.indexOf(`export CURL_CA_BUNDLE=${CORPORATE_CA_PATH}`);
