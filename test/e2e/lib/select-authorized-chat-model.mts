@@ -17,14 +17,20 @@ function fail(message: string): never {
   throw new Error(`authorized model selection failed: ${message}`);
 }
 
-function modelIds(body) {
-  if (!body || typeof body !== "object" || !Array.isArray(body.data)) {
+function modelIds(body: unknown): string[] {
+  const data = body && typeof body === "object" ? (body as { data?: unknown }).data : undefined;
+  if (!Array.isArray(data)) {
     fail("the authenticated models response has no data array");
   }
-  return [...new Set(body.data.map((entry) => entry?.id).filter((id) => typeof id === "string"))];
+  const ids = data
+    .map((entry: unknown) =>
+      entry && typeof entry === "object" ? (entry as { id?: unknown }).id : undefined,
+    )
+    .filter((id: unknown): id is string => typeof id === "string");
+  return [...new Set(ids)];
 }
 
-function orderedChatCandidates(ids, currentModel) {
+function orderedChatCandidates(ids: string[], currentModel: string): string[] {
   const candidates = ids.filter(
     (id) => id !== currentModel && CHAT_MODEL_HINT.test(id) && !NON_CHAT_MODEL_HINT.test(id),
   );
@@ -36,7 +42,7 @@ function orderedChatCandidates(ids, currentModel) {
   });
 }
 
-async function parseJson(response, label) {
+async function parseJson(response: Response, label: string): Promise<unknown> {
   try {
     return await response.json();
   } catch {
@@ -44,13 +50,19 @@ async function parseJson(response, label) {
   }
 }
 
-async function probePayload(model) {
-  const imported = await import("../../../src/lib/inference/openai-probe-models");
-  const defaultExport = imported.default;
-  const payloadFactory =
-    imported.getChatCompletionsProbePayload ?? defaultExport?.getChatCompletionsProbePayload;
-  if (!payloadFactory) fail("the product inference probe could not be loaded");
-  return payloadFactory(model);
+async function probePayload(model: string): Promise<Record<string, unknown>> {
+  const { getChatCompletionsProbePayload } = await import(
+    "../../../src/lib/inference/openai-probe-models"
+  );
+  return getChatCompletionsProbePayload(model);
+}
+
+interface AuthorizedChatModelOptions {
+  apiKey?: string;
+  currentModel?: string;
+  endpoint?: string;
+  fetchImpl?: typeof fetch;
+  maxCandidates?: number;
 }
 
 export async function selectAuthorizedChatModel({
@@ -59,9 +71,10 @@ export async function selectAuthorizedChatModel({
   endpoint,
   fetchImpl = fetch,
   maxCandidates = MAX_CANDIDATES,
-}) {
+}: AuthorizedChatModelOptions): Promise<string> {
   if (!apiKey) fail("COMPATIBLE_API_KEY is required");
   if (!currentModel) fail("the current model is required");
+  if (!endpoint) fail("the endpoint is required");
   if (!Number.isInteger(maxCandidates) || maxCandidates < 1 || maxCandidates > MAX_CANDIDATES) {
     fail(`maxCandidates must be an integer from 1 to ${MAX_CANDIDATES}`);
   }
@@ -133,7 +146,7 @@ export async function selectAuthorizedChatModel({
 
 async function main() {
   const args = process.argv.slice(2);
-  const value = (name) => {
+  const value = (name: string): string | undefined => {
     const index = args.indexOf(name);
     return index >= 0 ? args[index + 1] : undefined;
   };
