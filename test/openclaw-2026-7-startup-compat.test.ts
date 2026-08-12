@@ -147,11 +147,29 @@ describe("OpenClaw 2026.7 startup compatibility", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-home-"));
     temporaryRoots.push(root);
     const observedHome = path.join(root, "observed-home");
+    const observedStepDown = path.join(root, "observed-step-down");
+    const observedUmask = path.join(root, "observed-umask");
     const gatewayLog = path.join(root, "gateway.log");
     const gateway = path.join(root, "openclaw-fixture");
+    const stepDown = path.join(root, "step-down-fixture");
     fs.writeFileSync(
       gateway,
-      `#!/usr/bin/env bash\nprintf '%s\\n' "$HOME" >${JSON.stringify(observedHome)}\n`,
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$HOME" >${JSON.stringify(observedHome)}`,
+        `umask >${JSON.stringify(observedUmask)}`,
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    fs.writeFileSync(
+      stepDown,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `printf 'stepped-down\\n' >${JSON.stringify(observedStepDown)}`,
+        `chmod 600 ${JSON.stringify(gatewayLog)}`,
+        'exec "$@"',
+      ].join("\n"),
       { mode: 0o700 },
     );
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
@@ -166,7 +184,7 @@ describe("OpenClaw 2026.7 startup compatibility", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "export HOME=/root",
-        "STEP_DOWN_PREFIX_GATEWAY=(env)",
+        `STEP_DOWN_PREFIX_GATEWAY=(${JSON.stringify(stepDown)})`,
         `OPENCLAW=${JSON.stringify(gateway)}`,
         "_DASHBOARD_PORT=18789",
         "arm_openclaw_gateway_supervisor_cleanup() { :; }",
@@ -174,6 +192,9 @@ describe("OpenClaw 2026.7 startup compatibility", () => {
         "capture_openclaw_pid_start_identity() { printf -v \"$2\" '%s' test-identity; }",
         "record_gateway_pid() { :; }",
         safeTmpHelpers(source),
+        // Model the root-created gateway-owned log as unavailable to the
+        // launcher until the privilege-transition fixture runs.
+        '_nemoclaw_safe_create_tmp_file() { : >"$1"; chmod 000 "$1"; }',
         extractShellFunction(source, "launch_openclaw_gateway_process").replaceAll(
           "/tmp/gateway.log",
           gatewayLog,
@@ -189,5 +210,7 @@ describe("OpenClaw 2026.7 startup compatibility", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(fs.readFileSync(observedHome, "utf-8").trim()).toBe("/sandbox");
+    expect(fs.readFileSync(observedStepDown, "utf-8").trim()).toBe("stepped-down");
+    expect(fs.readFileSync(observedUmask, "utf-8").trim()).toBe("0007");
   });
 });

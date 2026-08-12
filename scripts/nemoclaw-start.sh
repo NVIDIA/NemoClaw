@@ -5169,13 +5169,28 @@ arm_openclaw_gateway_supervisor_cleanup() {
 
 launch_openclaw_gateway_process() {
   local log_mode="$1"
-  shift
+  local launch_identity="$2"
+  local -a gateway_launch_prefix=()
+  shift 2
+  case "$launch_identity" in
+    current) ;;
+    gateway)
+      gateway_launch_prefix=(
+        "${STEP_DOWN_PREFIX_GATEWAY[@]}" env HOME=/sandbox sh -c
+        'umask 0007; exec "$@"' sh
+      )
+      ;;
+    *)
+      echo "[gateway] invalid gateway launch identity: $launch_identity" >&2
+      return 1
+      ;;
+  esac
   case "$log_mode" in
     append) ;;
     truncate)
       # Replace the predictable log path immediately before the initial launch.
       # The descriptor-safe launcher below then pins that exact regular file.
-      if [ "$(id -u)" -eq 0 ]; then
+      if [ "$launch_identity" = gateway ] && [ "$(id -u)" -eq 0 ]; then
         _nemoclaw_safe_create_tmp_file /tmp/gateway.log 644 gateway:gateway || return 1
       else
         _nemoclaw_safe_create_tmp_file /tmp/gateway.log 644 || return 1
@@ -5188,6 +5203,7 @@ launch_openclaw_gateway_process() {
   esac
 
   nohup /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN \
+    "${gateway_launch_prefix[@]+"${gateway_launch_prefix[@]}"}" \
     python3 -I - "$log_mode" "$@" <<'PYGATEWAYLAUNCH' &
 import os
 import stat
@@ -5262,9 +5278,7 @@ launch_openclaw_gateway() {
   # script -- keeps it in place.
   arm_openclaw_gateway_supervisor_cleanup
   mark_in_container_gateway
-  launch_openclaw_gateway_process truncate \
-    "${STEP_DOWN_PREFIX_GATEWAY[@]}" env HOME=/sandbox sh -c \
-    'umask 0007; exec "$@"' sh \
+  launch_openclaw_gateway_process truncate gateway \
     "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" || return 1
   if ! capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY; then
     # An uncaptured numeric PID is never safe to signal: Bash may already have
@@ -5285,7 +5299,7 @@ launch_openclaw_gateway() {
 launch_openclaw_gateway_non_root() {
   arm_openclaw_gateway_supervisor_cleanup
   mark_in_container_gateway
-  launch_openclaw_gateway_process truncate \
+  launch_openclaw_gateway_process truncate current \
     "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" || return 1
   capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY || exit 1
   record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
@@ -5952,7 +5966,7 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[gateway] pid $EXITED_GATEWAY_PID exited (rc=$RC); respawning (#$RESPAWN_COUNT in 60s window) in 2s" >&2
     sleep 2
     prepare_openclaw_automatic_respawn || exit 1
-    launch_openclaw_gateway_process append \
+    launch_openclaw_gateway_process append current \
       "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}"
     capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY || exit 1
     record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"

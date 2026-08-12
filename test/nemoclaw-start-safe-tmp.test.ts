@@ -68,7 +68,7 @@ describe("nemoclaw-start safe tmp file creation", () => {
         safeTmpHelpers(src),
         launch,
         "export OPENCLAW_GATEWAY_TOKEN=gateway-secret",
-        `launch_openclaw_gateway_process truncate printf '%s\\n' 'gateway started'`,
+        `launch_openclaw_gateway_process truncate current printf '%s\\n' 'gateway started'`,
         'wait "$GATEWAY_PID"',
       ].join("\n");
       const result = spawnSync("bash", ["-c", script], {
@@ -105,7 +105,7 @@ describe("nemoclaw-start safe tmp file creation", () => {
         "set -uo pipefail",
         "_nemoclaw_safe_create_tmp_file() { return 1; }",
         processLaunch,
-        `if launch_openclaw_gateway_process truncate sh -c 'printf launched > ${JSON.stringify(launchSentinel)}'; then wait "$GATEWAY_PID"; exit 30; fi`,
+        `if launch_openclaw_gateway_process truncate current sh -c 'printf launched > ${JSON.stringify(launchSentinel)}'; then wait "$GATEWAY_PID"; exit 30; fi`,
         '[ -z "${GATEWAY_PID:-}" ] || exit 31',
         `[ ! -e ${JSON.stringify(launchSentinel)} ] || exit 32`,
         "launch_openclaw_gateway_process() { return 1; }",
@@ -150,7 +150,7 @@ describe("nemoclaw-start safe tmp file creation", () => {
         "set -uo pipefail",
         launch,
         "export OPENCLAW_GATEWAY_TOKEN=gateway-secret",
-        "launch_openclaw_gateway_process append true",
+        "launch_openclaw_gateway_process append current true",
         'wait "$GATEWAY_PID"',
       ].join("\n");
       const result = spawnSync("bash", ["-c", script], {

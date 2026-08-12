@@ -32,7 +32,7 @@ describe("OpenClaw gateway credential environment", () => {
       safeTmpHelpers(source),
       launch,
       "export OPENCLAW_GATEWAY_TOKEN=gateway-secret",
-      `launch_openclaw_gateway_process ${logMode} sh -c 'printf "ENV=%s\\nARGS=%s\\n" "\${OPENCLAW_GATEWAY_TOKEN-unset}" "$*"' sh`,
+      `launch_openclaw_gateway_process ${logMode} current sh -c 'printf "ENV=%s\\nARGS=%s\\n" "\${OPENCLAW_GATEWAY_TOKEN-unset}" "$*"' sh`,
       'wait "$GATEWAY_PID"',
     ].join("\n");
 
@@ -71,7 +71,7 @@ describe("OpenClaw gateway credential environment", () => {
         safeTmpHelpers(source),
         launch,
         "export OPENCLAW_GATEWAY_TOKEN=gateway-secret",
-        `launch_openclaw_gateway_process ${logMode} node -e 'setTimeout(() => {}, 30000)' nemoclaw-proc-credential-probe`,
+        `launch_openclaw_gateway_process ${logMode} current node -e 'setTimeout(() => {}, 30000)' nemoclaw-proc-credential-probe`,
         'trap \'kill "$GATEWAY_PID" 2>/dev/null || true; wait "$GATEWAY_PID" 2>/dev/null || true\' EXIT',
         "ready=0",
         "for _ in $(seq 1 100); do",
@@ -111,7 +111,7 @@ describe("OpenClaw gateway credential environment", () => {
     ).replaceAll("/tmp/gateway.log", gatewayLog);
     const result = spawnSync(
       "bash",
-      ["-c", [launch, "launch_openclaw_gateway_process invalid true"].join("\n")],
+      ["-c", [launch, "launch_openclaw_gateway_process invalid current true"].join("\n")],
       { encoding: "utf8", timeout: 5000 },
     );
 
