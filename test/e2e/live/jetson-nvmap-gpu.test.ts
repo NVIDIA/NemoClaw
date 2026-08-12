@@ -10,6 +10,7 @@ import {
 } from "../fixtures/cleanup-resources.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
+import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -80,6 +81,7 @@ test("Jetson onboarding completes with the CPU-only fallback (#7610)", {
       "confirm nvmap and NVIDIA Docker runtime",
       "install NemoClaw with the CPU-only fallback",
       "confirm CPU-only sandbox status",
+      "confirm /dev/nvmap is absent from the CPU-only sandbox",
     ],
   },
 }, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
@@ -176,7 +178,11 @@ fi`,
   await cleanupJetsonSandbox(host);
 
   progress.phase("confirm nvmap and NVIDIA Docker runtime");
-  const hostNvmap = await hostShell(host, "ls -l /dev/nvmap", "phase-0-host-nvmap");
+  const hostNvmap = await hostShell(
+    host,
+    "test -c /dev/nvmap && ls -l /dev/nvmap",
+    "phase-0-host-nvmap",
+  );
   expect(hostNvmap.exitCode, resultText(hostNvmap)).toBe(0);
   expect(hostNvmap.stdout).toContain("/dev/nvmap");
 
@@ -254,4 +260,24 @@ done`,
   expect(status.exitCode, resultText(status)).toBe(0);
   expect(resultText(status)).toContain("Sandbox GPU: disabled");
   expect(resultText(status)).not.toMatch(/CUDA verified|last CUDA proof failed|CUDA unverified/u);
+  expect(resultText(status)).not.toContain("/dev/nvmap");
+  expect(resultText(status)).not.toContain("/opt/nvidia");
+
+  progress.phase("confirm /dev/nvmap is absent from the CPU-only sandbox");
+  const sandboxNvmap = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(String.raw`if [ -e /dev/nvmap ] || [ -L /dev/nvmap ]; then
+  echo "CPU-only sandbox unexpectedly exposes /dev/nvmap" >&2
+  ls -ld /dev/nvmap >&2
+  exit 1
+fi
+printf 'absent:/dev/nvmap\n'`),
+    {
+      artifactName: "phase-5-sandbox-nvmap-absent",
+      env: env(),
+      timeoutMs: 60_000,
+    },
+  );
+  expect(sandboxNvmap.exitCode, resultText(sandboxNvmap)).toBe(0);
+  expect(sandboxNvmap.stdout.trim()).toBe("absent:/dev/nvmap");
 });

@@ -136,9 +136,15 @@ archive.
 
 ## Live Target
 
-`test/e2e/live/jetson-nvmap-gpu.test.ts` runs the supported Jetson hardware
-proof against the candidate checkout. It verifies the Jetson hardware gate,
-Docker NVIDIA runtime, real noninteractive NemoClaw installation, job-local
-installed commands, sandbox access to `/dev/nvmap`, successful CUDA
-initialization, and the verified GPU status reported by NemoClaw. The test
-records phase evidence through the shared live E2E artifact fixtures.
+`test/e2e/live/jetson-nvmap-gpu.test.ts` runs a temporary CPU-only Jetson
+fallback while issue #7610 blocks CUDA qualification through OpenShell. It
+verifies the Jetson hardware gate, the host `/dev/nvmap` character device,
+Docker NVIDIA runtime, real noninteractive NemoClaw installation, and
+job-local installed commands. Onboarding sets `NEMOCLAW_SANDBOX_GPU=0`, so a
+successful run proves CPU-only onboarding rather than sandbox GPU access or
+CUDA initialization.
+
+The target also requires CPU-only status output that excludes `/dev/nvmap`
+and `/opt/nvidia`, then verifies from inside the sandbox that `/dev/nvmap` is
+absent, including as a symbolic link. The test records phase evidence through
+the shared live E2E artifact fixtures.
