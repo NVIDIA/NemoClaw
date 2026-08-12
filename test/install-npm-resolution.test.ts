@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
@@ -171,6 +171,27 @@ function runVerifyNemoclaw(
 }
 
 describe("installer npm resolution", () => {
+  it("keeps an existing user-local npm PATH stable when fixing permissions", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-npm-path-"));
+    const fakeBin = path.join(tmp, "bin");
+    const npmBin = path.join(tmp, ".npm-global", "bin");
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.mkdirSync(npmBin, { recursive: true });
+    writeExecutable(path.join(fakeBin, "uname"), "#!/usr/bin/env bash\nprintf 'Linux\\n'\n");
+    writeExecutable(
+      path.join(fakeBin, "npm"),
+      '#!/usr/bin/env bash\nif [[ "$*" == "config get prefix" ]]; then printf \'/System/nemoclaw\\n\'; fi\n',
+    );
+    const initialPath = [npmBin, fakeBin, TEST_SYSTEM_PATH].join(path.delimiter);
+    const result = runInstallerFunction('fix_npm_permissions; printf "%s\\n" "$PATH"', fakeBin, {
+      HOME: tmp,
+      PATH: initialPath,
+    });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout.trim().split("\n").at(-1)).toBe(initialPath);
+  });
+
   it("creates user-local shims for every packaged CLI alias during the default install path", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-package-shims-"));
     const fakeBin = path.join(tmp, "bin");
@@ -222,6 +243,68 @@ echo "${cliBin} v0.1.0"
         ),
       ).toContain(normalizeShellPathForAssert(path.join(prefixBin, cliBin)));
     }
+  });
+
+  it("keeps PATH stable only when the generated shim resolves its selected Node", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-stable-shim-path-"));
+    const fakeBin = path.join(tmp, "bin");
+    const prefix = path.join(tmp, "prefix");
+    const prefixBin = path.join(prefix, "bin");
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(prefixBin, { recursive: true });
+
+    writeExecutable(path.join(fakeBin, "node"), "#!/usr/bin/env bash\nexit 0\n");
+    writeExecutable(
+      path.join(fakeBin, "npm"),
+      `#!/usr/bin/env bash
+if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
+  echo "$ACTIVE_NPM_PREFIX"
+  exit 0
+fi
+exit 99
+`,
+    );
+    writeExecutable(
+      path.join(prefixBin, "nemoclaw"),
+      "#!/usr/bin/env bash\nprintf '%s\\n' \"$PATH\"\n",
+    );
+    const initialPath = [path.join(tmp, "first"), fakeBin, TEST_SYSTEM_PATH].join(path.delimiter);
+    const create = runInstallerFunction('_CLI_BIN=nemoclaw; ensure_cli_shim "nemoclaw"', fakeBin, {
+      ACTIVE_NPM_PREFIX: prefix,
+      HOME: tmp,
+      PATH: initialPath,
+    });
+    expect(create.status, `${create.stdout}${create.stderr}`).toBe(0);
+
+    const shimPath = path.join(tmp, ".local", "bin", "nemoclaw");
+    const existingNodePath = spawnSync(BASH_BIN, [shimPath], {
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmp, PATH: initialPath },
+    });
+    expect(existingNodePath.status, `${existingNodePath.stdout}${existingNodePath.stderr}`).toBe(0);
+    expect(existingNodePath.stdout.trim()).toBe(initialPath);
+
+    const shadowBin = path.join(tmp, "shadow-bin");
+    fs.mkdirSync(shadowBin);
+    writeExecutable(path.join(shadowBin, "node"), "#!/usr/bin/env bash\nexit 0\n");
+    const shadowedPath = `${shadowBin}${path.delimiter}${initialPath}`;
+    const repairedShadowedPath = spawnSync(BASH_BIN, [shimPath], {
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmp, PATH: shadowedPath },
+    });
+    expect(
+      repairedShadowedPath.status,
+      `${repairedShadowedPath.stdout}${repairedShadowedPath.stderr}`,
+    ).toBe(0);
+    expect(repairedShadowedPath.stdout.trim()).toBe(`${fakeBin}${path.delimiter}${shadowedPath}`);
+
+    const missingNodePath = TEST_SYSTEM_PATH;
+    const repairedNodePath = spawnSync(BASH_BIN, [shimPath], {
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmp, PATH: missingNodePath },
+    });
+    expect(repairedNodePath.status, `${repairedNodePath.stdout}${repairedNodePath.stderr}`).toBe(0);
+    expect(repairedNodePath.stdout.trim()).toBe(`${fakeBin}${path.delimiter}${missingNodePath}`);
   });
 
   it("prefers the active npm on PATH over a hostile nvm environment", () => {

@@ -9,7 +9,9 @@ import { buildLiveTargetMatrix, type LiveTargetMatrixEntry } from "../../test/e2
 import {
   type CredentialFreeTestMatrixRow,
   discoverCredentialFreeTests,
+  SHARED_E2E_JOB_ID,
 } from "./credential-free-tests.mts";
+import { JETSON_DISPATCH_TARGET } from "./jetson-dispatch-contract.mts";
 import { selectedRetiredControllerJobs } from "./retired-selector-compatibility.mts";
 import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import { readFreeStandingJobsInventory } from "./workflow-boundary.mts";
@@ -192,11 +194,32 @@ function emptyE2eWorkflowPlan(): E2eWorkflowPlan {
   };
 }
 
+export function releaseRequiredWorkflowJobs(): string[] {
+  const inventory = readFreeStandingJobsInventory();
+  const sharedTestsRun = discoverCredentialFreeTests().length > 0;
+  const liveTargetsRun = buildLiveTargetMatrix().length > 0;
+  return [...inventory.workflowJobs, ...(liveTargetsRun ? ["live"] : [])]
+    .filter((job) => !inventory.explicitOnlyJobs.includes(job))
+    .filter((job) => job !== SHARED_E2E_JOB_ID || sharedTestsRun)
+    .sort();
+}
+
 export function buildE2eWorkflowPlan(selectors: WorkflowPlanSelectors = {}): E2eWorkflowPlan {
   const jobs = selectorIds(selectors.jobs, "jobs");
   const targets = selectorIds(selectors.targets, "targets");
 
   const inventory = readFreeStandingJobsInventory();
+  const jetsonDispatchSelected =
+    (jobs.length === 1 && jobs[0] === JETSON_DISPATCH_TARGET && targets.length === 0) ||
+    (targets.length === 1 && targets[0] === JETSON_DISPATCH_TARGET && jobs.length === 0);
+  if (jetsonDispatchSelected) {
+    return {
+      matrix: [],
+      testMatrix: [],
+      hermesSelected: false,
+      explicitOnlyJobs: [...inventory.explicitOnlyJobs],
+    };
+  }
   const credentialFreeTests = discoverCredentialFreeTests();
 
   if (jobs.length > 0) {
@@ -306,6 +329,7 @@ export function writeE2eWorkflowPlanCiOutput(
       `test_matrix=${JSON.stringify(plan.testMatrix)}`,
       `hermes_selected=${plan.hermesSelected}`,
       `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
+      `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
       "",
     ].join("\n"),
   );

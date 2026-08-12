@@ -144,7 +144,7 @@ export interface PromptSandboxNameDeps {
   promptOrDefault(question: string, envVar: string, defaultValue: string): Promise<string>;
   cliDisplayName(): string;
   isNonInteractive(): boolean;
-  checkpointSandboxName(sandboxName: string, agent: AgentDefinition | null): void;
+  checkpointSandboxName(sandboxName: string, agent: AgentDefinition | null): Promise<void>;
   exit(code: number): never;
 }
 
@@ -198,7 +198,7 @@ export function createPromptValidatedSandboxName(deps: PromptSandboxNameDeps) {
         continue;
       }
 
-      deps.checkpointSandboxName(validatedSandboxName, agent);
+      await deps.checkpointSandboxName(validatedSandboxName, agent);
       return validatedSandboxName;
     }
 

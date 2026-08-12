@@ -14,6 +14,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { createServer } from "node:net";
 import os from "node:os";
 
 import {
@@ -329,6 +330,20 @@ export interface CreateSandboxDashboardPortResult {
   chatUiUrl: string;
 }
 
+export interface DashboardPortReservation {
+  port: number;
+  release(): Promise<void>;
+}
+
+export interface DashboardPortReservationScope {
+  current: DashboardPortReservation | null;
+  release(): Promise<void>;
+}
+
+export interface ReservedCreateSandboxDashboardPortResult extends CreateSandboxDashboardPortResult {
+  reservation: DashboardPortReservation | null;
+}
+
 function normalizeChatUiUrlForParsing(chatUiUrl: string): string {
   return chatUiUrl.includes("://") ? chatUiUrl : `http://${chatUiUrl}`;
 }
@@ -393,6 +408,121 @@ export function resolveCreateSandboxDashboardPort(
     effectivePort,
     chatUiUrl: buildCreateSandboxChatUiUrl(input.chatUiUrlEnv, input.controlUiPort, effectivePort),
   };
+}
+
+/**
+ * Bind the selected host port until sandbox creation can start its OpenShell
+ * forward. The server closes attempted connections and does not keep the
+ * process alive. The reservation closes on normal release or process exit.
+ */
+export async function reserveDashboardPort(port: number): Promise<DashboardPortReservation> {
+  const server = createServer((socket) => socket.destroy());
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => {
+      server.removeListener("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.removeListener("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen({ host: "127.0.0.1", port, exclusive: true });
+  });
+  server.unref();
+
+  let released = false;
+  const closeOnExit = () => {
+    if (server.listening) server.close();
+  };
+  process.once("exit", closeOnExit);
+
+  return {
+    port,
+    async release() {
+      if (released) return;
+      released = true;
+      process.removeListener("exit", closeOnExit);
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    },
+  };
+}
+
+function isAddressInUse(error: unknown): boolean {
+  return typeof error === "object" && error !== null && Reflect.get(error, "code") === "EADDRINUSE";
+}
+
+/**
+ * Select and bind a dashboard port before sandbox preparation begins. If a
+ * listener wins the gap between the allocation probe and bind, classify that
+ * port as occupied and select again before any sandbox side effect.
+ *
+ * A live forward owned by the target sandbox already holds its port while the
+ * caller decides whether to reuse or recreate that sandbox.
+ */
+export async function reserveCreateSandboxDashboardPort(
+  input: CreateSandboxDashboardPortInput,
+  reservePort: (port: number) => Promise<DashboardPortReservation> = reserveDashboardPort,
+): Promise<ReservedCreateSandboxDashboardPortResult> {
+  const occupied = new Map(
+    input.registryOccupiedPorts ?? getRegistryOccupiedDashboardPorts(input.sandboxName),
+  );
+  const forwardOwner = getOccupiedPorts(input.forwardListOutput);
+  while (true) {
+    const result = resolveCreateSandboxDashboardPort({
+      ...input,
+      registryOccupiedPorts: occupied,
+      warn: undefined,
+    });
+    if (forwardOwner.get(String(result.effectivePort)) === input.sandboxName) {
+      if (result.effectivePort !== result.preferredPort) {
+        input.warn?.(
+          `  ! Port ${result.preferredPort} is taken. Using port ${result.effectivePort} instead.`,
+        );
+      }
+      return { ...result, reservation: null };
+    }
+    try {
+      const reservation = await reservePort(result.effectivePort);
+      if (result.effectivePort !== result.preferredPort) {
+        input.warn?.(
+          `  ! Port ${result.preferredPort} is taken. Using port ${result.effectivePort} instead.`,
+        );
+      }
+      return { ...result, reservation };
+    } catch (error) {
+      if (!isAddressInUse(error)) throw error;
+      occupied.set(String(result.effectivePort), "non-OpenShell host listener");
+    }
+  }
+}
+
+/** Release a dashboard reservation after both successful and failed creation. */
+export async function withDashboardPortReservationScope<T>(
+  operation: (scope: DashboardPortReservationScope) => Promise<T>,
+): Promise<T> {
+  const scope: DashboardPortReservationScope = {
+    current: null,
+    async release() {
+      const reservation = this.current;
+      this.current = null;
+      await reservation?.release();
+    },
+  };
+  try {
+    return await operation(scope);
+  } finally {
+    await scope.release();
+  }
 }
 
 /**

@@ -97,7 +97,11 @@ vi.mock("../../shields", () => ({
 vi.mock("../../shields/timer-bound-lock", () => ({
   withTimerBoundShieldsMutationLock: vi.fn((_sandbox, _command, fn) => fn()),
 }));
-vi.mock("../../shields/timer-control", () => ({ readTimerMarker: vi.fn(() => null) }));
+vi.mock("../../shields/timer-control", () => ({
+  isProcessAlive: vi.fn(() => true),
+  readProcessStartIdentity: vi.fn(() => "snapshot-test-process-start"),
+  readTimerMarker: vi.fn(() => null),
+}));
 vi.mock("../../state/gateway", () => ({
   isGatewayHealthy: vi.fn(() => true),
   isSandboxReady: vi.fn((output: string, sandboxName: string) =>

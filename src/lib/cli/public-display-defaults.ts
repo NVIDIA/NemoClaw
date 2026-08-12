@@ -202,7 +202,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       order: 25,
       usage: "nemoclaw <name> channels status",
       description: "Messaging channel status",
-      flags: "[--channel <channel>] [--json]",
+      flags: "[--channel <channel>] [--wait] [--timeout <seconds>] [--json]",
     },
   ],
   ...SANDBOX_MCP_DISPLAY_LAYOUT,
