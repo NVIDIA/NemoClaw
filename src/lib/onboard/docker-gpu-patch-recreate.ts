@@ -18,6 +18,7 @@ import {
   buildDockerGpuCloneRunOptions,
   dockerContainerName,
   getDockerGpuCloneFallbackDns,
+  JETSON_DEVICE_GROUP_BOOTSTRAP,
   parseDockerInspectJson,
   sameContainerId,
   validateRequiredDockerUlimits,
@@ -159,6 +160,7 @@ export function recreateOpenShellDockerSandboxContainer(
     requiredUlimits?: readonly import("./docker-gpu-patch-types").DockerUlimit[] | null;
     expectedOldContainerId?: string | null;
     backend?: "generic" | "jetson";
+    preserveJetsonDeviceGroupMembership?: boolean;
     dockerDesktopWsl?: boolean;
     modeOverride?: DockerGpuPatchMode;
   },
@@ -262,15 +264,43 @@ export function recreateOpenShellDockerSandboxContainer(
         );
       }
     }
-    if (selection.mode.kind !== "startup-command" && options.backend === "jetson") {
+    const shouldDetectJetsonGroups =
+      options.backend === "jetson" &&
+      (selection.mode.kind !== "startup-command" ||
+        options.preserveJetsonDeviceGroupMembership === true);
+    if (shouldDetectJetsonGroups) {
       const tegraGroupGids = d.detectTegraDeviceGroupGids();
       if (tegraGroupGids.length > 0) {
         cloneOptions.extraGroupGids = tegraGroupGids;
-        console.log(
-          `  ✓ Granting sandbox user the detected Jetson GPU device groups via --group-add ${tegraGroupGids.join(
-            ", ",
-          )} (so CUDA can initialize as a non-root user)`,
-        );
+        if (options.preserveJetsonDeviceGroupMembership === true) {
+          const wrapperProbe = d.dockerRun(
+            [
+              "exec",
+              "--user",
+              "0",
+              oldContainerId,
+              "/usr/bin/test",
+              "-x",
+              JETSON_DEVICE_GROUP_BOOTSTRAP,
+            ],
+            { ignoreError: true, suppressOutput: true, timeout: DOCKER_GPU_PATCH_TIMEOUT_MS },
+          );
+          if (!hasZeroDockerExitStatus(wrapperProbe)) {
+            throw new Error(
+              `OpenClaw sandbox image is missing executable ${JETSON_DEVICE_GROUP_BOOTSTRAP}.`,
+            );
+          }
+          cloneOptions.preserveJetsonDeviceGroupMembership = true;
+          console.log(
+            `  ✓ Preserving the detected Jetson GPU device groups through OpenShell startup: ${tegraGroupGids.join(", ")}`,
+          );
+        } else {
+          console.log(
+            `  ✓ Granting sandbox user the detected Jetson GPU device groups via --group-add ${tegraGroupGids.join(
+              ", ",
+            )} (so CUDA can initialize as a non-root user)`,
+          );
+        }
       } else {
         console.warn(
           "  ⚠ Could not resolve the group owning Jetson Tegra GPU device nodes (/dev/nvmap); CUDA may fail with NvRmMemInitNvmap permission denied. Confirm /dev/nvmap exists and is group-readable on the host.",

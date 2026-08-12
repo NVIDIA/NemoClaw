@@ -152,6 +152,7 @@ function originalInspect(inputs = agentInputs()): DockerContainerInspect {
       NetworkMode: "openshell",
       RestartPolicy: { Name: "unless-stopped" },
       CapDrop: ["NET_RAW"],
+      GroupAdd: [],
       SecurityOpt: ["no-new-privileges"],
       Ulimits: [{ Name: "nofile", Soft: 65_536, Hard: 65_536 }],
     },
@@ -363,6 +364,9 @@ export function fixture(options: DockerFixtureOptions = {}) {
           const env = dockerOptions.flatMap((value, index) =>
             value === "--env" ? [String(args[index + 1] ?? "")] : [],
           );
+          const groupAdd = dockerOptions.flatMap((value, index) =>
+            value === "--group-add" ? [String(args[index + 1] ?? "")] : [],
+          );
           const ulimits = parseFixtureDockerUlimits(args, imageIndex);
           replacement = {
             ...structuredClone(source),
@@ -377,6 +381,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
             },
             HostConfig: {
               ...structuredClone(source.HostConfig),
+              ...(groupAdd.length > 0 ? { GroupAdd: groupAdd } : {}),
               Ulimits: ulimits,
             },
             State: { Running: false, Paused: false, Restarting: false, Dead: false },

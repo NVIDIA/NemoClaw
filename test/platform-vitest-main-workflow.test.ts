@@ -207,7 +207,7 @@ describe("platform Vitest main workflow", () => {
     const stepNames = job("wsl-vitest").steps?.map((entry) => entry.name) ?? [];
     const checkout = step("wsl-vitest", "Check out candidate source");
     const install = step("wsl-vitest", "Install Ubuntu dependencies").run ?? "";
-    const fullSuite = step("wsl-vitest", "Run full Vitest suite in WSL").run ?? "";
+    const fullSuite = step("wsl-vitest", "Run Vitest suite in WSL").run ?? "";
     const rootSuite = step("wsl-vitest", "Run root-required Vitest contracts in WSL").run ?? "";
 
     expect(job("wsl-vitest")["timeout-minutes"]).toBe(90);
@@ -220,7 +220,7 @@ describe("platform Vitest main workflow", () => {
       "persist-credentials": false,
     });
     expect(stepNames.indexOf("Install Ubuntu dependencies")).toBeLessThan(
-      stepNames.indexOf("Run full Vitest suite in WSL"),
+      stepNames.indexOf("Run Vitest suite in WSL"),
     );
     expect(install).toContain("Install-WslUbuntuDependencies");
     expect(install).toContain("'python3-venv'");
@@ -231,6 +231,7 @@ describe("platform Vitest main workflow", () => {
     expect(fullSuite).toContain("NEMOCLAW_EXEC_TIMEOUT=60000");
     expect(fullSuite).toContain("NEMOCLAW_TEST_TIMEOUT=60000");
     expect(fullSuite).toContain("--shard='${{ matrix.shard }}/4'");
+    expect(fullSuite).toContain("--exclude test/jetson-device-group-bootstrap.test.ts");
     expect(fullSuite).not.toMatch(/\bsudo\b|sudoers|NOPASSWD/u);
     expect(rootSuite).toContain("-User root");
     expect(step("wsl-vitest", "Run root-required Vitest contracts in WSL").if).toBe(

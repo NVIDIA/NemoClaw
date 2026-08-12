@@ -85,6 +85,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     const nestedPluginFile = path.join(nestedPluginDir, "helper.js");
     const gatewayControlPath = path.join(localBin, "nemoclaw-gateway-control");
     const gatewaySupervisorPath = path.join(localLib, "gateway-supervisor.sh");
+    const jetsonDeviceGroupBootstrapPath = path.join(localLib, "jetson-device-group-bootstrap.sh");
     const stateDirGuardPath = path.join(localLib, "state-dir-guard.py");
     const stateLockPlanPath = path.join(localShare, "state-lock-plan.json");
     const configGuardPath = path.join(localLib, "openclaw-config-guard.py");
@@ -99,6 +100,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "sandbox-rlimits.sh"),
       gatewaySupervisorPath,
+      jetsonDeviceGroupBootstrapPath,
       stateDirGuardPath,
       stateLockPlanPath,
       configGuardPath,
@@ -161,6 +163,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       expect((fs.statSync(nestedPluginFile).mode & 0o777).toString(8)).toBe("644");
       expect((fs.statSync(gatewayControlPath).mode & 0o777).toString(8)).toBe("700");
       expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
+      expect((fs.statSync(jetsonDeviceGroupBootstrapPath).mode & 0o777).toString(8)).toBe("500");
       expect((fs.statSync(stateDirGuardPath).mode & 0o777).toString(8)).toBe("500");
       expect((fs.statSync(stateLockPlanPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(configGuardPath).mode & 0o777).toString(8)).toBe("500");

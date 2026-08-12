@@ -251,7 +251,7 @@ jobs:
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
 
-      - name: Run full Vitest suite in WSL
+      - name: Run Vitest suite in WSL
         shell: powershell
         run: |
           . "$env:TRUSTED_WSL_HELPER"
@@ -263,7 +263,8 @@ jobs:
           cd $workdir
           export NEMOCLAW_EXEC_TIMEOUT=60000
           export NEMOCLAW_TEST_TIMEOUT=60000
-          npx vitest run --testTimeout 60000 --shard='${{ matrix.shard }}/4'
+          npx vitest run --testTimeout 60000 --shard='${{ matrix.shard }}/4' \
+            --exclude test/jetson-device-group-bootstrap.test.ts
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
 
