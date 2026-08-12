@@ -227,7 +227,13 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     });
   }
 
+  function bindPreparation<Agent>(prepareCredentialProviders: PrepareCredentialProviders<Agent>) {
+    return (input: StageSandboxCredentialProvidersInput<Agent>) =>
+      stageSandboxCredentialProviders(input, prepareCredentialProviders);
+  }
+
   return {
+    bindPreparation,
     providerMatchesGatewayCredential,
     stageSandboxCredentialProviders,
     upsertMessagingProviders,

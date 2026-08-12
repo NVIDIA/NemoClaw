@@ -963,20 +963,18 @@ const verifyDirectSandboxGpu = sandboxGpuPreflight.createDirectSandboxGpuVerifie
   redact,
 });
 
-const registeredCredentialProviders =
-  credentialProviderRegistration.createCredentialProviderRegistration({
-    root: ROOT,
-    runOpenshell,
-    redact,
-    getGatewayName: () => GATEWAY_NAME,
-    normalizeCredentialValue,
-    updateSession: onboardSession.updateSession,
-    stagedLegacyValues,
-    migratedLegacyKeys,
-    persistMigratedLegacyKeys,
-  });
-const { upsertMessagingProviders, providerMatchesGatewayCredential } =
-  registeredCredentialProviders;
+const credentialProviders = credentialProviderRegistration.createCredentialProviderRegistration({
+  root: ROOT,
+  runOpenshell,
+  redact,
+  getGatewayName: () => GATEWAY_NAME,
+  normalizeCredentialValue,
+  updateSession: onboardSession.updateSession,
+  stagedLegacyValues,
+  migratedLegacyKeys,
+  persistMigratedLegacyKeys,
+});
+const { upsertMessagingProviders, providerMatchesGatewayCredential } = credentialProviders;
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAME) => onboardProviders.providerExistsInGateway(name, setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, gatewayName));
 
@@ -3520,8 +3518,9 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
     }),
 });
 
-// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-const stageSandboxCredentialProviders = (input: import("./onboard/credential-provider-registration").StageSandboxCredentialProvidersInput<AgentDefinition | null>) => registeredCredentialProviders.stageSandboxCredentialProviders(input, sandboxCreateIntentResolver.prepareCredentialProviders);
+const stageSandboxCredentialProviders = credentialProviders.bindPreparation(
+  sandboxCreateIntentResolver.prepareCredentialProviders,
+);
 
 function getRecordedMessagingChannelsForResume(
   resume: boolean,
