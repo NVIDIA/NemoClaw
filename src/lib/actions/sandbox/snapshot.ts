@@ -361,6 +361,8 @@ async function autoCreateSandboxFromSource(
   srcName: string,
   dstName: string,
   srcEntry: SandboxEntry | { name: string },
+  sourceGatewayName: string,
+  sourceGatewayPort: number,
   fromImage: string,
   createPolicyPath: string,
   dstDashboardPort: number | null,
@@ -369,13 +371,6 @@ async function autoCreateSandboxFromSource(
   const openshellBin = getOpenshellBinary();
   const sourceObservabilityEnabled =
     (srcEntry as { observabilityEnabled?: boolean }).observabilityEnabled === true;
-  const sourceGatewayName = resolveSandboxGatewayName(
-    srcEntry as { gatewayName?: string | null; gatewayPort?: number | null },
-  );
-  const sourceGatewayPort = resolveGatewayPortFromName(sourceGatewayName);
-  if (sourceGatewayPort === null) {
-    throw new Error(`Cannot resolve gateway port for snapshot source '${srcName}'.`);
-  }
   const startupCommand = [
     "env",
     `NEMOCLAW_OBSERVABILITY=${sourceObservabilityEnabled ? "1" : "0"}`,
@@ -1288,6 +1283,13 @@ async function runSnapshotRestoreUnlocked(
         );
         snapshotExit(1);
       }
+      const lockedGatewayPort = resolveGatewayPortFromName(lockedGatewayName);
+      if (lockedGatewayPort === null) {
+        console.error(
+          `  Cannot resolve the gateway port for source sandbox '${sandboxName}' — aborting before changing '${targetSandbox}'.`,
+        );
+        snapshotExit(1);
+      }
       const compatibility = checkGatewayRouteCompatibility({
         gatewayName: sourceGatewayName,
         sandboxName: targetSandbox,
@@ -1320,6 +1322,8 @@ async function runSnapshotRestoreUnlocked(
           sandboxName,
           targetSandbox,
           lockedSourceEntry,
+          lockedGatewayName,
+          lockedGatewayPort,
           lockedFromImage,
           clonePolicy.policyPath,
           dstDashboardPort,
