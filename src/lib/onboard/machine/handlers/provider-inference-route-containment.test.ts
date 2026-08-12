@@ -148,6 +148,7 @@ function resumeOptions(
     fresh: false,
     session,
     gpu: null,
+    gpuPassthrough: false,
     sandboxName: "target-sandbox",
     agent: null,
     initial: {

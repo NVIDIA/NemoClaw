@@ -30,6 +30,8 @@ import type {
   createProviderRecoveryReceiptLedger,
   ProviderRecoveryReceipt,
 } from "../../rebuild-route-handoff";
+import type { HostLocalOllamaAccelerationAuthority } from "../../runtime-provider/host-local-inference";
+import { normalizeHostLocalOllamaModelRef } from "../../runtime-provider/host-local-inference";
 import {
   HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL,
   HOST_LOCAL_INFERENCE_APPLICATIONS,
@@ -111,6 +113,8 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   fresh: boolean;
   session: Session | null;
   gpu: Gpu;
+  /** Accepted sandbox GPU-passthrough choice for this flow, including resume. */
+  gpuPassthrough: boolean;
   sandboxName: string | null;
   agent: Agent;
   forceProviderSelection?: boolean;
@@ -334,6 +338,15 @@ function agentName(agent: unknown): string {
   return typeof name === "string" && name.length > 0 ? name : "openclaw";
 }
 
+function selectedHostLocalOllamaAcceleration(
+  gpu: unknown,
+  gpuPassthrough: boolean,
+): HostLocalOllamaAccelerationAuthority {
+  return gpuPassthrough && (gpu as { readonly type?: unknown } | null)?.type === "nvidia"
+    ? "nvidia-gpu"
+    : "cpu";
+}
+
 type HostLocalInferenceSetupOptions = {
   hostLocalInference?: HostLocalInferenceStartupSelection;
 };
@@ -361,6 +374,7 @@ function createCachedHostLocalInferenceSetupResolver(input: {
   application: string;
   provider: string;
   model: string;
+  acceleration: HostLocalOllamaAccelerationAuthority;
   requireToolCalling: boolean | null;
   allowPublishedResume: boolean;
   recover: boolean;
@@ -373,6 +387,7 @@ function createCachedHostLocalInferenceSetupResolver(input: {
       sandboxName,
       provider: input.provider,
       model: input.model,
+      acceleration: input.acceleration,
       requireToolCalling: input.requireToolCalling,
       allowPublishedResume: input.allowPublishedResume,
       recover: input.recover,
@@ -459,6 +474,7 @@ function hostLocalInferenceSetupOptions(
     sandboxName: string;
     provider: string;
     model: string;
+    acceleration: HostLocalOllamaAccelerationAuthority;
     requireToolCalling: boolean | null;
     allowPublishedResume: boolean;
     recover: boolean;
@@ -483,8 +499,18 @@ function hostLocalInferenceSetupOptions(
     }
     const providerInput =
       selected.request.service === "ollama" ? selected.request.endpoint : selected.request.managed;
+    const selectedModel =
+      selected.request.service === "ollama"
+        ? normalizeHostLocalOllamaModelRef(providerInput.model)
+        : providerInput.model;
+    const acceptedModel =
+      selected.request.service === "ollama"
+        ? normalizeHostLocalOllamaModelRef(input.model)
+        : input.model;
     if (
-      providerInput.model !== input.model ||
+      selectedModel !== acceptedModel ||
+      (selected.request.service === "ollama" &&
+        selected.request.endpoint.acceleration !== input.acceleration) ||
       (input.requireToolCalling !== null &&
         providerInput.requireToolCalling !== input.requireToolCalling)
     ) {
@@ -493,6 +519,11 @@ function hostLocalInferenceSetupOptions(
       );
     }
     if (selected.request.service !== "ollama") {
+      if (input.acceleration !== "nvidia-gpu") {
+        throw new Error(
+          "Managed host-local inference requires accepted NVIDIA GPU passthrough authority.",
+        );
+      }
       const hasPublishedResume = selected.request.resumeReceipt !== undefined;
       const hasInterruptedRecovery = selected.request.recover === true;
       if (
@@ -715,6 +746,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   fresh,
   session,
   gpu,
+  gpuPassthrough,
   sandboxName,
   agent,
   forceProviderSelection: initialForceProviderSelection = false,
@@ -1070,6 +1102,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         application: agentName(agent),
         provider: selectedProvider,
         model: selectedModel,
+        acceleration: selectedHostLocalOllamaAcceleration(gpu, gpuPassthrough),
         requireToolCalling: canonicalHostLocalResume ? null : !allowToolsIncompatible,
         allowPublishedResume: effectiveResume,
         recover: canonicalHostLocalResume,

@@ -236,6 +236,7 @@ export function baseOptions(
     fresh: false,
     session,
     gpu: { type: "nvidia" },
+    gpuPassthrough: true,
     sandboxName: null,
     agent: null,
     initial: {

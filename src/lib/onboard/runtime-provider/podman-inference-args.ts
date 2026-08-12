@@ -4,6 +4,7 @@
 import { isIPv4 } from "node:net";
 import path from "node:path";
 
+import type { HostLocalOllamaAccelerationAuthority } from "./host-local-inference";
 import { qualifyPodmanGpuAttachments } from "./podman-gpu";
 import {
   normalizePodmanInferenceAuthorityReceipt,
@@ -59,7 +60,7 @@ const OWNED_LABEL_VALUE = new Map<string, (value: string) => boolean>([
   ["ai.nvidia.nemoclaw.inference.probe.managed", (value) => value === "true"],
   [
     "ai.nvidia.nemoclaw.inference.probe.phase",
-    (value) => value === "ready" || value === "inference",
+    (value) => value === "ready" || value === "gpu" || value === "inference",
   ],
   ["ai.nvidia.nemoclaw.inference.probe.spec-sha256", (value) => SHA256.test(value)],
 ]);
@@ -347,7 +348,10 @@ function appendGpuDevices(
 export function translatePodmanLocalInferenceArgs(
   args: readonly string[],
   authority: PodmanInferenceAuthorityReceipt,
-  options: { readonly allowedPublishAddresses?: readonly string[] } = {},
+  options: {
+    readonly acceleration?: HostLocalOllamaAccelerationAuthority;
+    readonly allowedPublishAddresses?: readonly string[];
+  } = {},
 ): readonly string[] {
   if (!Array.isArray(args) || args.length > MAX_ARGUMENTS) {
     throw new Error("Podman local inference has too many command arguments.");
@@ -357,6 +361,7 @@ export function translatePodmanLocalInferenceArgs(
     throw new Error("Podman local inference translates only an explicit container run command.");
   }
   const qualified = normalizePodmanInferenceAuthorityReceipt(authority);
+  const acceleration = options.acceleration ?? "nvidia-gpu";
   const allowedPublishAddresses = new Set(["127.0.0.1"]);
   for (const address of options.allowedPublishAddresses ?? []) {
     if (!isIPv4(address) || address.startsWith("127.")) {
@@ -406,12 +411,18 @@ export function translatePodmanLocalInferenceArgs(
     }
     seenOptions.add(option.name);
     if (option.name === "--gpus") {
+      if (acceleration !== "nvidia-gpu") {
+        throw new Error("Podman local inference CPU authority forbids GPU attachment.");
+      }
       appendGpuDevices(
         translated,
         translatedGpuDevices(option.value, qualified.cdiDevices),
         requestedGpuDevices,
       );
     } else if (option.name === "--device") {
+      if (acceleration !== "nvidia-gpu") {
+        throw new Error("Podman local inference CPU authority forbids GPU attachment.");
+      }
       if (!option.value.startsWith("nvidia.com/gpu=")) {
         throw new Error(
           "Podman local inference refuses raw or unsupported device arguments; exact NVIDIA CDI is required.",

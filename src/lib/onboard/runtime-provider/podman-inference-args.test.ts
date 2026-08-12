@@ -46,6 +46,17 @@ function authority(devices: readonly string[] = CDI_DEVICES) {
 }
 
 describe("Podman local inference command translation", () => {
+  it.each([
+    ["Docker GPU selector", ["--gpus", "all"]],
+    ["NVIDIA CDI device", ["--device", "nvidia.com/gpu=all"]],
+  ] as const)("rejects %s under CPU operation authority even when NVIDIA CDI exists", (_label, gpuArgs) => {
+    expect(() =>
+      translatePodmanLocalInferenceArgs(["run", ...gpuArgs, IMAGE], authority(), {
+        acceleration: "cpu",
+      }),
+    ).toThrow("CPU authority forbids GPU attachment");
+  });
+
   it("translates the current NIM run shape to exact CDI", () => {
     expect(
       translatePodmanLocalInferenceArgs(

@@ -15,7 +15,9 @@ import type {
   HostLocalInferenceApplication,
   HostLocalInferenceStartupSelection,
 } from "../src/lib/onboard/runtime-provider/host-local-inference-routing.js";
+import { createPodmanHostLocalInferenceOperation } from "../src/lib/onboard/runtime-provider/podman-host-local-inference.js";
 import type { SetupInference, SetupInferenceDeps } from "../src/lib/onboard/setup-inference.js";
+import { createPodmanHostLocalInferenceTestHarness } from "./helpers/podman-host-local-inference-test-harness.js";
 import { createInMemoryRuntimeProviderBundle } from "./helpers/runtime-provider-bundle.js";
 import { createDirectSetupInferenceHarnessFactory } from "./support/setup-inference-test-harness.js";
 
@@ -78,7 +80,7 @@ function receipt(
     },
     inference: {
       protocol: "openai-chat-completions",
-      model: MODEL,
+      model: service === "ollama" ? `${MODEL}:latest` : MODEL,
       toolCallingRequired: true,
     },
     publication: {
@@ -88,7 +90,12 @@ function receipt(
     },
     runtime:
       service === "ollama"
-        ? { kind: "host", probeImageRef: PROBE_IMAGE }
+        ? {
+            kind: "host",
+            probeImageRef: PROBE_IMAGE,
+            acceleration: "nvidia-gpu",
+            modelDigest: `sha256:${"8".repeat(64)}`,
+          }
         : {
             kind: "container",
             runtimeId: `mxc-runtime:${service}`,
@@ -271,6 +278,7 @@ function fixture(
           application,
           service,
           endpoint: {
+            acceleration: "nvidia-gpu",
             model: MODEL,
             requireToolCalling: true,
             networkName: "mxc-runtime-network",
@@ -354,7 +362,6 @@ describe("onboard host-local inference routing", () => {
         updateSandbox: reserve,
       },
     });
-
     await expect(
       harness.setupInference(SANDBOX, MODEL, "ollama-local", null, null, null, [], {
         gatewayName: "nemoclaw",
@@ -368,6 +375,14 @@ describe("onboard host-local inference routing", () => {
       provider: "ollama-local",
       model: MODEL,
       providerBaseUrl: "http://host.openshell.internal:11434/v1",
+    });
+    expect(route.providerRuntime.qualifyOllama).toHaveBeenCalledWith(
+      expect.objectContaining({ acceleration: "nvidia-gpu", model: MODEL }),
+      writer,
+    );
+    expect(route.preparedStartups[0]?.receipt.runtime).toMatchObject({
+      kind: "host",
+      acceleration: "nvidia-gpu",
     });
     expect(harness.commands.map(({ command }) => command)).toEqual([
       "provider get -g nemoclaw ollama-local",
@@ -383,6 +398,7 @@ describe("onboard host-local inference routing", () => {
       "gateway-route-verify",
       "runtime-precommit-validation",
       "gateway-commit",
+      "runtime-precommit-validation",
       "sandbox-reserve",
       "runtime-commit",
     ]);
@@ -699,8 +715,8 @@ describe("onboard host-local inference routing", () => {
     ).rejects.toThrow("EXIT_CALLED:1");
 
     expect(route.events.slice(-4)).toEqual([
-      "runtime-precommit-validation",
       "gateway-commit",
+      "runtime-precommit-validation",
       "sandbox-reserve-refused",
       "redacted-evidence",
     ]);
@@ -731,8 +747,8 @@ describe("onboard host-local inference routing", () => {
     ).rejects.toThrow("EXIT_CALLED:1");
 
     expect(route.events.slice(-4)).toEqual([
-      "runtime-precommit-validation",
       "gateway-commit",
+      "runtime-precommit-validation",
       "sandbox-reserve-write-entered",
       "redacted-evidence",
     ]);
@@ -769,8 +785,8 @@ describe("onboard host-local inference routing", () => {
     ).rejects.toThrow("EXIT_CALLED:1");
 
     expect(route.events.slice(-5)).toEqual([
-      "runtime-precommit-validation",
       "gateway-commit",
+      "runtime-precommit-validation",
       "sandbox-reserve",
       "runtime-commit",
       "redacted-evidence",
@@ -797,6 +813,139 @@ describe("onboard host-local inference routing", () => {
     expect(failureEvidence[0]).toContain("route publication authority changed");
   });
 
+  it("re-proves provider-native Ollama placement after asynchronous gateway commit", async () => {
+    const provider = createPodmanHostLocalInferenceTestHarness();
+    const providerOperation = createPodmanHostLocalInferenceOperation({
+      engine: provider.engine,
+      env: provider.env,
+      authorityStore: provider.authorityStore,
+      routeAuthorityStore: provider.routeAuthorityStore,
+      onFailureEvidence: provider.onFailureEvidence,
+      redactSensitive: provider.redactSensitive,
+    });
+    const sourceRuntime = providerOperation.managedRuntime;
+    if (!sourceRuntime) throw new Error("test provider lacks host-local inference runtime");
+    const preparedStartups: Array<{
+      prepared: HostLocalInferencePreparedStartup;
+      commit: ReturnType<typeof vi.fn>;
+      rollback: ReturnType<typeof vi.fn>;
+    }> = [];
+    const capturedRuntime: HostLocalInferenceRuntime = {
+      ...sourceRuntime,
+      qualifyOllama: vi.fn((input, receiptWriter) => {
+        const source = sourceRuntime.qualifyOllama(input, receiptWriter);
+        const commit = vi.fn(() => source.commit());
+        const rollback = vi.fn(() => source.rollback());
+        const prepared = { ...source, commit, rollback };
+        preparedStartups.push({ prepared, commit, rollback });
+        return prepared;
+      }),
+    };
+    const capturedOperation: HostLocalInferenceOperation = {
+      ...providerOperation,
+      managedRuntime: capturedRuntime,
+    };
+    const inMemoryBundle = createInMemoryRuntimeProviderBundle({
+      providerId: "podman",
+      workloadProfile: {
+        support: {
+          exactDigestReferences: true,
+          platforms: ["linux/amd64"],
+          startupProfileContractVersions: [1],
+          capabilityContractVersions: [1],
+        },
+        hostArchitectures: ["x64"],
+        managedImageSelectionPolicy: "require-managed",
+        legacyDockerfileBuilds: false,
+      },
+      hostLocalInference: {
+        services: ["ollama"],
+        createOperation: () => capturedOperation,
+      },
+    });
+    const bundle = {
+      ...inMemoryBundle,
+      containerEngine: {
+        ...inMemoryBundle.containerEngine,
+        identities: inMemoryBundle.containerEngine.identities.map((identity) =>
+          identity.operation === "host-local-inference"
+            ? { operation: identity.operation, engineId: "podman", displayName: "Podman" }
+            : identity,
+        ),
+      },
+    };
+    const gatewayRollback = vi.fn();
+    const gatewayCommit = vi.fn(() => {
+      provider.state.ollamaPsModels = [
+        {
+          name: "nemotron:latest",
+          model: "nemotron:latest",
+          size: 8 * 1024 ** 3,
+          size_vram: 4 * 1024 ** 3,
+          digest: "7".repeat(64),
+        },
+      ];
+    });
+    const selection: HostLocalInferenceStartupSelection = {
+      runtimeProviderId: "podman",
+      request: {
+        application: "openclaw",
+        service: "ollama",
+        endpoint: {
+          acceleration: "nvidia-gpu",
+          model: "nemotron:latest",
+          requireToolCalling: true,
+          networkName: provider.input.networkName,
+          networkId: provider.input.networkId,
+          networkGatewayIp: provider.input.networkGatewayIp,
+          hostPort: 11434,
+          probeImageRef: provider.input.probeImageRef,
+        },
+        receiptWriter: provider.writer,
+      },
+      resolveRuntimeProvider: () => bundle,
+      prepareGatewayMutation: () => ({ commit: gatewayCommit, rollback: gatewayRollback }),
+    };
+    const reserve = vi.fn(() => true);
+    const redactedEvidence: string[] = [];
+    const harness = createHarness({
+      overrides: {
+        updateSandbox: reserve,
+        error: vi.fn((message: string) => redactedEvidence.push(message)),
+      },
+    });
+
+    const result = harness.setupInference(
+      SANDBOX,
+      "nemotron:latest",
+      "ollama-local",
+      null,
+      null,
+      null,
+      [],
+      { hostLocalInference: selection },
+    );
+    await expect(result).rejects.toThrow("EXIT_CALLED:1");
+
+    expect(gatewayCommit).toHaveBeenCalledOnce();
+    expect(gatewayRollback).toHaveBeenCalledOnce();
+    expect(provider.failures.at(-1)).toMatchObject({ phase: "gpu" });
+    expect(redactedEvidence).toHaveLength(1);
+    expect(redactedEvidence[0]).toContain("runtime provider 'podman'");
+    expect(redactedEvidence[0]).toContain("complete provider-native NVIDIA GPU offload");
+    expect(redactedEvidence.join("\n")).not.toContain("nvapi-1234567890abcdef");
+    expect(reserve).not.toHaveBeenCalled();
+    expect(preparedStartups).toHaveLength(1);
+    expect(preparedStartups[0]?.commit).not.toHaveBeenCalled();
+    expect(preparedStartups[0]?.rollback).toHaveBeenCalledOnce();
+    expect(preparedStartups[0]?.rollback).toHaveReturnedWith(
+      expect.objectContaining({ status: "retained", priorState: "host-process" }),
+    );
+    expect(preparedStartups[0]?.prepared.publicationState()).toBe("unpublished");
+    expect(provider.routeAuthorityStore.load("ollama")).toBeNull();
+    expect(provider.written).toHaveLength(0);
+  });
+
   it.each(
     APPLICATIONS,
   )("fails closed for %s at an indeterminate receipt boundary without destroying the durable route", async (application) => {
@@ -821,8 +970,8 @@ describe("onboard host-local inference routing", () => {
     ).rejects.toThrow("EXIT_CALLED:1");
 
     expect(route.events.slice(-5)).toEqual([
-      "runtime-precommit-validation",
       "gateway-commit",
+      "runtime-precommit-validation",
       "sandbox-reserve",
       "runtime-commit",
       "redacted-evidence",

@@ -48,6 +48,13 @@ export interface HostLocalInferenceEndpointInput {
   readonly requireToolCalling: boolean;
 }
 
+/** Exact provider-neutral compute authority for one host-owned Ollama model. */
+export type HostLocalOllamaAccelerationAuthority = "cpu" | "nvidia-gpu";
+
+export interface HostLocalOllamaInferenceInput extends HostLocalInferenceEndpointInput {
+  readonly acceleration: HostLocalOllamaAccelerationAuthority;
+}
+
 export interface HostLocalInferenceMount {
   readonly source: string;
   readonly target: string;
@@ -103,6 +110,10 @@ export type HostLocalInferenceRuntimeAuthority =
       readonly kind: "host";
       /** Immutable utility image used to prove endpoint reachability from the runtime network. */
       readonly probeImageRef: string;
+      /** Exact compute authority proved for the selected Ollama model. */
+      readonly acceleration: HostLocalOllamaAccelerationAuthority;
+      /** Immutable provider-native identity of the exact running Ollama model. */
+      readonly modelDigest: string;
     }
   | {
       readonly kind: "container";
@@ -265,6 +276,8 @@ export type HostLocalInferenceCommandSpawner = (
 
 export interface HostLocalInferenceOperationInput {
   readonly env: NodeJS.ProcessEnv;
+  /** Accepted request scope when constructing a managed local-inference operation. */
+  readonly acceleration?: HostLocalOllamaAccelerationAuthority;
 }
 
 /**
@@ -292,7 +305,7 @@ export interface HostLocalInferenceRuntime {
   readonly services: readonly HostLocalInferenceService[];
   translateContainerArgs(args: readonly string[]): readonly string[];
   qualifyOllama(
-    input: HostLocalInferenceEndpointInput,
+    input: HostLocalOllamaInferenceInput,
     writer: HostLocalInferenceReceiptWriter,
   ): HostLocalInferencePreparedStartup;
   startManaged(
@@ -388,6 +401,16 @@ export function normalizeHostLocalInferenceImageRef(value: unknown): string {
   return exactText(value, OCI_DIGEST_REFERENCE, "runtime image reference");
 }
 
+/** Canonicalize Ollama's implicit latest tag without treating registry ports as tags. */
+export function normalizeHostLocalOllamaModelRef(value: unknown): string {
+  const model = exactText(value, INFERENCE_MODEL, "Ollama model");
+  const lastSegment = model.slice(model.lastIndexOf("/") + 1);
+  // Digest references are not admitted by INFERENCE_MODEL. Keep this guard so
+  // a future grammar expansion cannot accidentally append a mutable tag.
+  if (model.includes("@") || lastSegment.includes(":")) return model;
+  return `${model}:latest`;
+}
+
 function exactIpv4(value: unknown, label: string): string {
   const address = exactText(value, /\S+/u, label);
   if (!isIPv4(address)) fail(`${label} is malformed`);
@@ -470,11 +493,20 @@ function normalizeRuntime(
 ): HostLocalInferenceRuntimeAuthority {
   const runtime = exactRecord(value, "runtime authority");
   if (runtime.kind === "host") {
-    exactKeys(runtime, ["kind", "probeImageRef"], "host runtime authority");
+    exactKeys(
+      runtime,
+      ["acceleration", "kind", "modelDigest", "probeImageRef"],
+      "host runtime authority",
+    );
     if (service !== "ollama") fail("only Ollama may use host-process authority");
+    if (runtime.acceleration !== "cpu" && runtime.acceleration !== "nvidia-gpu") {
+      fail("Ollama acceleration authority is malformed");
+    }
     return Object.freeze({
       kind: "host" as const,
       probeImageRef: normalizeHostLocalInferenceImageRef(runtime.probeImageRef),
+      acceleration: runtime.acceleration,
+      modelDigest: exactText(runtime.modelDigest, SHA256_DIGEST, "Ollama model digest"),
     });
   }
   if (runtime.kind !== "container") fail("runtime kind is unsupported");

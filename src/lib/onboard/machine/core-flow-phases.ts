@@ -146,6 +146,7 @@ export function createProviderInferenceOnboardFlowPhase<
       fresh: context.fresh,
       session: context.session,
       gpu: context.gpu,
+      gpuPassthrough: context.gpuPassthrough,
       sandboxName: context.sandboxName,
       agent: context.agent,
       forceProviderSelection: options.forceProviderSelection,

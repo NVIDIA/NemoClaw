@@ -89,6 +89,7 @@ function hostLocalStartupSelection(
             application: input.application,
             service,
             endpoint: {
+              acceleration: input.acceleration,
               model: input.model,
               requireToolCalling,
               networkName: "mxc-runtime-network",
@@ -171,6 +172,7 @@ describe("provider inference host-local startup selection", () => {
       sandboxName: "my-assistant",
       provider: "nvidia-prod",
       model: "nvidia/test",
+      acceleration: "nvidia-gpu",
       requireToolCalling: true,
       allowPublishedResume: false,
       recover: false,
@@ -194,6 +196,7 @@ describe("provider inference host-local startup selection", () => {
       ...baseSelection,
       provider,
       model,
+      acceleration: "nvidia-gpu",
       endpointUrl: null,
       credentialEnv: null,
       preferredInferenceApi: "openai-completions",
@@ -219,6 +222,7 @@ describe("provider inference host-local startup selection", () => {
       sandboxName: `${application}-sandbox`,
       provider,
       model,
+      acceleration: "nvidia-gpu",
       requireToolCalling: true,
       allowPublishedResume: false,
       recover: false,
@@ -230,6 +234,15 @@ describe("provider inference host-local startup selection", () => {
       }),
     );
     expect(setupCall[7]).not.toHaveProperty("preparedOllamaProxyToken");
+    if (service === "ollama") {
+      const hostLocalInference = (
+        setupCall[7] as { hostLocalInference: HostLocalInferenceStartupSelection }
+      ).hostLocalInference;
+      expect(hostLocalInference.request).toMatchObject({
+        service: "ollama",
+        endpoint: { acceleration: "nvidia-gpu", model },
+      });
+    }
     expect(calls.prepareLocalProviderForInference).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       endpointUrl: "https://inference.local/v1",
@@ -243,6 +256,124 @@ describe("provider inference host-local startup selection", () => {
         toolCallingRequired: true,
       },
     });
+  });
+
+  it("keeps fresh Ollama CPU-scoped when GPU passthrough was disabled on NVIDIA", async () => {
+    const model = "nemotron:latest";
+    const setupNim = vi.fn(async () => ({
+      ...baseSelection,
+      provider: "ollama-local",
+      model,
+      endpointUrl: null,
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+    }));
+    const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
+      hostLocalStartupSelection(input),
+    );
+    const { deps, calls } = createDeps({
+      setupNim,
+      resolveHostLocalInferenceStartupSelection: resolver,
+    });
+    const options = baseOptions(deps, createSession());
+
+    await handleProviderInferenceState({
+      ...options,
+      gpu: { type: "nvidia" },
+      gpuPassthrough: false,
+      sandboxName: "cpu-ollama",
+    });
+
+    expect(resolver).toHaveBeenCalledWith(
+      expect.objectContaining({ acceleration: "cpu", provider: "ollama-local", model }),
+    );
+    const setupCall = calls.setupInference.mock.calls[0] as unknown as readonly unknown[];
+    expect(
+      (setupCall[7] as { hostLocalInference: HostLocalInferenceStartupSelection })
+        .hostLocalInference.request,
+    ).toMatchObject({ service: "ollama", endpoint: { acceleration: "cpu" } });
+  });
+
+  it("keeps canonical Ollama resume CPU-scoped when GPU passthrough was disabled on NVIDIA", async () => {
+    const model = "nemotron:latest";
+    const session = createSession({
+      provider: "ollama-local",
+      model,
+      endpointUrl: "https://inference.local/v1",
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+    });
+    session.steps.provider_selection.status = "complete";
+    const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
+      hostLocalStartupSelection(input),
+    );
+    const { deps, calls } = createDeps({
+      isInferenceRouteReady: vi.fn(() => true),
+      resolveHostLocalInferenceStartupSelection: resolver,
+    });
+    const options = baseOptions(deps, session);
+
+    await handleProviderInferenceState({
+      ...options,
+      gpu: { type: "nvidia" },
+      gpuPassthrough: false,
+      initial: { ...options.initial, endpointSource: "inference-set" },
+      resume: true,
+      sandboxName: "cpu-ollama-resume",
+    });
+
+    expect(resolver).toHaveBeenCalledWith({
+      application: "openclaw",
+      sandboxName: "cpu-ollama-resume",
+      provider: "ollama-local",
+      model,
+      acceleration: "cpu",
+      requireToolCalling: null,
+      allowPublishedResume: true,
+      recover: true,
+    });
+    expect(calls.setupInference).toHaveBeenCalledOnce();
+    const setupCall = calls.setupInference.mock.calls[0] as unknown as readonly unknown[];
+    expect(
+      (setupCall[7] as { hostLocalInference: HostLocalInferenceStartupSelection })
+        .hostLocalInference.request,
+    ).toMatchObject({ service: "ollama", endpoint: { acceleration: "cpu" } });
+  });
+
+  it("rejects an Ollama resolver that enables GPU against accepted disabled authority", async () => {
+    const model = "nemotron:latest";
+    const setupNim = vi.fn(async () => ({
+      ...baseSelection,
+      provider: "ollama-local",
+      model,
+      endpointUrl: null,
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+    }));
+    const { deps, calls } = createDeps({
+      setupNim,
+      resolveHostLocalInferenceStartupSelection: (input) => {
+        const selected = hostLocalStartupSelection(input);
+        if (selected.request.service !== "ollama") throw new Error("expected Ollama selection");
+        return {
+          ...selected,
+          request: {
+            ...selected.request,
+            endpoint: { ...selected.request.endpoint, acceleration: "nvidia-gpu" },
+          },
+        };
+      },
+    });
+
+    await expect(
+      handleProviderInferenceState({
+        ...baseOptions(deps, createSession()),
+        gpu: { type: "nvidia" },
+        gpuPassthrough: false,
+        sandboxName: "gpu-ollama",
+      }),
+    ).rejects.toThrow("accepted model proof");
+    expect(calls.setupInference).not.toHaveBeenCalled();
   });
 
   it("carries a durable published receipt into managed runtime resume", async () => {
@@ -276,6 +407,7 @@ describe("provider inference host-local startup selection", () => {
       sandboxName: "my-assistant",
       provider: "vllm-local",
       model,
+      acceleration: "nvidia-gpu",
       requireToolCalling: null,
       allowPublishedResume: true,
       recover: true,
@@ -332,6 +464,7 @@ describe("provider inference host-local startup selection", () => {
       sandboxName: `${application}-sandbox`,
       provider: "vllm-local",
       model,
+      acceleration: "nvidia-gpu",
       requireToolCalling: true,
       allowPublishedResume: true,
       recover: false,
@@ -439,6 +572,7 @@ describe("provider inference host-local startup selection", () => {
       sandboxName: "my-assistant",
       provider: "vllm-local",
       model,
+      acceleration: "nvidia-gpu",
       requireToolCalling: true,
       allowPublishedResume: true,
       recover: false,
@@ -545,6 +679,7 @@ describe("provider inference host-local startup selection", () => {
       sandboxName: "my-assistant",
       provider: "ollama-local",
       model,
+      acceleration: "nvidia-gpu",
       requireToolCalling: null,
       allowPublishedResume: true,
       recover: true,
