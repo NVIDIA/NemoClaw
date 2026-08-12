@@ -650,7 +650,7 @@ describe("DGX Station Express resume (#7048)", () => {
   it("reports a non-directory NemoClaw state path before receipt cleanup (#8795)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-receipt-file-"));
     const statePath = path.join(home, ".nemoclaw");
-    fs.writeFileSync(statePath, "keep", { mode: 0o600 });
+    fs.writeFileSync(statePath, "keep", { mode: 0o755 });
 
     try {
       expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow(

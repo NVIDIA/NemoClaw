@@ -281,13 +281,14 @@ function assertStationExpressClearStatePathSafe(paths: StationExpressReceiptPath
     if (stat.isSymbolicLink()) {
       throw new Error(`Refusing symbolic link in DGX Station Express resume path: ${candidate}`);
     }
-    const isLegacyStateBase = candidate === paths.stateBase && (stat.mode & 0o7777) === 0o755;
+    const isLegacyStateBase =
+      candidate === paths.stateBase && stat.isDirectory() && (stat.mode & 0o7777) === 0o755;
     if (!isLegacyStateBase) {
       assertOwnerOnlyDirectory(candidate, stat);
       continue;
     }
     const uid = process.getuid?.();
-    if (!stat.isDirectory() || uid === undefined || stat.uid !== uid) {
+    if (uid === undefined || stat.uid !== uid) {
       throw new Error(
         `Refusing NemoClaw installer resume directory that is not owned by the current user: ${candidate}`,
       );
