@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -410,15 +410,15 @@ async function collectOnboardFailureDockerDiagnostics(
     );
     await Promise.allSettled(
       containerIds.map(async (containerId, index) => {
-        const logs = spawnSync("docker", ["logs", "--tail", "1000", containerId], {
-          encoding: "utf8",
+        const logs = await host.command("docker", ["logs", "--tail", "1000", containerId], {
+          captureLimitBytes: 2 * 1024 * 1024,
           env,
-          killSignal: "SIGKILL",
-          maxBuffer: 2 * 1024 * 1024,
-          timeout: 30_000,
+          persistArtifacts: false,
+          redactionValues: [API_KEY],
+          timeoutMs: 30_000,
         });
-        if (logs.status !== 0 || logs.error) return;
-        const output = `${logs.stdout ?? ""}\n${logs.stderr ?? ""}`;
+        if (logs.exitCode !== 0) return;
+        const output = `${logs.stdout}\n${logs.stderr}`;
         await artifacts.writeJson(
           `managed-activation-onboard-failure-${agent}-container-${index + 1}-startup-signals.json`,
           summarizeOnboardFailureStartupSignals(output),
