@@ -193,7 +193,7 @@ model_a="${model_a#openai:}"
 assert_identity "$identity_before" "$model_a" "initial"
 
 model_b="$(
-  node --experimental-strip-types --no-warnings "$MODEL_SELECTOR" \
+  npx --no-install tsx "$MODEL_SELECTOR" \
     --endpoint "$HOSTED_ENDPOINT" \
     --current-model "$model_a"
 )" || fail "could not select an authorized alternate chat model"

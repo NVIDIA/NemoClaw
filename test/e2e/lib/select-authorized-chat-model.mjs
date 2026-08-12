@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getChatCompletionsProbePayload } from "../../../src/lib/inference/openai-probe-models.ts";
-
 const CHAT_MODEL_HINT = /(?:claude|deepseek|gemma|gpt|kimi|llama|mistral|nemotron|phi|qwen)/iu;
 const NON_CHAT_MODEL_HINT =
   /(?:audio|clip|embed|guard|image|moderation|ocr|rerank|retrieval|reward|safety|speech|video)/iu;
@@ -44,6 +42,15 @@ async function parseJson(response, label) {
   } catch {
     fail(`${label} did not return JSON`);
   }
+}
+
+async function probePayload(model) {
+  const imported = await import("../../../src/lib/inference/openai-probe-models");
+  const defaultExport = imported.default;
+  const payloadFactory =
+    imported.getChatCompletionsProbePayload ?? defaultExport?.getChatCompletionsProbePayload;
+  if (!payloadFactory) fail("the product inference probe could not be loaded");
+  return payloadFactory(model);
 }
 
 export async function selectAuthorizedChatModel({
@@ -91,7 +98,7 @@ export async function selectAuthorizedChatModel({
       let response;
       try {
         response = await fetchImpl(new URL("chat/completions", baseUrl), {
-          body: JSON.stringify(getChatCompletionsProbePayload(model)),
+          body: JSON.stringify(await probePayload(model)),
           headers: { ...headers, "Content-Type": "application/json" },
           method: "POST",
           signal: AbortSignal.timeout(60_000),
