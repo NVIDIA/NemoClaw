@@ -3,6 +3,8 @@
 
 import type { GatewayReadinessProjection } from "../../readiness/gateway";
 import type { GatewayReuseState } from "../../state/gateway";
+import type { Session } from "../../state/onboard-session";
+import { getGatewayPortCheckOptions } from "../docker-driver-gateway-env";
 import * as fatalRuntimePreflight from "../fatal-runtime-preflight";
 import type { GatewayOwner } from "../gateway-ownership";
 import {
@@ -34,6 +36,79 @@ export interface PreparePreflightGatewayAuthorityDeps {
 export interface PreflightGatewayAuthority {
   externallySupervised: boolean;
   gatewayReuseState: GatewayReuseState;
+}
+
+export interface OnboardPreflightGatewayAuthorityDeps
+  extends Pick<OnboardGatewayReadinessCollectorDeps, "gatewayName" | "gatewayPort"> {
+  collectGatewayReadiness(
+    deps: OnboardGatewayReadinessCollectorDeps,
+  ): Promise<GatewayReadinessProjection>;
+  getGatewayOwnerDeps(): {
+    resolveGatewayOwner(): GatewayOwner;
+    probeGatewayAttachment: OnboardGatewayReadinessCollectorDeps["probeAttachment"];
+  };
+  isNonInteractive(): boolean;
+  ensureOpenshellForOnboard(
+    exitProcess: (code: number) => never,
+    persistTrustedGatewayOwner: (owner: GatewayOwner) => void,
+  ): void;
+  updateSession(mutator: (session: Session) => Session | void): Session;
+  adoptPackagedGatewayAuthorityAfterTrustedInstall(
+    session: Session,
+    owner: GatewayOwner,
+  ): GatewayOwner;
+  checkPortAvailable: GatewayPortConflictDeps["checkPortAvailable"];
+  isDockerDriverGatewayPortListener: GatewayPortConflictDeps["isDockerDriverGatewayPortListener"];
+  getGatewayReuseSnapshot(): GatewayReuseSnapshot;
+  selectNamedGatewayForReuseIfNeeded(snapshot: GatewayReuseSnapshot): GatewayReuseSnapshot;
+  refreshDockerDriverGatewayReuseState(state: GatewayReuseState): Promise<GatewayReuseState>;
+}
+
+export function createOnboardPreflightGatewayAuthority(deps: OnboardPreflightGatewayAuthorityDeps) {
+  const collectGatewayReadiness = () => {
+    const ownerDeps = deps.getGatewayOwnerDeps();
+    return deps.collectGatewayReadiness({
+      gatewayName: deps.gatewayName,
+      gatewayPort: deps.gatewayPort,
+      resolveOwner: ownerDeps.resolveGatewayOwner,
+      probeAttachment: ownerDeps.probeGatewayAttachment,
+    });
+  };
+  return {
+    collectGatewayReadiness,
+    runRuntimePreflight: (
+      options: Parameters<typeof fatalRuntimePreflight.runReadinessGatedRuntimePreflight>[0],
+      exitProcess?: NonNullable<
+        Parameters<typeof fatalRuntimePreflight.runReadinessGatedRuntimePreflight>[1]["exitProcess"]
+      >,
+    ) =>
+      fatalRuntimePreflight.runReadinessGatedRuntimePreflight(options, {
+        nonInteractive: deps.isNonInteractive(),
+        collectGatewayReadiness,
+        ...(exitProcess ? { exitProcess } : {}),
+      }),
+    prepareGatewayAuthority: () =>
+      preparePreflightGatewayAuthority({
+        collectGatewayReadiness,
+        ensureOpenshell: (persistTrustedGatewayOwner) =>
+          deps.ensureOpenshellForOnboard((code) => process.exit(code), persistTrustedGatewayOwner),
+        persistTrustedGatewayOwner: (owner) => {
+          deps.updateSession((session) => {
+            deps.adoptPackagedGatewayAuthorityAfterTrustedInstall(session, owner);
+          });
+        },
+        gatewayPort: deps.gatewayPort(),
+        portConflict: {
+          checkPortAvailable: deps.checkPortAvailable,
+          getGatewayPortCheckOptions,
+          isDockerDriverGatewayPortListener: deps.isDockerDriverGatewayPortListener,
+          exitProcess: (code) => process.exit(code),
+        },
+        getGatewayReuseSnapshot: deps.getGatewayReuseSnapshot,
+        selectNamedGatewayForReuseIfNeeded: deps.selectNamedGatewayForReuseIfNeeded,
+        refreshDockerDriverGatewayReuseState: deps.refreshDockerDriverGatewayReuseState,
+      }),
+  };
 }
 
 export function collectOnboardGatewayReadiness(

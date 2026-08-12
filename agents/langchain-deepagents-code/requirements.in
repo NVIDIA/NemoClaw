@@ -14,3 +14,5 @@ pillow==12.3.0
 mcp==1.28.1
 # Fix the transitive ASN.1 decoder resource-exhaustion advisories.
 pyasn1==0.6.4
+# Fix the transitive SQLite store namespace-prefix matching advisory.
+langgraph-checkpoint-sqlite==3.1.1
