@@ -225,7 +225,7 @@ export function runAgentNonJsonPassthrough(
   const stderr = nonJsonAsText(result.stderr);
 
   if (isSilentAgentDispatch(result, stdout, stderr)) {
-    writeSilentAgentDispatchFailure(proc, sandboxName);
+    writeSilentAgentDispatchFailure(proc, sandboxName, command);
     return proc.exit(SILENT_AGENT_DISPATCH_EXIT_CODE);
   }
 

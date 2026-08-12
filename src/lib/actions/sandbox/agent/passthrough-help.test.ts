@@ -51,31 +51,67 @@ describe("printAgentPassthroughHelp", () => {
 });
 
 describe("writeSilentAgentDispatchFailure", () => {
+  const turn = ["openclaw", "agent", "--agent", "main", "-m", "Say PONG"];
+
   it("names the sandbox and states that the turn was not delivered", () => {
     const { lines, proc } = collectStderr();
 
-    writeSilentAgentDispatchFailure(proc, "my-assistant");
+    writeSilentAgentDispatchFailure(proc, "my-assistant", turn);
 
     expect(lines.join("")).toContain(
       "The agent dispatch for sandbox 'my-assistant' exited 0 without producing any output, so the turn was not delivered.",
     );
   });
 
+  it("prints a directly runnable recovery command carrying the whole turn", () => {
+    const { lines, proc } = collectStderr();
+
+    writeSilentAgentDispatchFailure(proc, "my-assistant", turn);
+
+    expect(lines.join("")).toContain(
+      "nemoclaw 'my-assistant' exec -- 'openclaw' 'agent' '--agent' 'main' '-m' 'Say PONG'",
+    );
+  });
+
+  it("keeps the target selector in the recovery command so it does not exit on the selector guard", () => {
+    const { lines, proc } = collectStderr();
+
+    writeSilentAgentDispatchFailure(proc, "my-assistant", [
+      "openclaw",
+      "agent",
+      "--session-key",
+      "agent:main:main",
+      "-m",
+      "ping",
+    ]);
+
+    expect(lines.join("")).toContain("'--session-key' 'agent:main:main'");
+  });
+
+  it("shell-quotes a sandbox name and turn arguments that carry shell metacharacters", () => {
+    const { lines, proc } = collectStderr();
+
+    writeSilentAgentDispatchFailure(proc, "sb; rm -rf /", ["openclaw", "agent", "-m", "a'b $(x)"]);
+
+    expect(lines.join("")).toContain("'sb; rm -rf /'");
+    expect(lines.join("")).toContain(String.raw`'a'\''b $(x)'`);
+  });
+
   it("offers the documented recovery paths", () => {
     const { lines, proc } = collectStderr();
 
-    writeSilentAgentDispatchFailure(proc, "my-assistant");
+    writeSilentAgentDispatchFailure(proc, "my-assistant", turn);
 
     const written = lines.join("");
-    expect(written).toContain("exec -- openclaw agent");
-    expect(written).toContain("my-assistant status");
-    expect(written).toContain("my-assistant recover");
+    expect(written).toContain("exec -- 'openclaw' 'agent'");
+    expect(written).toContain("'my-assistant' status");
+    expect(written).toContain("'my-assistant' recover");
   });
 
   it("terminates every emitted line", () => {
     const { lines, proc } = collectStderr();
 
-    writeSilentAgentDispatchFailure(proc, "my-assistant");
+    writeSilentAgentDispatchFailure(proc, "my-assistant", turn);
 
     expect(lines.every((line) => line.endsWith("\n"))).toBe(true);
   });

@@ -96,7 +96,7 @@ export function runAgentJsonPassthrough(
   // Ahead of the stdout write so machine-readable stdout stays byte-empty and
   // no provenance line is appended for a turn that never ran.
   if (isSilentAgentDispatch(result, stdout, stderr)) {
-    writeSilentAgentDispatchFailure(proc, sandboxName);
+    writeSilentAgentDispatchFailure(proc, sandboxName, command);
     return proc.exit(SILENT_AGENT_DISPATCH_EXIT_CODE);
   }
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../../../cli/branding";
+import { shellQuote } from "../../../core/shell-quote";
 
 /** Stderr sink for the passthrough's operator-facing failure text. */
 export type AgentPassthroughDiagnosticProcess = {
@@ -16,7 +17,15 @@ export type AgentPassthroughDiagnosticProcess = {
 export function writeSilentAgentDispatchFailure(
   proc: AgentPassthroughDiagnosticProcess,
   sandboxName: string,
+  command: readonly string[],
 ): void {
+  // The recovery command reproduces THIS turn, not a bare `openclaw agent`:
+  // an invocation without a target selector and the original arguments exits 2
+  // on the selector guard instead of running anything. Sandbox name and
+  // forwarded argv are user-controlled command text and stay shell-quoted.
+  const directRun = [CLI_NAME, shellQuote(sandboxName), "exec", "--", ...command.map(shellQuote)]
+    .join(" ")
+    .trimEnd();
   proc.stderr.write(
     `  The agent dispatch for sandbox '${sandboxName}' exited 0 without producing any output, so the turn was not delivered.\n`,
   );
@@ -24,14 +33,13 @@ export function writeSilentAgentDispatchFailure(
     "  Reporting this as a failure: a delivered turn always writes to stdout or stderr.\n",
   );
   proc.stderr.write("  Documented recovery paths:\n");
+  proc.stderr.write(`    ${directRun}\n`);
+  proc.stderr.write("      — run this exact turn directly inside the sandbox\n");
   proc.stderr.write(
-    `    ${CLI_NAME} ${sandboxName} exec -- openclaw agent   — run the turn directly inside the sandbox\n`,
+    `    ${CLI_NAME} ${shellQuote(sandboxName)} status    — confirm gateway and inference health\n`,
   );
   proc.stderr.write(
-    `    ${CLI_NAME} ${sandboxName} status                   — confirm gateway and inference health\n`,
-  );
-  proc.stderr.write(
-    `    ${CLI_NAME} ${sandboxName} recover                  — re-pair the gateway without recreating the sandbox\n`,
+    `    ${CLI_NAME} ${shellQuote(sandboxName)} recover   — re-pair the gateway without recreating the sandbox\n`,
   );
 }
 
