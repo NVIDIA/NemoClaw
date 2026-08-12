@@ -13,6 +13,12 @@ import { addTraceEvent, withDashboardReadinessTrace, withSandboxReadinessTrace }
 type RunCaptureOpenshell = (args: string[], options?: { ignoreError?: boolean }) => string;
 
 export const SANDBOX_READY_ERROR_DEBOUNCE_ENV = "NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE";
+/**
+ * OpenClaw cold starts can finish the sandbox-ready handoff before the
+ * dashboard process has bound its health endpoint. Keep the verification
+ * budget long enough to cover that bounded final startup phase.
+ */
+export const DEFAULT_DASHBOARD_READINESS_TIMEOUT_SECS = 60;
 
 /*
  * Create/readiness Error-phase debounce.
@@ -384,7 +390,7 @@ export function waitForDashboardReadyWithTrace(options: {
   trace?: typeof addTraceEvent;
 }): boolean {
   const { sandboxName, port, runCaptureOpenshell, sleep } = options;
-  const timeoutSecs = options.timeoutSecs ?? 30;
+  const timeoutSecs = options.timeoutSecs ?? DEFAULT_DASHBOARD_READINESS_TIMEOUT_SECS;
   const budgetMs = Math.max(0, timeoutSecs * 1000);
   return withDashboardReadinessTrace(sandboxName, port, timeoutSecs, () => {
     let attempt = 0;
