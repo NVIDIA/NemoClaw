@@ -5,8 +5,10 @@ import { applyCompatibleEndpointContextWindow } from "../inference/compatible-en
 import type { TrustedPrivateEndpointCapability } from "../inference/endpoint-ssrf-preflight";
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
 import { getProbeExtraHeaders } from "../inference/onboard-probes";
+import { needsBedrockRuntimeAdapter, normalizeCustomAnthropicEndpointUrl } from "./bedrock-runtime";
 import type { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import type { NvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
+import { getNavigationChoice } from "./prompt-helpers";
 import type { ReasoningEffort } from "./reasoning-mode";
 
 export { createNvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
@@ -88,6 +90,17 @@ export function clearNimContainerBeforeRetry(state: SetupNimSelectionState): voi
 
 type CompatibleEndpointKind = "openai" | "anthropic";
 
+type CompatibleEndpointSelectionArgs = {
+  selectedKey: "custom" | "anthropicCompatible";
+  state: SetupNimSelectionState;
+  recoveredEndpointUrl: string | null | undefined;
+  nonInteractive: boolean;
+  prompt: (message: string) => Promise<string>;
+  normalizeEndpoint: (value: string, kind: CompatibleEndpointKind) => string;
+  envUrl?: string | null;
+  preferredInferenceApi?: string | null;
+};
+
 export async function resolveCompatibleEndpointInput(args: {
   kind: CompatibleEndpointKind;
   envUrl: string | null | undefined;
@@ -108,6 +121,63 @@ export async function resolveCompatibleEndpointInput(args: {
           : "  Anthropic-compatible base URL (e.g., https://proxy.example.com): ",
     )) || defaultEndpointUrl
   );
+}
+
+export async function configureCompatibleEndpointSelection(
+  args: CompatibleEndpointSelectionArgs,
+): Promise<"selected" | "retry-selection"> {
+  const kind = args.selectedKey === "custom" ? "openai" : "anthropic";
+  const endpointInput = await resolveCompatibleEndpointInput({
+    kind,
+    envUrl: args.envUrl ?? process.env.NEMOCLAW_ENDPOINT_URL,
+    recoveredEndpointUrl: args.recoveredEndpointUrl,
+    nonInteractive: args.nonInteractive,
+    prompt: args.prompt,
+  });
+  const navigation = getNavigationChoice(endpointInput);
+  if (navigation === "back") {
+    console.log("  Returning to provider selection.");
+    console.log("");
+    return "retry-selection";
+  }
+  if (navigation === "exit") {
+    console.log("  Exiting onboarding.");
+    process.exit(1);
+  }
+
+  let endpointUrl: string | null = args.normalizeEndpoint(endpointInput, kind);
+  if (!endpointUrl) {
+    console.error(
+      args.selectedKey === "custom"
+        ? "  Endpoint URL is required for Other OpenAI-compatible endpoint."
+        : "  Endpoint URL is required for Other Anthropic-compatible endpoint.",
+    );
+    if (args.nonInteractive) process.exit(1);
+    console.log("");
+    return "retry-selection";
+  }
+  if (args.selectedKey === "anthropicCompatible") {
+    endpointUrl = normalizeCustomAnthropicEndpointUrl(endpointUrl);
+  }
+
+  const explicitApi = (args.preferredInferenceApi ?? process.env.NEMOCLAW_PREFERRED_API ?? "")
+    .trim()
+    .toLowerCase();
+  let preferredInferenceApi =
+    args.selectedKey === "custom"
+      ? explicitApi === "chat-completions"
+        ? "openai-completions"
+        : explicitApi || null
+      : null;
+  if (!preferredInferenceApi) {
+    preferredInferenceApi =
+      args.selectedKey === "custom" || needsBedrockRuntimeAdapter(endpointUrl)
+        ? "openai-completions"
+        : "anthropic-messages";
+  }
+  args.state.endpointUrl = endpointUrl;
+  args.state.preferredInferenceApi = preferredInferenceApi;
+  return "selected";
 }
 
 type ProviderChoice = {

@@ -23,9 +23,9 @@ const {
 const {
   applyCloudFallbackSelection,
   clearNimContainerBeforeRetry,
+  configureCompatibleEndpointSelection,
   createNvidiaFeaturedModelSession,
   createRemoteModelValidator,
-  resolveCompatibleEndpointInput,
 }: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
 const setupNimFlow: typeof import("./onboard/setup-nim-flow") = require("./onboard/setup-nim-flow");
 const openrouterSelection: typeof import("./onboard/openrouter-selection") = require("./onboard/openrouter-selection");
@@ -2751,12 +2751,14 @@ async function createSandboxWithTemporaryManagedRuntime(
 
 // ── Step 3: Inference selection ──────────────────────────────────
 
-type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
 type RebuildRouteHandoff = import("./onboard/rebuild-route-handoff").RebuildRouteHandoff;
+type RemoteProviderSelectionArgs = import("./onboard/setup-nim-flow").SetupNimRemoteSelectionArgs;
 
-// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-const { readRecordedProvider, readRecordedNimContainer, readRecordedModel, readRecordedEndpointUrl,
-  readRecordedInferenceRoute, readRecordedProviderEndpoints } = providerRecovery.createProviderRecoveryHelpers({ parseGatewayInference, runCaptureOpenshell, warn: (message) => console.warn(message) });
+const providerRecoveryHelpers = providerRecovery.createProviderRecoveryHelpers({
+  parseGatewayInference,
+  runCaptureOpenshell,
+  warn: (message) => console.warn(message),
+});
 
 async function selectAndValidateOllamaModel(
   gpu: ReturnType<typeof nim.detectGpu>,
@@ -2861,9 +2863,6 @@ type SetupNimSelectionState =
 type OllamaModelSelectionDefaults =
   import("./onboard/setup-nim-selection").OllamaModelSelectionDefaults;
 type SetupNimSelectionResult = "selected" | "retry-selection";
-
-// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-type RemoteProviderSelectionArgs = { selected: ProviderChoice; requestedModel: string | null; recoveredFromSandbox: boolean; recoveredModel: string | null; sandboxName: string | null; gatewayName: string | null; intendedInferenceApi: string | null; recoverySessionId: string | null | undefined };
 
 async function handleRoutedSelection(
   state: SetupNimSelectionState,
@@ -3061,64 +3060,32 @@ async function handleNimLocalSelection(
   return "selected";
 }
 
-// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, state: SetupNimSelectionState, recoveredRegistryRoute: RebuildRouteHandoff["route"] | null): Promise<SetupNimSelectionResult> {
-  const { selected, requestedModel, recoveredFromSandbox, recoveredModel, sandboxName, intendedInferenceApi } = args;
+async function handleRemoteProviderSelection(
+  args: RemoteProviderSelectionArgs,
+  state: SetupNimSelectionState,
+  recoveredRegistryRoute: RebuildRouteHandoff["route"] | null,
+): Promise<SetupNimSelectionResult> {
+  const { selected, requestedModel, recoveredFromSandbox } = args;
   const remoteConfig = REMOTE_PROVIDER_CONFIG[selected.key];
   state.provider = remoteConfig.providerName;
   state.credentialEnv = remoteConfig.credentialEnv;
   state.endpointUrl = remoteConfig.endpointUrl;
   state.preferredInferenceApi = null;
-  state.model = requestedModel || (recoveredFromSandbox ? recoveredModel : null);
+  state.model = requestedModel || (recoveredFromSandbox ? args.recoveredModel : null);
 
   if (selected.key === "custom" || selected.key === "anthropicCompatible") {
-    const kind = selected.key === "custom" ? "openai" : "anthropic";
-    const endpointInput = await resolveCompatibleEndpointInput({
-      kind,
-      envUrl: process.env.NEMOCLAW_ENDPOINT_URL,
+    const selectionResult = await configureCompatibleEndpointSelection({
+      selectedKey: selected.key,
+      state,
       recoveredEndpointUrl: recoveredFromSandbox
         ? (recoveredRegistryRoute?.endpointUrl ??
-          readRecordedEndpointUrl(sandboxName, args.recoverySessionId))
+          providerRecoveryHelpers.readRecordedEndpointUrl(args.sandboxName, args.recoverySessionId))
         : null,
       nonInteractive: isNonInteractive(),
       prompt,
+      normalizeEndpoint: normalizeProviderBaseUrl,
     });
-    const navigation = getNavigationChoice(endpointInput);
-    if (navigation === "back") {
-      console.log("  Returning to provider selection.");
-      console.log("");
-      return "retry-selection";
-    }
-    if (navigation === "exit") {
-      exitOnboardFromPrompt();
-    }
-    state.endpointUrl = normalizeProviderBaseUrl(endpointInput, kind);
-    if (!state.endpointUrl) {
-      console.error(
-        selected.key === "custom"
-          ? "  Endpoint URL is required for Other OpenAI-compatible endpoint."
-          : "  Endpoint URL is required for Other Anthropic-compatible endpoint.",
-      );
-      if (isNonInteractive()) {
-        process.exit(1);
-      }
-      console.log("");
-      return "retry-selection";
-    }
-    if (selected.key === "anthropicCompatible") {
-      state.endpointUrl = bedrockRuntimeOnboard.normalizeCustomAnthropicEndpointUrl(
-        state.endpointUrl,
-      );
-    }
-    const explicitApi = (process.env.NEMOCLAW_PREFERRED_API || "").trim().toLowerCase();
-    state.preferredInferenceApi = selected.key === "custom" ? (explicitApi === "chat-completions" ? "openai-completions" : explicitApi || null) : null;
-    if (!state.preferredInferenceApi) {
-      state.preferredInferenceApi =
-        selected.key === "custom" ||
-        bedrockRuntimeOnboard.needsBedrockRuntimeAdapter(state.endpointUrl)
-          ? "openai-completions"
-          : "anthropic-messages";
-    }
+    if (selectionResult === "retry-selection") return selectionResult;
   }
   state.assertRouteCompatible?.();
   if (selected.key === "hermesProvider") {
@@ -3149,8 +3116,10 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
     } else {
       state.credentialEnv = remoteConfig.credentialEnv;
     }
-    const recordedHermesToolGateways = sandboxName
-      ? normalizeHermesToolGatewaySelections(registry.getSandbox(sandboxName)?.hermesToolGateways)
+    const recordedHermesToolGateways = args.sandboxName
+      ? normalizeHermesToolGatewaySelections(
+          registry.getSandbox(args.sandboxName)?.hermesToolGateways,
+        )
       : null;
     state.hermesToolGateways = await setupHermesToolGateways(
       state.provider,
@@ -3160,7 +3129,9 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
     );
 
     const defaultModel =
-      requestedModel || (typeof state.model === "string" && state.model) || remoteConfig.defaultModel;
+      requestedModel ||
+      (typeof state.model === "string" && state.model) ||
+      remoteConfig.defaultModel;
     if (isNonInteractive()) {
       state.model = defaultModel;
     } else {
@@ -3202,7 +3173,8 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
         provider: state.provider,
         helpUrl: REMOTE_PROVIDER_CONFIG.build.helpUrl,
         recoveredFromSandbox,
-        providerExistsInGateway: (name) => providerExistsInGateway(name, args.gatewayName ?? GATEWAY_NAME),
+        providerExistsInGateway: (name) =>
+          providerExistsInGateway(name, args.gatewayName ?? GATEWAY_NAME),
       });
       state.skipHostInferenceSmoke = reuseGatewayCredential;
       state.reuseGatewayCredentialWithoutLocalKey = reuseGatewayCredential;
@@ -3211,7 +3183,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
     }
     state.model = await state.nvidiaFeaturedModels!.select(
       requestedModel || (typeof state.model === "string" ? state.model : null),
-      recoveredFromSandbox ? recoveredModel : null,
+      recoveredFromSandbox ? args.recoveredModel : null,
       isNonInteractive(),
       process.env.NEMOCLAW_MODEL,
     );
@@ -3228,12 +3200,17 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
       requestedModel ||
       (typeof state.model === "string" && state.model) ||
       _envModelRemote ||
-      (recoveredFromSandbox && recoveredModel) ||
+      (recoveredFromSandbox && args.recoveredModel) ||
       remoteConfig.defaultModel;
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const selectedCredentialEnv = requireValue(state.credentialEnv, `Missing credential env for ${remoteConfig.label}`);
-    const compatibleNoAuth = selected.key === "custom" && Boolean(state.endpointUrl && compatibleEndpointGatewayRoute.gatewayReachableCompatibleEndpointUrl(state.provider, state.endpointUrl) !== state.endpointUrl);
-    const useNoAuth = compatibleNoAuth && (!isNonInteractive() || (process.env.NEMOCLAW_COMPATIBLE_AUTH_MODE || "").trim().toLowerCase() === "none");
+    const { compatibleNoAuth, useNoAuth } =
+      compatibleEndpointGatewayRoute.resolveCompatibleEndpointAuthSelection(
+        selected.key,
+        state.provider,
+        state.endpointUrl,
+        isNonInteractive(),
+      );
     const bedrockSelection = await bedrockRuntimeOnboard.selectBedrockRuntimeCustomAnthropic({
       selectedKey: selected.key,
       endpointUrl: state.endpointUrl,
@@ -3263,11 +3240,33 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
     if (isNonInteractive()) {
       state.model = defaultModel;
       state.assertRouteCompatible?.();
-      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-      if (useNoAuth) state.credentialEnv = OLLAMA_PROXY_CREDENTIAL_ENV; else recoveredProviderReuse.resolveRecoveredProviderCredentialReuse(
-        { selected, remoteConfig, state, selectedCredentialEnv, recoveredFromSandbox, selectedModel: defaultModel, sandboxName, recoveredRegistryRoute },
-        { resolveProviderCredential, readRecordedInferenceRoute: (name) => readRecordedInferenceRoute(name, args.recoverySessionId), readRecordedProviderEndpoints, readGatewayProviderMetadata: (provider) => onboardProviders.readGatewayProviderMetadata(provider, runOpenshell, args.gatewayName ?? GATEWAY_NAME), note },
-      );
+      if (useNoAuth) state.credentialEnv = OLLAMA_PROXY_CREDENTIAL_ENV;
+      else
+        recoveredProviderReuse.resolveRecoveredProviderCredentialReuse(
+          {
+            selected,
+            remoteConfig,
+            state,
+            selectedCredentialEnv,
+            recoveredFromSandbox,
+            selectedModel: defaultModel,
+            sandboxName: args.sandboxName,
+            recoveredRegistryRoute,
+          },
+          {
+            resolveProviderCredential,
+            readRecordedInferenceRoute: (name) =>
+              providerRecoveryHelpers.readRecordedInferenceRoute(name, args.recoverySessionId),
+            readRecordedProviderEndpoints: providerRecoveryHelpers.readRecordedProviderEndpoints,
+            readGatewayProviderMetadata: (provider) =>
+              onboardProviders.readGatewayProviderMetadata(
+                provider,
+                runOpenshell,
+                args.gatewayName ?? GATEWAY_NAME,
+              ),
+            note,
+          },
+        );
     } else {
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
       const credentialResult = await credentialPrompt.ensureNamedCredential(selectedCredentialEnv, compatibleNoAuth ? `${remoteConfig.label} API key (press Enter for no authentication)` : `${remoteConfig.label} API key`, remoteConfig.helpUrl, openrouterSelection.credentialValidatorForProvider(selected.key), compatibleNoAuth);
@@ -3308,7 +3307,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
         state.model = defaultModel;
       } else if (openrouterSelection.isOpenRouterProvider(selected.key)) {
         // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-        state.model = await openrouterSelection.selectModel({ state, requestedModel, recoveredFromSandbox, recoveredModel, remoteConfig, validateOpenAiLikeModel });
+        state.model = await openrouterSelection.selectModel({ state, requestedModel, recoveredFromSandbox, recoveredModel: args.recoveredModel, remoteConfig, validateOpenAiLikeModel });
       } else if (remoteConfig.modelMode === "curated") {
         state.model = await promptRemoteModel(
           remoteConfig.label,
@@ -3330,7 +3329,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
         ? "selected"
         : await validateSelectedRemoteModel(
             // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-            { selected, remoteConfig, state, selectedCredentialEnv, intendedInferenceApi },
+            { selected, remoteConfig, state, selectedCredentialEnv, intendedInferenceApi: args.intendedInferenceApi },
           );
       if (validationResult === "selected") {
         state.assertRouteCompatible?.();
@@ -3390,9 +3389,9 @@ function getSetupNimDeps(): SetupNimDeps {
     detectInferenceProviderHostState,
     getAgentInferenceProviderOptions,
     loadRoutedProfile: () => loadBlueprintProfile("routed"),
-    readRecordedProvider,
-    readRecordedNimContainer,
-    readRecordedModel,
+    readRecordedProvider: providerRecoveryHelpers.readRecordedProvider,
+    readRecordedNimContainer: providerRecoveryHelpers.readRecordedNimContainer,
+    readRecordedModel: providerRecoveryHelpers.readRecordedModel,
     prompt,
     selectFromNumberedMenu: selectFromNumberedMenuOrExit,
     note,
@@ -4499,10 +4498,10 @@ module.exports = {
     name: string | null | undefined,
     opts: { hasNimContainer?: boolean } = {},
   ) => providerRecovery.providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, name, opts),
-  readRecordedProvider,
-  readRecordedModel,
-  readRecordedNimContainer,
-  readRecordedEndpointUrl,
+  readRecordedProvider: providerRecoveryHelpers.readRecordedProvider,
+  readRecordedModel: providerRecoveryHelpers.readRecordedModel,
+  readRecordedNimContainer: providerRecoveryHelpers.readRecordedNimContainer,
+  readRecordedEndpointUrl: providerRecoveryHelpers.readRecordedEndpointUrl,
   isInferenceRouteReady,
   shouldRunCompatibleEndpointSandboxSmoke,
   isNonInteractive,

@@ -10,6 +10,7 @@ import {
   BUNDLED_LOCAL_INFERENCE_GATEWAY_PORTS,
   COMPATIBLE_ENDPOINT_GATEWAY_PORTS,
   gatewayReachableCompatibleEndpointUrl,
+  resolveCompatibleEndpointAuthSelection,
 } from "./compatible-endpoint-gateway-route";
 
 describe("compatible endpoint gateway routing", () => {
@@ -105,5 +106,30 @@ describe("compatible endpoint gateway routing", () => {
     ).toBe("http://localhost:8000/v1");
     expect(gatewayReachableCompatibleEndpointUrl("compatible-endpoint", null)).toBeNull();
     expect(gatewayReachableCompatibleEndpointUrl("compatible-endpoint", undefined)).toBeUndefined();
+  });
+
+  it("allows no-auth only for bridged custom endpoints and explicit non-interactive opt-in", () => {
+    const args = ["custom", "compatible-endpoint", "http://localhost:8000/v1"] as const;
+
+    expect(resolveCompatibleEndpointAuthSelection(...args, false)).toEqual({
+      compatibleNoAuth: true,
+      useNoAuth: true,
+    });
+    expect(resolveCompatibleEndpointAuthSelection(...args, true, "bearer")).toEqual({
+      compatibleNoAuth: true,
+      useNoAuth: false,
+    });
+    expect(resolveCompatibleEndpointAuthSelection(...args, true, " NONE ")).toEqual({
+      compatibleNoAuth: true,
+      useNoAuth: true,
+    });
+    expect(
+      resolveCompatibleEndpointAuthSelection(
+        "anthropicCompatible",
+        "compatible-anthropic-endpoint",
+        "http://localhost:8000/v1",
+        false,
+      ),
+    ).toEqual({ compatibleNoAuth: false, useNoAuth: false });
   });
 });

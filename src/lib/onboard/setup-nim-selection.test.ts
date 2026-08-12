@@ -6,10 +6,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 
 import { requireValue } from "../core/require-value";
+import { normalizeProviderBaseUrl } from "../core/url-utils";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import {
   applyCloudFallbackSelection,
   clearNimContainerBeforeRetry,
+  configureCompatibleEndpointSelection,
   createRemoteModelValidator,
   type SetupNimSelectionState,
 } from "./setup-nim-selection";
@@ -64,6 +66,67 @@ describe("setupNim selection state helpers", () => {
     assert.equal(state.nimContainer, null);
     assert.equal(state.model, "nvidia/local-nim");
     assert.equal(state.provider, "vllm-local");
+  });
+});
+
+describe("configureCompatibleEndpointSelection", () => {
+  it("normalizes an OpenAI-compatible endpoint and preserves its explicit API choice", async () => {
+    const state = makeState();
+
+    const result = await configureCompatibleEndpointSelection({
+      selectedKey: "custom",
+      state,
+      envUrl: "https://inference.example/v1/chat/completions?tenant=ignored",
+      recoveredEndpointUrl: null,
+      preferredInferenceApi: " Chat-Completions ",
+      nonInteractive: true,
+      normalizeEndpoint: normalizeProviderBaseUrl,
+      prompt: async () => {
+        throw new Error("non-interactive selection must not prompt");
+      },
+    });
+
+    assert.equal(result, "selected");
+    assert.equal(state.endpointUrl, "https://inference.example/v1");
+    assert.equal(state.preferredInferenceApi, "openai-completions");
+  });
+
+  it("uses a recovered Anthropic-compatible endpoint as the interactive default", async () => {
+    const state = makeState();
+
+    const result = await configureCompatibleEndpointSelection({
+      selectedKey: "anthropicCompatible",
+      state,
+      envUrl: "",
+      recoveredEndpointUrl: "https://proxy.example.com/v1/messages",
+      preferredInferenceApi: "",
+      nonInteractive: false,
+      normalizeEndpoint: normalizeProviderBaseUrl,
+      prompt: async () => "",
+    });
+
+    assert.equal(result, "selected");
+    assert.equal(state.endpointUrl, "https://proxy.example.com");
+    assert.equal(state.preferredInferenceApi, "anthropic-messages");
+  });
+
+  it("selects the OpenAI adapter API for a Bedrock Runtime endpoint", async () => {
+    const state = makeState();
+
+    const result = await configureCompatibleEndpointSelection({
+      selectedKey: "anthropicCompatible",
+      state,
+      envUrl: "https://bedrock-runtime.us-east-1.amazonaws.com/v1/messages",
+      recoveredEndpointUrl: null,
+      preferredInferenceApi: "",
+      nonInteractive: true,
+      normalizeEndpoint: normalizeProviderBaseUrl,
+      prompt: async () => "",
+    });
+
+    assert.equal(result, "selected");
+    assert.equal(state.endpointUrl, "https://bedrock-runtime.us-east-1.amazonaws.com");
+    assert.equal(state.preferredInferenceApi, "openai-completions");
   });
 });
 

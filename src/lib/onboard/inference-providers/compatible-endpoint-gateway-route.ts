@@ -62,6 +62,29 @@ export function gatewayReachableCompatibleEndpointUrl(
     : `${parsed.origin}${parsed.pathname}${routeSuffix}`;
 }
 
+export function resolveCompatibleEndpointAuthSelection(
+  selectedKey: string,
+  provider: string,
+  endpointUrl: string | null,
+  nonInteractive: boolean,
+  authMode = process.env.NEMOCLAW_COMPATIBLE_AUTH_MODE,
+): { compatibleNoAuth: boolean; useNoAuth: boolean } {
+  const compatibleNoAuth =
+    selectedKey === "custom" &&
+    Boolean(
+      endpointUrl && gatewayReachableCompatibleEndpointUrl(provider, endpointUrl) !== endpointUrl,
+    );
+  return {
+    compatibleNoAuth,
+    useNoAuth:
+      compatibleNoAuth &&
+      (!nonInteractive ||
+        String(authMode || "")
+          .trim()
+          .toLowerCase() === "none"),
+  };
+}
+
 export function reuseRegisteredProviderWithGatewayEndpoint(args: {
   provider: string;
   providerType: string;
