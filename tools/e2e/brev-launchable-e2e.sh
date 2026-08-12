@@ -41,17 +41,27 @@ workspace() {
 wait_for_host_ssh() {
   local timeout_seconds="${BREV_HOST_SSH_TIMEOUT_SECONDS:-600}"
   local deadline=$((SECONDS + timeout_seconds))
+  local remaining refresh_timeout sleep_seconds ssh_timeout
   log "Waiting for host SSH access"
   while [ "$SECONDS" -lt "$deadline" ]; do
-    timeout 60s brev refresh >/dev/null 2>&1 || true
-    if timeout 15s ssh -T -o BatchMode=yes -o ConnectTimeout=10 \
+    remaining=$((deadline - SECONDS))
+    [ "$remaining" -gt 0 ] || break
+    refresh_timeout=$((remaining < 60 ? remaining : 60))
+    timeout "${refresh_timeout}s" brev refresh >/dev/null 2>&1 || true
+    remaining=$((deadline - SECONDS))
+    [ "$remaining" -gt 0 ] || break
+    ssh_timeout=$((remaining < 15 ? remaining : 15))
+    if timeout "${ssh_timeout}s" ssh -T -o BatchMode=yes -o ConnectTimeout=10 \
       -o ConnectionAttempts=1 -o NumberOfPasswordPrompts=0 \
       -o RequestTTY=no -o LogLevel=ERROR "${INSTANCE_NAME}-host" true \
       >/dev/null 2>&1; then
       log "SSH access to ${INSTANCE_NAME}-host succeeded"
       return 0
     fi
-    sleep "${POLL_SECONDS:-15}"
+    remaining=$((deadline - SECONDS))
+    [ "$remaining" -gt 0 ] || break
+    sleep_seconds="${POLL_SECONDS:-15}"
+    sleep "$((sleep_seconds < remaining ? sleep_seconds : remaining))"
   done
   die "host SSH readiness timed out"
 }

@@ -22,6 +22,7 @@ function executable(file: string, source: string): void {
 
 function fixture(
   options: {
+    blockRefresh?: boolean;
     bootImage?: string;
     deleteFails?: boolean;
     e2eFails?: boolean;
@@ -48,10 +49,26 @@ function fixture(
   const state = path.join(root, "workspace.json");
   const calls = path.join(root, "calls.log");
   const sshAttempts = path.join(root, "ssh-attempts");
+  const timeoutBlock = path.join(root, "timeout-block");
   fs.mkdirSync(bin);
   fs.mkdirSync(workDir);
+  if (options.blockRefresh) fs.writeFileSync(timeoutBlock, "block\n");
 
-  executable(path.join(bin, "timeout"), '#!/usr/bin/env bash\nshift\nexec "$@"\n');
+  executable(
+    path.join(bin, "timeout"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+duration="$1"
+shift
+printf 'timeout %s %s\n' "$duration" "$*" >> "$FAKE_CALLS"
+if [ -f "$FAKE_TIMEOUT_BLOCK" ] && [ "\${1:-} \${2:-}" = "brev refresh" ]; then
+  rm -f "$FAKE_TIMEOUT_BLOCK"
+  /bin/sleep "\${duration%s}"
+  exit 124
+fi
+exec "$@"
+`,
+  );
   executable(
     path.join(bin, "sleep"),
     '#!/usr/bin/env bash\nprintf "sleep %s\\n" "$*" >> "$FAKE_CALLS"\n',
@@ -134,11 +151,17 @@ esac
     `#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${*: -1}" = true ]; then
+  expected=(-T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 -o NumberOfPasswordPrompts=0 -o RequestTTY=no -o LogLevel=ERROR "$INSTANCE_NAME-host" true)
+  [ "$#" -eq "\${#expected[@]}" ]
+  received=("$@")
+  for index in "\${!expected[@]}"; do
+    [ "\${received[$index]}" = "\${expected[$index]}" ]
+  done
   attempts=0
   [ ! -f "$FAKE_SSH_ATTEMPTS" ] || attempts="$(cat "$FAKE_SSH_ATTEMPTS")"
   attempts=$((attempts + 1))
   printf '%s\n' "$attempts" > "$FAKE_SSH_ATTEMPTS"
-  printf 'ssh host readiness attempt %s\n' "$attempts" >> "$FAKE_CALLS"
+  printf 'ssh host readiness attempt %s: %s\n' "$attempts" "$*" >> "$FAKE_CALLS"
   [ "$attempts" -ge "$FAKE_SSH_READY_AFTER" ]
   exit
 fi
@@ -182,6 +205,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_SOURCE_REPOSITORY: options.sourceRepository ?? "NVIDIA/NemoClaw",
     FAKE_SOURCE_PATH: options.sourcePath ?? "/opt/nemoclaw-image/NemoClaw",
     FAKE_STATE: state,
+    FAKE_TIMEOUT_BLOCK: timeoutBlock,
     GH_TOKEN: "github-test-token",
     GITHUB_RUN_ATTEMPT: "1",
     GITHUB_RUN_ID: "789",
@@ -211,6 +235,9 @@ describe("focused staging Brev Launchable lane", () => {
     );
     expect(commands).toContain("create nclaw-e2e-test-1 --launchable env-staging123");
     expect(commands.match(/ssh host readiness attempt/gu)).toHaveLength(3);
+    expect(commands).toContain(
+      "ssh host readiness attempt 1: -T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 -o NumberOfPasswordPrompts=0 -o RequestTTY=no -o LogLevel=ERROR nclaw-e2e-test-1-host true",
+    );
     expect(fs.readFileSync(sshAttempts, "utf8").trim()).toBe("3");
     expect(commands).toContain("ssh preinstalled full-e2e.test.ts");
     expect(commands).not.toContain("nvapi-test-value");
@@ -320,6 +347,22 @@ describe("focused staging Brev Launchable lane", () => {
       status: "ABSENT",
     });
   });
+
+  it("caps a blocking refresh by the host SSH deadline and deletes the workspace", () => {
+    const { calls, env, state, workDir } = fixture({ blockRefresh: true });
+    const startedAt = performance.now();
+    const result = run({ ...env, BREV_HOST_SSH_TIMEOUT_SECONDS: "1" });
+    const elapsedMs = performance.now() - startedAt;
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("host SSH readiness timed out");
+    expect(elapsedMs).toBeLessThan(10_000);
+    expect(fs.readFileSync(calls, "utf8")).toContain("timeout 1s brev refresh");
+    expect(fs.readFileSync(calls, "utf8")).not.toMatch(/brev exec|full-e2e\.test\.ts/u);
+    expect(fs.existsSync(state)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  }, 90_000);
 
   it("preserves the booted image when the provision receipt is missing", () => {
     const { calls, env, state, workDir } = fixture({ missingProvisionReceipt: true });
