@@ -322,7 +322,14 @@ def _install_broker_url_safety_patch():
     if browser_tool is not None and hasattr(browser_tool, "_is_safe_url"):
         setattr(browser_tool, "_is_safe_url", _broker_safe_url)
         if hasattr(browser_tool, "_allow_private_urls_resolved"):
-            setattr(browser_tool, "_allow_private_urls_resolved", False)
+            config = _load_hermes_config() or {}
+            security = config.get("security", {}) if isinstance(config, dict) else {}
+            allow_private_urls = (
+                security.get("allow_private_urls") is True
+                if isinstance(security, dict)
+                else False
+            )
+            setattr(browser_tool, "_allow_private_urls_resolved", allow_private_urls)
         patched = True
 
     return patched

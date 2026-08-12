@@ -233,7 +233,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       `  ${err instanceof Error ? err.message : String(err)}`,
     ];
     if (deleteSucceeded) {
-      lines.push("  The orphaned sandbox has been removed — you can safely retry.");
+      lines.push(
+        "  The orphaned sandbox has been removed. Resolve the error above before retrying.",
+      );
     } else {
       lines.push("  Could not remove the orphaned sandbox. Manual cleanup:");
       lines.push(`    openshell sandbox delete "${sandboxName}"`);

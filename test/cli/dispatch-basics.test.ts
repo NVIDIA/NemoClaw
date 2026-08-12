@@ -633,6 +633,20 @@ describe("CLI dispatch", () => {
     );
   });
 
+  it("does not suggest a route-only reservation in the connect command-order hint (#8801)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, stderr }) => {
+        await expect(dispatchCli(["connect", "stale"])).rejects.toThrow("process.exit:1");
+
+        const output = stderr.join("\n");
+        expect(output).not.toContain("Did you mean: nemoclaw stale connect?");
+        expect(output).not.toContain("Registered sandboxes: stale");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+      { sandboxNames: ["stale"], pendingSandboxNames: ["stale"] },
+    );
+  });
+
   it("suggests the closest registered sandbox name for a mistyped sandbox action", async () => {
     await withDirectPublicDispatch(
       async ({ dispatchCli, exitSpy, stderr }) => {
@@ -645,6 +659,63 @@ describe("CLI dispatch", () => {
         expect(exitSpy).toHaveBeenCalledWith(1);
       },
       { sandboxNames: ["my-assistant"] },
+    );
+  });
+
+  it("does not suggest a route-only reservation as a registered sandbox (#8801)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, stderr }) => {
+        await expect(dispatchCli(["stail", "stop"])).rejects.toThrow("process.exit:1");
+
+        const output = stderr.join("\n");
+        expect(output).toContain("Sandbox 'stail' does not exist");
+        expect(output).not.toContain("Did you mean: nemoclaw stale stop?");
+        expect(output).not.toContain("Registered sandboxes: stale");
+        expect(output).toContain("Run 'nemoclaw onboard' to create one.");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+      { sandboxNames: ["stale"], pendingSandboxNames: ["stale"] },
+    );
+  });
+
+  it("omits route-only reservations from unknown-command diagnostics (#8801)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, stderr }) => {
+        await expect(dispatchCli(["stail-reservation", "unknownaction"])).rejects.toThrow(
+          "process.exit:1",
+        );
+
+        const output = stderr.join("\n");
+        expect(output).toContain("Unknown command: stail-reservation");
+        expect(output).not.toContain("Did you mean: nemoclaw stale-reservation connect?");
+        expect(output).not.toContain("Registered sandboxes: stale-reservation");
+        expect(output).toContain("Run 'nemoclaw help' for usage.");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+      {
+        sandboxNames: ["stale-reservation"],
+        pendingSandboxNames: ["stale-reservation"],
+      },
+    );
+  });
+
+  it("suggests a created sandbox when its reservation flag remains pending (#8801)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, sandboxes, stderr }) => {
+        sandboxes.set("created", {
+          name: "created",
+          pendingRouteReservation: true,
+          createdAt: "2026-01-01T00:00:00Z",
+        });
+
+        await expect(dispatchCli(["create", "stop"])).rejects.toThrow("process.exit:1");
+
+        const output = stderr.join("\n");
+        expect(output).toContain("Did you mean: nemoclaw created stop?");
+        expect(output).toContain("Registered sandboxes: created");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+      { sandboxNames: ["created"], pendingSandboxNames: ["created"] },
     );
   });
 
