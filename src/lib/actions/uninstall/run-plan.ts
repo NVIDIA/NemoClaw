@@ -118,6 +118,7 @@ export interface UninstallRunDeps {
   runDualStationRuntimeCleanup?: (receiptPath: string, options?: SpawnSyncOptions) => RunResult;
   runLocalModelRuntimeCleanup?: (deleteModels: boolean, options?: SpawnSyncOptions) => RunResult;
   runManagedLlamaCppRuntimeCleanup?: (sandboxName: string, gatewayPort: number) => RunResult;
+  stderrHasColors?: boolean;
   stderrIsTty?: boolean;
 }
 
@@ -429,6 +430,7 @@ interface UninstallRuntime {
   runDualStationRuntimeCleanup: (receiptPath: string, options?: SpawnSyncOptions) => RunResult;
   runLocalModelRuntimeCleanup: (deleteModels: boolean, options?: SpawnSyncOptions) => RunResult;
   runManagedLlamaCppRuntimeCleanup: (sandboxName: string, gatewayPort: number) => RunResult;
+  stderrHasColors: boolean;
   stderrIsTty: boolean;
   warn: (message: string) => void;
 }
@@ -517,6 +519,9 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
               stderr: result.reason,
             };
       }),
+    stderrHasColors:
+      deps.stderrHasColors ??
+      (typeof process.stderr.hasColors === "function" && process.stderr.hasColors()),
     stderrIsTty: deps.stderrIsTty ?? process.stderr.isTTY === true,
     warn: deps.error ?? ((message) => console.warn(message)),
   };
@@ -529,6 +534,7 @@ function runtimeBranding(runtime: UninstallRuntime): AgentBranding {
 function yellowWarningText(message: string, runtime: UninstallRuntime): string {
   if (runtime.env.NO_COLOR !== undefined) return message;
   if (!runtime.stderrIsTty) return message;
+  if (!runtime.stderrHasColors) return message;
   return `\x1b[33m${message}\x1b[39m`;
 }
 
