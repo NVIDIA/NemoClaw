@@ -2183,11 +2183,6 @@ async function createSandboxWithBaseImageResolution(
     ({ effectivePort, chatUiUrl } = dashboardSelection);
     dashboardPortReservationScope.current = dashboardSelection.reservation;
   }
-  const releaseDashboardPortReservation = async (): Promise<void> => {
-    const reservation = dashboardPortReservationScope.current;
-    dashboardPortReservationScope.current = null;
-    await reservation?.release();
-  };
   const hermesDashboardForwarding = onboardHermesDashboard.createHermesDashboardOnboardForwarding({
     agentName: agent?.name,
     env: process.env,
@@ -2204,7 +2199,7 @@ async function createSandboxWithBaseImageResolution(
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   let recreateRuntime: import("./onboard/sandbox-recreate-transaction").SandboxRecreateRuntime | recreateJournal.OwnedSandboxRecreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(onboardSession, createIntent?.recreateTransaction, sandboxName, GATEWAY_NAME, existingEntry, getSandboxRecreateObservation, note);
   const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
-    await releaseDashboardPortReservation();
+    await dashboardPortReservationScope.release();
     ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({
       sandboxName,
       chatUiUrl,
@@ -2616,7 +2611,7 @@ async function createSandboxWithBaseImageResolution(
   let actualDashboardPort = 0;
   let finalHermesDashboardState = hermesDashboardState;
   if (manageDashboard) {
-    await releaseDashboardPortReservation();
+    await dashboardPortReservationScope.release();
     actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {
       rollbackSandboxOnFailure: true,
     });
@@ -2746,34 +2741,16 @@ type CreateSandboxArgs =
 
 async function createSandbox(...args: CreateSandboxArgs): Promise<string> {
   const computePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
-  return withDashboardPortReservationScope((dashboardPortReservationScope) =>
-    createSandboxWithBaseImageResolution(
-      baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
-      computePlan,
-      null,
-      false,
-      null,
-      dashboardPortReservationScope,
-      ...args,
-    ),
-  );
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  return withDashboardPortReservationScope((dashboardPortReservationScope) => createSandboxWithBaseImageResolution(baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }), computePlan, null, false, null, dashboardPortReservationScope, ...args));
 }
 
 async function createSandboxWithTemporaryManagedRuntime(
   ...args: CreateSandboxArgs
 ): Promise<string> {
   const computePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
-  return withDashboardPortReservationScope((dashboardPortReservationScope) =>
-    createSandboxWithBaseImageResolution(
-      baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
-      computePlan,
-      null,
-      true,
-      null,
-      dashboardPortReservationScope,
-      ...args,
-    ),
-  );
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  return withDashboardPortReservationScope((dashboardPortReservationScope) => createSandboxWithBaseImageResolution(baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }), computePlan, null, true, null, dashboardPortReservationScope, ...args));
 }
 
 // ── Step 3: Inference selection ──────────────────────────────────

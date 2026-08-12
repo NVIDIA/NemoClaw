@@ -337,6 +337,7 @@ export interface DashboardPortReservation {
 
 export interface DashboardPortReservationScope {
   current: DashboardPortReservation | null;
+  release(): Promise<void>;
 }
 
 export interface ReservedCreateSandboxDashboardPortResult extends CreateSandboxDashboardPortResult {
@@ -509,13 +510,18 @@ export async function reserveCreateSandboxDashboardPort(
 export async function withDashboardPortReservationScope<T>(
   operation: (scope: DashboardPortReservationScope) => Promise<T>,
 ): Promise<T> {
-  const scope: DashboardPortReservationScope = { current: null };
+  const scope: DashboardPortReservationScope = {
+    current: null,
+    async release() {
+      const reservation = this.current;
+      this.current = null;
+      await reservation?.release();
+    },
+  };
   try {
     return await operation(scope);
   } finally {
-    const reservation = scope.current;
-    scope.current = null;
-    await reservation?.release();
+    await scope.release();
   }
 }
 
