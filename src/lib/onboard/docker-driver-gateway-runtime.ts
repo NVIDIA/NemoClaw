@@ -83,6 +83,7 @@ export interface DockerDriverGatewayRuntimeDeps {
   runCaptureEx?: RunCaptureEx;
   shouldUseOpenshellDevChannel(): boolean;
   supportedOpenshellFallbackVersion: string;
+  enableBindMounts?: () => boolean;
 }
 
 export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewayRuntimeDeps): {
@@ -257,6 +258,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       podmanSocketPath,
       getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
       resolveSandboxBin: resolveOpenShellSandboxBinary,
+      enableBindMounts: deps.enableBindMounts?.() === true,
     });
     if (gatewayEnv.OPENSHELL_LOCAL_TLS_DIR) {
       process.env.OPENSHELL_LOCAL_TLS_DIR = gatewayEnv.OPENSHELL_LOCAL_TLS_DIR;
@@ -344,9 +346,14 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       return { reason: "could not verify process environment" };
     }
     for (const key of dockerDriverGatewayEnv.DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS) {
-      const desired = desiredEnv[key];
-      if (typeof desired !== "string") continue;
       const actual = processEnv[key];
+      const desired = desiredEnv[key];
+      if (typeof desired !== "string") {
+        if (key === "NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS" && actual !== undefined) {
+          return { reason: `${key}=${actual} (expected <unset>)` };
+        }
+        continue;
+      }
       if (actual !== desired) {
         return { reason: `${key}=${actual || "<unset>"} (expected ${desired})` };
       }

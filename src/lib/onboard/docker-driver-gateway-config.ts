@@ -122,7 +122,8 @@ export function buildDockerDriverGatewayConfigToml(
 ): string {
   const driver = gatewayEnv.OPENSHELL_DRIVERS === "podman" ? "podman" : "docker";
   const localTlsDir = jwtBundle ? gatewayLocalTlsDir(gatewayEnv) : undefined;
-  const dockerEntries: [string, string | undefined][] = [
+  const dockerEntries: [string, string | boolean | undefined][] = [
+    ["enable_bind_mounts", gatewayEnv.NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS === "1" || undefined],
     ["sandbox_namespace", driver === "docker" ? gatewayId : undefined],
     ["grpc_endpoint", gatewayEnv.OPENSHELL_GRPC_ENDPOINT],
     ["host_gateway_ip", driver === "podman" ? PORTABLE_HOST_GATEWAY_IP : undefined],
@@ -139,9 +140,13 @@ export function buildDockerDriverGatewayConfigToml(
   ];
   const dockerConfig = dockerEntries
     .filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim() !== "",
+      (entry): entry is [string, string | boolean] =>
+        typeof entry[1] === "boolean" || (typeof entry[1] === "string" && entry[1].trim() !== ""),
     )
-    .map(([key, value]) => `${key} = ${tomlString(value)}`)
+    .map(
+      ([key, value]) =>
+        `${key} = ${typeof value === "boolean" ? String(value) : tomlString(value)}`,
+    )
     .join("\n");
 
   const sections = [

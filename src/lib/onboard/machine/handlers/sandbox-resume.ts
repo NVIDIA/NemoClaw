@@ -9,6 +9,7 @@ import {
 } from "../../../inference/web-search";
 import type { Session } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
+import { persistedSandboxHostMountsEqual } from "../../../state/registry/host-mount";
 import { normalizeToolDisclosure, toolDisclosureOrDefault } from "../../../tool-disclosure";
 
 export interface SandboxResumeSignals {
@@ -20,6 +21,7 @@ export interface SandboxResumeSignals {
   readonly compatibleEndpointReasoningChanged: boolean;
   readonly webSearchConfigChanged: boolean;
   readonly sandboxGpuConfigChanged: boolean;
+  readonly hostMountConfigChanged: boolean;
   readonly recreateSandboxRequested: boolean;
   readonly recreateJournalHandoff?: boolean;
   readonly messagingChannelConfigChanged: boolean;
@@ -29,6 +31,10 @@ export interface SandboxResumeSignals {
   readonly toolDisclosureMigrationNeeded: boolean;
   readonly toolDisclosureChanged: boolean;
   readonly inferenceSelectionChanged: boolean;
+}
+
+export function hasHostMountConfigDrift(left: unknown, right: unknown): boolean {
+  return !persistedSandboxHostMountsEqual(left, right);
 }
 
 interface InferenceRouteResumeInput {
@@ -154,6 +160,7 @@ function canReuseSandbox(signals: SandboxResumeSignals): boolean {
     !signals.inferenceSelectionChanged &&
     !signals.webSearchConfigChanged &&
     !signals.sandboxGpuConfigChanged &&
+    !signals.hostMountConfigChanged &&
     !signals.recreateSandboxRequested &&
     !signals.messagingChannelConfigChanged &&
     !signals.hermesToolGatewayConfigChanged &&
@@ -242,6 +249,13 @@ function runtimeConfigurationResumeDecision(
       kind: "recreate",
       note: "  [resume] Sandbox GPU settings changed; recreating sandbox.",
       removeRegistryEntry: true,
+    };
+  }
+  if (signals.hostMountConfigChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Read-only host mount declarations changed; recreating sandbox.",
+      removeRegistryEntry: false,
     };
   }
   if (signals.messagingChannelConfigChanged) {
