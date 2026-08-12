@@ -47,7 +47,7 @@ function agentFlagDescription(): string {
 }
 
 export const onboardUsage = [
-  `onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 export const onboardExamples = [
@@ -57,6 +57,7 @@ export const onboardExamples = [
   "<%= config.bin %> onboard --fresh",
   "<%= config.bin %> onboard --profile <profile-id>",
   "<%= config.bin %> onboard --from ./Dockerfile --name alpha",
+  "<%= config.bin %> onboard --name alpha --host-mount /home/user/project:/sandbox/project",
   "<%= config.bin %> onboard --agents ./agents.yaml",
   "<%= config.bin %> onboard --sandbox-gpu --sandbox-gpu-device nvidia.com/gpu=0",
   `<%= config.bin %> onboard --non-interactive --yes --name alpha ${NOTICE_ACCEPT_FLAG}`,
@@ -73,6 +74,7 @@ export type OnboardFlags = {
   "no-gpu"?: boolean;
   from?: string;
   name?: string;
+  "host-mount"?: string[];
   "sandbox-gpu"?: boolean;
   "no-sandbox-gpu"?: boolean;
   "sandbox-gpu-device"?: string;
@@ -116,6 +118,11 @@ export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Re
     }),
     from: Flags.string({ description: "Path to a Dockerfile to use as the sandbox image source" }),
     name: Flags.string({ description: "Sandbox name" }),
+    "host-mount": Flags.string({
+      description:
+        "Expose an existing absolute host directory read-only below /sandbox (repeatable)",
+      multiple: true,
+    }),
     "sandbox-gpu": Flags.boolean({
       description: "Enable direct NVIDIA GPU access inside the sandbox",
       exclusive: ["no-gpu", "no-sandbox-gpu"],
