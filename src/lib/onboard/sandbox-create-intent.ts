@@ -144,6 +144,7 @@ export function resolveSandboxCreateIntent({
   sandboxGpuConfig,
   gpuCreateArgs,
   resourceCreateArgs = [],
+  hostMounts = [],
   gpuRoutePlan,
   sandboxGpuLogMessage,
   extraPlaceholderKeys = [],
@@ -197,6 +198,16 @@ export function resolveSandboxCreateIntent({
     },
     gpuCreateArgs: [...gpuCreateArgs],
     resourceCreateArgs: [...resourceCreateArgs],
+    ...(hostMounts.length > 0
+      ? {
+          hostMounts: hostMounts.map(({ source, target, sourceIdentity }) => ({
+            source,
+            target,
+            readOnly: true,
+            ...(sourceIdentity ? { sourceIdentity: { ...sourceIdentity } } : {}),
+          })),
+        }
+      : {}),
     gpuRoutePlan,
     sandboxGpuLogMessage,
     disabledChannelNames: [...disabledChannelNames],

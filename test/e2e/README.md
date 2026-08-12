@@ -456,12 +456,11 @@ runs remain queued instead of replacing one another.
 
 The Jetson nvmap and DGX Spark llama.cpp jobs remain excluded from ordinary and
 full runs unless their independent opt-in flags are `true`.
-Set `allow_jetson_dispatch=true` to select `jetson-nvmap-gpu` only after every
-deployment check in
-[Jetson Dispatch Through Colossus](docs/jetson-colossus-dispatch.md) passes.
-The Colossus lifecycle removes and verifies only the fixed job-owned cleanup
-allowlist. Its cleanup evidence does not attest that every possible candidate
-host change was reversed.
+Set `allow_jetson_dispatch=true` to select `jetson-nvmap-gpu` after the
+operator-owned dispatch service is available at the repository variable
+`JETSON_DISPATCH_URL`. Refer to the
+[Jetson dispatch controller](docs/jetson-dispatch.md) for the trusted workflow,
+HTTP contract, and evidence boundary that NemoClaw owns.
 Set `allow_dgx_spark_runner_queue=true` to select both
 `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`.
 GitHub can pause the qualification job for the
@@ -798,7 +797,7 @@ For a PR revision run, a repository maintainer or administrator leaves `jobs` an
 - every shared credential-free test; and
 - these controller-selected registry targets: `ubuntu-policy-custom-missing-presets-negative`, `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and `ubuntu-repo-docker-post-reboot-recovery`.
 
-The run skips `jetson-nvmap-gpu` unless its Colossus dispatch flag is `true`.
+The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
 It skips `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`
 unless their runner-queue flag is `true`.
 The trusted workflow definition remains on `main` and binds the candidate head to the current PR base SHA.
