@@ -13,7 +13,7 @@ const MAX_CANDIDATES = 6;
 const MAX_TRANSIENT_ATTEMPTS = 3;
 const TRANSIENT_STATUS = new Set([408, 409, 425, 429]);
 
-function fail(message) {
+function fail(message: string): never {
   throw new Error(`authorized model selection failed: ${message}`);
 }
 

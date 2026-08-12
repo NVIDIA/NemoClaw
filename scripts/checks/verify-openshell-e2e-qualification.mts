@@ -5,12 +5,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { compareDottedVersions } from "../../src/lib/domain/maintenance/upgrade.ts";
 import { readValidatedArtifactZipEntry } from "../scorecard/read-artifact-zip.mts";
 import { extractInstallerPins } from "./extract-installer-pins.mts";
 
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
-const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+$/u;
+// compareDottedVersions parses a segment with Number.parseInt, which loses
+// precision above Number.MAX_SAFE_INTEGER. That value has 16 digits, so a
+// 15-digit bound keeps every accepted version exactly ordered.
+const VERSION_PATTERN = /^[0-9]{1,15}(?:\.[0-9]{1,15}){2}$/u;
 const SAFE_PATH_PATTERN = /^[^\u0000-\u001f\u007f\\]{1,4096}$/u;
 const SAFE_JOB_NAME_PATTERN = /^[^\u0000-\u001f\u007f]{1,256}$/u;
 const MAX_JSON_RESPONSE_BYTES = 16 * 1024 * 1024;
@@ -606,18 +610,6 @@ export function extractOpenShellVersion(root: string): string {
   return unique[0] ?? fail("OpenShell version is missing");
 }
 
-function compareVersions(left: string, right: string): number {
-  const leftParts = left.split(".").map((part) => BigInt(part));
-  const rightParts = right.split(".").map((part) => BigInt(part));
-  for (let index = 0; index < 3; index += 1) {
-    const leftPart = leftParts[index] ?? 0n;
-    const rightPart = rightParts[index] ?? 0n;
-    if (leftPart < rightPart) return -1;
-    if (leftPart > rightPart) return 1;
-  }
-  return 0;
-}
-
 function extractUpgradeFixtureRequirement(
   baseRoot: string,
   baselineVersion: string,
@@ -642,6 +634,9 @@ function extractUpgradeFixtureRequirement(
     const version = /^            openshell_version: ([0-9]+\.[0-9]+\.[0-9]+)$/u.exec(line)?.[1];
     if (version) {
       if (!currentId) fail("trusted E2E upgrade version has no fixture id");
+      if (!VERSION_PATTERN.test(version)) {
+        fail(`trusted E2E fixture ${currentId} has a malformed openshell_version`);
+      }
       fixtures.push({ id: currentId, version });
       currentId = undefined;
     }
@@ -652,8 +647,8 @@ function extractUpgradeFixtureRequirement(
       ? baselineVersion
       : fixtures
           .map((fixture) => fixture.version)
-          .filter((version) => compareVersions(version, targetVersion) < 0)
-          .sort((left, right) => compareVersions(right, left))[0];
+          .filter((version) => compareDottedVersions(version, targetVersion) < 0)
+          .sort((left, right) => compareDottedVersions(right, left))[0];
   if (!selectedVersion) {
     fail(`trusted E2E matrix has no predecessor fixture below target ${targetVersion}`);
   }

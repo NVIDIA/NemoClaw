@@ -16,7 +16,7 @@ REPO="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)}"
 CLI="${NEMOCLAW_CLI_BIN:-${REPO}/bin/nemoclaw.js}"
 PREFIX="04-deepagents-code-fresh-reonboard"
 HOSTED_ENDPOINT="${NEMOCLAW_ENDPOINT_URL:-https://inference-api.nvidia.com/v1}"
-MODEL_SELECTOR="${REPO}/test/e2e/lib/select-authorized-chat-model.mjs"
+MODEL_SELECTOR="${REPO}/test/e2e/lib/select-authorized-chat-model.mts"
 CREDENTIAL_CANARY="nemoclaw-dcode-config-get-canary"
 
 fail() {

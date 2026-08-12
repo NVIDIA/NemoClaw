@@ -90,7 +90,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     const script = fs.readFileSync(dcodeFreshReonboardCheck, "utf8");
 
     expect(script).toContain(
-      'MODEL_SELECTOR="${REPO}/test/e2e/lib/select-authorized-chat-model.mjs"',
+      'MODEL_SELECTOR="${REPO}/test/e2e/lib/select-authorized-chat-model.mts"',
     );
     expect(script).toContain('--current-model "$model_a"');
     expect(script).not.toContain("openai/openai/gpt-5.5");

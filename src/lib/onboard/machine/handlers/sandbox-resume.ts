@@ -9,6 +9,7 @@ import {
 } from "../../../inference/web-search";
 import type { Session } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
+import { persistedSandboxHostMountsEqual } from "../../../state/registry/host-mount";
 import { normalizeToolDisclosure, toolDisclosureOrDefault } from "../../../tool-disclosure";
 
 export interface SandboxResumeSignals {
@@ -20,15 +21,21 @@ export interface SandboxResumeSignals {
   readonly compatibleEndpointReasoningChanged: boolean;
   readonly webSearchConfigChanged: boolean;
   readonly sandboxGpuConfigChanged: boolean;
+  readonly hostMountConfigChanged: boolean;
   readonly recreateSandboxRequested: boolean;
   readonly recreateJournalHandoff?: boolean;
   readonly messagingChannelConfigChanged: boolean;
+  readonly messagingCredentialChanged: boolean;
   readonly hermesToolGatewayConfigChanged: boolean;
   readonly observabilityChanged?: boolean;
   readonly dcodeAutoApprovalChanged?: boolean;
   readonly toolDisclosureMigrationNeeded: boolean;
   readonly toolDisclosureChanged: boolean;
   readonly inferenceSelectionChanged: boolean;
+}
+
+export function hasHostMountConfigDrift(left: unknown, right: unknown): boolean {
+  return !persistedSandboxHostMountsEqual(left, right);
 }
 
 interface InferenceRouteResumeInput {
@@ -101,14 +108,21 @@ export function resolveToolDisclosureResumeSignals(
 }
 
 export type SandboxResumeDecision =
-  | { readonly kind: "create" }
+  | {
+      readonly kind: "create";
+      readonly validateMessagingCredentialsBeforeMutation?: boolean;
+    }
   | { readonly kind: "reuse" }
   | {
       readonly kind: "recreate";
       readonly note: string;
       readonly removeRegistryEntry: boolean;
+      readonly validateMessagingCredentialsBeforeMutation?: boolean;
     }
-  | { readonly kind: "repair-and-recreate" };
+  | {
+      readonly kind: "repair-and-recreate";
+      readonly validateMessagingCredentialsBeforeMutation?: boolean;
+    };
 
 export function replacesSameNameSandbox(decision: SandboxResumeDecision): boolean {
   if (decision.kind === "repair-and-recreate") return true;
@@ -154,8 +168,10 @@ function canReuseSandbox(signals: SandboxResumeSignals): boolean {
     !signals.inferenceSelectionChanged &&
     !signals.webSearchConfigChanged &&
     !signals.sandboxGpuConfigChanged &&
+    !signals.hostMountConfigChanged &&
     !signals.recreateSandboxRequested &&
     !signals.messagingChannelConfigChanged &&
+    !signals.messagingCredentialChanged &&
     !signals.hermesToolGatewayConfigChanged &&
     !signals.observabilityChanged &&
     !signals.dcodeAutoApprovalChanged &&
@@ -244,10 +260,24 @@ function runtimeConfigurationResumeDecision(
       removeRegistryEntry: true,
     };
   }
+  if (signals.hostMountConfigChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Read-only host mount declarations changed; recreating sandbox.",
+      removeRegistryEntry: false,
+    };
+  }
   if (signals.messagingChannelConfigChanged) {
     return {
       kind: "recreate",
       note: "  [resume] Messaging channel configuration changed; recreating sandbox.",
+      removeRegistryEntry: true,
+    };
+  }
+  if (signals.messagingCredentialChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Messaging credential changed; recreating sandbox after configured checks.",
       removeRegistryEntry: true,
     };
   }

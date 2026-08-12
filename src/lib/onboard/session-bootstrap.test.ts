@@ -104,6 +104,9 @@ describe("prepareOnboardSession", () => {
         nonInteractive: true,
         requestedToolDisclosure: "direct",
         requestedObservabilityEnabled: true,
+        requestedHostMounts: [
+          { source: "/srv/project", target: "/sandbox/project", readOnly: true },
+        ],
       },
       deps,
     );
@@ -112,6 +115,9 @@ describe("prepareOnboardSession", () => {
     expect(result.fromDockerfile).toBe("/abs/Dockerfile.custom");
     expect(result.session?.mode).toBe("non-interactive");
     expect(result.session?.metadata.fromDockerfile).toBe("/abs/Dockerfile.custom");
+    expect(result.session?.metadata.hostMounts).toEqual([
+      { source: "/srv/project", target: "/sandbox/project", readOnly: true },
+    ]);
     expect(result.session?.toolDisclosure).toBe("direct");
     expect(result.session?.observabilityEnabled).toBe(true);
     expect(result.session?.observabilityRequestedExplicitly).toBe(true);
@@ -188,7 +194,11 @@ describe("prepareOnboardSession", () => {
         message: "failed",
         recordedAt: "2026-06-10T00:00:00.000Z",
       },
-      metadata: { gatewayName: "nemoclaw", fromDockerfile: "Dockerfile.recorded" },
+      metadata: {
+        gatewayName: "nemoclaw",
+        fromDockerfile: "Dockerfile.recorded",
+        hostMounts: [{ source: "/srv/project", target: "/sandbox/project", readOnly: true }],
+      },
       sandboxName: "demo",
       status: "failed",
       observabilityEnabled: true,
@@ -220,6 +230,9 @@ describe("prepareOnboardSession", () => {
     expect(deps.applySessionRecovery).toHaveBeenCalledWith(initial);
     expect(result.session?.observabilityEnabled).toBe(true);
     expect(result.session?.observabilityRequestedExplicitly).toBe(true);
+    expect(result.session?.metadata.hostMounts).toEqual([
+      { source: "/srv/project", target: "/sandbox/project", readOnly: true },
+    ]);
     expect(deps.setOnboardBrandingAgent).toHaveBeenCalledWith("hermes");
   });
 
@@ -344,6 +357,51 @@ describe("prepareOnboardSession", () => {
       "  Run: nemoclaw onboard              # start a fresh onboarding session",
     );
     expect(deps.exitProcess).toHaveBeenCalledWith(1);
+  });
+
+  it("checks requested host mounts for resume conflict without overwriting recorded state", async () => {
+    const recordedMount = {
+      source: "/srv/project",
+      target: "/sandbox/project",
+      readOnly: true as const,
+    };
+    const requestedMount = {
+      source: "/srv/reference",
+      target: "/sandbox/reference",
+      readOnly: true as const,
+    };
+    const initial = createSession({
+      metadata: { gatewayName: "nemoclaw", fromDockerfile: null, hostMounts: [recordedMount] },
+    });
+    const conflict: ResumeConfigConflict = {
+      field: "host mounts",
+      requested: JSON.stringify([requestedMount]),
+      recorded: JSON.stringify([recordedMount]),
+    };
+    const getResumeConfigConflicts = vi.fn(() => [conflict]);
+    const { deps } = createDeps(initial, { getResumeConfigConflicts });
+
+    await expect(
+      prepareOnboardSession(
+        {
+          resume: true,
+          fresh: false,
+          requestedFromDockerfile: null,
+          requestedSandboxName: null,
+          requestedHostMounts: [requestedMount],
+          cannotPrompt: false,
+          nonInteractive: false,
+        },
+        deps,
+      ),
+    ).rejects.toThrow(ExitError);
+
+    expect(getResumeConfigConflicts).toHaveBeenCalledWith(
+      initial,
+      expect.objectContaining({ hostMounts: [requestedMount] }),
+    );
+    expect(deps.updateSession).not.toHaveBeenCalled();
+    expect(initial.metadata.hostMounts).toEqual([recordedMount]);
   });
 
   it("still exits on resume conflicts when diagnostic recording fails", async () => {

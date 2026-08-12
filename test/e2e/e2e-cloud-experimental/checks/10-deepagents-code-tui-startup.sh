@@ -4,8 +4,8 @@
 #
 # Case: Deep Agents Code interactive TUI startup (#5620).
 #
-# This live check runs a headless request and two interactive sessions against a
-# real Deep Agents Code sandbox. It proves completed sessions do not leak
+# This live check runs two interactive sessions against a real Deep Agents Code
+# sandbox. It proves completed sessions do not leak
 # DCode/LangGraph processes and leaves only sanitized, secret-free capture
 # artifacts.
 #
@@ -17,15 +17,14 @@ set -euo pipefail
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
 PREFIX="10-deepagents-code-tui-startup"
 TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-90}"
-HEADLESS_TIMEOUT="${DEEPAGENTS_HEADLESS_TIMEOUT:-120}"
 PROCESS_CLEANUP_TIMEOUT=20
 # Shell-only live check fallback for remote e2e hosts; Vitest parity coverage in
 # test/deepagents-code-tui-startup-check.test.ts pins this to secret-patterns.ts.
 SECRET_PATTERN='(?:nvapi-[A-Za-z0-9_-]{10,}|nvcf-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{10,}|github_pat_[A-Za-z0-9_]{30,}|sk-proj-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}|A(?:K|S)IA[A-Z0-9]{16}|hf_[A-Za-z0-9]{10,}|glpat-[A-Za-z0-9_-]{10,}|gsk_[A-Za-z0-9]{10,}|pypi-[A-Za-z0-9_-]{10,}|\bbot[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b|tvly-[A-Za-z0-9_-]{10,}|lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*)'
 CONTEXT_SECRET_VALUE_PATTERN='[A-Za-z0-9_.+\/=-]{10,}'
 # Pinned DCode 0.1.54 renders this exact modal title for `/agents`. Opening it
-# proves input reached the main composer after optional onboarding; headless
-# check 07 independently owns backend readiness and inference acceptance.
+# proves input reached the main composer after optional onboarding. Check 07
+# independently owns backend readiness and inference acceptance.
 TUI_READY_PATTERN='(select agent)'
 # Wait for the pinned main TUI banner before sending `/agents`; a fixed delay
 # can race startup and submit `agents` as an ordinary chat prompt instead.
@@ -49,12 +48,6 @@ pass() {
 
 sandbox_exec() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
-}
-
-run_headless_session() {
-  openshell sandbox exec --name "$SANDBOX_NAME" -- \
-    dcode -n 'Reply with exactly one word: PONG' \
-    --json --max-turns 1 --timeout "$HEADLESS_TIMEOUT" 2>&1
 }
 
 sandbox_is_ready() {
@@ -406,12 +399,6 @@ main() {
     exit 1
   fi
 
-  if ! is_positive_integer "$HEADLESS_TIMEOUT"; then
-    fail_test "DEEPAGENTS_HEADLESS_TIMEOUT must be a positive integer"
-    printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
-    exit 1
-  fi
-
   if ! command -v perl >/dev/null 2>&1; then
     fail_test "perl is required to sanitize and redact Deep Agents Code TUI captures"
     printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
@@ -465,27 +452,6 @@ main() {
     fail_test "unable to record the baseline DCode/LangGraph process count"
     printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
     exit 1
-  fi
-
-  local headless_output headless_rc
-  set +e
-  headless_output="$(run_headless_session)"
-  headless_rc=$?
-  set -e
-  if [ "$headless_rc" -eq 0 ] && grep -Eiq '(^|[^A-Za-z])PONG([^A-Za-z]|$)' <<<"$headless_output"; then
-    pass "headless dcode request returned PONG"
-  else
-    fail_test "headless dcode request did not return exit-zero PONG"
-  fi
-  if wait_for_dcode_process_baseline "$baseline_process_count"; then
-    pass "headless completion returned the DCode/LangGraph process count to baseline"
-  else
-    fail_test "headless completion left the DCode/LangGraph process count above baseline after ${PROCESS_CLEANUP_TIMEOUT}s"
-  fi
-  if wait_for_sandbox_ready; then
-    pass "sandbox remained Ready after headless completion"
-  else
-    fail_test "sandbox was not Ready after headless completion"
   fi
 
   info "Running two Deep Agents Code TUI sessions in sandbox: $SANDBOX_NAME"

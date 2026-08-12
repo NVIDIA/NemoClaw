@@ -1266,7 +1266,9 @@ langgraph-checkpoint==4.1.1 \
 langgraph-checkpoint-sqlite==3.1.1 \
     --hash=sha256:6fcb20db4c37ef7aad52f29b539eb98c38e2dad6fab7c2446a2a9db24f37a70e \
     --hash=sha256:8505c54c94a658080525d7e6780fdd4e0c078ff2566b30d399c02cc9f9af1c63
-    # via deepagents-code
+    # via
+    #   -r agents/langchain-deepagents-code/requirements.in
+    #   deepagents-code
 langgraph-cli==0.4.31 \
     --hash=sha256:111da6269d6c9d8606b19264caaa8d5e6b98bb6684233853a5d55489a6e62496 \
     --hash=sha256:b35951d901bc8bcb998be6715ee3512a545182ddbb8f72702d0558fe39cea505

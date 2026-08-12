@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { selectAuthorizedChatModel } from "../lib/select-authorized-chat-model.mjs";
+import { selectAuthorizedChatModel } from "../lib/select-authorized-chat-model.mts";
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 

@@ -182,6 +182,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       lifecycleLiveIdentityFingerprint: "d".repeat(64),
       gatewayName: "nemoclaw-19080",
       gatewayPort: 19080,
+      hostMounts: [{ source: "/srv/project", target: "/sandbox/project", readOnly: true }],
     });
 
     expect(entry).toMatchObject({
@@ -214,6 +215,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       gpuEnabled: true,
       openshellDriver: "docker",
       openshellVersion: "0.1.2",
+      hostMounts: [{ source: "/srv/project", target: "/sandbox/project", readOnly: true }],
     });
     expect(entry.agent).toBeNull();
     expect(entry.agentVersion).toBeTruthy();

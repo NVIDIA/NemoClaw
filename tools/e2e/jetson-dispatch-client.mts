@@ -6,16 +6,16 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
+  decodeJetsonArtifactArchive,
   JETSON_DISPATCH_AUDIENCE,
   JETSON_DISPATCH_TARGET,
-  parseJetsonDispatchRequest,
-} from "./jetson-dispatch-contract.mts";
-import {
-  decodeJetsonArtifactArchive,
   type JetsonDispatchArtifact,
   type JetsonDispatchStatus,
   MAX_JETSON_DISPATCH_ARTIFACT_RESPONSE_BYTES,
-} from "./jetson-dispatch-lifecycle.mts";
+  parseJetsonDispatchArtifact,
+  parseJetsonDispatchRequest,
+  parseJetsonDispatchStatusResponse,
+} from "./jetson-dispatch-contract.mts";
 import { writePrivateRegularFile } from "./private-file.mts";
 
 const MAX_STATUS_BYTES = 64 * 1024;
@@ -23,7 +23,6 @@ const POLL_INTERVAL_MS = 10_000;
 const MAX_WAIT_MS = 54 * 60_000;
 const MAX_CONSECUTIVE_POLL_FAILURES = 3;
 const OIDC_TOKEN_CACHE_MS = 4 * 60_000;
-const JOB_ID_PATTERN = /^[a-f0-9]{64}$/u;
 
 function record(value: unknown, name: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -32,7 +31,7 @@ function record(value: unknown, name: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function dispatcherBaseUrl(value: string | undefined): URL {
+export function dispatcherBaseUrl(value: string | undefined): URL {
   if (!value) throw new Error("JETSON_DISPATCH_URL is required");
   const url = new URL(value);
   if (
@@ -103,15 +102,17 @@ export function createGitHubOidcTokenProvider(
 
 const githubOidcToken = createGitHubOidcTokenProvider();
 
-async function dispatcherRequest(options: {
+export async function dispatcherRequest(options: {
   baseUrl: URL;
   method: "DELETE" | "GET" | "POST";
   path: string;
   body?: unknown;
   maxBytes: number;
+  fetchImpl?: typeof fetch;
+  tokenProvider?: () => Promise<string>;
 }): Promise<unknown> {
-  const token = await githubOidcToken();
-  const response = await fetch(new URL(options.path, options.baseUrl), {
+  const token = await (options.tokenProvider ?? githubOidcToken)();
+  const response = await (options.fetchImpl ?? fetch)(new URL(options.path, options.baseUrl), {
     method: options.method,
     headers: {
       Accept: "application/json",
@@ -159,39 +160,6 @@ async function dispatcherRequest(options: {
   return payload;
 }
 
-function validateStatus(value: unknown): JetsonDispatchStatus {
-  const response = record(value, "Jetson dispatcher response");
-  const job = record(response.job, "Jetson dispatch job");
-  if (
-    typeof job.jobId !== "string" ||
-    !JOB_ID_PATTERN.test(job.jobId) ||
-    !["queued", "running", "completed"].includes(String(job.state))
-  ) {
-    throw new Error("Jetson dispatcher returned an invalid job status");
-  }
-  return job as unknown as JetsonDispatchStatus;
-}
-
-function validateArtifact(value: unknown, jobId: string): JetsonDispatchArtifact {
-  const artifact = record(value, "Jetson dispatch artifact");
-  const status = record(artifact.status, "Jetson dispatch artifact status");
-  if (
-    status.jobId !== jobId ||
-    status.state !== "completed" ||
-    typeof status.conclusion !== "string" ||
-    typeof artifact.log !== "string"
-  ) {
-    throw new Error("Jetson dispatcher returned an invalid artifact");
-  }
-  if (artifact.artifactArchiveBase64 !== undefined) {
-    decodeJetsonArtifactArchive(artifact.artifactArchiveBase64);
-  }
-  if (status.conclusion === "success" && artifact.artifactArchiveBase64 === undefined) {
-    throw new Error("Successful Jetson dispatch did not return its E2E artifact archive");
-  }
-  return artifact as unknown as JetsonDispatchArtifact;
-}
-
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -211,6 +179,9 @@ export async function pollJetsonDispatch(options: {
   const wait = options.wait ?? delay;
   let consecutiveFailures = 0;
   let status = options.initialStatus;
+  if (status.jobId !== options.jobId) {
+    throw new Error("Jetson dispatcher status does not match the accepted job");
+  }
   while (status.state !== "completed") {
     if (options.stopping?.()) throw new Error("Jetson dispatch cancellation requested");
     if (now() >= options.deadlineMs) {
@@ -224,14 +195,18 @@ export async function pollJetsonDispatch(options: {
     }
     await wait(POLL_INTERVAL_MS);
     try {
-      status = validateStatus(
+      status = parseJetsonDispatchStatusResponse(
         await request({
           baseUrl: options.baseUrl,
           method: "GET",
           path: `v1/jobs/${options.jobId}`,
           maxBytes: MAX_STATUS_BYTES,
         }),
+        options.initialStatus.request,
       );
+      if (status.jobId !== options.jobId) {
+        throw new Error("Jetson dispatcher status does not match the accepted job");
+      }
       consecutiveFailures = 0;
       console.log(`Jetson dispatch state: ${status.state}`);
     } catch (error) {
@@ -286,7 +261,7 @@ async function main(): Promise<void> {
   process.on("SIGINT", cancel);
   process.on("SIGTERM", cancel);
 
-  const dispatched = validateStatus(
+  const dispatched = parseJetsonDispatchStatusResponse(
     await dispatcherRequest({
       baseUrl,
       method: "POST",
@@ -294,6 +269,7 @@ async function main(): Promise<void> {
       body: request,
       maxBytes: MAX_STATUS_BYTES,
     }),
+    request,
   );
   jobId = dispatched.jobId;
   console.log(`Jetson dispatch accepted as ${jobId}`);
@@ -312,7 +288,7 @@ async function main(): Promise<void> {
     path: `v1/jobs/${jobId}/artifact`,
     maxBytes: MAX_JETSON_DISPATCH_ARTIFACT_RESPONSE_BYTES,
   });
-  const artifact = validateArtifact(artifactValue, jobId);
+  const artifact: JetsonDispatchArtifact = parseJetsonDispatchArtifact(artifactValue, jobId);
   const { artifactArchiveBase64, ...artifactReceipt } = artifact;
   writePrivateRegularFile(
     path.join(artifactDirectory, "jetson-dispatch.json"),

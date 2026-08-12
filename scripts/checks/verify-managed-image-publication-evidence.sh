@@ -243,15 +243,40 @@ if ! descriptor_matches_file "$attestation_descriptor" "$attestation_raw"; then
   exit 1
 fi
 
-if ! jq -e '
-  (keys | sort) == ["config", "layers", "mediaType", "schemaVersion"]
+workload_size="$(jq -er '.size | tostring' "$workload_descriptor")"
+if ! jq -e \
+  --arg workload_digest "$workload_digest" \
+  --argjson workload_size "$workload_size" \
+  '
+  (keys | sort) == [
+    "artifactType",
+    "config",
+    "layers",
+    "mediaType",
+    "schemaVersion",
+    "subject"
+  ]
   and .schemaVersion == 2
   and .mediaType == "application/vnd.oci.image.manifest.v1+json"
-  and (.config | keys | sort) == ["digest", "mediaType", "size"]
-  and .config.mediaType == "application/vnd.oci.image.config.v1+json"
-  and (.config.digest | test("^sha256:[0-9a-f]{64}$"))
-  and (.config.size | type) == "number" and .config.size > 0
-  and (.config.size | floor) == .config.size
+  and .artifactType == "application/vnd.docker.attestation.manifest.v1+json"
+  and .config == {
+    mediaType: "application/vnd.oci.empty.v1+json",
+    digest: "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    size: 2,
+    data: "e30="
+  }
+  and .subject == {
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    digest: $workload_digest,
+    size: $workload_size
+  }
+  ' "$attestation_raw" >/dev/null; then
+  echo "ERROR: attestation manifest is not the canonical workload-bound OCI artifact." >&2
+  exit 1
+fi
+
+if ! jq -e '
+  (.layers | type) == "array"
   and (.layers | length) == 2
   and all(.layers[];
     (keys | sort) == ["annotations", "digest", "mediaType", "size"]
