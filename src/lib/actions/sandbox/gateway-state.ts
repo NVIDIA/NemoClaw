@@ -636,8 +636,14 @@ export async function ensureLiveSandboxOrExit(
         printDockerRuntimeDownGuidance(sandboxName);
         process.exit(1);
       }
-      const dockerRuntime = phase === "Error" ? getSandboxDockerRuntime(sandboxName) : null;
-      if (dockerRuntime?.paused && dockerRuntime.containerName) {
+      const dockerRuntime = getSandboxDockerRuntime(sandboxName);
+      if (dockerRuntime.containerName && !dockerRuntime.running && !dockerRuntime.paused) {
+        console.error(`  Sandbox '${sandboxName}' is stopped.`);
+        console.error("  Workspace state is preserved.");
+        console.error(`  Start it again with \`${CLI_NAME} ${sandboxName} start\`.`);
+        process.exit(1);
+      }
+      if (phase === "Error" && dockerRuntime.paused && dockerRuntime.containerName) {
         console.error(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
         console.error("");
         console.error(

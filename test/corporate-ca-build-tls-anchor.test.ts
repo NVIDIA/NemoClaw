@@ -18,37 +18,23 @@ describe("corporate proxy CA build-time TLS anchor (#6839)", () => {
   });
 
   // source-shape-contract: security -- The build-time TLS trust anchor must precede registry and signature-verifying fetches
-  it("decodes the CA and exports NODE_EXTRA_CA_CERTS before the reinstall audit-signatures step", () => {
+  it("sets NODE_EXTRA_CA_CERTS only in Node build steps when the CA exists", () => {
     const argIndex = dockerfile.indexOf("ARG NEMOCLAW_CORPORATE_CA_B64=");
     const decodeIndex = dockerfile.indexOf('RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then');
-    const anchorIndex = dockerfile.indexOf(
-      "ENV NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem",
-    );
-    const curlAnchorIndex = dockerfile.indexOf(
-      "export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem",
-      anchorIndex,
-    );
-    const ipAddressPatchIndex = dockerfile.indexOf(
-      "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
-      curlAnchorIndex,
-    );
+    const curlAnchorIndex = dockerfile.indexOf("export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem");
+    const nodeAnchorIndex = dockerfile.indexOf("export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem");
+    const ipAddressPatchIndex = dockerfile.indexOf("node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts", nodeAnchorIndex);
     const auditSignaturesIndex = dockerfile.indexOf("mcporter-runtime audit signatures");
 
-    for (const [name, index] of Object.entries({
-      argIndex,
-      decodeIndex,
-      anchorIndex,
-      curlAnchorIndex,
-      ipAddressPatchIndex,
-      auditSignaturesIndex,
-    })) {
+    expect(dockerfile).not.toContain("ENV NODE_EXTRA_CA_CERTS=");
+    for (const [name, index] of Object.entries({ argIndex, decodeIndex, curlAnchorIndex, nodeAnchorIndex, ipAddressPatchIndex, auditSignaturesIndex })) {
       expect(index, name).toBeGreaterThan(-1);
     }
     expect(argIndex).toBeLessThan(decodeIndex);
-    expect(decodeIndex).toBeLessThan(anchorIndex);
-    expect(anchorIndex).toBeLessThan(curlAnchorIndex);
-    expect(curlAnchorIndex).toBeLessThan(ipAddressPatchIndex);
-    expect(anchorIndex).toBeLessThan(auditSignaturesIndex);
+    expect(decodeIndex).toBeLessThan(curlAnchorIndex);
+    expect(curlAnchorIndex).toBeLessThan(nodeAnchorIndex);
+    expect(nodeAnchorIndex).toBeLessThan(ipAddressPatchIndex);
+    expect(nodeAnchorIndex).toBeLessThan(auditSignaturesIndex);
   });
 });
 
@@ -189,15 +175,13 @@ describe("Hermes corporate proxy CA final-stage trust", () => {
       argIndex,
     );
     const nodeAnchorIndex = finalStage.indexOf(
-      "ENV NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem",
+      "export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem",
       decodeIndex,
     );
-    const payloadCopyIndex = finalStage.indexOf(
-      "COPY --from=hermes-npm-patch-payload / /",
-      nodeAnchorIndex,
-    );
-    const conditionalCurlTrust = `RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \\
+    const payloadCopyIndex = finalStage.indexOf("COPY --from=hermes-npm-patch-payload / /");
+    const conditionalNodeTrust = `RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \\
       export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \\
+      export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \\
     fi; \\`;
     const remediationCommands = [
       "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
@@ -248,16 +232,17 @@ describe("Hermes corporate proxy CA final-stage trust", () => {
     })) {
       expect(index, name).toBeGreaterThan(-1);
     }
+    expect(finalStage).not.toContain("ENV NODE_EXTRA_CA_CERTS=");
     expect(argIndex).toBeLessThan(decodeIndex);
-    expect(decodeIndex).toBeLessThan(nodeAnchorIndex);
-    expect(nodeAnchorIndex).toBeLessThan(payloadCopyIndex);
+    expect(decodeIndex).toBeLessThan(payloadCopyIndex);
+    expect(payloadCopyIndex).toBeLessThan(nodeAnchorIndex);
     for (const remediationCommand of remediationCommands) {
       const remediationIndex = finalStage.indexOf(remediationCommand, payloadCopyIndex);
       expect(remediationIndex, remediationCommand).toBeGreaterThan(payloadCopyIndex);
       const runIndex = finalStage.lastIndexOf("\nRUN ", remediationIndex) + 1;
       expect(runIndex, remediationCommand).toBeGreaterThan(payloadCopyIndex);
       expect(finalStage.slice(runIndex, remediationIndex).trim(), remediationCommand).toBe(
-        conditionalCurlTrust,
+        conditionalNodeTrust,
       );
     }
     expect(npmCommandIndexes.length).toBeGreaterThan(0);
