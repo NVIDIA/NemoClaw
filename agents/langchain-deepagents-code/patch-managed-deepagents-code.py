@@ -652,7 +652,11 @@ def _nemoclaw_create_deep_agent(*args, **kwargs):
             ProgressiveToolDisclosureMiddleware,
         )
 
-        middleware.append(ProgressiveToolDisclosureMiddleware())
+        middleware.append(
+            ProgressiveToolDisclosureMiddleware(
+                registered_tools=kwargs.get("tools")
+            )
+        )
     if observability_active:
         from deepagents_code.nemoclaw_observability import new_relay_middleware
 
@@ -666,7 +670,11 @@ def _nemoclaw_create_deep_agent(*args, **kwargs):
             if isinstance(subagent, dict):
                 subagent_middleware = list(subagent.get("middleware") or ())
                 if progressive_active:
-                    subagent_middleware.append(ProgressiveToolDisclosureMiddleware())
+                    subagent_middleware.append(
+                        ProgressiveToolDisclosureMiddleware(
+                            registered_tools=kwargs.get("tools")
+                        )
+                    )
                 if observability_active:
                     subagent_middleware.append(new_relay_middleware())
                 subagent = {**subagent, "middleware": subagent_middleware}

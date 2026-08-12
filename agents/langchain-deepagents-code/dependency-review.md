@@ -30,6 +30,21 @@ The image build runs `pip3 check` and asserts all seven installed package versio
 The complete point-in-time audit now reports only two duplicate database records for `setuptools==82.0.1`; that record is outside the Critical/High remediation scope.
 This review does not claim the complete lock is vulnerability-free.
 
+## Progressive MCP Tool Catalog Compatibility
+
+Deep Agents Code `0.1.54` with LangChain `1.3.14` can supply `search_tools` with a `ToolRuntime.tools` view that omits loaded MCP tools.
+The next model request can still expose those tools, but a search against only the middleware runtime view reports no match and cannot disclose them.
+
+NemoClaw owns the progressive-disclosure middleware injection at graph construction.
+Each main-agent and local-subagent middleware instance therefore retains the registered tool tuple from that boundary.
+At search time, the middleware combines that tuple with `ToolRuntime.tools` by object identity and applies the existing name, result, state, and schema limits to the combined catalog.
+Model requests still use their request-time tool view, and the existing callable-name validation still rejects ambiguous or reserved owners before graph construction.
+
+The focused fixture and installed-image validator give `search_tools` a runtime view that contains only itself.
+They require a registered hidden MCP tool to appear in the search response and in the next model tool list.
+The live Deep Agents MCP E2E test separately requires the tool to be hidden initially, returned by `search_tools`, exposed on the next model request, and invoked through the authenticated managed MCP path.
+Remove the retained catalog only after the pinned Deep Agents and LangChain runtime supplies every registered searchable tool to middleware calls and both evidence paths pass without it.
+
 ## Managed `fetch_url` Proxy Adapter
 
 Deep Agents Code `0.1.54` deliberately disables ambient proxies and resolves

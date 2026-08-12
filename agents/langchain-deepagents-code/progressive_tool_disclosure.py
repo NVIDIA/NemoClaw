@@ -356,9 +356,20 @@ class ProgressiveToolDisclosureMiddleware(
 
     state_schema = ProgressiveToolDisclosureState
 
-    def __init__(self) -> None:
-        """Create an isolated disclosure middleware instance."""
+    def __init__(self, registered_tools: Sequence[object] | None = None) -> None:
+        """Create an isolated disclosure middleware instance.
+
+        ``ToolRuntime.tools`` is the executor view assembled by LangGraph. Keep
+        the graph-construction view as well because a dependency release can
+        project a narrower runtime view for a middleware tool. Search must still
+        cover every registered named tool that the next model request can expose.
+        """
         super().__init__()
+        self._registered_tools = tuple(
+            tool
+            for tool in registered_tools or ()
+            if isinstance(tool, (BaseTool, dict))
+        )
 
         # Keep these annotations concrete (this module intentionally does not
         # enable postponed annotations). StructuredTool uses inspect.signature
@@ -386,6 +397,19 @@ class ProgressiveToolDisclosureMiddleware(
                 infer_schema=False,
             )
         ]
+
+    def _search_catalog(
+        self,
+        runtime_tools: Sequence[BaseTool | dict[str, Any]],
+    ) -> tuple[BaseTool | dict[str, Any], ...]:
+        """Combine executor and graph-construction tool views by identity."""
+        combined = list(runtime_tools)
+        identities = {id(tool) for tool in combined}
+        for tool in self._registered_tools:
+            if id(tool) not in identities:
+                combined.append(tool)
+                identities.add(id(tool))
+        return tuple(combined)
 
     @staticmethod
     def _catalog_entries(
@@ -465,13 +489,14 @@ class ProgressiveToolDisclosureMiddleware(
         runtime: ToolRuntime[ContextT, ProgressiveToolDisclosureState],
     ) -> Command[Any]:
         """Search for hidden tools and persist matches in graph state."""
-        matches = self._matching_hidden_tools(query, runtime.tools)
+        catalog = self._search_catalog(runtime.tools)
+        matches = self._matching_hidden_tools(query, catalog)
         page = matches[:MAX_SEARCH_RESULTS]
         current_names = _bounded_discovered_tools(runtime.state.get("discovered_tools"))
         current = set(current_names)
         candidate_state = current_names
         _, visible_discovered = self._visible_discovered_tools(
-            runtime.tools, current_names
+            catalog, current_names
         )
         state_omitted_names: set[str] = set()
         schema_omitted_names: set[str] = set()
@@ -485,7 +510,7 @@ class ProgressiveToolDisclosureMiddleware(
                 state_omitted_names.add(entry.name)
                 continue
             _, proposed_visible = self._visible_discovered_tools(
-                runtime.tools, proposed_state
+                catalog, proposed_state
             )
             if entry.name not in proposed_visible or not visible_discovered.issubset(
                 proposed_visible

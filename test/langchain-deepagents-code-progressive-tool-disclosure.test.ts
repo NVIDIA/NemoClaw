@@ -619,6 +619,7 @@ describe("Deep Agents progressive tool disclosure", () => {
     ]);
     expect(result.max_query_length).toBe(256);
     expect(result.provider_native_preserved).toBe(true);
+    expect(result.projected_catalog_discovered).toEqual(["query_database"]);
   });
 
   it("bounds broad catalog output, persisted discovery, and visible schemas deterministically", () => {
@@ -707,7 +708,9 @@ describe("Deep Agents 0.1.54 progressive-disclosure build patch", () => {
       HARDENING_MARKER,
     );
     expect(
-      firstBytes[fixture.agentPath].match(/ProgressiveToolDisclosureMiddleware\(\)/g),
+      firstBytes[fixture.agentPath].match(
+        /ProgressiveToolDisclosureMiddleware\(\s*registered_tools=kwargs\.get\("tools"\)\s*\)/g,
+      ),
     ).toHaveLength(2);
     expect(firstBytes[fixture.modulePath]).toBe(fs.readFileSync(middlewarePath, "utf8"));
     expect(firstBytes[fixture.observabilityModulePath]).toBe(
