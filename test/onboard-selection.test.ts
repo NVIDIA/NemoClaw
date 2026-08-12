@@ -450,7 +450,7 @@ function makeSetupNimOllamaDeps(overrides: Partial<SetupNimOllamaDeps> = {}): Se
     ensureOllamaLoopbackSystemdOverride: () => "not-applicable",
     runOllamaStartupOrGate: () => ({ kind: "ready" }),
     shouldFrontOllamaWithProxy: () => false,
-    startOllamaAuthProxy: () => true,
+    // Proxy startup is deferred until configuration review acceptance.
     getLocalProviderBaseUrl: () => "http://host.docker.internal:11434/v1",
     selectAndValidateOllamaModel: async () => ({
       outcome: "selected",
