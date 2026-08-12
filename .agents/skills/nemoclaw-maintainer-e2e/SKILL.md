@@ -67,7 +67,7 @@ Choose exactly one mode:
   - every default-selected free-standing workflow E2E except `Exact staging Brev Launchable`;
   - every shared credential-free test; and
   - these controller-selected registry targets: `ubuntu-policy-custom-missing-presets-negative`, `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and `ubuntu-repo-docker-post-reboot-recovery`.
-  The run skips `jetson-nvmap-gpu` unless its Colossus dispatch flag is `true`.
+  The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
   It skips `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification` unless their runner-queue flag is `true`.
 - For protected managed-image runtime qualification, set `E2E_JOBS=managed-image-protected-runtime`. The exact candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
 
@@ -243,12 +243,11 @@ repository `maintain` or `admin` permission before the Launchable path's source
 checkout. That role check is the authorization.
 A user permitted to dispatch this workflow may set `allow_jetson_dispatch=true`
 to add `jetson-nvmap-gpu` to an empty-selector manual run or enable its explicit
-selection. Set it only after every deployment check in
-[Jetson Dispatch Through Colossus](../../../test/e2e/docs/jetson-colossus-dispatch.md)
-passes.
-The Jetson lifecycle removes and verifies only its fixed job-owned cleanup
-allowlist. Do not treat `cleanup: "succeeded"` as evidence that every possible
-candidate host change was reversed.
+selection. Set it only after the operator-owned service is available and
+compatible with HTTP contract
+version `1.0.0`, and `JETSON_DISPATCH_URL` contains its verified HTTPS origin.
+See [Jetson Dispatch Controller](../../../test/e2e/docs/jetson-dispatch.md).
+Require the uploaded Jetson receipt to report `cleanup: "succeeded"`.
 A permitted dispatcher may set `allow_dgx_spark_runner_queue=true` to add
 `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification` to an
 empty-selector manual run or enable explicit qualification selection. Set it

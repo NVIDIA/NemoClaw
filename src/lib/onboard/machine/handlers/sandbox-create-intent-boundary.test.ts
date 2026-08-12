@@ -295,6 +295,7 @@ describe("sandbox create intent machine boundary", () => {
       .fn<() => typeof messagingPlan | null>()
       .mockReturnValueOnce(null)
       .mockReturnValueOnce(null)
+      .mockReturnValueOnce(null)
       .mockReturnValueOnce(messagingPlan)
       .mockReturnValue(null);
     const { deps, calls } = createDeps({

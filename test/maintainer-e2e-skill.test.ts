@@ -222,7 +222,7 @@ describe("nemoclaw-maintainer-e2e evidence validation", () => {
       "dispatch.jobs",
     ],
     [
-      "a full dispatch that opts into Colossus Jetson execution",
+      "a full dispatch that opts into operator-owned Jetson execution",
       (evidence: ReturnType<typeof validEvidence>) => {
         evidence.dispatch.allowJetsonDispatch = true;
       },
