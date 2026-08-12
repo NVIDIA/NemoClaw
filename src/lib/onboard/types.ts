@@ -133,6 +133,8 @@ export type OnboardOptions = {
   fresh?: boolean;
   fromDockerfile?: string | null;
   sandboxName?: string | null;
+  /** Explicit host directories exposed read-only to the sandbox. */
+  hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
   sandboxGpu?: "enable" | "disable" | null;
   sandboxGpuDevice?: string | null;
   acceptThirdPartySoftware?: boolean;

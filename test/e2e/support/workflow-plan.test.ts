@@ -243,6 +243,18 @@ describe("E2E workflow plan", () => {
     }
   });
 
+  it.each([
+    "jobs",
+    "targets",
+  ] as const)("emits an empty shared plan for the Jetson dispatch %s selector (#8142)", (selector) => {
+    expect(buildE2eWorkflowPlan({ [selector]: "jetson-nvmap-gpu" })).toEqual({
+      matrix: [],
+      testMatrix: [],
+      hermesSelected: false,
+      explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
+    });
+  });
+
   it("emits an empty matrix for retired free-standing rebuild selectors (#7615)", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     const output = path.join(directory, "github-output");

@@ -209,6 +209,7 @@ export async function prepareSandboxDockerfilePatch({
     (() => {
       const metadata = fromDockerfile ? null : (resolved?.metadata ?? preResolvedBaseImageMetadata);
       return {
+        agentName: managedAgentName,
         buildIdPolicy,
         toolDisclosure,
         ...(rebuildPreservedEnv ? { rebuildPreservedEnv } : {}),

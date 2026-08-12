@@ -329,6 +329,7 @@ const {
 }: typeof import("./onboard/local-inference-topology") = require("./onboard/local-inference-topology");
 const {
   formatGatewayHealthWaitLimit,
+  getGatewayHealthWaitConfig,
   waitForGatewayHealth,
 }: typeof import("./onboard/gateway-health-wait") = require("./onboard/gateway-health-wait");
 const {
@@ -656,6 +657,7 @@ const {
   runCaptureEx,
   shouldUseOpenshellDevChannel,
   supportedOpenshellFallbackVersion: SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+  enableBindMounts: onboardSessionBootstrap.isDockerBindMountsEnabled,
 });
 
 import type { JsonObject as LooseObject } from "./core/json-types";
@@ -1061,7 +1063,6 @@ const {
   ensureOllamaLoopbackSystemdOverride,
   runOllamaStartupOrGate,
   shouldFrontOllamaWithProxy,
-  startOllamaAuthProxy,
   getLocalProviderBaseUrl,
   selectAndValidateOllamaModel,
   printOllamaExposureWarning,
@@ -1280,26 +1281,6 @@ function getGatewayClusterContainerState(): string {
     .trim()
     .toLowerCase();
   return state || "missing";
-}
-
-function getGatewayHealthWaitConfig(_startStatus = 0, containerState = "") {
-  const isArm64 = process.arch === "arm64";
-  const standardCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", isArm64 ? 30 : 12);
-  const standardInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", isArm64 ? 10 : 5);
-  const extendedCount = envInt("NEMOCLAW_GATEWAY_START_POLL_COUNT", standardCount);
-  const extendedInterval = envInt("NEMOCLAW_GATEWAY_START_POLL_INTERVAL", standardInterval);
-  const normalizedState = String(containerState || "")
-    .trim()
-    .toLowerCase();
-  const normalizedContainerState = normalizedState || "missing";
-  const useExtendedWait = normalizedContainerState !== "missing";
-
-  return {
-    count: useExtendedWait ? extendedCount : standardCount,
-    interval: useExtendedWait ? extendedInterval : standardInterval,
-    extended: useExtendedWait,
-    containerState: normalizedContainerState,
-  };
 }
 
 function buildGatewayClusterExecArgv(script: string): string[] {
@@ -2537,6 +2518,7 @@ async function createSandboxWithBaseImageResolution(
   });
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
+  onboardSessionBootstrap.verifyReadOnlyHostMountSources(resolvedCreateIntent.hostMounts);
   recreateRuntime.advance("creating");
   const managedBootstrap = managedWorkloadOnboard.resolveOnboardManagedBootstrapLaunch({
     runtime: managedWorkloadRuntime,
@@ -2700,6 +2682,7 @@ async function createSandboxWithBaseImageResolution(
           ...recreateRuntime.registrationFields,
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
+          hostMounts: resolvedCreateIntent.hostMounts,
         }),
     },
   );
@@ -3671,6 +3654,7 @@ const {
 
 const startRecordedStep = onboardRuntimeBoundary.startRecordedStep.bind(onboardRuntimeBoundary);
 const recordStepComplete = onboardRuntimeBoundary.recordStepComplete.bind(onboardRuntimeBoundary);
+const recordStepRejected = onboardRuntimeBoundary.recordStepRejected.bind(onboardRuntimeBoundary);
 const recordStepSkipped = onboardRuntimeBoundary.recordStepSkipped.bind(onboardRuntimeBoundary);
 const recordStepFailed = onboardRuntimeBoundary.recordStepFailed.bind(onboardRuntimeBoundary);
 const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboardRuntimeBoundary);
@@ -3739,6 +3723,7 @@ async function preflightAuthoritativeRebuildTarget(
 // ── Main ─────────────────────────────────────────────────────────
 const onboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
+  const hostMountScope = onboardSessionBootstrap.beginHostMountScope(opts.hostMounts);
   resetGatewayOwnerBinding();
   setupInferenceFactory.assertNoOpenShellGatewayEndpointOverride();
   const runtimeControlRequests = runtimeControlFlow.applyOnboardRuntimeControlRequests(opts);
@@ -3752,33 +3737,16 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     authoritativeGateway?.name ?? GATEWAY_NAME,
   );
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
-  NON_INTERACTIVE = opts.nonInteractive || isNonInteractiveEnv();
-  RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const { fresh, nonInteractive, requestedFromDockerfile, requestedSandboxName, cannotPrompt, resume } = onboardEntryOptions.resolveOnboardRunEntryOptions(opts, process.env, onboardSession.loadSession()?.status ?? null, isNonInteractiveEnv, { validateName, reservedSandboxNames: RESERVED_SANDBOX_NAMES, cliDisplayName, getNameValidationGuidance, error: (message) => console.error(message), exitProcess: (code) => process.exit(code) });
+  NON_INTERACTIVE = nonInteractive;
+  RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   _preflightDashboardPort =
     opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
   if (!authoritativeGateway) delete process.env.OPENSHELL_GATEWAY;
   preparedDcodeRuntime.applyGatewayEnv(process.env);
-  const { resume, fresh, requestedFromDockerfile, requestedSandboxName, cannotPrompt } =
-    onboardEntryOptions.resolveOnboardEntryOptions(
-      {
-        opts,
-        env: process.env,
-        stdinIsTty: Boolean(process.stdin && process.stdin.isTTY),
-        stdoutIsTty: Boolean(process.stdout && process.stdout.isTTY),
-        persistedSessionStatus: onboardSession.loadSession()?.status ?? null,
-      },
-      {
-        isNonInteractive,
-        validateName,
-        reservedSandboxNames: RESERVED_SANDBOX_NAMES,
-        cliDisplayName,
-        getNameValidationGuidance,
-        error: (message) => console.error(message),
-        exitProcess: (code) => process.exit(code),
-      },
-    );
   const baseImageResolutionContext = baseImageResolutionFlow.createBaseImageResolutionContext({
     fresh,
     initialHint: opts.baseImageResolutionHint,
@@ -3889,6 +3857,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         servingProfileProvenance: opts.servingProfileProvenance ?? null,
         agentFlag: opts.agent || null,
         envAgent: process.env.NEMOCLAW_AGENT || null,
+        requestedHostMounts: opts.hostMounts,
         ...stationSessionInput,
       },
       {
@@ -3907,6 +3876,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         exitProcess: (code) => process.exit(code),
       },
     );
+    const effectiveHostMounts = hostMountScope.activate(session?.metadata.hostMounts);
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
     // Resume backstop: a session may exist without a sandboxName if sandbox
     // creation failed before that step. Non-interactive --from cannot infer a
@@ -3973,6 +3943,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     if (isNonInteractive()) note("  (non-interactive mode)");
     if (resume) note("  (resume mode)");
     console.log("  ===================");
+    onboardSessionBootstrap.reportReadOnlyHostMounts(effectiveHostMounts, note);
     const explicitSandboxGpuFlag = resolveSandboxGpuFlagFromOptions(opts);
     const recordedGpuPassthroughBeforePreflight = session?.gpuPassthrough === true;
     type InitialOnboardFlowContext =
@@ -4051,6 +4022,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       },
       gatewayName: GATEWAY_NAME,
       recreateSandbox: isRecreateSandbox,
+      requiresBindMounts: effectiveHostMounts.length > 0,
       gatewayDeps: {
         ...machineGatewayOwnerDeps,
         refreshDockerDriverGatewayReuseState,
@@ -4111,6 +4083,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const endpointProvenance = { endpointSource: opts.endpointSource, endpointSourceProvider: opts.rebuildRegistryInferenceRoute?.route.provider ?? null, endpointSourceEndpointUrl: opts.rebuildRegistryInferenceRoute?.route.endpointUrl ?? null, getSandboxRegistryEntry: registry.getSandbox };
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const providerReviewDeps = setupInferenceFactory.createProviderReviewDeps(onboardSession.updateSession, onboardSessionBootstrap.checkpointSandboxName, { shouldFrontOllamaWithProxy, startOllamaAuthProxy, getOllamaProxyToken, persistAndProbeOllamaProxy }, process.exit, console.error);
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const coreFlowPhases = createCoreOnboardFlowPhases<InitialOnboardFlowContext, unknown, MessagingChannelConfig, import("./resources-cmd").ResourceProfile>({
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
       resumeProvider: { isNonInteractive, isRoutedInferenceProvider, providerExistsInGateway, replaceNamedCredential, resumeManagedLlamaCppRuntime: (sandboxName) => setupNimFlow.resumeManagedLlamaCppRuntime(sandboxName, { gatewayPort: GATEWAY_PORT, runtimeProvider: setupNimFlow.resolveCurrentRuntimeProviderBundle() }) },
@@ -4136,6 +4111,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           setupInference,
           startRecordedStep,
           recordStepComplete,
+          recordStepRejected,
           toSessionUpdates: (updates) =>
             toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
           skippedStepMessage,
@@ -4167,6 +4143,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           },
           reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
           registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
+          ...providerReviewDeps,
           promptValidatedSandboxName,
           assessHost,
           formatSandboxBuildEstimateNote,
@@ -4191,6 +4168,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
         requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
         rebuildPreservedEnv: opts.rebuildPreservedEnv,
+        hostMounts: effectiveHostMounts,
         endpointProvenance,
         recreateSandbox: isRecreateSandbox,
         controlUiPort: _preflightDashboardPort,
@@ -4409,16 +4387,20 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     completed = true;
     traceCompleted = finalFlowResult.session.machine.state === "complete";
   } finally {
-    releaseOnboardLock();
-    onboardRuntimeBoundary.clear();
-    onboardTracing.finishOnboardTrace(onboardTrace, traceCompleted);
-    GATEWAY_NAME = previousGatewayBinding.name;
-    GATEWAY_PORT = previousGatewayBinding.port;
-    if (previousOpenshellGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
-    else process.env.OPENSHELL_GATEWAY = previousOpenshellGateway;
-    if (previousOpenshellLocalTlsDir === undefined) delete process.env.OPENSHELL_LOCAL_TLS_DIR;
-    else process.env.OPENSHELL_LOCAL_TLS_DIR = previousOpenshellLocalTlsDir;
-    resetGatewayOwnerBinding();
+    try {
+      releaseOnboardLock();
+      onboardRuntimeBoundary.clear();
+      onboardTracing.finishOnboardTrace(onboardTrace, traceCompleted);
+      GATEWAY_NAME = previousGatewayBinding.name;
+      GATEWAY_PORT = previousGatewayBinding.port;
+      if (previousOpenshellGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
+      else process.env.OPENSHELL_GATEWAY = previousOpenshellGateway;
+      if (previousOpenshellLocalTlsDir === undefined) delete process.env.OPENSHELL_LOCAL_TLS_DIR;
+      else process.env.OPENSHELL_LOCAL_TLS_DIR = previousOpenshellLocalTlsDir;
+      resetGatewayOwnerBinding();
+    } finally {
+      hostMountScope.restore();
+    }
   }
 }
 

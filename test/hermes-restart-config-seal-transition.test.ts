@@ -187,6 +187,13 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
       expect(mode(fixture.sandboxDir)).toBe(0o1775);
       expect(strictHashIsValid(fixture)).toBe(true);
     } finally {
+      for (const pathname of [fixture.sandboxDir, fixture.hermesDir]) {
+        try {
+          fs.chmodSync(pathname, 0o770);
+        } catch {
+          // A failed transition can remove the fixture directory.
+        }
+      }
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });

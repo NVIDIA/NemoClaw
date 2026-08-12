@@ -486,6 +486,23 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
   });
 
+  it("reports a redacted verbose diagnostic for quiet recovery failures", () => {
+    vi.stubEnv("NEMOCLAW_REBUILD_VERBOSE", "1");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const deps = baseDeps({
+      backupState: vi.fn(() => {
+        throw new Error("OPENAI_API_KEY=sk-recovery-secret backup finalization failed");
+      }),
+    });
+
+    expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).toBeNull();
+    const output = errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Trusted container recovery could not start");
+    expect(output).toContain("OPENAI_API_KEY=<REDACTED>");
+    expect(output).toContain("backup finalization failed");
+    expect(output).not.toContain("sk-recovery-secret");
+  });
+
   it("preserves the recreation diagnostic when state-backup cleanup throws", () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);

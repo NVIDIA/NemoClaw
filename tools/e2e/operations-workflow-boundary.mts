@@ -241,8 +241,11 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   ) {
     errors.push("Manual PR E2E concurrency must be scoped to its pull request");
   }
-  if (workflow.concurrency?.["cancel-in-progress"] !== "${{ inputs.checkout_sha != '' }}") {
-    errors.push("Manual PR E2E concurrency must cancel obsolete runs");
+  if (
+    workflow.concurrency?.["cancel-in-progress"] !==
+    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch }}"
+  ) {
+    errors.push("Manual PR E2E concurrency must not cancel an active Jetson dispatch");
   }
 
   const matrixJob = workflow.jobs["generate-matrix"] ?? {};
@@ -271,6 +274,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   const authEnvironment = {
     ACTOR: "${{ github.actor }}",
+    ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
     BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
@@ -293,10 +297,15 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   const authSource = String(authentication.run ?? "");
   const acceptedJobCases = [
-    "::false",
-    ...PR_E2E_MANUAL_CONTROLLER_JOB_IDS.map((jobId) => `${jobId}::false`),
+    "::false:false",
+    ...PR_E2E_MANUAL_CONTROLLER_JOB_IDS.map((jobId) => `${jobId}::false:false`),
+    ":jetson-nvmap-gpu:false:true",
   ].join(" | ");
-  const acceptedJobNames = PR_E2E_MANUAL_CONTROLLER_JOB_IDS.join(", or ");
+  const acceptedNames = [
+    ...PR_E2E_MANUAL_CONTROLLER_JOB_IDS,
+    "jetson-nvmap-gpu with its dispatch flag",
+  ];
+  const acceptedJobNames = `${acceptedNames.slice(0, -1).join(", ")}, or ${acceptedNames.at(-1)}`;
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
     '"$WORKFLOW_REF" == "refs/heads/main"',
@@ -374,6 +383,11 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Checkout trusted llama.cpp qualification" &&
         step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
+      const trustedJetsonControllerCheckout =
+        jobName === "jetson-nvmap-gpu" &&
+        step.name === "Check out trusted Jetson controller" &&
+        step.with?.repository === "NVIDIA/NemoClaw" &&
+        step.with?.ref === "${{ github.workflow_sha }}";
       const trustedCheckout =
         trustedHermesFixtureCheckout ||
         trustedReportHelperCheckout ||
@@ -381,7 +395,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         trustedPublicationCheckout ||
         trustedManagedImageRuntimeCheckout ||
         trustedLlamaCppPlanCheckout ||
-        trustedLlamaCppQualificationCheckout;
+        trustedLlamaCppQualificationCheckout ||
+        trustedJetsonControllerCheckout;
       if (
         step.uses?.startsWith("actions/checkout@") &&
         step.with?.ref !== "${{ inputs.checkout_sha || github.sha }}" &&
