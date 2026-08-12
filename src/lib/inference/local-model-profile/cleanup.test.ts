@@ -386,6 +386,10 @@ describe("host-local model cleanup", () => {
   it("removes non-credential Hugging Face cache data without running runtime cleanup", () => {
     const homeDir = temporaryHome();
     const cache = path.join(homeDir, ".cache", "huggingface");
+    const runtimePaths = managedLlamaCppStatePaths(homeDir);
+    createManagedState(homeDir, engineHarness().engine);
+    const runtimeOwner = fs.readFileSync(runtimePaths.ownerPath, "utf8");
+    const runtimeReceipt = fs.readFileSync(runtimePaths.receiptPath, "utf8");
     fs.mkdirSync(cache, { recursive: true });
     fs.writeFileSync(path.join(cache, "shared-model"), "delete");
     fs.writeFileSync(path.join(cache, "token"), "keep-credential", { mode: 0o600 });
@@ -399,6 +403,8 @@ describe("host-local model cleanup", () => {
     expect(fs.readFileSync(path.join(cache, "stored_tokens"), "utf8")).toBe(
       "keep-stored-credentials",
     );
+    expect(fs.readFileSync(runtimePaths.ownerPath, "utf8")).toBe(runtimeOwner);
+    expect(fs.readFileSync(runtimePaths.receiptPath, "utf8")).toBe(runtimeReceipt);
     expect(result.removed).toContain(`cache-contents:${cache}`);
     expect(result.preserved).toEqual(
       expect.arrayContaining([path.join(cache, "token"), path.join(cache, "stored_tokens")]),

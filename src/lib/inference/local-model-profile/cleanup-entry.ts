@@ -18,8 +18,6 @@ try {
     process.argv.at(-1) === "--delete-cache-data"
       ? "Hugging Face cache-data cleanup"
       : "Host-local model runtime cleanup";
-  console.error(
-    `${operation} failed: ${error instanceof Error ? error.message : String(error)}`,
-  );
+  console.error(`${operation} failed: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 }
