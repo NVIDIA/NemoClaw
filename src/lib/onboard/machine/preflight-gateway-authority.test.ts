@@ -46,9 +46,9 @@ describe("preflight gateway authority", () => {
       .spyOn(fatalRuntimePreflight, "collectOnboardGatewayReadiness")
       .mockImplementation(async (collectorDeps) => {
         events.push("collect readiness");
-        expect(collectorDeps.gatewayName()).toBe("nemoclaw");
-        expect(collectorDeps.gatewayPort()).toBe(8080);
-        expect(collectorDeps.resolveOwner()).toBe(owner);
+        expect(collectorDeps.gatewayName?.()).toBe("nemoclaw");
+        expect(collectorDeps.gatewayPort?.()).toBe(8080);
+        expect(collectorDeps.resolveOwner?.()).toBe(owner);
         return gatewayReadiness;
       });
     const session = {} as Session;
