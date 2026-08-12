@@ -34,9 +34,7 @@ export const PR_E2E_MANUAL_CONTROLLER_JOB_IDS = [
   "inference-routing",
   "managed-image-protected-runtime",
 ] as const;
-const PR_E2E_MANUAL_CONTROLLER_JOB_ID_SET = new Set<string>(
-  PR_E2E_MANUAL_CONTROLLER_JOB_IDS,
-);
+const PR_E2E_MANUAL_CONTROLLER_JOB_ID_SET = new Set<string>(PR_E2E_MANUAL_CONTROLLER_JOB_IDS);
 const DEEPAGENTS_HEADLESS_INFERENCE_CHECK =
   "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh";
 const DEEPAGENTS_CODE_RUNTIME_ROOT = "agents/langchain-deepagents-code/";
@@ -244,7 +242,7 @@ export function isPrE2eTypedTargetId(value: string): boolean {
 }
 
 export function isPrE2ePlanningJob(value: string): boolean {
-  // Automatic PR planning cannot attest the external Colossus dispatcher and cleanup path.
+  // Automatic PR planning cannot attest the operator-owned Jetson backend and hardware path.
   // Remove this exclusion after that hardware gate produces trusted planning evidence.
   return !PR_E2E_PLANNING_OMITTED_JOB_IDS.has(value);
 }
