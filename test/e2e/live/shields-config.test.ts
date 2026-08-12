@@ -483,7 +483,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
       "restart OpenClaw with shields down",
       "recover shields after a dead restore timer",
       "reject duplicate shields transitions",
-      "prove installed recovery refuses a live child and supported shields down unlocks childless state",
+      "prove installed failed-startup guard refuses a live child and supported shields down unlocks childless state",
       "record shields contract evidence",
     ],
   },
@@ -505,7 +505,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
       "start restores a stopped OpenClaw sandbox while shields are down",
       "dead auto-restore timer inline recovery re-locks config and .config-hash",
       "double shields-up/down operations are rejected",
-      "installed recovery refuses a live child and supported shields down atomically unlocks childless state",
+      "installed failed-startup guard refuses a live child and supported shields down atomically unlocks childless state",
     ],
   });
 
@@ -1074,7 +1074,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   expect(resultText(finalUp)).toContain("Lockdown active");
 
   progress.phase(
-    "prove installed recovery refuses a live child and supported shields down unlocks childless state",
+    "prove installed failed-startup guard refuses a live child and supported shields down unlocks childless state",
   );
   const recoveryContainerId = await findSandboxContainer(host);
   const removeMarkers = await docker(
