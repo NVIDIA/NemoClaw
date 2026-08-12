@@ -150,6 +150,7 @@ export function assertOnboardSystemReadiness(
       isPortableExperimentalProfile() || !isLinuxDockerDriverGatewayEnabled(),
     allowStorageRemediation: options.allowStorageRemediation === true,
     allowPortableHostPreparation: options.allowPortableHostPreparation,
+    allowDeferredN1xManagedVllm: process.env.NEMOCLAW_PROVIDER === "install-vllm",
   });
   if (admission.admitted) return readinessReport;
   const jetsonRuntimeMissing = admission.findingIds.includes("host.gpu.nvidia_runtime_missing");

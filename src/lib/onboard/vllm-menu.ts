@@ -30,9 +30,9 @@ interface VllmProfileShape {
   name: string;
 }
 
-const MANAGED_VLLM_DEFAULT_PLATFORMS = new Set<NvidiaPlatform>(["spark", "station"]);
+const MANAGED_VLLM_DEFAULT_PLATFORMS = new Set<NvidiaPlatform>(["spark", "station", "n1x"]);
 
-/** DGX platforms where the provider menu exposes managed vLLM without `experimental`. */
+/** NVIDIA platforms where the provider menu exposes managed vLLM without `experimental`. */
 export function isManagedVllmDefaultPlatform(platform: NvidiaPlatform | null | undefined): boolean {
   return platform != null && MANAGED_VLLM_DEFAULT_PLATFORMS.has(platform);
 }
@@ -67,11 +67,18 @@ export function buildVllmMenuEntries(opts: BuildVllmMenuOptions): VllmMenuEntry[
         `  Note: NEMOCLAW_PROVIDER=install-vllm requested, but vLLM is already running on localhost:${VLLM_PORT} — selecting the running instance.`,
       );
     }
-    const experimentalLabel = isManagedVllmDefaultPlatform(opts.platform) ? "" : " [experimental]";
+    const experimentalLabel =
+      opts.platform === "n1x"
+        ? " [Deferred preview]"
+        : isManagedVllmDefaultPlatform(opts.platform)
+          ? ""
+          : " [experimental]";
     return [
       {
         key: "vllm",
-        label: `Local vLLM${experimentalLabel} (localhost:${VLLM_PORT}) — running (suggested)`,
+        label: `Local vLLM${experimentalLabel} (localhost:${VLLM_PORT}) — running${
+          opts.platform === "n1x" ? "" : " (suggested)"
+        }`,
       },
     ];
   }
@@ -81,7 +88,8 @@ export function buildVllmMenuEntries(opts: BuildVllmMenuOptions): VllmMenuEntry[
   ) {
     const verb = opts.hasVllmImage ? "Start" : "Install";
     const profileLabel = opts.vllmProfile?.name ?? "no profile detected";
-    return [{ key: "install-vllm", label: `${verb} vLLM (${profileLabel})` }];
+    const previewLabel = opts.platform === "n1x" ? " [Deferred preview]" : "";
+    return [{ key: "install-vllm", label: `${verb} vLLM (${profileLabel})${previewLabel}` }];
   }
   return [];
 }

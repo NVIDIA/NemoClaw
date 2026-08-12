@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { NvidiaPlatform } from "../inference/nim.js";
+import { collectN1xIdentity, type N1xIdentityOptions } from "../inference/platform-identity/n1x.js";
 import {
   isQualifiedStationProfile,
   isQualifiedStationRuntime,
@@ -27,6 +28,9 @@ export type { StationProfile } from "./station-qualification.js";
 export interface PlatformIdentity {
   nvidiaPlatform?: NvidiaPlatform | null;
   productName?: string | null;
+  n1xCandidate?: boolean | null;
+  n1xFastOsMarker?: boolean | null;
+  n1xPciGpu?: boolean | null;
   stationProfile?: StationProfile | null;
   stationGb300PciGpu?: boolean | null;
   osId?: string | null;
@@ -51,23 +55,9 @@ export interface PlatformQualificationProjection {
   evidence: ReadinessEvidence[];
 }
 
-export interface CollectPlatformIdentityOptions {
-  readFile?: (filePath: string) => string;
-  readdir?: (directory: string) => readonly string[];
-  openFile?: (filePath: string, flags: number) => number;
-  statFileDescriptor?: (fileDescriptor: number) => {
-    isFile(): boolean;
-    isSymbolicLink(): boolean;
-    size: number;
-    uid: number;
-    gid: number;
-    mode: number;
-  };
-  readFileDescriptor?: (fileDescriptor: number, maxBytes: number) => string;
-  closeFileDescriptor?: (fileDescriptor: number) => void;
+export interface CollectPlatformIdentityOptions extends N1xIdentityOptions {
   productNamePath?: string;
   stationReleasePath?: string;
-  pciDevicesPath?: string;
   osReleasePath?: string;
 }
 
@@ -239,7 +229,29 @@ export function collectPlatformIdentity(
     readFile,
     options.productNamePath ?? "/sys/class/dmi/id/product_name",
   );
-  const nvidiaPlatform = nvidiaPlatformFromProduct(productName);
+  let nvidiaPlatform = nvidiaPlatformFromProduct(productName);
+  if (nvidiaPlatform === undefined) {
+    const n1xIdentity = collectN1xIdentity({
+      readFile,
+      readdir,
+      openFile,
+      statFileDescriptor,
+      readFileDescriptor,
+      closeFileDescriptor,
+      fastOsReleasePath: options.fastOsReleasePath,
+      pciDevicesPath: options.pciDevicesPath,
+    });
+    if (n1xIdentity.qualified) nvidiaPlatform = "n1x";
+    if (n1xIdentity.candidate) {
+      return {
+        nvidiaPlatform,
+        productName,
+        n1xCandidate: true,
+        n1xFastOsMarker: n1xIdentity.fastOsMarker,
+        n1xPciGpu: n1xIdentity.pciGpu,
+      };
+    }
+  }
   if (nvidiaPlatform !== "station") return { nvidiaPlatform, productName };
   const osRelease = readOptional(readFile, options.osReleasePath ?? "/etc/os-release");
   const { osId, osVersionId } = osRelease ? parseOsRelease(osRelease) : {};
@@ -352,19 +364,46 @@ export function projectPlatformQualification(
         : "unqualified";
   const sparkIdentity = input.nvidiaPlatform === "spark";
   const sparkQualified = sparkIdentity && input.architecture === "arm64" && input.hasNvidiaGpu;
+  const n1xIdentity =
+    input.nvidiaPlatform === "n1x" || input.n1xCandidate === true || input.n1xFastOsMarker === true;
+  const n1xQualified =
+    n1xIdentity &&
+    input.nvidiaPlatform === "n1x" &&
+    input.n1xFastOsMarker === true &&
+    input.n1xPciGpu === true &&
+    input.platform === "linux" &&
+    input.architecture === "arm64" &&
+    input.hasNvidiaGpu;
+  let n1xStatus: QualificationStatus = "unknown";
+  if (n1xIdentity && input.n1xFastOsMarker === false) {
+    n1xStatus = "unqualified";
+  } else if (n1xIdentity && input.n1xFastOsMarker === true && input.n1xPciGpu !== undefined) {
+    n1xStatus = n1xQualified ? "qualified" : "unqualified";
+  }
   const platformSupported =
     (linuxSupported || macosSupported) &&
     (!stationIdentity || stationQualified) &&
     (!sparkIdentity || sparkQualified) &&
+    !n1xIdentity &&
     (!input.isWsl || dockerDesktop);
   const evidence: ReadinessEvidence[] = [];
-  if (input.productName || input.nvidiaPlatform || input.stationProfile) {
+  if (
+    input.productName ||
+    input.nvidiaPlatform ||
+    input.n1xCandidate !== undefined ||
+    input.n1xFastOsMarker !== undefined ||
+    input.n1xPciGpu !== undefined ||
+    input.stationProfile
+  ) {
     evidence.push({
       id: "host.platform.identity",
       summary: "Bounded platform identity used for qualification.",
       details: {
         product: input.productName?.slice(0, 256) ?? null,
         nvidiaPlatform: input.nvidiaPlatform ?? null,
+        n1xCandidate: input.n1xCandidate ?? null,
+        n1xFastOsMarker: input.n1xFastOsMarker ?? null,
+        n1xPciGpu: input.n1xPciGpu ?? null,
         stationProfile: input.stationProfile ?? null,
         stationGb300PciGpu: input.stationGb300PciGpu ?? null,
         osId: input.osId ?? null,
@@ -393,6 +432,16 @@ export function projectPlatformQualification(
     ),
     capability("host.platform.wsl_gpu_passthrough", wslGpuPassthrough),
     capability("host.platform.dgx_spark", sparkQualified ? "present" : "absent"),
+    capability(
+      "host.platform.n1x",
+      !n1xIdentity
+        ? "absent"
+        : n1xStatus === "qualified"
+          ? "present"
+          : n1xStatus === "unqualified"
+            ? "absent"
+            : "unknown",
+    ),
     capability(
       "host.platform.dgx_station",
       !stationIdentity
@@ -431,6 +480,9 @@ export function projectPlatformQualification(
         "host.platform.dgx_spark",
       ]),
     );
+  }
+  if (n1xIdentity) {
+    qualifications.push(qualification("host.platform.n1x", n1xStatus, ["host.platform.n1x"]));
   }
   if (stationIdentity) {
     qualifications.push(
@@ -505,6 +557,32 @@ export function projectPlatformQualification(
       severity: "blocking",
       summary: "DGX Spark requires an ARM64 host with an available NVIDIA GPU.",
       capabilityIds: ["host.platform.dgx_spark", "host.platform.supported"],
+      ...(evidence.length ? { evidenceIds: ["host.platform.identity"] } : {}),
+    });
+  }
+  if (n1xStatus === "qualified") {
+    findings.push({
+      id: "host.platform.n1x_validation_pending",
+      severity: "blocking",
+      summary: "N1x platform validation is pending a physical NemoClaw Express E2E run.",
+      capabilityIds: ["host.platform.n1x", "host.platform.supported"],
+      ...(evidence.length ? { evidenceIds: ["host.platform.identity"] } : {}),
+    });
+  } else if (n1xStatus === "unqualified") {
+    findings.push({
+      id: "host.platform.n1x_unqualified",
+      severity: "blocking",
+      summary:
+        "N1x requires the trusted FastOS marker, NVIDIA PCI identity, Arm64 host, and available NVIDIA GPU.",
+      capabilityIds: ["host.platform.n1x", "host.platform.supported"],
+      ...(evidence.length ? { evidenceIds: ["host.platform.identity"] } : {}),
+    });
+  } else if (n1xIdentity && n1xStatus === "unknown") {
+    findings.push({
+      id: "host.platform.n1x_inconclusive",
+      severity: "blocking",
+      summary: "N1x qualification is inconclusive and fails closed.",
+      capabilityIds: ["host.platform.n1x", "host.platform.supported"],
       ...(evidence.length ? { evidenceIds: ["host.platform.identity"] } : {}),
     });
   }

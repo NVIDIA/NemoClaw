@@ -101,6 +101,31 @@ describe("buildVllmMenuEntries", () => {
     assert.equal(entries[0].label, "Start vLLM (DGX Station)");
   });
 
+  it("labels the N1x managed-vLLM entries as a Deferred preview (#8574)", () => {
+    const install = buildVllmMenuEntries({
+      vllmRunning: false,
+      vllmProfile: { name: "N1x" },
+      experimental: false,
+      platform: "n1x",
+      hasVllmImage: false,
+      env: {},
+      log: () => {},
+    });
+    const running = buildVllmMenuEntries({
+      vllmRunning: true,
+      vllmProfile: { name: "N1x" },
+      experimental: false,
+      platform: "n1x",
+      hasVllmImage: true,
+      env: {},
+      log: () => {},
+    });
+
+    assert.equal(install[0].label, "Install vLLM (N1x) [Deferred preview]");
+    assert.match(running[0].label, /Local vLLM \[Deferred preview\]/);
+    assert.doesNotMatch(running[0].label, /suggested/);
+  });
+
   it("keeps generic Linux managed vLLM behind EXPERIMENTAL", () => {
     const entries = buildVllmMenuEntries({
       vllmRunning: false,

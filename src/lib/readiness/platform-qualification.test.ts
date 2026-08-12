@@ -240,6 +240,111 @@ describe("platform readiness qualification (#7410)", () => {
     expect(result.findings.map(({ id }) => id)).toContain("host.platform.dgx_spark_unqualified");
   });
 
+  it("collects and qualifies the accepted N1x identity boundary (#8574)", () => {
+    const identity = collectPlatformIdentity({
+      productNamePath: "/fixtures/product_name",
+      fastOsReleasePath: "/fixtures/fastos-release",
+      pciDevicesPath: "/fixtures/pci",
+      readFile: (filePath) => {
+        if (filePath.endsWith("product_name")) return "SKU 1\n";
+        if (filePath.endsWith("vendor")) return "0x10de\n";
+        if (filePath.endsWith("device")) return "0x2e2a\n";
+        if (filePath.endsWith("class")) return "0x030000\n";
+        throw new Error(`unexpected path: ${filePath}`);
+      },
+      readdir: () => ["000f:01:00.0"],
+      openFile: () => 19,
+      statFileDescriptor: () => trustedMarkerStat({ size: 116 }),
+      readFileDescriptor: () => 'NAME="N1x FASTOS"\nVERSION="1.23.0"\n',
+      closeFileDescriptor: () => undefined,
+    });
+    const result = projectPlatformQualification(
+      input({ architecture: "arm64", hasNvidiaGpu: true, ...identity }),
+    );
+
+    expect(identity).toEqual({
+      nvidiaPlatform: "n1x",
+      productName: "SKU 1",
+      n1xCandidate: true,
+      n1xFastOsMarker: true,
+      n1xPciGpu: true,
+    });
+    expect(capability(result, "host.platform.n1x")).toBe("present");
+    expect(capability(result, "host.platform.supported")).toBe("absent");
+    expect(qualification(result, "host.platform.n1x")).toBe("qualified");
+    expect(result.findings.map(({ id }) => id)).toContain("host.platform.n1x_validation_pending");
+    expect(result.evidence[0]?.details).toMatchObject({
+      product: "SKU 1",
+      nvidiaPlatform: "n1x",
+      n1xCandidate: true,
+      n1xFastOsMarker: true,
+      n1xPciGpu: true,
+    });
+  });
+
+  it.each([
+    ["wrong operating system", { platform: "darwin" }],
+    ["wrong architecture", { architecture: "x64" }],
+    ["unavailable GPU", { hasNvidiaGpu: false }],
+    ["wrong PCI device", { nvidiaPlatform: null, n1xPciGpu: false }],
+  ] as const)("keeps N1x unqualified with %s (#8574)", (_scenario, overrides) => {
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        hasNvidiaGpu: true,
+        nvidiaPlatform: "n1x",
+        productName: "SKU 1",
+        n1xFastOsMarker: true,
+        n1xPciGpu: true,
+        ...overrides,
+      }),
+    );
+
+    expect(capability(result, "host.platform.n1x")).toBe("absent");
+    expect(capability(result, "host.platform.supported")).toBe("absent");
+    expect(qualification(result, "host.platform.n1x")).toBe("unqualified");
+    expect(result.findings.map(({ id }) => id)).toContain("host.platform.n1x_unqualified");
+  });
+
+  it("keeps N1x qualification inconclusive when PCI identity cannot be read (#8574)", () => {
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        hasNvidiaGpu: true,
+        nvidiaPlatform: null,
+        productName: "SKU 1",
+        n1xFastOsMarker: true,
+        n1xPciGpu: undefined,
+      }),
+    );
+
+    expect(capability(result, "host.platform.n1x")).toBe("unknown");
+    expect(qualification(result, "host.platform.n1x")).toBe("unknown");
+    expect(result.findings.map(({ id }) => id)).toContain("host.platform.n1x_inconclusive");
+  });
+
+  it.each([
+    ["untrusted", false, "unqualified", "host.platform.n1x_unqualified"],
+    ["unreadable", undefined, "unknown", "host.platform.n1x_inconclusive"],
+  ] as const)("fails closed for an %s N1x FastOS marker (#8574)", (_scenario, n1xFastOsMarker, expectedStatus, expectedFinding) => {
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        hasNvidiaGpu: true,
+        n1xCandidate: true,
+        n1xFastOsMarker,
+        n1xPciGpu: undefined,
+      }),
+    );
+
+    expect(capability(result, "host.platform.n1x")).toBe(
+      expectedStatus === "unqualified" ? "absent" : "unknown",
+    );
+    expect(capability(result, "host.platform.supported")).toBe("absent");
+    expect(qualification(result, "host.platform.n1x")).toBe(expectedStatus);
+    expect(result.findings.map(({ id }) => id)).toContain(expectedFinding);
+  });
+
   it.each([
     ["generic-ubuntu", "qualified"],
     ["supported-dgx-os", "qualified"],

@@ -324,7 +324,7 @@ const { setupNim } = require(${onboardPath});
     assert.doesNotMatch(result.stderr, /INSTALL_VLLM_CALLED/);
   });
 
-  it("surfaces managed vLLM by default on DGX Spark and Station only", () => {
+  it("surfaces managed vLLM by default on accepted NVIDIA platforms", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-platform-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -361,6 +361,12 @@ const { setupNim } = require(${onboardPath});
         gpu: { type: "nvidia", platform: "station" },
         vllmExpected: true,
         platformLabel: "DGX Station",
+      },
+      {
+        name: "n1x",
+        gpu: { type: "nvidia", platform: "n1x" },
+        vllmExpected: true,
+        platformLabel: "N1x",
       },
       {
         name: "linux",
@@ -490,6 +496,9 @@ async function runScenario(scenario) {
             menuOutput.includes(`Start vLLM (${scenario.platformLabel})`),
           scenario.name,
         );
+        if (scenario.name === "n1x") {
+          assert.match(menuOutput, /\[Deferred preview\]/);
+        }
       } else {
         assert.doesNotMatch(menuOutput, /Install vLLM \(/);
         assert.doesNotMatch(menuOutput, /Start vLLM \(/);

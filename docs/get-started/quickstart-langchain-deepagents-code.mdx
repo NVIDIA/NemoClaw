@@ -103,9 +103,13 @@ Use these details when you need more control during setup or after the first san
     Before you install from Windows, follow [Prepare a Windows Machine to Install NemoClaw](additional-setup/windows-preparation).
     Before you install on DGX Station, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation).
 
-    DGX Spark, qualifying DGX Station hosts, and Windows Subsystem for Linux (WSL) can offer the recommended express install mode after the third-party software notice.
+    DGX Spark, qualifying DGX Station, and Windows Subsystem for Linux (WSL) hosts can offer the recommended express install mode after the third-party software notice.
+    N1x can offer a Deferred preview after the notice, but full physical NemoClaw Express E2E validation is pending.
     Press Enter at the express install prompt to apply preset settings, switch the remaining onboarding to non-interactive mode, and select the managed local inference path for that platform.
+    On N1x, accept the preview prompt to apply those settings as explicit Deferred preview intent.
     Enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
+
+    The N1x preview selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
 
     Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles and headless setup.
     Refer to [Set Up vLLM on Two DGX Stations](../inference/local-inference/set-up-vllm-on-two-dgx-stations) for the Deferred paired workflow.
