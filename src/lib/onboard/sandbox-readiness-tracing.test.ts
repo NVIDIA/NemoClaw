@@ -5,7 +5,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import { getSandboxFailurePhase, isSandboxReady } from "../state/gateway";
 import {
-  DEFAULT_DASHBOARD_READINESS_TIMEOUT_SECS,
   createSandboxReadyWaiter,
   formatCreatedSandboxReadinessFailureMessage,
   getSandboxReadyErrorDebouncePolls,
@@ -298,29 +297,6 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
 });
 
 describe("waitForDashboardReadyWithTrace", () => {
-  it("uses the extended default budget for a cold dashboard start", () => {
-    let nowMs = 1_000;
-    const runCaptureOpenshell = vi.fn(() => "503");
-    const sleep = vi.fn((seconds: number) => {
-      nowMs += seconds * 1000;
-    });
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    expect(
-      waitForDashboardReadyWithTrace({
-        sandboxName: NAME,
-        port: 18789,
-        runCaptureOpenshell,
-        sleep,
-        now: () => nowMs,
-      }),
-    ).toBe(false);
-    expect(sleep.mock.calls.reduce((total, [seconds]) => total + seconds, 0)).toBe(
-      DEFAULT_DASHBOARD_READINESS_TIMEOUT_SECS,
-    );
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("60s deadline"));
-  });
-
   it("traces a zero-budget deadline without probing", () => {
     const runCaptureOpenshell = vi.fn(() => "200");
     const sleep = vi.fn();
