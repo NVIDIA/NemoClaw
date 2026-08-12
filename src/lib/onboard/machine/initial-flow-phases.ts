@@ -67,6 +67,7 @@ export interface InitialOnboardFlowPhaseOptions<
   assertGatewayReadiness(): Promise<void>;
   gatewayName: string;
   recreateSandbox(): boolean;
+  requiresBindMounts?: boolean;
   gatewayDeps: GatewayStateOptions<Gpu>["deps"];
   note(message: string): void;
   spawnSync?: SpawnSync;
@@ -203,6 +204,7 @@ export function createInitialOnboardFlowPhases<
         recordedSandboxName: context.recordedSandboxName,
         requestedSandboxName: context.requestedSandboxName,
         recreateSandbox: options.recreateSandbox(),
+        requiresBindMounts: options.requiresBindMounts === true,
         deps: options.gatewayDeps,
       });
       return {
