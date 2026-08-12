@@ -4,6 +4,9 @@
 # Jetson Dispatch Through Colossus
 
 This temporary path runs the `jetson-nvmap-gpu` end-to-end (E2E) job on one Jetson behind a Colossus host.
+The target keeps its existing fixed dispatch ID, but uses a CPU-only fallback while [issue #7610](https://github.com/NVIDIA/NemoClaw/issues/7610) remains open.
+It sets `NEMOCLAW_SANDBOX_GPU=0`, completes onboarding, and requires CPU-only status.
+A passing job does not establish sandbox GPU access or CUDA initialization.
 GitHub Actions controls the job through an authenticated HTTPS endpoint.
 Colossus retains the Cloudflare Tunnel credential, Jetson SSH key, SSH host key, device lock, and cleanup capability.
 Candidate code runs only on the Jetson.
@@ -18,7 +21,7 @@ The deployment has these input and credential boundaries:
 | --- | --- | --- |
 | GitHub-hosted controller | Candidate commit SHA, workflow run identity, public dispatch URL, and short-lived GitHub OpenID Connect (OIDC) token | Jetson SSH key, tunnel credential, and cleanup privilege |
 | Colossus dispatcher | Validated workflow identity, fixed target, and candidate commit SHA | Request-controlled command, SSH host, repository, path, or cleanup command |
-| Jetson | Candidate checkout and the fixed live E2E command | GitHub OIDC token, tunnel credential, and Colossus SSH private key |
+| Jetson | Candidate checkout and the fixed CPU-only live E2E command | GitHub OIDC token, tunnel credential, and Colossus SSH private key |
 
 The dispatcher accepts only `NVIDIA/NemoClaw` and the trusted `main` E2E workflow.
 It requires a GitHub-hosted controller, one repository ID, one workflow run identity, and the `jetson-nvmap-gpu` target.
@@ -85,7 +88,8 @@ Node.js must be version 22.19.0 or later, and npm must have major version 10 or 
 OpenShell must be absent from the host `PATH` and the three checked host binary directories.
 Do not preinstall OpenShell on the Jetson.
 The `ollama list` command must succeed.
-Docker must expose the NVIDIA runtime required by the existing Jetson live E2E test.
+Docker must expose the NVIDIA runtime required by the target's fixed Jetson host prerequisite check.
+The target also requires `/dev/nvmap` before and after execution, even though onboarding disables sandbox GPU access.
 Preinstall Ollama so candidate code does not invoke its host installer.
 The `nvidia` account must not have passwordless `sudo` access.
 
@@ -105,7 +109,8 @@ The worker creates `/var/tmp/nemoclaw-jetson-e2e/<jobId>` and sets these job-loc
 The worker unsets `DBUS_SESSION_BUS_ADDRESS` so onboarding uses OpenShell's existing standalone fallback when the job-local systemd user service cannot load.
 The worker must not set `NEMOCLAW_DEFER_OPENSHELL_INSTALL`.
 It must not invoke `scripts/install-openshell.sh`.
-The existing live E2E runs `bash install.sh --non-interactive`.
+The live E2E runs `bash install.sh --non-interactive` with `NEMOCLAW_SANDBOX_GPU=0`.
+`install.sh` does not accept `--no-gpu`, so this setting is equivalent to `nemoclaw onboard --no-gpu`.
 NemoClaw onboarding owns the compatible pinned OpenShell installation in the job workspace.
 After onboarding, `nemoclaw`, `openshell`, `openshell-gateway`, and `openshell-sandbox` must resolve canonically inside the job workspace.
 The worker rejects a symbolic link or resolved path that leaves that workspace.
@@ -678,6 +683,17 @@ gh workflow run .github/workflows/e2e.yaml --repo NVIDIA/NemoClaw --ref main \
 
 The `jetson-nvmap-gpu` job uses the fixed `jetson-nvmap-gpu-colossus` concurrency group.
 `queue: max` queues every dispatch, and `cancel-in-progress: false` prevents automatic cancellation.
+The historical target ID remains fixed because dispatch authentication, concurrency, cleanup, and artifacts bind that exact value.
+
+The live test must satisfy these CPU-only acceptance criteria:
+
+- The environment sets `NEMOCLAW_SANDBOX_GPU=0` before it runs `install.sh`.
+- Installation exits successfully and reports that sandbox GPU access is disabled by configuration.
+- `nemoclaw e2e-jetson-nvmap status` exits successfully and reports `Sandbox GPU: disabled`.
+- Status does not report `CUDA verified`, `CUDA unverified`, or `last CUDA proof failed`.
+
+The target does not run an in-sandbox CUDA proof.
+Do not use a passing result as evidence that `cuInit(0)` works through OpenShell or that issue #7610 is resolved.
 
 The controller must run on `ubuntu-latest`.
 The GitHub controller log must show one `Jetson dispatch accepted as <jobId>` line.
