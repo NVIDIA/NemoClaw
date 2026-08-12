@@ -477,6 +477,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     artifactName: "legacy-restart-trusted-recover",
     env: {
       ...buildAvailabilityProbeEnv(),
+      NEMOCLAW_REBUILD_VERBOSE: "1",
       NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "CUSTOM_PROVIDER_CREDENTIAL",
       CUSTOM_PROVIDER_CREDENTIAL: legacyCredentialCanary,
     },

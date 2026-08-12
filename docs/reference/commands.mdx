@@ -341,6 +341,16 @@ For a profile-backed session, resume requires the same catalog, preset, and reci
 Omit `--profile` to reuse that recorded selection, or pass the same profile explicitly; use `--fresh` to adopt a changed catalog definition.
 Legacy sessions without a profile-provenance record continue to resume normally, but cannot acquire a new `--profile` selection during resume.
 
+Before the configuration review, NemoClaw records the sandbox name and the selected provider and model as an incomplete choice.
+If onboarding stops at the review prompt, an interactive `--resume` run shows the prompt again.
+A non-interactive `--resume` run reuses the recorded choice and continues to inference setup.
+After you accept the review, NemoClaw records the choice before inference setup starts.
+If inference setup fails, `--resume` reuses the accepted provider, model, and sandbox name.
+If you reject the review, onboarding exits with a nonzero status and clears those recorded choices.
+Run `$$nemoclaw onboard` to make new choices after rejection.
+During a resume without terminal input, `--yes` or `NEMOCLAW_YES=1` also selects non-interactive resume behavior.
+For a new or fresh session, `--yes` and `NEMOCLAW_YES=1` accept supported confirmations but do not replace `--non-interactive`.
+
 <AgentOnly variant="openclaw">
 
 OpenClaw sessions also record the web search selection, messaging selection and non-secret settings, and resource profile.
