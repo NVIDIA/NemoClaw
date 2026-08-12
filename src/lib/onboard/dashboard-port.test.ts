@@ -8,10 +8,12 @@ import { createServer, type Server } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
 import {
+  createDashboardPortScopedSandboxEntryPoints,
+  type DashboardPortReservationScope,
   findAvailableDashboardPort,
   findDashboardForwardOwner,
   getRegistryOccupiedDashboardPorts,
@@ -254,6 +256,59 @@ describe("resolveCreateSandboxDashboardPort", () => {
 });
 
 describe("dashboard port reservation", () => {
+  it("scopes sandbox creation and distinguishes the temporary runtime path", async () => {
+    const createSandboxWithBaseImageResolution = vi.fn(
+      async (
+        baseImageResolutionContext: { fresh: boolean },
+        computePlan: { sequence: number },
+        managedWorkloadRebuild: null,
+        temporaryManagedRuntime: boolean,
+        temporaryManagedRuntimeCatalog: null,
+        dashboardPortReservationScope: DashboardPortReservationScope,
+        sandboxName: string,
+      ) => ({
+        baseImageResolutionContext,
+        computePlan,
+        managedWorkloadRebuild,
+        temporaryManagedRuntime,
+        temporaryManagedRuntimeCatalog,
+        dashboardPortReservationScope,
+        sandboxName,
+      }),
+    );
+    let sequence = 0;
+    const entryPoints = createDashboardPortScopedSandboxEntryPoints({
+      createBaseImageResolutionContext: () => ({ fresh: false }),
+      createSandboxWithBaseImageResolution,
+      resolveComputePlan: () => ({ sequence: ++sequence }),
+    });
+
+    await expect(entryPoints.createSandbox("standard")).resolves.toMatchObject({
+      baseImageResolutionContext: { fresh: false },
+      computePlan: { sequence: 1 },
+      managedWorkloadRebuild: null,
+      temporaryManagedRuntime: false,
+      temporaryManagedRuntimeCatalog: null,
+      dashboardPortReservationScope: { current: null, release: expect.any(Function) },
+      sandboxName: "standard",
+    });
+    await expect(
+      entryPoints.createSandboxWithTemporaryManagedRuntime("temporary"),
+    ).resolves.toMatchObject({
+      baseImageResolutionContext: { fresh: false },
+      computePlan: { sequence: 2 },
+      managedWorkloadRebuild: null,
+      temporaryManagedRuntime: true,
+      temporaryManagedRuntimeCatalog: null,
+      dashboardPortReservationScope: { current: null, release: expect.any(Function) },
+      sandboxName: "temporary",
+    });
+    expect(createSandboxWithBaseImageResolution).toHaveBeenCalledTimes(2);
+    expect(createSandboxWithBaseImageResolution.mock.calls[0]?.[5]).not.toBe(
+      createSandboxWithBaseImageResolution.mock.calls[1]?.[5],
+    );
+  });
+
   it("holds the selected port during creation and releases it after failure (#8798)", async () => {
     const port = await unusedLoopbackPort();
 
