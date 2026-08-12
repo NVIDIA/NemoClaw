@@ -222,11 +222,20 @@ async function expectStopStartRecovery(
       .join("\n"),
   ).toBe(0);
 
-  const status = await runNemoclaw(host, [SANDBOX_NAME, "status"], {
-    artifactName: `${artifactPrefix}-status`,
-    redactionValues,
-    timeoutMs: 5 * 60_000,
+  const statusAttempt = await pollUntil({
+    artifactPrefix: `${artifactPrefix}-status`,
+    attempts: 5,
+    delayMs: 5_000,
+    probe: async (_attempt, artifactName) =>
+      await runNemoclaw(host, [SANDBOX_NAME, "status"], {
+        artifactName,
+        redactionValues,
+        timeoutMs: 60_000,
+      }),
+    accept: (result) =>
+      result.exitCode === 0 && /Phase:\s*Ready/i.test(stripAnsi(resultText(result))),
   });
+  const status = statusAttempt.value;
   expect(status.exitCode, resultText(status)).toBe(0);
   expect(stripAnsi(resultText(status))).toMatch(/Phase:\s*Ready/i);
 
