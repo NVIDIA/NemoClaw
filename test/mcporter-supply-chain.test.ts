@@ -25,6 +25,8 @@ const expectedTarball = "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tg
 const expectedHonoNodeServerVersion = "2.0.11";
 const expectedHonoNodeServerTarball =
   "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz";
+const expectedHonoVersion = "4.12.34";
+const expectedHonoTarball = "https://registry.npmjs.org/hono/-/hono-4.12.34.tgz";
 const expectedFastUriVersion = "3.1.5";
 const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz";
 const expectedIpAddressVersion = "10.3.1";
@@ -86,6 +88,9 @@ describe("mcporter image supply-chain controls", () => {
     expect(dependencyReview).toContain("`GHSA-v2hh-gcrm-f6hx`");
     expect(dependencyReview).toContain("`GHSA-7p8r-x3mc-p8w7`");
     expect(dependencyReview).toContain("exact `3.1.5`");
+    expect(dependencyReview).toContain("`hono@4.12.34`");
+    expect(dependencyReview).toContain("`GHSA-54fx-42gc-7vw4`");
+    expect(dependencyReview).toContain("exact `4.12.34`");
     expect(dependencyReview).toContain("`ip-address@10.3.1`");
     expect(dependencyReview).toContain("`GHSA-mwp4-54f8-5fhr`");
     expect(dependencyReview).toContain("exact `10.3.1`");
@@ -106,6 +111,13 @@ describe("mcporter image supply-chain controls", () => {
         overridden: true,
         resolved: expectedHonoNodeServerTarball,
         version: expectedHonoNodeServerVersion,
+      }),
+    );
+    expect(findDependency(graph, "hono")).toEqual(
+      expect.objectContaining({
+        overridden: true,
+        resolved: expectedHonoTarball,
+        version: expectedHonoVersion,
       }),
     );
     expect(findDependency(graph, "fast-uri")).toEqual(
@@ -187,7 +199,7 @@ describe("mcporter image supply-chain controls", () => {
     expect(contents).not.toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);
     expect(contents).toContain(`${runtimePrefix} audit signatures`);
     expect(flattenedContents).toContain(
-      `${runtimePrefix} ls --omit=dev --all @hono/node-server @modelcontextprotocol/sdk mcporter`,
+      `${runtimePrefix} ls --omit=dev --all @hono/node-server @modelcontextprotocol/sdk hono mcporter`,
     );
     expect(contents).toContain("StreamableHTTPServerTransport");
   });

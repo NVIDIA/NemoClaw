@@ -137,16 +137,6 @@ export async function setupMessagingChannels(
   }
   if (invalidConfigEnvValues.length > 0) process.exit(1);
 
-  if (deps.selectionCompleted) {
-    if (nonInteractive) {
-      const message =
-        "A completed messaging selection is missing required credentials. Export the missing messaging credential environment variables, then run nemoclaw onboard --resume again.";
-      note(`  [resume] ${message}`);
-      throw new Error(message);
-    }
-    note("  [resume] Reusing messaging channel selection; requesting missing credentials only.");
-  }
-
   const manifestRegistry = createBuiltInChannelManifestRegistry();
   const availabilityContext = getMessagingManifestAvailabilityContext(
     agent,
@@ -159,9 +149,31 @@ export async function setupMessagingChannels(
     resolveMessagingManifestSeed(availableChannels, existingChannels, hasManifestConfiguredInputs, {
       includeAllExisting,
     });
+  const completedSelection = (existingChannels ?? []).filter((channelId) =>
+    availableChannels.some((manifest) => manifest.id === channelId),
+  );
+
+  if (deps.selectionCompleted) {
+    const missingCredentialChannels = availableChannels
+      .filter(
+        (manifest) =>
+          completedSelection.includes(manifest.id) &&
+          manifest.inputs.some((input) => input.required) &&
+          !hasManifestConfiguredInputs(manifest),
+      )
+      .map((manifest) => manifest.id);
+    if (nonInteractive && missingCredentialChannels.length > 0) {
+      const message = `A completed messaging selection is missing required credentials for these channels: ${missingCredentialChannels.join(", ")}. Export the missing messaging credential environment variables, then run nemoclaw onboard --resume again.`;
+      note(`  [resume] ${message}`);
+      throw new Error(message);
+    }
+    if (!nonInteractive) {
+      note("  [resume] Reusing messaging channel selection; requesting missing credentials only.");
+    }
+  }
 
   if (nonInteractive) {
-    const enabled = new Set(seedFromState(false));
+    const enabled = new Set(deps.selectionCompleted ? completedSelection : seedFromState(false));
     const found = Array.from(enabled);
     if (found.length > 0) {
       note(`  [non-interactive] Messaging channel inputs detected: ${found.join(", ")}`);
@@ -170,6 +182,7 @@ export async function setupMessagingChannels(
         interactive: false,
         sandboxName: deps.sandboxName,
         googlechatTunnelRuntime: deps.googlechatTunnelRuntime,
+        configurationCompleted: deps.selectionCompleted,
       });
     } else {
       MessagingSetupApplier.clearPlanEnv();
@@ -178,13 +191,7 @@ export async function setupMessagingChannels(
     return Array.from(enabled);
   }
 
-  const enabled = new Set(
-    deps.selectionCompleted
-      ? (existingChannels ?? []).filter((channelId) =>
-          availableChannels.some((manifest) => manifest.id === channelId),
-        )
-      : seedFromState(true),
-  );
+  const enabled = new Set(deps.selectionCompleted ? completedSelection : seedFromState(true));
   const input = process.stdin as MessagingSelectorInput;
   const output = process.stderr as MessagingSelectorOutput;
   const statusForChannel = (manifest: ChannelManifest): string =>

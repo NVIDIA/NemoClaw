@@ -200,7 +200,42 @@ describe("OpenAI validation keepalive sequence", () => {
     expect(harness.legacyProbe).not.toHaveBeenCalled();
   });
 
-  it("fails after one larger-budget retry without replaying the legacy probe", async () => {
+  it("gives the delayed 4096-token native retry the doubled deadline (#8714)", async () => {
+    const observedBodies: Array<Record<string, unknown>> = [];
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        const parsed = JSON.parse(body) as Record<string, unknown>;
+        observedBodies.push(parsed);
+        response.setHeader("content-type", "application/json");
+        const reply =
+          (parsed.max_tokens as number) < 4096
+            ? '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}'
+            : '{"choices":[{"finish_reason":"tool_calls","message":{"content":"","tool_calls":[{"type":"function","function":{"name":"sessions_send","arguments":"{\\"message\\":\\"hello\\"}"}}]}}]}';
+        setTimeout(() => response.end(reply), (parsed.max_tokens as number) === 4096 ? 1_200 : 0);
+      });
+    });
+    const port = await listen(server);
+    const harness = createOpenAiValidationTestDeps();
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "nemotron-3-nano:30b",
+      "test-key",
+      { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
+      harness,
+    );
+
+    expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+    expect(observedBodies.map((body) => body.max_tokens)).toEqual([256, 1024, 4096]);
+    expect(harness.legacyProbe).not.toHaveBeenCalled();
+  });
+
+  it("fails after the full retry ladder without replaying the legacy probe (#8714)", async () => {
     const observedBodies: Array<Record<string, unknown>> = [];
     const server = http.createServer((request, response) => {
       let body = "";
@@ -230,10 +265,16 @@ describe("OpenAI validation keepalive sequence", () => {
     expect(result).toMatchObject({
       ok: false,
       message: expect.stringContaining("did not return a tool call"),
+      failures: [
+        expect.objectContaining({
+          diagnosticCodes: [
+            "openai-chat-missing-structured-tool-call",
+            "openai-chat-reasoning-budget-exhausted",
+          ],
+        }),
+      ],
     });
-    expect(observedBodies).toHaveLength(2);
-    expect(observedBodies[0]).toMatchObject({ max_tokens: 256 });
-    expect(observedBodies[1]).toMatchObject({ max_tokens: 1024 });
+    expect(observedBodies.map((body) => body.max_tokens)).toEqual([256, 1024, 4096]);
     expect(harness.legacyProbe).not.toHaveBeenCalled();
   });
 
