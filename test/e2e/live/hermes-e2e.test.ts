@@ -745,7 +745,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     expect(afterGateway.owner).toBe("gateway");
     expect(afterGateway.pid).not.toBe(beforeGateway.pid);
     await assertNoStandaloneRoutingSidecars(
-      "phase-5-hermes-routing-topology-after-restart",
+      "phase-5-hermes-routing-topology-after-root-supervised-restart",
       Number(afterGateway.pid),
     );
 
@@ -1148,7 +1148,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     expect(restartedManagedGateway.ppid).toBe(supervisor.pid);
     expect(restartedManagedGateway.pid).not.toBe(beforeGateway.pid);
     await assertNoStandaloneRoutingSidecars(
-      "phase-5-hermes-routing-topology-after-restart",
+      "phase-5-hermes-routing-topology-after-managed-restart",
       Number(restartedManagedGateway.pid),
     );
 

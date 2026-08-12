@@ -3,7 +3,11 @@
 
 import type { ArtifactSink } from "./artifacts.ts";
 import { artifactLabel, assertExitZero } from "./clients/command.ts";
-import { type SandboxClient, trustedSandboxShellScript } from "./clients/sandbox.ts";
+import {
+  type SandboxClient,
+  type TrustedSandboxShellScript,
+  trustedSandboxShellScript,
+} from "./clients/sandbox.ts";
 import type { ShellProbeRunOptions } from "./shell-probe.ts";
 
 const HERMES_ROUTING_TOPOLOGY_PROBE = String.raw`
@@ -19,15 +23,19 @@ self_pid = os.getpid()
 def read_bytes(path):
     try:
         return path.read_bytes()
-    except (FileNotFoundError, PermissionError, ProcessLookupError):
+    except (FileNotFoundError, ProcessLookupError):
         return None
+    except PermissionError as error:
+        raise RuntimeError(f"permission denied reading process metadata: {path}") from error
 
 
 def read_status(path):
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except (FileNotFoundError, PermissionError, ProcessLookupError):
+    except (FileNotFoundError, ProcessLookupError):
         return None
+    except PermissionError as error:
+        raise RuntimeError(f"permission denied reading process metadata: {path}") from error
     fields = {}
     for line in lines:
         key, separator, value = line.partition(":")
@@ -179,7 +187,7 @@ function parseGatewayProcess(value: unknown, index: number): HermesRoutingGatewa
 
 export function buildHermesRoutingTopologyProbeScript(
   procRoot = "/proc",
-): ReturnType<typeof trustedSandboxShellScript> {
+): TrustedSandboxShellScript {
   if (procRoot.length === 0 || procRoot.includes("\0")) {
     throw new Error("Hermes routing topology proc root must be nonempty and contain no NUL bytes");
   }
@@ -276,10 +284,9 @@ export async function captureHermesRoutingTopology(
     } satisfies ShellProbeRunOptions,
   );
   assertExitZero(result, `capture Hermes routing topology for ${options.sandboxName}`);
+  const artifactBase = `routing-topology/${artifactLabel(options.artifactName)}`;
+  await options.artifacts.writeText(`${artifactBase}.raw.txt`, result.stdout);
   const topology = parseHermesRoutingTopology(result.stdout.trim());
-  await options.artifacts.writeJson(
-    `routing-topology/${artifactLabel(options.artifactName)}.json`,
-    topology,
-  );
+  await options.artifacts.writeJson(`${artifactBase}.json`, topology);
   return topology;
 }

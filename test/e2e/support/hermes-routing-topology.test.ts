@@ -68,10 +68,16 @@ function writeProcess(
   );
 }
 
-function runTopologyProbe(procRoot: string): { stderr: string; topology: HermesRoutingTopology } {
-  const result = spawnSync("sh", ["-c", buildHermesRoutingTopologyProbeScript(procRoot)], {
+function spawnTopologyProbe(procRoot: string) {
+  return spawnSync("sh", ["-c", buildHermesRoutingTopologyProbeScript(procRoot)], {
     encoding: "utf8",
+    killSignal: "SIGKILL",
+    timeout: 5_000,
   });
+}
+
+function runTopologyProbe(procRoot: string): { stderr: string; topology: HermesRoutingTopology } {
+  const result = spawnTopologyProbe(procRoot);
   expect(result.status, result.stderr).toBe(0);
   return {
     stderr: result.stderr,
@@ -141,12 +147,9 @@ describe("Hermes routing topology probe", () => {
       writeProcess(procRoot, 501, ["/opt/nemo-relay/bin/nemo-relay", "serve"]);
       writeProcess(procRoot, 502, ["python3", "-m", "switchyard_server", "--port", "8899"]);
 
-      const result = spawnSync("sh", ["-c", buildHermesRoutingTopologyProbeScript(procRoot)], {
-        encoding: "utf8",
-      });
+      const { topology } = runTopologyProbe(procRoot);
 
-      expect(result.status, result.stderr).toBe(0);
-      expect(parseHermesRoutingTopology(result.stdout.trim())).toEqual({
+      expect(topology).toEqual({
         schema_version: 1,
         gateway_processes: [
           {
@@ -246,6 +249,45 @@ describe("Hermes routing topology probe", () => {
           ),
         ),
       ).toEqual(SIDECAR_FREE_TOPOLOGY);
+      expect(
+        fs.readFileSync(
+          path.join(
+            artifactRoot,
+            "routing-topology",
+            "phase-5-routing-topology-before-restart.raw.txt",
+          ),
+          "utf8",
+        ),
+      ).toBe(`${JSON.stringify(SIDECAR_FREE_TOPOLOGY)}\n`);
+    } finally {
+      fs.rmSync(artifactRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves raw probe output when normalized topology parsing fails (#8889)", async () => {
+    const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-routing-artifacts-"));
+    try {
+      const artifacts = new ArtifactSink(artifactRoot);
+      await expect(
+        captureHermesRoutingTopology({
+          artifactName: "Malformed routing topology",
+          artifacts,
+          sandbox: new SandboxClient(new RecordingRunner(shellResult("not-json\n"))),
+          sandboxName: "e2e-hermes",
+        }),
+      ).rejects.toThrow("output is not valid JSON");
+
+      expect(
+        fs.readFileSync(
+          path.join(artifactRoot, "routing-topology", "malformed-routing-topology.raw.txt"),
+          "utf8",
+        ),
+      ).toBe("not-json\n");
+      expect(
+        fs.existsSync(
+          path.join(artifactRoot, "routing-topology", "malformed-routing-topology.json"),
+        ),
+      ).toBe(false);
     } finally {
       fs.rmSync(artifactRoot, { recursive: true, force: true });
     }
@@ -257,4 +299,20 @@ describe("Hermes routing topology probe", () => {
       "contain no NUL bytes",
     );
   });
+
+  it("fails closed when process metadata cannot be inspected (#8889)", () =>
+    withFakeProcRoot((procRoot) => {
+      const processRoot = path.join(procRoot, "700");
+      fs.mkdirSync(processRoot);
+      fs.mkdirSync(path.join(processRoot, "cmdline"));
+      fs.writeFileSync(
+        path.join(processRoot, "status"),
+        ["Name:\tnemo-relay", "PPid:\t1", "Uid:\t1000\t1000\t1000\t1000", ""].join("\n"),
+      );
+
+      const result = spawnTopologyProbe(procRoot);
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("IsADirectoryError");
+    }));
 });
