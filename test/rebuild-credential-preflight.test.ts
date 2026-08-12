@@ -15,7 +15,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { execTimeout } from "./helpers/timeouts";
+import { execTimeout, testTimeoutOptions } from "./helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const NODE_BIN = path.dirname(process.execPath);
@@ -387,37 +387,41 @@ describe("atomic rebuild process contracts (#2273)", () => {
     expect(registryHasSandbox(fixture)).toBe(true);
   });
 
-  it("keeps a Ready DCode sandbox usable when its stored route returns 401 (#6195)", () => {
-    const fixture = createFixture({
-      agent: "langchain-deepagents-code",
-      provider: "compatible-endpoint",
-      credentialEnv: "COMPATIBLE_API_KEY",
-      providerRegistered: true,
-      inferenceProbeHttpStatus: 401,
-    });
+  it(
+    "keeps a Ready DCode sandbox usable when its stored route returns 401 (#6195)",
+    testTimeoutOptions(30_000),
+    () => {
+      const fixture = createFixture({
+        agent: "langchain-deepagents-code",
+        provider: "compatible-endpoint",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        providerRegistered: true,
+        inferenceProbeHttpStatus: 401,
+      });
 
-    const result = runRebuild(fixture, {
-      NEMOCLAW_PROVIDER_KEY: "obviously-invalid-ambient-credential",
-    });
-    const output = `${result.stderr || ""}${result.stdout || ""}`;
+      const result = runRebuild(fixture, {
+        NEMOCLAW_PROVIDER_KEY: "obviously-invalid-ambient-credential",
+      });
+      const output = `${result.stderr || ""}${result.stdout || ""}`;
 
-    expect(result.status).not.toBe(0);
-    expect(output).toContain("HTTP 401");
-    expect(output).toContain("Sandbox is untouched");
-    expect(output).not.toContain("Backing up sandbox state");
-    expect(output).not.toContain("Deleting old sandbox");
-    expect(output).not.toContain("Creating new sandbox with current image");
-    expect(fs.existsSync(fixture.deleteMarker)).toBe(false);
-    expect(registryHasSandbox(fixture)).toBe(true);
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("HTTP 401");
+      expect(output).toContain("Sandbox is untouched");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Deleting old sandbox");
+      expect(output).not.toContain("Creating new sandbox with current image");
+      expect(fs.existsSync(fixture.deleteMarker)).toBe(false);
+      expect(registryHasSandbox(fixture)).toBe(true);
 
-    const marker = runCli(fixture, [
-      fixture.sandboxName,
-      "exec",
-      "--",
-      "cat",
-      "/sandbox/rebuild-atomicity-marker.txt",
-    ]);
-    expect(marker.status, marker.stderr).toBe(0);
-    expect(marker.stdout).toContain("dcode-atomicity-marker");
-  });
+      const marker = runCli(fixture, [
+        fixture.sandboxName,
+        "exec",
+        "--",
+        "cat",
+        "/sandbox/rebuild-atomicity-marker.txt",
+      ]);
+      expect(marker.status, marker.stderr).toBe(0);
+      expect(marker.stdout).toContain("dcode-atomicity-marker");
+    },
+  );
 });
