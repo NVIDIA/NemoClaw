@@ -1556,16 +1556,56 @@ export function buildConfig(env: Env = process.env): JsonObject {
   return config;
 }
 
-function preserveExistingPluginInstalls(config: JsonObject, configPath: string): void {
-  let existing: unknown;
+function boundedOpenClawMetadataText(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value === value.trim() &&
+    Buffer.byteLength(value, "utf8") <= 256 &&
+    !/[\0\r\n]/u.test(value)
+  );
+}
+
+function readExistingOpenClawConfig(configPath: string): JsonObject | null {
+  let value: unknown;
   try {
-    existing = JSON.parse(readFileSync(configPath, "utf-8"));
+    value = JSON.parse(readFileSync(configPath, "utf-8"));
   } catch {
-    return;
+    return null;
   }
-  if (!isObject(existing)) {
-    return;
+  return isObject(value) ? value : null;
+}
+
+function openClawContinuityMetadata(value: unknown): JsonObject | null {
+  if (
+    !isObject(value) ||
+    !boundedOpenClawMetadataText(value.lastTouchedVersion) ||
+    !boundedOpenClawMetadataText(value.lastTouchedAt)
+  ) {
+    return null;
   }
+  return {
+    lastTouchedVersion: value.lastTouchedVersion,
+    lastTouchedAt: value.lastTouchedAt,
+  };
+}
+
+function preserveExistingOpenClawState(config: JsonObject, configPath: string): void {
+  const existing = readExistingOpenClawConfig(configPath);
+
+  // OpenClaw 2026.7 rejects a regenerated config that drops the write
+  // metadata carried by its last-known-good snapshot, then restores the old
+  // config with `missing-meta-vs-last-good`. The final image-generation pass
+  // can leave the active file without metadata while its exact OpenClaw-owned
+  // `.bak` retains it, so prefer the active pair and otherwise inspect only
+  // that one fixed backup path. Copy only the two bounded continuity fields;
+  // every NemoClaw-owned routing field still comes from the managed profile.
+  const continuityMeta =
+    openClawContinuityMetadata(existing?.meta) ??
+    openClawContinuityMetadata(readExistingOpenClawConfig(`${configPath}.bak`)?.meta);
+  if (continuityMeta) config.meta = continuityMeta;
+
+  if (!existing) return;
   const existingPlugins = existing.plugins;
   if (!isObject(existingPlugins)) {
     return;
@@ -1585,7 +1625,7 @@ function preserveExistingPluginInstalls(config: JsonObject, configPath: string):
 export function writeOpenClawConfig(): void {
   const config = buildConfig();
   const configPath = expandUser("~/.openclaw/openclaw.json");
-  preserveExistingPluginInstalls(config, configPath);
+  preserveExistingOpenClawState(config, configPath);
   mkdirSync(dirname(configPath), { recursive: true });
   writeFileSync(configPath, JSON.stringify(config, null, 2));
   chmodSync(configPath, 0o600);
