@@ -171,6 +171,10 @@ FROM ${BASE_IMAGE}
 # Dockerfile.base. The final stage also creates and verifies the directory.
 ENV HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages
 
+# Cross-stage root copies are accepted by Docker's legacy builder and create
+# one final-image layer while preserving metadata on existing parent paths.
+COPY --from=hermes-npm-patch-payload / /
+
 # A published base can lag the source patch in Dockerfile.base. Apply only the
 # two Hindsight compatibility hunks when needed, then verify the final source
 # contract. This remains idempotent once the published base contains them.
@@ -230,10 +234,6 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
 # ignores the path when no CA was baked. At runtime, nemoclaw-start replaces it
 # with the merged OpenShell and corporate bundle.
 ENV NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem
-
-# Cross-stage root copies are accepted by Docker's legacy builder and create
-# one final-image layer while preserving metadata on existing parent paths.
-COPY --from=hermes-npm-patch-payload / /
 
 # The final Hermes image owns the shipped dependency boundary independently of
 # base freshness. Reassert the idempotent npm-private node-tar fix here. When
