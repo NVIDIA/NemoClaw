@@ -57,6 +57,7 @@ import {
   createOnboardProcessWorkspace,
   type OnboardProcessWorkspace,
 } from "./helpers/onboard-child-process-harness.js";
+import { onboardChildRuntimeSource } from "./helpers/onboard-child-runtime.js";
 import { testTimeout } from "./helpers/timeouts";
 import {
   createWindowsHostOllamaRunCapture,
@@ -89,9 +90,6 @@ const localInferencePath = JSON.stringify(
 );
 const ollamaSystemdPath = JSON.stringify(
   path.join(repoRoot, "src", "lib", "onboard", "ollama-systemd.ts"),
-);
-const childRuntimePath = JSON.stringify(
-  path.join(repoRoot, "test", "helpers", "onboard-child-runtime.cjs"),
 );
 const TEST_REMOTE_PROVIDER_CONFIG = {
   build: { label: "NVIDIA Endpoints", providerName: "nvidia-prod" },
@@ -689,13 +687,12 @@ function runCredentialBackScenarioBatch(): Map<string, CredentialBackPayload> {
   const workspace = onboardProcessWorkspace("nemoclaw-onboard-credential-back-batch-");
   const { root: tmpDir } = workspace;
   const fakeBin = workspace.binDir;
-  const scriptPath = path.join(tmpDir, "credential-back-batch.js");
   const agentDefsPath = JSON.stringify(path.join(repoRoot, "src", "lib", "agent", "defs.ts"));
   const childScenarios = PROCESS_CREDENTIAL_BACK_SCENARIOS;
   writeAlwaysOkCurl(fakeBin);
 
   const script = String.raw`
-const { installPromptQueue, reportChildScenario } = require(${childRuntimePath});
+${onboardChildRuntimeSource}
 const scenarios = ${JSON.stringify(childScenarios)};
 const clearCredentialEnv = [
   "NVIDIA_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
@@ -841,7 +838,7 @@ async function runScenario(scenario) {
 
   try {
     const result = workspace.runNodeSource(script, {
-      name: path.basename(scriptPath),
+      name: "credential-back-batch.js",
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -857,7 +854,7 @@ async function runScenario(scenario) {
     assert.equal(payloads.length, PROCESS_CREDENTIAL_BACK_SCENARIOS.length);
     return new Map(payloads.map((payload) => [payload.name, payload]));
   } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    workspace.remove();
   }
 }
 
@@ -1258,11 +1255,11 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-ollama-validation-");
     const { root: tmpDir } = workspace;
     const fakeBin = workspace.binDir;
-    const scriptPath = path.join(tmpDir, "ollama-validation-check.js");
+
     writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
 
     const script = String.raw`
-const { installPromptQueue, reportChildScenario } = require(${childRuntimePath});
+${onboardChildRuntimeSource}
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const child_process = require("child_process");
@@ -1308,7 +1305,7 @@ reportChildScenario(async () => {
 });
 `;
     const result = workspace.runNodeSource(script, {
-      name: path.basename(scriptPath),
+      name: "ollama-validation-check.js",
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -1395,11 +1392,11 @@ reportChildScenario(async () => {
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-ollama-loopback-");
     const { root: tmpDir } = workspace;
     const fakeBin = workspace.binDir;
-    const scriptPath = path.join(tmpDir, "ollama-loopback-check.js");
+
     writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
 
     const script = String.raw`
-const { installPromptQueue, reportChildScenario } = require(${childRuntimePath});
+${onboardChildRuntimeSource}
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
@@ -1458,7 +1455,7 @@ reportChildScenario(async () => {
 });
 `;
     const result = workspace.runNodeSource(script, {
-      name: path.basename(scriptPath),
+      name: "ollama-loopback-check.js",
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -1495,11 +1492,11 @@ reportChildScenario(async () => {
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-ollama-systemd-");
     const { root: tmpDir } = workspace;
     const fakeBin = workspace.binDir;
-    const scriptPath = path.join(tmpDir, "ollama-systemd-check.js");
+
     writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
 
     const script = String.raw`
-const { installPromptQueue, reportChildScenario } = require(${childRuntimePath});
+${onboardChildRuntimeSource}
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
 const child_process = require("child_process");
@@ -1549,7 +1546,7 @@ reportChildScenario(async () => {
 });
 `;
     const result = workspace.runNodeSource(script, {
-      name: path.basename(scriptPath),
+      name: "ollama-systemd-check.js",
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -1591,11 +1588,11 @@ reportChildScenario(async () => {
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-ollama-systemd-merge-");
     const { root: tmpDir } = workspace;
     const fakeBin = workspace.binDir;
-    const scriptPath = path.join(tmpDir, "ollama-systemd-merge-check.js");
+
     writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
 
     const script = String.raw`
-const { installPromptQueue, reportChildScenario } = require(${childRuntimePath});
+${onboardChildRuntimeSource}
 const fs = require("fs");
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
@@ -1662,7 +1659,7 @@ reportChildScenario(async () => {
 });
 `;
     const result = workspace.runNodeSource(script, {
-      name: path.basename(scriptPath),
+      name: "ollama-systemd-merge-check.js",
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -1726,10 +1723,9 @@ reportChildScenario(async () => {
   }, () => {
     const workspace = onboardProcessWorkspace("nemoclaw-ollama-systemd-spark-");
     const { root: tmpDir } = workspace;
-    const scriptPath = path.join(tmpDir, "ollama-systemd-spark-check.js");
 
     const script = String.raw`
-const { installPromptQueue, reportChildScenario } = require(${childRuntimePath});
+${onboardChildRuntimeSource}
 const fs = require("fs");
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
@@ -1775,7 +1771,7 @@ reportChildScenario(() => {
 });
 `;
     const result = workspace.runNodeSource(script, {
-      name: path.basename(scriptPath),
+      name: "ollama-systemd-spark-check.js",
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -1802,10 +1798,9 @@ reportChildScenario(() => {
   }, () => {
     const workspace = onboardProcessWorkspace("nemoclaw-ollama-systemd-sudo-mode-");
     const { root: tmpDir } = workspace;
-    const scriptPath = path.join(tmpDir, "ollama-systemd-sudo-mode-check.js");
 
     const script = String.raw`
-const { installPromptQueue, reportChildScenario } = require(${childRuntimePath});
+${onboardChildRuntimeSource}
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
 const localInference = require(${localInferencePath});
@@ -1831,7 +1826,7 @@ reportChildScenario(() => {
 });
 `;
     const result = workspace.runNodeSource(script, {
-      name: path.basename(scriptPath),
+      name: "ollama-systemd-sudo-mode-check.js",
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -1893,11 +1888,11 @@ reportChildScenario(() => {
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-ollama-systemd-loopback-");
     const { root: tmpDir } = workspace;
     const fakeBin = workspace.binDir;
-    const scriptPath = path.join(tmpDir, "ollama-systemd-loopback-check.js");
+
     writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
 
     const script = String.raw`
-const { installPromptQueue, reportChildScenario } = require(${childRuntimePath});
+${onboardChildRuntimeSource}
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
 const child_process = require("child_process");
@@ -1948,7 +1943,7 @@ reportChildScenario(async () => {
 });
 `;
     const result = workspace.runNodeSource(script, {
-      name: path.basename(scriptPath),
+      name: "ollama-systemd-loopback-check.js",
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -1994,10 +1989,9 @@ reportChildScenario(async () => {
   }, () => {
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-existing-systemd-restart-fail-");
     const { root: tmpDir } = workspace;
-    const scriptPath = path.join(tmpDir, "existing-systemd-restart-fail-check.js");
 
     const script = String.raw`
-const { installPromptQueue, reportChildScenario } = require(${childRuntimePath});
+${onboardChildRuntimeSource}
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
 const wait = require(${waitPath});
@@ -2039,7 +2033,7 @@ const { setupNim } = require(${onboardPath});
 });
 `;
     const result = workspace.runNodeSource(script, {
-      name: path.basename(scriptPath),
+      name: "existing-systemd-restart-fail-check.js",
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -2058,10 +2052,9 @@ const { setupNim } = require(${onboardPath});
   it("fails closed when an existing Ollama systemd override cannot be applied", () => {
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-existing-systemd-fail-");
     const { root: tmpDir } = workspace;
-    const scriptPath = path.join(tmpDir, "existing-systemd-fail-check.js");
 
     const script = String.raw`
-const { installPromptQueue, reportChildScenario } = require(${childRuntimePath});
+${onboardChildRuntimeSource}
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
 
@@ -2092,7 +2085,7 @@ const { setupNim } = require(${onboardPath});
 });
 `;
     const result = workspace.runNodeSource(script, {
-      name: path.basename(scriptPath),
+      name: "existing-systemd-fail-check.js",
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -2671,11 +2664,11 @@ const { setupNim } = require(${onboardPath});
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-custom-endpoint-blank-");
     const { root: tmpDir } = workspace;
     const fakeBin = workspace.binDir;
-    const scriptPath = path.join(tmpDir, "custom-endpoint-blank-check.js");
+
     writeAlwaysOkCurl(fakeBin, '{"id":"ok"}');
 
     const script = String.raw`
-const { installPromptQueue, reportChildScenario } = require(${childRuntimePath});
+${onboardChildRuntimeSource}
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
@@ -2691,7 +2684,7 @@ reportChildScenario(async () => {
 });
 `;
     const result = workspace.runNodeSource(script, {
-      name: path.basename(scriptPath),
+      name: "custom-endpoint-blank-check.js",
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -3077,7 +3070,7 @@ reportChildScenario(async () => {
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-build-auth-retry-");
     const { root: tmpDir } = workspace;
     const fakeBin = workspace.binDir;
-    const scriptPath = path.join(tmpDir, "build-auth-retry-check.js");
+
     fs.writeFileSync(
       path.join(fakeBin, "curl"),
       `#!/usr/bin/env bash
@@ -3112,7 +3105,7 @@ printf '%s' "$status"
     );
 
     const script = String.raw`
-const { installPromptQueue, reportChildScenario } = require(${childRuntimePath});
+${onboardChildRuntimeSource}
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
@@ -3128,7 +3121,7 @@ reportChildScenario(async () => {
 });
 `;
     const result = workspace.runNodeSource(script, {
-      name: path.basename(scriptPath),
+      name: "build-auth-retry-check.js",
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -3242,11 +3235,11 @@ reportChildScenario(async () => {
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-custom-openai-auth-retry-");
     const { root: tmpDir } = workspace;
     const fakeBin = workspace.binDir;
-    const scriptPath = path.join(tmpDir, "custom-openai-auth-retry-check.js");
+
     writeOpenAiStyleAuthRetryCurl(fakeBin, "proxy-good", ["custom-model"]);
 
     const script = String.raw`
-const { installPromptQueue, reportChildScenario } = require(${childRuntimePath});
+${onboardChildRuntimeSource}
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
@@ -3266,7 +3259,7 @@ reportChildScenario(async () => {
 });
 `;
     const result = workspace.runNodeSource(script, {
-      name: path.basename(scriptPath),
+      name: "custom-openai-auth-retry-check.js",
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -3311,7 +3304,7 @@ reportChildScenario(async () => {
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-vllm-override-");
     const { root: tmpDir } = workspace;
     const fakeBin = workspace.binDir;
-    const scriptPath = path.join(tmpDir, "vllm-override-check.js");
+
     // Fake curl: /v1/responses returns 200 (so probe detects openai-responses),
     // /v1/models returns a vLLM model list
     fs.writeFileSync(
@@ -3342,7 +3335,7 @@ printf '%s' "$status"
 
     // vLLM is option 8 (build, openrouter, openai, custom, anthropic, anthropicCompatible, gemini, vllm)
     const script = String.raw`
-const { installPromptQueue, reportChildScenario } = require(${childRuntimePath});
+${onboardChildRuntimeSource}
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
@@ -3366,7 +3359,7 @@ reportChildScenario(async () => {
 });
 `;
     const result = workspace.runNodeSource(script, {
-      name: path.basename(scriptPath),
+      name: "vllm-override-check.js",
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -3391,7 +3384,7 @@ reportChildScenario(async () => {
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-nim-override-");
     const { root: tmpDir } = workspace;
     const fakeBin = workspace.binDir;
-    const scriptPath = path.join(tmpDir, "nim-override-check.js");
+
     // Fake curl: /v1/responses returns 200 (probe detects openai-responses)
     fs.writeFileSync(
       path.join(fakeBin, "curl"),
@@ -3422,7 +3415,7 @@ printf '%s' "$status"
     // NIM-local is option 8 (build, openrouter, openai, custom, anthropic, anthropicCompatible, gemini, nim-local)
     // No ollama, no vLLM — only NIM-local shows up as experimental option
     const script = String.raw`
-const { installPromptQueue, reportChildScenario } = require(${childRuntimePath});
+${onboardChildRuntimeSource}
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
@@ -3457,7 +3450,7 @@ reportChildScenario(async () => {
 });
 `;
     const result = workspace.runNodeSource(script, {
-      name: path.basename(scriptPath),
+      name: "nim-override-check.js",
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -3562,10 +3555,9 @@ reportChildScenario(async () => {
   it("fails closed when the Linux systemd loopback override cannot be applied", () => {
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-systemd-fail-");
     const { root: tmpDir } = workspace;
-    const scriptPath = path.join(tmpDir, "systemd-fail-check.js");
 
     const script = String.raw`
-const { installPromptQueue, reportChildScenario } = require(${childRuntimePath});
+${onboardChildRuntimeSource}
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
@@ -3624,7 +3616,7 @@ const { setupNim } = require(${onboardPath});
 });
 `;
     const result = workspace.runNodeSource(script, {
-      name: path.basename(scriptPath),
+      name: "systemd-fail-check.js",
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -4118,7 +4110,7 @@ const { setupNim } = require(${onboardPath});
     const { root: tmpDir } = workspace;
     const fakeBin = workspace.binDir;
     const stateFile = path.join(tmpDir, "state.json");
-    const scriptPath = path.join(tmpDir, "compatible-timeout-check.js");
+
     fs.writeFileSync(stateFile, JSON.stringify({ inferenceSetArgs: null }));
 
     // Fake openshell: records inference set args, stubs provider/gateway ops
@@ -4142,7 +4134,7 @@ process.exit(0);
     );
 
     const script = String.raw`
-const { installPromptQueue, reportChildScenario } = require(${childRuntimePath});
+${onboardChildRuntimeSource}
 const runner = require(${runnerPath});
 // Mock runCapture before onboard.js is required so the destructured reference picks up the mock.
 runner.runCapture = (cmd) => {
@@ -4160,7 +4152,7 @@ const { setupInference } = require(${onboardPath});
 })().catch((err) => { console.error(err); process.exit(1); });
 `;
     const result = workspace.runNodeSource(script, {
-      name: path.basename(scriptPath),
+      name: "compatible-timeout-check.js",
       cwd: repoRoot,
       env: {
         ...process.env,

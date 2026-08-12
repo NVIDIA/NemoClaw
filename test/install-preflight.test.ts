@@ -40,8 +40,6 @@ function installerCheckout(prefix: string): InstallerCheckout {
   return checkout;
 }
 
-/** Minimal npm stub with an injectable install/link/run handler. */
-
 function runFailedSessionPromptChoice(answer: string) {
   const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-install-failed-choice-");
   const onboardLog = path.join(tmp, "onboard.log");
@@ -1599,7 +1597,7 @@ describe("installer release-tag resolution", () => {
   }
 
   it("defaults to the installer default ref with no env override", () => {
-    const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-resolve-tag-default-");
+    const { binDir: fakeBin } = installerCheckout("nemoclaw-resolve-tag-default-");
 
     writeExecutable(path.join(fakeBin, "node"), "#!/usr/bin/env bash\nexit 1");
 
@@ -1610,7 +1608,7 @@ describe("installer release-tag resolution", () => {
   });
 
   it("uses NEMOCLAW_INSTALL_TAG override", () => {
-    const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-resolve-tag-override-");
+    const { binDir: fakeBin } = installerCheckout("nemoclaw-resolve-tag-override-");
 
     // curl stub that would fail — must NOT be called
     writeExecutable(
@@ -2409,7 +2407,7 @@ describe("installer runtime checks (sourced)", () => {
   }
 
   it("fails with clear message when node is missing entirely", () => {
-    const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-no-node-");
+    const { binDir: fakeBin } = installerCheckout("nemoclaw-no-node-");
 
     // npm exists but node does not
     writeExecutable(
@@ -2425,7 +2423,7 @@ echo "10.9.2"`,
   });
 
   it("fails with clear message when npm is missing entirely", () => {
-    const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-no-npm-");
+    const { binDir: fakeBin } = installerCheckout("nemoclaw-no-npm-");
 
     writeExecutable(
       path.join(fakeBin, "node"),
@@ -2441,7 +2439,7 @@ exit 0`,
   });
 
   it("succeeds with acceptable Node.js 22.19 and npm 10", () => {
-    const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-runtime-ok-");
+    const { binDir: fakeBin } = installerCheckout("nemoclaw-runtime-ok-");
 
     writeExecutable(
       path.join(fakeBin, "node"),
@@ -2463,7 +2461,7 @@ exit 0`,
   });
 
   it("rejects Node.js 22.18 which is below the 22.19 minimum", () => {
-    const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-runtime-node22-18-");
+    const { binDir: fakeBin } = installerCheckout("nemoclaw-runtime-node22-18-");
 
     writeExecutable(
       path.join(fakeBin, "node"),
@@ -2487,7 +2485,7 @@ exit 0`,
   });
 
   it("rejects node that returns a non-numeric version", () => {
-    const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-runtime-badver-");
+    const { binDir: fakeBin } = installerCheckout("nemoclaw-runtime-badver-");
 
     writeExecutable(
       path.join(fakeBin, "node"),

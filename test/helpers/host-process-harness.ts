@@ -6,14 +6,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-export type HostCommandRoute = {
-  args?: readonly string[];
-  argsPrefix?: readonly string[];
+type HostCommandOutcome = {
   stdout?: string;
   stderr?: string;
   exitCode?: number;
   repeat?: boolean;
 };
+
+export type HostCommandRoute = HostCommandOutcome &
+  (
+    | { args: readonly string[]; argsPrefix?: never }
+    | { args?: never; argsPrefix: readonly string[] }
+  );
 
 export type HostCommandRecord = {
   command: string;

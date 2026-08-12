@@ -11,6 +11,7 @@ import {
   type HostCommandRecord,
   type HostCommandRoute,
   type HostProcessResult,
+  type HostProcessWorkspace,
 } from "./host-process-harness";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH, writeExecutable } from "./installer-sourced-env";
 
@@ -52,7 +53,7 @@ export interface InstallerCheckout {
   run: (
     command: string,
     args: readonly string[],
-    options?: Parameters<ReturnType<typeof createHostProcessWorkspace>["run"]>[2],
+    options?: Parameters<HostProcessWorkspace["run"]>[2],
   ) => HostProcessResult;
   /** Removes the whole checkout. */
   remove: () => void;

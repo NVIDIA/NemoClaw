@@ -14,7 +14,11 @@ import type {
   ProviderSelectionSuccess,
 } from "../../src/lib/onboard/provider-selection.js";
 import type { DetectWindowsHostOllamaDeps } from "../../src/lib/onboard/windows-host-ollama.js";
-import { createHostProcessWorkspace } from "../helpers/host-process-harness.js";
+import {
+  createHostProcessWorkspace,
+  trailingJsonPayload,
+} from "../helpers/host-process-harness.js";
+import { onboardChildRuntimeSource } from "../helpers/onboard-child-runtime.js";
 
 const PROVIDER_CREDENTIAL_ENV_KEYS = new Set([
   "ANTHROPIC_API_KEY",
@@ -58,14 +62,13 @@ export function runOllamaPullScenario(
   const repoRoot = path.join(import.meta.dirname, "..", "..");
   const workspace = createHostProcessWorkspace("nemoclaw-onboard-ollama-pull-");
   const pullLog = workspace.path("pulls.log");
+  const curlResponsePath = workspace.path("curl-response.json");
+  fs.writeFileSync(curlResponsePath, curlResponse);
   const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
   const credentialsPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
   );
   const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-  const childRuntimePath = JSON.stringify(
-    path.join(repoRoot, "test", "helpers", "onboard-child-runtime.cjs"),
-  );
   const listResult =
     scenario.listAfter === "first-pull"
       ? `fs.existsSync(pullLog) ? "qwen3.5:9b" : ""`
@@ -76,7 +79,6 @@ export function runOllamaPullScenario(
   workspace.writeExecutable(
     "curl",
     `#!/usr/bin/env bash
-body='${curlResponse}'
 status="200"
 outfile=""
 url=""
@@ -90,7 +92,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 if [ "$has_config" -eq 0 ] && [[ "$url" == *:11435/* ]]; then status="401"; fi
-if [ -n "$outfile" ]; then printf '%s' "$body" > "$outfile"; fi
+if [ -n "$outfile" ]; then cat ${JSON.stringify(curlResponsePath)} > "$outfile"; fi
 printf '%s' "$status"
 `,
   );
@@ -104,7 +106,7 @@ exit 0
 
   const source = String.raw`
 const fs = require("fs");
-const { installPromptQueue, reportChildScenario } = require(${childRuntimePath});
+${onboardChildRuntimeSource}
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const { messages } = installPromptQueue(credentials, ${JSON.stringify(scenario.answers)});
@@ -134,8 +136,8 @@ reportChildScenario(async () => {
     });
     if (result.status !== 0) throw new Error(`Ollama pull scenario failed: ${result.stderr}`);
     return {
-      payload: JSON.parse(result.stdout.trim()),
-      pulls: fs.readFileSync(pullLog, "utf8").trim(),
+      payload: trailingJsonPayload<OllamaPullScenarioResult["payload"]>(result.stdout),
+      pulls: fs.existsSync(pullLog) ? fs.readFileSync(pullLog, "utf8").trim() : "",
     };
   } finally {
     workspace.remove();
