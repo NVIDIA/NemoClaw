@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { createServer } from "node:net";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../src/lib/agent/defs";
@@ -115,6 +116,57 @@ describe("onboard dashboard helpers", () => {
     expect(getPortConflictServiceHints("linux").join("\n")).toMatch(
       /systemctl --user stop openclaw-gateway.service/,
     );
+  });
+
+  it("deletes the built sandbox and exits 1 when the committed port becomes occupied (#8798)", async () => {
+    const listener = createServer();
+    await new Promise<void>((resolve, reject) => {
+      listener.once("error", reject);
+      listener.listen(0, "127.0.0.1", resolve);
+    });
+    const address = listener.address();
+    if (!address || typeof address === "string") {
+      throw new Error("loopback listener did not report a TCP address");
+    }
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${String(code)})`);
+    }) as typeof process.exit);
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell: vi.fn(() => ""),
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+
+    try {
+      expect(() =>
+        helpers.ensureDashboardForward("my-sandbox", `http://127.0.0.1:${String(address.port)}`, {
+          rollbackSandboxOnFailure: true,
+        }),
+      ).toThrow("process.exit(1)");
+      expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", "my-sandbox"], {
+        ignoreError: true,
+      });
+      expect(errorSpy.mock.calls.map(([line]) => String(line)).join("\n")).toContain(
+        "The orphaned sandbox has been removed. Resolve the error above before retrying.",
+      );
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+      await new Promise<void>((resolve, reject) => {
+        listener.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
   });
 
   it("uses sandbox-scoped forward stops for same-sandbox dashboard cleanup", () => {

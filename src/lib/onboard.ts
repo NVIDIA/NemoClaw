@@ -497,7 +497,8 @@ const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
   findAvailableDashboardPort,
   preflightDashboardPortRangeAvailability,
-  resolveCreateSandboxDashboardPort,
+  reserveCreateSandboxDashboardPort,
+  withDashboardPortReservationScope,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const authoritativeRebuildTarget: typeof import("./onboard/authoritative-rebuild-target") =
   require("./onboard/authoritative-rebuild-target");
@@ -2116,6 +2117,7 @@ async function createSandboxWithBaseImageResolution(
   managedWorkloadRebuild: import("./onboard/workload/rebuild").ManagedWorkloadRebuildHandoff | null,
   tempManagedRuntime: boolean,
   tempManagedRuntimeCatalog: string | null,
+  dashboardPortReservationScope: import("./onboard/dashboard-port").DashboardPortReservationScope,
   gpu: ReturnType<typeof nim.detectGpu>,
   model: string,
   provider: string,
@@ -2168,7 +2170,7 @@ async function createSandboxWithBaseImageResolution(
   let effectivePort = 0,
     chatUiUrl = "";
   if (manageDashboard) {
-    ({ effectivePort, chatUiUrl } = resolveCreateSandboxDashboardPort({
+    const dashboardSelection = await reserveCreateSandboxDashboardPort({
       sandboxName,
       controlUiPort,
       chatUiUrlEnv: process.env.CHAT_UI_URL,
@@ -2177,8 +2179,15 @@ async function createSandboxWithBaseImageResolution(
       defaultPort: DASHBOARD_PORT,
       forwardListOutput: runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
       warn: (message) => console.warn(message),
-    }));
+    });
+    ({ effectivePort, chatUiUrl } = dashboardSelection);
+    dashboardPortReservationScope.current = dashboardSelection.reservation;
   }
+  const releaseDashboardPortReservation = async (): Promise<void> => {
+    const reservation = dashboardPortReservationScope.current;
+    dashboardPortReservationScope.current = null;
+    await reservation?.release();
+  };
   const hermesDashboardForwarding = onboardHermesDashboard.createHermesDashboardOnboardForwarding({
     agentName: agent?.name,
     env: process.env,
@@ -2194,7 +2203,8 @@ async function createSandboxWithBaseImageResolution(
   const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   let recreateRuntime: import("./onboard/sandbox-recreate-transaction").SandboxRecreateRuntime | recreateJournal.OwnedSandboxRecreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(onboardSession, createIntent?.recreateTransaction, sandboxName, GATEWAY_NAME, existingEntry, getSandboxRecreateObservation, note);
-  const restoreReusedSandboxDashboard = (selectionVerified: boolean): void => {
+  const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
+    await releaseDashboardPortReservation();
     ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({
       sandboxName,
       chatUiUrl,
@@ -2213,7 +2223,7 @@ async function createSandboxWithBaseImageResolution(
     }));
   };
   if (recreateRuntime.acceptedTarget) {
-    restoreReusedSandboxDashboard(true);
+    await restoreReusedSandboxDashboard(true);
     return sandboxName;
   }
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -2370,7 +2380,7 @@ async function createSandboxWithBaseImageResolution(
                 "  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to force recreation.",
               );
             }
-            restoreReusedSandboxDashboard(!selectionDrift.unknown);
+            await restoreReusedSandboxDashboard(!selectionDrift.unknown);
             return sandboxName;
           }
         } else {
@@ -2400,7 +2410,7 @@ async function createSandboxWithBaseImageResolution(
           if (await promptYesNoOrDefault("  Reuse existing sandbox?", null, true)) {
             policyPresetCarry.seedReusedSandboxPolicyPresets(sandboxName, isNonInteractive());
             upsertMessagingProviders(messagingTokenDefs);
-            restoreReusedSandboxDashboard(!selectionDrift.unknown);
+            await restoreReusedSandboxDashboard(!selectionDrift.unknown);
             return sandboxName;
           }
         }
@@ -2468,7 +2478,7 @@ async function createSandboxWithBaseImageResolution(
     }
     if (!createIntent?.recreateTransaction) recreateRuntime = openRecreateJournal();
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    if (recreateRuntime.acceptedTarget) { if ("complete" in recreateRuntime) recreateRuntime.complete(); restoreReusedSandboxDashboard(true); return sandboxName; }
+    if (recreateRuntime.acceptedTarget) { if ("complete" in recreateRuntime) recreateRuntime.complete(); await restoreReusedSandboxDashboard(true); return sandboxName; }
     const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     baseImageResolutionFlow.captureBaseResolution(baseImageResolutionContext, previousEntry?.imageTag);
@@ -2606,6 +2616,7 @@ async function createSandboxWithBaseImageResolution(
   let actualDashboardPort = 0;
   let finalHermesDashboardState = hermesDashboardState;
   if (manageDashboard) {
+    await releaseDashboardPortReservation();
     actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {
       rollbackSandboxOnFailure: true,
     });
@@ -2727,6 +2738,7 @@ type CreateSandboxArgs =
     unknown,
     unknown,
     unknown,
+    unknown,
     ...infer Args,
   ]
     ? Args
@@ -2734,13 +2746,16 @@ type CreateSandboxArgs =
 
 async function createSandbox(...args: CreateSandboxArgs): Promise<string> {
   const computePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
-  return createSandboxWithBaseImageResolution(
-    baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
-    computePlan,
-    null,
-    false,
-    null,
-    ...args,
+  return withDashboardPortReservationScope((dashboardPortReservationScope) =>
+    createSandboxWithBaseImageResolution(
+      baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
+      computePlan,
+      null,
+      false,
+      null,
+      dashboardPortReservationScope,
+      ...args,
+    ),
   );
 }
 
@@ -2748,13 +2763,16 @@ async function createSandboxWithTemporaryManagedRuntime(
   ...args: CreateSandboxArgs
 ): Promise<string> {
   const computePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
-  return createSandboxWithBaseImageResolution(
-    baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
-    computePlan,
-    null,
-    true,
-    null,
-    ...args,
+  return withDashboardPortReservationScope((dashboardPortReservationScope) =>
+    createSandboxWithBaseImageResolution(
+      baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
+      computePlan,
+      null,
+      true,
+      null,
+      dashboardPortReservationScope,
+      ...args,
+    ),
   );
 }
 
@@ -4226,14 +4244,18 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             planRegisteredExtraProviders(gatewayName, { runOpenshell }),
           resolveSandboxCreateIntent: sandboxCreateIntentResolver.resolve,
           createSandbox: preparedDcodeRuntime.bindCreateSandbox(
-            createSandboxWithBaseImageResolution.bind(
-              null,
-              baseImageResolutionContext,
-              onboardingComputePlan,
-              opts.managedWorkloadRebuild ?? null,
-              opts.tempManagedRuntime === true,
-              opts.tempManagedRuntimeCatalog ?? null,
-            ),
+            (...createArgs) =>
+              withDashboardPortReservationScope((dashboardPortReservationScope) =>
+                createSandboxWithBaseImageResolution(
+                  baseImageResolutionContext,
+                  onboardingComputePlan,
+                  opts.managedWorkloadRebuild ?? null,
+                  opts.tempManagedRuntime === true,
+                  opts.tempManagedRuntimeCatalog ?? null,
+                  dashboardPortReservationScope,
+                  ...createArgs,
+                ),
+              ),
           ),
           updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
           getSandboxAgentRegistryFields,
