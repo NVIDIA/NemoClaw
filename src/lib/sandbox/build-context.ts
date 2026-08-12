@@ -297,10 +297,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "managed-bootstrap-trampoline.sh"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "jetson-device-group-bootstrap.sh"),
-    path.join(stagedScriptsDir, "jetson-device-group-bootstrap.sh"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "gateway-control.sh"),
     path.join(stagedScriptsDir, "gateway-control.sh"),
   );

@@ -18,7 +18,6 @@ import { hasZeroDockerExitStatus } from "../docker-command-result";
 import {
   buildDockerGpuCloneRunArgs,
   dockerContainerName,
-  JETSON_DEVICE_GROUP_BOOTSTRAP,
   shouldOmitOpenShellOciImageUser,
 } from "../docker-gpu-patch-clone";
 import {
@@ -637,7 +636,6 @@ function replacementPlan(options: ManagedBootstrapReplacementOptions): {
   readonly mode: DockerGpuPatchMode;
   readonly requiredUlimits: readonly DockerUlimit[];
   readonly extraGroupGids: readonly string[];
-  readonly preserveJetsonDeviceGroupMembership: boolean;
 } {
   const allowed = new Set([
     "gpuModeArgs",
@@ -645,7 +643,6 @@ function replacementPlan(options: ManagedBootstrapReplacementOptions): {
     "gpuModeKind",
     "gpuModeLabel",
     "extraGroupGids",
-    "preserveJetsonDeviceGroupMembership",
     "requiredUlimits",
   ]);
   const unknown = Object.keys(options.values).filter((key) => !allowed.has(key));
@@ -659,11 +656,6 @@ function replacementPlan(options: ManagedBootstrapReplacementOptions): {
     throw new Error(`Managed bootstrap Docker GPU mode '${kind}' is invalid.`);
   }
   const args = exactStringArray(options.values.gpuModeArgs ?? [], "GPU mode arguments");
-  const preserveJetsonDeviceGroupMembership =
-    options.values.preserveJetsonDeviceGroupMembership ?? false;
-  if (typeof preserveJetsonDeviceGroupMembership !== "boolean") {
-    throw new Error("Managed bootstrap Docker Jetson device-group preservation must be a boolean.");
-  }
   return {
     mode: {
       kind,
@@ -679,7 +671,6 @@ function replacementPlan(options: ManagedBootstrapReplacementOptions): {
         return value;
       },
     ),
-    preserveJetsonDeviceGroupMembership,
     requiredUlimits: parseRequiredUlimits(options.values.requiredUlimits),
   };
 }
@@ -687,18 +678,7 @@ function replacementPlan(options: ManagedBootstrapReplacementOptions): {
 function replacementCommand(
   handle: ManagedBootstrapHeldWorkloadHandle,
   snapshot: ManagedBootstrapObservedSnapshot,
-  plan: ReturnType<typeof replacementPlan>,
 ): readonly string[] {
-  const supervisorArgv =
-    plan.preserveJetsonDeviceGroupMembership && plan.extraGroupGids.length > 0
-      ? [
-          JETSON_DEVICE_GROUP_BOOTSTRAP,
-          "--device-group-gids",
-          plan.extraGroupGids.join(","),
-          "--",
-          ...snapshot.supervisorArgv,
-        ]
-      : snapshot.supervisorArgv;
   return Object.freeze([
     "--agent",
     handle.plan.profile.agent,
@@ -715,20 +695,20 @@ function replacementCommand(
     "--request-file",
     MANAGED_BOOTSTRAP_REQUEST_FILE,
     "--",
-    ...supervisorArgv,
+    ...snapshot.supervisorArgv,
   ]);
 }
 
 function assertReplacementBoundary(
   inspect: DockerContainerInspect,
   handle: ManagedBootstrapHeldWorkloadHandle,
-  expectedCommand: readonly string[],
+  snapshot: ManagedBootstrapObservedSnapshot,
 ): void {
   const entrypoint = exactStringArray(inspect.Config?.Entrypoint, "replacement entrypoint");
   const command = exactStringArray(inspect.Config?.Cmd, "replacement command");
   if (
     !exactArrayEqual(entrypoint, [MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE]) ||
-    !exactArrayEqual(command, expectedCommand)
+    !exactArrayEqual(command, replacementCommand(handle, snapshot))
   ) {
     throw new Error("Managed bootstrap Docker replacement process boundary changed.");
   }
@@ -3267,7 +3247,7 @@ export function createDockerManagedBootstrapAdapter(
           detail: `preparation requires rollback or commit from durable phase ${existingJournal.phase}`,
         });
       }
-      const trampolineCommand = replacementCommand(handle, snapshot, plan);
+      const trampolineCommand = replacementCommand(handle, snapshot);
       const omitOciImageUser = shouldOmitOpenShellOciImageUser(
         parsed.inspect,
         handle.intendedWorkloadArgv,
@@ -3333,7 +3313,7 @@ export function createDockerManagedBootstrapAdapter(
             "Managed bootstrap Docker replacement requires one bounded intended workload argv.",
           );
         }
-        assertReplacementBoundary(createdInspect, handle, trampolineCommand);
+        assertReplacementBoundary(createdInspect, handle, snapshot);
         const expectedActivatedSpecHash = assertReplacementMatchesIntent(
           snapshot.specCanonicalJson,
           createdInspect,
@@ -3574,12 +3554,7 @@ export function createDockerManagedBootstrapAdapter(
               (commandDetail(started) || "state did not reach running"),
           );
         }
-        const expectedReplacementCommand = exactStringArray(
-          parseDockerManagedBootstrapLaunchSpec(prepared.expectedActivatedSpecCanonicalJson).inspect
-            .Config?.Cmd,
-          "expected replacement command",
-        );
-        assertReplacementBoundary(running, handle, expectedReplacementCommand);
+        assertReplacementBoundary(running, handle, snapshot);
         const preservedOriginal = inspectExact(snapshot.runtimeId, deps);
         assertTransactionOriginal(journal, preservedOriginal);
         if (dockerContainerName(preservedOriginal) !== journal.backupName) {
@@ -3644,12 +3619,7 @@ export function createDockerManagedBootstrapAdapter(
       if (beforeImageContentId !== replacement.runtimeImageContentId) {
         throw new Error("Managed bootstrap Docker replacement image content changed.");
       }
-      const expectedReplacementCommand = exactStringArray(
-        parseDockerManagedBootstrapLaunchSpec(replacement.replacementSpecCanonicalJson).inspect
-          .Config?.Cmd,
-        "expected replacement command",
-      );
-      assertReplacementBoundary(before, handle, expectedReplacementCommand);
+      assertReplacementBoundary(before, handle, snapshot);
       if (!waitForOpenShellSupervisorReconnect(handle.sandbox.sandboxName, timeoutSecs, deps)) {
         throw new Error("Managed bootstrap Docker supervisor did not reconnect.");
       }
@@ -3667,7 +3637,7 @@ export function createDockerManagedBootstrapAdapter(
       if (assertImage(after, replacement.image, deps) !== replacement.runtimeImageContentId) {
         throw new Error("Managed bootstrap Docker completed image content changed.");
       }
-      assertReplacementBoundary(after, handle, expectedReplacementCommand);
+      assertReplacementBoundary(after, handle, snapshot);
       const normalized = normalizeDockerManagedBootstrapLaunchSpec(after);
       if (normalized.hash !== replacement.replacementSpecHash) {
         throw new Error("Managed bootstrap Docker replacement changed during bootstrap.");

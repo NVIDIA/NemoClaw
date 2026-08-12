@@ -41,63 +41,8 @@ describe("Jetson device-node group propagation (#4231, #7610)", () => {
     expect(args).not.toEqual(expect.arrayContaining(["--group-add"]));
   });
 
-  it("runs the fixed OpenShell supervisor through the Jetson group helper (#7610)", () => {
-    const args = buildDockerGpuCloneRunArgs(
-      inspectFixture(),
-      buildDockerGpuMode("nvidia-runtime", null, { backend: "jetson" }),
-      { extraGroupGids: ["44"], preserveJetsonDeviceGroupMembership: true },
-    );
-
-    expect(args).toEqual(
-      expect.arrayContaining([
-        "--entrypoint",
-        "/usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh",
-      ]),
-    );
-    expect(args.slice(args.indexOf("openshell/sandbox:abc"))).toEqual([
-      "openshell/sandbox:abc",
-      "--device-group-gids",
-      "44",
-      "--",
-      "/opt/openshell/bin/openshell-sandbox",
-    ]);
-  });
-
-  it("rejects invalid, duplicate, or excessive supplementary groups (#7610)", () => {
-    const build = (extraGroupGids: readonly string[]) =>
-      buildDockerGpuCloneRunArgs(
-        inspectFixture(),
-        buildDockerGpuMode("nvidia-runtime", null, { backend: "jetson" }),
-        { extraGroupGids, preserveJetsonDeviceGroupMembership: true },
-      );
-
-    for (const gids of [
-      ["0"],
-      ["2147483648"],
-      ["44", "44"],
-      Array.from({ length: 17 }, (_, index) => String(index + 1)),
-    ]) {
-      expect(() => build(gids)).toThrow(
-        "Docker clone received invalid or excessive supplementary group IDs.",
-      );
-    }
-  });
-
-  it("rejects group preservation outside the fixed supervisor boundary (#7610)", () => {
-    const inspect = inspectFixture();
-    inspect.Config!.Entrypoint = ["/custom/entrypoint"];
-
-    expect(() =>
-      buildDockerGpuCloneRunArgs(
-        inspect,
-        buildDockerGpuMode("nvidia-runtime", null, { backend: "jetson" }),
-        { extraGroupGids: ["44"], preserveJetsonDeviceGroupMembership: true },
-      ),
-    ).toThrow("Jetson device-group bootstrap requires the OpenShell supervisor entrypoint.");
-  });
-
   it("passes all detected Tegra device GIDs into the Jetson recreate as --group-add", () => {
-    const dockerRunDetached = vi.fn((_args: readonly string[]) => ({
+    const dockerRunDetached = vi.fn(() => ({
       status: 0,
       stdout: "new-container-id\n",
     }));
@@ -114,12 +59,7 @@ describe("Jetson device-node group propagation (#4231, #7610)", () => {
     );
 
     recreateOpenShellDockerSandboxWithGpu(
-      {
-        sandboxName: "alpha",
-        timeoutSecs: 1,
-        backend: "jetson",
-        preserveJetsonDeviceGroupMembership: true,
-      },
+      { sandboxName: "alpha", timeoutSecs: 1, backend: "jetson" },
       {
         dockerCapture: dockerCaptureFixture(),
         dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),
@@ -140,20 +80,6 @@ describe("Jetson device-node group propagation (#4231, #7610)", () => {
       expect.arrayContaining(["--group-add", "44", "--group-add", "104", "--group-add", "995"]),
       expect.objectContaining({ ignoreError: true }),
     );
-    const createArgs = dockerRunDetached.mock.calls[0]?.[0] ?? [];
-    expect(createArgs).toEqual(
-      expect.arrayContaining([
-        "--entrypoint",
-        "/usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh",
-      ]),
-    );
-    expect(createArgs.slice(createArgs.indexOf("openshell/sandbox:abc"))).toEqual([
-      "openshell/sandbox:abc",
-      "--device-group-gids",
-      "44,104,995",
-      "--",
-      "/opt/openshell/bin/openshell-sandbox",
-    ]);
   });
 
   it("does not add Tegra device GIDs for the generic (non-Jetson) backend", () => {
@@ -185,36 +111,5 @@ describe("Jetson device-node group propagation (#4231, #7610)", () => {
       expect.arrayContaining(["--group-add", "44"]),
       expect.anything(),
     );
-  });
-
-  it("keeps the original container running when the helper is missing (#7610)", () => {
-    const dockerStop = vi.fn(() => ({ status: 0 }));
-
-    expect(() =>
-      recreateOpenShellDockerSandboxWithGpu(
-        {
-          sandboxName: "alpha",
-          timeoutSecs: 1,
-          backend: "jetson",
-          preserveJetsonDeviceGroupMembership: true,
-        },
-        {
-          dockerCapture: dockerCaptureFixture(),
-          dockerRun: vi.fn((args: readonly string[]) => ({
-            status: args[0] === "exec" ? 1 : 0,
-          })),
-          dockerRunDetached: vi.fn(() => ({ status: 0, stdout: "new-container-id\n" })),
-          dockerRename: vi.fn(() => ({ status: 0 })),
-          dockerStop,
-          dockerRm: vi.fn(() => ({ status: 0 })),
-          runOpenshell: vi.fn(() => ({ status: 0 })),
-          sleep: vi.fn(),
-          now: () => new Date("2026-05-15T00:00:00Z"),
-          detectSandboxFallbackDns: () => null,
-          detectTegraDeviceGroupGids: () => ["44"],
-        },
-      ),
-    ).toThrow("OpenClaw sandbox image is missing executable");
-    expect(dockerStop).not.toHaveBeenCalled();
   });
 });

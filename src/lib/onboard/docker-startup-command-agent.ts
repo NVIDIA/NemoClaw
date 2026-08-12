@@ -19,21 +19,15 @@ export function resolveDockerStartupCommandPatch(
   dockerDriverGateway: boolean | null | undefined,
 ): {
   persistStartupCommand: boolean;
-  preserveJetsonDeviceGroupMembership: boolean;
   requiredUlimits: readonly DockerUlimit[] | null;
 } {
-  const agentName = agent?.name ?? "openclaw";
   if (dockerDriverGateway !== true) {
-    return {
-      persistStartupCommand: false,
-      preserveJetsonDeviceGroupMembership: agentName === "openclaw",
-      requiredUlimits: null,
-    };
+    return { persistStartupCommand: false, requiredUlimits: null };
   }
+  const agentName = agent?.name ?? "openclaw";
   return {
     persistStartupCommand:
       agentName === "openclaw" || agentName === "hermes" || agentName === DCODE_AGENT_NAME,
-    preserveJetsonDeviceGroupMembership: agentName === "openclaw",
     requiredUlimits: agentName === DCODE_AGENT_NAME ? DCODE_DOCKER_ULIMITS : null,
   };
 }

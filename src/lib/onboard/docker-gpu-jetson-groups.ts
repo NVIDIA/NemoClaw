@@ -16,18 +16,12 @@ const TEGRA_GPU_DEVICE_NODES = [
   "/dev/nvgpu/igpu0/as",
   "/dev/nvgpu/igpu0/prof",
 ] as const;
-const NVMAP_DEVICE = "/dev/nvmap";
 const READ_WRITE_PERMISSION_BITS = 0o6;
 const MAX_DOCKER_SUPPLEMENTARY_GID = 2_147_483_647;
 
 type DeviceGroupAccess = {
   gid: number;
   mode: number;
-};
-
-type DevicePathAccess = {
-  isCharacterDevice: boolean;
-  isSymbolicLink: boolean;
 };
 
 /**
@@ -55,39 +49,6 @@ function discoverTegraRenderDevicePaths(): string[] {
  */
 function listTegraGpuDevicePaths(): string[] {
   return [...TEGRA_GPU_DEVICE_NODES, ...discoverTegraRenderDevicePaths()];
-}
-
-/**
- * Return the fixed Jetson GPU device paths that are safe to add to an
- * OpenShell filesystem policy. `/dev/nvmap` anchors detection so a host with
- * only an unrelated DRI render device does not receive Jetson grants.
- */
-export function detectTegraGpuDevicePaths(
-  deps: {
-    statDevicePath?: (path: string) => DevicePathAccess | null;
-    listDevicePaths?: () => string[];
-  } = {},
-): string[] {
-  const devicePaths = deps.listDevicePaths?.() ?? listTegraGpuDevicePaths();
-  const statDevicePath =
-    deps.statDevicePath ??
-    ((devicePath: string): DevicePathAccess | null => {
-      try {
-        const stat = fs.lstatSync(devicePath);
-        return {
-          isCharacterDevice: stat.isCharacterDevice(),
-          isSymbolicLink: stat.isSymbolicLink(),
-        };
-      } catch {
-        return null;
-      }
-    });
-
-  const detectedPaths = devicePaths.filter((devicePath) => {
-    const access = statDevicePath(devicePath);
-    return access?.isCharacterDevice === true && access.isSymbolicLink === false;
-  });
-  return detectedPaths.includes(NVMAP_DEVICE) ? detectedPaths : [];
 }
 
 /**

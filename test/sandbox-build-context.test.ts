@@ -215,7 +215,6 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "managed-startup-hold.sh"));
     writeFixture(path.join("scripts", "managed-bootstrap-entrypoint.c"));
     writeFixture(path.join("scripts", "managed-bootstrap-trampoline.sh"));
-    writeFixture(path.join("scripts", "jetson-device-group-bootstrap.sh"));
     writeFixture(path.join("scripts", "gateway-control.sh"));
     writeFixture(path.join("scripts", "managed-gateway-control.py"));
     writeFixture(path.join("scripts", "state-dir-guard.py"));
@@ -852,9 +851,6 @@ describe("sandbox build context staging", () => {
       expect(fs.existsSync(path.join(buildCtx, "scripts", "managed-bootstrap-trampoline.sh"))).toBe(
         true,
       );
-      expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "jetson-device-group-bootstrap.sh")),
-      ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "gateway-control.sh"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "managed-gateway-control.py"))).toBe(
         true,

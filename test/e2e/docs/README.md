@@ -341,14 +341,11 @@ test/e2e/
   its result counts to the expected and tested candidate SHA, correlation ID,
   job ID, and shard ID. The workflow boundary requires every selected job shard
   to upload its evidence artifact.
-- `.github/workflows/platform-vitest-main.yaml` runs the Vitest suite in
+- `.github/workflows/platform-vitest-main.yaml` runs the full Vitest suite in
   four independent shards on each of macOS and WSL, with `fail-fast` disabled.
   Each macOS shard installs the pinned OpenShell formula and has a 30-minute
   budget. Each WSL shard has a 90-minute budget, and WSL runs its additional
   root-required contracts on shard 1 only.
-  The WSL shard command excludes only
-  `test/jetson-device-group-bootstrap.test.ts` because this lane does not
-  provision Docker.
   `.github/workflows/macos-e2e.yaml`, `.github/workflows/wsl-e2e.yaml`, and
   `.github/workflows/sandbox-images-and-e2e.yaml` call focused E2E targets
   directly. `.github/workflows/e2e.yaml` selects free-standing jobs, including

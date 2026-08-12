@@ -112,7 +112,7 @@ fi`,
   expect(hardwareGate.exitCode, resultText(hardwareGate)).toBe(0);
   hardwareGate.stdout.startsWith("jetson:") ||
     skip(
-      "Not a Jetson/Tegra host (/dev/nvmap absent) — reporter workflow requires Jetson hardware; hermetic #4231 coverage remains in src/lib/onboard/docker-gpu-patch.test.ts.",
+      "Not a Jetson/Tegra host (/dev/nvmap absent) — reporter workflow requires Jetson hardware; hermetic #4231 coverage remains in src/lib/onboard/docker-gpu-patch-jetson.test.ts.",
     );
 
   const gatewayCleanupOptions = {
@@ -249,7 +249,7 @@ done`,
 
   expect(resultText(install)).toMatch(/Sandbox GPU(?::)? disabled by configuration/u);
 
-  // A4: a green temporary lane proves CPU-only onboarding, not CUDA usability.
+  // A4: a passing live E2E result verifies CPU-only onboarding, not CUDA usability.
   progress.phase("confirm CPU-only sandbox status");
   const status = await hostShell(
     host,

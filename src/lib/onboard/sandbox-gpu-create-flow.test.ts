@@ -330,7 +330,6 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
     recoverUnfinished.mockClear();
     createLifecycle.mockClear();
-    input.preserveJetsonDeviceGroupMembership = true;
     mocks.streamSandboxCreate.mockResolvedValueOnce({
       status: 23,
       output: "Created sandbox: alpha",
@@ -341,11 +340,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
 
     expect(result).toMatchObject({ route: "none", runtimePatch: patch });
     expect(createLifecycle).toHaveBeenCalledWith(
-      expect.objectContaining({
-        providerId: "mxc",
-        preserveJetsonDeviceGroupMembership: true,
-        route: "none",
-      }),
+      expect.objectContaining({ providerId: "mxc", route: "none" }),
     );
     expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
       "mxc-launch",
@@ -570,21 +565,16 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(createHandoff).toEqual(["poll", "create-complete", "ensure-applied"]);
   });
 
-  it("threads OpenClaw Jetson group preservation without forcing native recreation (#7610)", async () => {
+  it("does not replace a native GPU container solely to persist its startup command", async () => {
     const input = createInput();
     input.persistStartupCommand = true;
-    input.preserveJetsonDeviceGroupMembership = true;
 
     await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
       route: "native",
     });
 
     expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        route: "native",
-        persistStartupCommand: false,
-        preserveJetsonDeviceGroupMembership: true,
-      }),
+      expect.objectContaining({ route: "native", persistStartupCommand: false }),
     );
   });
 

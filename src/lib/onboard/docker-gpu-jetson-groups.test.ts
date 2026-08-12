@@ -5,43 +5,7 @@ import fs from "node:fs";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { detectTegraDeviceGroupGids, detectTegraGpuDevicePaths } from "./docker-gpu-jetson-groups";
-
-describe("detectTegraGpuDevicePaths", () => {
-  it("returns existing non-symlink character devices when nvmap anchors detection (#7610)", () => {
-    const paths = ["/dev/nvmap", "/dev/nvhost-gpu", "/dev/nvgpu/igpu0/link"];
-
-    expect(
-      detectTegraGpuDevicePaths({
-        listDevicePaths: () => paths,
-        statDevicePath: (devicePath) =>
-          devicePath === "/dev/nvmap"
-            ? { isCharacterDevice: true, isSymbolicLink: false }
-            : devicePath === "/dev/nvgpu/igpu0/link"
-              ? { isCharacterDevice: true, isSymbolicLink: true }
-              : null,
-      }),
-    ).toEqual(["/dev/nvmap"]);
-  });
-
-  it("returns no paths when nvmap is missing, a symlink, or not a character device (#7610)", () => {
-    for (const nvmapAccess of [
-      null,
-      { isCharacterDevice: true, isSymbolicLink: true },
-      { isCharacterDevice: false, isSymbolicLink: false },
-    ]) {
-      expect(
-        detectTegraGpuDevicePaths({
-          listDevicePaths: () => ["/dev/nvmap", "/dev/dri/renderD128"],
-          statDevicePath: (devicePath) =>
-            devicePath === "/dev/nvmap"
-              ? nvmapAccess
-              : { isCharacterDevice: true, isSymbolicLink: false },
-        }),
-      ).toEqual([]);
-    }
-  });
-});
+import { detectTegraDeviceGroupGids } from "./docker-gpu-jetson-groups";
 
 describe("detectTegraDeviceGroupGids", () => {
   afterEach(() => {

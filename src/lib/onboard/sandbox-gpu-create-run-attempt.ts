@@ -112,7 +112,6 @@ export function createSandboxGpuCreateAttemptRunner(
             : {}),
           route,
           persistStartupCommand: input.persistStartupCommand === true,
-          preserveJetsonDeviceGroupMembership: input.preserveJetsonDeviceGroupMembership === true,
           sandboxName: input.sandboxName,
           sandboxGpuConfig: input.sandboxGpuConfig,
           requiredLimits: input.requiredUlimits ?? [],
@@ -148,7 +147,6 @@ export function createSandboxGpuCreateAttemptRunner(
         requiredUlimits: input.requiredUlimits,
         timeoutSecs: input.sandboxReadyTimeoutSecs,
         backend: input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
-        preserveJetsonDeviceGroupMembership: input.preserveJetsonDeviceGroupMembership === true,
         deps,
       });
     const recovery = await managedLifecycle?.recoverUnfinished();
