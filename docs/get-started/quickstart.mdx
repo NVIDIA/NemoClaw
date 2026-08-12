@@ -302,8 +302,11 @@ Use these details when your first-run path needs more control.
     ```
 
     The default is `Y`.
-    Press Enter to continue, or answer `n` to abort cleanly, correct the entries, and rerun `nemoclaw onboard`.
-    Non-interactive runs print the summary for log clarity but skip the prompt.
+    Press Enter to accept the configuration.
+    If you answer `n`, onboarding exits with a nonzero status and clears the recorded provider, model, and sandbox name.
+    The rejected run does not register a new gateway credential.
+    Run `nemoclaw onboard` to make new choices.
+    Non-interactive runs print the summary and skip the prompt.
   </Accordion>
 
   <Accordion title="Web Search Messaging and Network Policies">

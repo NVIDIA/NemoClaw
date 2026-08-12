@@ -51,6 +51,51 @@ export interface ResolvedOnboardEntryOptions {
 
 type NonInteractiveEntryOptions = { nonInteractive?: boolean };
 type ResumableEntryOptions = NonInteractiveEntryOptions & { resume?: boolean; fresh?: boolean };
+
+export function resolveOnboardRunOptions(
+  options: OnboardEntryOptionsInput["opts"] & { autoYes?: boolean; nonInteractive?: boolean },
+  env: NodeJS.ProcessEnv,
+  persistedSessionStatus: string | null,
+  isNonInteractiveEnv: () => boolean,
+  terminal: { stdinIsTty: boolean; stdoutIsTty: boolean } = {
+    stdinIsTty: Boolean(process.stdin?.isTTY),
+    stdoutIsTty: Boolean(process.stdout?.isTTY),
+  },
+) {
+  const resume =
+    options.resume === true || (options.fresh !== true && persistedSessionStatus === "in_progress");
+  const nonInteractive =
+    options.nonInteractive === true ||
+    ((options.autoYes === true || env.NEMOCLAW_YES === "1") && resume && !terminal.stdinIsTty) ||
+    isNonInteractiveEnv();
+  return {
+    resume,
+    nonInteractive,
+    entryOptionsInput: { opts: options, env, ...terminal, persistedSessionStatus },
+  };
+}
+
+export function resolveOnboardRunEntryOptions(
+  options: OnboardEntryOptionsInput["opts"] & { autoYes?: boolean; nonInteractive?: boolean },
+  env: NodeJS.ProcessEnv,
+  persistedSessionStatus: string | null,
+  isNonInteractiveEnv: () => boolean,
+  deps: Omit<OnboardEntryOptionsDeps, "isNonInteractive">,
+) {
+  const context = resolveOnboardRunOptions(
+    options,
+    env,
+    persistedSessionStatus,
+    isNonInteractiveEnv,
+  );
+  return {
+    ...context,
+    ...resolveOnboardEntryOptions(context.entryOptionsInput, {
+      ...deps,
+      isNonInteractive: () => context.nonInteractive,
+    }),
+  };
+}
 interface StationExpressSessionLifecycle {
   loadSession(): StationExpressSessionLike | null;
   reconcileStationExpressReceiptRetirement(generation: string): void;

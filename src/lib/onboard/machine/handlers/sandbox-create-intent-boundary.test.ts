@@ -96,7 +96,7 @@ describe("sandbox create intent machine boundary", () => {
           disabledChannelNames: [],
           extraPlaceholderKeys: [],
         },
-        recreate: expect.any(Boolean),
+        recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
         extraProviders: [],
@@ -115,6 +115,20 @@ describe("sandbox create intent machine boundary", () => {
 
     expect(resolvedIntents[1]).toEqual(resolvedIntents[0]);
     expect(resolvedIntents[2]).toEqual(resolvedIntents[0]);
+  });
+
+  it("carries an explicit recreate request through a fresh sandbox decision (#8847)", async () => {
+    const session = createSession({ sandboxName: "same-sandbox" });
+    const { deps, calls } = createDeps();
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      fresh: true,
+      recreateSandbox: () => true,
+      sandboxName: "same-sandbox",
+    });
+
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({ recreate: true });
   });
 
   it("checkpoints a known sandbox name before an interrupted web-search prompt (#6743)", async () => {
