@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isNonInteractiveEnv } from "../core/non-interactive";
+import { getNameValidationGuidance } from "../name-validation";
+import { cliDisplayName } from "./branding";
+import { RESERVED_SANDBOX_NAMES } from "./sandbox-agent";
 import {
   requireStationExpressResumeIntent,
   type StationExpressSessionLike,
@@ -95,6 +99,31 @@ export function resolveOnboardRunEntryOptions(
       isNonInteractive: () => context.nonInteractive,
     }),
   };
+}
+
+export function resolveDefaultRunEntryOptions(
+  options: OnboardEntryOptionsInput["opts"] & { autoYes?: boolean; nonInteractive?: boolean },
+  persistedSessionStatus: string | null,
+  validateSandboxName: OnboardEntryOptionsDeps["validateName"],
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return resolveOnboardRunEntryOptions(options, env, persistedSessionStatus, isNonInteractiveEnv, {
+    validateName: validateSandboxName,
+    reservedSandboxNames: RESERVED_SANDBOX_NAMES,
+    cliDisplayName,
+    getNameValidationGuidance,
+    error: (message) => console.error(message),
+    exitProcess: (code) => process.exit(code),
+  });
+}
+
+export function assertDefaultSandboxNameAllowed(sandboxName: string): void {
+  if (!RESERVED_SANDBOX_NAMES.has(sandboxName)) return;
+  console.error(
+    `  Reserved name in resumed session: '${sandboxName}' is a ${cliDisplayName()} CLI command.`,
+  );
+  console.error("  Start a fresh onboard with --name <sandbox> to choose a different name.");
+  process.exit(1);
 }
 interface StationExpressSessionLifecycle {
   loadSession(): StationExpressSessionLike | null;

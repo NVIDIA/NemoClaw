@@ -289,6 +289,19 @@ Promotion requires broader validation of the pinned Python frontend and the `ste
 The fixed recipe intentionally rejects model and serve-argument overrides; use another catalog profile instead of modifying its validated resource boundary.
 </Warning>
 
+<Note title="Reading Reasoning and Sizing max_tokens for Direct Callers">
+Nemotron 3.5 Lightning is a reasoning model that emits a hidden reasoning trace before its answer.
+Two behaviors surprise direct callers of the managed vLLM endpoint; the OpenClaw agent path is unaffected because it already requests a large budget.
+
+- **Read reasoning from `reasoning`, not `reasoning_content`.**
+  The pinned vLLM runtime renamed the deprecated `reasoning_content` response field to `reasoning`, so `choices[].message.reasoning_content` is `null` even for prompts that reasoned heavily.
+  The reasoning is not discarded — read `choices[].message.reasoning` (and the `delta.reasoning` field when streaming).
+- **Send a generous `max_tokens` (at least `1024`, and more for hard prompts).**
+  The reasoning trace counts against `max_tokens`.
+  With a modest budget the model can spend the entire budget on reasoning before it reaches the answer, returning an empty `content` with `finish_reason=length`.
+  A larger budget lets the answer follow the reasoning.
+</Note>
+
 Muse Glimmer is an additional single-DGX Spark choice and does not change the Qwen default.
 Select its stable catalog ID after confirming that `$$nemoclaw profiles list` reports it as compatible.
 
