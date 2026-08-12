@@ -221,7 +221,7 @@ These are the primary npm scripts for day-to-day development:
 | `npm run check` | Run the broad repo-wide pre-commit and full CLI/plugin coverage baseline |
 | `npm run check:diff` | Compatibility alias for `npm run validate:pr` |
 | `npm run checks` | Compatibility alias for `npm run checks:repository`; prints scope guidance before delegating |
-| `npm run format` | Auto-format JavaScript and TypeScript files added by the current branch with Oxfmt |
+| `npm run format` | Auto-format added JavaScript and TypeScript files that Oxfmt does not exclude |
 | `npm run typecheck:cli` | Type-check the root TypeScript project using `tsconfig.cli.json` |
 | `npm --prefix nemoclaw run typecheck` | Type-check plugin production and test sources without emitting files |
 | `npm test` | Build package artifacts and run every non-live Vitest project for broad changes |
@@ -398,7 +398,9 @@ All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-bina
 | **commit-msg** | commitlint (Conventional Commits) |
 | **pre-push** | Path-scoped incremental CLI/plugin TypeScript checks and checked-JavaScript checks |
 
-The Oxfmt and anti-slop hooks process each added JavaScript or TypeScript file that does not exist in `origin/main`. If `origin/main` is unavailable, they process files that do not exist in `HEAD`.
+The Oxfmt and `anti-slop` hooks process added JavaScript and TypeScript files that their configurations do not exclude.
+A file is added when it does not exist in `origin/main`.
+If `origin/main` is unavailable, a file is added when it does not exist in `HEAD`.
 
 For PR preparation, normal `pre-commit`, `commit-msg`, and `pre-push` hooks are valid verification when they pass and were not bypassed with `--no-verify`.
 If hooks were skipped, missing, failed, or uncertain, refresh the remote-tracking base with `git fetch origin main`, then run `npm run validate:pr` once to reproduce those checks for the current diff.
