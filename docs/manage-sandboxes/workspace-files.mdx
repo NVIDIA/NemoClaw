@@ -83,8 +83,8 @@ These files live at `/sandbox/.openclaw/workspace/` and are collectively called 
 | `USER.md` | Stores information about the human the agent assists. |
 | `IDENTITY.md` | Short identity card with name, language, emoji, and creature type. |
 | `AGENTS.md` | Behavioral rules, memory conventions, safety guidelines, and session workflow. |
-| `MEMORY.md` | Curated long-term memory distilled from daily notes. |
-| `memory/` | Directory of daily note files (`YYYY-MM-DD.md`) for session continuity. |
+| `MEMORY.md` | Curated long-term memory distilled from daily notes. OpenClaw creates this file when it first stores long-term memory. |
+| `memory/` | Directory of daily note files (`YYYY-MM-DD.md`) for session continuity. OpenClaw creates this directory when it first stores a daily note. |
 
 ## Where They Live
 
@@ -94,10 +94,10 @@ All workspace files reside inside the sandbox filesystem:
 /sandbox/.openclaw/workspace/
 ├── AGENTS.md
 ├── IDENTITY.md
-├── MEMORY.md
+├── MEMORY.md             # created on first long-term memory use
 ├── SOUL.md
 ├── USER.md
-└── memory/
+└── memory/               # created on first daily memory use
     ├── 2026-03-18.md
     └── 2026-03-19.md
 ```
@@ -123,7 +123,8 @@ For example, a Teams-integrated deployment can use a shared `main` agent plus pe
 └── workspace-ops/       # named agent "ops"
 ```
 
-Each per-agent workspace contains the same Markdown file structure as the default workspace: `SOUL.md`, `USER.md`, `IDENTITY.md`, `AGENTS.md`, `MEMORY.md`, and `memory/`.
+Each per-agent workspace uses the same Markdown file structure as the default workspace: `SOUL.md`, `USER.md`, `IDENTITY.md`, and `AGENTS.md`.
+OpenClaw creates `MEMORY.md` and `memory/` separately in each workspace when that agent first uses long-term or daily memory.
 Files are per-agent.
 Changes in `workspace-main/AGENTS.md` are not visible to `workspace-support/`.
 

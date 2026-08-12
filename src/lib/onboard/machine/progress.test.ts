@@ -18,7 +18,7 @@ describe("onboard progress metadata", () => {
     expect(ONBOARD_PROGRESS_STEPS).toEqual({
       preflight: { number: 1, total: 8, title: "Preflight checks" },
       gateway: { number: 2, total: 8, title: "Starting OpenShell gateway" },
-      provider_selection: { number: 3, total: 8, title: "Configuring inference (NIM)" },
+      provider_selection: { number: 3, total: 8, title: "Configuring inference provider" },
       inference: { number: 4, total: 8, title: "Setting up inference provider" },
       messaging: { number: 5, total: 8, title: "Messaging channels" },
       sandbox: { number: 6, total: 8, title: "Creating sandbox" },
@@ -34,5 +34,12 @@ describe("onboard progress metadata", () => {
       title: "Starting OpenShell gateway",
     });
     expect(getOnboardProgressStep("not-a-step")).toBeNull();
+  });
+
+  it("uses provider-neutral copy when resume returns to Ollama selection (#8853)", () => {
+    const providerSelection = getOnboardProgressStep("provider_selection");
+
+    expect(providerSelection?.title).toBe("Configuring inference provider");
+    expect(providerSelection?.title).not.toContain("NIM");
   });
 });
