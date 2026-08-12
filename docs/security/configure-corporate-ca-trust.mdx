@@ -37,7 +37,7 @@ This lets the in-sandbox OpenShell proxy validate TLS when it opens the upstream
 
 It sets `NODE_EXTRA_CA_CERTS` before build-time Node.js dependency verification, including `npm audit signatures` requests that cross a TLS-inspecting proxy.
 When NemoClaw selects a corporate CA, it sets `NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root` for the image build.
-The OpenClaw entrypoint creates `/tmp/nemoclaw-ca-bundle.pem` as `root:root` with mode `0444` before it starts agent commands as the `sandbox` user.
+The OpenClaw managed startup runtime creates `/run/nemoclaw/managed-startup-ca-bundle.pem` as `root:root` with mode `0444` before it starts agent commands as the `sandbox` user.
 The `sandbox` user can read the merged bundle but cannot modify or replace it.
 
 </AgentOnly>

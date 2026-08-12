@@ -79,8 +79,8 @@ expect_export() {
 }
 
 corp='/usr/local/share/nemoclaw/corporate-ca.pem'
-bundle='/tmp/nemoclaw-ca-bundle.pem'
-runtime_env='/tmp/nemoclaw-proxy-env.sh'
+bundle='/run/nemoclaw/managed-startup-ca-bundle.pem'
+runtime_env='/run/nemoclaw/managed-startup-runtime.env'
 
 [ -s "$corp" ] || probe_fail missing-corporate-ca
 [ -s "$bundle" ] || probe_fail missing-merged-bundle
