@@ -34,7 +34,7 @@ on:
           - internal-nvidia
           - public-nvidia
       allow_jetson_dispatch:
-        description: "Set true for jetson-nvmap-gpu only after the Colossus dispatcher, Cloudflare Tunnel, cleanup helper, and JETSON_DISPATCH_URL repository variable have passed the deployment checks in test/e2e/docs/jetson-colossus-dispatch.md."
+        description: "Set true for jetson-nvmap-gpu only after the operator-owned dispatch backend is available and JETSON_DISPATCH_URL contains its verified HTTPS origin. Refer to test/e2e/docs/jetson-dispatch.md."
         required: false
         default: false
         type: boolean
@@ -707,8 +707,8 @@ jobs:
         name: Prepare the trusted lane
         env:
           BREV_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.BREV_API_KEY || '' }}
-          BREV_CLI_SHA256: 5a6e70374db9be33f85f299161733b4a8409840d47638c781429b96e8d53704f
-          BREV_CLI_VERSION: 0.6.330
+          BREV_CLI_SHA256: d4aa49db1716f10308a6587778a676a0c0076bd48a212d86a421ab9550bc8f32
+          BREV_CLI_VERSION: 0.6.334
           BREV_ORG_ID: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.BREV_ORG_ID || '' }}
         run: |
           set -euo pipefail
@@ -4924,7 +4924,7 @@ jobs:
     needs: generate-matrix
     if: ${{ inputs.allow_jetson_dispatch && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}
     concurrency:
-      group: jetson-nvmap-gpu-colossus
+      group: jetson-nvmap-gpu-dispatch
       queue: max
       cancel-in-progress: false
     runs-on: ubuntu-latest
@@ -4945,7 +4945,7 @@ jobs:
         with:
           node-version: 22
 
-      - name: Dispatch exact commit to Jetson through Colossus
+      - name: Dispatch exact commit to Jetson through operator backend
         env:
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu
           JETSON_DISPATCH_CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}

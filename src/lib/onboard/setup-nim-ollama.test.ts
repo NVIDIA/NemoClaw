@@ -41,7 +41,6 @@ function makeDeps(overrides: Partial<Deps> = {}): Deps {
     ensureOllamaLoopbackSystemdOverride: () => "unchanged",
     runOllamaStartupOrGate: () => ({ kind: "ready" }),
     shouldFrontOllamaWithProxy: () => false,
-    startOllamaAuthProxy: () => true,
     getLocalProviderBaseUrl: () => "http://127.0.0.1:11434/v1",
     selectAndValidateOllamaModel: async () => ({
       outcome: "selected",
@@ -361,10 +360,9 @@ describe("createSetupNimOllamaHandlers", () => {
     assert.equal(state.allowToolsIncompatible, true);
   });
 
-  it("fronts installed WSL-local Ollama with the sandbox proxy when host loopback is not container-reachable (#7318)", async () => {
+  it("selects the proxy route without starting it before configuration review (#7318)", async () => {
     const state = makeState();
     const install = vi.fn(() => ({ ok: true }));
-    const startProxy = vi.fn(() => true);
     const selectModel = vi.fn<Deps["selectAndValidateOllamaModel"]>(async () => ({
       outcome: "selected",
       model: "qwen3:0.6b",
@@ -376,7 +374,6 @@ describe("createSetupNimOllamaHandlers", () => {
         process: { ...process, platform: "linux" } as NodeJS.Process,
         installOllamaOnLinux: install,
         shouldFrontOllamaWithProxy: () => true,
-        startOllamaAuthProxy: startProxy,
         getLocalProviderBaseUrl: () => "http://host.openshell.internal:11435/v1",
         selectAndValidateOllamaModel: selectModel,
       }),
@@ -388,7 +385,6 @@ describe("createSetupNimOllamaHandlers", () => {
 
     expect(result).toBe("selected");
     expect(install).toHaveBeenCalledTimes(1);
-    expect(startProxy).toHaveBeenCalledTimes(1);
     expect(state).toMatchObject({
       provider: "ollama-local",
       endpointUrl: "http://host.openshell.internal:11435/v1",
@@ -407,7 +403,6 @@ describe("createSetupNimOllamaHandlers", () => {
     const exit = vi.fn((code?: number) => {
       throw new Error(`exit ${code}`);
     });
-    const startProxy = vi.fn(() => true);
     const selectModel = vi.fn(async () => ({
       outcome: "selected" as const,
       model: "should-not-run",
@@ -417,7 +412,6 @@ describe("createSetupNimOllamaHandlers", () => {
       makeDeps({
         process: { ...process, exit: exit as never },
         runOllamaStartupOrGate: () => ({ kind: "mystery" }) as never,
-        startOllamaAuthProxy: startProxy,
         selectAndValidateOllamaModel: selectModel,
       }),
     );
@@ -429,7 +423,6 @@ describe("createSetupNimOllamaHandlers", () => {
 
     assert.deepEqual(state, before);
     assert.equal(exit.mock.calls[0]?.[0], 1);
-    assert.equal(startProxy.mock.calls.length, 0);
     assert.equal(selectModel.mock.calls.length, 0);
   });
 
@@ -442,7 +435,6 @@ describe("createSetupNimOllamaHandlers", () => {
     state.preferredInferenceApi = "responses";
     state.nimContainer = "stale-nim";
     state.allowToolsIncompatible = true;
-    const startProxy = vi.fn(() => true);
     const selectModel = vi.fn(async () => ({
       outcome: "selected" as const,
       model: "should-not-run",
@@ -460,7 +452,6 @@ describe("createSetupNimOllamaHandlers", () => {
             preferredInferenceApi: "openai-completions",
           },
         }),
-        startOllamaAuthProxy: startProxy,
         selectAndValidateOllamaModel: selectModel,
       }),
     );
@@ -480,7 +471,6 @@ describe("createSetupNimOllamaHandlers", () => {
       allowToolsIncompatible: false,
       skipHostInferenceSmoke: false,
     });
-    assert.equal(startProxy.mock.calls.length, 0);
     assert.equal(selectModel.mock.calls.length, 0);
   });
 });

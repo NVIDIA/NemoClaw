@@ -1,23 +1,34 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createPublicKey, createVerify, type JsonWebKeyInput, type KeyObject } from "node:crypto";
+import { createHash } from "node:crypto";
 
+export const JETSON_DISPATCH_CONTRACT_VERSION = "1.0.0";
 export const JETSON_DISPATCH_AUDIENCE = "nemoclaw-jetson-dispatch";
 export const JETSON_DISPATCH_TARGET = "jetson-nvmap-gpu";
-export const JETSON_DISPATCH_REPOSITORY = "NVIDIA/NemoClaw";
-export const JETSON_DISPATCH_WORKFLOW_REF =
-  "NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main";
 
-const GITHUB_OIDC_ISSUER = "https://token.actions.githubusercontent.com";
-const GITHUB_OIDC_JWKS_URL = `${GITHUB_OIDC_ISSUER}/.well-known/jwks`;
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
+const JOB_ID_PATTERN = /^[a-f0-9]{64}$/u;
 const POSITIVE_INTEGER_PATTERN = /^[1-9][0-9]*$/u;
-const MAX_TOKEN_BYTES = 16 * 1024;
-const MAX_TOKEN_LIFETIME_SECONDS = 15 * 60;
-const CLOCK_SKEW_SECONDS = 30;
-const JWKS_CACHE_MS = 5 * 60_000;
-const UNKNOWN_KEY_REFRESH_INTERVAL_MS = 60_000;
+const DISPATCH_CONCLUSIONS: readonly string[] = [
+  "cancelled",
+  "cleanup-failed",
+  "failure",
+  "success",
+  "timed-out",
+];
+const COMPLETED_CLEANUP_STATES: readonly string[] = ["failed", "succeeded"];
+const MAX_ERROR_CHARACTERS = 500;
+const MAX_DEVICE_IDENTITY_CHARACTERS = 500;
+export const MAX_JETSON_DISPATCH_LOG_BYTES = 4 * 1024 * 1024;
+export const MAX_JETSON_ARTIFACT_ARCHIVE_BYTES = 1024 * 1024;
+const MAX_JETSON_ARTIFACT_ARCHIVE_BASE64_CHARACTERS =
+  Math.ceil(MAX_JETSON_ARTIFACT_ARCHIVE_BYTES / 3) * 4;
+const MAX_JETSON_DISPATCH_ARTIFACT_JSON_OVERHEAD_BYTES = 256 * 1024;
+export const MAX_JETSON_DISPATCH_ARTIFACT_RESPONSE_BYTES =
+  MAX_JETSON_DISPATCH_LOG_BYTES * 6 +
+  MAX_JETSON_ARTIFACT_ARCHIVE_BASE64_CHARACTERS +
+  MAX_JETSON_DISPATCH_ARTIFACT_JSON_OVERHEAD_BYTES;
 
 export interface JetsonDispatchRequest {
   schemaVersion: 1;
@@ -27,26 +38,62 @@ export interface JetsonDispatchRequest {
   workflowRunAttempt: number;
 }
 
-export interface GitHubOidcIdentity {
-  repository: typeof JETSON_DISPATCH_REPOSITORY;
-  repositoryId: string;
-  runId: string;
-  runAttempt: number;
-  workflowSha: string;
-  tokenId: string;
+export type JetsonDispatchConclusion =
+  | "cancelled"
+  | "cleanup-failed"
+  | "failure"
+  | "success"
+  | "timed-out";
+
+export interface JetsonDeviceIdentity {
+  model: string;
+  jetpackVersion: string;
+  jetsonLinuxRelease: string;
+  kernel: string;
 }
 
-export interface GitHubOidcPolicy {
-  repositoryId: string;
+export interface JetsonDispatchStatus {
+  schemaVersion: 1;
+  jobId: string;
+  request: JetsonDispatchRequest;
+  state: "queued" | "running" | "completed";
+  conclusion?: JetsonDispatchConclusion;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  device?: JetsonDeviceIdentity;
+  cleanup: "pending" | "succeeded" | "failed";
+  error?: string;
 }
 
-export type SigningKeyResolver = (keyId: string) => Promise<KeyObject>;
+export interface JetsonDispatchArtifact {
+  status: JetsonDispatchStatus;
+  log: string;
+  artifactArchiveBase64?: string;
+}
 
 function record(value: unknown, name: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${name} must be an object`);
   }
   return value as Record<string, unknown>;
+}
+
+function requireFields(
+  value: Record<string, unknown>,
+  name: string,
+  required: string[],
+  optional: string[] = [],
+): void {
+  const allowed = new Set([...required, ...optional]);
+  if (
+    required.some((field) => !Object.hasOwn(value, field)) ||
+    Object.keys(value).some((field) => !allowed.has(field))
+  ) {
+    throw new Error(
+      `${name} fields do not match Jetson dispatch contract ${JETSON_DISPATCH_CONTRACT_VERSION}`,
+    );
+  }
 }
 
 function positiveInteger(value: unknown, name: string): number {
@@ -65,20 +112,13 @@ function positiveIntegerString(value: unknown, name: string): string {
 
 export function parseJetsonDispatchRequest(value: unknown): JetsonDispatchRequest {
   const request = record(value, "dispatch request");
-  const expectedKeys = [
+  requireFields(request, "dispatch request", [
     "candidateSha",
     "schemaVersion",
     "target",
     "workflowRunAttempt",
     "workflowRunId",
-  ];
-  const actualKeys = Object.keys(request).sort();
-  if (
-    actualKeys.length !== expectedKeys.length ||
-    actualKeys.some((key, index) => key !== expectedKeys[index])
-  ) {
-    throw new Error("dispatch request fields must match the fixed Jetson contract");
-  }
+  ]);
   if (request.schemaVersion !== 1) {
     throw new Error("dispatch request schemaVersion must be 1");
   }
@@ -88,187 +128,213 @@ export function parseJetsonDispatchRequest(value: unknown): JetsonDispatchReques
   if (typeof request.candidateSha !== "string" || !SHA_PATTERN.test(request.candidateSha)) {
     throw new Error("candidateSha must be a lowercase 40-character commit SHA");
   }
-  const workflowRunId = positiveIntegerString(request.workflowRunId, "workflowRunId");
-  const workflowRunAttempt = positiveInteger(request.workflowRunAttempt, "workflowRunAttempt");
   return {
     schemaVersion: 1,
     target: JETSON_DISPATCH_TARGET,
     candidateSha: request.candidateSha,
-    workflowRunId,
-    workflowRunAttempt,
+    workflowRunId: positiveIntegerString(request.workflowRunId, "workflowRunId"),
+    workflowRunAttempt: positiveInteger(request.workflowRunAttempt, "workflowRunAttempt"),
   };
 }
 
-function decodeJwtPart(encoded: string, name: string): Record<string, unknown> {
-  if (!/^[A-Za-z0-9_-]+$/u.test(encoded)) throw new Error(`OIDC ${name} encoding is invalid`);
-  let value: unknown;
-  try {
-    value = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
-  } catch {
-    throw new Error(`OIDC ${name} is not valid JSON`);
-  }
-  return record(value, `OIDC ${name}`);
+function expectedJobId(request: JetsonDispatchRequest): string {
+  return createHash("sha256")
+    .update(
+      `${request.schemaVersion}:${request.target}:${request.candidateSha}:${request.workflowRunId}:${request.workflowRunAttempt}`,
+      "utf8",
+    )
+    .digest("hex");
 }
 
-function stringClaim(claims: Record<string, unknown>, name: string): string {
-  const value = claims[name];
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error(`OIDC ${name} claim is invalid`);
+function parseTimestamp(value: unknown, name: string): string {
+  if (
+    typeof value !== "string" ||
+    value.length !== 24 ||
+    Number.isNaN(Date.parse(value)) ||
+    new Date(value).toISOString() !== value
+  ) {
+    throw new Error(`${name} must be an ISO timestamp`);
   }
   return value;
 }
 
-function numericDateClaim(claims: Record<string, unknown>, name: string): number {
-  const value = claims[name];
-  if (!Number.isSafeInteger(value) || (value as number) < 1) {
-    throw new Error(`OIDC ${name} claim is invalid`);
+function parseDeviceIdentity(value: unknown): JetsonDeviceIdentity {
+  const device = record(value, "Jetson device identity");
+  requireFields(device, "Jetson device identity", [
+    "jetpackVersion",
+    "jetsonLinuxRelease",
+    "kernel",
+    "model",
+  ]);
+  for (const field of ["jetpackVersion", "jetsonLinuxRelease", "kernel", "model"]) {
+    const entry = device[field];
+    if (
+      typeof entry !== "string" ||
+      entry.length === 0 ||
+      entry.length > MAX_DEVICE_IDENTITY_CHARACTERS ||
+      /[\u0000-\u001f\u007f]/u.test(entry)
+    ) {
+      throw new Error(`Jetson device ${field} is invalid`);
+    }
   }
-  return value as number;
-}
-
-export async function verifyGitHubOidcToken(options: {
-  token: string;
-  request: JetsonDispatchRequest;
-  policy: GitHubOidcPolicy;
-  resolveSigningKey: SigningKeyResolver;
-  nowMs?: number;
-}): Promise<GitHubOidcIdentity> {
-  if (
-    typeof options.token !== "string" ||
-    options.token.length === 0 ||
-    Buffer.byteLength(options.token) > MAX_TOKEN_BYTES
-  ) {
-    throw new Error("OIDC token size is invalid");
-  }
-  if (!POSITIVE_INTEGER_PATTERN.test(options.policy.repositoryId)) {
-    throw new Error("trusted repository ID must be a positive decimal integer");
-  }
-  const parts = options.token.split(".");
-  if (parts.length !== 3 || parts.some((part) => part.length === 0)) {
-    throw new Error("OIDC token must be a compact JWT");
-  }
-  const [encodedHeader, encodedClaims, encodedSignature] = parts as [string, string, string];
-  const header = decodeJwtPart(encodedHeader, "header");
-  if (header.alg !== "RS256" || header.typ !== "JWT") {
-    throw new Error("OIDC token must use an RS256 JWT header");
-  }
-  const keyId = stringClaim(header, "kid");
-  if (keyId.length > 256 || /[\u0000-\u001f\u007f]/u.test(keyId)) {
-    throw new Error("OIDC kid header is invalid");
-  }
-
-  const claims = decodeJwtPart(encodedClaims, "claims");
-  if (!/^[A-Za-z0-9_-]+$/u.test(encodedSignature)) {
-    throw new Error("OIDC signature encoding is invalid");
-  }
-  const signature = Buffer.from(encodedSignature, "base64url");
-  const verifier = createVerify("RSA-SHA256");
-  verifier.update(`${encodedHeader}.${encodedClaims}`, "ascii");
-  verifier.end();
-  const signingKey = await options.resolveSigningKey(keyId);
-  if (!verifier.verify(signingKey, signature)) {
-    throw new Error("OIDC signature verification failed");
-  }
-
-  const nowSeconds = Math.floor((options.nowMs ?? Date.now()) / 1000);
-  const issuedAt = numericDateClaim(claims, "iat");
-  const notBefore = numericDateClaim(claims, "nbf");
-  const expiresAt = numericDateClaim(claims, "exp");
-  if (
-    issuedAt > nowSeconds + CLOCK_SKEW_SECONDS ||
-    notBefore > nowSeconds + CLOCK_SKEW_SECONDS ||
-    expiresAt <= nowSeconds - CLOCK_SKEW_SECONDS ||
-    expiresAt <= issuedAt ||
-    expiresAt - issuedAt > MAX_TOKEN_LIFETIME_SECONDS
-  ) {
-    throw new Error("OIDC token is outside its allowed validity window");
-  }
-
-  const workflowSha = stringClaim(claims, "workflow_sha");
-  const workflowRunId = positiveIntegerString(claims.run_id, "OIDC run_id claim");
-  const workflowRunAttempt = positiveIntegerString(claims.run_attempt, "OIDC run_attempt claim");
-  if (
-    stringClaim(claims, "iss") !== GITHUB_OIDC_ISSUER ||
-    stringClaim(claims, "aud") !== JETSON_DISPATCH_AUDIENCE ||
-    stringClaim(claims, "repository") !== JETSON_DISPATCH_REPOSITORY ||
-    stringClaim(claims, "repository_id") !== options.policy.repositoryId ||
-    stringClaim(claims, "workflow_ref") !== JETSON_DISPATCH_WORKFLOW_REF ||
-    stringClaim(claims, "ref") !== "refs/heads/main" ||
-    stringClaim(claims, "event_name") !== "workflow_dispatch" ||
-    stringClaim(claims, "runner_environment") !== "github-hosted" ||
-    !SHA_PATTERN.test(workflowSha) ||
-    stringClaim(claims, "sha") !== workflowSha ||
-    workflowRunId !== options.request.workflowRunId ||
-    Number(workflowRunAttempt) !== options.request.workflowRunAttempt
-  ) {
-    throw new Error("OIDC claims do not match the trusted Jetson controller");
-  }
-
   return {
-    repository: JETSON_DISPATCH_REPOSITORY,
-    repositoryId: options.policy.repositoryId,
-    runId: workflowRunId,
-    runAttempt: options.request.workflowRunAttempt,
-    workflowSha,
-    tokenId: stringClaim(claims, "jti"),
+    model: device.model as string,
+    jetpackVersion: device.jetpackVersion as string,
+    jetsonLinuxRelease: device.jetsonLinuxRelease as string,
+    kernel: device.kernel as string,
   };
 }
 
-type FetchLike = typeof fetch;
-
-export function createGitHubJwksResolver(fetchImpl: FetchLike = fetch): SigningKeyResolver {
-  let cachedAt = 0;
-  let cachedKeys = new Map<string, KeyObject>();
-  let refreshInFlight: Promise<void> | undefined;
-
-  async function refresh(): Promise<void> {
-    const response = await fetchImpl(GITHUB_OIDC_JWKS_URL, {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!response.ok) throw new Error(`GitHub OIDC JWKS returned HTTP ${response.status}`);
-    const payload = record(await response.json(), "GitHub OIDC JWKS response");
-    if (!Array.isArray(payload.keys) || payload.keys.length === 0 || payload.keys.length > 20) {
-      throw new Error("GitHub OIDC JWKS response has an invalid key set");
-    }
-    const nextKeys = new Map<string, KeyObject>();
-    for (const value of payload.keys) {
-      const key = record(value, "GitHub OIDC JWK");
-      if (
-        key.kty !== "RSA" ||
-        key.use !== "sig" ||
-        key.alg !== "RS256" ||
-        typeof key.kid !== "string" ||
-        key.kid.length === 0 ||
-        typeof key.n !== "string" ||
-        typeof key.e !== "string"
-      ) {
-        continue;
-      }
-      nextKeys.set(key.kid, createPublicKey({ key, format: "jwk" } as JsonWebKeyInput));
-    }
-    if (nextKeys.size === 0) throw new Error("GitHub OIDC JWKS contains no RS256 signing key");
-    cachedKeys = nextKeys;
-    cachedAt = Date.now();
+export function parseJetsonDispatchStatus(value: unknown): JetsonDispatchStatus {
+  const status = record(value, "Jetson dispatch status");
+  const baseFields = ["cleanup", "createdAt", "jobId", "request", "schemaVersion", "state"];
+  const request = parseJetsonDispatchRequest(status.request);
+  if (
+    status.schemaVersion !== 1 ||
+    typeof status.jobId !== "string" ||
+    !JOB_ID_PATTERN.test(status.jobId) ||
+    status.jobId !== expectedJobId(request)
+  ) {
+    throw new Error("Jetson dispatch status does not match its request and job ID");
   }
-
-  async function refreshOnce(): Promise<void> {
-    refreshInFlight ??= refresh().finally(() => {
-      refreshInFlight = undefined;
-    });
-    await refreshInFlight;
-  }
-
-  return async (keyId) => {
-    const now = Date.now();
-    const refreshedExpiredCache = cachedAt === 0 || now - cachedAt > JWKS_CACHE_MS;
-    if (refreshedExpiredCache) await refreshOnce();
-    let key = cachedKeys.get(keyId);
-    if (!key && !refreshedExpiredCache && now - cachedAt > UNKNOWN_KEY_REFRESH_INTERVAL_MS) {
-      await refreshOnce();
-      key = cachedKeys.get(keyId);
+  const createdAt = parseTimestamp(status.createdAt, "createdAt");
+  if (status.state === "queued") {
+    requireFields(status, "queued Jetson dispatch status", baseFields);
+    if (status.cleanup !== "pending") {
+      throw new Error("queued Jetson dispatch cleanup must be pending");
     }
-    if (!key) throw new Error("OIDC signing key is unknown");
-    return key;
+    return {
+      schemaVersion: 1,
+      jobId: status.jobId,
+      request,
+      state: "queued",
+      createdAt,
+      cleanup: "pending",
+    };
+  }
+  if (status.state === "running") {
+    requireFields(status, "running Jetson dispatch status", [...baseFields, "startedAt"]);
+    const startedAt = parseTimestamp(status.startedAt, "startedAt");
+    if (status.cleanup !== "pending" || startedAt < createdAt) {
+      throw new Error("running Jetson dispatch status is invalid");
+    }
+    return {
+      schemaVersion: 1,
+      jobId: status.jobId,
+      request,
+      state: "running",
+      createdAt,
+      startedAt,
+      cleanup: "pending",
+    };
+  }
+  if (status.state !== "completed") {
+    throw new Error("Jetson dispatch status state is invalid");
+  }
+  requireFields(
+    status,
+    "completed Jetson dispatch status",
+    [...baseFields, "completedAt", "conclusion", "startedAt"],
+    ["device", "error"],
+  );
+  if (
+    typeof status.conclusion !== "string" ||
+    !DISPATCH_CONCLUSIONS.includes(status.conclusion) ||
+    typeof status.cleanup !== "string" ||
+    !COMPLETED_CLEANUP_STATES.includes(status.cleanup) ||
+    (status.cleanup === "failed" && status.conclusion !== "cleanup-failed")
+  ) {
+    throw new Error("completed Jetson dispatch result is invalid");
+  }
+  const startedAt = parseTimestamp(status.startedAt, "startedAt");
+  const completedAt = parseTimestamp(status.completedAt, "completedAt");
+  if (startedAt < createdAt || completedAt < startedAt) {
+    throw new Error("completed Jetson dispatch timestamps are invalid");
+  }
+  if (
+    status.error !== undefined &&
+    (typeof status.error !== "string" ||
+      status.error.length === 0 ||
+      status.error.length > MAX_ERROR_CHARACTERS ||
+      /[\u0000-\u001f\u007f]/u.test(status.error))
+  ) {
+    throw new Error("completed Jetson dispatch error is invalid");
+  }
+  const device = status.device === undefined ? undefined : parseDeviceIdentity(status.device);
+  if (status.conclusion === "success" && device === undefined) {
+    throw new Error("successful Jetson dispatch must include device identity");
+  }
+  return {
+    schemaVersion: 1,
+    jobId: status.jobId,
+    request,
+    state: "completed",
+    conclusion: status.conclusion as JetsonDispatchConclusion,
+    createdAt,
+    startedAt,
+    completedAt,
+    ...(device === undefined ? {} : { device }),
+    cleanup: status.cleanup as "failed" | "succeeded",
+    ...(status.error === undefined ? {} : { error: status.error }),
+  };
+}
+
+export function parseJetsonDispatchStatusResponse(
+  value: unknown,
+  expectedRequest?: JetsonDispatchRequest,
+): JetsonDispatchStatus {
+  const response = record(value, "Jetson dispatcher response");
+  requireFields(response, "Jetson dispatcher response", ["job"]);
+  const status = parseJetsonDispatchStatus(response.job);
+  if (expectedRequest !== undefined && status.jobId !== expectedJobId(expectedRequest)) {
+    throw new Error("Jetson dispatcher response does not match the submitted request");
+  }
+  return status;
+}
+
+export function decodeJetsonArtifactArchive(value: unknown): Buffer {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_JETSON_ARTIFACT_ARCHIVE_BASE64_CHARACTERS ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)
+  ) {
+    throw new Error("Jetson artifact archive must be bounded canonical base64");
+  }
+  const decoded = Buffer.from(value, "base64");
+  if (decoded.length > MAX_JETSON_ARTIFACT_ARCHIVE_BYTES || decoded.toString("base64") !== value) {
+    throw new Error("Jetson artifact archive must be bounded canonical base64");
+  }
+  return decoded;
+}
+
+export function parseJetsonDispatchArtifact(
+  value: unknown,
+  expectedArtifactJobId: string,
+): JetsonDispatchArtifact {
+  const artifact = record(value, "Jetson dispatch artifact");
+  requireFields(artifact, "Jetson dispatch artifact", ["log", "status"], ["artifactArchiveBase64"]);
+  const status = parseJetsonDispatchStatus(artifact.status);
+  if (status.jobId !== expectedArtifactJobId || status.state !== "completed") {
+    throw new Error("Jetson dispatch artifact does not match its completed job");
+  }
+  if (
+    typeof artifact.log !== "string" ||
+    Buffer.byteLength(artifact.log) > MAX_JETSON_DISPATCH_LOG_BYTES
+  ) {
+    throw new Error("Jetson dispatch artifact log is invalid");
+  }
+  if (artifact.artifactArchiveBase64 !== undefined) {
+    decodeJetsonArtifactArchive(artifact.artifactArchiveBase64);
+  }
+  if (status.conclusion === "success" && artifact.artifactArchiveBase64 === undefined) {
+    throw new Error("successful Jetson dispatch must include its artifact archive");
+  }
+  return {
+    status,
+    log: artifact.log,
+    ...(artifact.artifactArchiveBase64 === undefined
+      ? {}
+      : { artifactArchiveBase64: artifact.artifactArchiveBase64 as string }),
   };
 }

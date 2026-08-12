@@ -64,6 +64,28 @@ describe("Docker GPU clone envelope", () => {
     expect(shouldOmitOpenShellOciImageUser(inspect, NEMOCLAW_STARTUP_ARGV)).toBe(false);
   });
 
+  it("preserves the exact workspace compatibility metadata across another recreation (#8662)", () => {
+    const inspect = openShellOciWorkspaceInspect();
+    inspect.Config!.Env = inspect.Config!.Env!.filter(
+      (entry) => !entry.startsWith("OPENSHELL_OCI_IMAGE_USER="),
+    );
+
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
+      openshellSandboxCommand: NEMOCLAW_STARTUP_ARGV,
+    });
+
+    expect(shouldOmitOpenShellOciImageUser(inspect, NEMOCLAW_STARTUP_ARGV)).toBe(false);
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--env",
+        "OPENSHELL_SANDBOX_UID=",
+        "--env",
+        "OPENSHELL_SANDBOX_GID=",
+      ]),
+    );
+    expect(args).not.toEqual(expect.arrayContaining(["--env", "OPENSHELL_OCI_IMAGE_USER=sandbox"]));
+  });
+
   it.each([
     {
       name: "missing sandbox GID",
@@ -94,6 +116,30 @@ describe("Docker GPU clone envelope", () => {
     {
       name: "duplicate OCI user",
       mutate: (environment: string[]) => [...environment, "OPENSHELL_OCI_IMAGE_USER=sandbox"],
+    },
+    {
+      name: "already-applied metadata without a sandbox GID",
+      mutate: (environment: string[]) =>
+        environment.filter(
+          (entry) =>
+            !entry.startsWith("OPENSHELL_OCI_IMAGE_USER=") && entry !== "OPENSHELL_SANDBOX_GID=",
+        ),
+    },
+    {
+      name: "already-applied metadata with a non-empty sandbox UID",
+      mutate: (environment: string[]) =>
+        environment
+          .filter((entry) => !entry.startsWith("OPENSHELL_OCI_IMAGE_USER="))
+          .map((entry) =>
+            entry === "OPENSHELL_SANDBOX_UID=" ? "OPENSHELL_SANDBOX_UID=998" : entry,
+          ),
+    },
+    {
+      name: "already-applied metadata with a duplicate sandbox UID",
+      mutate: (environment: string[]) => [
+        ...environment.filter((entry) => !entry.startsWith("OPENSHELL_OCI_IMAGE_USER=")),
+        "OPENSHELL_SANDBOX_UID=",
+      ],
     },
   ])("rejects $name in OpenShell's protected identity metadata (#8662)", ({ mutate }) => {
     const inspect = openShellOciWorkspaceInspect();
