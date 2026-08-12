@@ -331,6 +331,7 @@ describe("nemoclaw-start in-container gateway healthcheck marker (#4503, #4710)"
           markerPath,
         ),
         extractShellFunctionFromSource(src, "arm_openclaw_gateway_supervisor_cleanup"),
+        extractShellFunctionFromSource(src, "launch_openclaw_gateway_process"),
         extractShellFunctionFromSource(src, launchFunction),
         "cleanup_openclaw_on_signal() { exit 143; }",
         "STEP_DOWN_PREFIX_GATEWAY=(env)",

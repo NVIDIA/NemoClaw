@@ -969,16 +969,24 @@ Then re-run `$$nemoclaw onboard`.
 
 <AgentOnly variant="openclaw,hermes">
 
-### Updated messaging token is not picked up
+### Sandbox Keeps Using the Previous Messaging Credential
 
-Re-running `$$nemoclaw onboard --non-interactive` with a new `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, or `SLACK_BOT_TOKEN` previously reported success while the sandbox kept polling with the old credential.
-Current NemoClaw stores SHA-256 hashes of messaging credentials in the sandbox registry at creation time and detects when a token has changed.
-When rotation is detected, NemoClaw automatically backs up workspace state, deletes the sandbox, recreates it with the new credential, and restores the backup.
+Rerunning `$$nemoclaw onboard --non-interactive` with a replacement `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `WECHAT_BOT_TOKEN`, or `MSTEAMS_APP_PASSWORD` previously reported success while the sandbox kept using the old credential.
+When you rerun onboarding, NemoClaw evaluates every active messaging credential binding and compares each supplied credential with its SHA-256 hash in the sandbox registry.
+When you provide a replacement credential, NemoClaw runs the channel's configured checks before it backs up supported workspace and manifest-declared state, destroys the sandbox, recreates it, and restores the backup.
+Files outside those state paths are not preserved.
+If an available pre-recreation check fails, onboarding stops before it backs up supported workspace and manifest-declared state or destroys the existing sandbox.
+Discord and Microsoft Teams require non-empty replacement input but cannot prove upstream credential validity before recreation, so send a real test message after onboarding and confirm that the recreated sandbox receives it and responds.
+If the channel state changes during rotation, onboarding stops before it destroys the existing sandbox and asks you to retry with the updated state.
+If you do not supply a credential, or the supplied credential matches the recorded hash, the credential check does not trigger recreation.
+If you replace a credential for a channel that you stopped with `channels stop`, onboarding does not trigger recreation because that channel is inactive.
 
-If you suspect a sandbox is still using a stale token, re-run onboarding so the credential check runs:
+If you suspect a sandbox is still using a stale messaging credential, follow [Rotate a Messaging Credential](../security/credential-rotation#rotate-a-messaging-credential) to export the replacement without putting it in shell history.
+Then rerun onboarding so the credential check runs:
 
 ```bash
-$$nemoclaw onboard --non-interactive
+$$nemoclaw onboard --name <sandbox> \
+  --non-interactive --yes --yes-i-accept-third-party-software
 ```
 
 </AgentOnly>
@@ -3408,6 +3416,7 @@ For unattended re-onboards, export the messaging env vars first so the wizard sk
 export TELEGRAM_BOT_TOKEN=...
 export DISCORD_BOT_TOKEN=...
 export SLACK_BOT_TOKEN=...
+export SLACK_APP_TOKEN=...
 nemohermes onboard --resume --non-interactive
 ```
 
