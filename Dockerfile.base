@@ -107,7 +107,8 @@ ENV AWS_EC2_METADATA_DISABLED=true
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Trixie has not published fixes for the reviewed libexpat, jq, or Vim
-# advisories. Install fixed Debian packages from an immutable snapshot, with
+# advisories. Install fixed Expat packages from the 20260811T082421Z snapshot
+# and fixed jq and Vim packages from the 20260724T000000Z snapshot, with
 # architecture-specific hashes, until Trixie carries them.
 # The checksum and runtime probes put the validating command last in each pipe.
 # The runtime Vim probe verifies the package that this layer installs.
@@ -134,14 +135,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && arch="$(dpkg --print-architecture)" \
     && case "$arch" in \
         amd64) \
-            libexpat_sha256="37d24b40a745107941f823d1f22c38f197f01981f7f0783777fe0026af016463"; \
+            libexpat_sha256="978e9d30b84893a4c8191d8dae4d1b93c9b7ecaa772ada2fdb892ae3765cab4e"; \
             libonig_sha256="3abee130696244050500bcc7870e3b4cb82ddd87149ece3fd55010c3d4e1d18c"; \
             libjq_sha256="9a5bf964cef39ed8f0f162e20d856e31961d28a57772b5313989b42a8be7e941"; \
             jq_sha256="b973a5d304f666845e8ccefab492e3850d4bc2e7aa2a1e7450862095125f2cc0"; \
             vim_tiny_sha256="0e6e231d6d2430a92cf76f8a78506090418fa37758c33b31ed50dfbfc76e22ed" \
             ;; \
         arm64) \
-            libexpat_sha256="df928e3a8e4da79408d4b18e8cd80a03dffa90130d0698e50041aab5e14f9397"; \
+            libexpat_sha256="660f5f598a06aa56613a2fbf1ffbd408708175f1a6c2fac833842148f0228176"; \
             libonig_sha256="137e708575c0622d347815d19cb471a107546b16e9602805ee27afad7bba107f"; \
             libjq_sha256="eae4a828df2eb53d728f88109d9f9549e0983a90b573cf0c7fa1e4bbc7533a7e"; \
             jq_sha256="c25086443abd04d1457cbb322a0837f9ba986f82b28f44670467c8dc9be1f696"; \
@@ -152,12 +153,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && perl_version_before="$(dpkg-query -W -f='${Version}' perl)" \
     && security_deb_dir="/tmp/nemoclaw-debian-security" \
     && snapshot_url="https://snapshot.debian.org/archive/debian/20260724T000000Z/pool/main" \
+    && expat_snapshot_url="https://snapshot.debian.org/archive/debian/20260811T082421Z/pool/main" \
     && vim_common_sha256="6b063038246492c4a20e0a212c896dde4d5aa9f59d6fb43ff33d10080bc53a39" \
     && mkdir -p "$security_deb_dir" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/libexpat1.deb" \
-        "$snapshot_url/e/expat/libexpat1_2.8.2-1_${arch}.deb" \
+        "$expat_snapshot_url/e/expat/libexpat1_2.8.3-1_${arch}.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/libonig5.deb" \
@@ -195,7 +197,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "$security_deb_dir/vim-tiny.deb" \
         /tmp/nemoclaw-native-security/libssh2-1t64.deb \
         /tmp/nemoclaw-native-security/nemoclaw-python3.13-htmlparser-fix.deb \
-    && test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.2-1" \
+    && test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.3-1" \
     && test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1" \
     && test "$(dpkg-query -W -f='${Version}' libjq1)" = "1.8.2-1" \
     && test "$(dpkg-query -W -f='${Version}' jq)" = "1.8.2-1" \
@@ -207,7 +209,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && test "$(jq --version)" = "jq-1.8.2" \
     && ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5' \
     && printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null \
-    && python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION" \
+    && python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.3', pyexpat.EXPAT_VERSION" \
     && printf '%s  %s\n' \
         "4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7" \
         /usr/lib/python3.13/html/parser.py \
@@ -218,7 +220,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && install -d -o root -g root -m 0755 /usr/local/share/nemoclaw \
     && printf '%s\n' \
         "architecture=$arch" \
-        "libexpat1=2.8.2-1" \
+        "libexpat1=2.8.3-1" \
         "libonig5=6.9.9-1+b1" \
         "libjq1=1.8.2-1" \
         "jq=1.8.2-1" \
@@ -477,7 +479,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     OPENCLAW_LOCK_SHA256=none-legacy-fixture; \
     OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
     if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
-        OPENCLAW_LOCK_SHA256=759b31779f40867f35f15065b582eb1d3efb8fddb1fe43c207507c905fa2a421; \
+        OPENCLAW_LOCK_SHA256=a814d82a36046bd7819d222337809ce80ccfd76b553cd17265ff64a527d3d095; \
         ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
         [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
             || { echo "Error: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)"; exit 1; }; \
@@ -545,7 +547,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     && npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ci \
         --ignore-scripts --omit=dev --no-audit --no-fund --no-progress \
     && npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ls \
-        --omit=dev --all @hono/node-server @modelcontextprotocol/sdk mcporter >/dev/null \
+        --omit=dev --all @hono/node-server @modelcontextprotocol/sdk hono mcporter >/dev/null \
     && node --input-type=module -e \
         'const { StreamableHTTPServerTransport } = await import("file:///usr/local/lib/nemoclaw/mcporter-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/server/streamableHttp.js"); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); await transport.close();' \
     && ln -s /usr/local/lib/nemoclaw/mcporter-runtime/node_modules/.bin/mcporter /usr/local/bin/mcporter \

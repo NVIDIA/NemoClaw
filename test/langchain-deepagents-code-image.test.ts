@@ -1077,7 +1077,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip",
     );
     expect(review).toContain(
-      "Targeted audit result: `aiohttp 3.14.3, cryptography 50.0.0, uv 0.11.33, MCP 1.28.1, Pillow 12.3.0, and pyasn1 0.6.4 have no known vulnerabilities`",
+      "Targeted audit result: `aiohttp 3.14.3, cryptography 50.0.0, uv 0.11.33, langgraph-checkpoint-sqlite 3.1.1, MCP 1.28.1, Pillow 12.3.0, and pyasn1 0.6.4 have no known vulnerabilities`",
     );
     expect(review).toContain(
       "Complete-lock audit result: `2 duplicate records in 1 unrelated package`",
@@ -1094,11 +1094,13 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(requirementsLock).toContain("mcp==1.28.1");
     expect(requirementsLock).toContain("pillow==12.3.0");
     expect(requirementsLock).toContain("pyasn1==0.6.4");
+    expect(requirementsLock).toContain("langgraph-checkpoint-sqlite==3.1.1");
     const dockerfileBase = readAgentFile("Dockerfile.base");
     for (const [name, expectedVersion] of [
       ["aiohttp", "3.14.3"],
       ["cryptography", "50.0.0"],
       ["deepagents-code", "0.1.34"],
+      ["langgraph-checkpoint-sqlite", "3.1.1"],
     ] as const) {
       expect(dockerfileBase).toContain(`'${name}': '${expectedVersion}'`);
     }
