@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SpawnSyncOptions } from "node:child_process";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { buildOpenshellExecArgs, wrapExecCommandWithRuntimeEnv } from "../exec";
@@ -53,7 +55,9 @@ describe("runAgentJsonPassthrough", () => {
 
     expect(() =>
       runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
         getOpenshellBinary: () => "/usr/local/bin/openshell",
+        stdinIsTty: () => false,
         spawnSync,
       }),
     ).toThrow("__exit:0");
@@ -93,7 +97,9 @@ describe("runAgentJsonPassthrough", () => {
 
     expect(() =>
       runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
         getOpenshellBinary: () => "openshell",
+        stdinIsTty: () => false,
         spawnSync,
       }),
     ).toThrow("__exit:1");
@@ -129,7 +135,9 @@ describe("runAgentJsonPassthrough", () => {
 
     expect(() =>
       runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
         getOpenshellBinary: () => "/usr/local/bin/openshell",
+        stdinIsTty: () => false,
         spawnSync,
       }),
     ).toThrow("__exit:0");
@@ -152,7 +160,9 @@ describe("runAgentJsonPassthrough", () => {
 
     expect(() =>
       runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
         getOpenshellBinary: () => "/usr/local/bin/openshell",
+        stdinIsTty: () => false,
         provenanceLines: () => {
           throw new SyntaxError("Unexpected token in OpenClaw JSON output");
         },
@@ -166,5 +176,88 @@ describe("runAgentJsonPassthrough", () => {
       "[openclaw provenance] skipped provenance extraction after parser failure.",
     );
     expect(exit).toHaveBeenCalledWith(7);
+  });
+
+  it("pins the sandbox's owning gateway in the dispatched argv", () => {
+    const payload = JSON.stringify({ result: { payloads: [{ text: "OK" }] } });
+    const spawnSync = vi.fn((_binary: string, _args: readonly string[], _options: object) => ({
+      status: 0,
+      signal: null,
+      stdout: payload,
+      stderr: "openclaw warning\n",
+      pid: 123,
+      output: [null, payload, "openclaw warning\n"],
+    }));
+    const { proc } = makeProc();
+
+    expect(() =>
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => "nemoclaw-8081",
+        getOpenshellBinary: () => "openshell",
+        spawnSync,
+        stdinIsTty: () => false,
+      }),
+    ).toThrow("__exit:0");
+
+    expect(spawnSync.mock.calls[0]?.[1].slice(0, 6)).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "alpha",
+      "-g",
+      "nemoclaw-8081",
+    ]);
+  });
+
+  it("withholds an interactive terminal from the non-interactive dispatch", () => {
+    const payload = JSON.stringify({ result: { payloads: [{ text: "OK" }] } });
+    const spawnSync = vi.fn(
+      (_binary: string, _args: readonly string[], _options: SpawnSyncOptions) => ({
+        status: 0,
+        signal: null,
+        stdout: payload,
+        stderr: "openclaw warning\n",
+        pid: 123,
+        output: [null, payload, "openclaw warning\n"],
+      }),
+    );
+    const { proc } = makeProc();
+
+    expect(() =>
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: () => "openshell",
+        spawnSync,
+        stdinIsTty: () => true,
+      }),
+    ).toThrow("__exit:0");
+
+    expect(spawnSync.mock.calls[0]?.[2].stdio).toEqual(["ignore", "pipe", "pipe"]);
+  });
+
+  it("fails loud and keeps stdout empty when the dispatch delivers nothing", () => {
+    const spawnSync = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      pid: 123,
+      output: [null, "", ""],
+    }));
+    const { exit, proc, stderr, stdout } = makeProc();
+
+    expect(() =>
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: () => "openshell",
+        spawnSync,
+        stdinIsTty: () => false,
+      }),
+    ).toThrow("__exit:1");
+
+    expect(stdout).toEqual([]);
+    expect(stderr.join("")).toContain("exited 0 without producing any output");
+    expect(stderr.join("")).not.toContain("[openclaw provenance]");
+    expect(exit).toHaveBeenCalledWith(1);
   });
 });

@@ -3,7 +3,16 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
+import {
+  hasAgentPassthroughHelpToken,
+  printAgentPassthroughHelp,
+  writeSilentAgentDispatchFailure,
+} from "./passthrough-help";
+
+function collectStderr() {
+  const lines: string[] = [];
+  return { lines, proc: { stderr: { write: (value: string) => lines.push(value) } } };
+}
 
 describe("hasAgentPassthroughHelpToken", () => {
   it("returns true for --help before the OpenClaw argv separator", () => {
@@ -38,5 +47,36 @@ describe("printAgentPassthroughHelp", () => {
     expect(output).toContain("terminal-runtime sandboxes run");
     expect(output).toContain("`dcode ...`");
     expect(output).not.toContain("OpenClaw sandboxes only");
+  });
+});
+
+describe("writeSilentAgentDispatchFailure", () => {
+  it("names the sandbox and states that the turn was not delivered", () => {
+    const { lines, proc } = collectStderr();
+
+    writeSilentAgentDispatchFailure(proc, "my-assistant");
+
+    expect(lines.join("")).toContain(
+      "The agent dispatch for sandbox 'my-assistant' exited 0 without producing any output, so the turn was not delivered.",
+    );
+  });
+
+  it("offers the documented recovery paths", () => {
+    const { lines, proc } = collectStderr();
+
+    writeSilentAgentDispatchFailure(proc, "my-assistant");
+
+    const written = lines.join("");
+    expect(written).toContain("exec -- openclaw agent");
+    expect(written).toContain("my-assistant status");
+    expect(written).toContain("my-assistant recover");
+  });
+
+  it("terminates every emitted line", () => {
+    const { lines, proc } = collectStderr();
+
+    writeSilentAgentDispatchFailure(proc, "my-assistant");
+
+    expect(lines.every((line) => line.endsWith("\n"))).toBe(true);
   });
 });

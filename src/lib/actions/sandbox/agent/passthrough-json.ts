@@ -3,8 +3,16 @@
 
 import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:child_process";
 
+import { isStdinTty } from "../../../core/stdin";
 import { openClawAgentJsonProvenanceLines } from "../../../openclaw/agent-json-provenance";
 import { buildOpenshellExecArgs, computeExitCode, wrapExecCommandWithRuntimeEnv } from "../exec";
+import { getKnownSandboxTargetGatewayName } from "../gateway-target";
+import {
+  agentDispatchStdio,
+  isSilentAgentDispatch,
+  SILENT_AGENT_DISPATCH_EXIT_CODE,
+} from "./passthrough-dispatch";
+import { writeSilentAgentDispatchFailure } from "./passthrough-help";
 
 const AGENT_JSON_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
@@ -16,6 +24,8 @@ export type AgentJsonPassthroughProcess = {
 
 export type AgentJsonPassthroughDeps = {
   getOpenshellBinary?: () => string;
+  getGatewayName?: (sandboxName: string) => string | null;
+  stdinIsTty?: () => boolean;
   provenanceLines?: (raw: string) => string[];
   spawnSync?: (
     command: string,
@@ -57,15 +67,28 @@ export function runAgentJsonPassthrough(
   const spawnSyncImpl = deps.spawnSync ?? spawnSync;
   const result = spawnSyncImpl(
     binary,
-    buildOpenshellExecArgs(sandboxName, wrapExecCommandWithRuntimeEnv(command), { tty: false }),
+    buildOpenshellExecArgs(
+      sandboxName,
+      wrapExecCommandWithRuntimeEnv(command),
+      { tty: false },
+      (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName) ?? undefined,
+    ),
     {
       encoding: "utf-8",
       maxBuffer: AGENT_JSON_MAX_BUFFER_BYTES,
-      stdio: ["inherit", "pipe", "pipe"],
+      stdio: agentDispatchStdio((deps.stdinIsTty ?? isStdinTty)()),
     },
   );
   const stdout = text(result.stdout);
   const stderr = text(result.stderr);
+
+  // Ahead of the stdout write so machine-readable stdout stays byte-empty and
+  // no provenance line is appended for a turn that never ran.
+  if (isSilentAgentDispatch(result, stdout, stderr)) {
+    writeSilentAgentDispatchFailure(proc, sandboxName);
+    return proc.exit(SILENT_AGENT_DISPATCH_EXIT_CODE);
+  }
+
   if (stdout) proc.stdout.write(stdout);
   if (stderr) proc.stderr.write(stderr);
 

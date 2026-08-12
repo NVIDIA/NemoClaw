@@ -1210,6 +1210,8 @@ The combined capture limit is `64 MiB`; exceeding it reports an OpenShell invoca
 If the captured output contains an embedded-fallback marker, the wrapper suppresses both streams, prints `recover`, `rebuild --yes`, and `onboard --resume` guidance to `stderr`, and exits with status `1`.
 Otherwise, it writes the captured output to the corresponding host streams and returns the OpenShell command's exit status.
 The in-sandbox NemoClaw plugin writes its registration banner to `stderr`, so the banner does not prefix the agent reply on `stdout` in non-JSON mode.
+Because a delivered turn therefore always writes to one of the two streams, a dispatch that exits `0` with no bytes on either stream is reported as a failure: the wrapper prints the recovery guidance to `stderr` and exits with status `1` instead of reporting a successful turn.
+Both captured paths pin the sandbox's owning gateway with an explicit `-g`, and neither forwards an interactive terminal on `stdin`; a genuine pipe or redirect is still passed through, so `printf 'ping' | nemoclaw my-assistant agent --agent main` keeps working.
 When the top-level OpenClaw `--json` output flag is present, the wrapper uses a captured no-TTY path with a `64 MiB` buffer so `stdout` stays parseable JSON.
 Raw `stderr` is forwarded, and failed-tool or untrusted-child provenance found in the stdout JSON is appended to `stderr`.
 Literal `--json` values consumed by flags such as `-m` or `--reply-channel`, or arguments after `--`, stay on the normal passthrough path.

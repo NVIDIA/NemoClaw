@@ -3,6 +3,38 @@
 
 import { CLI_NAME } from "../../../cli/branding";
 
+/** Stderr sink for the passthrough's operator-facing failure text. */
+export type AgentPassthroughDiagnosticProcess = {
+  stderr: { write(s: string): unknown };
+};
+
+/**
+ * Report a dispatch that exited 0 without delivering a turn (#8796). Lives
+ * beside the help text because both are operator-facing copy for this command;
+ * the classifier that decides when to call it lives in `passthrough-dispatch`.
+ */
+export function writeSilentAgentDispatchFailure(
+  proc: AgentPassthroughDiagnosticProcess,
+  sandboxName: string,
+): void {
+  proc.stderr.write(
+    `  The agent dispatch for sandbox '${sandboxName}' exited 0 without producing any output, so the turn was not delivered.\n`,
+  );
+  proc.stderr.write(
+    "  Reporting this as a failure: a delivered turn always writes to stdout or stderr.\n",
+  );
+  proc.stderr.write("  Documented recovery paths:\n");
+  proc.stderr.write(
+    `    ${CLI_NAME} ${sandboxName} exec -- openclaw agent   — run the turn directly inside the sandbox\n`,
+  );
+  proc.stderr.write(
+    `    ${CLI_NAME} ${sandboxName} status                   — confirm gateway and inference health\n`,
+  );
+  proc.stderr.write(
+    `    ${CLI_NAME} ${sandboxName} recover                  — re-pair the gateway without recreating the sandbox\n`,
+  );
+}
+
 export function hasAgentPassthroughHelpToken(args: readonly string[]): boolean {
   for (const arg of args) {
     if (arg === "--") break;
