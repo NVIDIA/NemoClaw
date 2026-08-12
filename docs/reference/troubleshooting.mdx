@@ -305,6 +305,10 @@ The NemoClaw dashboard uses port `18789` by default and the gateway uses port `8
 If another sandbox already owns the dashboard port, onboarding scans ports `18789` through `18799` and uses the next free port.
 If all ports in that range are occupied, the error lists the owner for each port and suggests using `--control-ui-port` with a port outside the range.
 
+NemoClaw allocates each Hermes sandbox an OpenAI-compatible API port from `8642` through `8652`, so it rejects every port in that range as a dashboard port for any agent.
+When all ports in the API range are occupied, the error lists the owner for each port.
+Destroy a listed Hermes sandbox or stop a listed non-OpenShell listener, then rerun onboarding.
+
 On macOS, the port check also tries a privileged `lsof` probe without prompting for a password so root-owned listeners are detected before the sandbox build starts.
 If a port becomes occupied after preflight but before `openshell forward start` runs, onboarding deletes the just-created sandbox and exits with a retry message instead of leaving a sandbox with an unreachable dashboard URL.
 
@@ -3268,7 +3272,7 @@ After the rebuild, make the intended change through a supported command such as 
 
 ### Port 8642 in a browser shows a blank page or `Cannot GET /`
 
-`nemohermes onboard` forwards the sandbox's API port, which is `8642` for the first Hermes sandbox on a host.
+`nemohermes onboard` forwards the sandbox's API port, which is `8642` when no other sandbox or host listener already holds it.
 Hermes serves an OpenAI-compatible API at that port, not a chat dashboard.
 A browser visit to `http://127.0.0.1:8642/` (or any non-API path) returns nothing renderable.
 
@@ -3305,7 +3309,20 @@ A second Hermes sandbox on the same host receives the next free API port, so che
 A Hermes sandbox onboarded before the API port became per-sandbox carries no allocated port and keeps `8642`.
 A Hermes sandbox created after that change receives its own port during onboarding, so a second sandbox needs no further action.
 To move a sandbox that predates the change onto its own port, set `NEMOCLAW_HERMES_API_PORT=<N>` and rerun onboarding with `--recreate-sandbox`.
-A recreate keeps the sandbox's registry row, so `--recreate-sandbox` without the variable keeps the recorded port.
+A recreate keeps the sandbox's registry entry, so `--recreate-sandbox` without the variable keeps the recorded port.
+
+### Install reports `Could not restore the Hermes forward`
+
+The installer reads the sandbox's recorded API port from the sandbox registry before it restores the API forward.
+It exits with that message when any of these conditions is true:
+
+- The `node` binary is missing.
+- The registry file is missing, does not parse, or records no entry for the sandbox.
+- The recorded port is not an integer from `8642` through `8652`.
+
+A sandbox registered before the API port became per-sandbox records no port, and the installer uses `8642` for it.
+Install `node`, or rerun `nemohermes onboard` to register the sandbox again.
+Then run `nemohermes <name> recover` to re-establish the forward.
 
 ### `nemohermes` reports `Sandbox 'X' already exists as OpenClaw`
 

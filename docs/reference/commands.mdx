@@ -1247,8 +1247,9 @@ Host-side validation runs before the sandbox dispatch:
 <AgentOnly variant="hermes">
 
 The `agent` wrapper rejects Hermes sandboxes with guidance for the Hermes HTTP API.
-Hermes sandboxes expose an OpenAI-compatible API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
-A second Hermes sandbox on the same host receives the next free port from `8642` through `8652`.
+Each Hermes sandbox exposes an OpenAI-compatible API inside the sandbox on its own port, which defaults to `8642`, so non-interactive use does not need a wrapper command.
+When another sandbox or a host listener already holds `8642`, the sandbox receives the next free port from `8642` through `8652`.
+The rejection message names that port and the `openshell forward start` command for it.
 Run `openshell forward list` to read the host bind for each of that sandbox's forwards.
 
 Forward the port and POST chat completions directly:
