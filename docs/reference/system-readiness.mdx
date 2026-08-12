@@ -102,6 +102,7 @@ The report rejects an unsupported explicit `DOCKER_HOST` before it uses Docker d
 TCP, SSH, relative Unix socket, and unsafe path values do not fall back to the default Docker socket.
 When `DOCKER_HOST` is unset, NemoClaw first probes the Docker CLI's selected authority, including `DOCKER_CONTEXT` when set, without a host override.
 If that authority is unreachable, NemoClaw probes a bounded set of local Unix sockets and accepts only an endpoint with valid server-version evidence.
+When it selects a fallback socket, NemoClaw clears the unreachable `DOCKER_CONTEXT` so later Docker commands use the selected `DOCKER_HOST`.
 A mixed set of reachable Docker and Podman fallbacks, or a fallback with an unknown server identity, produces no automatic `DOCKER_HOST` override.
 A reachable Podman endpoint remains classified as Podman and does not satisfy the standard Docker runtime requirement.
 

@@ -43,6 +43,9 @@ type SpawnResult = SpawnSyncReturns<string | Buffer>;
 const dockerHost = detectDockerHost();
 if (dockerHost) {
   process.env.DOCKER_HOST = dockerHost.dockerHost;
+  if (dockerHost.source === "socket") {
+    delete process.env.DOCKER_CONTEXT;
+  }
 }
 
 function buildRunnerEnv(extraEnv?: NodeJS.ProcessEnv, executable?: string): Record<string, string> {

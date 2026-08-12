@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import { redact, runCapture } from "../src/lib/runner";
 
 const runnerPath = path.join(import.meta.dirname, "..", "src", "lib", "runner.ts");
+const platformPath = path.join(import.meta.dirname, "..", "src", "lib", "platform.ts");
 const PINNED_OPEN_SHELL_SHA256 = {
   cliDarwinArm64: "9daaccdb9e30e220d56dd6d6bf4bd00ccca8ae4ad2845f5f0d9b9da3eb8ee881",
   cliLinuxArm64: "b553d3bfc08e9354b990a10fb8abd976e039afeec2d3947f8a112018be40d296",
@@ -174,6 +175,60 @@ describe("runner helpers", () => {
 });
 
 describe("runner env merging", () => {
+  it("clears a named context when initialization selects a socket fallback (#8816)", () => {
+    const platform = require(platformPath);
+    const detectDockerHostSpy = vi.spyOn(platform, "detectDockerHost").mockReturnValue({
+      dockerHost: "unix:///selected-fallback.sock",
+      source: "socket",
+      socketPath: "/selected-fallback.sock",
+    });
+    let initializedContext: string | undefined;
+    let initializedHost: string | undefined;
+
+    try {
+      vi.stubEnv("DOCKER_CONTEXT", "unreachable-context");
+      vi.stubEnv("DOCKER_HOST", undefined);
+      delete require.cache[require.resolve(runnerPath)];
+      require(runnerPath);
+      initializedContext = process.env.DOCKER_CONTEXT;
+      initializedHost = process.env.DOCKER_HOST;
+    } finally {
+      detectDockerHostSpy.mockRestore();
+      vi.unstubAllEnvs();
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    expect(initializedHost).toBe("unix:///selected-fallback.sock");
+    expect(initializedContext).toBeUndefined();
+  });
+
+  it("keeps a named context when initialization uses an explicit Docker host (#8816)", () => {
+    const platform = require(platformPath);
+    const detectDockerHostSpy = vi.spyOn(platform, "detectDockerHost").mockReturnValue({
+      dockerHost: "unix:///explicit.sock",
+      source: "env",
+      socketPath: null,
+    });
+    let initializedContext: string | undefined;
+    let initializedHost: string | undefined;
+
+    try {
+      vi.stubEnv("DOCKER_CONTEXT", "ambient-context");
+      vi.stubEnv("DOCKER_HOST", "unix:///explicit.sock");
+      delete require.cache[require.resolve(runnerPath)];
+      require(runnerPath);
+      initializedContext = process.env.DOCKER_CONTEXT;
+      initializedHost = process.env.DOCKER_HOST;
+    } finally {
+      detectDockerHostSpy.mockRestore();
+      vi.unstubAllEnvs();
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    expect(initializedHost).toBe("unix:///explicit.sock");
+    expect(initializedContext).toBe("ambient-context");
+  });
+
   it("preserves Docker context only for Docker subprocesses (#8816)", () => {
     const calls: SpawnCall[] = [];
     const originalSpawnSync = childProcess.spawnSync;
