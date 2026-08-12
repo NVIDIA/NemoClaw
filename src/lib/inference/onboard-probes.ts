@@ -405,11 +405,12 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
       options.timingArgs ??
       getChatCompletionsProbeTimingArgs(model, getProbeTimingOptions(options));
     // The calibrated deadline covers a 256-token generation. The final ladder
-    // rung generates up to 4096 tokens, so it gets the doubled deadline the
-    // timeout retry path already uses; otherwise a slow reasoning model turns
-    // the budget failure into curl exit 28.
-    const doubledTimingArgs = timingArgs.map((arg) =>
-      /^\d+$/.test(arg) ? String(Number(arg) * 2) : arg,
+    // rung generates up to 4096 tokens, so its request deadline doubles;
+    // otherwise a slow reasoning model turns the budget failure into curl
+    // exit 28. The connect timeout stays: the endpoint already answered the
+    // earlier rungs, and the native session doubles only the request deadline.
+    const doubledTimingArgs = timingArgs.map((arg, index) =>
+      timingArgs[index - 1] === "--max-time" ? String(Number(arg) * 2) : arg,
     );
     const runToolProbe = (maxTokens, timing = timingArgs) => {
       const args = [

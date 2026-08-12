@@ -18,12 +18,14 @@ describe("strict tool-call probe reasoning retry ladder", () => {
 outfile=""
 payload=""
 maxtime=""
+connecttimeout=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
     -w) shift 2 ;;
     -d) payload="$2"; shift 2 ;;
     --max-time) maxtime="$2"; shift 2 ;;
+    --connect-timeout) connecttimeout="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -32,6 +34,7 @@ n=$((n + 1))
 echo "$n" > "${HARNESS_COUNTER}"
 printf '%s' "$payload" > "${HARNESS_TMPDIR}/request-$n.json"
 printf '%s' "$maxtime" > "${HARNESS_TMPDIR}/maxtime-$n"
+printf '%s' "$connecttimeout" > "${HARNESS_TMPDIR}/connect-$n"
 if [ -n "$outfile" ]; then
   if [ "$n" -le 2 ]; then
     cat <<'JSON' > "$outfile"
@@ -74,6 +77,12 @@ exit 0
         expect(maxTimes[0]).toBeGreaterThan(0);
         expect(maxTimes[1]).toBe(maxTimes[0]);
         expect(maxTimes[2]).toBe(maxTimes[0] * 2);
+        const connectTimeouts = [1, 2, 3].map((n) =>
+          Number(fs.readFileSync(path.join(tmpDir, `connect-${n}`), "utf8")),
+        );
+        expect(connectTimeouts[0]).toBeGreaterThan(0);
+        expect(connectTimeouts[1]).toBe(connectTimeouts[0]);
+        expect(connectTimeouts[2]).toBe(connectTimeouts[0]);
       },
     );
   });
