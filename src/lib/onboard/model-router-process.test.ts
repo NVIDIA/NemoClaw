@@ -69,7 +69,7 @@ describe("findModelRouterPidForPort", () => {
 });
 
 describe("stopModelRouterProcess", () => {
-  it("returns when the recorded PID and health endpoint have stopped", async () => {
+  it("returns when the recorded PID does not report as running and the health endpoint is not healthy", async () => {
     const isHealthy = vi.fn(async () => false);
     const kill = vi.fn();
 
@@ -85,7 +85,7 @@ describe("stopModelRouterProcess", () => {
     expect(kill).not.toHaveBeenCalled();
   });
 
-  it("refuses replacement when the recorded PID stops but the health endpoint remains healthy", async () => {
+  it("refuses replacement when the recorded PID does not report as running but the health endpoint remains healthy", async () => {
     const kill = vi.fn();
 
     await expect(
@@ -99,7 +99,7 @@ describe("stopModelRouterProcess", () => {
     expect(kill).not.toHaveBeenCalled();
   });
 
-  it("returns only after the owned process and health endpoint stop", async () => {
+  it("returns only after the recorded PID does not report as running and the health endpoint is not healthy", async () => {
     let running = true;
     let healthy = true;
     const signals: NodeJS.Signals[] = [];
@@ -145,7 +145,7 @@ describe("stopModelRouterProcess", () => {
         },
         sleep: async () => {},
       }),
-    ).rejects.toThrow("Failed to send SIGTERM");
+    ).rejects.toThrow("could not send SIGTERM");
   });
 
   it("does not escalate when a process survives SIGTERM without a PID-stable handle", async () => {
@@ -159,7 +159,7 @@ describe("stopModelRouterProcess", () => {
         kill: (_pid, signal) => signals.push(signal),
         sleep: async () => {},
       }),
-    ).rejects.toThrow("refusing PID-based SIGKILL");
+    ).rejects.toThrow("refuses PID-based SIGKILL");
     expect(signals).toEqual(["SIGTERM"]);
   });
 
@@ -202,14 +202,14 @@ describe("stopModelRouterProcess", () => {
         },
         sleep: async () => {},
       }),
-    ).rejects.toThrow("refusing PID-based SIGKILL");
+    ).rejects.toThrow("refuses PID-based SIGKILL");
 
     expect(ownershipChecks).toBe(2);
     expect(routerSignals).toEqual(["SIGTERM"]);
     expect(replacementSignals).toEqual([]);
   });
 
-  it("does not declare success when the PID exits but the endpoint survives", async () => {
+  it("does not report success when the PID does not report as running but the health endpoint remains healthy", async () => {
     let running = true;
 
     await expect(

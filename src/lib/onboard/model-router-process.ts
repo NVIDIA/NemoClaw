@@ -146,7 +146,7 @@ export async function stopModelRouterProcess(
   if (!isRunning(pid)) {
     if (!(await isHealthy(port, 1000))) return;
     throw new Error(
-      `Refusing to replace Model Router: recorded PID ${pid} no longer reports as running but port ${port} remains healthy.`,
+      `NemoClaw refuses to replace the Model Router: recorded PID ${pid} no longer reports as running but port ${port} remains healthy.`,
     );
   }
   if (
@@ -156,7 +156,7 @@ export async function stopModelRouterProcess(
     })
   ) {
     throw new Error(
-      `Refusing to stop PID ${pid}: it is not the model-router proxy for port ${port}.`,
+      `NemoClaw refuses to stop PID ${pid}: it is not the model-router proxy for port ${port}.`,
     );
   }
 
@@ -165,7 +165,7 @@ export async function stopModelRouterProcess(
   } catch (error) {
     if (!isRunning(pid) && !(await isHealthy(port, 1000))) return;
     throw new Error(
-      `Failed to send SIGTERM to Model Router PID ${pid}: ${
+      `NemoClaw could not send SIGTERM to Model Router PID ${pid}: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
@@ -187,11 +187,11 @@ export async function stopModelRouterProcess(
     })
   ) {
     throw new Error(
-      `Model Router ownership changed during shutdown for PID ${pid}; no escalation signal was sent.`,
+      `Model Router ownership changed during shutdown for PID ${pid}; NemoClaw did not send an escalation signal.`,
     );
   }
   throw new Error(
-    `Model Router shutdown did not converge after SIGTERM; refusing PID-based SIGKILL for PID ${pid} because process identity cannot be preserved atomically.`,
+    `Model Router shutdown did not converge after SIGTERM. NemoClaw refuses PID-based SIGKILL for PID ${pid} because process identity cannot be preserved atomically.`,
   );
 }
 
