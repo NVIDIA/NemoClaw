@@ -35,6 +35,31 @@ export function writeSilentAgentDispatchFailure(
   );
 }
 
+/**
+ * Report a turn the payload marks incomplete or abandoned (#8796). The agent's
+ * partial output has already been written verbatim, so this only adds the
+ * verdict, the markers that produced it, and verify-before-retry guidance —
+ * retrying blind can re-apply side effects the abandoned turn already made.
+ */
+export function writeIncompleteAgentTurnFailure(
+  proc: AgentPassthroughDiagnosticProcess,
+  sandboxName: string,
+  markers: readonly string[],
+): void {
+  proc.stderr.write(
+    `  The agent turn in sandbox '${sandboxName}' did not complete: ${markers.join(", ")}.\n`,
+  );
+  proc.stderr.write(
+    "  The output above is a partial trace. Tool calls in it may have already applied side effects.\n",
+  );
+  proc.stderr.write(
+    "  Verify what the turn already changed before retrying, or the retry may repeat those side effects.\n",
+  );
+  proc.stderr.write(
+    `    ${CLI_NAME} ${sandboxName} sessions list             — locate the session and inspect its transcript\n`,
+  );
+}
+
 export function hasAgentPassthroughHelpToken(args: readonly string[]): boolean {
   for (const arg of args) {
     if (arg === "--") break;

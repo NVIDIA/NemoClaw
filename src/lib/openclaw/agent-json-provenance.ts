@@ -285,3 +285,89 @@ export function openClawAgentJsonProvenanceLines(raw: string): string[] {
     ...docs.flatMap(collectToolFailureProvenance),
   ]);
 }
+
+// Turn-level completion markers (#8796).
+//
+// The tool-failure walk above only recognises FAILED TOOLS. A turn can run
+// every tool successfully and still be abandoned before it produces a reply —
+// the reporter observed 7 successful tool calls, a real on-disk side effect,
+// and a turn marked `incomplete_turn` / `abandoned`, while the envelope's own
+// top-level status said the turn completed.
+//
+// Matched by marker VALUE anywhere in the document rather than by a fixed path:
+// OpenClaw is not vendored here, so the envelope's nesting is not a contract
+// NemoClaw can pin. The three markers are specific enough that a value match is
+// safe, and an unrecognised future spelling degrades to today's behaviour
+// instead of misfiring on a healthy turn.
+// Compared after `normalized()`, which lowercases and maps `_` to `-`, so this
+// covers `incomplete_turn`, `incomplete-turn`, and `incompleteTurn`.
+const INCOMPLETE_TURN_KIND_VALUES = new Set(["incomplete-turn", "incompleteturn"]);
+const ABANDONED_LIVENESS_VALUES = new Set(["abandoned"]);
+
+export type OpenClawIncompleteTurnSignal = {
+  /** Human-readable `field=value` markers, in document order, deduped. */
+  markers: string[];
+};
+
+function incompleteTurnMarkers(record: Record<string, unknown>): string[] {
+  const markers: string[] = [];
+  for (const key of ["kind", "errorKind", "error_kind"]) {
+    if (INCOMPLETE_TURN_KIND_VALUES.has(normalized(record[key]))) {
+      markers.push(`${key}=${String(record[key])}`);
+    }
+  }
+  for (const key of ["livenessState", "liveness_state"]) {
+    if (ABANDONED_LIVENESS_VALUES.has(normalized(record[key]))) {
+      markers.push(`${key}=${String(record[key])}`);
+    }
+  }
+  for (const key of ["replayInvalid", "replay_invalid"]) {
+    if (record[key] === true) markers.push(`${key}=true`);
+  }
+  return markers;
+}
+
+function collectIncompleteTurnMarkers(value: unknown): string[] {
+  const markers: string[] = [];
+  const seen = new WeakSet<object>();
+  const stack: WalkEntry[] = [{ value, depth: 0 }];
+  let visited = 0;
+
+  while (stack.length > 0 && visited < MAX_PROVENANCE_WALK_NODES) {
+    const entry = stack.pop();
+    if (!entry) break;
+    visited += 1;
+    if (entry.depth > MAX_PROVENANCE_WALK_DEPTH) continue;
+
+    const children = Array.isArray(entry.value)
+      ? entry.value
+      : isObjectRecord(entry.value)
+        ? Object.values(entry.value)
+        : [];
+
+    if (isObjectRecord(entry.value)) {
+      markers.push(...incompleteTurnMarkers(entry.value));
+    }
+    if (children.length === 0) continue;
+
+    const objectValue = entry.value as object;
+    if (seen.has(objectValue)) continue;
+    seen.add(objectValue);
+    for (const child of children) stack.push({ value: child, depth: entry.depth + 1 });
+  }
+
+  return markers;
+}
+
+/**
+ * Detect a turn the payload itself marks incomplete or abandoned. Returns null
+ * when no marker is present, so a healthy turn is never reclassified.
+ */
+export function openClawAgentIncompleteTurnSignal(
+  raw: string,
+): OpenClawIncompleteTurnSignal | null {
+  const docs = parseOpenClawJsonDocs(raw);
+  if (docs.length === 0) return null;
+  const markers = dedupe(docs.flatMap(collectIncompleteTurnMarkers));
+  return markers.length > 0 ? { markers } : null;
+}

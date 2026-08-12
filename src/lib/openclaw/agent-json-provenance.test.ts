@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { openClawAgentJsonProvenanceLines } from "./agent-json-provenance";
+import {
+  openClawAgentIncompleteTurnSignal,
+  openClawAgentJsonProvenanceLines,
+} from "./agent-json-provenance";
 
 describe("openClawAgentJsonProvenanceLines", () => {
   it("returns no provenance for plain successful assistant payloads", () => {
@@ -159,5 +162,54 @@ describe("openClawAgentJsonProvenanceLines", () => {
 
     expect(() => openClawAgentJsonProvenanceLines(nested)).not.toThrow();
     expect(openClawAgentJsonProvenanceLines(nested)).toEqual([]);
+  });
+});
+
+describe("openClawAgentIncompleteTurnSignal", () => {
+  it("returns null for a healthy turn", () => {
+    const raw = JSON.stringify({ status: "ok", result: { payloads: [{ text: "PONG" }] } });
+    expect(openClawAgentIncompleteTurnSignal(raw)).toBeNull();
+  });
+
+  it("detects a nested incomplete_turn error kind", () => {
+    const raw = JSON.stringify({ result: { error: { kind: "incomplete_turn" } } });
+    expect(openClawAgentIncompleteTurnSignal(raw)?.markers).toEqual(["kind=incomplete_turn"]);
+  });
+
+  it("detects an abandoned liveness state", () => {
+    const raw = JSON.stringify({ result: { livenessState: "abandoned" } });
+    expect(openClawAgentIncompleteTurnSignal(raw)?.markers).toEqual(["livenessState=abandoned"]);
+  });
+
+  it("detects replayInvalid", () => {
+    const raw = JSON.stringify({ result: { replayInvalid: true } });
+    expect(openClawAgentIncompleteTurnSignal(raw)?.markers).toEqual(["replayInvalid=true"]);
+  });
+
+  it("reports every marker present without duplicates", () => {
+    const raw = JSON.stringify({
+      a: { error: { kind: "incomplete_turn" } },
+      b: { livenessState: "abandoned", replayInvalid: true },
+      c: { error: { kind: "incomplete_turn" } },
+    });
+    expect(openClawAgentIncompleteTurnSignal(raw)?.markers.sort()).toEqual([
+      "kind=incomplete_turn",
+      "livenessState=abandoned",
+      "replayInvalid=true",
+    ]);
+  });
+
+  it("ignores a replayInvalid that is not literally true", () => {
+    const raw = JSON.stringify({ result: { replayInvalid: "false" } });
+    expect(openClawAgentIncompleteTurnSignal(raw)).toBeNull();
+  });
+
+  it("reads markers out of log-prefixed JSON framing", () => {
+    const raw = `2026-08-12 INFO starting\n${JSON.stringify({ result: { livenessState: "abandoned" } })}`;
+    expect(openClawAgentIncompleteTurnSignal(raw)?.markers).toEqual(["livenessState=abandoned"]);
+  });
+
+  it("returns null when stdout carries no JSON at all", () => {
+    expect(openClawAgentIncompleteTurnSignal("not json")).toBeNull();
   });
 });

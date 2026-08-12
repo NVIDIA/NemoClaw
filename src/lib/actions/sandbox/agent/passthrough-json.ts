@@ -4,7 +4,11 @@
 import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:child_process";
 
 import { isStdinTty } from "../../../core/stdin";
-import { openClawAgentJsonProvenanceLines } from "../../../openclaw/agent-json-provenance";
+import {
+  openClawAgentIncompleteTurnSignal,
+  type OpenClawIncompleteTurnSignal,
+  openClawAgentJsonProvenanceLines,
+} from "../../../openclaw/agent-json-provenance";
 import { buildOpenshellExecArgs, computeExitCode, wrapExecCommandWithRuntimeEnv } from "../exec";
 import { getKnownSandboxTargetGatewayName } from "../gateway-target";
 import {
@@ -12,9 +16,15 @@ import {
   isSilentAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
 } from "./passthrough-dispatch";
-import { writeSilentAgentDispatchFailure } from "./passthrough-help";
+import {
+  writeIncompleteAgentTurnFailure,
+  writeSilentAgentDispatchFailure,
+} from "./passthrough-help";
 
 const AGENT_JSON_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+
+/** Exit code for a turn the payload itself marks incomplete or abandoned. */
+export const INCOMPLETE_AGENT_TURN_EXIT_CODE = 1;
 
 export type AgentJsonPassthroughProcess = {
   exit(code: number): never;
@@ -27,6 +37,7 @@ export type AgentJsonPassthroughDeps = {
   getGatewayName?: (sandboxName: string) => string | null;
   stdinIsTty?: () => boolean;
   provenanceLines?: (raw: string) => string[];
+  incompleteTurnSignal?: (raw: string) => OpenClawIncompleteTurnSignal | null;
   spawnSync?: (
     command: string,
     args: readonly string[],
@@ -108,6 +119,15 @@ export function runAgentJsonPassthrough(
   if (errorMessage) {
     proc.stderr.write(`  Failed to invoke openshell: ${errorMessage}\n`);
     proc.stderr.write("  Ensure 'openshell' is installed and on PATH.\n");
+  }
+
+  // Last, so the partial trace and its provenance are already on the wire: a
+  // turn the payload marks incomplete must not exit 0 just because the envelope
+  // reported success. An upstream non-zero code is preserved as-is.
+  const incompleteTurn = (deps.incompleteTurnSignal ?? openClawAgentIncompleteTurnSignal)(stdout);
+  if (incompleteTurn && code === 0) {
+    writeIncompleteAgentTurnFailure(proc, sandboxName, incompleteTurn.markers);
+    return proc.exit(INCOMPLETE_AGENT_TURN_EXIT_CODE);
   }
   return proc.exit(code);
 }
