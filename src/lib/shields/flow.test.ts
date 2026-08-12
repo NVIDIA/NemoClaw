@@ -990,6 +990,9 @@ describe("shields command flow", () => {
       },
       dockerExecFileSync: (argv: unknown) => {
         const args = Array.isArray(argv) ? argv.map(String) : [];
+        if (args.some((arg) => arg.includes("nemoclaw-shields-down-path-preflight"))) {
+          return "";
+        }
         observedPreparingDuringUnlock ||= readOnlyTransition().phase === "preparing";
         switch (true) {
           case args.includes("sha256sum"):
