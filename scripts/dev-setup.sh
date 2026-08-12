@@ -230,14 +230,25 @@ check_executable() {
 check_quiet_command() {
   local label="$1"
   local remediation="$2"
+  local classification command_status matcher_status pipeline_result
+  local -a pipeline_status
   shift 2
 
-  # Capture output to classify the failure. Only match against it; never print
-  # it, because a failing command can name paths the report should not carry.
-  local output
-  if output="$("$@" 2>&1)"; then
+  # Drain the complete stream and retain one classification word. This bounds
+  # shell memory and keeps command output out of the doctor report.
+  pipeline_result="$(
+    "$@" 2>&1 | awk '
+      index($0, "JavaScript heap out of memory") { found = 1 }
+      END { printf "%s", found ? "heap" : "other" }
+    '
+    pipeline_status=("${PIPESTATUS[@]}")
+    printf '|%s|%s' "${pipeline_status[0]}" "${pipeline_status[1]}"
+  )"
+  IFS='|' read -r classification command_status matcher_status <<<"${pipeline_result}"
+
+  if [ "${command_status}" = "0" ] && [ "${matcher_status}" = "0" ]; then
     pass "${label}"
-  elif printf '%s' "${output}" | grep -q 'JavaScript heap out of memory'; then
+  elif [ "${classification}" = "heap" ] && [ "${matcher_status}" = "0" ]; then
     # Node.js derives its default old-space limit from host memory, so this
     # reports the host size rather than a fault in the checked sources.
     fail "${label}: ran out of Node.js heap" \
