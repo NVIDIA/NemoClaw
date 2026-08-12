@@ -36,12 +36,12 @@ const DEPENDENCY_NAME_MAP_FIELDS = new Set([
   "packages",
 ]);
 
-function isLockfileCredentialField(key: string): boolean {
+function isDependencyCredentialField(key: string): boolean {
   const normalized = key.replace(/^_+/, "");
   return normalized.toLowerCase() === "auth" || isCredentialField(normalized);
 }
 
-function lockfileStringContainsCredential(value: string): boolean {
+function dependencyStringContainsCredential(value: string): boolean {
   const candidates = value.match(/https?:\/\/[^\s"'<>]+/g) ?? [];
   let nonUrlContent = value;
   for (const candidate of candidates) {
@@ -49,7 +49,7 @@ function lockfileStringContainsCredential(value: string): boolean {
       const url = new URL(candidate);
       if (url.username || url.password) return true;
       for (const [key, queryValue] of url.searchParams) {
-        if (queryValue && isLockfileCredentialField(key)) return true;
+        if (queryValue && isDependencyCredentialField(key)) return true;
       }
       nonUrlContent = nonUrlContent.replace(candidate, "");
     } catch {
@@ -60,10 +60,10 @@ function lockfileStringContainsCredential(value: string): boolean {
   return valueLooksLikeSecret(nonUrlContent);
 }
 
-function lockfileValueContainsCredential(value: unknown, parentField?: string): boolean {
-  if (typeof value === "string") return lockfileStringContainsCredential(value);
+function dependencyValueContainsCredential(value: unknown, parentField?: string): boolean {
+  if (typeof value === "string") return dependencyStringContainsCredential(value);
   if (Array.isArray(value)) {
-    return value.some((entry) => lockfileValueContainsCredential(entry));
+    return value.some((entry) => dependencyValueContainsCredential(entry));
   }
   if (value === null || typeof value !== "object") return false;
 
@@ -72,42 +72,54 @@ function lockfileValueContainsCredential(value: unknown, parentField?: string): 
   for (const [key, child] of Object.entries(value)) {
     if (
       !keysAreDependencyNames &&
-      isLockfileCredentialField(key) &&
+      isDependencyCredentialField(key) &&
       child !== null &&
       child !== undefined &&
       child !== ""
     ) {
       return true;
     }
-    if (lockfileValueContainsCredential(child, key)) return true;
+    if (dependencyValueContainsCredential(child, key)) return true;
   }
   return false;
 }
 
 function dependencyLockfileContainsCredential(raw: string): boolean {
-  if (lockfileStringContainsCredential(raw)) return true;
+  if (dependencyStringContainsCredential(raw)) return true;
   try {
-    return lockfileValueContainsCredential(JSON.parse(raw));
+    return dependencyValueContainsCredential(JSON.parse(raw));
   } catch {
     try {
-      return lockfileValueContainsCredential(parseYaml(raw));
+      return dependencyValueContainsCredential(parseYaml(raw));
     } catch {
       return false;
     }
   }
 }
 
+function dependencyManifestContainsCredential(raw: string): boolean {
+  if (dependencyStringContainsCredential(raw)) return true;
+  try {
+    return dependencyValueContainsCredential(JSON.parse(raw));
+  } catch {
+    // Installed package manifests are JSON. Preserve only documents whose
+    // structure was inspected successfully; an unparseable manifest cannot
+    // receive the dependency-name-key exemption safely.
+    return true;
+  }
+}
+
 /**
- * Whether a scanned file is machine-generated dependency material rather than
- * an artifact an operator or agent writes credentials into.
+ * Whether a scanned file is an installed package manifest that requires
+ * dependency-aware credential inspection.
  *
  * Package names are object keys in an installed package's own manifest. The
  * ordinary credential key matcher therefore reads `cookie`, `js-tokens`, and
  * `path-key` as secrets and replaces the versions they resolve to. `npm install`
- * then fails. Lockfiles use their narrower inspection path above; this helper
- * applies only to installed package manifests.
+ * then fails. The structured inspection exempts only those dependency-map
+ * keys while continuing to reject credential-bearing fields and values.
  */
-function isVendoredDependencyArtifact(filePath: string, basename: string): boolean {
+function isVendoredDependencyManifest(filePath: string, basename: string): boolean {
   return (
     filePath.split("/").includes(VENDORED_DEPENDENCY_DIRECTORY) &&
     basename === DEPENDENCY_MANIFEST_NAME
@@ -130,8 +142,12 @@ function actionForScannedFile(file: SnapshotScannedFile): SnapshotSanitizationAc
       : null;
   }
   // Runs after the sensitive-basename and lockfile credential checks. Only an
-  // installed package manifest bypasses ordinary config sanitization.
-  if (isVendoredDependencyArtifact(file.path, name)) return null;
+  // installed package manifest uses the dependency-aware credential check.
+  if (isVendoredDependencyManifest(file.path, name)) {
+    return dependencyManifestContainsCredential(raw)
+      ? { kind: "remove", path: file.path, metadata: file.metadata }
+      : null;
+  }
 
   let sanitized: string | null;
   if (name === ".env" || name.endsWith(".env")) {

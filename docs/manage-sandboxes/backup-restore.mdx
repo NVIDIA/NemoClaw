@@ -57,7 +57,8 @@ It omits a recognized lockfile when the file contains any of these values:
 - A credential-bearing query parameter.
 
 Dependency names in lockfile maps do not count as credential fields.
-NemoClaw also preserves installed `node_modules/**/package.json` manifests byte for byte because dependency names can match credential field names.
+NemoClaw also preserves valid, credential-free `node_modules/**/package.json` manifests byte for byte because dependency names can match credential field names.
+It omits an installed package manifest when the file contains invalid JSON, a credential or authentication field, a provider-shaped secret, or a credential-bearing URL.
 It continues to sanitize configuration and `.env` files inside installed dependency trees.
 It preserves OpenShell credential placeholders so rebuild can reattach the host-side provider.
 If NemoClaw cannot sanitize a copied configuration or environment file, it omits that file from the snapshot.

@@ -143,12 +143,47 @@ describe("rebuild backup credential sanitization", () => {
     // credential key matcher, so without the dependency-tree exclusion their
     // versions become the `[STRIPPED_BY_MIGRATION]` marker and `npm install`
     // fails.
-    const contents = `{"name":"express","dependencies":{"cookie":"0.7.1","path-key":"3.1.1"}}`;
+    const contents = `{"name":"express","dependencies":{"cookie":"0.7.1","path-key":"3.1.1","token":"1.0.0"}}`;
     writeFileSync(manifestPath, contents, { mode: 0o600 });
 
     sanitizeBackupDirectory(backupPath);
 
     expect(readFileSync(manifestPath, "utf-8")).toBe(contents);
+  });
+
+  it.each([
+    ["credential field", '{"name":"unsafe-package","token":"opaque-runtime-secret"}'],
+    ["npm authentication field", '{"name":"unsafe-package","_auth":"opaque-runtime-secret"}'],
+    [
+      "credential-bearing URL",
+      '{"name":"unsafe-package","repository":"https://build-user:build-password@example.test/pkg.git"}',
+    ],
+    [
+      "provider-shaped secret",
+      '{"name":"unsafe-package","metadata":"sk-abcdefghijklmnopqrstuvwxyz0123456789"}',
+    ],
+  ])("removes an installed package manifest containing %s", (_label, contents) => {
+    const backupPath = createBackup();
+    const vendoredDirectory = join(backupPath, "state", "node_modules", "unsafe-package");
+    mkdirSync(vendoredDirectory, { recursive: true });
+    const manifestPath = join(vendoredDirectory, "package.json");
+    writeFileSync(manifestPath, contents, { mode: 0o600 });
+
+    sanitizeBackupDirectory(backupPath);
+
+    expect(existsSync(manifestPath)).toBe(false);
+  });
+
+  it("removes an installed package manifest that cannot be inspected as JSON", () => {
+    const backupPath = createBackup();
+    const vendoredDirectory = join(backupPath, "state", "node_modules", "invalid-package");
+    mkdirSync(vendoredDirectory, { recursive: true });
+    const manifestPath = join(vendoredDirectory, "package.json");
+    writeFileSync(manifestPath, '{"name":"invalid-package"', { mode: 0o600 });
+
+    sanitizeBackupDirectory(backupPath);
+
+    expect(existsSync(manifestPath)).toBe(false);
   });
 
   it("still strips a credential header from an agent configuration", () => {
