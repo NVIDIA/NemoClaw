@@ -72,7 +72,7 @@ COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
-COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch
+COPY agents/hermes/security-dependencies.patch /scripts/hermes-security-dependencies.patch
 
 FROM scratch AS hermes-agent-payload
 
@@ -181,22 +181,22 @@ COPY --from=hermes-npm-patch-payload / /
 RUN if ! grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py; then \
         git -C /opt/hermes apply --check \
             --include=hermes_cli/memory_setup.py \
-            /tmp/hermes-security-dependencies.patch; \
+            /scripts/hermes-security-dependencies.patch; \
         git -C /opt/hermes apply \
             --include=hermes_cli/memory_setup.py \
-            /tmp/hermes-security-dependencies.patch; \
+            /scripts/hermes-security-dependencies.patch; \
     fi \
     && if ! grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml; then \
         git -C /opt/hermes apply --check \
             --include=plugins/memory/hindsight/plugin.yaml \
-            /tmp/hermes-security-dependencies.patch; \
+            /scripts/hermes-security-dependencies.patch; \
         git -C /opt/hermes apply \
             --include=plugins/memory/hindsight/plugin.yaml \
-            /tmp/hermes-security-dependencies.patch; \
+            /scripts/hermes-security-dependencies.patch; \
     fi \
     && grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py \
     && grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml \
-    && rm /tmp/hermes-security-dependencies.patch
+    && rm /scripts/hermes-security-dependencies.patch
 
 # Base64-encoded host corporate-proxy CA bundle (#6210). Empty by default. When
 # onboard detects an operator-supplied corporate CA on the host it bakes it

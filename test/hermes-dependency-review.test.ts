@@ -146,8 +146,9 @@ describe("Hermes 0.19.0 dependency review", () => {
       "COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch",
     );
     expect(dockerfile).toContain(
-      "COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch",
+      "COPY agents/hermes/security-dependencies.patch /scripts/hermes-security-dependencies.patch",
     );
+    expect(dockerfile).toContain("/scripts/hermes-security-dependencies.patch");
     expect(dockerfileBase).toContain(
       "git -C /opt/hermes apply --check /tmp/hermes-security-dependencies.patch",
     );
