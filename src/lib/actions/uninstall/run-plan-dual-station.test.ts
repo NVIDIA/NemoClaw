@@ -92,7 +92,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     }
   });
 
-  it("stops a distributed runtime before deleting the shared Hugging Face cache", () => {
+  it("stops a distributed runtime before requesting shared Hugging Face cache-data cleanup", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-cache-order-"));
     const stateDir = path.join(home, ".nemoclaw");
     const receiptPath = path.join(stateDir, DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE);

@@ -48,6 +48,19 @@ function okWithKnownGatewayList(command: string, args: readonly string[]): RunRe
     : ok();
 }
 
+function runWithOllamaInventory(inventory: RunResult, failedModels: readonly string[] = []) {
+  const failures = new Set(failedModels);
+  const run: NonNullable<UninstallRunDeps["run"]> = (command, args) =>
+    command === "openshell" && args[0] === "gateway" && args[1] === "list"
+      ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+      : command === "ollama" && args[0] === "list"
+        ? inventory
+        : command === "ollama" && args[0] === "rm" && failures.has(args[1] ?? "")
+          ? notFound()
+          : ok();
+  return vi.fn(run);
+}
+
 function publishManagedLlamaOwner(
   homeDir: string,
   gatewayPort: number,
@@ -133,7 +146,7 @@ describe("uninstall local model profile cleanup", () => {
     expect(errors.join("\n")).toContain("could not inventory reserved managed inference");
   });
 
-  it("states that model deletion removes every Ollama model and the Hugging Face cache", () => {
+  it("states that model deletion removes every Ollama model and non-credential Hugging Face cache data", () => {
     const logs: string[] = [];
     const result = runUninstallPlan(
       { assumeYes: false, deleteModels: true, keepOpenShell: true },
@@ -156,7 +169,7 @@ describe("uninstall local model profile cleanup", () => {
     expect(logs).toContain("Aborted.");
   });
 
-  it("removes a shared Hugging Face cache even when no managed runtime state remains", () => {
+  it("requests shared Hugging Face cache-data cleanup when no managed runtime state remains", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-llama-cache-"));
     const cacheDir = path.join(tmpHome, ".cache", "huggingface");
     const runLocalModelRuntimeCleanup = vi.fn(() => ok());
@@ -185,21 +198,15 @@ describe("uninstall local model profile cleanup", () => {
   });
 
   it("deletes every model returned by Ollama inventory", () => {
-    const run = vi.fn((command: string, args: string[], _options?: { env?: NodeJS.ProcessEnv }) => {
-      if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-        return ok(JSON.stringify([{ name: "nemoclaw" }]));
-      }
-      if (command === "ollama" && args[0] === "list") {
-        return ok(
-          [
-            "NAME                   ID              SIZE      MODIFIED",
-            "team/first:latest      111111111111    5 GB      1 hour ago",
-            "second:q4              222222222222    3 GB      2 hours ago",
-          ].join("\n"),
-        );
-      }
-      return ok();
-    });
+    const run = runWithOllamaInventory(
+      ok(
+        [
+          "NAME                   ID              SIZE      MODIFIED",
+          "team/first:latest      111111111111    5 GB      1 hour ago",
+          "second:q4              222222222222    3 GB      2 hours ago",
+        ].join("\n"),
+      ),
+    );
 
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: true, keepOpenShell: true },
@@ -227,18 +234,15 @@ describe("uninstall local model profile cleanup", () => {
         .filter(([command, args]) => command === "ollama" && args[0] === "rm")
         .map(([, args]) => args[1]),
     ).toEqual(["team/first:latest", "second:q4"]);
+    expect(
+      run.mock.calls
+        .filter(([command, args]) => command === "ollama" && args[0] === "rm")
+        .map(([, , options]) => options?.timeout),
+    ).toEqual([60_000, 60_000]);
   });
 
   it("ignores a remote Ollama environment override during model cleanup", () => {
-    const run = vi.fn((command: string, args: string[], _options?: { env?: NodeJS.ProcessEnv }) => {
-      if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-        return ok(JSON.stringify([{ name: "nemoclaw" }]));
-      }
-      if (command === "ollama" && args[0] === "list") {
-        return ok("NAME ID SIZE MODIFIED\nlocal-model 111 1 GB now\n");
-      }
-      return ok();
-    });
+    const run = runWithOllamaInventory(ok("NAME ID SIZE MODIFIED\nlocal-model 111 1 GB now\n"));
 
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: true, keepOpenShell: true },
@@ -264,15 +268,9 @@ describe("uninstall local model profile cleanup", () => {
 
   it("fails without deleting any Ollama model when inventory is malformed", () => {
     const errors: string[] = [];
-    const run = vi.fn((command: string, args: string[]) => {
-      if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-        return ok(JSON.stringify([{ name: "nemoclaw" }]));
-      }
-      if (command === "ollama" && args[0] === "list") {
-        return ok("NAME ID SIZE MODIFIED\n--unsafe 111111111111 1 GB now\n");
-      }
-      return ok();
-    });
+    const run = runWithOllamaInventory(
+      ok("NAME ID SIZE MODIFIED\n--unsafe 111111111111 1 GB now\n"),
+    );
 
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: true, keepOpenShell: true },
@@ -295,14 +293,10 @@ describe("uninstall local model profile cleanup", () => {
   });
 
   it("fails without deleting any Ollama model when inventory execution fails", () => {
-    const run = vi.fn((command: string, args: string[]) => {
-      if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-        return ok(JSON.stringify([{ name: "nemoclaw" }]));
-      }
-      if (command === "ollama" && args[0] === "list") {
-        return { status: 1, stdout: "", stderr: "daemon unavailable" };
-      }
-      return ok();
+    const run = runWithOllamaInventory({
+      status: 1,
+      stdout: "",
+      stderr: "daemon unavailable",
     });
 
     const result = runUninstallPlan(
@@ -324,16 +318,10 @@ describe("uninstall local model profile cleanup", () => {
   });
 
   it("attempts every inventoried Ollama removal and fails when one removal fails", () => {
-    const run = vi.fn((command: string, args: string[]) => {
-      if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-        return ok(JSON.stringify([{ name: "nemoclaw" }]));
-      }
-      if (command === "ollama" && args[0] === "list") {
-        return ok("NAME ID SIZE MODIFIED\nfirst 111 1 GB now\nsecond 222 1 GB now\n");
-      }
-      if (command === "ollama" && args[0] === "rm" && args[1] === "first") return notFound();
-      return ok();
-    });
+    const run = runWithOllamaInventory(
+      ok("NAME ID SIZE MODIFIED\nfirst 111 1 GB now\nsecond 222 1 GB now\n"),
+      ["first"],
+    );
 
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: true, keepOpenShell: true },

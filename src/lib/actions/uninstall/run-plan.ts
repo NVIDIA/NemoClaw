@@ -1775,7 +1775,13 @@ function removeOllamaModels(options: UninstallRunOptions, runtime: UninstallRunt
   }
   let ok = true;
   for (const model of models) {
-    if (runtime.run("ollama", ["rm", model], { env: ollamaEnv, stdio: "ignore" }).status === 0)
+    if (
+      runtime.run("ollama", ["rm", model], {
+        env: ollamaEnv,
+        stdio: "ignore",
+        timeout: 60_000,
+      }).status === 0
+    )
       runtime.log(`Removed Ollama model '${model}'`);
     else {
       runtime.error(`Failed to remove Ollama model '${model}'`);

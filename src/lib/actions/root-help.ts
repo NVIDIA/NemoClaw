@@ -82,7 +82,7 @@ export function help(): void {
   lines.push(`    --yes${" ".repeat(29)}Skip the confirmation prompt`);
   lines.push(`    --keep-openshell${" ".repeat(18)}Leave the openshell binary installed`);
   lines.push(
-    `    --delete-models${" ".repeat(19)}Remove all Ollama models and Hugging Face cache data`,
+    `    --delete-models${" ".repeat(19)}Remove all Ollama models and non-credential Hugging Face cache data (authentication files remain)`,
   );
   lines.push(
     `    --destroy-user-data${" ".repeat(15)}Remove preserved ~/.nemoclaw/ user data (rebuild-backups/, backups/, sandboxes.json)`,

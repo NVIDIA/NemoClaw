@@ -20,7 +20,8 @@ export default class InternalUninstallPlanCommand extends NemoClawCommand {
       description: "Accepted for parity with run-plan; ignored while planning",
     }),
     "delete-models": Flags.boolean({
-      description: "Plan removal of all Ollama models and Hugging Face cache data",
+      description:
+        "Plan removal of all Ollama models and non-credential Hugging Face cache data (authentication files remain)",
     }),
     "keep-openshell": Flags.boolean({ description: "Keep the openshell binary installed" }),
     gateway: Flags.string({ description: "Gateway name", default: "nemoclaw" }),

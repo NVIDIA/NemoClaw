@@ -79,6 +79,19 @@ export function buildUninstallPlan(
           { kind: "stop-orphaned-openshell-processes" },
           { kind: "stop-ollama-auth-proxy" },
           { kind: "stop-model-router" },
+          ...(options.deleteModels
+            ? [
+                {
+                  kind: "delete-hugging-face-cache-data" as const,
+                  path: paths.huggingFaceModelCacheDir,
+                },
+              ]
+            : [
+                {
+                  kind: "preserve-hugging-face-cache-data" as const,
+                  path: paths.huggingFaceModelCacheDir,
+                },
+              ]),
         ],
       },
       {
@@ -109,20 +122,8 @@ export function buildUninstallPlan(
       {
         name: "Model stores",
         actions: options.deleteModels
-          ? [
-              { kind: "delete-all-ollama-models" },
-              {
-                kind: "delete-hugging-face-cache-data",
-                path: paths.huggingFaceModelCacheDir,
-              },
-            ]
-          : [
-              { kind: "preserve-ollama-models" },
-              {
-                kind: "preserve-hugging-face-cache-data",
-                path: paths.huggingFaceModelCacheDir,
-              },
-            ],
+          ? [{ kind: "delete-all-ollama-models" }]
+          : [{ kind: "preserve-ollama-models" }],
       },
       {
         name: "State and binaries",

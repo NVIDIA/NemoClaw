@@ -54,24 +54,32 @@ describe("uninstall plan", () => {
     const stoppingServicesStep = plan.steps.find((step) => step.name === "Stopping services");
     expect(stoppingServicesStep).toBeTruthy();
     expect(stoppingServicesStep?.actions).toEqual(
-      expect.arrayContaining([{ kind: "stop-ollama-auth-proxy" }, { kind: "stop-model-router" }]),
+      expect.arrayContaining([
+        { kind: "stop-ollama-auth-proxy" },
+        { kind: "stop-model-router" },
+        {
+          kind: "preserve-hugging-face-cache-data",
+          path: path.join("/home/test", ".cache", "huggingface"),
+        },
+      ]),
     );
+    const modelStoresStep = plan.steps.find((step) => step.name === "Model stores");
+    expect(modelStoresStep?.actions).toEqual([{ kind: "preserve-ollama-models" }]);
   });
 
   it("respects delete-models, keep-openshell, custom gateway, and foreign shim decisions", () => {
     const paths = defaultUninstallPaths({ home: "/home/test", xdgBinHome: "/bin" });
-    const actions = flattenUninstallPlan(
-      buildUninstallPlan(paths, {
-        deleteModels: true,
-        gatewayName: "custom",
-        keepOpenShell: true,
-        shim: {
-          kind: "preserve-foreign-file",
-          reason: "regular file is not an installer-managed shim",
-          remove: false,
-        },
-      }),
-    );
+    const plan = buildUninstallPlan(paths, {
+      deleteModels: true,
+      gatewayName: "custom",
+      keepOpenShell: true,
+      shim: {
+        kind: "preserve-foreign-file",
+        reason: "regular file is not an installer-managed shim",
+        remove: false,
+      },
+    });
+    const actions = flattenUninstallPlan(plan);
 
     expect(actions).toEqual(
       expect.arrayContaining([{ kind: "delete-docker-volume", name: "openshell-cluster-custom" }]),
@@ -85,6 +93,17 @@ describe("uninstall plan", () => {
         },
       ]),
     );
+    expect(plan.steps.find((step) => step.name === "Stopping services")?.actions).toEqual(
+      expect.arrayContaining([
+        {
+          kind: "delete-hugging-face-cache-data",
+          path: path.join("/home/test", ".cache", "huggingface"),
+        },
+      ]),
+    );
+    expect(plan.steps.find((step) => step.name === "Model stores")?.actions).toEqual([
+      { kind: "delete-all-ollama-models" },
+    ]);
     expect(actions).toEqual(
       expect.arrayContaining([
         {
