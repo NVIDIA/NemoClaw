@@ -23,6 +23,14 @@ const BLUEPRINT_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "nemoclaw-blueprint/blueprint.yaml"),
   "utf8",
 );
+const SUPERVISOR_RUNTIME_TEMPLATE = fs.readFileSync(
+  path.join(REPO_ROOT, "src/lib/onboard/docker-driver-gateway-runtime.ts"),
+  "utf8",
+);
+const V00103_SANDBOX_BUILD_DIGESTS = [
+  "412dc28fa288938373aca0a95c6be3f890066c377992bb75b3ca078d92dbef00",
+  "fc1454705fad9cc0890297a84d2b7869670a364d01d5398685e3c987d2b6c123",
+] as const;
 const ARBITRARY_SANDBOX_BUILD_DIGESTS = ["a".repeat(64), "b".repeat(64)] as const;
 const tempDirs: string[] = [];
 
@@ -71,15 +79,19 @@ function runParser(mutate: (source: string) => string = (source) => source) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sandbox-build-trust-"));
   const scriptsDir = path.join(root, "scripts");
   const blueprintDir = path.join(root, "nemoclaw-blueprint");
+  const supervisorRuntimeDir = path.join(root, "src/lib/onboard");
   const installer = path.join(scriptsDir, "install-openshell.sh");
   const brevInstaller = path.join(scriptsDir, "brev-launchable-ci-cpu.sh");
   const blueprint = path.join(blueprintDir, "blueprint.yaml");
+  const supervisorRuntime = path.join(supervisorRuntimeDir, "docker-driver-gateway-runtime.ts");
   tempDirs.push(root);
   fs.mkdirSync(scriptsDir, { recursive: true });
   fs.mkdirSync(blueprintDir, { recursive: true });
+  fs.mkdirSync(supervisorRuntimeDir, { recursive: true });
   fs.writeFileSync(installer, mutate(INSTALLER_TEMPLATE));
   fs.writeFileSync(brevInstaller, BREV_TEMPLATE);
   fs.writeFileSync(blueprint, BLUEPRINT_TEMPLATE);
+  fs.writeFileSync(supervisorRuntime, SUPERVISOR_RUNTIME_TEMPLATE);
   return spawnSync(
     "node",
     [
@@ -92,6 +104,8 @@ function runParser(mutate: (source: string) => string = (source) => source) {
       installer,
       "--brev-installer",
       brevInstaller,
+      "--supervisor-runtime",
+      supervisorRuntime,
       "--format",
       "tsv",
     ],
@@ -106,6 +120,14 @@ describe("standalone sandbox build trust", () => {
 
   it("accepts the selected reviewed v0.0.101 identities", () => {
     expect(runParser().status).toBe(0);
+  });
+
+  it("accepts the base-trusted OpenShell 0.0.103 sandbox identities before version selection (#8893)", () => {
+    const result = runParser((source) =>
+      addSandboxBuildPins(source, "0.0.103", V00103_SANDBOX_BUILD_DIGESTS),
+    );
+
+    expect(result.status, result.stderr).toBe(0);
   });
 
   it("rejects an arbitrary structurally valid identity addition", () => {
