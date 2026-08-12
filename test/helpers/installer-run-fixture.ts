@@ -1,11 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import {
+  createHostProcessWorkspace,
+  type HostCommandRecord,
+  type HostCommandRoute,
+  type HostProcessResult,
+  type HostProcessWorkspace,
+} from "./host-process-harness";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH, writeExecutable } from "./installer-sourced-env";
 
 /**
@@ -30,30 +37,51 @@ export interface InstallerCheckout {
   writeExecutable: (name: string, contents: string) => string;
   /** Resolves a path under the checkout root. */
   path: (...segments: string[]) => string;
+  /** Composes the inherited environment with this HOME, fake PATH, and npm prefix. */
+  environment: (overrides?: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
+  /** Writes an ordered, fail-on-unmatched command route set into binDir. */
+  writeCommand: (
+    name: string,
+    routes: readonly HostCommandRoute[],
+    environmentKeys?: readonly string[],
+  ) => string;
+  /** Returns fake-command argument, environment, output, and exit records. */
+  commandRecords: () => HostCommandRecord[];
+  /** Fails when a configured non-repeating route was not used. */
+  assertCommandRoutesUsed: () => void;
+  /** Runs a process with decoded output. */
+  run: (
+    command: string,
+    args: readonly string[],
+    options?: Parameters<HostProcessWorkspace["run"]>[2],
+  ) => HostProcessResult;
   /** Removes the whole checkout. */
   remove: () => void;
 }
 
 /** Creates a fresh installer checkout with created bin and prefix/bin dirs. */
 export function createInstallerCheckout(prefix: string): InstallerCheckout {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  const binDir = path.join(root, "bin");
+  const workspace = createHostProcessWorkspace(prefix);
+  const { root, binDir } = workspace;
   const prefixDir = path.join(root, "prefix");
-  fs.mkdirSync(binDir, { recursive: true });
   fs.mkdirSync(path.join(prefixDir, "bin"), { recursive: true });
   return {
     root,
     binDir,
     prefixDir,
-    writeExecutable: (name, contents) => {
-      const target = path.join(binDir, name);
-      writeExecutable(target, contents);
-      return target;
-    },
-    path: (...segments) => path.join(root, ...segments),
-    remove: () => {
-      fs.rmSync(root, { recursive: true, force: true });
-    },
+    writeExecutable: workspace.writeExecutable,
+    path: workspace.path,
+    environment: (overrides = {}) =>
+      workspace.environment({
+        PATH: `${binDir}:${TEST_SYSTEM_PATH}`,
+        NPM_PREFIX: prefixDir,
+        ...overrides,
+      }),
+    writeCommand: workspace.writeCommand,
+    commandRecords: workspace.commandRecords,
+    assertCommandRoutesUsed: workspace.assertCommandRoutesUsed,
+    run: workspace.run,
+    remove: workspace.remove,
   };
 }
 
@@ -133,6 +161,17 @@ export interface NpmStubOptions {
   handleCi?: boolean;
 }
 
+export type SourceCheckoutNpmStubOptions = {
+  commandLog?: boolean;
+  onboardLog?: boolean;
+  rewriteRootLockfile?: boolean;
+};
+
+export type InstallerLinkNpmStubOptions = {
+  cliVersion?: string;
+  createCli: boolean;
+};
+
 /**
  * Writes an npm stub that reports a fixed version, resolves the prefix from
  * NPM_PREFIX, runs installSnippet for install-family commands, and fails
@@ -154,5 +193,90 @@ if ${commands}; then
   ${installSnippet}${ciExit}
 fi
 echo "unexpected npm invocation: $*" >&2; exit 98`,
+  );
+}
+
+/** Writes the npm routes used by a source-checkout install that links a runnable CLI. */
+export function writeSourceCheckoutNpmStub(
+  fakeBin: string,
+  options: SourceCheckoutNpmStubOptions = {},
+): void {
+  const commandLog = options.commandLog ? `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"\n` : "";
+  const rewriteLockfile = options.rewriteRootLockfile
+    ? `printf '{"rewritten":true}\\n' > package-lock.json; `
+    : "";
+  const onboard = options.onboardLog
+    ? `printf '%s\\n' "$*" >> "$NEMOCLAW_ONBOARD_LOG"`
+    : `if [ "$1" = "onboard" ]; then exit 0; fi`;
+  writeNpmStub(fakeBin, {
+    installSnippet: `${commandLog}if [ "$1" = "pack" ]; then
+  tmpdir="$4"
+  mkdir -p "$tmpdir/package"
+  tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
+  exit 0
+fi
+if [ "$1" = "install" ]; then ${rewriteLockfile}exit 0; fi
+if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" = "--if-present" ]; }; then exit 0; fi
+if [ "$1" = "link" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.1.0-test"; exit 0; fi
+${onboard}
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi`,
+    handleCi: true,
+  });
+}
+
+/** Writes the package files that make a temporary root a source checkout. */
+export function writeSourceCheckoutPackages(root: string): void {
+  fs.writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
+  );
+  fs.mkdirSync(path.join(root, "nemoclaw"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "nemoclaw", "package.json"),
+    JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
+  );
+}
+
+/** Writes npm routes for an installer payload that links or intentionally omits the CLI. */
+export function writeInstallerLinkNpmStub(
+  fakeBin: string,
+  { cliVersion = "0.1.0-test", createCli }: InstallerLinkNpmStubOptions,
+): void {
+  writeExecutable(
+    path.join(fakeBin, "npm"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = "--version" ]; then echo "10.9.2"; exit 0; fi
+if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
+  echo "$NPM_PREFIX"
+  exit 0
+fi
+if [ "$1" = "pack" ]; then exit 1; fi
+if { [ "$1" = "ci" ] || [ "$1" = "install" ]; } && [[ "$*" == *"--ignore-scripts"* ]]; then exit 0; fi
+if [ "$1" = "run" ] || [ "$1" = "uninstall" ]; then exit 0; fi
+if [ "$1" = "link" ]; then
+  ${
+    createCli
+      ? `cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+if [ "$1" = "onboard" ]; then exit 0; fi
+if [ "$1" = "--version" ]; then echo "nemoclaw v${cliVersion}"; exit 0; fi
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"`
+      : ":"
+  }
+  exit 0
+fi
+echo "unexpected npm invocation: $*" >&2
+exit 98
+`,
   );
 }

@@ -43,7 +43,7 @@ const SECURITY_IMAGES = [
 ] as const;
 const ARCHITECTURES = ["amd64", "arm64"] as const;
 const EXPECTED_SECURITY_PACKAGE_INVENTORY = [
-  "libexpat1=2.8.2-1",
+  "libexpat1=2.8.3-1",
   "libonig5=6.9.9-1+b1",
   "libjq1=1.8.2-1",
   "jq=1.8.2-1",
@@ -157,6 +157,9 @@ describe("sandbox base security packages", () => {
       );
       expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
       expect(calls).toContain("dpkg-install");
+      expect(calls).toContain(
+        `download https://snapshot.debian.org/archive/debian/20260811T082421Z/pool/main/e/expat/libexpat1_2.8.3-1_${architecture}.deb`,
+      );
       expect(fs.readFileSync(prepared.inventory, "utf-8")).toBe(securityInventory(architecture));
       expect(fs.statSync(prepared.inventory).mode & 0o777).toBe(0o444);
       expect(
@@ -165,7 +168,7 @@ describe("sandbox base security packages", () => {
           .filter((line) => line.startsWith("download "))
           .map((line) => line.slice(line.lastIndexOf("/") + 1)),
       ).toEqual([
-        `libexpat1_2.8.2-1_${architecture}.deb`,
+        `libexpat1_2.8.3-1_${architecture}.deb`,
         `libonig5_6.9.9-1+b1_${architecture}.deb`,
         `libjq1_1.8.2-1_${architecture}.deb`,
         `jq_1.8.2-1_${architecture}.deb`,
