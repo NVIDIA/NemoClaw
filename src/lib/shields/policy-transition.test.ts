@@ -149,6 +149,41 @@ describe("shields down policy rejection", () => {
     expect(state).toMatchObject({ shieldsDown: false, shieldsDownAt: null });
   });
 
+  it("finishes Shields down when a terminal sandbox has the exact committed policy receipt (#8304)", () => {
+    const hash = "d71616b0333b";
+    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+      deferredPolicyContainerMissing: true,
+      initialOpenClawPosture: "locked",
+      run: (cmd) => {
+        const args = Array.isArray(cmd) ? cmd.map(String) : [];
+        if (args.includes("policy") && args.includes("get")) {
+          return {
+            status: 0,
+            stdout: `Version: 11\nHash: ${hash}\nStatus: pending\n---\nversion: 1\nnetwork_policies: {}\n`,
+            stderr: "",
+          };
+        }
+        if (args.includes("policy") && args.includes("set")) {
+          return {
+            status: 1,
+            stdout: `Policy version 11 submitted (hash: ${hash})\n`,
+            stderr: "Timeout waiting for policy version 11 to load\n",
+          };
+        }
+        return { status: 0 };
+      },
+    });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", { reason: "failed startup recovery", throwOnError: true }),
+    ).not.toThrow();
+    expect(harness.isShieldsDown("openclaw")).toBe(true);
+    expect(harness.getOpenClawPosture()).toBe("mutable");
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
+      "Policy committed for the stopped sandbox",
+    );
+  });
+
   it("retains auto-restore authority when rejected policy state cleanup fails (#8198)", () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     const statePath = path.join(stateDir, "shields-openclaw.json");

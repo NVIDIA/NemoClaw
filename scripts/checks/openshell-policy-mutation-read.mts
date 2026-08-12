@@ -80,6 +80,7 @@ export const MUTATION_READS: readonly AuditedPolicyReadFile[] = [
   {
     relativePath: "src/lib/shields/index.ts",
     expectedReads: [
+      ignoredBase("readDeferredPermissivePolicyReceipt"),
       preservingBase("resolveExactManagedMcpPolicies"),
       ignoredBase("resolveProvableManagedMcpPoliciesForDeadline"),
       ignoredBase("shieldsDownWithoutHostLock"),
@@ -521,6 +522,7 @@ function classifyIgnoreErrorOption(expression: ts.Expression): IgnoreErrorOption
 const POLICY_READ_RUNNERS = new Set([
   "captureOpenshell",
   "captureOpenshellForStatus",
+  "run",
   "runCapture",
   "runCmd",
 ]);

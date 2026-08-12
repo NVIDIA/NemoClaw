@@ -33,6 +33,7 @@ const {
 }: typeof import("../adapters/docker/exec") = require("../adapters/docker/exec");
 const {
   isDirectSandboxFallbackUnavailableError,
+  isMissingDirectSandboxContainerError,
   privilegedSandboxExecArgv,
   withPrivilegedSandboxExecutionLease,
 }: typeof import("../sandbox/privileged-exec") = require("../sandbox/privileged-exec");
@@ -73,6 +74,7 @@ const {
 const { cleanupTempDir } = require("../onboard/temp-files");
 const { verifyShieldsLockState }: typeof import("./verify-lock") = require("./verify-lock");
 const {
+  confirmDeferredPermissivePolicyForStoppedSandbox,
   relockAndReconfirm,
   waitForHermesInferenceRouteConvergence,
 }: typeof import("./relock-reconfirm") = require("./relock-reconfirm");
@@ -4247,6 +4249,35 @@ interface ShieldsDownOpts {
   processToken?: string;
 }
 
+function proveNoRunningDirectSandbox(sandboxName: string): boolean {
+  try {
+    // Argv resolution performs the exact registry-bound Docker discovery but
+    // does not execute the command. A live container therefore returns false;
+    // only the dedicated missing-container error admits deferred activation.
+    privilegedSandboxExecArgv(sandboxName, ["/usr/bin/true"], false, true);
+    return false;
+  } catch (error) {
+    return isMissingDirectSandboxContainerError(error);
+  }
+}
+
+function readDeferredPermissivePolicyReceipt(sandboxName: string): ReturnType<typeof run> {
+  // invalidState: a failed or malformed gateway read is mistaken for proof
+  // that the timed-out forward policy was committed.
+  // sourceBoundary: OpenShell owns the base-policy receipt; the canonical
+  // parser and exact version/hash verifier admit it below.
+  // whyNotSourceFix: supported OpenShell releases expose this receipt only via
+  // the CLI after a stopped sandbox cannot acknowledge policy activation.
+  // regressionTest: relock-reconfirm.test.ts covers failed reads and receipt
+  // mismatches; policy-transition.test.ts covers the full Shields state flow.
+  // removalCondition: remove when policy set returns a structured committed
+  // result independently of live-load acknowledgement.
+  return run(buildPolicyGetCommand(sandboxName), {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+}
+
 type RecoveredShieldsDownCompletion = {
   readonly alreadyCommitted: boolean;
   readonly audit: Parameters<typeof appendAuditEntry>[0];
@@ -4884,7 +4915,14 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   } finally {
     cleanupRuntimePolicyFile();
   }
-  if (policySetResult.status !== 0) {
+  const deferredPolicyConfirmed =
+    policySetResult.status !== 0 &&
+    confirmDeferredPermissivePolicyForStoppedSandbox(policySetResult, {
+      proveNoRunningDirectSandbox: () => proveNoRunningDirectSandbox(sandboxName),
+      readPolicyReceipt: () => readDeferredPermissivePolicyReceipt(sandboxName),
+      parsePolicy: parseCurrentPolicy,
+    });
+  if (policySetResult.status !== 0 && !deferredPolicyConfirmed) {
     // The permissive policy was rejected before it applied — for example,
     // OpenShell refuses a live Landlock change on a sandbox whose policy is
     // sealed at startup (Deep Agents). Nothing was weakened: configuration is
@@ -4937,6 +4975,11 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     );
     console.error("  Shields down did not take effect. `shields status` continues to report `UP`.");
     return failShieldsCommand(`Could not apply ${policyName} policy`, opts.throwOnError);
+  }
+  if (deferredPolicyConfirmed) {
+    console.log(
+      "  Policy committed for the stopped sandbox and will load when the sandbox starts.",
+    );
   }
 
   // 2b. Return config to default mutable state.

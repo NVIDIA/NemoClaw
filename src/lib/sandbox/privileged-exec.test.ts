@@ -634,10 +634,15 @@ describe("privileged sandbox exec routing", () => {
           throw new Error("docker daemon unavailable");
         },
       },
-      ({ privilegedSandboxExecArgv }) => {
-        expect(() => privilegedSandboxExecArgv("alpha", ["id"])).toThrow(
-          "docker daemon unavailable",
-        );
+      ({ isMissingDirectSandboxContainerError, privilegedSandboxExecArgv }) => {
+        let refusal: unknown;
+        try {
+          privilegedSandboxExecArgv("alpha", ["id"]);
+        } catch (error) {
+          refusal = error;
+        }
+        expect(String(refusal)).toContain("docker daemon unavailable");
+        expect(isMissingDirectSandboxContainerError(refusal)).toBe(false);
       },
     );
   });
@@ -652,7 +657,11 @@ describe("privileged sandbox exec routing", () => {
         }),
         dockerCapture: () => "",
       },
-      ({ isDirectSandboxFallbackUnavailableError, privilegedSandboxExecArgv }) => {
+      ({
+        isDirectSandboxFallbackUnavailableError,
+        isMissingDirectSandboxContainerError,
+        privilegedSandboxExecArgv,
+      }) => {
         let refusal: unknown;
         try {
           privilegedSandboxExecArgv("alpha", ["id"]);
@@ -664,6 +673,7 @@ describe("privileged sandbox exec routing", () => {
           /No running direct OpenShell sandbox container found for 'alpha'/,
         );
         expect(isDirectSandboxFallbackUnavailableError(refusal)).toBe(true);
+        expect(isMissingDirectSandboxContainerError(refusal)).toBe(true);
       },
     );
   });

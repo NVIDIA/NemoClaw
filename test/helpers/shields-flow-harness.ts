@@ -34,6 +34,7 @@ export type ShieldsFlowHarnessOptions = {
   beginContainment?: typeof import("../../src/lib/state/mcp-lifecycle-lock.js").beginCommittedMcpLifecycleContainmentSync;
   confirmOpenClawInodeFlags?: boolean;
   directSandboxUnavailable?: boolean;
+  deferredPolicyContainerMissing?: boolean;
   dockerExecFileSync?: (argv: unknown) => string;
   failOpenClawGuardActions?: Array<"preflight" | "lock" | "unlock">;
   failPolicyRejectionStateClear?: boolean;
@@ -62,7 +63,11 @@ export type ShieldsFlowHarnessOptions = {
     kill: () => boolean;
   };
   livePolicyYaml?: string;
-  run?: (cmd: unknown) => { status: number };
+  run?: (cmd: unknown) => {
+    status: number;
+    stdout?: string | Buffer;
+    stderr?: string | Buffer;
+  };
   sandboxEntry?: SandboxEntry;
   timerAuthorityRevokedSequence?: readonly boolean[];
 };
@@ -309,9 +314,15 @@ export function createShieldsFlowHarness(
   vi.spyOn(privilegedExec, "isDirectSandboxFallbackUnavailableError").mockReturnValue(
     Boolean(options.directSandboxUnavailable),
   );
+  vi.spyOn(privilegedExec, "isMissingDirectSandboxContainerError").mockImplementation(
+    (error: unknown) =>
+      Boolean(options.deferredPolicyContainerMissing) && error === directSandboxUnavailableError,
+  );
   vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(
-    (_sandboxName: unknown, cmd: unknown) =>
-      options.directSandboxUnavailable
+    (_sandboxName: unknown, cmd: unknown) => {
+      const args = Array.isArray(cmd) ? cmd.map(String) : [];
+      return options.directSandboxUnavailable ||
+        (options.deferredPolicyContainerMissing && args[0] === "/usr/bin/true")
         ? throwHarnessError(directSandboxUnavailableError)
         : [
             "exec",
@@ -319,7 +330,8 @@ export function createShieldsFlowHarness(
             "root",
             "openshell-openclaw",
             ...(Array.isArray(cmd) ? cmd.map(String) : []),
-          ],
+          ];
+    },
   );
   const dockerSpawnCalls: Array<{ args: string[]; timeout: number | undefined }> = [];
   vi.spyOn(dockerExec, "dockerSpawnSync").mockImplementation(
