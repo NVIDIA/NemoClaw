@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { safeTmpHelpers } from "./nemoclaw-start-gateway.test-helpers";
 import { extractShellFunctionFromSource } from "./support/shell-function-extractor";
 
 const START_SCRIPT = path.resolve(import.meta.dirname, "../scripts/nemoclaw-start.sh");
@@ -28,6 +29,7 @@ describe("OpenClaw gateway credential environment", () => {
     fs.writeFileSync(gatewayLog, seed);
     const script = [
       "set -euo pipefail",
+      safeTmpHelpers(source),
       launch,
       "export OPENCLAW_GATEWAY_TOKEN=gateway-secret",
       `launch_openclaw_gateway_process ${logMode} sh -c 'printf "ENV=%s\\nARGS=%s\\n" "\${OPENCLAW_GATEWAY_TOKEN-unset}" "$*"' sh`,
@@ -63,11 +65,13 @@ describe("OpenClaw gateway credential environment", () => {
         source,
         "launch_openclaw_gateway_process",
       ).replaceAll("/tmp/gateway.log", gatewayLog);
+      fs.writeFileSync(gatewayLog, "");
       const script = [
         "set -euo pipefail",
+        safeTmpHelpers(source),
         launch,
         "export OPENCLAW_GATEWAY_TOKEN=gateway-secret",
-        `launch_openclaw_gateway_process ${logMode} ${JSON.stringify(process.execPath)} -e 'setTimeout(() => {}, 30000)' nemoclaw-proc-credential-probe`,
+        `launch_openclaw_gateway_process ${logMode} node -e 'setTimeout(() => {}, 30000)' nemoclaw-proc-credential-probe`,
         'trap \'kill "$GATEWAY_PID" 2>/dev/null || true; wait "$GATEWAY_PID" 2>/dev/null || true\' EXIT',
         "ready=0",
         "for _ in $(seq 1 100); do",

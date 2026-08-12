@@ -5171,17 +5171,82 @@ launch_openclaw_gateway_process() {
   local log_mode="$1"
   shift
   case "$log_mode" in
-    append)
-      nohup /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN "$@" >>/tmp/gateway.log 2>&1 &
-      ;;
+    append) ;;
     truncate)
-      nohup /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN "$@" >/tmp/gateway.log 2>&1 &
+      # Replace the predictable log path immediately before the initial launch.
+      # The descriptor-safe launcher below then pins that exact regular file.
+      if [ "$(id -u)" -eq 0 ]; then
+        _nemoclaw_safe_create_tmp_file /tmp/gateway.log 644 gateway:gateway
+      else
+        _nemoclaw_safe_create_tmp_file /tmp/gateway.log 644
+      fi
       ;;
     *)
       echo "[gateway] invalid gateway log mode: $log_mode" >&2
       return 1
       ;;
   esac
+
+  nohup /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN \
+    python3 -I - "$log_mode" "$@" <<'PYGATEWAYLAUNCH' &
+import os
+import stat
+import sys
+
+log_path = "/tmp/gateway.log"
+log_mode = sys.argv[1]
+argv = sys.argv[2:]
+if not argv:
+    print("[gateway] refusing empty gateway launch command", file=sys.stderr)
+    raise SystemExit(1)
+if not hasattr(os, "O_NOFOLLOW"):
+    print("[SECURITY] refusing gateway launch because O_NOFOLLOW is unavailable", file=sys.stderr)
+    raise SystemExit(1)
+
+try:
+    before = os.lstat(log_path)
+except OSError as exc:
+    print(f"[SECURITY] refusing unavailable gateway log path: {log_path}: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+    print(f"[SECURITY] refusing unsafe gateway log path: {log_path}", file=sys.stderr)
+    raise SystemExit(1)
+
+flags = os.O_WRONLY | os.O_NOFOLLOW
+for optional_flag in ("O_CLOEXEC", "O_NONBLOCK"):
+    flags |= getattr(os, optional_flag, 0)
+if log_mode == "append":
+    flags |= os.O_APPEND
+elif log_mode != "truncate":
+    print(f"[gateway] invalid gateway log mode: {log_mode}", file=sys.stderr)
+    raise SystemExit(1)
+
+try:
+    descriptor = os.open(log_path, flags)
+except OSError as exc:
+    print(f"[SECURITY] refusing unsafe gateway log path: {log_path}: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+try:
+    opened = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or opened.st_nlink != 1
+        or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+    ):
+        print(f"[SECURITY] refusing replaced gateway log path: {log_path}", file=sys.stderr)
+        raise SystemExit(1)
+    if log_mode == "truncate":
+        os.ftruncate(descriptor, 0)
+    os.dup2(descriptor, 1)
+    os.dup2(descriptor, 2)
+finally:
+    if descriptor > 2:
+        os.close(descriptor)
+
+environment = os.environ.copy()
+environment.pop("OPENCLAW_GATEWAY_TOKEN", None)
+os.execvpe(argv[0], argv, environment)
+PYGATEWAYLAUNCH
   GATEWAY_PID=$!
 }
 
@@ -5199,7 +5264,7 @@ launch_openclaw_gateway() {
   mark_in_container_gateway
   launch_openclaw_gateway_process truncate \
     "${STEP_DOWN_PREFIX_GATEWAY[@]}" env HOME=/sandbox sh -c \
-    'umask 0007; exec "$@" >>/tmp/gateway.log 2>&1' sh \
+    'umask 0007; exec "$@"' sh \
     "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}"
   if ! capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY; then
     # An uncaptured numeric PID is never safe to signal: Bash may already have
@@ -5815,10 +5880,6 @@ if [ "$(id -u)" -ne 0 ]; then
   write_auth_profile
   harden_auth_profiles
 
-  # In non-root mode, detach gateway stdout/stderr from the sandbox-create
-  # stream so openshell sandbox create can return once the container is ready.
-  _nemoclaw_safe_create_tmp_file /tmp/gateway.log 644
-
   # Separate log for auto-pair in non-root mode as well.
   _nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600
 
@@ -5952,10 +6013,6 @@ if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   run_oneshot_command "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
   exit "$_nemoclaw_cmd_rc"
 fi
-
-# Gateway log: owned by gateway user, world-readable for diagnostics.
-# The sandbox user can read but not truncate/overwrite (not owner, sticky /tmp).
-_nemoclaw_safe_create_tmp_file /tmp/gateway.log 644 gateway:gateway
 
 # Separate log for auto-pair so sandbox user can write to it
 _nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600 sandbox:sandbox

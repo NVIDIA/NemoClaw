@@ -67,7 +67,6 @@ describe("nemoclaw-start safe tmp file creation", () => {
         "set -euo pipefail",
         safeTmpHelpers(src),
         launch,
-        `_nemoclaw_safe_create_tmp_file ${JSON.stringify(gatewayLog)} 644`,
         "export OPENCLAW_GATEWAY_TOKEN=gateway-secret",
         `launch_openclaw_gateway_process truncate printf '%s\\n' 'gateway started'`,
         'wait "$GATEWAY_PID"',
@@ -78,9 +77,45 @@ describe("nemoclaw-start safe tmp file creation", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(fs.lstatSync(gatewayLog).isSymbolicLink()).toBe(false);
-      expect(fs.readFileSync(gatewayLog, "utf-8")).toBe("gateway started\n");
+      const descriptor = fs.openSync(gatewayLog, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        expect(fs.readFileSync(descriptor, "utf-8")).toBe("gateway started\n");
+      } finally {
+        fs.closeSync(descriptor);
+      }
       expect(fs.readFileSync(symlinkTarget, "utf-8")).toBe("do not overwrite\n");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a planted gateway-log symlink during automatic respawn", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-safe-tmp-"));
+    const gatewayLog = path.join(tmpDir, "gateway.log");
+    const symlinkTarget = path.join(tmpDir, "symlink-target.log");
+    const launch = extractShellFunctionFromSource(
+      src,
+      "launch_openclaw_gateway_process",
+    ).replaceAll("/tmp/gateway.log", gatewayLog);
+
+    try {
+      fs.writeFileSync(symlinkTarget, "do not append\n");
+      fs.symlinkSync(symlinkTarget, gatewayLog);
+      const script = [
+        "set -uo pipefail",
+        launch,
+        "export OPENCLAW_GATEWAY_TOKEN=gateway-secret",
+        "launch_openclaw_gateway_process append true",
+        'wait "$GATEWAY_PID"',
+      ].join("\n");
+      const result = spawnSync("bash", ["-c", script], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+
+      expect(result.status, result.stderr).toBe(1);
+      expect(result.stderr).toContain("refusing unsafe gateway log path");
+      expect(fs.readFileSync(symlinkTarget, "utf-8")).toBe("do not append\n");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

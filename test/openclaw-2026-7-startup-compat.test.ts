@@ -8,6 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { safeTmpHelpers } from "./nemoclaw-start-gateway.test-helpers";
+
 const ROOT = path.resolve(import.meta.dirname, "..");
 const NORMALIZER = path.join(ROOT, "scripts", "lib", "normalize_mutable_config_perms.py");
 const START_SCRIPT = path.join(ROOT, "scripts", "nemoclaw-start.sh");
@@ -164,13 +166,14 @@ describe("OpenClaw 2026.7 startup compatibility", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "export HOME=/root",
-        "STEP_DOWN_PREFIX_GATEWAY=()",
+        "STEP_DOWN_PREFIX_GATEWAY=(env)",
         `OPENCLAW=${JSON.stringify(gateway)}`,
         "_DASHBOARD_PORT=18789",
         "arm_openclaw_gateway_supervisor_cleanup() { :; }",
         "mark_in_container_gateway() { :; }",
         "capture_openclaw_pid_start_identity() { printf -v \"$2\" '%s' test-identity; }",
         "record_gateway_pid() { :; }",
+        safeTmpHelpers(source),
         extractShellFunction(source, "launch_openclaw_gateway_process").replaceAll(
           "/tmp/gateway.log",
           gatewayLog,
