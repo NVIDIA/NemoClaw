@@ -13,7 +13,7 @@ export function htmlParserSecurityProbe(parserPath: string): string {
 }
 
 const PYEXPAT_PROBE =
-  "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION";
+  "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.3', pyexpat.EXPAT_VERSION";
 const LIBSSH2_PROBE =
   "import ctypes, sys; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; lib.libssh2_version(0) == b'1.11.1' or sys.exit('unexpected libssh2 runtime version')";
 const FIXED_PARSER_FIXTURE = path.resolve(

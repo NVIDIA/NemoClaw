@@ -240,8 +240,22 @@ function lstatOrNull(candidate: string): fs.Stats | null {
 
 function assertOwnerOnlyDirectory(candidate: string, stat: fs.Stats): void {
   const uid = process.getuid?.();
-  if (!stat.isDirectory() || uid === undefined || stat.uid !== uid || (stat.mode & 0o077) !== 0) {
-    throw new Error(`Refusing non-owner-only DGX Station Express resume directory: ${candidate}`);
+  if (!stat.isDirectory()) {
+    throw new Error(
+      `Refusing NemoClaw installer resume path that is not a directory: ${candidate}`,
+    );
+  }
+  if (uid === undefined || stat.uid !== uid) {
+    throw new Error(
+      `Refusing NemoClaw installer resume directory that is not owned by the current user: ${candidate}`,
+    );
+  }
+  if ((stat.mode & 0o077) !== 0) {
+    const mode = (stat.mode & 0o7777).toString(8).padStart(4, "0");
+    throw new Error(
+      `NemoClaw installer resume directory has mode ${mode}; expected 0700: ${candidate}. ` +
+        'After you verify ownership, run `chmod 700 -- "$HOME/.nemoclaw"` for the default state directory.',
+    );
   }
 }
 
@@ -267,14 +281,17 @@ function assertStationExpressClearStatePathSafe(paths: StationExpressReceiptPath
     if (stat.isSymbolicLink()) {
       throw new Error(`Refusing symbolic link in DGX Station Express resume path: ${candidate}`);
     }
-    const isLegacyStateBase = candidate === paths.stateBase && (stat.mode & 0o7777) === 0o755;
+    const isLegacyStateBase =
+      candidate === paths.stateBase && stat.isDirectory() && (stat.mode & 0o7777) === 0o755;
     if (!isLegacyStateBase) {
       assertOwnerOnlyDirectory(candidate, stat);
       continue;
     }
     const uid = process.getuid?.();
-    if (!stat.isDirectory() || uid === undefined || stat.uid !== uid) {
-      throw new Error(`Refusing non-owner-only DGX Station Express resume directory: ${candidate}`);
+    if (uid === undefined || stat.uid !== uid) {
+      throw new Error(
+        `Refusing NemoClaw installer resume directory that is not owned by the current user: ${candidate}`,
+      );
     }
   }
 }
@@ -1079,7 +1096,7 @@ export function withStationExpressResumeEnvironment<Options extends ResumeOption
           deps.clearInstallerResume();
         } catch (error) {
           deps.error(
-            `  Could not discard DGX Station Express installer resume state: ${error instanceof Error ? error.message : String(error)}`,
+            `  Could not discard NemoClaw installer resume state: ${error instanceof Error ? error.message : String(error)}`,
           );
           deps.exitProcess(1);
         }
