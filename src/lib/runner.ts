@@ -56,6 +56,8 @@ function buildRunnerEnv(extraEnv?: NodeJS.ProcessEnv, executable?: string): Reco
     executable !== undefined &&
     path.basename(executable) === "docker" &&
     normalizedExtra.DOCKER_CONTEXT === undefined &&
+    normalizedExtra.DOCKER_HOST === undefined &&
+    process.env.DOCKER_HOST === undefined &&
     process.env.DOCKER_CONTEXT !== undefined
   ) {
     normalizedExtra.DOCKER_CONTEXT = process.env.DOCKER_CONTEXT;

@@ -178,6 +178,7 @@ describe("runner env merging", () => {
     const calls: SpawnCall[] = [];
     const originalSpawnSync = childProcess.spawnSync;
     const originalDockerContext = process.env.DOCKER_CONTEXT;
+    const originalDockerHost = process.env.DOCKER_HOST;
     const originalApiKey = process.env.NVIDIA_INFERENCE_API_KEY;
     // @ts-expect-error — intentional partial mock for testing
     childProcess.spawnSync = captureSpawnCall(calls, {
@@ -188,6 +189,7 @@ describe("runner env merging", () => {
 
     try {
       process.env.DOCKER_CONTEXT = "healthy-context";
+      delete process.env.DOCKER_HOST;
       process.env.NVIDIA_INFERENCE_API_KEY = "test-secret-must-not-cross-runner-boundary";
       delete require.cache[require.resolve(runnerPath)];
       const { run } = require(runnerPath);
@@ -198,6 +200,11 @@ describe("runner env merging", () => {
         delete process.env.DOCKER_CONTEXT;
       } else {
         process.env.DOCKER_CONTEXT = originalDockerContext;
+      }
+      if (originalDockerHost === undefined) {
+        delete process.env.DOCKER_HOST;
+      } else {
+        process.env.DOCKER_HOST = originalDockerHost;
       }
       if (originalApiKey === undefined) {
         delete process.env.NVIDIA_INFERENCE_API_KEY;
@@ -216,6 +223,53 @@ describe("runner env merging", () => {
     expect(dockerEnv?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
     expect(nonDockerEnv?.DOCKER_CONTEXT).toBeUndefined();
     expect(nonDockerEnv?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+  });
+
+  it("keeps Docker host precedence over an ambient Docker context (#8816)", () => {
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    const originalDockerContext = process.env.DOCKER_CONTEXT;
+    const originalDockerHost = process.env.DOCKER_HOST;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    try {
+      process.env.DOCKER_CONTEXT = "ambient-context";
+      delete process.env.DOCKER_HOST;
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      run(["docker", "ps"], { env: { DOCKER_HOST: "unix:///explicit.sock" } });
+      process.env.DOCKER_HOST = "unix:///selected-fallback.sock";
+      run(["docker", "ps"]);
+    } finally {
+      if (originalDockerContext === undefined) {
+        delete process.env.DOCKER_CONTEXT;
+      } else {
+        process.env.DOCKER_CONTEXT = originalDockerContext;
+      }
+      if (originalDockerHost === undefined) {
+        delete process.env.DOCKER_HOST;
+      } else {
+        process.env.DOCKER_HOST = originalDockerHost;
+      }
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(2);
+    expect(requireCall(runnerCalls, 0)[2]?.env).toMatchObject({
+      DOCKER_HOST: "unix:///explicit.sock",
+    });
+    expect(requireCall(runnerCalls, 0)[2]?.env?.DOCKER_CONTEXT).toBeUndefined();
+    expect(requireCall(runnerCalls, 1)[2]?.env).toMatchObject({
+      DOCKER_HOST: "unix:///selected-fallback.sock",
+    });
+    expect(requireCall(runnerCalls, 1)[2]?.env?.DOCKER_CONTEXT).toBeUndefined();
   });
 
   it("preserves process env when opts.env is provided to runCapture", () => {
