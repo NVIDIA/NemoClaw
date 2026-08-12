@@ -149,6 +149,7 @@ describe("MCP workflow artifact boundary", () => {
   });
 
   it.each([
+    "release-qualification",
     "report-to-pr",
     "scorecard",
   ])("requires %s to wait for the independent credential-window result", (terminalJob) => {
