@@ -4,7 +4,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GatewayReadinessProjection } from "../../readiness/gateway";
 import type { Session } from "../../state/onboard-session";
-import * as fatalRuntimePreflight from "../fatal-runtime-preflight";
 import type { GatewayOwner } from "../gateway-ownership";
 import {
   createOnboardPreflightGatewayAuthority,
@@ -42,15 +41,13 @@ describe("preflight gateway authority", () => {
       findings: [],
       evidence: [],
     };
-    const collectReadiness = vi
-      .spyOn(fatalRuntimePreflight, "collectOnboardGatewayReadiness")
-      .mockImplementation(async (collectorDeps) => {
-        events.push("collect readiness");
-        expect(collectorDeps.gatewayName?.()).toBe("nemoclaw");
-        expect(collectorDeps.gatewayPort?.()).toBe(8080);
-        expect(collectorDeps.resolveOwner?.()).toBe(owner);
-        return gatewayReadiness;
-      });
+    const collectReadiness = vi.fn(async (collectorDeps) => {
+      events.push("collect readiness");
+      expect(collectorDeps.gatewayName?.()).toBe("nemoclaw");
+      expect(collectorDeps.gatewayPort?.()).toBe(8080);
+      expect(collectorDeps.resolveOwner?.()).toBe(owner);
+      return gatewayReadiness;
+    });
     const session = {} as Session;
     const deps = {
       gatewayName: vi.fn(() => "nemoclaw"),
@@ -58,6 +55,7 @@ describe("preflight gateway authority", () => {
         events.push("read gateway port");
         return 8080;
       }),
+      collectGatewayReadiness: collectReadiness,
       getGatewayOwnerDeps: vi.fn(() => ({
         resolveGatewayOwner: vi.fn(() => owner),
         probeGatewayAttachment: vi.fn(),

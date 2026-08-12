@@ -40,6 +40,9 @@ export interface PreflightGatewayAuthority {
 
 export interface OnboardPreflightGatewayAuthorityDeps
   extends Pick<OnboardGatewayReadinessCollectorDeps, "gatewayName" | "gatewayPort"> {
+  collectGatewayReadiness(
+    deps: OnboardGatewayReadinessCollectorDeps,
+  ): Promise<GatewayReadinessProjection>;
   getGatewayOwnerDeps(): {
     resolveGatewayOwner(): GatewayOwner;
     probeGatewayAttachment: OnboardGatewayReadinessCollectorDeps["probeAttachment"];
@@ -64,7 +67,7 @@ export interface OnboardPreflightGatewayAuthorityDeps
 export function createOnboardPreflightGatewayAuthority(deps: OnboardPreflightGatewayAuthorityDeps) {
   const collectGatewayReadiness = () => {
     const ownerDeps = deps.getGatewayOwnerDeps();
-    return collectOnboardGatewayReadiness({
+    return deps.collectGatewayReadiness({
       gatewayName: deps.gatewayName,
       gatewayPort: deps.gatewayPort,
       resolveOwner: ownerDeps.resolveGatewayOwner,

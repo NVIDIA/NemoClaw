@@ -1365,6 +1365,8 @@ const onboardPreflightGatewayAuthority =
   preflightGatewayAuthority.createOnboardPreflightGatewayAuthority({
     gatewayName: () => GATEWAY_NAME,
     gatewayPort: () => GATEWAY_PORT,
+    collectGatewayReadiness: (deps) =>
+      preflightGatewayAuthority.collectOnboardGatewayReadiness(deps),
     getGatewayOwnerDeps: () => machineGatewayOwnerDeps,
     isNonInteractive,
     ensureOpenshellForOnboard,
