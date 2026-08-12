@@ -3968,14 +3968,12 @@ function validateAllowJetsonDispatchInput(errors: string[], dispatchInputs: Work
   }
   const description = stringValue(input.description);
   if (
-    !description.includes("Colossus dispatcher") ||
-    !description.includes("Cloudflare Tunnel") ||
-    !description.includes("cleanup helper") ||
+    !description.includes("operator-owned dispatch backend") ||
     !description.includes("JETSON_DISPATCH_URL") ||
-    !description.includes("test/e2e/docs/jetson-colossus-dispatch.md")
+    !description.includes("test/e2e/docs/jetson-dispatch.md")
   ) {
     errors.push(
-      "workflow_dispatch allow_jetson_dispatch input must require the Colossus dispatcher, tunnel, cleanup helper, repository URL variable, and deployment checks",
+      "workflow_dispatch allow_jetson_dispatch input must require the operator-owned backend, repository URL variable, and controller documentation",
     );
   }
 }
@@ -3999,13 +3997,13 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
     errors.push("jetson-nvmap-gpu controller timeout must be 60 minutes");
   if (
     !isDeepStrictEqual(asRecord(job.concurrency), {
-      group: "jetson-nvmap-gpu-colossus",
+      group: "jetson-nvmap-gpu-dispatch",
       queue: "max",
       "cancel-in-progress": false,
     })
   ) {
     errors.push(
-      "jetson-nvmap-gpu concurrency must queue every dispatch on one fixed device without cancellation",
+      "jetson-nvmap-gpu concurrency must queue every operator-backend dispatch without cancellation",
     );
   }
   if (!isDeepStrictEqual(asRecord(job.permissions), { contents: "read", "id-token": "write" })) {
@@ -4042,7 +4040,7 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
       errors.push("jetson-nvmap-gpu controller must use Node.js 22");
     }
   }
-  const dispatch = namedStep(steps, "Dispatch exact commit to Jetson through Colossus");
+  const dispatch = namedStep(steps, "Dispatch exact commit to Jetson through operator backend");
   if (
     dispatch?.run !==
       "node --experimental-strip-types --no-warnings tools/e2e/jetson-dispatch-client.mts" ||

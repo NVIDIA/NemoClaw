@@ -171,6 +171,10 @@ describe("OpenClaw 2026.7 startup compatibility", () => {
         "mark_in_container_gateway() { :; }",
         "capture_openclaw_pid_start_identity() { printf -v \"$2\" '%s' test-identity; }",
         "record_gateway_pid() { :; }",
+        extractShellFunction(source, "launch_openclaw_gateway_process").replaceAll(
+          "/tmp/gateway.log",
+          gatewayLog,
+        ),
         launch,
         "launch_openclaw_gateway",
         'wait "$GATEWAY_PID"',
