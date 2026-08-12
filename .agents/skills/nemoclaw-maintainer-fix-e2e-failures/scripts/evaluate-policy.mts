@@ -53,6 +53,10 @@ function requiredStringArray(state: JsonRecord, key: string): string[] {
   return value;
 }
 
+function normalizeLogin(login: string): string {
+  return login.trim().toLowerCase();
+}
+
 function decision(overrides: Partial<FixLoopPolicyDecision>): FixLoopPolicyDecision {
   return {
     action: "record-blocker",
@@ -146,7 +150,10 @@ function evaluateReview(state: JsonRecord): FixLoopPolicyDecision {
   const reviewedHead = requiredString(state, "reviewedHead");
   const checksHead = requiredString(state, "checksHead");
   const requiredChecksPass = requiredBoolean(state, "requiredChecksPass");
-  const independent = actor !== opener && !authors.includes(actor);
+  const normalizedActor = normalizeLogin(actor);
+  const independent =
+    normalizedActor !== normalizeLogin(opener) &&
+    !authors.some((author) => normalizeLogin(author) === normalizedActor);
 
   if (!independent || currentHead !== reviewedHead) {
     return decision({

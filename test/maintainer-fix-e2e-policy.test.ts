@@ -97,6 +97,30 @@ describe("continuous E2E fix-loop executable write policy", () => {
   });
 
   it.each([
+    ["opener", " fix-author ", ["primary-author"]],
+    ["author", "pr-opener", [" FIX-AUTHOR "]],
+    ["co-author", "pr-opener", ["primary-author", " fix-author "]],
+  ])("denies approval by a case-varied %s identity", (_identity, opener, authors) => {
+    expect(
+      evaluateFixLoopPolicy({
+        kind: "review",
+        actor: " Fix-Author ",
+        opener,
+        authors,
+        currentHead: "head-b",
+        reviewedHead: "head-b",
+        checksHead: "head-b",
+        requiredChecksPass: true,
+      }),
+    ).toMatchObject({
+      action: "route-to-independent-current-head-reviewer",
+      allowedWrites: [],
+      deniedWrites: ["submit-approval"],
+      queueState: "waiting-review",
+    });
+  });
+
+  it.each([
     ["pending", "head-b", false],
     ["failing", "head-b", false],
     ["stale", "head-a", true],
