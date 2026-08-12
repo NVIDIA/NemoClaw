@@ -17,6 +17,8 @@ OpenShell registers it as an OpenAI-compatible provider while the sandbox remain
 The Model Router option uses the `routed` inference profile in `nemoclaw-blueprint/blueprint.yaml`.
 During onboarding, NemoClaw starts the router proxy on host port `4000`, waits for its health endpoint, and registers the `nvidia-router` provider with OpenShell.
 The sandbox does not call port `4000` directly.
+On a host without cached routing-model files, Model Router downloads and loads its routing model before the health endpoint responds.
+NemoClaw gives a running router up to 10 minutes to pass its health check and stops onboarding sooner if the process exits.
 
 ```text
 Sandbox agent -> OpenShell -> Model Router on port 4000 -> NVIDIA API

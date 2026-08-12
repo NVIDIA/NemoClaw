@@ -386,11 +386,8 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     const fixture = dockerFixture();
     const store = journalStore();
     const privateBridge = privateBridgeFixture();
-    const lifecycle = createLifecycle(
-      options(fixture, store, { ...bindings(), hostPort: 8081 }),
-      {},
-      privateBridge,
-    );
+    const runtimeBindings = { ...bindings(), hostPort: 8081 };
+    const lifecycle = createLifecycle(options(fixture, store, runtimeBindings), {}, privateBridge);
     const writer = receiptWriter();
     const receipt = lifecycle.start(writer);
     const serialized = serializeHostLocalInferenceReceipt(receipt);
@@ -415,6 +412,9 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(serialized).not.toContain(modelPath);
     expect(serialized).not.toContain("filesystemIdentity");
     expect(serialized).not.toContain("test-only-secret");
+    expect(fixture.capture.mock.calls.map(([argv]) => argv)).toContainEqual(
+      expect.arrayContaining(["create", "--no-healthcheck"]),
+    );
     expect(lifecycle.runtime.inspectManaged(receipt).running).toBe(true);
     expect(lifecycle.runtime.stopManaged(receipt).running).toBe(false);
     expect(lifecycle.runtime.prepareDestroy(receipt)).toEqual(receipt);

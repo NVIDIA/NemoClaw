@@ -27,6 +27,7 @@ import { ROOT, shellQuote } from "../../runner";
 import {
   isDirectSandboxFallbackUnavailableError,
   privilegedSandboxExecArgv,
+  withPrivilegedSandboxExecutionLease,
 } from "../../sandbox/privileged-exec";
 import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
 import * as registry from "../../state/registry";
@@ -98,6 +99,7 @@ function commandTransportDependencies(): CommandTransportDependencies {
     openshellProbeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
     privilegedSandboxExecArgv,
     root: ROOT,
+    withPrivilegedSandboxExecutionLease,
   };
 }
 
@@ -150,20 +152,26 @@ export function executePrivilegedSandboxCommand(
   command: readonly string[],
   timeout: number,
 ): SandboxCommandResult | null {
-  const argv = privilegedSandboxExecArgv(sandboxName, [...command], false, true);
-  const result = dockerSpawnSync(argv, {
-    cwd: ROOT,
-    encoding: "utf-8",
-    env: buildSubprocessEnv(),
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout,
-  });
-  if (result.error) return null;
-  return {
-    status: result.status ?? 1,
-    stdout: String(result.stdout || ""),
-    stderr: String(result.stderr || ""),
-  };
+  return withPrivilegedSandboxExecutionLease(
+    sandboxName,
+    "sandbox process recovery controller",
+    () => {
+      const argv = privilegedSandboxExecArgv(sandboxName, [...command], false, true);
+      const result = dockerSpawnSync(argv, {
+        cwd: ROOT,
+        encoding: "utf-8",
+        env: buildSubprocessEnv(),
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout,
+      });
+      if (result.error) return null;
+      return {
+        status: result.status ?? 1,
+        stdout: String(result.stdout || ""),
+        stderr: String(result.stderr || ""),
+      };
+    },
+  );
 }
 
 export function executeSandboxExecCommand(
@@ -188,15 +196,49 @@ function executeGatewaySupervisorActionPinned(
   expectedContainerId?: string,
 ): ManagedGatewaySupervisorActionResult | null {
   const nonce = randomBytes(32).toString("hex");
-  let argv: string[];
   try {
-    argv = privilegedSandboxExecArgv(
-      sandboxName,
-      [MANAGED_GATEWAY_CONTROL_PATH, action, nonce],
-      false,
-      true,
-      expectedContainerId,
-    );
+    return withPrivilegedSandboxExecutionLease(sandboxName, `gateway supervisor ${action}`, () => {
+      const argv = privilegedSandboxExecArgv(
+        sandboxName,
+        [MANAGED_GATEWAY_CONTROL_PATH, action, nonce],
+        false,
+        true,
+        expectedContainerId,
+      );
+      const controlPathIndex = argv.lastIndexOf(MANAGED_GATEWAY_CONTROL_PATH);
+      const targetContainerId = controlPathIndex > 0 ? argv[controlPathIndex - 1] : null;
+      const result = dockerSpawnSync(argv, {
+        cwd: ROOT,
+        encoding: "utf-8",
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout,
+      });
+      if (result.error) return null;
+      const status = result.status ?? 1;
+      const stdout = String(result.stdout || "").trim();
+      let stderr = String(result.stderr || "").trim();
+      const restartingContainerMatch = stderr.match(DOCKER_CONTAINER_RESTARTING_ERROR);
+      const managedControlRestartingContainerId =
+        status === 1 &&
+        stdout === "" &&
+        restartingContainerMatch?.[1] !== undefined &&
+        restartingContainerMatch[1] === targetContainerId
+          ? restartingContainerMatch[1]
+          : undefined;
+      if (
+        (status === 126 || status === 127) &&
+        /(?:not found|no such file|executable file)/i.test(`${stdout}\n${stderr}`)
+      ) {
+        stderr = ["SUPERVISOR_REBUILD_REQUIRED", stderr].filter(Boolean).join("\n");
+      }
+      return {
+        status,
+        stdout,
+        stderr,
+        ...(managedControlRestartingContainerId ? { managedControlRestartingContainerId } : {}),
+      };
+    });
   } catch (error) {
     if (isDirectSandboxFallbackUnavailableError(error)) {
       // New clones can report Ready before their labeled direct container is
@@ -215,40 +257,6 @@ function executeGatewaySupervisorActionPinned(
       stderr: `PRIVILEGED_CONTROL_UNAVAILABLE: ${detail}`,
     };
   }
-
-  const controlPathIndex = argv.lastIndexOf(MANAGED_GATEWAY_CONTROL_PATH);
-  const targetContainerId = controlPathIndex > 0 ? argv[controlPathIndex - 1] : null;
-  const result = dockerSpawnSync(argv, {
-    cwd: ROOT,
-    encoding: "utf-8",
-    env: process.env,
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout,
-  });
-  if (result.error) return null;
-  const status = result.status ?? 1;
-  const stdout = String(result.stdout || "").trim();
-  let stderr = String(result.stderr || "").trim();
-  const restartingContainerMatch = stderr.match(DOCKER_CONTAINER_RESTARTING_ERROR);
-  const managedControlRestartingContainerId =
-    status === 1 &&
-    stdout === "" &&
-    restartingContainerMatch?.[1] !== undefined &&
-    restartingContainerMatch[1] === targetContainerId
-      ? restartingContainerMatch[1]
-      : undefined;
-  if (
-    (status === 126 || status === 127) &&
-    /(?:not found|no such file|executable file)/i.test(`${stdout}\n${stderr}`)
-  ) {
-    stderr = ["SUPERVISOR_REBUILD_REQUIRED", stderr].filter(Boolean).join("\n");
-  }
-  return {
-    status,
-    stdout,
-    stderr,
-    ...(managedControlRestartingContainerId ? { managedControlRestartingContainerId } : {}),
-  };
 }
 
 type RequestPinnedGatewaySupervisorAction = typeof executeGatewaySupervisorActionPinned;
@@ -810,6 +818,7 @@ function waitForRecreatedSandboxOpenShellReadyResult(
       ? Math.max(1, Math.floor(timeoutSeconds / intervalSeconds) + 1)
       : Math.max(1, Math.floor(timeoutSeconds) + 1);
   let lastOpenshellError: string | undefined;
+  let observedRetryableReRegistrationState = false;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const preGuardRemainingMs = deadlineMs - now();
@@ -853,8 +862,25 @@ function waitForRecreatedSandboxOpenShellReadyResult(
     // mutation outcome to reconcile. Treat that exact timeout as inconclusive
     // and retry behind the pinned managed-health guard on the next iteration.
     // All other unexpected OpenShell failures remain definitive.
+    const retryableReRegistrationState = isRetryableOpenshellReRegistrationState(
+      result,
+      sandboxName,
+    );
+    if (retryableReRegistrationState) observedRetryableReRegistrationState = true;
+    const emptyReadOnlyProbeAfterReRegistration =
+      observedRetryableReRegistrationState &&
+      result.status === 1 &&
+      !result.error &&
+      String(result.stdout ?? "").trim() === "" &&
+      String(result.stderr ?? "").trim() === "";
+    // OpenShell can briefly return an empty exit-1 result after first exposing
+    // the exact replacement re-registration state. Keep that result
+    // inconclusive only inside the same bounded wait and behind the pinned
+    // managed-health guard. It is never accepted as Ready, and an empty first
+    // failure or any diagnostic-bearing unknown failure remains terminal.
     if (
-      !isRetryableOpenshellReRegistrationState(result, sandboxName) &&
+      !retryableReRegistrationState &&
+      !emptyReadOnlyProbeAfterReRegistration &&
       !isCommandTimeout(result)
     ) {
       return {
