@@ -124,6 +124,37 @@ export function isInferenceHealthFailing(inferenceHealth: ProviderHealthStatus |
   return Boolean(inferenceHealth && (!inferenceHealth.probed || !inferenceHealth.ok));
 }
 
+/** Validate user-editable mount state before it reaches JSON or terminal output. */
+export function normalizeSandboxStatusHostMounts(value: unknown): registry.SandboxHostMount[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new Error("Persisted host mount state must be an array; repair the local state first.");
+  }
+  return value.map((candidate) => {
+    if (
+      typeof candidate !== "object" ||
+      candidate === null ||
+      typeof (candidate as Record<string, unknown>).source !== "string" ||
+      typeof (candidate as Record<string, unknown>).target !== "string" ||
+      (candidate as Record<string, unknown>).readOnly !== true
+    ) {
+      throw new Error(
+        "Persisted state contains an invalid read-only host mount; repair the local state first.",
+      );
+    }
+    const { source, target } = candidate as { source: string; target: string };
+    if (
+      registry.hasUnsafeHostMountTerminalText(source) ||
+      registry.hasUnsafeHostMountTerminalText(target)
+    ) {
+      throw new Error(
+        "Persisted state contains a host mount with unsafe terminal control characters; repair the local state first.",
+      );
+    }
+    return { source, target, readOnly: true };
+  });
+}
+
 function buildSandboxInferenceRouteHealth(
   gateway: Awaited<ReturnType<ProbeSandboxInferenceGatewayHealth>>,
   providerHealth: ProviderHealthStatus | null,
@@ -179,6 +210,7 @@ export interface SandboxStatusReport {
   // Last recorded CUDA-usability proof so `status` can distinguish a configured
   // GPU from a proven-usable one instead of reporting any GPU as healthy (#4231).
   sandboxGpuProof: registry.SandboxGpuProofResult | null;
+  hostMounts: registry.SandboxHostMount[];
   openshellDriver: string;
   openshellVersion: string;
   policies: string[];
@@ -667,6 +699,7 @@ async function buildSandboxStatusReport(
     phase,
   );
   const sandboxGpuEnabled = sb ? (sb.sandboxGpuEnabled ?? sb.gpuEnabled === true) : false;
+  const hostMounts = normalizeSandboxStatusHostMounts(sb?.hostMounts);
   const policies =
     sb && Array.isArray(sb.policies)
       ? sb.policies.filter((policy): policy is string => typeof policy === "string")
@@ -722,6 +755,7 @@ async function buildSandboxStatusReport(
     sandboxGpuMode: (sb && sb.sandboxGpuMode) || null,
     sandboxGpuDevice: (sb && sb.sandboxGpuDevice) || null,
     sandboxGpuProof: (sb && sb.sandboxGpuProof) || null,
+    hostMounts,
     openshellDriver: (sb && sb.openshellDriver) || "unknown",
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies,

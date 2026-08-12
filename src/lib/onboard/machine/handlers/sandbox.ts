@@ -114,8 +114,10 @@ import {
   decideSandboxResume,
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
+  hasHostMountConfigDrift,
   mcpRegistryRemovalBlockReason,
   replacesSameNameSandbox,
+  requiresSandboxRecreation,
   resolveToolDisclosureResumeSignals,
   type SandboxResumeDecision,
 } from "./sandbox-resume";
@@ -165,6 +167,7 @@ export interface SandboxStateOptions<
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
   rebuildPreservedEnv?: readonly import("../../../state/preserved-env").PreservedEnvFile[];
+  hostMounts?: readonly import("../../../state/registry/types").SandboxHostMount[];
   recreateSandbox: (requested?: boolean) => boolean;
   gatewayName: string;
   session: Session | null;
@@ -296,6 +299,7 @@ export interface SandboxStateOptions<
       policyTier?: string | null;
       baselineExclusions?: readonly BaselineExclusionEntry[];
       reuseRegisteredCredentials?: boolean;
+      hostMounts?: readonly import("../../../state/registry/types").SandboxHostMount[];
     }): Promise<ResolvedSandboxCreateIntent>;
     createSandbox(
       gpu: Gpu,
@@ -688,6 +692,10 @@ class SandboxStateFlow<
       sandboxGpuConfigChanged: state.sandboxName
         ? this.deps.hasSandboxGpuDrift(state.sandboxName, this.options.sandboxGpuConfig)
         : false,
+      hostMountConfigChanged: hasHostMountConfigDrift(
+        registryEntry?.hostMounts,
+        this.options.hostMounts,
+      ),
       recreateSandboxRequested: this.options.recreateSandbox(false),
       recreateJournalHandoff: Boolean(this.options.recreateJournalTargetIntentFingerprint),
       messagingChannelConfigChanged: !this.deps.messagingChannelConfigsEqual(
@@ -1451,6 +1459,7 @@ class SandboxStateFlow<
       hermesToolGateways,
       extraProviders,
       staleExtraProviders,
+      hostMounts: this.options.hostMounts,
       baselineExclusions: baselineExclusionsForCreate(sandboxName),
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
       ...(this.options.authoritativePolicyTier !== undefined
@@ -1459,7 +1468,7 @@ class SandboxStateFlow<
     });
     return {
       resolved,
-      recreate: decision.kind !== "create",
+      recreate: requiresSandboxRecreation(decision, this.options.recreateSandbox(false)),
       toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
       observabilityEnabled: state.session?.observabilityEnabled === true,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
