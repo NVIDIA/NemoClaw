@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -14,6 +15,7 @@ import {
 import {
   JETSON_DISPATCH_AUDIENCE,
   JETSON_DISPATCH_CONTRACT_VERSION,
+  JETSON_DISPATCH_V1_SHA256,
   type JetsonDispatchArtifact,
   type JetsonDispatchRequest,
   type JetsonDispatchStatus,
@@ -32,9 +34,10 @@ interface CompatibilityVectors {
   queuedResponse: unknown;
 }
 
-const vectors = JSON.parse(
-  fs.readFileSync(path.join(process.cwd(), "tools/e2e/contracts/v1/jetson-dispatch.json"), "utf8"),
-) as CompatibilityVectors;
+const vectorBytes = fs.readFileSync(
+  path.join(process.cwd(), "tools/e2e/contracts/v1/jetson-dispatch.json"),
+);
+const vectors = JSON.parse(vectorBytes.toString("utf8")) as CompatibilityVectors;
 const request = parseJetsonDispatchRequest(vectors.request);
 const queuedStatus = parseJetsonDispatchStatusResponse(vectors.queuedResponse);
 const completedStatus = parseJetsonDispatchStatus(vectors.completedStatus);
@@ -49,6 +52,10 @@ afterEach(() => {
 });
 
 describe("Jetson dispatch static HTTP contract", () => {
+  it("keeps the published v1 bytes immutable (#8142)", () => {
+    expect(createHash("sha256").update(vectorBytes).digest("hex")).toBe(JETSON_DISPATCH_V1_SHA256);
+  });
+
   it("accepts every version 1.0.0 compatibility vector (#8142)", () => {
     expect(vectors.contractVersion).toBe(JETSON_DISPATCH_CONTRACT_VERSION);
     expect(request).toEqual(vectors.request);
