@@ -82,6 +82,10 @@ def cli_main():
     async def _restart_server_for_agent_swap(self, agent_name):
         del agent_name
 
+    async def _set_approval_mode(self, target):
+        del target
+        return True
+
     async def _switch_model(self, model_spec, **kwargs):
 `,
     ),
@@ -257,6 +261,7 @@ def should_run_onboarding(state_dir=None): return True
   "tui/widgets/approval.py": `from __future__ import annotations
 
 class ApprovalMenu:
+    def _build_options(self): return []
     def _handle_selection(self, option, *, reject_message=None): pass
 `,
   "tui/widgets/status.py": `from __future__ import annotations
