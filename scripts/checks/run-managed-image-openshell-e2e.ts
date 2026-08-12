@@ -659,11 +659,15 @@ function assertProtectedLocalInference(
   }
 }
 
-function failureInjectingAdapter(onboard: OnboardModule): ManagedBootstrapAdapter {
+export function failureInjectingAdapter(
+  onboard: OnboardModule,
+  stateRoot: string,
+): ManagedBootstrapAdapter {
   const adapter = createDockerManagedBootstrapAdapter({
     runCaptureOpenshell: onboard.runCaptureOpenshell,
     runOpenshell: onboard.runOpenshell,
     sleep: onboard.sleepSeconds,
+    stateRoot,
   });
   return {
     ...adapter,
@@ -1002,7 +1006,8 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           verifyDirectSandboxGpu,
           ...(input.failureInjection
             ? {
-                createManagedBootstrapAdapter: () => failureInjectingAdapter(onboard!),
+                createManagedBootstrapAdapter: (stateRoot: string) =>
+                  failureInjectingAdapter(onboard!, stateRoot),
               }
             : {}),
         },
