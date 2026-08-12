@@ -1176,8 +1176,11 @@ RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandb
     && /usr/local/lib/nemoclaw/state-dir-guard.py unlock \
         --config-dir /sandbox/.hermes --plan-json "$lazy_plan" \
     && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
-        find /sandbox/.hermes/lazy-packages -mindepth 1 -delete \
+        sh -c ': > /sandbox/.hermes/lazy-packages/.nemoclaw-sandbox-unlock-probe' \
+    && test -f /sandbox/.hermes/lazy-packages/.nemoclaw-sandbox-unlock-probe \
+    && find /sandbox/.hermes/lazy-packages -mindepth 1 -delete \
     && test -z "$(find /sandbox/.hermes/lazy-packages -mindepth 1 -print -quit)" \
+    && chown sandbox:sandbox /sandbox/.hermes/lazy-packages \
     && chmod 750 /sandbox/.hermes/lazy-packages \
     && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750"
 
