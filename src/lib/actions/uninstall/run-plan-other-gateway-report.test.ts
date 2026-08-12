@@ -107,7 +107,6 @@ describe("uninstall reporting for other gateway-port environments (#7791)", () =
   });
 
   it("colors the retained gateway warning and uninstall commands yellow (#8797)", () => {
-    const originalColorDepth = Object.getOwnPropertyDescriptor(process.stderr, "getColorDepth");
     Object.defineProperty(process.stderr, "getColorDepth", {
       configurable: true,
       value: () => 8,
@@ -125,11 +124,7 @@ describe("uninstall reporting for other gateway-port environments (#7791)", () =
         "\x1b[33m  Remove every gateway port: nemoclaw uninstall --all-gateway-ports\x1b[39m",
       );
     } finally {
-      if (originalColorDepth) {
-        Object.defineProperty(process.stderr, "getColorDepth", originalColorDepth);
-      } else {
-        Reflect.deleteProperty(process.stderr, "getColorDepth");
-      }
+      Reflect.deleteProperty(process.stderr, "getColorDepth");
     }
   });
 
