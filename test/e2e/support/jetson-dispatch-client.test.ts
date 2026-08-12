@@ -38,6 +38,11 @@ const vectors = JSON.parse(
 const request = parseJetsonDispatchRequest(vectors.request);
 const queuedStatus = parseJetsonDispatchStatusResponse(vectors.queuedResponse);
 const completedStatus = parseJetsonDispatchStatus(vectors.completedStatus);
+const invalidRequestErrors: Record<string, string> = {
+  "extra request field": "dispatch request fields do not match Jetson dispatch contract 1.0.0",
+  "noncanonical candidate SHA": "candidateSha must be a lowercase 40-character commit SHA",
+  "wrong target": "dispatch target must be jetson-nvmap-gpu",
+};
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -54,8 +59,8 @@ describe("Jetson dispatch static HTTP contract", () => {
     );
   });
 
-  it.each(vectors.invalidRequests)("rejects $name (#8142)", ({ value }) => {
-    expect(() => parseJetsonDispatchRequest(value)).toThrow();
+  it.each(vectors.invalidRequests)("rejects $name (#8142)", ({ name, value }) => {
+    expect(() => parseJetsonDispatchRequest(value)).toThrow(invalidRequestErrors[name]);
   });
 
   it("rejects a valid status for a different submitted request (#8142)", () => {
@@ -71,18 +76,23 @@ describe("Jetson dispatch static HTTP contract", () => {
     {
       name: "an extra status field",
       value: { ...(vectors.queuedResponse as { job: object }).job, command: "untrusted" },
+      expectedError:
+        "queued Jetson dispatch status fields do not match Jetson dispatch contract 1.0.0",
     },
     {
       name: "a mismatched job ID",
       value: { ...(vectors.queuedResponse as { job: object }).job, jobId: "f".repeat(64) },
+      expectedError: "Jetson dispatch status does not match its request and job ID",
     },
     {
       name: "completed cleanup on a queued job",
       value: { ...(vectors.queuedResponse as { job: object }).job, cleanup: "succeeded" },
+      expectedError: "queued Jetson dispatch cleanup must be pending",
     },
     {
       name: "a successful result without device identity",
       value: { ...(vectors.completedStatus as Record<string, unknown>), device: undefined },
+      expectedError: "successful Jetson dispatch must include device identity",
     },
     {
       name: "a cleanup conclusion mismatch",
@@ -91,6 +101,31 @@ describe("Jetson dispatch static HTTP contract", () => {
         cleanup: "failed",
         conclusion: "failure",
       },
+      expectedError: "completed Jetson dispatch result is invalid",
+    },
+    {
+      name: "a successful result with failed cleanup",
+      value: {
+        ...(vectors.completedStatus as Record<string, unknown>),
+        cleanup: "failed",
+      },
+      expectedError: "completed Jetson dispatch result is invalid",
+    },
+    {
+      name: "a non-string conclusion",
+      value: {
+        ...(vectors.completedStatus as Record<string, unknown>),
+        conclusion: ["success"],
+      },
+      expectedError: "completed Jetson dispatch result is invalid",
+    },
+    {
+      name: "a non-string cleanup state",
+      value: {
+        ...(vectors.completedStatus as Record<string, unknown>),
+        cleanup: ["succeeded"],
+      },
+      expectedError: "completed Jetson dispatch result is invalid",
     },
     {
       name: "an out-of-order completion timestamp",
@@ -98,9 +133,10 @@ describe("Jetson dispatch static HTTP contract", () => {
         ...(vectors.completedStatus as Record<string, unknown>),
         completedAt: "2026-08-11T23:59:59.000Z",
       },
+      expectedError: "completed Jetson dispatch timestamps are invalid",
     },
-  ])("rejects $name (#8142)", ({ value }) => {
-    expect(() => parseJetsonDispatchStatus(value)).toThrow();
+  ])("rejects $name (#8142)", ({ expectedError, value }) => {
+    expect(() => parseJetsonDispatchStatus(value)).toThrow(expectedError);
   });
 
   it("accepts cleanup success when later device-lock release fails (#8142)", () => {
@@ -137,11 +173,13 @@ describe("Jetson dispatch static HTTP contract", () => {
     {
       name: "an extra artifact field",
       value: { ...(vectors.artifact as Record<string, unknown>), secret: "unexpected" },
+      expectedError: "Jetson dispatch artifact fields do not match Jetson dispatch contract 1.0.0",
     },
     {
       name: "a mismatched artifact job ID",
       value: vectors.artifact,
       expectedJobId: "f".repeat(64),
+      expectedError: "Jetson dispatch artifact does not match its completed job",
     },
     {
       name: "a noncanonical artifact archive",
@@ -149,6 +187,7 @@ describe("Jetson dispatch static HTTP contract", () => {
         ...(vectors.artifact as Record<string, unknown>),
         artifactArchiveBase64: "not base64",
       },
+      expectedError: "Jetson artifact archive must be bounded canonical base64",
     },
     {
       name: "a successful result without its archive",
@@ -156,11 +195,23 @@ describe("Jetson dispatch static HTTP contract", () => {
         status: (vectors.artifact as { status: unknown }).status,
         log: "fixture log\n",
       },
+      expectedError: "successful Jetson dispatch must include its artifact archive",
     },
-  ])("rejects $name (#8142)", ({ expectedJobId, value }) => {
+    {
+      name: "a non-string successful conclusion without an archive",
+      value: {
+        status: {
+          ...(vectors.completedStatus as Record<string, unknown>),
+          conclusion: ["success"],
+        },
+        log: "fixture log\n",
+      },
+      expectedError: "completed Jetson dispatch result is invalid",
+    },
+  ])("rejects $name (#8142)", ({ expectedError, expectedJobId, value }) => {
     expect(() =>
       parseJetsonDispatchArtifact(value, expectedJobId ?? completedStatus.jobId),
-    ).toThrow();
+    ).toThrow(expectedError);
   });
 });
 
@@ -269,6 +320,35 @@ describe("Jetson dispatch GitHub controller", () => {
         path: "v1/jobs",
         body: request,
         maxBytes: 64 * 1024,
+        fetchImpl,
+        tokenProvider: async () => "oidc-token",
+      }),
+    ).rejects.toThrow("Jetson dispatcher response is too large");
+  });
+
+  it("rejects an oversized streamed response without Content-Length (#8142)", async () => {
+    const chunk = new TextEncoder().encode("x".repeat(4096));
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(chunk);
+              controller.enqueue(chunk);
+              controller.enqueue(chunk);
+              controller.close();
+            },
+          }),
+          { status: 202 },
+        ),
+    );
+
+    await expect(
+      dispatcherRequest({
+        baseUrl: new URL("https://dispatch.test/"),
+        method: "GET",
+        path: "v1/jobs/test",
+        maxBytes: 8 * 1024,
         fetchImpl,
         tokenProvider: async () => "oidc-token",
       }),

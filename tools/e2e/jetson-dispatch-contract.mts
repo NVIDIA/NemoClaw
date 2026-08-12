@@ -10,6 +10,14 @@ export const JETSON_DISPATCH_TARGET = "jetson-nvmap-gpu";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const JOB_ID_PATTERN = /^[a-f0-9]{64}$/u;
 const POSITIVE_INTEGER_PATTERN = /^[1-9][0-9]*$/u;
+const DISPATCH_CONCLUSIONS: readonly string[] = [
+  "cancelled",
+  "cleanup-failed",
+  "failure",
+  "success",
+  "timed-out",
+];
+const COMPLETED_CLEANUP_STATES: readonly string[] = ["failed", "succeeded"];
 const MAX_ERROR_CHARACTERS = 500;
 const MAX_DEVICE_IDENTITY_CHARACTERS = 500;
 export const MAX_JETSON_DISPATCH_LOG_BYTES = 4 * 1024 * 1024;
@@ -230,10 +238,10 @@ export function parseJetsonDispatchStatus(value: unknown): JetsonDispatchStatus 
     ["device", "error"],
   );
   if (
-    !["cancelled", "cleanup-failed", "failure", "success", "timed-out"].includes(
-      String(status.conclusion),
-    ) ||
-    !["failed", "succeeded"].includes(String(status.cleanup)) ||
+    typeof status.conclusion !== "string" ||
+    !DISPATCH_CONCLUSIONS.includes(status.conclusion) ||
+    typeof status.cleanup !== "string" ||
+    !COMPLETED_CLEANUP_STATES.includes(status.cleanup) ||
     (status.cleanup === "failed" && status.conclusion !== "cleanup-failed")
   ) {
     throw new Error("completed Jetson dispatch result is invalid");
