@@ -633,6 +633,20 @@ describe("CLI dispatch", () => {
     );
   });
 
+  it("does not suggest a route-only reservation in the connect command-order hint (#8801)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, stderr }) => {
+        await expect(dispatchCli(["connect", "stale"])).rejects.toThrow("process.exit:1");
+
+        const output = stderr.join("\n");
+        expect(output).not.toContain("Did you mean: nemoclaw stale connect?");
+        expect(output).not.toContain("Registered sandboxes: stale");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+      { sandboxNames: ["stale"], pendingSandboxNames: ["stale"] },
+    );
+  });
+
   it("suggests the closest registered sandbox name for a mistyped sandbox action", async () => {
     await withDirectPublicDispatch(
       async ({ dispatchCli, exitSpy, stderr }) => {
