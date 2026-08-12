@@ -653,10 +653,7 @@ describe("complete managed-image publication workflow", () => {
     expect(qaBuilder.permissions).toEqual({ contents: "read" });
     expect(qaBuilder.env).toMatchObject({
       CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
-      STAGING_PRODUCER_SHA: "cd0cb2b89965d57cd3d7d97a30d4bdab26781b61",
-      STAGING_QA_SOURCE_SHA: "d097a22145859102c0495b0310de264b7a27624f",
-      STAGING_QA_RECORDED_INDEX_DIGEST:
-        "sha256:ceaa94a895ba5cb3f231074b97f9910df3ce9d375802cb1d21c777691e0feb43",
+      STAGING_QA_SOURCE_SHA: "250d4abd2d602f864659c06d170699347b5d38bc",
       STAGING_QA_BASE_IMAGE: "nemoclaw-deepagents-code-base:staging-31396519688",
     });
     expect(JSON.stringify(qaBuilder)).not.toContain(":latest");

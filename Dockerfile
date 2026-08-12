@@ -18,7 +18,7 @@ ARG CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY=sha512-30vSoZuW1DP6Nuz24Gg3jgVC37IYe0
 ARG CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY=sha512-I1f6WoSLbLlsWq4zH+vtwdoc4Y41mqRXPpSkfgIifxBw34QmWJmi37etZ7lKTYp6R+J/Z4PUN0rsmnsmKpBZTw==
 
 # Stage 1: Build TypeScript plugin from source
-FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS builder
+FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS builder
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
@@ -139,7 +139,7 @@ FROM codex-acp-${TARGETARCH}-archive AS codex-acp-platform-archive
 
 # Reviewed-archive invariants (#5896): checksum-addressed source archives,
 # committed SRI verification, offline installation, and exact architecture.
-FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS codex-acp-runtime
+FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS codex-acp-runtime
 ARG TARGETARCH
 ARG CODEX_ACP_0_11_1_INTEGRITY
 ARG CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY
@@ -162,7 +162,7 @@ RUN --network=none set -eu; \
     rm -rf /tmp/codex-acp; \
     command -v codex-acp >/dev/null
 
-FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS wechat-npm-cache
+FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS wechat-npm-cache
 COPY agents/openclaw/wechat-runtime/package.json agents/openclaw/wechat-runtime/package-lock.json /opt/wechat-runtime/
 COPY scripts/checks/materialize-locked-npm-cache-seed.mts /opt/checks/
 COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/seed-reviewed-npm-cache.mts /opt/nemoclaw-build-tools/
@@ -476,10 +476,10 @@ FROM openclaw-managed-messaging-npm-${TARGETARCH}-archives AS openclaw-managed-m
 
 # Keep the complete managed-image messaging dependency graph inert for normal
 # Dockerfile builds. Release-image builds select the exact-lock cache stage.
-FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS openclaw-managed-messaging-npm-cache-0
+FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS openclaw-managed-messaging-npm-cache-0
 RUN install -d -o root -g root -m 0755 /out/npm-cache
 
-FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS openclaw-managed-messaging-npm-cache-1
+FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS openclaw-managed-messaging-npm-cache-1
 ARG TARGETARCH
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
@@ -857,7 +857,7 @@ RUN --network=default set -eu; \
     OPENCLAW_LOCK_SHA256=none-legacy-fixture; \
     OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
     if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
-        OPENCLAW_LOCK_SHA256=759b31779f40867f35f15065b582eb1d3efb8fddb1fe43c207507c905fa2a421; \
+        OPENCLAW_LOCK_SHA256=a814d82a36046bd7819d222337809ce80ccfd76b553cd17265ff64a527d3d095; \
         ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
         [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
             || { echo "ERROR: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)" >&2; exit 1; }; \
@@ -986,7 +986,7 @@ RUN --network=default set -eu; \
         npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ci \
             --ignore-scripts --omit=dev --no-audit --no-fund --no-progress; \
         npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ls \
-            --omit=dev --all @hono/node-server @modelcontextprotocol/sdk mcporter >/dev/null; \
+            --omit=dev --all @hono/node-server @modelcontextprotocol/sdk hono mcporter >/dev/null; \
         node --input-type=module -e \
             'const { StreamableHTTPServerTransport } = await import("file:///usr/local/lib/nemoclaw/mcporter-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/server/streamableHttp.js"); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); await transport.close();'; \
         ln -s /usr/local/lib/nemoclaw/mcporter-runtime/node_modules/.bin/mcporter /usr/local/bin/mcporter; \
@@ -2397,7 +2397,7 @@ RUN set -eu; \
     test "$(stat -c '%u:%g:%a' "$security_inventory")" = "0:0:444"; \
     printf '%s\n' \
         "architecture=$arch" \
-        "libexpat1=2.8.2-1" \
+        "libexpat1=2.8.3-1" \
         "libonig5=6.9.9-1+b1" \
         "libjq1=1.8.2-1" \
         "jq=1.8.2-1" \
@@ -2408,7 +2408,7 @@ RUN set -eu; \
         "perl-base=5.44.0-1nemoclaw1" \
         "perl=5.44.0-1nemoclaw1" \
         | cmp -s - "$security_inventory"; \
-    test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.2-1"; \
+    test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.3-1"; \
     test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1"; \
     test "$(dpkg-query -W -f='${Version}' libjq1)" = "1.8.2-1"; \
     test "$(dpkg-query -W -f='${Version}' jq)" = "1.8.2-1"; \
@@ -2422,7 +2422,7 @@ RUN set -eu; \
     ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5'; \
     test "$(jq --version)" = "jq-1.8.2"; \
     printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null; \
-    python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION"; \
+    python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.3', pyexpat.EXPAT_VERSION"; \
     printf '%s  %s\n' \
         "4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7" \
         /usr/lib/python3.13/html/parser.py \
