@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Shields transition confirmation helpers (#4663, #8304).
+// Re-lock-and-reconfirm helper for shields (#4663).
 //
 // `lockAgentConfig` chmod 444 / chown root:root the config files and verifies
 // the on-disk state once — a single instantaneous snapshot. On DGX Station /
@@ -33,69 +33,6 @@ const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_SETTLE_MS = 750;
 const MIN_SETTLE_MS = 0;
 const MAX_SETTLE_MS = 10_000;
-const POLICY_ANSI_RE = /\x1b\[[0-9;]*m/g;
-
-export interface PolicyCommandResult {
-  status: number | null;
-  stdout?: string | Buffer | null;
-  stderr?: string | Buffer | null;
-}
-
-export interface DeferredPermissivePolicyConfirmationOptions {
-  proveNoRunningDirectSandbox: () => boolean;
-  readPolicyReceipt: () => PolicyCommandResult;
-  parsePolicy: (raw: string) => string;
-}
-
-function policyCommandOutput(result: PolicyCommandResult): string {
-  return [result.stdout, result.stderr]
-    .map((value) => String(value ?? ""))
-    .filter(Boolean)
-    .join("\n")
-    .replace(POLICY_ANSI_RE, "");
-}
-
-/**
- * Confirm the one safe deferred-load case for a user-authorized Shields-down
- * transition. OpenShell may commit the relaxed policy but return nonzero when
- * a failed-startup sandbox has no running container to acknowledge loading it.
- * The caller must independently prove that exact stopped-container state; a
- * discovery error, live container, malformed receipt, or mismatch fails closed.
- */
-export function confirmDeferredPermissivePolicyForStoppedSandbox(
-  policySetResult: PolicyCommandResult,
-  options: DeferredPermissivePolicyConfirmationOptions,
-): boolean {
-  const output = policyCommandOutput(policySetResult);
-  const submissions = [
-    ...output.matchAll(/^.*Policy version ([1-9]\d*) submitted \(hash: ([0-9a-f]{8,64})\)\s*$/gim),
-  ];
-  if (submissions.length !== 1) return false;
-  const version = submissions[0]?.[1];
-  const hash = submissions[0]?.[2]?.toLowerCase();
-  if (!version || !hash) return false;
-  const timeouts = output.match(
-    new RegExp(`^.*Timeout waiting for policy version ${version} to load\\s*$`, "gim"),
-  );
-  if (timeouts?.length !== 1 || !options.proveNoRunningDirectSandbox()) return false;
-
-  const receipt = options.readPolicyReceipt();
-  if (receipt.status !== 0) return false;
-  const receiptOutput = policyCommandOutput(receipt);
-  const separator = /(?:^|\r?\n)---[ \t]*(?:\r?\n|$)/.exec(receiptOutput);
-  if (!separator || !options.parsePolicy(receiptOutput)) return false;
-  const header = receiptOutput.slice(0, separator.index);
-  const versions = [...header.matchAll(/^\s*Version:\s*([1-9]\d*)\s*$/gim)];
-  const hashes = [...header.matchAll(/^\s*Hash:\s*([0-9a-f]{8,64})\s*$/gim)];
-  const statuses = [...header.matchAll(/^\s*Status:\s*(pending|active)\s*$/gim)];
-  return (
-    versions.length === 1 &&
-    hashes.length === 1 &&
-    statuses.length === 1 &&
-    versions[0]?.[1] === version &&
-    hashes[0]?.[1]?.toLowerCase() === hash
-  );
-}
 
 /** Result of a single `lockAgentConfig` call: apply + verify. */
 export interface LockResult {

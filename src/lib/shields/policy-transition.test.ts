@@ -29,33 +29,6 @@ function sandboxCommandFailure(
 ): Error {
   return Object.assign(new Error(message), { stderr, stdout });
 }
-
-function deferredPolicyRunner(hash: string): NonNullable<ShieldsFlowHarnessOptions["run"]> {
-  const results = new Map<string, ReturnType<NonNullable<ShieldsFlowHarnessOptions["run"]>>>([
-    [
-      "get",
-      {
-        status: 0,
-        stdout: `Version: 11\nHash: ${hash}\nStatus: pending\n---\nversion: 1\nnetwork_policies: {}\n`,
-        stderr: "",
-      },
-    ],
-    [
-      "set",
-      {
-        status: 1,
-        stdout: `Policy version 11 submitted (hash: ${hash})\n`,
-        stderr: "Timeout waiting for policy version 11 to load\n",
-      },
-    ],
-  ]);
-  return (cmd) => {
-    const args = Array.isArray(cmd) ? cmd.map(String) : [];
-    const operation = args.find((arg) => arg === "get" || arg === "set") ?? "unknown";
-    return results.get(operation) ?? { status: 0 };
-  };
-}
-
 const TRANSITION_LOCK_MODULE = "./transition-lock.js";
 
 describe("shields policy transition", () => {
@@ -174,24 +147,6 @@ describe("shields down policy rejection", () => {
       fs.readFileSync(path.join(tmpDir, ".nemoclaw/state/shields-openclaw.json"), "utf-8"),
     );
     expect(state).toMatchObject({ shieldsDown: false, shieldsDownAt: null });
-  });
-
-  it("finishes Shields down when a terminal sandbox has the exact committed policy receipt (#8304)", () => {
-    const hash = "d71616b0333b";
-    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
-      deferredPolicyContainerMissing: true,
-      initialOpenClawPosture: "locked",
-      run: deferredPolicyRunner(hash),
-    });
-
-    expect(() =>
-      harness.shieldsDown("openclaw", { reason: "failed startup recovery", throwOnError: true }),
-    ).not.toThrow();
-    expect(harness.isShieldsDown("openclaw")).toBe(true);
-    expect(harness.getOpenClawPosture()).toBe("mutable");
-    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
-      "Policy committed for the stopped sandbox",
-    );
   });
 
   it("retains auto-restore authority when rejected policy state cleanup fails (#8198)", () => {

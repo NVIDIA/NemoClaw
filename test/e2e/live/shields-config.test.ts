@@ -483,7 +483,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
       "restart OpenClaw with shields down",
       "recover shields after a dead restore timer",
       "reject duplicate shields transitions",
-      "prove installed failed-startup recovery refuses a live child and unlocks childless state",
+      "prove supported shields down recovery refuses a live child and unlocks childless state",
       "record shields contract evidence",
     ],
   },
@@ -505,7 +505,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
       "start restores a stopped OpenClaw sandbox while shields are down",
       "dead auto-restore timer inline recovery re-locks config and .config-hash",
       "double shields-up/down operations are rejected",
-      "installed failed-startup recovery refuses a live supervised child and atomically unlocks childless state",
+      "supported shields down recovery refuses a live child and atomically unlocks childless state",
     ],
   });
 
@@ -1074,7 +1074,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   expect(resultText(finalUp)).toContain("Lockdown active");
 
   progress.phase(
-    "prove installed failed-startup recovery refuses a live child and unlocks childless state",
+    "prove supported shields down recovery refuses a live child and unlocks childless state",
   );
   const recoveryContainerId = await findSandboxContainer(host);
   const removeMarkers = await docker(
@@ -1143,14 +1143,24 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   expect(terminateChild.exitCode, resultText(terminateChild)).toBe(0);
 
   await waitForChildlessStartup(host, recoveryContainerId);
-  const childlessUnlock = await runInstalledFailedStartupUnlock(
+  const childlessRecovery = await runNemoclaw(
     host,
-    recoveryContainerId,
-    "phase-12-childless-unlock",
+    [
+      SANDBOX_NAME,
+      "shields",
+      "down",
+      "--timeout",
+      "5m",
+      "--reason",
+      "Supported failed-startup recovery E2E",
+    ],
+    { artifactName: "phase-12-childless-shields-down", timeoutMs: 16 * 60_000 },
   );
-  expect(childlessUnlock.exitCode, resultText(childlessUnlock)).toBe(0);
-  expect(resultText(childlessUnlock)).toContain('"action": "unlock-failed-startup"');
-  expect(resultText(childlessUnlock)).toContain('"status": "ok"');
+  expect(childlessRecovery.exitCode, resultText(childlessRecovery)).toBe(0);
+  expect(resultText(childlessRecovery)).toContain(
+    "Lowered shields on a sandbox whose startup never completed.",
+  );
+  expect(resultText(childlessRecovery)).toContain("Sandbox is in default (mutable) state.");
   const unlockedPaths = await docker(
     host,
     [
@@ -1179,22 +1189,9 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   expect(resumeSupervisor.exitCode, resultText(resumeSupervisor)).toBe(0);
   supervisorPaused = false;
 
-  // Reconcile the host-side Shields receipt after the direct installed-guard
-  // proof, then restart the failed sandbox and return cleanup to lockdown.
-  const reconcileDown = await runNemoclaw(
-    host,
-    [
-      SANDBOX_NAME,
-      "shields",
-      "down",
-      "--timeout",
-      "5m",
-      "--reason",
-      "Installed failed-startup recovery E2E",
-    ],
-    { artifactName: "phase-12-reconcile-shields-down", timeoutMs: 16 * 60_000 },
-  );
-  expect(reconcileDown.exitCode, resultText(reconcileDown)).toBe(0);
+  // The supported host command owns the policy receipt and config mutation as
+  // one transition. Resume only after it commits the mutable posture, then
+  // prove ordinary stop/start recovery remains available before relocking.
   await expectStopStartRecovery(host, sandbox, "DOWN", "phase-12-restart-after-recovery", [apiKey]);
   const relockAfterRecovery = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
     artifactName: "phase-12-relock-after-recovery",
@@ -1219,7 +1216,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
       deadTimerInlineAutoRestore: true,
       doubleOperationRejection: true,
       installedFailedStartupLiveChildRefusal: true,
-      installedFailedStartupChildlessUnlock: true,
+      supportedShieldsDownChildlessRecovery: true,
       inheritedMutationLockAcceptedByStateGuard: true,
     },
   });

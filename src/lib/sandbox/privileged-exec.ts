@@ -55,13 +55,6 @@ class DirectSandboxFallbackUnavailableError extends Error {
   }
 }
 
-class MissingDirectSandboxContainerError extends DirectSandboxFallbackUnavailableError {
-  constructor(message: string) {
-    super(message);
-    this.name = "MissingDirectSandboxContainerError";
-  }
-}
-
 function normalizeDriver(driver: unknown): string | null {
   return typeof driver === "string" && driver.trim() ? driver.trim().toLowerCase() : null;
 }
@@ -185,18 +178,12 @@ function findDirectSandboxContainer(sandboxName: string): string | null {
 
 function missingDirectContainerError(sandboxName: string, driver: string | null): Error {
   const driverLabel = driver ?? "unspecified";
-  return new MissingDirectSandboxContainerError(
+  return new DirectSandboxFallbackUnavailableError(
     `No running direct OpenShell sandbox container found for '${sandboxName}' ` +
       `(driver: ${driverLabel}). Expected one OpenShell-managed container labeled ` +
       `'${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}' and named ` +
       `${expectedDirectContainerPattern(sandboxName)}. Is the sandbox running?`,
   );
-}
-
-function isMissingDirectSandboxContainerError(
-  error: unknown,
-): error is MissingDirectSandboxContainerError {
-  return error instanceof MissingDirectSandboxContainerError;
 }
 
 function isDirectSandboxFallbackUnavailableError(
@@ -341,7 +328,6 @@ function privilegedSandboxExecArgv(
 export {
   containerNameMatchesSandbox,
   isDirectSandboxFallbackUnavailableError,
-  isMissingDirectSandboxContainerError,
   privilegedSandboxExecArgv,
   resolveDirectSandboxContainer,
   selectDirectSandboxContainer,
