@@ -17,7 +17,7 @@ function validateWorkflowMutation(
 }
 
 describe("Jetson nvmap GPU E2E workflow boundary", () => {
-  it("rejects a permissive Colossus dispatch opt-in (#8142)", () => {
+  it("rejects a permissive Jetson dispatch opt-in (#8142)", () => {
     const inputErrors = validateWorkflowMutation((workflow) => {
       const triggers = (workflow.on ?? workflow[true as unknown as string]) as {
         workflow_dispatch?: {
@@ -33,7 +33,7 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
       expect.arrayContaining([
         "workflow_dispatch allow_jetson_dispatch input must be boolean",
         "workflow_dispatch allow_jetson_dispatch input must default to false",
-        "workflow_dispatch allow_jetson_dispatch input must require the Colossus dispatcher, tunnel, cleanup helper, repository URL variable, and deployment checks",
+        "workflow_dispatch allow_jetson_dispatch input must require the operator-owned backend, repository URL variable, and controller documentation",
       ]),
     );
   });
@@ -51,7 +51,7 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
     );
   });
 
-  it("queues every Jetson dispatch on one fixed device without cancellation (#8142)", () => {
+  it("queues every operator-backend dispatch without cancellation (#8142)", () => {
     const workflow = readWorkflow();
     const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {
       concurrency?: Record<string, unknown>;
@@ -62,7 +62,7 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
       "cancel-in-progress": true,
     };
     expect(validateJetsonDispatchBoundary(workflow)).toContain(
-      "jetson-nvmap-gpu concurrency must queue every dispatch on one fixed device without cancellation",
+      "jetson-nvmap-gpu concurrency must queue every operator-backend dispatch without cancellation",
     );
   });
 
@@ -78,7 +78,7 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
       )!;
       checkout.with!.ref = "${{ inputs.checkout_sha }}";
       const dispatch = job.steps!.find(
-        (step) => step.name === "Dispatch exact commit to Jetson through Colossus",
+        (step) => step.name === "Dispatch exact commit to Jetson through operator backend",
       )!;
       dispatch.run = "bash candidate-script.sh";
     });
@@ -118,7 +118,7 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
         E2E_ARTIFACT_DIR: "${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu",
       };
       const dispatch = job.steps!.find(
-        (step) => step.name === "Dispatch exact commit to Jetson through Colossus",
+        (step) => step.name === "Dispatch exact commit to Jetson through operator backend",
       )!;
       dispatch.env!.E2E_ARTIFACT_DIR = "${{ github.workspace }}/e2e-artifacts";
     });

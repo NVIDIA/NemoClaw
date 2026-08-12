@@ -2163,7 +2163,10 @@ install_nemoclaw() {
     # Clone first so we can pre-extract openclaw before npm install (GH-503).
     # npm install -g git+https://... does this internally but we can't hook
     # into its extraction pipeline, so we do it ourselves.
-    local nemoclaw_src="${HOME}/.nemoclaw/source"
+    local nemoclaw_src
+    ensure_nemoclaw_state_dir >/dev/null \
+      || error "Could not prepare owner-only NemoClaw state for the managed CLI installation."
+    nemoclaw_src="$(nemoclaw_state_root)/source"
     NEMOCLAW_SOURCE_ROOT="$nemoclaw_src"
     if is_reusable_managed_nemoclaw_install "$nemoclaw_src"; then
       info "Reusing the installed ${_CLI_DISPLAY} CLI at the selected revision."

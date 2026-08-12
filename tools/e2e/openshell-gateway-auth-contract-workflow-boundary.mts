@@ -16,7 +16,7 @@ const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const MAIN_AND_MANUAL_CONDITION =
   "${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openshell-gateway-auth-contract,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-auth-contract,') }}";
 const GATEWAY_PROBE_IMAGE =
-  "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba";
+  "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
 const ARTIFACT_SAFETY_GATED_UPLOAD =
   "${{ always() && steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path != '' }}";
 const APPROVED_ARTIFACT_PATH = "${{ steps.artifact_safety.outputs.approved_path }}";

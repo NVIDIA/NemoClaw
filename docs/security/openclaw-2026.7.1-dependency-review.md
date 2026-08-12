@@ -19,7 +19,7 @@ the exact plugin graph reports no vulnerabilities after that update.
 
 The production OpenClaw install uses the authoritative committed lock at
 `agents/openclaw/openclaw-runtime/package-lock.json`, with SHA-256
-`759b31779f40867f35f15065b582eb1d3efb8fddb1fe43c207507c905fa2a421`.
+`a814d82a36046bd7819d222337809ce80ccfd76b553cd17265ff64a527d3d095`.
 NemoClaw derives that lock from the SRI-verified `openclaw@2026.7.1` archive
 after applying the reviewed dependency remediation.
 The remediation replaces `brace-expansion@5.0.7` with `5.0.9`.
@@ -29,6 +29,7 @@ The same reviewed `undici@8.10.0` replacement applies to the OpenClaw core
 dependency and the Discord manifest, shrinkwrap, and bundled package tree.
 The committed mcporter lock also selects `fast-uri@3.1.5` and
 `ip-address@10.3.1`.
+Both committed runtime locks select `hono@4.12.34`.
 Image builds verify the lock digest and installed production graph before they
 expose the OpenClaw binary.
 
@@ -87,8 +88,12 @@ whose amd64 config reports Node `22.23.1`.
   - `https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz`
   - `MIT`; no dependencies; Node `>= 12`
   - annotated source tag commit: `be7e626c0d49fccb518899f520a3fb64ee189741`; unsigned tag
+- `hono@4.12.34` (OpenClaw and mcporter locked-runtime remediation)
+  - `sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==`
+  - `https://registry.npmjs.org/hono/-/hono-4.12.34.tgz`
+  - `MIT`; no dependencies; Node.js `>=16.9.0`
 - `mcporter@0.7.3` committed runtime lock
-  - SHA-256: `962dee34f6b0a493521d1619d1cf030e2630cbdfce8bf0598217202f57078793`
+  - SHA-256: `17f2372a0a6949df928333a2f98862ae563013a7682b19a8ce63825c4696a064`
 
 `fast-uri@3.1.5` has a valid npm registry signature and no registry attestation.
 `undici@8.10.0` has a valid npm registry signature and SLSA provenance.
@@ -104,9 +109,9 @@ Its exact results are:
 
 - Reviewed archive graph: `info=0`, `low=0`, `moderate=6`, `high=0`,
   `critical=0`, `clean`.
-- OpenClaw locked runtime: `info=0`, `low=0`, `moderate=7`, `high=0`,
+- OpenClaw locked runtime: `info=0`, `low=0`, `moderate=6`, `high=0`,
   `critical=0`, `clean`.
-- mcporter runtime: `info=0`, `low=0`, `moderate=1`, `high=0`, `critical=0`,
+- mcporter runtime: `info=0`, `low=0`, `moderate=0`, `high=0`, `critical=0`,
   `clean`.
 
 Registry signature checks completed within the successful audit.
@@ -129,6 +134,14 @@ reviewed `2.0.11`, outside both affected ranges. Its Node `>=20`
 requirement remains inside the image's Node contract, and real ESM plus
 CommonJS Streamable HTTP transport construction/start/close probes cover the
 major-version compatibility boundary.
+
+The SDK graphs in OpenClaw and mcporter request `hono@^4.11.4`.
+The committed locks previously selected `4.12.25` and `4.12.27`.
+`GHSA-8j4g-w8fx-2239`, `GHSA-54fx-42gc-7vw4`,
+`GHSA-f23p-vx2j-j53r`, and `GHSA-79qm-7rj5-m7r9` affect those releases.
+Version `4.12.34` fixes all four advisories.
+Both runtime manifests now select reviewed `4.12.34` through an exact override
+that remains within the declared SDK range.
 
 OpenClaw's `minimatch@10.2.5` edge originally resolved
 `brace-expansion@5.0.7`, which is affected by `GHSA-mh99-v99m-4gvg`.

@@ -17,12 +17,18 @@ import {
 import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
 import { getManagedVllmProviderBinding } from "../inference/local";
 import {
+  getOllamaProxyToken,
+  persistAndProbeOllamaProxy,
+  startOllamaAuthProxy,
+} from "../inference/ollama/proxy";
+import {
   assertNoExplicitOpenShellGatewayEndpoint,
   assertNoOpenShellGatewayEndpointOverride,
   type OpenShellGatewayEndpointEnvironment,
 } from "../openshell-gateway-endpoint-guard";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import type { Session } from "../state/onboard-session";
+import { shouldFrontOllamaWithProxy } from "./local-inference-topology";
 
 export { assertNoOpenShellGatewayEndpointOverride };
 
@@ -59,6 +65,24 @@ export function createProviderReviewDeps(
       return proxyToken;
     },
   };
+}
+
+export function createDefaultProviderReviewDeps(
+  updateSession: Parameters<typeof createProviderReviewDeps>[0],
+  checkpointSandboxName: Parameters<typeof createProviderReviewDeps>[1],
+) {
+  return createProviderReviewDeps(
+    updateSession,
+    checkpointSandboxName,
+    {
+      shouldFrontOllamaWithProxy,
+      startOllamaAuthProxy,
+      getOllamaProxyToken,
+      persistAndProbeOllamaProxy,
+    },
+    process.exit,
+    console.error,
+  );
 }
 
 import type { HermesAuthMethod } from "./hermes-auth";

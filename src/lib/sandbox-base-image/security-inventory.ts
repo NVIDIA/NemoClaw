@@ -6,7 +6,7 @@ import { dockerCapture } from "../adapters/docker";
 const SECURITY_INVENTORY_PROBE_OK = "nemoclaw-security-inventory-ok";
 
 export const SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY = [
-  "libexpat1=2.8.2-1",
+  "libexpat1=2.8.3-1",
   "libonig5=6.9.9-1+b1",
   "libjq1=1.8.2-1",
   "jq=1.8.2-1",

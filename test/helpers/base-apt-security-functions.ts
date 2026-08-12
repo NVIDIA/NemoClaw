@@ -8,14 +8,14 @@ export const BASE_APT_SECURITY_HASHES: Record<
   { libexpat: string; libonig: string; libjq: string; jq: string; vimTiny: string }
 > = {
   amd64: {
-    libexpat: "37d24b40a745107941f823d1f22c38f197f01981f7f0783777fe0026af016463",
+    libexpat: "978e9d30b84893a4c8191d8dae4d1b93c9b7ecaa772ada2fdb892ae3765cab4e",
     libonig: "3abee130696244050500bcc7870e3b4cb82ddd87149ece3fd55010c3d4e1d18c",
     libjq: "9a5bf964cef39ed8f0f162e20d856e31961d28a57772b5313989b42a8be7e941",
     jq: "b973a5d304f666845e8ccefab492e3850d4bc2e7aa2a1e7450862095125f2cc0",
     vimTiny: "0e6e231d6d2430a92cf76f8a78506090418fa37758c33b31ed50dfbfc76e22ed",
   },
   arm64: {
-    libexpat: "df928e3a8e4da79408d4b18e8cd80a03dffa90130d0698e50041aab5e14f9397",
+    libexpat: "660f5f598a06aa56613a2fbf1ffbd408708175f1a6c2fac833842148f0228176",
     libonig: "137e708575c0622d347815d19cb471a107546b16e9602805ee27afad7bba107f",
     libjq: "eae4a828df2eb53d728f88109d9f9549e0983a90b573cf0c7fa1e4bbc7533a7e",
     jq: "c25086443abd04d1457cbb322a0837f9ba986f82b28f44670467c8dc9be1f696",
@@ -44,7 +44,7 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
       "dpkg-query() {",
       '  [[ "$#" -eq 3 && "$1" == "-W" && "$2" == \'-f=${Version}\' ]] || return 64',
       '  case "$3" in',
-      '    libexpat1) printf "2.8.2-1" ;;',
+      '    libexpat1) printf "2.8.3-1" ;;',
       '    libonig5) printf "6.9.9-1+b1" ;;',
       '    libjq1|jq) printf "1.8.2-1" ;;',
       '    perl-base) [[ "${perl_base_installed:-0}" == "1" ]] || return 64; printf "5.44.0-1nemoclaw1" ;;',
@@ -62,7 +62,7 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
       '  [[ "$5" == "--retry" && "$6" == "5" && "$7" == "--retry-all-errors" && "$8" == "--retry-delay" && "$9" == "2" ]] || return 64',
       '  [[ "${10}" == "--connect-timeout" && "${11}" == "15" && "${12}" == "--max-time" && "${13}" == "120" && "${14}" == "-o" ]] || return 64',
       '  case "${16}" in',
-      `    */e/expat/libexpat1_2.8.2-1_${architecture}.deb) [[ "\${15##*/}" == "libexpat1.deb" ]] ;;`,
+      `    */e/expat/libexpat1_2.8.3-1_${architecture}.deb) [[ "\${15##*/}" == "libexpat1.deb" ]] ;;`,
       `    */libo/libonig/libonig5_6.9.9-1+b1_${architecture}.deb) [[ "\${15##*/}" == "libonig5.deb" ]] ;;`,
       `    */j/jq/libjq1_1.8.2-1_${architecture}.deb) [[ "\${15##*/}" == "libjq1.deb" ]] ;;`,
       `    */j/jq/jq_1.8.2-1_${architecture}.deb) [[ "\${15##*/}" == "jq.deb" ]] ;;`,
@@ -119,7 +119,7 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
       "python3() {",
       '  [[ "$#" -eq 2 && "$1" == "-c" ]] || return 64',
       '  case "$2" in',
-      "    \"import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.2', pyexpat.EXPAT_VERSION\") ;;",
+      "    \"import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.3', pyexpat.EXPAT_VERSION\") ;;",
       "    \"import sys; from pathlib import Path; import html.parser; Path(html.parser.__file__).resolve() == Path('/usr/lib/python3.13/html/parser.py').resolve() or sys.exit('html.parser loaded from an unexpected path'); from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; p._pending == [] or sys.exit('empty feeds accumulated pending entries'); p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); p.rawdata == '' or sys.exit('incremental parsing retained raw data')\") ;;",
       "    \"import ctypes, sys; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; lib.libssh2_version(0) == b'1.11.1' or sys.exit('unexpected libssh2 runtime version')\") ;;",
       "    *) return 64 ;;",
