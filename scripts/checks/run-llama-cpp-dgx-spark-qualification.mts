@@ -8,6 +8,7 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { compareDottedVersions } from "../../src/lib/domain/maintenance/upgrade.ts";
 import {
   buildLlamaCppRequestGuardDockerArgv,
   consumeDockerLoopbackPublishAuthority,
@@ -512,16 +513,6 @@ export function buildRuntimeLogForbiddenValues(
   ];
 }
 
-function compareVersions(left: string, right: string): number {
-  const leftParts = left.split(".").map(Number);
-  const rightParts = right.split(".").map(Number);
-  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
-    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
-    if (difference !== 0) return difference;
-  }
-  return 0;
-}
-
 export function parseNvidiaSmi(
   output: string,
   minimumDriverVersion: string,
@@ -535,7 +526,7 @@ export function parseNvidiaSmi(
   const match = /^(NVIDIA GB10)\s*,\s*([0-9]{3}\.[0-9]{2}\.[0-9]{2})$/u.exec(lines[0] ?? "");
   if (!match) throw new Error("qualification host is not the expected NVIDIA GB10 profile");
   const driverVersion = match[2] as string;
-  if (compareVersions(driverVersion, minimumDriverVersion) < 0) {
+  if (compareDottedVersions(driverVersion, minimumDriverVersion) < 0) {
     throw new Error("NVIDIA driver is below the qualification minimum");
   }
   return { count: 1, driverVersion, name: "NVIDIA GB10" };
