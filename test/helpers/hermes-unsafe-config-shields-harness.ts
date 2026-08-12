@@ -48,6 +48,7 @@ export type HermesUnsafeConfigScenario =
   | "preflight-dir-symlink"
   | "preflight-sensitive-file-symlink"
   | "unlock-symlink"
+  | "unlock-partial-rollback-symlink"
   | "unlock-ok-relock-symlink";
 
 type DockerExecImpl = (cmd: string[]) => string;
@@ -116,11 +117,28 @@ function wrapScenario(
   configFixtureDir: string,
 ): DockerExecImpl {
   const unsafePathError = new Error("refusing to follow symlink: /sandbox/.hermes/config.yaml");
+  let stateDirMutationStarted = false;
 
   return (cmd: string[]) => {
     if (isPathPreflight(cmd)) return runPathPreflight(cmd, configFixtureDir);
     if (scenario === "unlock-symlink" && isGuardAction(cmd, "begin-shields-transition")) {
       throw unsafePathError;
+    }
+    if (scenario === "unlock-partial-rollback-symlink") {
+      if (
+        isGuardAction(cmd, "run-state-dir-transition") &&
+        cmd[cmd.indexOf("--state-action") + 1] === "unlock"
+      ) {
+        stateDirMutationStarted = true;
+      } else if (
+        stateDirMutationStarted &&
+        (isGuardAction(cmd, "apply-shields-transition") ||
+          (isGuardAction(cmd, "run-state-dir-transition") &&
+            cmd[cmd.indexOf("--state-action") + 1] === "lock") ||
+          (isGuardAction(cmd, "begin-shields-transition") && shieldsMode(cmd) === "locked"))
+      ) {
+        throw unsafePathError;
+      }
     }
     if (
       scenario === "unlock-ok-relock-symlink" &&

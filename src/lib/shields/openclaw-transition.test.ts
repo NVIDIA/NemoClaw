@@ -837,7 +837,7 @@ describe("Hermes Shields down unsafe config path (#8804)", () => {
     });
   });
 
-  it("clears provisional DOWN when unlock fails on an unsafe Hermes config symlink (#8804)", () => {
+  it("keeps DOWN when unlock fails and unsafe re-lock cannot verify protection (#8804)", () => {
     const stateDir = harness.seedLockedState("hermes-shields");
     harness.setScenario("unlock-symlink");
 
@@ -849,15 +849,35 @@ describe("Hermes Shields down unsafe config path (#8804)", () => {
       }),
     ).toThrow(/refusing to follow symlink: \/sandbox\/\.hermes\/config\.yaml/);
 
-    expectHermesShieldsUpRecord(stateDir, "hermes-shields", harness.shields);
-    expect(harness.shields.getShieldsPosture("hermes-shields", false)).toMatchObject({
-      locked: true,
-      mutable: false,
-    });
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, "shields-hermes-shields.json"), "utf-8")),
+    ).toMatchObject({ shieldsDown: true });
     expect(harness.auditSpy).not.toHaveBeenCalled();
-    expect(harness.errorSpy.mock.calls.flat().map(String).join("\n")).toContain(
-      "Restrictive policy restored and provisional Shields down cleared",
-    );
+    const errors = harness.errorSpy.mock.calls.flat().map(String).join("\n");
+    expect(errors).toContain("Manual intervention is required");
+    expect(errors).not.toContain("provisional Shields down cleared");
+  });
+
+  it("keeps DOWN when unsafe replacement breaks rollback after mutation begins (#8804)", () => {
+    const stateDir = harness.seedLockedState("hermes-shields");
+    harness.setScenario("unlock-partial-rollback-symlink");
+
+    expect(() =>
+      harness.shields.shieldsDown("hermes-shields", {
+        reason: "unsafe-path-during-unlock",
+        timeout: "15m",
+        throwOnError: true,
+      }),
+    ).toThrow(/refusing to follow symlink: \/sandbox\/\.hermes\/config\.yaml/);
+
+    const errors = harness.errorSpy.mock.calls.flat().map(String).join("\n");
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, "shields-hermes-shields.json"), "utf-8")),
+    ).toMatchObject({ shieldsDown: true });
+    expect(harness.shields.isShieldsDown("hermes-shields")).toBe(true);
+    expect(errors).toContain("Hermes shields rollback preparation failed");
+    expect(errors).toContain("Manual intervention is required");
+    expect(errors).not.toContain("provisional Shields down cleared");
   });
 
   it("keeps DOWN when unlock succeeded and unsafe re-lock cannot verify protection (#8804)", () => {

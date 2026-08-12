@@ -4042,7 +4042,6 @@ function rollbackShieldsDown(
   initialState: LoadedShieldsState,
   allowLegacyHermesProtocol = false,
   cachedProtocol?: HermesShieldsProtocol,
-  configUnlocked = false,
 ): ShieldsDownRollbackResult {
   console.error("  Rolling back — restoring policy from snapshot...");
   let rollbackResult: ReturnType<typeof run> | null = null;
@@ -4096,29 +4095,6 @@ function rollbackShieldsDown(
       console.error(
         `  Warning: Rollback re-lock could not be re-confirmed. Check config manually. ${relock.error ?? ""}`.trimEnd(),
       );
-      // Unlock never completed, but an unsafe config path also blocks re-lock.
-      // Restrictive policy is already restored. Clearing the provisional DOWN
-      // record keeps status honest for an unlock that never happened (#8804).
-      // After a successful unlock, do not claim UP without a verified re-lock.
-      if (
-        initialMode === "locked" &&
-        !configUnlocked &&
-        relock.error !== undefined &&
-        isUnsafeShieldsConfigPathError(relock.error)
-      ) {
-        const timerCancellation = killTimer(sandboxName);
-        timerAuthorityRevoked = timerCancellation.authorityRevoked;
-        if (!timerCancellation.authorityRevoked) {
-          console.error(
-            `  Warning: Restrictive policy was restored, but auto-restore timer authority could not be revoked: ${timerCancellation.warnings.join("; ")}`,
-          );
-        }
-        restoreShieldsStateSnapshot(sandboxName, initialState);
-        console.error(
-          "  Restrictive policy restored and provisional Shields down cleared. The config path remains unsafe; restore a regular config file before retrying.",
-        );
-        return { outcome: "lockdown_restored", timerAuthorityRevoked };
-      }
     }
   } else {
     console.error("  Warning: Policy restore failed during rollback.");
@@ -4562,7 +4538,6 @@ function failRecoveredHermesShieldsDown(
     state,
     allowLegacyHermesProtocol,
     "provider-state-mutation-v2",
-    true,
   );
   if (completion.transition && rollback.timerAuthorityRevoked) {
     clearShieldsDownTransition(sandboxName, completion.transition.processToken);
@@ -5092,7 +5067,6 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   //     is a member of the sandbox group, can mutate runtime config.
   console.log(`  Unlocking ${target.agentName} config (${target.configPath})...`);
   let inferenceRouteConvergenceFailed = false;
-  let configUnlocked = false;
   try {
     if (transition && timerAuthority) {
       assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
@@ -5104,7 +5078,6 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       opts.allowLegacyHermesProtocol === true,
       protocol,
     );
-    configUnlocked = true;
     if (target.agentName === "hermes") {
       console.log("  Confirming Hermes inference route after policy transition...");
       const convergence = waitForHermesInferenceRouteConvergence(sandboxName, { run });
@@ -5127,27 +5100,45 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       state,
       opts.allowLegacyHermesProtocol === true,
       protocol,
-      configUnlocked,
     );
+    if (
+      transition &&
+      timerAuthority &&
+      rollback.outcome === "manual_intervention_required" &&
+      !rollback.timerAuthorityRevoked
+    ) {
+      try {
+        assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
+        transition = { ...transition, phase: "active" };
+        writeShieldsDownTransition(transition, "preparing");
+        assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "active");
+      } catch (transitionError) {
+        const transitionMessage =
+          transitionError instanceof Error ? transitionError.message : String(transitionError);
+        console.error(
+          `  CRITICAL: Could not persist the incomplete Shields down posture. Treat the config as mutable and recover it manually. ${transitionMessage}`,
+        );
+      }
+    }
     if (transition && rollback.timerAuthorityRevoked) {
       clearShieldsDownTransition(sandboxName, transition.processToken);
     }
     console.error(`  ERROR: ${message}`);
-    const timerAuthority = describeRollbackTimerAuthority(
+    const timerAuthorityDescription = describeRollbackTimerAuthority(
       transition !== null,
       rollback.timerAuthorityRevoked,
     );
     if (rollback.outcome === "mutable_default_restored") {
       console.error(
-        `  Config mutation failed; the original mutable-default posture was restored.${timerAuthority}`,
+        `  Config mutation failed; the original mutable-default posture was restored.${timerAuthorityDescription}`,
       );
     } else if (rollback.outcome === "lockdown_restored") {
       console.error(
-        `  Config did not reach the mutable-default state; fail-closed lockdown was restored.${timerAuthority}`,
+        `  Config did not reach the mutable-default state; fail-closed lockdown was restored.${timerAuthorityDescription}`,
       );
     } else {
       console.error(
-        `  Config rollback is incomplete.${timerAuthority} Manual intervention is required.`,
+        `  Config rollback is incomplete.${timerAuthorityDescription} Manual intervention is required.`,
       );
     }
     if (inferenceRouteConvergenceFailed) {
@@ -5181,7 +5172,6 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
         state,
         opts.allowLegacyHermesProtocol === true,
         protocol,
-        true,
       );
       if (rollback.timerAuthorityRevoked) {
         clearShieldsDownTransition(sandboxName, transition.processToken);
