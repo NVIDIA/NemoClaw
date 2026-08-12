@@ -917,45 +917,6 @@ function persistMigratedLegacyKeys(): void {
   }
 }
 
-// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-function upsertProvider(name: string, type: string, credentialEnv: string, baseUrl: string | null, env: NodeJS.ProcessEnv = {}, gatewayName: string = GATEWAY_NAME) {
-  const result = onboardProviders.upsertProvider(
-    name,
-    type,
-    credentialEnv,
-    baseUrl,
-    env,
-    setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, gatewayName),
-  );
-  if (result.ok && credentialEnv) {
-    const stagedValue = stagedLegacyValues.get(credentialEnv);
-    if (stagedValue !== undefined) {
-      // openshell receives `--credential <ENV>` and reads the value from the
-      // `env` block passed here, falling back to the inherited process.env.
-      // Use getCredential() for the env-fallback branch (per the
-      // direct credential env guard from PR #2306) — it mirrors
-      // openshell's resolution order while the staging contract has
-      // already populated the same value into process.env.
-      const upsertedValue = env[credentialEnv] ?? getCredential(credentialEnv);
-      if (upsertedValue === stagedValue) {
-        // The gateway received the staged legacy value verbatim — count
-        // this key as migrated.
-        migratedLegacyKeys.add(credentialEnv);
-      } else {
-        // A later upsert under the same env-key wrote a different value
-        // (e.g. a retry-loop after validation failure replaced the legacy
-        // key with a freshly entered one, or a placeholder like "dummy"
-        // for vllm-local). The gateway no longer holds the staged legacy
-        // value under this env-key, so withdraw the migration mark — the
-        // cleanup gate must keep the legacy file intact.
-        migratedLegacyKeys.delete(credentialEnv);
-      }
-      persistMigratedLegacyKeys();
-    }
-  }
-  return result;
-}
-
 type MessagingTokenDef = import("./onboard/messaging-prep").MessagingTokenDef;
 
 type EndpointValidationResult =
@@ -974,19 +935,27 @@ const registeredCredentialProviders =
     runOpenshell,
     redact,
     getGatewayName: () => GATEWAY_NAME,
+    getCredential,
     normalizeCredentialValue,
     updateSession: onboardSession.updateSession,
     stagedLegacyValues,
     migratedLegacyKeys,
     persistMigratedLegacyKeys,
   });
-const { upsertMessagingProviders, providerMatchesGatewayCredential } =
+const { upsertProvider, upsertMessagingProviders, providerMatchesGatewayCredential } =
   registeredCredentialProviders;
-// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAME) => onboardProviders.providerExistsInGateway(name, setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, gatewayName));
+const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAME) =>
+  onboardProviders.providerExistsInGateway(
+    name,
+    setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, gatewayName),
+  );
 
-// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-const { verifyInferenceRoute, isInferenceRouteReady, checkGatewayRouteCompatibility, preflightGatewayRouteDiscovery } = inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
+const {
+  verifyInferenceRoute,
+  isInferenceRouteReady,
+  checkGatewayRouteCompatibility,
+  preflightGatewayRouteDiscovery,
+} = inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
 const { inspectSandboxForCreate, confirmRecreateForSelectionDrift, isOpenclawReady } =
   sandboxLifecycle.createSandboxLifecycleHelpers({
     runCaptureOpenshell,
@@ -1075,11 +1044,24 @@ const {
   assertOllamaUpgradeApplied,
 });
 
-// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const handleVllmSelection = createSetupNimVllmHandler({
-  VLLM_PORT, runCapture, getLocalProviderBaseUrl, getLocalProviderValidationBaseUrl,
-  getManagedVllmProviderBinding: localInference.getManagedVllmProviderBinding, queryVllmModels: (baseUrl, apiKey) => { const result = localInference.probeVllmModels(baseUrl, apiKey); return result.ok ? result.body : ""; }, isSafeModelId, requireValue, validateOpenAiLikeSelection,
-  applyVllmRuntimeContextWindow: localInference.applyVllmRuntimeContextWindow, isDgxSparkHost: () => nim.detectNvidiaPlatform() === "spark", isNemoClawManagedVllmRunning: vllmInference.isNemoClawManagedVllmRunning, persistConfiguredManagedVllmRuntimeReceipt: vllmInference.persistConfiguredManagedVllmRuntimeReceipt,
+  VLLM_PORT,
+  runCapture,
+  getLocalProviderBaseUrl,
+  getLocalProviderValidationBaseUrl,
+  getManagedVllmProviderBinding: localInference.getManagedVllmProviderBinding,
+  queryVllmModels: (baseUrl, apiKey) => {
+    const result = localInference.probeVllmModels(baseUrl, apiKey);
+    return result.ok ? result.body : "";
+  },
+  isSafeModelId,
+  requireValue,
+  validateOpenAiLikeSelection,
+  applyVllmRuntimeContextWindow: localInference.applyVllmRuntimeContextWindow,
+  isDgxSparkHost: () => nim.detectNvidiaPlatform() === "spark",
+  isNemoClawManagedVllmRunning: vllmInference.isNemoClawManagedVllmRunning,
+  persistConfiguredManagedVllmRuntimeReceipt:
+    vllmInference.persistConfiguredManagedVllmRuntimeReceipt,
   exitProcess: (code) => process.exit(code),
 });
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -3909,9 +3891,12 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     const gatewaySandboxName = resume
       ? (recordedSandboxName ?? requestedSandboxName ?? checkpointedSandboxName)
       : null;
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    const onboardGateway = gatewayBinding.resolveCoreOnboardGatewayBinding({ authoritativeGateway, currentGateway: { name: GATEWAY_NAME, port: GATEWAY_PORT }, resume, sandbox: gatewaySandboxName ? registry.getSandbox(gatewaySandboxName) : null });
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const onboardGateway = gatewayBinding.resolveCoreOnboardGatewayBinding({
+      authoritativeGateway,
+      currentGateway: { name: GATEWAY_NAME, port: GATEWAY_PORT },
+      resume,
+      sandbox: gatewaySandboxName ? registry.getSandbox(gatewaySandboxName) : null,
+    });
     ({ name: GATEWAY_NAME, port: GATEWAY_PORT } = onboardGateway);
     process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
     const resolvedGatewayOwner = getGatewayOwner();
@@ -4067,8 +4052,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       selectedMessagingChannels,
       assertSandboxNameAllowed: onboardEntryOptions.assertDefaultSandboxNameAllowed,
     });
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    const runCoreGatewayOpenshell = setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, GATEWAY_NAME);
+    const runCoreGatewayOpenshell = setupInferenceFactory.createGatewayScopedOpenshellRunner(
+      runOpenshell,
+      GATEWAY_NAME,
+    );
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const endpointProvenance = { endpointSource: opts.endpointSource, endpointSourceProvider: opts.rebuildRegistryInferenceRoute?.route.provider ?? null, endpointSourceEndpointUrl: opts.rebuildRegistryInferenceRoute?.route.endpointUrl ?? null, getSandboxRegistryEntry: registry.getSandbox };
     const providerReviewDeps = setupInferenceFactory.createDefaultProviderReviewDeps(
@@ -4298,8 +4285,12 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         loadSession: onboardSession.loadSession,
         getActiveSandbox: (name) => registry.getSandbox(name),
         mergePolicyMessagingChannels,
-        // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-        verifyCompatibleEndpointSandboxSmoke: (options) => verifyCompatibleEndpointSandboxSmoke({ ...options, runOpenshell: runCoreGatewayOpenshell, redact }),
+        verifyCompatibleEndpointSandboxSmoke: (options) =>
+          verifyCompatibleEndpointSandboxSmoke({
+            ...options,
+            runOpenshell: runCoreGatewayOpenshell,
+            redact,
+          }),
         preparePolicyPresetResumeSelection,
         arePolicyPresetsApplied,
         skippedStepMessage,
