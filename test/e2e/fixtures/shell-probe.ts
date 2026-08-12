@@ -28,7 +28,7 @@ export interface ShellProbeRunOptions {
   redactionValues?: string[];
   /** Retain at most the last N bytes from each output stream. */
   captureLimitBytes?: number;
-  /** Keep raw output in memory instead of writing it to the artifact sink. */
+  /** Persist redacted, size-bounded output and result metadata; set false to write neither. */
   persistArtifacts?: boolean;
   /** Timestamp-only output observer; chunk contents never cross this boundary. */
   onOutput?: (event: ShellProbeOutputEvent) => void;
