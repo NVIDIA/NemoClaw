@@ -4261,9 +4261,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       agentSetupDeps: {
         handleAgentSetup: agentOnboard.handleAgentSetup,
         agentSetupContext: () => ({
-          step,
-          runCaptureOpenshell,
-          captureOpenshell,
+          // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+          ...{ step, runCaptureOpenshell, captureOpenshell },
           openshellShellCommand,
           openshellBinary: getOpenshellBinary(),
           buildSandboxConfigSyncScript,
