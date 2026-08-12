@@ -3,7 +3,11 @@
 
 import path from "node:path";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
-import { hasInvalidSessionToolDisclosure } from "../state/onboard-session";
+import {
+  hasInvalidSessionHostMounts,
+  hasInvalidSessionToolDisclosure,
+} from "../state/onboard-session";
+import type { SandboxHostMount } from "../state/registry/types";
 import { normalizeToolDisclosure, type ToolDisclosure } from "../tool-disclosure";
 import { preflightVllmModelEnvOrExit } from "./vllm-model-preflight";
 
@@ -16,7 +20,7 @@ export interface ResumeSessionLike {
   agent?: string | null;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
-  metadata?: { fromDockerfile?: string | null } | null;
+  metadata?: { fromDockerfile?: string | null; hostMounts?: SandboxHostMount[] } | null;
   steps?: { sandbox?: { status?: string | null } | null } | null;
   checkpoint?: {
     sandboxIdentity?: import("../state/onboard-checkpoint-types").CheckpointDecision<
@@ -29,6 +33,18 @@ export interface ResumeConfigConflict {
   field: string;
   requested: string | null;
   recorded: string | null;
+}
+
+function canonicalHostMounts(mounts: readonly SandboxHostMount[] | undefined): string {
+  return JSON.stringify(
+    (mounts ?? [])
+      .map(({ source, target }) => ({ source, target, readOnly: true as const }))
+      .sort((left, right) => {
+        const leftKey = `${left.source}\0${left.target}`;
+        const rightKey = `${right.source}\0${right.target}`;
+        return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+      }),
+  );
 }
 
 export function getRequestedSandboxNameHint(
@@ -122,6 +138,7 @@ export function getResumeConfigConflicts(
     agent?: string | null;
     toolDisclosure?: ToolDisclosure | null;
     observabilityEnabled?: boolean | null;
+    hostMounts?: readonly SandboxHostMount[];
     /**
      * Internal rebuild-resume mode: the caller already rewrote the session from
      * validated registry state, so credential aliases must not synthesize a new
@@ -175,6 +192,19 @@ export function getResumeConfigConflicts(
       field: "fromDockerfile",
       requested: requestedFrom,
       recorded: recordedFrom,
+    });
+  }
+
+  const requestedHostMounts =
+    opts.hostMounts === undefined ? null : canonicalHostMounts(opts.hostMounts);
+  const recordedHostMounts = canonicalHostMounts(session?.metadata?.hostMounts);
+  if (hasInvalidSessionHostMounts(session)) {
+    conflicts.push({ field: "host mounts", requested: requestedHostMounts, recorded: "invalid" });
+  } else if (requestedHostMounts !== null && requestedHostMounts !== recordedHostMounts) {
+    conflicts.push({
+      field: "host mounts",
+      requested: requestedHostMounts,
+      recorded: recordedHostMounts,
     });
   }
 

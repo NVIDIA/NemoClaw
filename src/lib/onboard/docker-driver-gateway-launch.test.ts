@@ -110,6 +110,26 @@ describe("docker-driver-gateway-launch", () => {
     expect(toml).toContain('supervisor_bin = "/home/shadeform/.local/bin/openshell-sandbox"');
   });
 
+  it("matches the pinned OpenShell v0.0.85 bind-mount gate contract", () => {
+    // OpenShell v0.0.85 contains NVIDIA/OpenShell#2092 (merge 43bb030), whose
+    // Docker-driver contract tests prove disabled bind mounts are rejected and
+    // enabled read-only mounts render with Docker's `:ro` option. Keep this
+    // gateway half paired with the `read_only: true` create-plan assertion in
+    // sandbox-create-plan.test.ts.
+    const baseEnv = {
+      OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
+      OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+    };
+    expect(buildDockerDriverGatewayConfigToml(baseEnv)).not.toContain("enable_bind_mounts");
+    expect(
+      buildDockerDriverGatewayConfigToml({
+        ...baseEnv,
+        NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS: "1",
+      }),
+    ).toContain("enable_bind_mounts = true");
+  });
+
   it("assigns different sandbox namespaces to different gateway state roots (#8663)", () => {
     const defaultNamespace = gatewayIdForStateDir("/tmp/openshell-docker-gateway");
     const alternateNamespace = gatewayIdForStateDir("/tmp/openshell-docker-gateway-18080");

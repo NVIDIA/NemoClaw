@@ -27,6 +27,7 @@ export type CompleteSandboxCreateIntentInput<Agent, ResourceProfile> = {
   agent: Agent;
   sandboxGpuConfig: SandboxGpuCreateConfig;
   resourceProfile: ResourceProfile | null;
+  hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
   hermesToolGateways: readonly string[];
   extraProviders: readonly string[];
   staleExtraProviders: readonly string[];
@@ -137,6 +138,7 @@ export function createSandboxCreateIntentResolver<
       sandboxGpuConfig: input.sandboxGpuConfig,
       gpuCreateArgs: buildSandboxGpuCreateArgs(input.sandboxGpuConfig),
       resourceCreateArgs,
+      hostMounts: input.hostMounts,
       gpuRoutePlan,
       sandboxGpuLogMessage,
       extraPlaceholderKeys: messaging.extraPlaceholderKeys,
