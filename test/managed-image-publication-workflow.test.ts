@@ -656,6 +656,8 @@ describe("complete managed-image publication workflow", () => {
       STAGING_QA_SOURCE_SHA: "250d4abd2d602f864659c06d170699347b5d38bc",
       STAGING_QA_BASE_IMAGE: "nemoclaw-deepagents-code-base:staging-31396519688",
     });
+    expect(qaBuilder.env).not.toHaveProperty("STAGING_PRODUCER_SHA");
+    expect(qaBuilder.env).not.toHaveProperty("STAGING_QA_RECORDED_INDEX_DIGEST");
     expect(JSON.stringify(qaBuilder)).not.toContain(":latest");
     expect(prCheckout.with).toMatchObject({
       ref: "${{ github.event.pull_request.head.sha }}",
