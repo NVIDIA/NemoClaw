@@ -153,13 +153,13 @@ For shell scripts use `#` comments. For Markdown use HTML comments.
 
 - `bin/` launcher and remaining `scripts/*.js`: **CommonJS** (`require`/`module.exports`), Node.js 22.19+
 - `test/`: **ESM** (`import`/`export`)
-- Biome config in `biome.json`
+- Oxlint config in `oxlint.config.ts`; added source files also use `oxlint.anti-slop.config.ts`
 - Keep function complexity low; existing complexity hotspots are tracked separately
 - Unused vars pattern: prefix with `_`
 
 ### TypeScript
 
-- Plugin code in `nemoclaw/src/` is linted and formatted by the root Biome config
+- Plugin code in `nemoclaw/src/` is linted by Oxlint; Oxfmt formats files added by the current branch
 - CLI type-checking via `tsconfig.cli.json`
 - Plugin production and test type-checking via `npm --prefix nemoclaw run typecheck`, using
   `nemoclaw/tsconfig.json` and `nemoclaw/tsconfig.test.json`
@@ -271,7 +271,7 @@ If the command trace contains no reviewer-request write, report the event as an 
 ### Gotchas
 
 - `npm install` at root triggers `prek install` which sets up git hooks. If hooks fail, check that `core.hooksPath` is unset: `git config --unset core.hooksPath`
-- The `nemoclaw/` subdirectory has its own `package.json` and `node_modules`, while sharing the root Biome config — it's a separate npm project
+- The `nemoclaw/` subdirectory has its own `package.json` and `node_modules`, while sharing the root Oxlint and Oxfmt configs — it's a separate npm project
 - SPDX headers are auto-inserted by pre-commit hooks; don't worry about adding them manually
 - Coverage thresholds are ratcheted in `ci/coverage-threshold-*.json` — new code should not decrease CLI or plugin coverage
 - The `.claude/skills` symlink points to `.agents/skills` — both paths resolve to the same content

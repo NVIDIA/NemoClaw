@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/** Runs local repository checks that are not first-class Biome rules. */
+/** Runs local repository checks that are not first-class Oxlint rules. */
 
 import { type SpawnSyncOptions, spawnSync } from "node:child_process";
 import path from "node:path";
