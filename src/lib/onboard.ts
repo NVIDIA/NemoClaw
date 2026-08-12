@@ -52,6 +52,7 @@ const managedWorkloadOnboard: typeof import("./onboard/managed-workload/onboard-
   require("./onboard/managed-workload/onboard-orchestration");
 const onboardEntryOptions: typeof import("./onboard/entry-options") = require("./onboard/entry-options");
 const onboardSessionBootstrap: typeof import("./onboard/session-bootstrap") = require("./onboard/session-bootstrap");
+const { getCheckpointedSandboxName } = onboardSessionBootstrap;
 const channelState: typeof import("./onboard/channel-state") = require("./onboard/channel-state");
 const {
   ensureOllamaLoopbackSystemdOverride,
@@ -3897,8 +3898,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     });
     const recordedSandboxName =
       session?.steps?.sandbox?.status === "complete" ? session?.sandboxName || null : null;
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    const checkpointedSandboxName = onboardSessionBootstrap.getCheckpointedSandboxName(resume, agent, session);
+    const checkpointedSandboxName = getCheckpointedSandboxName(resume, agent, session);
     const gatewaySandboxName = resume
       ? (recordedSandboxName ?? requestedSandboxName ?? checkpointedSandboxName)
       : null;
