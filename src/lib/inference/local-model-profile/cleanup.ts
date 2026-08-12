@@ -53,6 +53,7 @@ const LLAMA_SPEC_LABEL = "io.nvidia.nemoclaw.host-local-inference.spec-sha256";
 const LLAMA_TRANSACTION_LABEL = "io.nvidia.nemoclaw.host-local-inference.transaction-sha256";
 const LLAMA_NETWORK_TRANSACTION_LABEL =
   "io.nvidia.nemoclaw.host-local-inference.network-transaction-sha256";
+const HUGGING_FACE_CREDENTIAL_ENTRIES = new Set(["stored_tokens", "token"]);
 
 interface CleanupDeps {
   capture: typeof dockerCapture;
@@ -206,6 +207,71 @@ function statePathExists(target: string): boolean {
 
 function canonicalCleanupHomeDir(homeDir: string): string {
   return statePathExists(homeDir) ? fs.realpathSync(homeDir) : path.resolve(homeDir);
+}
+
+function sharedHuggingFaceCacheDir(homeDir: string): string {
+  return path.join(homeDir, ".cache", "huggingface");
+}
+
+function requireCurrentUserCacheDirectory(
+  directory: string,
+  label: string,
+  currentUserId: number | null,
+): void {
+  if (currentUserId === null) {
+    throw new Error(`${label} ownership cannot be verified on this host`);
+  }
+  const status = fs.lstatSync(directory);
+  if (status.isSymbolicLink()) throw new Error(`${label} is a symlink`);
+  if (!status.isDirectory()) throw new Error(`${label} is not a directory`);
+  if (status.uid !== currentUserId) {
+    throw new Error(`${label} is not owned by the current user`);
+  }
+  const expectedPath = path.join(
+    fs.realpathSync(path.dirname(directory)),
+    path.basename(directory),
+  );
+  if ((status.mode & 0o022) !== 0 || fs.realpathSync(directory) !== expectedPath) {
+    throw new Error(`${label} is not current-user filesystem authority`);
+  }
+}
+
+function removeSharedHuggingFaceCacheData(
+  homeDir: string,
+  currentUserId: number | null,
+  removed: string[],
+  preserved: string[],
+): void {
+  const cacheDir = sharedHuggingFaceCacheDir(homeDir);
+  if (!statePathExists(cacheDir)) return;
+  const cacheParent = path.dirname(cacheDir);
+  requireCurrentUserCacheDirectory(cacheParent, "Hugging Face cache parent", currentUserId);
+  requireCurrentUserCacheDirectory(cacheDir, "Hugging Face model cache", currentUserId);
+  const entries = fs.readdirSync(cacheDir);
+  let deletedCacheData = false;
+  for (const entry of entries) {
+    const target = path.join(cacheDir, entry);
+    if (HUGGING_FACE_CREDENTIAL_ENTRIES.has(entry)) {
+      preserved.push(target);
+      continue;
+    }
+    fs.rmSync(target, { force: true, recursive: true });
+    deletedCacheData = true;
+  }
+  const unexpectedEntry = fs
+    .readdirSync(cacheDir)
+    .find((entry) => !HUGGING_FACE_CREDENTIAL_ENTRIES.has(entry));
+  if (unexpectedEntry) {
+    throw new Error(
+      `Hugging Face cache cleanup left an unexpected entry at ${path.join(cacheDir, unexpectedEntry)}`,
+    );
+  }
+  if (deletedCacheData) removed.push(`cache-contents:${cacheDir}`);
+}
+
+function preserveSharedHuggingFaceCache(homeDir: string, preserved: string[]): void {
+  const cacheDir = sharedHuggingFaceCacheDir(homeDir);
+  if (statePathExists(cacheDir)) preserved.push(cacheDir);
 }
 
 function requireEngineSuccess(
@@ -383,7 +449,6 @@ function cleanupLlamaCpp(
   homeDir: string,
   deps: CleanupDeps,
   removed: string[],
-  preserved: string[],
   options: {
     gatewayPort?: number;
     sandboxName?: string;
@@ -441,8 +506,6 @@ function cleanupLlamaCpp(
     }
     fs.rmSync(paths.stateDir, { recursive: true });
     removed.push(`state:${paths.stateDir}`);
-    const sharedCache = path.join(homeDir, ".cache", "huggingface");
-    if (fs.existsSync(sharedCache)) preserved.push(sharedCache);
     return true;
   }
   if (journals.length > 1) {
@@ -541,8 +604,6 @@ function cleanupLlamaCpp(
   }
   fs.rmSync(paths.stateDir, { recursive: true });
   removed.push(`state:${paths.stateDir}`);
-  const sharedCache = path.join(homeDir, ".cache", "huggingface");
-  if (fs.existsSync(sharedCache)) preserved.push(sharedCache);
   return true;
 }
 
@@ -604,12 +665,13 @@ export function cleanupManagedLlamaCppRuntimeForSandbox(
     if (!fs.existsSync(paths.ownerPath)) return { ok: true, removed, preserved };
     const owner = loadManagedLlamaCppOwner(paths);
     if (!owner || owner.sandboxName !== sandboxName) return { ok: true, removed, preserved };
-    cleanupLlamaCpp(homeDir, deps, removed, preserved, {
+    cleanupLlamaCpp(homeDir, deps, removed, {
       gatewayPort: options.gatewayPort,
       sandboxName,
       env: options.env,
       engine: options.engine,
     });
+    preserveSharedHuggingFaceCache(homeDir, preserved);
     return { ok: true, removed, preserved };
   } catch (error) {
     return { ok: false, reason: (error as Error).message, removed, preserved };
@@ -652,12 +714,17 @@ export function cleanupLocalModelRuntimes(
       cleanupHostLocalVllm(vllmStateDir, deps, removed);
     }
     if (statePathExists(llamaPaths.stateDir)) {
-      cleanupLlamaCpp(homeDir, deps, removed, preserved, {
+      cleanupLlamaCpp(homeDir, deps, removed, {
         gatewayPort: options.gatewayPort,
         sandboxName: options.sandboxName,
         env: options.env,
         engine: options.engine,
       });
+    }
+    if (options.deleteModels) {
+      removeSharedHuggingFaceCacheData(homeDir, deps.currentUserId, removed, preserved);
+    } else {
+      preserveSharedHuggingFaceCache(homeDir, preserved);
     }
     return { ok: true, removed, preserved };
   } catch (error) {

@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE } from "../../inference/serving/managed-runtime-receipts";
+
 import {
   type RunResult,
   runUninstallPlan as runUninstallPlanBase,
@@ -84,6 +86,48 @@ describe("managed distributed vLLM runtime uninstall", () => {
       expect(runDocker).toHaveBeenCalled();
       expect(runDualStationRuntimeCleanup.mock.invocationCallOrder[0]).toBeLessThan(
         runDocker.mock.invocationCallOrder[0],
+      );
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("stops a distributed runtime before deleting the shared Hugging Face cache", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-cache-order-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receiptPath = path.join(stateDir, DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE);
+    const cacheDir = path.join(home, ".cache", "huggingface");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(receiptPath, "{}\n", { mode: 0o600 });
+    fs.mkdirSync(`${receiptPath}.ssh-binding`, { mode: 0o700 });
+    fs.mkdirSync(cacheDir, { recursive: true });
+    const runDualStationRuntimeCleanup = vi.fn(() => ok());
+    const runLocalModelRuntimeCleanup = vi.fn(() => ok());
+
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: true, keepOpenShell: true },
+        {
+          commandExists: (command) => command === "openshell",
+          env: { HOME: home, TMPDIR: home } as NodeJS.ProcessEnv,
+          existsSync: fs.existsSync,
+          isTty: false,
+          log: vi.fn(),
+          rmSync: vi.fn(),
+          run: okWithKnownGatewayList,
+          runDualStationRuntimeCleanup,
+          runLocalModelRuntimeCleanup,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(runDualStationRuntimeCleanup).toHaveBeenCalledOnce();
+      expect(runLocalModelRuntimeCleanup).toHaveBeenCalledWith(
+        true,
+        expect.objectContaining({ stdio: "inherit" }),
+      );
+      expect(runDualStationRuntimeCleanup.mock.invocationCallOrder[0]).toBeLessThan(
+        runLocalModelRuntimeCleanup.mock.invocationCallOrder[0],
       );
     } finally {
       fs.rmSync(home, { recursive: true, force: true });

@@ -36,6 +36,62 @@ afterEach(() => {
 
 describe("host-local model cleanup path safety", () => {
   it.skipIf(process.platform === "win32")(
+    "fails closed when the Hugging Face model cache is a symlink",
+    () => {
+      const homeDir = home();
+      const cacheParent = path.join(homeDir, ".cache");
+      const target = path.join(homeDir, "substituted-cache");
+      fs.mkdirSync(cacheParent);
+      fs.mkdirSync(target);
+      fs.symlinkSync(target, path.join(cacheParent, "huggingface"), "dir");
+
+      expect(cleanupLocalModelRuntimes({ deleteModels: true, homeDir })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining("model cache is a symlink"),
+      });
+      expect(fs.existsSync(target)).toBe(true);
+    },
+  );
+
+  it.skipIf(typeof process.getuid !== "function")(
+    "fails closed when the Hugging Face model cache has an unexpected owner",
+    () => {
+      const homeDir = home();
+      const cache = path.join(homeDir, ".cache", "huggingface");
+      fs.mkdirSync(cache, { recursive: true });
+      const observedOwner = fs.lstatSync(cache).uid;
+
+      expect(
+        cleanupLocalModelRuntimes({
+          deleteModels: true,
+          homeDir,
+          deps: dockerDeps({ currentUserId: observedOwner + 1 }),
+        }),
+      ).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining("cache parent is not owned by the current user"),
+      });
+      expect(fs.existsSync(cache)).toBe(true);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "fails closed when the Hugging Face model cache is group-writable",
+    () => {
+      const homeDir = home();
+      const cache = path.join(homeDir, ".cache", "huggingface");
+      fs.mkdirSync(cache, { recursive: true });
+      fs.chmodSync(cache, 0o770);
+
+      expect(cleanupLocalModelRuntimes({ deleteModels: true, homeDir })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining("model cache is not current-user filesystem authority"),
+      });
+      expect(fs.existsSync(cache)).toBe(true);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
     "fails closed when managed llama.cpp state is a symlink",
     () => {
       const homeDir = home();

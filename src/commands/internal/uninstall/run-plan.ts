@@ -30,7 +30,7 @@ export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
     "all-gateway-ports-child": Flags.boolean({ hidden: true }),
     "keep-openshell": Flags.boolean({ description: "Leave the openshell binary installed" }),
     "delete-models": Flags.boolean({
-      description: `Remove ${CLI_DISPLAY_NAME}-pulled Ollama models`,
+      description: "Remove all Ollama models and Hugging Face cache data",
     }),
     "destroy-user-data": Flags.boolean({
       description:

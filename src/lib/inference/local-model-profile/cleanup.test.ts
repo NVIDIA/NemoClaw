@@ -358,7 +358,9 @@ describe("host-local model cleanup", () => {
     createManagedState(homeDir, harness.engine);
     const cache = path.join(homeDir, ".cache", "huggingface");
     fs.mkdirSync(cache, { recursive: true });
-    fs.writeFileSync(path.join(cache, "shared-model"), "keep");
+    fs.writeFileSync(path.join(cache, "shared-model"), "delete");
+    fs.writeFileSync(path.join(cache, "token"), "keep-credential", { mode: 0o600 });
+    fs.writeFileSync(path.join(cache, "stored_tokens"), "keep-stored-credentials", { mode: 0o600 });
     const ambientCapture = vi.fn(() => "") as never;
     const ambientForceRm = vi.fn(() => ({ status: 0 })) as never;
     const ambientRun = vi.fn(() => ({ status: 0 })) as never;
@@ -379,8 +381,29 @@ describe("host-local model cleanup", () => {
     expect(ambientCapture).not.toHaveBeenCalled();
     expect(ambientForceRm).not.toHaveBeenCalled();
     expect(ambientRun).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(cache, "shared-model"))).toBe(false);
+    expect(fs.readFileSync(path.join(cache, "token"), "utf8")).toBe("keep-credential");
+    expect(fs.readFileSync(path.join(cache, "stored_tokens"), "utf8")).toBe(
+      "keep-stored-credentials",
+    );
+    expect(result.removed).toContain(`cache-contents:${cache}`);
+    expect(result.preserved).toEqual(
+      expect.arrayContaining([path.join(cache, "token"), path.join(cache, "stored_tokens")]),
+    );
+  });
+
+  it("preserves the shared Hugging Face cache unless model deletion is requested", () => {
+    const homeDir = temporaryHome();
+    const cache = path.join(homeDir, ".cache", "huggingface");
+    fs.mkdirSync(cache, { recursive: true });
+    fs.writeFileSync(path.join(cache, "shared-model"), "keep");
+
+    const result = cleanupLocalModelRuntimes({ deleteModels: false, homeDir });
+
+    expect(result).toMatchObject({ ok: true });
     expect(fs.existsSync(path.join(cache, "shared-model"))).toBe(true);
     expect(result.preserved).toContain(cache);
+    expect(result.removed).not.toContain(cache);
   });
 
   it("canonicalizes a symlink HOME alias before exact managed llama.cpp cleanup", () => {
