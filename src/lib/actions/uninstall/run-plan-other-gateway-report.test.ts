@@ -107,6 +107,7 @@ describe("uninstall reporting for other gateway-port environments (#7791)", () =
   });
 
   it("colors the retained gateway warning only when NO_COLOR is absent (#8797)", () => {
+    vi.stubEnv("NO_COLOR", undefined);
     Object.defineProperty(process.stderr, "getColorDepth", {
       configurable: true,
       value: () => 8,
