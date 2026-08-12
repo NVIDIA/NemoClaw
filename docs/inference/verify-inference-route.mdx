@@ -32,7 +32,9 @@ $$nemoclaw <name> status
 
 The `Inference` row first checks the sandbox's `inference.local` path.
 When that route responds, `status` sends one inference request through the same path.
-The row reports `healthy` only when the route serves that request.
+The row reports `healthy` only when the route returns a structurally valid result for the recorded API family.
+An empty body, malformed JSON, provider-error envelope, or wrong response shape reports `unhealthy`, even with a 2xx status.
+Status diagnostics do not include the response body.
 An HTTP `401` or `403` response reports `unauthorized`.
 Correct the stored provider credential.
 The route-reachability and upstream provider subprobes remain available to identify the failing hop.

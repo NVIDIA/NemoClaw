@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getSandboxInferenceConfig } from "../../inference/config";
+import { validateInferenceResponseBody } from "../../inference/health";
 import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "../../inference/max-tokens-field";
 import { shellQuote } from "../../runner";
 import { executeSandboxExecCommand, type SandboxCommandResult } from "./process-recovery";
@@ -27,6 +28,7 @@ export type SandboxInferenceInvocationDeps = {
  */
 export const REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS = 100_000;
 export const READINESS_INFERENCE_INVOCATION_TIMEOUT_MS = 30_000;
+const INFERENCE_INVOCATION_MAX_RESPONSE_BYTES = 64 * 1024;
 
 function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   endpoint: string;
@@ -82,9 +84,12 @@ export function buildSandboxInferenceInvocationCommand(
   const payload = shellQuote(JSON.stringify(request.payload));
   const endpoint = shellQuote(request.endpoint);
   return [
-    `code=$(curl -sS --connect-timeout 5 --max-time 90 -o /dev/null -w '%{http_code}' ${headerArgs} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,
+    "umask 077",
+    "body=$(mktemp /tmp/nemoclaw-inference-invocation.XXXXXX) || exit 1",
+    "trap 'rm -f \"$body\"' EXIT HUP INT TERM",
+    `code=$(curl -sS --connect-timeout 5 --max-time 90 --max-filesize ${INFERENCE_INVOCATION_MAX_RESPONSE_BYTES} -o "$body" -w '%{http_code}' ${headerArgs} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,
     "printf '%s\\n' \"$code\"",
-    'case "$code" in 2??) exit 0 ;; *) exit 1 ;; esac',
+    'case "$code" in 2??) cat "$body"; exit 0 ;; *) exit 1 ;; esac',
   ].join("; ");
 }
 
@@ -105,12 +110,30 @@ export function probeSandboxInferenceInvocation(
     buildSandboxInferenceInvocationCommand(input),
     timeoutMs,
   );
-  if (result?.status === 0) return { ok: true };
   if (!result) {
     return {
       ok: false,
       detail: "sandbox inference invocation probe was unavailable",
       httpStatus: null,
+    };
+  }
+  if (result.status === 0) {
+    const separator = result.stdout.indexOf("\n");
+    const statusText = (separator >= 0 ? result.stdout.slice(0, separator) : result.stdout).trim();
+    const httpStatus = /^2\d\d$/.test(statusText) ? Number.parseInt(statusText, 10) : null;
+    const body = separator >= 0 ? result.stdout.slice(separator + 1) : "";
+    const inferenceApi = getSandboxInferenceConfig(
+      input.model,
+      input.provider,
+      input.preferredInferenceApi,
+    ).inferenceApi;
+    if (httpStatus !== null && validateInferenceResponseBody(inferenceApi, body).ok) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      detail: "sandbox inference invocation probe returned an invalid response body",
+      httpStatus,
     };
   }
   const httpStatus = result.stdout.match(/(?:^|\n)([1-5]\d\d)(?:\n|$)/)?.[1];
