@@ -587,6 +587,7 @@ describe("gateway launch wiring (#4710)", () => {
           'kill() { printf "unexpected-kill:%s\\n" "$*" >>"$EVENT_LOG"; }',
           'wait() { printf "unexpected-wait:%s\\n" "$*" >>"$EVENT_LOG"; }',
           extractShellFunction(src, "arm_openclaw_gateway_supervisor_cleanup"),
+          extractShellFunction(src, "launch_openclaw_gateway_process"),
           launch,
           "launch_openclaw_gateway",
         ].join("\n"),
