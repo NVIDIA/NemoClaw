@@ -241,9 +241,11 @@ describe("runAgentJsonPassthrough", () => {
       summary: "completed",
       result: {
         messages: [{ role: "toolResult", toolName: "write_file", toolCallId: "c1" }],
-        error: { kind: "incomplete_turn" },
-        livenessState: "abandoned",
-        replayInvalid: true,
+        meta: {
+          error: { kind: "incomplete_turn" },
+          livenessState: "abandoned",
+          replayInvalid: true,
+        },
       },
     });
     const spawnSync = vi.fn(() => ({
@@ -267,7 +269,7 @@ describe("runAgentJsonPassthrough", () => {
 
     expect(stdout.join("")).toBe(payload);
     expect(stderr.join("")).toContain("did not complete");
-    expect(stderr.join("")).toContain("kind=incomplete_turn");
+    expect(stderr.join("")).toContain("error.kind=incomplete_turn");
     expect(stderr.join("")).toContain("livenessState=abandoned");
     expect(stderr.join("")).toContain("replayInvalid=true");
     expect(stderr.join("")).toContain("Verify what the turn already changed before retrying");
@@ -278,7 +280,7 @@ describe("runAgentJsonPassthrough", () => {
     const payload = JSON.stringify({
       status: "ok",
       summary: "completed",
-      result: { payloads: [{ text: "PONG" }], livenessState: "live" },
+      result: { payloads: [{ text: "PONG" }], meta: { livenessState: "working" } },
     });
     const spawnSync = vi.fn(() => ({
       status: 0,
@@ -302,8 +304,48 @@ describe("runAgentJsonPassthrough", () => {
     expect(exit).toHaveBeenCalledWith(0);
   });
 
+  it("keeps a completed turn at exit 0 when a tool result merely contains marker fields", () => {
+    const payload = JSON.stringify({
+      status: "ok",
+      result: {
+        messages: [
+          {
+            role: "toolResult",
+            content: {
+              replayInvalid: true,
+              livenessState: "abandoned",
+              error: { kind: "incomplete_turn" },
+            },
+          },
+        ],
+        payloads: [{ text: "done" }],
+      },
+    });
+    const spawnSync = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      stdout: payload,
+      stderr: "",
+      pid: 123,
+      output: [null, payload, ""],
+    }));
+    const { exit, proc, stdout } = makeProc();
+
+    expect(() =>
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: () => "openshell",
+        spawnSync,
+        stdinIsTty: () => false,
+      }),
+    ).toThrow("__exit:0");
+
+    expect(stdout.join("")).toBe(payload);
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
   it("preserves an upstream non-zero code instead of relabelling an incomplete turn", () => {
-    const payload = JSON.stringify({ result: { error: { kind: "incomplete_turn" } } });
+    const payload = JSON.stringify({ result: { meta: { error: { kind: "incomplete_turn" } } } });
     const spawnSync = vi.fn(() => ({
       status: 7,
       signal: null,
