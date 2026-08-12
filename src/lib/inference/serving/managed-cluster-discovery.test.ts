@@ -84,6 +84,31 @@ function readiness(overrides: Partial<SystemReadinessReport> = {}): SystemReadin
   } as SystemReadinessReport;
 }
 
+function remediableStorageReadiness(
+  remediationState: "present" | "absent" = "present",
+): SystemReadinessReport {
+  return {
+    ...readiness(),
+    capabilities: [
+      ...REQUIRED_CAPABILITIES.map((id) => ({
+        id,
+        state: id === "host.docker.storage_compatible" ? ("absent" as const) : ("present" as const),
+      })),
+      { id: "host.docker.storage_remediation_available", state: remediationState },
+    ],
+    findings: [
+      {
+        id: "host.docker.storage_incompatible",
+        severity: "blocking" as const,
+        summary: "The Docker storage configuration cannot support nested overlay mounts.",
+        capabilityIds: ["host.docker.storage_compatible"],
+      },
+    ],
+    status: "incompatible",
+    exitCode: 2,
+  } as SystemReadinessReport;
+}
+
 function capacity(
   requestedPath: string,
   uid: number,
@@ -383,6 +408,26 @@ describe("managed DGX Spark cluster discovery", () => {
       events.lastIndexOf("readiness:spark-worker"),
     );
     expect(events.filter((event) => event.startsWith("close:"))).toHaveLength(4);
+  });
+
+  it("detects a cluster whose Docker storage conflict has an available remediation", () => {
+    const { deps } = fixture({ createReadiness: () => remediableStorageReadiness() });
+
+    expect(probeManagedClusterManagedServingCapability({ env: {}, deps })).toMatchObject({
+      kind: "ready",
+      selectionIntent: "automatic",
+      topology: { status: "qualified" },
+    });
+  });
+
+  it("returns an ordinary automatic no-match when the storage conflict has no available remediation", () => {
+    const { deps } = fixture({ createReadiness: () => remediableStorageReadiness("absent") });
+
+    expect(probeManagedClusterManagedServingCapability({ env: {}, deps })).toMatchObject({
+      kind: "not-selected",
+      code: "no-match",
+      reason: "A node readiness report is incompatible with this topology.",
+    });
   });
 
   it("returns an ordinary automatic no-match when both rails are not pretrusted", () => {

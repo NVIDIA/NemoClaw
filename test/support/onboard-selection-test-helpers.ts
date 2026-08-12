@@ -14,6 +14,11 @@ import type {
   ProviderSelectionSuccess,
 } from "../../src/lib/onboard/provider-selection.js";
 import type { DetectWindowsHostOllamaDeps } from "../../src/lib/onboard/windows-host-ollama.js";
+import {
+  createHostProcessWorkspace,
+  trailingJsonPayload,
+} from "../helpers/host-process-harness.js";
+import { onboardChildRuntimeSource } from "../helpers/onboard-child-runtime.js";
 
 const PROVIDER_CREDENTIAL_ENV_KEYS = new Set([
   "ANTHROPIC_API_KEY",
@@ -33,6 +38,111 @@ const PROVIDER_CREDENTIAL_ENV_KEYS = new Set([
   "OPENAI_API_KEY",
   "OPENROUTER_API_KEY",
 ]);
+
+export type OllamaPullScenario = {
+  answers: readonly string[];
+  environment?: NodeJS.ProcessEnv;
+  listAfter: { attempts: number } | { model: string } | "first-pull";
+};
+
+export type OllamaPullScenarioResult = {
+  payload: {
+    result: { provider: string; model: string };
+    messages: string[];
+    lines: string[];
+    listAttempts: number;
+  };
+  pulls: string;
+};
+
+export function runOllamaPullScenario(
+  scenario: OllamaPullScenario,
+  curlResponse: string,
+): OllamaPullScenarioResult {
+  const repoRoot = path.join(import.meta.dirname, "..", "..");
+  const workspace = createHostProcessWorkspace("nemoclaw-onboard-ollama-pull-");
+  const pullLog = workspace.path("pulls.log");
+  const curlResponsePath = workspace.path("curl-response.json");
+  fs.writeFileSync(curlResponsePath, curlResponse);
+  const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+  const credentialsPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+  );
+  const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+  const listResult =
+    scenario.listAfter === "first-pull"
+      ? `fs.existsSync(pullLog) ? "qwen3.5:9b" : ""`
+      : "attempts" in scenario.listAfter
+        ? `fs.existsSync(pullLog) && ++listAttempts >= ${scenario.listAfter.attempts} ? "qwen3.5:9b" : ""`
+        : `fs.existsSync(pullLog) && fs.readFileSync(pullLog, "utf8").includes(${JSON.stringify(scenario.listAfter.model)}) ? ${JSON.stringify(scenario.listAfter.model)} : ""`;
+
+  workspace.writeExecutable(
+    "curl",
+    `#!/usr/bin/env bash
+status="200"
+outfile=""
+url=""
+has_config=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    --config) has_config=1; shift 2 ;;
+    http://*|https://*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+if [ "$has_config" -eq 0 ] && [[ "$url" == *:11435/* ]]; then status="401"; fi
+if [ -n "$outfile" ]; then cat ${JSON.stringify(curlResponsePath)} > "$outfile"; fi
+printf '%s' "$status"
+`,
+  );
+  workspace.writeExecutable(
+    "ollama",
+    `#!/usr/bin/env bash
+if [ "$1" = "pull" ]; then echo "$2" >> ${JSON.stringify(pullLog)}; exit 0; fi
+exit 0
+`,
+  );
+
+  const source = String.raw`
+const fs = require("fs");
+${onboardChildRuntimeSource}
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const { messages } = installPromptQueue(credentials, ${JSON.stringify(scenario.answers)});
+const pullLog = ${JSON.stringify(pullLog)};
+let listAttempts = 0;
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
+  if (cmd.includes("ollama list")) return ${listResult};
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
+  return "";
+};
+const { setupNim } = require(${onboardPath});
+reportChildScenario(async () => {
+  const result = await setupNim(null);
+  return { result, messages, listAttempts };
+});
+`;
+
+  try {
+    const result = workspace.runNodeSource(source, {
+      cwd: repoRoot,
+      env: workspace.environment(scenario.environment),
+    });
+    if (result.status !== 0) throw new Error(`Ollama pull scenario failed: ${result.stderr}`);
+    return {
+      payload: trailingJsonPayload<OllamaPullScenarioResult["payload"]>(result.stdout),
+      pulls: fs.existsSync(pullLog) ? fs.readFileSync(pullLog, "utf8").trim() : "",
+    };
+  } finally {
+    workspace.remove();
+  }
+}
 
 export function requirePresent<T>(value: T | null | undefined, message: string): T {
   if (value === null || value === undefined) throw new Error(message);

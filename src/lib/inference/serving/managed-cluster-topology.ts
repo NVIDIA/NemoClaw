@@ -4,6 +4,7 @@
 import net from "node:net";
 
 import { checkSystemReadinessSchemaVersion } from "../../readiness/compatibility.js";
+import { hasRemediableStorageConflict } from "../../readiness/storage-remediation.js";
 import type { SystemReadinessReport } from "../../readiness/types.js";
 import { managedInferenceDigest } from "./catalog-integrity.js";
 import type { ManagedInferenceTopologyQualification } from "./types.js";
@@ -220,10 +221,12 @@ function validateReadiness(
       message: "A node readiness report is inconclusive.",
     };
   }
+  const remediableStorage = hasRemediableStorageConflict(report);
   if (
-    report.status !== "supported" ||
-    report.exitCode !== 0 ||
-    report.findings.some(({ severity }) => severity === "blocking" || severity === "fatal")
+    (report.status !== "supported" ||
+      report.exitCode !== 0 ||
+      report.findings.some(({ severity }) => severity === "blocking" || severity === "fatal")) &&
+    !remediableStorage
   ) {
     return {
       code: "readiness-incompatible",
