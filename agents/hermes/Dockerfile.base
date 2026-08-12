@@ -283,7 +283,8 @@ RUN node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mt
 
 # setpriv runtime contract for gateway and sandbox privilege separation.
 RUN test -x /usr/bin/setpriv \
-    && /usr/bin/setpriv --version
+    && /usr/bin/setpriv --version \
+    && ! command -v gosu
 
 # Create sandbox user (matches OpenShell convention) and gateway user.
 # gateway is a member of the sandbox group so it can read Hermes config files

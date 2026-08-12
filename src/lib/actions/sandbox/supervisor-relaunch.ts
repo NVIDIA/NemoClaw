@@ -301,7 +301,7 @@ export function relaunchManagedSupervisorSession(
         // Preserve the recreation failure that stopped container recovery.
       }
     }
-    if (!quiet) {
+    if (!quiet || process.env.NEMOCLAW_REBUILD_VERBOSE === "1") {
       const detail = error instanceof Error ? error.message : String(error);
       console.error(`  Trusted container recovery could not start: ${redactFull(redact(detail))}`);
     }
