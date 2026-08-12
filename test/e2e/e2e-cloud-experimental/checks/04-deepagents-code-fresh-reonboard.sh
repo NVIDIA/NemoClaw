@@ -15,9 +15,8 @@ SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-}}"
 REPO="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)}"
 CLI="${NEMOCLAW_CLI_BIN:-${REPO}/bin/nemoclaw.js}"
 PREFIX="04-deepagents-code-fresh-reonboard"
-PRIMARY_TARGET_MODEL="nvidia/nemotron-3-super-120b-a12b"
-FALLBACK_TARGET_MODEL="nvidia/nvidia/nemotron-3-ultra"
 HOSTED_ENDPOINT="${NEMOCLAW_ENDPOINT_URL:-https://inference-api.nvidia.com/v1}"
+MODEL_SELECTOR="${REPO}/test/e2e/lib/select-authorized-chat-model.mjs"
 CREDENTIAL_CANARY="nemoclaw-dcode-config-get-canary"
 
 fail() {
@@ -193,12 +192,13 @@ model_a="${model_a#openai:}"
 [ -n "$model_a" ] || fail "initial dcode identity did not report a model"
 assert_identity "$identity_before" "$model_a" "initial"
 
-if [ "$model_a" = "$PRIMARY_TARGET_MODEL" ]; then
-  model_b="$FALLBACK_TARGET_MODEL"
-else
-  model_b="$PRIMARY_TARGET_MODEL"
-fi
+model_b="$(
+  node --experimental-strip-types --no-warnings "$MODEL_SELECTOR" \
+    --endpoint "$HOSTED_ENDPOINT" \
+    --current-model "$model_a"
+)" || fail "could not select an authorized alternate chat model"
 [ "$model_a" != "$model_b" ] || fail "model A and model B must differ"
+pass "authenticated endpoint validation selected model B"
 pass "initial live identity reports model A"
 
 seed_source="$(seed_config_source)"
