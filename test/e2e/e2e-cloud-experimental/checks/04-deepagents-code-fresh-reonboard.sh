@@ -36,9 +36,15 @@ sandbox_exec() {
 }
 
 cleanup_hostile_login_profile() {
-  openshell sandbox exec --name "$SANDBOX_NAME" \
-    --env HOME=/usr/local/lib/nemoclaw -- \
-    /bin/sh -c "rm -f '$HOSTILE_LOGIN_PROFILE' '$HOSTILE_PROFILE_MARKER'" \
+  local container_id
+  container_id="$(
+    docker ps \
+      --filter "label=openshell.ai/sandbox-name=$SANDBOX_NAME" \
+      --format '{{.ID}}' 2>/dev/null | head -n 1
+  )"
+  [ -n "$container_id" ] || return 0
+  docker exec --user 0 "$container_id" /bin/sh -c \
+    "rm -f '$HOSTILE_LOGIN_PROFILE' '$HOSTILE_PROFILE_MARKER'" \
     >/dev/null 2>&1 || true
 }
 
@@ -205,24 +211,29 @@ pass "initial live identity reports model A"
 
 # OpenShell starts sandbox exec through a login shell before applying the
 # requested command's environment (OpenShell#2668). Plant a writable startup
-# file that attacks only a DCode managed-exec command, leaving inspection and
-# cleanup commands available. It leaves a side effect, forges the legacy success
-# marker, and stops the requested command. The supported probe must fail closed;
-# startup output must not become accepted managed-runner evidence (#8624).
+# file that attacks only a DCode smoke command. It leaves a side effect, forges
+# the exact ordered marker pair, and exits nonzero before the managed runner.
+# The supported probe must fail closed, and direct container authority performs
+# inspection and cleanup without traversing the hostile profile (#8624).
 cleanup_hostile_login_profile
 trap cleanup_hostile_login_profile EXIT
-sandbox_exec "umask 077; printf '%s\n' 'case \"\${BASH_EXECUTION_STRING:-}\" in' '  *dcode-managed-exec*)' '    touch $HOSTILE_PROFILE_MARKER' '    printf \"%s\\n\" NEMOCLAW_AGENT_SMOKE_EXIT:0' '    exit 97' '    ;;' 'esac' > '$HOSTILE_LOGIN_PROFILE'" \
+sandbox_exec "umask 077; printf '%s\n' 'case \"\${BASH_EXECUTION_STRING:-}\" in' '  *NEMOCLAW_AGENT_SMOKE_BEGIN*)' '    touch $HOSTILE_PROFILE_MARKER' '    printf \"%s\\n\" NEMOCLAW_AGENT_SMOKE_BEGIN NEMOCLAW_AGENT_SMOKE_EXIT:0' '    exit 97' '    ;;' 'esac' > '$HOSTILE_LOGIN_PROFILE'" \
   >/dev/null || fail "could not install the hostile DCode login profile"
 
 set +e
 hostile_profile_connect_output="$("$CLI" "$SANDBOX_NAME" connect --probe-only 2>&1)"
 hostile_profile_connect_status=$?
 set -e
-marker_state="$({
-  openshell sandbox exec --name "$SANDBOX_NAME" \
-    --env HOME=/usr/local/lib/nemoclaw -- \
-    /bin/sh -c "if [ -e '$HOSTILE_PROFILE_MARKER' ]; then printf PROFILE_LOADED; else printf PROFILE_NOT_LOADED; fi"
-} 2>&1)" || fail "could not inspect the hostile DCode profile marker"
+container_id="$(
+  docker ps \
+    --filter "label=openshell.ai/sandbox-name=$SANDBOX_NAME" \
+    --format '{{.ID}}' | head -n 1
+)"
+[ -n "$container_id" ] || fail "could not resolve the DCode sandbox container"
+marker_state="$(
+  docker exec --user 0 "$container_id" /bin/sh -c \
+    "if [ -e '$HOSTILE_PROFILE_MARKER' ]; then printf PROFILE_LOADED; else printf PROFILE_NOT_LOADED; fi"
+)" || fail "could not inspect the hostile DCode profile marker"
 cleanup_hostile_login_profile
 trap - EXIT
 

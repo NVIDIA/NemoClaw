@@ -109,4 +109,31 @@ describe("terminal-agent connect inference route", () => {
       "  Probe complete: LangChain Deep Agents Code terminal smoke checks passed (dcode).",
     );
   });
+
+  it("fails dcode connect when a hostile profile forges markers before a nonzero exit (#8624)", () => {
+    const capture = vi.fn(() => ({
+      status: 97,
+      output: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
+    }));
+    const ensureInferenceRoute = vi.fn(() => ({ routeHealthy: true }));
+
+    expect(() =>
+      runTerminalAgentConnectProbe({
+        agent: dcodeAgent,
+        agentName: "LangChain Deep Agents Code",
+        capture: capture as never,
+        ensureInferenceRoute,
+        sandboxName: "deep-code",
+      }),
+    ).toThrow("process.exit(1)");
+
+    expect(capture).toHaveBeenCalledOnce();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "  Probe failed: LangChain Deep Agents Code terminal smoke command failed: dcode --version",
+    );
+    expect(logSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("terminal smoke checks passed"),
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
 });

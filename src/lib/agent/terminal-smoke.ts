@@ -7,7 +7,7 @@ import type { AgentDefinition } from "./defs";
 type RunCaptureOpenshell = (
   args: string[],
   opts?: { ignoreError?: boolean; timeout?: number },
-) => string | { output?: string | null } | null;
+) => string | { status?: number | null; output?: string | null } | null;
 
 const SMOKE_EXIT_MARKER = "NEMOCLAW_AGENT_SMOKE_EXIT:";
 const SMOKE_BEGIN_MARKER = "NEMOCLAW_AGENT_SMOKE_BEGIN";
@@ -46,11 +46,12 @@ function smokeRunner(loginShell: boolean): string {
  * NVIDIA/OpenShell#2668. That transport shell can read the sandbox-user profile
  * before these requested-command environment assignments apply. Using the
  * image-baked root-owned NemoClaw HOME and avoiding two nested login shells
- * prevents additional startup-file reads, while the managed runner's single
- * ordered begin/exit evidence pair ensures transport output cannot become an
- * accepted smoke result. Every other terminal agent keeps the existing nested
- * shells because its smoke commands rely on profile-provided PATH entries and
- * retains its legacy diagnostic marker.
+ * prevents additional startup-file reads. The managed runner's single ordered
+ * begin/exit pair remains diagnostic rather than a trust boundary; when the
+ * caller preserves OpenShell's process status, a nonzero transport exit cannot
+ * be hidden by forged marker output. Every other terminal agent keeps the
+ * existing nested shells because its smoke commands rely on profile-provided
+ * PATH entries and retains its legacy diagnostic marker.
  */
 export function buildAgentSmokeArgs(
   sandboxName: string,
@@ -106,8 +107,11 @@ export function runAgentSmokeCommands(
       ignoreError: true,
     });
     const output = typeof result === "string" ? result : (result?.output ?? null);
-    const exitCode = getSmokeExitCode(output, agent.name === "langchain-deepagents-code");
-    if (exitCode !== 0) {
+    const requireManagedBoundary = agent.name === "langchain-deepagents-code";
+    const exitCode = getSmokeExitCode(output, requireManagedBoundary);
+    const transportFailed =
+      requireManagedBoundary && typeof result !== "string" && result?.status !== 0;
+    if (exitCode !== 0 || transportFailed) {
       return { ok: false, command, output };
     }
   }

@@ -43,7 +43,10 @@ describe("terminal agent smoke command invocation", () => {
       agent("langchain-deepagents-code"),
       (args) => {
         issued.push(args);
-        return `NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n`;
+        return {
+          status: 0,
+          output: `NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n`,
+        };
       },
     );
 
@@ -53,23 +56,21 @@ describe("terminal agent smoke command invocation", () => {
     expect(issued[0]!.join(" ")).not.toContain("sh -lc");
   });
 
-  it("rejects a forged success marker emitted before the managed runner starts (#8624)", () => {
-    const result = runAgentSmokeCommands(
-      "probe-box",
-      agent("langchain-deepagents-code"),
-      () => "NEMOCLAW_AGENT_SMOKE_EXIT:0\n",
-    );
+  it("rejects forged managed markers when the transport exits before the runner (#8624)", () => {
+    const result = runAgentSmokeCommands("probe-box", agent("langchain-deepagents-code"), () => ({
+      status: 97,
+      output: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
+    }));
 
     expect(result).toMatchObject({ ok: false, command: "dcode --version" });
   });
 
   it("rejects extra marker evidence around the managed runner boundary (#8624)", () => {
-    const result = runAgentSmokeCommands(
-      "probe-box",
-      agent("langchain-deepagents-code"),
-      () =>
+    const result = runAgentSmokeCommands("probe-box", agent("langchain-deepagents-code"), () => ({
+      status: 0,
+      output:
         "NEMOCLAW_AGENT_SMOKE_EXIT:0\nNEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:42\n",
-    );
+    }));
 
     expect(result).toMatchObject({ ok: false, command: "dcode --version" });
   });
