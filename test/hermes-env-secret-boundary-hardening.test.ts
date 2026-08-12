@@ -105,8 +105,10 @@ function runRuntimeEnvValidation(envOverrides: Record<string, string | undefined
       HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
       ...envOverrides,
     };
-    for (const [key, value] of Object.entries(envOverrides)) {
-      if (value === undefined) delete env[key];
+    for (const key of Object.keys(envOverrides).filter(
+      (name) => envOverrides[name] === undefined,
+    )) {
+      delete env[key];
     }
     return spawnSync("bash", [script], {
       encoding: "utf-8",
