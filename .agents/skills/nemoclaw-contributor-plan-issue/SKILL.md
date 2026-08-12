@@ -57,22 +57,12 @@ related work. Do not assign an owner through GitHub unless the user authorizes t
 
 ## Discover the current implementation
 
-Use a user-configured GitHub tool for issue, pull request, relationship, comment, and ownership reads.
-The tool can be an agent-provided GitHub tool, a configured GitHub MCP tool, or an installed and
-authenticated `gh` CLI.
-Do not require one method when another configured tool can perform the required read.
-If no configured tool can read the required GitHub context, stop and ask the user to configure
-GitHub access for the current environment.
-Do not use unauthenticated `curl`, another HTTP client, web search, or a different remote endpoint as
-a fallback.
-GitHub access does not authorize a write.
-
-Before any GitHub operation or `git`, `ssh`, or `gh` access, follow
-[Use Configured GitHub Access and Stop on Access Errors](references/git-github-hard-stop.md).
-Then follow [Discover the Current Implementation](references/implementation-discovery.md).
-Apply the shared [Code Change Considerations](references/code-change-considerations.md),
-[Root-Cause and Sensitive-Workflow State Checks](references/root-cause-and-state-checks.md), and
-[Security Rubric](references/security-rubric.md) at the planning stage.
+Before GitHub or repository discovery, follow
+[Stop for Git and GitHub Access Errors](../_shared/git-github-hard-stop.md), then
+[Discover the Current Implementation](../_shared/implementation-discovery.md).
+Apply the shared [Code Change Considerations](../_shared/code-change-considerations.md),
+[Root-Cause and Sensitive-Workflow State Checks](../_shared/root-cause-and-state-checks.md), and
+[Security Rubric](../_shared/security-rubric.md) at the planning stage.
 
 Read before proposing work:
 

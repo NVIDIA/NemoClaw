@@ -1,16 +1,16 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "Use NemoClaw Docs and Skills with Coding Agents"
-sidebar-title: "Use Docs and Skills"
-description: "NemoClaw exposes canonical documentation for coding agents and supports explicit issue-planning skill installation with user-configured GitHub access."
-description-agent: "Guides users and coding agents to the NemoClaw docs MCP server, Markdown documentation, llms.txt index, docs-routing skill, and issue-planning skill with managed GitHub MCP access. Use when users ask about AI agent support, agent skills, GitHub issue planning, Markdown docs, MCP docs, Cursor, Claude Code, Codex, or Copilot."
-keywords: ["nemoclaw ai agent docs", "nemoclaw contributor skills", "nemoclaw github mcp", "nemoclaw mcp docs", "nemoclaw markdown docs", "llms.txt", "cursor", "claude code", "copilot"]
+title: "Use NemoClaw Docs with Your Coding Agents"
+sidebar-title: "Use Docs with Agents"
+description: "NemoClaw exposes an MCP docs server and Markdown documentation that AI coding agents can use when they help you install, configure, or operate a sandbox."
+description-agent: "Guides users and their AI coding agents to the NemoClaw docs MCP server, canonical Markdown documentation, llms.txt index, and optional docs-routing skill. Use when users ask about AI agent support, Markdown docs, MCP docs server, agent skills, Cursor, Claude Code, Codex, or Copilot."
+keywords: ["nemoclaw ai agent docs", "nemoclaw mcp docs", "nemoclaw markdown docs", "llms.txt", "cursor", "claude code", "copilot"]
 content:
   type: "how_to"
 ---
-NemoClaw publishes an MCP docs server, Markdown documentation, and installable agent skills for AI coding agents.
-Your agent can use the canonical docs for local setup or use an explicitly installed contributor skill inside a sandbox.
+NemoClaw publishes an MCP docs server and Markdown versions of its Fern documentation for AI coding agents.
+Your agent can search or fetch the same canonical pages that appear on the docs site and apply that guidance to your local setup.
 
 Use this page when you want your agent to help with installation, inference configuration, network policies, monitoring, deployment, security, workspace management, or command reference lookup.
 
@@ -54,129 +54,3 @@ git checkout
 
 Open the `NemoClaw` directory in your AI coding assistant.
 The assistant discovers `nemoclaw-user-guide` and uses it to fetch relevant Markdown documentation.
-
-## Use the Issue-Planning Skill in a Sandbox
-
-NemoClaw does not install repository contributor skills or configure GitHub access during onboarding.
-Install the issue-planning skill when you want a sandbox agent to plan work on the NemoClaw repository.
-
-Run this command from a trusted NemoClaw source checkout on the host:
-
-<AgentOnly variant="openclaw,hermes">
-First run `$$nemoclaw my-sandbox shields status` and record the current posture.
-If shields are up, open one maintenance window for skill installation and MCP registration:
-
-```bash
-$$nemoclaw my-sandbox shields down --timeout 15m --reason "Contributor skill and GitHub MCP setup"
-```
-
-Keep shields down through the `skill install` and `mcp add` commands below.
-</AgentOnly>
-
-```bash
-$$nemoclaw my-sandbox skill install .agents/skills/nemoclaw-contributor-plan-issue
-```
-
-The planning skill also inspects the full current checkout; installing the skill does not upload the repository.
-Make a trusted checkout available to the sandbox before starting the agent.
-For example, run this from the directory that contains a clean `NemoClaw` checkout, after removing untracked secrets and unnecessary build output:
-
-```bash
-$$nemoclaw my-sandbox upload ./NemoClaw /sandbox/
-$$nemoclaw my-sandbox exec --workdir /sandbox/NemoClaw -- test -f AGENTS.md
-```
-
-Tell the agent to work from `/sandbox/NemoClaw`.
-Refer to the [commands reference](../reference/commands#nemoclaw-name-upload-host-path-sandbox-dest) for upload semantics.
-
-The planning skill requires a user-configured GitHub tool with read access to issue context.
-For a NemoClaw-managed credential boundary, register a GitHub Model Context Protocol (MCP) server from the host.
-Use a GitHub credential with read access only and GitHub's supported MCP endpoint.
-The `mcp add` command durably creates an OpenShell provider, generated network policy, and agent adapter registration.
-After committing that state, it sends authenticated credential-resolution probe traffic to the endpoint by default.
-
-```bash
-export GITHUB_MCP_TOKEN='<LOAD_FROM_SECRET_MANAGER>'
-$$nemoclaw my-sandbox mcp add github --url https://api.githubcopilot.com/mcp/ --env GITHUB_MCP_TOKEN
-unset GITHUB_MCP_TOKEN
-```
-
-<AgentOnly variant="openclaw,hermes">
-If you lowered shields for this procedure, restore them as soon as registration finishes:
-
-```bash
-$$nemoclaw my-sandbox shields up
-```
-</AgentOnly>
-
-Do not put the credential in an agent prompt, a repository file, or command arguments.
-NemoClaw passes the host environment value to the OpenShell provider store.
-The sandbox configuration receives only a credential placeholder.
-OpenShell injects the bearer credential when an approved request crosses the egress boundary.
-OpenShell retains the credential after you unset the host variable.
-The token remains valid until it expires or you revoke it at GitHub.
-
-Tool discovery sends authenticated traffic to the configured endpoint.
-Run this command only after you trust that endpoint:
-
-```bash
-$$nemoclaw my-sandbox mcp status github --tools
-```
-
-The result must succeed and list `issue_read`, `search_issues`, `search_pull_requests`, and `pull_request_read`.
-If discovery fails or any required tool is absent, GitHub access is not usable, but the provider, policy, and adapter registration can still exist.
-The agent must stop; do not rerun `mcp add` over the existing registration.
-The tool list reports endpoint-advertised names at one point in time; it does not prove which tools the model can use.
-
-If the stored credential is invalid, export a replacement under the same environment variable name, restart the registration, then unset the variable.
-If the endpoint or tool set is wrong, remove the registration before adding a corrected one.
-
-<AgentOnly variant="hermes">
-To replace the stored credential on Hermes:
-
-```bash
-$$nemoclaw my-sandbox shields down --timeout 15m --reason "GitHub MCP maintenance"
-export GITHUB_MCP_TOKEN='<LOAD_FROM_SECRET_MANAGER>'
-$$nemoclaw my-sandbox mcp restart github
-unset GITHUB_MCP_TOKEN
-$$nemoclaw my-sandbox shields up
-```
-
-To remove the registration instead:
-
-```bash
-$$nemoclaw my-sandbox shields down --timeout 15m --reason "GitHub MCP removal"
-$$nemoclaw my-sandbox mcp remove github
-$$nemoclaw my-sandbox shields up
-```
-</AgentOnly>
-
-<AgentOnly variant="openclaw,deepagents">
-To replace the stored credential on OpenClaw or Deep Agents:
-
-```bash
-export GITHUB_MCP_TOKEN='<LOAD_FROM_SECRET_MANAGER>'
-$$nemoclaw my-sandbox mcp restart github
-unset GITHUB_MCP_TOKEN
-```
-
-To remove the registration instead:
-
-```bash
-$$nemoclaw my-sandbox mcp remove github
-```
-</AgentOnly>
-
-Removal deletes the managed provider and blocks new requests, but it does not revoke the upstream token or terminate an open response or event stream.
-For immediate revocation, revoke the token at GitHub first, remove the registration, then rebuild or destroy the sandbox to terminate active streams.
-<AgentOnly variant="hermes">
-If you destroy a Hermes sandbox without first removing its managed MCP registrations, lower shields before `destroy` and allow at least 15 minutes per configured server.
-</AgentOnly>
-
-Start a new agent session after skill installation and MCP registration succeed.
-Ask the planning skill to read one known issue.
-Confirm that it reports the issue through the configured GitHub tool without using an HTTP fallback.
-
-The contributor skill stops with GitHub setup guidance when the agent has no configured GitHub tool.
-It does not use unauthenticated HTTP requests as a fallback.
-Refer to [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server) for credential, endpoint, policy, and lifecycle requirements.

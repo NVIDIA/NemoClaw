@@ -9,13 +9,13 @@ entries, Announcements, or maintainer guidance.
 
 ## Load the Guidance for the Surface
 
-- Follow `WRITING.md` from the root of the current NemoClaw checkout for any changed explanatory text.
+- Follow the [NemoClaw Writing Guide](../../../WRITING.md) for any changed explanatory text.
   It owns claim accuracy, writing rules, review scope, and terminology routing.
-- Also follow `docs/CONTRIBUTING.md` from the current NemoClaw checkout when changing public-facing
-  documentation.
+- Also follow the [documentation contributor guide](../../../docs/CONTRIBUTING.md) when changing
+  public-facing documentation.
   It owns documentation procedures, patterns, and validation.
 
-Follow the Agent-Written Text requirements in `WRITING.md` at every boundary that section defines.
+Follow the [Agent-Written Text](../../../WRITING.md#agent-written-text) requirements at every boundary that section defines.
 Do not copy either guide's rules into a skill.
 
 ## Complete the Assigned Review

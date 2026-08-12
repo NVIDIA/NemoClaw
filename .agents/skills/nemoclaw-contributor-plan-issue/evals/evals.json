@@ -118,9 +118,9 @@
   },
   {
     "id": "configured-github-tool",
-    "question": "I explicitly installed the NemoClaw issue-planning skill in Hermes and configured a read-only GitHub MCP tool. Plan NVIDIA/NemoClaw issue #8378.",
+    "question": "Plan NVIDIA/NemoClaw issue #8378 with the configured read-only GitHub MCP tool.",
     "expected_skill": "nemoclaw-contributor-plan-issue",
-    "ground_truth": "The planning workflow uses the GitHub tool that the user configured. It does not require the gh CLI when the configured MCP tool can read the issue.",
+    "ground_truth": "The planning workflow uses the configured GitHub tool instead of requiring the gh CLI.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-plan-issue`.",
       "Reads the issue through the configured GitHub MCP tool.",
@@ -130,9 +130,9 @@
   },
   {
     "id": "missing-github-tool",
-    "question": "I explicitly installed the NemoClaw issue-planning skill in Hermes, but this agent has no agent-provided GitHub tool, no GitHub MCP tool, and no authenticated gh CLI. Plan NVIDIA/NemoClaw issue #8378.",
+    "question": "Plan NVIDIA/NemoClaw issue #8378. This agent has no agent-provided GitHub tool, GitHub MCP tool, or authenticated gh CLI.",
     "expected_skill": "nemoclaw-contributor-plan-issue",
-    "ground_truth": "The workflow cannot obtain the required issue context through configured GitHub access, so it stops with setup guidance and does not improvise an unauthenticated fallback.",
+    "ground_truth": "The workflow stops with setup guidance because it cannot read the issue through configured GitHub access.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-plan-issue`.",
       "Stops before producing an evidence-based issue plan.",

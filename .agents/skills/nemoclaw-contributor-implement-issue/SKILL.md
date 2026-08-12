@@ -54,25 +54,13 @@ changes and validation; it does not authorize GitHub writes, a push, or pull req
 
 ## Discover the current implementation
 
-Use a user-configured GitHub tool to read the accepted issue and related GitHub context.
-The tool can be an agent-provided GitHub tool, a configured GitHub MCP tool, or an installed and
-authenticated `gh` CLI.
-If no configured tool can read the required context, stop and ask the user to configure GitHub
-access for the current environment.
-Do not use unauthenticated `curl`, another HTTP client, web search, or a different remote endpoint as
-a fallback.
-GitHub access does not authorize a write, push, or pull request publication.
-
-Before any GitHub operation or `git`, `ssh`, or `gh` access, follow
-[Use Configured GitHub Access and Stop on Access Errors](references/git-github-hard-stop.md).
-Stop and request user remediation for any Git or GitHub access error.
-Do not attempt a credential, remote, protocol, or permission bypass.
-Then follow
-[Discover the Current Implementation](references/implementation-discovery.md). Apply the shared
-[Code Change Considerations](references/code-change-considerations.md),
-[Root-Cause and Sensitive-Workflow State Checks](references/root-cause-and-state-checks.md),
-[Security Rubric](references/security-rubric.md), and
-[Documentation Writing and Review](references/documentation-writing-review.md) contract.
+Before GitHub or repository discovery, follow
+[Stop for Git and GitHub Access Errors](../_shared/git-github-hard-stop.md), then
+[Discover the Current Implementation](../_shared/implementation-discovery.md).
+Apply the shared [Code Change Considerations](../_shared/code-change-considerations.md),
+[Root-Cause and Sensitive-Workflow State Checks](../_shared/root-cause-and-state-checks.md),
+[Security Rubric](../_shared/security-rubric.md), and
+[Documentation Writing and Review](../_shared/documentation-writing-review.md) contract.
 
 Read current code, tests, workflows, and every active `AGENTS.md` file for each affected area before
 editing. Derive paths, test commands, architecture, and ownership from the current checkout. Treat
