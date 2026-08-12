@@ -11,7 +11,11 @@ import {
 } from "../state/onboard-checkpoint-types";
 import { createSession, type Session, type SessionRecoveryReceipt } from "../state/onboard-session";
 import type { ResumeConfigConflict } from "./resume-config";
-import { type OnboardSessionBootstrapDeps, prepareOnboardSession } from "./session-bootstrap";
+import {
+  checkpointSandboxName,
+  type OnboardSessionBootstrapDeps,
+  prepareOnboardSession,
+} from "./session-bootstrap";
 
 class ExitError extends Error {
   constructor(readonly code: number) {
@@ -429,6 +433,104 @@ describe("prepareOnboardSession", () => {
 
     expect(result.session?.sandboxName).toBe("checkpointed-box");
     expect(deps.exitProcess).not.toHaveBeenCalled();
+  });
+
+  it("allows no-TTY resume after review-stage identity persistence (#8687)", async () => {
+    const session = createSession({
+      provider: "ollama-local",
+      model: "qwen3.5:9b",
+      status: "failed",
+    });
+    await checkpointSandboxName("review-interrupted", { name: "openclaw" }, (mutator) => {
+      return mutator(session) ?? session;
+    });
+    session.steps.provider_selection.status = "failed";
+    const { deps } = createDeps(session);
+
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: true,
+        nonInteractive: true,
+      },
+      deps,
+    );
+
+    expect(result.session).toMatchObject({
+      sandboxName: "review-interrupted",
+      provider: "ollama-local",
+      model: "qwen3.5:9b",
+      checkpoint: {
+        sandboxIdentity: decisionSelected({ name: "review-interrupted", agent: "openclaw" }),
+      },
+    });
+    expect(deps.exitProcess).not.toHaveBeenCalled();
+  });
+
+  it("persists Hermes review identity for no-TTY resume (#8687)", async () => {
+    const session = createSession({ agent: "hermes", status: "failed" });
+    await checkpointSandboxName("hermes-review", { name: "hermes" }, (mutator) => {
+      return mutator(session) ?? session;
+    });
+    session.steps.provider_selection.status = "failed";
+    const { deps } = createDeps(session);
+
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: true,
+        nonInteractive: true,
+      },
+      deps,
+    );
+
+    expect(result.session).toMatchObject({
+      sandboxName: "hermes-review",
+      checkpoint: {
+        sandboxIdentity: decisionSelected({ name: "hermes-review", agent: "hermes" }),
+      },
+    });
+    expect(deps.exitProcess).not.toHaveBeenCalled();
+  });
+
+  it("waits for canonical sandbox identity persistence before returning (#8687)", async () => {
+    const session = createSession();
+    let release: (() => void) | undefined;
+    const writeStarted = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let completed = false;
+    const checkpoint = checkpointSandboxName(
+      "review-race",
+      { name: "openclaw" },
+      async (mutator) => {
+        await writeStarted;
+        const next = mutator(session) ?? session;
+        completed = true;
+        return next;
+      },
+    );
+
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    expect(session.checkpoint).toBeNull();
+    release?.();
+    await checkpoint;
+
+    expect(completed).toBe(true);
+    expect(session).toMatchObject({
+      sandboxName: "review-race",
+      sandboxPromptProgress: { sandboxName: true },
+      checkpoint: {
+        sandboxIdentity: decisionSelected({ name: "review-race", agent: "openclaw" }),
+      },
+    });
   });
 
   it("recovers a non-OpenClaw checkpointed sandbox name after a crash before the legacy field was written (#7022)", async () => {

@@ -148,6 +148,7 @@ function createPhases(
       recordStepComplete: vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>
         sessionWithUpdates(updates),
       ),
+      recordStepRejected: vi.fn(async () => createSession()),
       toSessionUpdates: (updates) => updates as SessionUpdates,
       skippedStepMessage: vi.fn(),
       ensureManagedLlamaCppResumeReady: vi.fn(async () => false),
@@ -184,6 +185,8 @@ function createPhases(
       }),
       reserveSandboxInferenceRoute: vi.fn(() => true),
       registryUpdateSandbox: vi.fn(),
+      checkpointSandboxIdentity: vi.fn(async () => undefined),
+      prepareLocalProviderForInference: vi.fn(async () => null),
       promptValidatedSandboxName: vi.fn(async () => "my-sandbox"),
       assessHost: () => ({ memoryGb: 64 }),
       formatSandboxBuildEstimateNote: () => null,

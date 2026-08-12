@@ -229,6 +229,8 @@ describe("provider inference host-local startup selection", () => {
         hostLocalInference: expect.objectContaining({ runtimeProviderId: "mxc" }),
       }),
     );
+    expect(setupCall[7]).not.toHaveProperty("preparedOllamaProxyToken");
+    expect(calls.prepareLocalProviderForInference).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       endpointUrl: "https://inference.local/v1",
       endpointSource: "inference-set",
