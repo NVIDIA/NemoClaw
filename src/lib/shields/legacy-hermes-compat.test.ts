@@ -914,6 +914,16 @@ describe("legacy Hermes shields compatibility", () => {
       expect(
         JSON.parse(fs.readFileSync(path.join(stateDir, `shields-${sandbox.name}.json`), "utf-8")),
       ).toMatchObject({ shieldsDown: true, shieldsPolicySnapshotPath: snapshotPath });
+      for (const event of [
+        "provider:mutable/locked",
+        "verified-mutable",
+        "policy",
+        "provider:locked/locked",
+        "route",
+        "audit",
+      ]) {
+        expect(events).toContain(event);
+      }
       expect(events.indexOf("provider:mutable/locked")).toBeLessThan(
         events.indexOf("verified-mutable"),
       );
