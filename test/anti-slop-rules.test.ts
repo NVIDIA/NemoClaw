@@ -103,10 +103,10 @@ describe("vendored anti-slop rules", () => {
     "rejects source that violates $name and accepts source that satisfies $name",
     (testCase) => {
       const rule = antiSlopPlugin.rules[testCase.name];
-      if (!rule) throw new Error(`Missing anti-slop rule: ${testCase.name}`);
       const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
 
-      tester.run(`anti-slop/${testCase.name}`, rule, {
+      // SAFETY: The registration assertion above proves every table name exists in plugin.rules.
+      tester.run(`anti-slop/${testCase.name}`, rule!, {
         invalid: [{ code: testCase.invalid, errors: 1 }],
         valid: [testCase.valid],
       });
