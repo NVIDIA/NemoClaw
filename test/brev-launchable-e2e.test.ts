@@ -32,14 +32,18 @@ function fixture(
     provisionSha?: string;
     ready?: boolean;
     receiptSha?: string;
+    refreshError?: string;
+    refreshStatus?: number;
     repoClean?: boolean;
     repoSha?: string;
     runtimeOverrides?: boolean;
     schemaVersion?: number;
+    sshDefaultStatus?: number;
+    sshHostError?: string;
     sshReadyAfter?: number;
     sourceRepository?: string;
     sourcePath?: string;
-    timeoutBlockCommand?: "brev refresh" | "ssh -T";
+    timeoutBlockCommand?: "brev refresh" | "ssh-host";
   } = {},
 ) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launchable-e2e-"));
@@ -48,6 +52,7 @@ function fixture(
   const workDir = path.join(root, "evidence");
   const state = path.join(root, "workspace.json");
   const calls = path.join(root, "calls.log");
+  const refreshAttempts = path.join(root, "refresh-attempts");
   const sshAttempts = path.join(root, "ssh-attempts");
   const timeoutBlock = path.join(root, "timeout-block");
   fs.mkdirSync(bin);
@@ -61,7 +66,14 @@ set -euo pipefail
 duration="$1"
 shift
 printf 'timeout %s %s\n' "$duration" "$*" >> "$FAKE_CALLS"
-if [ -f "$FAKE_TIMEOUT_BLOCK" ] && [ "\${1:-} \${2:-}" = "$FAKE_TIMEOUT_BLOCK_COMMAND" ]; then
+should_block=0
+if [ "$FAKE_TIMEOUT_BLOCK_COMMAND" = "brev refresh" ] && [ "\${1:-} \${2:-}" = "brev refresh" ]; then
+  should_block=1
+elif [ "$FAKE_TIMEOUT_BLOCK_COMMAND" = "ssh-host" ] && [ "\${1:-}" = ssh ] &&
+  [[ " $* " == *" $INSTANCE_NAME-host true "* ]]; then
+  should_block=1
+fi
+if [ -f "$FAKE_TIMEOUT_BLOCK" ] && [ "$should_block" -eq 1 ]; then
   rm -f "$FAKE_TIMEOUT_BLOCK"
   /bin/sleep "\${duration%s}"
   exit 124
@@ -141,7 +153,19 @@ case "$1" in
       *) exit 2 ;;
     esac ;;
   delete) [ "$FAKE_DELETE_FAILS" = 1 ] || rm -f "$FAKE_STATE" ;;
-  refresh) ;;
+  refresh)
+    attempts=0
+    [ ! -f "$FAKE_REFRESH_ATTEMPTS" ] || attempts="$(cat "$FAKE_REFRESH_ATTEMPTS")"
+    attempts=$((attempts + 1))
+    printf '%s\n' "$attempts" > "$FAKE_REFRESH_ATTEMPTS"
+    if [ "$FAKE_REFRESH_STATUS" -ne 0 ]; then
+      if [ "$attempts" -eq 1 ]; then
+        printf 'stale refresh detail\n' >&2
+      else
+        printf '%s\n' "$FAKE_REFRESH_ERROR" >&2
+      fi
+      exit "$FAKE_REFRESH_STATUS"
+    fi ;;
   *) exit 2 ;;
 esac
 `,
@@ -155,14 +179,30 @@ if [ "\${*: -1}" = true ]; then
   for argument in "\${required[@]}"; do
     [[ " $* " == *" $argument "* ]]
   done
-  [ "\${*: -2:1}" = "$INSTANCE_NAME-host" ]
+  target="\${*: -2:1}"
+  if [ "$target" = "$INSTANCE_NAME" ]; then
+    printf 'ssh default diagnostic probe: %s\n' "$*" >> "$FAKE_CALLS"
+    if [ "$FAKE_SSH_DEFAULT_STATUS" -ne 0 ]; then
+      printf '%s\n' "$FAKE_SSH_DEFAULT_ERROR" >&2
+      exit "$FAKE_SSH_DEFAULT_STATUS"
+    fi
+    exit 0
+  fi
+  [ "$target" = "$INSTANCE_NAME-host" ]
   attempts=0
   [ ! -f "$FAKE_SSH_ATTEMPTS" ] || attempts="$(cat "$FAKE_SSH_ATTEMPTS")"
   attempts=$((attempts + 1))
   printf '%s\n' "$attempts" > "$FAKE_SSH_ATTEMPTS"
   printf 'ssh host readiness attempt %s: %s\n' "$attempts" "$*" >> "$FAKE_CALLS"
-  [ "$attempts" -ge "$FAKE_SSH_READY_AFTER" ]
-  exit
+  if [ "$attempts" -lt "$FAKE_SSH_READY_AFTER" ]; then
+    if [ "$attempts" -eq 1 ]; then
+      printf 'stale host SSH detail\n' >&2
+    else
+      printf '%s\n' "$FAKE_SSH_HOST_ERROR" >&2
+    fi
+    exit 34
+  fi
+  exit 0
 fi
 script="$(cat)"
 grep -q 'NEMOCLAW_E2E_SETUP_MODE=preinstalled-launchable' <<<"$script"
@@ -181,6 +221,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     BREV_DELETE_TIMEOUT_SECONDS: "5",
     BREV_READY_TIMEOUT_SECONDS: "5",
     BREV_LAUNCHABLE_ID: "env-staging123",
+    BREV_API_KEY: "brev-test-secret",
     CANDIDATE_SHA: candidateSha,
     CORRELATION_ID: "11111111-1111-4111-8111-111111111111",
     FAKE_BOOT_IMAGE: options.bootImage ?? "projects/brevdevprod/global/images/nemoclaw-test-image",
@@ -197,9 +238,20 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_RECEIPT_SHA: options.receiptSha ?? candidateSha,
     FAKE_REPO_CLEAN: options.repoClean === false ? "false" : "true",
     FAKE_REPO_SHA: options.repoSha ?? candidateSha,
+    FAKE_REFRESH_ERROR:
+      options.refreshError ??
+      "refresh safe detail; api_key=brev-test-secret; endpoint=https://refresh.hidden.internal/path",
+    FAKE_REFRESH_ATTEMPTS: refreshAttempts,
+    FAKE_REFRESH_STATUS: String(options.refreshStatus ?? 0),
     FAKE_RUNTIME_OVERRIDES: options.runtimeOverrides ? "true" : "false",
     FAKE_SCHEMA_VERSION: String(options.schemaVersion ?? 1),
     FAKE_SSH_ATTEMPTS: sshAttempts,
+    FAKE_SSH_DEFAULT_ERROR:
+      "default SSH safe detail; password=default-secret; host=default.hidden.internal",
+    FAKE_SSH_DEFAULT_STATUS: String(options.sshDefaultStatus ?? 33),
+    FAKE_SSH_HOST_ERROR:
+      options.sshHostError ??
+      "ssh: Could not resolve hostname host.hidden.internal: host SSH safe detail; password=ssh-secret; identityfile=/hidden/private-key",
     FAKE_SSH_READY_AFTER: String(options.sshReadyAfter ?? 1),
     FAKE_SOURCE_REPOSITORY: options.sourceRepository ?? "NVIDIA/NemoClaw",
     FAKE_SOURCE_PATH: options.sourcePath ?? "/opt/nemoclaw-image/NemoClaw",
@@ -213,7 +265,6 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     GITHUB_RUN_ID: "789",
     INSTANCE_NAME: "nclaw-e2e-test-1",
     NVIDIA_INFERENCE_API_KEY: "nvapi-test-value",
-    POLL_SECONDS: "0",
     RUNNER_TEMP: root,
     WORK_DIR: workDir,
   };
@@ -224,9 +275,13 @@ function run(env: NodeJS.ProcessEnv) {
   return spawnSync("bash", [SCRIPT], { cwd: REPO_ROOT, encoding: "utf8", env });
 }
 
+function emittedOutput(result: ReturnType<typeof run>, workDir: string): string {
+  return `${result.stdout}\n${result.stderr}\n${fs.readFileSync(path.join(workDir, "lane.log"), "utf8")}`;
+}
+
 describe("focused staging Brev Launchable lane", () => {
   it("binds the producer run, verifies the clean booted SHA, runs E2E, and deletes (#6943)", () => {
-    const { calls, env, sshAttempts, state, workDir } = fixture({ sshReadyAfter: 3 });
+    const { calls, env, sshAttempts, state, workDir } = fixture({ sshReadyAfter: 6 });
     const result = run(env);
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const commands = fs.readFileSync(calls, "utf8");
@@ -236,28 +291,57 @@ describe("focused staging Brev Launchable lane", () => {
       commands.indexOf("create nclaw-e2e-test-1 --launchable env-staging123"),
     );
     expect(commands).toContain("create nclaw-e2e-test-1 --launchable env-staging123");
-    expect(commands.match(/ssh host readiness attempt/gu)).toHaveLength(3);
+    expect(commands.match(/ssh host readiness attempt/gu)).toHaveLength(6);
+    const readinessCommands = commands.slice(
+      commands.indexOf("create nclaw-e2e-test-1 --launchable env-staging123"),
+      commands.indexOf("NEMOCLAW_BOOT_IMAGE"),
+    );
+    expect(readinessCommands.split("\n").filter((line) => line === "brev refresh")).toHaveLength(2);
+    expect(readinessCommands.indexOf("brev refresh")).toBeLessThan(
+      readinessCommands.indexOf("ssh default diagnostic probe"),
+    );
+    expect(readinessCommands.indexOf("brev refresh")).toBeLessThan(
+      readinessCommands.indexOf("ssh host readiness attempt 1"),
+    );
+    expect(readinessCommands.lastIndexOf("brev refresh")).toBeGreaterThan(
+      readinessCommands.indexOf("ssh host readiness attempt 5"),
+    );
+    expect(readinessCommands.lastIndexOf("brev refresh")).toBeLessThan(
+      readinessCommands.indexOf("ssh host readiness attempt 6"),
+    );
+    expect(readinessCommands).toContain("sleep 5");
     const readinessCall = commands
       .split("\n")
       .find((line) => line.startsWith("ssh host readiness attempt 1: "));
     expect(readinessCall).toBeDefined();
     const readinessArgs = readinessCall?.split(": ").at(1)?.split(" ") ?? [];
-    expect(readinessArgs).toEqual(
-      expect.arrayContaining([
-        "-T",
-        "BatchMode=yes",
-        "ConnectTimeout=10",
-        "ConnectionAttempts=1",
-        "NumberOfPasswordPrompts=0",
-        "RequestTTY=no",
-        "LogLevel=ERROR",
-      ]),
-    );
-    expect(readinessArgs.slice(-2)).toEqual(["nclaw-e2e-test-1-host", "true"]);
-    expect(fs.readFileSync(sshAttempts, "utf8").trim()).toBe("3");
+    expect(readinessArgs).toEqual([
+      "-T",
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ConnectTimeout=10",
+      "-o",
+      "ConnectionAttempts=1",
+      "-o",
+      "NumberOfPasswordPrompts=0",
+      "-o",
+      "RequestTTY=no",
+      "-o",
+      "LogLevel=ERROR",
+      "nclaw-e2e-test-1-host",
+      "true",
+    ]);
+    expect(fs.readFileSync(sshAttempts, "utf8").trim()).toBe("6");
     expect(commands).toContain("ssh preinstalled full-e2e.test.ts");
     expect(commands).not.toContain("nvapi-test-value");
     expect(commands).not.toMatch(/rsync|install\.sh|npm (?:ci|install)|git clone/u);
+    expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).toContain(
+      "Waiting up to 900 seconds for host SSH access",
+    );
+    expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).not.toMatch(
+      /last failure|Readiness classification/u,
+    );
     expect(fs.existsSync(state)).toBe(false);
     expect(fs.readdirSync(workDir).sort()).toEqual([
       "cleanup.json",
@@ -352,12 +436,77 @@ describe("focused staging Brev Launchable lane", () => {
     });
   });
 
-  it("fails after host SSH readiness times out and deletes the workspace", () => {
-    const { calls, env, state, workDir } = fixture({ sshReadyAfter: Number.MAX_SAFE_INTEGER });
-    const result = run({ ...env, BREV_HOST_SSH_TIMEOUT_SECONDS: "1" });
+  it("reports only the final sanitized refresh and direct host SSH failures", () => {
+    const { calls, env, state, workDir } = fixture({
+      refreshError: `refresh safe detail; api_key=brev-test-secret; endpoint=https://refresh.hidden.internal/path; ${"r".repeat(2_000)}`,
+      refreshStatus: 35,
+      sshHostError: `ssh: Could not resolve hostname host.hidden.internal: host SSH safe detail; password=ssh-secret; identityfile=/hidden/private-key; ${"s".repeat(2_000)}`,
+      sshReadyAfter: Number.MAX_SAFE_INTEGER,
+    });
+    const result = run({ ...env, BREV_HOST_SSH_TIMEOUT_SECONDS: "2" });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("host SSH readiness timed out");
-    expect(fs.readFileSync(calls, "utf8")).not.toMatch(/brev exec|full-e2e\.test\.ts/u);
+    const commands = fs.readFileSync(calls, "utf8");
+    expect(commands).toMatch(
+      /timeout [12]s ssh -T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 -o NumberOfPasswordPrompts=0 -o RequestTTY=no -o LogLevel=ERROR nclaw-e2e-test-1 true/u,
+    );
+    expect(commands).toMatch(
+      /timeout [12]s ssh -T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 -o NumberOfPasswordPrompts=0 -o RequestTTY=no -o LogLevel=ERROR nclaw-e2e-test-1-host true/u,
+    );
+    expect(commands).not.toMatch(/ssh -G|brev exec .* true --host/u);
+    expect(commands).not.toMatch(/NEMOCLAW_BOOT_IMAGE|full-e2e\.test\.ts/u);
+
+    const output = emittedOutput(result, workDir);
+    expect(output).toContain(
+      "Readiness Brev refresh last failure: status 35; error: refresh safe detail",
+    );
+    expect(output).toContain("Readiness direct host SSH last failure: status 34; error:");
+    expect(output).toContain("host SSH safe detail");
+    expect(output).toContain(
+      "Readiness classification: neither default Brev container nor direct host reachable",
+    );
+    expect(output).not.toContain("stale refresh detail");
+    expect(output).not.toContain("stale host SSH detail");
+    const errorLines = fs
+      .readFileSync(path.join(workDir, "lane.log"), "utf8")
+      .split("\n")
+      .filter((line) => line.includes("; error:"));
+    expect(errorLines).not.toHaveLength(0);
+    for (const line of errorLines) {
+      expect(Buffer.byteLength(line.split("; error: ", 2)[1] ?? "")).toBeLessThanOrEqual(512);
+    }
+    for (const sensitiveValue of [
+      "brev-test-secret",
+      "default-secret",
+      "ssh-secret",
+      "github-test-token",
+      "nvapi-test-value",
+      "/hidden/private-key",
+      "host.hidden.internal",
+      "refresh.hidden.internal",
+    ]) {
+      expect(output).not.toContain(sensitiveValue);
+    }
+    expect(fs.existsSync(state)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
+  it.each([
+    ["default Brev container reachable; direct host unreachable", { sshDefaultStatus: 0 }],
+    ["neither default Brev container nor direct host reachable", {}],
+  ])("classifies %s after the shared readiness deadline", (classification, options) => {
+    const { calls, env, state, workDir } = fixture({
+      ...options,
+      sshReadyAfter: Number.MAX_SAFE_INTEGER,
+    });
+    const result = run({ ...env, BREV_HOST_SSH_TIMEOUT_SECONDS: "1" });
+    expect(result.status).not.toBe(0);
+    expect(emittedOutput(result, workDir)).toContain(`Readiness classification: ${classification}`);
+    const commands = fs.readFileSync(calls, "utf8");
+    expect(commands).toContain("ssh default diagnostic probe");
+    expect(commands).not.toMatch(/NEMOCLAW_BOOT_IMAGE|full-e2e\.test\.ts/u);
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
@@ -372,8 +521,11 @@ describe("focused staging Brev Launchable lane", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("host SSH readiness timed out");
     expect(elapsedMs).toBeLessThan(10_000);
-    expect(fs.readFileSync(calls, "utf8")).toContain("timeout 1s brev refresh");
-    expect(fs.readFileSync(calls, "utf8")).not.toMatch(/brev exec|full-e2e\.test\.ts/u);
+    const commands = fs.readFileSync(calls, "utf8");
+    expect(commands).toContain("timeout 1s brev refresh");
+    expect(commands).not.toMatch(
+      /ssh default diagnostic probe|ssh host readiness attempt|NEMOCLAW_BOOT_IMAGE|full-e2e\.test\.ts/u,
+    );
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
@@ -381,20 +533,46 @@ describe("focused staging Brev Launchable lane", () => {
   }, 90_000);
 
   it("caps a blocking SSH probe by the host SSH deadline and deletes the workspace", () => {
-    const { calls, env, state, workDir } = fixture({ timeoutBlockCommand: "ssh -T" });
+    const { calls, env, state, workDir } = fixture({ timeoutBlockCommand: "ssh-host" });
     const startedAt = performance.now();
     const result = run({ ...env, BREV_HOST_SSH_TIMEOUT_SECONDS: "2" });
     const elapsedMs = performance.now() - startedAt;
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("host SSH readiness timed out");
     expect(elapsedMs).toBeLessThan(10_000);
-    expect(fs.readFileSync(calls, "utf8")).toContain("timeout 2s ssh -T");
-    expect(fs.readFileSync(calls, "utf8")).not.toMatch(/brev exec|full-e2e\.test\.ts/u);
+    const commands = fs.readFileSync(calls, "utf8");
+    expect(commands).toMatch(/timeout [12]s ssh -T .*nclaw-e2e-test-1-host true/u);
+    expect(commands.match(/timeout [12]s ssh -T .*nclaw-e2e-test-1-host true/gu)).toHaveLength(1);
+    expect(commands).not.toMatch(/NEMOCLAW_BOOT_IMAGE|full-e2e\.test\.ts/u);
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
     });
   }, 90_000);
+
+  it("caps the five-second poll sleep by the shared readiness deadline", () => {
+    const { calls, env, state, workDir } = fixture({
+      sshReadyAfter: Number.MAX_SAFE_INTEGER,
+    });
+    const result = run({
+      ...env,
+      BREV_HOST_SSH_TIMEOUT_SECONDS: "2",
+      POLL_SECONDS: "9",
+    });
+    expect(result.status).not.toBe(0);
+    const commands = fs.readFileSync(calls, "utf8");
+    const readinessCommands = commands.slice(
+      commands.indexOf("timeout 2s brev refresh"),
+      commands.indexOf("timeout 60s brev delete"),
+    );
+    expect(readinessCommands).toMatch(/sleep [12]/u);
+    expect(readinessCommands).not.toContain("sleep 9");
+    expect(commands).not.toMatch(/NEMOCLAW_BOOT_IMAGE|full-e2e\.test\.ts/u);
+    expect(fs.existsSync(state)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
 
   it("preserves the booted image when the provision receipt is missing", () => {
     const { calls, env, state, workDir } = fixture({ missingProvisionReceipt: true });
