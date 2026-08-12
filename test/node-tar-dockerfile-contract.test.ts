@@ -48,7 +48,11 @@ function namedStage(source: string, name: string): string {
 
 describe("node-tar image remediation contract", () => {
   it("binds the remediation lifecycle to the affected upstream Node image pins", () => {
-    const pinnedBaseSources = ["Dockerfile.base", "agents/hermes/Dockerfile.base"]
+    const pinnedBaseSources = [
+      "Dockerfile.base",
+      "agents/hermes/Dockerfile.base",
+      "agents/langchain-deepagents-code/Dockerfile.base",
+    ]
       .map((file) => fs.readFileSync(path.join(repoRoot, file), "utf8"))
       .join("\n");
 
