@@ -1114,7 +1114,12 @@ def _expected_file_mode(policy: Policy, action: Action, old_mode: int) -> int:
         return (old_mode & 0o700) | 0o060 | (0o010 if old_mode & 0o111 else 0)
     if policy == "confidentiality":
         return old_mode & 0o700
-    return old_mode & ~0o022
+    # High-risk files move from the sandbox UID to root while retaining the
+    # sandbox group. Mirror the original owner's read/execute access onto that
+    # group before removing every group/world write bit; otherwise an
+    # owner-private 0600 runtime file becomes root:sandbox 0600 and the
+    # gateway loses the access it had before Shields went up (#8304).
+    return (old_mode & ~0o022) | ((old_mode & 0o500) >> 3)
 
 
 def _freeze_dir_for_lock(dir_fd: int) -> None:
@@ -1824,12 +1829,21 @@ def _verify_metadata(
                 path,
                 f"confidential file exposes group/world permissions: {mode:04o}",
             )
-    elif mode & 0o022:
-        return Issue(
-            "verification-mode-mismatch",
-            path,
-            f"high-risk file is group/world writable: {mode:04o}",
-        )
+    else:
+        if mode & 0o022:
+            return Issue(
+                "verification-mode-mismatch",
+                path,
+                f"high-risk file is group/world writable: {mode:04o}",
+            )
+        required_group_access = (mode & 0o500) >> 3
+        if (mode & required_group_access) != required_group_access:
+            return Issue(
+                "verification-mode-mismatch",
+                path,
+                "high-risk file does not preserve owner read/execute access "
+                f"for the sandbox group: {mode:04o}",
+            )
     return None
 
 

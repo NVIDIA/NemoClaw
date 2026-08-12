@@ -97,6 +97,47 @@ describe("writeSilentAgentDispatchFailure", () => {
     expect(lines.join("")).toContain(String.raw`'a'\''b $(x)'`);
   });
 
+  it("redacts a credential pasted into the turn arguments", () => {
+    const { lines, proc } = collectStderr();
+
+    writeSilentAgentDispatchFailure(proc, "my-assistant", [
+      "openclaw",
+      "agent",
+      "--agent",
+      "main",
+      "-m",
+      "use sk-ant-api03-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH",
+    ]);
+
+    const output = lines.join("");
+    expect(output).not.toContain("sk-ant-api03-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH");
+    // Pin the surviving command, not just the absent token: a bare negative
+    // assertion also passes if the recovery command is dropped entirely.
+    expect(output).toContain(
+      "nemoclaw 'my-assistant' exec -- 'openclaw' 'agent' '--agent' 'main' '-m' 'use <REDACTED>'",
+    );
+    expect(output).toContain("sensitive values were redacted; do not replay this command");
+    expect(output).not.toContain("run this turn directly inside the sandbox");
+  });
+
+  it("leaves ordinary turn text runnable rather than redacting it", () => {
+    const { lines, proc } = collectStderr();
+
+    writeSilentAgentDispatchFailure(proc, "my-assistant", [
+      "openclaw",
+      "agent",
+      "--agent",
+      "main",
+      "-m",
+      "Summarise README.md",
+    ]);
+
+    const output = lines.join("");
+    expect(output).toContain("'-m' 'Summarise README.md'");
+    expect(output).toContain("run this turn directly inside the sandbox");
+    expect(output).not.toContain("do not replay this command");
+  });
+
   it("offers the documented recovery paths", () => {
     const { lines, proc } = collectStderr();
 
