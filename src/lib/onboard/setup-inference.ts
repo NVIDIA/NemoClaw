@@ -685,6 +685,12 @@ export function createSetupInference(
                 model,
                 provider,
                 allowToolsIncompatible: options.allowToolsIncompatible === true,
+                // A review-approved normal onboarding path has already
+                // initialized, persisted, and probed the proxy once. Recovery
+                // callers without this token retain the provider fallback.
+                preparedProxyToken: hostLocalRoute
+                  ? undefined
+                  : options.preparedOllamaProxyToken,
               },
               {
                 ...commonDeps,

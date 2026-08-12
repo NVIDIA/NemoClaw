@@ -78,6 +78,8 @@ export interface ProviderInferenceSetupOptions {
   isRecordedProviderRecoveryAuthorized?: () => boolean;
   /** Operation-scoped provider request selected for this onboarding attempt. */
   hostLocalInference?: HostLocalInferenceStartupSelection;
+  /** Proxy token prepared after configuration review; avoids repeating host mutations in setup. */
+  preparedOllamaProxyToken?: string;
 }
 
 export interface ProviderSelectionResult {
