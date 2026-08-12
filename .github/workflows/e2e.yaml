@@ -162,6 +162,7 @@ jobs:
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
       explicit_only_jobs: ${{ steps.matrix.outputs.explicit_only_jobs }}
+      release_required_jobs: ${{ steps.matrix.outputs.release_required_jobs }}
       runner_routing: ${{ steps.runner_routing.outputs.runner_routing }}
     steps:
       - id: controller_matrix
@@ -721,37 +722,6 @@ jobs:
           brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"
           printf 'work_dir=%s\n' "$work_dir" >> "$GITHUB_OUTPUT"
 
-      - name: Record E2E dispatch identity
-        env:
-          CANDIDATE_SHA: ${{ env.CANDIDATE_SHA }}
-          DISPATCH_JOBS: ${{ inputs.jobs }}
-          DISPATCH_TARGETS: ${{ inputs.targets }}
-          EVENT_NAME: ${{ github.event_name }}
-          INCLUDE_STAGING_BREV_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-          RUN_ID: ${{ github.run_id }}
-          WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
-        run: |
-          jq -n \
-            --arg candidateSha "$CANDIDATE_SHA" \
-            --arg eventName "$EVENT_NAME" \
-            --arg jobs "$DISPATCH_JOBS" \
-            --arg targets "$DISPATCH_TARGETS" \
-            --arg workflowRunId "$RUN_ID" \
-            --argjson includeStagingBrevLaunchable "$INCLUDE_STAGING_BREV_LAUNCHABLE" \
-            --argjson workflowRunAttempt "$RUN_ATTEMPT" \
-            '{
-              kind: "nemoclaw-e2e-dispatch-v1",
-              candidateSha: $candidateSha,
-              eventName: $eventName,
-              workflowRunId: $workflowRunId,
-              workflowRunAttempt: $workflowRunAttempt,
-              jobs: $jobs,
-              targets: $targets,
-              includeStagingBrevLaunchable: $includeStagingBrevLaunchable,
-              emptySelectors: ($jobs == "" and $targets == "")
-            }' >"$WORK_DIR/dispatch.json"
-
       - name: Build, deploy, verify, test, and clean up
         env:
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
@@ -767,7 +737,6 @@ jobs:
           name: staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ steps.workspace.outputs.work_dir }}/lane.log
-            ${{ steps.workspace.outputs.work_dir }}/dispatch.json
             ${{ steps.workspace.outputs.work_dir }}/launchable-e2e.json
             ${{ steps.workspace.outputs.work_dir }}/full-e2e.log
             ${{ steps.workspace.outputs.work_dir }}/cleanup.json
@@ -2491,6 +2460,7 @@ jobs:
     permissions:
       contents: read
     env:
+      E2E_DEFAULT_ENABLED: "0"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-dgx-spark-qualification
       E2E_JOB: "1"
       E2E_TARGET_ID: "llama-cpp-dgx-spark-qualification"
@@ -7465,6 +7435,28 @@ jobs:
               issue_number: prNumber,
               body: report.body,
             });
+
+  release-qualification:
+    name: Release qualification
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: *e2e-result-jobs
+    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.jobs == '' && inputs.targets == '' && inputs.include_staging_brev_launchable && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue)) }}
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the qualification evaluator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: tools/e2e/release-qualification.mts
+          sparse-checkout-cone-mode: false
+      - name: Require every release E2E result
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          RELEASE_REQUIRED_JOBS: ${{ needs.generate-matrix.outputs.release_required_jobs }}
+        run: node --experimental-strip-types --no-warnings tools/e2e/release-qualification.mts
 
   # ── Push/manual scorecard ─────────────────────────────────────────────────
   scorecard:
