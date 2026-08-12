@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
@@ -16,7 +16,7 @@ describe("OpenClaw gateway credential environment", () => {
   it.each([
     "truncate",
     "append",
-  ])("passes --token and removes OPENCLAW_GATEWAY_TOKEN when the log mode is %s (#8693)", (logMode) => {
+  ])("removes OPENCLAW_GATEWAY_TOKEN from the gateway environment without passing its value in argv when the log mode is %s (#8693)", (logMode) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-token-env-"));
     const gatewayLog = path.join(tmpDir, "gateway.log");
     const seed = "existing gateway output\n";
@@ -40,13 +40,61 @@ describe("OpenClaw gateway credential environment", () => {
         timeout: 5000,
       });
       expect(result.status, result.stderr).toBe(0);
-      const expectedOutput = "ENV=unset\nARGS=--token gateway-secret\n";
+      const expectedOutput = "ENV=unset\nARGS=\n";
       expect(fs.readFileSync(gatewayLog, "utf8")).toBe(
         logMode === "append" ? `${seed}${expectedOutput}` : expectedOutput,
       );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  describe.skipIf(!fs.existsSync("/proc/self/cmdline"))("Linux process inspection", () => {
+    it.each([
+      { logMode: "truncate", launchPath: "initial launch" },
+      { logMode: "append", launchPath: "automatic respawn" },
+    ])("keeps the gateway token out of process cmdline and environ during $launchPath (#8693)", ({
+      logMode,
+    }) => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-token-proc-"));
+      const gatewayLog = path.join(tmpDir, "gateway.log");
+      const source = fs.readFileSync(START_SCRIPT, "utf8");
+      const launch = extractShellFunctionFromSource(
+        source,
+        "launch_openclaw_gateway_process",
+      ).replaceAll("/tmp/gateway.log", gatewayLog);
+      const script = [
+        "set -euo pipefail",
+        launch,
+        "export OPENCLAW_GATEWAY_TOKEN=gateway-secret",
+        `launch_openclaw_gateway_process ${logMode} ${JSON.stringify(process.execPath)} -e 'setTimeout(() => {}, 30000)' nemoclaw-proc-credential-probe`,
+        'trap \'kill "$GATEWAY_PID" 2>/dev/null || true; wait "$GATEWAY_PID" 2>/dev/null || true\' EXIT',
+        "ready=0",
+        "for _ in $(seq 1 100); do",
+        '  [ -r "/proc/$GATEWAY_PID/cmdline" ] || { sleep 0.01; continue; }',
+        "  process_cmdline=\"$(tr '\\0' '\\n' < \"/proc/$GATEWAY_PID/cmdline\")\"",
+        '  case "$process_cmdline" in *nemoclaw-proc-credential-probe*) ready=1; break ;; esac',
+        "  sleep 0.01",
+        "done",
+        '[ "$ready" -eq 1 ] || { echo "gateway process did not become inspectable" >&2; exit 30; }',
+        "process_environment=\"$(tr '\\0' '\\n' < \"/proc/$GATEWAY_PID/environ\")\"",
+        'case "$process_cmdline" in *"$OPENCLAW_GATEWAY_TOKEN"*) exit 31 ;; esac',
+        'case "$process_environment" in *"OPENCLAW_GATEWAY_TOKEN=$OPENCLAW_GATEWAY_TOKEN"*) exit 32 ;; esac',
+        'kill "$GATEWAY_PID"',
+        'wait "$GATEWAY_PID" 2>/dev/null || true',
+        "trap - EXIT",
+      ].join("\n");
+
+      try {
+        const result = spawnSync("bash", ["-c", script], {
+          encoding: "utf8",
+          timeout: 5000,
+        });
+        expect(result.status, result.stderr).toBe(0);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
   });
 
   it("rejects an unknown gateway log mode before launch (#8693)", () => {

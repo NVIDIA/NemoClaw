@@ -2337,6 +2337,11 @@ try {
   const gateway = cfg.gateway && typeof cfg.gateway === "object" ? cfg.gateway : (cfg.gateway = {});
   const auth = gateway.auth && typeof gateway.auth === "object" ? gateway.auth : (gateway.auth = {});
   auth.token = tokenUrlSafe(32);
+  const meta = cfg.meta && typeof cfg.meta === "object" ? cfg.meta : (cfg.meta = {});
+  // Record OpenClaw's configuration-write metadata. Without this field,
+  // OpenClaw 2026.7 can classify the authenticated configuration as overwritten
+  // and restore the tokenless build-time backup before gateway authentication resolves.
+  meta.lastTouchedAt = new Date().toISOString();
 
   const dirPath = pathModule.dirname(path);
   let fd;
@@ -5166,31 +5171,15 @@ launch_openclaw_gateway_process() {
   local log_mode="$1"
   shift
   case "$log_mode" in
-    append | truncate) ;;
+    append)
+      nohup /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN "$@" >>/tmp/gateway.log 2>&1 &
+      ;;
+    truncate)
+      nohup /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN "$@" >/tmp/gateway.log 2>&1 &
+      ;;
     *)
       echo "[gateway] invalid gateway log mode: $log_mode" >&2
       return 1
-      ;;
-  esac
-
-  # OpenClaw startup repair can restore a tokenless build-time config backup
-  # before gateway authentication resolves. Pass the runtime gateway token
-  # through the supported --token option and remove OPENCLAW_GATEWAY_TOKEN from
-  # the gateway process environment. This keeps the gateway authenticated
-  # without passing the credential to child processes through environment
-  # inheritance (#8693).
-  local gateway_token="${OPENCLAW_GATEWAY_TOKEN:-}"
-  local -a gateway_auth_args=()
-  if [ -n "$gateway_token" ]; then
-    gateway_auth_args=(--token "$gateway_token")
-  fi
-
-  case "$log_mode" in
-    append)
-      nohup /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN "$@" "${gateway_auth_args[@]}" >>/tmp/gateway.log 2>&1 &
-      ;;
-    truncate)
-      nohup /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN "$@" "${gateway_auth_args[@]}" >/tmp/gateway.log 2>&1 &
       ;;
   esac
   GATEWAY_PID=$!
