@@ -329,6 +329,7 @@ const {
 }: typeof import("./onboard/local-inference-topology") = require("./onboard/local-inference-topology");
 const {
   formatGatewayHealthWaitLimit,
+  getGatewayHealthWaitConfig,
   waitForGatewayHealth,
 }: typeof import("./onboard/gateway-health-wait") = require("./onboard/gateway-health-wait");
 const {
@@ -496,7 +497,8 @@ const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
   findAvailableDashboardPort,
   preflightDashboardPortRangeAvailability,
-  resolveCreateSandboxDashboardPort,
+  reserveCreateSandboxDashboardPort,
+  withDashboardPortReservationScope,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const authoritativeRebuildTarget: typeof import("./onboard/authoritative-rebuild-target") =
   require("./onboard/authoritative-rebuild-target");
@@ -656,6 +658,7 @@ const {
   runCaptureEx,
   shouldUseOpenshellDevChannel,
   supportedOpenshellFallbackVersion: SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+  enableBindMounts: onboardSessionBootstrap.isDockerBindMountsEnabled,
 });
 
 import type { JsonObject as LooseObject } from "./core/json-types";
@@ -1061,7 +1064,6 @@ const {
   ensureOllamaLoopbackSystemdOverride,
   runOllamaStartupOrGate,
   shouldFrontOllamaWithProxy,
-  startOllamaAuthProxy,
   getLocalProviderBaseUrl,
   selectAndValidateOllamaModel,
   printOllamaExposureWarning,
@@ -1280,26 +1282,6 @@ function getGatewayClusterContainerState(): string {
     .trim()
     .toLowerCase();
   return state || "missing";
-}
-
-function getGatewayHealthWaitConfig(_startStatus = 0, containerState = "") {
-  const isArm64 = process.arch === "arm64";
-  const standardCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", isArm64 ? 30 : 12);
-  const standardInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", isArm64 ? 10 : 5);
-  const extendedCount = envInt("NEMOCLAW_GATEWAY_START_POLL_COUNT", standardCount);
-  const extendedInterval = envInt("NEMOCLAW_GATEWAY_START_POLL_INTERVAL", standardInterval);
-  const normalizedState = String(containerState || "")
-    .trim()
-    .toLowerCase();
-  const normalizedContainerState = normalizedState || "missing";
-  const useExtendedWait = normalizedContainerState !== "missing";
-
-  return {
-    count: useExtendedWait ? extendedCount : standardCount,
-    interval: useExtendedWait ? extendedInterval : standardInterval,
-    extended: useExtendedWait,
-    containerState: normalizedContainerState,
-  };
 }
 
 function buildGatewayClusterExecArgv(script: string): string[] {
@@ -2135,6 +2117,7 @@ async function createSandboxWithBaseImageResolution(
   managedWorkloadRebuild: import("./onboard/workload/rebuild").ManagedWorkloadRebuildHandoff | null,
   tempManagedRuntime: boolean,
   tempManagedRuntimeCatalog: string | null,
+  dashboardPortReservationScope: import("./onboard/dashboard-port").DashboardPortReservationScope,
   gpu: ReturnType<typeof nim.detectGpu>,
   model: string,
   provider: string,
@@ -2187,7 +2170,7 @@ async function createSandboxWithBaseImageResolution(
   let effectivePort = 0,
     chatUiUrl = "";
   if (manageDashboard) {
-    ({ effectivePort, chatUiUrl } = resolveCreateSandboxDashboardPort({
+    const dashboardSelection = await reserveCreateSandboxDashboardPort({
       sandboxName,
       controlUiPort,
       chatUiUrlEnv: process.env.CHAT_UI_URL,
@@ -2196,7 +2179,9 @@ async function createSandboxWithBaseImageResolution(
       defaultPort: DASHBOARD_PORT,
       forwardListOutput: runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
       warn: (message) => console.warn(message),
-    }));
+    });
+    ({ effectivePort, chatUiUrl } = dashboardSelection);
+    dashboardPortReservationScope.current = dashboardSelection.reservation;
   }
   const hermesDashboardForwarding = onboardHermesDashboard.createHermesDashboardOnboardForwarding({
     agentName: agent?.name,
@@ -2213,7 +2198,8 @@ async function createSandboxWithBaseImageResolution(
   const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   let recreateRuntime: import("./onboard/sandbox-recreate-transaction").SandboxRecreateRuntime | recreateJournal.OwnedSandboxRecreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(onboardSession, createIntent?.recreateTransaction, sandboxName, GATEWAY_NAME, existingEntry, getSandboxRecreateObservation, note);
-  const restoreReusedSandboxDashboard = (selectionVerified: boolean): void => {
+  const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
+    await dashboardPortReservationScope.release();
     ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({
       sandboxName,
       chatUiUrl,
@@ -2232,7 +2218,7 @@ async function createSandboxWithBaseImageResolution(
     }));
   };
   if (recreateRuntime.acceptedTarget) {
-    restoreReusedSandboxDashboard(true);
+    await restoreReusedSandboxDashboard(true);
     return sandboxName;
   }
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -2389,7 +2375,7 @@ async function createSandboxWithBaseImageResolution(
                 "  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to force recreation.",
               );
             }
-            restoreReusedSandboxDashboard(!selectionDrift.unknown);
+            await restoreReusedSandboxDashboard(!selectionDrift.unknown);
             return sandboxName;
           }
         } else {
@@ -2419,7 +2405,7 @@ async function createSandboxWithBaseImageResolution(
           if (await promptYesNoOrDefault("  Reuse existing sandbox?", null, true)) {
             policyPresetCarry.seedReusedSandboxPolicyPresets(sandboxName, isNonInteractive());
             upsertMessagingProviders(messagingTokenDefs);
-            restoreReusedSandboxDashboard(!selectionDrift.unknown);
+            await restoreReusedSandboxDashboard(!selectionDrift.unknown);
             return sandboxName;
           }
         }
@@ -2487,7 +2473,7 @@ async function createSandboxWithBaseImageResolution(
     }
     if (!createIntent?.recreateTransaction) recreateRuntime = openRecreateJournal();
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    if (recreateRuntime.acceptedTarget) { if ("complete" in recreateRuntime) recreateRuntime.complete(); restoreReusedSandboxDashboard(true); return sandboxName; }
+    if (recreateRuntime.acceptedTarget) { if ("complete" in recreateRuntime) recreateRuntime.complete(); await restoreReusedSandboxDashboard(true); return sandboxName; }
     const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     baseImageResolutionFlow.captureBaseResolution(baseImageResolutionContext, previousEntry?.imageTag);
@@ -2537,6 +2523,7 @@ async function createSandboxWithBaseImageResolution(
   });
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
+  onboardSessionBootstrap.verifyReadOnlyHostMountSources(resolvedCreateIntent.hostMounts);
   recreateRuntime.advance("creating");
   const managedBootstrap = managedWorkloadOnboard.resolveOnboardManagedBootstrapLaunch({
     runtime: managedWorkloadRuntime,
@@ -2624,6 +2611,7 @@ async function createSandboxWithBaseImageResolution(
   let actualDashboardPort = 0;
   let finalHermesDashboardState = hermesDashboardState;
   if (manageDashboard) {
+    await dashboardPortReservationScope.release();
     actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {
       rollbackSandboxOnFailure: true,
     });
@@ -2700,6 +2688,7 @@ async function createSandboxWithBaseImageResolution(
           ...recreateRuntime.registrationFields,
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
+          hostMounts: resolvedCreateIntent.hostMounts,
         }),
     },
   );
@@ -2744,6 +2733,7 @@ type CreateSandboxArgs =
     unknown,
     unknown,
     unknown,
+    unknown,
     ...infer Args,
   ]
     ? Args
@@ -2751,28 +2741,16 @@ type CreateSandboxArgs =
 
 async function createSandbox(...args: CreateSandboxArgs): Promise<string> {
   const computePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
-  return createSandboxWithBaseImageResolution(
-    baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
-    computePlan,
-    null,
-    false,
-    null,
-    ...args,
-  );
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  return withDashboardPortReservationScope((dashboardPortReservationScope) => createSandboxWithBaseImageResolution(baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }), computePlan, null, false, null, dashboardPortReservationScope, ...args));
 }
 
 async function createSandboxWithTemporaryManagedRuntime(
   ...args: CreateSandboxArgs
 ): Promise<string> {
   const computePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
-  return createSandboxWithBaseImageResolution(
-    baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
-    computePlan,
-    null,
-    true,
-    null,
-    ...args,
-  );
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  return withDashboardPortReservationScope((dashboardPortReservationScope) => createSandboxWithBaseImageResolution(baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }), computePlan, null, true, null, dashboardPortReservationScope, ...args));
 }
 
 // ── Step 3: Inference selection ──────────────────────────────────
@@ -3671,6 +3649,7 @@ const {
 
 const startRecordedStep = onboardRuntimeBoundary.startRecordedStep.bind(onboardRuntimeBoundary);
 const recordStepComplete = onboardRuntimeBoundary.recordStepComplete.bind(onboardRuntimeBoundary);
+const recordStepRejected = onboardRuntimeBoundary.recordStepRejected.bind(onboardRuntimeBoundary);
 const recordStepSkipped = onboardRuntimeBoundary.recordStepSkipped.bind(onboardRuntimeBoundary);
 const recordStepFailed = onboardRuntimeBoundary.recordStepFailed.bind(onboardRuntimeBoundary);
 const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboardRuntimeBoundary);
@@ -3739,6 +3718,7 @@ async function preflightAuthoritativeRebuildTarget(
 // ── Main ─────────────────────────────────────────────────────────
 const onboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
+  const hostMountScope = onboardSessionBootstrap.beginHostMountScope(opts.hostMounts);
   resetGatewayOwnerBinding();
   setupInferenceFactory.assertNoOpenShellGatewayEndpointOverride();
   const runtimeControlRequests = runtimeControlFlow.applyOnboardRuntimeControlRequests(opts);
@@ -3752,33 +3732,16 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     authoritativeGateway?.name ?? GATEWAY_NAME,
   );
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
-  NON_INTERACTIVE = opts.nonInteractive || isNonInteractiveEnv();
-  RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const { fresh, nonInteractive, requestedFromDockerfile, requestedSandboxName, cannotPrompt, resume } = onboardEntryOptions.resolveOnboardRunEntryOptions(opts, process.env, onboardSession.loadSession()?.status ?? null, isNonInteractiveEnv, { validateName, reservedSandboxNames: RESERVED_SANDBOX_NAMES, cliDisplayName, getNameValidationGuidance, error: (message) => console.error(message), exitProcess: (code) => process.exit(code) });
+  NON_INTERACTIVE = nonInteractive;
+  RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   _preflightDashboardPort =
     opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
   if (!authoritativeGateway) delete process.env.OPENSHELL_GATEWAY;
   preparedDcodeRuntime.applyGatewayEnv(process.env);
-  const { resume, fresh, requestedFromDockerfile, requestedSandboxName, cannotPrompt } =
-    onboardEntryOptions.resolveOnboardEntryOptions(
-      {
-        opts,
-        env: process.env,
-        stdinIsTty: Boolean(process.stdin && process.stdin.isTTY),
-        stdoutIsTty: Boolean(process.stdout && process.stdout.isTTY),
-        persistedSessionStatus: onboardSession.loadSession()?.status ?? null,
-      },
-      {
-        isNonInteractive,
-        validateName,
-        reservedSandboxNames: RESERVED_SANDBOX_NAMES,
-        cliDisplayName,
-        getNameValidationGuidance,
-        error: (message) => console.error(message),
-        exitProcess: (code) => process.exit(code),
-      },
-    );
   const baseImageResolutionContext = baseImageResolutionFlow.createBaseImageResolutionContext({
     fresh,
     initialHint: opts.baseImageResolutionHint,
@@ -3889,6 +3852,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         servingProfileProvenance: opts.servingProfileProvenance ?? null,
         agentFlag: opts.agent || null,
         envAgent: process.env.NEMOCLAW_AGENT || null,
+        requestedHostMounts: opts.hostMounts,
         ...stationSessionInput,
       },
       {
@@ -3907,6 +3871,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         exitProcess: (code) => process.exit(code),
       },
     );
+    const effectiveHostMounts = hostMountScope.activate(session?.metadata.hostMounts);
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
     // Resume backstop: a session may exist without a sandboxName if sandbox
     // creation failed before that step. Non-interactive --from cannot infer a
@@ -3973,6 +3938,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     if (isNonInteractive()) note("  (non-interactive mode)");
     if (resume) note("  (resume mode)");
     console.log("  ===================");
+    onboardSessionBootstrap.reportReadOnlyHostMounts(effectiveHostMounts, note);
     const explicitSandboxGpuFlag = resolveSandboxGpuFlagFromOptions(opts);
     const recordedGpuPassthroughBeforePreflight = session?.gpuPassthrough === true;
     type InitialOnboardFlowContext =
@@ -4051,6 +4017,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       },
       gatewayName: GATEWAY_NAME,
       recreateSandbox: isRecreateSandbox,
+      requiresBindMounts: effectiveHostMounts.length > 0,
       gatewayDeps: {
         ...machineGatewayOwnerDeps,
         refreshDockerDriverGatewayReuseState,
@@ -4111,6 +4078,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const endpointProvenance = { endpointSource: opts.endpointSource, endpointSourceProvider: opts.rebuildRegistryInferenceRoute?.route.provider ?? null, endpointSourceEndpointUrl: opts.rebuildRegistryInferenceRoute?.route.endpointUrl ?? null, getSandboxRegistryEntry: registry.getSandbox };
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const providerReviewDeps = setupInferenceFactory.createProviderReviewDeps(onboardSession.updateSession, onboardSessionBootstrap.checkpointSandboxName, { shouldFrontOllamaWithProxy, startOllamaAuthProxy, getOllamaProxyToken, persistAndProbeOllamaProxy }, process.exit, console.error);
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const coreFlowPhases = createCoreOnboardFlowPhases<InitialOnboardFlowContext, unknown, MessagingChannelConfig, import("./resources-cmd").ResourceProfile>({
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
       resumeProvider: { isNonInteractive, isRoutedInferenceProvider, providerExistsInGateway, replaceNamedCredential, resumeManagedLlamaCppRuntime: (sandboxName) => setupNimFlow.resumeManagedLlamaCppRuntime(sandboxName, { gatewayPort: GATEWAY_PORT, runtimeProvider: setupNimFlow.resolveCurrentRuntimeProviderBundle() }) },
@@ -4136,6 +4106,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           setupInference,
           startRecordedStep,
           recordStepComplete,
+          recordStepRejected,
           toSessionUpdates: (updates) =>
             toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
           skippedStepMessage,
@@ -4167,6 +4138,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           },
           reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
           registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
+          ...providerReviewDeps,
           promptValidatedSandboxName,
           assessHost,
           formatSandboxBuildEstimateNote,
@@ -4191,6 +4163,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
         requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
         rebuildPreservedEnv: opts.rebuildPreservedEnv,
+        hostMounts: effectiveHostMounts,
         endpointProvenance,
         recreateSandbox: isRecreateSandbox,
         controlUiPort: _preflightDashboardPort,
@@ -4248,14 +4221,18 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             planRegisteredExtraProviders(gatewayName, { runOpenshell }),
           resolveSandboxCreateIntent: sandboxCreateIntentResolver.resolve,
           createSandbox: preparedDcodeRuntime.bindCreateSandbox(
-            createSandboxWithBaseImageResolution.bind(
-              null,
-              baseImageResolutionContext,
-              onboardingComputePlan,
-              opts.managedWorkloadRebuild ?? null,
-              opts.tempManagedRuntime === true,
-              opts.tempManagedRuntimeCatalog ?? null,
-            ),
+            (...createArgs) =>
+              withDashboardPortReservationScope((dashboardPortReservationScope) =>
+                createSandboxWithBaseImageResolution(
+                  baseImageResolutionContext,
+                  onboardingComputePlan,
+                  opts.managedWorkloadRebuild ?? null,
+                  opts.tempManagedRuntime === true,
+                  opts.tempManagedRuntimeCatalog ?? null,
+                  dashboardPortReservationScope,
+                  ...createArgs,
+                ),
+              ),
           ),
           updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
           getSandboxAgentRegistryFields,
@@ -4409,16 +4386,20 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     completed = true;
     traceCompleted = finalFlowResult.session.machine.state === "complete";
   } finally {
-    releaseOnboardLock();
-    onboardRuntimeBoundary.clear();
-    onboardTracing.finishOnboardTrace(onboardTrace, traceCompleted);
-    GATEWAY_NAME = previousGatewayBinding.name;
-    GATEWAY_PORT = previousGatewayBinding.port;
-    if (previousOpenshellGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
-    else process.env.OPENSHELL_GATEWAY = previousOpenshellGateway;
-    if (previousOpenshellLocalTlsDir === undefined) delete process.env.OPENSHELL_LOCAL_TLS_DIR;
-    else process.env.OPENSHELL_LOCAL_TLS_DIR = previousOpenshellLocalTlsDir;
-    resetGatewayOwnerBinding();
+    try {
+      releaseOnboardLock();
+      onboardRuntimeBoundary.clear();
+      onboardTracing.finishOnboardTrace(onboardTrace, traceCompleted);
+      GATEWAY_NAME = previousGatewayBinding.name;
+      GATEWAY_PORT = previousGatewayBinding.port;
+      if (previousOpenshellGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
+      else process.env.OPENSHELL_GATEWAY = previousOpenshellGateway;
+      if (previousOpenshellLocalTlsDir === undefined) delete process.env.OPENSHELL_LOCAL_TLS_DIR;
+      else process.env.OPENSHELL_LOCAL_TLS_DIR = previousOpenshellLocalTlsDir;
+      resetGatewayOwnerBinding();
+    } finally {
+      hostMountScope.restore();
+    }
   }
 }
 

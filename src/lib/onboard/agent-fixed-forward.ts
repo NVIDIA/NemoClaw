@@ -29,7 +29,7 @@ export function ensureAgentFixedForward(
   const stopForwardForSandbox = (portToStop: string | number) =>
     bestEffortForwardStopForSandbox(
       deps.runOpenshell,
-      (args, opts) => (deps.runCaptureOpenshell(args, opts) ?? "") as string,
+      (args, opts) => deps.runCaptureOpenshell(args, opts),
       portToStop,
       sandboxName,
     );
@@ -39,9 +39,7 @@ export function ensureAgentFixedForward(
     buildDetachedForwardStartSpawn(
       deps.openshellArgv(["forward", "start", "--background", forwardTarget, sandboxName]),
     ),
-    () =>
-      (deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }) ??
-        "") as string,
+    () => deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }),
     { port, sandboxName },
     () => {
       deps.sleep(1);

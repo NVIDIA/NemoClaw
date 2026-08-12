@@ -67,6 +67,8 @@ export interface ProviderInferenceSetupOptions {
   reservationSessionId?: string;
   /** Recheck recorded-route ownership after acquiring route mutation locks. */
   isRecordedProviderRecoveryAuthorized?: () => boolean;
+  /** Proxy token prepared after configuration review; avoids repeating host mutations in setup. */
+  preparedOllamaProxyToken?: string;
 }
 
 export interface ProviderSelectionResult {
@@ -170,6 +172,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       updates?: { provider?: string | null; model?: string | null },
     ): Promise<void>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
+    recordStepRejected(stepName: string): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
     skippedStepMessage(stepName: string, detail?: string | null): void;
     ensureResumeProviderReady(
@@ -238,6 +241,8 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       },
     ): boolean;
     registryUpdateSandbox(sandboxName: string, updates: { nimContainer?: string | null }): void;
+    checkpointSandboxIdentity(sandboxName: string, agent: Agent): Promise<void>;
+    prepareLocalProviderForInference(provider: string): Promise<string | null>;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     assessHost(): Host;
     formatSandboxBuildEstimateNote(host: Host): string | null;
@@ -413,6 +418,109 @@ function provenResumeSandboxName(
     : null;
 }
 
+function reviewRecoveryState(session: Session | null, sandboxName: string | null) {
+  return (
+    session?.steps?.provider_selection?.status === "failed" &&
+    session.sandboxPromptProgress.sandboxName === true &&
+    session.sandboxName === sandboxName
+  );
+}
+
+function canResumeProviderSelection(
+  forceProviderSelection: boolean,
+  effectiveResume: boolean,
+  authoritativeResumeConfig: boolean,
+  session: Session | null,
+  interruptedReview: boolean,
+  provider: string | null,
+  model: string | null,
+): boolean {
+  return (
+    !forceProviderSelection &&
+    effectiveResume &&
+    (authoritativeResumeConfig ||
+      session?.steps?.provider_selection?.status === "complete" ||
+      interruptedReview) &&
+    typeof provider === "string" &&
+    typeof model === "string"
+  );
+}
+
+type ResumeReasoningDeps = Pick<
+  ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
+  | "clearCompatibleEndpointReasoning"
+  | "clearCompatibleEndpointReasoningEffort"
+  | "cliName"
+  | "configureCompatibleEndpointReasoning"
+  | "configureCompatibleEndpointReasoningEffort"
+  | "log"
+>;
+
+async function configureResumeReasoning(
+  provider: string,
+  reasoning: string | null,
+  effort: string | null,
+  env: NodeJS.ProcessEnv,
+  deps: ResumeReasoningDeps,
+): Promise<{ reasoning: string | null; effort: string | null }> {
+  if (provider !== "compatible-endpoint") {
+    return {
+      reasoning: deps.clearCompatibleEndpointReasoning(),
+      effort: deps.clearCompatibleEndpointReasoningEffort(),
+    };
+  }
+  const ignoredReasoning = describeIgnoredReasoningEnv(reasoning, deps.cliName());
+  if (ignoredReasoning) deps.log(ignoredReasoning);
+  const ignoredEffort = describeIgnoredReasoningEffortEnv(effort, deps.cliName(), env);
+  if (ignoredEffort) deps.log(ignoredEffort);
+  return {
+    reasoning: await deps.configureCompatibleEndpointReasoning(reasoning),
+    effort: await deps.configureCompatibleEndpointReasoningEffort(effort, env, false),
+  };
+}
+
+type LocalInferenceRepairDeps = Pick<
+  ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
+  "recordRepairEvent" | "repairLocalInferenceSystemdOverrideOrExit"
+>;
+
+async function repairResumedLocalInference(
+  provider: string,
+  model: string,
+  agent: unknown,
+  deps: LocalInferenceRepairDeps,
+): Promise<void> {
+  const options = {
+    provider,
+    model,
+    contextWindowFloor: getOllamaContextWindowFloorForAgent(agentName(agent)),
+    isNonInteractive: () => false,
+  };
+  if (provider !== "ollama-local") {
+    deps.repairLocalInferenceSystemdOverrideOrExit(options);
+    return;
+  }
+  const metadata = { repair: "ollama-systemd-loopback" };
+  await deps.recordRepairEvent("state.repair.started", {
+    state: "provider_selection",
+    metadata,
+  });
+  try {
+    deps.repairLocalInferenceSystemdOverrideOrExit(options);
+  } catch (error) {
+    await deps.recordRepairEvent("state.repair.failed", {
+      state: "provider_selection",
+      error: error instanceof Error ? error.message : String(error),
+      metadata,
+    });
+    throw error;
+  }
+  await deps.recordRepairEvent("state.repair.completed", {
+    state: "provider_selection",
+    metadata,
+  });
+}
+
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
   gatewayName,
   resume,
@@ -500,13 +608,26 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       recoveryReceiptLedger: providerRecoveryReceiptLedger,
       gatewayName,
     });
-    const resumeProviderSelection =
-      !forceProviderSelection &&
-      effectiveResume &&
-      (authoritativeResumeConfig || session?.steps?.provider_selection?.status === "complete") &&
-      typeof provider === "string" &&
-      typeof model === "string";
+    const completeRecoveredReviewSelectionAfterInference = reviewRecoveryState(
+      session,
+      sandboxName,
+    );
+    const reviewRecoveredInteractively =
+      completeRecoveredReviewSelectionAfterInference && !deps.isNonInteractive();
+    const resumeProviderSelection = canResumeProviderSelection(
+      forceProviderSelection,
+      effectiveResume,
+      authoritativeResumeConfig,
+      session,
+      completeRecoveredReviewSelectionAfterInference,
+      provider,
+      model,
+    );
     let shouldRecordProviderSelection = false;
+    // A review interruption selected a provider but did not configure its
+    // route. Do not let a coincidentally ready gateway route skip setup.
+    forceInferenceSetup ||=
+      completeRecoveredReviewSelectionAfterInference || reviewRecoveredInteractively;
     if (resumeProviderSelection) {
       assertOnboardReasoningEffortRoute(reasoningEffortRequest, provider, preferredInferenceApi);
       assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
@@ -591,61 +712,24 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         provider,
         model,
       });
-      if (provider === "compatible-endpoint") {
-        // Report before configuring: configureCompatibleEndpointReasoning
-        // overwrites process.env.NEMOCLAW_REASONING with the recorded value.
-        const ignoredReasoning = describeIgnoredReasoningEnv(
-          compatibleEndpointReasoning,
-          deps.cliName(),
-        );
-        if (ignoredReasoning) deps.log(ignoredReasoning);
-        const ignoredReasoningEffort = describeIgnoredReasoningEffortEnv(
-          compatibleEndpointReasoningEffort,
-          deps.cliName(),
-          env,
-        );
-        if (ignoredReasoningEffort) deps.log(ignoredReasoningEffort);
-        compatibleEndpointReasoning = await deps.configureCompatibleEndpointReasoning(
-          compatibleEndpointReasoning,
-        );
-        compatibleEndpointReasoningEffort = await deps.configureCompatibleEndpointReasoningEffort(
-          compatibleEndpointReasoningEffort,
-          env,
-          false,
-        );
-      } else {
-        compatibleEndpointReasoning = deps.clearCompatibleEndpointReasoning();
-        compatibleEndpointReasoningEffort = deps.clearCompatibleEndpointReasoningEffort();
-      }
-      const localInferenceRepairOptions = {
-        provider,
-        model,
-        contextWindowFloor: getOllamaContextWindowFloorForAgent(agentName(agent)),
-        isNonInteractive: deps.isNonInteractive,
-      };
-      if (provider === "ollama-local") {
-        const repairMetadata = { repair: "ollama-systemd-loopback" };
-        await deps.recordRepairEvent("state.repair.started", {
-          state: "provider_selection",
-          metadata: repairMetadata,
-        });
-        try {
-          deps.repairLocalInferenceSystemdOverrideOrExit(localInferenceRepairOptions);
-        } catch (err) {
-          await deps.recordRepairEvent("state.repair.failed", {
-            state: "provider_selection",
-            error: err instanceof Error ? err.message : String(err),
-            metadata: repairMetadata,
-          });
-          throw err;
-        }
-        await deps.recordRepairEvent("state.repair.completed", {
-          state: "provider_selection",
-          metadata: repairMetadata,
-        });
-      } else {
-        deps.repairLocalInferenceSystemdOverrideOrExit(localInferenceRepairOptions);
-      }
+      const resumedSelection = requireSelection(provider, model, deps);
+      const configuredReasoning = await configureResumeReasoning(
+        resumedSelection.provider,
+        compatibleEndpointReasoning,
+        compatibleEndpointReasoningEffort,
+        env,
+        deps,
+      );
+      compatibleEndpointReasoning = configuredReasoning.reasoning;
+      compatibleEndpointReasoningEffort = configuredReasoning.effort;
+      await repairResumedLocalInference(resumedSelection.provider, resumedSelection.model, agent, {
+        ...deps,
+        repairLocalInferenceSystemdOverrideOrExit: (options) =>
+          deps.repairLocalInferenceSystemdOverrideOrExit({
+            ...options,
+            isNonInteractive: deps.isNonInteractive,
+          }),
+      });
     } else {
       // An incomplete Station Express resume intentionally retries setupNim here. The outer
       // Station resume wrapper restores the exact provider/model as non-interactive env input,
@@ -748,10 +832,14 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         preferredInferenceApi,
       });
     }
-    if (shouldRecordProviderSelection) {
-      // Provider selection is not yet durable route trust. Deliberately omit
-      // endpointSource/onboardEndpointUrl here so an interrupted run fails
-      // closed and revalidates the endpoint before inference setup on resume.
+    if (
+      shouldRecordProviderSelection &&
+      (authoritativeResumeConfig || effectiveResume) &&
+      !completeRecoveredReviewSelectionAfterInference
+    ) {
+      // Authoritative rebuild selections are already route-validated. Persist
+      // them before inference setup so their reservation can retain the
+      // authoritative session identity.
       session = await deps.recordStepComplete(
         "provider_selection",
         deps.toSessionUpdates({
@@ -761,9 +849,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           credentialEnv,
           hermesAuthMethod,
           hermesToolGateways,
-          // An authoritative rebuild records route fidelity before inference
-          // setup. Keep the stale marker until the provider surface heal
-          // succeeds so a failed attempt remains armed on the next resume.
           preferredInferenceApi: healAdjustedInferenceApi
             ? initial.preferredInferenceApi
             : preferredInferenceApi,
@@ -992,18 +1077,52 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         }),
       );
       deps.log("  Web search and messaging channels will be prompted next.");
+      // Persist canonical sandbox identity and selection before local-provider
+      // preparation. A preparation failure or SIGINT must leave a no-TTY-
+      // resumable provider_selection step without claiming inference setup
+      // completed.
+      await deps.checkpointSandboxIdentity(confirmedSandboxName, agent);
+      const needsReviewSelectionRecovery =
+        session?.steps?.provider_selection?.status !== "complete";
+      if (needsReviewSelectionRecovery) {
+        await deps.startRecordedStep("provider_selection", { provider, model });
+      }
       if (!deps.isNonInteractive()) {
         if (!(await deps.promptYesNoOrDefault("  Apply this configuration?", null, true))) {
+          await deps.recordStepRejected("provider_selection");
           deps.log(`  Aborted. Re-run \`${deps.cliName()} onboard\` to start over.`);
           deps.log("  Credentials entered so far were only staged in memory for this run.");
           deps.log("  No new gateway credential was registered because onboarding stopped here.");
-          deps.exitProcess(0);
+          deps.exitProcess(1);
         }
       }
+      // The review acceptance authorizes this fresh selection. Persist it
+      // before inference setup starts so an interruption in setup can resume
+      // the accepted provider/model rather than returning to the default menu.
+      if (shouldRecordProviderSelection && !effectiveResume) {
+        session = await deps.recordStepComplete(
+          "provider_selection",
+          deps.toSessionUpdates({
+            provider,
+            model,
+            endpointUrl,
+            credentialEnv,
+            hermesAuthMethod,
+            hermesToolGateways,
+            preferredInferenceApi,
+            compatibleEndpointReasoning,
+            compatibleEndpointReasoningEffort,
+            nimContainer,
+            stationExpressModelIdentity: vllmModelIdentity,
+          }),
+        );
+      }
+      const preparedOllamaProxyToken = await deps.prepareLocalProviderForInference(provider);
 
       const inferenceOptions = {
         gatewayName,
         allowToolsIncompatible,
+        ...(preparedOllamaProxyToken ? { preparedOllamaProxyToken } : {}),
         ...(skipHostInferenceSmoke ? { skipHostInferenceSmoke } : {}),
         ...(reuseGatewayCredentialWithoutLocalKey ? { reuseGatewayCredentialWithoutLocalKey } : {}),
         ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
@@ -1064,6 +1183,29 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(healAdjustedInferenceApi ? { preferredInferenceApi } : {}),
       }),
     );
+    if (completeRecoveredReviewSelectionAfterInference) {
+      // Provider selection remains in progress until its inference route has
+      // configured successfully. This retains the selected provider/model for
+      // interruption recovery without claiming a usable route prematurely.
+      session = await deps.recordStepComplete(
+        "provider_selection",
+        deps.toSessionUpdates({
+          provider,
+          model,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          preferredInferenceApi: healAdjustedInferenceApi
+            ? initial.preferredInferenceApi
+            : preferredInferenceApi,
+          compatibleEndpointReasoning,
+          compatibleEndpointReasoningEffort,
+          nimContainer,
+          stationExpressModelIdentity: vllmModelIdentity,
+        }),
+      );
+    }
     break;
   }
 

@@ -32,6 +32,11 @@ export type CommandTransportDependencies = {
   openshellProbeTimeoutMs: number;
   privilegedSandboxExecArgv: (sandboxName: string, command: string[]) => string[];
   root: string;
+  withPrivilegedSandboxExecutionLease: <T>(
+    sandboxName: string,
+    operation: string,
+    fn: () => T,
+  ) => T;
 };
 
 export const DEFAULT_SANDBOX_EXEC_TIMEOUT_MS = 15000;
@@ -46,50 +51,56 @@ export function executeSandboxCommandTransport(
   sandboxName: string,
   command: string,
 ): SandboxCommandResult | null {
-  const sshConfigResult = deps.captureSandboxSshConfig(sandboxName, {
-    ignoreError: true,
-    timeout: deps.openshellProbeTimeoutMs,
-  });
-  if (sshConfigResult.status !== 0) return null;
-  if (!sshConfigResult.output.trim()) return null;
-  const sshHost = resolveOpenshellSandboxSshHost(sandboxName, sshConfigResult.output);
-  if (sshHost === null) return null;
+  return deps.withPrivilegedSandboxExecutionLease(
+    sandboxName,
+    "sandbox SSH command transport",
+    () => {
+      const sshConfigResult = deps.captureSandboxSshConfig(sandboxName, {
+        ignoreError: true,
+        timeout: deps.openshellProbeTimeoutMs,
+      });
+      if (sshConfigResult.status !== 0) return null;
+      if (!sshConfigResult.output.trim()) return null;
+      const sshHost = resolveOpenshellSandboxSshHost(sandboxName, sshConfigResult.output);
+      if (sshHost === null) return null;
 
-  const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-");
-  try {
-    const result = spawnSync(
-      "ssh",
-      [
-        "-F",
-        tmpSshConfig.file,
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-o",
-        "UserKnownHostsFile=/dev/null",
-        "-o",
-        "ConnectTimeout=5",
-        "-o",
-        "LogLevel=ERROR",
-        sshHost,
-        command,
-      ],
-      {
-        encoding: "utf-8",
-        env: deps.buildSubprocessEnv(),
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-      },
-    );
-    return {
-      status: result.status ?? 1,
-      stdout: (result.stdout || "").trim(),
-      stderr: (result.stderr || "").trim(),
-    };
-  } catch {
-    return null;
-  } finally {
-    tmpSshConfig.cleanup();
-  }
+      const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-");
+      try {
+        const result = spawnSync(
+          "ssh",
+          [
+            "-F",
+            tmpSshConfig.file,
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "ConnectTimeout=5",
+            "-o",
+            "LogLevel=ERROR",
+            sshHost,
+            command,
+          ],
+          {
+            encoding: "utf-8",
+            env: deps.buildSubprocessEnv(),
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+          },
+        );
+        return {
+          status: result.status ?? 1,
+          stdout: (result.stdout || "").trim(),
+          stderr: (result.stderr || "").trim(),
+        };
+      } catch {
+        return null;
+      } finally {
+        tmpSshConfig.cleanup();
+      }
+    },
+  );
 }
 
 function parseSandboxCommandResult(
@@ -147,27 +158,35 @@ export function executeSandboxExecCommandTransport(
   timeout: number,
   options: SandboxExecCommandOptions,
 ): SandboxCommandResult | null {
-  const markedCommand = deps.buildSandboxExecMarkedCommand(command);
-  const effectiveTimeout = resolveSandboxExecTimeout(timeout);
-  try {
-    const result = spawnSync(
-      deps.getOpenshellBinary(),
-      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", markedCommand],
-      {
-        cwd: deps.root,
-        encoding: "utf-8",
-        env: deps.buildSubprocessEnv(),
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: effectiveTimeout,
-      },
-    );
-    const parsed = parseSandboxCommandResult(deps, result);
-    if (parsed !== null) return parsed;
-  } catch {
-    // OpenShell transport failed; try the trusted direct-container fallback.
-  }
-  if (options.allowLocalDockerFallback === false) return null;
-  // Keep the fallback outside the OpenShell try/catch so a fail-closed identity
-  // refusal cannot be caught and retried against changing container state.
-  return executeLocalDockerSandboxCommand(deps, sandboxName, markedCommand, effectiveTimeout);
+  return deps.withPrivilegedSandboxExecutionLease(
+    sandboxName,
+    "sandbox OpenShell command transport",
+    () => {
+      const markedCommand = deps.buildSandboxExecMarkedCommand(command);
+      const effectiveTimeout = resolveSandboxExecTimeout(timeout);
+      try {
+        const result = spawnSync(
+          deps.getOpenshellBinary(),
+          ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", markedCommand],
+          {
+            cwd: deps.root,
+            encoding: "utf-8",
+            env: deps.buildSubprocessEnv(),
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: effectiveTimeout,
+          },
+        );
+        const parsed = parseSandboxCommandResult(deps, result);
+        if (parsed !== null) return parsed;
+      } catch {
+        // OpenShell transport failed; try the trusted direct-container fallback.
+      }
+      if (options.allowLocalDockerFallback === false) return null;
+      // Keep the fallback outside the OpenShell try/catch so a fail-closed identity
+      // refusal cannot be caught and retried against changing container state.
+      // The outer execution lease covers argv resolution and the complete fallback
+      // subprocess lifetime without an unleased gap after the OpenShell attempt.
+      return executeLocalDockerSandboxCommand(deps, sandboxName, markedCommand, effectiveTimeout);
+    },
+  );
 }
