@@ -201,6 +201,7 @@ type RunnerOptions = {
   timeout?: number;
   openshellBinary?: string;
 };
+type FinalizationDeps = Parameters<typeof finalizeCreatedSandbox>[1];
 
 const {
   DASHBOARD_PORT,
@@ -744,6 +745,8 @@ const {
   getGatewayPort: () => GATEWAY_PORT,
   getDockerDriverGatewayEndpoint,
 });
+const readDcodeSelectionDrift: FinalizationDeps["getDcodeSelectionDrift"] = (...args) =>
+  getDcodeSelectionDrift(...args, { runCaptureOpenshell });
 
 // Gateway state functions — delegated to src/lib/state/gateway.ts
 const { isSandboxReady, parseSandboxStatus, getSandboxStateFromOutputs } = gatewayState;
@@ -2290,9 +2293,7 @@ async function createSandboxWithBaseImageResolution(
       hasMessagingTokens &&
       messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
     const selectionDrift = isManagedDcodeAgent
-      ? getDcodeSelectionDrift(sandboxName, provider, model, preferredInferenceApi, {
-          runCaptureOpenshell,
-        })
+      ? readDcodeSelectionDrift(sandboxName, provider, model, preferredInferenceApi)
       : getSelectionDrift(sandboxName, provider, model, { runOpenshell });
     const actionableSelectionDrift = requiresSelectionRecreate(selectionDrift, isManagedDcodeAgent);
     const sandboxGpuDrift = hasSandboxGpuDrift(sandboxName, effectiveSandboxGpuConfig);
@@ -2649,10 +2650,7 @@ async function createSandboxWithBaseImageResolution(
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
       discoverFreshOpenClawImagePluginInstalls: (name) => openClawPluginRestore.discoverFreshOpenClawImagePluginInstalls(name, sandboxState, agent?.configPaths.dir),
       restoreRecreatedSandboxState: sandboxState.restoreRecreatedSandboxState,
-      getDcodeSelectionDrift: (name, selectedProvider, selectedModel, selectedApi) =>
-        getDcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, {
-          runCaptureOpenshell,
-        }),
+      getDcodeSelectionDrift: readDcodeSelectionDrift,
       note,
       error: console.error,
       exitProcess: (code) => process.exit(code),
@@ -2672,8 +2670,13 @@ async function createSandboxWithBaseImageResolution(
           observabilityEnabled: createIntent?.observabilityEnabled === true,
           ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
           policyTier: resolvedCreatePolicyTier,
-          // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-          ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod), dashboardRemoteBindPrepared, resolvedCreateIntent.policy.options.baselineExclusions),
+          ...sandboxRegistration.creationFidelity(
+            webSearchConfig,
+            fromDockerfile,
+            normalizeHermesAuthMethod(hermesAuthMethod),
+            dashboardRemoteBindPrepared,
+            resolvedCreateIntent.policy.options.baselineExclusions,
+          ),
           plannedMessagingState,
           preservedMcpState,
           hermesToolGateways,
@@ -4175,10 +4178,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           messagingChannelConfigsEqual,
           getSandboxReuseState,
           getSandboxRecreateObservation,
-          getDcodeSelectionDrift: (name, selectedProvider, selectedModel, selectedApi) =>
-            getDcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, {
-              runCaptureOpenshell,
-            }),
+          getDcodeSelectionDrift: readDcodeSelectionDrift,
           hasSandboxGpuDrift,
           getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
           getSandboxRegistryEntry: registry.getSandbox,
