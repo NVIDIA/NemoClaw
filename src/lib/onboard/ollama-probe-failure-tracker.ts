@@ -43,6 +43,19 @@ export class OllamaProbeFailureTracker {
     return this.excludedModelTags;
   }
 
+  promptOptions(
+    defaultModel: string | null | undefined,
+    isSafeModelId: (value: string) => boolean,
+  ): {
+    defaultModel: string | null;
+    excludeModels: ReadonlySet<string>;
+  } {
+    return {
+      defaultModel: defaultModel && isSafeModelId(defaultModel) ? defaultModel : null,
+      excludeModels: this.excludedModels(),
+    };
+  }
+
   getTotalFailures(): number {
     return this.totalProbeFailures;
   }

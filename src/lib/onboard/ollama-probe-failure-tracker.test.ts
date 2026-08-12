@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { isSafeModelId } from "../validation";
 import { OllamaProbeFailureTracker } from "./ollama-probe-failure-tracker";
 
 describe("OllamaProbeFailureTracker", () => {
@@ -27,6 +28,18 @@ describe("OllamaProbeFailureTracker", () => {
 
     expect(tracker.recordFailure("qwen3.5:9b")).toBe(true);
     expect(tracker.shouldExclude("qwen3.5:9b")).toBe(true);
+  });
+
+  it("builds prompt options with only a safe requested default", () => {
+    const tracker = new OllamaProbeFailureTracker();
+    tracker.recordFailure("excluded:1b");
+
+    expect(tracker.promptOptions("requested:2b", isSafeModelId)).toEqual({
+      defaultModel: "requested:2b",
+      excludeModels: new Set(["excluded:1b"]),
+    });
+    expect(tracker.promptOptions("unsafe model", isSafeModelId).defaultModel).toBeNull();
+    expect(tracker.promptOptions(undefined, isSafeModelId).defaultModel).toBeNull();
   });
 
   it("trips the global limit across distinct models", () => {

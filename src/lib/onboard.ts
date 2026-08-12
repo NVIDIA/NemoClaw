@@ -2776,8 +2776,8 @@ async function selectAndValidateOllamaModel(
     } else if (isNonInteractive()) {
       model = localInference.resolveNonInteractiveOllamaModel(requestedModel, recoveredModel, gpu);
     } else {
-      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-      model = await promptOllamaModel(gpu, { defaultModel: promptDefaultModel && isSafeModelId(promptDefaultModel) ? promptDefaultModel : null, excludeModels: probeFailures.excludedModels() });
+      const promptOptions = probeFailures.promptOptions(promptDefaultModel, isSafeModelId);
+      model = await promptOllamaModel(gpu, promptOptions);
     }
     if (isBackToSelection(model)) {
       console.log("  Returning to provider selection.");
