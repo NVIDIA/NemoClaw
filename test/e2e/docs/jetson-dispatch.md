@@ -148,7 +148,7 @@ The test verifies these requirements:
 - `/dev/nvmap` is a character device on the host.
 - Docker reports the NVIDIA runtime.
 - NemoClaw installation completes without prompts.
-- The installed commands resolve inside the GitHub Actions job workspace.
+- The installed commands resolve inside the Jetson job workspace.
 
 The live test runs `bash install.sh --non-interactive` with
 `NEMOCLAW_SANDBOX_GPU=0`. `install.sh` does not accept `--no-gpu`, so this
