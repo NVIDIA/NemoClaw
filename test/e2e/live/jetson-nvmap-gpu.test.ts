@@ -72,16 +72,16 @@ fi`,
   ).catch(() => undefined);
 }
 
-test("Jetson onboarding completes with the CPU-only fallback (#7610)", {
+test("Jetson onboarding disables sandbox GPU access (#7610)", {
   timeout: TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "detect Jetson hardware",
       "clear previous Jetson runtime state",
       "confirm nvmap and NVIDIA Docker runtime",
-      "install NemoClaw with the CPU-only fallback",
-      "confirm CPU-only sandbox status",
-      "confirm /dev/nvmap is absent from the CPU-only sandbox",
+      "install NemoClaw with sandbox GPU access disabled",
+      "confirm sandbox GPU access is disabled",
+      "confirm the sandbox excludes /dev/nvmap",
     ],
   },
 }, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
@@ -89,11 +89,11 @@ test("Jetson onboarding completes with the CPU-only fallback (#7610)", {
     id: "jetson-nvmap-gpu",
     issue: 7610,
     boundary:
-      "Jetson/Tegra host + install.sh Ollama onboard with NEMOCLAW_SANDBOX_GPU=0 + OpenShell CPU-only sandbox + nemoclaw status",
+      "CPU-only Jetson/Tegra onboarding through install.sh, OpenShell, and nemoclaw status with NEMOCLAW_SANDBOX_GPU=0",
     sandboxName: SANDBOX_NAME,
   });
 
-  // A1: non-Jetson hosts skip cleanly before mutating Docker/OpenShell state.
+  // A1: Skip before changing Docker or OpenShell state when the host is not a Jetson device.
   const hardwareGate = await hostShell(
     host,
     String.raw`if [ -e /dev/nvmap ]; then
@@ -112,7 +112,7 @@ fi`,
   expect(hardwareGate.exitCode, resultText(hardwareGate)).toBe(0);
   hardwareGate.stdout.startsWith("jetson:") ||
     skip(
-      "Not a Jetson/Tegra host (/dev/nvmap absent) — reporter workflow requires Jetson hardware; hermetic #4231 coverage remains in src/lib/onboard/docker-gpu-patch-jetson.test.ts.",
+      "This test requires a Jetson/Tegra host with /dev/nvmap. Source tests cover Jetson GPU patch behavior in src/lib/onboard/docker-gpu-patch-jetson.test.ts.",
     );
 
   const gatewayCleanupOptions = {
@@ -190,7 +190,7 @@ fi`,
   expect(env().NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE).toBe("1");
   expect(env().NEMOCLAW_SANDBOX_GPU).toBe("0");
 
-  // A2: Jetson prerequisites match the original lane: Docker and the NVIDIA runtime.
+  // A2: The Jetson test requires Docker and the NVIDIA runtime.
   const docker = await host.command("docker", ["info"], {
     artifactName: "phase-1-docker-info",
     env: env(),
@@ -205,10 +205,9 @@ fi`,
   expect(dockerRuntimes.exitCode, resultText(dockerRuntimes)).toBe(0);
   expect(resultText(dockerRuntimes)).toMatch(/"nvidia"|nvidia:/u);
 
-  // A3: install.sh does not accept --no-gpu. The environment setting is the
-  // exact onboarding equivalent and keeps this lane useful while #7610 blocks
-  // Jetson CUDA qualification through OpenShell.
-  progress.phase("install NemoClaw with the CPU-only fallback");
+  // A3: install.sh does not accept --no-gpu. NEMOCLAW_SANDBOX_GPU=0 selects
+  // the same CPU-only behavior while #7610 blocks GPU verification through OpenShell.
+  progress.phase("install NemoClaw with sandbox GPU access disabled");
   const ollamaBaseline = await hostShell(
     host,
     "command -v ollama && ollama list",
@@ -250,7 +249,7 @@ done`,
   expect(resultText(install)).toMatch(/Sandbox GPU(?::)? disabled by configuration/u);
 
   // A4: a passing live E2E result verifies CPU-only onboarding, not CUDA usability.
-  progress.phase("confirm CPU-only sandbox status");
+  progress.phase("confirm sandbox GPU access is disabled");
   const status = await hostShell(
     host,
     `nemoclaw "$NEMOCLAW_SANDBOX_NAME" status`,
@@ -263,7 +262,7 @@ done`,
   expect(resultText(status)).not.toContain("/dev/nvmap");
   expect(resultText(status)).not.toContain("/opt/nvidia");
 
-  progress.phase("confirm /dev/nvmap is absent from the CPU-only sandbox");
+  progress.phase("confirm the sandbox excludes /dev/nvmap");
   const sandboxNvmap = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(String.raw`if [ -e /dev/nvmap ] || [ -L /dev/nvmap ]; then
