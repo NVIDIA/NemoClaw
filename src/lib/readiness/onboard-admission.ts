@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { hasRemediableStorageConflict } from "./storage-remediation.js";
 import type { ReadinessCapability, ReadinessFinding, SystemReadinessReport } from "./types";
 
 export const ONBOARD_READINESS_ADMISSION_REASON_IDS = {
@@ -98,7 +99,7 @@ function isBlocking(finding: ReadinessFinding): boolean {
 
 function canWaiveFinding(
   finding: ReadinessFinding,
-  capabilities: ReadonlyMap<string, ReadinessCapability>,
+  report: SystemReadinessReport | undefined,
   options: Readonly<OnboardReadinessAdmissionOptions>,
   managedGateway: boolean,
 ): boolean {
@@ -120,12 +121,7 @@ function canWaiveFinding(
     return true;
   }
   return (
-    options.allowStorageRemediation &&
-    finding.id === ONBOARD_READINESS_FINDING_IDS.storageIncompatible &&
-    capabilityState(
-      capabilities,
-      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
-    ) === "present"
+    options.allowStorageRemediation && report !== undefined && hasRemediableStorageConflict(report)
   );
 }
 
@@ -246,7 +242,7 @@ function decisionFor(
  * closed before lifecycle effects begin.
  */
 export function evaluateOnboardReadinessAdmission(
-  report: Readonly<OnboardReadinessInput>,
+  report: Readonly<SystemReadinessReport>,
   options: Readonly<OnboardReadinessAdmissionOptions>,
 ): OnboardReadinessAdmissionDecision {
   const capabilities = new Map(report.capabilities.map((entry) => [entry.id, entry]));
@@ -255,7 +251,7 @@ export function evaluateOnboardReadinessAdmission(
   const findingIds: string[] = [];
   for (const finding of report.findings) {
     if (!isBlocking(finding)) continue;
-    if (canWaiveFinding(finding, capabilities, options, managedGateway)) {
+    if (canWaiveFinding(finding, report, options, managedGateway)) {
       waivedFindingIds.push(finding.id);
     } else findingIds.push(finding.id);
   }
@@ -277,7 +273,7 @@ export function evaluateOnboardGatewayReadinessAdmission(
     if (
       canWaiveFinding(
         finding,
-        capabilities,
+        undefined,
         {
           explicitlyOptedOutGpuPassthrough: false,
           allowUnsupportedRuntime: false,

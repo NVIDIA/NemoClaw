@@ -397,7 +397,7 @@ describe("host readiness projection (#7408)", () => {
     expect(result.status).toBe("supported");
   });
 
-  it("reports supported remediation for the containerd overlay conflict (#7770)", () => {
+  it("reports an available containerd overlay remediation as a supported warning (#8849)", () => {
     const result = report({
       dockerStorageDriver: "overlayfs",
       dockerUsesContainerdSnapshotter: true,
@@ -406,8 +406,32 @@ describe("host readiness projection (#7408)", () => {
 
     expect(state(result, "host.docker.storage_compatible")).toBe("absent");
     expect(state(result, "host.docker.storage_remediation_available")).toBe("present");
-    expect(findingIds(result)).toContain("host.docker.storage_incompatible");
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({
+        id: "host.docker.storage_incompatible",
+        severity: "warning",
+        summary: expect.stringContaining("patched OpenShell gateway image"),
+      }),
+    );
+    expect(result).toMatchObject({ status: "supported", exitCode: 0 });
+  });
+
+  it("keeps a remediable storage conflict incompatible when another blocker exists (#8849)", () => {
+    const result = report({
+      dockerStorageDriver: "overlayfs",
+      dockerUsesContainerdSnapshotter: true,
+      hasNestedOverlayConflict: true,
+      isUnsupportedRuntime: true,
+      runtime: "podman",
+    });
+
     expect(result).toMatchObject({ status: "incompatible", exitCode: 2 });
+    expect(result.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "host.docker.storage_incompatible", severity: "blocking" }),
+        expect.objectContaining({ id: "host.docker.runtime_unsupported", severity: "blocking" }),
+      ]),
+    );
   });
 
   it("reports no remediation when the containerd snapshotter is absent (#7770)", () => {

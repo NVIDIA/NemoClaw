@@ -138,7 +138,9 @@ test.skipIf(overlayfsAutofixNotInRuntimePath())(
       e2ePhases: [
         "confirm Docker overlayfs eligibility",
         "enable containerd snapshotter mode",
+        "verify host probe admits remediable storage",
         "install with the overlayfs auto-fix enabled",
+        "verify OpenClaw agent JSON parity",
         "confirm patched cluster image reuse",
         "reproduce the failure with the auto-fix disabled",
       ],
@@ -151,10 +153,13 @@ test.skipIf(overlayfsAutofixNotInRuntimePath())(
       id: "overlayfs-autofix",
       sandboxName: SANDBOX_NAME,
       issue: "#2481",
+      relatedIssues: ["#8849"],
       preservedBoundaries: [
         "real Docker daemon feature flip through sudo-managed /etc/docker/daemon.json",
         "real Docker daemon restart and docker info overlayfs/containerd-snapshotter probe",
+        "real node ./bin/nemoclaw.js host probe with remediable storage warning",
         "real install.sh --non-interactive onboarding with hosted compatible inference",
+        "real node ./bin/nemoclaw.js list --json and scoped status --json agent parity",
         "real local nemoclaw-cluster:*fuse-overlayfs* Docker image build/cache check",
         "real OpenShell gateway container image/log inspection",
         "real NEMOCLAW_DISABLE_OVERLAY_FIX=1 negative install attempt with bounded timeout",
@@ -297,6 +302,22 @@ sudo systemctl restart docker`,
 
     await preCleanup(host, apiKey, "phase-2-pre-cleanup");
 
+    progress.phase("verify host probe admits remediable storage");
+    const hostProbe = await host.command("node", ["./bin/nemoclaw.js", "host", "probe"], {
+      artifactName: "phase-2-host-probe-remediable",
+      cwd: process.cwd(),
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    });
+    await artifacts.writeText("phase-2-host-probe-remediable.log", text(hostProbe));
+    expect(
+      hostProbe.exitCode,
+      `host probe must classify the remediation as supported: ${text(hostProbe)}`,
+    ).toBe(0);
+    expect(text(hostProbe)).toContain("System readiness: supported");
+    expect(text(hostProbe)).toContain("[warning] host.docker.storage_incompatible");
+    expect(text(hostProbe)).toContain("patched OpenShell gateway image");
+
     progress.phase("install with the overlayfs auto-fix enabled");
     const positive = await host.command("bash", ["install.sh", "--non-interactive"], {
       artifactName: "phase-3-install-autofix-on",
@@ -311,6 +332,37 @@ sudo systemctl restart docker`,
       `install.sh + onboard failed with auto-fix on: ${text(positive)}`,
     ).toBe(0);
     expect(text(positive)).toContain("Detected Docker 26+ containerd-snapshotter overlayfs");
+
+    progress.phase("verify OpenClaw agent JSON parity");
+    const list = await host.command("node", ["./bin/nemoclaw.js", "list", "--json"], {
+      artifactName: "phase-3-list-json",
+      cwd: process.cwd(),
+      env: overlayEnv(apiKey),
+      redactionValues,
+      timeoutMs: 60_000,
+    });
+    const status = await host.command(
+      "node",
+      ["./bin/nemoclaw.js", SANDBOX_NAME, "status", "--json"],
+      {
+        artifactName: "phase-3-scoped-status-json",
+        cwd: process.cwd(),
+        env: overlayEnv(apiKey),
+        redactionValues,
+        timeoutMs: 60_000,
+      },
+    );
+    expect(list.exitCode, `list --json failed: ${text(list)}`).toBe(0);
+    expect(status.exitCode, `scoped status --json failed: ${text(status)}`).toBe(0);
+    const listJson = JSON.parse(list.stdout) as {
+      sandboxes?: Array<{ name?: string; agent?: string }>;
+    };
+    const listSandbox = listJson.sandboxes?.find(({ name }) => name === SANDBOX_NAME);
+    const statusJson = JSON.parse(status.stdout) as { agent?: string };
+    expect(listSandbox?.agent, "list --json must report the OpenClaw agent").toBe("openclaw");
+    expect(statusJson.agent, "scoped status --json must report the OpenClaw agent").toBe(
+      "openclaw",
+    );
 
     const patchedImageResult = await bash(
       host,

@@ -111,12 +111,13 @@ The Docker storage capabilities separate the current host configuration from Nem
 | Capability ID | Result represented |
 | --- | --- |
 | `host.docker.storage_compatible` | The current Docker storage configuration supports nested overlay mounts without remediation. |
-| `host.docker.storage_remediation_available` | NemoClaw can build a patched cluster image for a non-WSL Linux host using Docker with an `overlayfs` containerd-snapshotter conflict. |
+| `host.docker.storage_remediation_available` | NemoClaw can build a patched OpenShell gateway image for a non-WSL Linux host using Docker with an `overlayfs` containerd-snapshotter conflict. |
 
 Use `host.docker.storage_compatible` for pre-mutation host diagnosis.
 For public NemoClaw lifecycle admission, require either `host.docker.storage_compatible` or `host.docker.storage_remediation_available`.
 When remediation is available, `host.docker.storage_compatible` remains `absent`.
-The report also retains `host.docker.storage_incompatible`, status `incompatible`, and exit code `2` because `host probe` does not change the host.
+When `host.docker.storage_remediation_available` is `present` and storage is the only blocking finding, `host probe` reports a warning and exits `0` with status `supported`.
+When remediation is unavailable or another blocking finding exists, `host probe` retains the blocking storage finding, status `incompatible`, and exit code `2`.
 Evaluate every other blocking finding before you run onboarding.
 The remediation capability does not prove that a later image build or gateway attachment succeeds.
 Use these storage capabilities when the lifecycle may create or recreate a gateway.

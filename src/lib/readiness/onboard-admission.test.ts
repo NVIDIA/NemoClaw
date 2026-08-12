@@ -30,8 +30,9 @@ function capability(id: string, state: ReadinessCapability["state"]): ReadinessC
 function finding(
   id: string,
   severity: ReadinessFinding["severity"] = "blocking",
+  capabilityIds?: readonly string[],
 ): ReadinessFinding {
-  return { id, severity, summary: id };
+  return { id, severity, summary: id, capabilityIds };
 }
 
 function requiredCapabilities(): ReadinessCapability[] {
@@ -279,7 +280,7 @@ describe("onboarding readiness admission (#7411)", () => {
     ).toMatchObject({ admitted: false, findingIds: ["host.docker.unavailable"] });
   });
 
-  it("admits the documented storage exception only when remediation is present", () => {
+  it("admits only the complete remediable storage report (#8849)", () => {
     let capabilities = withCapabilityState(
       requiredCapabilities(),
       ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageCompatible,
@@ -290,7 +291,9 @@ describe("onboarding readiness admission (#7411)", () => {
       ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
       "present",
     );
-    const storageFinding = finding(ONBOARD_READINESS_FINDING_IDS.storageIncompatible);
+    const storageFinding = finding(ONBOARD_READINESS_FINDING_IDS.storageIncompatible, "blocking", [
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageCompatible,
+    ]);
 
     expect(
       evaluateOnboardReadinessAdmission(
@@ -309,6 +312,82 @@ describe("onboarding readiness admission (#7411)", () => {
     ).toMatchObject({
       admitted: false,
       findingIds: [ONBOARD_READINESS_FINDING_IDS.storageIncompatible],
+    });
+  });
+
+  it("fails closed for unavailable, unknown, malformed, and mixed storage reports (#8849)", () => {
+    let capabilities = withCapabilityState(
+      requiredCapabilities(),
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageCompatible,
+      "absent",
+    );
+    const storageFinding = finding(ONBOARD_READINESS_FINDING_IDS.storageIncompatible, "blocking", [
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageCompatible,
+    ]);
+
+    for (const remediationState of ["absent", "unknown"] as const) {
+      capabilities = withCapabilityState(
+        capabilities,
+        ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
+        remediationState,
+      );
+      expect(
+        evaluateOnboardReadinessAdmission(
+          report({ capabilities, findings: [storageFinding], status: "incompatible" }),
+          DEFAULT_OPTIONS,
+        ),
+      ).toMatchObject({
+        admitted: false,
+        findingIds: [ONBOARD_READINESS_FINDING_IDS.storageIncompatible],
+      });
+    }
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({
+          capabilities: capabilities.filter(
+            ({ id }) => id !== ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
+          ),
+          findings: [storageFinding],
+          status: "incompatible",
+        }),
+        DEFAULT_OPTIONS,
+      ),
+    ).toMatchObject({
+      admitted: false,
+      findingIds: [ONBOARD_READINESS_FINDING_IDS.storageIncompatible],
+      capabilityIds: [ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable],
+    });
+
+    const remediableCapabilities = withCapabilityState(
+      capabilities,
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
+      "present",
+    );
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({
+          capabilities: remediableCapabilities,
+          findings: [finding(ONBOARD_READINESS_FINDING_IDS.storageIncompatible)],
+          status: "incompatible",
+        }),
+        DEFAULT_OPTIONS,
+      ),
+    ).toMatchObject({
+      admitted: false,
+      findingIds: [ONBOARD_READINESS_FINDING_IDS.storageIncompatible],
+    });
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({
+          capabilities: remediableCapabilities,
+          findings: [storageFinding, finding("host.example.blocked")],
+          status: "incompatible",
+        }),
+        DEFAULT_OPTIONS,
+      ),
+    ).toMatchObject({
+      admitted: false,
+      findingIds: [ONBOARD_READINESS_FINDING_IDS.storageIncompatible, "host.example.blocked"],
     });
   });
 

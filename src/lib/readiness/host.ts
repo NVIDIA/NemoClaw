@@ -19,6 +19,7 @@ import {
 } from "./platform-qualification.js";
 import { buildSystemReadinessProbeEnv, createSystemReadinessCapture } from "./probe-env.js";
 import { sanitizeReadinessText } from "./sanitize.js";
+import { hasRemediableStorageConflict } from "./storage-remediation.js";
 import {
   type EvidenceScalar,
   type FindingSeverity,
@@ -563,7 +564,7 @@ export function projectHostReadiness(
     : hasUnknown
       ? ({ status: "inconclusive", exitCode: 3 } as const)
       : ({ status: "supported", exitCode: 0 } as const);
-  return {
+  const report: SystemReadinessReport = {
     schemaVersion: SYSTEM_READINESS_SCHEMA_VERSION,
     ...outcome,
     mutated: false,
@@ -577,6 +578,23 @@ export function projectHostReadiness(
     qualifications,
     findings,
     evidence,
+  };
+  if (!hasRemediableStorageConflict(report)) return report;
+
+  return {
+    ...report,
+    status: "supported",
+    exitCode: 0,
+    findings: report.findings.map((entry) =>
+      entry.id === "host.docker.storage_incompatible"
+        ? {
+            ...entry,
+            severity: "warning",
+            summary:
+              "The Docker storage configuration requires NemoClaw to use a patched OpenShell gateway image for nested overlay mounts.",
+          }
+        : entry,
+    ),
   };
 }
 
