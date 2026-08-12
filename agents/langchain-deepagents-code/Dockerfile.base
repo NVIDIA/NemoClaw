@@ -252,6 +252,11 @@ RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.m
 RUN node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
+# setpriv runtime contract for sandbox privilege separation.
+RUN test -x /usr/bin/setpriv \
+    && /usr/bin/setpriv --version \
+    && ! command -v gosu
+
 RUN groupadd -r -g 999 sandbox \
     && useradd -r -u 999 -g sandbox -d /sandbox -s /bin/bash sandbox \
     && usermod -a -G sandbox root \
