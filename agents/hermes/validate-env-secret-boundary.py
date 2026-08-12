@@ -499,6 +499,13 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
             if len(violations) < MAX_VIOLATIONS:
                 violations.append(key)
             continue
+        if key == "HERMES_LAZY_INSTALL_TARGET":
+            if value == "/sandbox/.hermes/lazy-packages":
+                continue
+            violation_count += 1
+            if len(violations) < MAX_VIOLATIONS:
+                violations.append(key)
+            continue
         if key in RUNTIME_ALLOWED_NONSECRET_KEYS:
             continue
         if key in RUNTIME_ALLOWED_RAW_SECRET_KEYS and is_allowed_raw_secret_value(

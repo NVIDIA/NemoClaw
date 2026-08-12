@@ -13,6 +13,7 @@
     "workspace"
   ],
   "confidentialRoots": [
+    "lazy-packages",
     "pairing"
   ],
   "readOnlyPrefixes": [],

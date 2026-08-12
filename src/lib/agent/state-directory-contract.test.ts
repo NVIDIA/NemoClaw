@@ -117,7 +117,7 @@ describe("agent state directory contract", () => {
           "weixin",
           "workspace",
         ],
-        confidentialRoots: ["pairing"],
+        confidentialRoots: ["lazy-packages", "pairing"],
         readOnlyPrefixes: [],
         confidentialPrefixes: [],
         writableSubpaths: ["profiles/dashboard-home"],

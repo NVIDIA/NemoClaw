@@ -1334,6 +1334,29 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+  it("keeps Hermes lazy dependencies sandbox-owned outside the sealed configuration (#8613)", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+    const layout = runHermesLayoutBlock(
+      HERMES_DOCKERFILE_BASE,
+      "# Create .hermes with mutable integration dirs",
+      "# Pre-create shell init files",
+    );
+    try {
+      expect(layout.result.status, layout.result.stderr).toBe(0);
+      const lazyPackages = path.join(layout.sandboxRoot, ".hermes", "lazy-packages");
+      const metadata = fs.statSync(lazyPackages);
+      expect(metadata.mode & 0o777).toBe(0o700);
+      expect(layout.calls).toContain(
+        `chown -R sandbox:sandbox ${path.join(layout.sandboxRoot, ".hermes")}`,
+      );
+      fs.writeFileSync(path.join(lazyPackages, "restart-marker"), "durable\n");
+      expect(fs.readFileSync(path.join(lazyPackages, "restart-marker"), "utf-8")).toBe("durable\n");
+      expect(dockerfile).toContain("ENV HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages");
+    } finally {
+      fs.rmSync(layout.tmp, { recursive: true, force: true });
+    }
+  });
+
   it("grants the Hermes gateway group write access to runtime state directories", () => {
     const runs = [
       runHermesLayoutBlock(

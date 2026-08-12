@@ -213,8 +213,8 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
     expect(OPENCLAW_STATE_LOCK_PLAN.writableSubpaths).toEqual(["agents/*/sessions"]);
   });
 
-  it("uses the Hermes manifest plan for pairing and the private dashboard profile", () => {
-    expect(HERMES_STATE_LOCK_PLAN.confidentialRoots).toEqual(["pairing"]);
+  it("uses the Hermes manifest plan for lazy dependencies, pairing, and the private dashboard profile", () => {
+    expect(HERMES_STATE_LOCK_PLAN.confidentialRoots).toEqual(["lazy-packages", "pairing"]);
     expect(HERMES_STATE_LOCK_PLAN.writableSubpaths).toEqual(["profiles/dashboard-home"]);
   });
 

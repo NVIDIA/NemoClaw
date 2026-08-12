@@ -430,6 +430,26 @@ wait "$child"
   });
 });
 
+describe("Hermes durable lazy-install target", () => {
+  it("accepts the image-owned lazy target in the runtime environment (#8613)", () => {
+    const result = runRuntimeEnvValidation({
+      HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it("rejects a lazy target override that could import sandbox code into the gateway (#8613)", () => {
+    const result = runRuntimeEnvValidation({
+      HERMES_LAZY_INSTALL_TARGET: "/tmp/untrusted-packages",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("HERMES_LAZY_INSTALL_TARGET");
+  });
+});
+
 describe("Hermes env secret-boundary value-shape discriminator", () => {
   it("accepts the same secret-shaped key once its value is an openshell resolver placeholder", () => {
     // The reject path aborts on DEVTEST_API_TOKEN=<raw>. Pin the other side of
