@@ -534,6 +534,7 @@ export function createSetupNim(
       agentProviderOptions,
       experimental: deps.experimental,
       gpuNimCapable,
+      nvidiaPlatform: gpu?.platform,
       hasOllama,
       ollamaRunning,
       ollamaHost,

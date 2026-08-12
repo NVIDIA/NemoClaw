@@ -10,7 +10,7 @@ import {
 } from "./nim-image-compat-warning";
 
 describe("arm64 NIM image compatibility warning", () => {
-  it("warns only when Local NIM is available on known Linux arm64 NVIDIA platforms", () => {
+  it("warns only when Local NIM is available on Linux arm64 DGX platforms", () => {
     expect(
       shouldWarnAboutArm64NimImageCompatibility({
         arch: "arm64",
@@ -37,14 +37,6 @@ describe("arm64 NIM image compatibility warning", () => {
     ).toBe(true);
     expect(
       shouldWarnAboutArm64NimImageCompatibility({
-        arch: "arm64",
-        platform: "linux",
-        gpu: { platform: "n1x" },
-        nimLocalAvailable: true,
-      }),
-    ).toBe(true);
-    expect(
-      shouldWarnAboutArm64NimImageCompatibility({
         arch: "x64",
         platform: "linux",
         gpu: { platform: "spark" },
@@ -63,15 +55,15 @@ describe("arm64 NIM image compatibility warning", () => {
       shouldWarnAboutArm64NimImageCompatibility({
         arch: "arm64",
         platform: "linux",
-        gpu: { platform: "spark" },
-        nimLocalAvailable: false,
+        gpu: { platform: "n1x" },
+        nimLocalAvailable: true,
       }),
     ).toBe(false);
     expect(
       shouldWarnAboutArm64NimImageCompatibility({
         arch: "arm64",
         platform: "linux",
-        gpu: { platform: "n1x" },
+        gpu: { platform: "spark" },
         nimLocalAvailable: false,
       }),
     ).toBe(false);
@@ -84,12 +76,6 @@ describe("arm64 NIM image compatibility warning", () => {
     expect(lines.join("\n")).toContain("linux/arm64 manifests");
     expect(lines.join("\n")).toContain("will try the selected image/platform digest");
     expect(lines.join("\n")).not.toMatch(/will fail|does not work/i);
-  });
-
-  it("identifies N1x in the Linux arm64 compatibility warning (#8574)", () => {
-    const lines = formatArm64NimImageCompatibilityWarning({ gpu: { platform: "n1x" } });
-
-    expect(lines.join("\n")).toContain("Linux arm64 N1x");
   });
 
   it("prints the warning once through the logger", () => {
