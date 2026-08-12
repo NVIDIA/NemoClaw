@@ -647,6 +647,21 @@ describe("DGX Station Express resume (#7048)", () => {
     }
   });
 
+  it("reports a non-directory NemoClaw state path before receipt cleanup (#8795)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-receipt-file-"));
+    const statePath = path.join(home, ".nemoclaw");
+    fs.writeFileSync(statePath, "keep", { mode: 0o600 });
+
+    try {
+      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow(
+        `Refusing NemoClaw installer resume path that is not a directory: ${statePath}`,
+      );
+      expect(fs.readFileSync(statePath, "utf8")).toBe("keep");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("reports the required mode and recovery command for unsafe fresh cleanup (#8795)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fresh-state-mode-"));
     const home = path.join(root, "home-$(touch injected)");

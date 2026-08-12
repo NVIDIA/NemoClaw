@@ -240,7 +240,12 @@ function lstatOrNull(candidate: string): fs.Stats | null {
 
 function assertOwnerOnlyDirectory(candidate: string, stat: fs.Stats): void {
   const uid = process.getuid?.();
-  if (!stat.isDirectory() || uid === undefined || stat.uid !== uid) {
+  if (!stat.isDirectory()) {
+    throw new Error(
+      `Refusing NemoClaw installer resume path that is not a directory: ${candidate}`,
+    );
+  }
+  if (uid === undefined || stat.uid !== uid) {
     throw new Error(
       `Refusing NemoClaw installer resume directory that is not owned by the current user: ${candidate}`,
     );
