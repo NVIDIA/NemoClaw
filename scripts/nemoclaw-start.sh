@@ -5176,9 +5176,9 @@ launch_openclaw_gateway_process() {
       # Replace the predictable log path immediately before the initial launch.
       # The descriptor-safe launcher below then pins that exact regular file.
       if [ "$(id -u)" -eq 0 ]; then
-        _nemoclaw_safe_create_tmp_file /tmp/gateway.log 644 gateway:gateway
+        _nemoclaw_safe_create_tmp_file /tmp/gateway.log 644 gateway:gateway || return 1
       else
-        _nemoclaw_safe_create_tmp_file /tmp/gateway.log 644
+        _nemoclaw_safe_create_tmp_file /tmp/gateway.log 644 || return 1
       fi
       ;;
     *)
@@ -5265,7 +5265,7 @@ launch_openclaw_gateway() {
   launch_openclaw_gateway_process truncate \
     "${STEP_DOWN_PREFIX_GATEWAY[@]}" env HOME=/sandbox sh -c \
     'umask 0007; exec "$@"' sh \
-    "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}"
+    "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" || return 1
   if ! capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY; then
     # An uncaptured numeric PID is never safe to signal: Bash may already have
     # reaped the short-lived child and the kernel may have reused its PID. Fail
@@ -5286,7 +5286,7 @@ launch_openclaw_gateway_non_root() {
   arm_openclaw_gateway_supervisor_cleanup
   mark_in_container_gateway
   launch_openclaw_gateway_process truncate \
-    "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}"
+    "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" || return 1
   capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY || exit 1
   record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2

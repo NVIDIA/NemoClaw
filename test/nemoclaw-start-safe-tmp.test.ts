@@ -89,6 +89,51 @@ describe("nemoclaw-start safe tmp file creation", () => {
     }
   });
 
+  it("does not launch a gateway when initial log replacement fails", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-safe-tmp-"));
+    const gatewayLog = path.join(tmpDir, "gateway.log");
+    const launchSentinel = path.join(tmpDir, "gateway-launched");
+    const processLaunch = extractShellFunctionFromSource(
+      src,
+      "launch_openclaw_gateway_process",
+    ).replaceAll("/tmp/gateway.log", gatewayLog);
+    const gatewayLaunch = extractShellFunctionFromSource(src, "launch_openclaw_gateway");
+
+    try {
+      fs.writeFileSync(gatewayLog, "stale gateway output\n");
+      const script = [
+        "set -uo pipefail",
+        "_nemoclaw_safe_create_tmp_file() { return 1; }",
+        processLaunch,
+        `if launch_openclaw_gateway_process truncate sh -c 'printf launched > ${JSON.stringify(launchSentinel)}'; then wait "$GATEWAY_PID"; exit 30; fi`,
+        '[ -z "${GATEWAY_PID:-}" ] || exit 31',
+        `[ ! -e ${JSON.stringify(launchSentinel)} ] || exit 32`,
+        "launch_openclaw_gateway_process() { return 1; }",
+        "arm_openclaw_gateway_supervisor_cleanup() { :; }",
+        "mark_in_container_gateway() { :; }",
+        'capture_openclaw_pid_start_identity() { printf launched > "$CAPTURE_SENTINEL"; return 0; }',
+        `CAPTURE_SENTINEL=${JSON.stringify(launchSentinel)}`,
+        "record_gateway_pid() { :; }",
+        "STEP_DOWN_PREFIX_GATEWAY=()",
+        "OPENCLAW=true",
+        "_DASHBOARD_PORT=18789",
+        gatewayLaunch,
+        "if launch_openclaw_gateway; then exit 33; fi",
+        '[ -z "${GATEWAY_PID:-}" ] || exit 31',
+        `[ ! -e ${JSON.stringify(launchSentinel)} ] || exit 32`,
+      ].join("\n");
+      const result = spawnSync("bash", ["-c", script], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(gatewayLog, "utf-8")).toBe("stale gateway output\n");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("refuses a planted gateway-log symlink during automatic respawn", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-safe-tmp-"));
     const gatewayLog = path.join(tmpDir, "gateway.log");
