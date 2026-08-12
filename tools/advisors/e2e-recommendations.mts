@@ -9,6 +9,7 @@ import path from "node:path";
 import { getTarget, listTargets } from "../../test/e2e/registry/registry.ts";
 import { liveTargetSupport } from "../../test/e2e/registry/runtime-support.ts";
 import { moduleTagDeclarations } from "../e2e/module-tags.mts";
+import { E2E_TARGET_CATALOGUE } from "../e2e/target-catalogue.mts";
 import { containsCommandShapedE2eText } from "./e2e-text.mts";
 import { enumValue, recordItems, stringOrUndefined } from "./json.mts";
 import { buildRiskPlan, isPrE2ePlanningJob, type RiskPlan } from "./risk-plan.mts";
@@ -364,9 +365,12 @@ function buildE2eTargetNormalizationContext(
   // The analyzed workflow is untrusted input. It may explain why a changed test has
   // no trusted workflow job, but it must never introduce a selector absent from the
   // trusted workflow.
-  const freeStandingJobs = extractFreeStandingE2eJobs(trustedWorkflowText).filter((job) =>
-    allowedJobIds.has(job.id),
-  );
+  const freeStandingJobs = [
+    ...extractFreeStandingE2eJobs(trustedWorkflowText),
+    ...E2E_TARGET_CATALOGUE.map(({ id, testFile }) => ({ id, liveTestFiles: [testFile] })),
+  ]
+    .filter((job) => allowedJobIds.has(job.id))
+    .sort((left, right) => left.id.localeCompare(right.id));
   const liveTestToJobs = new Map<string, string[]>();
   const changedCredentialFreeTests: E2eChangedCredentialFreeTest[] = [];
   const changedCredentialFreeProjects = new Map(
@@ -476,6 +480,7 @@ function extractAllowedE2eJobIds(
   if (jobs.some(({ id }) => id === SHARED_E2E_JOB_ID)) {
     allowed.push(...credentialFreeTests.map(({ id }) => id));
   }
+  allowed.push(...E2E_TARGET_CATALOGUE.map(({ id }) => id));
   return [...new Set(allowed)].sort();
 }
 
@@ -502,7 +507,9 @@ function addMapValue(map: Map<string, string[]>, key: string, value: string): vo
 export function extractFreeStandingE2eJobs(workflowText: string): E2eWorkflowJob[] {
   const jobs: E2eWorkflowJob[] = [];
   for (const { id, body } of e2eWorkflowJobs(workflowText)) {
-    if (!body.includes("inputs.jobs") || !body.includes(`,${id},`)) continue;
+    const legacySelector = body.includes("inputs.jobs") && body.includes(`,${id},`);
+    const plannedSelector = body.includes("selected_jobs") && body.includes(id);
+    if (!legacySelector && !plannedSelector) continue;
     const liveTestFiles = uniqueStrings(
       [...body.matchAll(/test\/e2e\/live\/[A-Za-z0-9._-]+\.test\.ts/g)].map((item) => item[0]),
     ).filter((file) => file !== REGISTRY_LIVE_ENTRYPOINT);

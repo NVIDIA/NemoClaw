@@ -4,8 +4,6 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { runLiveVitestCommand } from "./live-vitest-invocation.mts";
-
 export const E2E_EXECUTION_PROFILES = ["standard", "nvidia-api", "nvidia-inference"] as const;
 export type E2eExecutionProfile = (typeof E2E_EXECUTION_PROFILES)[number];
 
@@ -517,7 +515,7 @@ export function catalogueMatrix(
     }));
 }
 
-export function runCatalogueTarget(id: string, testFile: string): number {
+export async function runCatalogueTarget(id: string, testFile: string): Promise<number> {
   const entry = catalogueTarget(id);
   if (entry.testFile !== testFile) {
     throw new Error(`E2E target ${id} does not own test file ${testFile}`);
@@ -526,6 +524,7 @@ export function runCatalogueTarget(id: string, testFile: string): number {
   if (entry.exposeCliBin) {
     process.env.NEMOCLAW_CLI_BIN = path.join(process.cwd(), "bin", "nemoclaw.js");
   }
+  const { runLiveVitestCommand } = await import("./live-vitest-invocation.mts");
   return runLiveVitestCommand(["run", "--test-path", entry.testFile]);
 }
 
@@ -534,5 +533,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   if (command !== "run" || !id || !testFile) {
     throw new Error("Usage: target-catalogue.mts run <target-id> <test-file>");
   }
-  process.exit(runCatalogueTarget(id, testFile));
+  process.exit(await runCatalogueTarget(id, testFile));
 }
