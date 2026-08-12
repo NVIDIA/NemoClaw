@@ -34,7 +34,7 @@ on:
           - internal-nvidia
           - public-nvidia
       allow_jetson_dispatch:
-        description: "Set true for jetson-nvmap-gpu only after the Colossus dispatcher, Cloudflare Tunnel, cleanup helper, and JETSON_DISPATCH_URL repository variable have passed the deployment checks in test/e2e/docs/jetson-colossus-dispatch.md."
+        description: "Set true for jetson-nvmap-gpu only after the operator-owned dispatch backend is available and JETSON_DISPATCH_URL contains its verified HTTPS origin. Refer to test/e2e/docs/jetson-dispatch.md."
         required: false
         default: false
         type: boolean
@@ -4924,7 +4924,7 @@ jobs:
     needs: generate-matrix
     if: ${{ inputs.allow_jetson_dispatch && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}
     concurrency:
-      group: jetson-nvmap-gpu-colossus
+      group: jetson-nvmap-gpu-dispatch
       queue: max
       cancel-in-progress: false
     runs-on: ubuntu-latest
@@ -4945,7 +4945,7 @@ jobs:
         with:
           node-version: 22
 
-      - name: Dispatch exact commit to Jetson through Colossus
+      - name: Dispatch exact commit to Jetson through operator backend
         env:
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu
           JETSON_DISPATCH_CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
