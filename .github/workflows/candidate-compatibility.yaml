@@ -304,7 +304,7 @@ jobs:
         continue-on-error: true
         working-directory: candidate-source
         env:
-          DOCKER_GRPC_PROBE_IMAGE: node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
+          DOCKER_GRPC_PROBE_IMAGE: node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/candidate-source/e2e-artifacts/live/openshell-gateway-auth-contract
           E2E_JOB: "1"
           E2E_TARGET_ID: openshell-gateway-auth-contract
