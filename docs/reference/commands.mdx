@@ -1228,7 +1228,7 @@ The in-sandbox NemoClaw plugin writes its registration banner to `stderr`, so th
 Because a delivered turn therefore always writes to one of the two streams, a dispatch that exits `0` with no bytes on either stream is reported as a failure: the wrapper prints the recovery guidance to `stderr` and exits with status `1` instead of reporting a successful turn.
 The diagnostic shell-quotes the sandbox name and forwarded arguments, then redacts detected credential values before writing the recovery command to `stderr`.
 If redaction changes the recovery command, the diagnostic tells you not to replay it; otherwise, it labels the command as runnable inside the sandbox.
-Both captured paths pin the sandbox's owning gateway with an explicit `-g`, and neither forwards an interactive terminal on `stdin`; a genuine pipe or redirect is still passed through, so `printf 'ping' | $$nemoclaw my-assistant agent --agent main` keeps working.
+For a registered sandbox, both captured paths pin the sandbox's recorded gateway with an explicit `-g`. Neither path forwards an interactive terminal on `stdin`; a genuine pipe or redirect is still passed through, so `printf 'ping' | $$nemoclaw my-assistant agent --agent main` keeps working.
 When the top-level OpenClaw `--json` output flag is present, the wrapper uses a captured no-TTY path with a `64 MiB` buffer so `stdout` stays parseable JSON.
 Raw `stderr`, including structured JSON diagnostics, is forwarded unchanged.
 NemoClaw appends failed-tool or untrusted-child provenance only from the `stdout` JSON.
