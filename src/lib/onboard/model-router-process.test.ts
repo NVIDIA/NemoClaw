@@ -94,7 +94,7 @@ describe("stopModelRouterProcess", () => {
         isHealthy: async () => true,
         kill,
       }),
-    ).rejects.toThrow("PID 123 exited but port 4000 remains healthy");
+    ).rejects.toThrow("PID 123 no longer reports as running but port 4000 remains healthy");
 
     expect(kill).not.toHaveBeenCalled();
   });
@@ -182,7 +182,7 @@ describe("stopModelRouterProcess", () => {
     expect(signals).toEqual(["SIGTERM"]);
   });
 
-  it("does not signal a replacement that takes the PID after final ownership observation", async () => {
+  it("does not send SIGKILL when a replacement owns the PID at the final command-line check", async () => {
     let ownershipChecks = 0;
     let replacementOwnsPid = false;
     const routerSignals: NodeJS.Signals[] = [];

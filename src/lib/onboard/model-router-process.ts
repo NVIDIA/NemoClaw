@@ -126,10 +126,10 @@ export function doesModelRouterProcessOwnPort(
 
 /**
  * Stop the recorded Model Router process and return only after its PID no
- * longer exists and its health endpoint is not healthy. The session stores a
- * numeric PID, not a PID-stable OS handle. Ownership validation and SIGTERM
- * delivery are separate OS operations, so PID reuse can still redirect
- * SIGTERM. Never send SIGKILL without a PID-stable handle.
+ * longer reports as running and its health endpoint is not healthy. The
+ * session stores a numeric PID, not a PID-stable OS handle. Ownership
+ * validation and SIGTERM delivery are separate OS operations, so PID reuse can
+ * still redirect SIGTERM. Never send SIGKILL without a PID-stable handle.
  */
 export async function stopModelRouterProcess(
   pid: number,
@@ -146,7 +146,7 @@ export async function stopModelRouterProcess(
   if (!isRunning(pid)) {
     if (!(await isHealthy(port, 1000))) return;
     throw new Error(
-      `Refusing to replace model router: PID ${pid} exited but port ${port} remains healthy.`,
+      `Refusing to replace Model Router: recorded PID ${pid} no longer reports as running but port ${port} remains healthy.`,
     );
   }
   if (
@@ -165,7 +165,7 @@ export async function stopModelRouterProcess(
   } catch (error) {
     if (!isRunning(pid) && !(await isHealthy(port, 1000))) return;
     throw new Error(
-      `Failed to send SIGTERM to model router PID ${pid}: ${
+      `Failed to send SIGTERM to Model Router PID ${pid}: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
@@ -177,7 +177,7 @@ export async function stopModelRouterProcess(
 
   if (!isRunning(pid)) {
     throw new Error(
-      `Model router PID ${pid} exited after SIGTERM, but port ${port} remains healthy.`,
+      `Model Router PID ${pid} no longer reports as running after SIGTERM, but port ${port} remains healthy.`,
     );
   }
   if (
@@ -187,11 +187,11 @@ export async function stopModelRouterProcess(
     })
   ) {
     throw new Error(
-      `Model router ownership changed during shutdown for PID ${pid}; no escalation signal was sent.`,
+      `Model Router ownership changed during shutdown for PID ${pid}; no escalation signal was sent.`,
     );
   }
   throw new Error(
-    `Model router shutdown did not converge after SIGTERM; refusing PID-based SIGKILL for PID ${pid} because process identity cannot be preserved atomically.`,
+    `Model Router shutdown did not converge after SIGTERM; refusing PID-based SIGKILL for PID ${pid} because process identity cannot be preserved atomically.`,
   );
 }
 
