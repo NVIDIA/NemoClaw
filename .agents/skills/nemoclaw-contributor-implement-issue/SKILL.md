@@ -64,15 +64,15 @@ a fallback.
 GitHub access does not authorize a write, push, or pull request publication.
 
 Before any GitHub operation or `git`, `ssh`, or `gh` access, follow
-[Use Configured GitHub Access and Stop on Access Errors](../_shared/git-github-hard-stop.md).
+[Use Configured GitHub Access and Stop on Access Errors](references/git-github-hard-stop.md).
 Stop and request user remediation for any Git or GitHub access error.
 Do not attempt a credential, remote, protocol, or permission bypass.
 Then follow
-[Discover the Current Implementation](../_shared/implementation-discovery.md). Apply the shared
-[Code Change Considerations](../_shared/code-change-considerations.md),
-[Root-Cause and Sensitive-Workflow State Checks](../_shared/root-cause-and-state-checks.md),
-[Security Rubric](../_shared/security-rubric.md), and
-[Documentation Writing and Review](../_shared/documentation-writing-review.md) contract.
+[Discover the Current Implementation](references/implementation-discovery.md). Apply the shared
+[Code Change Considerations](references/code-change-considerations.md),
+[Root-Cause and Sensitive-Workflow State Checks](references/root-cause-and-state-checks.md),
+[Security Rubric](references/security-rubric.md), and
+[Documentation Writing and Review](references/documentation-writing-review.md) contract.
 
 Read current code, tests, workflows, and every active `AGENTS.md` file for each affected area before
 editing. Derive paths, test commands, architecture, and ownership from the current checkout. Treat

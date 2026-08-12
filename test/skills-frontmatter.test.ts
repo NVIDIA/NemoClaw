@@ -258,17 +258,17 @@ describe("repo skill markdown files", () => {
     ) as Array<{ id: string; expected_skill: string | null }>;
 
     expect(skill).toContain("pick up issue for implementation");
-    expect(skill).toContain("../_shared/implementation-discovery.md");
-    expect(skill).toContain("../_shared/code-change-considerations.md");
-    expect(skill).toContain("../_shared/root-cause-and-state-checks.md");
-    expect(skill).toContain("../_shared/security-rubric.md");
-    expect(skill).toContain("../_shared/documentation-writing-review.md");
+    expect(skill).toContain("references/implementation-discovery.md");
+    expect(skill).toContain("references/code-change-considerations.md");
+    expect(skill).toContain("references/root-cause-and-state-checks.md");
+    expect(skill).toContain("references/security-rubric.md");
+    expect(skill).toContain("references/documentation-writing-review.md");
     expect(skill).toContain("smallest independently valuable capability slice");
     expect(skill).toContain("Read current code, tests, workflows");
     expect(skill).toContain("Load a narrow specialist only");
     expect(skill).toContain("it does not authorize GitHub writes");
 
-    expect(skill).toContain("../_shared/git-github-hard-stop.md");
+    expect(skill).toContain("references/git-github-hard-stop.md");
     expect(skill).toContain("Use a user-configured GitHub tool");
     expect(skill).toContain("configured GitHub MCP tool");
     expect(skill).toContain("Do not use unauthenticated `curl`");
@@ -346,29 +346,50 @@ describe("repo skill markdown files", () => {
       expect(skill).toContain("Do not use unauthenticated `curl`");
     }
 
-    const portableReferenceNames = [
-      "code-change-considerations.md",
-      "git-github-hard-stop.md",
-      "implementation-discovery.md",
-      "root-cause-and-state-checks.md",
-      "security-rubric.md",
+    const portableSkills = [
+      {
+        name: "nemoclaw-contributor-plan-issue",
+        content: planning,
+        references: [
+          "code-change-considerations.md",
+          "git-github-hard-stop.md",
+          "implementation-discovery.md",
+          "root-cause-and-state-checks.md",
+          "security-rubric.md",
+        ],
+      },
+      {
+        name: "nemoclaw-contributor-implement-issue",
+        content: implementation,
+        references: [
+          "code-change-considerations.md",
+          "documentation-writing-review.md",
+          "git-github-hard-stop.md",
+          "implementation-discovery.md",
+          "root-cause-and-state-checks.md",
+          "security-rubric.md",
+        ],
+      },
     ];
-    const planRoot = path.join(skillsRoot, "nemoclaw-contributor-plan-issue");
-    const installedFiles = collectFiles(planRoot).files;
-    const installedReferences = Array.from(
-      planning.matchAll(/\]\((references\/[^)#]+\.md)(?:#[^)]+)?\)/gu),
-      (match) => match[1],
-    ).sort();
 
-    expect(installedReferences).toEqual(
-      portableReferenceNames.map((name) => `references/${name}`).sort(),
-    );
-    for (const name of portableReferenceNames) {
-      const installedPath = `references/${name}`;
-      expect(installedFiles).toContain(installedPath);
-      expect(fs.readFileSync(path.join(planRoot, installedPath), "utf8")).toBe(
-        fs.readFileSync(path.join(skillsRoot, "_shared", name), "utf8"),
+    for (const portableSkill of portableSkills) {
+      const skillRoot = path.join(skillsRoot, portableSkill.name);
+      const installedFiles = collectFiles(skillRoot).files;
+      const installedReferences = Array.from(
+        portableSkill.content.matchAll(/\]\((references\/[^)#]+\.md)(?:#[^)]+)?\)/gu),
+        (match) => match[1],
+      ).sort();
+
+      expect(installedReferences).toEqual(
+        portableSkill.references.map((name) => `references/${name}`).sort(),
       );
+      for (const name of portableSkill.references) {
+        const installedPath = `references/${name}`;
+        expect(installedFiles).toContain(installedPath);
+        expect(fs.readFileSync(path.join(skillRoot, installedPath), "utf8")).toBe(
+          fs.readFileSync(path.join(skillsRoot, "_shared", name), "utf8"),
+        );
+      }
     }
 
     expect(docs).toContain("## Use the Issue-Planning Skill in a Sandbox");
@@ -399,10 +420,23 @@ describe("repo skill markdown files", () => {
       path.join(skillsRoot, "_shared", "documentation-writing-review.md"),
       "utf8",
     );
-    expect(documentationReview).toContain("../../../WRITING.md");
-    expect(documentationReview).toContain("../../../docs/CONTRIBUTING.md");
-    expect(documentationReview).not.toContain("../../../AGENTS.md");
-    expect(documentationReview).not.toContain("../../../docs/AGENTS.md");
+    const installedDocumentationReview = fs.readFileSync(
+      path.join(
+        skillsRoot,
+        "nemoclaw-contributor-implement-issue",
+        "references",
+        "documentation-writing-review.md",
+      ),
+      "utf8",
+    );
+
+    expect(installedDocumentationReview).toBe(documentationReview);
+    for (const routing of [documentationReview, installedDocumentationReview]) {
+      expect(routing).toContain("`WRITING.md` from the root of the current NemoClaw checkout");
+      expect(routing).toContain("`docs/CONTRIBUTING.md` from the current NemoClaw checkout");
+      expect(routing).not.toContain("../../../");
+      expect(routing).not.toContain("AGENTS.md");
+    }
   });
 
   it("keeps messaging channel guidance in the owning package (#8364)", () => {
