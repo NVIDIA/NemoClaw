@@ -257,6 +257,7 @@ describe("resolveCreateSandboxDashboardPort", () => {
 
 describe("dashboard port reservation", () => {
   it("scopes sandbox creation and distinguishes the temporary runtime path", async () => {
+    const events: string[] = [];
     const createSandboxWithBaseImageResolution = vi.fn(
       async (
         baseImageResolutionContext: { fresh: boolean },
@@ -266,21 +267,30 @@ describe("dashboard port reservation", () => {
         temporaryManagedRuntimeCatalog: null,
         dashboardPortReservationScope: DashboardPortReservationScope,
         sandboxName: string,
-      ) => ({
-        baseImageResolutionContext,
-        computePlan,
-        managedWorkloadRebuild,
-        temporaryManagedRuntime,
-        temporaryManagedRuntimeCatalog,
-        dashboardPortReservationScope,
-        sandboxName,
-      }),
+      ) => {
+        events.push("create sandbox");
+        return {
+          baseImageResolutionContext,
+          computePlan,
+          managedWorkloadRebuild,
+          temporaryManagedRuntime,
+          temporaryManagedRuntimeCatalog,
+          dashboardPortReservationScope,
+          sandboxName,
+        };
+      },
     );
     let sequence = 0;
     const entryPoints = createDashboardPortScopedSandboxEntryPoints({
-      createBaseImageResolutionContext: () => ({ fresh: false }),
+      createBaseImageResolutionContext: () => {
+        events.push("create base-image context");
+        return { fresh: false };
+      },
       createSandboxWithBaseImageResolution,
-      resolveComputePlan: () => ({ sequence: ++sequence }),
+      resolveComputePlan: () => {
+        events.push("resolve compute plan");
+        return { sequence: ++sequence };
+      },
     });
 
     await expect(entryPoints.createSandbox("standard")).resolves.toMatchObject({
@@ -307,6 +317,14 @@ describe("dashboard port reservation", () => {
     expect(createSandboxWithBaseImageResolution.mock.calls[0]?.[5]).not.toBe(
       createSandboxWithBaseImageResolution.mock.calls[1]?.[5],
     );
+    expect(events).toEqual([
+      "resolve compute plan",
+      "create base-image context",
+      "create sandbox",
+      "resolve compute plan",
+      "create base-image context",
+      "create sandbox",
+    ]);
   });
 
   it("holds the selected port during creation and releases it after failure (#8798)", async () => {
