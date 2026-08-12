@@ -713,7 +713,7 @@ printf 'vllm-stopped-diagnostic\\n'`,
     writeCommand(
       fixture.binDir,
       "curl",
-      `printf '%s\\n' "$*" >>"$FAKE_CURL_ARGV_LOG"
+      `printf '%s\\n' "$@" >>"$FAKE_CURL_ARGV_LOG"
 /bin/sleep 0.2
 exit 28`,
     );
@@ -737,9 +737,14 @@ printf 'vllm-stalled-probe-diagnostic\\n'`,
 
     expect(result.exitCode).toBe(1);
     expect(result.timedOut).toBe(false);
-    expect(fs.readFileSync(curlArgvLog, "utf8").trim()).toBe(
-      "-fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8000/v1/models",
-    );
+    expect(fs.readFileSync(curlArgvLog, "utf8").trim().split("\n")).toEqual([
+      "-fsS",
+      "--connect-timeout",
+      "2",
+      "--max-time",
+      "5",
+      "http://127.0.0.1:8000/v1/models",
+    ]);
     expect(result.stderr).toContain("vllm-stalled-probe-diagnostic");
     expect(result.stderr).toContain("managed-image-vllm-not-ready attempts=1");
   });
