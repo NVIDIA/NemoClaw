@@ -96,6 +96,7 @@ export interface OnboardDashboardHelpers {
     sandboxName: string,
     agent: { forwardPort?: number | null; forward_ports?: number[] | null },
   ): number;
+  ensureFinalDashboardForward(sandboxName: string, agent: AgentDefinition | null): number;
   ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean;
   fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null;
   fetchAgentWebAuthTokenFromSandbox(sandboxName: string, agent: AgentDefinition): string | null;
@@ -396,6 +397,12 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     });
   }
 
+  function ensureFinalDashboardForward(sandboxName: string, agent: AgentDefinition | null): number {
+    return agent
+      ? ensureAgentDashboardForward(sandboxName, agent)
+      : ensureDashboardForward(sandboxName, process.env.CHAT_UI_URL);
+  }
+
   function ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean {
     return ensureFixedAgentForward(deps, sandboxName, port, label);
   }
@@ -578,6 +585,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     buildOrphanedSandboxRollbackMessage,
     ensureDashboardForward,
     ensureAgentDashboardForward,
+    ensureFinalDashboardForward,
     ensureAgentFixedForward,
     fetchGatewayAuthTokenFromSandbox,
     fetchAgentWebAuthTokenFromSandbox,

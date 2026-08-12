@@ -3576,6 +3576,7 @@ const {
   buildOrphanedSandboxRollbackMessage,
   ensureDashboardForward,
   ensureAgentDashboardForward,
+  ensureFinalDashboardForward,
   ensureAgentFixedForward,
   fetchGatewayAuthTokenFromSandbox,
   getDashboardForwardPort,
@@ -4313,8 +4314,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         webSearchProvider: (config) => webSearchProviderForConfig(config),
       },
       finalizationDeps: {
-        // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-        ensureAgentDashboardForward: (name, selectedAgent) => selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : ensureDashboardForward(name, process.env.CHAT_UI_URL),
+        ensureAgentDashboardForward: ensureFinalDashboardForward,
         setDefaultSandbox: registry.setDefault,
         verifyWebSearchInsideSandbox,
         toSessionUpdates: (updates) =>
