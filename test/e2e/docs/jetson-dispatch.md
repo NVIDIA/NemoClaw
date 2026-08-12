@@ -88,10 +88,12 @@ content, and a noncanonical archive.
 
 The static vectors in
 `tools/e2e/contracts/v1/jetson-dispatch.json` are the compatibility boundary
-shared with the operator-owned service. They include one request, queued and
-completed responses, one artifact, and rejected request examples. Change the
-contract version, parser tests, client tests, and vectors together when an
-incompatible wire change is required.
+shared with the operator-owned service. Contract v1 is immutable at SHA-256
+`d50e381860ec131e92f78c25272bfdcbacb790adc9552c3aaf0778427171314c`.
+The receiver's CI and deployment gate compare its copy against NemoClaw
+`main`. The vectors include one request, queued and completed responses, one
+artifact, and rejected request examples. Publish a coordinated v2 contract
+instead of editing v1 when an incompatible wire change is required.
 
 ## Trusted GitHub Dispatch
 
