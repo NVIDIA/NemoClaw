@@ -560,7 +560,7 @@ export function createDashboardPortScopedSandboxEntryPoints<
   createSandbox: (...args: Args) => Promise<Result>;
   createSandboxWithTemporaryManagedRuntime: (...args: Args) => Promise<Result>;
 } {
-  const create = (temporaryManagedRuntime: boolean, args: Args): Promise<Result> => {
+  const create = async (temporaryManagedRuntime: boolean, args: Args): Promise<Result> => {
     const computePlan = deps.resolveComputePlan();
     return withDashboardPortReservationScope((dashboardPortReservationScope) =>
       deps.createSandboxWithBaseImageResolution(

@@ -327,6 +327,28 @@ describe("dashboard port reservation", () => {
     ]);
   });
 
+  it("rejects both entry-point promises when synchronous setup fails", async () => {
+    const setupFailure = new Error("compute plan unavailable");
+    const entryPoints = createDashboardPortScopedSandboxEntryPoints<
+      [string],
+      string,
+      { fresh: boolean },
+      { sequence: number }
+    >({
+      createBaseImageResolutionContext: () => ({ fresh: false }),
+      createSandboxWithBaseImageResolution: async () => "unreachable",
+      resolveComputePlan: () => {
+        throw setupFailure;
+      },
+    });
+
+    const standard = entryPoints.createSandbox("standard");
+    const temporary = entryPoints.createSandboxWithTemporaryManagedRuntime("temporary");
+
+    await expect(standard).rejects.toBe(setupFailure);
+    await expect(temporary).rejects.toBe(setupFailure);
+  });
+
   it("holds the selected port during creation and releases it after failure (#8798)", async () => {
     const port = await unusedLoopbackPort();
 
