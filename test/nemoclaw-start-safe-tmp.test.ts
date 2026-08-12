@@ -114,7 +114,7 @@ describe("nemoclaw-start safe tmp file creation", () => {
         'capture_openclaw_pid_start_identity() { printf launched > "$CAPTURE_SENTINEL"; return 0; }',
         `CAPTURE_SENTINEL=${JSON.stringify(launchSentinel)}`,
         "record_gateway_pid() { :; }",
-        "STEP_DOWN_PREFIX_GATEWAY=()",
+        "STEP_DOWN_PREFIX_GATEWAY=(env)",
         "OPENCLAW=true",
         "_DASHBOARD_PORT=18789",
         gatewayLaunch,
