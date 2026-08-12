@@ -485,6 +485,10 @@ async function inspectProtectedProviderContainer(
   requestedImage: string,
   artifactName: string,
 ): Promise<ProtectedProviderContainerAuthority> {
+  const reportedContainerId = state.reportedContainerId;
+  if (!reportedContainerId) {
+    throw new Error(`provider start did not report authority for ${state.name}`);
+  }
   const result = await host.command(
     "docker",
     [
@@ -492,7 +496,7 @@ async function inspectProtectedProviderContainer(
       "inspect",
       "--format",
       '{{.Id}}|{{.Name}}|{{.Config.Image}}|{{.Image}}|{{ index .Config.Labels "io.nvidia.nemoclaw.e2e-owner" }}|{{ index .Config.Labels "io.nvidia.nemoclaw.e2e-provider" }}',
-      state.name,
+      reportedContainerId,
     ],
     {
       artifactName,
@@ -520,7 +524,7 @@ async function inspectProtectedProviderContainer(
     requestedImage,
   };
   if (
-    containerId !== state.reportedContainerId ||
+    containerId !== reportedContainerId ||
     actualName !== `/${state.name}` ||
     actualImage !== requestedImage ||
     owner !== state.owner ||
@@ -646,10 +650,14 @@ export function protectedVllmReadinessCommand(
     command: "bash",
     captureLimitBytes: PROTECTED_READINESS_CAPTURE_LIMIT_BYTES,
     args: [
+      "--noprofile",
+      "--norc",
       "-c",
       `set -euo pipefail
 attempt=0
-for attempt in $(seq 1 300); do
+deadline=$((SECONDS + 600))
+while [ "$SECONDS" -lt "$deadline" ]; do
+  attempt=$((attempt + 1))
   if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8000/v1/models >/dev/null 2>&1; then
     printf 'managed-image-vllm-ready attempts=%s\n' "$attempt"
     exit 0

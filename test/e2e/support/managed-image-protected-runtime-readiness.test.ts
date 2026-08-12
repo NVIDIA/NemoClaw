@@ -517,7 +517,7 @@ describe("protected managed-image runtime commands", () => {
     expect(ollama.command.slice(0, 2)).toEqual(["bash", "-c"]);
     expect(ollama.exitCode).toBe(0);
     expect(ollama.stdout).toBe("restart_mode=manual\nmanaged-image-ollama-ready\n");
-    expect(vllm.command.slice(0, 2)).toEqual(["bash", "-c"]);
+    expect(vllm.command.slice(0, 4)).toEqual(["bash", "--noprofile", "--norc", "-c"]);
     expect(vllm.exitCode).toBe(0);
     expect(vllm.stdout).toBe("managed-image-vllm-ready attempts=1\n");
   });
@@ -614,13 +614,12 @@ describe("protected managed-image runtime commands", () => {
       "utf8",
     );
     writeCommand(fixture.binDir, "curl", "/bin/sleep 0.2\nexit 1");
-    writeCommand(fixture.binDir, "seq", "printf '1\\n'");
     writeCommand(fixture.binDir, "sleep", "exit 0");
     writeCommand(
       fixture.binDir,
       "docker",
       `if [ "$1" = "container" ]; then
-  printf 'true\\n'
+  printf 'false\\n'
   exit 0
 fi
 /bin/cat "$FAKE_VLLM_SOURCE_LOG"
@@ -684,7 +683,6 @@ exit 42`,
     const fixture = createReadinessFixture();
     const command = protectedVllmReadinessCommand(VLLM_PROVIDER_NAME);
     writeCommand(fixture.binDir, "curl", "exit 1");
-    writeCommand(fixture.binDir, "seq", "printf '1\\n'");
     writeCommand(fixture.binDir, "sleep", "exit 99");
     writeCommand(
       fixture.binDir,
@@ -711,18 +709,14 @@ printf 'vllm-stopped-diagnostic\\n'`,
   it("bounds a connected-but-stalled vLLM probe before collecting diagnostics", async () => {
     const fixture = createReadinessFixture();
     const command = protectedVllmReadinessCommand(VLLM_PROVIDER_NAME);
+    const curlArgvLog = path.join(fixture.root, "curl-argv.log");
     writeCommand(
       fixture.binDir,
       "curl",
-      `[ "$1" = -fsS ]
-[ "$2" = --connect-timeout ]
-[ "$3" = 2 ]
-[ "$4" = --max-time ]
-[ "$5" = 5 ]
+      `printf '%s\\n' "$*" >>"$FAKE_CURL_ARGV_LOG"
 /bin/sleep 0.2
 exit 28`,
     );
-    writeCommand(fixture.binDir, "seq", "printf '1\\n'");
     writeCommand(fixture.binDir, "sleep", "exit 0");
     writeCommand(
       fixture.binDir,
@@ -737,12 +731,15 @@ printf 'vllm-stalled-probe-diagnostic\\n'`,
     const result = await fixture.host.command(command.command, command.args, {
       artifactName: "vllm-readiness-stalled-probe",
       captureLimitBytes: command.captureLimitBytes,
-      env: fixture.env,
+      env: { ...fixture.env, FAKE_CURL_ARGV_LOG: curlArgvLog },
       timeoutMs: 5_000,
     });
 
     expect(result.exitCode).toBe(1);
     expect(result.timedOut).toBe(false);
+    expect(fs.readFileSync(curlArgvLog, "utf8").trim()).toBe(
+      "-fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8000/v1/models",
+    );
     expect(result.stderr).toContain("vllm-stalled-probe-diagnostic");
     expect(result.stderr).toContain("managed-image-vllm-not-ready attempts=1");
   });
