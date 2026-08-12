@@ -199,12 +199,12 @@ npx tsx tools/e2e/credential-free-tests.mts
 
 ## Catalogue Targets
 
-`tools/e2e/target-catalogue.mts` declares homogeneous live E2E targets that run on `ubuntu-latest`.
+`tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
 Each entry owns these target properties:
 
 - Target ID and Vitest file.
 - Source paths that select the target after a push to `main`.
-- Execution profile and timeout.
+- Execution profile, runner, and timeout.
 - OpenShell install mode and CLI artifact use.
 - Target-specific environment variables.
 - Pre-tag release requirement.
@@ -220,8 +220,21 @@ The workflow partitions catalogue targets into three credential profiles:
 - `nvidia-inference` receives `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs.
 
 All three profiles call `.github/workflows/e2e-standard-profile.yaml`.
-The reusable workflow owns checkout, Docker authentication, setup, CLI artifact restoration, OpenShell installation, Vitest execution, artifact upload, and Docker credential cleanup.
-Keep a dedicated workflow job when a target needs another runner, a different setup boundary, a multi-job handoff, or different credential access.
+Each target selects its runner through the catalogue.
+The reusable workflow owns checkout, Docker authentication, setup, CLI artifact restoration, OpenShell installation, Vitest execution, evidence manifest creation, artifact upload, and Docker credential cleanup.
+The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets use this shape on `linux-amd64-gpu-rtxpro6000-latest-1`.
+Keep a dedicated workflow job when a target needs a different setup boundary, a multi-job handoff, or credential access outside the three profiles.
+
+### Catalogue Execution Evidence
+
+Every catalogue execution writes `evidence-manifest.json` in its target artifact directory.
+The manifest uses kind `nemoclaw-e2e-evidence-v1`.
+It records `targetId`, the candidate repository and commit, the trusted workflow repository and commit, the GitHub Actions run ID and attempt, the job status, the artifact directory, and `productEvidenceFileCount`.
+A successful target must write at least one product evidence file before the workflow writes a successful manifest.
+If the target reports success without product evidence, manifest creation fails instead of certifying an empty run.
+Failed targets still write a manifest for diagnosis, and the existing artifact upload publishes the manifest with the target artifacts.
+The manifest is secret-free diagnostic evidence.
+It does not replace the workflow job result or the `Release qualification` release gate.
 
 Run the planner locally to inspect the complete default selection:
 
@@ -493,8 +506,16 @@ runs remain queued instead of replacing one another.
 For a full manual run dispatched against `main`, `Release qualification` waits for every E2E job that does not require a separate opt-in.
 The check requires each of those jobs to pass, including `Exact staging Brev Launchable`.
 A passing check at the candidate commit SHA is the pre-tag release E2E evidence.
-Dispatch the full manual `main` run for each candidate commit SHA.
-Maintainers do not build a local evidence ledger or revalidate GitHub job status from an artifact.
+Ensure that each candidate commit SHA has a qualifying full manual `main` run.
+Dispatch another full run only when no qualifying run exists.
+`scripts/release-cut-tag.sh` searches completed, successful manual `.github/workflows/e2e.yaml` runs at the exact planned `origin/main` commit before a signing preflight or tag push.
+It accepts the first run with exactly one completed, successful `Release qualification` job.
+A run with zero or multiple jobs of that name is not evidence.
+If no qualifying run exists, the script fails closed.
+Local fixture remotes skip the canonical repository gate only when tests set the explicit `NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL=1` override and the shared classifier confirms a noncanonical origin.
+Canonical-equivalent `NVIDIA/NemoClaw` remotes always run the gate, even when that override is set.
+A local fixture cannot authorize a production release.
+Maintainers do not build a local evidence ledger or infer GitHub job status from an artifact.
 The Launchable job retains its test and cleanup artifacts for diagnosis.
 
 The Jetson nvmap and DGX Spark llama.cpp jobs remain excluded from ordinary and

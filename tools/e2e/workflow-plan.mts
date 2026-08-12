@@ -168,9 +168,18 @@ function hasUniqueIds(rows: readonly { id: string }[]): boolean {
 function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["id", "install_mode", "restore_cli", "test_file", "timeout_minutes"]) &&
+    hasExactKeys(value, [
+      "id",
+      "install_mode",
+      "restore_cli",
+      "runner",
+      "test_file",
+      "timeout_minutes",
+    ]) &&
     typeof value.id === "string" &&
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.id) &&
+    typeof value.runner === "string" &&
+    /^[A-Za-z0-9._-]+$/u.test(value.runner) &&
     typeof value.test_file === "string" &&
     /^test\/e2e\/live\/[A-Za-z0-9._-]+[.]test[.]ts$/u.test(value.test_file) &&
     typeof value.timeout_minutes === "number" &&
@@ -191,6 +200,7 @@ function isCatalogueMatrixRowForProfile(
   const target = E2E_TARGET_CATALOGUE.find((entry) => entry.id === value.id);
   return (
     target?.profile === profile &&
+    target.runner === value.runner &&
     target.testFile === value.test_file &&
     target.timeoutMinutes === value.timeout_minutes &&
     target.installMode === value.install_mode &&
@@ -559,7 +569,7 @@ export function renderE2eWorkflowPlanSummary(plan: E2eWorkflowPlan): string {
   }
   for (const profile of E2E_EXECUTION_PROFILES) {
     for (const row of plan.catalogueMatrices[profile]) {
-      lines.push(`| \`${row.id}\` | \`${profile}\` profile | \`ubuntu-latest\` |`);
+      lines.push(`| \`${row.id}\` | \`${profile}\` profile | \`${row.runner}\` |`);
     }
   }
   return `${lines.join("\n")}\n`;

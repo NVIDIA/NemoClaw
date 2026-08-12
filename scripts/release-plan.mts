@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
 
@@ -38,6 +39,11 @@ type ReleasePlan = {
   operations: string[];
   forbiddenOperations: string[];
   planHash: string;
+};
+
+const require = createRequire(import.meta.url);
+const { isCanonicalNemoClawRemote } = require("./release/remote.js") as {
+  isCanonicalNemoClawRemote: (remote: string) => boolean;
 };
 
 function run(command: string, args: string[], options: { allowFailure?: boolean } = {}): string {
@@ -179,7 +185,7 @@ function main(): void {
   const originRemote = run("git", ["remote", "get-url", "origin"]).trim();
   if (
     process.env.NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL !== "1" &&
-    !/NVIDIA\/NemoClaw(?:\.git)?$/.test(originRemote)
+    !isCanonicalNemoClawRemote(originRemote)
   ) {
     throw new Error(`Unexpected origin remote: ${originRemote}`);
   }

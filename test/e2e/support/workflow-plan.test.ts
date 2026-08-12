@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import { discoverCredentialFreeTests } from "../../../tools/e2e/credential-free-tests.mts";
 import { RETIRED_CONTROLLER_SELECTOR_IDS } from "../../../tools/e2e/retired-selector-compatibility.mts";
 import {
+  catalogueTarget,
   catalogueTargetsForChangedFiles,
   E2E_TARGET_CATALOGUE,
   isPrCandidateCatalogueTarget,
@@ -127,6 +128,32 @@ describe("E2E workflow plan", () => {
         ]),
       ),
     ).toEqual({ standard: true, "nvidia-api": false, "nvidia-inference": false });
+  });
+
+  it("routes homogeneous GPU targets through the standard profile", () => {
+    const expectedRunner = "linux-amd64-gpu-rtxpro6000-latest-1";
+    const gpuDoubleOnboard = catalogueTarget("gpu-double-onboard");
+    const gpuE2e = catalogueTarget("gpu-e2e");
+    const llamaCpp = catalogueTarget("llama-cpp-generic-gpu");
+
+    expect([gpuDoubleOnboard, gpuE2e, llamaCpp]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ profile: "standard", runner: expectedRunner }),
+      ]),
+    );
+    expect([gpuDoubleOnboard.runner, gpuE2e.runner, llamaCpp.runner]).toEqual([
+      expectedRunner,
+      expectedRunner,
+      expectedRunner,
+    ]);
+    expect(gpuE2e.environment.E2E_LLAMA_CPP_DEDICATED_LANE).toBe("1");
+    expect(llamaCpp.environment).toEqual(
+      expect.objectContaining({
+        NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
+        NEMOCLAW_PROVIDER: "install-llama-cpp",
+      }),
+    );
+    expect(llamaCpp.environment).not.toHaveProperty("NEMOCLAW_MODEL");
   });
 
   it("selects only catalogue targets that own changed files", () => {

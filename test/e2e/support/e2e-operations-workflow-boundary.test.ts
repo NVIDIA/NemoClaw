@@ -239,23 +239,15 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("does not activate generic GPU risk reporting for an automatic main push", () => {
+  it("keeps catalogue-owned GPU targets out of the handwritten workflow jobs", () => {
     const workflow = readE2eOperationsWorkflow();
-    workflow.jobs["llama-cpp-generic-gpu"]!.env!.NEMOCLAW_E2E_EXPECTED_SHA =
-      "${{ inputs.checkout_sha || github.sha }}";
+    workflow.jobs["llama-cpp-generic-gpu"] = {
+      name: "Duplicated catalogue target",
+      steps: [],
+    };
 
     expect(validateE2eWorkflow(workflow)).toContain(
-      "llama-cpp-generic-gpu job must set NEMOCLAW_E2E_EXPECTED_SHA to ${{ inputs.checkout_sha }}",
-    );
-  });
-
-  it("retains generic GPU candidate identity for main and manual PR runs", () => {
-    const workflow = readE2eOperationsWorkflow();
-    workflow.jobs["llama-cpp-generic-gpu"]!.env!.NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA =
-      "${{ inputs.checkout_sha }}";
-
-    expect(validateE2eWorkflow(workflow)).toContain(
-      "llama-cpp-generic-gpu job must set NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA to ${{ inputs.checkout_sha || github.sha }}",
+      "llama-cpp-generic-gpu must run through the catalogue execution profile",
     );
   });
 

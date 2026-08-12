@@ -14,6 +14,7 @@ export interface E2eCatalogueTarget {
   id: string;
   testFile: string;
   profile: E2eExecutionProfile;
+  runner: string;
   owningPaths: readonly string[];
   releaseRequired: boolean;
   timeoutMinutes: number;
@@ -25,6 +26,7 @@ export interface E2eCatalogueTarget {
 
 export interface E2eCatalogueMatrixRow {
   id: string;
+  runner: string;
   test_file: string;
   timeout_minutes: number;
   install_mode: E2eInstallMode;
@@ -33,20 +35,22 @@ export interface E2eCatalogueMatrixRow {
 
 type TargetOptions = Omit<
   E2eCatalogueTarget,
-  "id" | "testFile" | "owningPaths" | "releaseRequired" | "environment"
+  "id" | "testFile" | "owningPaths" | "releaseRequired" | "environment" | "runner"
 > & {
   owningPaths?: readonly string[];
   environment?: Readonly<Record<string, string>>;
+  runner?: string;
 };
 
 function target(id: string, options: TargetOptions): E2eCatalogueTarget {
   const testFile = `test/e2e/live/${id}.test.ts`;
-  const { owningPaths = [], environment = {}, ...execution } = options;
+  const { owningPaths = [], environment = {}, runner = "ubuntu-latest", ...execution } = options;
   return {
     id,
     testFile,
     owningPaths: [testFile, ...owningPaths],
     releaseRequired: true,
+    runner,
     environment,
     ...execution,
   };
@@ -146,6 +150,38 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: true,
     environment: nonInteractive,
   }),
+  target("gpu-double-onboard", {
+    profile: "standard",
+    runner: "linux-amd64-gpu-rtxpro6000-latest-1",
+    timeoutMinutes: 100,
+    installMode: "authenticated",
+    restoreCli: true,
+    exposeCliBin: true,
+    environment: {
+      ...nonInteractive,
+      NEMOCLAW_MODEL: "qwen3.5:9b",
+      NEMOCLAW_SANDBOX_NAME: "e2e-gpu-double",
+      NEMOCLAW_PROVIDER: "ollama",
+      NEMOCLAW_OLLAMA_PROXY_PORT: "11435",
+    },
+  }),
+  target("gpu-e2e", {
+    profile: "standard",
+    runner: "linux-amd64-gpu-rtxpro6000-latest-1",
+    timeoutMinutes: 90,
+    installMode: "authenticated",
+    restoreCli: true,
+    exposeCliBin: true,
+    environment: {
+      ...nonInteractive,
+      E2E_LLAMA_CPP_DEDICATED_LANE: "1",
+      NEMOCLAW_MODEL: "qwen3.5:9b",
+      NEMOCLAW_PROVIDER: "ollama",
+      NEMOCLAW_OLLAMA_PULL_TIMEOUT: "2400",
+      NEMOCLAW_SANDBOX_NAME: "e2e-gpu-ollama",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
   target("full-e2e", {
     profile: "nvidia-inference",
     timeoutMinutes: 75,
@@ -197,6 +233,21 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       ...nonInteractive,
       NEMOCLAW_SANDBOX_NAME: "e2e-kimi-compat",
       NEMOCLAW_E2E_INFERENCE_MODE: "mock",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
+  target("llama-cpp-generic-gpu", {
+    profile: "standard",
+    runner: "linux-amd64-gpu-rtxpro6000-latest-1",
+    timeoutMinutes: 120,
+    installMode: "authenticated",
+    restoreCli: true,
+    exposeCliBin: true,
+    environment: {
+      ...nonInteractive,
+      NEMOCLAW_PROVIDER: "install-llama-cpp",
+      NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
+      NEMOCLAW_SANDBOX_NAME: "e2e-llamacpp-gpu",
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
@@ -458,6 +509,9 @@ export function validateE2eTargetCatalogue(
     if (!E2E_EXECUTION_PROFILES.includes(entry.profile)) {
       throw new Error(`E2E target ${entry.id} has an invalid execution profile`);
     }
+    if (!/^[A-Za-z0-9._-]+$/u.test(entry.runner)) {
+      throw new Error(`E2E target ${entry.id} has an invalid runner`);
+    }
     if (!E2E_INSTALL_MODES.includes(entry.installMode)) {
       throw new Error(`E2E target ${entry.id} has an invalid install mode`);
     }
@@ -513,6 +567,7 @@ export function catalogueMatrix(
     .filter((entry) => entry.profile === profile)
     .map((entry) => ({
       id: entry.id,
+      runner: entry.runner,
       test_file: entry.testFile,
       timeout_minutes: entry.timeoutMinutes,
       install_mode: entry.installMode,

@@ -96,6 +96,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       candidate_sha: "${{ inputs.checkout_sha || github.sha }}",
       cli_artifact_provenance: "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
       target_id: "${{ matrix.id }}",
+      runner: "${{ matrix.runner }}",
       test_file: "${{ matrix.test_file }}",
       timeout_minutes: "${{ matrix.timeout_minutes }}",
       install_mode: "${{ matrix.install_mode }}",
@@ -126,6 +127,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     candidate_sha: "string",
     cli_artifact_provenance: "string",
     target_id: "string",
+    runner: "string",
     test_file: "string",
     timeout_minutes: "number",
     install_mode: "string",
@@ -159,8 +161,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   }
 
   const runJob = record(record(profile.jobs).run);
-  if (runJob["runs-on"] !== "ubuntu-latest") {
-    errors.push("standard E2E profile must run on ubuntu-latest");
+  if (runJob["runs-on"] !== "${{ inputs.runner }}") {
+    errors.push("standard E2E profile must use the catalogue runner");
   }
   if (runJob["timeout-minutes"] !== "${{ inputs.timeout_minutes }}") {
     errors.push("standard E2E profile must use the catalogue timeout");
@@ -171,6 +173,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     E2E_TARGET_ID: "${{ inputs.target_id }}",
     E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/${{ inputs.target_id }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
+    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.candidate_sha }}",
+    NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: "${{ inputs.candidate_sha }}",
   })) {
     if (jobEnv[name] !== expected) errors.push(`standard E2E profile must set ${name}`);
   }
@@ -267,6 +271,23 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     upload.uses !== E2E_ACTION_PROVENANCE.uploadArtifacts.reference
   ) {
     errors.push("standard E2E profile must always upload artifacts with the reviewed action");
+  }
+  const evidence = requireStep(errors, workflowSteps, "Write E2E evidence manifest");
+  const evidenceEnv = record(evidence?.env);
+  const evidenceRun = String(evidence?.run ?? "");
+  if (
+    evidence?.if !== "always()" ||
+    evidenceEnv.CANDIDATE_SHA !== "${{ inputs.candidate_sha }}" ||
+    evidenceEnv.WORKFLOW_SHA !== "${{ github.workflow_sha }}" ||
+    evidenceEnv.JOB_STATUS !== "${{ job.status }}" ||
+    !evidenceRun.includes('kind: "nemoclaw-e2e-evidence-v1"') ||
+    !evidenceRun.includes("successful E2E target produced no product evidence") ||
+    !evidenceRun.includes('>"$ARTIFACT_DIRECTORY/evidence-manifest.json"') ||
+    workflowSteps.indexOf(evidence ?? {}) >= workflowSteps.indexOf(upload ?? {})
+  ) {
+    errors.push(
+      "standard E2E profile must write exact-commit product evidence before artifact upload",
+    );
   }
   const cleanup = namedStep(workflowSteps, "Clean up Docker auth");
   if (

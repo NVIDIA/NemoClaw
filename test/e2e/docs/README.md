@@ -24,8 +24,7 @@ Direct E2E implementations now live in Vitest. The former
 | Live target IDs and metadata | `test/e2e/registry/registry.ts`, `test/e2e/registry/definitions/baseline.ts` |
 | GitHub Actions matrix emission | `test/e2e/registry/run.ts --emit-live-matrix` |
 | Live target execution | `test/e2e/live/registry-targets.test.ts` |
-| Homogeneous Ubuntu target declarations | `tools/e2e/target-catalogue.mts` |
-| Homogeneous Ubuntu target execution | `.github/workflows/e2e-standard-profile.yaml` |
+| Homogeneous target catalogue and execution | [Catalogue Targets](../README.md#catalogue-targets) |
 | Main-push and manual selection | `tools/e2e/workflow-plan.mts` |
 | Phase fixtures and clients | `test/e2e/fixtures/` |
 | Expected-state probes | `test/e2e/registry/expected-states.ts` |
@@ -69,29 +68,6 @@ harness or runner. Vitest remains the only test harness.
 
 `suiteIds` remain metadata for reporting and migration planning. They do not
 dispatch shell validation suites.
-
-## Workflow Target Catalogue
-
-Direct live tests that share the Ubuntu execution shape belong in `tools/e2e/target-catalogue.mts`.
-Each catalogue entry binds one target ID to its test file, owning paths, credential profile, timeout, install mode, CLI artifact use, environment, and release requirement.
-
-The catalogue has three credential profiles:
-
-- `standard` receives no NVIDIA API credential.
-- `nvidia-api` receives `NVIDIA_API_KEY` on trusted `main` runs.
-- `nvidia-inference` receives `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs.
-
-All profiles call `.github/workflows/e2e-standard-profile.yaml`.
-Keep a dedicated workflow job for a different runner, setup boundary, multi-job handoff, or credential contract.
-
-On a push to `main`, the workflow compares the before and candidate commit SHAs.
-The planner selects catalogue targets and retained jobs whose owning paths match the changed files.
-It also selects changed tagged tests and the registry matrix when its owning paths change.
-`Relevant E2E` requires every selected workflow job to pass.
-When no target owns a changed file, the check reports a successful no-op.
-
-A full manual dispatch against `main` uses the same planner without changed-file filtering.
-It includes `Exact staging Brev Launchable` and publishes `Release qualification` for the candidate commit SHA.
 
 ## Cross-Runtime Foundation
 

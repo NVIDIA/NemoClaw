@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -30,6 +31,75 @@ describe("standard E2E execution profile boundary", () => {
     );
   });
 
+  it("writes normalized evidence and rejects successful empty runs", () => {
+    const profile = YAML.parse(
+      fs.readFileSync(
+        path.join(REPO_ROOT, ".github", "workflows", "e2e-standard-profile.yaml"),
+        "utf8",
+      ),
+    ) as { jobs: { run: { steps: Array<{ name?: string; run?: string }> } } };
+    const evidenceScript = profile.jobs.run.steps.find(
+      (step) => step.name === "Write E2E evidence manifest",
+    )!.run!;
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-evidence-manifest-"));
+    const artifactDirectory = path.join("e2e-artifacts", "live", "snapshot-commands");
+    const environment = {
+      ...process.env,
+      ARTIFACT_DIRECTORY: artifactDirectory,
+      CANDIDATE_REPOSITORY: "NVIDIA/NemoClaw",
+      CANDIDATE_SHA: "a".repeat(40),
+      JOB_STATUS: "success",
+      RUN_ATTEMPT: "2",
+      RUN_ID: "123",
+      TARGET_ID: "snapshot-commands",
+      WORKFLOW_REPOSITORY: "NVIDIA/NemoClaw",
+      WORKFLOW_SHA: "b".repeat(40),
+    };
+
+    try {
+      fs.mkdirSync(path.join(directory, artifactDirectory), { recursive: true });
+      fs.writeFileSync(path.join(directory, artifactDirectory, "test-progress.json"), "{}\n");
+      const success = spawnSync("bash", ["-c", evidenceScript], {
+        cwd: directory,
+        encoding: "utf8",
+        env: environment,
+      });
+      expect(success.status, success.stderr).toBe(0);
+      expect(
+        JSON.parse(
+          fs.readFileSync(
+            path.join(directory, artifactDirectory, "evidence-manifest.json"),
+            "utf8",
+          ),
+        ),
+      ).toEqual({
+        kind: "nemoclaw-e2e-evidence-v1",
+        targetId: "snapshot-commands",
+        candidate: { repository: "NVIDIA/NemoClaw", sha: "a".repeat(40) },
+        workflow: {
+          repository: "NVIDIA/NemoClaw",
+          sha: "b".repeat(40),
+          runId: "123",
+          runAttempt: "2",
+          jobStatus: "success",
+        },
+        artifactDirectory,
+        productEvidenceFileCount: 1,
+      });
+
+      fs.rmSync(path.join(directory, artifactDirectory), { force: true, recursive: true });
+      const empty = spawnSync("bash", ["-c", evidenceScript], {
+        cwd: directory,
+        encoding: "utf8",
+        env: environment,
+      });
+      expect(empty.status).not.toBe(0);
+      expect(empty.stderr).toContain("successful E2E target produced no product evidence");
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects checkout, credential guard, target execution, and cleanup drift", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-standard-profile-"));
     const profilePath = path.join(tmp, "profile.yaml");
@@ -41,6 +111,7 @@ describe("standard E2E execution profile boundary", () => {
     ) as {
       jobs: {
         run: {
+          env?: Record<string, unknown>;
           steps: Array<{
             if?: string;
             env?: Record<string, unknown>;
@@ -64,6 +135,9 @@ describe("standard E2E execution profile boundary", () => {
       ...execute.env,
       NVIDIA_API_KEY: "${{ !inputs.trusted_main && secrets.NVIDIA_API_KEY || '' }}",
     };
+    profile.jobs.run.env!.NEMOCLAW_E2E_EXPECTED_SHA = "${{ github.sha }}";
+    const upload = steps.find((step) => step.name === "Upload E2E artifacts")!;
+    upload.if = "success()";
     const cleanup = steps.pop()!;
     steps.unshift(cleanup);
     fs.writeFileSync(profilePath, YAML.stringify(profile));
@@ -75,6 +149,8 @@ describe("standard E2E execution profile boundary", () => {
           "standard E2E profile must check out the exact candidate without credentials",
           "standard E2E profile Docker Hub auth-required must be guarded by trusted_main",
           "standard E2E profile must run the planned catalogue target with guarded secrets",
+          "standard E2E profile must set NEMOCLAW_E2E_EXPECTED_SHA",
+          "standard E2E profile must always upload artifacts with the reviewed action",
           "standard E2E profile must always clean up Docker authentication last",
         ]),
       );

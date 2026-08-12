@@ -11,7 +11,8 @@ description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw mai
 Use `.github/workflows/e2e.yaml` from trusted `main`.
 Every push to `main` selects the default workflow E2E jobs.
 Push runs skip `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification` because push events cannot set the required workflow dispatch flags.
-A successful push run publishes the same `Release qualification` check as the full `workflow_dispatch` mode described below.
+Push runs publish `Relevant E2E` and do not publish `Release qualification`.
+Only the full `workflow_dispatch` mode described below publishes `Release qualification`.
 Do not substitute local `npm run test:live-e2e` unless the maintainer explicitly requests local execution.
 
 ## Manual PR E2E
@@ -335,7 +336,8 @@ If the release candidate SHA changes, discard the earlier full run and dispatch 
 No release-note-only delta exception is currently defined.
 
 When `nemoclaw-maintainer-cut-release-tag` invokes this skill, return the exact-SHA workflow and `Release qualification` job URLs.
-The stable check is the pre-tag E2E evidence; do not build a second status ledger from artifacts.
+The stable check is provisional pre-tag E2E evidence until `scripts/release-cut-tag.sh` verifies the canonical GitHub job at the planned commit.
+Do not build a second status ledger from artifacts.
 Do not ask for the release confirmation phrase in this skill.
 
 ## Access Failures

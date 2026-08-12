@@ -18,6 +18,9 @@ on:
       target_id:
         required: true
         type: string
+      runner:
+        required: true
+        type: string
       test_file:
         required: true
         type: string
@@ -49,13 +52,15 @@ permissions:
 jobs:
   run:
     name: ${{ inputs.target_id }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: ${{ inputs.target_id }}
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/${{ inputs.target_id }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.candidate_sha }}
+      NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ inputs.candidate_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -116,6 +121,61 @@ jobs:
             "$OPENSHELL_BIN" --version
           fi
           npx tsx tools/e2e/target-catalogue.mts run "$TARGET_ID" "$TEST_FILE"
+
+      - name: Write E2E evidence manifest
+        if: always()
+        env:
+          ARTIFACT_DIRECTORY: e2e-artifacts/live/${{ inputs.target_id }}
+          CANDIDATE_REPOSITORY: ${{ inputs.candidate_repository }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          TARGET_ID: ${{ inputs.target_id }}
+          WORKFLOW_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TARGET_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || { echo "::error::E2E target ID is invalid" >&2; exit 1; }
+          [[ "$CANDIDATE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::candidate repository is invalid" >&2; exit 1; }
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ && "$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::E2E evidence requires exact commit SHAs" >&2; exit 1; }
+          [[ "$RUN_ID" =~ ^[1-9][0-9]*$ && "$RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || { echo "::error::E2E workflow run identity is invalid" >&2; exit 1; }
+          [[ "$JOB_STATUS" =~ ^(success|failure|cancelled)$ ]] || { echo "::error::E2E job status is invalid" >&2; exit 1; }
+          expected_directory="e2e-artifacts/live/${TARGET_ID}"
+          [[ "$ARTIFACT_DIRECTORY" == "$expected_directory" ]] || { echo "::error::E2E artifact directory does not match the target" >&2; exit 1; }
+          install -d -m 0700 "$ARTIFACT_DIRECTORY"
+          product_evidence_count="$(find -P "$ARTIFACT_DIRECTORY" -type f ! -name evidence-manifest.json -printf . | wc -c)"
+          if [[ "$JOB_STATUS" == "success" && "$product_evidence_count" == "0" ]]; then
+            echo "::error::successful E2E target produced no product evidence" >&2
+            exit 1
+          fi
+          jq -n \
+            --arg artifactDirectory "$ARTIFACT_DIRECTORY" \
+            --arg candidateRepository "$CANDIDATE_REPOSITORY" \
+            --arg candidateSha "$CANDIDATE_SHA" \
+            --arg jobStatus "$JOB_STATUS" \
+            --arg runAttempt "$RUN_ATTEMPT" \
+            --arg runId "$RUN_ID" \
+            --arg targetId "$TARGET_ID" \
+            --arg workflowRepository "$WORKFLOW_REPOSITORY" \
+            --arg workflowSha "$WORKFLOW_SHA" \
+            --argjson productEvidenceFileCount "$product_evidence_count" \
+            '{
+              kind: "nemoclaw-e2e-evidence-v1",
+              targetId: $targetId,
+              candidate: {repository: $candidateRepository, sha: $candidateSha},
+              workflow: {
+                repository: $workflowRepository,
+                sha: $workflowSha,
+                runId: $runId,
+                runAttempt: $runAttempt,
+                jobStatus: $jobStatus
+              },
+              artifactDirectory: $artifactDirectory,
+              productEvidenceFileCount: $productEvidenceFileCount
+            }' >"$ARTIFACT_DIRECTORY/evidence-manifest.json"
+          chmod 0600 "$ARTIFACT_DIRECTORY/evidence-manifest.json"
 
       - name: Upload E2E artifacts
         if: always()
