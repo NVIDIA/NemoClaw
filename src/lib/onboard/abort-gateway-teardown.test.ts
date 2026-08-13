@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   gatewayHasRegisteredSandbox,
   teardownOrphanManagedGatewayOnAbort,
-} from "./abort-gateway-teardown";
+} from "./gateway-destroy";
 import { GatewayAuthorityError } from "./gateway-teardown-authority";
 
 describe("gatewayHasRegisteredSandbox", () => {
