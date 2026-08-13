@@ -18,6 +18,7 @@ const SERVICE_TEMPLATE = path.join(
   "lib",
   "openshell-gateway.service.in",
 );
+const RUNNING_AS_ROOT = typeof process.getuid === "function" && process.getuid() === 0;
 const tempRoots: string[] = [];
 
 afterEach(() => {
@@ -445,9 +446,13 @@ describe("install.sh OpenShell gateway service", () => {
     });
     const env: NodeJS.ProcessEnv = {
       PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+      ...(relativeDirectory.startsWith("runtime/")
+        ? { XDG_RUNTIME_DIR: path.join(home, "runtime") }
+        : {}),
+      ...(relativeDirectory.startsWith("xdg-data/")
+        ? { XDG_DATA_DIRS: path.join(home, "xdg-data") }
+        : {}),
     };
-    if (relativeDirectory.startsWith("runtime/")) env.XDG_RUNTIME_DIR = path.join(home, "runtime");
-    if (relativeDirectory.startsWith("xdg-data/")) env.XDG_DATA_DIRS = path.join(home, "xdg-data");
 
     const result = runInstallHelper(
       home,
@@ -488,6 +493,7 @@ describe("install.sh OpenShell gateway service", () => {
 
   it("fails closed when SYSTEMD_UNIT_PATH overrides the unit search path (#8926)", () => {
     const home = makeTempRoot();
+    const systemdUnitPath = path.join(home, "custom-systemd", "user");
     const systemctl = writeUpstreamSystemctlStub(home, {
       diagnostic: "Failed to connect to bus: No medium found",
       status: 1,
@@ -501,43 +507,50 @@ describe("install.sh OpenShell gateway service", () => {
       ].join("\n"),
       {
         PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
-        SYSTEMD_UNIT_PATH: path.join(home, "custom-systemd", "user"),
+        SYSTEMD_UNIT_PATH: systemdUnitPath,
       },
     );
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("SYSTEMD_UNIT_PATH");
+    expect(result.stderr).toContain(`SYSTEMD_UNIT_PATH=${systemdUnitPath}`);
     expect(result.stdout).not.toContain("existing standalone gateway");
   });
 
-  it("fails closed when an activation root cannot be inspected (#8926)", () => {
-    const home = makeTempRoot();
-    const dataHome = path.join(home, "xdg-data");
-    const activationRoot = path.join(dataHome, "systemd", "user");
-    fs.mkdirSync(activationRoot, { recursive: true });
-    fs.chmodSync(activationRoot, 0o000);
-    const systemctl = writeUpstreamSystemctlStub(home, {
-      diagnostic: "Failed to connect to bus: No medium found",
-      status: 1,
-    });
+  it.skipIf(RUNNING_AS_ROOT)(
+    "fails closed when an activation root cannot be inspected (#8926)",
+    () => {
+      const home = makeTempRoot();
+      const dataHome = path.join(home, "xdg-data");
+      const activationRoot = path.join(dataHome, "systemd", "user");
+      fs.mkdirSync(activationRoot, { recursive: true });
+      fs.chmodSync(activationRoot, 0o000);
+      const systemctl = writeUpstreamSystemctlStub(home, {
+        diagnostic: "Failed to connect to bus: No medium found",
+        status: 1,
+      });
 
-    const result = runInstallHelper(
-      home,
-      [
-        "upstream_openshell_gateway_user_service_installed() { return 0; }",
-        "install_nemoclaw_openshell_gateway_user_service",
-      ].join("\n"),
-      {
-        PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
-        XDG_DATA_HOME: dataHome,
-      },
-    );
-    fs.chmodSync(activationRoot, 0o700);
+      let result: ReturnType<typeof runInstallHelper>;
+      try {
+        result = runInstallHelper(
+          home,
+          [
+            "upstream_openshell_gateway_user_service_installed() { return 0; }",
+            "install_nemoclaw_openshell_gateway_user_service",
+          ].join("\n"),
+          {
+            PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+            XDG_DATA_HOME: dataHome,
+          },
+        );
+      } finally {
+        fs.chmodSync(activationRoot, 0o700);
+      }
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("could not inspect");
-    expect(result.stderr).toContain(activationRoot);
-  });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("could not inspect");
+      expect(result.stderr).toContain(activationRoot);
+    },
+  );
 
   it("stops an active trusted NemoClaw gateway user service during upgrade retirement (#8800)", () => {
     const home = makeTempRoot();

@@ -91,6 +91,12 @@ function nonSymlinkStat(): never {
   return { isSymbolicLink: () => false } as never;
 }
 
+function throwErrno(message: string, code: string): never {
+  const error = new Error(message) as NodeJS.ErrnoException;
+  error.code = code;
+  throw error;
+}
+
 function systemdSpawn(
   events: string[],
   fragmentPath = "/lib/systemd/user/openshell-gateway.service",
@@ -1084,18 +1090,18 @@ describe("docker-driver-gateway-service", () => {
         isSymbolicLink: () => candidate === activationPath,
       })) as never,
       platform: "linux",
-      readdirSync: ((root: string) => {
-        if (root === path.dirname(path.dirname(activationPath))) {
-          return [
-            {
-              isDirectory: () => true,
-              isSymbolicLink: () => false,
-              name: path.basename(path.dirname(activationPath)),
-            },
-          ];
-        }
-        return root === path.dirname(activationPath) ? [path.basename(activationPath)] : [];
-      }) as never,
+      readdirSync: ((root: string) =>
+        root === path.dirname(path.dirname(activationPath))
+          ? [
+              {
+                isDirectory: () => true,
+                isSymbolicLink: () => false,
+                name: path.basename(path.dirname(activationPath)),
+              },
+            ]
+          : root === path.dirname(activationPath)
+            ? [path.basename(activationPath)]
+            : []) as never,
       readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
       spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
     });
@@ -1272,26 +1278,18 @@ describe("docker-driver-gateway-service", () => {
         env: { HOME: home },
         existsSync: (candidate) => candidate === servicePath,
         home,
-        lstatSync: ((candidate: string) => {
-          if (candidate === servicePath) return { isSymbolicLink: () => false };
-          const inaccessibleRoot = `${home}/.local/share/systemd/user`;
-          const error = new Error(
-            candidate === inaccessibleRoot ? "permission denied" : "missing",
-          ) as NodeJS.ErrnoException;
-          error.code = candidate === inaccessibleRoot ? "EACCES" : "ENOENT";
-          throw error;
-        }) as never,
+        lstatSync: ((candidate: string) =>
+          candidate === servicePath
+            ? { isSymbolicLink: () => false }
+            : throwErrno(
+                candidate === `${home}/.local/share/systemd/user` ? "permission denied" : "missing",
+                candidate === `${home}/.local/share/systemd/user` ? "EACCES" : "ENOENT",
+              )) as never,
         platform: "linux",
-        readdirSync: ((root: string) => {
-          if (root === `${home}/.local/share/systemd/user`) {
-            const error = new Error("permission denied") as NodeJS.ErrnoException;
-            error.code = "EACCES";
-            throw error;
-          }
-          const error = new Error("missing") as NodeJS.ErrnoException;
-          error.code = "ENOENT";
-          throw error;
-        }) as never,
+        readdirSync: ((root: string) =>
+          root === `${home}/.local/share/systemd/user`
+            ? throwErrno("permission denied", "EACCES")
+            : throwErrno("missing", "ENOENT")) as never,
         readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
         spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
       }),
@@ -1348,18 +1346,18 @@ describe("docker-driver-gateway-service", () => {
       home,
       lstatSync: nonSymlinkStat,
       platform: "linux",
-      readdirSync: ((root: string) => {
-        if (root === userRoot) {
-          return [
-            {
-              isDirectory: () => false,
-              isSymbolicLink: () => true,
-              name: "default.target.wants",
-            },
-          ];
-        }
-        return root === activationDirectory ? ["openshell-gateway.service"] : [];
-      }) as never,
+      readdirSync: ((root: string) =>
+        root === userRoot
+          ? [
+              {
+                isDirectory: () => false,
+                isSymbolicLink: () => true,
+                name: "default.target.wants",
+              },
+            ]
+          : root === activationDirectory
+            ? ["openshell-gateway.service"]
+            : []) as never,
       readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
       spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
     });
@@ -1381,20 +1379,16 @@ describe("docker-driver-gateway-service", () => {
         home,
         lstatSync: nonSymlinkStat,
         platform: "linux",
-        readdirSync: ((root: string) => {
-          if (root === userRoot) {
-            return [
-              {
-                isDirectory: () => false,
-                isSymbolicLink: () => true,
-                name: "default.target.wants",
-              },
-            ];
-          }
-          const error = new Error("dangling activation directory") as NodeJS.ErrnoException;
-          error.code = "ENOENT";
-          throw error;
-        }) as never,
+        readdirSync: ((root: string) =>
+          root === userRoot
+            ? [
+                {
+                  isDirectory: () => false,
+                  isSymbolicLink: () => true,
+                  name: "default.target.wants",
+                },
+              ]
+            : throwErrno("dangling activation directory", "ENOENT")) as never,
         readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
         spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
       }),
