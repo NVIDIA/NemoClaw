@@ -316,7 +316,8 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     expect(session?.severity).toBe("ok");
   });
 
-  it("clears the session-path split after the documented session_path repair (#8718)", async () => {
+  // Keep this compatibility assertion only for the support period tracked by #8947.
+  it("clears the session-path split during the compatibility period (#8947)", async () => {
     const exec = hermesExec({
       configuredSessionPath: HERMES_DASHBOARD_SESSION_DIR,
       credsDirs: [HERMES_DASHBOARD_SESSION_DIR],

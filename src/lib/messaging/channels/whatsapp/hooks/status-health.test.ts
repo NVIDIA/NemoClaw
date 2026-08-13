@@ -458,6 +458,8 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     expect(command).not.toMatch(/(^|[;&|]\s*)(cat|grep|find|ls)\b/);
   });
 
+  // Keep these configured-path compatibility assertions only for the support period tracked by
+  // #8947. The default constant above remains the supported durable session location.
   it.each([
     {
       label: "path outside the Hermes config directory",
@@ -475,7 +477,7 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
       label: "non-string value",
       sessionPath: 42,
     },
-  ])("keeps the default gateway session path for an unsupported session_path: $label (#8718)", ({
+  ])("keeps the durable session path for an unsupported compatibility value: $label (#8947)", ({
     sessionPath,
   }) => {
     const exec = hermesExec({
