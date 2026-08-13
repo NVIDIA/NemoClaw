@@ -1723,8 +1723,45 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  mcp-bridge-dev:
+  openshell-dev-artifact:
     needs: generate-matrix
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    outputs:
+      artifact_name: ${{ steps.resolve_openshell_dev_artifact.outputs.artifact_name }}
+      source_commit: ${{ steps.resolve_openshell_dev_artifact.outputs.source_commit }}
+      manifest_sha256: ${{ steps.resolve_openshell_dev_artifact.outputs.manifest_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node for OpenShell dev artifact resolution
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - id: resolve_openshell_dev_artifact
+        name: Resolve immutable OpenShell dev artifact
+        run: >-
+          node --experimental-strip-types --no-warnings
+          tools/e2e/openshell-dev-artifact.mts resolve
+          "${{ runner.temp }}/openshell-dev-artifact"
+
+      - name: Upload OpenShell dev artifact resolution
+        if: ${{ always() }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: ${{ steps.resolve_openshell_dev_artifact.outputs.artifact_name || format('openshell-dev-infrastructure-failure-{0}-{1}', github.run_id, github.run_attempt) }}
+          path: ${{ runner.temp }}/openshell-dev-artifact/
+
+  mcp-bridge-dev:
+    needs: [generate-matrix, openshell-dev-artifact]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}
     runs-on: ubuntu-latest
     permissions:
@@ -1762,6 +1799,21 @@ jobs:
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
+      - name: Restore immutable OpenShell dev artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.openshell-dev-artifact.outputs.artifact_name }}
+          path: ${{ runner.temp }}/openshell-dev-artifact
+          digest-mismatch: error
+
+      - name: Verify immutable OpenShell dev artifact
+        run: >-
+          node --experimental-strip-types --no-warnings
+          tools/e2e/openshell-dev-artifact.mts verify
+          "${{ runner.temp }}/openshell-dev-artifact"
+          "${{ needs.openshell-dev-artifact.outputs.source_commit }}"
+          "${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}"
+
       - name: Install and verify cloudflared prerequisite
         # Update posture: keep this dev compatibility lane on the same reviewed
         # version/SHA256 pair as the stable lane; workflow-contract tests fail
@@ -1787,13 +1839,13 @@ jobs:
       - name: Generate MCP test TLS
         run: bash test/e2e/setup-mcp-test-tls.sh
 
-      - name: Revoke Docker auth before unverified dev tooling
+      - name: Revoke Docker auth before OpenShell development tooling
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
       - name: Install OpenShell CLI
         env:
-          NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1"
+          NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR: ${{ runner.temp }}/openshell-dev-artifact/assets
           NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
         run: |
           set -euo pipefail
@@ -3496,6 +3548,7 @@ jobs:
         openshell-gateway-auth-contract,
         mcp-bridge,
         openshell-credential-generation-window,
+        openshell-dev-artifact,
         mcp-bridge-dev,
         managed-image-multiarch-startup,
         llama-cpp-dgx-spark-plan,

@@ -150,6 +150,20 @@ else
   RESOLVED_CHANNEL="$CHANNEL"
 fi
 
+E2E_RELEASE_ASSET_DIR="${NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR:-}"
+if [ -n "$E2E_RELEASE_ASSET_DIR" ]; then
+  [ "${E2E_JOB:-}" = "1" ] \
+    || fail "NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR is restricted to E2E jobs."
+  [ "$RESOLVED_CHANNEL" = "dev" ] \
+    || fail "NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR requires the dev channel."
+  [ "$OS" = "Linux" ] && [ "$ARCH_LABEL" = "x86_64" ] \
+    || fail "NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR supports Linux x86_64 only."
+  [[ "$E2E_RELEASE_ASSET_DIR" = /* ]] \
+    || fail "NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR must be an absolute path."
+  [ -d "$E2E_RELEASE_ASSET_DIR" ] && [ ! -L "$E2E_RELEASE_ASSET_DIR" ] \
+    || fail "NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR must name a regular directory."
+fi
+
 if [ "$RESOLVED_CHANNEL" = "dev" ]; then
   # invalidState: a mutable dev artifact is consumed as if it were a verified
   # stable release. sourceBoundary: OpenShell owns the moving dev tag; NemoClaw
@@ -160,10 +174,13 @@ if [ "$RESOLVED_CHANNEL" = "dev" ]; then
   # compatibility testing ends or OpenShell publishes an independently
   # verifiable immutable development channel. See the v0.0.72 compatibility
   # review's "Dev Channel Opt-In" section.
-  if [ "${NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL:-}" != "1" ]; then
+  if [ -n "$E2E_RELEASE_ASSET_DIR" ]; then
+    info "Using the same-run verified OpenShell dev artifact."
+  elif [ "${NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL:-}" != "1" ]; then
     fail "Dev channel install skips SHA-256 verification. Set NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1 to explicitly accept an unverified OpenShell dev-channel install."
+  else
+    warn "Dev channel install skips SHA-256 verification. Use only in trusted environments."
   fi
-  warn "Dev channel install skips SHA-256 verification. Use only in trusted environments."
 fi
 
 HOMEBREW_TAP="nvidia/openshell"
@@ -969,8 +986,16 @@ download_with_curl() {
   done
 }
 
-info "Downloading OpenShell release assets (this may take a minute)..."
-if command -v gh >/dev/null 2>&1; then
+if [ -n "$E2E_RELEASE_ASSET_DIR" ]; then
+  info "Loading same-run verified OpenShell release assets..."
+  for name in "${ASSETS[@]}" "${CHECKSUM_FILES[@]}"; do
+    source_asset="$E2E_RELEASE_ASSET_DIR/$name"
+    [ -f "$source_asset" ] && [ ! -L "$source_asset" ] \
+      || fail "Verified E2E OpenShell artifact is missing regular file $name"
+    cp -- "$source_asset" "$tmpdir/$name"
+  done
+elif command -v gh >/dev/null 2>&1; then
+  info "Downloading OpenShell release assets (this may take a minute)..."
   gh_ok=1
   for name in "${ASSETS[@]}" "${CHECKSUM_FILES[@]}"; do
     if ! GH_PROMPT_DISABLED=1 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" gh release download "$RELEASE_TAG" --repo NVIDIA/OpenShell \
@@ -987,6 +1012,7 @@ if command -v gh >/dev/null 2>&1; then
     download_with_curl
   fi
 else
+  info "Downloading OpenShell release assets (this may take a minute)..."
   download_with_curl
 fi
 

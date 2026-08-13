@@ -8,6 +8,7 @@ import { UPLOAD_E2E_ARTIFACTS_ACTION } from "./upload-e2e-artifacts-workflow-bou
 
 const DEFAULT_WORKFLOW_PATH = ".github/workflows/e2e.yaml";
 const MCP_JOBS = ["mcp-bridge", "mcp-bridge-dev"] as const;
+const DEV_ARTIFACT_JOB = "openshell-dev-artifact";
 const CREDENTIAL_WINDOW_JOB = "openshell-credential-generation-window";
 const MCP_AGENT_SHARDS = ["openclaw", "hermes", "deepagents"] as const;
 const MATRIX_AGENT_EXPRESSION = "${{ matrix.agent }}";
@@ -18,7 +19,15 @@ const TERMINAL_JOBS = [
   "scorecard",
 ] as const;
 const DOCKER_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
-const DEV_DOCKER_CLEANUP_NAME = "Revoke Docker auth before unverified dev tooling";
+const DEV_DOCKER_CLEANUP_NAME = "Revoke Docker auth before OpenShell development tooling";
+const DEV_ARTIFACT_TOOL = "tools/e2e/openshell-dev-artifact.mts";
+const DEV_ARTIFACT_DIRECTORY = "${{ runner.temp }}/openshell-dev-artifact";
+const DEV_ARTIFACT_JOB_CONDITION =
+  "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}";
+const DEV_ARTIFACT_DOWNLOAD_ACTION =
+  "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
+const DEV_ARTIFACT_UPLOAD_NAME =
+  "${{ steps.resolve_openshell_dev_artifact.outputs.artifact_name || format('openshell-dev-infrastructure-failure-{0}-{1}', github.run_id, github.run_attempt) }}";
 const DEV_COMPATIBILITY_STEP_NAME = "Classify OpenShell credential-boundary compatibility";
 const DEV_COMPATIBILITY_STEP_ID = "mcp_runtime_compatibility";
 const DEV_COMPATIBILITY_TOOL = "tools/e2e/mcp-bridge-runtime-compatibility.mts";
@@ -143,6 +152,14 @@ function validateJobIdentity(
     `${jobName} must bound each shard to 90 minutes`,
   );
   requireEqual(errors, strategy["fail-fast"], false, `${jobName} shards must not fail fast`);
+  requireEqual(
+    errors,
+    JSON.stringify(jobNeeds(job)),
+    JSON.stringify(
+      jobName === "mcp-bridge-dev" ? ["generate-matrix", DEV_ARTIFACT_JOB] : ["generate-matrix"],
+    ),
+    `${jobName} must depend on its reviewed artifact producers`,
+  );
   if (JSON.stringify(matrix.agent) !== JSON.stringify(MCP_AGENT_SHARDS)) {
     errors.push(`${jobName} must exercise the reviewed OpenClaw, Hermes, and Deep Agents shards`);
   }
@@ -212,7 +229,7 @@ function validateJobIdentity(
       "mcp-bridge-dev must select the OpenShell dev channel",
     );
     if (Object.hasOwn(env, "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL")) {
-      errors.push("mcp-bridge-dev must scope unverified artifact opt-in to its installer step");
+      errors.push("mcp-bridge-dev must not authorize moving unverified dev artifacts");
     }
     requireEqual(
       errors,
@@ -283,7 +300,7 @@ function validateJobSecurity(
       run: DOCKER_CLEANUP_RUN,
     };
     if (JSON.stringify(devCleanup) !== JSON.stringify(expectedDevCleanup)) {
-      errors.push("mcp-bridge-dev must revoke Docker auth before unverified dev tooling");
+      errors.push("mcp-bridge-dev must revoke Docker auth before OpenShell development tooling");
     }
     const devCleanupIndex = steps.indexOf(devCleanup);
     const installIndex = steps.indexOf(install);
@@ -377,10 +394,13 @@ function validateJobExecution(
   if (jobName === "mcp-bridge-dev") {
     requireEqual(
       errors,
-      installEnv.NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL,
-      "1",
-      "mcp-bridge-dev installer must explicitly authorize unverified dev artifacts",
+      installEnv.NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR,
+      `${DEV_ARTIFACT_DIRECTORY}/assets`,
+      "mcp-bridge-dev installer must consume the same-run verified asset directory",
     );
+    if (Object.hasOwn(installEnv, "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL")) {
+      errors.push("mcp-bridge-dev installer must not authorize moving unverified dev artifacts");
+    }
   } else if (Object.hasOwn(installEnv, "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL")) {
     errors.push("mcp-bridge stable installer must not authorize unverified dev artifacts");
   } else {
@@ -398,6 +418,50 @@ function validateJobExecution(
     `${jobName} must use the repository OpenShell installer`,
   );
   if (jobName === "mcp-bridge-dev") {
+    const restoreCli = namedStep(job, "Restore exact-commit CLI artifact");
+    const restoreArtifact = namedStep(job, "Restore immutable OpenShell dev artifact");
+    const verifyArtifact = namedStep(job, "Verify immutable OpenShell dev artifact");
+    requireEqual(
+      errors,
+      restoreArtifact.uses,
+      DEV_ARTIFACT_DOWNLOAD_ACTION,
+      "mcp-bridge-dev must use the reviewed immutable artifact downloader",
+    );
+    if (
+      !hasExactEntries(asRecord(restoreArtifact.with), {
+        name: "${{ needs.openshell-dev-artifact.outputs.artifact_name }}",
+        path: DEV_ARTIFACT_DIRECTORY,
+        "digest-mismatch": "error",
+      })
+    ) {
+      errors.push("mcp-bridge-dev must restore exactly the resolver's content-addressed artifact");
+    }
+    for (const token of [
+      DEV_ARTIFACT_TOOL,
+      " verify ",
+      DEV_ARTIFACT_DIRECTORY,
+      "${{ needs.openshell-dev-artifact.outputs.source_commit }}",
+      "${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}",
+    ]) {
+      requireContains(
+        errors,
+        verifyArtifact.run,
+        token,
+        "mcp-bridge-dev must verify the immutable OpenShell artifact before installation",
+      );
+    }
+    const devCleanup = namedStep(job, DEV_DOCKER_CLEANUP_NAME);
+    if (
+      steps.indexOf(restoreCli) < 0 ||
+      steps.indexOf(restoreArtifact) <= steps.indexOf(restoreCli) ||
+      steps.indexOf(verifyArtifact) <= steps.indexOf(restoreArtifact) ||
+      steps.indexOf(devCleanup) <= steps.indexOf(verifyArtifact) ||
+      steps.indexOf(install) <= steps.indexOf(devCleanup)
+    ) {
+      errors.push(
+        "mcp-bridge-dev must restore, verify, revoke Docker auth, and install in reviewed order",
+      );
+    }
     if (compatibilitySteps.length !== 1 || compatibilitySteps[0] !== compatibility) {
       errors.push("mcp-bridge-dev must use exactly one canonical runtime compatibility classifier");
     }
@@ -516,6 +580,114 @@ function validateJobExecution(
   }
   if (steps.indexOf(run) < 0 || steps.indexOf(scan) <= steps.indexOf(run)) {
     errors.push(`${jobName} must scan artifacts after its MCP compatibility execution`);
+  }
+}
+
+function validateDevArtifactJob(errors: string[], job: UnknownRecord): void {
+  if (Object.keys(job).length === 0) {
+    errors.push(`missing OpenShell development artifact job: ${DEV_ARTIFACT_JOB}`);
+    return;
+  }
+  requireEqual(
+    errors,
+    JSON.stringify(jobNeeds(job)),
+    JSON.stringify(["generate-matrix"]),
+    `${DEV_ARTIFACT_JOB} must depend only on matrix generation`,
+  );
+  requireEqual(
+    errors,
+    job.if,
+    DEV_ARTIFACT_JOB_CONDITION,
+    `${DEV_ARTIFACT_JOB} must use the trusted execution plan`,
+  );
+  requireEqual(
+    errors,
+    job["runs-on"],
+    "ubuntu-latest",
+    `${DEV_ARTIFACT_JOB} must use an ephemeral standard runner`,
+  );
+  requireEqual(
+    errors,
+    job["timeout-minutes"],
+    15,
+    `${DEV_ARTIFACT_JOB} must retain its bounded 15-minute budget`,
+  );
+  if (!hasExactEntries(asRecord(job.permissions), { contents: "read" })) {
+    errors.push(`${DEV_ARTIFACT_JOB} must use only contents:read permissions`);
+  }
+  if (
+    !hasExactEntries(asRecord(job.outputs), {
+      artifact_name: "${{ steps.resolve_openshell_dev_artifact.outputs.artifact_name }}",
+      source_commit: "${{ steps.resolve_openshell_dev_artifact.outputs.source_commit }}",
+      manifest_sha256: "${{ steps.resolve_openshell_dev_artifact.outputs.manifest_sha256 }}",
+    })
+  ) {
+    errors.push(`${DEV_ARTIFACT_JOB} must expose only the immutable artifact identity`);
+  }
+  if (FORBIDDEN_INFERENCE_SECRETS.test(JSON.stringify(job))) {
+    errors.push(`${DEV_ARTIFACT_JOB} must not receive inference or GitHub credentials`);
+  }
+
+  const steps = asSteps(job);
+  const checkouts = steps.filter((step) => asString(step.uses).startsWith("actions/checkout@"));
+  if (checkouts.length !== 1) errors.push(`${DEV_ARTIFACT_JOB} must use exactly one checkout`);
+  const checkout = checkouts[0] ?? {};
+  if (!/^actions\/checkout@[a-f0-9]{40}$/u.test(asString(checkout.uses))) {
+    errors.push(`${DEV_ARTIFACT_JOB} must use a SHA-pinned checkout`);
+  }
+  if (asRecord(checkout.with)["persist-credentials"] !== false) {
+    errors.push(`${DEV_ARTIFACT_JOB} checkout must set persist-credentials:false`);
+  }
+  const setup = namedStep(job, "Set up Node for OpenShell dev artifact resolution");
+  if (!/^actions\/setup-node@[a-f0-9]{40}$/u.test(asString(setup.uses))) {
+    errors.push(`${DEV_ARTIFACT_JOB} must use a SHA-pinned Node setup`);
+  }
+  if (!hasExactEntries(asRecord(setup.with), { "node-version": 22 })) {
+    errors.push(`${DEV_ARTIFACT_JOB} must use only the reviewed Node version`);
+  }
+  const resolve = namedStep(job, "Resolve immutable OpenShell dev artifact");
+  requireEqual(
+    errors,
+    resolve.id,
+    "resolve_openshell_dev_artifact",
+    `${DEV_ARTIFACT_JOB} resolver must expose its canonical step id`,
+  );
+  for (const token of [DEV_ARTIFACT_TOOL, " resolve ", DEV_ARTIFACT_DIRECTORY]) {
+    requireContains(
+      errors,
+      resolve.run,
+      token,
+      `${DEV_ARTIFACT_JOB} must run the reviewed immutable resolver`,
+    );
+  }
+  const upload = namedStep(job, "Upload OpenShell dev artifact resolution");
+  requireEqual(
+    errors,
+    upload.uses,
+    UPLOAD_E2E_ARTIFACTS_ACTION,
+    `${DEV_ARTIFACT_JOB} must use the reviewed shared uploader`,
+  );
+  requireEqual(
+    errors,
+    upload.if,
+    "${{ always() }}",
+    `${DEV_ARTIFACT_JOB} must retain infrastructure diagnostics on failure`,
+  );
+  if (
+    !hasExactEntries(asRecord(upload.with), {
+      name: DEV_ARTIFACT_UPLOAD_NAME,
+      path: `${DEV_ARTIFACT_DIRECTORY}/`,
+    })
+  ) {
+    errors.push(`${DEV_ARTIFACT_JOB} must retain its content-addressed 14-day artifact contract`);
+  }
+  if (
+    steps.indexOf(checkout) !== 0 ||
+    steps.indexOf(setup) <= steps.indexOf(checkout) ||
+    steps.indexOf(resolve) <= steps.indexOf(setup) ||
+    steps.indexOf(upload) !== steps.length - 1
+  ) {
+    errors.push(`${DEV_ARTIFACT_JOB} must resolve before its final diagnostic-preserving upload`);
   }
 }
 
@@ -762,12 +934,13 @@ export function validateMcpOpenShellWorkflowBoundary(
     validateJobSecurity(errors, jobName, job, canonicalDockerAuth);
     validateJobExecution(errors, jobName, job);
   }
+  validateDevArtifactJob(errors, asRecord(jobs[DEV_ARTIFACT_JOB]));
   validateCredentialWindowJob(errors, asRecord(jobs[CREDENTIAL_WINDOW_JOB]), canonicalDockerAuth);
 
   for (const terminalJobName of TERMINAL_JOBS) {
     const terminal = asRecord(jobs[terminalJobName]);
     const terminalNeeds = new Set(jobNeeds(terminal));
-    for (const mcpJob of [...MCP_JOBS, CREDENTIAL_WINDOW_JOB]) {
+    for (const mcpJob of [...MCP_JOBS, DEV_ARTIFACT_JOB, CREDENTIAL_WINDOW_JOB]) {
       if (!terminalNeeds.has(mcpJob)) {
         errors.push(`${terminalJobName} must wait for ${mcpJob}`);
       }

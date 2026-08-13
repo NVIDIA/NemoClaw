@@ -193,6 +193,13 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "openshell-dev-artifact",
+    {
+      name: "${{ steps.resolve_openshell_dev_artifact.outputs.artifact_name || format('openshell-dev-infrastructure-failure-{0}-{1}', github.run_id, github.run_attempt) }}",
+      path: "${{ runner.temp }}/openshell-dev-artifact/",
+    },
+  ],
+  [
     "openshell-credential-generation-window",
     {
       name: "e2e-openshell-credential-generation-window",
@@ -206,6 +213,7 @@ const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
   ["staging-brev-launchable", "${{ always() && steps.workspace.outputs.work_dir != '' }}"],
   ["mcp-bridge", MCP_SCANNED_UPLOAD_CONDITION],
   ["mcp-bridge-dev", MCP_SCANNED_UPLOAD_CONDITION],
+  ["openshell-dev-artifact", "${{ always() }}"],
   ["openshell-credential-generation-window", CREDENTIAL_WINDOW_SCANNED_UPLOAD_CONDITION],
   ["openshell-gateway-auth-contract", GATEWAY_AUTH_SCANNED_UPLOAD_CONDITION],
 ]);
@@ -336,6 +344,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
           jobName === "generate-matrix" ||
           jobName === "jetson-nvmap-gpu" ||
           jobName === "live" ||
+          jobName === "openshell-dev-artifact" ||
           jobName === RETIRED_SELECTOR_COMPATIBILITY_JOB ||
           env.E2E_JOB === "1" ||
           env.NEMOCLAW_RUN_LIVE_E2E === "1" ||

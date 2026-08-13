@@ -459,6 +459,22 @@ trust boundary and are never host-prebuilt by this fixture.
 The runtime target for `openclaw-plugin-runtime-exdev` is 16–17 minutes.
 Push-run timing for the reduced lifecycle has not yet been measured.
 
+## OpenShell development artifact retention
+
+The `openshell-dev-artifact` job resolves the public OpenShell `dev` release
+once for each selected `mcp-bridge-dev` run. It records the source commit and
+the GitHub asset ID, source URL, size, and SHA-256 digest for every required
+Linux x64 archive and checksum file. It rejects release drift during download,
+then uploads the verified bytes under a content-addressed name with the shared
+14-day E2E retention policy.
+
+The OpenClaw, Hermes, and Deep Agents Code shards restore and verify that same
+artifact before installation. A missing, replaced, or corrupt upstream asset
+fails the resolver as an infrastructure failure and preserves
+`resolution.json` with the failed identifier and source URL. The three product
+shards do not start in that case, so the run cannot report a product failure
+before reaching product assertions.
+
 ## Larger-runner routing
 
 The larger-runner experiment is inactive while the configuration variable

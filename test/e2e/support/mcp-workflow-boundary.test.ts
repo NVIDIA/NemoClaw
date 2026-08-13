@@ -264,7 +264,7 @@ describe("MCP workflow artifact boundary", () => {
     }
   });
 
-  it("revokes Docker credentials before executing unverified dev artifacts", () => {
+  it("revokes Docker credentials before executing OpenShell development tooling (#9051)", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");
     try {
@@ -272,12 +272,58 @@ describe("MCP workflow artifact boundary", () => {
         jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
       };
       workflow.jobs["mcp-bridge-dev"].steps = workflow.jobs["mcp-bridge-dev"].steps.filter(
-        (step) => step.name !== "Revoke Docker auth before unverified dev tooling",
+        (step) => step.name !== "Revoke Docker auth before OpenShell development tooling",
       );
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
-        "mcp-bridge-dev must revoke Docker auth before unverified dev tooling",
+        "mcp-bridge-dev must revoke Docker auth before OpenShell development tooling",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects moving or unverified inputs for the OpenShell dev shards (#9051)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<
+          string,
+          {
+            needs?: string | string[];
+            steps: Array<{
+              name?: string;
+              uses?: string;
+              env?: Record<string, unknown>;
+              with?: Record<string, unknown>;
+            }>;
+          }
+        >;
+      };
+      const dev = workflow.jobs["mcp-bridge-dev"];
+      dev.needs = "generate-matrix";
+      const restore = dev.steps.find(
+        (step) => step.name === "Restore immutable OpenShell dev artifact",
+      );
+      const install = dev.steps.find((step) => step.name === "Install OpenShell CLI");
+      requireFixture(restore?.with, "OpenShell dev artifact restore fixture is missing");
+      requireFixture(install?.env, "OpenShell dev installer fixture is missing");
+      restore.uses = "actions/download-artifact@main";
+      restore.with.name = "openshell-dev-latest";
+      install.env.NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL = "1";
+      delete install.env.NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR;
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "mcp-bridge-dev must depend on its reviewed artifact producers",
+          "mcp-bridge-dev must use the reviewed immutable artifact downloader",
+          "mcp-bridge-dev must restore exactly the resolver's content-addressed artifact",
+          "mcp-bridge-dev installer must consume the same-run verified asset directory",
+          "mcp-bridge-dev installer must not authorize moving unverified dev artifacts",
+        ]),
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });

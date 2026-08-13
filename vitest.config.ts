@@ -178,6 +178,7 @@ export default defineConfig({
             "test/install-station-package-transaction.test.ts",
             "test/install-openshell-version-pin.test.ts",
             "test/install-openshell-version-check.test.ts",
+            "test/install-openshell-e2e-artifact.test.ts",
           ],
         },
       },
@@ -210,6 +211,7 @@ export default defineConfig({
             "test/install-station-package-transaction.test.ts",
             "test/install-openshell-version-pin.test.ts",
             "test/install-openshell-version-check.test.ts",
+            "test/install-openshell-e2e-artifact.test.ts",
           ],
           // Slow tests that spawn real bash install.sh processes. Explicit
           // project selection keeps them out of the fast source-test command.
