@@ -11,9 +11,9 @@ import type { WslDetectionOptions } from "../../src/lib/platform";
 import type { ConfigObject } from "../../src/lib/security/credential-filter";
 import type { SandboxEntry } from "../../src/lib/state/registry";
 
-type ConnectSandbox = typeof import("../../src/lib/actions/sandbox/connect")["connectSandbox"];
+type ConnectSandbox = (typeof import("../../src/lib/actions/sandbox/connect"))["connectSandbox"];
 type GatewayRouteMutationLock =
-  typeof import("../../src/lib/inference/gateway-route-mutation-lock")["withGatewayRouteMutationLock"];
+  (typeof import("../../src/lib/inference/gateway-route-mutation-lock"))["withGatewayRouteMutationLock"];
 type LaunchReadinessPublicationResult =
   import("../../src/lib/actions/sandbox/launch-readiness").LaunchReadinessPublicationResult;
 
@@ -275,15 +275,17 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const probeOllamaAuthProxyHealthSpy = vi
     .spyOn(ollamaProxy, "probeOllamaAuthProxyHealth")
     .mockReturnValue({ ok: true });
-  const realIsWsl = platform.isWsl as (opts?: WslDetectionOptions) => boolean;
-  // Pin the platform gate for every isWsl consumer the harness loads: isWsl
-  // answers false off Linux before it reads WSL_DISTRO_NAME, so a case that
-  // stubs that variable cannot reach the WSL route on a macOS contributor
-  // machine. With the gate pinned, the stubbed environment decides, on every
-  // host, and a caller's own options still win over the pin (#8868).
-  vi.spyOn(platform, "isWsl").mockImplementation((...args: unknown[]) =>
-    realIsWsl({ platform: "linux", ...((args[0] as WslDetectionOptions | undefined) ?? {}) }),
-  );
+  if (typeof options.isWsl !== "boolean") {
+    const realIsWsl = platform.isWsl as (opts?: WslDetectionOptions) => boolean;
+    // Pin the platform gate for every isWsl consumer the harness loads: isWsl
+    // answers false off Linux before it reads WSL_DISTRO_NAME, so a case that
+    // stubs that variable cannot reach the WSL route on a macOS contributor
+    // machine. With the gate pinned, the stubbed environment decides, on every
+    // host, and a caller's own options still win over the pin (#8868).
+    vi.spyOn(platform, "isWsl").mockImplementation((...args: unknown[]) =>
+      realIsWsl({ platform: "linux", ...((args[0] as WslDetectionOptions | undefined) ?? {}) }),
+    );
+  }
   const primaryRegistryEntry: SandboxEntry = {
     name: "alpha",
     agent: options.agentName ?? "openclaw",

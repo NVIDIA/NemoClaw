@@ -306,6 +306,7 @@ const { onboard } = require(${onboardPath});
 
 (async () => {
   try {
+    process.exitCode = 1;
     await onboard({
       nonInteractive: true,
       autoYes: true,
