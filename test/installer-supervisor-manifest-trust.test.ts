@@ -89,9 +89,9 @@ function selectOpenShellV00103(): {
 } {
   const installer = addSandboxBuildPins(
     replaceRequired(INSTALLER_TEMPLATE, [
+      ['DEV_MIN_VERSION="0.0.101"', 'DEV_MIN_VERSION="0.0.103"'],
       ['MIN_VERSION="0.0.101"', 'MIN_VERSION="0.0.103"'],
       ['MAX_VERSION="0.0.101"', 'MAX_VERSION="0.0.103"'],
-      ['DEV_MIN_VERSION="0.0.101"', 'DEV_MIN_VERSION="0.0.103"'],
       ["v0.0.101:", "v0.0.103:"],
     ]),
   );
