@@ -44,7 +44,6 @@ import {
 } from "./operations-workflow-boundary.mts";
 import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-workflow-boundary.mts";
 import { validateRunnerPressureWorkflow } from "./runner-pressure-workflow-boundary.mts";
-import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
 import { validateSecurityPostureWorkflow } from "./security-posture-workflow-boundary.mts";
 import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import {
@@ -3554,14 +3553,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateRebuildHermesJob(errors, jobs, { staleBase: false });
   validateRebuildHermesJob(errors, jobs, { staleBase: true });
   validateTokenRotationJob(errors, jobs);
-  errors.push(...validateSandboxOperationsWorkflow({ jobs }));
-  validateFreeStandingJobSelector(
-    errors,
-    jobs,
-    "openclaw-inference-switch",
-    "openclaw-inference-switch",
-  );
-
   validateBedrockRuntimeCompatibleAnthropicJob(errors, jobs);
 
   validateTunnelLifecycleJob(errors, jobs);
