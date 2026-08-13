@@ -422,6 +422,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environment: { ...nonInteractive, NEMOCLAW_SANDBOX_NAME: "e2e-repair" },
   }),
   target("onboard-policy-preset-sequencing", {
+    displayName: "Onboarding: preserves policy preset step order",
     profile: "standard",
     timeoutMinutes: 60,
     installMode: "authenticated",

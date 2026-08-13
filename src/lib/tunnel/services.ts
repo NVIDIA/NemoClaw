@@ -538,9 +538,34 @@ export function stopAll(opts: ServiceOptions = {}): void {
     warn("Invalid sandbox name without an explicit PID directory; skipping host service stop.");
   }
 
-  if (opts.releaseGatewayPort && sandboxName) {
-    agentForwardStop.stopAgentForwardPortsForStop(sandboxName, { info, warn });
-    gatewayStop.releaseGatewayPortForStop(sandboxName, { info, warn });
+  let gatewayOutcome: gatewayStop.GatewayStopOutcome | undefined;
+  if (opts.releaseGatewayPort) {
+    if (sandboxName) {
+      agentForwardStop.stopAgentForwardPortsForStop(sandboxName, { info, warn });
+      gatewayOutcome = gatewayStop.releaseGatewayPortForStop(sandboxName, { info, warn });
+    } else if (!rawSandboxName) {
+      // #8952: no registry name — release only when NEMOCLAW_GATEWAY_PORT is
+      // explicit. A requested-but-malformed name stays out: scope is unknown, not absent.
+      gatewayOutcome = gatewayStop.releaseGatewayPortForStop(undefined, { info, warn });
+    }
+  }
+
+  // When nothing scoped the gateway, or a scoped release was not confirmed, do
+  // not claim every service stopped.
+  if (gatewayOutcome === "not-scoped") {
+    warn(
+      "No sandbox name and no explicit NEMOCLAW_GATEWAY_PORT — the managed OpenShell gateway was not released.",
+    );
+    warn(
+      "Hint: rerun with NEMOCLAW_GATEWAY_PORT=<port> to release that gateway, or 'openshell gateway list' to find it.",
+    );
+    info("Host services stopped; managed gateway not released.");
+    return;
+  }
+
+  if (gatewayOutcome === "unconfirmed") {
+    info("Host services stopped; managed gateway release was not confirmed.");
+    return;
   }
 
   info("All services stopped.");

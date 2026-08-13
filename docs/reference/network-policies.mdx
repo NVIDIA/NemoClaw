@@ -155,6 +155,9 @@ The sandbox's filesystem, process, gateway authentication, and managed credentia
 Use this tier only for trusted personal workloads with trusted prompts and data.
 </Warning>
 
+The experimental portable profile selects only `personal-open-internet` from the Personal tier.
+Its broad L4 rule already permits matching `weather`, `public-reference`, and `github` destinations on ports `80` and `443`, so portable onboarding does not add those narrower overlapping presets.
+
 After selecting a tier, a combined preset and access-mode screen lets you include or exclude individual presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access.
 Tier-default presets are pre-selected; additional presets can be added from the built-in preset list available to the sandbox's active agent.
 NemoClaw filters tier defaults and built-in preset choices by the active agent's supported integrations.
