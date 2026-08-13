@@ -157,7 +157,6 @@ import {
   createArchiveFromDirectory,
   createSnapshotBundle,
   detectHostOpenClaw,
-  type HostOpenClawState,
   loadSnapshotManifest,
   restoreSnapshotToHost,
   type SnapshotManifest,

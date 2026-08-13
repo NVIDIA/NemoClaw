@@ -27,16 +27,19 @@ const PROFILE_JOBS = {
   standard: {
     job: "catalogue-standard",
     matrix: "catalogue_standard_matrix",
+    credentialBoundary: "no provider credential",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME"],
   },
   "nvidia-api": {
     job: "catalogue-nvidia-api",
     matrix: "catalogue_nvidia_api_matrix",
+    credentialBoundary: "NVIDIA API key",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_API_KEY"],
   },
   "nvidia-inference": {
     job: "catalogue-nvidia-inference",
     matrix: "catalogue_nvidia_inference_matrix",
+    credentialBoundary: "NVIDIA inference API key",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_INFERENCE_API_KEY"],
   },
 } as const;
@@ -83,6 +86,9 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     if (job.needs !== "generate-matrix" || job.uses !== PROFILE_WORKFLOW) {
       errors.push(`${contract.job} must call the standard E2E profile after matrix generation`);
     }
+    if (job.name !== "${{ matrix.display_name }}") {
+      errors.push(`${contract.job} must use the planned outcome-first display name`);
+    }
     const matrixOutput = `needs.generate-matrix.outputs.${contract.matrix}`;
     if (
       job.if !== `\${{ ${matrixOutput} != '[]' }}` ||
@@ -94,7 +100,12 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     for (const [name, expected] of Object.entries({
       candidate_repository: "${{ inputs.checkout_repository || github.repository }}",
       candidate_sha: "${{ inputs.checkout_sha || github.sha }}",
+      risk_signal_expected_sha:
+        "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}",
+      risk_signal_correlation_id:
+        "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}",
       cli_artifact_provenance: "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
+      credential_boundary: contract.credentialBoundary,
       target_id: "${{ matrix.id }}",
       runner: "${{ matrix.runner }}",
       test_file: "${{ matrix.test_file }}",
@@ -127,7 +138,10 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const requiredInputs = {
     candidate_repository: "string",
     candidate_sha: "string",
+    risk_signal_expected_sha: "string",
+    risk_signal_correlation_id: "string",
     cli_artifact_provenance: "string",
+    credential_boundary: "string",
     target_id: "string",
     runner: "string",
     test_file: "string",
@@ -174,6 +188,9 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   if (runJob["runs-on"] !== "${{ inputs.runner }}") {
     errors.push("standard E2E profile must use the catalogue runner");
   }
+  if (runJob.name !== "${{ inputs.credential_boundary }}") {
+    errors.push("standard E2E profile must show the planned credential boundary");
+  }
   if (runJob["timeout-minutes"] !== "${{ inputs.timeout_minutes }}") {
     errors.push("standard E2E profile must use the catalogue timeout");
   }
@@ -184,6 +201,9 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/${{ inputs.target_id }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.candidate_sha }}",
+    NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.risk_signal_correlation_id }}",
+    NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA: "${{ inputs.risk_signal_expected_sha }}",
+    NEMOCLAW_E2E_SHARD: "default",
     NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: "${{ inputs.candidate_sha }}",
   };
   if (Object.keys(jobEnv).sort().join(",") !== Object.keys(expectedJobEnv).sort().join(",")) {
