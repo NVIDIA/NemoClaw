@@ -49,20 +49,27 @@ At cutoff:
 
 The release candidate is the full `origin/main` commit SHA captured by the generated release plan. At that commit, `.github/workflows/e2e.yaml` is the sole source of truth for the release E2E test set. Do not maintain a separate release-gating test list.
 
-Before asking for the release confirmation phrase, require a completed, successful `Release qualification` check at that SHA.
+Before asking for the release confirmation phrase, require a completed, successful `Release qualification` check from a full manual run at that SHA.
 
 - `.github/workflows/e2e.yaml` derives the release-required jobs from its E2E metadata. Do not copy them into a second release test list.
-- The check runs for trusted pushes to `main` and full manual runs dispatched against `main`.
+- Push runs publish `Relevant E2E`; only full manual runs dispatched against `main` publish `Release qualification`.
 - The check requires every default-required workflow E2E result to succeed, including `Exact staging Brev Launchable`.
 - `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification` remain separate opt-in work and do not block this check.
 - The successful Launchable job proves the candidate checkout, in-guest full E2E result, and cleanup. Its artifacts are diagnostic evidence, not a second status ledger.
 - A skipped, queued, in-progress, cancelled, or failed `Release qualification` check is not release evidence.
 - A check from another commit SHA is not release evidence.
-- Run `nemoclaw-maintainer-e2e` in full mode only when the candidate SHA has no passing check.
+- Use an existing qualifying full manual run for the candidate SHA, or run `nemoclaw-maintainer-e2e` in full mode when none exists.
 
 Record the workflow and `Release qualification` job URLs.
-Immediately before confirmation, compare `origin/main` with the planned SHA.
-If the candidate SHA changes, discard the earlier check, regenerate the release plan, and require a passing check for the new SHA.
+Run the release script's signing preflight before confirmation.
+For the canonical `NVIDIA/NemoClaw` remote, `scripts/release-cut-tag.sh` searches completed, successful manual `.github/workflows/e2e.yaml` runs at the exact planned `origin/main` commit.
+It accepts the first run with exactly one completed, successful `Release qualification` job and fails closed when no qualifying run exists.
+A run with zero or multiple jobs of that name is not evidence.
+The script repeats this check before it pushes the tag.
+Local fixture remotes skip the production gate only when tests set `NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL=1` and the shared classifier confirms a noncanonical origin.
+Canonical-equivalent `NVIDIA/NemoClaw` remotes always run the gate, even when that override is set.
+A local fixture cannot authorize a release.
+If the candidate SHA changes, discard the earlier check, regenerate the release plan, and require qualifying full manual E2E for the new SHA.
 This does not freeze `main` or prevent merges.
 No release-note-only delta exception is currently defined.
 
