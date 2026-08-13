@@ -14,6 +14,7 @@ import type { MessagingAgentId, SandboxMessagingPlan } from "../../../messaging/
 import {
   type RegistryMessagingAuthority,
   resolveMessagingPlanAuthority,
+  sameRegistryMessagingAuthority,
 } from "../../../messaging/plan-authority";
 import { hashCredential } from "../../../security/credential-hash";
 import { isDecisionSelected, isDecisionUnset } from "../../../state/onboard-checkpoint-decision";
@@ -21,7 +22,11 @@ import type { Session } from "../../../state/onboard-session";
 import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
 import { getActiveChannelsFromPlan, getChannelsFromPlan } from "../../messaging-plan-session";
 
-export { resolveMessagingPlanAuthority };
+export {
+  type RegistryMessagingAuthority,
+  resolveMessagingPlanAuthority,
+  sameRegistryMessagingAuthority,
+};
 
 function sameChannelSet(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) return false;

@@ -32,6 +32,97 @@ Use \`$$nemoclaw\` for the current variant.
 `;
 
 describe("agent variant docs", () => {
+  // source-shape-contract: compatibility -- OpenClaw workspace documentation must list every runtime-seeded template so generated variants cannot omit operator-visible files.
+  it("keeps the OpenClaw workspace inventory aligned with seeded runtime templates", () => {
+    const workspaceFiles = readFileSync(
+      new URL("../docs/manage-sandboxes/workspace-files.mdx", import.meta.url),
+      "utf8",
+    );
+    const startScript = readFileSync(
+      new URL("../scripts/nemoclaw-start.sh", import.meta.url),
+      "utf8",
+    );
+    const seedFunction = startScript.slice(
+      startScript.indexOf("seed_default_workspace_templates()"),
+    );
+    const seededFiles = seedFunction
+      .match(/for file in ([^;]+); do/)?.[1]
+      .trim()
+      .split(/\s+/);
+
+    expect(seededFiles).toEqual([
+      "AGENTS.md",
+      "SOUL.md",
+      "IDENTITY.md",
+      "USER.md",
+      "TOOLS.md",
+      "HEARTBEAT.md",
+    ]);
+    const expectedSeededFiles = seededFiles ?? [];
+    const deferredFiles = ["MEMORY.md", "memory/"];
+
+    const rendered = renderAgentVariantPage(workspaceFiles, "openclaw", {
+      sourcePath: "/repo/docs/manage-sandboxes/workspace-files.mdx",
+    });
+    expect(rendered).toContain(
+      "when the default workspace directory exists, is not a symbolic link, and is empty",
+    );
+    expect(rendered).toContain(
+      "Set `NEMOCLAW_MINIMAL_BOOTSTRAP=1` before onboarding to skip default workspace template seeding.",
+    );
+    const fileReference = rendered.match(
+      /## File Reference\n\n([\s\S]*?)\n\n## Where They Live/,
+    )?.[1];
+    const tableFiles = Array.from(
+      fileReference?.matchAll(/^\| `([^`]+)` \|/gm) ?? [],
+      (match) => match[1],
+    );
+    expect(tableFiles.filter((file) => !deferredFiles.includes(file)).sort()).toEqual(
+      [...expectedSeededFiles].sort(),
+    );
+    expect(tableFiles.filter((file) => deferredFiles.includes(file)).sort()).toEqual(
+      [...deferredFiles].sort(),
+    );
+
+    const workspaceTree = rendered.match(
+      /```text\n\/sandbox\/\.openclaw\/workspace\/\n([\s\S]*?)\n```/,
+    )?.[1];
+    const treeFiles = Array.from(
+      workspaceTree?.matchAll(/^[├└]── ([^\s]+)/gm) ?? [],
+      (match) => match[1],
+    );
+    for (const file of expectedSeededFiles) {
+      expect(tableFiles).toContain(file);
+      expect(treeFiles).toContain(file);
+    }
+    expect(treeFiles.filter((file) => !deferredFiles.includes(file)).sort()).toEqual(
+      [...expectedSeededFiles].sort(),
+    );
+    expect(treeFiles.filter((file) => deferredFiles.includes(file)).sort()).toEqual(
+      [...deferredFiles].sort(),
+    );
+
+    const multiAgentSection = rendered.match(
+      /## Multi-Agent Deployments\n\n([\s\S]*?)\n\n## Persistence Behavior/,
+    )?.[1];
+    const seededSummary = multiAgentSection?.match(
+      /same seeded Markdown file structure[^:]*: ([^\n]+)\n/,
+    )?.[1];
+    const deferredSummary = multiAgentSection?.match(
+      /OpenClaw creates ([^\n]+) separately in each workspace/,
+    )?.[1];
+    const summarySeededFiles = Array.from(
+      seededSummary?.matchAll(/`([^`]+)`/g) ?? [],
+      (match) => match[1],
+    );
+    const summaryDeferredFiles = Array.from(
+      deferredSummary?.matchAll(/`([^`]+)`/g) ?? [],
+      (match) => match[1],
+    );
+    expect(summarySeededFiles.sort()).toEqual([...expectedSeededFiles].sort());
+    expect(summaryDeferredFiles.sort()).toEqual([...deferredFiles].sort());
+  });
+
   it("renders OpenClaw placeholder code and content", () => {
     const rendered = renderAgentVariantPage(source, "openclaw");
 

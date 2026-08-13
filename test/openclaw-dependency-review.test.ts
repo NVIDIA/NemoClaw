@@ -648,7 +648,7 @@ for dockerfile in Dockerfile Dockerfile.base; do
   check_contains "$openclaw_block" 'mcporter-audit-policy-sha256=' "$dockerfile mcporter audit policy hash"
   check_contains "$openclaw_block" 'mcporter-audit-status=' "$dockerfile mcporter audit status"
   check_contains "$openclaw_block" 'mcporter-audit-exceptions=' "$dockerfile mcporter audit exceptions"
-  check_contains "$openclaw_block" 'mcporter-recipe=locked-ci+reviewed-audit+signatures-v2' "$dockerfile mcporter provenance recipe"
+  check_contains "$openclaw_block" 'mcporter-recipe=locked-ci+reviewed-audit-v3' "$dockerfile mcporter provenance recipe"
 done
 
 check_contains "$(cat Dockerfile.base)" 'chmod 0444 "$OPENCLAW_PROVENANCE_TMP"' "base provenance protected mode"

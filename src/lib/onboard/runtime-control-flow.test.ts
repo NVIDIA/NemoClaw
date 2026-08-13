@@ -159,4 +159,34 @@ describe("onboard runtime control flow", () => {
     expect(effects).toEqual(["stop-router", "update-session"]);
     expect(session.routerPid).toBeNull();
   });
+
+  it("preserves durable session state when the Model Router stop fails", async () => {
+    const session = createSession({
+      agent: "langchain-deepagents-code",
+      provider: "nvidia",
+      routerPid: 1234,
+    });
+    const before = structuredClone(session);
+    const updateSession = vi.fn((mutator) => mutator(session) ?? session);
+    const plan = planSelectedAgentTransition(
+      {
+        resume: true,
+        session,
+        selectedAgentName: "openclaw",
+        routerPort: 4000,
+        note: () => undefined,
+      },
+      {
+        stopTrackedModelRouterForAgentChange: async () => {
+          throw new Error("Model Router stop failed");
+        },
+        updateSession,
+      },
+    );
+
+    await expect(plan.commit()).rejects.toThrow("Model Router stop failed");
+
+    expect(updateSession).not.toHaveBeenCalled();
+    expect(session).toEqual(before);
+  });
 });

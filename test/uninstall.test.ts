@@ -100,7 +100,9 @@ exit 0
     const output = `${result.stdout}${result.stderr}`;
     expect(output).toMatch(/NemoHermes Uninstaller/);
     expect(output).toMatch(/Remove host-side NemoHermes resources/);
-    expect(output).toMatch(/Remove NemoHermes-pulled Ollama models/);
+    expect(output).toMatch(
+      /Remove all Ollama models and non-credential Hugging\s+Face cache data \(authentication files remain\)/,
+    );
     expect(output).not.toMatch(/NemoClaw Uninstaller/);
   });
 

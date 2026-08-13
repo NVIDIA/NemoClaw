@@ -23,7 +23,7 @@ describe("policy channel helpers", () => {
   });
 
   it("parses policy add option errors", () => {
-    expect(parsePolicyAddOptions({ fromFile: "a.yaml", fromDir: "dir" }, {})).toEqual({
+    expect(parsePolicyAddOptions({ fromFile: "a.yaml", fromDir: "dir" }, {}, true)).toEqual({
       dryRun: false,
       skipConfirm: false,
       source: { kind: "error", message: "--from-file and --from-dir are mutually exclusive." },
@@ -31,7 +31,7 @@ describe("policy channel helpers", () => {
       trustedPrivateHosts: [],
       commandTrustedPrivateHosts: [],
     });
-    expect(parsePolicyAddOptions({ fromFile: "" }, {})).toEqual({
+    expect(parsePolicyAddOptions({ fromFile: "" }, {}, true)).toEqual({
       dryRun: false,
       skipConfirm: false,
       source: { kind: "error", message: "--from-file requires a path argument." },
@@ -42,7 +42,7 @@ describe("policy channel helpers", () => {
   });
 
   it("limits trusted private hosts to custom policy input (#8176)", () => {
-    expect(parsePolicyAddOptions({ trustedPrivateHosts: ["api.corp.example"] }, {})).toEqual({
+    expect(parsePolicyAddOptions({ trustedPrivateHosts: ["api.corp.example"] }, {}, true)).toEqual({
       dryRun: false,
       skipConfirm: false,
       source: {
@@ -74,9 +74,15 @@ describe("policy channel helpers", () => {
   });
 
   it("detects policy confirmation bypass options", () => {
-    expect(parsePolicyAddOptions({ yes: true }, {}).skipConfirm).toBe(true);
-    expect(parsePolicyAddOptions({ force: true }, {}).skipConfirm).toBe(true);
-    expect(parsePolicyAddOptions({}, { NEMOCLAW_NON_INTERACTIVE: "1" }).skipConfirm).toBe(true);
-    expect(parsePolicyAddOptions({}, {}).skipConfirm).toBe(false);
+    expect(parsePolicyAddOptions({ yes: true }, {}, true).skipConfirm).toBe(true);
+    expect(parsePolicyAddOptions({ force: true }, {}, true).skipConfirm).toBe(true);
+    expect(parsePolicyAddOptions({}, { NEMOCLAW_NON_INTERACTIVE: "1" }, true).skipConfirm).toBe(
+      true,
+    );
+    expect(parsePolicyAddOptions({}, {}, true).skipConfirm).toBe(false);
+  });
+
+  it("skips the confirmation prompt in a session without a terminal (#8877)", () => {
+    expect(parsePolicyAddOptions({}, {}, false).skipConfirm).toBe(true);
   });
 });

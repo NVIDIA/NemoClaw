@@ -95,7 +95,7 @@ describe("prepare-e2e workflow boundary", () => {
     )!;
     producerPrepare.with = { "build-cli": "false" };
 
-    const consumerJob = workflow.jobs["sandbox-operations"];
+    const consumerJob = workflow.jobs["token-rotation"];
     const consumerPrepare = consumerJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
     delete consumerPrepare.with;
     consumerJob.steps!.splice(consumerJob.steps!.indexOf(consumerPrepare), 0, {
@@ -117,7 +117,7 @@ describe("prepare-e2e workflow boundary", () => {
     const untrustedPrepare = untrustedJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
     untrustedPrepare.uses = "./.github/actions/prepare-e2e";
 
-    const orderedJob = workflow.jobs["network-policy"];
+    const orderedJob = workflow.jobs["brave-search"];
     const orderedPrepareIndex = orderedJob.steps!.findIndex(
       (step) => step.name === PREPARE_E2E_STEP,
     );
@@ -128,9 +128,9 @@ describe("prepare-e2e workflow boundary", () => {
       expect.arrayContaining([
         "generate-matrix prepare-e2e must own the only default CLI build",
         "generate-matrix prepare-e2e invocation must not override its canonical contract",
-        "sandbox-operations prepare-e2e must set build-cli to false",
-        "sandbox-operations prepare-e2e invocation must not override its canonical contract",
-        "sandbox-operations must not duplicate prepare-e2e step 'Build CLI'",
+        "token-rotation prepare-e2e must set build-cli to false",
+        "token-rotation prepare-e2e invocation must not override its canonical contract",
+        "token-rotation must not duplicate prepare-e2e step 'Build CLI'",
         "bootstrap-install-smoke prepare-e2e must set build-cli to false",
         "bootstrap-install-smoke prepare-e2e invocation must not override its canonical contract",
         "shared-e2e must not declare E2E_EXECUTION_PROFILE",
@@ -139,8 +139,8 @@ describe("prepare-e2e workflow boundary", () => {
         "shared-e2e prepare-e2e invocation must not override its canonical contract",
         "inference-routing must not load prepare-e2e from the target checkout",
         "inference-routing must use prepare-e2e exactly once",
-        "network-policy must check out the repository before prepare-e2e",
-        "network-policy must authenticate to Docker Hub before prepare-e2e",
+        "brave-search must check out the repository before prepare-e2e",
+        "brave-search must authenticate to Docker Hub before prepare-e2e",
       ]),
     );
   });

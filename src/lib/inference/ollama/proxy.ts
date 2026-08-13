@@ -48,17 +48,23 @@ const { isOllamaAuthProxyCommandLine }: typeof import("./process") = require("./
 const { buildSubprocessEnv } = require("../../subprocess-env");
 const { prompt } = require("../../credentials/store");
 const { promptManualModelId } = require("../model-prompts");
+const { listGatewayStateRoots } = require("../../state/gateway-registry");
+const {
+  withMcpLifecycleLock,
+  withMcpLifecycleLockSync,
+} = require("../../state/mcp-lifecycle-lock");
+const { openRegularFileNoFollow } = require("../../adapters/fs/regular-file");
 const {
   formatOllamaProxyUnreachableMessage,
   probeOllamaProxySandboxReachability,
 } = require("../../onboard/ollama-proxy-reachability");
 const {
-  DEFAULT_LOCAL_ADAPTER_STATE_DIR,
   isLocalAdapterProcess,
   killLocalAdapterPid,
   loadLocalAdapterPid,
   persistLocalAdapterPid,
-  readLocalAdapterTextFile,
+  removeLocalAdapterFile,
+  SHARED_LOCAL_ADAPTER_STATE_DIR,
   spawnDetachedNodeAdapter,
   writeLocalAdapterSecretFile,
 } = require("../local-adapter-lifecycle");
@@ -72,10 +78,14 @@ const {
 
 // ── State ────────────────────────────────────────────────────────
 
-const PROXY_STATE_DIR = DEFAULT_LOCAL_ADAPTER_STATE_DIR;
+const PROXY_STATE_DIR = SHARED_LOCAL_ADAPTER_STATE_DIR;
 const PROXY_TOKEN_PATH = path.join(PROXY_STATE_DIR, "ollama-proxy-token");
+const PROXY_BACKEND_PATH = path.join(PROXY_STATE_DIR, "ollama-backend");
+const PROXY_PORT_PATH = path.join(PROXY_STATE_DIR, "ollama-proxy-port");
 const PROXY_PID_PATH = path.join(PROXY_STATE_DIR, "ollama-auth-proxy.pid");
 const PROXY_STATUS_PATH = defaultProxyStatusPath(PROXY_STATE_DIR);
+const OLLAMA_PROXY_LIFECYCLE_LOCK = "host-global-ollama-auth-proxy";
+const MAX_PROXY_STATE_FILE_BYTES = 64 * 1024;
 
 let ollamaProxyToken: string | null = null;
 
@@ -85,9 +95,63 @@ function sleep(seconds: number): void {
 
 // ── Token persistence ────────────────────────────────────────────
 
-function persistProxyToken(token: string, backendUrl = `http://127.0.0.1:${OLLAMA_PORT}`): void {
-  writeLocalAdapterSecretFile(path.join(PROXY_STATE_DIR, "ollama-backend"), backendUrl);
+function withOllamaProxyLifecycleLock<T>(operation: () => T): T {
+  // The shared state/ directory is the repository's recognized home for
+  // host-global lifecycle locks. An empty lock directory does not masquerade
+  // as a default-port gateway during scoped uninstall discovery.
+  return withMcpLifecycleLockSync(OLLAMA_PROXY_LIFECYCLE_LOCK, operation, {
+    stateDir: path.join(PROXY_STATE_DIR, "state"),
+  });
+}
+
+function withOllamaProxyLifecycleTransaction<T>(operation: () => Promise<T> | T): Promise<T> {
+  // Async setup steps can call the synchronous helpers below while retaining
+  // this lock through the shared re-entrant lifecycle-lock context.
+  return withMcpLifecycleLock(OLLAMA_PROXY_LIFECYCLE_LOCK, operation, {
+    stateDir: path.join(PROXY_STATE_DIR, "state"),
+  });
+}
+
+function persistProxyTokenUnlocked(
+  token: string,
+  backendUrl = `http://127.0.0.1:${OLLAMA_PORT}`,
+): void {
+  writeLocalAdapterSecretFile(PROXY_BACKEND_PATH, backendUrl);
   writeLocalAdapterSecretFile(PROXY_TOKEN_PATH, token);
+}
+
+function persistProxyToken(token: string, backendUrl = `http://127.0.0.1:${OLLAMA_PORT}`): void {
+  withOllamaProxyLifecycleLock(() => persistProxyTokenUnlocked(token, backendUrl));
+}
+
+function readProxyStateFile(filePath: string): string | null {
+  let opened;
+  try {
+    opened = openRegularFileNoFollow(filePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw new Error(`Cannot safely read Ollama auth proxy state at ${filePath}`, { cause: error });
+  }
+  try {
+    return opened.readBytes(MAX_PROXY_STATE_FILE_BYTES).toString("utf8").trim() || null;
+  } finally {
+    opened.close();
+  }
+}
+
+function persistOrValidateProxyPortUnlocked(): boolean {
+  const requestedPort = String(OLLAMA_PROXY_PORT);
+  const persistedPort = readProxyStateFile(PROXY_PORT_PATH);
+  if (!persistedPort) {
+    writeLocalAdapterSecretFile(PROXY_PORT_PATH, requestedPort);
+    return true;
+  }
+  if (persistedPort === requestedPort) return false;
+
+  throw new Error(
+    `The shared Ollama auth proxy already uses port ${persistedPort}, but this command requested port ${requestedPort}. ` +
+      `Export NEMOCLAW_OLLAMA_PROXY_PORT=${persistedPort} for every gateway port on this host and retry.`,
+  );
 }
 
 // Persist the proxy token then probe sandbox → proxy reachability. Runs
@@ -105,7 +169,57 @@ async function persistAndProbeOllamaProxy(token: string): Promise<void> {
 }
 
 function loadPersistedProxyToken(): string | null {
-  return readLocalAdapterTextFile(PROXY_TOKEN_PATH);
+  return withOllamaProxyLifecycleLock(
+    () => readProxyStateFile(PROXY_TOKEN_PATH) ?? adoptGatewayScopedProxyToken(),
+  );
+}
+
+function adoptGatewayScopedProxyToken(): string | null {
+  const candidates = listGatewayStateRoots(path.dirname(PROXY_STATE_DIR))
+    .filter(({ root }) => root !== PROXY_STATE_DIR)
+    .flatMap(({ root }) => {
+      const token = readProxyStateFile(path.join(root, "ollama-proxy-token"));
+      if (!token) return [];
+      return [
+        {
+          backendUrl: readProxyStateFile(path.join(root, "ollama-backend")),
+          token,
+          tokenPath: path.join(root, "ollama-proxy-token"),
+        },
+      ];
+    });
+  if (candidates.length === 0) return null;
+
+  const tokens = [...new Set(candidates.map(({ token }) => token))];
+  let selectedToken: string;
+  if (tokens.length === 1) {
+    [selectedToken] = tokens;
+  } else {
+    const accepted = tokens.filter((token) => probeProxyToken(token) === "accepted");
+    if (accepted.length !== 1) {
+      const tokenPaths = candidates.map(({ tokenPath }) => tokenPath).join(", ");
+      throw new Error(
+        "Conflicting legacy Ollama proxy tokens exist across gateway state roots. " +
+          "NemoClaw cannot safely select one while preserving existing sandbox access. " +
+          `After confirming which token serves the active sandboxes, reconcile or remove the stale files and retry: ${tokenPaths}`,
+      );
+    }
+    [selectedToken] = accepted;
+  }
+
+  const selectedCandidates = candidates.filter(({ token }) => token === selectedToken);
+  const backendUrls = [
+    ...new Set(selectedCandidates.map(({ backendUrl }) => backendUrl).filter(Boolean)),
+  ];
+  if (backendUrls.length > 1) {
+    throw new Error(
+      "Conflicting legacy Ollama backend URLs exist for the shared proxy token. " +
+        "NemoClaw cannot safely select one.",
+    );
+  }
+  const selectedBackendUrl = backendUrls[0] ?? readProxyStateFile(PROXY_BACKEND_PATH) ?? undefined;
+  persistProxyTokenUnlocked(selectedToken, selectedBackendUrl);
+  return selectedToken;
 }
 
 function curlAuthHeaderConfig(token: string): string {
@@ -168,7 +282,7 @@ function spawnOllamaAuthProxy(token: string, backendUrl?: string): number | null
   // Clear any stale status file so a read after this spawn observes the new
   // proxy's exit reason (or finds no file when the proxy starts cleanly).
   clearStaleProxyStatus(PROXY_STATUS_PATH);
-  const url = backendUrl || readLocalAdapterTextFile(path.join(PROXY_STATE_DIR, "ollama-backend"));
+  const url = backendUrl || readProxyStateFile(PROXY_BACKEND_PATH);
   const child = spawnDetachedNodeAdapter({
     scriptPath: path.join(SCRIPTS, "ollama-auth-proxy.mts"),
     env: {
@@ -289,7 +403,10 @@ function generateProxyToken(): string {
   return crypto.randomBytes(24).toString("hex");
 }
 
-function startOllamaAuthProxyWithToken(proxyToken: string, backendUrl?: string): boolean {
+function attemptStartOllamaAuthProxyWithTokenUnlocked(
+  proxyToken: string,
+  backendUrl?: string,
+): boolean {
   killStaleProxy();
 
   // After clearing any stale NemoClaw proxy, a process still holding the port
@@ -355,12 +472,65 @@ function startOllamaAuthProxyWithToken(proxyToken: string, backendUrl?: string):
   return false;
 }
 
+function startOllamaAuthProxyWithTokenUnlocked(
+  proxyToken: string,
+  backendUrl?: string,
+  releaseReservedPortOnFailure = false,
+): boolean {
+  // Bind the host-global proxy state to one port before touching its process.
+  // A second gateway with a different environment must not move the shared
+  // proxy away from routes that existing sandboxes still use.
+  const reservedPort = persistOrValidateProxyPortUnlocked();
+  try {
+    const started = attemptStartOllamaAuthProxyWithTokenUnlocked(proxyToken, backendUrl);
+    if (!started && reservedPort && releaseReservedPortOnFailure) {
+      removeLocalAdapterFile(PROXY_PORT_PATH);
+    }
+    return started;
+  } catch (error) {
+    if (reservedPort && releaseReservedPortOnFailure) removeLocalAdapterFile(PROXY_PORT_PATH);
+    throw error;
+  }
+}
+
+function startOllamaAuthProxyWithToken(proxyToken: string, backendUrl?: string): boolean {
+  return withOllamaProxyLifecycleLock(() => {
+    const releaseReservedPortOnFailure = !readProxyStateFile(PROXY_TOKEN_PATH);
+    return startOllamaAuthProxyWithTokenUnlocked(
+      proxyToken,
+      backendUrl,
+      releaseReservedPortOnFailure,
+    );
+  });
+}
+
 function startOllamaAuthProxy(backendUrl?: string): boolean {
-  // Re-onboarding the committed local Ollama route must keep the credential
-  // already mounted in the sandbox. A compatible custom endpoint uses the
-  // explicit fresh-token path below until provider selection commits it.
-  const proxyToken = loadPersistedProxyToken() ?? generateProxyToken();
-  return startOllamaAuthProxyWithToken(proxyToken, backendUrl);
+  return withOllamaProxyLifecycleLock(() => {
+    // Re-onboarding the committed local Ollama route must keep the credential
+    // already mounted in the sandbox. A compatible custom endpoint uses the
+    // explicit fresh-token path below until provider selection commits it.
+    let proxyToken = loadPersistedProxyToken();
+    const reservedNewToken = !proxyToken;
+    if (!proxyToken) {
+      proxyToken = generateProxyToken();
+      // Reserve the first host token before restarting the shared process so
+      // another gateway cannot mint a different credential after this lock is
+      // released. The backend remains uncommitted until provider selection.
+      writeLocalAdapterSecretFile(PROXY_TOKEN_PATH, proxyToken);
+    }
+    try {
+      const started = startOllamaAuthProxyWithTokenUnlocked(
+        proxyToken,
+        backendUrl,
+        reservedNewToken,
+      );
+      if (!started && reservedNewToken) removeLocalAdapterFile(PROXY_TOKEN_PATH);
+      return started;
+    } catch (error) {
+      if (reservedNewToken) removeLocalAdapterFile(PROXY_TOKEN_PATH);
+      throw error;
+    }
+  });
 }
 
 function noAuthProxy(endpointUrl: string) {
@@ -378,9 +548,13 @@ function noAuthProxy(endpointUrl: string) {
 }
 
 function restorePersistedOllamaAuthProxy(): void {
-  killStaleProxy();
-  ollamaProxyToken = null;
-  ensureOllamaAuthProxy();
+  withOllamaProxyLifecycleLock(() => {
+    const hasPersistedToken = readProxyStateFile(PROXY_TOKEN_PATH) !== null;
+    killStaleProxy();
+    if (!hasPersistedToken) removeLocalAdapterFile(PROXY_PORT_PATH);
+    ollamaProxyToken = null;
+    ensureOllamaAuthProxy();
+  });
 }
 
 /**
@@ -429,14 +603,13 @@ function proxyOwnsPortWithToken(token: string): boolean {
  * background proxy process was lost, and to detect token divergence
  * after a failed re-onboard (see issue #2553).
  */
-function ensureOllamaAuthProxy(): void {
+function ensureOllamaAuthProxyUnlocked(): void {
   const pid = loadPersistedProxyPid();
-  // startOllamaAuthProxy replaces the live proxy before setupInference confirms
-  // the selected provider and calls persistProxyToken. It cannot persist sooner:
-  // the user may still back out, leaving the previous route as the committed one.
-  // Preserve this in-memory proxy across recovery during that transition. This
-  // exception can go away when provider selection commits the replacement token
-  // and backend before any recovery path can call ensureOllamaAuthProxy.
+  // noAuthProxy can replace the live proxy before setupInference confirms a
+  // compatible endpoint and commits its new token and backend. Preserve this
+  // in-memory proxy across recovery during that transition. This exception can
+  // go away when compatible-provider selection commits the replacement state
+  // before any recovery path can call ensureOllamaAuthProxy.
   if (
     ollamaProxyToken &&
     isOllamaProxyProcess(pid) &&
@@ -448,6 +621,7 @@ function ensureOllamaAuthProxy(): void {
   // Try to load persisted token first — if none, this isn't an Ollama setup.
   const token = loadPersistedProxyToken();
   if (!token) return;
+  persistOrValidateProxyPortUnlocked();
 
   if (isOllamaProxyProcess(pid)) {
     const tokenStatus = probeProxyToken(token);
@@ -466,6 +640,10 @@ function ensureOllamaAuthProxy(): void {
     sleep(1);
   }
   console.error(`  Error: Ollama auth proxy did not become ready after restart.`);
+}
+
+function ensureOllamaAuthProxy(): void {
+  withOllamaProxyLifecycleLock(ensureOllamaAuthProxyUnlocked);
 }
 
 /** Return the current proxy token, falling back to the persisted file. */
@@ -1104,4 +1282,5 @@ export {
   pullOllamaModel,
   startOllamaAuthProxy,
   unloadOllamaModels,
+  withOllamaProxyLifecycleTransaction,
 };

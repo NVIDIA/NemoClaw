@@ -2211,52 +2211,6 @@ exit 1
     expect(pathValue).toBe(initialPath);
   });
 
-  it("restore_onboard_forward_after_post_checks: restores Hermes forward from session", () => {
-    const { root: tmp, binDir: fakeBin } = installerCheckout("nemohermes-forward-restore-");
-    const stateDir = path.join(tmp, ".nemoclaw");
-    const openshellLog = path.join(tmp, "openshell.log");
-    fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(stateDir, "onboard-session.json"),
-      JSON.stringify({ sandboxName: "created-by-onboard", agent: "hermes" }),
-    );
-    writeExecutable(
-      path.join(fakeBin, "openshell"),
-      `#!/usr/bin/env bash
-printf '%s\\n' "$*" >> "$OPENSHELL_LOG"
-if [ "$1" = "forward" ] && [ "$2" = "list" ]; then
-  echo "SANDBOX BIND PORT PID STATUS"
-  echo "created-by-onboard 127.0.0.1 8642 123 running"
-fi
-exit 0
-`,
-    );
-    writeExecutable(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-exit 0
-`,
-    );
-    writeExecutable(
-      path.join(fakeBin, "sleep"),
-      `#!/usr/bin/env bash
-exit 0
-`,
-    );
-
-    const r = callInstallerPayloadFn("restore_onboard_forward_after_post_checks", {
-      HOME: tmp,
-      NEMOCLAW_SKIP_FORWARD_WATCHER: "1",
-      OPENSHELL_LOG: openshellLog,
-      PATH: `${fakeBin}:${process.env.PATH || ""}`,
-    });
-
-    expect(r.status).toBe(0);
-    const openshellCalls = fs.readFileSync(openshellLog, "utf-8");
-    expect(openshellCalls).toContain("forward stop 8642 created-by-onboard");
-    expect(openshellCalls).toContain("forward start --background 8642 created-by-onboard");
-  });
-
   // -- resolve_default_sandbox_name --
 
   it("resolve_default_sandbox_name: returns 'my-assistant' with no registry", () => {

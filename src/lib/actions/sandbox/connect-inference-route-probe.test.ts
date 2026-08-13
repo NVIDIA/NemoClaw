@@ -18,7 +18,7 @@ import {
 } from "./connect-inference-route-probe";
 
 describe("sandbox connect inference route probe argv", () => {
-  it("uses the managed DCode proxy boundary without a login shell (#6191)", () => {
+  it("uses the managed DCode proxy boundary without adding a login shell (#6191)", () => {
     const args = buildSandboxInferenceRouteProbeArgs("deep-code", {
       name: "langchain-deepagents-code",
     });
@@ -99,7 +99,7 @@ describe("sandbox connect inference route probe argv", () => {
   it.each([
     "OK 200",
     "BROKEN 503",
-  ])("does not run hostile DCode startup or curl config for a %s spoof (#6192)", (spoof) => {
+  ])("managed launcher does not run hostile DCode startup or curl config for a %s spoof (#6192)", (spoof) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-probe-"));
     const profileMarker = path.join(home, "profile-ran");
     try {

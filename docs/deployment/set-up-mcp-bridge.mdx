@@ -149,7 +149,7 @@ The validated transaction helper runs as a one-shot ordinary `openshell sandbox 
 It runs as the normal sandbox identity, rejects the legacy root-separated runtime topology, validates the gateway PID and launcher before signaling it, updates the managed compatibility hash, verifies loopback health, and rolls back config and hashes if reload fails.
 
 Within the five-minute reload deadline, if the first signal has not converged after half the budget, the helper may send one additional `SIGUSR1` only after revalidating the gateway identity and managed parent.
-Success requires a replacement gateway identity, healthy loopback endpoints on internal port `18642` and public port `8642`, and a stable final identity.
+Success requires a replacement gateway identity, healthy loopback endpoints on internal port `18642` and the sandbox's public API port, and a stable final identity.
 
 There is no host listener, persistent control socket, MCP relay, or service for this operation.
 The command carries no MCP traffic or raw service credential, and its payload contains only the endpoint definition and OpenShell placeholder.

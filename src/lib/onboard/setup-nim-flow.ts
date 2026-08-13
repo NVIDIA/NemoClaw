@@ -387,7 +387,6 @@ export function createSetupNim(
   const localModelProfileIntegration =
     deps.localModelProfileIntegration ?? createLocalModelProfileIntegration(deps);
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider onboarding is an intentionally centralized interaction loop.
   return async function setupNimWithDeps(
     gpu: SetupNimGpu,
     sandboxName: string | null = null,
@@ -618,6 +617,7 @@ export function createSetupNim(
           if (providerSelection.kind === "failure") {
             reportProviderSelectionFailure({
               reason: providerSelection.reason,
+              availableProviderKeys: options.map((option) => option.key),
               isWindowsHostOllama,
               rejectWindowsHostOllama,
               writeError: deps.error,
