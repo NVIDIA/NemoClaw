@@ -21,6 +21,7 @@ async function printGuidance({
   dockerRuntime: {
     health: "none";
     paused: boolean;
+    running: boolean;
     containerName: string | null;
   } | null;
 }): Promise<void> {
@@ -49,6 +50,7 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
       dockerRuntime: {
         health: "none",
         paused: false,
+        running: true,
         containerName: "openshell-beta-abc",
       },
     });
@@ -67,6 +69,28 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).toContain("cannot snapshot a stopped container");
   });
 
+  it("reports an owned stopped container without crash guidance (#8695)", async () => {
+    const cap = captureConsoleLog();
+    await printGuidance({
+      phase: "Provisioning",
+      dockerRuntime: {
+        health: "none",
+        paused: false,
+        running: false,
+        containerName: "openshell-beta-abc",
+      },
+    });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("Sandbox 'beta' is stopped.");
+    expect(text).toContain("Workspace state is preserved.");
+    expect(text).toContain("nemoclaw beta start");
+    expect(text).not.toContain("process crash");
+    expect(text).not.toContain("is stuck");
+    expect(text).not.toContain("rebuild --yes");
+  });
+
   it("keeps the unpause hint for a paused container and never suggests start/rebuild (#4495)", async () => {
     const cap = captureConsoleLog();
     await printGuidance({
@@ -74,6 +98,7 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
       dockerRuntime: {
         health: "none",
         paused: true,
+        running: true,
         containerName: "openshell-beta-abc",
       },
     });
@@ -95,7 +120,7 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     const cap = captureConsoleLog();
     await printGuidance({
       phase,
-      dockerRuntime: { health: "none", paused: false, containerName },
+      dockerRuntime: { health: "none", paused: false, running: true, containerName },
     });
     const text = cap.lines();
     cap.restore();

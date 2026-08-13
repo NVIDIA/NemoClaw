@@ -58,7 +58,7 @@
     },
     {
       "file": "test/corporate-ca-build-tls-anchor.test.ts",
-      "test": "decodes the CA and exports NODE_EXTRA_CA_CERTS before the reinstall audit-signatures step",
+      "test": "uses conditional Node and curl trust in every final-stage registry step",
       "category": "security"
     },
     {
@@ -79,6 +79,11 @@
     {
       "file": "test/corporate-ca-build-tls-anchor.test.ts",
       "test": "uses the corporate CA conditionally for all Hermes registry remediations",
+      "category": "security"
+    },
+    {
+      "file": "test/dashboard-remote-bind-lifecycle.test.ts",
+      "test": "rejects a mutated checked-in security inventory instruction (#6024)",
       "category": "security"
     },
     {
@@ -199,11 +204,6 @@
     {
       "file": "test/e2e/support/e2e-workflow.test.ts",
       "test": "rejects credential-backed provider smokes in the PR-safe inference-routing job",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects duplicate unguarded Docker Hub auth in messaging-compatible-endpoint",
       "category": "security"
     },
     {
@@ -595,6 +595,16 @@
     {
       "file": "test/growth-guardrails-workflow-boundary.test.ts",
       "test": "flags %s",
+      "category": "security"
+    },
+    {
+      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
+      "test": "returns a credential-free JSON manifest byte for byte",
+      "category": "security"
+    },
+    {
+      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
+      "test": "leaves an installed package manifest that names a credential-shaped dependency",
       "category": "security"
     }
   ]

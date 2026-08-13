@@ -11,7 +11,12 @@ const MCP_JOBS = ["mcp-bridge", "mcp-bridge-dev"] as const;
 const CREDENTIAL_WINDOW_JOB = "openshell-credential-generation-window";
 const MCP_AGENT_SHARDS = ["openclaw", "hermes", "deepagents"] as const;
 const MATRIX_AGENT_EXPRESSION = "${{ matrix.agent }}";
-const TERMINAL_JOBS = ["release-qualification", "report-to-pr", "scorecard"] as const;
+const TERMINAL_JOBS = [
+  "release-qualification",
+  "relevant-e2e",
+  "report-to-pr",
+  "scorecard",
+] as const;
 const DOCKER_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
 const DEV_DOCKER_CLEANUP_NAME = "Revoke Docker auth before unverified dev tooling";
 const DEV_COMPATIBILITY_STEP_NAME = "Classify OpenShell credential-boundary compatibility";
@@ -22,7 +27,7 @@ const CREDENTIAL_WINDOW_FILE = `test/e2e/live/${CREDENTIAL_WINDOW_ID}.test.ts`;
 const CREDENTIAL_WINDOW_ARTIFACT_DIR = "e2e-artifacts/live/openshell-credential-generation-window";
 const CREDENTIAL_WINDOW_RUN_STEP = "Run OpenShell credential generation-window live test";
 const CREDENTIAL_WINDOW_JOB_CONDITION =
-  "${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',mcp-bridge,') || contains(format(',{0},', inputs.targets), ',mcp-bridge,') || contains(format(',{0},', inputs.jobs), ',openshell-credential-generation-window,') || contains(format(',{0},', inputs.targets), ',openshell-credential-generation-window,') }}";
+  "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}";
 const STABLE_RELEASE_SOURCE_SHA = "8ddd98c3dff62619a3963f99ba1e055b67650e72";
 const STABLE_RELEASE_SUPERVISOR_INDEX =
   "b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb";
@@ -190,11 +195,11 @@ function validateJobIdentity(
     if (Object.hasOwn(env, "E2E_DEFAULT_ENABLED")) {
       errors.push("mcp-bridge must remain default-enabled");
     }
-    requireContains(
+    requireEqual(
       errors,
       job.if,
-      "inputs.jobs == ''",
-      "mcp-bridge must run for empty-selector dispatches",
+      "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge') }}",
+      "mcp-bridge must use the trusted execution plan",
     );
   } else {
     if (Object.hasOwn(env, "E2E_DEFAULT_ENABLED")) {
@@ -209,11 +214,11 @@ function validateJobIdentity(
     if (Object.hasOwn(env, "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL")) {
       errors.push("mcp-bridge-dev must scope unverified artifact opt-in to its installer step");
     }
-    requireContains(
+    requireEqual(
       errors,
       job.if,
-      "inputs.jobs == ''",
-      "mcp-bridge-dev must run for empty-selector dispatches",
+      "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}",
+      "mcp-bridge-dev must use the trusted execution plan",
     );
   }
 }
@@ -546,7 +551,7 @@ function validateCredentialWindowJob(
     errors,
     job.if,
     CREDENTIAL_WINDOW_JOB_CONDITION,
-    `${CREDENTIAL_WINDOW_JOB} must remain default-enabled and follow explicit MCP selections`,
+    `${CREDENTIAL_WINDOW_JOB} must use the trusted execution plan`,
   );
 
   const env = asRecord(job.env);

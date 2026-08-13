@@ -184,7 +184,7 @@ other literal identifiers.
 | `custom endpoint` | Technical noun | A user-supplied inference endpoint that is not one of NemoClaw's named provider choices. | compatible endpoint before compatibility is validated |
 | `hosted inference` | Technical noun | Inference served by a remote provider-operated service. | local inference, cloud model |
 | `inference` | Technical noun | Model execution that produces a response from an input. | AI, generation when model execution is intended |
-| `inference health` | Technical noun | The complete classification from the named `inference.local` `/v1/models` status probe: `reachable` for HTTP `200` through `499`, `unhealthy` for HTTP `500` through `599`, or `unreachable` when no qualifying HTTP response arrives. | model health, successful inference, validation request |
+| `inference health` | Technical noun | The classification reported for a sandbox's inference route: the `inference.local` `/v1/models` probe result, and, when that route is reachable and the sandbox records a provider and a model, the result of one inference request sent over the same route. Values are `healthy`, `unauthorized`, `reachable`, `unhealthy`, `unreachable`, and `not probed`. | model health, successful inference |
 | `inference profile` | Technical noun | A blueprint selection that defines an inference provider type, provider name, endpoint, model, credential input, and route settings. | provider profile, model profile |
 | `inference request` | Technical noun | One request sent through an inference route to a model. | API call when the inference purpose matters |
 | `inference route reachability` | Technical noun | The `reachable` inference-health result produced when `https://inference.local/v1/models` returns HTTP `200` through `499`. It does not establish valid credentials, successful model invocation, readiness, compatibility, or support. | inference health, successful inference, validation request |
@@ -391,7 +391,7 @@ A result can support more than one claim only when its evidence meets each defin
 | Class | Claim | Establishes | Does not establish |
 |---|---|---|---|
 | Operational | `inference route reachability` | The named `/v1/models` route returned HTTP `200` through `499`. | Valid credentials, successful model invocation, readiness, compatibility, or support. |
-| Operational | `inference health` | The named `/v1/models` probe produced a `reachable`, `unhealthy`, or `unreachable` classification. | Valid credentials, successful model invocation, readiness, compatibility, or support. |
+| Operational | `inference health` | The named `/v1/models` probe classification, plus the result of one inference request over the same route when NemoClaw sent one. | Broader API conformance, other requests or models, readiness, compatibility, or support. |
 | Operational | `readiness check` | A service or resource meets named criteria to begin its intended work. | Broader reliability, compatibility, or support. |
 | Operational | `validation request` | One authenticated request succeeded for the named endpoint, API family, model, and request shape. | Broader API conformance, other requests or models, reliability, or support. |
 | Evidence | `verification` | Evidence confirms the stated result for the named revision and environment. | Compatibility or support unless the evidence and decision establish them. |

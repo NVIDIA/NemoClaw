@@ -109,6 +109,7 @@ describe("agent state directory contract", () => {
         readOnlyRoots: [
           "cron",
           "hooks",
+          "lazy-packages",
           "platforms",
           "plugins",
           "profiles",

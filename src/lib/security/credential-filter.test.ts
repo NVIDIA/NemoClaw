@@ -413,6 +413,7 @@ describe("shouldScanSnapshotFileForCredentials", () => {
   });
 
   it("skips dependency lockfiles that can contain non-secret package metadata matches", () => {
+    expect(shouldScanSnapshotFileForCredentials(".package-lock.json")).toBe(false);
     expect(shouldScanSnapshotFileForCredentials("package-lock.json")).toBe(false);
     expect(shouldScanSnapshotFileForCredentials("npm-shrinkwrap.json")).toBe(false);
     expect(shouldScanSnapshotFileForCredentials("yarn.lock")).toBe(false);

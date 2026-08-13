@@ -115,5 +115,29 @@
       "Does not edit source or mutate GitHub.",
       "Reports `Not authorized; plan only`."
     ]
+  },
+  {
+    "id": "configured-github-tool",
+    "question": "Plan NVIDIA/NemoClaw issue #8378 with the configured read-only GitHub MCP tool.",
+    "expected_skill": "nemoclaw-contributor-plan-issue",
+    "ground_truth": "The planning workflow uses the configured GitHub tool instead of requiring the gh CLI.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-plan-issue`.",
+      "Reads the issue through the configured GitHub MCP tool.",
+      "Does not require or install the `gh` CLI.",
+      "Does not perform a GitHub write."
+    ]
+  },
+  {
+    "id": "missing-github-tool",
+    "question": "Plan NVIDIA/NemoClaw issue #8378. This agent has no agent-provided GitHub tool, GitHub MCP tool, or authenticated gh CLI.",
+    "expected_skill": "nemoclaw-contributor-plan-issue",
+    "ground_truth": "The workflow stops with setup guidance because it cannot read the issue through configured GitHub access.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-plan-issue`.",
+      "Stops before producing an evidence-based issue plan.",
+      "Asks the user to configure GitHub access for the current environment.",
+      "Does not use curl, another HTTP client, web search, or a different endpoint."
+    ]
   }
 ]

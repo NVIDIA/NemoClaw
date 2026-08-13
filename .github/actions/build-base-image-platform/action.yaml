@@ -104,6 +104,30 @@ runs:
         cache-to: type=registry,ref=${{ inputs.registry }}/${{ inputs.image }}:buildcache-${{ inputs.arch }},mode=max
         build-args: ${{ steps.production-build-args.outputs.openclaw_build_arg }}
 
+    - name: Validate Deep Agents Code dos2unix executable
+      if: ${{ inputs.agent == 'langchain-deepagents-code' }}
+      shell: bash
+      env:
+        DIGEST: ${{ steps.build.outputs.digest }}
+        IMAGE: ${{ inputs.registry }}/${{ inputs.image }}
+        PLATFORM: ${{ inputs.platform }}
+      run: |
+        set -euo pipefail
+        if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+          echo "ERROR: Deep Agents Code base image build did not return a valid digest: $DIGEST" >&2
+          exit 1
+        fi
+        reference="${IMAGE}@${DIGEST}"
+        docker run --rm --platform "$PLATFORM" \
+          --network none \
+          --cap-drop ALL \
+          --security-opt no-new-privileges \
+          --read-only \
+          --user 999:999 \
+          --entrypoint /bin/sh \
+          "$reference" -eu -c \
+          'test -x /usr/bin/dos2unix; test "$(command -v dos2unix)" = /usr/bin/dos2unix; dos2unix --version >/dev/null'
+
     - name: Export platform digest
       shell: bash
       env:

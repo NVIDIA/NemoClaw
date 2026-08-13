@@ -108,6 +108,7 @@ describe("onboard Windows-host Ollama provider rejection", () => {
     const errors: string[] = [];
     reportProviderSelectionFailure({
       reason: failedResolution.reason,
+      availableProviderKeys: options.map((option) => option.key),
       isWindowsHostOllama: false,
       rejectWindowsHostOllama: () => {
         setup();
@@ -143,6 +144,7 @@ describe("onboard Windows-host Ollama provider rejection", () => {
     const errors: string[] = [];
     reportProviderSelectionFailure({
       reason: failedResolution.reason,
+      availableProviderKeys: options.map((option) => option.key),
       isWindowsHostOllama: false,
       rejectWindowsHostOllama: () => {
         install();

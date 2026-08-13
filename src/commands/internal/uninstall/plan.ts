@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Flags } from "@oclif/core";
+import { buildHostUninstallPlan } from "../../../lib/actions/uninstall/plan";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../../lib/cli/branding";
 import { jsonFlag } from "../../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
-
-import { buildHostUninstallPlan } from "../../../lib/actions/uninstall/plan";
 
 export default class InternalUninstallPlanCommand extends NemoClawCommand {
   static hidden = true;
@@ -21,7 +20,8 @@ export default class InternalUninstallPlanCommand extends NemoClawCommand {
       description: "Accepted for parity with run-plan; ignored while planning",
     }),
     "delete-models": Flags.boolean({
-      description: `Plan removal of ${CLI_DISPLAY_NAME}-pulled Ollama models`,
+      description:
+        "Plan removal of all Ollama models and non-credential Hugging Face cache data (authentication files remain)",
     }),
     "keep-openshell": Flags.boolean({ description: "Keep the openshell binary installed" }),
     gateway: Flags.string({ description: "Gateway name", default: "nemoclaw" }),
