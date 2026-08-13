@@ -361,16 +361,21 @@ export async function startModelRouter(
     // validated routed credential must own that variable. An ambient or
     // legacy-staged OPENAI_API_KEY is not valid for the default NVIDIA pool
     // endpoints, and onboarding then reported only a startup timeout. A
-    // A custom or unproven pool keeps an explicitly resolvable
+    // custom or unproven pool keeps an explicitly resolvable
     // OPENAI_API_KEY because NemoClaw cannot prove that every endpoint accepts
     // the routed NVIDIA credential. Resolving OPENAI_API_KEY only on that path
     // also avoids restaging a stale legacy value into process.env.
-    const ambientOpenAiCredential = poolTargetsOnlyNvidiaEndpoints(
-      deps.readPoolConfig(poolConfigPath),
-    )
-      ? null
-      : deps.resolveProviderCredential("OPENAI_API_KEY");
-    credEnvVars.OPENAI_API_KEY = ambientOpenAiCredential || routedCredential;
+    if (poolTargetsOnlyNvidiaEndpoints(deps.readPoolConfig(poolConfigPath))) {
+      credEnvVars.OPENAI_API_KEY = routedCredential;
+    } else {
+      const ambientOpenAiCredential = deps.resolveProviderCredential("OPENAI_API_KEY");
+      if (!ambientOpenAiCredential) {
+        throw new Error(
+          "Model Router pool endpoints are not proven NVIDIA-only. Set OPENAI_API_KEY for the configured pool and retry.",
+        );
+      }
+      credEnvVars.OPENAI_API_KEY = ambientOpenAiCredential;
+    }
   } else {
     const openAiCredential = deps.resolveProviderCredential("OPENAI_API_KEY");
     if (openAiCredential) credEnvVars.OPENAI_API_KEY = openAiCredential;
