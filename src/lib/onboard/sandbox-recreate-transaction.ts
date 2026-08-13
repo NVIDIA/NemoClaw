@@ -347,15 +347,19 @@ export function createCreatedSandboxLifecycle(
   return {
     generation,
     capture: (lifecycleRegistrationFields) => {
-      runtime.recordCreated();
+      const observed = captureCreatedSandboxLifecycleRegistration(
+        target,
+        generation,
+        lifecycleRegistrationFields,
+        observe,
+      );
+      runtime.recordCreated({
+        state: "ready",
+        liveIdentityFingerprint: observed.lifecycleLiveIdentityFingerprint,
+      });
       return selectCreatedSandboxLifecycleRegistration(
         target.sandboxName,
-        captureCreatedSandboxLifecycleRegistration(
-          target,
-          generation,
-          lifecycleRegistrationFields,
-          observe,
-        ),
+        observed,
         runtime.targetGeneration,
         runtime.registrationFields,
       );
@@ -773,7 +777,7 @@ export interface SandboxRecreateRuntime {
   advance(phase: CheckpointSandboxRecreatePhase): void;
   beginDelete(): SandboxRecreateSourcePresence;
   confirmDeleted(): void;
-  recordCreated(): void;
+  recordCreated(observation: SandboxRecreateObservation): void;
 }
 
 const NO_SANDBOX_RECREATE: SandboxRecreateRuntime = {
@@ -872,8 +876,7 @@ export function createSandboxRecreateRuntime(
       }
       advance("deleted");
     },
-    recordCreated: () => {
-      const observation = observe(sandboxName, transaction.gatewayName);
+    recordCreated: (observation) => {
       sessionStore.updateSession((current) => {
         targetLiveIdentityFingerprint = recordSandboxRecreateTargetCreated(
           current,

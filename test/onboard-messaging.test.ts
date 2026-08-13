@@ -66,7 +66,7 @@ describe("onboard messaging", () => {
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -315,9 +315,11 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.mkdirSync(customBuildDir, { recursive: true });
       fs.writeFileSync(customDockerfilePath, "FROM scratch\nARG NEMOCLAW_MESSAGING_PLAN_B64=\nARG NEMOCLAW_TOOL_DISCLOSURE=progressive\nENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}\n");
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+      fs.writeFileSync(
+        path.join(fakeBin, "openshell"),
+        '#!/usr/bin/env bash\nif [ "${1:-}" = sandbox ] && [ "${2:-}" = get ]; then printf "Sandbox:\\n\\n  Id: fixture-hermes-slack-sandbox\\n  Name: %s\\n  Phase: Ready\\n" "${!#}"; fi\nexit 0\n',
+        { mode: 0o755 },
+      );
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -501,7 +503,7 @@ const { createSandbox } = require(${onboardPath});
     const messagingPlanB64 = encodeMessagingPlanForChannels(["discord", "slack"]);
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -661,7 +663,7 @@ const { createSandbox } = require(${onboardPath});
     const messagingPlanB64 = encodeMessagingPlanForChannels(["telegram"], ["telegram"]);
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -814,7 +816,7 @@ const { createSandbox } = require(${onboardPath});
       const messagingPlanB64 = encodeMessagingPlanForChannels(["whatsapp"]);
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin);
+      writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -964,7 +966,7 @@ const { createSandbox } = require(${onboardPath});
       const messagingPlanB64 = encodeMessagingPlanForChannels(["whatsapp"], ["whatsapp"]);
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin);
+      writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -1286,7 +1288,7 @@ const { createSandbox } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -1417,7 +1419,7 @@ const { createSandbox } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
     const script = String.raw`
 const runner = require(${runnerPath});

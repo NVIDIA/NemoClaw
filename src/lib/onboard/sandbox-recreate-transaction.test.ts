@@ -25,6 +25,7 @@ import {
   beginSandboxRecreateTransaction,
   captureCreatedSandboxLifecycleRegistration,
   clearCompletedSandboxRecreateTransaction,
+  createCreatedSandboxLifecycle,
   createSandboxRecreateRuntime,
   fingerprintSandboxLiveIdentity,
   fingerprintSandboxRecreateValue,
@@ -112,6 +113,48 @@ function transactionAt(
     phase,
     startedAt: ISO,
     updatedAt: ISO,
+  };
+}
+
+function creatingLifecycleFixture() {
+  const session = createSession({ sandboxName: "alpha" });
+  beginSandboxRecreateTransaction(
+    session,
+    beginInput({ state: "ready", liveIdentityFingerprint: SOURCE_ID }),
+  );
+  let observation: SandboxRecreateObservation = {
+    state: "ready",
+    liveIdentityFingerprint: SOURCE_ID,
+  };
+  const runtime = createSandboxRecreateRuntime(
+    {
+      loadSession: () => session,
+      updateSession: (mutator) => {
+        mutator(session);
+        return session;
+      },
+    },
+    {
+      id: TX_ID,
+      targetGeneration: TARGET_GENERATION,
+      targetIntentFingerprint: TARGET_INTENT,
+    },
+    "alpha",
+    "nemoclaw-31818",
+    SOURCE_ENTRY,
+    () => observation,
+    () => undefined,
+  );
+  runtime.advance("deleting");
+  observation = { state: "missing", liveIdentityFingerprint: null };
+  runtime.confirmDeleted();
+  runtime.advance("creating");
+  return {
+    lifecycle: createCreatedSandboxLifecycle(runtime, CREATED_TARGET, () => observation),
+    session,
+    setObservation: (next: SandboxRecreateObservation) => {
+      observation = next;
+    },
   };
 }
 
@@ -344,7 +387,7 @@ describe("sandbox recreate journal", () => {
     runtime.confirmDeleted();
     runtime.advance("creating");
     observation = { state: "ready", liveIdentityFingerprint: TARGET_ID };
-    runtime.recordCreated();
+    runtime.recordCreated(observation);
 
     expect(runtime).toMatchObject({
       acceptedTarget: false,
@@ -525,7 +568,7 @@ describe("sandbox recreate journal", () => {
     expect(restart().acceptedTarget).toBe(false);
 
     observation = { state: "ready", liveIdentityFingerprint: TARGET_ID };
-    runtime.recordCreated();
+    runtime.recordCreated(observation);
     expect(() => restart()).toThrow(/registration did not commit/i);
 
     registryEntry = {
@@ -893,6 +936,50 @@ describe("journal-bound source proof", () => {
 });
 
 describe("created sandbox lifecycle registration", () => {
+  it.each([
+    ["not Ready", { state: "not_ready" as const, liveIdentityFingerprint: null }, /Ready/u],
+    [
+      "malformed",
+      { state: "ready" as const, liveIdentityFingerprint: "not-a-fingerprint" },
+      /valid live identity/u,
+    ],
+  ])("does not journal a %s replacement before validation", (_label, invalid, expected) => {
+    const fixture = creatingLifecycleFixture();
+    fixture.setObservation(invalid);
+
+    expect(() =>
+      fixture.lifecycle.capture({ lifecycleGeneration: TARGET_GENERATION }),
+    ).toThrow(expected);
+    expect(fixture.session.checkpoint?.sandboxRecreate).toMatchObject({
+      phase: "creating",
+      targetLiveIdentityFingerprint: null,
+    });
+
+    fixture.setObservation({ state: "ready", liveIdentityFingerprint: TARGET_ID });
+    expect(fixture.lifecycle.capture({ lifecycleGeneration: TARGET_GENERATION })).toEqual({
+      lifecycleGeneration: TARGET_GENERATION,
+      lifecycleLiveIdentityFingerprint: TARGET_ID,
+    });
+    expect(fixture.session.checkpoint?.sandboxRecreate).toMatchObject({
+      phase: "created",
+      targetLiveIdentityFingerprint: TARGET_ID,
+    });
+  });
+
+  it("can revalidate the journaled identity after transient identity drift", () => {
+    const fixture = creatingLifecycleFixture();
+    fixture.setObservation({ state: "ready", liveIdentityFingerprint: TARGET_ID });
+    const registration = fixture.lifecycle.capture({
+      lifecycleGeneration: TARGET_GENERATION,
+    });
+
+    fixture.setObservation({ state: "ready", liveIdentityFingerprint: FOREIGN_ID });
+    expect(() => fixture.lifecycle.revalidate(registration)).toThrow(/identity changed/u);
+
+    fixture.setObservation({ state: "ready", liveIdentityFingerprint: TARGET_ID });
+    expect(fixture.lifecycle.revalidate(registration)).toEqual(registration);
+  });
+
   it("captures the Ready identity only from the owning gateway", () => {
     const observe = vi.fn((_sandboxName: string, gatewayName: string) =>
       gatewayName === CREATED_TARGET.gatewayName
