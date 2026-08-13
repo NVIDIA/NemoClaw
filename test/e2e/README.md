@@ -249,7 +249,14 @@ npx tsx tools/e2e/workflow-plan.mts --summary --jobs hermes-e2e
 npx tsx tools/e2e/workflow-plan.mts --summary --targets ubuntu-repo-cloud-openclaw
 ```
 
-The command uses the GitHub Actions summary renderer.
+The command renders a Markdown summary to standard output.
+To publish that output in a GitHub Actions job, append it to `$GITHUB_STEP_SUMMARY`:
+
+```bash
+npx tsx tools/e2e/workflow-plan.mts --summary >> "$GITHUB_STEP_SUMMARY"
+```
+
+The workflow's `--ci-output` mode uses the same renderer for its job summary.
 The table includes the typed registry matrix, shared test matrix, three catalogue profile matrices, and retained workflow jobs.
 
 ## Inactive Windows MXC OpenClaw qualification
