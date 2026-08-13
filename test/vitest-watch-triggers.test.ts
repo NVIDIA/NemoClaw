@@ -142,6 +142,10 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/managed-image-publication-workflow.test.ts",
       "test/dcode-base-image-workflow.test.ts",
     ]);
+    expect(triggeredBy(".github/actions/build-base-image-platform/action.yaml")).toEqual([
+      "test/dcode-base-image-workflow.test.ts",
+      "test/openclaw-dependency-review.test.ts",
+    ]);
     expect(triggeredBy("scripts/checks/validate-managed-base-index.sh")).toEqual([
       "test/validate-managed-base-index.test.ts",
     ]);

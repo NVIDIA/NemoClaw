@@ -93,12 +93,18 @@ export const CREDENTIAL_SENSITIVE_BASENAMES = new Set([
  * checks.
  */
 const SNAPSHOT_CREDENTIAL_SCAN_EXCLUDED_BASENAMES = new Set([
+  ".package-lock.json",
   "package-lock.json",
   "npm-shrinkwrap.json",
   "yarn.lock",
   "pnpm-lock.yaml",
   "pnpm-lock.yml",
 ]);
+
+/** Whether a filename is a dependency lockfile. */
+export function isDependencyLockfile(filename: string): boolean {
+  return SNAPSHOT_CREDENTIAL_SCAN_EXCLUDED_BASENAMES.has(basename(filename).toLowerCase());
+}
 
 /**
  * Credential field names that MUST be stripped from config files.
@@ -455,6 +461,12 @@ export function sanitizeYamlConfigContent(rawConfig: string): string | null {
  *
  * The filename is used only to decide whether a non-JSON document is an
  * allowed YAML target. Returns null when the input cannot be sanitized.
+ *
+ * A credential-free document is returned byte for byte. Re-emitting it through
+ * `JSON.stringify` would change indentation, key spacing, and the trailing
+ * newline without redacting anything. Hermes hashes its WhatsApp bridge manifest
+ * to decide whether the installed dependencies are current, and reads that
+ * reformat as a change.
  */
 export function sanitizeConfigFileContent(configName: string, rawConfig: string): string | null {
   try {
@@ -465,7 +477,11 @@ export function sanitizeConfigFileContent(configName: string, rawConfig: string)
       const { gateway: _gateway, ...withoutGateway } = parsed;
       config = withoutGateway;
     }
-    return JSON.stringify(stripCredentials(config), null, 2);
+    const stripped = stripCredentials(config);
+    // Compare against the document as parsed, before the `gateway` section was
+    // dropped, so removing that section still counts as a change.
+    if (JSON.stringify(stripped) === JSON.stringify(parsed)) return rawConfig;
+    return JSON.stringify(stripped, null, 2);
   } catch {
     // Fall through to YAML for Hermes and other non-JSON configs.
   }
@@ -534,7 +550,7 @@ export function isSensitiveFile(filename: string): boolean {
  */
 export function shouldScanSnapshotFileForCredentials(filename: string): boolean {
   const normalizedBasename = basename(filename).toLowerCase();
-  if (SNAPSHOT_CREDENTIAL_SCAN_EXCLUDED_BASENAMES.has(normalizedBasename)) return false;
+  if (isDependencyLockfile(normalizedBasename)) return false;
   return (
     normalizedBasename === ".env" ||
     normalizedBasename.endsWith(".env") ||

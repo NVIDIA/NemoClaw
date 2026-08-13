@@ -34,8 +34,11 @@ export default class SandboxChannelsStatusCommand extends NemoClawCommand {
     }),
     timeout: Flags.integer({
       dependsOn: ["wait"],
-      description: "Readiness timeout in seconds",
-      default: 180,
+      // No parser default: oclif validates dependsOn whenever the flag has a
+      // value, so a default makes oclif reject every invocation that omits
+      // --wait (#8883). showSandboxChannelStatus applies the 180-second
+      // budget documented in docs/reference/commands.mdx.
+      description: "Readiness timeout in seconds (default: 180)",
       min: 1,
     }),
   };
