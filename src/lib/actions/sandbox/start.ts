@@ -19,10 +19,11 @@ import {
 } from "./runtime/lifecycle-runtime";
 
 function verifyGateway(sandboxName: string): Promise<void> {
-  const { connectSandbox } = require("./connect") as {
-    connectSandbox: (name: string, options?: { probeOnly?: boolean }) => Promise<void>;
-  };
-  return connectSandbox(sandboxName, { probeOnly: true });
+  const { connectSandbox } = require("./connect") as typeof import("./connect");
+  return connectSandbox(sandboxName, {
+    probeOnly: true,
+    requireLaunchReadinessPublication: false,
+  });
 }
 
 type SandboxStartupRecoveryResult = import("./connect").SandboxStartupRecoveryResult;
@@ -38,9 +39,19 @@ function restoreLockedStartupAccess(sandboxName: string): void {
   restoreLockedStateDirStartupAccess(sandboxName);
 }
 
+function waitForSandboxReady(sandboxName: string): void {
+  const { waitForSandboxReadyOrExit, SANDBOX_REPAIR_READY_TIMEOUT_SEC } =
+    require("./connect") as typeof import("./connect");
+  waitForSandboxReadyOrExit(sandboxName, {
+    defaultTimeoutSec: SANDBOX_REPAIR_READY_TIMEOUT_SEC,
+    retryCommand: "start",
+  });
+}
+
 export interface SandboxStartupStateDeps {
   agent?: SandboxEntry["agent"];
   restoreLockedStartupAccess?: (sandboxName: string) => void;
+  waitForSandboxReady?: (sandboxName: string) => void;
   restoreProcessState?: (sandboxName: string) => SandboxStartupRecoveryResult;
 }
 
@@ -51,6 +62,7 @@ export function restoreStoppedSandboxStartupState(
   if ((deps.agent ?? "openclaw") === "openclaw") {
     (deps.restoreLockedStartupAccess ?? restoreLockedStartupAccess)(sandboxName);
   }
+  (deps.waitForSandboxReady ?? waitForSandboxReady)(sandboxName);
   return (deps.restoreProcessState ?? restoreProcessState)(sandboxName);
 }
 

@@ -41,10 +41,12 @@ export interface GatewayStartFailure {
    * - `docker_unreachable`: the underlying Docker daemon (Colima on macOS,
    *   dockerd on Linux) is not responding. Retrying the openshell health
    *   poll cannot recover from this — the user must start Docker first.
+   * - `database_migration_incompatible`: the gateway database records a
+   *   migration that the installed OpenShell version does not include.
    * - `unknown`: any other failure; callers should fall through to the
    *   normal retry/health-wait behavior.
    */
-  kind: "docker_unreachable" | "unknown";
+  kind: "database_migration_incompatible" | "docker_unreachable" | "unknown";
 }
 
 export function classifyValidationFailure({
@@ -217,16 +219,18 @@ export function planSandboxCreateRecovery(
  * Classify a non-zero `openshell gateway start` result so the onboard retry
  * loop can short-circuit on unrecoverable failures.
  *
- * The only case we special-case today is "Docker daemon not reachable" — on
- * macOS this surfaces as `Socket not found: /var/run/docker.sock` (Colima
- * stopped) and on Linux as `Cannot connect to the Docker daemon at
- * unix:///var/run/docker.sock. Is the docker daemon running?`. Retrying the
- * health poll against a stopped daemon wastes ~5–15 minutes and produces an
- * unactionable error at the end; bailing out immediately with a clear
- * "start Docker" message is strictly better UX. See NemoClaw #2347.
+ * The classifier identifies failures for which callers can select a supported
+ * recovery instead of generic retry or health-wait behavior.
  */
 export function classifyGatewayStartFailure(output = ""): GatewayStartFailure {
   const text = String(output || "");
+  if (
+    /migration\s+\d+\s+was previously applied[\s\S]{0,512}\bis missing in the resolved migrations\b/i.test(
+      text,
+    )
+  ) {
+    return { kind: "database_migration_incompatible" };
+  }
   // Match both macOS (Colima / Docker Desktop) and Linux docker daemon-down
   // signatures. The openshell CLI echoes these verbatim from the underlying
   // Docker client error when the gateway controller starts.

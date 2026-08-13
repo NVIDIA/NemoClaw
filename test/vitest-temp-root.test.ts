@@ -9,7 +9,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import pluginVitestConfig from "../nemoclaw/vitest.config";
 import rootVitestConfig from "../vitest.config";
-import { setupVitestTempRoot } from "./helpers/vitest-temp-root";
+import {
+  prepareGitHubHostedRuntimeAuthority,
+  setupVitestTempRoot,
+} from "./helpers/vitest-temp-root";
 
 const TEMP_ENV_KEYS = ["TMPDIR", "TMP", "TEMP"] as const;
 const ROOT_SETUP = "test/helpers/vitest-temp-root.ts";
@@ -41,6 +44,71 @@ afterEach(() => {
 });
 
 describe("Vitest temp root", () => {
+  it("reapplies the required Linux runtime-authority ownership and mode (#8942)", () => {
+    const install = vi.fn();
+    const options = {
+      platform: "linux" as const,
+      githubActions: "true",
+      runnerEnvironment: "github-hosted",
+      uid: 1001,
+      gid: 1002,
+      install,
+    };
+
+    prepareGitHubHostedRuntimeAuthority(options);
+    prepareGitHubHostedRuntimeAuthority(options);
+
+    expect(install).toHaveBeenCalledTimes(2);
+    expect(install).toHaveBeenLastCalledWith(
+      "sudo",
+      [
+        "--non-interactive",
+        "install",
+        "-d",
+        "-m",
+        "0700",
+        "-o",
+        "1001",
+        "-g",
+        "1002",
+        "/run/user/1001",
+        "/run/user/1001/nemoclaw",
+        "/run/user/1001/nemoclaw/launch-readiness",
+      ],
+      { stdio: "inherit" },
+    );
+  });
+
+  it("does not prepare runtime authority on macOS (#8942)", () => {
+    const install = vi.fn();
+
+    prepareGitHubHostedRuntimeAuthority({
+      platform: "darwin",
+      githubActions: "true",
+      runnerEnvironment: "github-hosted",
+      uid: 1001,
+      gid: 1002,
+      install,
+    });
+
+    expect(install).not.toHaveBeenCalled();
+  });
+
+  it("recognizes the GitHub-hosted image marker exported to test processes (#8942)", () => {
+    const install = vi.fn();
+
+    prepareGitHubHostedRuntimeAuthority({
+      platform: "linux",
+      githubActions: "true",
+      runnerImageOs: "ubuntu24",
+      uid: 1001,
+      gid: 1002,
+      install,
+    });
+
+    expect(install).toHaveBeenCalledOnce();
+  });
+
   it("redirects the selected project into one private temp root", () => {
     const root = process.env.TMPDIR as string;
 

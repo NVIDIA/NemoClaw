@@ -580,6 +580,22 @@ describe("policy tier setup", () => {
     assert.deepEqual(result.appliedCalls, ["brave", "npm"]);
   });
 
+  it(
+    "keeps an explicit Personal preset list authoritative before policy mutation (#8991)",
+    async () => {
+      const explicitPresets = ["weather", "public-reference", "github"];
+      const result = await runPolicySetup({
+        tierName: "personal",
+        policyMode: "custom",
+        policyPresets: explicitPresets.join(","),
+      });
+
+      assert.deepEqual(result.applied, explicitPresets);
+      assert.deepEqual(result.appliedCalls, explicitPresets);
+      assert.deepEqual(result.syncCalls[0]?.selected, explicitPresets);
+    },
+  );
+
   it("preserves a recorded Balanced tier default during resumed reapply (#6844)", async () => {
     const result = await runPolicySetup(
       {
