@@ -152,6 +152,32 @@ describe("model-router venv disk-space gate (#8973)", () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
+  it("installs on retry after capacity recovers from an earlier refusal", () => {
+    const { provisioner, prepareModelRouterVenv, run, probeStorage, venvDir } = makeProvisioner({
+      availableBytes: 1n * GIB,
+    });
+
+    expect(() => provisioner.ensureModelRouterCommand()).toThrow(
+      /needs at least 3 GiB of free or reclaimable capacity/,
+    );
+    expect(prepareModelRouterVenv).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+
+    probeStorage.mockReturnValueOnce({
+      ok: true,
+      capacity: {
+        availableBytes: 3n * GIB,
+        path: venvDir,
+        source: "Model Router venv",
+      },
+    });
+
+    expect(provisioner.ensureModelRouterCommand()).toBe(path.join(venvDir, "bin", "model-router"));
+    expect(probeStorage).toHaveBeenCalledTimes(2);
+    expect(prepareModelRouterVenv).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
   it("continues with an advisory naming the probe failure when capacity is unreadable", () => {
     const { provisioner, prepareModelRouterVenv, logs } = makeProvisioner({ probeOk: false });
 
