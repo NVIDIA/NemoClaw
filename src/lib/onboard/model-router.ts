@@ -361,10 +361,10 @@ export async function startModelRouter(
     // validated routed credential must own that variable. An ambient or
     // legacy-staged OPENAI_API_KEY is not valid for the default NVIDIA pool
     // endpoints, and onboarding then reported only a startup timeout. A
-    // custom pool that names a non-NVIDIA api_base keeps an explicitly
-    // resolvable OPENAI_API_KEY, because that endpoint needs the operator's
-    // own key. Resolving OPENAI_API_KEY only on that path also avoids
-    // restaging a stale legacy value into process.env.
+    // A custom or unproven pool keeps an explicitly resolvable
+    // OPENAI_API_KEY because NemoClaw cannot prove that every endpoint accepts
+    // the routed NVIDIA credential. Resolving OPENAI_API_KEY only on that path
+    // also avoids restaging a stale legacy value into process.env.
     const ambientOpenAiCredential = poolTargetsOnlyNvidiaEndpoints(
       deps.readPoolConfig(poolConfigPath),
     )
@@ -502,25 +502,27 @@ function hasHealthyEndpoint(body: string | null): boolean {
 }
 
 /**
- * True when every pool endpoint targets an nvidia.com api_base, which is
- * the shipped pool shape. An unreadable or unparseable pool counts as the
- * shipped shape so the routed credential wins.
+ * True when a nonempty pool proves that every endpoint uses HTTPS on
+ * nvidia.com or one of its subdomains.
  */
-function poolTargetsOnlyNvidiaEndpoints(poolConfigText: string | null): boolean {
-  if (!poolConfigText) return true;
+export function poolTargetsOnlyNvidiaEndpoints(poolConfigText: string | null): boolean {
+  if (!poolConfigText) return false;
   try {
     const YAML = require("yaml");
     const parsed = YAML.parse(poolConfigText) as {
       models?: readonly { api_base?: unknown }[];
     };
-    const models = Array.isArray(parsed?.models) ? parsed.models : [];
+    if (!Array.isArray(parsed?.models) || parsed.models.length === 0) return false;
+    const models = parsed.models;
     return models.every((model) => {
-      if (typeof model?.api_base !== "string") return true;
-      const hostname = new URL(model.api_base).hostname;
+      if (typeof model?.api_base !== "string" || !model.api_base.trim()) return false;
+      const endpoint = new URL(model.api_base);
+      if (endpoint.protocol !== "https:") return false;
+      const hostname = endpoint.hostname.replace(/\.$/, "");
       return hostname === "nvidia.com" || hostname.endsWith(".nvidia.com");
     });
   } catch {
-    return true;
+    return false;
   }
 }
 

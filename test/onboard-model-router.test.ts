@@ -12,6 +12,7 @@ import { getSandboxInferenceConfig } from "../src/lib/inference/config";
 import {
   createProductionModelRouterCommandProvisioner,
   isManagedModelRouterCurrent,
+  poolTargetsOnlyNvidiaEndpoints,
   startModelRouter,
 } from "../src/lib/onboard/model-router";
 import {
@@ -533,6 +534,8 @@ describe("onboard Model Router setup", () => {
             unref: () => undefined,
           };
         },
+        readPoolConfig: () =>
+          'models:\n  - litellm_model: "openai/nvidia/test"\n    api_base: "https://integrate.api.nvidia.com/v1"\n',
         resolveProviderCredential: (name) =>
           ({ ROUTER_API_KEY: "router-secret", OPENAI_API_KEY: "stale-openai" })[name] ?? null,
         buildSubprocessEnv: (extra) => ({ ...extra }),
@@ -551,6 +554,34 @@ describe("onboard Model Router setup", () => {
       ROUTER_API_KEY: "router-secret",
       OPENAI_API_KEY: "router-secret",
     });
+  });
+
+  it("does not classify uncertain pool shapes as NVIDIA-only (#8962)", () => {
+    const uncertainPools = [
+      null,
+      "not: [valid",
+      "routing: {}\n",
+      "models: []\n",
+      'models:\n  - litellm_model: "openai/gpt-test"\n',
+      'models:\n  - api_base: ""\n',
+      'models:\n  - api_base: "not-a-url"\n',
+      'models:\n  - api_base: "http://integrate.api.nvidia.com/v1"\n',
+    ];
+
+    for (const pool of uncertainPools) {
+      assert.equal(poolTargetsOnlyNvidiaEndpoints(pool), false, String(pool));
+    }
+  });
+
+  it("classifies the shipped NVIDIA pool as NVIDIA-only (#8962)", () => {
+    const shippedPool = [
+      "models:",
+      "  - name: nemotron",
+      '    api_base: "https://integrate.api.nvidia.com/v1"',
+      "",
+    ].join("\n");
+
+    assert.equal(poolTargetsOnlyNvidiaEndpoints(shippedPool), true);
   });
 
   it("appends the last router health error and log path to the startup timeout error (#8962)", async () => {
@@ -761,54 +792,63 @@ describe("onboard Model Router setup", () => {
     );
   });
 
-  it("keeps an ambient OPENAI_API_KEY when the pool names a non-NVIDIA endpoint (#8962)", async () => {
+  it("keeps an ambient OPENAI_API_KEY for non-NVIDIA and unproven pools (#8962)", async () => {
     const pid = 12_345;
     let spawnedEnv: Record<string, string> | null = null;
-    let healthProbe = 0;
-    const customPool = [
-      "models:",
-      "  - name: custom-openai",
-      '    litellm_model: "openai/gpt-test"',
-      '    api_base: "https://api.openai.com/v1"',
-      "",
-    ].join("\n");
+    const pools = [
+      [
+        "models:",
+        "  - name: custom-openai",
+        '    litellm_model: "openai/gpt-test"',
+        '    api_base: "https://api.openai.com/v1"',
+        "",
+      ].join("\n"),
+      'models:\n  - litellm_model: "openai/gpt-test"\n',
+    ];
 
-    await startModelRouter(
-      { port: 45_695, pool_config_path: "router/test-pool.yaml", credential_env: "ROUTER_API_KEY" },
-      {
-        rootDir: "/test/repo",
-        homeDir: "/test/home",
-        ensureModelRouterCommand: () => "/test/model-router",
-        mkdirSync: () => undefined,
-        runProxyConfig: () => ({ status: 0 }),
-        spawnProxy: (_command, _args, options) => {
-          spawnedEnv = options.env;
-          return {
-            pid,
-            onError: () => undefined,
-            onExit: () => undefined,
-            unref: () => undefined,
-          };
+    for (const pool of pools) {
+      let healthProbe = 0;
+      await startModelRouter(
+        {
+          port: 45_695,
+          pool_config_path: "router/test-pool.yaml",
+          credential_env: "ROUTER_API_KEY",
         },
-        readPoolConfig: () => customPool,
-        resolveProviderCredential: (name) =>
-          ({ ROUTER_API_KEY: "router-secret", OPENAI_API_KEY: "operator-openai" })[name] ?? null,
-        buildSubprocessEnv: (extra) => ({ ...extra }),
-        isRouterHealthy: async () => {
-          healthProbe += 1;
-          return healthProbe > 1;
+        {
+          rootDir: "/test/repo",
+          homeDir: "/test/home",
+          ensureModelRouterCommand: () => "/test/model-router",
+          mkdirSync: () => undefined,
+          runProxyConfig: () => ({ status: 0 }),
+          spawnProxy: (_command, _args, options) => {
+            spawnedEnv = options.env;
+            return {
+              pid,
+              onError: () => undefined,
+              onExit: () => undefined,
+              unref: () => undefined,
+            };
+          },
+          readPoolConfig: () => pool,
+          resolveProviderCredential: (name) =>
+            ({ ROUTER_API_KEY: "router-secret", OPENAI_API_KEY: "operator-openai" })[name] ?? null,
+          buildSubprocessEnv: (extra) => ({ ...extra }),
+          isRouterHealthy: async () => {
+            healthProbe += 1;
+            return healthProbe > 1;
+          },
+          sleep: async () => undefined,
+          isProcessAlive: () => true,
+          terminateProcess: () => undefined,
+          getProviderKey: () => "",
         },
-        sleep: async () => undefined,
-        isProcessAlive: () => true,
-        terminateProcess: () => undefined,
-        getProviderKey: () => "",
-      },
-    );
+      );
 
-    assert.deepEqual(spawnedEnv, {
-      ROUTER_API_KEY: "router-secret",
-      OPENAI_API_KEY: "operator-openai",
-    });
+      assert.deepEqual(spawnedEnv, {
+        ROUTER_API_KEY: "router-secret",
+        OPENAI_API_KEY: "operator-openai",
+      });
+    }
   });
 
   it("stops when the 10-minute Model Router startup deadline expires", async () => {
