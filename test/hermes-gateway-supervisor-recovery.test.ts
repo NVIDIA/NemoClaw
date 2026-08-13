@@ -27,7 +27,7 @@ function runHermesHealthyGatewayRecovery(integrityStatus: 0 | 1) {
     'gateway_control_pid_is_live() { trace "pid-live:$1"; return 0; }',
     "hermes_gateway_healthy() { trace gateway-healthy; return 0; }",
     "validate_running_hermes_boundary() { trace boundary-validation; return 0; }",
-    `verify_hermes_config_integrity() { trace strict-integrity; return ${integrityStatus}; }`,
+    `verify_hermes_config_integrity() { trace strict-integrity; return ${integrityStatus}; }\nprepare_hermes_lazy_dependencies() { return 0; }`,
     "hermes_auxiliaries_need_recovery() { trace auxiliaries-needed; return 0; }",
     "seal_hermes_restart_inputs() { trace seal-inputs; return 0; }",
     "unseal_hermes_restart_inputs() { trace unseal-inputs; return 0; }",

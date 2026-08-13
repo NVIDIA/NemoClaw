@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -32,6 +33,22 @@ const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3
 const expectedIpAddressVersion = "10.3.1";
 const expectedIpAddressTarball = "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
+const reviewedAuditConfig = JSON.parse(
+  fs.readFileSync(path.join(repoRoot, "ci", "reviewed-npm-audit.json"), "utf8"),
+) as {
+  lockedGraphs: Array<{
+    directory: string;
+    id: string;
+    integrity: string;
+    lockSha256: string;
+    packageSpec: string;
+    tarballUrl: string;
+  }>;
+};
+const reviewedAuditDriver = fs.readFileSync(
+  path.join(repoRoot, "scripts", "audit-reviewed-npm-graph.mts"),
+  "utf8",
+);
 
 function extractIntegrityGate(contents: string): string {
   const startMarker = 'MCPORTER_EXPECTED_INTEGRITY=""';
@@ -197,10 +214,28 @@ describe("mcporter image supply-chain controls", () => {
       "node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high",
     );
     expect(contents).not.toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);
-    expect(contents).toContain(`${runtimePrefix} audit signatures`);
+    expect(contents).not.toContain(`${runtimePrefix} audit signatures`);
     expect(flattenedContents).toContain(
       `${runtimePrefix} ls --omit=dev --all @hono/node-server @modelcontextprotocol/sdk hono mcporter`,
     );
     expect(contents).toContain("StreamableHTTPServerTransport");
+  });
+
+  it("verifies the exact committed dependency graph signatures in trusted CI (#8925)", () => {
+    const graph = reviewedAuditConfig.lockedGraphs.find(
+      (candidate) => candidate.id === "mcporter-runtime",
+    );
+    expect(graph).toMatchObject({
+      directory: "agents/openclaw/mcporter-runtime",
+      integrity: expectedIntegrity,
+      packageSpec: `mcporter@${expectedVersion}`,
+      tarballUrl: expectedTarball,
+    });
+
+    const lockfile = fs.readFileSync(path.join(runtimeDirectory, "package-lock.json"));
+    expect(createHash("sha256").update(lockfile).digest("hex")).toBe(graph?.lockSha256);
+    expect(reviewedAuditDriver).toContain(
+      'run("npm", ["audit", "signatures", "--omit=dev"], directory);',
+    );
   });
 });
