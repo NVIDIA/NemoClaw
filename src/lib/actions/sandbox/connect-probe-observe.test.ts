@@ -148,7 +148,7 @@ describe("connectSandbox probe-only observe mode", () => {
       );
     expect(listInvocations.length).toBeGreaterThan(0);
     // The container must be started before recovery starts polling for readiness,
-    // otherwise the wait loop observes a dead container until it times out.
+    // otherwise the wait loop observes a stopped container until it times out.
     expect(harness.dockerStartSpy.mock.invocationCallOrder[0]!).toBeLessThan(
       listInvocations[0]!.order,
     );
