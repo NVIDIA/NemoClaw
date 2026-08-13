@@ -631,6 +631,51 @@ describe("onboard Model Router setup", () => {
     assert.equal(terminateProcess.mock.calls.length, 0);
   });
 
+  it("redacts a credential-shaped health error from the startup error (#8962)", async () => {
+    const pid = 12_345;
+    const secret = "nvapi-HEALTHSECRETHEALTHSECRETHEALTHSECRETHEALTH";
+    const credentialBody = JSON.stringify({
+      healthy_endpoints: [],
+      unhealthy_endpoints: [{ error: `AuthenticationError: api_key ${secret} invalid` }],
+    });
+
+    await assert.rejects(
+      startModelRouter(
+        { port: 45_697, pool_config_path: "router/test-pool.yaml" },
+        {
+          rootDir: "/test/repo",
+          homeDir: "/test/home",
+          ensureModelRouterCommand: () => "/test/model-router",
+          mkdirSync: () => undefined,
+          runProxyConfig: () => ({ status: 0 }),
+          spawnProxy: () => ({
+            pid,
+            onError: () => undefined,
+            onExit: () => undefined,
+            unref: () => undefined,
+          }),
+          resolveProviderCredential: () => null,
+          buildSubprocessEnv: () => ({}),
+          isRouterHealthy: async () => false,
+          getRouterHealthSnapshot: async () => ({ healthy: false, body: credentialBody }),
+          sleep: async () => undefined,
+          isProcessAlive: () => true,
+          terminateProcess: () => undefined,
+          getProviderKey: () => "",
+        },
+      ),
+      (error: Error) => {
+        assert.match(
+          error.message,
+          /last health error: AuthenticationError: api_key <REDACTED> invalid/,
+        );
+        assert.doesNotMatch(error.message, /HEALTHSECRET/);
+        assert.doesNotMatch(error.message, /nvapi-HEAL/);
+        return true;
+      },
+    );
+  });
+
   it("still fails when the final snapshot is 2xx with zero healthy endpoints (#8962)", async () => {
     const pid = 12_345;
     const terminateProcess = vi.fn();
