@@ -12,6 +12,12 @@ content:
 Choose a provider based on where the model runs, which API it exposes, and which credential you can supply.
 NemoClaw validates the provider and model before it creates the sandbox.
 
+<Warning>
+On N1x, the Deferred managed-vLLM preview is the only admitted inference route.
+Hosted providers, compatible endpoints, Model Router, Ollama, existing vLLM or llama.cpp servers, managed llama.cpp, fixed vLLM profiles, and NVIDIA NIM are unavailable.
+Accept the N1x Express prompt or set `NEMOCLAW_PROVIDER=install-vllm` to provide the required explicit preview intent.
+</Warning>
+
 ## Provider Support
 
 Use this status table to distinguish validated provider integrations from adapters whose behavior depends on the selected compatible implementation.
