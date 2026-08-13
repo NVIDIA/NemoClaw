@@ -56,9 +56,48 @@ describe("getRouterHealthSnapshot (#8962)", () => {
     );
   });
 
-  it("reports unhealthy with no body when nothing listens on the port", async () => {
-    const snapshot = await getRouterHealthSnapshot(1);
-    expect(snapshot).toEqual({ healthy: false, body: null });
+  it("reports unhealthy with no body when the connection is refused", async () => {
+    const server = http.createServer();
+    server.on("connection", (socket) => socket.destroy());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const snapshot = await getRouterHealthSnapshot(port);
+      expect(snapshot).toEqual({ healthy: false, body: null });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("settles at the wall-clock deadline with the partial body of a trickling response", async () => {
+    await withHealthServer(
+      (_req, res) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.write('{"healthy_endpoints":[],"unhealthy_endpoints":[{"error":"partial');
+        // Never end the response; the wall-clock deadline must settle it.
+      },
+      async (port) => {
+        const snapshot = await getRouterHealthSnapshot(port, 300);
+        expect(snapshot.healthy).toBe(true);
+        expect(snapshot.body).toContain('"error":"partial');
+      },
+    );
+  });
+
+  it("settles at the capture cap with the truncated body prefix", async () => {
+    const oversized = `{"unhealthy_endpoints":[{"error":"big"}],"pad":"${"x".repeat(70 * 1024)}"}`;
+    await withHealthServer(
+      (_req, res) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(oversized);
+      },
+      async (port) => {
+        const snapshot = await getRouterHealthSnapshot(port);
+        expect(snapshot.healthy).toBe(true);
+        expect(snapshot.body?.length).toBe(64 * 1024);
+        expect(snapshot.body).toContain('"error":"big"');
+      },
+    );
   });
 });
 
