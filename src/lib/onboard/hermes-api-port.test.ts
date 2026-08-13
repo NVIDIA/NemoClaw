@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createHermesApiPortReservationScope,
   findAvailableHermesApiPort,
   HERMES_API_PORT_ENV,
   readHermesApiPort,
@@ -118,6 +119,42 @@ describe("reserveCreateSandboxHermesApiPort", () => {
       }),
     ).rejects.toThrow(/sandbox preparation failed/);
     expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("rebinds an owned forward after sandbox deletion", async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const scope = createHermesApiPortReservationScope();
+    const input = {
+      agentName: "hermes",
+      sandboxName: "beta",
+      env,
+      getSandbox: () => ({ hermesApiPort: 8643 }),
+      captureForwardList: () => forwardList(["beta 127.0.0.1 8643 101 running"]),
+      reservePort: async (port: number) => ({ port, release: vi.fn(async () => undefined) }),
+      warn: vi.fn(),
+    };
+
+    await scope.selectAndReserve(input);
+    expect(scope.effectivePort).toBe(8643);
+    expect(scope.current).toBeNull();
+
+    await scope.rebindAfterOwnedForwardDelete(input);
+    expect(scope.current?.port).toBe(8643);
+    await scope.release();
+  });
+
+  it("releases only before the matching Hermes API forward", async () => {
+    const release = vi.fn(async () => undefined);
+    const scope = createHermesApiPortReservationScope();
+    scope.current = { port: 8643, release };
+
+    await scope.releaseBeforeForward("hermes", 18789);
+    await scope.releaseBeforeForward("openclaw", 8643);
+    expect(release).not.toHaveBeenCalled();
+
+    await scope.releaseBeforeForward("hermes", 8643);
+    expect(release).toHaveBeenCalledOnce();
+    expect(scope.current).toBeNull();
   });
 });
 

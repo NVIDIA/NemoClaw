@@ -21,8 +21,22 @@ import {
 
 export const HERMES_API_PORT_ENV = "NEMOCLAW_HERMES_API_PORT";
 
+export interface HermesApiPortReservationInput {
+  agentName?: string | null;
+  sandboxName: string;
+  env: NodeJS.ProcessEnv;
+  getSandbox(name: string): { hermesApiPort?: number | null } | null | undefined;
+  captureForwardList(): string | null;
+  reservePort?(port: number): Promise<DashboardPortReservation>;
+  warn(message: string): void;
+}
+
 export interface HermesApiPortReservationScope {
   current: DashboardPortReservation | null;
+  effectivePort: number | null;
+  selectAndReserve(input: HermesApiPortReservationInput): Promise<void>;
+  rebindAfterOwnedForwardDelete(input: HermesApiPortReservationInput): Promise<void>;
+  releaseBeforeForward(agentName: string, port: number): Promise<void>;
   release(): Promise<void>;
 }
 
@@ -160,6 +174,28 @@ export async function reserveCreateSandboxHermesApiPort(options: {
 export function createHermesApiPortReservationScope(): HermesApiPortReservationScope {
   return {
     current: null,
+    effectivePort: null,
+    async selectAndReserve(input) {
+      if (input.agentName !== "hermes") return;
+      const selection = await reserveCreateSandboxHermesApiPort({
+        sandboxName: input.sandboxName,
+        env: input.env,
+        getSandbox: input.getSandbox,
+        allowRegisteredOverride: true,
+        forwardListOutput: input.captureForwardList(),
+        reservePort: input.reservePort,
+        warn: input.warn,
+      });
+      this.effectivePort = selection.effectivePort;
+      this.current = selection.reservation;
+    },
+    async rebindAfterOwnedForwardDelete(input) {
+      if (input.agentName !== "hermes" || this.current !== null) return;
+      await this.selectAndReserve({ ...input, captureForwardList: () => "" });
+    },
+    async releaseBeforeForward(agentName, port) {
+      if (agentName === "hermes" && this.current?.port === port) await this.release();
+    },
     async release() {
       const reservation = this.current;
       this.current = null;
