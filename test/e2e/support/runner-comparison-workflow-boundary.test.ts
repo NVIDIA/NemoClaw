@@ -121,12 +121,12 @@ describe("runner comparison E2E workflow boundary (#7140)", () => {
 
   it("rejects runner comparison consumers outside the eleven comparison jobs", () => {
     const workflow = loadWorkflow();
-    workflow.jobs["shields-config"]!.steps.push(
+    workflow.jobs["gateway-guard-recovery"]!.steps.push(
       structuredClone(telemetrySteps(workflow, "common-egress-agent")[0]!),
     );
 
     expect(validateRunnerComparisonWorkflow(workflow)).toContain(
-      "shields-config must not collect runner comparison telemetry",
+      "gateway-guard-recovery must not collect runner comparison telemetry",
     );
   });
 

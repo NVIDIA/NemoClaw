@@ -9,9 +9,10 @@ description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw mai
 # Run Maintainer E2E
 
 Use `.github/workflows/e2e.yaml` from trusted `main`.
-Every push to `main` selects the default workflow E2E jobs.
+Each push to `main` selects catalogue targets and retained workflow jobs that own changed files.
 Push runs skip `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification` because push events cannot set the required workflow dispatch flags.
-A successful push run publishes the same `Release qualification` check as the full `workflow_dispatch` mode described below.
+Push runs publish `Relevant E2E` and do not publish `Release qualification`.
+Only the full `workflow_dispatch` mode described below publishes `Release qualification`.
 Do not substitute local `npm run test:live-e2e` unless the maintainer explicitly requests local execution.
 
 ## Manual PR E2E
@@ -38,7 +39,7 @@ After a failure, inspect the artifacts and remove resources that target cleanup 
 - `NVIDIA_INFERENCE_API_KEY` is exported into the Brev guest for the full E2E process. Code in the baked candidate checkout can read and use it.
 
 These credentials remain valid until they expire or an administrator revokes them in their issuing services. If cleanup fails, remove the recorded Brev workspace. Rotate or revoke each credential to remove later access.
-This Brev credential boundary applies to trusted `main` pushes and Launchable or full manual runs. It does not apply to manual PR runs, which keep `include_staging_brev_launchable=false`.
+This Brev credential boundary applies only to trusted Launchable or full manual dispatches against `main`. It does not apply to `main` pushes or manual PR runs.
 
 For `managed-image-protected-runtime`, the workflow supplies the long-lived `NVIDIA_API_KEY` repository secret only to the trusted qualification step. Trusted host code uses it for NGC login and passes it as `NGC_API_KEY` and `NIM_NGC_API_KEY` to the temporary NIM container. Candidate managed sandboxes receive generated local route tokens instead of this key. The live fixture attempts to stop and remove `nemoclaw-managed-image-nim-e2e`, but Docker stop or removal errors do not fail the test. A surviving container can retain the API key until runner teardown. The final workflow step removes the job's isolated Docker credential directory and fails if that removal does not complete. The workflow does not revoke the NVIDIA API key. Rotate or revoke it in the issuing NVIDIA service to remove later access.
 
@@ -335,7 +336,8 @@ If the release candidate SHA changes, discard the earlier full run and dispatch 
 No release-note-only delta exception is currently defined.
 
 When `nemoclaw-maintainer-cut-release-tag` invokes this skill, return the exact-SHA workflow and `Release qualification` job URLs.
-The stable check is the pre-tag E2E evidence; do not build a second status ledger from artifacts.
+The stable check is provisional pre-tag E2E evidence until `scripts/release-cut-tag.sh` verifies the canonical GitHub job at the planned commit.
+Do not build a second status ledger from artifacts.
 Do not ask for the release confirmation phrase in this skill.
 
 ## Access Failures

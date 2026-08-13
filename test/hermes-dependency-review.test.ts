@@ -12,6 +12,7 @@ const dockerfileBase = fs.readFileSync(
   path.join(root, "agents", "hermes", "Dockerfile.base"),
   "utf8",
 );
+const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
 const config = fs.readFileSync(
   path.join(root, "agents", "hermes", "config", "managed-policy.ts"),
   "utf8",
@@ -144,12 +145,42 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(dockerfileBase).toContain(
       "COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch",
     );
+    expect(dockerfile).toContain(
+      "COPY agents/hermes/security-dependencies.patch /scripts/hermes-security-dependencies.patch",
+    );
+    expect(dockerfile).toContain("/scripts/hermes-security-dependencies.patch");
     expect(dockerfileBase).toContain(
       "git -C /opt/hermes apply --check /tmp/hermes-security-dependencies.patch",
+    );
+    expect(dockerfile).toContain("--include=hermes_cli/memory_setup.py");
+    expect(dockerfile).toContain("--include=plugins/memory/hindsight/plugin.yaml");
+    expect(dockerfile).toContain(
+      "grep -Fq 'ensure(\"memory.hindsight\", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py",
+    );
+    expect(dockerfile).toContain(
+      "grep -Fqx '  - \"hindsight-client==0.6.1\"' /opt/hermes/plugins/memory/hindsight/plugin.yaml",
+    );
+    expect(dockerfile).toContain(
+      "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)",
+    );
+    expect(dockerfile).toContain("state-dir-guard.py lock");
+    expect(dockerfile).toContain("--reuid=gateway --regid=gateway --init-groups");
+    expect(dockerfile).toContain("gateway can modify locked Hermes lazy packages");
+    expect(dockerfile).toContain("sandbox can modify locked Hermes lazy packages");
+    expect(dockerfile).toContain(
+      `test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750"`,
+    );
+    expect(dockerfile).toContain(
+      `test "$(stat -c '%U:%G %a' /sandbox/.hermes)" = "sandbox:sandbox 3770"`,
     );
     expect(dockerfileBase).toContain("uv pip check --python /opt/hermes/.venv/bin/python");
     expect(arg("NODE_VERSION")).toBe("24.18.1");
     expect(arg("UV_VERSION")).toBe("0.11.33");
+    expect(securityDependenciesPatch).toContain('hindsight = ["hindsight-client==0.6.1"]');
+    expect(securityDependenciesPatch).not.toContain("hindsight-client==0.8.");
+    expect(securityDependenciesPatch).toContain('ensure("memory.hindsight", prompt=False)');
+    expect(securityDependenciesPatch).toContain('-  - "hindsight-client>=0.6.1"');
+    expect(securityDependenciesPatch).toContain('+  - "hindsight-client==0.6.1"');
     for (const selection of [
       '"aiohttp==3.14.3"',
       '"cryptography==50.0.0"',

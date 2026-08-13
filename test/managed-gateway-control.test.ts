@@ -505,7 +505,11 @@ with tempfile.TemporaryDirectory() as root:
         try:
             control._validate_runtime_environment(
                 sys.argv[2],
-                {"LD_PRELOAD": "/tmp/attacker.so", "SAFE": "1"},
+                {
+                    "LD_PRELOAD": "/tmp/attacker.so",
+                    "SAFE": "1",
+                    "HERMES_LAZY_INSTALL_TARGET": "/sandbox/.hermes/lazy-packages",
+                },
             )
             runtime_validation = "in-process"
         finally:
@@ -1295,6 +1299,10 @@ describe("managed gateway root control", () => {
     const result = spawnSync("python3", ["-c", PROCESS_HARNESS, HELPER, BOUNDARY_VALIDATOR], {
       encoding: "utf-8",
       timeout: 10_000,
+      env: {
+        ...process.env,
+        HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
+      },
     });
 
     expect(result.status, result.stderr).toBe(0);

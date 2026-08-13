@@ -84,6 +84,18 @@ describe("startGatewayWithOptions docker-unreachable abort (#2347)", () => {
       expect(joined).not.toContain("colima start");
       expect(joined).not.toContain("systemctl");
     });
+
+    it("prints the rootless-Podman recovery hint when portable=true (#8873)", () => {
+      const printed: string[] = [];
+      printDockerDaemonRecovery((message = "") => printed.push(message), "linux", true);
+      const joined = printed.join("\n");
+      expect(joined).toContain("rootless Podman API service is not reachable");
+      expect(joined).toContain("Start Podman");
+      expect(joined).toContain("nemoclaw onboard --experimental-profile portable");
+      expect(joined).not.toContain("sudo systemctl start docker");
+      expect(joined).not.toContain("colima start");
+      expect(joined).not.toContain("--resume");
+    });
   });
 
   // ── Layer 1: handleFinalGatewayStartFailure dockerUnreachable branch ─────

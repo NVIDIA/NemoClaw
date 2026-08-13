@@ -27,13 +27,13 @@ import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import type { ToolDisclosure } from "../../tool-disclosure";
+import { probeSandboxInferenceInvocation } from "./inference-invocation-probe";
 import {
   DCODE_AGENT_NAME,
   type ResolvedDcodeRebuildTarget,
   resolveDcodeRebuildTarget,
 } from "./rebuild-dcode-target";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
-import { preflightRebuildInferenceRoute } from "./rebuild-inference-preflight";
 import {
   disposePreparedDcodeRebuildImage,
   type PreparedDcodeRebuildImage,
@@ -212,7 +212,7 @@ function requireInferenceRoute(
   target: ResolvedDcodeRebuildTarget,
   bail: DcodeRebuildPreflightBail,
 ): void {
-  const result = preflightRebuildInferenceRoute({ sandboxName, ...target });
+  const result = probeSandboxInferenceInvocation({ sandboxName, ...target });
   if (!result.ok) {
     fail(
       `recorded inference credentials or route were rejected: ${result.detail}`,
