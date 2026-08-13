@@ -202,21 +202,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects channels stop/start workflow-boundary drift for secret and artifact handling",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects credential-backed provider smokes in the PR-safe inference-routing job",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects free-standing E2E artifact uploads from raw temp paths",
-      "category": "security"
-    },
-    {
       "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
       "test": "keeps every candidate on standard runners when $name (#7145)",
       "category": "security"
@@ -234,11 +219,6 @@
     {
       "file": "test/e2e/support/podman-cpu-proof-workflow.test.ts",
       "test": "runs as a credential-free exact-head PR workflow",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/trusted-hermes-swap-workflow-boundary.test.ts",
-      "test": "keeps the fixed privileged program before candidate checkout in every protected job (#7145)",
       "category": "security"
     },
     {

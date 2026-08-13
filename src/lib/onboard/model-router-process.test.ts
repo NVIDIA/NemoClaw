@@ -1,9 +1,105 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as http from "node:http";
+import type { AddressInfo } from "node:net";
+
 import { describe, expect, it, vi } from "vitest";
 
-import { findModelRouterPidForPort, stopModelRouterProcess } from "./model-router-process";
+import {
+  findModelRouterPidForPort,
+  getRouterHealthSnapshot,
+  stopModelRouterProcess,
+} from "./model-router-process";
+
+async function withHealthServer(
+  handler: http.RequestListener,
+  run: (port: number) => Promise<void>,
+): Promise<void> {
+  const server = http.createServer(handler);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    await run((server.address() as AddressInfo).port);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+describe("getRouterHealthSnapshot (#8962)", () => {
+  it("captures the /health body alongside a 2xx status", async () => {
+    const body = JSON.stringify({
+      healthy_endpoints: [],
+      unhealthy_endpoints: [{ error: "AuthenticationError: bad key" }],
+    });
+    await withHealthServer(
+      (_req, res) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(body);
+      },
+      async (port) => {
+        const snapshot = await getRouterHealthSnapshot(port);
+        expect(snapshot).toEqual({ healthy: true, body });
+      },
+    );
+  });
+
+  it("reports unhealthy with the body for a non-2xx response", async () => {
+    await withHealthServer(
+      (_req, res) => {
+        res.writeHead(503, { "content-type": "text/plain" });
+        res.end("router warming up");
+      },
+      async (port) => {
+        const snapshot = await getRouterHealthSnapshot(port);
+        expect(snapshot).toEqual({ healthy: false, body: "router warming up" });
+      },
+    );
+  });
+
+  it("reports unhealthy with no body when the connection is reset", async () => {
+    const server = http.createServer();
+    server.on("connection", (socket) => socket.destroy());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const snapshot = await getRouterHealthSnapshot(port);
+      expect(snapshot).toEqual({ healthy: false, body: null });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("settles at the wall-clock deadline with the partial body of a trickling response", async () => {
+    await withHealthServer(
+      (_req, res) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.write('{"healthy_endpoints":[],"unhealthy_endpoints":[{"error":"partial');
+        // Never end the response; the wall-clock deadline must settle it.
+      },
+      async (port) => {
+        const snapshot = await getRouterHealthSnapshot(port, 300);
+        expect(snapshot.healthy).toBe(true);
+        expect(snapshot.body).toContain('"error":"partial');
+      },
+    );
+  });
+
+  it("settles at the capture cap with the truncated body prefix", async () => {
+    const oversized = `{"unhealthy_endpoints":[{"error":"big"}],"pad":"${"x".repeat(70 * 1024)}"}`;
+    await withHealthServer(
+      (_req, res) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(oversized);
+      },
+      async (port) => {
+        const snapshot = await getRouterHealthSnapshot(port);
+        expect(snapshot.healthy).toBe(true);
+        expect(snapshot.body?.length).toBe(64 * 1024);
+        expect(snapshot.body).toContain('"error":"big"');
+      },
+    );
+  });
+});
 
 const ROUTER_ARGS = ["/opt/model-router", "proxy", "--port", "4000"];
 

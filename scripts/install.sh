@@ -505,7 +505,7 @@ resolve_hermes_api_port() {
 }
 
 restore_onboard_forward_after_post_checks() {
-  local sandbox_name agent_name agent_display port openshell_bin openshell_dir attempt selected_state_dir state_dir pid_file watcher_script watcher_pid
+  local sandbox_name agent_name agent_display port openshell_bin openshell_dir attempt selected_state_dir state_dir pid_file watcher_script watcher_pid start_diagnostic diagnostic_file
   sandbox_name="$(resolve_default_sandbox_name)"
   agent_name="$(resolve_onboarded_agent)"
   agent_display="$(agent_display_name "$agent_name")"
@@ -557,6 +557,37 @@ restore_onboard_forward_after_post_checks() {
     rm -f "$pid_file"
   fi
 
+  redact_forward_start_diagnostic() {
+    local redactor
+    redactor="$(resolve_repo_root)/dist/lib/security/redact.js"
+    if command_exists node && [[ -f "$redactor" ]] \
+      && node -e '
+        const fs = require("fs");
+        const { redactFull } = require(process.argv[1]);
+        process.stdout.write(redactFull(fs.readFileSync(0, "utf8")));
+      ' "$redactor" 2>/dev/null; then
+      return 0
+    fi
+    printf "<REDACTED>"
+  }
+
+  sanitize_forward_start_diagnostic() {
+    if command_exists node && node -e '
+      const fs = require("fs");
+      const encoded = fs.readFileSync(0).toString("latin1")
+        .replace(/\x1B\][\s\S]*?(?:\x07|\x1B\\|$)/g, "")
+        .replace(/\x9D[\s\S]*?(?:\x07|\x1B\\|\x9C|$)/g, "")
+        .replace(/(?:\x1B\[|\x9B)[0-?]*[ -/]*[@-~]/g, "")
+        .replace(/\x1B[@-_]/g, "");
+      const diagnostic = Buffer.from(encoded, "latin1").toString("utf8")
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ");
+      process.stdout.write(diagnostic);
+    ' 2>/dev/null; then
+      return 0
+    fi
+    printf "<REDACTED>"
+  }
+
   stop_agent_forward_if_owned() {
     local forward_list owner status
     "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 && return 0
@@ -578,12 +609,36 @@ restore_onboard_forward_after_post_checks() {
     fi
   }
 
+  start_diagnostic=""
+  diagnostic_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-forward-start-XXXXXX" 2>/dev/null)" \
+    || diagnostic_file=""
+
   for attempt in 1 2 3; do
     stop_agent_forward_if_owned
     if [ "$attempt" -gt 1 ]; then
       sleep 2
     fi
-    "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 || true
+    if [[ -n "$diagnostic_file" ]]; then
+      "$openshell_bin" forward start --background "$port" "$sandbox_name" \
+        >"$diagnostic_file" 2>&1 || true
+      start_diagnostic="$(sanitize_forward_start_diagnostic <"$diagnostic_file" | awk '
+        {
+          gsub(/[[:space:]]+/, " ")
+          sub(/^ /, "")
+          sub(/ $/, "")
+          if ($0 != "") joined = (joined == "" ? $0 : joined "; " $0)
+        }
+        END { printf "%s", joined }
+      ' 2>/dev/null || true)"
+      start_diagnostic="$(
+        printf "%s" "$start_diagnostic" | redact_forward_start_diagnostic
+      )"
+      if [[ "${#start_diagnostic}" -gt 300 ]]; then
+        start_diagnostic="${start_diagnostic:0:300} [truncated]"
+      fi
+    else
+      "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 || true
+    fi
     watcher_pid=""
     if [[ "${NEMOCLAW_SKIP_FORWARD_WATCHER:-}" != "1" ]] && command_exists node; then
       watcher_script="${pid_file}.js"
@@ -598,10 +653,27 @@ function healthy() {
     stdio: "ignore",
   }).status === 0;
 }
+function listedStatus() {
+  const listed = spawnSync(openshellBin, ["forward", "list"], { encoding: "utf-8" });
+  if (listed.status !== 0 || typeof listed.stdout !== "string") return null;
+  for (const line of listed.stdout.split("\n")) {
+    const columns = line.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "").trim().split(/\s+/);
+    if (columns[0] === sandboxName && columns[2] === port) {
+      return (columns[4] || "").toLowerCase();
+    }
+  }
+  return "";
+}
 function tick() {
   if (healthy()) return;
-  run(["forward", "stop", port, sandboxName]);
-  run(["forward", "start", "--background", port, sandboxName]);
+  const status = listedStatus();
+  if (status === null) return;
+  if (status === "dead") {
+    run(["forward", "stop", port, sandboxName]);
+    run(["forward", "start", "--background", port, sandboxName]);
+    return;
+  }
+  if (status === "") run(["forward", "start", "--background", port, sandboxName]);
 }
 tick();
 setInterval(tick, 10_000);
@@ -622,10 +694,12 @@ NODE
     sleep 4
     if command_exists curl \
       && curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+      [[ -n "$diagnostic_file" ]] && rm -f "$diagnostic_file"
       return 0
     fi
     watcher_pid="$(cat "$pid_file" 2>/dev/null || true)"
     if ! command_exists curl && [[ -n "$watcher_pid" ]] && kill -0 "$watcher_pid" >/dev/null 2>&1; then
+      [[ -n "$diagnostic_file" ]] && rm -f "$diagnostic_file"
       return 0
     fi
     if [[ -n "$watcher_pid" ]]; then
@@ -633,8 +707,12 @@ NODE
     fi
     rm -f "$pid_file"
   done
+  [[ -n "$diagnostic_file" ]] && rm -f "$diagnostic_file"
 
   warn "Could not restore ${agent_display} host forward on port ${port}."
+  if [[ -n "$start_diagnostic" ]]; then
+    warn "OpenShell reported: ${start_diagnostic}"
+  fi
   warn "Run: openshell forward start --background ${port} ${sandbox_name}"
   return 1
 }
@@ -3390,6 +3468,7 @@ repair_installer_nvidia_cdi_spec() {
 run_installer_host_preflight() {
   local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/preflight.js"
   local gateway_management_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/gateway-management.js"
+  local portable_profile_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/experimental/portable-profile.js"
   local host_readiness_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/host.js"
   local onboard_admission_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/onboard-admission.js"
   if ! command_exists node \
@@ -3410,6 +3489,16 @@ run_installer_host_preflight() {
       const hostReadinessPath = process.argv[2];
       const onboardAdmissionPath = process.argv[3];
       const gatewayManagementPath = process.argv[4];
+      const portableProfilePath = process.argv[5];
+      let explicitlySelectedPortableProfile = false;
+      try {
+        const portableProfile = require(portableProfilePath);
+        if (typeof portableProfile.isPortableExperimentalProfile === "function") {
+          explicitlySelectedPortableProfile = Boolean(
+            portableProfile.isPortableExperimentalProfile()
+          );
+        }
+      } catch {}
       try {
         const { assessHost, planHostAdvisories } = require(preflightPath);
         const { createHostReadinessReport } = require(hostReadinessPath);
@@ -3434,7 +3523,7 @@ run_installer_host_preflight() {
         );
         const admission = evaluateOnboardReadinessAdmission(readiness, {
           explicitlyOptedOutGpuPassthrough: false,
-          allowUnsupportedRuntime: false,
+          allowUnsupportedRuntime: explicitlySelectedPortableProfile,
           // The installer starts a NemoClaw-managed onboarding flow. Let the
           // authoritative onboarding gate apply supported storage remediation,
           // but only when the gateway declaration confirms NemoClaw ownership.
@@ -3506,7 +3595,7 @@ run_installer_host_preflight() {
       } catch {
         process.exit(0);
       }
-    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module" "$gateway_management_module"
+    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module" "$gateway_management_module" "$portable_profile_module"
   )"; then
     status=0
   else

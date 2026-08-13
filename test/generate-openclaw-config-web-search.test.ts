@@ -25,8 +25,23 @@ describe("generate-openclaw-config.mts: Tavily web search", () => {
       config: { webSearch: { apiKey: "openshell:resolve:env:TAVILY_API_KEY" } },
     });
     expect(config.plugins?.entries?.brave).toBeUndefined();
+    expect(config.plugins?.allow).toContain("tavily");
     expect(config.tools?.web?.search?.apiKey).toBeUndefined();
     expect(config.tools?.web?.fetch).toEqual({ enabled: true, useTrustedEnvProxy: true });
+  });
+
+  it("allows the enabled Brave plugin (#8975)", () => {
+    const config = buildWebSearchConfig({
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
+    });
+
+    expect(config.plugins?.entries?.brave).toEqual({
+      enabled: true,
+      config: { webSearch: { apiKey: "openshell:resolve:env:BRAVE_API_KEY" } },
+    });
+    expect(config.plugins?.allow).toContain("brave");
+    expect(config.plugins?.allow).not.toContain("tavily");
   });
 
   it("rejects an unknown provider instead of silently selecting one", () => {

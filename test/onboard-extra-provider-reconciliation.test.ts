@@ -40,7 +40,7 @@ describe("onboard extra-provider reconciliation", () => {
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin);
+      writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
       const script = String.raw`
 const runner = require(${runnerPath});

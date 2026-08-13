@@ -52,11 +52,10 @@ const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 // release; the later pin PR may then change release data without authorizing
 // any operational installer change. A mismatch reports the candidate hash.
 // #7739 extends the Homebrew trust transition into one operation boundary used
-// by installation and later lifecycle calls. The first hash preserves the
-// current installer while this prerequisite lands; the second pre-authorizes
-// the reviewed successor for the implementation PR.
+// by installation and later lifecycle calls. Keep only the reviewed successor:
+// it verifies formula bytes before each operation, uses formula-scoped trust,
+// and removes that temporary trust after success or failure.
 const TRUSTED_INSTALLER_TEMPLATE_SHA256_ALLOWLIST = [
-  "0fa737a64cf2a7a6a437dc5f203dad81f66f191dc316214c2f343f762ad9b0a5",
   "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
 ] as const;
 const TRUSTED_BREV_TEMPLATE_SHA256_ALLOWLIST = [

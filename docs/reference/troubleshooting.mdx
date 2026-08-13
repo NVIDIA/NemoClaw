@@ -575,6 +575,40 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 The next installer run must continue past the OpenShell installation step without reporting a version mismatch.
 
+### Docker Driver Gateway Reports a Missing Migration
+
+Onboarding can stop when the Docker driver gateway log contains both parts of this error:
+
+```text
+migration N was previously applied
+is missing in the resolved migrations
+```
+
+NemoClaw identifies `<selected-state-dir>/openshell.db` as incompatible with the installed OpenShell migration set.
+This failure can occur after an OpenShell downgrade.
+NemoClaw offers state-move recovery only when the current gateway process wrote this error and then exited.
+The diagnostic prints the database path, an unused archive path beside the selected state directory, and the profile-specific onboarding command.
+
+<Warning>
+The selected state directory contains the gateway database, mutual TLS private keys, JSON Web Token signing material, and every sandbox and provider registration on the selected gateway.
+Moving it makes those registrations and credentials unavailable to the fresh gateway.
+Other sandboxes on the selected gateway can require re-onboarding and credential entry.
+</Warning>
+
+Use this recovery only after the diagnostic confirms that the gateway process exited.
+Run the exact commands that NemoClaw prints:
+
+1. Create the printed `.incompatible` archive with owner-only access.
+   If that path exists, NemoClaw adds a numeric suffix instead of nesting or replacing an earlier archive.
+2. Move the selected state directory into the archive as `gateway-state`.
+3. Run the printed onboarding command only after the archive and move succeed.
+   Standard onboarding prints `$$nemoclaw onboard --resume`.
+   The portable experimental profile prints its required fresh-onboarding command because it does not support resume.
+
+The archive remains beside the selected state directory and retains the previous gateway records and credentials.
+Keep it owner-only until onboarding completes and every required sandbox and provider registration is restored.
+Delete the archive only after you no longer need its gateway records or credentials for recovery.
+
 ### Installer Reports That the Systemd User Manager Is Unavailable
 
 On Linux, an OpenShell package can install `/usr/lib/systemd/user/openshell-gateway.service` on a host without a reachable systemd user manager.
@@ -891,9 +925,13 @@ The wizard cleans up stale port forwards and waits for gateway readiness automat
 ### GPU Setup Fails with a Placeholder GPU Name
 
 On Windows, WSL, and native Linux ARM64 hosts, some systems report a placeholder display adapter name even when no NVIDIA GPU firmware is present.
+This section also applies when preflight reports no GPU on an ARM64 Linux host whose `nvidia-smi` shows a non-placeholder GPU name.
 NVIDIA NIM and GPU-backed sandbox setup require a real NVIDIA GPU.
 
-When the primary memory-query probe reports a placeholder name on a native or Docker Desktop-backed WSL ARM64 Linux host without firmware-confirmed NVIDIA platform metadata, onboarding runs one bounded Docker CUDA workload.
+When the primary memory-query probe reports exactly one placeholder-named GPU row on a native or Docker Desktop-backed WSL ARM64 Linux host without firmware-confirmed NVIDIA platform metadata, onboarding runs one bounded Docker CUDA workload.
+When that probe reports a single non-placeholder NVIDIA GPU name on such a host and the NVIDIA kernel-driver interface (`/proc/driver/nvidia`) is absent, onboarding runs the same workload.
+A WSL2 host never provides that interface because Windows paravirtualizes the GPU through `/dev/dxg`.
+A non-placeholder name that does not identify an NVIDIA GPU or product family does not start the workload.
 NemoClaw treats a recognized NVIDIA product model from `/sys/class/dmi/id/product_name` or `/sys/firmware/devicetree/base/model`, or a known Tegra device node, as authoritative platform identity.
 Docker may pull the CUDA sample image from `nvcr.io` and keeps the image in the local cache after the container exits.
 The workload uses this command:
@@ -1198,14 +1236,20 @@ Follow these steps to reconnect.
    Only the default port `8080` uses a NemoClaw-managed service.
    If the gateway is externally supervised, inspect and restart it through the supervisor declared by `NEMOCLAW_GATEWAY_MANAGEMENT`, regardless of port.
 
-   On Apple Silicon macOS with Homebrew, inspect and restart the official formula service.
+   On Apple Silicon macOS with Homebrew, let NemoClaw inspect and restart the official formula service.
+   NemoClaw runs each Homebrew operation inside the checksum-verified temporary trust boundary.
+   Continue to the NemoClaw recovery step below instead of running `brew services` directly.
+
+   NemoClaw verifies the staged formula checksum and temporarily trusts only `nvidia/openshell/openshell` around each Homebrew inspection, start, or stop operation.
+   If formula verification fails or Homebrew cannot grant or remove temporary trust, rerun the standard NemoClaw installer and then rerun onboarding:
 
    ```bash
-   brew services list
-   brew services restart openshell
+   curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
    ```
-
-   During onboarding, NemoClaw uses the standalone fallback when the `openshell` formula is missing.
+   The standalone gateway is selected only when Homebrew or both the staged formula and installed keg are absent.
+   When the formula or keg exists, Homebrew remains the lifecycle authority.
+   NemoClaw does not switch to the standalone gateway after a Homebrew inspection, start, or stop failure.
+   Follow the reported repair guidance instead of changing service ownership manually.
    If the installed service fails inspection, startup, or its health check, NemoClaw prints this log command:
 
    ```bash
@@ -1242,7 +1286,7 @@ Follow these steps to reconnect.
 
    The tarball unit is under `$XDG_CONFIG_HOME/systemd/user`, or `~/.config/systemd/user` when `XDG_CONFIG_HOME` is not absolute.
    It starts with your user session; NemoClaw does not enable lingering.
-   If a managed service fails inspection, startup, or its health check, NemoClaw attempts the standalone fallback on either platform.
+   On Linux, NemoClaw attempts the standalone fallback when a managed service fails inspection, startup, or its health check.
    The standalone gateway starts only after NemoClaw verifies exclusive ownership of the gateway port.
    The fallback does not bypass managed-service trust validation or unsafe environment configuration.
    These conditions remain hard failures:
@@ -1319,15 +1363,18 @@ For details, refer to [Create and Restore Snapshots](../manage-sandboxes/state-a
 Destroying the final sandbox with `--cleanup-gateway` stops the packaged OpenShell gateway service before it reaps host gateway processes, so the gateway port is released.
 The service is stopped, not disabled or removed, and the next onboarding run starts it again.
 If the service cannot be stopped, `destroy` exits non-zero and prints the status command for the service.
-Stop the service yourself, then rerun `destroy`.
 
-On Apple Silicon macOS with Homebrew:
+On Apple Silicon macOS with Homebrew, rerun the standard NemoClaw installer to restore the pinned formula and temporary trust contract:
 
 ```bash
-brew services stop openshell
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-On Linux, use the service name that matches the install. For package installs:
+Then rerun `$$nemoclaw <name> destroy --cleanup-gateway` instead of stopping the Homebrew service directly.
+
+On Linux, stop the service yourself, then rerun `destroy`.
+Use the service name that matches the install.
+For package installs:
 
 ```bash
 systemctl --user stop openshell-gateway
@@ -1518,13 +1565,32 @@ Use the lightest recovery path first instead of rebuilding immediately.
    docker ps -a --filter "label=openshell.ai/sandbox-name=<name>"
    ```
 
-   If a container is listed, start it:
+1. Run recovery from the host.
+
+<AgentOnly variant="openclaw,hermes">
 
    ```bash
-   docker start <container-name>
+   $$nemoclaw <name> recover
    ```
 
-1. Run status recovery from the host.
+   For a stopped, non-paused Docker-driver container, `recover` starts the existing container before it waits for OpenShell readiness.
+   It leaves a running or paused container unchanged.
+   If Docker cannot start the container, the command continues to the readiness check and reports the resulting failure.
+
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+   ```bash
+   $$nemoclaw <name> status
+   ```
+
+   Deep Agents Code does not provide the `recover` command.
+   Use `$$nemoclaw <name> start` to start its existing container.
+
+</AgentOnly>
+
+1. Check status from the host.
 
    ```bash
    $$nemoclaw <name> status
@@ -1532,16 +1598,6 @@ Use the lightest recovery path first instead of rebuilding immediately.
 
    On Docker-driver hosts, status also attempts non-destructive recovery when OpenShell reports the sandbox as missing but Docker still has a stopped `openshell.ai/sandbox-name=<name>` container or the latest GPU-backup sibling.
    A successful recovery prints that the sandbox was recovered from Docker and then shows the refreshed OpenShell state.
-
-<AgentOnly variant="openclaw,hermes">
-
-1. If the sandbox is running but the agent gateway or dashboard forward is still down, recover the in-sandbox gateway and forwards:
-
-   ```bash
-   $$nemoclaw <name> recover
-   ```
-
-</AgentOnly>
 
 1. Rebuild only if the sandbox cannot be restarted or status still cannot recover it while the local registry entry exists:
 
@@ -2524,6 +2580,8 @@ Changing them after onboarding requires re-running `$$nemoclaw onboard` to rebui
 
 When `HTTP_PROXY` or `HTTPS_PROXY` is set on the host, NemoClaw adds `localhost`, `127.0.0.1`, `::1`, `0.0.0.0`, the container-host aliases `host.docker.internal` and `host.containers.internal`, and the managed inference hostname `inference.local` to `NO_PROXY` for host-side subprocesses and for the env forwarded into `openshell sandbox create`.
 This keeps local Ollama health checks, model pulls, and managed inference traffic from being chained through a corporate or desktop proxy at the sandbox-create boundary, while preserving the proxy for external hosts.
+For the local provider validation probe, NemoClaw removes `HTTP_PROXY`, `HTTPS_PROXY`, and `ALL_PROXY` from the probe process and sets `NO_PROXY=*` instead.
+A host proxy therefore cannot answer for the local endpoint, including the `host.docker.internal` alias used for Windows-host Ollama.
 Inside the running sandbox, processes continue to use the OpenShell L7 proxy for `inference.local` so OpenShell's internal routing, DNS, and audit boundaries stay intact.
 
 ### Agent cannot reach a host-side HTTP service

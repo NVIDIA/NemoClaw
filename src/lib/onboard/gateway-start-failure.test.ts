@@ -66,6 +66,23 @@ describe("classifyGatewayStartFailure", () => {
     });
   });
 
+  it("classifies a gateway database migration absent from installed OpenShell as incompatible (#8797)", () => {
+    const output = [
+      "Error: execution error: migration error: migration 6 was previously applied",
+      "  is missing in the resolved migrations",
+    ].join("\n");
+
+    expect(classifyGatewayStartFailure(output)).toEqual({
+      kind: "database_migration_incompatible",
+    });
+  });
+
+  it("does not classify an unrelated SQLite migration failure as incompatible database state (#8797)", () => {
+    const output = "database is locked while applying migration 6";
+
+    expect(classifyGatewayStartFailure(output)).toEqual({ kind: "unknown" });
+  });
+
   it("returns unknown for healthy-but-slow output (should not short-circuit)", () => {
     // Real output seen during a slow first-time k3s bootstrap — the retry
     // loop must stay engaged for these, so we must not misclassify them.
