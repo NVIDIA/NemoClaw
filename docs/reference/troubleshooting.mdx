@@ -2580,6 +2580,8 @@ Changing them after onboarding requires re-running `$$nemoclaw onboard` to rebui
 
 When `HTTP_PROXY` or `HTTPS_PROXY` is set on the host, NemoClaw adds `localhost`, `127.0.0.1`, `::1`, `0.0.0.0`, the container-host aliases `host.docker.internal` and `host.containers.internal`, and the managed inference hostname `inference.local` to `NO_PROXY` for host-side subprocesses and for the env forwarded into `openshell sandbox create`.
 This keeps local Ollama health checks, model pulls, and managed inference traffic from being chained through a corporate or desktop proxy at the sandbox-create boundary, while preserving the proxy for external hosts.
+For the local provider validation probe, NemoClaw removes `HTTP_PROXY`, `HTTPS_PROXY`, and `ALL_PROXY` from the probe process and sets `NO_PROXY=*` instead.
+A host proxy therefore cannot answer for the local endpoint, including the `host.docker.internal` alias used for Windows-host Ollama.
 Inside the running sandbox, processes continue to use the OpenShell L7 proxy for `inference.local` so OpenShell's internal routing, DNS, and audit boundaries stay intact.
 
 ### Agent cannot reach a host-side HTTP service

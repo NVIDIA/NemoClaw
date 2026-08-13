@@ -1619,6 +1619,7 @@ export function buildOllamaProbeOptions(allowToolsIncompatible: boolean): {
   requireChatCompletionsToolCalling: boolean;
   retryChatCompletionsToolReadiness: boolean;
 
+  pinnedAddresses: readonly string[];
   allowHostDockerInternal: boolean;
   probeFromDocker: { expectedPort: number } | null;
 } {
@@ -1628,6 +1629,7 @@ export function buildOllamaProbeOptions(allowToolsIncompatible: boolean): {
     requireChatCompletionsToolCalling: !allowToolsIncompatible,
     retryChatCompletionsToolReadiness: !allowToolsIncompatible,
 
+    pinnedAddresses: [],
     allowHostDockerInternal: windowsHostOllama,
     probeFromDocker: windowsHostOllama ? { expectedPort: OLLAMA_PORT } : null,
   };
