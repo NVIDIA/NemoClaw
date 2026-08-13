@@ -3,12 +3,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { GATEWAY_PORT } from "../src/lib/core/ports";
-import type { OnboardDashboardDeps, OnboardDashboardHelpers } from "../src/lib/onboard/dashboard";
+import { createOnboardDashboardHelpers } from "../src/lib/onboard/dashboard";
 import type { ListSandboxesFn } from "../src/lib/onboard/dashboard-port";
-
-const { createOnboardDashboardHelpers } = require("../src/lib/onboard/dashboard") as {
-  createOnboardDashboardHelpers: (deps: OnboardDashboardDeps) => OnboardDashboardHelpers;
-};
 
 function createFinalizationForwardHarness(options: {
   forwardList: string;
