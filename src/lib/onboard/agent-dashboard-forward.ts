@@ -117,7 +117,7 @@ export async function ensureAgentDashboardForward(options: {
   return actualAgentDashboardPort;
 }
 
-function replaceUrlPort(value: string, port: number): string {
+export function replaceUrlPort(value: string, port: number): string {
   try {
     const parsed = new URL(value.includes("://") ? value : `http://${value}`);
     parsed.port = String(port);
