@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { expect, type MockInstance, vi } from "vitest";
 import type { SandboxWorkloadReceipt } from "../../src/lib/state/registry";
 
-type DestroySandbox = typeof import("../../src/lib/actions/sandbox/destroy")["destroySandbox"];
+type DestroySandbox = (typeof import("../../src/lib/actions/sandbox/destroy"))["destroySandbox"];
 
 const requireDist = createRequire(
   new URL("../../src/lib/actions/sandbox/destroy-flow.test.ts", import.meta.url),
@@ -51,6 +51,9 @@ type DestroyHarnessOptions = {
   deleteOutput?: string;
   deleteStatus?: number;
   dockerPsOutput?: string;
+  dockerRunResult?: { status: number | null; stdout?: string; stderr?: string };
+  dockerRunResults?: Array<{ status: number | null; stdout?: string; stderr?: string }>;
+  onDockerRun?: (call: number) => void;
   endpointUrl?: string;
   finalizeMcpBridgeError?: string;
   finalizeMcpError?: string;
@@ -66,6 +69,7 @@ type DestroyHarnessOptions = {
   sandboxPresent?: boolean;
   shieldsDown?: boolean;
   shieldsUpError?: Error;
+  stopInferenceError?: string;
   workload?: SandboxWorkloadReceipt;
 };
 
@@ -240,9 +244,12 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
         : names;
       return matchedNames.length > 0 ? `${matchedNames.join("\n")}\n` : "";
     });
-  const dockerRunSpy = vi
-    .spyOn(dockerRun, "dockerRun")
-    .mockReturnValue({ status: 0 } as ReturnType<typeof dockerRun.dockerRun>);
+  const dockerRunSpy = vi.spyOn(dockerRun, "dockerRun").mockImplementation(() => {
+    const call = dockerRunSpy.mock.calls.length;
+    options.onDockerRun?.(call);
+    const result = options.dockerRunResults?.[call - 1] ?? options.dockerRunResult ?? { status: 0 };
+    return result as ReturnType<typeof dockerRun.dockerRun>;
+  });
   const selectGatewaySpy = vi
     .spyOn(destroyGateway, "selectGatewayForSandboxDestroy")
     .mockImplementation(() => undefined);
@@ -251,14 +258,18 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     .mockImplementation(() => undefined);
   vi.spyOn(sandboxProviderCleanup, "runSandboxProviderPreDeleteCleanup").mockImplementation(() => {
     events.push("detach");
-    return { failures: [] };
+    return { detached: [], failures: [] };
   });
   vi.spyOn(sandboxProviderCleanup, "emitProviderDetachResidualHint").mockImplementation(
     () => undefined,
   );
   const stopNimByNameSpy = vi
     .spyOn(nim, "stopNimContainerByName")
-    .mockImplementation(() => undefined);
+    .mockImplementation(() => {
+      if (options.stopInferenceError !== undefined) {
+        throw new Error(options.stopInferenceError);
+      }
+    });
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   const killStaleProxySpy = vi
     .spyOn(ollamaProxy, "killStaleProxy")
@@ -308,6 +319,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const prepareMcpBridgesForDestroySpy = vi
     .spyOn(mcpBridge, "prepareMcpBridgesForDestroy")
     .mockImplementation(async () => {
+      events.push("mcp-prepare");
       if (options.prepareMcpBridgeError !== undefined) {
         throw new McpBridgeError(options.prepareMcpBridgeError);
       }

@@ -2215,6 +2215,41 @@ If you want to upgrade the sandbox while preserving state, use `$$nemoclaw <name
 If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds.
 Pass `--yes`, `-y`, or `--force`, or set `NEMOCLAW_NON_INTERACTIVE=1`, to authorize deletion without prompting in scripted workflows.
 
+Before changing a Docker-backed sandbox, NemoClaw inspects every container with the requested `openshell.ai/sandbox-name` label.
+The command continues when Docker returns no matching containers.
+For one matching container, the command continues only when all these labels have the required values:
+
+- `openshell.ai/managed-by=openshell`
+- A nonempty `openshell.ai/sandbox-workspace`
+- A nonempty `openshell.ai/sandbox-id`
+
+If the initial inspection cannot complete, more than one container matches, a matching container has conflicting or incomplete labels, or Docker returns malformed identity data, `destroy` exits before changing sandbox resources.
+NemoClaw rechecks the exact identity after read-only preflight, before provider cleanup, and synchronously at the sandbox-deletion boundary.
+If a later recheck detects drift or fails, `destroy` refuses sandbox deletion, restores managed MCP preparation when possible, preserves local ownership state, and reports any earlier cleanup already performed.
+If Docker cannot complete the inspection, correct the reported Docker error before you rerun `destroy`.
+For common recovery steps, refer to [Docker is not running](troubleshooting#docker-is-not-running) and [Docker permission denied on Linux](troubleshooting#docker-permission-denied-on-linux).
+
+If `destroy` reports conflicting, incomplete, or malformed identity data, inspect the matching containers:
+
+```bash
+docker ps -a --no-trunc \
+  --filter "label=openshell.ai/sandbox-name=my-assistant" \
+  --format 'table {{.ID}}\t{{.Label "openshell.ai/managed-by"}}\t{{.Label "openshell.ai/sandbox-workspace"}}\t{{.Label "openshell.ai/sandbox-id"}}'
+```
+
+The labels show what each container claims.
+They do not prove container ownership.
+
+<Warning>
+Do not remove or recreate a container until you verify its purpose, ownership, and data-retention requirements.
+Removing or recreating a container can discard state that is not stored in a volume.
+</Warning>
+
+Resolve a conflict through the workflow that created the conflicting container.
+Docker cannot change labels on an existing container.
+Rerun the query after you resolve the conflict.
+Rerun `destroy` only when the query returns one complete expected label set that you verified belongs to the target sandbox, or no containers after you independently confirm that the sandbox is absent.
+
 <AgentOnly variant="hermes">
 
 If the Hermes sandbox has managed MCP entries, shields must be down before destroy can scrub their adapter configuration.

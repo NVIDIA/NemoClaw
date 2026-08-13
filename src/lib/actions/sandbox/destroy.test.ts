@@ -75,7 +75,7 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
   const dockerSandbox = { openshellDriver: "docker" } as { openshellDriver: string | null };
 
   it("refuses destroy when a foreign container shares the sandbox-name label", () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const error = vi.fn();
     const classify = vi.fn(() => ({
       status: "ambiguous" as const,
       sandboxName: "destroytest",
@@ -87,22 +87,28 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
     const proceed = assertUnambiguousDestroyContainerIdentity("destroytest", {
       getSandbox: vi.fn(() => dockerSandbox) as never,
       classify: classify as never,
+      error,
     });
 
     expect(proceed).toBe(false);
     expect(classify).toHaveBeenCalledWith("destroytest");
     expect(error).toHaveBeenCalled();
-    error.mockRestore();
   });
 
   it("proceeds for a clear single managed identity", () => {
-    const classify = vi.fn(() => ({ status: "clear" as const }));
+    const identity = {
+      id: "aaaa000000000000",
+      managedBy: "openshell",
+      workspace: "default",
+      sandboxId: "sb",
+    };
+    const classify = vi.fn(() => ({ status: "clear" as const, identity }));
     expect(
       assertUnambiguousDestroyContainerIdentity("destroytest", {
         getSandbox: vi.fn(() => dockerSandbox) as never,
         classify: classify as never,
       }),
-    ).toBe(true);
+    ).toEqual({ kind: "docker", identity });
   });
 
   it("does not probe or block a non-Docker runtime provider", () => {
@@ -111,23 +117,26 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
       getSandbox: vi.fn(() => ({ openshellDriver: "podman" })) as never,
       classify: classify as never,
     });
-    expect(proceed).toBe(true);
+    expect(proceed).toEqual({ kind: "not-docker" });
     expect(classify).not.toHaveBeenCalled();
   });
 
-  it("proceeds but warns when the Docker probe cannot prove identity", () => {
-    const warn = vi.fn();
+  it("refuses when the Docker probe cannot prove identity", () => {
+    const error = vi.fn();
     const proceed = assertUnambiguousDestroyContainerIdentity("destroytest", {
       getSandbox: vi.fn(() => dockerSandbox) as never,
       classify: vi.fn(() => ({ status: "probe-failed" as const, detail: "daemon down" })) as never,
-      warn,
+      error,
     });
-    expect(proceed).toBe(true);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("daemon down"));
+    expect(proceed).toBe(false);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("daemon down"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("No sandbox resources were removed"),
+    );
   });
 
   it("treats an unknown/null driver as Docker (the default) and still guards", () => {
-    const classify = vi.fn(() => ({ status: "clear" as const }));
+    const classify = vi.fn(() => ({ status: "clear" as const, identity: null }));
     assertUnambiguousDestroyContainerIdentity("destroytest", {
       getSandbox: vi.fn(() => ({ openshellDriver: null })) as never,
       classify: classify as never,
