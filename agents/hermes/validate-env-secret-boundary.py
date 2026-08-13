@@ -32,6 +32,8 @@ SECRET_KEY_RE = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$
 PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
 KEY_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
+HERMES_API_PORT_RANGE_START = 8642
+HERMES_API_PORT_RANGE_END = 8652
 
 ENV_FILE_ALLOWED_NONSECRET_KEYS = frozenset({"API_SERVER_HOST", "API_SERVER_PORT"})
 # API_SERVER_KEY is the bearer token Hermes' own api_server (Hermes v0.16.0+)
@@ -363,6 +365,15 @@ def is_generated_api_server_key(value: str) -> bool:
     return API_SERVER_KEY_RE.fullmatch(unquote(value)) is not None
 
 
+def is_assigned_hermes_api_port(value: str) -> bool:
+    return (
+        len(value) == 4
+        and value.isascii()
+        and value.isdecimal()
+        and HERMES_API_PORT_RANGE_START <= int(value) <= HERMES_API_PORT_RANGE_END
+    )
+
+
 def is_allowed_raw_secret_value(key: str, value: str) -> bool:
     if key == "OPENCLAW_GATEWAY_TOKEN":
         return True
@@ -512,6 +523,13 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
                 violations.append(key)
             continue
         if key == "HERMES_LAZY_INSTALL_TARGET":
+            continue
+        if key == "NEMOCLAW_HERMES_API_PORT":
+            if is_assigned_hermes_api_port(value):
+                continue
+            violation_count += 1
+            if len(violations) < MAX_VIOLATIONS:
+                violations.append(key)
             continue
         if key in RUNTIME_ALLOWED_NONSECRET_KEYS:
             continue

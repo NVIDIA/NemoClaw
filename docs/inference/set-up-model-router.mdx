@@ -83,6 +83,13 @@ NemoClaw creates a host-side virtual environment for Model Router during onboard
 It probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and `python3` in that order.
 The selected interpreter must have a version in the range `[3.10, 3.14)` and must import `ensurepip`, `pyexpat`, `ssl`, and `venv` without error.
 
+Before creating the environment, NemoClaw checks for at least 3 GiB of free or reclaimable capacity on its filesystem.
+This capacity covers the installed Python packages and download staging.
+When NemoClaw replaces a NemoClaw-managed environment, storage that removal can reclaim counts toward the requirement.
+If capacity is below the requirement, onboarding stops before creating the environment and reports how much space to free.
+Free the reported capacity, then run `$$nemoclaw onboard --resume`.
+If the filesystem does not report capacity, onboarding prints the reason and continues.
+
 If no candidate qualifies, onboarding stops and prints the failure for each candidate.
 Set `NEMOCLAW_MODEL_ROUTER_PYTHON` to an absolute path to probe only one interpreter.
 

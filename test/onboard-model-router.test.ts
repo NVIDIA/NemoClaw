@@ -118,6 +118,13 @@ function createCommandHarness(options: CommandHarnessOptions = {}) {
       return venvPython;
     },
     packageVersion: () => MODEL_ROUTER_TEST_VERSION,
+    // Hermetic disk-space gate: never statfs the host filesystem from tests.
+    probeStorage: (targetPath, source) => ({
+      ok: true,
+      capacity: { availableBytes: 100n * 1024n ** 3n, path: targetPath, source },
+    }),
+    measureDirectorySize: () => 0n,
+    formatStorageBytes: (bytes) => `${String(bytes / 1024n ** 3n)} GiB`,
     ...(options.sourceFingerprint ? { sourceFingerprint: options.sourceFingerprint } : {}),
   };
   const provisioner = createModelRouterCommandProvisioner(
@@ -249,6 +256,14 @@ describe("onboard Model Router setup", () => {
         const provisioner = createProductionModelRouterCommandProvisioner(
           fixture.routerDir,
           fixture.venvDir,
+          // Hermetic disk-space gate: the fixture venv lives under os.tmpdir(),
+          // whose real free space must not decide this test.
+          {
+            probeStorage: (targetPath, source) => ({
+              ok: true,
+              capacity: { availableBytes: 100n * 1024n ** 3n, path: targetPath, source },
+            }),
+          },
         );
         assert.equal(provisioner.ensureModelRouterCommand(), fixture.managedCommand);
         assert.equal(provisioner.isManagedModelRouterCurrent(), true);
