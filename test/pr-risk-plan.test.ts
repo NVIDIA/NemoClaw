@@ -13,6 +13,7 @@ import {
   riskPlanRequiredJobIds,
   riskPlanRequiredTargetIds,
 } from "../tools/advisors/risk-plan.mts";
+import { E2E_TARGET_CATALOGUE } from "../tools/e2e/target-catalogue.mts";
 import {
   focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,
@@ -928,8 +929,11 @@ describe("deterministic PR risk plan", () => {
     expect(result.suggestedTests.join("\n")).toContain("`src/lib/state/registry.ts`");
   });
 
-  it("keeps every discovered test selector wired into the canonical E2E workflow", () => {
-    const allowedJobs = new Set(readFreeStandingJobsInventory().allowedJobs);
+  it("keeps every risk-plan job wired into the canonical E2E workflow", () => {
+    const allowedJobs = new Set([
+      ...readFreeStandingJobsInventory().allowedJobs,
+      ...E2E_TARGET_CATALOGUE.map(({ id }) => id),
+    ]);
     const configuredJobs = new Set(RISK_RULES.flatMap((rule) => rule.requiredJobs));
 
     expect([...configuredJobs].filter((job) => !allowedJobs.has(job))).toEqual([]);
