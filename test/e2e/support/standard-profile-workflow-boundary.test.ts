@@ -145,10 +145,13 @@ describe("standard E2E execution profile boundary", () => {
       NVIDIA_API_KEY: "${{ !inputs.trusted_main && secrets.NVIDIA_API_KEY || '' }}",
     };
     profile.jobs.run.env!.NEMOCLAW_E2E_EXPECTED_SHA = "${{ github.sha }}";
+    profile.jobs.run.env!.BASH_ENV = "${{ github.workspace }}/scripts/leak.sh";
     const upload = steps.find((step) => step.name === "Upload E2E artifacts")!;
     upload.if = "success()";
+    upload.with = { path: "/tmp/unreviewed-e2e-output" };
     const cleanup = steps.pop()!;
     steps.unshift(cleanup);
+    steps.splice(3, 0, { name: "Run unreviewed helper", run: "bash scripts/helper.sh" });
     fs.writeFileSync(profilePath, YAML.stringify(profile));
 
     try {
@@ -161,7 +164,9 @@ describe("standard E2E execution profile boundary", () => {
           "standard E2E profile must install host dependencies before workspace prep",
           "standard E2E profile must run the planned catalogue target with guarded secrets",
           "standard E2E profile must set NEMOCLAW_E2E_EXPECTED_SHA",
-          "standard E2E profile must always upload artifacts with the reviewed action",
+          "standard E2E profile must expose only its reviewed job environment",
+          "standard E2E profile must keep its reviewed step set and order",
+          "standard E2E profile must always upload its target-derived artifact path with the reviewed action",
           "standard E2E profile must always clean up Docker authentication last",
         ]),
       );
