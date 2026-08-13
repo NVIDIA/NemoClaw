@@ -37,7 +37,7 @@ The command uses deterministic exit codes:
 
 | Exit code | Status | Meaning |
 | --- | --- | --- |
-| `0` | `supported` | Required readiness checks passed. |
+| `0` | `supported` | Required readiness checks passed, or the sole blocking finding is a Docker storage conflict with a supported remediation path. |
 | `2` | `incompatible` | A blocking or fatal finding prevents onboarding. |
 | `3` | `inconclusive` | NemoClaw could not determine a required capability. |
 
@@ -113,11 +113,14 @@ The Docker storage capabilities separate the current host configuration from Nem
 | `host.docker.storage_compatible` | The current Docker storage configuration supports nested overlay mounts without remediation. |
 | `host.docker.storage_remediation_available` | NemoClaw can build a patched cluster image for a non-WSL Linux host using Docker with an `overlayfs` containerd-snapshotter conflict. |
 
-Use `host.docker.storage_compatible` for pre-mutation host diagnosis.
-For public NemoClaw lifecycle admission, require either `host.docker.storage_compatible` or `host.docker.storage_remediation_available`.
+Use `host.docker.storage_compatible` when a consumer requires compatibility before mutation.
+The strict internal readiness report remains `incompatible` with exit code `2` until a consumer applies its operation-specific admission policy.
+Public NemoClaw lifecycle admission can accept either `host.docker.storage_compatible` or `host.docker.storage_remediation_available`.
 When remediation is available, `host.docker.storage_compatible` remains `absent`.
-The report also retains `host.docker.storage_incompatible`, status `incompatible`, and exit code `2` because `host probe` does not change the host.
-Evaluate every other blocking finding before you run onboarding.
+If `host.docker.storage_incompatible` is the sole blocking finding and `host.docker.storage_remediation_available` is `present`, `host probe` publishes status `supported` and exit code `0`.
+The public report retains `host.docker.storage_incompatible` as a warning.
+Any other blocking or fatal finding prevents this public projection.
+The public status indicates a supported remediation path, not that the current Docker storage configuration is compatible.
 The remediation capability does not prove that a later image build or gateway attachment succeeds.
 Use these storage capabilities when the lifecycle may create or recreate a gateway.
 Gateway attachment is a separate readiness decision.

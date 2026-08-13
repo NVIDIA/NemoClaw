@@ -2,6 +2,86 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../../../cli/branding";
+import { shellQuote } from "../../../core/shell-quote";
+import { redactFull } from "../../../security/redact";
+
+/** Stderr sink for the passthrough's operator-facing failure text. */
+export type AgentPassthroughDiagnosticProcess = {
+  stderr: { write(s: string): unknown };
+};
+
+/**
+ * Report a dispatch that exited 0 without delivering a turn (#8796). Lives
+ * beside the help text because both are operator-facing copy for this command;
+ * the classifier that decides when to call it lives in `passthrough-dispatch`.
+ */
+export function writeSilentAgentDispatchFailure(
+  proc: AgentPassthroughDiagnosticProcess,
+  sandboxName: string,
+  command: readonly string[],
+): void {
+  // The recovery command reproduces THIS turn, not a bare `openclaw agent`:
+  // an invocation without a target selector and the original arguments exits 2
+  // on the selector guard instead of running anything. Sandbox name and
+  // forwarded argv are user-controlled command text and stay shell-quoted.
+  //
+  // The forwarded argv can carry message text and session identifiers, and
+  // stderr is captured by CI logs and automation that may never log the
+  // invocation itself. Redact before emitting so a credential pasted into
+  // `-m` is not amplified into a log it would not otherwise reach. Redaction
+  // is pattern-based, so ordinary prompt text is unchanged and the command
+  // stays runnable; a command that does get masked is one nobody should
+  // replay verbatim anyway.
+  const rawDirectRun = [CLI_NAME, shellQuote(sandboxName), "exec", "--", ...command.map(shellQuote)]
+    .join(" ")
+    .trimEnd();
+  const directRun = redactFull(rawDirectRun);
+  const directRunWasRedacted = directRun !== rawDirectRun;
+  proc.stderr.write(
+    `  The agent dispatch for sandbox '${sandboxName}' exited 0 without producing any output, so the turn was not delivered.\n`,
+  );
+  proc.stderr.write(
+    "  Reporting this as a failure: a delivered turn always writes to stdout or stderr.\n",
+  );
+  proc.stderr.write("  Documented recovery paths:\n");
+  proc.stderr.write(`    ${directRun}\n`);
+  proc.stderr.write(
+    directRunWasRedacted
+      ? "      — sensitive values were redacted; do not replay this command\n"
+      : "      — run this turn directly inside the sandbox\n",
+  );
+  proc.stderr.write(
+    `    ${CLI_NAME} ${shellQuote(sandboxName)} status    — confirm gateway and inference health\n`,
+  );
+  proc.stderr.write(
+    `    ${CLI_NAME} ${shellQuote(sandboxName)} recover   — re-pair the gateway without recreating the sandbox\n`,
+  );
+}
+
+/**
+ * Report a turn the payload marks incomplete or abandoned (#8796). The agent's
+ * partial output has already been written verbatim, so this only adds the
+ * verdict, the markers that produced it, and verify-before-retry guidance —
+ * retrying blind can re-apply side effects the abandoned turn already made.
+ */
+export function writeIncompleteAgentTurnFailure(
+  proc: AgentPassthroughDiagnosticProcess,
+  sandboxName: string,
+  markers: readonly string[],
+): void {
+  proc.stderr.write(
+    `  The agent turn in sandbox '${sandboxName}' did not complete: ${markers.join(", ")}.\n`,
+  );
+  proc.stderr.write(
+    "  The output above is a partial trace. Tool calls in it may have already applied side effects.\n",
+  );
+  proc.stderr.write("  Locate the session key, then export its transcript:\n");
+  proc.stderr.write(`    ${CLI_NAME} ${shellQuote(sandboxName)} sessions list\n`);
+  proc.stderr.write(`    ${CLI_NAME} ${shellQuote(sandboxName)} sessions export <key>\n`);
+  proc.stderr.write(
+    "  Inspect the partial JSON trace, exported transcript, and affected resources before retrying.\n",
+  );
+}
 
 export function hasAgentPassthroughHelpToken(args: readonly string[]): boolean {
   for (const arg of args) {
