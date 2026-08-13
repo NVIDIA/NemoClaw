@@ -262,11 +262,11 @@ describe("Podman executable authority", () => {
   it("rejects executable rotation during a metadata-only authority check", () => {
     const authority = capturePodmanExecutableAuthority(EXECUTABLE_PATH, authorityDeps());
     let executableReads = 0;
-    const lstat = vi.fn((filePath: string) => {
-      if (filePath !== EXECUTABLE_PATH) return directoryStat(filePath);
-      executableReads += 1;
-      return executableReads === 1 ? executableStat() : executableStat({ ino: 43n });
-    });
+    const nextExecutableStat = () =>
+      (executableReads += 1) === 1 ? executableStat() : executableStat({ ino: 43n });
+    const lstat = vi.fn((filePath: string) =>
+      filePath === EXECUTABLE_PATH ? nextExecutableStat() : directoryStat(filePath),
+    );
     const readFile = vi.fn(() => EXECUTABLE_BYTES);
 
     expect(() =>
