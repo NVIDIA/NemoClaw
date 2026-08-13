@@ -111,6 +111,7 @@ import * as inferenceProviders from "./inference-providers";
 import { createLocalInferenceRouteApplier } from "./local-inference-route";
 import type { ProviderInferenceSetupOptions } from "./machine/handlers/provider-inference";
 import {
+  hostLocalInferenceRollbackStatus,
   normalizeHostLocalInferenceReceipt,
   normalizeHostLocalOllamaModelRef,
   serializeHostLocalInferenceReceipt,
@@ -349,12 +350,7 @@ function assertHostLocalInferenceRollback(
   ) {
     throw new Error("Host-local inference rollback returned a different runtime authority.");
   }
-  const expectedStatus =
-    result.priorState === "absent"
-      ? "removed"
-      : result.priorState === "host-process"
-        ? "retained"
-        : "restored";
+  const expectedStatus = hostLocalInferenceRollbackStatus(result.priorState);
   if (result.status !== expectedStatus || result.priorState !== route.prepared.rollbackPriorState) {
     throw new Error("Host-local inference rollback returned ambiguous prior-runtime evidence.");
   }

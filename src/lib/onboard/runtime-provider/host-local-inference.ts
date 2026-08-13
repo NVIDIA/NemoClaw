@@ -223,6 +223,14 @@ export interface HostLocalInferenceStartupRollbackResult {
   readonly receipt: HostLocalInferenceReceipt;
 }
 
+export function hostLocalInferenceRollbackStatus(
+  priorState: HostLocalInferencePriorRuntimeState,
+): HostLocalInferenceStartupRollbackResult["status"] {
+  if (priorState === "absent") return "removed";
+  if (priorState === "host-process") return "retained";
+  return "restored";
+}
+
 export type HostLocalInferencePublicationState = "unpublished" | "indeterminate" | "published";
 
 /**
@@ -609,6 +617,9 @@ export function normalizeHostLocalInferenceReceipt(value: unknown): HostLocalInf
   }
   const service = receipt.service as HostLocalInferenceService;
   const proofReceipt = receipt.schemaVersion === HOST_LOCAL_INFERENCE_PROOF_RECEIPT_SCHEMA_VERSION;
+  if (!proofReceipt && service !== "llama-cpp") {
+    fail("legacy receipt schema supports only llama.cpp");
+  }
   if (proofReceipt && service === "llama-cpp") {
     fail("proof receipt schema does not support llama.cpp");
   }

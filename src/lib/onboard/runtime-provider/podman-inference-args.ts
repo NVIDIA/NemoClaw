@@ -291,7 +291,7 @@ function normalizedOptionValue(
       }
       return value;
     default:
-      return value;
+      throw new Error(`Podman local inference option ${name} is unsupported.`);
   }
 }
 

@@ -641,7 +641,10 @@ async function setupPoliciesWithSelectionInner(
   requireSandboxReady(deps, sandboxName, "before");
 
   const accessByName: Record<string, string> = {};
-  for (const preset of resolvedPresets) accessByName[preset.name] = preset.access;
+  const interactiveChoiceNames = new Set(interactiveChoice);
+  for (const preset of resolvedPresets) {
+    if (interactiveChoiceNames.has(preset.name)) accessByName[preset.name] = preset.access;
+  }
   deps.syncPresetSelection(sandboxName, currentAppliedPresets, interactiveChoice, accessByName);
   requireSandboxReady(deps, sandboxName, "after");
   return interactiveChoice;
