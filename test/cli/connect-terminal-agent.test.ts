@@ -69,9 +69,7 @@ describe("CLI dispatch for terminal agents", () => {
     });
 
     expect(r.code).toBe(process.platform === "darwin" ? 1 : 0);
-    if (process.platform === "darwin") {
-      expect(r.out).toContain(PLATFORM_EVIDENCE_UNAVAILABLE);
-    }
+    expect(r.out.includes(PLATFORM_EVIDENCE_UNAVAILABLE)).toBe(process.platform === "darwin");
     expect(r.out).toContain("terminal smoke checks passed");
     const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
     expect(calls).toContain("sandbox get -g nemoclaw alpha");

@@ -41,11 +41,7 @@ const PLATFORM_EVIDENCE_UNAVAILABLE = "launch-readiness evidence is unavailable 
 
 function expectProbeOnlyPublicationOutcome(result: { code: number; out: string }): void {
   expect(result.code, result.out).toBe(expectedProbeOnlyExitCode);
-  if (process.platform === "darwin") {
-    expect(result.out).toContain(PLATFORM_EVIDENCE_UNAVAILABLE);
-  } else {
-    expect(result.out).not.toContain(PLATFORM_EVIDENCE_UNAVAILABLE);
-  }
+  expect(result.out.includes(PLATFORM_EVIDENCE_UNAVAILABLE)).toBe(process.platform === "darwin");
 }
 
 function writeGatewayControlDockerStub(
