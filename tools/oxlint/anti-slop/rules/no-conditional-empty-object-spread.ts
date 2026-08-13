@@ -20,8 +20,8 @@ function isConditionalEmptyObjectSpread(node: ESTree.Expression): boolean {
   const conditional = unwrapParentheses(node);
   return (
     conditional.type === "ConditionalExpression" &&
-    (isEmptyObjectExpression(conditional.consequent) ||
-      isEmptyObjectExpression(conditional.alternate))
+    (isEmptyObjectExpression(unwrapParentheses(conditional.consequent)) ||
+      isEmptyObjectExpression(unwrapParentheses(conditional.alternate)))
   );
 }
 

@@ -167,6 +167,14 @@ repos:
         pass_filenames: true
         priority: 10
 
+      - id: oxlint-type-aware
+        name: Oxlint type-aware rules
+        entry: npx oxlint --config oxlint.type-aware.config.ts --no-error-on-unmatched-pattern
+        language: system
+        files: ^nemoclaw/src/.*\.ts$
+        pass_filenames: true
+        priority: 10
+
       - id: validate-config-schemas
         name: Validate config files against JSON schemas
         entry: npx tsx scripts/validate-configs.mts

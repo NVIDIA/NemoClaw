@@ -159,7 +159,6 @@ export default defineConfig({
           },
         ],
         "typescript/no-explicit-any": "error",
-        "typescript/no-floating-promises": "error",
         "typescript/prefer-nullish-coalescing": "error",
         "typescript/prefer-optional-chain": "error",
         "typescript/switch-exhaustiveness-check": "error",

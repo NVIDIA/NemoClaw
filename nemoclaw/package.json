@@ -22,8 +22,8 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest run --config vitest.config.ts",
-    "lint": "oxlint src",
-    "lint:fix": "oxlint --fix src",
+    "lint": "oxlint src && oxlint --config ../oxlint.type-aware.config.ts src",
+    "lint:fix": "oxlint --fix src && oxlint --config ../oxlint.type-aware.config.ts src",
     "format": "npm --prefix .. run format",
     "format:check": "npm --prefix .. run format:check",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
@@ -40,6 +40,7 @@
     "@types/node": "^22.0.0",
     "oxfmt": "0.63.0",
     "oxlint": "1.78.0",
+    "oxlint-tsgolint": "7.0.2001",
     "typescript": "6.0.3",
     "ultracite": "7.10.3",
     "vitest": "^4.1.9"
