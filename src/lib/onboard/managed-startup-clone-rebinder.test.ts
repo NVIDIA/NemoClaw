@@ -8,6 +8,7 @@ import { PEM } from "./__test-helpers__/corporate-ca-fixtures";
 import {
   type ManagedStartupCloneCurrentState,
   ManagedStartupCloneRebindError,
+  managedStartupCloneRebinderDependencies,
   rebindManagedStartupProfileForClone,
 } from "./managed-startup/clone-rebinder";
 import {
@@ -285,6 +286,54 @@ describe("rebindManagedStartupProfileForClone", () => {
       reasoning: true,
       reasoningEffort: "high",
     });
+  });
+
+  it("resolves the current Ollama context window when the source provider changed", () => {
+    const built = buildManagedStartupProfile(openClawInput());
+    const resolveContextWindowForModel = vi
+      .spyOn(managedStartupCloneRebinderDependencies, "resolveContextWindowForModel")
+      .mockReturnValue(131_072);
+
+    const rebound = rebind(built, "openclaw", 20_789, {
+      provider: "ollama-local",
+      model: "qwen3.5:9b",
+    });
+
+    expect(resolveContextWindowForModel).toHaveBeenCalledWith(
+      "ollama-local",
+      "qwen3.5:9b",
+    );
+    expect(rebound.profile.tuning.contextWindow).toBe(131_072);
+  });
+
+  it("resolves the current Ollama context window when only the source model changed", () => {
+    const input = openClawInput();
+    const ollamaSource = buildManagedStartupProfile({
+      ...input,
+      inference: {
+        ...input.inference,
+        upstreamProvider: "ollama-local",
+        model: "qwen3:8b",
+        api: "openai-completions",
+        primaryModelRef: "inference/qwen3:8b",
+        compatibility: { supportsUsageInStreaming: true },
+      },
+      environment: { NEMOCLAW_CONTEXT_WINDOW: "65536" },
+    });
+    const resolveContextWindowForModel = vi
+      .spyOn(managedStartupCloneRebinderDependencies, "resolveContextWindowForModel")
+      .mockReturnValue(131_072);
+
+    const rebound = rebind(ollamaSource, "openclaw", 20_789, {
+      provider: "ollama-local",
+      model: "qwen3.5:9b",
+    });
+
+    expect(resolveContextWindowForModel).toHaveBeenCalledWith(
+      "ollama-local",
+      "qwen3.5:9b",
+    );
+    expect(rebound.profile.tuning.contextWindow).toBe(131_072);
   });
 
   it("rebinds Hermes public dashboard and provider identity while retaining its internal port", () => {

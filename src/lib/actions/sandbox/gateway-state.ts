@@ -23,6 +23,7 @@ const { pruneKnownHostsEntries } = require("../../onboard/known-hosts") as {
   pruneKnownHostsEntries: (contents: string) => string;
 };
 
+import { dockerStart } from "../../adapters/docker/container";
 import { stripAnsi } from "../../adapters/openshell/client";
 import {
   detectOpenShellStateRpcPreflightIssue,
@@ -42,7 +43,7 @@ import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
-import { D, R } from "../../cli/terminal-style";
+import { D, G, R } from "../../cli/terminal-style";
 import {
   type DockerDriverRecoveryResult,
   recoverDockerDriverSandbox,
@@ -615,6 +616,38 @@ export async function getReconciledSandboxGatewayState(
   }
 
   return lookup;
+}
+
+const RECOVER_CONTAINER_START_TIMEOUT_MS = 30_000;
+
+/**
+ * Start a sandbox's Docker container when it exists but is stopped, before the
+ * probe-only readiness wait begins polling. `recover` and `connect --probe-only`
+ * both advertise that they restart a stopped sandbox, but the wait loop only
+ * observes readiness. A container in `exited` cannot reach Ready. A plain
+ * `docker start` can restore the same container with its workspace state and
+ * managed configuration preserved (#8967). A nonzero or missing `docker start`
+ * status continues to the readiness wait, which surfaces the existing
+ * stopped-container guidance. The function leaves an unresolved, running, or
+ * paused container unchanged. A paused container keeps its `docker unpause`
+ * guidance. A caller that reaches this function after container startup makes
+ * no change.
+ */
+export function startStoppedSandboxContainerForProbeRecovery(sandboxName: string): void {
+  const runtime = getSandboxDockerRuntime(sandboxName);
+  if (!runtime.containerName || runtime.running || runtime.paused) return;
+  console.error(`  Sandbox '${sandboxName}' container is stopped — starting it...`);
+  const result = dockerStart(runtime.containerName, {
+    ignoreError: true,
+    timeout: RECOVER_CONTAINER_START_TIMEOUT_MS,
+  });
+  if (result.status === 0) {
+    console.error(`  ${G}✓${R} Started container '${runtime.containerName}'.`);
+  } else {
+    console.error(
+      `  Docker could not start container '${runtime.containerName}' (exit ${result.status ?? "unknown"}); continuing with readiness checks.`,
+    );
+  }
 }
 
 export async function ensureLiveSandboxOrExit(
