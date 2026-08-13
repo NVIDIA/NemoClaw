@@ -556,7 +556,6 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         --directory /usr/local/lib/nemoclaw/mcporter-runtime \
         --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high \
         --report /tmp/mcporter-npm-audit.json --result /tmp/mcporter-npm-audit-policy.json \
-    && npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit signatures \
     && MCPORTER_AUDIT_STATUS="$(node -p "require('/tmp/mcporter-npm-audit-policy.json').status")" \
     && MCPORTER_AUDIT_EXCEPTIONS="$(node -p "require('/tmp/mcporter-npm-audit-policy.json').acceptedAdvisories.join(',') || 'none'")" \
     && MCPORTER_AUDIT_POLICY_SHA256="$(node -p "require('/tmp/mcporter-npm-audit-policy.json').exceptionPolicySha256")" \
@@ -568,7 +567,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     && mkdir -p "$OPENCLAW_PROVENANCE_DIR" \
     && OPENCLAW_PROVENANCE_TMP="$(mktemp "${OPENCLAW_PROVENANCE_PATH}.tmp.XXXXXX")" \
     && printf '%s\n' \
-        'schema=3' \
+        'schema=4' \
         "package=openclaw@${OPENCLAW_VERSION}" \
         "integrity=${EXPECTED_INTEGRITY}" \
         "tarball=${EXPECTED_TARBALL}" \
@@ -581,7 +580,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         "mcporter-audit-policy-sha256=${MCPORTER_AUDIT_POLICY_SHA256}" \
         "mcporter-audit-status=${MCPORTER_AUDIT_STATUS}" \
         "mcporter-audit-exceptions=${MCPORTER_AUDIT_EXCEPTIONS}" \
-        'mcporter-recipe=locked-ci+reviewed-audit+signatures-v2' \
+        'mcporter-recipe=locked-ci+reviewed-audit-v3' \
         > "$OPENCLAW_PROVENANCE_TMP" \
     && chmod 0444 "$OPENCLAW_PROVENANCE_TMP" \
     && mv -f "$OPENCLAW_PROVENANCE_TMP" "$OPENCLAW_PROVENANCE_PATH" \
