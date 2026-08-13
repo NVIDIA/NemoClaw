@@ -39,6 +39,22 @@ const OPENSHELL_MCP_FEATURE_MARKER = "allow_all_known_mcp_methods";
 const OPENSHELL_FEATURE_MARKERS = `${OPENSHELL_REWRITE_FEATURE_MARKERS} ${OPENSHELL_MCP_FEATURE_MARKER}`;
 type OpenShellFeaturePlacement = "openshell" | "gateway" | "split-mcp-gateway" | "none";
 
+function trustedFormulaBoundaryEvents(operation: string): string[] {
+  return [
+    "--repository nvidia/openshell",
+    "help trust",
+    "help untrust",
+    "untrust --formula nvidia/openshell/openshell",
+    "trust --formula nvidia/openshell/openshell",
+    operation,
+    "untrust --formula nvidia/openshell/openshell",
+  ];
+}
+
+function unverifiedFormulaBoundaryEvents(operation: string): string[] {
+  return trustedFormulaBoundaryEvents(operation).filter((event) => !event.startsWith("trust "));
+}
+
 function writeExecutable(target: string, contents: string) {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
@@ -714,11 +730,8 @@ exit 1`,
         "tap-info nvidia/openshell",
         "tap-new --no-git nvidia/openshell",
         "--repository nvidia/openshell",
-        "help trust",
-        "trust --formula nvidia/openshell/openshell",
-        "list --formula openshell",
-        "install --formula nvidia/openshell/openshell",
-        "untrust --formula nvidia/openshell/openshell",
+        ...trustedFormulaBoundaryEvents("list --formula openshell"),
+        ...trustedFormulaBoundaryEvents("install --formula nvidia/openshell/openshell"),
         "--prefix",
       ]);
       expect(result.stdout).toContain(
@@ -743,14 +756,11 @@ exit 1`,
           "tap-info nvidia/openshell",
           "tap-new --no-git nvidia/openshell",
           "--repository nvidia/openshell",
-          "help trust",
-          "trust --formula nvidia/openshell/openshell",
-          "list --formula openshell",
-          `${action} --formula nvidia/openshell/openshell`,
-          "untrust --formula nvidia/openshell/openshell",
+          ...trustedFormulaBoundaryEvents("list --formula openshell"),
+          ...trustedFormulaBoundaryEvents(`${action} --formula nvidia/openshell/openshell`),
           ...(expectedStatus === 0 ? ["--prefix"] : []),
         ]);
-        expect(fs.readFileSync(untrustCount, "utf-8").trim()).toBe("1");
+        expect(fs.readFileSync(untrustCount, "utf-8").trim()).toBe("4");
         expect(fs.existsSync(formulaTmpDir)).toBe(false);
       }
 
@@ -771,7 +781,7 @@ exit 1`,
         0,
       );
       expect(refusedTrust.stderr).toContain(
-        "Homebrew refused to trust the checksum-verified OpenShell formula nvidia/openshell/openshell",
+        "OpenShell Homebrew formula verification or temporary trust setup failed (status 67)",
       );
       const refusedTrustEvents = fs.readFileSync(brewLog, "utf-8").trim().split("\n");
       expect(refusedTrustEvents).toContain("help trust");
@@ -795,14 +805,14 @@ exit 1`,
       expect(
         unsupportedTrust.status,
         `${unsupportedTrust.stdout}\n${unsupportedTrust.stderr}`,
-      ).toBe(0);
+      ).toBeGreaterThan(0);
+      expect(unsupportedTrust.stderr).toContain(
+        "OpenShell Homebrew formula verification or temporary trust setup failed (status 67)",
+      );
       const unsupportedTrustEvents = fs.readFileSync(brewLog, "utf-8").trim().split("\n");
       expect(unsupportedTrustEvents).toContain("help trust");
       expect(unsupportedTrustEvents).not.toContain("trust --formula nvidia/openshell/openshell");
-      expect(unsupportedTrustEvents).toContain("install --formula nvidia/openshell/openshell");
-      expect(unsupportedTrust.stdout).toContain(
-        "OpenShell Homebrew service staged; onboarding will start it after gateway validation.",
-      );
+      expect(unsupportedTrustEvents).not.toContain("install --formula nvidia/openshell/openshell");
 
       fs.writeFileSync(brewLog, "");
       const missingUntrust = spawnSync("bash", [SCRIPT], {
@@ -824,7 +834,7 @@ exit 1`,
         `${missingUntrust.stdout}\n${missingUntrust.stderr}`,
       ).toBeGreaterThan(0);
       expect(missingUntrust.stderr).toContain(
-        "Homebrew supports formula trust but not the required untrust cleanup",
+        "OpenShell Homebrew formula verification or temporary trust setup failed (status 67)",
       );
       const missingUntrustEvents = fs.readFileSync(brewLog, "utf-8").trim().split("\n");
       expect(missingUntrustEvents).toContain("help trust");
@@ -853,7 +863,7 @@ exit 1`,
         `${refusedUntrust.stdout}\n${refusedUntrust.stderr}`,
       ).toBeGreaterThan(0);
       expect(refusedUntrust.stderr).toContain(
-        "Homebrew refused to remove inherited trust for the unverified OpenShell dev formula nvidia/openshell/openshell",
+        "OpenShell Homebrew formula verification or temporary trust setup failed (status 67)",
       );
       const refusedUntrustEvents = fs.readFileSync(brewLog, "utf-8").trim().split("\n");
       expect(refusedUntrustEvents).toContain("help trust");
@@ -882,21 +892,16 @@ exit 1`,
         failedCleanupUntrust.status,
         `${failedCleanupUntrust.stdout}\n${failedCleanupUntrust.stderr}`,
       ).toBeGreaterThan(0);
-      expect(failedCleanupUntrust.stdout).toContain(
-        "Homebrew could not remove temporary trust for nvidia/openshell/openshell",
+      expect(failedCleanupUntrust.stderr).toContain(
+        "OpenShell Homebrew formula verification or temporary trust setup failed (status 68)",
       );
       expect(fs.readFileSync(brewLog, "utf-8").trim().split("\n")).toEqual([
         "tap-info nvidia/openshell",
         "tap-new --no-git nvidia/openshell",
         "--repository nvidia/openshell",
-        "help trust",
-        "help untrust",
-        "untrust --formula nvidia/openshell/openshell",
-        "list --formula openshell",
-        "install --formula nvidia/openshell/openshell",
-        "untrust --formula nvidia/openshell/openshell",
+        ...unverifiedFormulaBoundaryEvents("list --formula openshell"),
       ]);
-      expect(fs.existsSync(path.join(formulaTmpDir, "openshell.rb"))).toBe(true);
+      expect(fs.existsSync(path.join(formulaTmpDir, "openshell.rb"))).toBe(false);
 
       fs.writeFileSync(brewLog, "");
       fs.writeFileSync(untrustCount, "0");
@@ -920,12 +925,8 @@ exit 1`,
         "tap-info nvidia/openshell",
         "tap-new --no-git nvidia/openshell",
         "--repository nvidia/openshell",
-        "help trust",
-        "help untrust",
-        "untrust --formula nvidia/openshell/openshell",
-        "list --formula openshell",
-        "install --formula nvidia/openshell/openshell",
-        "untrust --formula nvidia/openshell/openshell",
+        ...unverifiedFormulaBoundaryEvents("list --formula openshell"),
+        ...unverifiedFormulaBoundaryEvents("install --formula nvidia/openshell/openshell"),
         "--prefix",
       ]);
       expect(devBrewEvents).not.toContain("trust --formula nvidia/openshell/openshell");

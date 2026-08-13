@@ -314,7 +314,6 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.mkdirSync(customBuildDir, { recursive: true });
-      // biome-ignore format: keep this legacy test within its file-size budget.
       fs.writeFileSync(customDockerfilePath, "FROM scratch\nARG NEMOCLAW_MESSAGING_PLAN_B64=\nARG NEMOCLAW_TOOL_DISCLOSURE=progressive\nENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}\n");
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
         mode: 0o755,

@@ -55,7 +55,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
     if (SELECTED_TARGET_ID === target.id) {
       console.warn(`[not wired] ${target.id}: ${support.reasons.join("; ")}`);
     }
-    // biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
     test.skip(
       liveTargetTestName(target),
       { meta: { e2ePhases: REGISTRY_TARGET_PHASES } },
@@ -64,7 +63,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
     continue;
   }
 
-  // biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
   test(
     liveTargetTestName(target),
     { meta: { e2ePhases: REGISTRY_TARGET_PHASES } },

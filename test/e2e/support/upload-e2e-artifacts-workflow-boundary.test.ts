@@ -201,7 +201,6 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     uploadStep(defaultJob).with = { name: "e2e-brave-search" };
     defaultJob.env!.E2E_TARGET_ID = "not a selector id";
 
-    uploadStep(workflow.jobs["hermes-slack"]).with!.path = "e2e-artifacts/live/hermes-slack/";
     uploadStep(workflow.jobs["common-egress-agent"]).with!.name = "e2e-common-egress-agent";
     uploadStep(workflow.jobs["mcp-bridge"]).if = "always()";
     uploadStep(workflow.jobs["openshell-gateway-auth-contract"]).if = "always()";
@@ -219,7 +218,6 @@ describe("upload-e2e-artifacts workflow boundary", () => {
         "brave-search upload-e2e-artifacts invocation must not override its contract",
         "brave-search upload-e2e-artifacts must use the action defaults",
         "brave-search default upload caller must declare a valid E2E_TARGET_ID",
-        "hermes-slack upload-e2e-artifacts must preserve its explicit name/path contract",
         "common-egress-agent upload-e2e-artifacts must preserve its explicit name/path contract",
         "mcp-bridge upload-e2e-artifacts invocation must remain gated by its reviewed pre-upload checks",
         "openshell-gateway-auth-contract upload-e2e-artifacts invocation must remain gated by its reviewed pre-upload checks",
