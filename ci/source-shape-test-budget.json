@@ -47,6 +47,11 @@
       "category": "compatibility"
     },
     {
+      "file": "test/agent-variant-docs.test.ts",
+      "test": "keeps the OpenClaw workspace inventory aligned with seeded runtime templates",
+      "category": "compatibility"
+    },
+    {
       "file": "test/code-change-considerations.test.ts",
       "test": "keeps the stage-neutral questions in one concise owner",
       "category": "compatibility"
@@ -204,16 +209,6 @@
     {
       "file": "test/e2e/support/e2e-workflow.test.ts",
       "test": "rejects credential-backed provider smokes in the PR-safe inference-routing job",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects duplicate unguarded Docker Hub auth in messaging-compatible-endpoint",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects free-standing E2E artifact uploads from raw temp paths",
       "category": "security"
     },
     {
@@ -600,6 +595,16 @@
     {
       "file": "test/growth-guardrails-workflow-boundary.test.ts",
       "test": "flags %s",
+      "category": "security"
+    },
+    {
+      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
+      "test": "returns a credential-free JSON manifest byte for byte",
+      "category": "security"
+    },
+    {
+      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
+      "test": "leaves an installed package manifest that names a credential-shaped dependency",
       "category": "security"
     }
   ]

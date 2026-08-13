@@ -39,11 +39,13 @@ describe("CLI dispatch for terminal agents", () => {
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "-n" ] && [ "$4" = "alpha" ]; then',
-        '  cmd="${10}"',
+        // The smoke command is always the final argument. Read it from the end
+        // so the stub does not depend on how many flags precede it (#8624).
+        '  cmd="${*: -1}"',
         '  case "$cmd" in',
-        '    *"dcode --version"*) echo "dcode 0.1.34"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
-        '    *"config.toml"*) echo "NEMOCLAW_DEEPAGENTS_CONFIG_OK"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
-        '    *"NEMOCLAW_DCODE_EMPTY_PROMPT_OK"*) echo "NEMOCLAW_DCODE_EMPTY_PROMPT_OK"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
+        '    *"dcode --version"*) echo "NEMOCLAW_AGENT_SMOKE_BEGIN"; echo "dcode 0.1.34"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
+        '    *"config.toml"*) echo "NEMOCLAW_AGENT_SMOKE_BEGIN"; echo "NEMOCLAW_DEEPAGENTS_CONFIG_OK"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
+        '    *"NEMOCLAW_DCODE_EMPTY_PROMPT_OK"*) echo "NEMOCLAW_AGENT_SMOKE_BEGIN"; echo "NEMOCLAW_DCODE_EMPTY_PROMPT_OK"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
         "  esac",
         "fi",
         "exit 0",

@@ -43,11 +43,6 @@ export const E2E_JOB_POLICY = {
     "bootstrap-install-smoke",
     "llama-cpp-dgx-spark-qualification",
     "managed-image-multiarch-startup",
-    "ollama-auth-proxy",
-    "shields-config",
-    "snapshot-commands",
-    "spark-install",
-    "whatsapp-qr-compact",
   ],
   prepareTrustedBuild: ["managed-image-protected-runtime"],
 } as const;

@@ -94,8 +94,25 @@ export function makeStartScriptFixture(
   assert.ok(original.includes("local target=/tmp/nemoclaw-proxy-env.sh"));
   assert.ok(original.includes('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"'));
   assert.ok(original.includes("local marker_dir=/sandbox/.deepagents"));
+  const loginProfileVerification = `verify_dcode_login_profile() {
+  [ -d /sandbox ] \\
+    && [ ! -L /sandbox ] \\
+    && [ -f "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" ] \\
+    && [ ! -L "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" ] \\
+    && [ "$(stat -c '%U:%G:%a' "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" 2>/dev/null || true)" = "root:root:444" ] \\
+    && [ ! -L /sandbox/.bash_profile ] \\
+    && [ "$(stat -c '%U:%G:%a' /sandbox 2>/dev/null || true)" = "root:sandbox:1775" ] \\
+    && [ "$(stat -c '%U:%G:%a' /sandbox/.bash_profile 2>/dev/null || true)" = "root:root:444" ] \\
+    && cmp -s "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" /sandbox/.bash_profile
+}`;
+  assert.ok(original.includes(loginProfileVerification));
   fs.mkdirSync(envDir, { recursive: true });
   const envRedirected = prepareManagedProxyFixture(original, tempDir, options)
+    // These unit fixtures exercise post-drop entrypoint behavior on the host.
+    // The dedicated login-profile tests and live image acceptance cover the
+    // Linux root-owned file contract, which cannot be reproduced as non-root
+    // on every contributor platform.
+    .replace(loginProfileVerification, "verify_dcode_login_profile() { return 0; }")
     .replace("local target=/tmp/nemoclaw-proxy-env.sh", `local target="${envFile}"`)
     .replace(
       'tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"',

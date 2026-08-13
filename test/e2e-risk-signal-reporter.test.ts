@@ -96,6 +96,16 @@ describe("E2E risk signal reporter", () => {
     ).toBeNull();
   });
 
+  it("stays disabled when the workflow preserves candidate identity without a risk signal", () => {
+    expect(
+      configuredEnvironment({
+        NEMOCLAW_E2E_CORRELATION_ID: "",
+        NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA,
+        NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA: "",
+      }),
+    ).toBeNull();
+  });
+
   it.each([
     ["missing correlation ID", undefined],
     ["uppercase correlation ID", CORRELATION_ID.toUpperCase()],

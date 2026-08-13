@@ -305,6 +305,10 @@ The NemoClaw dashboard uses port `18789` by default and the gateway uses port `8
 If another sandbox already owns the dashboard port, onboarding scans ports `18789` through `18799` and uses the next free port.
 If all ports in that range are occupied, the error lists the owner for each port and suggests using `--control-ui-port` with a port outside the range.
 
+NemoClaw allocates each Hermes sandbox an OpenAI-compatible API port from `8642` through `8652`, so it rejects every port in that range as a dashboard port for any agent.
+When all ports in the API range are occupied, the error lists the owner for each port.
+Destroy a listed Hermes sandbox or stop a listed non-OpenShell listener, then rerun onboarding.
+
 On macOS, the port check also tries a privileged `lsof` probe without prompting for a password so root-owned listeners are detected before the sandbox build starts.
 For a new sandbox, NemoClaw reserves the selected loopback port through sandbox preparation and the image build.
 If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources.
@@ -570,6 +574,39 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 The next installer run must continue past the OpenShell installation step without reporting a version mismatch.
+
+### Installer Reports That the Systemd User Manager Is Unavailable
+
+On Linux, an OpenShell package can install `/usr/lib/systemd/user/openshell-gateway.service` on a host without a reachable systemd user manager.
+The service query can then return this diagnostic:
+
+```text
+Failed to connect to bus: No medium found
+```
+
+The installer accepts only recognized user-manager-unavailable diagnostics for the standalone gateway fallback.
+It checks `.wants`, `.requires`, and `.upholds` links in the standard systemd user unit paths.
+The installer keeps the standalone lifecycle only when neither gateway service has an activation path that can later claim port `8080`.
+The installer also stops when `SYSTEMD_UNIT_PATH` overrides the standard paths.
+The installer does not parse, modify, or remove a package or foreign unit to make this decision.
+
+If an activation path exists, the installer stops because the service can start later and compete for port `8080`.
+Restore the systemd user manager, then inspect both possible services:
+
+```bash
+systemctl --user status openshell-gateway.service
+systemctl --user is-enabled openshell-gateway.service
+systemctl --user status nemoclaw-openshell-gateway.service
+systemctl --user is-enabled nemoclaw-openshell-gateway.service
+```
+
+Resolve the competing service through its package or platform owner.
+Do not delete an activation link or edit a unit file by hand.
+Rerun the installer only after the owner confirms that no enabled user service can claim port `8080`.
+
+Unknown service query errors remain fatal.
+The installer also stops for malformed effective metadata, an untrusted unit or executable path, an executable failure, or a gateway version mismatch.
+Follow the reported condition instead of forcing the standalone fallback.
 
 <AgentOnly variant="openclaw">
 
@@ -1161,14 +1198,20 @@ Follow these steps to reconnect.
    Only the default port `8080` uses a NemoClaw-managed service.
    If the gateway is externally supervised, inspect and restart it through the supervisor declared by `NEMOCLAW_GATEWAY_MANAGEMENT`, regardless of port.
 
-   On Apple Silicon macOS with Homebrew, inspect and restart the official formula service.
+   On Apple Silicon macOS with Homebrew, let NemoClaw inspect and restart the official formula service.
+   NemoClaw runs each Homebrew operation inside the checksum-verified temporary trust boundary.
+   Continue to the NemoClaw recovery step below instead of running `brew services` directly.
+
+   NemoClaw verifies the staged formula checksum and temporarily trusts only `nvidia/openshell/openshell` around each Homebrew inspection, start, or stop operation.
+   If formula verification fails or Homebrew cannot grant or remove temporary trust, rerun the standard NemoClaw installer and then rerun onboarding:
 
    ```bash
-   brew services list
-   brew services restart openshell
+   curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
    ```
-
-   During onboarding, NemoClaw uses the standalone fallback when the `openshell` formula is missing.
+   The standalone gateway is selected only when Homebrew or both the staged formula and installed keg are absent.
+   When the formula or keg exists, Homebrew remains the lifecycle authority.
+   NemoClaw does not switch to the standalone gateway after a Homebrew inspection, start, or stop failure.
+   Follow the reported repair guidance instead of changing service ownership manually.
    If the installed service fails inspection, startup, or its health check, NemoClaw prints this log command:
 
    ```bash
@@ -1205,7 +1248,7 @@ Follow these steps to reconnect.
 
    The tarball unit is under `$XDG_CONFIG_HOME/systemd/user`, or `~/.config/systemd/user` when `XDG_CONFIG_HOME` is not absolute.
    It starts with your user session; NemoClaw does not enable lingering.
-   If a managed service fails inspection, startup, or its health check, NemoClaw attempts the standalone fallback on either platform.
+   On Linux, NemoClaw attempts the standalone fallback when a managed service fails inspection, startup, or its health check.
    The standalone gateway starts only after NemoClaw verifies exclusive ownership of the gateway port.
    The fallback does not bypass managed-service trust validation or unsafe environment configuration.
    These conditions remain hard failures:
@@ -1282,15 +1325,18 @@ For details, refer to [Create and Restore Snapshots](../manage-sandboxes/state-a
 Destroying the final sandbox with `--cleanup-gateway` stops the packaged OpenShell gateway service before it reaps host gateway processes, so the gateway port is released.
 The service is stopped, not disabled or removed, and the next onboarding run starts it again.
 If the service cannot be stopped, `destroy` exits non-zero and prints the status command for the service.
-Stop the service yourself, then rerun `destroy`.
 
-On Apple Silicon macOS with Homebrew:
+On Apple Silicon macOS with Homebrew, rerun the standard NemoClaw installer to restore the pinned formula and temporary trust contract:
 
 ```bash
-brew services stop openshell
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-On Linux, use the service name that matches the install. For package installs:
+Then rerun `$$nemoclaw <name> destroy --cleanup-gateway` instead of stopping the Homebrew service directly.
+
+On Linux, stop the service yourself, then rerun `destroy`.
+Use the service name that matches the install.
+For package installs:
 
 ```bash
 systemctl --user stop openshell-gateway
@@ -2182,7 +2228,7 @@ $$nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>
 
 `channels add` registers credentials with the OpenShell gateway and `channels remove` clears them.
 Both offer to rebuild the sandbox so the image reflects the new channel set.
-In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `$$nemoclaw <sandbox> rebuild`.
+In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`, or any run without a terminal on stdin), the commands stage the change and leave the rebuild to a follow-up `$$nemoclaw <sandbox> rebuild`.
 WeChat and WhatsApp are experimental.
 Review [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) before enabling them.
 
@@ -3282,7 +3328,8 @@ After the rebuild, make the intended change through a supported command such as 
 
 ### Port 8642 in a browser shows a blank page or `Cannot GET /`
 
-`nemohermes onboard` forwards port `8642`, but Hermes serves an OpenAI-compatible API at that port, not a chat dashboard.
+`nemohermes onboard` forwards the sandbox's API port, which is `8642` when no other sandbox or host listener already holds it.
+Hermes serves an OpenAI-compatible API at that port, not a chat dashboard.
 A browser visit to `http://127.0.0.1:8642/` (or any non-API path) returns nothing renderable.
 
 Confirm the agent is healthy with the API health endpoint instead:
@@ -3312,7 +3359,29 @@ openshell forward list                       # shows the host bind for each forw
 curl -sf http://127.0.0.1:8642/health        # confirms the relayed endpoint answers
 ```
 
-If `openshell forward list` does not show port `8642`, run `nemohermes <name> connect --probe-only` (or `nemohermes <name> recover`) to ask the recovery path to re-establish every manifest-declared agent forward port that has gone missing.
+If `openshell forward list` does not show the sandbox's API port, run `nemohermes <name> connect --probe-only` (or `nemohermes <name> recover`) to ask the recovery path to re-establish every manifest-declared agent forward port that has gone missing.
+Recovery targets each sandbox's own ports.
+A second Hermes sandbox on the same host receives the next free API port, so check which sandbox owns each row before assuming a missing `8642` row belongs to the sandbox you are debugging.
+A Hermes sandbox onboarded before the API port became per-sandbox carries no allocated port and keeps `8642`.
+A Hermes sandbox created after that change receives its own port during onboarding, so a second sandbox needs no further action.
+To move a sandbox that predates the change onto its own port, set `NEMOCLAW_HERMES_API_PORT=<N>` and rerun onboarding with `--recreate-sandbox`.
+Set `<N>` to a free port from `8642` through `8652`.
+Onboarding rejects a value outside that range.
+It also rejects an in-range value that another sandbox or host listener already holds.
+A recreate keeps the sandbox's registry entry, so `--recreate-sandbox` without the variable keeps the recorded port.
+
+### Install reports `Could not restore the Hermes forward`
+
+The installer reads the sandbox's recorded API port from the sandbox registry before it restores the API forward.
+It exits with that message when any of these conditions is true:
+
+- The `node` binary is missing.
+- The registry file is missing, does not parse, or records no entry for the sandbox.
+- The recorded port is not an integer from `8642` through `8652`.
+
+A sandbox registered before the API port became per-sandbox records no port, and the installer uses `8642` for it.
+Install `node`, or rerun `nemohermes onboard` to register the sandbox again.
+Then run `nemohermes <name> recover` to re-establish the forward.
 
 ### `nemohermes` reports `Sandbox 'X' already exists as OpenClaw`
 

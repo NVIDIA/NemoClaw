@@ -24,6 +24,7 @@ import {
 } from "../serving/vllm-host-local-lifecycle";
 import { managedVllmStateDir } from "../vllm-api-key";
 import {
+  cleanupHuggingFaceCacheData,
   cleanupLocalModelRuntimes,
   cleanupManagedLlamaCppRuntimeForSandbox,
   resolveManagedLlamaCppCleanupTarget,
@@ -71,7 +72,7 @@ describe("host-local model cleanup", () => {
       preserved: [],
       removed: [],
     });
-    expect(cleanupLocalModelRuntimes({ deleteModels: false, homeDir })).toEqual({
+    expect(cleanupLocalModelRuntimes({ homeDir })).toEqual({
       ok: true,
       preserved: [],
       removed: [],
@@ -84,7 +85,6 @@ describe("host-local model cleanup", () => {
     createPreStartManagedState(homeDir, harness.engine);
 
     const result = cleanupLocalModelRuntimes({
-      deleteModels: false,
       homeDir,
       engine: harness.engine,
     });
@@ -107,7 +107,6 @@ describe("host-local model cleanup", () => {
     createPreStartManagedState(homeDir, harness.engine);
 
     const result = cleanupLocalModelRuntimes({
-      deleteModels: false,
       homeDir,
       engine: harness.engine,
     });
@@ -147,7 +146,6 @@ describe("host-local model cleanup", () => {
 
     expect(
       cleanupLocalModelRuntimes({
-        deleteModels: false,
         homeDir,
         deps: {
           capture: capture as never,
@@ -202,7 +200,6 @@ describe("host-local model cleanup", () => {
 
     expect(
       cleanupLocalModelRuntimes({
-        deleteModels: false,
         gatewayPort,
         homeDir,
         deps: {
@@ -270,7 +267,6 @@ describe("host-local model cleanup", () => {
 
     expect(
       cleanupLocalModelRuntimes({
-        deleteModels: false,
         homeDir,
         deps: {
           capture: capture as never,
@@ -304,7 +300,6 @@ describe("host-local model cleanup", () => {
 
     expect(
       cleanupLocalModelRuntimes({
-        deleteModels: false,
         homeDir,
         deps: {
           capture: vi.fn((argv: readonly string[]) =>
@@ -339,7 +334,6 @@ describe("host-local model cleanup", () => {
 
     expect(
       cleanupLocalModelRuntimes({
-        deleteModels: false,
         homeDir,
         deps: {
           capture: capture as never,
@@ -358,13 +352,14 @@ describe("host-local model cleanup", () => {
     createManagedState(homeDir, harness.engine);
     const cache = path.join(homeDir, ".cache", "huggingface");
     fs.mkdirSync(cache, { recursive: true });
-    fs.writeFileSync(path.join(cache, "shared-model"), "keep");
+    fs.writeFileSync(path.join(cache, "shared-model"), "delete");
+    fs.writeFileSync(path.join(cache, "token"), "keep-credential", { mode: 0o600 });
+    fs.writeFileSync(path.join(cache, "stored_tokens"), "keep-stored-credentials", { mode: 0o600 });
     const ambientCapture = vi.fn(() => "") as never;
     const ambientForceRm = vi.fn(() => ({ status: 0 })) as never;
     const ambientRun = vi.fn(() => ({ status: 0 })) as never;
 
     const result = cleanupLocalModelRuntimes({
-      deleteModels: true,
       homeDir,
       engine: harness.engine,
       deps: {
@@ -379,8 +374,55 @@ describe("host-local model cleanup", () => {
     expect(ambientCapture).not.toHaveBeenCalled();
     expect(ambientForceRm).not.toHaveBeenCalled();
     expect(ambientRun).not.toHaveBeenCalled();
+    expect(fs.readFileSync(path.join(cache, "shared-model"), "utf8")).toBe("delete");
+    expect(fs.readFileSync(path.join(cache, "token"), "utf8")).toBe("keep-credential");
+    expect(fs.readFileSync(path.join(cache, "stored_tokens"), "utf8")).toBe(
+      "keep-stored-credentials",
+    );
+    expect(result.removed).not.toContain(`cache-contents:${cache}`);
+    expect(result.preserved).toContain(cache);
+  });
+
+  it("removes non-credential Hugging Face cache data without running runtime cleanup", () => {
+    const homeDir = temporaryHome();
+    const cache = path.join(homeDir, ".cache", "huggingface");
+    const runtimePaths = managedLlamaCppStatePaths(homeDir);
+    createManagedState(homeDir, engineHarness().engine);
+    const runtimeOwner = fs.readFileSync(runtimePaths.ownerPath, "utf8");
+    const runtimeReceipt = fs.readFileSync(runtimePaths.receiptPath, "utf8");
+    fs.mkdirSync(cache, { recursive: true });
+    fs.writeFileSync(path.join(cache, "shared-model"), "delete");
+    fs.writeFileSync(path.join(cache, "token"), "keep-credential", { mode: 0o600 });
+    fs.writeFileSync(path.join(cache, "stored_tokens"), "keep-stored-credentials", { mode: 0o600 });
+
+    const result = cleanupHuggingFaceCacheData({ homeDir });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(fs.existsSync(path.join(cache, "shared-model"))).toBe(false);
+    expect(fs.readFileSync(path.join(cache, "token"), "utf8")).toBe("keep-credential");
+    expect(fs.readFileSync(path.join(cache, "stored_tokens"), "utf8")).toBe(
+      "keep-stored-credentials",
+    );
+    expect(fs.readFileSync(runtimePaths.ownerPath, "utf8")).toBe(runtimeOwner);
+    expect(fs.readFileSync(runtimePaths.receiptPath, "utf8")).toBe(runtimeReceipt);
+    expect(result.removed).toContain(`cache-contents:${cache}`);
+    expect(result.preserved).toEqual(
+      expect.arrayContaining([path.join(cache, "token"), path.join(cache, "stored_tokens")]),
+    );
+  });
+
+  it("preserves the shared Hugging Face cache during runtime cleanup", () => {
+    const homeDir = temporaryHome();
+    const cache = path.join(homeDir, ".cache", "huggingface");
+    fs.mkdirSync(cache, { recursive: true });
+    fs.writeFileSync(path.join(cache, "shared-model"), "keep");
+
+    const result = cleanupLocalModelRuntimes({ homeDir });
+
+    expect(result).toMatchObject({ ok: true });
     expect(fs.existsSync(path.join(cache, "shared-model"))).toBe(true);
     expect(result.preserved).toContain(cache);
+    expect(result.removed).not.toContain(cache);
   });
 
   it("canonicalizes a symlink HOME alias before exact managed llama.cpp cleanup", () => {
@@ -391,7 +433,6 @@ describe("host-local model cleanup", () => {
     createManagedState(homeDir, harness.engine);
 
     const result = cleanupLocalModelRuntimes({
-      deleteModels: false,
       homeDir: homeAlias,
       engine: harness.engine,
     });
@@ -412,7 +453,6 @@ describe("host-local model cleanup", () => {
     const harness = engineHarness();
 
     const result = cleanupLocalModelRuntimes({
-      deleteModels: false,
       homeDir,
       engine: harness.engine,
     });
@@ -437,7 +477,6 @@ describe("host-local model cleanup", () => {
     createManagedState(homeDir, harness.engine, { phase });
 
     const result = cleanupLocalModelRuntimes({
-      deleteModels: false,
       homeDir,
       engine: harness.engine,
     });
@@ -455,7 +494,6 @@ describe("host-local model cleanup", () => {
     });
 
     const result = cleanupLocalModelRuntimes({
-      deleteModels: false,
       homeDir,
       engine: harness.engine,
     });
@@ -474,7 +512,6 @@ describe("host-local model cleanup", () => {
     createManagedState(homeDir, original.engine);
 
     const result = cleanupLocalModelRuntimes({
-      deleteModels: false,
       homeDir,
       engine: changed.engine,
     });
@@ -493,7 +530,6 @@ describe("host-local model cleanup", () => {
     createManagedState(homeDir, harness.engine);
 
     const result = cleanupLocalModelRuntimes({
-      deleteModels: false,
       homeDir,
       engine: harness.engine,
     });
@@ -517,7 +553,6 @@ describe("host-local model cleanup", () => {
     const lease = store.acquireExecution(TRANSACTION_ID);
     try {
       const result = cleanupLocalModelRuntimes({
-        deleteModels: false,
         homeDir,
         engine: harness.engine,
       });
@@ -542,7 +577,6 @@ describe("host-local model cleanup", () => {
     createManagedState(homeDir, harness.engine);
 
     const result = cleanupLocalModelRuntimes({
-      deleteModels: false,
       homeDir,
       engine: harness.engine,
     });

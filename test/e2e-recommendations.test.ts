@@ -75,6 +75,7 @@ describe("E2E recommendation normalizer", () => {
         "tools/advisors/e2e-text.mts",
         "tools/advisors/json.mts",
         "tools/advisors/risk-plan.mts",
+        "tools/e2e/target-catalogue.mts",
         "scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts",
         "scripts/checks/protected-managed-image-contract.ts",
         "tools/e2e/module-tags.mts",
@@ -286,7 +287,7 @@ describe("E2E recommendation normalizer", () => {
     expect(JSON.stringify({ coverage, targets })).not.toContain("workflow run");
   });
 
-  it("enforces deterministic risk-plan jobs when the model recommends none", () => {
+  it("does not expose credentialed deterministic jobs as PR selectors", () => {
     const normalized = normalizeE2eTargetAdvisorResult(
       {
         required: [],
@@ -297,13 +298,10 @@ describe("E2E recommendation normalizer", () => {
       metadata({ changedFiles: ["src/lib/actions/upgrade-sandboxes.ts"] }),
     );
 
-    expect(normalized.required.map((item) => item.id)).toEqual([
-      "rebuild-openclaw",
-      "state-backup-restore",
-    ]);
-    expect(normalized.required.every((item) => item.required)).toBe(true);
-    expect(normalized.noTargetE2eReason).toBeNull();
-    expect(normalized.confidence).toBe("medium");
+    expect(normalized.required).toEqual([]);
+    expect(normalized.optional).toEqual([]);
+    expect(normalized.noTargetE2eReason).toBe("No trusted E2E selector was selected.");
+    expect(normalized.confidence).toBe("low");
   });
 
   it("does not report an empty coverage decision when optional coverage was selected", () => {
@@ -326,7 +324,7 @@ describe("E2E recommendation normalizer", () => {
     expect(normalized.noE2eReason).toBeNull();
   });
 
-  it("does not let a model downgrade a deterministic risk-plan job", () => {
+  it("rejects a model recommendation for a credentialed catalogue job", () => {
     const normalized = normalizeE2eTargetAdvisorResult(
       {
         required: [],
@@ -343,7 +341,7 @@ describe("E2E recommendation normalizer", () => {
       metadata({ changedFiles: ["src/lib/actions/upgrade-sandboxes.ts"] }),
     );
 
-    expect(normalized.required.map((item) => item.id)).toContain("rebuild-openclaw");
+    expect(normalized.required.map((item) => item.id)).not.toContain("rebuild-openclaw");
     expect(normalized.optional.map((item) => item.id)).not.toContain("rebuild-openclaw");
   });
 
@@ -354,7 +352,6 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
-      "full-e2e",
       "hermes-e2e",
       "onboard-repair",
       "onboard-resume",
@@ -624,7 +621,6 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
       "security-posture",
     ]);
@@ -679,7 +675,6 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
       "security-posture",
     ]);
@@ -731,7 +726,6 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
       "security-posture",
     ]);
@@ -786,10 +780,8 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
       "security-posture",
-      "full-e2e",
       "hermes-e2e",
       "onboard-repair",
       "onboard-resume",
@@ -815,6 +807,31 @@ jobs:
       {
         id: "token-rotation",
         liveTestFiles: ["test/e2e/live/token-rotation.test.ts"],
+      },
+    ]);
+  });
+
+  it("requires exact selected-jobs membership for planned workflow jobs", () => {
+    expect(
+      extractFreeStandingE2eJobs(String.raw`
+jobs:
+  target-a:
+    if: \${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'target-a-extra') }}
+    steps:
+      - run: npx vitest run test/e2e/live/target-a.test.ts
+  target-b:
+    # selected_jobs and target-b are unrelated text.
+    steps:
+      - run: npx vitest run test/e2e/live/target-b.test.ts
+  target-c:
+    if: \${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'target-c') }}
+    steps:
+      - run: npx vitest run test/e2e/live/target-c.test.ts
+`),
+    ).toEqual([
+      {
+        id: "target-c",
+        liveTestFiles: ["test/e2e/live/target-c.test.ts"],
       },
     ]);
   });
@@ -849,7 +866,6 @@ jobs:
     );
 
     expect(normalized.required.map((item) => [item.selectorType, item.id])).toEqual([
-      ["job", "cloud-inference"],
       ["job", "cloud-onboard"],
       ["job", "security-posture"],
       ["job", "token-rotation"],
@@ -888,7 +904,6 @@ jobs:
     );
 
     expect(normalized.required.map((item) => [item.selectorType, item.id])).toEqual([
-      ["job", "cloud-inference"],
       ["job", "cloud-onboard"],
       ["job", "security-posture"],
       ["job", "token-rotation"],
@@ -924,7 +939,6 @@ jobs:
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
       "security-posture",
     ]);
@@ -949,7 +963,6 @@ jobs:
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
       "security-posture",
     ]);

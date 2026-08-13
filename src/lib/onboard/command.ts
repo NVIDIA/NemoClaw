@@ -427,7 +427,8 @@ function applyPortableEnvironment(
     NEMOCLAW_PROVIDER: "ollama",
     NEMOCLAW_MODEL: "qwen3-vl:4b",
     NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
-    NEMOCLAW_POLICY_MODE: "suggested",
+    NEMOCLAW_POLICY_MODE: "custom",
+    NEMOCLAW_POLICY_PRESETS: "personal-open-internet",
     NEMOCLAW_POLICY_TIER: "personal",
   } as const;
   const previousPortableEnv = new Map<string, string | undefined>();

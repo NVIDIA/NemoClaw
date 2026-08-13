@@ -142,7 +142,7 @@ describe("stopAll with sandbox channels", () => {
       .mockImplementation(() => {});
     const releaseGateway = vi
       .spyOn(gatewayStop, "releaseGatewayPortForStop")
-      .mockImplementation(() => {});
+      .mockImplementation(() => "attempted");
     writeFileSync(join(pidDir, "cloudflared.pid"), "999999999");
 
     expect(() =>
