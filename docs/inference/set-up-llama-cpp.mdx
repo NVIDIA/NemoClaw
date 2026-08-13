@@ -158,7 +158,7 @@ $$nemoclaw my-assistant doctor
 docker inspect --format '{{json .HostConfig.PortBindings}}' nemoclaw-llama-cpp
 ```
 
-Accept the result when `status` reports `Managed llama.cpp: running`, the inference route is `reachable`, and `doctor` exits with status `0`.
+Accept the result when `status` reports `Managed llama.cpp: running`, the inference route is `healthy`, and `doctor` exits with status `0`.
 The Docker inspection output must be `{}`, confirming that the container has no Docker-published port.
 The host-owned private bridge still listens on loopback.
 These checks do not establish agent and model qualification.
@@ -246,7 +246,10 @@ It preserves `~/.cache/huggingface/` because other applications can use that cac
 If exact cleanup fails, NemoClaw preserves the sandbox registry entry and ownership state for a retry.
 
 For full NemoClaw removal, run `$$nemoclaw uninstall`.
-Full uninstall applies the same exact-ownership checks and preserves the shared Hugging Face cache.
+Full uninstall applies the same exact-ownership checks and preserves the shared Hugging Face cache by default.
+Pass `--delete-models` only when you accept deletion of all non-credential data in the current user's shared cache after managed model runtimes stop.
+The same flag also deletes every model installed in the host's local Ollama inventory.
+Uninstall preserves the Hugging Face `token` and `stored_tokens` authentication files.
 
 ## Related Topics
 

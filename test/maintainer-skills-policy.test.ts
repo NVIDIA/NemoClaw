@@ -185,7 +185,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(taxonomy.quality_rules.post_merge_untagged_release_labeling_allowed).toBe(true);
   });
 
-  it("requires one passing exact-SHA release qualification check (#7912)", () => {
+  it("requires one full manual exact-SHA release qualification check (#7912)", () => {
     const dailyFlow = read(".agents/skills/nemoclaw-maintainer-policies/references/daily-flow.md");
     const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
     const priorities = read(".agents/skills/nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md");
@@ -196,21 +196,20 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(policy).toContain("`.github/workflows/e2e.yaml` is the sole source of truth");
     expect(policy).toContain("Do not maintain a separate release-gating test list");
     expect(policy).toContain("completed, successful `Release qualification` check");
-    expect(policy).toContain(
-      "trusted pushes to `main` and full manual runs dispatched against `main`",
-    );
+    expect(policy).toContain("only full manual runs dispatched against `main`");
     expect(policy).toContain("every default-required workflow E2E result");
     expect(policy).toContain("A check from another commit SHA is not release evidence");
-    expect(policy).toContain("only when the candidate SHA has no passing check");
+    expect(policy).toContain("run `nemoclaw-maintainer-e2e` in full mode when none exists");
     expect(policy).toContain("workflow and `Release qualification` job URLs");
+    expect(policy).toContain("`scripts/release-cut-tag.sh` searches completed, successful manual");
+    expect(policy).toContain("fails closed when no qualifying run exists");
+    expect(policy).toContain("The script repeats this check before it pushes the tag");
     expect(policy).toContain("This does not freeze `main` or prevent merges");
-    expect(release).toContain("gh run list");
-    expect(release).toContain('--commit "$CANDIDATE_SHA"');
-    expect(release).toContain("one job named `Release qualification`");
     expect(release).toContain("load `nemoclaw-maintainer-e2e` and dispatch one full run");
     expect(release).toContain("include_staging_brev_launchable=true");
+    expect(release).toContain("first run with exactly one completed, successful");
     expect(release).toContain("Before showing the confirmation prompt");
-    expect(release).toContain("Immediately before asking, refresh `origin/main` once");
+    expect(release).toContain("Run the release script's signing preflight");
     expect(release).not.toContain("release:e2e-evidence");
     expect(release).not.toContain("dispatchJson");
     expect(release).not.toContain("itemized maintainer exception");
@@ -221,13 +220,14 @@ describe("maintainer skills follow canonical workflow policy", () => {
     );
     expect(evidenceSummary).toBeGreaterThanOrEqual(0);
     expect(evidenceSummary).toBeLessThan(confirmationPrompt);
-    expect(evening).toContain("Use a passing `Release qualification` check");
-    expect(evening).toContain("without a passing check at the current candidate SHA");
+    expect(evening).toContain("run full mode when none exists");
+    expect(evening).toContain("accepts the canonical check at the current candidate SHA");
     expect(evening).toContain("Tag the confirmed release commit with `vX.Y.Z`");
     expect(evening).not.toContain("tag `main`");
-    expect(dailyFlow).toContain("capture the candidate SHA and require a passing");
+    expect(dailyFlow).toContain("capture the candidate SHA");
+    expect(dailyFlow).toContain("Dispatch full manual E2E only when no qualifying run exists");
     expect(dailyFlow).toContain("discard the earlier check");
-    expect(priorities).toContain("candidate SHA and passing `Release qualification` check");
+    expect(priorities).toContain("full manual `Release qualification` check");
   });
 
   it("requires exact Brev Launchable through the aggregate check (#7912)", () => {

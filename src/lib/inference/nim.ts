@@ -26,6 +26,7 @@ import { isSafeModelId } from "../validation";
 import { isDgxStationGb300Product } from "./dgx-station-identity";
 import {
   type Arm64WslDockerDesktopGpuProver,
+  captureNvidiaSmi,
   escapeGpuNameForTerminal,
   isDenylistedNvidiaGpuName,
   isPlausibleNvidiaGpuName,
@@ -103,6 +104,8 @@ export interface DetectGpuDeps {
   proveArm64WslDockerDesktopGpu?: Arm64WslDockerDesktopGpuProver | null;
   /** Read-only command transport used by observation-only readiness callers. */
   runCaptureImpl?: typeof runCapture;
+  /** Override WSL detection for deterministic tests. */
+  isWsl?: boolean;
 }
 
 // Lazily construct the default ARM64 Linux GPU prover. Keep it behind a require
@@ -314,10 +317,9 @@ export function detectNvidiaPlatform(): NvidiaPlatform {
 // container to a specific GPU on hosts with mixed configurations (e.g.
 // DGX Station's GB300 alongside other GPUs).
 export function getGpuIndicesByName(pattern: RegExp): number[] {
-  const out = runCapture(
-    ["nvidia-smi", "--query-gpu=index,name", "--format=csv,noheader,nounits"],
-    { ignoreError: true },
-  );
+  const out = captureNvidiaSmi(["--query-gpu=index,name", "--format=csv,noheader,nounits"], {
+    runCaptureImpl: runCapture,
+  });
   if (!out) return [];
   const indices: number[] = [];
   for (const line of out.split("\n")) {
@@ -419,9 +421,9 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
   // the bootstrap-model selector can pick a model that fits currently
   // available memory, not just the headline total.
   try {
-    const output = runCaptureImpl(
-      ["nvidia-smi", "--query-gpu=name,memory.total,memory.free", "--format=csv,noheader,nounits"],
-      { ignoreError: true },
+    const output = captureNvidiaSmi(
+      ["--query-gpu=name,memory.total,memory.free", "--format=csv,noheader,nounits"],
+      { isWsl: deps.isWsl, runCaptureImpl },
     );
     if (output) {
       type ParsedGpu = { name: string; memoryMB: number; freeMemoryMB: number };
@@ -532,10 +534,10 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
 
   // Fallback: unified-memory NVIDIA devices
   try {
-    const nameOutput = runCaptureImpl(
-      ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader,nounits"],
-      { ignoreError: true },
-    );
+    const nameOutput = captureNvidiaSmi(["--query-gpu=name", "--format=csv,noheader,nounits"], {
+      isWsl: deps.isWsl,
+      runCaptureImpl,
+    });
     const gpuNames = nameOutput
       .split("\n")
       .map((line: string) => line.trim())
@@ -692,12 +694,12 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
 
 /** Return one consistent NVIDIA driver version from the read-only host GPU inventory. */
 export function detectNvidiaDriverVersion(
-  deps: { runCaptureImpl?: typeof runCapture } = {},
+  deps: { isWsl?: boolean; runCaptureImpl?: typeof runCapture } = {},
 ): string | undefined {
-  const output = (deps.runCaptureImpl ?? runCapture)(
-    ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader,nounits"],
-    { ignoreError: true },
-  );
+  const output = captureNvidiaSmi(["--query-gpu=driver_version", "--format=csv,noheader,nounits"], {
+    isWsl: deps.isWsl,
+    runCaptureImpl: deps.runCaptureImpl ?? runCapture,
+  });
   if (!output) return undefined;
   const versions = output
     .split("\n")
