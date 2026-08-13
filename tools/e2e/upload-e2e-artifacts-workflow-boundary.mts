@@ -165,23 +165,10 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
-    "common-egress-agent",
-    {
-      name: "e2e-common-egress-agent-${{ matrix.scenario }}",
-      path: "e2e-artifacts/live/common-egress-agent/${{ matrix.scenario }}/",
-    },
-  ],
-  [
     "hermes-gpu-startup",
     {
       name: "e2e-hermes-gpu-startup-${{ matrix.scenario }}",
       path: "e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/",
-    },
-  ],
-  [
-    "openshell-gateway-upgrade",
-    {
-      name: "e2e-openshell-gateway-upgrade-${{ matrix.id }}",
     },
   ],
   [

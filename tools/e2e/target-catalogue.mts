@@ -5,8 +5,15 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
-export const E2E_EXECUTION_PROFILES = ["standard", "nvidia-api", "nvidia-inference"] as const;
+export const E2E_EXECUTION_PROFILES = [
+  "standard",
+  "nvidia-api",
+  "nvidia-inference",
+  "github-read",
+  "brave-nvidia-inference",
+] as const;
 export type E2eExecutionProfile = (typeof E2E_EXECUTION_PROFILES)[number];
 
 export const E2E_INSTALL_MODES = ["none", "authenticated", "credential-free"] as const;
@@ -17,6 +24,7 @@ export type E2eHostPackage = (typeof E2E_HOST_PACKAGES)[number];
 
 export const E2E_CATALOGUE_RUNNER_KEYS = [
   "channels-stop-start-hermes",
+  "common-egress-agent",
   "hermes-discord",
   "hermes-inference-switch",
   "hermes-shields-config",
@@ -46,6 +54,7 @@ export interface E2eCatalogueTarget {
   installNonInteractive: boolean;
   restoreCli: boolean;
   exposeCliBin: boolean;
+  cloudflared: boolean;
   hostPackages: readonly E2eHostPackage[];
   hostPreparation: E2eHostPreparation;
   runnerComparison: boolean;
@@ -69,6 +78,7 @@ export interface E2eCatalogueMatrixRow {
   install_mode: E2eInstallMode;
   install_non_interactive: boolean;
   restore_cli: boolean;
+  cloudflared: boolean;
   host_packages: string;
   host_preparation: E2eHostPreparation;
   runner_comparison: boolean;
@@ -86,6 +96,7 @@ type TargetOptions = Omit<
   | "releaseRequired"
   | "environment"
   | "hostPackages"
+  | "cloudflared"
   | "installNonInteractive"
   | "runner"
   | "runnerKey"
@@ -101,6 +112,7 @@ type TargetOptions = Omit<
   owningPaths?: readonly string[];
   environment?: Readonly<Record<string, string>>;
   hostPackages?: readonly E2eHostPackage[];
+  cloudflared?: boolean;
   installNonInteractive?: boolean;
   runner?: string;
   runnerKey?: string;
@@ -121,6 +133,7 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     owningPaths = [],
     environment = {},
     hostPackages = [],
+    cloudflared = false,
     installNonInteractive = false,
     runner = "ubuntu-latest",
     runnerKey = "",
@@ -146,6 +159,7 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     targetId,
     environment,
     hostPackages,
+    cloudflared,
     hostPreparation,
     runnerComparison,
     runnerPressure,
@@ -166,6 +180,149 @@ const nonInteractive = {
   NEMOCLAW_NON_INTERACTIVE: "1",
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
 } as const;
+
+function commonEgressTarget(options: {
+  displayName: string;
+  hermes?: boolean;
+  selector: string;
+  shard: string;
+}): E2eCatalogueTarget {
+  return target(`common-egress-agent-${options.shard}`, {
+    targetId: "common-egress-agent",
+    displayName: options.displayName,
+    profile: "brave-nvidia-inference",
+    testFile: "test/e2e/live/common-egress-agent.test.ts",
+    timeoutMinutes: 60,
+    installMode: "credential-free",
+    installNonInteractive: true,
+    restoreCli: true,
+    exposeCliBin: true,
+    runnerKey: "common-egress-agent",
+    hostPreparation: options.hermes ? "hermes-swap" : "none",
+    runnerComparison: true,
+    shard: options.shard,
+    selector: options.selector,
+    owningPaths: ["test/e2e/live/common-egress-agent-helpers.ts"],
+    environment: {
+      ...hostedInference,
+      ...nonInteractive,
+      NEMOCLAW_RECREATE_SANDBOX: "1",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  });
+}
+
+interface GatewayUpgradeTargetOptions {
+  commit: string;
+  currentOpenClawVersion?: string;
+  displayName: string;
+  installerSha256: string;
+  nemoclawRef: string;
+  openClawVersion: string;
+  openShellVersion: string;
+  runner?: string;
+  sandboxBaseImageRef: string;
+  shard: string;
+  stateUpgrade?: boolean;
+}
+
+function gatewayUpgradeTarget(options: GatewayUpgradeTargetOptions): E2eCatalogueTarget {
+  return target(`openshell-gateway-upgrade-${options.shard}`, {
+    targetId: "openshell-gateway-upgrade",
+    displayName: options.displayName,
+    profile: "github-read",
+    runner: options.runner ?? "ubuntu-latest",
+    testFile: "test/e2e/live/openshell-gateway-upgrade.test.ts",
+    timeoutMinutes: 70,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: true,
+    shard: options.shard,
+    owningPaths: [
+      "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
+      "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
+    ],
+    environment: {
+      ...nonInteractive,
+      NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gw-survivor",
+      NEMOCLAW_OLD_NEMOCLAW_REF: options.nemoclawRef,
+      NEMOCLAW_OLD_NEMOCLAW_COMMIT: options.commit,
+      NEMOCLAW_OLD_INSTALLER_SHA256: options.installerSha256,
+      NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: options.sandboxBaseImageRef,
+      NEMOCLAW_OLD_OPENSHELL_VERSION: options.openShellVersion,
+      NEMOCLAW_OLD_OPENCLAW_VERSION: options.openClawVersion,
+      NEMOCLAW_CURRENT_OPENCLAW_VERSION: options.currentOpenClawVersion ?? "",
+      NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF: options.stateUpgrade ? "1" : "",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  });
+}
+
+const GATEWAY_UPGRADE_FIXTURES = [
+  {
+    displayName: "Upgrade: preserves v0.0.36 state on x86-64",
+    shard: "v0-0-36-x86-64",
+    nemoclawRef: "v0.0.36",
+    commit: "3351fbdd4eb7d9b80ec471545083956327da2b10",
+    installerSha256: "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f",
+    sandboxBaseImageRef:
+      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6",
+    openShellVersion: "0.0.36",
+    openClawVersion: "2026.4.24",
+  },
+  {
+    displayName: "Upgrade: preserves v0.0.55 state on x86-64",
+    shard: "v0-0-55-x86-64",
+    nemoclawRef: "v0.0.55",
+    commit: "95d483fe2b6569d68e59493c60f19df09a068e8f",
+    installerSha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897",
+    sandboxBaseImageRef:
+      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108",
+    openShellVersion: "0.0.44",
+    openClawVersion: "2026.5.22",
+  },
+  {
+    displayName: "Upgrade: preserves v0.0.55 state on Arm64",
+    runner: "ubuntu-24.04-arm",
+    shard: "v0-0-55-aarch64",
+    nemoclawRef: "v0.0.55",
+    commit: "95d483fe2b6569d68e59493c60f19df09a068e8f",
+    installerSha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897",
+    sandboxBaseImageRef:
+      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108",
+    openShellVersion: "0.0.44",
+    openClawVersion: "2026.5.22",
+  },
+  {
+    displayName: "Upgrade: preserves v0.0.74 state on x86-64",
+    shard: "v0-0-74-x86-64",
+    nemoclawRef: "v0.0.74",
+    commit: "3a05b54e8ec3e1d5550ec5c728de54af872bffe3",
+    installerSha256: "a0cd3feca488d247e53d59d7d8246d2b86e75e95acb5e7d78504b3c0c60fd7db",
+    sandboxBaseImageRef:
+      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6",
+    openShellVersion: "0.0.72",
+    openClawVersion: "2026.5.27",
+  },
+  {
+    displayName: "Upgrade: migrates v0.0.89 state on x86-64",
+    shard: "v0-0-89-x86-64",
+    nemoclawRef: "v0.0.89",
+    commit: "1143aa5cce77f3bad1b3b5588bd7fddbe438237e",
+    installerSha256: "00f24959e5ca68104fe91221c0a015dab6a4154618497fa36b969b661f418cc2",
+    sandboxBaseImageRef:
+      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1",
+    openShellVersion: "0.0.85",
+    openClawVersion: "2026.6.10",
+    currentOpenClawVersion: "2026.7.1",
+    stateUpgrade: true,
+  },
+] as const satisfies readonly GatewayUpgradeTargetOptions[];
+
+const GATEWAY_UPGRADE_TARGETS = GATEWAY_UPGRADE_FIXTURES.map(gatewayUpgradeTarget);
+const GATEWAY_UPGRADE_TARGET_BY_ID = new Map(
+  GATEWAY_UPGRADE_TARGETS.map((entry) => [entry.id, entry]),
+);
 
 export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   target("agent-turn-latency", {
@@ -248,6 +405,21 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-ultra",
       NEMOCLAW_PREFERRED_API: "openai-completions",
       SKIP_DOCKER_PULL: "1",
+    },
+  }),
+  target("brave-search", {
+    displayName: "Search: OpenClaw returns a Brave result without exposing its key",
+    profile: "brave-nvidia-inference",
+    timeoutMinutes: 45,
+    installMode: "authenticated",
+    installNonInteractive: true,
+    restoreCli: true,
+    exposeCliBin: true,
+    environment: {
+      ...hostedInference,
+      ...nonInteractive,
+      NEMOCLAW_SANDBOX_NAME: "e2e-brave-search",
+      OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
   target("channels-add-remove", {
@@ -333,6 +505,22 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_SANDBOX_NAME: "e2e-cloud-inference",
       OPENSHELL_GATEWAY: "nemoclaw",
     },
+  }),
+  commonEgressTarget({
+    displayName: "Networking: OpenClaw answers through balanced egress",
+    shard: "openclaw-balanced-weather",
+    selector: "^common-egress.+C1.+$",
+  }),
+  commonEgressTarget({
+    displayName: "Networking: OpenClaw reaches a public reference through open egress",
+    shard: "openclaw-open-reference",
+    selector: "^common-egress.+C2.+$",
+  }),
+  commonEgressTarget({
+    displayName: "Networking: Hermes reaches a public reference through open egress",
+    hermes: true,
+    shard: "hermes-open-reference",
+    selector: "^common-egress.+C3.+$",
   }),
   target("concurrent-gateway-ports", {
     displayName: "Gateway: isolates ports for concurrent sandboxes",
@@ -591,6 +779,15 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
+  target("inference-routing", {
+    displayName: "Inference: rejects unsafe routes and proves runtime identities",
+    profile: "standard",
+    timeoutMinutes: 45,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: false,
+    cloudflared: true,
+  }),
   target("kimi-inference-compat", {
     displayName: "Inference: configures a Kimi-compatible endpoint",
     profile: "standard",
@@ -798,6 +995,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       SLACK_APP_TOKEN: "xapp-fake-slack-pairing-e2e",
     },
   }),
+  ...GATEWAY_UPGRADE_TARGETS,
   target("overlayfs-autofix", {
     displayName: "Install: uses a patched cluster image for Docker overlayfs",
     profile: "nvidia-inference",
@@ -1075,6 +1273,39 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
+  target("token-rotation", {
+    displayName: "Messaging: rotates one provider token without rebuilding siblings",
+    profile: "github-read",
+    timeoutMinutes: 45,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: true,
+    environment: {
+      TELEGRAM_BOT_TOKEN_A: "test-fake-token-A-rotation-e2e",
+      TELEGRAM_BOT_TOKEN_B: "test-fake-token-B-rotation-e2e",
+      DISCORD_BOT_TOKEN_A: "dc-a-rotation-e2e",
+      DISCORD_BOT_TOKEN_B: "dc-b-rotation-e2e",
+      SLACK_BOT_TOKEN_A: "xoxb-fake-A-rotation-e2e",
+      SLACK_BOT_TOKEN_B: "xoxb-fake-B-rotation-e2e",
+      SLACK_APP_TOKEN_A: "xapp-fake-A-rotation-e2e",
+      SLACK_APP_TOKEN_B: "xapp-fake-B-rotation-e2e",
+    },
+  }),
+  target("tunnel-lifecycle", {
+    displayName: "Tunnel: starts, probes, and stops a public dashboard tunnel",
+    profile: "nvidia-inference",
+    timeoutMinutes: 75,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: true,
+    cloudflared: true,
+    environment: {
+      ...hostedInference,
+      ...nonInteractive,
+      NEMOCLAW_SANDBOX_NAME: "e2e-tunnel-life",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
   target("whatsapp-qr-compact", {
     displayName: "Messaging: renders a compact WhatsApp pairing QR code",
     profile: "standard",
@@ -1194,6 +1425,27 @@ export function validateE2eTargetCatalogue(
         "E2E target onboard-policy-preset-sequencing requires interactive installation and execution",
       );
     }
+    if (
+      entry.id === "inference-routing" &&
+      (entry.profile !== "standard" ||
+        entry.testFile !== "test/e2e/live/inference-routing.test.ts" ||
+        !entry.cloudflared)
+    ) {
+      throw new Error(
+        "E2E target inference-routing must remain credential-free with reviewed cloudflared",
+      );
+    }
+    if (
+      entry.targetId === "openshell-gateway-upgrade" ||
+      entry.id.startsWith("openshell-gateway-upgrade-")
+    ) {
+      const expected = GATEWAY_UPGRADE_TARGET_BY_ID.get(entry.id);
+      if (!expected || !isDeepStrictEqual(entry, expected)) {
+        throw new Error(
+          `E2E target ${entry.id} must match the exact reviewed gateway-upgrade fixture`,
+        );
+      }
+    }
     if (entry.owningPaths.length === 0 || !entry.owningPaths.includes(entry.testFile)) {
       throw new Error(`E2E target ${entry.id} must own its test file`);
     }
@@ -1266,6 +1518,7 @@ export function catalogueMatrix(
       install_mode: entry.installMode,
       install_non_interactive: entry.installNonInteractive,
       restore_cli: entry.restoreCli,
+      cloudflared: entry.cloudflared,
       host_packages: entry.hostPackages.join(" "),
       host_preparation: entry.hostPreparation,
       runner_comparison: entry.runnerComparison,

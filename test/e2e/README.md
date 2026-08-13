@@ -208,16 +208,19 @@ Each entry owns these target properties:
 - Source paths that select the target after a push to `main`.
 - Execution profile, runner or key into the trusted runner-routing map, and timeout.
 - OpenShell install mode, non-interactive installer selection, and CLI artifact use.
-- Reviewed host packages and host preparation.
+- Reviewed host packages, host preparation, and optional cloudflared prerequisite.
 - Runner telemetry and one reviewed artifact layout.
 - PR Review Advisor selection. Standard-profile targets are selectable by default; a credentialed target must set `prAdvisorSelectable` before the Advisor may recommend its logical target ID.
 - Optional Vitest title selector.
 - Target-specific environment variables.
 - Pre-tag release requirement.
 
-Host preparation is the reviewed E2E runner preparation mode. `none` makes no runner-level
-change, `hermes-swap` provisions swap for Hermes execution, and `rebuild-swap` provisions swap
-for the Hermes image rebuild.
+Host preparation is the reviewed E2E runner preparation mode.
+`none` makes no runner-level change.
+`hermes-swap` provisions swap for Hermes execution, and `rebuild-swap` provisions swap for the Hermes image rebuild.
+Targets that require cloudflared set `cloudflared: true` in the catalogue.
+The reusable workflow installs the pinned amd64 Debian package after validating its SHA-256 digest and package metadata.
+The installation step does not receive a catalogue profile credential.
 
 The test file is always one owning path.
 List each additional source file or directory whose change requires the target.
@@ -234,14 +237,18 @@ Do not include this implementation metadata or workflow text in the display name
 - A runner or sandbox ID.
 
 `E2E_TARGET_CATALOGUE` is one logical target set.
-The planner partitions that set into three GitHub Actions matrices, one for each credential profile:
+The planner partitions that set into GitHub Actions matrices, one for each execution profile.
+The execution profile owns the credentials available to its target step:
 
 - `standard` displays `no provider credential` and receives no NVIDIA API credential.
 - `nvidia-api` displays `NVIDIA API key` and receives `NVIDIA_API_KEY` on trusted `main` runs.
 - `nvidia-inference` displays `NVIDIA inference API key` and receives `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs.
+- `github-read` displays `GitHub read token` and receives the job-scoped `GITHUB_TOKEN` only for the target step when `trusted_main` is `true`.
+  The reusable workflow enforces this boundary; PR revision callers set `trusted_main` to `false`, so their target steps receive no `GITHUB_TOKEN`.
+- `brave-nvidia-inference` displays `Brave and NVIDIA inference API keys` and receives `BRAVE_API_KEY` and `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs.
 
-GitHub Actions renders each catalogue execution as `<display name> / <provider credential boundary>`.
-All three profiles call `.github/workflows/e2e-standard-profile.yaml`.
+GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.
+All catalogue profiles call `.github/workflows/e2e-standard-profile.yaml`.
 Each target selects its runner through the catalogue.
 The reusable workflow validates the catalogue plan before candidate checkout.
 It derives the artifact path and upload name from the target ID, shard, and reviewed layout.
@@ -259,7 +266,7 @@ When `shard` is not `default`, the standard layout adds the shard directory.
 The security-posture matrix uses the reviewed flat-shard layout to preserve its existing artifact names.
 The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets keep the standard layout and select `linux-amd64-gpu-rtxpro6000-latest-1` through the catalogue.
 Retained workflow jobs are exceptions to the catalogue shape.
-Keep one only for a multi-job handoff, a credential boundary outside the three profiles, or an execution contract the reusable profile cannot represent.
+Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 
 ### Catalogue Execution Evidence
 
@@ -293,7 +300,7 @@ npx tsx tools/e2e/workflow-plan.mts --summary >> "$GITHUB_STEP_SUMMARY"
 ```
 
 The workflow's `--ci-output` mode uses the same renderer for its job summary.
-The table includes the typed registry matrix, shared test matrix, three catalogue profile matrices, and retained workflow jobs.
+The table includes the typed registry matrix, shared test matrix, catalogue profile matrices, and retained workflow jobs.
 
 ## Launch-readiness locked-image acceptance
 
@@ -912,7 +919,7 @@ flowchart LR
   manual["Exact-SHA full manual dispatch<br/>or manual selectors"] --> planner
   planner --> registry["Typed registry matrix"]
   planner --> shared["Shared test matrix"]
-  planner --> profiles["Three catalogue profile matrices"]
+  planner --> profiles["Catalogue profile matrices"]
   planner --> retained["Retained workflow jobs"]
   profiles --> reusable["Reusable profile workflow"]
   registry --> dedicated["Dedicated GitHub Actions jobs"]
@@ -962,7 +969,7 @@ For a PR revision run, a repository maintainer or administrator leaves `jobs` an
 - every shared credential-free test; and
 - these controller-selected registry targets: `ubuntu-policy-custom-missing-presets-negative`, `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and `ubuntu-repo-docker-post-reboot-recovery`.
 
-The catalogue profile callers do not forward NVIDIA API credentials to a PR candidate checkout.
+The PR selection does not forward an NVIDIA API key, `BRAVE_API_KEY`, or `GITHUB_TOKEN` to the candidate checkout.
 The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
 It skips `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`
 unless their runner-queue flag is `true`.
@@ -977,16 +984,19 @@ PR Review Advisor maps changes to either of these shared journaled-recreation ha
 - `src/lib/onboard/machine/handlers/sandbox-resume.ts`.
 - `src/lib/onboard/machine/handlers/sandbox.ts`.
 
-The risk plan selects the `openshell-gateway-upgrade` job and the
-`ubuntu-repo-cloud-langchain-deepagents-code` typed target. The job covers the
-installer-driven OpenShell gateway upgrade handoff. The target covers the
-LangChain Deep Agents Code sandbox recreation path.
+The risk plan selects the `openshell-gateway-upgrade` catalogue target and the
+`ubuntu-repo-cloud-langchain-deepagents-code` typed target.
+The catalogue target covers the installer-driven OpenShell gateway upgrade handoff.
+The typed target covers the LangChain Deep Agents Code sandbox recreation path.
 
-An empty-selector manual run exposes these values to candidate-controlled job processes:
+A trusted manual `main` run with empty selectors exposes these values to candidate-controlled job processes:
 
 - Long-lived API keys from repository secrets: `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, and `BRAVE_API_KEY`.
 - Long-lived messaging credentials from repository secrets: `TELEGRAM_BOT_TOKEN_REAL`, `DISCORD_BOT_TOKEN_REAL`, `SLACK_BOT_TOKEN_REAL`, and `SLACK_APP_TOKEN_REAL`.
-- The job-scoped `GITHUB_TOKEN` in the `token-rotation` and `openshell-gateway-upgrade` jobs. It has `checks: read`, `contents: read`, and `pull-requests: read` access. Candidate code can use it while either job runs. GitHub Actions invalidates it after the job.
+- The job-scoped `GITHUB_TOKEN`, exposed only to the target step in the `token-rotation` and `openshell-gateway-upgrade` catalogue executions.
+  It has `contents: read` access.
+  Candidate code can use it while either target runs.
+  GitHub Actions invalidates it after the reusable workflow job.
 - Messaging account and channel identifiers from repository secrets: `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_AUTHORIZED_CHAT_IDS`, `TELEGRAM_CHAT_ID`, `TELEGRAM_CHAT_ID_E2E`, `DISCORD_CHANNEL_ID_E2E`, and `SLACK_CHANNEL_ID_E2E`.
 
 The workflow does not rotate or revoke these API keys or messaging credentials. To remove later access, rotate or revoke every listed credential in the external service that issued it. The workflow cannot erase identifiers copied by candidate code. Review the complete candidate diff before dispatch.
@@ -1039,8 +1049,8 @@ classify that guidance as required, but rendered advisor guidance remains
 non-authoritative. Model advice is additive and cannot downgrade the
 deterministic floor. PR Review Advisor recommendations remain advisory.
 A maintainer decides whether to dispatch this trusted selection for the current PR
-revision. The manual PR controller accepts the credential-free
-`inference-routing` job. It does not dispatch secret-backed targets such as
+revision. The manual PR selection includes the credential-free
+`inference-routing` catalogue target. It does not dispatch secret-backed targets such as
 `network-policy` for PR revisions. The Advisor comment labels that boundary.
 No PR E2E controller dispatches the risk plan.
 

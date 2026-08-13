@@ -52,6 +52,8 @@ function expectedCiOutput(plan: ReturnType<typeof buildE2eWorkflowPlan>): string
     `catalogue_standard_matrix=${JSON.stringify(plan.catalogueMatrices.standard)}`,
     `catalogue_nvidia_api_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-api"])}`,
     `catalogue_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-inference"])}`,
+    `catalogue_github_read_matrix=${JSON.stringify(plan.catalogueMatrices["github-read"])}`,
+    `catalogue_brave_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["brave-nvidia-inference"])}`,
     `selected_jobs=${JSON.stringify(plan.selectedJobs)}`,
     `selected_workflow_jobs=${JSON.stringify(selectedWorkflowJobs(plan))}`,
     `hermes_selected=${plan.hermesSelected}`,
@@ -430,6 +432,8 @@ describe("E2E workflow plan", () => {
     const plan = buildE2eWorkflowPlan();
     plan.catalogueMatrices["nvidia-api"] = [];
     plan.catalogueMatrices["nvidia-inference"] = [];
+    plan.catalogueMatrices["github-read"] = [];
+    plan.catalogueMatrices["brave-nvidia-inference"] = [];
 
     try {
       writeE2eWorkflowPlanCiOutput(
@@ -457,7 +461,13 @@ describe("E2E workflow plan", () => {
           isPrCandidateCatalogueTarget(target),
         ]),
       ),
-    ).toEqual({ standard: true, "nvidia-api": false, "nvidia-inference": false });
+    ).toEqual({
+      standard: true,
+      "nvidia-api": false,
+      "nvidia-inference": false,
+      "github-read": false,
+      "brave-nvidia-inference": false,
+    });
   });
 
   it("routes homogeneous GPU targets through the standard profile", () => {
@@ -697,7 +707,13 @@ describe("E2E workflow plan", () => {
       const plan: ReturnType<typeof buildE2eWorkflowPlan> = {
         matrix: [],
         testMatrix: [],
-        catalogueMatrices: { standard: [], "nvidia-api": [], "nvidia-inference": [] },
+        catalogueMatrices: {
+          standard: [],
+          "nvidia-api": [],
+          "nvidia-inference": [],
+          "github-read": [],
+          "brave-nvidia-inference": [],
+        },
         selectedJobs: [],
         hermesSelected: false,
         explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
@@ -733,7 +749,13 @@ describe("E2E workflow plan", () => {
       expect(buildE2eWorkflowPlan({ [selector]: "jetson-nvmap-gpu" })).toEqual({
         matrix: [],
         testMatrix: [],
-        catalogueMatrices: { standard: [], "nvidia-api": [], "nvidia-inference": [] },
+        catalogueMatrices: {
+          standard: [],
+          "nvidia-api": [],
+          "nvidia-inference": [],
+          "github-read": [],
+          "brave-nvidia-inference": [],
+        },
         selectedJobs: ["jetson-nvmap-gpu"],
         hermesSelected: false,
         explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
@@ -748,7 +770,13 @@ describe("E2E workflow plan", () => {
     const plan: ReturnType<typeof buildE2eWorkflowPlan> = {
       matrix: [],
       testMatrix: [],
-      catalogueMatrices: { standard: [], "nvidia-api": [], "nvidia-inference": [] },
+      catalogueMatrices: {
+        standard: [],
+        "nvidia-api": [],
+        "nvidia-inference": [],
+        "github-read": [],
+        "brave-nvidia-inference": [],
+      },
       selectedJobs: [],
       hermesSelected: false,
       explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
