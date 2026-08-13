@@ -471,7 +471,7 @@ export function createSandboxGpuCreateAttemptRunner(
       if (compatibility) runtimePatch.printReadinessFailureIfEnabled();
       else if (expectedRecreatedSandboxId) {
         console.error(
-          "  Dashboard forwarding was not started. The sandbox was left in place for inspection and recovery.",
+          "  NemoClaw did not start dashboard forwarding. NemoClaw left the sandbox in place for inspection and recovery.",
         );
       } else {
         const deletion = deps.runOpenshell(["sandbox", "delete", input.sandboxName], {

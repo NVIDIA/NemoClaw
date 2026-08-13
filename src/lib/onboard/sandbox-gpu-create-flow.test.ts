@@ -622,7 +622,9 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
     });
-    expect(errorOutput()).toContain("sandbox was left in place for inspection and recovery");
+    expect(errorOutput()).toContain(
+      "NemoClaw left the sandbox in place for inspection and recovery",
+    );
   });
 
   it("keeps a transient recreated-sandbox not-ready response inside the readiness wait (#9050)", async () => {

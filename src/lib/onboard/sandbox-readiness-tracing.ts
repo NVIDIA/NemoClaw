@@ -216,7 +216,7 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
    * Optional exact-identity and executability proof for a sandbox whose
    * runtime was replaced after OpenShell first reported Ready. A transient
    * not-ready result stays inside this bounded wait. Identity changes and
-   * unrelated probe failures remain terminal.
+   * all other probe failures remain terminal.
    */
   checkReadyIdentity?: CreatedSandboxReadyIdentityCheck;
   /**
@@ -407,7 +407,7 @@ export function formatCreatedSandboxReadinessFailureMessage(
     return `  Sandbox '${sandboxName}' changed identity before its recreated runtime became ready.`;
   }
   if (readiness.reason === "identity_probe_failed") {
-    return `  Sandbox '${sandboxName}' reached Ready, but its recreated runtime could not be verified.`;
+    return `  NemoClaw could not verify that sandbox '${sandboxName}' still had the expected ID and accepted commands.`;
   }
   return `  Sandbox '${sandboxName}' was created but did not become ready within ${timeoutSecs}s.`;
 }
