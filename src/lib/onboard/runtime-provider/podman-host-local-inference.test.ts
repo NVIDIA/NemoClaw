@@ -29,9 +29,12 @@ function ollamaPsModel(overrides: Record<string, unknown> = {}): Record<string, 
   };
 }
 
-function operationRuntime(
+function operationAndRuntime(
   harness: ReturnType<typeof createPodmanHostLocalInferenceTestHarness>,
-): HostLocalInferenceRuntime {
+): {
+  operation: ReturnType<typeof createPodmanHostLocalInferenceOperation>;
+  runtime: HostLocalInferenceRuntime;
+} {
   const operation = createPodmanHostLocalInferenceOperation({
     engine: harness.engine,
     env: harness.env,
@@ -41,12 +44,18 @@ function operationRuntime(
     onFailureEvidence: harness.onFailureEvidence,
     redactSensitive: harness.redactSensitive,
   });
-  return (
+  const runtime =
     operation.managedRuntime ??
     (() => {
       throw new Error("test operation lacks managed runtime");
-    })()
-  );
+    })();
+  return { operation, runtime };
+}
+
+function operationRuntime(
+  harness: ReturnType<typeof createPodmanHostLocalInferenceTestHarness>,
+): HostLocalInferenceRuntime {
+  return operationAndRuntime(harness).runtime;
 }
 
 describe("Podman host-local inference lifecycle", () => {
@@ -1029,19 +1038,7 @@ describe("Podman host-local inference lifecycle", () => {
     expectedRunning,
   }) => {
     const harness = createPodmanHostLocalInferenceTestHarness();
-    const operation = createPodmanHostLocalInferenceOperation({
-      engine: harness.engine,
-      env: harness.env,
-      authorityStore: harness.authorityStore,
-      routeAuthorityStore: harness.routeAuthorityStore,
-      onFailureEvidence: harness.onFailureEvidence,
-      redactSensitive: harness.redactSensitive,
-    });
-    const runtime =
-      operation.managedRuntime ??
-      (() => {
-        throw new Error("test operation lacks managed runtime");
-      })();
+    const { operation, runtime } = operationAndRuntime(harness);
     harness.seedManaged(priorState, true, operation.bindingSha256);
     harness.state.probeFailure = "inference";
     harness.events.length = 0;
@@ -1065,19 +1062,7 @@ describe("Podman host-local inference lifecycle", () => {
 
   it("rejects a stale transaction label before recovery mutation", () => {
     const harness = createPodmanHostLocalInferenceTestHarness();
-    const operation = createPodmanHostLocalInferenceOperation({
-      engine: harness.engine,
-      env: harness.env,
-      authorityStore: harness.authorityStore,
-      routeAuthorityStore: harness.routeAuthorityStore,
-      onFailureEvidence: harness.onFailureEvidence,
-      redactSensitive: harness.redactSensitive,
-    });
-    const runtime =
-      operation.managedRuntime ??
-      (() => {
-        throw new Error("test operation lacks managed runtime");
-      })();
+    const { operation, runtime } = operationAndRuntime(harness);
     harness.seedManaged("stopped", true, operation.bindingSha256);
     const seeded = harness.container();
     expect(seeded).not.toBeNull();

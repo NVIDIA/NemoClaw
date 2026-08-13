@@ -31,7 +31,9 @@ function createHarness() {
     selectPolicyTier: vi.fn(async () => "balanced"),
     setPolicyTier: vi.fn(),
     getRecordedPolicyTier: vi.fn(() => null),
-    selectTierPresetsAndAccess: vi.fn(async () => []),
+    selectTierPresetsAndAccess: vi.fn(
+      async (): Promise<Array<{ name: string; access: string }>> => [],
+    ),
     parsePolicyPresetEnv: vi.fn(() => []),
     env: { NEMOCLAW_POLICY_MODE: "suggested" },
   } satisfies SetupPolicySelectionDeps;
@@ -67,6 +69,27 @@ describe("host-local route-only policy selection", () => {
     ).resolves.toEqual(["npm"]);
 
     expect(syncPresetSelection).toHaveBeenCalledWith("alpha", ["local-inference", "npm"], ["npm"]);
+  });
+
+  it("excludes local-inference from an interactive tier selection", async () => {
+    const { deps, syncPresetSelection } = createHarness();
+    deps.isNonInteractive.mockReturnValue(false);
+    deps.selectTierPresetsAndAccess.mockResolvedValue([
+      { name: "local-inference", access: "read" },
+      { name: "npm", access: "read" },
+    ]);
+
+    await expect(
+      setupPoliciesWithSelection(deps, "alpha", {
+        selectedPresets: null,
+        provider: null,
+        excludedPresets: ["local-inference"],
+      }),
+    ).resolves.toEqual(["npm"]);
+
+    expect(syncPresetSelection).toHaveBeenCalledWith("alpha", ["local-inference", "npm"], ["npm"], {
+      npm: "read",
+    });
   });
 
   it("removes a live stale local-inference preset even when ordinary policy setup is skipped", async () => {

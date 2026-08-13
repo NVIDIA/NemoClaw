@@ -346,7 +346,10 @@ describe("host-local inference receipt contract", () => {
         inference: { ...vllm.inference, toolCallingRequired: "yes" },
       }),
     ).toThrow("tool-calling requirement is malformed");
+  });
 
+  it("requires service-specific publication authority", () => {
+    const vllm = receipt("vllm");
     expect(() =>
       normalizeHostLocalInferenceReceipt({
         ...vllm,
@@ -366,6 +369,7 @@ describe("host-local inference receipt contract", () => {
         publication: { ...vllm.publication, priorState: "host-process" },
       }),
     ).toThrow("prior state does not match the service lifecycle");
+    const ollama = receipt("ollama");
     expect(() =>
       normalizeHostLocalInferenceReceipt({
         ...ollama,
@@ -374,27 +378,20 @@ describe("host-local inference receipt contract", () => {
     ).toThrow("prior state does not match the service lifecycle");
   });
 
-  it("keeps canonical schema-v1 non-llama receipts compatible", () => {
-    const modern = receipt("vllm");
+  it.each([
+    "ollama",
+    "nim",
+    "vllm",
+  ] as const)("rejects schema-v1 %s receipts without proof authority", (service) => {
+    const modern = receipt(service);
     const { inference: _inference, publication: _publication, ...legacy } = modern;
-    const { launchSha256: _launchSha256, ...legacyRuntime } = containerRuntime(legacy);
-    const normalized = normalizeHostLocalInferenceReceipt({
-      ...legacy,
-      schemaVersion: 1,
-      endpoint: {
-        host: legacy.endpoint.host,
-        port: legacy.endpoint.port,
-        networkName: legacy.endpoint.networkName,
-      },
-      runtime: legacyRuntime,
-    });
 
-    expect(normalized.schemaVersion).toBe(1);
-    expect(normalized.inference).toBeUndefined();
-    expect(normalized.publication).toBeUndefined();
-    expect(parseHostLocalInferenceReceipt(serializeHostLocalInferenceReceipt(normalized))).toEqual(
-      normalized,
-    );
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({
+        ...legacy,
+        schemaVersion: 1,
+      }),
+    ).toThrow("legacy receipt schema supports only llama.cpp");
   });
 
   it("rejects extensions and noncanonical serialized receipts", () => {

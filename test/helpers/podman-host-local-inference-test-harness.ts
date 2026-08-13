@@ -154,6 +154,14 @@ function labelsFrom(args: readonly string[]): Record<string, string> {
   return labels;
 }
 
+function immutableManagedImage(args: readonly string[]): string {
+  const imageRef = args.find(
+    (arg) => arg.includes("@sha256:") && !arg.includes(`@sha256:${PROBE_DIGEST}`),
+  );
+  if (!imageRef) throw new Error("test harness expected an immutable managed image reference");
+  return imageRef;
+}
+
 function inspectPayload(container: TestContainer): string {
   const environment = container.createArguments.flatMap((value, index, args) =>
     value === "--env" && typeof args[index + 1] === "string"
@@ -517,12 +525,8 @@ export function createPodmanHostLocalInferenceTestHarness(
             ? result(125, "", "transport closed after probe create")
             : result(0, `${PROBE_CONTAINER_ID}\n`);
         }
-        const publishIndex = args.indexOf("--publish");
-        const imageRef = String(args[publishIndex + 2 + 2 * state.cdiDevices.length] ?? "");
         // Locate the immutable workload reference independent of optional flags.
-        const immutableImage = args.find(
-          (arg) => arg.includes("@sha256:") && !arg.includes(`@sha256:${PROBE_DIGEST}`),
-        );
+        const immutableImage = immutableManagedImage(args);
         if (state.parentInheritedImageLabel) {
           labels["org.opencontainers.image.source"] = "https://example.invalid/managed";
         }
@@ -532,7 +536,7 @@ export function createPodmanHostLocalInferenceTestHarness(
         currentContainer = {
           id: CONTAINER_ID,
           name,
-          imageRef: immutableImage ?? imageRef,
+          imageRef: immutableImage,
           labels,
           createArguments: Object.freeze([...args]),
           running: state.runSemanticMismatchText === null,

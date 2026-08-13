@@ -10,7 +10,10 @@ import type {
   HostLocalInferenceStartupSelection,
   HostLocalInferenceStartupSelectionInput,
 } from "../../runtime-provider/host-local-inference-routing";
-import { handleProviderInferenceState } from "./provider-inference";
+import {
+  createCachedHostLocalInferenceSetupResolver,
+  handleProviderInferenceState,
+} from "./provider-inference";
 import { baseOptions, baseSelection, createDeps } from "./provider-inference.test-support";
 
 const PROBE_IMAGE = `quay.io/curl/curl@sha256:${"b".repeat(64)}`;
@@ -160,6 +163,29 @@ function hostLocalPublishedResumeSelection(
 }
 
 describe("provider inference host-local startup selection", () => {
+  it("rejects reuse of cached startup authority for a different sandbox", () => {
+    const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
+      hostLocalStartupSelection(input),
+    );
+    const resolveCached = createCachedHostLocalInferenceSetupResolver({
+      resolver,
+      application: "openclaw",
+      provider: "ollama-local",
+      model: "qwen3.5-9b",
+      acceleration: "nvidia-gpu",
+      requireToolCalling: true,
+      allowPublishedResume: false,
+      recover: false,
+      recordToolCallingRequirement: vi.fn(),
+    });
+
+    expect(resolveCached("sandbox-alpha").hostLocalInference).toBeDefined();
+    expect(() => resolveCached("sandbox-beta")).toThrow(
+      "Cached host-local inference authority belongs to a different sandbox.",
+    );
+    expect(resolver).toHaveBeenCalledOnce();
+  });
+
   it("leaves the current provider path unchanged when the resolver returns null", async () => {
     const { deps, calls } = createDeps();
     const session = createSession();

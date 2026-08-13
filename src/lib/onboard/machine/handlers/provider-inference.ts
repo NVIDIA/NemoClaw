@@ -369,7 +369,7 @@ function isCanonicalHostLocalResume(input: {
   );
 }
 
-function createCachedHostLocalInferenceSetupResolver(input: {
+export function createCachedHostLocalInferenceSetupResolver(input: {
   resolver: HostLocalInferenceStartupSelectionResolver;
   application: string;
   provider: string;
@@ -381,17 +381,23 @@ function createCachedHostLocalInferenceSetupResolver(input: {
   recordToolCallingRequirement(requireToolCalling: boolean): void;
 }): (sandboxName: string) => HostLocalInferenceSetupOptions {
   let cached: HostLocalInferenceSetupOptions | null = null;
+  let cachedSandboxName: string | null = null;
   return (sandboxName) => {
-    cached ??= hostLocalInferenceSetupOptions(input.resolver, {
-      application: input.application,
-      sandboxName,
-      provider: input.provider,
-      model: input.model,
-      acceleration: input.acceleration,
-      requireToolCalling: input.requireToolCalling,
-      allowPublishedResume: input.allowPublishedResume,
-      recover: input.recover,
-    });
+    if (cached === null) {
+      cached = hostLocalInferenceSetupOptions(input.resolver, {
+        application: input.application,
+        sandboxName,
+        provider: input.provider,
+        model: input.model,
+        acceleration: input.acceleration,
+        requireToolCalling: input.requireToolCalling,
+        allowPublishedResume: input.allowPublishedResume,
+        recover: input.recover,
+      });
+      cachedSandboxName = sandboxName;
+    } else if (sandboxName !== cachedSandboxName) {
+      throw new Error("Cached host-local inference authority belongs to a different sandbox.");
+    }
     const request = cached.hostLocalInference?.request;
     if (request) {
       const providerInput = request.service === "ollama" ? request.endpoint : request.managed;

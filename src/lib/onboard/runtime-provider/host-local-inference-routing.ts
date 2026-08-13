@@ -12,6 +12,7 @@ import {
   type HostLocalManagedInferenceInput,
   type HostLocalOllamaAccelerationAuthority,
   type HostLocalOllamaInferenceInput,
+  hostLocalInferenceRollbackStatus,
   normalizeHostLocalInferenceImageRef,
   normalizeHostLocalInferenceReceipt,
   normalizeHostLocalOllamaModelRef,
@@ -242,8 +243,7 @@ function rollbackRejectedStartup(prepared: HostLocalInferencePreparedStartup): v
   const result = prepared.rollback();
   const rolledBack = normalizeHostLocalInferenceReceipt(result.receipt);
   const priorState = prepared.rollbackPriorState;
-  const expectedStatus =
-    priorState === "absent" ? "removed" : priorState === "host-process" ? "retained" : "restored";
+  const expectedStatus = hostLocalInferenceRollbackStatus(priorState);
   if (
     result.priorState !== priorState ||
     result.status !== expectedStatus ||
