@@ -60,9 +60,10 @@ export function resolveDestroySandboxContainerIdentity(
 }
 
 // Container IDs are validated as 64-hex upstream; names and label values are
-// attacker-controlled, so drop every non-printable byte before the terminal.
+// attacker-controlled. Drop every non-printable byte, then JSON-quote so an
+// embedded quote cannot forge an apparent field in the refusal output.
 function terminalSafeLabelValue(value: string): string {
-  return value.replace(/[^\x20-\x7e]/g, "?").slice(0, 64);
+  return JSON.stringify(value.replace(/[^\x20-\x7e]/g, "?").slice(0, 64));
 }
 
 export function renderDestroySandboxContainerIdentityRefusal(
@@ -75,9 +76,9 @@ export function renderDestroySandboxContainerIdentityRefusal(
       `OpenShell-managed identity:`,
     ...rows.map(
       (row) =>
-        `    - ${row.id.slice(0, 12)} name='${terminalSafeLabelValue(row.name)}' ` +
-        `${OPENSHELL_MANAGED_BY_LABEL}='${terminalSafeLabelValue(row.managedBy)}' ` +
-        `${OPENSHELL_SANDBOX_WORKSPACE_LABEL}='${terminalSafeLabelValue(row.workspace)}'`,
+        `    - ${row.id.slice(0, 12)} name=${terminalSafeLabelValue(row.name)} ` +
+        `${OPENSHELL_MANAGED_BY_LABEL}=${terminalSafeLabelValue(row.managedBy)} ` +
+        `${OPENSHELL_SANDBOX_WORKSPACE_LABEL}=${terminalSafeLabelValue(row.workspace)}`,
     ),
     `  NemoClaw did not change any container, image, or local sandbox state.`,
     `  Inspect each container with 'docker inspect <id>'. Remove a container that is not an ` +

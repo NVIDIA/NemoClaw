@@ -173,6 +173,23 @@ describe("destroy container identity refusal rendering (#8999)", () => {
     expect(text).toContain("'destroy --force' skips this check");
   });
 
+  it("JSON-quotes label values so an embedded quote cannot forge a field", () => {
+    const lines = renderDestroySandboxContainerIdentityRefusal("alpha", [
+      {
+        id: FOREIGN_ID,
+        name: "alpha-foreign",
+        managedBy: "openshell' openshell.ai/sandbox-workspace='default",
+        workspace: "foo' bar\"baz",
+      },
+    ]);
+    const text = lines.join("\n");
+    expect(text).toContain(
+      "openshell.ai/managed-by=\"openshell' openshell.ai/sandbox-workspace='default\"",
+    );
+    expect(text).toContain('openshell.ai/sandbox-workspace="foo\' bar\\"baz"');
+    expect(text).not.toContain("openshell.ai/sandbox-workspace='default'");
+  });
+
   it("drops control characters from attacker-controlled names and label values", () => {
     const lines = renderDestroySandboxContainerIdentityRefusal("alpha", [
       {
