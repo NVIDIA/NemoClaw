@@ -15,9 +15,8 @@
 | Lifecycle scripts | None declared |
 
 NemoClaw executes this package only during contributor and CI lint checks. The package is not a
-production dependency. The root package file allowlist does not include `tools/`, and
+production dependency. The `files` array in the root `package.json` does not include `tools/`, and
 `npm pack --dry-run --json --ignore-scripts` does not include the SonarJS package code.
-The plugin image cache uses `nemoclaw/package-lock.json`, which does not select SonarJS.
+The locked npm cache seed generated from `nemoclaw/package-lock.json` does not include SonarJS.
 
-This review permits the package only inside that development-tool boundary. A version, license,
-dependency-class, package-content, image, or publication change requires another review.
+This review permits the package only within that development-tool boundary. A change to the version, license, dependency class, package contents, image, or publication requires another review.
