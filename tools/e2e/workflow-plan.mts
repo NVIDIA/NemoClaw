@@ -171,6 +171,7 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     isRecord(value) &&
     hasExactKeys(value, [
       "id",
+      "display_name",
       "host_packages",
       "install_mode",
       "install_non_interactive",
@@ -181,6 +182,8 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     ]) &&
     typeof value.id === "string" &&
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.id) &&
+    typeof value.display_name === "string" &&
+    /^[A-Z][A-Za-z0-9 .'+()-]+: [^/\r\n]{1,72}$/u.test(value.display_name) &&
     typeof value.runner === "string" &&
     /^[A-Za-z0-9._-]+$/u.test(value.runner) &&
     typeof value.test_file === "string" &&
@@ -206,6 +209,7 @@ function isCatalogueMatrixRowForProfile(
   const target = E2E_TARGET_CATALOGUE.find((entry) => entry.id === value.id);
   return (
     target?.profile === profile &&
+    target.displayName === value.display_name &&
     target.runner === value.runner &&
     target.testFile === value.test_file &&
     target.timeoutMinutes === value.timeout_minutes &&

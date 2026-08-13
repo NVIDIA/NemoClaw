@@ -65,6 +65,11 @@ export interface InferenceSelectionValidationDeps {
   resolveEndpointHost?: EndpointDnsLookupFn;
   /** Exact private endpoint hosts trusted by the operator (tests may inject this). */
   trustedPrivateEndpointHosts?: readonly string[];
+  /**
+   * Optional abort teardown hook for tests. Production loads the helper lazily
+   * so openshell binaries stay out of the validation unit graph.
+   */
+  teardownOrphanManagedGatewayOnAbort?: () => void;
   promptValidationRecovery(
     label: string,
     recovery: ReturnType<typeof getProbeRecovery>,
@@ -147,6 +152,22 @@ export function createInferenceSelectionValidationHelpers(
     deps.trustedPrivateEndpointHosts ?? parseTrustedPrivateInferenceHostsFromEnv(process.env);
 
   function exitNonInteractiveValidationFailure(): never {
+    // #8952: tear down an unowned managed gateway before fatal exit.
+    try {
+      const teardown =
+        deps.teardownOrphanManagedGatewayOnAbort ??
+        (() => {
+          const { teardownOrphanManagedGatewayOnAbort } =
+            require("./abort-gateway-teardown") as typeof import("./abort-gateway-teardown");
+          teardownOrphanManagedGatewayOnAbort();
+        });
+      teardown();
+    } catch (error) {
+      // Helper never throws; this covers require/load / inject failures.
+      console.error(
+        `  Gateway teardown after onboard abort failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     process.exitCode = 1;
     (process.exit as (code?: number) => void)(1);
     throw new Error("Non-interactive endpoint validation failed.");

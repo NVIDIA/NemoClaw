@@ -549,7 +549,6 @@ async function runLiveIssue2603ReproWithEventCaptureRetry(
 
 // ─── The live regression guard ─────────────────────────────────────
 
-// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "openclaw-tui-chat-correlation keeps rapid sends correlated and accepts terminal input after connected idle (#2603, #3145, #6194)",
   {
