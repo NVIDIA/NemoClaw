@@ -438,6 +438,13 @@ wait "$child"
 });
 
 describe("Hermes durable lazy-install target", () => {
+  it("accepts the provider-assigned Hermes API port in the runtime environment", () => {
+    const result = runRuntimeEnvValidation({ NEMOCLAW_HERMES_API_PORT: "8645" });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
   it("accepts the image-owned lazy target in the runtime environment (#8613)", () => {
     const result = runRuntimeEnvValidation({
       HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
