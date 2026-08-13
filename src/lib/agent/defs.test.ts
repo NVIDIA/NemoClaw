@@ -64,7 +64,7 @@ describe("agent definitions", () => {
     expect(listAgents({})).not.toContain("pi");
     expect(getAgentChoices().map((choice) => choice.name)).not.toContain("pi");
     expect(resolveAgentNameAlias("pi", listAgents({}))).toBeNull();
-    expect(() => loadAgent("pi", {})).toThrow("it is not a selectable agent yet");
+    expect(() => loadAgent("pi", {})).toThrow("Pi is not selectable in this release");
   });
 
   it("exposes the Pi candidate manifest to qualification authority only (#7925)", () => {
