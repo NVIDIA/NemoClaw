@@ -5,7 +5,7 @@ import type { SpawnSyncOptions } from "node:child_process";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { buildOpenshellExecArgs, wrapExecCommandWithRuntimeEnv } from "../exec";
+import { buildOpenshellExecArgs, wrapOpenClawAgentCommandWithRuntimeEnv } from "../exec";
 import { runAgentJsonPassthrough } from "./passthrough-json";
 
 describe("runAgentJsonPassthrough", () => {
@@ -66,7 +66,7 @@ describe("runAgentJsonPassthrough", () => {
       "/usr/local/bin/openshell",
       buildOpenshellExecArgs(
         "alpha",
-        wrapExecCommandWithRuntimeEnv(["openclaw", "agent", "--json"]),
+        wrapOpenClawAgentCommandWithRuntimeEnv(["openclaw", "agent", "--json"]),
         { tty: false },
       ),
       expect.objectContaining({

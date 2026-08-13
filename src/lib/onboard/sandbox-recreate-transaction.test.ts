@@ -404,7 +404,7 @@ describe("sandbox recreate journal", () => {
     });
   });
 
-  it("rejects a malformed identity at the lower runtime boundary (#8942)", () => {
+  it("rejects a malformed replacement identity before the recreate journal records it (#8942)", () => {
     const session = createSession({ sandboxName: "alpha" });
     beginSandboxRecreateTransaction(
       session,
@@ -444,7 +444,7 @@ describe("sandbox recreate journal", () => {
         state: "ready",
         liveIdentityFingerprint: "not-a-fingerprint",
       }),
-    ).toThrow(/stable OpenShell Id/u);
+    ).toThrow(/valid live identity fingerprint/u);
     expect(session.checkpoint?.sandboxRecreate).toMatchObject({
       phase: "creating",
       targetLiveIdentityFingerprint: null,
