@@ -20,6 +20,10 @@ import {
   validateManagedStartupProfile,
 } from "./profile";
 
+export const managedStartupCloneRebinderDependencies = {
+  resolveContextWindowForModel,
+};
+
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const MANAGED_INFERENCE_API_SET = new Set([
   "openai-completions",
@@ -324,7 +328,7 @@ function reconcileCurrentSourceProfile(
       profile.inference.upstreamProvider !== current.provider ||
       profile.inference.model !== current.model
     ) {
-      contextWindow = resolveContextWindowForModel(
+      contextWindow = managedStartupCloneRebinderDependencies.resolveContextWindowForModel(
         requireCurrentString(current.provider, "inference provider"),
         requireCurrentString(current.model, "inference model"),
       );

@@ -24,10 +24,19 @@ on:
       credential_boundary:
         required: true
         type: string
+      catalogue_id:
+        required: true
+        type: string
       target_id:
         required: true
         type: string
       runner:
+        required: true
+        type: string
+      checkout_sha:
+        required: true
+        type: string
+      workflow_sha:
         required: true
         type: string
       test_file:
@@ -46,6 +55,21 @@ on:
         required: true
         type: boolean
       host_packages:
+        required: true
+        type: string
+      host_preparation:
+        required: true
+        type: string
+      runner_comparison:
+        required: true
+        type: boolean
+      compatible_api_key:
+        required: true
+        type: boolean
+      shard:
+        required: true
+        type: string
+      artifact_layout:
         required: true
         type: string
       trusted_main:
@@ -72,14 +96,254 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: ${{ inputs.target_id }}
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/${{ inputs.target_id }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.candidate_sha }}
       NEMOCLAW_E2E_CORRELATION_ID: ${{ inputs.risk_signal_correlation_id }}
       NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA: ${{ inputs.risk_signal_expected_sha }}
-      NEMOCLAW_E2E_SHARD: default
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ inputs.candidate_sha }}
     steps:
+      - id: execution_plan
+        name: Validate catalogue execution plan
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          ARTIFACT_LAYOUT: ${{ inputs.artifact_layout }}
+          BASH_ENV: /dev/null
+          CANDIDATE_REPOSITORY: ${{ inputs.candidate_repository }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CATALOGUE_ID: ${{ inputs.catalogue_id }}
+          ENV: /dev/null
+          GITHUB_WORKSPACE_VALUE: ${{ github.workspace }}
+          HOST_PACKAGES: ${{ inputs.host_packages }}
+          HOST_PREPARATION: ${{ inputs.host_preparation }}
+          INSTALL_MODE: ${{ inputs.install_mode }}
+          LC_ALL: C
+          SHARD: ${{ inputs.shard }}
+          TARGET_ID: ${{ inputs.target_id }}
+          TEST_FILE: ${{ inputs.test_file }}
+        run: |
+          set -euo pipefail
+          fail() {
+            printf 'Invalid catalogue execution plan: %s\n' "$1" >&2
+            exit 1
+          }
+          [[ "$CATALOGUE_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail "catalogue ID"
+          [[ "$TARGET_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail "target ID"
+          [[ "$SHARD" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail "shard"
+          [[ "$CANDIDATE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail "candidate repository"
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]] || fail "candidate SHA"
+          [[ "$TEST_FILE" =~ ^test/e2e/live/[A-Za-z0-9._-]+\.test\.ts$ ]] || fail "test file"
+          [[ "$ARTIFACT_LAYOUT" == "target-shard" || "$ARTIFACT_LAYOUT" == "flat-shard" ]] || fail "artifact layout"
+          [[ "$HOST_PREPARATION" == "none" || "$HOST_PREPARATION" == "hermes-swap" || "$HOST_PREPARATION" == "rebuild-swap" ]] || fail "host preparation"
+          [[ "$HOST_PACKAGES" == "" || "$HOST_PACKAGES" == "expect" || "$HOST_PACKAGES" == "iptables" || "$HOST_PACKAGES" == "expect iptables" ]] || fail "host packages"
+          [[ "$INSTALL_MODE" == "none" || "$INSTALL_MODE" == "authenticated" || "$INSTALL_MODE" == "credential-free" ]] || fail "install mode"
+          if [[ "$ARTIFACT_LAYOUT" == "flat-shard" && "$SHARD" == "default" ]]; then
+            fail "flat shard layout requires a named shard"
+          fi
+          artifact_directory="e2e-artifacts/live/${TARGET_ID}"
+          upload_name="e2e-${TARGET_ID}"
+          if [[ "$SHARD" != "default" ]]; then
+            upload_name="${upload_name}-${SHARD}"
+            if [[ "$ARTIFACT_LAYOUT" == "flat-shard" ]]; then
+              artifact_directory="${artifact_directory}-${SHARD}"
+            else
+              artifact_directory="${artifact_directory}/${SHARD}"
+            fi
+          fi
+          printf 'artifact_directory=%s\n' "$artifact_directory" >>"$GITHUB_OUTPUT"
+          printf 'upload_name=%s\n' "$upload_name" >>"$GITHUB_OUTPUT"
+          printf 'E2E_ARTIFACT_DIR=%s/%s\n' "$GITHUB_WORKSPACE_VALUE" "$artifact_directory" >>"$GITHUB_ENV"
+          printf 'NEMOCLAW_E2E_SHARD=%s\n' "$SHARD" >>"$GITHUB_ENV"
+
+      - id: trusted_hermes_swap
+        name: Provision trusted Hermes E2E swap
+        if: ${{ inputs.host_preparation == 'hermes-swap' }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          ENV: /dev/null
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          LC_ALL: C
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
+          RUNNER_OS_KIND: ${{ runner.os }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |-
+          set -euo pipefail
+          readonly swap_dir="/mnt/nemoclaw-hermes-e2e-swap"
+          readonly required_swap_bytes=34359738368
+          readonly swap_file_bytes=34359742464
+          readonly reserve_bytes=17179869184
+          readonly activation_observation_attempts=5
+          readonly activation_observation_delay_seconds=1
+          swap_file=""
+          swap_activation_succeeded=0
+
+          fail() {
+            printf 'Trusted Hermes E2E swap setup failed: %s\n' "$1" >&2
+            exit 1
+          }
+
+          if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${REF}" != "refs/heads/main" ]]; then
+            fail "workflow must run from NVIDIA/NemoClaw main"
+          fi
+          if [[ "${EVENT_NAME}" != "push" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then
+            fail "workflow event must be push or workflow_dispatch"
+          fi
+          # PR E2E mode: maintainer-dispatched PR commit.
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${CHECKOUT_SHA}" ]]; then
+            if [[ ! "${CHECKOUT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+              fail "checkout SHA must be lowercase 40-hex"
+            fi
+            if [[ ! "${EXPECTED_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ || "${WORKFLOW_SHA}" != "${EXPECTED_WORKFLOW_SHA}" || "${WORKFLOW_SHA}" != "${DISPATCH_SHA}" ]]; then
+              fail "workflow source must match the trusted dispatch revision"
+            fi
+          else
+            # Direct-main mode: push or manual trigger on main.
+            if [[ -n "${CHECKOUT_SHA}" || -n "${EXPECTED_WORKFLOW_SHA}" ]]; then
+              fail "direct main runs must not request an alternate checkout or workflow revision"
+            fi
+            if [[ ! "${WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ || "${WORKFLOW_SHA}" != "${DISPATCH_SHA}" ]]; then
+              fail "direct main workflow source must match the run revision"
+            fi
+          fi
+          if [[ "${RUNNER_ENVIRONMENT_KIND}" != "github-hosted" || "${RUNNER_OS_KIND}" != "Linux" || "${RUNNER_ARCH_KIND}" != "X64" ]]; then
+            fail "swap fallback requires an ephemeral GitHub-hosted Linux x64 runner"
+          fi
+          mnt_metadata="$(/usr/bin/stat -c "%F:%u:%g" -- /mnt)"
+          if [[ "${mnt_metadata}" != "directory:0:0" ]]; then
+            fail "/mnt must be a root-owned directory"
+          fi
+
+          read_active_swap_bytes() {
+            /usr/bin/sudo -n /usr/sbin/swapon --show=SIZE --bytes --noheadings |
+              /usr/bin/awk '{ total += $1 } END { printf "%.0f", total }'
+          }
+
+          active_swap_bytes="$(read_active_swap_bytes)"
+          active_swap_bytes="${active_swap_bytes:-0}"
+          if [[ ! "${active_swap_bytes}" =~ ^[0-9]+$ ]]; then
+            fail "unable to determine active swap capacity"
+          fi
+          if (( active_swap_bytes >= required_swap_bytes )); then
+            printf 'Hermes E2E swap is already sufficient: %s bytes active\n' "${active_swap_bytes}"
+            exit 0
+          fi
+
+          available_bytes="$(/usr/bin/df --block-size=1 --output=avail /mnt | /usr/bin/tail -n 1 | /usr/bin/tr -d "[:space:]")"
+          if [[ ! "${available_bytes}" =~ ^[0-9]+$ ]]; then
+            fail "unable to determine available disk capacity under /mnt"
+          fi
+          required_disk_bytes=$((swap_file_bytes + reserve_bytes))
+          if (( available_bytes < required_disk_bytes )); then
+            fail "insufficient disk capacity: ${available_bytes} bytes available, ${required_disk_bytes} required"
+          fi
+
+          if /usr/bin/sudo -n /usr/bin/test -e "${swap_dir}" || /usr/bin/sudo -n /usr/bin/test -L "${swap_dir}"; then
+            fail "refusing unexpected pre-existing swap path"
+          fi
+
+          directory_created=0
+          cleanup_partial_swap() {
+            status="$?"
+            if (( status != 0 && directory_created == 1 )); then
+              if active_swap_names="$(/usr/bin/sudo -n /usr/sbin/swapon --show=NAME --noheadings --raw 2>/dev/null)"; then
+                fixed_swap_active=0
+                while IFS= read -r active_swap_name; do
+                  if [[ -n "${swap_file}" && "${active_swap_name}" == "${swap_file}" ]]; then
+                    fixed_swap_active=1
+                    break
+                  fi
+                done <<< "${active_swap_names}"
+                if (( fixed_swap_active == 1 || swap_activation_succeeded == 1 )); then
+                  if /usr/bin/sudo -n /usr/sbin/swapoff "${swap_file}" 2>/dev/null; then
+                    /usr/bin/sudo -n /usr/bin/rm -f -- "${swap_file}" || true
+                    /usr/bin/sudo -n /usr/bin/rmdir -- "${swap_dir}" || true
+                  else
+                    printf 'Preserving active Hermes E2E swap after setup failure: %s\n' "${swap_file}" >&2
+                  fi
+                else
+                  if [[ -n "${swap_file}" ]]; then
+                    /usr/bin/sudo -n /usr/bin/rm -f -- "${swap_file}" || true
+                  fi
+                  /usr/bin/sudo -n /usr/bin/rmdir -- "${swap_dir}" || true
+                fi
+              else
+                printf 'Preserving Hermes E2E swap because active swap could not be queried: %s\n' "${swap_file}" >&2
+              fi
+            fi
+            trap - EXIT
+            exit "${status}"
+          }
+          trap cleanup_partial_swap EXIT
+
+          /usr/bin/sudo -n /usr/bin/mkdir -m 0700 -- "${swap_dir}"
+          directory_created=1
+          directory_metadata="$(/usr/bin/sudo -n /usr/bin/stat -c "%F:%u:%g:%a" -- "${swap_dir}")"
+          if [[ "${directory_metadata}" != "directory:0:0:700" ]]; then
+            fail "swap directory must be a root-owned mode-0700 directory"
+          fi
+          swap_file="$(/usr/bin/sudo -n /usr/bin/mktemp --tmpdir="${swap_dir}" nemoclaw-hermes.XXXXXXXX.swap)"
+          if ! /usr/bin/sudo -n /usr/bin/test -f "${swap_file}" || /usr/bin/sudo -n /usr/bin/test -L "${swap_file}"; then
+            fail "swap file must be a regular non-symlink"
+          fi
+          file_metadata="$(/usr/bin/sudo -n /usr/bin/stat -c "%u:%g:%a" -- "${swap_file}")"
+          if [[ "${file_metadata}" != "0:0:600" ]]; then
+            fail "swap file must be root-owned mode 0600"
+          fi
+          /usr/bin/sudo -n /usr/bin/fallocate -l "${swap_file_bytes}" "${swap_file}"
+          file_size_bytes="$(/usr/bin/sudo -n /usr/bin/stat -c "%s" -- "${swap_file}")"
+          if [[ ! "${file_size_bytes}" =~ ^[0-9]+$ || "${file_size_bytes}" -ne "${swap_file_bytes}" ]]; then
+            fail "swap file size does not match the fixed backing allocation"
+          fi
+          remaining_bytes="$(/usr/bin/df --block-size=1 --output=avail /mnt | /usr/bin/tail -n 1 | /usr/bin/tr -d "[:space:]")"
+          if [[ ! "${remaining_bytes}" =~ ^[0-9]+$ || "${remaining_bytes}" -lt "${reserve_bytes}" ]]; then
+            fail "swap allocation did not preserve the required disk reserve"
+          fi
+          /usr/bin/sudo -n /usr/sbin/mkswap --quiet "${swap_file}"
+          /usr/bin/sudo -n /usr/sbin/swapon "${swap_file}"
+          swap_activation_succeeded=1
+
+          observe_provisioned_swap() {
+            activation_observation_attempt=1
+            while (( activation_observation_attempt <= activation_observation_attempts )); do
+              provisioned_swap_active=0
+              if active_swap_names="$(/usr/bin/sudo -n /usr/sbin/swapon --show=NAME --noheadings --raw 2>/dev/null)"; then
+                while IFS= read -r active_swap_name; do
+                  if [[ "${active_swap_name}" == "${swap_file}" ]]; then
+                    provisioned_swap_active=1
+                    break
+                  fi
+                done <<< "${active_swap_names}"
+              fi
+              if observed_swap_bytes="$(read_active_swap_bytes 2>/dev/null)"; then
+                observed_swap_bytes="${observed_swap_bytes:-0}"
+                if [[ "${observed_swap_bytes}" =~ ^[0-9]+$ ]] &&
+                  (( provisioned_swap_active == 1 && observed_swap_bytes >= required_swap_bytes )); then
+                  active_swap_bytes="${observed_swap_bytes}"
+                  return 0
+                fi
+              fi
+              if (( activation_observation_attempt < activation_observation_attempts )); then
+                /usr/bin/sleep "${activation_observation_delay_seconds}"
+              fi
+              activation_observation_attempt=$((activation_observation_attempt + 1))
+            done
+            return 1
+          }
+
+          if ! observe_provisioned_swap; then
+            fail "unable to verify the required active swap capacity after bounded observation"
+          fi
+
+          trap - EXIT
+          printf 'Hermes E2E swap ready: %s bytes active\n' "${active_swap_bytes}"
+          /usr/bin/sudo -n /usr/sbin/swapon --show
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ inputs.candidate_repository }}
@@ -110,6 +374,112 @@ jobs:
         with:
           provenance-json: ${{ inputs.cli_artifact_provenance }}
 
+      - name: Add swap for Hermes image rebuild
+        if: ${{ inputs.host_preparation == 'rebuild-swap' }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          ENV: /dev/null
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          LC_ALL: C
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
+          RUNNER_OS_KIND: ${{ runner.os }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |-
+          set -euo pipefail
+          readonly swap_file="/mnt/nemoclaw-hermes-rebuild.swap"
+          readonly swap_file_bytes=34359738368
+          readonly reserve_bytes=17179869184
+          swap_created=0
+          swap_active=0
+
+          fail() {
+            printf 'Trusted Hermes rebuild swap setup failed: %s\n' "$1" >&2
+            exit 1
+          }
+
+          if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${REF}" != "refs/heads/main" ]]; then
+            fail "workflow must run from NVIDIA/NemoClaw main"
+          fi
+          if [[ "${EVENT_NAME}" != "push" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then
+            fail "workflow event must be push or workflow_dispatch"
+          fi
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${CHECKOUT_SHA}" ]]; then
+            if [[ ! "${CHECKOUT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+              fail "checkout SHA must be lowercase 40-hex"
+            fi
+            if [[ ! "${EXPECTED_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ || "${WORKFLOW_SHA}" != "${EXPECTED_WORKFLOW_SHA}" || "${WORKFLOW_SHA}" != "${DISPATCH_SHA}" ]]; then
+              fail "workflow source must match the trusted dispatch revision"
+            fi
+          else
+            if [[ -n "${CHECKOUT_SHA}" || -n "${EXPECTED_WORKFLOW_SHA}" ]]; then
+              fail "direct main runs must not request an alternate checkout or workflow revision"
+            fi
+            if [[ ! "${WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ || "${WORKFLOW_SHA}" != "${DISPATCH_SHA}" ]]; then
+              fail "direct main workflow source must match the run revision"
+            fi
+          fi
+          if [[ "${RUNNER_ENVIRONMENT_KIND}" != "github-hosted" || "${RUNNER_OS_KIND}" != "Linux" || "${RUNNER_ARCH_KIND}" != "X64" ]]; then
+            fail "rebuild swap requires an ephemeral GitHub-hosted Linux x64 runner"
+          fi
+          if [[ "$(/usr/bin/stat -c "%F:%u:%g" -- /mnt)" != "directory:0:0" ]]; then
+            fail "/mnt must be a root-owned directory"
+          fi
+          if /usr/bin/sudo -n /usr/bin/test -e "${swap_file}" || /usr/bin/sudo -n /usr/bin/test -L "${swap_file}"; then
+            fail "refusing unexpected pre-existing rebuild swap path"
+          fi
+          available_bytes="$(/usr/bin/df --block-size=1 --output=avail /mnt | /usr/bin/tail -n 1 | /usr/bin/tr -d "[:space:]")"
+          required_disk_bytes=$((swap_file_bytes + reserve_bytes))
+          if [[ ! "${available_bytes}" =~ ^[0-9]+$ ]] || (( available_bytes < required_disk_bytes )); then
+            fail "insufficient disk capacity for rebuild swap and reserve"
+          fi
+
+          cleanup_partial_swap() {
+            status="$?"
+            if (( status != 0 && swap_created == 1 )); then
+              if (( swap_active == 1 )); then
+                /usr/bin/sudo -n /usr/sbin/swapoff "${swap_file}" || true
+              fi
+              /usr/bin/sudo -n /usr/bin/rm -f -- "${swap_file}" || true
+            fi
+            trap - EXIT
+            exit "${status}"
+          }
+          trap cleanup_partial_swap EXIT
+
+          /usr/bin/sudo -n /usr/bin/fallocate -l "${swap_file_bytes}" "${swap_file}"
+          swap_created=1
+          /usr/bin/sudo -n /usr/bin/chmod 0600 "${swap_file}"
+          file_metadata="$(/usr/bin/sudo -n /usr/bin/stat -c "%F:%u:%g:%a:%s" -- "${swap_file}")"
+          if [[ "${file_metadata}" != "regular file:0:0:600:${swap_file_bytes}" ]]; then
+            fail "rebuild swap file metadata does not match the reviewed allocation"
+          fi
+          remaining_bytes="$(/usr/bin/df --block-size=1 --output=avail /mnt | /usr/bin/tail -n 1 | /usr/bin/tr -d "[:space:]")"
+          if [[ ! "${remaining_bytes}" =~ ^[0-9]+$ ]] || (( remaining_bytes < reserve_bytes )); then
+            fail "rebuild swap allocation did not preserve the required disk reserve"
+          fi
+          /usr/bin/sudo -n /usr/sbin/mkswap --quiet "${swap_file}"
+          /usr/bin/sudo -n /usr/sbin/swapon "${swap_file}"
+          swap_active=1
+          if ! /usr/bin/sudo -n /usr/sbin/swapon --show=NAME --noheadings --raw | /usr/bin/grep -Fx -- "${swap_file}" >/dev/null; then
+            fail "rebuild swap did not become active"
+          fi
+
+          trap - EXIT
+          /usr/bin/sudo -n /usr/sbin/swapon --show
+
+      - name: Initialize runner comparison telemetry
+        if: ${{ inputs.runner_comparison && inputs.trusted_main }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts initialize
+
       - name: Install OpenShell CLI
         if: ${{ inputs.install_mode == 'authenticated' }}
         env:
@@ -129,10 +499,11 @@ jobs:
       - name: Run catalogue E2E target
         env:
           INSTALL_MODE: ${{ inputs.install_mode }}
-          TARGET_ID: ${{ inputs.target_id }}
+          CATALOGUE_ID: ${{ inputs.catalogue_id }}
           TEST_FILE: ${{ inputs.test_file }}
           NVIDIA_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_API_KEY || '' }}
           NVIDIA_INFERENCE_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
+          COMPATIBLE_API_KEY: ${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -148,12 +519,18 @@ jobs:
             export OPENSHELL_BIN
             "$OPENSHELL_BIN" --version
           fi
-          npx tsx tools/e2e/target-catalogue.mts run "$TARGET_ID" "$TEST_FILE"
+          npx tsx tools/e2e/target-catalogue.mts run "$CATALOGUE_ID" "$TEST_FILE"
+
+      - name: Finalize runner comparison telemetry
+        if: ${{ always() && inputs.runner_comparison && inputs.trusted_main }}
+        continue-on-error: true
+        shell: bash
+        run: npx tsx tools/e2e/runner-comparison.mts finalize
 
       - name: Write E2E evidence manifest
-        if: always()
+        if: ${{ always() && steps.execution_plan.outcome == 'success' }}
         env:
-          ARTIFACT_DIRECTORY: e2e-artifacts/live/${{ inputs.target_id }}
+          ARTIFACT_DIRECTORY: ${{ steps.execution_plan.outputs.artifact_directory }}
           CANDIDATE_REPOSITORY: ${{ inputs.candidate_repository }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           JOB_STATUS: ${{ job.status }}
@@ -170,8 +547,7 @@ jobs:
           [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ && "$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::E2E evidence requires exact commit SHAs" >&2; exit 1; }
           [[ "$RUN_ID" =~ ^[1-9][0-9]*$ && "$RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || { echo "::error::E2E workflow run identity is invalid" >&2; exit 1; }
           [[ "$JOB_STATUS" =~ ^(success|failure|cancelled)$ ]] || { echo "::error::E2E job status is invalid" >&2; exit 1; }
-          expected_directory="e2e-artifacts/live/${TARGET_ID}"
-          [[ "$ARTIFACT_DIRECTORY" == "$expected_directory" ]] || { echo "::error::E2E artifact directory does not match the target" >&2; exit 1; }
+          [[ "$ARTIFACT_DIRECTORY" =~ ^e2e-artifacts/live/[a-z0-9]+([_-][a-z0-9]+)*(/[a-z0-9]+([_-][a-z0-9]+)*)?$ ]] || { echo "::error::E2E artifact directory is invalid" >&2; exit 1; }
           install -d -m 0700 "$ARTIFACT_DIRECTORY"
           product_evidence_count="$(find -P "$ARTIFACT_DIRECTORY" -type f ! -name evidence-manifest.json -printf . | wc -c)"
           if [[ "$JOB_STATUS" == "success" && "$product_evidence_count" == "0" ]]; then
@@ -205,9 +581,29 @@ jobs:
             }' >"$ARTIFACT_DIRECTORY/evidence-manifest.json"
           chmod 0600 "$ARTIFACT_DIRECTORY/evidence-manifest.json"
 
-      - name: Upload E2E artifacts
-        if: always()
+      - name: Upload skill-agent artifacts
+        if: ${{ always() && steps.execution_plan.outcome == 'success' && inputs.catalogue_id == 'skill-agent' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: ${{ steps.execution_plan.outputs.upload_name }}
+          path: |
+            e2e-artifacts/live/skill-agent/evidence-manifest.json
+            e2e-artifacts/live/skill-agent/*/artifact-summary.json
+            e2e-artifacts/live/skill-agent/*/cleanup.json
+            e2e-artifacts/live/skill-agent/*/cleanup-skill-agent-summary.json
+            e2e-artifacts/live/skill-agent/*/target.json
+            e2e-artifacts/live/skill-agent/*/target-result.json
+            e2e-artifacts/live/skill-agent/*/test-progress.json
+            e2e-artifacts/live/skill-agent/*/shell/*.result.json
+            e2e-artifacts/live/skill-agent/*/shell/*.stdout.txt
+            e2e-artifacts/live/skill-agent/*/shell/*.stderr.txt
+
+      - name: Upload E2E artifacts
+        if: ${{ always() && steps.execution_plan.outcome == 'success' && inputs.catalogue_id != 'skill-agent' }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: ${{ steps.execution_plan.outputs.upload_name }}
+          path: ${{ steps.execution_plan.outputs.artifact_directory }}/
 
       - name: Clean up Docker auth
         if: always()
