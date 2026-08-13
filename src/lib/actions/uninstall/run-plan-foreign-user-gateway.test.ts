@@ -25,22 +25,22 @@ function uninstallWithHostGatewayOwnedBy(uid: number): {
 } {
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-foreign-"));
   const errors: string[] = [];
-  const run = (command: string, args: string[]): RunResult => {
-    if (command === "pgrep") {
-      return args.some((arg) => arg.includes("openshell-gateway"))
+  const psResults = new Map<string, RunResult>([
+    ["stat=", ok("S\n")],
+    ["args=", ok("/usr/local/bin/openshell-gateway\n")],
+    ["user=", ok("otheruser\n")],
+    ["uid=", ok(`${uid}\n`)],
+  ]);
+  const run = (command: string, args: string[]): RunResult =>
+    command === "pgrep"
+      ? args.some((arg) => arg.includes("openshell-gateway"))
         ? ok(`${HOST_GATEWAY_PID}\n`)
-        : notFound();
-    }
-    if (command === "ps") {
-      if (args.includes("stat=")) return ok("S\n");
-      if (args.includes("args=")) return ok("/usr/local/bin/openshell-gateway\n");
-      if (args.includes("user=")) return ok("otheruser\n");
-      if (args.includes("uid=")) return ok(`${uid}\n`);
-      return notFound();
-    }
-    if (command === "openshell" && args.join(" ") === "gateway list -o json") return ok("[]");
-    return ok();
-  };
+        : notFound()
+      : command === "ps"
+        ? (psResults.get(args.at(-1) ?? "") ?? notFound())
+        : command === "openshell" && args.join(" ") === "gateway list -o json"
+          ? ok("[]")
+          : ok();
   try {
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: false },

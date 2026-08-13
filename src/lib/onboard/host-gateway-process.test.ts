@@ -59,16 +59,15 @@ function psResponses(
     uid?: number;
   },
 ): [string, RunResult | ((args: string[]) => RunResult)][] {
-  const entries: [string, RunResult | ((args: string[]) => RunResult)][] = [
+  return [
     [`ps -p ${pid} -o stat=`, () => (opts.exited.has(pid) ? notFound() : ok("S\n"))],
     [`ps -p ${pid} -o user=`, ok(`${opts.owner ?? "tester"}\n`)],
     [
       `ps -p ${pid} -o args=`,
       ok(opts.cmdline ?? `/home/test/.local/bin/openshell-gateway --port 8080\n`),
     ],
+    ...(opts.uid === undefined ? [] : ([[`ps -p ${pid} -o uid=`, ok(`${opts.uid}\n`)]] as const)),
   ];
-  if (opts.uid !== undefined) entries.push([`ps -p ${pid} -o uid=`, ok(`${opts.uid}\n`)]);
-  return entries;
 }
 
 function otherUserUid(): number {
@@ -427,7 +426,7 @@ describe("stopHostGatewayProcesses", () => {
     ]);
     const { run } = makeRun(responses);
     const kill = vi.fn<HostGatewayProcessDeps["kill"]>((pid, signal) => {
-      if (signal === "SIGTERM") exited.add(pid);
+      signal === "SIGTERM" && exited.add(pid);
       return true;
     });
 
