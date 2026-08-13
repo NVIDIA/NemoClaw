@@ -395,9 +395,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
    * carry the port the in-sandbox gateway listens on; the registry entry
    * persisted by onboarding is the only record of that port. The forward and
    * the in-sandbox gateway must share one port number (`openshell forward`
-   * binds the same port on both sides), and post-verify builds its probe
-   * chain and Browser URL from `CHAT_UI_URL`, so this publishes the port that
-   * `ensureDashboardForward` bound back to `CHAT_UI_URL`. (#8970)
+   * binds the same port on both sides). Post-verify builds its probe chain
+   * and Browser URL from `CHAT_UI_URL`, so after the forward starts this
+   * writes the bound port to `CHAT_UI_URL`. (#8970)
    */
   function ensureFinalizationDashboardForward(sandboxName: string): number {
     const persistedPort = getPersistedDashboardPort(sandboxName, deps.listSandboxes);

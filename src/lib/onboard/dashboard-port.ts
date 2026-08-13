@@ -284,7 +284,7 @@ export function getRegistryOccupiedDashboardPorts(
  * gateway. The onboard resume path skips sandbox creation, which is the step
  * that normally publishes the created sandbox's port through `CHAT_UI_URL`,
  * so finalization re-reads the port that onboarding persisted (#8214).
- * Returns null when the sandbox has no valid persisted port. (#8970)
+ * Returns null when the entry has no positive integer port. (#8970)
  */
 export function getPersistedDashboardPort(
   currentSandboxName: string,

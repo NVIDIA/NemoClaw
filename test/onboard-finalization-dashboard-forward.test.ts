@@ -39,7 +39,7 @@ function createFinalizationForwardHarness(options: {
 }
 
 describe("finalization dashboard forward", () => {
-  it("prefers the persisted registry port over the default when CHAT_UI_URL is unset (#8970)", () => {
+  it("prefers the persisted registry port over the default dashboard port when CHAT_UI_URL is unset (#8970)", () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const { helpers, openshellArgv } = createFinalizationForwardHarness({
@@ -84,7 +84,7 @@ describe("finalization dashboard forward", () => {
     expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
   });
 
-  it("publishes the reallocated port when the persisted port was taken over (#8970)", () => {
+  it("publishes the reallocated port when another sandbox holds the persisted port (#8970)", () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const { helpers } = createFinalizationForwardHarness({
@@ -151,7 +151,7 @@ describe("finalization dashboard forward", () => {
     expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18789");
   });
 
-  it("ignores an invalid persisted dashboard port and falls back to the default (#8970)", () => {
+  it("ignores a zero persisted dashboard port and uses the default dashboard port (#8970)", () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
     const { helpers } = createFinalizationForwardHarness({
       forwardList:
