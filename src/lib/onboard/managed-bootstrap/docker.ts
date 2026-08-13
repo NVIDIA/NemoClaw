@@ -32,7 +32,10 @@ import type {
   DockerGpuPatchModeKind,
   DockerUlimit,
 } from "../docker-gpu-patch-types";
-import { waitForOpenShellSupervisorReconnect } from "../docker-gpu-supervisor-reconnect";
+import {
+  getDockerGpuSupervisorReconnectTimeoutSecs,
+  waitForOpenShellSupervisorReconnect,
+} from "../docker-gpu-supervisor-reconnect";
 import { openshellSandboxCommandEnvValue } from "../docker-startup-command-env";
 import {
   OPENSHELL_MANAGED_BY_LABEL,
@@ -3650,7 +3653,14 @@ export function createDockerManagedBootstrapAdapter(
         "expected replacement command",
       );
       assertReplacementBoundary(before, handle, expectedReplacementCommand);
-      if (!waitForOpenShellSupervisorReconnect(handle.sandbox.sandboxName, timeoutSecs, deps)) {
+      const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(timeoutSecs);
+      if (
+        !waitForOpenShellSupervisorReconnect(
+          handle.sandbox.sandboxName,
+          supervisorReconnectTimeoutSecs,
+          deps,
+        )
+      ) {
         throw new Error("Managed bootstrap Docker supervisor did not reconnect.");
       }
       const afterWaitJournal = deps.journalStore.load(journal.bootstrapIdentity);
