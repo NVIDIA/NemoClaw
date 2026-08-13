@@ -21,6 +21,7 @@ interface GitHubHostedRuntimeAuthorityOptions {
   platform?: NodeJS.Platform;
   githubActions?: string;
   runnerEnvironment?: string;
+  runnerImageOs?: string;
   uid?: number;
   gid?: number;
   install?: RuntimeAuthorityInstaller;
@@ -29,10 +30,13 @@ interface GitHubHostedRuntimeAuthorityOptions {
 export function prepareGitHubHostedRuntimeAuthority(
   options: GitHubHostedRuntimeAuthorityOptions = {},
 ): void {
+  const hostedRunner =
+    (options.runnerEnvironment ?? process.env.RUNNER_ENVIRONMENT) === "github-hosted" ||
+    /^(?:ubuntu|macos|win)/i.test(options.runnerImageOs ?? process.env.ImageOS ?? "");
   if (
     (options.platform ?? process.platform) !== "linux" ||
     (options.githubActions ?? process.env.GITHUB_ACTIONS) !== "true" ||
-    (options.runnerEnvironment ?? process.env.RUNNER_ENVIRONMENT) !== "github-hosted"
+    !hostedRunner
   ) {
     return;
   }

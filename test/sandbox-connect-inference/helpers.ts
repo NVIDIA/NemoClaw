@@ -40,6 +40,7 @@ export type SetupFixtureOptions = {
   inferenceSetStatus?: number;
   writeOllamaProxyState?: boolean;
   gatewaySupervisorRecovery?: boolean;
+  launchReadinessRegistry?: boolean;
 };
 
 const fixtureForwardListeners = new Map<string, ChildProcess>();
@@ -139,7 +140,7 @@ function writeRegistryState(
       defaultSandbox: sandboxName,
       sandboxes: {
         [sandboxName]: {
-          ...launchReadinessRegistryFixture(),
+          ...(options.launchReadinessRegistry ? launchReadinessRegistryFixture() : {}),
           ...sandboxEntry,
         },
       },

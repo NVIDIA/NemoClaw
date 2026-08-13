@@ -92,6 +92,21 @@ describe("Vitest temp root", () => {
     expect(install).not.toHaveBeenCalled();
   });
 
+  it("recognizes the GitHub-hosted image marker exported to test processes (#8942)", () => {
+    const install = vi.fn();
+
+    prepareGitHubHostedRuntimeAuthority({
+      platform: "linux",
+      githubActions: "true",
+      runnerImageOs: "ubuntu24",
+      uid: 1001,
+      gid: 1002,
+      install,
+    });
+
+    expect(install).toHaveBeenCalledOnce();
+  });
+
   it("redirects the selected project into one private temp root", () => {
     const root = process.env.TMPDIR as string;
 

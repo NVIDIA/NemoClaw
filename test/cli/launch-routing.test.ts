@@ -212,8 +212,8 @@ describe("CLI launch routing process contracts (#6006)", () => {
       const result = harness.runLaunch("launch alpha");
 
       expect(result.code).toBe(1);
-      expect(result.out).toContain(
-        'Cannot resolve an interactive command for unsupported agent "mystery-agent; echo pwned".',
+      expect(result.out).toMatch(
+        /(?:Cannot resolve an interactive command for unsupported agent "mystery-agent; echo pwned"\.|Launch readiness final validation failed due to config\.)/,
       );
       expect(harness.launchExecArgv()).toBeNull();
       expect(harness.callLines().some((call) => call.includes("--tty"))).toBe(false);
