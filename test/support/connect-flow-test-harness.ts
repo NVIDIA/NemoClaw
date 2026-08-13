@@ -30,6 +30,8 @@ export type ConnectHarness = {
   ensureOllamaAuthProxySpy: MockInstance;
   findReachableOllamaHostSpy: MockInstance;
   ensureLiveSandboxSpy: MockInstance;
+  getSandboxDockerRuntimeSpy: MockInstance;
+  dockerStartSpy: MockInstance;
   errorSpy: MockInstance;
   logSpy: MockInstance;
   preflightVllmSpy: MockInstance;
@@ -73,6 +75,13 @@ export type ConnectHarnessOptions = {
     mcpReconciliationReason?: string;
   };
   portableRecoveryResult?: { kind: "not-installed" | "already-running" | "recovered" };
+  dockerRuntime?: {
+    health?: string;
+    paused?: boolean;
+    running?: boolean;
+    containerName?: string | null;
+  };
+  dockerStartStatus?: number | null;
   spawnSignal?: NodeJS.Signals | null;
   spawnStatus?: number | null;
   sttyThrows?: boolean;
@@ -117,6 +126,8 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const gatewayFailureClassifier = requireDist(
     "../../src/lib/actions/sandbox/gateway-failure-classifier.js",
   );
+  const dockerHealth = requireDist("../../src/lib/actions/sandbox/docker-health.js");
+  const dockerAdapter = requireDist("../../src/lib/adapters/docker/container.js");
   const localInference = requireDist("../../src/lib/inference/local.js");
   const ollamaProxy = requireDist("../../src/lib/inference/ollama/proxy.js");
   const gatewayRouteMutationLock = requireDist(
@@ -136,6 +147,17 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     output: "Name: alpha\nPhase: Ready\n",
   });
   vi.spyOn(gatewayFailureClassifier, "isDockerRuntimeDown").mockReturnValue(false);
+  const getSandboxDockerRuntimeSpy = vi
+    .spyOn(dockerHealth, "getSandboxDockerRuntime")
+    .mockReturnValue({
+      health: options.dockerRuntime?.health ?? "healthy",
+      paused: options.dockerRuntime?.paused ?? false,
+      running: options.dockerRuntime?.running ?? true,
+      containerName: options.dockerRuntime?.containerName ?? null,
+    });
+  const dockerStartSpy = vi
+    .spyOn(dockerAdapter, "dockerStart")
+    .mockReturnValue({ status: options.dockerStartStatus ?? 0 });
   const inferenceProbeResponses = [...(options.inferenceProbeResponses ?? [])];
   const listOutputs = [...(options.listOutputs ?? [])];
   const captureOpenshellSpy = vi
@@ -276,6 +298,8 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     ensureOllamaAuthProxySpy,
     findReachableOllamaHostSpy,
     ensureLiveSandboxSpy,
+    getSandboxDockerRuntimeSpy,
+    dockerStartSpy,
     errorSpy,
     logSpy,
     preflightVllmSpy,

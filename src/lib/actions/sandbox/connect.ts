@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { dockerStart } from "../../adapters/docker";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
   captureOpenshell,
@@ -71,6 +72,7 @@ import {
   parseSandboxInferenceRouteProbeResult,
 } from "./connect-inference-route-probe";
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
+import { getSandboxDockerRuntime } from "./docker-health";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import {
   ensureLiveSandboxOrExit,
@@ -1248,12 +1250,54 @@ export async function prepareInteractiveSession(
   return { agent, sb };
 }
 
+const RECOVER_CONTAINER_START_TIMEOUT_MS = 30_000;
+
+/**
+ * Start a sandbox's Docker container when it exists but is stopped, before the
+ * probe-only readiness wait begins polling. `recover` and `connect --probe-only`
+ * both advertise that they restart a stopped sandbox, but the wait loop below
+ * only observes readiness: a container sitting in `exited` never reaches Ready,
+ * so recovery spins to the full timeout and gives up while a plain `docker
+ * start` brings the same container back healthy in seconds with workspace state
+ * and managed config preserved (#8967). Best-effort — on any failure we fall
+ * through to the readiness wait, which surfaces the existing stopped-container
+ * guidance. A running or paused container is left untouched (pause is handled
+ * by its own `docker unpause` guidance), so the callers that reach this after a
+ * container is already up (e.g. `start`'s post-restart gateway verify) are
+ * no-ops.
+ */
+function startStoppedSandboxContainerForProbeRecovery(sandboxName: string): void {
+  let runtime: ReturnType<typeof getSandboxDockerRuntime>;
+  try {
+    runtime = getSandboxDockerRuntime(sandboxName);
+  } catch {
+    return;
+  }
+  if (!runtime.containerName || runtime.running || runtime.paused) return;
+  console.error(`  Sandbox '${sandboxName}' container is stopped — starting it...`);
+  const result = dockerStart(runtime.containerName, {
+    ignoreError: true,
+    timeout: RECOVER_CONTAINER_START_TIMEOUT_MS,
+  });
+  if (result.status === 0) {
+    console.error(`  ${G}✓${R} Started container '${runtime.containerName}'.`);
+  } else {
+    console.error(
+      `  Could not start container '${runtime.containerName}' (exit ${result.status ?? "unknown"}); continuing with readiness checks.`,
+    );
+  }
+}
+
 export async function connectSandbox(
   sandboxName: string,
   { probeOnly = false }: SandboxConnectOptions = {},
 ): Promise<void> {
   if (probeOnly) {
     await runConnectEntryPreflight(sandboxName, { probeOnly: true });
+    // Restart a stopped container so recovery does not poll a dead sandbox all
+    // the way to the timeout; a plain `docker start` brings it back healthy in
+    // seconds with workspace state preserved (#8967).
+    startStoppedSandboxContainerForProbeRecovery(sandboxName);
     waitForSandboxReadyOrExit(sandboxName, {
       defaultTimeoutSec: 300,
       retryCommand: "connect --probe-only",

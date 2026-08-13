@@ -123,6 +123,45 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
   });
 
+  it("starts a stopped container before the readiness wait polls it (#8967)", async () => {
+    const harness = createConnectHarness({
+      dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.dockerStartSpy).toHaveBeenCalledOnce();
+    expect(harness.dockerStartSpy).toHaveBeenCalledWith(
+      "openshell-alpha",
+      expect.objectContaining({ ignoreError: true }),
+    );
+    const listInvocations = harness.captureOpenshellSpy.mock.calls
+      .map((call, index) => ({ call, order: harness.captureOpenshellSpy.mock.invocationCallOrder[index]! }))
+      .filter(
+        ({ call }) =>
+          Array.isArray(call?.[0]) &&
+          (call[0] as string[])[0] === "sandbox" &&
+          (call[0] as string[])[1] === "list",
+      );
+    expect(listInvocations.length).toBeGreaterThan(0);
+    // The container must be started before recovery starts polling for readiness,
+    // otherwise the wait loop observes a dead container until it times out.
+    expect(harness.dockerStartSpy.mock.invocationCallOrder[0]!).toBeLessThan(
+      listInvocations[0]!.order,
+    );
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("leaves a running container untouched on probe-only recovery (#8967)", async () => {
+    const harness = createConnectHarness({
+      dockerRuntime: { containerName: "openshell-alpha", running: true, paused: false },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.dockerStartSpy).not.toHaveBeenCalled();
+  });
+
   it("suggests a longer equivalent retry when probe-only readiness times out", async () => {
     vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(300_001);
     const harness = createConnectHarness({ listOutput: "alpha Starting" });
