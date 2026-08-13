@@ -11,6 +11,7 @@ import path from "node:path";
 import { DASHBOARD_PORT } from "../core/ports";
 import { isCuaFrameworkEnabled, requireCuaFrameworkEnabled } from "../cua/feature";
 import { getCuaExternalAgentManifestPath } from "../cua/runtime-manifest";
+import { isPiQualificationEnabled, requirePiQualificationEnabled } from "../pi/feature";
 import { ROOT } from "../runner";
 import {
   formatAgentAliasSuffix,
@@ -122,6 +123,7 @@ export function listAgents(env: NodeJS.ProcessEnv = process.env): string[] {
         .readdirSync(AGENTS_DIR, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
         .filter((entry) => entry.name !== "nemocua")
+        .filter((entry) => entry.name !== "pi" || isPiQualificationEnabled(env))
         .filter((entry) => fs.existsSync(path.join(AGENTS_DIR, entry.name, "manifest.yaml")))
         .map((entry) => entry.name)
     : [];
@@ -156,6 +158,7 @@ export function requireAgentPolicyAdditionsPath(
  */
 export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): AgentDefinition {
   if (name === "nemocua") requireCuaFrameworkEnabled(env);
+  if (name === "pi") requirePiQualificationEnabled(env);
   const externalCua = name === "nemocua";
   const manifestPath = externalCua
     ? getCuaExternalAgentManifestPath(env)

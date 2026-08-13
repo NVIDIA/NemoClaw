@@ -58,6 +58,39 @@ describe("agent definitions", () => {
     );
   });
 
+  it("keeps the Pi candidate manifest out of agent selection by default (#7925)", () => {
+    expect(fs.existsSync(path.join(AGENTS_DIR, "pi", "manifest.yaml"))).toBe(true);
+
+    expect(listAgents({})).not.toContain("pi");
+    expect(getAgentChoices().map((choice) => choice.name)).not.toContain("pi");
+    expect(resolveAgentNameAlias("pi", listAgents({}))).toBeNull();
+    expect(() => loadAgent("pi", {})).toThrow("it is not a selectable agent yet");
+  });
+
+  it("exposes the Pi candidate manifest to qualification authority only (#7925)", () => {
+    const qualifiedEnv = { NEMOCLAW_PI_QUALIFICATION: "1" };
+
+    expect(listAgents(qualifiedEnv)).toContain("pi");
+
+    const agent = loadAgent("pi", qualifiedEnv);
+    expect(agent.name).toBe("pi");
+    expect(agent.expectedVersion).toBe("0.84.1");
+    expect(agent.runtime?.kind).toBe("terminal");
+    expect(agent.config?.dir).toBe("/sandbox/.pi/agent");
+  });
+
+  it("keeps Pi credential and trust state outside portable backup (#7925)", () => {
+    const agent = loadAgent("pi", { NEMOCLAW_PI_QUALIFICATION: "1" });
+
+    expect(agent.backupStateDirs).toEqual(["sessions", "prompts", "themes"]);
+    expect(agent.nonBackupStateDirs).toEqual(["tools", "bin"]);
+    expect(agent.stateFiles.map((file) => file.path)).toEqual(["settings.json"]);
+    const restore = agent.stateFiles[0]?.restore;
+    expect(restore?.merge).toBe("key-allowlist");
+    expect(restore?.userKeys?.map((entry) => entry.key)).not.toContain("defaultProjectTrust");
+    expect(restore?.userKeys?.map((entry) => entry.key)).not.toContain("shellPath");
+  });
+
   it("orders OpenClaw first in interactive choices", () => {
     const choices = getAgentChoices();
     expect(choices[0]?.name).toBe("openclaw");
