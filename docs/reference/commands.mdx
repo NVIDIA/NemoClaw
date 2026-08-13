@@ -782,7 +782,10 @@ Kanban backup does not include named boards, attachments, worker logs, scratch w
 </AgentOnly>
 
 Before creating the gateway, the wizard runs preflight checks.
-It verifies that Docker is reachable, rejects unsupported runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
+It verifies that Docker is reachable and prints host remediation guidance when prerequisites are missing.
+Standard onboarding rejects unsupported runtimes such as Podman.
+The explicit portable experimental profile has one installer-preflight admission exception for the Podman unsupported-runtime finding.
+It does not waive any other readiness blocker or make Podman generally supported.
 The preflight also enforces the OpenShell version range declared in the blueprint (`min_openshell_version` and `max_openshell_version`).
 If the installed OpenShell version falls outside this range, onboarding exits with an actionable error and a link to compatible releases.
 For fresh OpenShell installs, NemoClaw queries published OpenShell releases and asks the installer to use a release that fits the blueprint range.
@@ -1187,10 +1190,8 @@ If gateway selection fails, `exec` stops without running the sandbox command.
 
 OpenClaw config resolves under `/sandbox/.openclaw`.
 
-```bash
-$$nemoclaw my-assistant exec -- openclaw agent -m "What is 2+2?"
-$$nemoclaw my-assistant exec --workdir /sandbox/workspace -- ls -la
-```
+Run one OpenClaw turn with `$$nemoclaw my-assistant exec -- openclaw agent --agent main -m "What is 2+2?"`.
+List the default OpenClaw workspace with `$$nemoclaw my-assistant exec --workdir /sandbox/.openclaw/workspace -- ls -la`.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -3608,6 +3609,18 @@ When `dst` does not exist, it is auto-created from the source image.
 For a Docker- or VM-driver source, the source can be stopped when its registry entry records both the sandbox image and a complete inference route.
 For a Kubernetes-driver source, the pod image must remain resolvable through its gateway.
 No re-onboarding is needed when those prerequisites are present.
+For a new destination, NemoClaw requires its owning gateway to report Ready state and a valid live identity.
+It revalidates that identity immediately before registration.
+The destination receives a new lifecycle generation and does not inherit the source sandbox's generation.
+If the destination is not Ready with the same valid identity, the command exits nonzero before registration or state restore.
+The created destination remains unregistered, so `--force` cannot select it for deletion.
+Run the exact owner-scoped deletion command printed by the failure:
+
+```bash
+openshell sandbox delete -g '<owning-gateway>' '<destination>'
+```
+
+After OpenShell deletes the destination, rerun the original `snapshot restore --to` command.
 <AgentOnly variant="openclaw">
 After NemoClaw creates the destination, it waits for the managed OpenClaw supervisor to pass a bounded readiness check before it applies snapshot state.
 If the check fails, the command leaves the destination registered without restored snapshot state and exits nonzero.
@@ -4072,6 +4085,8 @@ For a managed dual-Station vLLM runtime, full uninstall revalidates the exact re
 If that cleanup fails, uninstall exits nonzero, preserves its owner-only cleanup receipt, and tells you to resolve the reported peer error before retrying.
 Pair cleanup can partially complete before an error; verify both Stations before the retry.
 For an authenticated host-local vLLM runtime, full uninstall verifies the exact named container, NemoClaw ownership label, persisted API key, and authentication fingerprint before removing the container by its inspected ID.
+When that ownership state is missing, full uninstall removes the reserved `nemoclaw-vllm` container only when Docker reports its NemoClaw managed label and a valid container ID.
+An unlabeled container or malformed inspection remains in place and stops the remaining uninstall steps.
 For managed llama.cpp, full uninstall verifies the exact named container and network ownership before removing both resources by their inspected IDs.
 These host-local checks run before NemoClaw deletes their state.
 If Docker is unavailable or a resource does not match its persisted ownership state, uninstall exits nonzero before the remaining uninstall steps and preserves that state for recovery.
@@ -4141,6 +4156,13 @@ Rerun `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw uninstall` with the gateway port 
 For an externally supervised authority, uninstall preserves the selected local gateway state in both full and gateway-scoped cleanup.
 It also preserves the gateway process, supervisor resources, marked Linux unit, Docker resources, OpenShell binaries, and the declared external state directory.
 A custom-port uninstall does not stop or remove the default gateway service or its environment file.
+Uninstall does not stop an `openshell-gateway` process that another non-root user owns and that this installation did not record.
+It names the owner and process ID, leaves that process running, and continues with the remaining cleanup.
+If no other cleanup fails, uninstall exits with status `0` even though that process can keep its port in use.
+Uninstall still tries to stop a `root`-owned process and the gateway process that this installation recorded.
+If either of those stops fails, uninstall prints `sudo kill -9 <pid>` for the process.
+A gateway-scoped uninstall and every `--all-gateway-ports` pass exit nonzero after that failure.
+A single full uninstall reports the process and continues.
 Before scoped cleanup stops a Docker gateway process, including a managed default gateway service, NemoClaw requires two Docker namespace proofs.
 The selected Docker gateway configuration and any running gateway process must use the state-root-specific OpenShell sandbox namespace that NemoClaw generated.
 Because the supported OpenShell Podman schema does not expose `sandbox_namespace`, scoped Podman uninstall fails closed before signaling and preserves the gateway runtime evidence and local state.

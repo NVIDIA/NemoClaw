@@ -15,7 +15,16 @@ export const SHIPPED_MANAGED_IMAGE_AGENTS = [
   "langchain-deepagents-code",
 ] as const;
 
+export const CANDIDATE_MANAGED_IMAGE_AGENTS = ["pi"] as const;
+
+export const MANAGED_IMAGE_AGENTS = [
+  ...SHIPPED_MANAGED_IMAGE_AGENTS,
+  ...CANDIDATE_MANAGED_IMAGE_AGENTS,
+] as const;
+
 export type ShippedManagedImageAgent = (typeof SHIPPED_MANAGED_IMAGE_AGENTS)[number];
+export type CandidateManagedImageAgent = (typeof CANDIDATE_MANAGED_IMAGE_AGENTS)[number];
+export type ManagedImageAgent = (typeof MANAGED_IMAGE_AGENTS)[number];
 
 export interface ManagedImageRuntimeIdentity {
   readonly uid: number;
@@ -24,19 +33,19 @@ export interface ManagedImageRuntimeIdentity {
 }
 
 /**
- * Numeric sandbox identities baked into the reviewed all-agent image bases.
- * Runtime providers consume this workload contract without adding
- * engine-specific agent switches to central orchestration.
+ * Shipped images bake in these numeric sandbox identities. Candidate
+ * qualification verifies the declared identity before activation. Runtime
+ * providers consume this workload contract without adding agent switches to
+ * central orchestration.
  */
 export const MANAGED_IMAGE_RUNTIME_IDENTITIES = Object.freeze({
   openclaw: Object.freeze({ uid: 998, gid: 998, workdir: "/sandbox" }),
   hermes: Object.freeze({ uid: 998, gid: 999, workdir: "/sandbox" }),
   "langchain-deepagents-code": Object.freeze({ uid: 999, gid: 999, workdir: "/sandbox" }),
-} as const satisfies Record<ShippedManagedImageAgent, ManagedImageRuntimeIdentity>);
+  pi: Object.freeze({ uid: 999, gid: 999, workdir: "/sandbox" }),
+} as const satisfies Record<ManagedImageAgent, ManagedImageRuntimeIdentity>);
 
-export function managedImageRuntimeIdentity(
-  agent: ShippedManagedImageAgent,
-): ManagedImageRuntimeIdentity {
+export function managedImageRuntimeIdentity(agent: ManagedImageAgent): ManagedImageRuntimeIdentity {
   return MANAGED_IMAGE_RUNTIME_IDENTITIES[agent];
 }
 
@@ -44,10 +53,10 @@ export const MANAGED_IMAGE_REPOSITORIES = {
   openclaw: "ghcr.io/nvidia/nemoclaw/openclaw-sandbox",
   hermes: "ghcr.io/nvidia/nemoclaw/hermes-sandbox",
   "langchain-deepagents-code": "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox",
-} as const satisfies Record<ShippedManagedImageAgent, string>;
+  pi: "ghcr.io/nvidia/nemoclaw/pi-sandbox",
+} as const satisfies Record<ManagedImageAgent, string>;
 
-export type PublicManagedImageRepository =
-  (typeof MANAGED_IMAGE_REPOSITORIES)[ShippedManagedImageAgent];
+export type PublicManagedImageRepository = (typeof MANAGED_IMAGE_REPOSITORIES)[ManagedImageAgent];
 export type ManagedImageDigest = `sha256:${string}`;
 export type ManagedImageReference = `${PublicManagedImageRepository}@${ManagedImageDigest}`;
 export type ManagedImagePublicationCohort = `ghrun-${number}-${number}`;
@@ -60,7 +69,8 @@ export interface ManagedImageSourceIdentity {
 }
 
 /**
- * Immutable identity consumed by buildless onboarding.
+ * Immutable identity consumed by stock buildless onboarding for shipped
+ * agents and by protected qualification for candidates.
  *
  * The validated cohort binds all shipped agent images to one publication.
  * Other publication evidence (mutable aliases and base-image provenance) stays
@@ -68,7 +78,7 @@ export interface ManagedImageSourceIdentity {
  */
 export interface ManagedImageContractV1 {
   readonly contractVersion: typeof MANAGED_IMAGE_CONTRACT_VERSION;
-  readonly agent: ShippedManagedImageAgent;
+  readonly agent: ManagedImageAgent;
   readonly platform: ManagedImagePlatform;
   readonly image: PublicManagedImageRepository;
   readonly digest: ManagedImageDigest;
@@ -135,6 +145,14 @@ export function isShippedManagedImageAgent(value: string): value is ShippedManag
   return (SHIPPED_MANAGED_IMAGE_AGENTS as readonly string[]).includes(value);
 }
 
+export function isCandidateManagedImageAgent(value: string): value is CandidateManagedImageAgent {
+  return (CANDIDATE_MANAGED_IMAGE_AGENTS as readonly string[]).includes(value);
+}
+
+export function isManagedImageAgent(value: string): value is ManagedImageAgent {
+  return (MANAGED_IMAGE_AGENTS as readonly string[]).includes(value);
+}
+
 export function isManagedImagePlatform(value: unknown): value is ManagedImagePlatform {
   return (
     typeof value === "string" && (MANAGED_IMAGE_PLATFORMS as readonly string[]).includes(value)
@@ -151,7 +169,7 @@ export function managedImagePlatformForNodeArchitecture(
 
 export function parseManagedImageContractV1(
   value: unknown,
-  expectedAgent?: ShippedManagedImageAgent,
+  expectedAgent?: ManagedImageAgent,
   expectedPlatform?: ManagedImagePlatform,
 ): ManagedImageContractV1 {
   const contract = requireRecord(value, "contract");
@@ -176,8 +194,8 @@ export function parseManagedImageContractV1(
     MANAGED_IMAGE_CONTRACT_VERSION,
     "contract.contractVersion",
   );
-  if (typeof contract.agent !== "string" || !isShippedManagedImageAgent(contract.agent)) {
-    throw new ManagedImageContractError("contract.agent is not a shipped managed agent");
+  if (typeof contract.agent !== "string" || !isManagedImageAgent(contract.agent)) {
+    throw new ManagedImageContractError("contract.agent is not a managed image agent");
   }
   const agent = contract.agent;
   if (expectedAgent !== undefined && agent !== expectedAgent) {
