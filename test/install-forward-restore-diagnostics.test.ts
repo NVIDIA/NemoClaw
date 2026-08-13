@@ -158,6 +158,34 @@ exit 0
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("bounds a long OpenShell forward-start diagnostic (#8884)", () => {
+    const { root, binDir } = prepareCheckout("nemohermes-forward-long-diagnostic-");
+    const diagnostic = `listener failure: ${"a".repeat(320)} excluded suffix`;
+    try {
+      writeExecutable(
+        path.join(binDir, "openshell"),
+        `#!/usr/bin/env bash
+if [ "$1" = "forward" ] && [ "$2" = "start" ]; then
+  echo ${JSON.stringify(diagnostic)} >&2
+  exit 1
+fi
+exit 0
+`,
+      );
+      writeExecutable(path.join(binDir, "curl"), "#!/usr/bin/env bash\nexit 7\n");
+
+      const result = runRestore(root, binDir, { NEMOCLAW_SKIP_FORWARD_WATCHER: "1" });
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain(
+        `OpenShell reported: ${diagnostic.slice(0, 300)} [truncated]`,
+      );
+      expect(result.stdout).not.toContain("excluded suffix");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("Hermes host forward watcher", () => {
