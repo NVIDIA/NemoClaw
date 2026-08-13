@@ -288,6 +288,10 @@ describe("onboard Model Router setup", () => {
     const stateDir = path.join(homeDir, ".nemoclaw", "state");
     const litellmConfigPath = path.join(stateDir, "litellm-proxy.yaml");
     fs.mkdirSync(path.dirname(poolConfigPath), { recursive: true });
+    fs.writeFileSync(
+      poolConfigPath,
+      'models:\n  - litellm_model: "openai/nvidia/test"\n    api_base: "https://integrate.api.nvidia.com/v1"\n',
+    );
     fs.mkdirSync(path.dirname(routerCommand), { recursive: true });
     fs.writeFileSync(
       routerCommand,
