@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { HERMES_API_PORT_RANGE_END, HERMES_API_PORT_RANGE_START } from "../core/ports";
 import {
   decodeManagedStartupProfile,
   encodeManagedStartupProfile,
@@ -960,8 +961,10 @@ describe("managed startup profile", () => {
 
   it.each([
     ["publicPort", 8642],
+    ["publicPort", 8652],
     ["publicPort", 18_642],
     ["internalPort", 8642],
+    ["internalPort", 8652],
     ["internalPort", 18_642],
   ] as const)("rejects Hermes dashboard %s collisions with reserved API port %i", (field, port) => {
     expect(() =>
@@ -969,7 +972,31 @@ describe("managed startup profile", () => {
         ...HERMES_PROFILE,
         dashboard: { ...HERMES_PROFILE.dashboard, [field]: port },
       }),
-    ).toThrow(/reserved API ports 8642 or 18642/);
+    ).toThrow(/reserved API ports 8642-8652 or 18642/);
+  });
+
+  it("reserves exactly the Hermes API port range the port module declares", () => {
+    for (let port = HERMES_API_PORT_RANGE_START; port <= HERMES_API_PORT_RANGE_END; port += 1) {
+      expect(() =>
+        validateManagedStartupProfile({
+          ...HERMES_PROFILE,
+          dashboard: { ...HERMES_PROFILE.dashboard, publicPort: port },
+        }),
+      ).toThrow(/reserved API ports/);
+    }
+
+    for (const port of [HERMES_API_PORT_RANGE_START - 1, HERMES_API_PORT_RANGE_END + 1]) {
+      expect(() =>
+        validateManagedStartupProfile({
+          ...HERMES_PROFILE,
+          dashboard: {
+            ...HERMES_PROFILE.dashboard,
+            url: `http://127.0.0.1:${port}`,
+            publicPort: port,
+          },
+        }),
+      ).not.toThrow();
+    }
   });
 
   it.each([

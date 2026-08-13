@@ -115,7 +115,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
       name: "staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}",
       path: [
         "${{ steps.workspace.outputs.work_dir }}/lane.log",
-        "${{ steps.workspace.outputs.work_dir }}/dispatch.json",
         "${{ steps.workspace.outputs.work_dir }}/launchable-e2e.json",
         "${{ steps.workspace.outputs.work_dir }}/full-e2e.log",
         "${{ steps.workspace.outputs.work_dir }}/cleanup.json",
@@ -145,31 +144,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
-    "skill-agent",
-    {
-      name: "e2e-skill-agent",
-      path: [
-        "e2e-artifacts/live/skill-agent/*/artifact-summary.json",
-        "e2e-artifacts/live/skill-agent/*/cleanup.json",
-        "e2e-artifacts/live/skill-agent/*/cleanup-skill-agent-summary.json",
-        "e2e-artifacts/live/skill-agent/*/target.json",
-        "e2e-artifacts/live/skill-agent/*/target-result.json",
-        "e2e-artifacts/live/skill-agent/*/test-progress.json",
-        "e2e-artifacts/live/skill-agent/*/shell/*.result.json",
-        "e2e-artifacts/live/skill-agent/*/shell/*.stdout.txt",
-        "e2e-artifacts/live/skill-agent/*/shell/*.stderr.txt",
-        "",
-      ].join("\n"),
-    },
-  ],
-  [
-    "hermes-inference-switch",
-    {
-      name: "e2e-hermes-inference-switch-${{ matrix.mode }}",
-      path: "e2e-artifacts/live/hermes-inference-switch/${{ matrix.mode }}/",
-    },
-  ],
-  [
     "managed-image-multiarch-startup",
     {
       name: "e2e-managed-image-multiarch-startup-${{ matrix.shard }}",
@@ -191,13 +165,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
-    "network-policy",
-    {
-      name: "e2e-network-policy-${{ matrix.scenario }}",
-      path: "e2e-artifacts/live/network-policy/${{ matrix.scenario }}/",
-    },
-  ],
-  [
     "common-egress-agent",
     {
       name: "e2e-common-egress-agent-${{ matrix.scenario }}",
@@ -212,34 +179,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
-    "hermes-slack",
-    {
-      name: "e2e-hermes-slack",
-      path: "e2e-artifacts/live/hermes-slack-e2e/",
-    },
-  ],
-  [
-    "shields-config",
-    {
-      name: "e2e-shields-config",
-      path: "e2e-artifacts/live/shields-config/\n",
-    },
-  ],
-  [
-    "security-posture",
-    {
-      name: "e2e-security-posture-${{ matrix.agent }}",
-      path: "e2e-artifacts/live/security-posture-${{ matrix.agent }}/",
-    },
-  ],
-  [
-    "openclaw-inference-switch",
-    {
-      name: "e2e-openclaw-inference-switch-${{ matrix.mode }}",
-      path: "e2e-artifacts/live/openclaw-inference-switch/${{ matrix.mode }}/",
-    },
-  ],
-  [
     "openshell-gateway-upgrade",
     {
       name: "e2e-openshell-gateway-upgrade-${{ matrix.id }}",
@@ -250,20 +189,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     {
       name: "e2e-openshell-gateway-auth-contract",
       path: "${{ steps.artifact_safety.outputs.approved_path }}",
-    },
-  ],
-  [
-    "bedrock-runtime-compatible-anthropic",
-    {
-      name: "e2e-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}",
-      path: "e2e-artifacts/live/bedrock-runtime-compatible-anthropic/${{ matrix.agent }}/",
-    },
-  ],
-  [
-    "channels-stop-start",
-    {
-      name: "e2e-channels-stop-start-${{ matrix.agent }}",
-      path: "e2e-artifacts/live/channels-stop-start/${{ matrix.agent }}/",
     },
   ],
   [

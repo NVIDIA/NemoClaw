@@ -60,8 +60,19 @@ async function captureExit(action: () => Promise<void>): Promise<number | undefi
   throw new Error("Expected process.exit to be called");
 }
 
+let stdinIsTty: PropertyDescriptor | undefined;
+
+function arrangeTerminal(present: boolean): void {
+  Object.defineProperty(process.stdin, "isTTY", {
+    configurable: true,
+    value: present ? true : undefined,
+  });
+}
+
 beforeEach(() => {
   delete process.env.NEMOCLAW_NON_INTERACTIVE;
+  stdinIsTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  arrangeTerminal(true);
   vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
@@ -89,6 +100,9 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.NEMOCLAW_NON_INTERACTIVE;
+  stdinIsTty
+    ? Object.defineProperty(process.stdin, "isTTY", stdinIsTty)
+    : Reflect.deleteProperty(process.stdin, "isTTY");
 });
 
 describe("excludeSandboxBaseline (#7178)", () => {
@@ -125,6 +139,16 @@ describe("excludeSandboxBaseline (#7178)", () => {
     process.env.NEMOCLAW_NON_INTERACTIVE = "1";
     const code = await captureExit(() => excludeSandboxBaseline("alpha", { key: "nous_research" }));
     expect(code).toBe(1);
+    expect(excludeBaselineEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("requires explicit acknowledgement when standard input has no terminal (#8877)", async () => {
+    arrangeTerminal(false);
+
+    const code = await captureExit(() => excludeSandboxBaseline("alpha", { key: "nous_research" }));
+
+    expect(code).toBe(1);
+    expect(promptMock).not.toHaveBeenCalled();
     expect(excludeBaselineEntryMock).not.toHaveBeenCalled();
   });
 
@@ -212,6 +236,17 @@ describe("restoreSandboxBaseline (#7178)", () => {
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("Usage: nemoclaw <sandbox> policy restore <key>"),
     );
+    expect(promptMock).not.toHaveBeenCalled();
+    expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("requires explicit restore acknowledgement when standard input has no terminal (#8877)", async () => {
+    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
+    arrangeTerminal(false);
+
+    const code = await captureExit(() => restoreSandboxBaseline("alpha", { key: "nous_research" }));
+
+    expect(code).toBe(1);
     expect(promptMock).not.toHaveBeenCalled();
     expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
   });

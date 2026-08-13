@@ -1,7 +1,42 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isWsl as detectWsl } from "../platform";
+
 const fs = require("fs");
+
+export const WSL_NVIDIA_SMI_PATH = "/usr/lib/wsl/lib/nvidia-smi";
+
+export interface NvidiaSmiOptions {
+  isWsl?: boolean;
+  runCaptureImpl: (command: readonly string[], options: { ignoreError: boolean }) => string;
+}
+
+function nvidiaSmiCandidates(isWsl: boolean): string[] {
+  return isWsl ? ["nvidia-smi", WSL_NVIDIA_SMI_PATH] : ["nvidia-smi"];
+}
+
+/** Run nvidia-smi from PATH, with the stock WSL driver path as a WSL-only fallback. */
+export function captureNvidiaSmi(args: readonly string[], options: NvidiaSmiOptions): string {
+  const runningInWsl = options.isWsl ?? detectWsl();
+  for (const command of nvidiaSmiCandidates(runningInWsl)) {
+    const output = options.runCaptureImpl([command, ...args], { ignoreError: true });
+    if (output.trim()) return output;
+  }
+  return "";
+}
+
+/** Resolve an executable nvidia-smi command without accepting an arbitrary path. */
+export function resolveNvidiaSmiCommand(options: NvidiaSmiOptions): string | null {
+  const runningInWsl = options.isWsl ?? detectWsl();
+  for (const command of nvidiaSmiCandidates(runningInWsl)) {
+    const resolved = options.runCaptureImpl(["sh", "-c", 'command -v "$1"', "--", command], {
+      ignoreError: true,
+    });
+    if (resolved.trim()) return command;
+  }
+  return null;
+}
 
 // Accept a name as NVIDIA when it advertises the vendor explicitly or matches
 // a known NVIDIA product family. The caller must still cross-check against
@@ -75,6 +110,9 @@ export function isPlausibleNvidiaGpuName(name: string): boolean {
 // Non-Linux hosts and non-ARM64 Linux keep the historical nvidia-smi trust path
 // because the observed false-positive source is WoA/ARM64-specific; broaden
 // this gate only if a new spoofing source is reproduced with a regression test.
+// When this predicate returns false, `detectGpu()` still offers the bounded
+// Docker `--gpus` CUDA proof as the only escape (#9000) — proof of a usable
+// device, not name trust, so the fail-closed posture is unchanged.
 export function nvidiaHostLooksGenuine(): boolean {
   if (process.platform !== "linux") return true;
   if (process.arch !== "arm64") return true;

@@ -166,7 +166,7 @@ function buildAnthropicMessagesProbeCurlArgs(
   ];
 }
 
-type ResponseValidation = { ok: true } | { ok: false; reason: string };
+export type InferenceResponseValidation = { ok: true } | { ok: false; reason: string };
 
 function isJsonRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -272,7 +272,7 @@ function isValidAnthropicContentBlock(value: unknown): boolean {
   return false;
 }
 
-function validateChatCompletionsResponse(body: string): ResponseValidation {
+function validateChatCompletionsResponse(body: string): InferenceResponseValidation {
   const parsed = parseJsonRecord(body);
   if (parsed) {
     if (hasProviderErrorEnvelope(parsed)) {
@@ -304,7 +304,32 @@ function validateChatCompletionsResponse(body: string): ResponseValidation {
     : { ok: false, reason: "response was not a Chat Completions result" };
 }
 
-function validateAnthropicMessagesResponse(body: string): ResponseValidation {
+function isValidResponsesContentBlock(value: unknown): boolean {
+  if (!isJsonRecord(value) || typeof value.type !== "string") return false;
+  if (value.type === "output_text") return typeof value.text === "string";
+  if (value.type === "refusal") return typeof value.refusal === "string";
+  return false;
+}
+
+function validateResponsesResponse(body: string): InferenceResponseValidation {
+  const parsed = parseJsonRecord(body);
+  if (!parsed) return { ok: false, reason: "response was not a Responses result" };
+  if (hasProviderErrorEnvelope(parsed)) {
+    return { ok: false, reason: "provider returned an error envelope" };
+  }
+  if (!Array.isArray(parsed.output) || parsed.output.length === 0) {
+    return { ok: false, reason: "response was not a Responses result" };
+  }
+  const hasMessage = parsed.output.some((item) => {
+    if (!isJsonRecord(item) || item.type !== "message" || !Array.isArray(item.content)) {
+      return false;
+    }
+    return item.content.length > 0 && item.content.every(isValidResponsesContentBlock);
+  });
+  return hasMessage ? { ok: true } : { ok: false, reason: "response was not a Responses result" };
+}
+
+function validateAnthropicMessagesResponse(body: string): InferenceResponseValidation {
   const parsed = parseJsonRecord(body);
   if (!parsed) return { ok: false, reason: "response was not an Anthropic Messages result" };
   if (hasProviderErrorEnvelope(parsed)) {
@@ -319,9 +344,20 @@ function validateAnthropicMessagesResponse(body: string): ResponseValidation {
     : { ok: false, reason: "response was not an Anthropic Messages result" };
 }
 
+export function validateInferenceResponseBody(
+  inferenceApi: string,
+  body: string,
+): InferenceResponseValidation {
+  if (inferenceApi === "anthropic-messages") return validateAnthropicMessagesResponse(body);
+  if (inferenceApi === "openai-responses" || inferenceApi === "responses") {
+    return validateResponsesResponse(body);
+  }
+  return validateChatCompletionsResponse(body);
+}
+
 function validateInvocationProbeResult(
   result: CurlProbeResult,
-  validateResponse: (body: string) => ResponseValidation,
+  validateResponse: (body: string) => InferenceResponseValidation,
 ): CurlProbeResult {
   if (!result.ok) return result;
   const validation = validateResponse(result.body);

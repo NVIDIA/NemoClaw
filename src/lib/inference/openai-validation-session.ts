@@ -14,8 +14,8 @@ import {
   isDeepSeekV4ProModel,
   isReasoningOnlyLengthResponse,
   STRICT_TOOL_PROBE_INITIAL_TOKENS,
-  STRICT_TOOL_PROBE_REASONING_RETRY_MESSAGE,
-  STRICT_TOOL_PROBE_RETRY_TOKENS,
+  STRICT_TOOL_PROBE_RETRY_TOKEN_LADDER,
+  strictToolProbeReasoningRetryMessage,
 } from "./openai-probe-models";
 import { STREAMING_EVENT_PROBE_MAX_SECONDS } from "./probe-http-helpers";
 
@@ -123,7 +123,11 @@ function failedChatToolCall(result: CurlProbeResult, leaked: boolean): OpenAiVal
   return failedChatValidation(
     result,
     failureMessage,
-    leaked ? undefined : ["openai-chat-missing-structured-tool-call"],
+    leaked
+      ? ["openai-chat-tool-call-leak"]
+      : isReasoningOnlyLengthResponse(result.body)
+        ? ["openai-chat-missing-structured-tool-call", "openai-chat-reasoning-budget-exhausted"]
+        : ["openai-chat-missing-structured-tool-call"],
   );
 }
 
@@ -330,6 +334,7 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
         const requestChat = (
           maxTokens = STRICT_TOOL_PROBE_INITIAL_TOKENS,
           retryTransientHttp = true,
+          timeoutMultiplier = 1,
         ) =>
           requestWithHttpRetry(
             "Chat Completions API",
@@ -339,23 +344,39 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
                 body: requireToolCall
                   ? chatToolPayload(model, maxTokens)
                   : JSON.stringify(deps.getChatPayload(model)),
-                timeoutMs: deps.getChatTimeoutMs(model, options),
+                timeoutMs: deps.getChatTimeoutMs(model, options) * timeoutMultiplier,
               }),
             retryTransientHttp,
           );
-        const retryReasoningOnly = (candidate: CurlProbeResult) => {
+        const retryReasoningOnly = async (
+          candidate: CurlProbeResult,
+        ): Promise<CurlProbeResult | null> => {
           if (!isReasoningOnlyLengthResponse(candidate.body)) return null;
-          retriedReasoningTruncation = true;
-          console.log(STRICT_TOOL_PROBE_REASONING_RETRY_MESSAGE);
-          addTraceEvent("tool_call_reasoning_retry", {
-            initial_max_tokens: STRICT_TOOL_PROBE_INITIAL_TOKENS,
-            retry_max_tokens: STRICT_TOOL_PROBE_RETRY_TOKENS,
-          });
-          return requestChat(STRICT_TOOL_PROBE_RETRY_TOKENS, false);
+          let laddered = candidate;
+          let exhaustedTokens = STRICT_TOOL_PROBE_INITIAL_TOKENS;
+          for (const retryTokens of STRICT_TOOL_PROBE_RETRY_TOKEN_LADDER) {
+            if (!laddered.ok || !isReasoningOnlyLengthResponse(laddered.body)) break;
+            retriedReasoningTruncation = true;
+            console.log(strictToolProbeReasoningRetryMessage(exhaustedTokens, retryTokens));
+            addTraceEvent("tool_call_reasoning_retry", {
+              initial_max_tokens: exhaustedTokens,
+              retry_max_tokens: retryTokens,
+            });
+            // The final rung generates up to 4096 tokens; give it the doubled
+            // deadline so a slow reasoning model does not time out instead of
+            // finishing the larger response.
+            laddered = await requestChat(
+              retryTokens,
+              false,
+              retryTokens === STRICT_TOOL_PROBE_RETRY_TOKEN_LADDER.at(-1) ? 2 : 1,
+            );
+            exhaustedTokens = retryTokens;
+          }
+          return laddered;
         };
         let result = await requestChat();
         if (!requireToolCall || !result.ok) return result;
-        const initialReasoningRetry = retryReasoningOnly(result);
+        const initialReasoningRetry = await retryReasoningOnly(result);
         if (initialReasoningRetry) return initialReasoningRetry;
         for (const delayMs of RETRY_DELAYS_MS) {
           if (
@@ -374,7 +395,7 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
           await waitForRetry(delayMs);
           result = await requestChat(STRICT_TOOL_PROBE_INITIAL_TOKENS, false);
           if (!result.ok) break;
-          const reasoningRetry = retryReasoningOnly(result);
+          const reasoningRetry = await retryReasoningOnly(result);
           if (reasoningRetry) return reasoningRetry;
         }
         return result;

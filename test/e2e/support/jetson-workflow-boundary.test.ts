@@ -17,7 +17,7 @@ function validateWorkflowMutation(
 }
 
 describe("Jetson nvmap GPU E2E workflow boundary", () => {
-  it("rejects a permissive Jetson dispatch opt-in (#8142)", () => {
+  it("keeps manual Jetson dispatch disabled by default (#8142)", () => {
     const inputErrors = validateWorkflowMutation((workflow) => {
       const triggers = (workflow.on ?? workflow[true as unknown as string]) as {
         workflow_dispatch?: {
@@ -38,7 +38,21 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
     );
   });
 
-  it("keeps opt-in and trusted selectors before controller assignment (#8142)", () => {
+  it("rejects a Jetson selector that omits trusted main pushes (#8142)", () => {
+    const errors = validateWorkflowMutation((workflow) => {
+      const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {
+        if?: string;
+      };
+      job.if =
+        "${{ inputs.allow_jetson_dispatch && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,')) }}";
+    });
+
+    expect(errors).toContain(
+      "jetson-nvmap-gpu job must run on trusted main pushes and require opt-in for same-repository manual selections",
+    );
+  });
+
+  it("rejects an untrusted Jetson event selector (#8142)", () => {
     const errors = validateWorkflowMutation((workflow) => {
       const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {
         if?: string;
@@ -47,7 +61,7 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
     });
 
     expect(errors).toContain(
-      "jetson-nvmap-gpu job must require the dispatch opt-in, trusted main workflow dispatch, same-repository candidate, and target selectors",
+      "jetson-nvmap-gpu job must run on trusted main pushes and require opt-in for same-repository manual selections",
     );
   });
 

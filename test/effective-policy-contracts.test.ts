@@ -348,6 +348,26 @@ describe("effective built-in policy contracts", () => {
     );
   });
 
+  it("allows only the approved local Hindsight endpoint (#8613)", () => {
+    const effective = composePresets(["local-memory"], "hermes");
+    const localMemory = requireNetworkPolicy(effective, "local_memory");
+    const endpoint = requireEndpoint(localMemory, "host.openshell.internal");
+    const privateRanges = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"];
+
+    expect(endpoint).toMatchObject({
+      port: 8888,
+      protocol: "rest",
+      enforcement: "enforce",
+      allowed_ips: privateRanges,
+    });
+    expect(rules(endpoint)).toEqual([
+      { method: "GET", path: "/**" },
+      { method: "POST", path: "/**" },
+    ]);
+    expect(binaries(localMemory)).toEqual(["/opt/hermes/.venv/bin/python"]);
+    expect((localMemory.endpoints ?? []).some((entry) => entry.host === "10.0.0.1")).toBe(false);
+  });
+
   it("keeps host-local inference and managed tools on their broker boundaries", () => {
     const matrix = loadManagedToolGatewayMatrix();
     const managedPresetNames = Object.keys(matrix);

@@ -549,7 +549,6 @@ async function runLiveIssue2603ReproWithEventCaptureRetry(
 
 // ─── The live regression guard ─────────────────────────────────────
 
-// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "openclaw-tui-chat-correlation keeps rapid sends correlated and accepts terminal input after connected idle (#2603, #3145, #6194)",
   {
@@ -592,7 +591,7 @@ test(
     });
     expect(checkoutRef.exitCode, resultText(checkoutRef)).toBe(0);
     const refEvidence = verifyNemoClawRefFidelity({
-      expectedRef: process.env.NEMOCLAW_TUI_EXPECTED_CHECKOUT_SHA,
+      expectedRef: process.env.NEMOCLAW_E2E_EXPECTED_SHA,
       actualRef: checkoutRef.stdout.trim(),
       cliPath: host.commandPath,
       expectedCliPath: CLI_ENTRYPOINT,
