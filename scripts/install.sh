@@ -1328,6 +1328,54 @@ upstream_openshell_gateway_user_service_installed() {
     || [[ -f /lib/systemd/user/openshell-gateway.service ]]
 }
 
+openshell_user_manager_unavailable_reason() {
+  # Keep in sync with userManagerLooksUnavailable in
+  # src/lib/onboard/docker-driver-gateway-service.ts.
+  local reason="${1:-}"
+  grep -qiE 'Failed to connect to bus|No medium found|XDG_RUNTIME_DIR|System has not been booted|Host is down' \
+    <<<"$reason"
+}
+
+upstream_openshell_gateway_user_manager_unavailable() {
+  local systemctl_stderr
+  if systemctl_stderr="$(systemctl --user show openshell-gateway.service --property=ExecStart --value 2>&1 >/dev/null)"; then
+    return 1
+  fi
+  openshell_user_manager_unavailable_reason "$systemctl_stderr"
+}
+
+upstream_openshell_gateway_user_service_activation_link_installed() {
+  local unit_dir link data_home="${XDG_DATA_HOME:-}"
+  if [[ "$data_home" != /* ]]; then
+    data_home="${HOME}/.local/share"
+  fi
+  # Persistent directories the systemd user manager honors for *.wants/
+  # *.requires enablement links. The manager resolves its own config home from
+  # the login environment, not this shell, so ~/.config is always probed even
+  # when the installer runs with XDG_CONFIG_HOME pointing elsewhere.
+  local -a unit_dirs=(
+    "$(openshell_user_config_home)/systemd/user"
+    "${HOME}/.config/systemd/user"
+    "${data_home}/systemd/user"
+    /etc/xdg/systemd/user
+    /etc/systemd/user
+    /usr/local/lib/systemd/user
+    /usr/lib/systemd/user
+    /lib/systemd/user
+  )
+  for unit_dir in "${unit_dirs[@]}"; do
+    # Quoted head keeps glob metacharacters in the directory path literal;
+    # only the *.wants/*.requires tail globs. -L also counts dangling links.
+    for link in "${unit_dir}"/*.wants/openshell-gateway.service \
+      "${unit_dir}"/*.requires/openshell-gateway.service; do
+      if [[ -e "$link" || -L "$link" ]]; then
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
 resolve_openshell_gateway_bin_for_user_service() {
   local service_name="${1:-}" exec_start gateway_bin
   local -a gateway_bins=()
@@ -1448,9 +1496,21 @@ install_nemoclaw_openshell_gateway_user_service() {
     if [[ -f "$service_path" ]] && ! is_nemoclaw_openshell_gateway_user_service "$service_path"; then
       error "Refusing to replace non-NemoClaw OpenShell gateway user service: $service_path"
     fi
-    require_compatible_upstream_openshell_gateway_service
-    info "OpenShell upstream gateway user service is staged; onboarding will select and start it."
-    return 0
+    # A packaged unit file alone does not prove the user service is
+    # inspectable: without a systemd user session the effective ExecStart
+    # cannot be read at all. Fall back to the NemoClaw-managed lifecycle only
+    # when the static unit also cannot activate later and compete for the
+    # gateway port; keep every other failure fail-closed.
+    if upstream_openshell_gateway_user_manager_unavailable; then
+      if upstream_openshell_gateway_user_service_activation_link_installed; then
+        error "The systemd user manager is unavailable, but an enabled OpenShell gateway user unit can activate later and compete for gateway port 8080. Start a systemd user session and disable the unit (systemctl --user disable openshell-gateway.service), or remove its enablement links, then rerun the installer."
+      fi
+      info "The systemd user manager is unavailable and the packaged OpenShell gateway user unit is not enabled; staging the NemoClaw-managed gateway service instead."
+    else
+      require_compatible_upstream_openshell_gateway_service
+      info "OpenShell upstream gateway user service is staged; onboarding will select and start it."
+      return 0
+    fi
   fi
 
   local gateway_bin

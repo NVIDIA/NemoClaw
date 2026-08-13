@@ -247,6 +247,130 @@ describe("install.sh OpenShell gateway service", () => {
     expect(fs.existsSync(servicePath(home))).toBe(false);
   });
 
+  it("stages the managed service past a static upstream unit when the user manager is unreachable (#8926)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const systemctlBin = path.join(home, "systemctl-bin");
+    fs.mkdirSync(systemctlBin);
+    writeExecutable(
+      path.join(systemctlBin, "systemctl"),
+      "#!/usr/bin/env bash\nprintf 'Failed to connect to bus: No medium found\\n' >&2\nexit 1\n",
+    );
+
+    const result = runInstallHelper(
+      home,
+      [
+        "upstream_openshell_gateway_user_service_installed() { return 0; }",
+        "upstream_openshell_gateway_user_service_activation_link_installed() { return 1; }",
+        `resolve_openshell_gateway_bin_for_service() { printf '%s\\n' ${JSON.stringify(gatewayBin)}; }`,
+        "install_nemoclaw_openshell_gateway_user_service",
+      ].join("\n"),
+      { PATH: `${systemctlBin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain("systemd user manager is unavailable");
+    expect(result.stdout).not.toContain("upstream gateway user service is staged");
+    expect(result.stderr).not.toContain("Could not locate the gateway binary");
+    expect(fs.readFileSync(servicePath(home), "utf-8")).toContain(
+      "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1",
+    );
+  });
+
+  it("stops before onboarding when the user manager is unreachable but the upstream unit is enabled (#8926)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const systemctlBin = path.join(home, "systemctl-bin");
+    const wantsDir = path.join(home, ".config", "systemd", "user", "default.target.wants");
+    fs.mkdirSync(systemctlBin);
+    fs.mkdirSync(wantsDir, { recursive: true });
+    fs.symlinkSync(
+      "/usr/lib/systemd/user/openshell-gateway.service",
+      path.join(wantsDir, "openshell-gateway.service"),
+    );
+    writeExecutable(
+      path.join(systemctlBin, "systemctl"),
+      "#!/usr/bin/env bash\nprintf 'Failed to connect to bus: No medium found\\n' >&2\nexit 1\n",
+    );
+
+    const result = runInstallHelper(
+      home,
+      [
+        "upstream_openshell_gateway_user_service_installed() { return 0; }",
+        `resolve_openshell_gateway_bin_for_service() { printf '%s\\n' ${JSON.stringify(gatewayBin)}; }`,
+        "install_nemoclaw_openshell_gateway_user_service",
+      ].join("\n"),
+      { PATH: `${systemctlBin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("enabled OpenShell gateway user unit");
+    expect(result.stderr).toContain("Start a systemd user session");
+    expect(result.stdout).not.toContain("upstream gateway user service is staged");
+    expect(fs.existsSync(servicePath(home))).toBe(false);
+  });
+
+  it("detects an enabled upstream unit under a config home with glob metacharacters (#8926)", () => {
+    const home = makeTempRoot();
+    const configHome = path.join(home, "[cfg]");
+    const gatewayBin = userGatewayBin(home);
+    const systemctlBin = path.join(home, "systemctl-bin");
+    const wantsDir = path.join(configHome, "systemd", "user", "default.target.wants");
+    fs.mkdirSync(systemctlBin);
+    fs.mkdirSync(wantsDir, { recursive: true });
+    fs.symlinkSync(
+      "/usr/lib/systemd/user/openshell-gateway.service",
+      path.join(wantsDir, "openshell-gateway.service"),
+    );
+    writeExecutable(
+      path.join(systemctlBin, "systemctl"),
+      "#!/usr/bin/env bash\nprintf 'Failed to connect to bus: No medium found\\n' >&2\nexit 1\n",
+    );
+
+    const result = runInstallHelper(
+      home,
+      [
+        "upstream_openshell_gateway_user_service_installed() { return 0; }",
+        `resolve_openshell_gateway_bin_for_service() { printf '%s\\n' ${JSON.stringify(gatewayBin)}; }`,
+        "install_nemoclaw_openshell_gateway_user_service",
+      ].join("\n"),
+      {
+        PATH: `${systemctlBin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+        XDG_CONFIG_HOME: configHome,
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("enabled OpenShell gateway user unit");
+    expect(fs.existsSync(servicePath(home, configHome))).toBe(false);
+  });
+
+  it("still fails closed when the upstream service query fails without a manager-unavailable diagnostic (#8926)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const systemctlBin = path.join(home, "systemctl-bin");
+    fs.mkdirSync(systemctlBin);
+    writeExecutable(
+      path.join(systemctlBin, "systemctl"),
+      "#!/usr/bin/env bash\nprintf 'unexpected systemctl failure\\n' >&2\nexit 1\n",
+    );
+
+    const result = runInstallHelper(
+      home,
+      [
+        "upstream_openshell_gateway_user_service_installed() { return 0; }",
+        `resolve_openshell_gateway_bin_for_service() { printf '%s\\n' ${JSON.stringify(gatewayBin)}; }`,
+        "trusted_openshell_gateway_bin_for_service() { return 0; }",
+        "install_nemoclaw_openshell_gateway_user_service",
+      ].join("\n"),
+      { PATH: `${systemctlBin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Could not locate the gateway binary");
+    expect(fs.existsSync(servicePath(home))).toBe(false);
+  });
+
   it("resolves the gateway from the effective upstream ExecStart (#8051)", () => {
     const home = makeTempRoot();
     const conventionalGatewayBin = path.join(home, "usr", "bin", "openshell-gateway");
