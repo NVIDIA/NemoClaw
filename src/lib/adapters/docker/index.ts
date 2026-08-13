@@ -11,3 +11,4 @@ export * from "./image";
 export * from "./container";
 export * from "./volume";
 export * from "./login";
+export * from "./sandbox-identity";

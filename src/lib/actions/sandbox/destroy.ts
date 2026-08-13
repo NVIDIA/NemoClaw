@@ -45,6 +45,7 @@ import {
   classifyDestroyContainerIdentity,
   type DestroyContainerIdentityVerdict,
   formatAmbiguousDestroyIdentity,
+  probeSandboxNameContainers,
 } from "./destroy-container-identity";
 import {
   executeSandboxDestroy,
@@ -465,6 +466,7 @@ export async function destroySandbox(
 
 export type AssertUnambiguousDestroyIdentityDeps = {
   getSandbox?: typeof registry.getSandbox;
+  probe?: typeof probeSandboxNameContainers;
   classify?: typeof classifyDestroyContainerIdentity;
   warn?: (message: string) => void;
 };
@@ -489,12 +491,13 @@ export function assertUnambiguousDestroyContainerIdentity(
   deps: AssertUnambiguousDestroyIdentityDeps = {},
 ): boolean {
   const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const probe = deps.probe ?? probeSandboxNameContainers;
   const classify = deps.classify ?? classifyDestroyContainerIdentity;
   const warn = deps.warn ?? defaultDestroyWarn;
   const providerId = normalizeRuntimeProviderIdentity(getSandbox(sandboxName)?.openshellDriver);
   if (providerId !== "docker") return true;
 
-  const verdict: DestroyContainerIdentityVerdict = classify(sandboxName);
+  const verdict: DestroyContainerIdentityVerdict = classify(sandboxName, probe(sandboxName));
   if (verdict.status === "ambiguous") {
     for (const line of formatAmbiguousDestroyIdentity(verdict, CLI_NAME)) {
       console.error(`  ${line}`);

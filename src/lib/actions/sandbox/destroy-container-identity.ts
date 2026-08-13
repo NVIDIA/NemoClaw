@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { dockerRun } from "../../adapters/docker";
+import {
+  OPENSHELL_SANDBOX_WORKSPACE_LABEL,
+  type SandboxIdentityProbe,
+  type SandboxNameLabeledContainer,
+} from "../../adapters/docker/sandbox-identity";
 import {
   OPENSHELL_MANAGED_BY_LABEL,
   OPENSHELL_MANAGED_BY_VALUE,
@@ -9,18 +13,12 @@ import {
   OPENSHELL_SANDBOX_NAME_LABEL,
 } from "../../onboard/openshell-docker-sandbox-containers";
 
-/** Workspace label OpenShell stamps on every managed sandbox container. */
-export const OPENSHELL_SANDBOX_WORKSPACE_LABEL = "openshell.ai/sandbox-workspace";
-
-const DOCKER_IDENTITY_PROBE_TIMEOUT_MS = 30_000;
-
-/** One container carrying the destroy target's `sandbox-name` label. */
-export type SandboxNameLabeledContainer = {
-  id: string;
-  managedBy: string;
-  workspace: string;
-  sandboxId: string;
-};
+export {
+  OPENSHELL_SANDBOX_WORKSPACE_LABEL,
+  probeSandboxNameContainers,
+  type SandboxIdentityProbe,
+  type SandboxNameLabeledContainer,
+} from "../../adapters/docker/sandbox-identity";
 
 /**
  * Verdict for whether the `sandbox-name` a destroy targets maps to a single
@@ -33,8 +31,9 @@ export type SandboxNameLabeledContainer = {
  *   containers spanning more than one workspace / sandbox-id). Destroy must
  *   fail closed so it never removes the real sandbox behind an impostor's name.
  * - `probe-failed` — Docker could not be queried, so ambiguity can neither be
- *   proven nor ruled out. Non-blocking: the destroy's existing lower-layer
- *   guards remain in force.
+ *   proven nor ruled out. The action fails closed on this: the lower layer can
+ *   still delete through the gateway, so an unverifiable identity must not be
+ *   allowed to proceed (#8999).
  */
 export type DestroyContainerIdentityVerdict =
   | { status: "clear" }
@@ -47,80 +46,26 @@ export type DestroyContainerIdentityVerdict =
       managed: SandboxNameLabeledContainer[];
     };
 
-export type ClassifyDestroyContainerIdentityDeps = {
-  dockerRun?: typeof dockerRun;
-};
-
-const IDENTITY_FORMAT = [
-  "{{.ID}}",
-  `{{.Label "${OPENSHELL_MANAGED_BY_LABEL}"}}`,
-  `{{.Label "${OPENSHELL_SANDBOX_WORKSPACE_LABEL}"}}`,
-  `{{.Label "${OPENSHELL_SANDBOX_ID_LABEL}"}}`,
-].join("\t");
-
-function resultText(result: {
-  stdout?: string | Buffer | null;
-  stderr?: string | Buffer | null;
-}): string {
-  return `${String(result.stderr || "")} ${String(result.stdout || "")}`.trim();
-}
-
-function parseIdentityRows(stdout: string): SandboxNameLabeledContainer[] {
-  return stdout
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [id = "", managedBy = "", workspace = "", sandboxId = ""] = line.split("\t");
-      return {
-        id: id.trim(),
-        managedBy: managedBy.trim(),
-        workspace: workspace.trim(),
-        sandboxId: sandboxId.trim(),
-      };
-    })
-    .filter((row) => row.id.length > 0);
-}
-
 /**
- * Classify every Docker container carrying `openshell.ai/sandbox-name=<name>`
- * to decide whether the destroy target resolves to a single managed identity.
+ * Classify the containers a Docker probe found for a target `sandbox-name` and
+ * decide whether the destroy resolves to a single managed identity.
  *
- * The lookup deliberately filters ONLY on the mutable `sandbox-name` label —
- * not on `managed-by=openshell` — so a foreign container that borrows the name
- * without the managed marker is still seen. A genuine managed sandbox carries
- * `managed-by=openshell` and one consistent `sandbox-workspace` / `sandbox-id`;
- * anything else sharing the name makes the identity ambiguous.
+ * Pure over an explicit probe result — the Docker call and its output parsing
+ * live in the `probeSandboxNameContainers` adapter, so this function makes only
+ * the identity decision and is trivially dependency-free to test. A genuine
+ * managed sandbox carries `managed-by=openshell` and one consistent
+ * `sandbox-workspace` / `sandbox-id`; anything else sharing the name makes the
+ * identity ambiguous.
  */
 export function classifyDestroyContainerIdentity(
   sandboxName: string,
-  deps: ClassifyDestroyContainerIdentityDeps = {},
+  probe: SandboxIdentityProbe,
 ): DestroyContainerIdentityVerdict {
-  const run = deps.dockerRun ?? dockerRun;
-  const result = run(
-    [
-      "ps",
-      "-a",
-      "--no-trunc",
-      "--filter",
-      `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
-      "--format",
-      IDENTITY_FORMAT,
-    ],
-    {
-      ignoreError: true,
-      suppressOutput: true,
-      timeout: DOCKER_IDENTITY_PROBE_TIMEOUT_MS,
-    },
-  );
-  if (Number(result.status ?? 1) !== 0) {
-    return {
-      status: "probe-failed",
-      detail: resultText(result) || "docker ps did not complete successfully",
-    };
+  if (probe.status === "probe-failed") {
+    return { status: "probe-failed", detail: probe.detail };
   }
 
-  const rows = parseIdentityRows(String(result.stdout ?? ""));
+  const rows = probe.rows;
   if (rows.length === 0) return { status: "clear" };
 
   const managed = rows.filter((row) => row.managedBy === OPENSHELL_MANAGED_BY_VALUE);
