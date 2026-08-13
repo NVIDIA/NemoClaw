@@ -20,7 +20,7 @@ import {
 
 describe("Deep Agents Code base image compatibility", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    mocks.dockerCapture.mockReset();
   });
 
   it("accepts only the exact installed distribution version (#6456)", () => {
@@ -41,6 +41,7 @@ describe("Deep Agents Code base image compatibility", () => {
     );
     mocks.dockerCapture
       .mockReturnValueOnce("9.8.7")
+      .mockReturnValueOnce("nemoclaw-dcode-dos2unix-ok")
       .mockReturnValueOnce("nemoclaw-security-inventory-ok");
 
     expect(options).toMatchObject({
@@ -48,9 +49,46 @@ describe("Deep Agents Code base image compatibility", () => {
         "/test/root/agents/langchain-deepagents-code/manifest.yaml",
         "/test/root/agents/langchain-deepagents-code/requirements.lock",
       ],
-      validationDescription: "deepagents-code==9.8.7 and the immutable security package inventory",
+      validationDescription:
+        "deepagents-code==9.8.7, dos2unix, and the immutable security package inventory",
     });
     expect(options?.validateImage?.("dcode-base:manifest-version")).toBe(true);
+  });
+
+  it("rejects a matching distribution from a base without dos2unix (#8870)", () => {
+    const options = createDeepAgentsCodeBaseImageResolutionOptions(
+      makeAgent({
+        name: "langchain-deepagents-code",
+        displayName: "LangChain Deep Agents Code",
+        expectedVersion: "0.1.34",
+      }),
+      "/test/root/agents/langchain-deepagents-code/Dockerfile.base",
+    );
+    mocks.dockerCapture.mockReturnValueOnce("0.1.34").mockReturnValueOnce("");
+
+    expect(options?.validateImage?.("dcode-base:missing-dos2unix")).toBe(false);
+    expect(mocks.dockerCapture).toHaveBeenCalledTimes(2);
+    expect(mocks.dockerCapture.mock.calls[1]?.[0]).toEqual(
+      expect.arrayContaining([
+        "run",
+        "--network",
+        "none",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--read-only",
+        "--user",
+        "999:999",
+        "--entrypoint",
+        "/bin/sh",
+        "dcode-base:missing-dos2unix",
+        "-eu",
+        "-c",
+      ]),
+    );
+    expect(mocks.dockerCapture.mock.calls[1]?.[0].at(-1)).toContain("test -x /usr/bin/dos2unix");
+    expect(mocks.dockerCapture.mock.calls[1]?.[0].at(-1)).toContain("dos2unix --version");
   });
 
   it("rejects a matching distribution from a base with an old security inventory (#7809)", () => {
@@ -62,11 +100,14 @@ describe("Deep Agents Code base image compatibility", () => {
       }),
       "/test/root/agents/langchain-deepagents-code/Dockerfile.base",
     );
-    mocks.dockerCapture.mockReturnValueOnce("0.1.34").mockReturnValueOnce("");
+    mocks.dockerCapture
+      .mockReturnValueOnce("0.1.34")
+      .mockReturnValueOnce("nemoclaw-dcode-dos2unix-ok")
+      .mockReturnValueOnce("");
 
     expect(options?.validateImage?.("dcode-base:v0.0.96")).toBe(false);
-    expect(mocks.dockerCapture).toHaveBeenCalledTimes(2);
-    expect(mocks.dockerCapture.mock.calls[1]?.[0]).toEqual(
+    expect(mocks.dockerCapture).toHaveBeenCalledTimes(3);
+    expect(mocks.dockerCapture.mock.calls[2]?.[0]).toEqual(
       expect.arrayContaining([
         "run",
         "--network",
@@ -82,7 +123,7 @@ describe("Deep Agents Code base image compatibility", () => {
         "-c",
       ]),
     );
-    expect(mocks.dockerCapture.mock.calls[1]?.[0].at(-1)).toContain(
+    expect(mocks.dockerCapture.mock.calls[2]?.[0].at(-1)).toContain(
       `cmp -s - "$security_inventory"`,
     );
   });

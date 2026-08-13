@@ -18,6 +18,7 @@ const SERVICE_TEMPLATE = path.join(
   "lib",
   "openshell-gateway.service.in",
 );
+const RUNNING_AS_ROOT = typeof process.getuid === "function" && process.getuid() === 0;
 const tempRoots: string[] = [];
 
 afterEach(() => {
@@ -117,6 +118,51 @@ function writeSystemctlStub(
   return { bin, log };
 }
 
+function writeUpstreamSystemctlStub(
+  home: string,
+  options: {
+    diagnostic?: string;
+    execStart?: string;
+    fragmentPath?: string;
+    gatewayBin?: string;
+    status?: number;
+  },
+) {
+  const bin = path.join(home, "upstream-systemctl-bin");
+  const log = path.join(home, "upstream-systemctl.log");
+  const status = options.status ?? 0;
+  fs.mkdirSync(bin, { recursive: true });
+  const response =
+    status === 0
+      ? [
+          `printf 'FragmentPath=%s\\n' ${JSON.stringify(options.fragmentPath ?? "")}`,
+          options.execStart === undefined
+            ? `printf 'ExecStart={ path=%s ; argv[]=%s ; ignore_errors=no ; }\\n' ${JSON.stringify(options.gatewayBin ?? "")} ${JSON.stringify(options.gatewayBin ?? "")}`
+            : `printf 'ExecStart=%s\\n' ${JSON.stringify(options.execStart)}`,
+        ]
+      : [
+          ...(options.diagnostic ?? "systemctl failed")
+            .split(/\r?\n/)
+            .map((line) => `printf '%s\\n' ${JSON.stringify(line)} >&2`),
+          `exit ${status}`,
+        ];
+  writeExecutable(
+    path.join(bin, "systemctl"),
+    [
+      "#!/usr/bin/env bash",
+      `printf '%s\\n' "$*" >> ${JSON.stringify(log)}`,
+      'case "$*" in',
+      '  "--user show openshell-gateway.service --property=FragmentPath --property=ExecStart")',
+      ...response.map((line) => `    ${line}`),
+      "    ;;",
+      "  *) exit 97 ;;",
+      "esac",
+      "",
+    ].join("\n"),
+  );
+  return { bin, log };
+}
+
 describe("install.sh OpenShell gateway service", () => {
   it.each([
     "user-local",
@@ -202,7 +248,7 @@ describe("install.sh OpenShell gateway service", () => {
       [
         "upstream_openshell_gateway_user_service_installed() { return 0; }",
         `resolve_openshell_gateway_bin_for_service() { printf '%s\\n' ${JSON.stringify(nemoclawGatewayBin)}; }`,
-        `resolve_upstream_openshell_gateway_bin_for_service() { printf '%s\\n' ${JSON.stringify(upstreamGatewayBin)}; }`,
+        `inspect_upstream_openshell_gateway_user_service() { UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN=${JSON.stringify(upstreamGatewayBin)}; return 0; }`,
         "trusted_openshell_gateway_bin_for_service() { return 0; }",
         "install_nemoclaw_openshell_gateway_user_service",
       ].join("\n"),
@@ -232,7 +278,7 @@ describe("install.sh OpenShell gateway service", () => {
       [
         "upstream_openshell_gateway_user_service_installed() { return 0; }",
         `resolve_openshell_gateway_bin_for_service() { printf '%s\\n' ${JSON.stringify(nemoclawGatewayBin)}; }`,
-        `resolve_upstream_openshell_gateway_bin_for_service() { printf '%s\\n' ${JSON.stringify(upstreamGatewayBin)}; }`,
+        `inspect_upstream_openshell_gateway_user_service() { UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN=${JSON.stringify(upstreamGatewayBin)}; return 0; }`,
         "trusted_openshell_gateway_bin_for_service() { return 0; }",
         "install_nemoclaw_openshell_gateway_user_service",
       ].join("\n"),
@@ -251,25 +297,262 @@ describe("install.sh OpenShell gateway service", () => {
     const home = makeTempRoot();
     const conventionalGatewayBin = path.join(home, "usr", "bin", "openshell-gateway");
     const overriddenGatewayBin = path.join(home, "opt", "openshell", "openshell-gateway");
-    const systemctlBin = path.join(home, "systemctl-bin");
+    const upstreamUnit = path.join(
+      home,
+      "usr",
+      "lib",
+      "systemd",
+      "user",
+      "openshell-gateway.service",
+    );
     fs.mkdirSync(path.dirname(conventionalGatewayBin), { recursive: true });
     fs.mkdirSync(path.dirname(overriddenGatewayBin), { recursive: true });
-    fs.mkdirSync(systemctlBin);
     writeExecutable(conventionalGatewayBin, "#!/usr/bin/env bash\nexit 0\n");
     writeExecutable(overriddenGatewayBin, "#!/usr/bin/env bash\nexit 0\n");
-    writeExecutable(
-      path.join(systemctlBin, "systemctl"),
-      `#!/usr/bin/env bash\nprintf '{ path=${overriddenGatewayBin} ; argv[]=${overriddenGatewayBin} ; ignore_errors=no ; }\\n'\n`,
-    );
-
-    const result = runInstallHelper(home, "resolve_upstream_openshell_gateway_bin_for_service", {
-      PATH: `${systemctlBin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+    const systemctl = writeUpstreamSystemctlStub(home, {
+      fragmentPath: upstreamUnit,
+      gatewayBin: overriddenGatewayBin,
     });
+
+    const result = runInstallHelper(
+      home,
+      [
+        `trusted_upstream_openshell_gateway_unit_for_service() { [[ "$1" == ${JSON.stringify(upstreamUnit)} ]]; }`,
+        `trusted_upstream_openshell_gateway_bin_for_service() { [[ "$1" == ${JSON.stringify(overriddenGatewayBin)} ]]; }`,
+        "resolve_upstream_openshell_gateway_bin_for_service",
+      ].join("\n"),
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe(overriddenGatewayBin);
     expect(result.stdout).not.toContain(conventionalGatewayBin);
   });
+
+  it("rejects duplicate effective ExecStart records even when their paths match (#8926)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = path.join(home, "usr", "bin", "openshell-gateway");
+    const upstreamUnit = path.join(
+      home,
+      "usr",
+      "lib",
+      "systemd",
+      "user",
+      "openshell-gateway.service",
+    );
+    fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
+    writeExecutable(gatewayBin, "#!/usr/bin/env bash\nexit 0\n");
+    const systemctl = writeUpstreamSystemctlStub(home, {
+      execStart: `{ path=${gatewayBin} ; }; { path=${gatewayBin} ; }`,
+      fragmentPath: upstreamUnit,
+    });
+
+    const result = runInstallHelper(
+      home,
+      [
+        `trusted_upstream_openshell_gateway_unit_for_service() { [[ "$1" == ${JSON.stringify(upstreamUnit)} ]]; }`,
+        `trusted_upstream_openshell_gateway_bin_for_service() { [[ "$1" == ${JSON.stringify(gatewayBin)} ]]; }`,
+        'inspect_upstream_openshell_gateway_user_service || { printf "%s\\n" "$UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR" >&2; exit 1; }',
+      ].join("\n"),
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("did not return one executable path");
+  });
+
+  it("keeps the standalone gateway when the systemd user manager is unavailable (#8926)", () => {
+    const home = makeTempRoot();
+    const systemctl = writeUpstreamSystemctlStub(home, {
+      diagnostic: "Failed to connect to bus: No medium found",
+      status: 1,
+    });
+
+    const result = runInstallHelper(
+      home,
+      [
+        "upstream_openshell_gateway_user_service_installed() { return 0; }",
+        "install_nemoclaw_openshell_gateway_user_service",
+      ].join("\n"),
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain("existing standalone gateway");
+    expect(result.stdout).toContain("port 8080");
+    expect(fs.existsSync(servicePath(home))).toBe(false);
+    expect(fs.readFileSync(systemctl.log, "utf-8").trim()).toBe(
+      "--user show openshell-gateway.service --property=FragmentPath --property=ExecStart",
+    );
+  });
+
+  it.each([
+    "openshell-gateway",
+    "nemoclaw-openshell-gateway",
+  ])("blocks standalone fallback when an enabled %s user service could claim port 8080 (#8926)", (serviceName) => {
+    const home = makeTempRoot();
+    const activationPath = path.join(
+      home,
+      ".config",
+      "systemd",
+      "user",
+      "default.target.wants",
+      `${serviceName}.service`,
+    );
+    fs.mkdirSync(path.dirname(activationPath), { recursive: true });
+    fs.symlinkSync(path.join(home, "missing-package-unit.service"), activationPath);
+    const systemctl = writeUpstreamSystemctlStub(home, {
+      diagnostic: "Failed to connect to bus: No medium found",
+      status: 1,
+    });
+
+    const result = runInstallHelper(
+      home,
+      [
+        "upstream_openshell_gateway_user_service_installed() { return 0; }",
+        "install_nemoclaw_openshell_gateway_user_service",
+      ].join("\n"),
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(activationPath);
+    expect(result.stderr).toContain("claim port 8080");
+    expect(result.stderr).toContain("Restore the systemd user manager");
+    expect(fs.lstatSync(activationPath).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(servicePath(home))).toBe(false);
+  });
+
+  it.each([
+    ["user data", ".local/share/systemd/user/session.target.wants"],
+    ["user runtime", "runtime/systemd/user/default.target.wants"],
+    ["user control", ".config/systemd/user.control/default.target.wants"],
+    ["runtime control", "runtime/systemd/user.control/default.target.requires"],
+    ["early generator", "runtime/systemd/generator.early/default.target.wants"],
+    ["generator", "runtime/systemd/generator/default.target.requires"],
+    ["late generator", "runtime/systemd/generator.late/default.target.wants"],
+    ["transient", "runtime/systemd/transient/default.target.requires"],
+    ["upheld", "xdg-data/systemd/user/default.target.upholds"],
+    ["data directory", "xdg-data/systemd/user/default.target.requires"],
+  ])("blocks standalone fallback for an activation link in the %s root (#8926)", (_root, relativeDirectory) => {
+    const home = makeTempRoot();
+    const activationDirectory = path.join(home, relativeDirectory);
+    const activationPath = path.join(activationDirectory, "openshell-gateway.service");
+    fs.mkdirSync(activationDirectory, { recursive: true });
+    fs.symlinkSync(path.join(home, "missing-package-unit.service"), activationPath);
+    const systemctl = writeUpstreamSystemctlStub(home, {
+      diagnostic: "Failed to connect to bus: No medium found",
+      status: 1,
+    });
+    const env: NodeJS.ProcessEnv = {
+      PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+      ...(relativeDirectory.startsWith("runtime/")
+        ? { XDG_RUNTIME_DIR: path.join(home, "runtime") }
+        : {}),
+      ...(relativeDirectory.startsWith("xdg-data/")
+        ? { XDG_DATA_DIRS: path.join(home, "xdg-data") }
+        : {}),
+    };
+
+    const result = runInstallHelper(
+      home,
+      [
+        "upstream_openshell_gateway_user_service_installed() { return 0; }",
+        "install_nemoclaw_openshell_gateway_user_service",
+      ].join("\n"),
+      env,
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(activationPath);
+    expect(fs.lstatSync(activationPath).isSymbolicLink()).toBe(true);
+  });
+
+  it("fails closed when the upstream service query returns an unknown error (#8926)", () => {
+    const home = makeTempRoot();
+    const systemctl = writeUpstreamSystemctlStub(home, {
+      diagnostic:
+        "Failed to connect to bus: No medium found\nFailed to connect to bus: Permission denied",
+      status: 1,
+    });
+
+    const result = runInstallHelper(
+      home,
+      [
+        "upstream_openshell_gateway_user_service_installed() { return 0; }",
+        "install_nemoclaw_openshell_gateway_user_service",
+      ].join("\n"),
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Failed to connect to bus: Permission denied");
+    expect(result.stdout).not.toContain("existing standalone gateway");
+    expect(fs.existsSync(servicePath(home))).toBe(false);
+  });
+
+  it("fails closed when SYSTEMD_UNIT_PATH overrides the unit search path (#8926)", () => {
+    const home = makeTempRoot();
+    const systemdUnitPath = `${path.join(home, "custom-systemd", "user")}\nspoofed-log-line`;
+    const systemctl = writeUpstreamSystemctlStub(home, {
+      diagnostic: "Failed to connect to bus: No medium found",
+      status: 1,
+    });
+
+    const result = runInstallHelper(
+      home,
+      [
+        "upstream_openshell_gateway_user_service_installed() { return 0; }",
+        "install_nemoclaw_openshell_gateway_user_service",
+      ].join("\n"),
+      {
+        PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+        SYSTEMD_UNIT_PATH: systemdUnitPath,
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("SYSTEMD_UNIT_PATH=");
+    expect(result.stderr).toContain("\\nspoofed-log-line");
+    expect(result.stderr).not.toContain("\nspoofed-log-line");
+    expect(result.stdout).not.toContain("existing standalone gateway");
+  });
+
+  it.skipIf(RUNNING_AS_ROOT)(
+    "fails closed when an activation root cannot be inspected (#8926)",
+    () => {
+      const home = makeTempRoot();
+      const dataHome = path.join(home, "xdg-data");
+      const activationRoot = path.join(dataHome, "systemd", "user");
+      fs.mkdirSync(activationRoot, { recursive: true });
+      fs.chmodSync(activationRoot, 0o000);
+      const systemctl = writeUpstreamSystemctlStub(home, {
+        diagnostic: "Failed to connect to bus: No medium found",
+        status: 1,
+      });
+
+      let result: ReturnType<typeof runInstallHelper>;
+      try {
+        result = runInstallHelper(
+          home,
+          [
+            "upstream_openshell_gateway_user_service_installed() { return 0; }",
+            "install_nemoclaw_openshell_gateway_user_service",
+          ].join("\n"),
+          {
+            PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+            XDG_DATA_HOME: dataHome,
+          },
+        );
+      } finally {
+        fs.chmodSync(activationRoot, 0o700);
+      }
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("could not inspect");
+      expect(result.stderr).toContain(activationRoot);
+    },
+  );
 
   it("stops an active trusted NemoClaw gateway user service during upgrade retirement (#8800)", () => {
     const home = makeTempRoot();
