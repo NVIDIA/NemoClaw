@@ -102,9 +102,11 @@ export function writeTimedOutAgentTurnFailure(
   timeoutPhase?: string,
 ): void {
   const target = shellQuote(sandboxName);
+  const diagnosticPhase =
+    timeoutPhase && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(timeoutPhase) ? timeoutPhase : undefined;
   proc.stderr.write(
-    timeoutPhase
-      ? `  The agent turn in sandbox '${sandboxName}' timed out in the ${timeoutPhase} phase before producing a result.\n`
+    diagnosticPhase
+      ? `  The agent turn in sandbox '${sandboxName}' timed out in the ${diagnosticPhase} phase before producing a result.\n`
       : `  The agent turn in sandbox '${sandboxName}' timed out before producing a result.\n`,
   );
   proc.stderr.write(

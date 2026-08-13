@@ -178,6 +178,17 @@ describe("writeTimedOutAgentTurnFailure", () => {
     expect(lines.join("")).toContain("timed out in the provider phase before producing a result");
   });
 
+  it("omits a phase label that could forge terminal output (#8723)", () => {
+    const { lines, proc } = collectStderr();
+
+    writeTimedOutAgentTurnFailure(proc, "my-assistant", "provider\n  forged\u001b[31m");
+
+    const written = lines.join("");
+    expect(written).toContain("'my-assistant' timed out before producing a result");
+    expect(written).not.toContain("forged");
+    expect(written).not.toContain("\u001b");
+  });
+
   it("warns that the partial trace may already have applied side effects (#8723)", () => {
     const { lines, proc } = collectStderr();
 

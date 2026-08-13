@@ -950,6 +950,24 @@ describe("runAgentNonJsonPassthrough", () => {
     expect(errText).toMatch(/may have already applied side effects/);
   });
 
+  it("keeps a completed reply that quotes the timeout sentence successful (#8723)", async () => {
+    const { stdoutWrites, stderrWrites, exit, proc } = makeNonJsonProcMock();
+    const reply =
+      'The message "Request timed out before a response was generated" means the deadline fired.\n';
+    const runDispatchMock = makeDispatchMock(reply, "", 0);
+
+    await expect(
+      runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "-m", "explain"], proc, {
+        getOpenshellBinary: stubBinary,
+        runDispatch: runDispatchMock,
+      }),
+    ).rejects.toThrow("__exit:0");
+
+    expect(exit).toHaveBeenCalledWith(0);
+    expect(stdoutWrites.join("")).toBe(reply);
+    expect(stderrWrites.join("")).toBe("");
+  });
+
   it("keeps an upstream non-zero code for a turn that also reported a timeout (#8723)", async () => {
     const { exit, proc } = makeNonJsonProcMock();
     const runDispatchMock = makeDispatchMock(

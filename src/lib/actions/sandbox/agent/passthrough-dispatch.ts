@@ -266,18 +266,19 @@ export const TIMED_OUT_AGENT_TURN_EXIT_CODE = 1;
  * lines. Only the invariant clause is matched so the configuration advice that
  * follows it can be reworded upstream without disabling the guard.
  */
-const OPENCLAW_AGENT_TIMEOUT_PATTERN = /Request timed out before a response was generated/i;
+const OPENCLAW_AGENT_TIMEOUT_PATTERN =
+  /(?:^|\r?\n)Request timed out before a response was generated[^\r\n]*(?:\r?\n)?$/i;
 
 /**
  * True when the captured output reports that the turn's deadline fired.
  *
- * Text is the only evidence the non-JSON transport has, so this mirrors the
- * embedded-fallback branch and accepts its risk: a turn that answers by quoting
- * the sentence is misread as a timeout. Callers gate on an otherwise successful
- * exit, so an upstream non-zero code is never rewritten.
+ * Text is the only evidence the non-JSON transport has. OpenClaw writes the
+ * report as the final line, so matching that position avoids treating a normal
+ * reply that quotes or explains the sentence as a timeout. Callers gate on an
+ * otherwise successful exit, so an upstream non-zero code is never rewritten.
  */
 export function isTimedOutAgentDispatch(stdout: string, stderr: string): boolean {
-  return OPENCLAW_AGENT_TIMEOUT_PATTERN.test(`${stdout}\n${stderr}`);
+  return OPENCLAW_AGENT_TIMEOUT_PATTERN.test(stdout) || OPENCLAW_AGENT_TIMEOUT_PATTERN.test(stderr);
 }
 
 /** Documented `openclaw agent` options that consume the next argv element. */
