@@ -19,6 +19,29 @@ describe("standard E2E execution profile boundary", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
+  it("rejects a cloudflared PATH shortcut before package verification", () => {
+    const profile = YAML.parse(
+      fs.readFileSync(
+        path.join(REPO_ROOT, ".github", "workflows", "e2e-standard-profile.yaml"),
+        "utf8",
+      ),
+    ) as { jobs: { run: { steps: Array<{ name?: string; run?: string }> } } };
+    const step = profile.jobs.run.steps.find(
+      (candidate) => candidate.name === "Install reviewed cloudflared",
+    )!;
+    step.run = `${step.run}\ncommand -v cloudflared`;
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-standard-profile-"));
+    const profilePath = path.join(directory, "profile.yaml");
+    try {
+      fs.writeFileSync(profilePath, YAML.stringify(profile));
+      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).toContain(
+        "standard E2E profile must install only the reviewed cloudflared package",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects secret crossover between catalogue profiles", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { secrets: Record<string, string> }>;
@@ -28,6 +51,23 @@ describe("standard E2E execution profile boundary", () => {
 
     expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
       "catalogue-standard must receive only its profile secrets",
+    );
+  });
+
+  it("rejects catalogue callers without dispatch-bound manual PR risk-signal identity", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { with: Record<string, string> }>;
+    };
+    workflow.jobs["catalogue-standard"]!.with.risk_signal_expected_sha =
+      "${{ inputs.checkout_sha || github.sha }}";
+    workflow.jobs["catalogue-standard"]!.with.risk_signal_correlation_id =
+      "${{ inputs.correlation_id }}";
+
+    expect(validateStandardProfileWorkflowBoundary(workflow)).toEqual(
+      expect.arrayContaining([
+        "catalogue-standard must pass risk_signal_expected_sha from the catalogue matrix",
+        "catalogue-standard must pass risk_signal_correlation_id from the catalogue matrix",
+      ]),
     );
   });
 
@@ -41,9 +81,126 @@ describe("standard E2E execution profile boundary", () => {
     expect(validateStandardProfileWorkflowBoundary(workflow)).toEqual(
       expect.arrayContaining([
         "catalogue-standard must use the planned outcome-first display name",
-        "catalogue-nvidia-api must pass credential_boundary from the trusted execution plan",
+        "catalogue-nvidia-api must pass credential_boundary from the catalogue matrix",
       ]),
     );
+  });
+
+  it("rejects shared host, telemetry, secret, and artifact drift", () => {
+    const profile = YAML.parse(
+      fs.readFileSync(
+        path.join(REPO_ROOT, ".github", "workflows", "e2e-standard-profile.yaml"),
+        "utf8",
+      ),
+    ) as {
+      jobs: {
+        run: {
+          steps: Array<{
+            env?: Record<string, string>;
+            if?: string;
+            name?: string;
+            run?: string;
+            with?: Record<string, string>;
+          }>;
+        };
+      };
+    };
+    const steps = profile.jobs.run.steps;
+    steps.find((step) => step.name === "Validate catalogue execution plan")!.run = "echo skipped";
+    steps.find((step) => step.name === "Provision trusted Hermes E2E swap")!.run +=
+      "\necho candidate-controlled";
+    steps.find((step) => step.name === "Add swap for Hermes image rebuild")!.run =
+      "echo unsafe swap";
+    steps.find((step) => step.name === "Install reviewed cloudflared")!.run =
+      "sudo apt-get install cloudflared";
+    steps.find((step) => step.name === "Initialize runner comparison telemetry")!.run =
+      "echo skipped";
+    steps.find((step) => step.name === "Run catalogue E2E target")!.env!.COMPATIBLE_API_KEY =
+      "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
+    steps.find((step) => step.name === "Upload E2E artifacts")!.with!.path =
+      "e2e-artifacts/live/all/";
+    steps.find((step) => step.name === "Upload skill-agent artifacts")!.with!.path =
+      "/tmp/unreviewed-skill-output";
+
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-standard-profile-"));
+    const profilePath = path.join(directory, "profile.yaml");
+    try {
+      fs.writeFileSync(profilePath, YAML.stringify(profile));
+      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).toEqual(
+        expect.arrayContaining([
+          "standard E2E profile must derive validated execution paths before candidate checkout",
+          "standard E2E profile must preserve trusted Hermes swap before candidate checkout",
+          "standard E2E profile must add the reviewed Hermes rebuild swap after CLI restore",
+          "standard E2E profile must install only the reviewed cloudflared package",
+          "standard E2E profile must initialize only planned trusted-main runner telemetry",
+          "standard E2E profile must run the planned catalogue target with guarded secrets",
+          "standard E2E profile must upload only the fixed skill-agent artifact set with the reviewed action",
+          "standard E2E profile must upload only its validated artifact path with the reviewed action",
+        ]),
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("derives artifact paths before checkout and rejects unsafe plan values", () => {
+    const profile = YAML.parse(
+      fs.readFileSync(
+        path.join(REPO_ROOT, ".github", "workflows", "e2e-standard-profile.yaml"),
+        "utf8",
+      ),
+    ) as { jobs: { run: { steps: Array<{ name?: string; run?: string }> } } };
+    const planScript = profile.jobs.run.steps.find(
+      (step) => step.name === "Validate catalogue execution plan",
+    )!.run!;
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-execution-plan-"));
+    const githubOutput = path.join(directory, "github-output");
+    const githubEnvironment = path.join(directory, "github-environment");
+    const environment = {
+      ARTIFACT_LAYOUT: "target-shard",
+      BASH_ENV: "/dev/null",
+      CANDIDATE_REPOSITORY: "NVIDIA/NemoClaw",
+      CANDIDATE_SHA: "a".repeat(40),
+      CATALOGUE_ID: "hermes-inference-switch",
+      ENV: "/dev/null",
+      GITHUB_ENV: githubEnvironment,
+      GITHUB_OUTPUT: githubOutput,
+      GITHUB_WORKSPACE_VALUE: directory,
+      HOST_PACKAGES: "",
+      HOST_PREPARATION: "hermes-swap",
+      INSTALL_MODE: "credential-free",
+      LC_ALL: "C",
+      PATH: process.env.PATH ?? "",
+      SHARD: "anthropic",
+      TARGET_ID: "hermes-inference-switch",
+      TEST_FILE: "test/e2e/live/hermes-inference-switch.test.ts",
+    };
+
+    try {
+      const shellArguments = ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c"];
+      const valid = spawnSync("bash", [...shellArguments, planScript], {
+        encoding: "utf8",
+        env: environment,
+      });
+      expect(valid.status, valid.stderr).toBe(0);
+      expect(fs.readFileSync(githubOutput, "utf8")).toBe(
+        "artifact_directory=e2e-artifacts/live/hermes-inference-switch/anthropic\n" +
+          "upload_name=e2e-hermes-inference-switch-anthropic\n",
+      );
+      expect(fs.readFileSync(githubEnvironment, "utf8")).toBe(
+        `E2E_ARTIFACT_DIR=${directory}/e2e-artifacts/live/hermes-inference-switch/anthropic\n` +
+          "NEMOCLAW_E2E_SHARD=anthropic\n",
+      );
+
+      const unsafe = spawnSync("bash", [...shellArguments, planScript], {
+        encoding: "utf8",
+        env: { ...environment, TARGET_ID: "../../runner-temp" },
+      });
+      expect(unsafe.status).not.toBe(0);
+      expect(unsafe.stderr).toContain("Invalid catalogue execution plan: target ID");
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
   });
 
   it("writes normalized evidence and rejects successful empty runs", () => {
@@ -162,7 +319,11 @@ describe("standard E2E execution profile boundary", () => {
       NVIDIA_API_KEY: "${{ !inputs.trusted_main && secrets.NVIDIA_API_KEY || '' }}",
     };
     profile.jobs.run.env!.NEMOCLAW_E2E_EXPECTED_SHA = "${{ github.sha }}";
+    profile.jobs.run.env!.NEMOCLAW_E2E_CORRELATION_ID = "";
+    profile.jobs.run.env!.NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA = "${{ github.sha }}";
     profile.jobs.run.env!.BASH_ENV = "${{ github.workspace }}/scripts/leak.sh";
+    steps.find((step) => step.name === "Validate catalogue execution plan")!.env!.SHARD =
+      "${{ github.event.issue.title }}";
     const upload = steps.find((step) => step.name === "Upload E2E artifacts")!;
     upload.if = "success()";
     upload.with = { path: "/tmp/unreviewed-e2e-output" };
@@ -181,10 +342,13 @@ describe("standard E2E execution profile boundary", () => {
           "standard E2E profile must install host dependencies before workspace prep",
           "standard E2E profile must run the planned catalogue target with guarded secrets",
           "standard E2E profile must set NEMOCLAW_E2E_EXPECTED_SHA",
+          "standard E2E profile must set NEMOCLAW_E2E_CORRELATION_ID",
+          "standard E2E profile must set NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA",
+          "standard E2E profile must derive validated execution paths before candidate checkout",
           "standard E2E profile must expose only its reviewed job environment",
           "standard E2E profile must show the planned credential boundary",
           "standard E2E profile must keep its reviewed step set and order",
-          "standard E2E profile must always upload its target-derived artifact path with the reviewed action",
+          "standard E2E profile must upload only its validated artifact path with the reviewed action",
           "standard E2E profile must always clean up Docker authentication last",
         ]),
       );

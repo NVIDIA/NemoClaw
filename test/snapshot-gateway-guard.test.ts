@@ -6,6 +6,7 @@
 // `openshell sandbox list` lies and returns exit 0 with stale data.
 
 import { type ChildProcess, execSync, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -84,6 +85,38 @@ function writeSandboxRegistry(
         },
       },
       defaultSandbox: sandboxName,
+    }),
+    { mode: 0o600 },
+  );
+}
+
+function writeEmptyOpenClawSnapshot(home: string, name: string): void {
+  const backupPath = path.join(
+    home,
+    ".nemoclaw",
+    "rebuild-backups",
+    "alpha",
+    "2026-08-13T00-00-00-000Z",
+  );
+  fs.mkdirSync(backupPath, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(
+    path.join(backupPath, "rebuild-manifest.json"),
+    JSON.stringify({
+      version: 1,
+      sandboxName: "alpha",
+      timestamp: "2026-08-13T00:00:00.000Z",
+      agentType: "openclaw",
+      agentVersion: null,
+      expectedVersion: null,
+      stateDirs: [],
+      failedBackupDirs: [],
+      stateFiles: [],
+      dir: "/sandbox/.openclaw",
+      backupPath,
+      blueprintDigest: null,
+      policyPresets: [],
+      customPolicies: [],
+      name,
     }),
     { mode: 0o600 },
   );
@@ -181,6 +214,7 @@ function makeHealthyVmGatewayEnv(prefix: string): Record<string, string> {
 function makeVmRestoreToEnv(
   prefix: string,
   entry: Record<string, unknown> = { imageTag: "openshell/sandbox-from:fast-path-test" },
+  cloneIdentity = "fixture-clone-1",
 ): Record<string, string> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
@@ -192,6 +226,7 @@ function makeVmRestoreToEnv(
     ...entry,
   });
   startReachableForward(dashboardPort);
+  writeEmptyOpenClawSnapshot(home, "baseline");
 
   const cloneReadyMarker = path.join(home, "clone-1-ready");
   const cloneRunningMarker = path.join(home, "clone-1-running");
@@ -200,8 +235,8 @@ function makeVmRestoreToEnv(
   writeExecutable(path.join(localBin, "openshell"), [
     'case "$1 $2" in',
     '  "gateway info") printf "Gateway Info\\n\\nGateway: nemoclaw\\nGateway endpoint: https://127.0.0.1:8080/\\n"; exit 0 ;;',
-    '  "sandbox get") printf "{\\"name\\":\\"%s\\"}\\n" "$3"; exit 0 ;;',
-    `  "sandbox list") if [ -f ${JSON.stringify(cloneReadyMarker)} ]; then printf "NAME STATUS\\nalpha Ready\\nclone-1 Ready\\n"; else printf "NAME STATUS\\nalpha Ready\\n"; fi; exit 0 ;;`,
+    `  "sandbox get") [ "$3 $4" = "-g nemoclaw" ] || exit 91; for sandbox_ref in "$@"; do :; done; printf "Name: %s\\nId: %s\\nPhase: Ready\\n" "$sandbox_ref" ${JSON.stringify(cloneIdentity)}; exit 0 ;;`,
+    `  "sandbox list") if [ -n "\${3:-}" ] && [ "$3 $4" != "-g nemoclaw" ]; then exit 91; fi; if [ -f ${JSON.stringify(cloneReadyMarker)} ]; then printf "NAME STATUS\\nalpha Ready\\nclone-1 Ready\\n"; else printf "NAME STATUS\\nalpha Ready\\n"; fi; exit 0 ;;`,
     '  "sandbox exec")',
     '    case "$*" in',
     '      *"__NEMOCLAW_SANDBOX_EXEC_STARTED__"*) printf "__NEMOCLAW_SANDBOX_EXEC_STARTED__\\nRUNNING\\n"; exit 0 ;;',
@@ -303,12 +338,12 @@ describe("snapshot VM-driver gateway guard", () => {
 
   // `snapshot restore --to <new>` on VM driver must use the registered
   // imageTag, not the legacy `docker exec ... kubectl` probe.
-  it("snapshot restore --to uses registered imageTag and restarts the VM gateway before pairing verification", () => {
-    const env = makeVmRestoreToEnv("nemoclaw-snap-vm-gw-restore-to-");
-
-    const seed = runCli("alpha snapshot create --name baseline", env);
-    expect(seed.code).toBe(0);
-    expect(seed.out).toContain("Snapshot v1 name=baseline created");
+  it("snapshot restore --to records a fresh clone lifecycle identity before pairing verification (#8942)", () => {
+    const env = makeVmRestoreToEnv("nemoclaw-snap-vm-gw-restore-to-", {
+      imageTag: "openshell/sandbox-from:fast-path-test",
+      lifecycleGeneration: "source-generation",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+    });
 
     const r = runCli("alpha snapshot restore baseline --to clone-1", env);
     expect(r.code, r.out).toBe(0);
@@ -318,15 +353,46 @@ describe("snapshot VM-driver gateway guard", () => {
     expect(fs.readFileSync(path.join(env.HOME, "gateway-lifecycle.log"), "utf8")).toBe(
       "restart clone-1\nrestart clone-1\n",
     );
+    const registryState = JSON.parse(
+      fs.readFileSync(path.join(env.HOME, ".nemoclaw", "sandboxes.json"), "utf8"),
+    );
+    expect(registryState.sandboxes["clone-1"]).toMatchObject({
+      lifecycleGeneration: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+      ),
+      lifecycleLiveIdentityFingerprint: createHash("sha256")
+        .update("fixture-clone-1")
+        .digest("hex"),
+    });
+    expect(registryState.sandboxes["clone-1"].lifecycleGeneration).not.toBe(
+      "source-generation",
+    );
+  }, 15000);
+
+  it("snapshot restore --to rejects a malformed clone identity before registration (#8942)", () => {
+    const env = makeVmRestoreToEnv(
+      "nemoclaw-snap-vm-gw-restore-to-malformed-identity-",
+      {
+        imageTag: "openshell/sandbox-from:fast-path-test",
+        lifecycleGeneration: "source-generation",
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+      },
+      "",
+    );
+
+    const r = runCli("alpha snapshot restore baseline --to clone-1", env);
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("valid live identity");
+    const registryState = JSON.parse(
+      fs.readFileSync(path.join(env.HOME, ".nemoclaw", "sandboxes.json"), "utf8"),
+    );
+    expect(registryState.sandboxes["clone-1"]).toBeUndefined();
   }, 15000);
 
   it("snapshot restore --to fails closed for VM-driver entries missing imageTag", () => {
     const env = makeVmRestoreToEnv("nemoclaw-snap-vm-gw-restore-to-missing-image-", {
       imageTag: null,
     });
-
-    const seed = runCli("alpha snapshot create --name baseline", env);
-    expect(seed.code).toBe(0);
 
     const r = runCli("alpha snapshot restore baseline --to clone-1", env);
     expect(r.code).toBe(1);

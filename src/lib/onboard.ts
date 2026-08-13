@@ -519,7 +519,7 @@ const { isGatewayTcpReady: probeGatewayTcpReady } =
   require("./onboard/gateway-tcp-readiness") as typeof import("./onboard/gateway-tcp-readiness");
 const { trackChildExit } =
   require("./onboard/child-exit-tracker") as typeof import("./onboard/child-exit-tracker");
-const { reportDockerDriverGatewayStartFailure } =
+const { reportDockerDriverGatewayStartFailure: reportGatewayFailure } =
   require("./onboard/docker-driver-gateway-failure") as typeof import("./onboard/docker-driver-gateway-failure");
 const {
   createFinalGatewayStartFailureHandler,
@@ -1901,11 +1901,11 @@ async function startDockerDriverGateway({
 
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const logPath = path.join(stateDir, "openshell-gateway.log");
-  const logFd = dockerDriverGatewayLaunch.openDockerDriverGatewayLog(logPath, { exitOnFailure });
+  const log = dockerDriverGatewayLaunch.openDockerDriverGatewayLog(logPath, { exitOnFailure });
   console.log("  Starting OpenShell Docker-driver gateway...");
   console.log(`  Gateway log: ${logPath}`);
   dockerDriverGatewayLaunch.prepareAndLogDockerDriverGatewayLaunch(gatewayLaunch);
-  const child = dockerDriverGatewayLaunch.spawnDockerDriverGateway(gatewayLaunch, logFd);
+  const child = dockerDriverGatewayLaunch.spawnDockerDriverGateway(gatewayLaunch, log.fd);
   const childExit = trackChildExit(child); // #3111 zombie-safe liveness
   child.unref();
   const childPid = child.pid ?? 0;
@@ -1951,7 +1951,7 @@ async function startDockerDriverGateway({
     return;
   }
 
-  reportDockerDriverGatewayStartFailure(logPath, childExit, { exitOnFailure });
+  reportGatewayFailure(logPath, childExit, { exitOnFailure, launchLogOffset: log.startOffset });
   if (gatewayStartup === "exited") {
     throw new Error("Docker-driver gateway failed to start because the process exited");
   }
@@ -2485,6 +2485,7 @@ async function createSandboxWithBaseImageResolution(
     request: managedStartupRootApplyRequest,
     intendedWorkloadArgv: intendedSandboxStartupCommand,
   });
+  const createdSandboxLifecycle = sandboxRecreateTransaction.createCreatedSandboxLifecycle(recreateRuntime, { sandboxName, gatewayName: GATEWAY_NAME }, getSandboxRecreateObservation);
   const {
     createResult,
     runtimePatch,
@@ -2506,7 +2507,7 @@ async function createSandboxWithBaseImageResolution(
       createArgv,
       sandboxEnv,
       sandboxStartupCommand,
-      lifecycleGeneration: recreateRuntime.targetGeneration,
+      lifecycleGeneration: createdSandboxLifecycle.generation,
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),
@@ -2578,7 +2579,7 @@ async function createSandboxWithBaseImageResolution(
       resolveSandboxImageTagFromCreateOutput,
     });
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
-  recreateRuntime.recordCreated();
+  const pinnedLifecycleRegistration = createdSandboxLifecycle.capture(lifecycleRegistrationFields);
   finalizeCreatedSandbox(
     {
       sandboxName,
@@ -2602,8 +2603,7 @@ async function createSandboxWithBaseImageResolution(
       note,
       error: console.error,
       exitProcess: (code) => process.exit(code),
-      register: (openclawImagePluginInstalls) =>
-        sandboxRegistration.registerCreatedSandbox({
+      register: (openclawImagePluginInstalls) => sandboxRegistration.registerCreatedSandbox({
           sandboxName,
           inferenceSelection: sandboxRegistration.selection(sandboxName, provider, model, preferredInferenceApi, createIntent?.endpointSource ?? null),
           runtimeFields: sandboxRuntimeFields,
@@ -2624,8 +2624,7 @@ async function createSandboxWithBaseImageResolution(
           hermesDashboardState: finalHermesDashboardState,
           hermesApiPort: hermesApiPortReservationScope.effectivePort,
           dashboardPort: actualDashboardPort,
-          ...lifecycleRegistrationFields,
-          ...recreateRuntime.registrationFields,
+          ...createdSandboxLifecycle.revalidate(pinnedLifecycleRegistration),
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
           hostMounts: resolvedCreateIntent.hostMounts,

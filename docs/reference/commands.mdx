@@ -927,6 +927,7 @@ When `$$nemoclaw onboard` detects an NVIDIA GPU on the host, it enables OpenShel
 The `nvidia-smi` probes require a successful result and reject placeholder `JMJWOA-Generic-*` GPU names unless NemoClaw can prove a supported NVIDIA platform or GPU execution.
 NemoClaw treats a recognized NVIDIA product model from `/sys/class/dmi/id/product_name` or `/sys/firmware/devicetree/base/model`, or a known Tegra device node, as authoritative platform identity.
 On eligible native or Docker Desktop-backed WSL ARM64 Linux hosts without that firmware evidence, one bounded Docker CUDA workload can prove GPU execution.
+On those hosts, a single plausible, non-placeholder NVIDIA GPU name also requires that proof when the NVIDIA kernel-driver interface (`/proc/driver/nvidia`) is absent.
 For the proof command, timeout control, and failure recovery, refer to [GPU Setup Fails with a Placeholder GPU Name](troubleshooting#gpu-setup-fails-with-a-placeholder-gpu-name).
 The names-only unified-memory fallback does not run this workload and rejects denylisted names.
 Other non-firmware-vouched hosts also reject denylisted names.
@@ -1013,9 +1014,44 @@ $$nemoclaw use <name> --json
 Connect to a sandbox and start its agent in one host-side command.
 Use it instead of running `$$nemoclaw <name> connect` and then typing the agent command inside the sandbox.
 
-`launch` runs the same preflight as [`$$nemoclaw <name> connect`](#$$nemoclaw-name-connect), including the readiness wait, in-sandbox agent process recovery, and inference-route reconciliation.
-It runs every check in that shared preflight.
-After the preflight, `launch` starts the sandbox's agent in your terminal instead of opening a sandbox shell.
+`launch` runs the complete preflight from [`$$nemoclaw <name> connect`](#$$nemoclaw-name-connect) when no launch-readiness lease is usable.
+That path includes the readiness wait, in-sandbox agent process recovery, and inference-route reconciliation.
+A successful complete preflight can publish a credential-free launch-readiness lease with a fixed 24-hour lifetime on Linux.
+Lease acceptance and publication are currently Linux-only and require a secure, independently writable OS per-user runtime authority under `/run/user/<numeric-uid>`.
+It never uses caller-provided environment variables to select this authority.
+On macOS, `launch` runs the complete preflight every time and does not publish a launch-readiness lease.
+
+During that lease, another `launch` still verifies these conditions:
+
+- The owning OpenShell gateway reports the exact sandbox identity in the `Ready` or `Running` state.
+- The sandbox registry, agent manifest, interactive command, policy intent, and effective parsed OpenShell network policy match the recorded identity.
+- The recorded inference selection matches the live route, and `inference.local` returns HTTP 2xx from its semantic probe when inference is configured. This is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
+- The agent runtime and its required host-side forwards pass their semantic health checks.
+
+After these checks pass, `launch` can skip duplicate recovery, readiness polling, and inference-route repair.
+The lease does not replace a health check or authorize repair.
+For missing, expired, malformed, inaccessible, mismatched, or unhealthy evidence, NemoClaw fences any prior acceptable evidence before it runs the complete preflight.
+Ordinary launch continues only when NemoClaw proves that no old authority or evidence can exist, or durably rotates the runtime epoch.
+If an old epoch might exist and cannot be durably rotated, `launch` stops before complete preflight or recovery.
+Its redacted guidance asks you to repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.
+A failed live check never becomes a successful launch because a lease exists.
+
+Immediately before the first mutation in the complete preflight, the producer revalidates its sandbox-global runtime epoch while holding the sandbox lifecycle lock followed by the owning gateway lock.
+It holds both locks through all mutations in the complete preflight, final state capture, and publication.
+If another producer has replaced the epoch, the stale producer makes no changes and re-inspects the newer lease.
+
+The 24-hour lifetime does not extend when you launch repeatedly.
+Exiting the agent with `/exit` does not revoke the lease.
+If state changes before expiry, NemoClaw fences the old evidence and runs the complete preflight.
+A successful preflight in that interval keeps the original start and expiry time.
+After expiry, a successful complete preflight starts a new 24-hour lease only when publication succeeds.
+
+If unsafe or malformed authority history makes the prior lease timeline untrustworthy, NemoClaw durably invalidates the old epoch and starts one conservative 24-hour quarantine.
+Both wall time and monotonic uptime must span the full quarantine, and publication remains disabled during it.
+Repeated attempts do not extend the quarantine.
+After it elapses, the next successful complete preflight can publish a new fixed 24-hour lease.
+You do not create or refresh this lease manually, and `launch` has no lease-control flags.
+After lease validation or the automatic fallback that runs the complete preflight, `launch` starts the sandbox's agent in your terminal instead of opening a sandbox shell.
 
 The agent command comes from the sandbox's agent manifest.
 If the sandbox registry names a non-OpenClaw agent without a readable local agent manifest, `launch` exits before starting an in-sandbox command.
@@ -1031,6 +1067,8 @@ $$nemoclaw launch <name>
 ```
 
 The sandbox name is required, and the command takes no flags.
+The sandbox must already exist in the local NemoClaw state.
+If it is not registered locally, `launch` exits before it runs an OpenShell command or readiness recovery and reports that the sandbox is not registered in the local NemoClaw state.
 When the agent exits, you return to the host shell.
 
 <AgentOnly variant="openclaw">
@@ -1072,7 +1110,7 @@ If only pending registrations remain, the command exits non-zero and tells you t
 If the registry remains empty after recovery, it tells you to run `$$nemoclaw onboard`.
 A registered sandbox literally named `connect` keeps the name-first reading.
 If the sandbox is not yet in the `Ready` phase, `connect` polls `openshell sandbox list` every few seconds and prints the current phase. This gives you progress output right after onboarding, when the 2.4 GB image is still pulling, instead of a silent hang.
-Control the wait budget with `NEMOCLAW_CONNECT_TIMEOUT` in integer seconds. An interactive connection defaults to `120` seconds, while `--probe-only` defaults to `300` seconds so a scripted health check can wait through a cold sandbox start. When the deadline expires, `connect` exits non-zero with the last-seen phase.
+Control the wait budget with `NEMOCLAW_CONNECT_TIMEOUT` in integer seconds. An interactive connection defaults to `120` seconds, while `--probe-only` and [`$$nemoclaw <name> start`](#$$nemoclaw-name-start) default to `300` seconds so a scripted health check can wait through a cold sandbox start. When the deadline expires, `connect` exits non-zero with the last-seen phase.
 
 On a TTY, a one-shot hint prints before dropping into the sandbox shell.
 The hint is agent-aware. It names the correct TUI command for the sandbox's agent and reminds you to use `/exit` to leave the chat before `exit` returns you to the host shell.
@@ -1118,11 +1156,24 @@ $$nemoclaw my-assistant connect [--probe-only]
 $$nemoclaw connect
 ```
 
-The `--probe-only` flag waits for the sandbox to become ready, verifies or repairs its in-sandbox agent process and host-side forward, and exits without opening a shell.
+On Linux, the `--probe-only` flag is the infrastructure producer for launch-readiness evidence.
+It validates a usable lease and exits without duplicate recovery.
+Otherwise, it fences prior evidence, waits for the sandbox, verifies or repairs its in-sandbox agent process and host-side forwards, and publishes evidence only after every probe succeeds.
 It rechecks the sandbox on its recorded OpenShell gateway after the readiness wait and never restarts the shared host gateway.
-Use it for health checks and scripted readiness probes.
+If an old runtime epoch might exist and cannot be durably rotated, the command exits nonzero before complete preflight or recovery and gives redacted repair guidance.
+A securely absent runtime authority and receipt let ordinary `launch` run the complete preflight without optimization if new authority creation fails, but `connect --probe-only` still exits nonzero because it could not publish launch-readiness evidence.
+A runtime failure and a failure to publish evidence for an otherwise healthy runtime also exit nonzero with different diagnostics.
 
-Use [`$$nemoclaw launch <name>`](#$$nemoclaw-launch-name) when you want the same preflight followed by the agent instead of a sandbox shell.
+Infrastructure must run the command as the same final numeric user that later runs `launch`.
+Run it only after the final durable home and state volume is mounted and after policy and network provisioning is complete.
+On Linux, that user also needs a secure, independently writable OS per-user runtime authority under `/run/user/<numeric-uid>`.
+Do not redirect this authority with caller environment variables.
+Do not use a graphical or login-session identifier as the deployment ordering boundary.
+On macOS, `connect --probe-only` runs the complete preflight, including recovery and probes, but exits nonzero because it cannot publish authoritative launch-readiness evidence.
+The publication-failure diagnostic is redacted and does not print filesystem paths or environment values.
+Run it for health checks and scripted readiness probes; users continue to run only `$$nemoclaw launch <name>`.
+
+Use [`$$nemoclaw launch <name>`](#$$nemoclaw-launch-name) when you want launch-readiness validation, an automatic fallback that runs the complete preflight, and then the agent instead of a sandbox shell.
 
 ### `$$nemoclaw <name> exec`
 
@@ -1136,10 +1187,8 @@ If gateway selection fails, `exec` stops without running the sandbox command.
 
 OpenClaw config resolves under `/sandbox/.openclaw`.
 
-```bash
-$$nemoclaw my-assistant exec -- openclaw agent -m "What is 2+2?"
-$$nemoclaw my-assistant exec --workdir /sandbox/workspace -- ls -la
-```
+Run one OpenClaw turn with `$$nemoclaw my-assistant exec -- openclaw agent --agent main -m "What is 2+2?"`.
+List the default OpenClaw workspace with `$$nemoclaw my-assistant exec --workdir /sandbox/.openclaw/workspace -- ls -la`.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -1472,7 +1521,11 @@ A surviving server keeps its recorded endpoint and address pins while its policy
 ### `$$nemoclaw <name> recover`
 
 Repair a stopped in-sandbox gateway and re-establish host-side forwards without opening an SSH session.
-Use this after a direct sandbox container restart, a sandbox crash, or whenever `$$nemoclaw <name> status` reports the gateway is not running but the sandbox is alive.
+Use this after a sandbox crash or whenever `$$nemoclaw <name> status` reports that the sandbox container or agent gateway is not running.
+
+For a stopped, non-paused Docker-driver container, `recover` starts the existing container before it waits for OpenShell readiness.
+It leaves a running or paused container unchanged.
+If Docker cannot start the container, `recover` continues to the readiness check and reports the resulting failure.
 
 `recover` waits up to 30 seconds to acquire the per-sandbox lifecycle lock.
 After acquisition, it holds the lock until gateway recovery and forward repair finish.
@@ -1640,6 +1693,14 @@ $$nemoclaw my-assistant start
 Starting an already-running sandbox skips the container start and still runs the gateway and forward health checks.
 A paused container is unpaused.
 If the container was removed entirely, `start` fails and points you to `$$nemoclaw <name> rebuild`.
+
+<AgentOnly variant="openclaw,hermes">
+Before it repairs the gateway and host forwards, `start` waits for OpenShell to report the sandbox in the `Ready` or `Running` state, using the same `300`-second budget and `NEMOCLAW_CONNECT_TIMEOUT` override as `connect --probe-only`.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+Before it verifies the managed terminal runtime, `start` waits for OpenShell to report the sandbox in the `Ready` or `Running` state, using the same `300`-second budget and `NEMOCLAW_CONNECT_TIMEOUT` override as `connect --probe-only`.
+</AgentOnly>
+When that deadline expires, `start` keeps the existing container, exits non-zero, and prints the `NEMOCLAW_CONNECT_TIMEOUT` value to use on the next run.
 
 After the gateway and forward checks pass, `start` sends one inference request through `https://inference.local` using the sandbox's recorded provider and model.
 A gateway that answers the `/v1/models` probe can still reject an inference request or return an invalid result, so the command exits non-zero in either case.
@@ -4725,7 +4786,7 @@ Defaults are sized for typical hardware; override only if you see false-positive
 | `NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS` | `30` | Maximum time to wait for an OpenShell MCP provider credential revision to become active or fully revoked inside the sandbox. Integer seconds; raise only when provider synchronization is unusually slow. |
 | `NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS` | per call site (typically `15000`) | Overrides the default timeout for `openshell sandbox exec` calls issued by recovery and lifecycle helpers. Integer milliseconds; non-positive or non-numeric values fall back to the per-call-site default. |
 | `NEMOCLAW_STATUS_PROBE_TIMEOUT_MS` | built-in default | Overrides the timeout for the OpenShell status probe used by `$$nemoclaw <name> status`. Integer milliseconds; non-positive or non-numeric values fall back to the default. |
-| `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` | `180000` | Maximum time for the bounded Docker CUDA workload that proves a placeholder-named GPU on an eligible ARM64 Linux host. A positive finite number of milliseconds overrides the default. Invalid, infinite, zero, and negative values use the default. |
+| `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` | `180000` | Maximum time for the bounded Docker CUDA workload on an eligible ARM64 Linux host. A positive finite number of milliseconds overrides the default. Invalid, infinite, zero, and negative values use the default. |
 
 ### Onboard and Sandbox Readiness Timeouts
 

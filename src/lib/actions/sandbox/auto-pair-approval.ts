@@ -1066,6 +1066,7 @@ export function runSandboxAutoPairApprovalPass(
     receipt?: boolean;
     budget?: AutoPairApprovalBudget;
     localDeviceOnly?: boolean;
+    gatewayName?: string;
   } = {},
   execDeps?: AutoPairApprovalExecDeps,
 ): AutoPairApprovalResult {
@@ -1104,7 +1105,16 @@ export function runSandboxAutoPairApprovalPass(
     // so script growth cannot fail before Python emits its fixed receipt.
     const result = deps.spawnSync(
       deps.getOpenshellBinary(),
-      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-s"],
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        sandboxName,
+        ...(options.gatewayName ? ["-g", options.gatewayName] : []),
+        "--",
+        "sh",
+        "-s",
+      ],
       {
         cwd: ROOT,
         env: process.env,
@@ -1140,7 +1150,21 @@ export function runSandboxAutoPairApprovalPass(
 /** Run the approval pass with the shared connect, probe, and finalization budget. */
 export function runConnectAutoPairApprovalPass(
   sandboxName: string,
+  gatewayName?: string,
   runApprovalPass = runSandboxAutoPairApprovalPass,
 ): void {
-  runApprovalPass(sandboxName, { budget: CONNECT_AUTO_PAIR_BUDGET });
+  let owningGatewayName = gatewayName;
+  if (!owningGatewayName) {
+    try {
+      owningGatewayName = (
+        require("./gateway-target") as typeof import("./gateway-target")
+      ).getSandboxTargetGatewayName(sandboxName);
+    } catch {
+      return;
+    }
+  }
+  runApprovalPass(sandboxName, {
+    budget: CONNECT_AUTO_PAIR_BUDGET,
+    gatewayName: owningGatewayName,
+  });
 }

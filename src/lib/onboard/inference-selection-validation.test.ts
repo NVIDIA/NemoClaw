@@ -92,6 +92,7 @@ describe("inference selection validation", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
     const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const teardownOrphanManagedGatewayOnAbort = vi.fn();
     const helpers = createInferenceSelectionValidationHelpers({
       isNonInteractive: () => true,
       agentProductName: () => "OpenClaw",
@@ -100,6 +101,7 @@ describe("inference selection validation", () => {
         ok: false,
         failures: [{ name: "Chat Completions API", httpStatus: 403 }],
       }),
+      teardownOrphanManagedGatewayOnAbort,
       promptValidationRecovery,
     });
 
@@ -115,6 +117,7 @@ describe("inference selection validation", () => {
       expect(exit).toHaveBeenCalledWith(1);
       expect(process.exitCode).toBe(1);
       expect(promptValidationRecovery).not.toHaveBeenCalled();
+      expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledOnce();
       expect(error.mock.calls.map((args) => args.join(" "))).toEqual([
         "  NVIDIA Endpoints endpoint validation failed.",
         "  Validation probe summary: Chat Completions API: HTTP 403.",
@@ -266,67 +269,66 @@ describe("inference selection validation", () => {
       expectedEndpointUrl: "https://anthropic.corp.example/v1",
       expectedProbeOptions: { calibrateTimeouts: true, skipResponsesProbe: true },
     },
-  ])("probes an exactly allowlisted private Anthropic endpoint on its $runtimeSurface surface (#7037)", async ({
-    intendedApi,
-    expectedEndpointUrl,
-    expectedProbeOptions,
-  }) => {
-    vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS", "anthropic.corp.example");
-    vi.stubEnv("NEMOCLAW_REASONING", "false");
-    const probeEndpoint = vi.fn(() => ({
-      ok: true,
-      api: intendedApi,
-      label: "Compatible API",
-    }));
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const helpers = createInferenceSelectionValidationHelpers({
-      isNonInteractive: () => false,
-      agentProductName: () => "NemoClaw agent",
-      getCredential: () => "test-key",
-      probeAnthropicEndpoint: probeEndpoint,
-      probeOpenAiLikeEndpoint: probeEndpoint,
-      promptValidationRecovery: vi.fn(async () => "selection" as const),
-      resolveEndpointHost: async () => [{ address: "10.0.0.8", family: 4 }],
-    });
-
-    try {
-      const result = await helpers.validateCustomAnthropicSelection(
-        "Custom Anthropic endpoint",
-        "https://anthropic.corp.example",
-        "model-a",
-        "COMPATIBLE_ANTHROPIC_API_KEY",
-        null,
-        { intendedApi },
-      );
-
-      expect(result).toMatchObject({
+  ])(
+    "probes an exactly allowlisted private Anthropic endpoint on its $runtimeSurface surface (#7037)",
+    async ({ intendedApi, expectedEndpointUrl, expectedProbeOptions }) => {
+      vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS", "anthropic.corp.example");
+      vi.stubEnv("NEMOCLAW_REASONING", "false");
+      const probeEndpoint = vi.fn(() => ({
         ok: true,
         api: intendedApi,
-        pinnedAddresses: ["10.0.0.8"],
-        trustedPrivateCapability: {
-          host: "anthropic.corp.example",
-          addresses: ["10.0.0.8"],
-        },
+        label: "Compatible API",
+      }));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const helpers = createInferenceSelectionValidationHelpers({
+        isNonInteractive: () => false,
+        agentProductName: () => "NemoClaw agent",
+        getCredential: () => "test-key",
+        probeAnthropicEndpoint: probeEndpoint,
+        probeOpenAiLikeEndpoint: probeEndpoint,
+        promptValidationRecovery: vi.fn(async () => "selection" as const),
+        resolveEndpointHost: async () => [{ address: "10.0.0.8", family: 4 }],
       });
-      expect(probeEndpoint).toHaveBeenCalledOnce();
-      expect(probeEndpoint).toHaveBeenCalledWith(
-        expectedEndpointUrl,
-        "model-a",
-        "test-key",
-        expect.objectContaining({
-          ...expectedProbeOptions,
+
+      try {
+        const result = await helpers.validateCustomAnthropicSelection(
+          "Custom Anthropic endpoint",
+          "https://anthropic.corp.example",
+          "model-a",
+          "COMPATIBLE_ANTHROPIC_API_KEY",
+          null,
+          { intendedApi },
+        );
+
+        expect(result).toMatchObject({
+          ok: true,
+          api: intendedApi,
           pinnedAddresses: ["10.0.0.8"],
-          trustedPrivateCapability: expect.objectContaining({ addresses: ["10.0.0.8"] }),
-        }),
-      );
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining("operator-trusted private"));
-    } finally {
-      log.mockRestore();
-      warn.mockRestore();
-      vi.unstubAllEnvs();
-    }
-  });
+          trustedPrivateCapability: {
+            host: "anthropic.corp.example",
+            addresses: ["10.0.0.8"],
+          },
+        });
+        expect(probeEndpoint).toHaveBeenCalledOnce();
+        expect(probeEndpoint).toHaveBeenCalledWith(
+          expectedEndpointUrl,
+          "model-a",
+          "test-key",
+          expect.objectContaining({
+            ...expectedProbeOptions,
+            pinnedAddresses: ["10.0.0.8"],
+            trustedPrivateCapability: expect.objectContaining({ addresses: ["10.0.0.8"] }),
+          }),
+        );
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("operator-trusted private"));
+      } finally {
+        log.mockRestore();
+        warn.mockRestore();
+        vi.unstubAllEnvs();
+      }
+    },
+  );
 
   it("honors an exactly allowlisted private endpoint during non-interactive validation (#6861)", async () => {
     vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS", "llm.corp.example");
@@ -400,47 +402,46 @@ describe("inference selection validation", () => {
     }
   });
 
-  it.each([
-    "http://127.0.0.1:8000/v1",
-    "https://inference.local/v1",
-    "https://93.184.216.34/v1",
-  ])("carries the approved no-pin capability to probes for %s (#6293)", async (endpointUrl) => {
-    const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));
-    const resolveEndpointHost = vi.fn(async () => [{ address: "10.0.0.8", family: 4 }]);
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const helpers = createInferenceSelectionValidationHelpers({
-      isNonInteractive: () => false,
-      agentProductName: () => "OpenClaw",
-      getCredential: () => "test-key",
-      probeOpenAiLikeEndpoint,
-      promptValidationRecovery: vi.fn(async () => "selection" as const),
-      resolveEndpointHost,
-    });
+  it.each(["http://127.0.0.1:8000/v1", "https://inference.local/v1", "https://93.184.216.34/v1"])(
+    "carries the approved no-pin capability to probes for %s (#6293)",
+    async (endpointUrl) => {
+      const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));
+      const resolveEndpointHost = vi.fn(async () => [{ address: "10.0.0.8", family: 4 }]);
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const helpers = createInferenceSelectionValidationHelpers({
+        isNonInteractive: () => false,
+        agentProductName: () => "OpenClaw",
+        getCredential: () => "test-key",
+        probeOpenAiLikeEndpoint,
+        promptValidationRecovery: vi.fn(async () => "selection" as const),
+        resolveEndpointHost,
+      });
 
-    try {
-      await expect(
-        helpers.validateCustomOpenAiLikeSelection(
-          "Custom endpoint",
+      try {
+        await expect(
+          helpers.validateCustomOpenAiLikeSelection(
+            "Custom endpoint",
+            endpointUrl,
+            "model-a",
+            "COMPATIBLE_API_KEY",
+          ),
+        ).resolves.toEqual({
+          ok: true,
+          api: "openai-completions",
+          pinnedAddresses: [],
+        });
+        expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
           endpointUrl,
           "model-a",
-          "COMPATIBLE_API_KEY",
-        ),
-      ).resolves.toEqual({
-        ok: true,
-        api: "openai-completions",
-        pinnedAddresses: [],
-      });
-      expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
-        endpointUrl,
-        "model-a",
-        "test-key",
-        expect.objectContaining({ pinnedAddresses: [] }),
-      );
-      expect(resolveEndpointHost).not.toHaveBeenCalled();
-    } finally {
-      log.mockRestore();
-    }
-  });
+          "test-key",
+          expect.objectContaining({ pinnedAddresses: [] }),
+        );
+        expect(resolveEndpointHost).not.toHaveBeenCalled();
+      } finally {
+        log.mockRestore();
+      }
+    },
+  );
 
   it("exits non-interactively when a custom Anthropic endpoint resolves to link-local metadata, without probing (#6293)", async () => {
     const originalExitCode = process.exitCode;
@@ -454,6 +455,7 @@ describe("inference selection validation", () => {
       probeAnthropicEndpoint,
       promptValidationRecovery: vi.fn(async () => "selection" as const),
       resolveEndpointHost: async () => [{ address: "169.254.169.254", family: 4 }],
+      teardownOrphanManagedGatewayOnAbort: vi.fn(),
     });
 
     try {
@@ -467,6 +469,81 @@ describe("inference selection validation", () => {
       ).rejects.toThrow("Non-interactive endpoint validation failed.");
       expect(probeAnthropicEndpoint).not.toHaveBeenCalled();
       expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      process.exitCode = originalExitCode;
+      exit.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it("tears down an orphan managed gateway before non-interactive validation exit (#8952)", async () => {
+    const originalExitCode = process.exitCode;
+    const teardownOrphanManagedGatewayOnAbort = vi.fn();
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => true,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeAnthropicEndpoint: vi.fn(),
+      teardownOrphanManagedGatewayOnAbort,
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+      resolveEndpointHost: async () => [{ address: "169.254.169.254", family: 4 }],
+    });
+
+    try {
+      await expect(
+        helpers.validateCustomAnthropicSelection(
+          "Custom Anthropic",
+          "https://metadata-name.example/v1",
+          "model-a",
+          "COMPATIBLE_ANTHROPIC_API_KEY",
+        ),
+      ).rejects.toThrow("Non-interactive endpoint validation failed.");
+      expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledTimes(1);
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(teardownOrphanManagedGatewayOnAbort.mock.invocationCallOrder[0]).toBeLessThan(
+        exit.mock.invocationCallOrder[0] ?? 0,
+      );
+    } finally {
+      process.exitCode = originalExitCode;
+      exit.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it("still exits when abort teardown throws during non-interactive validation (#8952)", async () => {
+    const originalExitCode = process.exitCode;
+    const teardownOrphanManagedGatewayOnAbort = vi.fn(() => {
+      throw new Error("teardown boom");
+    });
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => true,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeAnthropicEndpoint: vi.fn(),
+      teardownOrphanManagedGatewayOnAbort,
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+      resolveEndpointHost: async () => [{ address: "169.254.169.254", family: 4 }],
+    });
+
+    try {
+      await expect(
+        helpers.validateCustomAnthropicSelection(
+          "Custom Anthropic",
+          "https://metadata-name.example/v1",
+          "model-a",
+          "COMPATIBLE_ANTHROPIC_API_KEY",
+        ),
+      ).rejects.toThrow("Non-interactive endpoint validation failed.");
+      expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledTimes(1);
+      expect(error.mock.calls.map((call) => String(call[0])).join("\n")).toContain("teardown boom");
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(teardownOrphanManagedGatewayOnAbort.mock.invocationCallOrder[0]).toBeLessThan(
+        exit.mock.invocationCallOrder[0] ?? 0,
+      );
     } finally {
       process.exitCode = originalExitCode;
       exit.mockRestore();
@@ -796,6 +873,7 @@ exit 0
       probeOpenAiLikeEndpoint,
       promptValidationRecovery,
       resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
+      teardownOrphanManagedGatewayOnAbort: vi.fn(),
     });
 
     try {

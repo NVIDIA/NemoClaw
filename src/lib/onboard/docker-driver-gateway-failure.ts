@@ -23,12 +23,14 @@
  */
 
 import fs from "node:fs";
+import path from "node:path";
 
 import { redact } from "../security/redact";
 import { classifyGatewayStartFailure } from "../validation";
 
 import type { ChildExitState } from "./child-exit-tracker";
 import { printDockerDaemonRecovery } from "./gateway-start-failure";
+import { noteOnboardResumeHintShown, onboardRecoveryCommand } from "./resume-hint";
 
 export type ReportDockerDriverGatewayStartFailureOpts = {
   /**
@@ -37,7 +39,22 @@ export type ReportDockerDriverGatewayStartFailureOpts = {
    * path), just print and let the caller decide.
    */
   exitOnFailure: boolean;
+  /** Byte offset where the current gateway launch began writing the append-only log. */
+  launchLogOffset: number;
 };
+
+function findAvailableGatewayStateArchivePath(stateDir: string): string | null {
+  for (let suffix = 1; suffix <= 100; suffix += 1) {
+    const candidate = `${stateDir}.incompatible${suffix === 1 ? "" : `-${suffix}`}`;
+    try {
+      fs.lstatSync(candidate);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return candidate;
+      return null;
+    }
+  }
+  return null;
+}
 
 /**
  * Print the standard Docker-driver-gateway-start failure diagnostic set
@@ -52,11 +69,13 @@ export type ReportDockerDriverGatewayStartFailureOpts = {
 export function reportDockerDriverGatewayStartFailure(
   logPath: string,
   childExit: ChildExitState,
-  { exitOnFailure }: ReportDockerDriverGatewayStartFailureOpts,
+  { exitOnFailure, launchLogOffset }: ReportDockerDriverGatewayStartFailureOpts,
 ): void {
-  const tail = fs.existsSync(logPath)
-    ? fs.readFileSync(logPath, "utf-8").split("\n").filter(Boolean).slice(-20).join("\n")
-    : "";
+  const logBytes = fs.existsSync(logPath) ? fs.readFileSync(logPath) : Buffer.alloc(0);
+  const currentLaunchLog = logBytes
+    .subarray(Math.min(Math.max(launchLogOffset, 0), logBytes.length))
+    .toString("utf-8");
+  const tail = currentLaunchLog.split("\n").filter(Boolean).slice(-20).join("\n");
 
   console.error("  Docker-driver gateway failed to start.");
   if (childExit.exited) {
@@ -74,8 +93,42 @@ export function reportDockerDriverGatewayStartFailure(
     console.error("  Gateway log tail:");
     for (const line of tail.split("\n")) console.error(`    ${redact(line)}`);
   }
-  if (classifyGatewayStartFailure(tail).kind === "docker_unreachable") {
+  const failure = classifyGatewayStartFailure(tail);
+  if (failure.kind === "docker_unreachable") {
     printDockerDaemonRecovery(console.error);
+  } else if (failure.kind === "database_migration_incompatible" && childExit.exited) {
+    const stateDir = path.dirname(logPath);
+    const databasePath = path.join(stateDir, "openshell.db");
+    console.error("  The installed OpenShell version cannot use the existing gateway database.");
+    console.error(`  Database: ${databasePath}`);
+    console.error("  The database records a migration that this OpenShell version does not include.");
+    console.error("  This can happen after an OpenShell downgrade.");
+    const archivePath = findAvailableGatewayStateArchivePath(stateDir);
+    if (archivePath) {
+      const archivedStatePath = path.join(archivePath, "gateway-state");
+      const [stateDirArg, archivePathArg, archivedStatePathArg] = [
+        stateDir,
+        archivePath,
+        archivedStatePath,
+      ].map(
+        (value) => `'${value.replaceAll("'", `'\\''`)}'`,
+      );
+      console.error(
+        "  The selected gateway state contains credentials and all registrations for this gateway.",
+      );
+      console.error("  Keep the archive owner-only until every required registration is restored.");
+      console.error(
+        "  Create the archive, move the selected gateway state, then continue onboarding:",
+      );
+      console.error(
+        `    mkdir -m 700 ${archivePathArg} && mv ${stateDirArg} ${archivedStatePathArg} && ${onboardRecoveryCommand()}`,
+      );
+      noteOnboardResumeHintShown();
+    } else {
+      console.error("  NemoClaw could not select an unused archive path for the gateway state.");
+      console.error("  Keep the gateway stopped and inspect the state directory before recovery.");
+      noteOnboardResumeHintShown();
+    }
   }
   console.error("  Troubleshooting:");
   console.error(`    tail -100 ${logPath}`);
