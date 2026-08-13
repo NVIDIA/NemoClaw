@@ -120,18 +120,18 @@ describe("N1x identity", () => {
     ).toEqual({ candidate: false, fastOsMarker: false, pciGpu: undefined, qualified: false });
   });
 
-  it.each([
-    "ELOOP",
-    "EMLINK",
-  ])("preserves a linked FastOS marker as an unqualified N1x candidate with %s (#8574)", (code) => {
-    expect(
-      n1xFixture({
-        openFile: () => {
-          throw Object.assign(new Error("marker unavailable"), { code });
-        },
-      }),
-    ).toEqual({ candidate: true, fastOsMarker: false, pciGpu: undefined, qualified: false });
-  });
+  it.each(["ELOOP", "EMLINK"])(
+    "preserves a linked FastOS marker as an unqualified N1x candidate with %s (#8574)",
+    (code) => {
+      expect(
+        n1xFixture({
+          openFile: () => {
+            throw Object.assign(new Error("marker unavailable"), { code });
+          },
+        }),
+      ).toEqual({ candidate: true, fastOsMarker: false, pciGpu: undefined, qualified: false });
+    },
+  );
 
   it("preserves an unreadable FastOS marker as an inconclusive N1x candidate (#8574)", () => {
     expect(
