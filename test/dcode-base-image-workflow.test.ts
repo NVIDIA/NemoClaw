@@ -47,11 +47,13 @@ describe("base-image dependency contracts", () => {
       ),
     ) as { runs?: { steps?: Step[] } };
     const steps = action.runs?.steps ?? [];
-    const validate = steps.find(
-      (candidate) => candidate.name === "Validate Deep Agents Code dos2unix executable",
-    );
-    expect(validate, "base-image platform action is missing the dos2unix validation").toBeDefined();
-    if (!validate) return;
+    const validate =
+      steps.find(
+        (candidate) => candidate.name === "Validate Deep Agents Code dos2unix executable",
+      ) ??
+      (() => {
+        throw new Error("Base-image platform action is missing the dos2unix validation");
+      })();
     const buildIndex = steps.findIndex(
       (candidate) => candidate.name === "Build and push platform digest",
     );
