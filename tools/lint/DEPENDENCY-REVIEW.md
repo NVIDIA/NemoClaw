@@ -19,4 +19,11 @@ production dependency. The `files` array in the root `package.json` does not inc
 `npm pack --dry-run --json --ignore-scripts` does not include the SonarJS package code.
 The locked npm cache seed generated from `nemoclaw/package-lock.json` does not include SonarJS.
 
-Re-review is required if any reviewed fact changes: package version, declared license, dependency class, registry artifact contents, inclusion in a NemoClaw image or published package, or execution outside contributor and CI lint checks.
+Re-review is required if any of these facts changes:
+
+- Package version.
+- Declared license.
+- Dependency class.
+- Registry artifact contents.
+- Inclusion in a NemoClaw image or published package.
+- Execution outside contributor and CI lint checks.
