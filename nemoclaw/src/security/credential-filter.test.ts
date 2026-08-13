@@ -95,7 +95,7 @@ describe("plugin credential-filter", () => {
     expect(isSafeCredentialPlaceholder("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_TOKEN")).toBe(true);
     expect(isSafeCredentialPlaceholder(null)).toBe(false);
     expect(valueLooksLikeSecret("sk-abcdefghijklmnopqrstuvwxyz")).toBe(true);
-    expect(valueLooksLikeSecret("glpat-abcdefghijklmnopqrst")).toBe(true);
+    expect(valueLooksLikeSecret("glpat-abcdefghijklmnopqrst")).toBe(true); // gitleaks:allow -- credential-detector fixture
     expect(valueLooksLikeSecret("nvcf-abcdefghij")).toBe(true);
     expect(valueLooksLikeSecret("GITHUB_TOKEN=opaque-secret-value-123")).toBe(true);
     expect(valueLooksLikeSecret("apiKey=opaque-secret-value-123")).toBe(true);

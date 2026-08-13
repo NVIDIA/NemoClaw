@@ -245,7 +245,6 @@ async function compileProductionPreload(shellProbe: ShellProbe, workdir: string)
   return preload;
 }
 
-// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "WhatsApp pairing QR renders compact with the NemoClaw preload",
   {
