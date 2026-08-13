@@ -161,6 +161,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
         exitOnFailure: false,
         isGatewayStateInUse: () => false,
         launchLogOffset: 0,
+        resolveGatewayStopCommand: () => "systemctl --user stop nemoclaw-openshell-gateway",
       });
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
       expect(joined).toContain("cannot use the existing gateway database");
@@ -171,7 +172,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       expect(joined).toContain("mkdir -m 700");
       expect(joined).toContain("incompatible/gateway-state'");
       expect(joined).toContain("nemoclaw onboard --resume");
-      expect(joined).not.toContain("could not confirm that the gateway process stopped");
+      expect(joined).toContain("systemctl --user stop nemoclaw-openshell-gateway && mkdir -m 700");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -217,7 +218,11 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
     }
   });
 
-  it("prints the state move when the runtime confirms no gateway process remains (#8797)", () => {
+  // Regression: NemoClaw #8797. On the reported downgrade the gateway dies on
+  // this failure, but the start loop reports it after the poll budget expires,
+  // so `childExit.exited` is false. Withholding the diagnosis in that state
+  // left the reported path with the raw sqlx text and no remedy.
+  it("prints the managed-service stop ahead of the state move when the exit was not observed (#8797)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
     const log = path.join(dir, "openshell-gateway.log");
     fs.writeFileSync(
@@ -232,23 +237,23 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       reportDockerDriverGatewayStartFailure(log, makeExitState(), {
         exitOnFailure: false,
         launchLogOffset: 0,
-        isGatewayStateInUse: () => false,
+        resolveGatewayStopCommand: () => "systemctl --user stop nemoclaw-openshell-gateway",
       });
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
       expect(joined).toContain("did not become healthy within the timeout");
       expect(joined).toContain("cannot use the existing gateway database");
       expect(joined).toContain(`Database: ${path.join(dir, "openshell.db")}`);
-      expect(joined).toContain(`mkdir -m 700 '${dir}.incompatible'`);
-      expect(joined).not.toContain("could not confirm that the gateway process stopped");
+      expect(joined).toContain(
+        `systemctl --user stop nemoclaw-openshell-gateway && mkdir -m 700 '${dir}.incompatible'`,
+      );
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it.each([
-    ["a service manager replaced the recorded process", () => true],
-    ["no identity-aware liveness result is available", undefined],
-  ] as const)("withholds the state move when %s (#8797)", (_scenario, probe) => {
+  // The recovery must stop the manager that actually runs the gateway on this
+  // host, so macOS gets the Homebrew service (#8797).
+  it("stops the Homebrew service in the recovery on macOS (#8797)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
     const log = path.join(dir, "openshell-gateway.log");
     fs.writeFileSync(
@@ -259,29 +264,50 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       ].join("\n"),
     );
     try {
-      reportDockerDriverGatewayStartFailure(
-        log,
-        makeExitState({ exited: _scenario.includes("replaced") }),
-        {
-          exitOnFailure: false,
-          launchLogOffset: 0,
-          isGatewayStateInUse: probe,
-          platform: "linux",
-        },
-      );
+      reportDockerDriverGatewayStartFailure(log, makeExitState(), {
+        exitOnFailure: false,
+        launchLogOffset: 0,
+        resolveGatewayStopCommand: () => "brew services stop openshell",
+      });
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
-      expect(joined).toContain("cannot use the existing gateway database");
-      expect(joined).toContain(`Database: ${path.join(dir, "openshell.db")}`);
-      expect(joined).toContain("could not confirm that the gateway process stopped");
-      expect(joined).toContain("systemctl --user stop nemoclaw-openshell-gateway");
-      expect(joined).not.toContain("mkdir -m 700");
-      expect(joined).not.toContain("mv ");
+      expect(joined).toContain("brew services stop openshell && mkdir -m 700");
+      expect(joined).not.toContain("systemctl --user stop");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it("prints the Homebrew service stop command on macOS when liveness is unconfirmed (#8797)", () => {
+  it.each([
+    ["a replacement still uses the selected state", () => true],
+    ["no identity-aware liveness result is available", undefined],
+  ] as const)("withholds the standalone state move when %s (#8797)", (_scenario, probe) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
+    const log = path.join(dir, "openshell-gateway.log");
+    fs.writeFileSync(
+      log,
+      [
+        "Error:   × execution error: migration error: migration 6 was previously applied but",
+        "  │ is missing in the resolved migrations",
+      ].join("\n"),
+    );
+    try {
+      reportDockerDriverGatewayStartFailure(log, makeExitState(), {
+        exitOnFailure: false,
+        isGatewayStateInUse: probe,
+        launchLogOffset: 0,
+        resolveGatewayStopCommand: () => null,
+      });
+      const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
+      expect(joined).toContain("could not confirm that the standalone gateway process stopped");
+      expect(joined).not.toContain(`mkdir -m 700 '${dir}.incompatible'`);
+      expect(joined).not.toContain("systemctl --user stop");
+      expect(joined).not.toContain("brew services stop");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("omits the stop for a confirmed-unused standalone gateway (#8797)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
     const log = path.join(dir, "openshell-gateway.log");
     fs.writeFileSync(
@@ -291,14 +317,14 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
     try {
       reportDockerDriverGatewayStartFailure(log, makeExitState(), {
         exitOnFailure: false,
-        isGatewayStateInUse: () => true,
+        isGatewayStateInUse: () => false,
         launchLogOffset: 0,
-        platform: "darwin",
+        resolveGatewayStopCommand: () => null,
       });
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
-      expect(joined).toContain("brew services stop openshell");
+      expect(joined).toContain(`mkdir -m 700 '${dir}.incompatible'`);
       expect(joined).not.toContain("systemctl --user stop");
-      expect(joined).not.toContain("mkdir -m 700");
+      expect(joined).not.toContain("brew services stop");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -319,6 +345,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
         exitOnFailure: false,
         isGatewayStateInUse: () => false,
         launchLogOffset: 0,
+        resolveGatewayStopCommand: () => null,
       });
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
       expect(joined).toContain(`mkdir -m 700 '${stateDir}.incompatible-2'`);
@@ -346,6 +373,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
         exitOnFailure: false,
         isGatewayStateInUse: () => false,
         launchLogOffset: 0,
+        resolveGatewayStopCommand: () => null,
       });
       printOnboardResumeHint(false, console.error);
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
@@ -370,6 +398,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
         exitOnFailure: false,
         isGatewayStateInUse: () => false,
         launchLogOffset: 0,
+        resolveGatewayStopCommand: () => null,
       });
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
       expect(joined).toContain("nemoclaw onboard --experimental-profile portable");

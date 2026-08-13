@@ -4,22 +4,6 @@
 /**
  * Failure-reporting helper for the Docker-driver gateway startup path in
  * `onboard.ts:startDockerDriverGateway`.
- *
- * When the gateway fails to become healthy within the poll budget, users
- * need three things to debug:
- *
- *   1. The fact of failure ("Docker-driver gateway failed to start.").
- *   2. **Why** the child process died — signal or exit code — when
- *      applicable. Surfaced via `ChildExitState.describeExit()` so users
- *      don't have to `tail` the gateway log just to learn "the binary
- *      was killed by SIGKILL" or "exited with code 127" (#3111).
- *   3. The tail of the gateway log plus a couple of troubleshooting
- *      commands so they know where to look next.
- *
- * Separated from `onboard.ts` because (a) it's a cohesive unit that
- * doesn't depend on any onboard-private state besides the inputs, and
- * (b) `onboard.ts` is the God Object being decomposed — new diagnostic
- * logic should land in focused modules.
  */
 
 import fs from "node:fs";
@@ -29,23 +13,18 @@ import { redact } from "../security/redact";
 import { classifyGatewayStartFailure } from "../validation";
 
 import type { ChildExitState } from "./child-exit-tracker";
-import { getOpenShellGatewayManagedServiceStopCommand } from "./docker-driver-gateway-service";
+import { getOpenShellGatewayServiceStopCommand } from "./docker-driver-gateway-service";
 import { printDockerDaemonRecovery } from "./gateway-start-failure";
 import { noteOnboardResumeHintShown, onboardRecoveryCommand } from "./resume-hint";
 
 export type ReportDockerDriverGatewayStartFailureOpts = {
-  /**
-   * If true (the default for production call sites), print the failure
-   * message set and call `process.exit(1)`. If false (the recovery
-   * path), just print and let the caller decide.
-   */
   exitOnFailure: boolean;
   /** Byte offset where the current gateway launch began writing the append-only log. */
   launchLogOffset: number;
   /** Identity-aware selected-state ownership probe supplied by the onboarding runtime. */
   isGatewayStateInUse?: () => boolean;
-  /** Test seam for host-specific managed-service recovery guidance. */
-  platform?: NodeJS.Platform;
+  /** Resolve the service-manager stop command, or null for a standalone gateway. */
+  resolveGatewayStopCommand?: () => string | null;
 };
 
 function findAvailableGatewayStateArchivePath(stateDir: string): string | null {
@@ -64,25 +43,16 @@ function findAvailableGatewayStateArchivePath(stateDir: string): string | null {
 /**
  * Print the incompatible-database diagnosis and its state-move recovery.
  *
- * The diagnosis prints whether or not this process observed the gateway exit.
- * `startDockerDriverGateway` also reaches this reporter after the poll budget
- * expires, and after the child's liveness dropped before its `exit` event
- * arrived (#5334). A gateway that dies on this failure therefore reports
- * `childExit.exited === false` on the reported downgrade path, and gating the
- * whole diagnosis on that flag left that path with no diagnosis at all (#8797).
- *
- * The state move needs stronger evidence than the diagnosis, because moving the
- * directory while a gateway process still runs leaves that process without its
- * state. This function prints the move only when the reporter itself established
- * that no gateway process holds the directory. An observed child exit is not
- * sufficient because `Restart=on-failure` can start a replacement before this
- * diagnostic runs. The caller therefore supplies the runtime's identity-aware
- * state-ownership probe, which also covers replacement processes (#8797).
+ * Managed gateways stop their owning service in the same command chain as the
+ * state move, so `Restart=on-failure` cannot replace the process between a
+ * separate check and the move. Standalone gateways have no manager to stop and
+ * receive the move only after the runtime confirms that no matching gateway
+ * process still uses the selected state (#8797; advisor findings PRA-1/PRA-2).
  */
 function printIncompatibleGatewayDatabaseRecovery(
   logPath: string,
   isGatewayStateInUse: (() => boolean) | undefined,
-  platform: NodeJS.Platform,
+  resolveGatewayStopCommand: () => string | null,
   printError: (message?: string) => void,
 ): void {
   const stateDir = path.dirname(logPath);
@@ -90,10 +60,10 @@ function printIncompatibleGatewayDatabaseRecovery(
   printError(`  Database: ${path.join(stateDir, "openshell.db")}`);
   printError("  The database records a migration that this OpenShell version does not include.");
   printError("  This can happen after an OpenShell downgrade.");
-  if (isGatewayStateInUse?.() !== false) {
-    printError("  NemoClaw could not confirm that the gateway process stopped.");
+  const stopCommand = resolveGatewayStopCommand();
+  if (!stopCommand && isGatewayStateInUse?.() !== false) {
+    printError("  NemoClaw could not confirm that the standalone gateway process stopped.");
     printError("  Stop the gateway, then run onboarding again:");
-    printError(`    ${getOpenShellGatewayManagedServiceStopCommand({ platform })}`);
     printError(`    ${onboardRecoveryCommand()}`);
     printError(
       "  A gateway process that keeps running after the move writes to a path that no longer holds its state.",
@@ -117,23 +87,16 @@ function printIncompatibleGatewayDatabaseRecovery(
     "  The selected gateway state contains credentials and all registrations for this gateway.",
   );
   printError("  Keep the archive owner-only until every required registration is restored.");
-  printError("  Create the archive, move the selected gateway state, then continue onboarding:");
+  const move = `mkdir -m 700 ${archivePathArg} && mv ${stateDirArg} ${archivedStatePathArg} && ${onboardRecoveryCommand()}`;
   printError(
-    `    mkdir -m 700 ${archivePathArg} && mv ${stateDirArg} ${archivedStatePathArg} && ${onboardRecoveryCommand()}`,
+    stopCommand
+      ? "  Stop the gateway, create the archive, move the selected gateway state, then continue onboarding:"
+      : "  Create the archive, move the selected gateway state, then continue onboarding:",
   );
+  printError(`    ${stopCommand ? `${stopCommand} && ${move}` : move}`);
   noteOnboardResumeHintShown();
 }
 
-/**
- * Print the standard Docker-driver-gateway-start failure diagnostic set
- * to stderr and either exit or return. Always prints:
- *
- *   - the "failed to start" header,
- *   - the child-exit descriptor when available,
- *   - the last 20 non-blank lines of the gateway log (redacted), and
- *   - a short Troubleshooting footer with the log path and a docker CDI
- *     inspection command.
- */
 export function reportDockerDriverGatewayStartFailure(
   logPath: string,
   childExit: ChildExitState,
@@ -141,7 +104,7 @@ export function reportDockerDriverGatewayStartFailure(
     exitOnFailure,
     launchLogOffset,
     isGatewayStateInUse,
-    platform = process.platform,
+    resolveGatewayStopCommand = getOpenShellGatewayServiceStopCommand,
   }: ReportDockerDriverGatewayStartFailureOpts,
 ): void {
   const logBytes = fs.existsSync(logPath) ? fs.readFileSync(logPath) : Buffer.alloc(0);
@@ -154,12 +117,6 @@ export function reportDockerDriverGatewayStartFailure(
   if (childExit.exited) {
     console.error(`  Gateway process ${childExit.describeExit()} before becoming ready.`);
   } else {
-    // #5334: the start loop also reaches this reporter when the poll budget is
-    // exhausted, or when the process's liveness dropped before its 'exit' event
-    // was observed. We therefore do NOT assert the process is "still running"
-    // (that would misreport a gateway that already died) and instead state only
-    // the observable fact: it never became healthy in time. The status commands
-    // in the Troubleshooting footer below are what reveal why.
     console.error("  The gateway process did not become healthy within the timeout.");
   }
   if (tail) {
@@ -173,7 +130,7 @@ export function reportDockerDriverGatewayStartFailure(
     printIncompatibleGatewayDatabaseRecovery(
       logPath,
       isGatewayStateInUse,
-      platform,
+      resolveGatewayStopCommand,
       console.error,
     );
   }
@@ -183,7 +140,5 @@ export function reportDockerDriverGatewayStartFailure(
   console.error("    openshell gateway info");
   console.error("    docker info --format '{{json .CDISpecDirs}}'");
 
-  if (exitOnFailure) {
-    process.exit(1);
-  }
+  if (exitOnFailure) process.exit(1);
 }

@@ -177,20 +177,6 @@ export function getOpenShellGatewayManagedServiceLogCommand(
   );
 }
 
-export function getOpenShellGatewayManagedServiceStopCommand(
-  opts: Pick<OpenShellGatewayUserServiceOptions, "existsSync" | "platform"> = {},
-): string {
-  const platform = opts.platform ?? process.platform;
-  if (platform === "darwin") {
-    return `brew services stop ${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`;
-  }
-  const serviceName =
-    platform === "linux" && hasUpstreamOpenShellGatewayUserService(opts)
-      ? OPENSHELL_GATEWAY_USER_SERVICE
-      : NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE;
-  return `systemctl --user stop ${serviceName}`;
-}
-
 export function getOpenShellGatewayUserServicePaths(): string[] {
   return [
     "/usr/local/lib/systemd/user/openshell-gateway.service",
@@ -700,6 +686,23 @@ export function hasOpenShellGatewayUserService(
   opts: OpenShellGatewayUserServiceOptions = {},
 ): boolean {
   return resolveOpenShellGatewayUserService(opts) !== null;
+}
+
+/**
+ * Stop command for whichever service manager owns the gateway on this host, or
+ * null when no managed service owns it and NemoClaw runs the gateway standalone.
+ *
+ * The resolver picks the upstream package unit, the NemoClaw unit, or the
+ * Homebrew formula, so a caller that prints a stop command must ask for the
+ * resolved name instead of deriving one from the platform (#8797).
+ */
+export function getOpenShellGatewayServiceStopCommand(
+  opts: OpenShellGatewayUserServiceOptions = {},
+): string | null {
+  const service = resolveOpenShellGatewayUserService(opts);
+  if (!service) return null;
+  const prefix = service.manager === "homebrew" ? "brew services stop" : "systemctl --user stop";
+  return `${prefix} ${service.serviceName}`;
 }
 
 function userManagerLooksUnavailable(reason: string): boolean {
