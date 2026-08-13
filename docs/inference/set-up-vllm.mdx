@@ -50,7 +50,15 @@ On N1x, the entry for an already-running server has no status label.
 Only the managed **Install vLLM** or **Start vLLM** entry carries the **Deferred preview** label.
 NemoClaw validates the detected endpoint and records the model reported by `/v1/models`.
 
-When an install request encounters an already-running server, NemoClaw selects that server instead of starting another container.
+On hosts other than N1x, when an install request encounters an already-running server, NemoClaw selects that server instead of starting another container.
+On N1x, explicit managed-preview intent never reuses an already-running server.
+Stop the server, then rerun managed onboarding.
+
+```bash
+NEMOCLAW_PROVIDER=install-vllm \
+  $$nemoclaw onboard --non-interactive
+```
+
 If the requested registry model and the served `id` differ, NemoClaw accepts the served `id` only when `/v1/models` reports a safe `root` that exactly matches the registry model.
 NemoClaw rejects mismatched or unverifiable roots, and it still requires the exact served identity for a newly started NemoClaw-managed container and for an existing shared-gateway route.
 When vLLM exposes runtime metadata such as `max_model_len`, NemoClaw uses that value for the configured context window unless you set `NEMOCLAW_CONTEXT_WINDOW`.
@@ -132,7 +140,8 @@ The container carries NemoClaw ownership and immutable catalog labels so later o
 NemoClaw also records an owner-only, credential-free runtime receipt that binds those labels to the exact container ID and API-key fingerprint.
 
 If an existing `nemoclaw-vllm` container does not carry that label, NemoClaw preserves it and asks you to remove or rename it before installing managed vLLM.
-If another vLLM server already occupies port `8000`, NemoClaw selects the existing-server path and applies the model-identity checks described above.
+On hosts other than N1x, if another vLLM server already occupies port `8000`, NemoClaw selects the existing-server path and applies the model-identity checks described above.
+On N1x, NemoClaw stops managed onboarding and requires you to stop that server before trying the Deferred preview again.
 If another process holds the configured single-host port, NemoClaw stops the managed install before it persists a bearer key or records the selected model.
 NemoClaw also stops before storage prompts, cache creation, image pull, or container start.
 Stop the process, then run onboarding again.
