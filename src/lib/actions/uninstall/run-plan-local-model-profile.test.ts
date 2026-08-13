@@ -175,6 +175,32 @@ describe("uninstall local model profile cleanup", () => {
     expect(errors.join("\n")).toContain("remains after ownership-aware cleanup");
   });
 
+  it("uses exact cleanup when the host-local vLLM receipt remains without its API key (#8981)", () => {
+    const errors: string[] = [];
+    const runDocker = vi.fn((_args: string[]) => ok());
+    const runLocalModelRuntimeCleanup = vi.fn(() => notFound());
+
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command === "openshell" || command === "docker",
+        env: { HOME: "/tmp/nemoclaw-uninstall-receipted-vllm" } as NodeJS.ProcessEnv,
+        existsSync: (target) => String(target).endsWith("/host-local-vllm-runtime.json"),
+        error: (message) => errors.push(message),
+        isTty: false,
+        log: () => {},
+        run: vi.fn(okWithKnownGatewayList),
+        runDocker,
+        runLocalModelRuntimeCleanup,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(runLocalModelRuntimeCleanup).toHaveBeenCalledOnce();
+    expect(runDocker).not.toHaveBeenCalled();
+    expect(errors.join("\n")).toContain("Host-local model runtime cleanup did not complete");
+  });
+
   it("stops uninstall when orphaned host-local vLLM removal fails (#8981)", () => {
     const errors: string[] = [];
     const containerId = "c".repeat(64);

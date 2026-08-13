@@ -46,7 +46,11 @@ import {
 } from "../serving/vllm-host-local-lifecycle";
 import { loadManagedVllmApiKey, managedVllmStateDir } from "../vllm-api-key";
 
-export { HOST_LOCAL_VLLM_CONTAINER_NAME, HOST_LOCAL_VLLM_MANAGED_LABEL };
+export {
+  HOST_LOCAL_VLLM_CONTAINER_NAME,
+  HOST_LOCAL_VLLM_MANAGED_LABEL,
+  HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
+};
 
 const LLAMA_MANAGED_LABEL = "io.nvidia.nemoclaw.host-local-inference.managed";
 const LLAMA_PROVIDER_LABEL = "io.nvidia.nemoclaw.host-local-inference.provider";

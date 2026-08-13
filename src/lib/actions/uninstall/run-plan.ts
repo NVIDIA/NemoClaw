@@ -32,6 +32,7 @@ import {
   cleanupManagedLlamaCppRuntimeForSandbox,
   HOST_LOCAL_VLLM_CONTAINER_NAME,
   HOST_LOCAL_VLLM_MANAGED_LABEL,
+  HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
   type ManagedLlamaCppCleanupTarget,
   resolveManagedLlamaCppCleanupTarget,
 } from "../../inference/local-model-profile/cleanup";
@@ -1592,12 +1593,20 @@ function removeHostLocalModelRuntimes(paths: UninstallPaths, runtime: UninstallR
   const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
   const hasLlamaState = runtime.existsSync(path.join(sharedRoot, "managed-llama-cpp"));
   const hasManagedKey = runtime.existsSync(path.join(sharedRoot, MANAGED_VLLM_API_KEY_FILE));
+  const hasHostLocalReceipt = runtime.existsSync(
+    path.join(sharedRoot, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE),
+  );
   const hasDistributedReceipt = [
     MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
     DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
   ].some((name) => runtime.existsSync(path.join(sharedRoot, name)));
-  if (!hasLlamaState && (!hasManagedKey || hasDistributedReceipt)) {
-    if (!hasManagedKey && !hasDistributedReceipt && !removeOrphanedManagedHostLocalVllm(runtime)) {
+  if (!hasLlamaState && ((!hasManagedKey && !hasHostLocalReceipt) || hasDistributedReceipt)) {
+    if (
+      !hasManagedKey &&
+      !hasHostLocalReceipt &&
+      !hasDistributedReceipt &&
+      !removeOrphanedManagedHostLocalVllm(runtime)
+    ) {
       return false;
     }
     return true;
