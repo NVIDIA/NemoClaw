@@ -1623,7 +1623,12 @@ function removeHostLocalModelRuntimes(paths: UninstallPaths, runtime: UninstallR
 }
 
 function removeOrphanedManagedHostLocalVllm(runtime: UninstallRuntime): boolean {
-  if (!runtime.commandExists("docker")) return true;
+  if (!runtime.commandExists("docker")) {
+    runtime.error(
+      `Docker is unavailable, so NemoClaw could not confirm that '${HOST_LOCAL_VLLM_CONTAINER_NAME}' is absent. NemoClaw did not start the remaining uninstall steps.`,
+    );
+    return false;
+  }
   const inspection = runtime.runDocker(
     [
       "container",
@@ -1634,10 +1639,32 @@ function removeOrphanedManagedHostLocalVllm(runtime: UninstallRuntime): boolean 
     ],
     { env: runtime.env, timeout: 10_000 },
   );
-  if (inspection.status !== 0 || !inspection.stdout.trim()) return true;
+  if (inspection.status !== 0) {
+    const absence = runtime.runDocker(
+      [
+        "container",
+        "ls",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        `name=^/${HOST_LOCAL_VLLM_CONTAINER_NAME}$`,
+        "--format",
+        "{{.ID}}",
+      ],
+      { env: runtime.env, timeout: 10_000 },
+    );
+    if (absence.status === 0 && !absence.stdout.trim()) return true;
+    runtime.error(
+      `Could not confirm that orphaned managed inference container '${HOST_LOCAL_VLLM_CONTAINER_NAME}' is absent. NemoClaw did not start the remaining uninstall steps.`,
+    );
+    return false;
+  }
   const [containerId, managedLabel, ...extra] = inspection.stdout.trim().split(/\s+/);
   if (!/^[0-9a-f]{64}$/u.test(containerId ?? "") || managedLabel !== "true" || extra.length > 0) {
-    return true;
+    runtime.error(
+      `Could not verify NemoClaw ownership of orphaned managed inference container '${HOST_LOCAL_VLLM_CONTAINER_NAME}'. NemoClaw did not start the remaining uninstall steps.`,
+    );
+    return false;
   }
   const removal = runtime.runDocker(["rm", "-f", containerId], {
     env: runtime.env,

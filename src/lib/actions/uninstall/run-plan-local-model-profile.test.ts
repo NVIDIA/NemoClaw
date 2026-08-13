@@ -38,9 +38,22 @@ const ORPHANED_VLLM_INSPECT_ARGS = [
   "nemoclaw-vllm",
 ];
 
+const ORPHANED_VLLM_ABSENCE_ARGS = [
+  "container",
+  "ls",
+  "--all",
+  "--no-trunc",
+  "--filter",
+  "name=^/nemoclaw-vllm$",
+  "--format",
+  "{{.ID}}",
+];
+
 const RESERVED_INFERENCE_NAMES_ARGS = ["ps", "-a", "--format", "{{.Names}}"];
 
 function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  const commandExists = deps.commandExists;
+  const hasExplicitDocker = deps.runDocker !== undefined;
   return runUninstallPlanBase(options, {
     resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
       gatewayName,
@@ -53,6 +66,16 @@ function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) 
       requiredCapabilities: [],
     }),
     ...deps,
+    commandExists: (command) =>
+      (!hasExplicitDocker && command === "docker") || commandExists?.(command) === true,
+    runDocker:
+      deps.runDocker ??
+      dockerResults(
+        new Map([
+          [JSON.stringify(ORPHANED_VLLM_INSPECT_ARGS), notFound()],
+          [JSON.stringify(ORPHANED_VLLM_ABSENCE_ARGS), ok()],
+        ]),
+      ),
   });
 }
 
@@ -144,7 +167,7 @@ describe("uninstall local model profile cleanup", () => {
 
     expect(result.exitCode).toBe(1);
     expect(runDocker.mock.calls.some(([args]) => args[0] === "rm")).toBe(false);
-    expect(errors.join("\n")).toContain("remains after ownership-aware cleanup");
+    expect(errors.join("\n")).toContain("Could not verify NemoClaw ownership");
   });
 
   it("preserves an orphaned host-local vLLM container after malformed inspection output (#8981)", () => {
@@ -172,7 +195,109 @@ describe("uninstall local model profile cleanup", () => {
 
     expect(result.exitCode).toBe(1);
     expect(runDocker.mock.calls.some(([args]) => args[0] === "rm")).toBe(false);
-    expect(errors.join("\n")).toContain("remains after ownership-aware cleanup");
+    expect(errors.join("\n")).toContain("Could not verify NemoClaw ownership");
+  });
+
+  it("stops orphan cleanup after an empty successful inspection (#8981)", () => {
+    const errors: string[] = [];
+    const runDocker = dockerResults(new Map([[JSON.stringify(ORPHANED_VLLM_INSPECT_ARGS), ok()]]));
+
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command === "openshell" || command === "docker",
+        env: { HOME: "/tmp/nemoclaw-uninstall-empty-vllm-inspection" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        error: (message) => errors.push(message),
+        isTty: false,
+        log: () => {},
+        run: vi.fn(okWithKnownGatewayList),
+        runDocker,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(runDocker).toHaveBeenCalledTimes(1);
+    expect(errors.join("\n")).toContain("Could not verify NemoClaw ownership");
+  });
+
+  it("stops orphan cleanup when Docker is unavailable (#8981)", () => {
+    const errors: string[] = [];
+    const runDocker = vi.fn((_args: string[]) => ok());
+
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command === "openshell",
+        env: { HOME: "/tmp/nemoclaw-uninstall-vllm-no-docker" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        error: (message) => errors.push(message),
+        isTty: false,
+        log: () => {},
+        run: vi.fn(okWithKnownGatewayList),
+        runDocker,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(runDocker).not.toHaveBeenCalled();
+    expect(errors.join("\n")).toContain("Docker is unavailable");
+  });
+
+  it("continues orphan cleanup only after Docker proves the container is absent (#8981)", () => {
+    const runDocker = dockerResults(
+      new Map([
+        [JSON.stringify(ORPHANED_VLLM_INSPECT_ARGS), notFound()],
+        [JSON.stringify(ORPHANED_VLLM_ABSENCE_ARGS), ok()],
+      ]),
+    );
+
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command === "openshell" || command === "docker",
+        env: { HOME: "/tmp/nemoclaw-uninstall-vllm-absent" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        log: () => {},
+        run: vi.fn(okWithKnownGatewayList),
+        runDocker,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(runDocker).toHaveBeenCalledWith(
+      ORPHANED_VLLM_ABSENCE_ARGS,
+      expect.objectContaining({ timeout: 10_000 }),
+    );
+  });
+
+  it("stops orphan cleanup when Docker cannot prove the container is absent (#8981)", () => {
+    const errors: string[] = [];
+    const runDocker = dockerResults(
+      new Map([
+        [JSON.stringify(ORPHANED_VLLM_INSPECT_ARGS), notFound()],
+        [JSON.stringify(ORPHANED_VLLM_ABSENCE_ARGS), notFound()],
+      ]),
+    );
+
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command === "openshell" || command === "docker",
+        env: { HOME: "/tmp/nemoclaw-uninstall-vllm-ambiguous" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        error: (message) => errors.push(message),
+        isTty: false,
+        log: () => {},
+        run: vi.fn(okWithKnownGatewayList),
+        runDocker,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(runDocker.mock.calls.some(([args]) => args[0] === "ps")).toBe(false);
+    expect(errors.join("\n")).toContain("Could not confirm");
   });
 
   it("uses exact cleanup when the host-local vLLM receipt remains without its API key (#8981)", () => {
@@ -247,6 +372,7 @@ describe("uninstall local model profile cleanup", () => {
         ]),
         notFound(),
       ],
+      [JSON.stringify(ORPHANED_VLLM_ABSENCE_ARGS), ok()],
       [JSON.stringify(["ps", "-a", "--format", "{{.Names}}"]), ok("nemoclaw-llama-cpp\n")],
       [
         JSON.stringify(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"]),
@@ -301,9 +427,13 @@ describe("uninstall local model profile cleanup", () => {
         isTty: false,
         log: () => {},
         run: vi.fn(okWithKnownGatewayList),
-        runDocker: vi.fn((args: string[]) =>
-          args[0] === "ps" && args.at(-1) === "{{.Names}}" ? notFound() : ok(),
-        ),
+        runDocker: vi.fn((args: string[]) => {
+          if (JSON.stringify(args) === JSON.stringify(ORPHANED_VLLM_INSPECT_ARGS)) {
+            return notFound();
+          }
+          if (JSON.stringify(args) === JSON.stringify(ORPHANED_VLLM_ABSENCE_ARGS)) return ok();
+          return args[0] === "ps" && args.at(-1) === "{{.Names}}" ? notFound() : ok();
+        }),
       },
     );
 
