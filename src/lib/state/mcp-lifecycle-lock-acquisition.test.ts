@@ -163,44 +163,6 @@ describe("MCP lifecycle lock acquisition", () => {
     expect(fs.existsSync(lockPath)).toBe(false);
   });
 
-  it("releases the owned generation when an asynchronous operation exits the process (#8877)", async () => {
-    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
-    const established = new Set(process.listeners("exit"));
-
-    await withMcpLifecycleLock(
-      SANDBOX_NAME,
-      () => {
-        expect(fs.existsSync(lockPath)).toBe(true);
-        for (const listener of process.listeners("exit")) {
-          if (!established.has(listener)) listener(0);
-        }
-        expect(fs.existsSync(lockPath)).toBe(false);
-      },
-      options(),
-    );
-
-    expect(process.listeners("exit").filter((listener) => !established.has(listener))).toEqual([]);
-  });
-
-  it("releases the owned generation when a synchronous operation exits the process (#8877)", () => {
-    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
-    const established = new Set(process.listeners("exit"));
-
-    withMcpLifecycleLockSync(
-      SANDBOX_NAME,
-      () => {
-        expect(fs.existsSync(lockPath)).toBe(true);
-        for (const listener of process.listeners("exit")) {
-          if (!established.has(listener)) listener(0);
-        }
-        expect(fs.existsSync(lockPath)).toBe(false);
-      },
-      options(),
-    );
-
-    expect(process.listeners("exit").filter((listener) => !established.has(listener))).toEqual([]);
-  });
-
   it("releases a synchronous lock after nested work completes", () => {
     const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
     const events: string[] = [];

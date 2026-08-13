@@ -43,7 +43,7 @@ describe("non-interactive session detection", () => {
 
   it("reads process.stdin when called without a terminal argument", () => {
     vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "");
-    const original = process.stdin.isTTY;
+    const originalDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
     try {
       Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
       expect(isNonInteractiveSession()).toBe(false);
@@ -51,7 +51,9 @@ describe("non-interactive session detection", () => {
       Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: undefined });
       expect(isNonInteractiveSession()).toBe(true);
     } finally {
-      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: original });
+      originalDescriptor
+        ? Object.defineProperty(process.stdin, "isTTY", originalDescriptor)
+        : Reflect.deleteProperty(process.stdin, "isTTY");
     }
   });
 });

@@ -82,6 +82,7 @@ let testHome: string;
 let registryEntry: SandboxEntry;
 let appliedPresets: string[];
 let session: onboardSession.Session;
+let stdinIsTty: PropertyDescriptor | undefined;
 
 function printedText(): string {
   return [...logSpy.mock.calls, ...errorSpy.mock.calls]
@@ -94,6 +95,8 @@ function openshellCalls(): string[][] {
 }
 
 beforeEach(() => {
+  stdinIsTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
   testHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-add-bridge-"));
   process.env.HOME = testHome;
   process.env.NEMOCLAW_NON_INTERACTIVE = "1";
@@ -188,6 +191,9 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  stdinIsTty
+    ? Object.defineProperty(process.stdin, "isTTY", stdinIsTty)
+    : Reflect.deleteProperty(process.stdin, "isTTY");
   fs.rmSync(testHome, { recursive: true, force: true });
   for (const key of Object.keys(process.env)) delete process.env[key];
   Object.assign(process.env, originalProcessEnv);
@@ -230,6 +236,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
 
   it("queues the rebuild instead of prompting when the session has no terminal (#8877)", async () => {
     delete process.env.NEMOCLAW_NON_INTERACTIVE;
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: undefined });
     const promptSpy = vi.spyOn(store, "prompt");
 
     await addSandboxChannel("test-sb", { channel: "googlechat" });

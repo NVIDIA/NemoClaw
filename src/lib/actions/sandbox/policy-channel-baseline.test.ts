@@ -100,7 +100,9 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.NEMOCLAW_NON_INTERACTIVE;
-  if (stdinIsTty) Object.defineProperty(process.stdin, "isTTY", stdinIsTty);
+  stdinIsTty
+    ? Object.defineProperty(process.stdin, "isTTY", stdinIsTty)
+    : Reflect.deleteProperty(process.stdin, "isTTY");
 });
 
 describe("excludeSandboxBaseline (#7178)", () => {

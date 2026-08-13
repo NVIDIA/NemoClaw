@@ -372,7 +372,9 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   for (const s of spies) s.mockRestore();
-  if (stdinIsTty) Object.defineProperty(process.stdin, "isTTY", stdinIsTty);
+  stdinIsTty
+    ? Object.defineProperty(process.stdin, "isTTY", stdinIsTty)
+    : Reflect.deleteProperty(process.stdin, "isTTY");
   delete process.env.NEMOCLAW_NON_INTERACTIVE;
   delete process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY;
   delete process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION;

@@ -327,7 +327,9 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  if (stdinIsTty) Object.defineProperty(process.stdin, "isTTY", stdinIsTty);
+  stdinIsTty
+    ? Object.defineProperty(process.stdin, "isTTY", stdinIsTty)
+    : Reflect.deleteProperty(process.stdin, "isTTY");
   fs.rmSync(testHome, { recursive: true, force: true });
   for (const key of Object.keys(process.env)) delete process.env[key];
   Object.assign(process.env, originalProcessEnv);
