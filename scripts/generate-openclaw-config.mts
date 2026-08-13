@@ -1432,7 +1432,11 @@ export function buildConfig(env: Env = process.env): JsonObject {
   }
 
   const plugins: JsonObject = {
-    allow: unique(["nemoclaw", ...openclawPlugins.map((plugin) => plugin.id)]),
+    allow: unique([
+      "nemoclaw",
+      ...(openclawOtel ? ["diagnostics-otel"] : []),
+      ...openclawPlugins.map((plugin) => plugin.id),
+    ]),
     entries: pluginEntries,
   };
   const pluginLoadPaths: string[] = [];
@@ -1554,6 +1558,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
       enabled: true,
       config: { webSearch: { apiKey: `openshell:resolve:env:${credentialEnv}` } },
     };
+    config.plugins.allow = unique([...config.plugins.allow, webSearchProvider]);
   }
 
   return config;

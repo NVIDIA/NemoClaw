@@ -25,6 +25,7 @@ describe("generate-openclaw-config.mts: Tavily web search", () => {
       config: { webSearch: { apiKey: "openshell:resolve:env:TAVILY_API_KEY" } },
     });
     expect(config.plugins?.entries?.brave).toBeUndefined();
+    expect(config.plugins?.allow).toContain("tavily");
     expect(config.tools?.web?.search?.apiKey).toBeUndefined();
     expect(config.tools?.web?.fetch).toEqual({ enabled: true, useTrustedEnvProxy: true });
   });

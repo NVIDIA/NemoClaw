@@ -125,19 +125,22 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
 
   it("suppresses only the UNDICI-EHPA warning for OpenClaw agent commands (#8975)", () => {
     const wrapped = wrapOpenClawAgentCommandWithRuntimeEnv([
-      process.execPath,
+      "node",
       "-e",
       [
+        'process.stdout.write(`TOKEN=[${process.env.OPENCLAW_GATEWAY_TOKEN ?? ""}]`);',
         'process.emitWarning("proxy warning", { code: "UNDICI-EHPA" });',
         'process.emitWarning("other warning", { code: "NEMOCLAW-TEST" });',
       ].join(""),
     ]);
     const result = spawnSync(wrapped[0], wrapped.slice(1), {
       encoding: "utf-8",
-      env: { ...process.env },
+      env: { ...process.env, OPENCLAW_GATEWAY_TOKEN: "super-secret-gateway-token" },
     });
 
     expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("TOKEN=[]");
+    expect(result.stdout).not.toContain("super-secret-gateway-token");
     expect(result.stderr).not.toContain("UNDICI-EHPA");
     expect(result.stderr).not.toContain("proxy warning");
     expect(result.stderr).toContain("NEMOCLAW-TEST");
