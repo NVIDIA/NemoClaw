@@ -927,6 +927,7 @@ When `$$nemoclaw onboard` detects an NVIDIA GPU on the host, it enables OpenShel
 The `nvidia-smi` probes require a successful result and reject placeholder `JMJWOA-Generic-*` GPU names unless NemoClaw can prove a supported NVIDIA platform or GPU execution.
 NemoClaw treats a recognized NVIDIA product model from `/sys/class/dmi/id/product_name` or `/sys/firmware/devicetree/base/model`, or a known Tegra device node, as authoritative platform identity.
 On eligible native or Docker Desktop-backed WSL ARM64 Linux hosts without that firmware evidence, one bounded Docker CUDA workload can prove GPU execution.
+On those hosts, a single plausible, non-placeholder NVIDIA GPU name also requires that proof when the NVIDIA kernel-driver interface (`/proc/driver/nvidia`) is absent.
 For the proof command, timeout control, and failure recovery, refer to [GPU Setup Fails with a Placeholder GPU Name](troubleshooting#gpu-setup-fails-with-a-placeholder-gpu-name).
 The names-only unified-memory fallback does not run this workload and rejects denylisted names.
 Other non-firmware-vouched hosts also reject denylisted names.
@@ -4787,7 +4788,7 @@ Defaults are sized for typical hardware; override only if you see false-positive
 | `NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS` | `30` | Maximum time to wait for an OpenShell MCP provider credential revision to become active or fully revoked inside the sandbox. Integer seconds; raise only when provider synchronization is unusually slow. |
 | `NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS` | per call site (typically `15000`) | Overrides the default timeout for `openshell sandbox exec` calls issued by recovery and lifecycle helpers. Integer milliseconds; non-positive or non-numeric values fall back to the per-call-site default. |
 | `NEMOCLAW_STATUS_PROBE_TIMEOUT_MS` | built-in default | Overrides the timeout for the OpenShell status probe used by `$$nemoclaw <name> status`. Integer milliseconds; non-positive or non-numeric values fall back to the default. |
-| `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` | `180000` | Maximum time for the bounded Docker CUDA workload that proves a placeholder-named GPU on an eligible ARM64 Linux host. A positive finite number of milliseconds overrides the default. Invalid, infinite, zero, and negative values use the default. |
+| `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` | `180000` | Maximum time for the bounded Docker CUDA workload on an eligible ARM64 Linux host. A positive finite number of milliseconds overrides the default. Invalid, infinite, zero, and negative values use the default. |
 
 ### Onboard and Sandbox Readiness Timeouts
 
