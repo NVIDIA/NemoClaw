@@ -530,7 +530,7 @@ export function measureDirectorySizeBytes(
 }
 
 /**
- * Return allocated bytes that removing one owned directory tree will reclaim.
+ * Return allocated bytes that removing the directory tree selected for replacement will reclaim.
  * The walk uses lstat so symlinks never contribute target storage. Files with
  * other hard links do not count because removing this tree might not release
  * their blocks. Any unreadable or malformed tree returns zero.

@@ -239,7 +239,7 @@ export function createModelRouterCommandProvisioner(
       `Model Router installation needs at least ${deps.formatStorageBytes(MODEL_ROUTER_VENV_REQUIRED_BYTES)} of free or reclaimable capacity ` +
         `at ${probe.capacity.path} (~2.1 GiB of Python packages plus download staging), but only ` +
         `${deps.formatStorageBytes(availableBytes)} is available. ` +
-        `Free up at least ${String(shortfallMib)} MiB and retry.`,
+        `Free at least ${String(shortfallMib)} MiB, then run \`nemoclaw onboard --resume\`.`,
     );
   };
 

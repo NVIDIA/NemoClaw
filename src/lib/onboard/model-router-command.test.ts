@@ -134,7 +134,7 @@ describe("model-router venv disk-space gate (#8973)", () => {
     const { provisioner } = makeProvisioner({ availableBytes: 3n * GIB - 1n });
 
     expect(() => provisioner.ensureModelRouterCommand()).toThrow(
-      /Free up at least 1 MiB and retry/,
+      /Free at least 1 MiB, then run `nemoclaw onboard --resume`/,
     );
   });
 
