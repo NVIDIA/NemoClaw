@@ -13,12 +13,14 @@ type Log = (message: string) => void;
  * a managed gateway was in scope.
  */
 export type GatewayStopOutcome =
-  /** A release ran against a resolved gateway port. */
+  /** A release ran and was confirmed (or intentionally skipped as invalid). */
   | "attempted"
   /** A registered peer still owns the gateway, so it stays up by design. */
   | "kept-shared"
   /** No sandbox name and no explicit NEMOCLAW_GATEWAY_PORT — nothing was scoped. */
-  | "not-scoped";
+  | "not-scoped"
+  /** A scoped release ran but the listener was not confirmed gone. */
+  | "unconfirmed";
 
 export interface GatewayStopDeps {
   env?: NodeJS.ProcessEnv;
@@ -78,7 +80,7 @@ function findSharedGatewayOwner(
 function reportUnconfirmedGatewayRelease(
   warn: Log,
   release: { port: number | null; released: boolean; skipped: boolean },
-): void {
+): boolean {
   // The release helper reports invalid bindings itself. For an attempted but
   // unconfirmed release, do not recommend killing raw lsof PIDs: an unrelated
   // listener may be one the scoped stopper deliberately left alone.
@@ -87,7 +89,9 @@ function reportUnconfirmedGatewayRelease(
       `NemoClaw gateway port ${release.port ?? "?"} was not confirmed released. ` +
         "Inspect the remaining listener and stop it only if it is the matching gateway process.",
     );
+    return true;
   }
+  return false;
 }
 
 function reportAmbiguousGatewayRelease(warn: Log, env: NodeJS.ProcessEnv, error: unknown): void {
@@ -128,9 +132,11 @@ export function releaseGatewayPortForStop(
     const port = resolveExplicitGatewayPortEnv(env);
     if (port === null) return "not-scoped";
     try {
-      reportUnconfirmedGatewayRelease(warn, releaseManagedGatewayPort({ port }, { env }));
+      const result = releaseManagedGatewayPort({ port }, { env });
+      if (reportUnconfirmedGatewayRelease(warn, result)) return "unconfirmed";
     } catch (error) {
       reportAmbiguousGatewayRelease(warn, env, error);
+      return "unconfirmed";
     }
     return "attempted";
   }
@@ -145,9 +151,11 @@ export function releaseGatewayPortForStop(
       return "kept-shared";
     }
 
-    reportUnconfirmedGatewayRelease(warn, releaseManagedGatewayPort({ sandboxName }));
+    const result = releaseManagedGatewayPort({ sandboxName });
+    if (reportUnconfirmedGatewayRelease(warn, result)) return "unconfirmed";
   } catch (error) {
     reportAmbiguousGatewayRelease(warn, env, error);
+    return "unconfirmed";
   }
   return "attempted";
 }

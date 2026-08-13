@@ -165,4 +165,70 @@ describe("teardownOrphanManagedGatewayOnAbort (#8952)", () => {
       "registry unreadable",
     );
   });
+
+  it("keeps registration when listener release is not confirmed", () => {
+    const release = vi.fn(() => ({
+      port: 8814,
+      released: false,
+      stopped: [],
+      remaining: [4242],
+      scanned: true,
+      skipped: false,
+    }));
+    const remove = vi.fn();
+    const warn = vi.fn();
+    const attempted = teardownOrphanManagedGatewayOnAbort({
+      gatewayPort: 8814,
+      gatewayName: "nemoclaw-8814",
+      listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
+      resolveAuthority: () => ({
+        gatewayName: "nemoclaw-8814",
+        gatewayPort: 8814,
+        mode: "nemoclaw-managed",
+        source: "standalone",
+        endpoint: null,
+        stateDir: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      }),
+      releaseManagedGatewayPort: release,
+      removeGatewayRegistration: remove,
+      warn,
+    });
+    expect(attempted).toBe(true);
+    expect(release).toHaveBeenCalledWith({ port: 8814 });
+    expect(remove).not.toHaveBeenCalled();
+    expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      "not confirmed released",
+    );
+  });
+
+  it("keeps registration when listener release throws", () => {
+    const release = vi.fn(() => {
+      throw new Error("stop boom");
+    });
+    const remove = vi.fn();
+    const warn = vi.fn();
+    const attempted = teardownOrphanManagedGatewayOnAbort({
+      gatewayPort: 8814,
+      gatewayName: "nemoclaw-8814",
+      listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
+      resolveAuthority: () => ({
+        gatewayName: "nemoclaw-8814",
+        gatewayPort: 8814,
+        mode: "nemoclaw-managed",
+        source: "standalone",
+        endpoint: null,
+        stateDir: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      }),
+      releaseManagedGatewayPort: release,
+      removeGatewayRegistration: remove,
+      warn,
+    });
+    expect(attempted).toBe(true);
+    expect(remove).not.toHaveBeenCalled();
+    expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toContain("stop boom");
+  });
 });

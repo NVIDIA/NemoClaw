@@ -500,6 +500,9 @@ describe("inference selection validation", () => {
       ).rejects.toThrow("Non-interactive endpoint validation failed.");
       expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledTimes(1);
       expect(exit).toHaveBeenCalledWith(1);
+      expect(teardownOrphanManagedGatewayOnAbort.mock.invocationCallOrder[0]).toBeLessThan(
+        exit.mock.invocationCallOrder[0] ?? 0,
+      );
     } finally {
       process.exitCode = originalExitCode;
       exit.mockRestore();
@@ -536,6 +539,9 @@ describe("inference selection validation", () => {
       expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledTimes(1);
       expect(error.mock.calls.map((call) => String(call[0])).join("\n")).toContain("teardown boom");
       expect(exit).toHaveBeenCalledWith(1);
+      expect(teardownOrphanManagedGatewayOnAbort.mock.invocationCallOrder[0]).toBeLessThan(
+        exit.mock.invocationCallOrder[0] ?? 0,
+      );
     } finally {
       process.exitCode = originalExitCode;
       exit.mockRestore();

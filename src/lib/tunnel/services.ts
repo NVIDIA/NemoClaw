@@ -550,7 +550,8 @@ export function stopAll(opts: ServiceOptions = {}): void {
     }
   }
 
-  // When nothing scoped the gateway, do not claim every service stopped.
+  // When nothing scoped the gateway, or a scoped release was not confirmed, do
+  // not claim every service stopped.
   if (gatewayOutcome === "not-scoped") {
     warn(
       "No sandbox name and no explicit NEMOCLAW_GATEWAY_PORT — the managed OpenShell gateway was not released.",
@@ -559,6 +560,11 @@ export function stopAll(opts: ServiceOptions = {}): void {
       "Hint: rerun with NEMOCLAW_GATEWAY_PORT=<port> to release that gateway, or 'openshell gateway list' to find it.",
     );
     info("Host services stopped; managed gateway not released.");
+    return;
+  }
+
+  if (gatewayOutcome === "unconfirmed") {
+    info("Host services stopped; managed gateway release was not confirmed.");
     return;
   }
 

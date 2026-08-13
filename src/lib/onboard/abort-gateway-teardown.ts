@@ -106,9 +106,11 @@ export function teardownOrphanManagedGatewayOnAbort(deps: AbortGatewayTeardownDe
     );
 
     let attempted = false;
+    let releaseConfirmed = false;
     try {
       const result = release({ port });
       attempted = true;
+      releaseConfirmed = result.released;
       if (result.released && result.stopped.length > 0) {
         log(
           `  Released gateway port ${String(result.port)} (stopped host process ${result.stopped.join(", ")}).`,
@@ -124,6 +126,10 @@ export function teardownOrphanManagedGatewayOnAbort(deps: AbortGatewayTeardownDe
         `  Gateway process stop after onboard abort failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+
+    // Keep the OpenShell registration when the listener may still be up — it is
+    // the supported recovery handle for a credential-bearing process.
+    if (!releaseConfirmed) return attempted;
 
     try {
       removeRegistration(gatewayName);
