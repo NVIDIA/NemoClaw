@@ -51,118 +51,122 @@ const ORDERED_STEP_MARKERS = [
   "[8/8] Policy presets",
 ] as const;
 
-test("interactive onboard wizard reaches Policy presets in step order (#6042)", {
-  timeout: ONBOARD_TIMEOUT_MS,
-  meta: {
-    e2ePhases: [
-      "start the local compatible-endpoint fake server",
-      "drive the interactive onboard wizard through a real PTY",
-      "confirm every ordered onboarding step appears in order",
-      "confirm Policy presets is reached before completion",
-    ],
+test(
+  "interactive onboard wizard reaches Policy presets in step order (#6042)",
+  {
+    timeout: ONBOARD_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "start the local compatible-endpoint fake server",
+        "drive the interactive onboard wizard through a real PTY",
+        "confirm every ordered onboarding step appears in order",
+        "confirm Policy presets is reached before completion",
+      ],
+    },
   },
-}, async ({ artifacts, cleanup, docker, host, progress }) => {
-  await docker.requireDocker();
+  async ({ artifacts, cleanup, docker, host, progress }) => {
+    await docker.requireDocker();
 
-  progress.phase("start the local compatible-endpoint fake server");
-  const apiKey = `e2e-6042-${randomBytes(16).toString("hex")}`;
-  const fake = await startFakeOpenAiCompatibleServer({
-    apiKey,
-    chatContent: "PONG",
-    host: "0.0.0.0",
-    model: MODEL,
-    progress,
-    publicHost: SANDBOX_HOST_ALIAS,
-    requireAuth: true,
-    responseText: "PONG",
-  });
-  artifacts.addRedactionValues([apiKey]);
-  cleanup.trackDisposable("close fake compatible-endpoint server", () => fake.close());
-  cleanup.trackSandbox(host, SANDBOX_NAME, {
-    artifactName: "cleanup-nemoclaw-destroy-onboard-policy-order",
-    env: buildAvailabilityProbeEnv(),
-    redactionValues: [apiKey],
-    timeoutMs: 120_000,
-  });
+    progress.phase("start the local compatible-endpoint fake server");
+    const apiKey = `e2e-6042-${randomBytes(16).toString("hex")}`;
+    const fake = await startFakeOpenAiCompatibleServer({
+      apiKey,
+      chatContent: "PONG",
+      host: "0.0.0.0",
+      model: MODEL,
+      progress,
+      publicHost: SANDBOX_HOST_ALIAS,
+      requireAuth: true,
+      responseText: "PONG",
+    });
+    artifacts.addRedactionValues([apiKey]);
+    cleanup.trackDisposable("close fake compatible-endpoint server", () => fake.close());
+    cleanup.trackSandbox(host, SANDBOX_NAME, {
+      artifactName: "cleanup-nemoclaw-destroy-onboard-policy-order",
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: [apiKey],
+      timeoutMs: 120_000,
+    });
 
-  progress.phase("drive the interactive onboard wizard through a real PTY");
-  const result = await driveInteractiveCommand({
-    activityLabel: "command: onboard-interactive-pty",
-    progress,
-    cmd: [
-      process.execPath,
-      CLI_ENTRYPOINT,
-      "onboard",
-      "--fresh",
-      "--agent",
-      "openclaw",
-      "--name",
-      SANDBOX_NAME,
-      "--yes-i-accept-third-party-software",
-    ],
-    cwd: REPO_ROOT,
-    env: buildAvailabilityProbeEnv(),
-    rules: [
-      // A reused host can already have accepted this first-run license
-      // notice, so this rule might not fire.
-      { trigger: "Type 'yes' to accept", response: "yes\n" },
-      // Only appears when the preflight resource check warns; skipped on
-      // an adequately provisioned CI runner.
-      { trigger: "Continue with onboarding?", response: "y\n" },
-      // "Other OpenAI-compatible endpoint" — position depends on
-      // src/lib/onboard/providers.ts's provider list for the openclaw agent.
-      { trigger: "Select your inference provider:", response: "4\n" },
-      { trigger: "Other OpenAI-compatible endpoint", response: "" },
-      { trigger: "OpenAI-compatible base URL", response: `${fake.baseUrl}\n` },
-      { trigger: "Other OpenAI-compatible endpoint API key:", response: `${apiKey}\n` },
-      { trigger: "endpoint model", response: `${MODEL}\n` },
-      { trigger: "Apply this configuration?", response: "y\n" },
-      { trigger: "Enable web search", response: "1\n" },
-      // Raw-mode messaging-channel selector; Enter with none toggled skips.
-      { trigger: "Press 1-7 to toggle", response: "\r" },
-      { trigger: "Resource profiles:", response: "6\n" },
-      // Raw-mode Policy tier selector; Enter confirms the pre-selected
-      // default (Balanced). This is the exact prompt the issue claims the
-      // wizard never reaches.
-      { trigger: "Policy tier", response: "\r" },
-      // A second raw-mode selector follows immediately: individual preset
-      // inclusion/rw toggles, pre-populated from the chosen tier. Enter
-      // confirms the Balanced defaults.
-      { trigger: "Presets  (", response: "\r" },
-    ],
-    timeoutMs: ONBOARD_TIMEOUT_MS - 5 * 60_000,
-  });
-  await artifacts.writeText("onboard-transcript.txt", result.output);
+    progress.phase("drive the interactive onboard wizard through a real PTY");
+    const result = await driveInteractiveCommand({
+      activityLabel: "command: onboard-interactive-pty",
+      progress,
+      cmd: [
+        process.execPath,
+        CLI_ENTRYPOINT,
+        "onboard",
+        "--fresh",
+        "--agent",
+        "openclaw",
+        "--name",
+        SANDBOX_NAME,
+        "--yes-i-accept-third-party-software",
+      ],
+      cwd: REPO_ROOT,
+      env: buildAvailabilityProbeEnv(),
+      rules: [
+        // A reused host can already have accepted this first-run license
+        // notice, so this rule might not fire.
+        { trigger: "Type 'yes' to accept", response: "yes\n" },
+        // Only appears when the preflight resource check warns; skipped on
+        // an adequately provisioned CI runner.
+        { trigger: "Continue with onboarding?", response: "y\n" },
+        // "Other OpenAI-compatible endpoint" — position depends on
+        // src/lib/onboard/providers.ts's provider list for the openclaw agent.
+        { trigger: "Select your inference provider:", response: "4\n" },
+        { trigger: "Other OpenAI-compatible endpoint", response: "" },
+        { trigger: "OpenAI-compatible base URL", response: `${fake.baseUrl}\n` },
+        { trigger: "Other OpenAI-compatible endpoint API key:", response: `${apiKey}\n` },
+        { trigger: "endpoint model", response: `${MODEL}\n` },
+        { trigger: "Apply this configuration?", response: "y\n" },
+        { trigger: "Enable web search", response: "1\n" },
+        // Raw-mode messaging-channel selector; Enter with none toggled skips.
+        { trigger: "Press 1-7 to toggle", response: "\r" },
+        { trigger: "Resource profiles:", response: "6\n" },
+        // Raw-mode Policy tier selector; Enter confirms the pre-selected
+        // default (Balanced). This is the exact prompt the issue claims the
+        // wizard never reaches.
+        { trigger: "Policy tier", response: "\r" },
+        // A second raw-mode selector follows immediately: individual preset
+        // inclusion/rw toggles, pre-populated from the chosen tier. Enter
+        // confirms the Balanced defaults.
+        { trigger: "Presets  (", response: "\r" },
+      ],
+      timeoutMs: ONBOARD_TIMEOUT_MS - 5 * 60_000,
+    });
+    await artifacts.writeText("onboard-transcript.txt", result.output);
 
-  const redactedTranscript = redactString(result.output, [apiKey]);
-  expect(
-    result.timedOut,
-    `onboard command timed out; see onboard-transcript.txt:\n${redactedTranscript}`,
-  ).toBe(false);
-  expect(
-    result.exitCode,
-    `onboard command exited non-zero; see onboard-transcript.txt:\n${redactedTranscript}`,
-  ).toBe(0);
-  expect(result.firedTriggers).toContain("Other OpenAI-compatible endpoint");
-  expect(result.firedTriggers).toContain("Policy tier");
-
-  progress.phase("confirm every ordered onboarding step appears in order");
-  let searchFrom = 0;
-  for (const marker of ORDERED_STEP_MARKERS) {
-    const index = result.output.indexOf(marker, searchFrom);
+    const redactedTranscript = redactString(result.output, [apiKey]);
     expect(
-      index,
-      `expected step marker ${JSON.stringify(marker)} after offset ${searchFrom} in the transcript; see onboard-transcript.txt`,
-    ).toBeGreaterThanOrEqual(searchFrom);
-    searchFrom = index + marker.length;
-  }
+      result.timedOut,
+      `onboard command timed out; see onboard-transcript.txt:\n${redactedTranscript}`,
+    ).toBe(false);
+    expect(
+      result.exitCode,
+      `onboard command exited non-zero; see onboard-transcript.txt:\n${redactedTranscript}`,
+    ).toBe(0);
+    expect(result.firedTriggers).toContain("Other OpenAI-compatible endpoint");
+    expect(result.firedTriggers).toContain("Policy tier");
 
-  progress.phase("confirm Policy presets is reached before completion");
-  const policyIndex = result.output.indexOf("[8/8] Policy presets");
-  const abortedIndex = result.output.search(/Onboarding did not finish/i);
-  expect(policyIndex, "Policy presets step must be observed").toBeGreaterThanOrEqual(0);
-  expect(
-    abortedIndex,
-    `onboarding must not abort after reaching Policy presets; see onboard-transcript.txt:\n${redactedTranscript}`,
-  ).not.toBeGreaterThanOrEqual(0);
-});
+    progress.phase("confirm every ordered onboarding step appears in order");
+    let searchFrom = 0;
+    for (const marker of ORDERED_STEP_MARKERS) {
+      const index = result.output.indexOf(marker, searchFrom);
+      expect(
+        index,
+        `expected step marker ${JSON.stringify(marker)} after offset ${searchFrom} in the transcript; see onboard-transcript.txt`,
+      ).toBeGreaterThanOrEqual(searchFrom);
+      searchFrom = index + marker.length;
+    }
+
+    progress.phase("confirm Policy presets is reached before completion");
+    const policyIndex = result.output.indexOf("[8/8] Policy presets");
+    const abortedIndex = result.output.search(/Onboarding did not finish/i);
+    expect(policyIndex, "Policy presets step must be observed").toBeGreaterThanOrEqual(0);
+    expect(
+      abortedIndex,
+      `onboarding must not abort after reaching Policy presets; see onboard-transcript.txt:\n${redactedTranscript}`,
+    ).not.toBeGreaterThanOrEqual(0);
+  },
+);
