@@ -98,7 +98,7 @@ export default defineConfig({
         "sonarjs/cognitive-complexity": ["error", 10],
       },
     },
-    // Pin current SonarJS scores for existing hotspots so the migration rejects further growth.
+    // Pin the migration-baseline SonarJS scores for existing hotspots so later changes cannot increase them.
 
     {
       files: ["src/lib/onboard/machine/handlers/provider-inference.ts"],
