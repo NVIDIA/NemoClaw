@@ -122,6 +122,7 @@ export function listAgents(env: NodeJS.ProcessEnv = process.env): string[] {
         .readdirSync(AGENTS_DIR, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
         .filter((entry) => entry.name !== "nemocua")
+        .filter((entry) => entry.name !== "pi")
         .filter((entry) => fs.existsSync(path.join(AGENTS_DIR, entry.name, "manifest.yaml")))
         .map((entry) => entry.name)
     : [];
@@ -156,6 +157,7 @@ export function requireAgentPolicyAdditionsPath(
  */
 export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): AgentDefinition {
   if (name === "nemocua") requireCuaFrameworkEnabled(env);
+  if (name === "pi") throw new Error("Pi is not selectable in this release");
   const externalCua = name === "nemocua";
   const manifestPath = externalCua
     ? getCuaExternalAgentManifestPath(env)

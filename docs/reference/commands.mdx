@@ -3606,6 +3606,18 @@ When `dst` does not exist, it is auto-created from the source image.
 For a Docker- or VM-driver source, the source can be stopped when its registry entry records both the sandbox image and a complete inference route.
 For a Kubernetes-driver source, the pod image must remain resolvable through its gateway.
 No re-onboarding is needed when those prerequisites are present.
+For a new destination, NemoClaw requires its owning gateway to report Ready state and a valid live identity.
+It revalidates that identity immediately before registration.
+The destination receives a new lifecycle generation and does not inherit the source sandbox's generation.
+If the destination is not Ready with the same valid identity, the command exits nonzero before registration or state restore.
+The created destination remains unregistered, so `--force` cannot select it for deletion.
+Run the exact owner-scoped deletion command printed by the failure:
+
+```bash
+openshell sandbox delete -g '<owning-gateway>' '<destination>'
+```
+
+After OpenShell deletes the destination, rerun the original `snapshot restore --to` command.
 <AgentOnly variant="openclaw">
 After NemoClaw creates the destination, it waits for the managed OpenClaw supervisor to pass a bounded readiness check before it applies snapshot state.
 If the check fails, the command leaves the destination registered without restored snapshot state and exits nonzero.
