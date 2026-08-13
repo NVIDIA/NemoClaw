@@ -115,6 +115,24 @@ export function loadDestroySandboxPresenceClassifier(): DestroySandboxPresenceCl
   return destroyModule.classifyDestroySandboxPresence;
 }
 
+export function traceDestroyBoundaryCalls(
+  harness: Pick<DestroyHarness, "runOpenshellSpy">,
+  trace: string[],
+): void {
+  harness.runOpenshellSpy.mockImplementation((args: unknown) => {
+    const argv = Array.isArray(args) ? args : [];
+    switch (`${String(argv[0])}:${String(argv[1])}`) {
+      case "sandbox:delete":
+        trace.push("delete");
+        return { status: 0, stdout: "", stderr: "" };
+      case "sandbox:list":
+        return { status: 0, stdout: "[]", stderr: "" };
+      default:
+        return { status: 0, stdout: "", stderr: "" };
+    }
+  });
+}
+
 export function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarness {
   resetDestroyModuleCache();
   const events: string[] = [];

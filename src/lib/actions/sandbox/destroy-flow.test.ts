@@ -23,6 +23,7 @@ import {
 import {
   createDestroyHarness,
   resetDestroyModuleCache,
+  traceDestroyBoundaryCalls,
 } from "../../../../test/helpers/destroy-flow-test-harness";
 
 describe("destroySandbox flow", () => {
@@ -143,7 +144,7 @@ describe("destroySandbox flow", () => {
 
   it("refuses before destructive work when multiple Docker identities share the name", async () => {
     const rows = [
-      "aaaa000000000000\topenshell\tdefault\tsb-alpha",
+      "aaaa000000000000\topenshell\tdefault\tsb-real",
       "ffff000000000000\t\tforeign\t",
     ].join("\n");
     const harness = createDestroyHarness({
@@ -152,8 +153,13 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
 
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(errorOutput).toContain("could not verify one complete container identity");
+    expect(errorOutput).toContain("sb-real");
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
     expect(harness.events).toEqual([]);
+    expect(harness.events).not.toContain("wipe");
+    expect(harness.events).not.toContain("detach");
     expect(harness.selectGatewaySpy).not.toHaveBeenCalled();
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.updateSessionSpy).not.toHaveBeenCalled();
@@ -346,17 +352,7 @@ describe("destroySandbox flow", () => {
       dockerRunResult: managed,
       onDockerRun: (call) => trace.push(`probe:${String(call)}`),
     });
-    harness.runOpenshellSpy.mockImplementation((args: unknown) => {
-      const argv = Array.isArray(args) ? args : [];
-      if (`${String(argv[0])}:${String(argv[1])}` === "sandbox:delete") {
-        trace.push("delete");
-        return { status: 0, stdout: "", stderr: "" };
-      }
-      if (`${String(argv[0])}:${String(argv[1])}` === "sandbox:list") {
-        return { status: 0, stdout: "[]", stderr: "" };
-      }
-      return { status: 0, stdout: "", stderr: "" };
-    });
+    traceDestroyBoundaryCalls(harness, trace);
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
