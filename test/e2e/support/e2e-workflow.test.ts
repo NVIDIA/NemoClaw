@@ -83,11 +83,11 @@ describe("e2e workflow boundary", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { if?: string }>;
     };
-    workflow.jobs["hermes-discord"]!.if =
-      "${{ !contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'hermes-discord') }}";
+    workflow.jobs["catalogue-standard"]!.if =
+      "${{ needs.generate-matrix.outputs.catalogue_standard_matrix == '[]' }}";
 
     expect(validateE2eWorkflow(workflow)).toContain(
-      "hermes-discord job must use the shared jobs selector condition",
+      "catalogue-standard must use its generated catalogue matrix",
     );
   });
 
@@ -274,24 +274,6 @@ describe("e2e workflow boundary", () => {
     );
   });
 
-  it("rejects Bedrock matrix shard identity drift (#6938)", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-bedrock-shard-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = readWorkflow() as {
-      jobs: Record<string, { env: Record<string, unknown> }>;
-    };
-    delete workflow.jobs["bedrock-runtime-compatible-anthropic"].env.NEMOCLAW_E2E_SHARD;
-    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-    try {
-      expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
-        "bedrock-runtime-compatible-anthropic job must pass matrix.agent through NEMOCLAW_E2E_SHARD",
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
   it("requires matrix generation to use the planner CI-output mode", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
@@ -409,73 +391,6 @@ describe("e2e workflow boundary", () => {
         "trusted controller matrix step must run before PR checkout",
       ]),
     );
-  });
-
-  type RebuildWorkflowStep = {
-    env?: Record<string, string>;
-    name?: string;
-    run?: string;
-    uses?: string;
-  };
-  const rebuildCacheMutations = [
-    [
-      "an isolated builder",
-      {
-        name: "Set up rebuild Buildx",
-        uses: "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c",
-      },
-    ],
-    [
-      "a separate cache warm",
-      {
-        name: "Warm current base build cache",
-        uses: "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
-      },
-    ],
-    [
-      "a step-level builder selection",
-      {
-        env: { BUILDX_BUILDER: "external" },
-        name: "Run rebuild live test",
-      },
-    ],
-    [
-      "a persistent builder selection",
-      {
-        name: "Select rebuild Buildx",
-        run: "docker buildx use external",
-      },
-    ],
-    [
-      "a multiline environment-file builder selection",
-      {
-        name: "Persist rebuild Buildx through the environment file",
-        run: "printf '%s\\n' 'BUILDX_BUILDER<<EOF' 'external' 'EOF' >> \"$GITHUB_ENV\"",
-      },
-    ],
-  ] satisfies ReadonlyArray<readonly [string, RebuildWorkflowStep]>;
-  const rebuildCacheCases = ["rebuild-hermes", "rebuild-hermes-stale-base"].flatMap((jobName) =>
-    rebuildCacheMutations.map(
-      ([caseName, injectedStep]) => [jobName, caseName, injectedStep] as const,
-    ),
-  );
-
-  it.each(rebuildCacheCases)("rejects %s with %s", (jobName, _case, injectedStep) => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-cache-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = readWorkflow() as {
-      jobs: Record<string, { steps: RebuildWorkflowStep[] }>;
-    };
-    workflow.jobs[jobName].steps.splice(2, 0, injectedStep);
-    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-    try {
-      expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
-        `${jobName} must keep rebuild builds on the Docker engine cache`,
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
   });
 
   // source-shape-contract: security -- Mutates the shipped workflow to prove PR-safe routing rejects credential-backed smokes and mutable tunnel tooling
@@ -619,41 +534,44 @@ describe("e2e workflow boundary", () => {
     });
   });
 
-  it("rejects malformed free-standing workflow metadata before matrix generation", {
-    timeout: 60_000,
-  }, () => {
-    const malformedWorkflows = [
-      {
-        body: `
+  it(
+    "rejects malformed free-standing workflow metadata before matrix generation",
+    {
+      timeout: 60_000,
+    },
+    () => {
+      const malformedWorkflows = [
+        {
+          body: `
 jobs:
   fixture-version-check:
     env:
       E2E_JOB: "yes"
       E2E_TARGET_ID: fixture-version-check
 `,
-        error: 'fixture-version-check job E2E_JOB must be "1"',
-      },
-      {
-        body: `
+          error: 'fixture-version-check job E2E_JOB must be "1"',
+        },
+        {
+          body: `
 jobs:
   fixture-version-check:
     env:
       E2E_TARGET_ID: fixture-version-check
 `,
-        error: "fixture-version-check job E2E_TARGET_ID requires E2E_JOB",
-      },
-      {
-        body: `
+          error: "fixture-version-check job E2E_TARGET_ID requires E2E_JOB",
+        },
+        {
+          body: `
 jobs:
   fixture-version-check:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "bad:target"
 `,
-        error: "fixture-version-check job E2E_TARGET_ID must be a selector id",
-      },
-      {
-        body: `
+          error: "fixture-version-check job E2E_TARGET_ID must be a selector id",
+        },
+        {
+          body: `
 jobs:
   resource-heavy:
     env:
@@ -661,10 +579,10 @@ jobs:
       E2E_DEFAULT_ENABLED: "yes"
       E2E_TARGET_ID: resource-heavy
 `,
-        error: 'resource-heavy job E2E_DEFAULT_ENABLED must be "0" when set',
-      },
-      {
-        body: `
+          error: 'resource-heavy job E2E_DEFAULT_ENABLED must be "0" when set',
+        },
+        {
+          body: `
 jobs:
   first:
     env:
@@ -675,22 +593,23 @@ jobs:
       E2E_JOB: "1"
       E2E_TARGET_ID: duplicate-target
 `,
-        error: "free-standing workflow metadata repeats target id: duplicate-target",
-      },
-    ];
+          error: "free-standing workflow metadata repeats target id: duplicate-target",
+        },
+      ];
 
-    for (const { body, error } of malformedWorkflows) {
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-bad-workflow-"));
-      const workflowPath = path.join(tmp, "workflow.yaml");
-      try {
-        fs.writeFileSync(workflowPath, body);
-        expect(validateFreeStandingWorkflowInventory(workflowPath)).toContain(error);
-        expect(() => readFreeStandingJobsInventory(workflowPath)).toThrow(error);
-      } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
+      for (const { body, error } of malformedWorkflows) {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-bad-workflow-"));
+        const workflowPath = path.join(tmp, "workflow.yaml");
+        try {
+          fs.writeFileSync(workflowPath, body);
+          expect(validateFreeStandingWorkflowInventory(workflowPath)).toContain(error);
+          expect(() => readFreeStandingJobsInventory(workflowPath)).toThrow(error);
+        } finally {
+          fs.rmSync(tmp, { recursive: true, force: true });
+        }
       }
-    }
-  });
+    },
+  );
 
   it(
     "keeps each free-standing selector out of the registry matrix",
@@ -782,91 +701,6 @@ jobs:
           "ad-hoc-derived step 'actions/checkout@v4' action must be pinned to a full commit SHA",
           "step 'Run ad hoc' run script must not interpolate dispatch inputs directly",
           "ad-hoc-derived step 'Run ad hoc' run script must not interpolate secrets directly",
-        ]),
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  // source-shape-contract: security -- Mutates the shipped workflow to prove channel lifecycle secrets and artifacts fail closed
-  it("rejects channels stop/start workflow-boundary drift for secret and artifact handling", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = readWorkflow() as {
-      jobs: Record<
-        string,
-        {
-          env: Record<string, unknown>;
-          steps: Array<Record<string, unknown>>;
-          strategy: { matrix: { agent: string[] }; "fail-fast": boolean };
-          "timeout-minutes"?: number;
-        }
-      >;
-    };
-    const job = workflow.jobs["channels-stop-start"];
-    expect(job).toBeDefined();
-    job["timeout-minutes"] = 45;
-    job.strategy["fail-fast"] = true;
-    job.strategy.matrix.agent = ["openclaw"];
-    job.env.NEMOCLAW_SANDBOX_NAME = "personal-dev-${{ matrix.agent }}";
-    job.env.DOCKER_CONFIG = "${{ github.workspace }}/.docker-config-shared";
-    job.env.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
-    const checkoutStep = job.steps.find(
-      (step) => typeof step.uses === "string" && step.uses.startsWith("actions/checkout@"),
-    );
-    expect(checkoutStep).toBeDefined();
-    checkoutStep!.with = {
-      ...(checkoutStep!.with as Record<string, unknown>),
-      "persist-credentials": true,
-    };
-
-    const installOpenShellStep = job.steps.find((step) => step.name === "Install OpenShell");
-    expect(installOpenShellStep).toBeDefined();
-    installOpenShellStep!.run = "bash scripts/install-openshell.sh";
-
-    const runStep = job.steps.find((step) => step.name === "Run channels stop/start live test");
-    expect(runStep).toBeDefined();
-    runStep!.env = {
-      TELEGRAM_BOT_TOKEN: "real-token",
-    };
-    runStep!.run = String(runStep!.run).replace(
-      "test/e2e/live/channels-stop-start.test.ts",
-      "test/e2e/live/channels-add-remove.test.ts",
-    );
-
-    const uploadStep = job.steps.find(
-      (step) => step.name === "Upload channels stop/start artifacts",
-    );
-    expect(uploadStep).toBeDefined();
-    uploadStep!.uses = "actions/upload-artifact@v4";
-    uploadStep!.with = {
-      ...(uploadStep!.with as Record<string, unknown>),
-      name: "channels-stop-start",
-      path: "e2e-artifacts/live/channels-stop-start/",
-      "include-hidden-files": true,
-      "retention-days": 1,
-    };
-
-    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-    try {
-      const errors = validateE2eWorkflowBoundary(workflowPath);
-      expect(errors).toEqual(
-        expect.arrayContaining([
-          "channels-stop-start job must keep the 90 minute timeout",
-          "channels-stop-start strategy.fail-fast must be false",
-          "channels-stop-start matrix must bind canonical per-agent sandbox names",
-          "channels-stop-start job must derive NEMOCLAW_SANDBOX_NAME from matrix.sandbox_name",
-          "channels-stop-start job must not include DOCKER_CONFIG",
-          "channels-stop-start job env must not include NVIDIA_INFERENCE_API_KEY",
-          "channels-stop-start checkout step must set persist-credentials=false",
-          "step 'Install OpenShell' run script must include env -u DOCKER_CONFIG",
-          "channels-stop-start step must receive NVIDIA_INFERENCE_API_KEY from secrets",
-          "channels-stop-start step must set the fake Telegram token",
-          "step 'Run channels stop/start live test' run script must include test/e2e/live/channels-stop-start.test.ts",
-          "channels-stop-start must not invoke actions/upload-artifact directly",
-          "channels-stop-start must use upload-e2e-artifacts exactly once",
         ]),
       );
     } finally {

@@ -1,129 +1,89 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-import { validateRunnerPressureWorkflow } from "../../../tools/e2e/runner-pressure-workflow-boundary.mts";
-import { readWorkflow } from "../../helpers/e2e-workflow-contract";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-type WorkflowStep = Record<string, unknown> & { if?: string; name?: string; run?: string };
-type WorkflowJob = { steps: WorkflowStep[] };
-type Workflow = { jobs: Record<string, WorkflowJob> };
+const mocks = vi.hoisted(() => ({
+  runLiveVitestCommand: vi.fn(),
+  spawnSync: vi.fn(),
+}));
 
-const JOBS = ["rebuild-hermes", "rebuild-hermes-stale-base"] as const;
+vi.mock("node:child_process", () => ({ spawnSync: mocks.spawnSync }));
+vi.mock("../../../tools/e2e/live-vitest-invocation.mts", () => ({
+  runLiveVitestCommand: mocks.runLiveVitestCommand,
+}));
 
-function loadWorkflow(): Workflow {
-  return readWorkflow() as Workflow;
-}
+import {
+  catalogueTarget,
+  E2E_TARGET_CATALOGUE,
+  runCatalogueTarget,
+  validateE2eTargetCatalogue,
+} from "../../../tools/e2e/target-catalogue.mts";
 
-function runStep(workflow: Workflow, jobId: (typeof JOBS)[number]): WorkflowStep {
-  return workflow.jobs[jobId]!.steps.find((step) => step.name?.startsWith("Run Hermes"))!;
-}
-
-function swapStep(workflow: Workflow, jobId: (typeof JOBS)[number]): WorkflowStep {
-  return workflow.jobs[jobId]!.steps.find(
-    (step) => step.name === "Add swap for Hermes image rebuild",
-  )!;
-}
-
-function comparisonInitializeStep(workflow: Workflow, jobId: (typeof JOBS)[number]): WorkflowStep {
-  return workflow.jobs[jobId]!.steps.find(
-    (step) => step.name === "Initialize runner comparison telemetry",
-  )!;
-}
-
-describe("runner-pressure E2E workflow boundary (#7146)", () => {
-  it("accepts the canonical Hermes heartbeat and terminal-consumer wiring", () => {
-    expect(validateRunnerPressureWorkflow(loadWorkflow())).toEqual([]);
+describe("runner-pressure catalogue boundary", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
   });
 
-  it.each(
-    JOBS,
-  )("provisions bounded swap before %s starts its memory-heavy image build", (jobId) => {
-    const workflow = loadWorkflow();
-    const jobSteps = workflow.jobs[jobId]!.steps;
-    const provision = swapStep(workflow, jobId);
-    const comparisonInitialize = comparisonInitializeStep(workflow, jobId);
-    const run = runStep(workflow, jobId);
-
-    expect(provision).toBeDefined();
-    expect(jobSteps.indexOf(provision)).toBeLessThan(jobSteps.indexOf(comparisonInitialize));
-    expect(jobSteps.indexOf(provision)).toBeLessThan(jobSteps.indexOf(run));
-    expect(provision.run).toContain("fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap");
-    expect(provision.run).toContain("chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap");
-    expect(provision.run).toContain("mkswap /mnt/nemoclaw-hermes-rebuild.swap");
-    expect(provision.run).toContain("swapon /mnt/nemoclaw-hermes-rebuild.swap");
-  });
+  it.each(["rebuild-hermes", "rebuild-hermes-stale-base"])(
+    "keeps %s on the shared rebuild lifecycle",
+    (id) => {
+      expect(() => validateE2eTargetCatalogue(E2E_TARGET_CATALOGUE)).not.toThrow();
+      expect(catalogueTarget(id)).toMatchObject({
+        testFile: "test/e2e/live/rebuild-hermes.test.ts",
+        profile: "nvidia-inference",
+        hostPreparation: "rebuild-swap",
+        runnerComparison: true,
+        runnerPressure: true,
+        owningPaths: expect.arrayContaining(["test/e2e/live/rebuild-hermes-cron-restore.ts"]),
+      });
+    },
+  );
 
   it.each([
-    {
-      label: "snapshot and phase baselines",
-      mutate: (script: string) =>
-        script
-          .replace("runner-pressure.mts snapshot", "runner-pressure.mts omitted-snapshot")
-          .replace("runner-pressure.mts initialize-evidence", "runner-pressure.mts baseline")
-          .replace("E2E_RESOURCE_PHASE_BASELINES_FILE", "OMITTED_PHASE_BASELINES_FILE"),
-      error:
-        "must emit snapshots and retain immutable workflow plus append-only phase baselines before its live test",
+    { exitCode: 17, finalCommands: ["classify", "validate-classification"] },
+    { exitCode: 0, finalCommands: [] },
+  ])(
+    "classifies only failed rebuilds before returning status $exitCode",
+    async ({ exitCode, finalCommands }) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-runner-pressure-"));
+      const target = catalogueTarget("rebuild-hermes");
+      const environmentNames = [
+        ...Object.keys(target.environment),
+        "DOCKER_OOM_CONTAINER",
+        "E2E_ARTIFACT_DIR",
+        "E2E_PHASE",
+        "E2E_RESOURCE_BASELINE_FILE",
+        "E2E_RESOURCE_PHASE_BASELINES_FILE",
+        "E2E_TERMINAL_CLASSIFICATION_FILE",
+        "E2E_TEST_OUTCOME_FILE",
+        "NEMOCLAW_CLI_BIN",
+      ];
+      for (const name of environmentNames) vi.stubEnv(name, process.env[name] ?? "");
+      vi.stubEnv("E2E_ARTIFACT_DIR", directory);
+      mocks.spawnSync.mockReturnValue({ status: 0 });
+      mocks.runLiveVitestCommand.mockResolvedValue(exitCode);
+
+      try {
+        await expect(runCatalogueTarget(target.id, target.testFile)).resolves.toBe(exitCode);
+        expect(mocks.runLiveVitestCommand).toHaveBeenCalledWith([
+          "run",
+          "--test-path",
+          target.testFile,
+        ]);
+        expect(mocks.spawnSync.mock.calls.map((call) => call[1].at(-1))).toEqual([
+          "snapshot",
+          "initialize-evidence",
+          ...finalCommands,
+        ]);
+      } finally {
+        fs.rmSync(directory, { force: true, recursive: true });
+      }
     },
-    {
-      label: "terminal classification consumer",
-      mutate: (script: string) =>
-        script.replace(
-          "runner-pressure.mts validate-classification",
-          "runner-pressure.mts omitted-validation",
-        ),
-      error:
-        "must fail closed on a missing or malformed terminal classification while preserving the live-test status",
-    },
-    {
-      label: "trusted assertion and timeout outcome propagation",
-      mutate: (script: string) =>
-        script.replace("E2E_TEST_OUTCOME_FILE", "OMITTED_TEST_OUTCOME_FILE"),
-      error:
-        "must propagate the trusted live-harness assertion or timeout outcome into terminal classification",
-    },
-  ])("rejects missing $label in both representative lanes", ({ mutate, error }) => {
-    const workflow = loadWorkflow();
-    for (const jobId of JOBS) {
-      const step = runStep(workflow, jobId);
-      step.run = mutate(step.run!);
-    }
-
-    expect(validateRunnerPressureWorkflow(workflow)).toEqual(
-      JOBS.map((jobId) => `${jobId} ${error}`),
-    );
-  });
-
-  it("rejects the old constant none outcome in both representative lanes", () => {
-    const workflow = loadWorkflow();
-    for (const jobId of JOBS) {
-      const step = runStep(workflow, jobId);
-      step.run = step.run!.replace(
-        "npx tsx tools/e2e/runner-pressure.mts classify",
-        "TEST_OUTCOME=none npx tsx tools/e2e/runner-pressure.mts classify",
-      );
-    }
-
-    expect(validateRunnerPressureWorkflow(workflow)).toEqual(
-      JOBS.map(
-        (jobId) =>
-          `${jobId} must propagate the trusted live-harness assertion or timeout outcome into terminal classification`,
-      ),
-    );
-  });
-
-  it("rejects outcome-dependent evidence uploads", () => {
-    const workflow = loadWorkflow();
-    for (const jobId of JOBS) {
-      const upload = workflow.jobs[jobId]!.steps.find((step) =>
-        step.name?.startsWith("Upload Hermes"),
-      )!;
-      upload.if = "success()";
-    }
-
-    expect(validateRunnerPressureWorkflow(workflow)).toEqual(
-      JOBS.map((jobId) => `${jobId} must upload runner-pressure evidence after every outcome`),
-    );
-  });
+  );
 });

@@ -39,9 +39,19 @@ function restoreLockedStartupAccess(sandboxName: string): void {
   restoreLockedStateDirStartupAccess(sandboxName);
 }
 
+function waitForSandboxReady(sandboxName: string): void {
+  const { waitForSandboxReadyOrExit, SANDBOX_REPAIR_READY_TIMEOUT_SEC } =
+    require("./connect") as typeof import("./connect");
+  waitForSandboxReadyOrExit(sandboxName, {
+    defaultTimeoutSec: SANDBOX_REPAIR_READY_TIMEOUT_SEC,
+    retryCommand: "start",
+  });
+}
+
 export interface SandboxStartupStateDeps {
   agent?: SandboxEntry["agent"];
   restoreLockedStartupAccess?: (sandboxName: string) => void;
+  waitForSandboxReady?: (sandboxName: string) => void;
   restoreProcessState?: (sandboxName: string) => SandboxStartupRecoveryResult;
 }
 
@@ -52,6 +62,7 @@ export function restoreStoppedSandboxStartupState(
   if ((deps.agent ?? "openclaw") === "openclaw") {
     (deps.restoreLockedStartupAccess ?? restoreLockedStartupAccess)(sandboxName);
   }
+  (deps.waitForSandboxReady ?? waitForSandboxReady)(sandboxName);
   return (deps.restoreProcessState ?? restoreProcessState)(sandboxName);
 }
 

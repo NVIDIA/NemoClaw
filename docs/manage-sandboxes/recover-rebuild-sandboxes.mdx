@@ -51,8 +51,15 @@ When the OpenClaw gateway is healthy, rerun `shields up`.
 
 ## Recover the Agent Runtime
 
+<AgentOnly variant="openclaw,hermes">
+`recover` can start an existing stopped Docker-driver container before it repairs the agent runtime.
+It starts only a non-paused container that Docker still associates with the registered sandbox.
+It leaves a running or paused container unchanged.
+If Docker cannot start the container, recovery continues to the OpenShell readiness check and reports the resulting failure.
+</AgentOnly>
+
 <AgentOnly variant="openclaw">
-If `$$nemoclaw <name> status` reports the sandbox is alive but the gateway is not running, run the recover command instead of opening a shell.
+If `$$nemoclaw <name> status` reports the sandbox container or gateway is not running, run the recover command instead of opening a shell.
 
 ```bash
 $$nemoclaw <sandbox-name> recover
@@ -75,7 +82,7 @@ Refer to [`$$nemoclaw <name> recover`](../../reference/commands#$$nemoclaw-name-
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-If `$$nemoclaw <name> status` reports the sandbox is alive but the Hermes gateway is not running, run the recover command instead of opening a shell.
+If `$$nemoclaw <name> status` reports the sandbox container or Hermes gateway is not running, run the recover command instead of opening a shell.
 
 ```bash
 $$nemoclaw <sandbox-name> recover

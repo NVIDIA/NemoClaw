@@ -1109,7 +1109,7 @@ If only pending registrations remain, the command exits non-zero and tells you t
 If the registry remains empty after recovery, it tells you to run `$$nemoclaw onboard`.
 A registered sandbox literally named `connect` keeps the name-first reading.
 If the sandbox is not yet in the `Ready` phase, `connect` polls `openshell sandbox list` every few seconds and prints the current phase. This gives you progress output right after onboarding, when the 2.4 GB image is still pulling, instead of a silent hang.
-Control the wait budget with `NEMOCLAW_CONNECT_TIMEOUT` in integer seconds. An interactive connection defaults to `120` seconds, while `--probe-only` defaults to `300` seconds so a scripted health check can wait through a cold sandbox start. When the deadline expires, `connect` exits non-zero with the last-seen phase.
+Control the wait budget with `NEMOCLAW_CONNECT_TIMEOUT` in integer seconds. An interactive connection defaults to `120` seconds, while `--probe-only` and [`$$nemoclaw <name> start`](#$$nemoclaw-name-start) default to `300` seconds so a scripted health check can wait through a cold sandbox start. When the deadline expires, `connect` exits non-zero with the last-seen phase.
 
 On a TTY, a one-shot hint prints before dropping into the sandbox shell.
 The hint is agent-aware. It names the correct TUI command for the sandbox's agent and reminds you to use `/exit` to leave the chat before `exit` returns you to the host shell.
@@ -1522,7 +1522,11 @@ A surviving server keeps its recorded endpoint and address pins while its policy
 ### `$$nemoclaw <name> recover`
 
 Repair a stopped in-sandbox gateway and re-establish host-side forwards without opening an SSH session.
-Use this after a direct sandbox container restart, a sandbox crash, or whenever `$$nemoclaw <name> status` reports the gateway is not running but the sandbox is alive.
+Use this after a sandbox crash or whenever `$$nemoclaw <name> status` reports that the sandbox container or agent gateway is not running.
+
+For a stopped, non-paused Docker-driver container, `recover` starts the existing container before it waits for OpenShell readiness.
+It leaves a running or paused container unchanged.
+If Docker cannot start the container, `recover` continues to the readiness check and reports the resulting failure.
 
 `recover` waits up to 30 seconds to acquire the per-sandbox lifecycle lock.
 After acquisition, it holds the lock until gateway recovery and forward repair finish.
@@ -1690,6 +1694,14 @@ $$nemoclaw my-assistant start
 Starting an already-running sandbox skips the container start and still runs the gateway and forward health checks.
 A paused container is unpaused.
 If the container was removed entirely, `start` fails and points you to `$$nemoclaw <name> rebuild`.
+
+<AgentOnly variant="openclaw,hermes">
+Before it repairs the gateway and host forwards, `start` waits for OpenShell to report the sandbox in the `Ready` or `Running` state, using the same `300`-second budget and `NEMOCLAW_CONNECT_TIMEOUT` override as `connect --probe-only`.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+Before it verifies the managed terminal runtime, `start` waits for OpenShell to report the sandbox in the `Ready` or `Running` state, using the same `300`-second budget and `NEMOCLAW_CONNECT_TIMEOUT` override as `connect --probe-only`.
+</AgentOnly>
+When that deadline expires, `start` keeps the existing container, exits non-zero, and prints the `NEMOCLAW_CONNECT_TIMEOUT` value to use on the next run.
 
 After the gateway and forward checks pass, `start` sends one inference request through `https://inference.local` using the sandbox's recorded provider and model.
 A gateway that answers the `/v1/models` probe can still reject an inference request or return an invalid result, so the command exits non-zero in either case.

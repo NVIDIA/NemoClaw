@@ -76,6 +76,7 @@ import {
   ensureLiveSandboxOrExit,
   printGatewayLifecycleHint,
   recoverPortableDemoSandboxLifecycleForConnect,
+  startStoppedSandboxContainerForProbeRecovery,
 } from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
@@ -1001,7 +1002,13 @@ type WaitForSandboxReadyOptions = {
   successLogs?: readonly string[];
 };
 
-function waitForSandboxReadyOrExit(
+// Readiness budget for the repair paths that wait for a restarted sandbox
+// before they touch in-sandbox processes or host forwards. A cold agent boot on
+// a constrained host can exceed the interactive budget, and `start` and
+// `connect --probe-only` prove the same readiness for the same sandbox.
+export const SANDBOX_REPAIR_READY_TIMEOUT_SEC = 300;
+
+export function waitForSandboxReadyOrExit(
   sandboxName: string,
   {
     defaultTimeoutSec = 120,
@@ -1279,8 +1286,11 @@ export async function connectSandbox(
       const publicationRequest = publicationFromDecision(sandboxName, readiness);
       const gated = await withLaunchReadinessMutationGate(publicationRequest, async () => {
         await runConnectEntryPreflight(sandboxName, { probeOnly: true });
+        // Restart a stopped container before the readiness wait. Without this step,
+        // OpenShell keeps reporting the stopped sandbox until the wait expires (#8967).
+        startStoppedSandboxContainerForProbeRecovery(sandboxName);
         waitForSandboxReadyOrExit(sandboxName, {
-          defaultTimeoutSec: 300,
+          defaultTimeoutSec: SANDBOX_REPAIR_READY_TIMEOUT_SEC,
           retryCommand: "connect --probe-only",
         });
         // Re-pin and re-observe the owning gateway after a potentially long wait
