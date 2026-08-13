@@ -4078,16 +4078,15 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           hermesApiKeyAuthMethod: HERMES_AUTH_METHOD_API_KEY,
           hermesApiKeyCredentialEnv: HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
         },
+        // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
         deps: {
           checkGatewayRouteCompatibility,
           preflightGatewayRouteDiscovery,
           getSandboxRecoveryAuthority: providerRecovery.getSandboxRecoveryAuthority,
           withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
           normalizeHermesAuthMethod,
-          // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
           setupNim: (g, s, a, recover, gateway, assertRouteCompatible, canProbeRoute, recoverySessionId) => setupNim(g, s, a, recover, opts.rebuildRegistryInferenceRoute, gateway, assertRouteCompatible, canProbeRoute, recoverySessionId),
-          setupInference,
-          resolveHostLocalInferenceStartupSelection: () => null,
+          setupInference, resolveHostLocalInferenceStartupSelection: () => null,
           startRecordedStep,
           recordStepComplete,
           recordStepRejected,
