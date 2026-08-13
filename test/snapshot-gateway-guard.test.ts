@@ -392,7 +392,7 @@ describe("snapshot VM-driver gateway guard", () => {
     const r = runCli("alpha snapshot restore baseline --to clone-1", env);
     expect(r.code, r.out).toBe(1);
     expect(r.out).toContain(
-      "could not verify the same valid Ready identity from its owning gateway through registration",
+      "could not verify the same valid Ready identity from its owning gateway before registration",
     );
     expect(r.out).toContain("Snapshot state was not restored and the clone was not registered.");
     expect(r.out).toContain("openshell sandbox delete -g 'nemoclaw' 'clone-1'");
@@ -413,7 +413,7 @@ describe("snapshot VM-driver gateway guard", () => {
     const r = runCli("alpha snapshot restore baseline --to clone-1", env);
     expect(r.code, r.out).toBe(1);
     expect(r.out).toContain(
-      "could not verify the same valid Ready identity from its owning gateway through registration",
+      "could not verify the same valid Ready identity from its owning gateway before registration",
     );
     expect(r.out).toContain("Snapshot state was not restored and the clone was not registered.");
     expect(r.out).toContain("openshell sandbox delete -g 'nemoclaw' 'clone-1'");
@@ -435,7 +435,7 @@ describe("snapshot VM-driver gateway guard", () => {
     const r = runCli("alpha snapshot restore baseline --to clone-1", env);
     expect(r.code, r.out).toBe(1);
     expect(r.out).toContain(
-      "could not verify the same valid Ready identity from its owning gateway through registration",
+      "could not verify the same valid Ready identity from its owning gateway before registration",
     );
     expect(r.out).toContain("Snapshot state was not restored and the clone was not registered.");
     expect(r.out).toContain("openshell sandbox delete -g 'nemoclaw' 'clone-1'");

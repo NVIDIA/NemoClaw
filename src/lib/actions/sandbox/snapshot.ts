@@ -142,7 +142,7 @@ function snapshotExit(exitCode = 1): never {
 
 function failUnregisteredSnapshotClone(sandboxName: string, gatewayName: string): never {
   throw new SnapshotCommandError([
-    `  Sandbox '${sandboxName}' was created, but NemoClaw could not verify the same valid Ready identity from its owning gateway through registration.`,
+    `  Sandbox '${sandboxName}' was created, but NemoClaw could not verify the same valid Ready identity from its owning gateway before registration.`,
     "  Snapshot state was not restored and the clone was not registered.",
     "  Remove the unregistered sandbox before retrying:",
     `    openshell sandbox delete -g ${shellQuote(gatewayName)} ${shellQuote(sandboxName)}`,
