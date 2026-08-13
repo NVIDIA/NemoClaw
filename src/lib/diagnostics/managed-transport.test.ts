@@ -462,6 +462,11 @@ describe("shared vocabulary with the OpenClaw managed transport dist patch", () 
     for (const sharedKey of ["transport_phase", "session_present"]) {
       expect(lines[0]).toContain(`${sharedKey}=`);
     }
+    // The superseded key names must be absent, not merely accompanied by the
+    // new ones: an emitter writing both `phase=` and `transport_phase=` would
+    // reintroduce the second vocabulary this change removes.
+    expect(lines[0]).not.toMatch(/(^|\s)phase=/);
+    expect(lines[0]).not.toContain("session_id_present");
     // trace_id stays distinct from the patch's diagnostic_id, which is
     // documented as a local identifier that does not correlate across
     // process boundaries.
