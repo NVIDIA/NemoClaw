@@ -236,11 +236,28 @@ Failed targets still write a manifest for diagnosis, and the existing artifact u
 The manifest is secret-free diagnostic evidence.
 It does not replace the workflow job result or the `Release qualification` release gate.
 
-Run the planner locally to inspect the complete default selection:
+Run the planner locally to render the complete default selection as a Markdown table:
 
 ```bash
-npx tsx tools/e2e/workflow-plan.mts
+npx tsx tools/e2e/workflow-plan.mts --summary
 ```
+
+Add the existing `--jobs` or `--targets` selector to render a filtered plan:
+
+```bash
+npx tsx tools/e2e/workflow-plan.mts --summary --jobs hermes-e2e
+npx tsx tools/e2e/workflow-plan.mts --summary --targets ubuntu-repo-cloud-openclaw
+```
+
+The command renders a Markdown summary to standard output.
+To publish that output in a GitHub Actions job, append it to `$GITHUB_STEP_SUMMARY`:
+
+```bash
+npx tsx tools/e2e/workflow-plan.mts --summary >> "$GITHUB_STEP_SUMMARY"
+```
+
+The workflow's `--ci-output` mode uses the same renderer for its job summary.
+The table includes the typed registry matrix, shared test matrix, three catalogue profile matrices, and retained workflow jobs.
 
 ## Inactive Windows MXC OpenClaw qualification
 
@@ -821,6 +838,29 @@ If no E2E target owns a changed file, `Relevant E2E` reports a successful no-op.
 Otherwise, `Relevant E2E` requires every selected workflow job to pass.
 The central workflow skips the Jetson nvmap and DGX Spark llama.cpp jobs on push.
 The central workflow has no scheduled trigger.
+
+The workflow planner connects each trusted input to its execution and evidence boundary:
+
+```mermaid
+flowchart LR
+  push["main push diff"] --> planner["Workflow planner"]
+  manual["Exact-SHA full manual dispatch<br/>or manual selectors"] --> planner
+  planner --> registry["Typed registry matrix"]
+  planner --> shared["Shared test matrix"]
+  planner --> profiles["Three catalogue profile matrices"]
+  planner --> retained["Retained workflow jobs"]
+  profiles --> reusable["Reusable profile workflow"]
+  registry --> dedicated["Dedicated GitHub Actions jobs"]
+  shared --> dedicated
+  retained --> dedicated
+  reusable --> evidence["Diagnostic product evidence"]
+  dedicated --> evidence
+  reusable -->|"push job results"| relevant["Relevant E2E"]
+  dedicated -->|"push job results"| relevant
+  reusable -->|"full manual job results"| release["Release qualification"]
+  dedicated -->|"full manual job results"| release
+  release --> gate["Release gate"]
+```
 
 Selected jobs retain their runner, credential, evidence, and cleanup boundaries.
 A main push can queue repository-owned GPU runners or create external resources when a selected target requires them.

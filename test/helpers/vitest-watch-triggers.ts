@@ -74,6 +74,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)nemoclaw-blueprint\/policies\/presets\/local-memory\.yaml$/,
+    testsToRun: runTests("test/effective-policy-contracts.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)nemoclaw-blueprint\/policies\/presets\/claude-code\.yaml$/,
     testsToRun: runTests("test/effective-policy-contracts.test.ts"),
   },
@@ -100,6 +104,13 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "test/managed-base-image-contract.test.ts",
       "test/managed-image-publication-workflow.test.ts",
       "test/dcode-base-image-workflow.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/actions\/build-base-image-platform\/action\.yaml$/,
+    testsToRun: runTests(
+      "test/dcode-base-image-workflow.test.ts",
+      "test/openclaw-dependency-review.test.ts",
     ),
   },
   {

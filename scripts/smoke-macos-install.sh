@@ -59,7 +59,7 @@ Options:
   --allow-existing-state      Allow running even if NemoClaw/OpenShell state already exists
   --keep-logs                 Preserve log files after success
   --remove-openshell          Allow uninstall.sh to remove openshell
-  --delete-models             Allow uninstall.sh to delete Ollama models
+  --delete-models             Allow uninstall.sh to delete all Ollama models and non-credential Hugging Face cache data (authentication files remain)
   -h, --help                  Show this help
 
 Environment:
