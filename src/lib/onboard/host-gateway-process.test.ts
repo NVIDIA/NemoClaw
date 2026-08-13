@@ -420,6 +420,31 @@ describe("stopHostGatewayProcesses", () => {
     );
   });
 
+  it("stops a foreign-user gateway recorded by this installation", () => {
+    const pid = 9999045;
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-"));
+    fs.writeFileSync(path.join(stateDir, "openshell-gateway.pid"), `${pid}\n`);
+    const exited = new Set<number>();
+    const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
+      [PGREP_KEY, notFound()],
+      ...psResponses(pid, { exited, owner: "otheruser", uid: otherUserUid() }),
+    ]);
+    const { run } = makeRun(responses);
+    const kill = vi.fn<HostGatewayProcessDeps["kill"]>((targetPid, signal) => {
+      signal === "SIGTERM" && exited.add(targetPid);
+      return true;
+    });
+
+    const result = stopHostGatewayProcesses(
+      { run, kill, env: { USER: "tester" }, commandExists: () => true, log: vi.fn() },
+      { stateDir },
+    );
+
+    expect(result.stopped).toEqual([pid]);
+    expect(result.foreignUserPids).toEqual([]);
+    expect(kill).toHaveBeenCalledWith(pid, "SIGTERM");
+  });
+
   it("still stops a swept host gateway owned by the current user", () => {
     const exited = new Set<number>();
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
