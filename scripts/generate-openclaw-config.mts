@@ -1431,7 +1431,10 @@ export function buildConfig(env: Env = process.env): JsonObject {
     pluginEntries["diagnostics-otel"] = { enabled: true };
   }
 
-  const plugins: JsonObject = { entries: pluginEntries };
+  const plugins: JsonObject = {
+    allow: unique(["nemoclaw", ...openclawPlugins.map((plugin) => plugin.id)]),
+    entries: pluginEntries,
+  };
   const pluginLoadPaths: string[] = [];
   for (const plugin of openclawPlugins) {
     pluginEntries[plugin.id] = { enabled: true };
@@ -1556,7 +1559,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   return config;
 }
 
-function preserveExistingPluginInstalls(config: JsonObject, configPath: string): void {
+function preserveExistingPluginState(config: JsonObject, configPath: string): void {
   let existing: unknown;
   try {
     existing = JSON.parse(readFileSync(configPath, "utf-8"));
@@ -1570,12 +1573,17 @@ function preserveExistingPluginInstalls(config: JsonObject, configPath: string):
   if (!isObject(existingPlugins)) {
     return;
   }
+  const currentPlugins = config.plugins;
+  if (Array.isArray(existingPlugins.allow)) {
+    currentPlugins.allow = unique([
+      ...(Array.isArray(currentPlugins.allow) ? currentPlugins.allow : []),
+      ...existingPlugins.allow.filter((pluginId): pluginId is string => typeof pluginId === "string"),
+    ]);
+  }
   const existingInstalls = existingPlugins.installs;
   if (!isObject(existingInstalls) || Object.keys(existingInstalls).length === 0) {
     return;
   }
-
-  const currentPlugins = config.plugins;
   if (!isObject(currentPlugins.installs)) {
     currentPlugins.installs = {};
   }
@@ -1585,7 +1593,7 @@ function preserveExistingPluginInstalls(config: JsonObject, configPath: string):
 export function writeOpenClawConfig(): void {
   const config = buildConfig();
   const configPath = expandUser("~/.openclaw/openclaw.json");
-  preserveExistingPluginInstalls(config, configPath);
+  preserveExistingPluginState(config, configPath);
   mkdirSync(dirname(configPath), { recursive: true });
   writeFileSync(configPath, JSON.stringify(config, null, 2));
   chmodSync(configPath, 0o600);

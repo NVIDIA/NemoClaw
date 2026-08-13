@@ -38,6 +38,11 @@ const EXPECTED_MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
 ] as const;
 
 describe("generate-openclaw-config.mts: default plugin entries", () => {
+  it("trusts the installed NemoClaw plugin by default (#8975)", () => {
+    const config = buildConfig({ ...BASE_ENV });
+    expect(config.plugins.allow).toEqual(["nemoclaw"]);
+  });
+
   it("omits the stale acpx entry and disables bundled bonjour by default", () => {
     const config = buildConfig({ ...BASE_ENV });
     expect(config.plugins.entries.acpx).toBeUndefined();
@@ -86,7 +91,12 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
       fs.writeFileSync(
         configPath,
-        JSON.stringify({ plugins: { installs: { "openclaw-weixin": installEntry } } }),
+        JSON.stringify({
+          plugins: {
+            allow: ["openclaw-weixin"],
+            installs: { "openclaw-weixin": installEntry },
+          },
+        }),
       );
       for (const name of Object.keys(process.env)) delete process.env[name];
       Object.assign(process.env, BASE_ENV, {
@@ -98,6 +108,7 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
 
       const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
       expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual(installEntry);
+      expect(config.plugins?.allow).toEqual(["nemoclaw", "openclaw-weixin"]);
       expect(config.plugins?.entries?.["openclaw-weixin"]).toEqual({ enabled: false });
       expect(config.channels?.["openclaw-weixin"]).toEqual({ enabled: false });
     } finally {
