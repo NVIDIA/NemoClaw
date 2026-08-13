@@ -142,6 +142,16 @@ describe("excludeSandboxBaseline (#7178)", () => {
     expect(excludeBaselineEntryMock).not.toHaveBeenCalled();
   });
 
+  it("requires explicit acknowledgement when standard input has no terminal (#8877)", async () => {
+    arrangeTerminal(false);
+
+    const code = await captureExit(() => excludeSandboxBaseline("alpha", { key: "nous_research" }));
+
+    expect(code).toBe(1);
+    expect(promptMock).not.toHaveBeenCalled();
+    expect(excludeBaselineEntryMock).not.toHaveBeenCalled();
+  });
+
   it("excludes with a bound digest when acknowledged via --force", async () => {
     await excludeSandboxBaseline("alpha", { key: "nous_research", force: true });
     expect(console.log).toHaveBeenCalledWith(
@@ -226,6 +236,17 @@ describe("restoreSandboxBaseline (#7178)", () => {
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("Usage: nemoclaw <sandbox> policy restore <key>"),
     );
+    expect(promptMock).not.toHaveBeenCalled();
+    expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("requires explicit restore acknowledgement when standard input has no terminal (#8877)", async () => {
+    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
+    arrangeTerminal(false);
+
+    const code = await captureExit(() => restoreSandboxBaseline("alpha", { key: "nous_research" }));
+
+    expect(code).toBe(1);
     expect(promptMock).not.toHaveBeenCalled();
     expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
   });
