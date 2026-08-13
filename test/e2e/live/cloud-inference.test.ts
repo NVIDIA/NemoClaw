@@ -306,7 +306,6 @@ async function expectSandboxCredentialBoundary(
   );
 }
 
-// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "cloud inference: inference.local chat and OpenClaw skill filesystem validate",
   {
