@@ -19,6 +19,21 @@ During onboarding, NemoClaw starts the router proxy on host port `4000`, waits f
 The sandbox does not call port `4000` directly.
 On a host without cached routing-model files, Model Router downloads and loads its routing model before the health endpoint responds.
 NemoClaw gives a running router up to 10 minutes to pass its health check and stops onboarding sooner if the process exits.
+NemoClaw tries to append router process output to `~/.nemoclaw/state/model-router.log`.
+A nondefault gateway port uses `~/.nemoclaw/gateways/<port>/state/model-router.log`.
+NemoClaw creates or reopens the log with owner-only permissions.
+Each Model Router start appends to the same file.
+NemoClaw does not truncate or rotate the file.
+If output capture fails, router startup continues without captured output.
+If the router does not pass its health check, NemoClaw tries one final health read.
+When that read returns an unhealthy-endpoint error, the startup error includes a redacted excerpt.
+When output capture succeeded, the startup error also includes the log path.
+When the log contains readable output from this run, the error includes a redacted excerpt.
+The owner-only log contains unredacted router output.
+Review the log before you share it.
+NemoClaw does not provide log-only cleanup.
+A successful [uninstall](../../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) stops the selected Model Router and removes its log with the selected gateway's operational state.
+Review the uninstall scope before you use it for log removal.
 
 ```text
 Sandbox agent -> OpenShell -> Model Router on port 4000 -> NVIDIA API
@@ -67,6 +82,13 @@ Use these values to tune the accuracy and cost tradeoff.
 NemoClaw creates a host-side virtual environment for Model Router during onboarding.
 It probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and `python3` in that order.
 The selected interpreter must have a version in the range `[3.10, 3.14)` and must import `ensurepip`, `pyexpat`, `ssl`, and `venv` without error.
+
+Before creating the environment, NemoClaw checks for at least 3 GiB of free or reclaimable capacity on its filesystem.
+This capacity covers the installed Python packages and download staging.
+When NemoClaw replaces a NemoClaw-managed environment, storage that removal can reclaim counts toward the requirement.
+If capacity is below the requirement, onboarding stops before creating the environment and reports how much space to free.
+Free the reported capacity, then run `$$nemoclaw onboard --resume`.
+If the filesystem does not report capacity, onboarding prints the reason and continues.
 
 If no candidate qualifies, onboarding stops and prints the failure for each candidate.
 Set `NEMOCLAW_MODEL_ROUTER_PYTHON` to an absolute path to probe only one interpreter.
