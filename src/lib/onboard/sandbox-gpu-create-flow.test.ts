@@ -111,6 +111,24 @@ const DEFAULT_RUNTIME_SNAPSHOT = {
   containerId: "container-a",
 };
 
+type OpenShellResult = ReturnType<SandboxGpuCreateFlowDeps["runOpenshell"]>;
+
+function readySandboxGetResult(): OpenShellResult {
+  return {
+    status: 0,
+    stdout: "Name: alpha\nId: alpha-sandbox-id\nState: Ready\n",
+    stderr: "",
+  };
+}
+
+function createSequencedOpenShellRunner(
+  entries: Array<[string, OpenShellResult[]]>,
+): SandboxGpuCreateFlowDeps["runOpenshell"] {
+  const resultsByCommand = new Map(entries);
+  return (args) =>
+    resultsByCommand.get(args.join(" "))?.shift() ?? { status: 0, stdout: "", stderr: "" };
+}
+
 function failNativeCreate(output = "error: unexpected argument '--gpu' found"): void {
   mocks.streamSandboxCreate.mockResolvedValueOnce({ status: 1, output, sawProgress: false });
 }
@@ -589,19 +607,15 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       { name: "nofile", soft: 65_536, hard: 65_536 },
     ];
     const deps = createDeps();
-    vi.mocked(deps.runOpenshell).mockImplementation((args: string[]) => {
-      if (args[0] === "sandbox" && args[1] === "get") {
-        return {
-          status: 0,
-          stdout: "Name: alpha\nId: alpha-sandbox-id\nState: Ready\n",
-          stderr: "",
-        };
-      }
-      if (args[0] === "sandbox" && args[1] === "exec") {
-        return { status: 1, stdout: "", stderr: "permission denied" };
-      }
-      return { status: 0, stdout: "", stderr: "" };
-    });
+    vi.mocked(deps.runOpenshell).mockImplementation(
+      createSequencedOpenShellRunner([
+        ["sandbox get alpha", [readySandboxGetResult(), readySandboxGetResult()]],
+        [
+          "sandbox exec --name alpha -- true",
+          [{ status: 1, stdout: "", stderr: "permission denied" }],
+        ],
+      ]),
+    );
     mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce((options) => {
       expect(options.checkReadyIdentity?.()).toBe("probe_failed");
       return {
@@ -645,29 +659,27 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       { name: "nofile", soft: 65_536, hard: 65_536 },
     ];
     const deps = createDeps();
-    let execAttempts = 0;
-    vi.mocked(deps.runOpenshell).mockImplementation((args: string[]) => {
-      if (args[0] === "sandbox" && args[1] === "get") {
-        return {
-          status: 0,
-          stdout: "Name: alpha\nId: alpha-sandbox-id\nState: Ready\n",
-          stderr: "",
-        };
-      }
-      if (args[0] === "sandbox" && args[1] === "exec") {
-        execAttempts += 1;
-        return execAttempts === 1
-          ? {
+    vi.mocked(deps.runOpenshell).mockImplementation(
+      createSequencedOpenShellRunner([
+        [
+          "sandbox get alpha",
+          [readySandboxGetResult(), readySandboxGetResult(), readySandboxGetResult()],
+        ],
+        [
+          "sandbox exec --name alpha -- true",
+          [
+            {
               status: 1,
               stdout: "",
               stderr:
                 `Error:   × code: 'The system is not in a state required for the operation's\n` +
                 '  │ execution\', message: "sandbox is not ready"\n',
-            }
-          : { status: 0, stdout: "", stderr: "" };
-      }
-      return { status: 0, stdout: "", stderr: "" };
-    });
+            },
+            { status: 0, stdout: "", stderr: "" },
+          ],
+        ],
+      ]),
+    );
     mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce((options) => {
       expect(options.checkReadyIdentity?.()).toBe("not_ready");
       expect(options.checkReadyIdentity?.()).toBe("ready");
@@ -678,7 +690,11 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       route: "none",
     });
 
-    expect(execAttempts).toBe(2);
+    expect(
+      vi
+        .mocked(deps.runOpenshell)
+        .mock.calls.filter(([args]) => args.join(" ") === "sandbox exec --name alpha -- true"),
+    ).toHaveLength(2);
     expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
     expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
