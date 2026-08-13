@@ -4,9 +4,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createHermesApiPortScopedSandboxEntryPoints,
   createHermesApiPortReservationScope,
   findAvailableHermesApiPort,
   HERMES_API_PORT_ENV,
+  type HermesApiPortReservationScope,
   readHermesApiPort,
   reserveCreateSandboxHermesApiPort,
   resolveOnboardHermesApiPort,
@@ -20,6 +22,46 @@ const noneBound = () => false;
 function forwardList(rows: string[]): string {
   return ["SANDBOX BIND PORT PID STATUS", ...rows].join("\n");
 }
+
+describe("Hermes API and dashboard port creation scopes", () => {
+  it("gives each sandbox creation both fresh reservation scopes", async () => {
+    const createSandboxWithBaseImageResolution = vi.fn(
+      async (
+        _baseImageResolutionContext: { fresh: boolean },
+        _computePlan: { sequence: number },
+        _managedWorkloadRebuild: null,
+        temporaryManagedRuntime: boolean,
+        _temporaryManagedRuntimeCatalog: null,
+        dashboardPortReservationScope: { current: unknown },
+        hermesApiPortReservationScope: HermesApiPortReservationScope,
+        sandboxName: string,
+      ) => ({
+        dashboardPortReservationScope,
+        hermesApiPortReservationScope,
+        sandboxName,
+        temporaryManagedRuntime,
+      }),
+    );
+    let sequence = 0;
+    const entryPoints = createHermesApiPortScopedSandboxEntryPoints({
+      createBaseImageResolutionContext: () => ({ fresh: false }),
+      createSandboxWithBaseImageResolution,
+      resolveComputePlan: () => ({ sequence: ++sequence }),
+    });
+
+    const standard = await entryPoints.createSandbox("standard");
+    const temporary = await entryPoints.createSandboxWithTemporaryManagedRuntime("temporary");
+
+    expect(standard).toMatchObject({ sandboxName: "standard", temporaryManagedRuntime: false });
+    expect(temporary).toMatchObject({ sandboxName: "temporary", temporaryManagedRuntime: true });
+    expect(standard.dashboardPortReservationScope).not.toBe(
+      temporary.dashboardPortReservationScope,
+    );
+    expect(standard.hermesApiPortReservationScope).not.toBe(
+      temporary.hermesApiPortReservationScope,
+    );
+  });
+});
 
 describe("readHermesApiPort", () => {
   it("falls back to the range start when unset", () => {

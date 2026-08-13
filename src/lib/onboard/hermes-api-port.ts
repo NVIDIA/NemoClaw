@@ -9,7 +9,9 @@ import {
 } from "../core/ports";
 import * as registry from "../state/registry";
 import {
+  createDashboardPortScopedSandboxEntryPoints,
   type DashboardPortReservation,
+  type DashboardPortReservationScope,
   findAvailablePortInRange,
   getOccupiedPorts,
   getRegistryOccupiedHermesApiPorts,
@@ -43,6 +45,70 @@ export interface HermesApiPortReservationScope {
 export interface ReservedCreateSandboxHermesApiPortResult {
   effectivePort: number;
   reservation: DashboardPortReservation | null;
+}
+
+interface HermesApiPortScopedSandboxEntryPointDeps<
+  Args extends unknown[],
+  Result,
+  BaseImageResolutionContext,
+  ComputePlan,
+> {
+  createBaseImageResolutionContext(): BaseImageResolutionContext;
+  createSandboxWithBaseImageResolution(
+    baseImageResolutionContext: BaseImageResolutionContext,
+    computePlan: ComputePlan,
+    managedWorkloadRebuild: null,
+    temporaryManagedRuntime: boolean,
+    temporaryManagedRuntimeCatalog: null,
+    dashboardPortReservationScope: DashboardPortReservationScope,
+    hermesApiPortReservationScope: HermesApiPortReservationScope,
+    ...args: Args
+  ): Promise<Result>;
+  resolveComputePlan(): ComputePlan;
+}
+
+/** Compose dashboard and Hermes API port ownership around sandbox creation. */
+export function createHermesApiPortScopedSandboxEntryPoints<
+  Args extends unknown[],
+  Result,
+  BaseImageResolutionContext,
+  ComputePlan,
+>(
+  deps: HermesApiPortScopedSandboxEntryPointDeps<
+    Args,
+    Result,
+    BaseImageResolutionContext,
+    ComputePlan
+  >,
+): {
+  createSandbox: (...args: Args) => Promise<Result>;
+  createSandboxWithTemporaryManagedRuntime: (...args: Args) => Promise<Result>;
+} {
+  return createDashboardPortScopedSandboxEntryPoints({
+    createBaseImageResolutionContext: deps.createBaseImageResolutionContext,
+    createSandboxWithBaseImageResolution: (
+      baseImageResolutionContext,
+      computePlan,
+      managedWorkloadRebuild,
+      temporaryManagedRuntime,
+      temporaryManagedRuntimeCatalog,
+      dashboardPortReservationScope,
+      ...args
+    ) =>
+      withHermesApiPortReservationScope((hermesApiPortReservationScope) =>
+        deps.createSandboxWithBaseImageResolution(
+          baseImageResolutionContext,
+          computePlan,
+          managedWorkloadRebuild,
+          temporaryManagedRuntime,
+          temporaryManagedRuntimeCatalog,
+          dashboardPortReservationScope,
+          hermesApiPortReservationScope,
+          ...args,
+        ),
+      ),
+    resolveComputePlan: deps.resolveComputePlan,
+  });
 }
 
 const HERMES_API_RANGE: HostPortRange = {

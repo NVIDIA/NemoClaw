@@ -29,6 +29,7 @@ import { isValidForwardPort } from "../onboard/dashboard-runtime";
 import { resolveSandboxHermesApiPort } from "../onboard/hermes-api-port";
 
 export {
+  createHermesApiPortScopedSandboxEntryPoints,
   createHermesApiPortReservationScope,
   type HermesApiPortReservationScope,
   reserveCreateSandboxHermesApiPort,

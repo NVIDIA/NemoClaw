@@ -491,7 +491,6 @@ const { skippedStepMessage }: typeof import("./onboard/skipped-step-message") =
 const policyPresetCarry: typeof import("./onboard/policy-preset-persistence") = require("./onboard/policy-preset-persistence");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
-  createDashboardPortScopedSandboxEntryPoints,
   findAvailableDashboardPort,
   preflightDashboardPortRangeAvailability,
   reserveCreateSandboxDashboardPort,
@@ -2707,36 +2706,10 @@ type CreateSandboxArgs =
     : never;
 
 const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
-  createDashboardPortScopedSandboxEntryPoints<
-    CreateSandboxArgs,
-    string,
-    ReturnType<typeof baseImageResolutionFlow.createBaseImageResolutionContext>,
-    ReturnType<typeof dockerDriverPlatform.resolveCurrentOpenShellComputePlan>
-  >({
+  agentOnboard.createHermesApiPortScopedSandboxEntryPoints({
     createBaseImageResolutionContext: () =>
       baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
-    createSandboxWithBaseImageResolution: (
-      baseImageResolutionContext,
-      computePlan,
-      managedWorkloadRebuild,
-      temporaryManagedRuntime,
-      temporaryManagedRuntimeCatalog,
-      dashboardPortReservationScope,
-      ...args
-    ) =>
-      agentOnboard.withHermesApiPortReservationScope(
-        (hermesApiPortReservationScope: import("./agent/onboard").HermesApiPortReservationScope) =>
-          createSandboxWithBaseImageResolution(
-            baseImageResolutionContext,
-            computePlan,
-            managedWorkloadRebuild,
-            temporaryManagedRuntime,
-            temporaryManagedRuntimeCatalog,
-            dashboardPortReservationScope,
-            hermesApiPortReservationScope,
-            ...args,
-          ),
-      ),
+    createSandboxWithBaseImageResolution,
     resolveComputePlan: dockerDriverPlatform.resolveCurrentOpenShellComputePlan,
   });
 
