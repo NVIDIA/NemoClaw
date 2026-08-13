@@ -35,7 +35,19 @@ This lets the in-sandbox OpenShell proxy validate TLS when it opens the upstream
 
 <AgentOnly variant="openclaw">
 
-It sets `NODE_EXTRA_CA_CERTS` before build-time Node.js dependency verification, including `npm audit signatures` requests that cross a TLS-inspecting proxy.
+It sets `NODE_EXTRA_CA_CERTS` before registry-backed build-time Node.js dependency requests that cross a TLS-inspecting proxy.
+The required `reviewed-npm-audit` CI check materializes the dependency graph from the committed lock and verifies its registry signatures.
+Any nonzero `npm audit signatures` status fails the check.
+The pull request (PR) check must pass before merge.
+The managed-image PR workflow loads its audit implementation from the base branch revision and evaluates the dependency files from the commit under review.
+The image-build job requires that result before local builds and same-repository digest publication.
+The base-image workflow requires its audit result before it builds or publishes any base image.
+It also requires the result before it invokes managed-image publication.
+Managed OpenClaw sandbox image builds do not repeat that Sigstore request.
+The base provenance marker records package and advisory-audit metadata, not the CI signature result.
+The final image reuses those runtimes only from a digest-pinned base in the official GHCR namespace.
+A locally built base or mutable tag does not provide independent CI publication evidence.
+Its marker cannot authorize reuse; the existing version checks reinstall the locked OpenClaw and mcporter runtimes or reject a newer base.
 When NemoClaw selects a corporate CA, it sets `NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root` for the image build.
 The OpenClaw managed startup runtime creates `/run/nemoclaw/managed-startup-ca-bundle.pem` as `root:root` with mode `0444` before it starts agent commands as the `sandbox` user.
 The `sandbox` user can read the merged bundle but cannot modify or replace it.
