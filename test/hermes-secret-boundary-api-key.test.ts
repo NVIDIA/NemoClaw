@@ -39,8 +39,19 @@ function runEnvFileValidator(envFileContent: string) {
   }
 }
 
-function runRuntimeEnvValidator(envOverrides: Record<string, string>) {
-  return spawnSync("python3", [SECRET_BOUNDARY_VALIDATOR_SCRIPT, "runtime-env"], {
+function runRuntimeEnvValidator(
+  envOverrides: Record<string, string>,
+  switchyardBindings?: string,
+) {
+  return spawnSync(
+    "python3",
+    [
+      SECRET_BOUNDARY_VALIDATOR_SCRIPT,
+      ...(switchyardBindings === undefined
+        ? ["runtime-env"]
+        : ["switchyard-runtime-env", switchyardBindings]),
+    ],
+    {
     encoding: "utf-8",
     timeout: 5000,
     env: {
@@ -49,7 +60,8 @@ function runRuntimeEnvValidator(envOverrides: Record<string, string>) {
       HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
       ...envOverrides,
     },
-  });
+    },
+  );
 }
 
 describe("agents/hermes/validate-hermes-env-secret-boundary API_SERVER_KEY contract", () => {
@@ -120,5 +132,112 @@ describe("agents/hermes/validate-hermes-env-secret-boundary API_SERVER_KEY contr
     expect(result.stderr).toContain("process environment");
     expect(result.stderr).toContain("API_SERVER_KEY");
     expect(result.stderr).not.toContain(weakKey);
+  });
+});
+
+describe("agents/hermes/validate-hermes-env-secret-boundary routing placeholders", () => {
+  it("rejects every Switchyard credential from persisted Hermes .env (#8887)", () => {
+    const result = runEnvFileValidator(
+      [
+        "API_SERVER_PORT=18642",
+        "API_SERVER_HOST=127.0.0.1",
+        "SWITCHYARD_WEAK_AUTHORIZATION=openshell:resolve:env:v9_SWITCHYARD_WEAK_AUTHORIZATION",
+        "",
+      ].join("\n"),
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("SWITCHYARD_WEAK_AUTHORIZATION");
+  });
+
+  it.each([
+    "Bearer openshell:resolve:env:FAST_API_KEY",
+    "Bearer sk-proj-rawcredentialmaterial",
+  ])("rejects an unsafe routing header without printing it (#8887)", (value) => {
+    const result = runEnvFileValidator(
+      [
+        "API_SERVER_PORT=18642",
+        "API_SERVER_HOST=127.0.0.1",
+        `SWITCHYARD_WEAK_AUTHORIZATION=${value}`,
+        "",
+      ].join("\n"),
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("SWITCHYARD_WEAK_AUTHORIZATION");
+    expect(result.stderr).not.toContain(value);
+  });
+
+  it("requires exact same-revision OpenShell markers for every enabled runtime binding (#8887)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-switchyard-bindings-"));
+    const bindings = path.join(directory, "bindings.json");
+    fs.writeFileSync(
+      bindings,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        targets: (["judge", "weak", "strong"] as const).map((role) => ({
+          role,
+          headerEnv: [
+            {
+              envKey: `SWITCHYARD_${role.toUpperCase()}_AUTHORIZATION`,
+              headerName: "authorization",
+            },
+          ],
+        })),
+      })}\n`,
+      { mode: 0o600 },
+    );
+    const revision = "1234567890123456789";
+    const valid = Object.fromEntries(
+      (["JUDGE", "WEAK", "STRONG"] as const).map((role) => {
+        const key = `SWITCHYARD_${role}_AUTHORIZATION`;
+        return [key, `openshell:resolve:env:v${revision}_${key}`];
+      }),
+    );
+
+    try {
+      expect(runRuntimeEnvValidator(valid, bindings).status).toBe(0);
+      const extra = runRuntimeEnvValidator(
+        { ...valid, SWITCHYARD_STALE_AUTHORIZATION: "raw-secret" },
+        bindings,
+      );
+      expect(extra.status).toBe(1);
+      expect(extra.stderr).toContain("SWITCHYARD_STALE_AUTHORIZATION");
+      expect(extra.stderr).not.toContain("raw-secret");
+      for (const [label, overrides] of [
+        ["missing", { ...valid, SWITCHYARD_WEAK_AUTHORIZATION: "" }],
+        ["raw", { ...valid, SWITCHYARD_WEAK_AUTHORIZATION: "raw-secret" }],
+        [
+          "unversioned",
+          {
+            ...valid,
+            SWITCHYARD_WEAK_AUTHORIZATION:
+              "openshell:resolve:env:SWITCHYARD_WEAK_AUTHORIZATION",
+          },
+        ],
+        [
+          "wrong suffix",
+          {
+            ...valid,
+            SWITCHYARD_WEAK_AUTHORIZATION:
+              `openshell:resolve:env:v${revision}_SWITCHYARD_STRONG_AUTHORIZATION`,
+          },
+        ],
+        [
+          "mixed revision",
+          {
+            ...valid,
+            SWITCHYARD_WEAK_AUTHORIZATION:
+              "openshell:resolve:env:v7_SWITCHYARD_WEAK_AUTHORIZATION",
+          },
+        ],
+      ] as const) {
+        const result = runRuntimeEnvValidator(overrides, bindings);
+        expect(result.status, `${label}: ${result.stderr}`).toBe(1);
+        expect(result.stderr).not.toContain("raw-secret");
+      }
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

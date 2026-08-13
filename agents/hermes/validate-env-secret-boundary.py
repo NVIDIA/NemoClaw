@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import errno
 import grp
+import json
 import os
 import pwd
 import re
@@ -28,9 +29,18 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Iterable, TextIO
 
-SECRET_KEY_RE = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
+SECRET_KEY_RE = re.compile(
+    r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API|AUTHORIZATION)(_|$)"
+)
 PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
+REVISION_BOUND_HEADER_PLACEHOLDER_RE = re.compile(
+    r"^(?:Bearer )?openshell:resolve:env:v[0-9]{1,20}_[A-Z][A-Z0-9_]{0,127}$"
+)
+REVISION_BOUND_RESOLVER_RE = re.compile(
+    r"^openshell:resolve:env:v([0-9]{1,20})_([A-Z][A-Z0-9_]{0,127})$"
+)
 KEY_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+SWITCHYARD_ENV_KEY_RE = re.compile(r"SWITCHYARD_[A-Z][A-Z0-9_]{0,111}")
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 
 ENV_FILE_ALLOWED_NONSECRET_KEYS = frozenset({"API_SERVER_HOST", "API_SERVER_PORT"})
@@ -70,6 +80,10 @@ INSTALLED_BOUNDARY_VALIDATOR = (
 )
 INSTALLED_ENV_ROOT = "/sandbox"
 INSTALLED_ENV_PATH = "/sandbox/.hermes/.env"
+INSTALLED_SWITCHYARD_RUNTIME_BINDINGS = (
+    "/usr/local/share/nemoclaw/hermes-switchyard-runtime-bindings.json"
+)
+MAX_SWITCHYARD_RUNTIME_BINDINGS_BYTES = 16 * 1024
 
 
 class UnsafeEnvInputError(RuntimeError):
@@ -355,6 +369,8 @@ def is_allowed_value(value: str) -> bool:
         return True
     if PLACEHOLDER_RE.fullmatch(value):
         return True
+    if REVISION_BOUND_HEADER_PLACEHOLDER_RE.fullmatch(value):
+        return True
     return False
 
 
@@ -458,6 +474,11 @@ def validate_env_file(path: str) -> int:
         key = key.strip()
         if not KEY_NAME_RE.fullmatch(key):
             continue
+        if key.startswith("SWITCHYARD_"):
+            violation_count += 1
+            if len(violations) < MAX_VIOLATIONS:
+                violations.append(f"{key} (line {lineno})")
+            continue
         if key in OPENSHELL_SUPERVISOR_ONLY_ENV_KEYS:
             violation_count += 1
             if len(violations) < MAX_VIOLATIONS:
@@ -496,10 +517,152 @@ def validate_env_file(path: str) -> int:
     return 1
 
 
+def _read_switchyard_runtime_bindings(path: str) -> bytes | None:
+    """Read the fixed root-owned routing env-key manifest without following symlinks."""
+
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(
+        os, "O_CLOEXEC", 0
+    )
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise UnsafeEnvInputError(
+            "the installed Switchyard runtime bindings are unreadable or unsafe"
+        ) from exc
+    try:
+        before = os.fstat(descriptor)
+        installed_mode = (
+            os.path.abspath(__file__) == INSTALLED_BOUNDARY_VALIDATOR
+            and path == INSTALLED_SWITCHYARD_RUNTIME_BINDINGS
+        )
+        trusted_metadata = (
+            before.st_uid == 0
+            and before.st_gid == 0
+            and stat.S_IMODE(before.st_mode) == 0o444
+            if installed_mode
+            else before.st_uid in _allowed_path_owner_uids()
+            and stat.S_IMODE(before.st_mode) & 0o022 == 0
+        )
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_nlink != 1
+            or not trusted_metadata
+            or before.st_size < 1
+            or before.st_size > MAX_SWITCHYARD_RUNTIME_BINDINGS_BYTES
+        ):
+            raise UnsafeEnvInputError(
+                "the installed Switchyard runtime bindings must be a bounded root:root mode 0444 file"
+            )
+        chunks: list[bytes] = []
+        remaining = before.st_size
+        while remaining > 0:
+            chunk = os.read(descriptor, min(remaining, 64 * 1024))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if remaining != 0 or os.read(descriptor, 1):
+            raise UnsafeEnvInputError(
+                "the installed Switchyard runtime bindings changed while they were read"
+            )
+        after = os.fstat(descriptor)
+        if _file_identity(before) != _file_identity(after):
+            raise UnsafeEnvInputError(
+                "the installed Switchyard runtime bindings changed while they were read"
+            )
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _switchyard_runtime_bindings(
+    path: str = INSTALLED_SWITCHYARD_RUNTIME_BINDINGS,
+) -> list[str] | None:
+    raw = _read_switchyard_runtime_bindings(path)
+    if raw is None:
+        return None
+    try:
+        document = json.loads(raw.decode("utf-8"))
+        targets = document.get("targets") if isinstance(document, dict) else None
+        if document.get("schemaVersion") != 1 or not isinstance(targets, list):
+            raise ValueError("invalid schema")
+        bindings: list[str] = []
+        seen_env_keys: set[str] = set()
+        if [target.get("role") for target in targets if isinstance(target, dict)] != [
+            "judge",
+            "weak",
+            "strong",
+        ]:
+            raise ValueError("invalid roles")
+        for target in targets:
+            header_env = target.get("headerEnv")
+            if not isinstance(header_env, list) or not 1 <= len(header_env) <= 8:
+                raise ValueError("invalid header bindings")
+            for binding in header_env:
+                env_key = binding.get("envKey") if isinstance(binding, dict) else None
+                if (
+                    not isinstance(env_key, str)
+                    or SWITCHYARD_ENV_KEY_RE.fullmatch(env_key) is None
+                    or env_key in seen_env_keys
+                ):
+                    raise ValueError("invalid env key")
+                seen_env_keys.add(env_key)
+                bindings.append(env_key)
+        return bindings
+    except (AttributeError, TypeError, UnicodeDecodeError, ValueError) as exc:
+        raise UnsafeEnvInputError(
+            "the installed Switchyard runtime bindings have an invalid contract"
+        ) from exc
+
+
+def validate_switchyard_runtime_env(
+    env: dict[str, str],
+    routing_path: str = INSTALLED_SWITCHYARD_RUNTIME_BINDINGS,
+) -> list[str]:
+    """Return redacted violations for the enabled Switchyard provider snapshot."""
+
+    bindings = _switchyard_runtime_bindings(routing_path)
+    if bindings is None:
+        return sorted(key for key in env if key.startswith("SWITCHYARD_"))
+    violations: list[str] = []
+    revisions: set[str] = set()
+    expected_keys = set(bindings)
+    violations.extend(
+        key
+        for key in env
+        if key.startswith("SWITCHYARD_") and key not in expected_keys
+    )
+    for env_key in bindings:
+        value = env.get(env_key)
+        match = REVISION_BOUND_RESOLVER_RE.fullmatch(value or "")
+        if match is None or match.group(2) != env_key:
+            violations.append(env_key)
+            continue
+        revisions.add(match.group(1))
+    if len(revisions) > 1:
+        violations.extend(bindings)
+    return sorted(set(violations))
+
+
 def validate_runtime_env(env: dict[str, str] | None = None) -> int:
     source = os.environ if env is None else env
     violations: list[str] = []
     violation_count = 0
+    try:
+        routing_violations = validate_switchyard_runtime_env(dict(source))
+    except UnsafeEnvInputError as exc:
+        print(
+            f"[SECURITY] Refusing Hermes startup because {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    for key in routing_violations:
+        violation_count += 1
+        if len(violations) < MAX_VIOLATIONS:
+            violations.append(key)
     if source.get("HERMES_LAZY_INSTALL_TARGET") != "/sandbox/.hermes/lazy-packages":
         violation_count += 1
         if len(violations) < MAX_VIOLATIONS:
@@ -531,7 +694,8 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
         return 0
     _emit_violations(
         "[SECURITY] Refusing Hermes startup because the process environment "
-        "contains raw secret-shaped values or OpenShell supervisor-only identity "
+        "contains raw secret-shaped values, an incomplete or mixed-revision "
+        "Switchyard provider snapshot, or OpenShell supervisor-only identity "
         "variables, or does not use the managed HERMES_LAZY_INSTALL_TARGET. "
         "Store credentials in OpenShell providers and keep only "
         "openshell resolver placeholders in the sandbox.",
@@ -712,6 +876,11 @@ def main(argv: list[str]) -> int:
         "runtime-env",
         help="Validate the current process environment",
     )
+    switchyard_parser = sub.add_parser(
+        "switchyard-runtime-env",
+        help="Validate runtime Switchyard bindings from an explicit manifest",
+    )
+    switchyard_parser.add_argument("path", help="Path to the runtime binding manifest")
     sub.add_parser(
         "mask-config-output",
         help="Mask secret-shaped fields on stdin; print to stdout",
@@ -721,6 +890,16 @@ def main(argv: list[str]) -> int:
         return validate_env_file(args.path)
     if args.mode == "mask-config-output":
         return mask_config_output(sys.stdin, sys.stdout)
+    if args.mode == "switchyard-runtime-env":
+        violations = validate_switchyard_runtime_env(dict(os.environ), args.path)
+        if not violations:
+            return 0
+        _emit_violations(
+            "[SECURITY] Refusing Hermes startup because the process environment "
+            "contains an incomplete or mixed-revision Switchyard provider snapshot.",
+            violations,
+        )
+        return 1
     assert args.mode == "runtime-env", (
         f"unreachable: argparse subparsers are required ({args.mode!r})"
     )

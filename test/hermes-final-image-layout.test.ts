@@ -264,6 +264,7 @@ describe("Hermes final image layout", () => {
           "COPY agents/hermes/patch-neutral-platform-env-activation.py /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py",
           "COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json",
           "COPY src/lib/hermes-managed-route.ts /src/lib/hermes-managed-route.ts",
+          "COPY src/lib/hermes-switchyard-routing.ts /src/lib/hermes-switchyard-routing.ts",
           "COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts",
           "COPY src/lib/messaging/ /src/lib/messaging/",
           "COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts",

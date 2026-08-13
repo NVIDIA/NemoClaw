@@ -5,7 +5,16 @@ import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { TextDecoder } from "node:util";
 
+import {
+  type HermesSwitchyardRouting,
+  HERMES_SWITCHYARD_RELAY_TOML,
+  HERMES_SWITCHYARD_RUNTIME_BINDINGS,
+  parseHermesSwitchyardRelayToml,
+  serializeHermesSwitchyardRelayToml,
+  serializeHermesSwitchyardRuntimeBindings,
+} from "../../hermes-switchyard-routing";
 import {
   type ManagedStartupAgentEnvironment,
   type ManagedStartupAgentMaterial,
@@ -63,6 +72,11 @@ const HERMES_MANAGED_CONFIG_FILES = [
 const HERMES_GENERATED_MANAGED_POLICY_FILE = "/sandbox/.hermes/managed-policy.json";
 const HERMES_INSTALLED_MANAGED_POLICY_FILE = "/usr/local/share/nemoclaw/hermes-managed-policy.json";
 const MAX_HERMES_MANAGED_POLICY_BYTES = 4 * 1024 * 1024;
+export const HERMES_GENERATED_RELAY_PLUGINS_FILE = "/sandbox/.hermes/relay-plugins.toml";
+export const HERMES_INSTALLED_RELAY_PLUGINS_FILE = HERMES_SWITCHYARD_RELAY_TOML;
+export const HERMES_INSTALLED_SWITCHYARD_RUNTIME_BINDINGS_FILE =
+  HERMES_SWITCHYARD_RUNTIME_BINDINGS;
+const MAX_HERMES_RELAY_PLUGINS_BYTES = 128 * 1024;
 const FIXED_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 export const MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION = 1;
@@ -833,6 +847,101 @@ export function installHermesManagedPolicy(
   fs.unlinkSync(source);
 }
 
+function requireAbsentFile(target: string, message: string): void {
+  try {
+    fs.lstatSync(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    fail(`could not inspect ${target}`);
+  }
+  fail(message);
+}
+
+function parseExpectedHermesRelayPlugins(
+  bytes: Buffer,
+  routing: HermesSwitchyardRouting,
+): Buffer {
+  let source: string;
+  try {
+    source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    parseHermesSwitchyardRelayToml(source);
+  } catch (error) {
+    fail(`generated Hermes Relay TOML is invalid: ${(error as Error).message}`);
+  }
+  const expected = Buffer.from(serializeHermesSwitchyardRelayToml(routing), "utf8");
+  if (!bytes.equals(expected)) {
+    fail("generated Hermes Relay TOML does not match the managed startup profile");
+  }
+  return expected;
+}
+
+/** Promote profile-bound native Relay configuration, or remove it when disabled. */
+export function installHermesRelayPluginsConfiguration(
+  routing: HermesSwitchyardRouting | undefined,
+  source = HERMES_GENERATED_RELAY_PLUGINS_FILE,
+  target = HERMES_INSTALLED_RELAY_PLUGINS_FILE,
+  runtimeBindingsTarget = HERMES_INSTALLED_SWITCHYARD_RUNTIME_BINDINGS_FILE,
+): void {
+  if (routing === undefined) {
+    requireAbsentFile(source, "disabled Hermes routing left generated Relay TOML behind");
+    removeSafeRootFile(target);
+    removeSafeRootFile(runtimeBindingsTarget);
+    return;
+  }
+  const generated = readStableRegularFileSnapshot(source, MAX_HERMES_RELAY_PLUGINS_BYTES);
+  const expected = parseExpectedHermesRelayPlugins(generated.bytes, routing);
+  atomicWriteRootFile(target, expected, 0o444);
+  atomicWriteRootFile(
+    runtimeBindingsTarget,
+    serializeHermesSwitchyardRuntimeBindings(routing),
+    0o444,
+  );
+  const current = fs.lstatSync(source, { bigint: true });
+  if (!sameStableFileMetadata(generated.stat, current)) {
+    fail(`Hermes Relay TOML changed before source cleanup: ${source}`);
+  }
+  fs.unlinkSync(source);
+}
+
+/** Verify the exact presence or absence of the committed native Relay configuration. */
+export function verifyHermesRelayPluginsConfiguration(
+  routing: HermesSwitchyardRouting | undefined,
+  target = HERMES_INSTALLED_RELAY_PLUGINS_FILE,
+  runtimeBindingsTarget = HERMES_INSTALLED_SWITCHYARD_RUNTIME_BINDINGS_FILE,
+): void {
+  if (routing === undefined) {
+    requireAbsentFile(target, "committed routing-disabled profile has stale Hermes Relay TOML");
+    requireAbsentFile(
+      runtimeBindingsTarget,
+      "committed routing-disabled profile has stale Switchyard runtime bindings",
+    );
+    return;
+  }
+  const expected = Buffer.from(serializeHermesSwitchyardRelayToml(routing), "utf8");
+  const installed = readStableRegularFileSnapshot(target, MAX_HERMES_RELAY_PLUGINS_BYTES);
+  parseExpectedHermesRelayPlugins(installed.bytes, routing);
+  if (
+    installed.stat.uid !== 0n ||
+    installed.stat.gid !== 0n ||
+    installed.stat.nlink !== 1n ||
+    Number(installed.stat.mode & 0o777n) !== 0o444 ||
+    !installed.bytes.equals(expected)
+  ) {
+    fail("committed Hermes Relay TOML drifted");
+  }
+  const bindings = readStableRegularFileSnapshot(runtimeBindingsTarget, 16 * 1024);
+  const expectedBindings = Buffer.from(serializeHermesSwitchyardRuntimeBindings(routing), "utf8");
+  if (
+    bindings.stat.uid !== 0n ||
+    bindings.stat.gid !== 0n ||
+    bindings.stat.nlink !== 1n ||
+    Number(bindings.stat.mode & 0o777n) !== 0o444 ||
+    !bindings.bytes.equals(expectedBindings)
+  ) {
+    fail("committed Switchyard runtime bindings drifted");
+  }
+}
+
 /**
  * Restore the mutable Hermes image contract after its sandbox-side generator
  * atomically replaces config.yaml or .env with mode 0600. The mode transition
@@ -1313,7 +1422,11 @@ function applyAdapter(
       sealOpenClawConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime);
       break;
     case "hermes":
+      if (context.profile.agentConfig.agent !== "hermes") {
+        fail("Hermes profile has inconsistent agent configuration");
+      }
       installHermesManagedPolicy();
+      installHermesRelayPluginsConfiguration(context.profile.agentConfig.switchyardRouting);
       sealHermesConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime);
       // Normalize before the coordinator commits a newly applied profile so
       // the durable transaction never records generator-created 0600 files as
@@ -1377,6 +1490,10 @@ export async function applyManagedStartupImageProfile(
     // Committed startup replays still repair generator-created 0600 files,
     // while the descriptor guard preserves root-owned shields-up files.
     normalizeHermesManagedConfiguration();
+    if (profile.agentConfig.agent !== "hermes") {
+      fail("committed Hermes profile has inconsistent agent configuration");
+    }
+    verifyHermesRelayPluginsConfiguration(profile.agentConfig.switchyardRouting);
   }
   let corporateCaMerged: boolean;
   if (result.adapterApplied) {

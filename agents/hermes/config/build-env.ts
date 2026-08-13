@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Buffer } from "node:buffer";
+import { TextDecoder } from "node:util";
 
+import {
+  type HermesSwitchyardRouting,
+  validateHermesSwitchyardRouting,
+} from "../../../src/lib/hermes-switchyard-routing.ts";
 import { normalizeProviderPlaceholderForEnvKey } from "../../../src/lib/messaging/provider-placeholders.ts";
 import { readToolDisclosureEnv } from "../../../src/lib/tool-disclosure.ts";
 import { isObjectRecord } from "./object-record.ts";
@@ -31,6 +36,7 @@ export type HermesBuildSettings = {
     brokerEnabled: boolean;
     presets: string[];
   };
+  switchyardRouting?: HermesSwitchyardRouting | null;
 };
 
 /** Read and validate the environment consumed by the Hermes config generator. */
@@ -60,7 +66,31 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
       brokerEnabled: env.NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER === "1",
       presets: readBase64Json<string[]>(env, "NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64", "W10="),
     },
+    switchyardRouting: readSwitchyardRouting(env),
   };
+}
+
+function readSwitchyardRouting(env: NodeJS.ProcessEnv): HermesSwitchyardRouting | null {
+  const encoded = env.NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64;
+  if (encoded === undefined || encoded === "") return null;
+  try {
+    if (
+      encoded.length > 128 * 1024 ||
+      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(encoded)
+    ) {
+      throw new Error("transport is not canonical base64");
+    }
+    const bytes = Buffer.from(encoded, "base64");
+    if (bytes.toString("base64") !== encoded) {
+      throw new Error("transport is not canonical base64");
+    }
+    return validateHermesSwitchyardRouting(
+      JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown validation failure";
+    throw new Error(`NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64 is invalid: ${message}`);
+  }
 }
 
 function readBooleanBuildFlag(env: NodeJS.ProcessEnv, name: string): boolean {

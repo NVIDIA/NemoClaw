@@ -434,9 +434,15 @@ function mapHermesProfile(
     NEMOCLAW_WEB_SEARCH_ENABLED: booleanFlag(profile.agentConfig.webSearch.enabled),
     NEMOCLAW_WEB_SEARCH_PROVIDER: profile.agentConfig.webSearch.provider,
   };
+  if (profile.agentConfig.switchyardRouting !== undefined) {
+    configurationEnvironment.NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64 = encodeCanonicalJson(
+      profile.agentConfig.switchyardRouting,
+    );
+  }
 
   const runtimeEnvironment: MutableEnvironment = { ...configurationEnvironment };
   delete runtimeEnvironment.NEMOCLAW_MESSAGING_PLAN_B64;
+  delete runtimeEnvironment.NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64;
   runtimeEnvironment.NEMOCLAW_DASHBOARD_PORT =
     profile.dashboard.publicPort === null ? "" : String(profile.dashboard.publicPort);
   runtimeEnvironment.NEMOCLAW_HERMES_DASHBOARD =

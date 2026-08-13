@@ -9,6 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { HERMES_API_PORT_RANGE_END, HERMES_API_PORT_RANGE_START } from "../core/ports";
+import type { HermesSwitchyardRouting } from "../hermes-switchyard-routing";
 import {
   decodeManagedStartupProfile,
   encodeManagedStartupProfile,
@@ -28,6 +29,23 @@ import {
 } from "./managed-startup/profile";
 
 const CA_SHA256 = "a".repeat(64);
+
+const HERMES_SWITCHYARD_ROUTING = {
+  algorithm: "llm_classifier",
+  baseThreshold: 0.5,
+  targets: (["judge", "weak", "strong"] as const).map((role) => ({
+    role,
+    baseUrl: `https://${role}.models.test/v1`,
+    model: `${role}-model`,
+    protocol: "openai_chat" as const,
+    headerEnv: [
+      {
+        headerName: "authorization",
+        envKey: `SWITCHYARD_${role.toUpperCase()}_AUTHORIZATION`,
+      },
+    ],
+  })),
+} as const satisfies HermesSwitchyardRouting;
 
 const MESSAGING_PLAN = {
   schemaVersion: 1,
@@ -382,6 +400,70 @@ describe("managed startup profile", () => {
       "nous-web",
     ]);
     expect(profile.messaging.plan).not.toBeNull();
+  });
+
+  it("carries and fingerprints secret-free Hermes Switchyard topology (#8887)", () => {
+    const routedProfile = {
+      ...HERMES_PROFILE,
+      agentConfig: {
+        ...HERMES_PROFILE.agentConfig,
+        switchyardRouting: HERMES_SWITCHYARD_ROUTING,
+      },
+    } as const satisfies ManagedStartupProfile;
+    const validated = validateManagedStartupProfile(routedProfile);
+
+    expect(
+      validated.agentConfig.agent === "hermes"
+        ? validated.agentConfig.switchyardRouting?.targets.map(({ role }) => role)
+        : [],
+    ).toEqual(["judge", "weak", "strong"]);
+    const encoded = encodeManagedStartupProfile(routedProfile);
+    expect(decodeManagedStartupProfile(encoded)).toEqual(validated);
+    const decodedTransport = Buffer.from(encoded, "base64url").toString("utf8");
+    expect(decodedTransport).not.toContain("openshell:resolve:env:v");
+    expect(decodedTransport).not.toContain("providerEnvironmentRevision");
+    expect(fingerprintManagedStartupProfile(routedProfile)).not.toBe(
+      fingerprintManagedStartupProfile({
+        ...routedProfile,
+        agentConfig: {
+          ...routedProfile.agentConfig,
+          switchyardRouting: {
+            ...HERMES_SWITCHYARD_ROUTING,
+            targets: HERMES_SWITCHYARD_ROUTING.targets.map((target) => ({
+              ...target,
+              model: target.role === "weak" ? "other-weak-model" : target.model,
+            })),
+          },
+        },
+      }),
+    );
+  });
+
+  it("rejects credential values added to the secret-free Switchyard topology (#8887)", () => {
+    expect(() =>
+      validateManagedStartupProfile({
+        ...HERMES_PROFILE,
+        agentConfig: {
+          ...HERMES_PROFILE.agentConfig,
+          switchyardRouting: {
+            ...HERMES_SWITCHYARD_ROUTING,
+            targets: HERMES_SWITCHYARD_ROUTING.targets.map((target) =>
+              target.role === "weak"
+                ? {
+                    ...target,
+                    headerEnv: [
+                      {
+                        ...target.headerEnv[0],
+                        placeholder: "Bearer sk-proj-rawcredentialmaterial",
+                      },
+                    ],
+                  }
+                : target,
+            ),
+          },
+        },
+      }),
+    ).toThrow(/credential-shaped string data/);
   });
 
   it("round-trips langchain-deepagents-code upstream metadata, managed proxy, approval, and observability", () => {

@@ -37,6 +37,23 @@ function encodeJson(value: unknown): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64");
 }
 
+const HERMES_SWITCHYARD_ROUTING = {
+  algorithm: "llm_classifier",
+  baseThreshold: 0.5,
+  targets: (["judge", "weak", "strong"] as const).map((role) => ({
+    role,
+    baseUrl: `https://${role}.models.test/v1`,
+    model: `${role}-model`,
+    protocol: "openai_chat" as const,
+    headerEnv: [
+      {
+        headerName: "authorization",
+        envKey: `SWITCHYARD_${role.toUpperCase()}_AUTHORIZATION`,
+      },
+    ],
+  })),
+} as const;
+
 function openClawInput(
   overrides: Partial<ManagedStartupProfileBuilderInput> = {},
 ): ManagedStartupProfileBuilderInput {
@@ -499,6 +516,20 @@ describe("buildManagedStartupProfile", () => {
     });
   });
 
+  it("builds internal Hermes Switchyard routing intent without a public environment knob (#8887)", () => {
+    const built = buildManagedStartupProfile(
+      hermesInput({ hermesSwitchyardRouting: HERMES_SWITCHYARD_ROUTING }),
+    );
+
+    expect(built.profile.agentConfig).toMatchObject({
+      agent: "hermes",
+      switchyardRouting: {
+        algorithm: "llm_classifier",
+        targets: [{ role: "judge" }, { role: "weak" }, { role: "strong" }],
+      },
+    });
+  });
+
   it.each([
     ["DCode messaging", dcodeInput({ messagingPlan: messagingPlan("openclaw") }), /messagingPlan/],
     [
@@ -509,6 +540,11 @@ describe("buildManagedStartupProfile", () => {
     [
       "OpenClaw Hermes gateways",
       openClawInput({ hermesToolGateways: ["nous-web"] }),
+      /another agent/,
+    ],
+    [
+      "OpenClaw Hermes Switchyard routing",
+      openClawInput({ hermesSwitchyardRouting: HERMES_SWITCHYARD_ROUTING }),
       /another agent/,
     ],
     [

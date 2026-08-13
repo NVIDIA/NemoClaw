@@ -25,6 +25,7 @@ import {
   type ManagedStartupDcodeAutoApprovalMode,
   type ManagedStartupExtraAgents,
   type ManagedStartupHermesToolGateway,
+  type ManagedStartupHermesSwitchyardRouting,
   type ManagedStartupInputModality,
   type ManagedStartupJsonObject,
   type ManagedStartupProfile,
@@ -97,6 +98,8 @@ export interface ManagedStartupProfileBuilderInput {
   } | null;
   readonly toolDisclosure: ManagedStartupToolDisclosure;
   readonly hermesToolGateways: readonly string[];
+  /** Internal, dependency-aware activation intent. No public onboarding surface emits it yet. */
+  readonly hermesSwitchyardRouting?: ManagedStartupHermesSwitchyardRouting;
   readonly messagingPlan: unknown | null;
   readonly dcodeAutoApprovalMode: ManagedStartupDcodeAutoApprovalMode | null;
   readonly observabilityEnabled: boolean | null;
@@ -511,6 +514,7 @@ function assertAgentSpecificInput(input: ManagedStartupProfileBuilderInput): voi
     if (
       input.inference.upstreamEndpointUrl !== null ||
       input.hermesToolGateways.length > 0 ||
+      input.hermesSwitchyardRouting !== undefined ||
       input.dcodeAutoApprovalMode !== null ||
       input.observabilityEnabled !== null
     ) {
@@ -536,6 +540,9 @@ function assertAgentSpecificInput(input: ManagedStartupProfileBuilderInput): voi
   }
   if (input.hermesToolGateways.length > 0) {
     fail("langchain-deepagents-code does not support Hermes tool gateways");
+  }
+  if (input.hermesSwitchyardRouting !== undefined) {
+    fail("langchain-deepagents-code does not support Hermes Switchyard routing");
   }
   if (input.messagingPlan !== null) {
     fail("langchain-deepagents-code messagingPlan must be null");
@@ -899,7 +906,13 @@ function buildCandidate(input: ManagedStartupProfileBuilderInput): {
     };
   } else if (input.agent === "hermes") {
     if (!webSearch) fail("Hermes web-search state is missing");
-    agentConfig = { agent: "hermes", webSearch };
+    agentConfig = {
+      agent: "hermes",
+      webSearch,
+      ...(input.hermesSwitchyardRouting === undefined
+        ? {}
+        : { switchyardRouting: input.hermesSwitchyardRouting }),
+    };
     tuning = {
       contextWindow: parsePositiveInteger(input.environment, "NEMOCLAW_CONTEXT_WINDOW", null, {
         minimum: MIN_HERMES_CONTEXT_WINDOW,

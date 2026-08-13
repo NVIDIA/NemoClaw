@@ -23,6 +23,22 @@ import {
 } from "./managed-startup/profile";
 
 const CA_SHA256 = "a".repeat(64);
+const HERMES_SWITCHYARD_ROUTING = {
+  algorithm: "llm_classifier" as const,
+  baseThreshold: 0.5,
+  targets: (["judge", "weak", "strong"] as const).map((role) => ({
+    role,
+    baseUrl: `https://${role}.models.test/v1`,
+    model: `${role}-model`,
+    protocol: "openai_chat" as const,
+    headerEnv: [
+      {
+        headerName: "authorization",
+        envKey: `SWITCHYARD_${role.toUpperCase()}_AUTHORIZATION`,
+      },
+    ],
+  })),
+};
 const OPENCLAW_APPLICATION_RUNTIME_NAMES = [
   "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS",
   "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS",
@@ -512,6 +528,28 @@ describe("managed startup agent environment", () => {
       kind: "configure-dashboard",
       dashboard: hermesProfile().dashboard,
     });
+  });
+
+  it("maps Hermes Switchyard intent only into the configuration phase (#8887)", () => {
+    const base = hermesProfile();
+    const profile: ManagedStartupProfile = {
+      ...base,
+      agentConfig: {
+        agent: "hermes",
+        webSearch: { enabled: true, provider: "tavily" },
+        switchyardRouting: HERMES_SWITCHYARD_ROUTING,
+      },
+    };
+    const result = mapManagedStartupProfileToAgentEnvironment(profile);
+    const encoded = result.configurationEnvironment.NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64;
+
+    expect(decodeBase64Json(encoded ?? "")).toEqual(HERMES_SWITCHYARD_ROUTING);
+    expect(result.runtimeEnvironment).not.toHaveProperty(
+      "NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64",
+    );
+    expect(readHermesBuildSettings(result.configurationEnvironment).switchyardRouting).toEqual(
+      HERMES_SWITCHYARD_ROUTING,
+    );
   });
 
   it("keeps DCode routing and auto-approval in root-owned files instead of ambient runtime env", () => {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { HermesBuildSettings } from "./build-env.ts";
+import { HERMES_SWITCHYARD_RELAY_TOML } from "../../../src/lib/hermes-switchyard-routing.ts";
 import {
   effectiveManagedToolGatewayPresets,
   loadManagedToolGatewayMatrix,
@@ -14,6 +15,10 @@ export function buildHermesEnvLines(
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
   const envLines = ["API_SERVER_PORT=18642", "API_SERVER_HOST=127.0.0.1"];
+
+  if (settings.switchyardRouting != null) {
+    envLines.push(`HERMES_NEMO_RELAY_PLUGINS_TOML=${HERMES_SWITCHYARD_RELAY_TOML}`);
+  }
 
   for (const { envKey, placeholder } of settings.messagingCredentialPlaceholders) {
     envLines.push(`${envKey}=${placeholder}`);

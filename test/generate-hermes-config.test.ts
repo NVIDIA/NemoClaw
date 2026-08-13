@@ -12,12 +12,17 @@ import {
   readHermesBuildSettings,
 } from "../agents/hermes/config/build-env.ts";
 import { generateHermesConfig } from "../agents/hermes/config/generate.ts";
+import { buildHermesEnvLines } from "../agents/hermes/config/hermes-env.ts";
 import {
   buildHermesManagedPolicy,
   MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS,
 } from "../agents/hermes/config/managed-policy.ts";
 import { discoverModelSpecificSetups } from "../agents/hermes/config/model-specific-setup.ts";
 import { HERMES_PROXY_REWRITE_SENTINEL } from "../src/lib/hermes-managed-route";
+import {
+  type HermesSwitchyardRouting,
+  serializeHermesSwitchyardRelayToml,
+} from "../src/lib/hermes-switchyard-routing";
 import {
   applyCompatibleEndpointContextWindow,
   resetCompatibleEndpointContextWindowAutoState,
@@ -47,6 +52,23 @@ const BASE_ENV: Record<string, string> = {
   NEMOCLAW_TELEGRAM_CONFIG_B64: encodeJson({}),
   NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({}),
 };
+
+const SWITCHYARD_ROUTING = {
+  algorithm: "llm_classifier",
+  baseThreshold: 0.5,
+  targets: (["judge", "weak", "strong"] as const).map((role) => ({
+    role,
+    baseUrl: `https://${role}.models.test/v1`,
+    model: `${role}-model`,
+    protocol: "openai_chat" as const,
+    headerEnv: [
+      {
+        headerName: "authorization",
+        envKey: `SWITCHYARD_${role.toUpperCase()}_AUTHORIZATION`,
+      },
+    ],
+  })),
+} as const satisfies HermesSwitchyardRouting;
 
 const HERMES_STRUCTURED_TOOL_SEARCH = {
   enabled: "on",
@@ -246,6 +268,10 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
     path.join(import.meta.dirname, "..", "src", "lib", "hermes-managed-route.ts"),
     path.join(fixtureRoot, "src", "lib", "hermes-managed-route.ts"),
   );
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "..", "src", "lib", "hermes-switchyard-routing.ts"),
+    path.join(fixtureRoot, "src", "lib", "hermes-switchyard-routing.ts"),
+  );
   return fixtureScriptPath;
 }
 
@@ -256,7 +282,7 @@ function expectRemotePlatformToolsets(toolsets: unknown, extraToolsets: string[]
 }
 
 function findRawSecretEnvEntries(envFile: string): string[] {
-  const secretKey = /(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)/;
+  const secretKey = /(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API|AUTHORIZATION)(_|$)/;
   const slackAlias = /^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$/;
   const allowedNonsecretKeys = new Set(["API_SERVER_HOST", "API_SERVER_PORT"]);
   // Mirror ENV_FILE_ALLOWED_RAW_SECRET_KEYS in
@@ -287,6 +313,7 @@ function findRawSecretEnvEntries(envFile: string): string[] {
     if (
       allowedLiterals.has(value) ||
       value.startsWith("openshell:resolve:env:") ||
+      /^Bearer openshell:resolve:env:v[0-9]{1,20}_[A-Z][A-Z0-9_]{0,127}$/.test(value) ||
       slackAlias.test(value)
     ) {
       continue;
@@ -307,6 +334,53 @@ afterEach(() => {
 });
 
 describe("agents/hermes/generate-config.ts", () => {
+  it("keeps native Relay disabled unless Switchyard routing is explicitly configured (#8886)", () => {
+    const { envFile } = generateBaseConfig();
+
+    expect(envFile).not.toContain("HERMES_NEMO_RELAY_PLUGINS_TOML");
+    expect(fs.existsSync(path.join(tmpDir, ".hermes", "relay-plugins.toml"))).toBe(false);
+  });
+
+  it("keeps native Relay disabled for legacy settings without a routing field (#8886)", () => {
+    const { switchyardRouting: _switchyardRouting, ...legacySettings } =
+      readHermesBuildSettings(buildHermesTestEnv());
+
+    expect(buildHermesEnvLines(legacySettings)).not.toContain(
+      "HERMES_NEMO_RELAY_PLUGINS_TOML=/usr/local/share/nemoclaw/hermes-relay-plugins.toml",
+    );
+  });
+
+  it("writes deterministic native Relay TOML without persisting provider placeholders (#8886)", () => {
+    const encoded = encodeJson(SWITCHYARD_ROUTING);
+    const { envFile } = generateBaseConfig({
+      NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64: encoded,
+    });
+    const relayPluginsPath = path.join(tmpDir, ".hermes", "relay-plugins.toml");
+    const relayPlugins = fs.readFileSync(relayPluginsPath, "utf8");
+
+    expect(relayPlugins).toBe(serializeHermesSwitchyardRelayToml(SWITCHYARD_ROUTING));
+    expect(fs.statSync(relayPluginsPath).mode & 0o777).toBe(0o600);
+    expect(envFile).toContain(
+      "HERMES_NEMO_RELAY_PLUGINS_TOML=/usr/local/share/nemoclaw/hermes-relay-plugins.toml\n",
+    );
+    expect(envFile).not.toContain("SWITCHYARD_WEAK_AUTHORIZATION=");
+    expect(envFile).not.toContain("openshell:resolve:env:v");
+    expect(envFile).not.toContain("providerEnvironmentRevision");
+    expect(findRawSecretEnvEntries(envFile)).toEqual([]);
+
+    generateBaseConfig();
+    expect(fs.existsSync(relayPluginsPath)).toBe(false);
+    expect(readGeneratedConfig().envFile).not.toContain("HERMES_NEMO_RELAY_PLUGINS_TOML");
+  });
+
+  it("rejects malformed native routing before writing Relay TOML (#8886)", () => {
+    expectGenerationError(
+      { NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64: encodeJson({ targets: [] }) },
+      /NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64 is invalid/,
+    );
+    expect(fs.existsSync(path.join(tmpDir, ".hermes", "relay-plugins.toml"))).toBe(false);
+  });
+
   it(
     "matches direct generation as a strip-types executable with an explicit gateway matrix",
     async () => {

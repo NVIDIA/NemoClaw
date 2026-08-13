@@ -5,6 +5,11 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
 
+import {
+  type HermesSwitchyardRouting,
+  validateHermesSwitchyardRouting,
+} from "../../hermes-switchyard-routing";
+
 /**
  * Versioned, bounded schema for managed-image startup intent.
  * Runtime-specific construction and activation stay outside this module.
@@ -272,7 +277,11 @@ export interface ManagedStartupOpenClawConfig {
 export interface ManagedStartupHermesConfig {
   readonly agent: "hermes";
   readonly webSearch: ManagedStartupWebSearch;
+  /** Absent keeps native Relay and Switchyard routing disabled. */
+  readonly switchyardRouting?: HermesSwitchyardRouting;
 }
+
+export type ManagedStartupHermesSwitchyardRouting = HermesSwitchyardRouting;
 
 export interface ManagedStartupDcodeConfig {
   readonly agent: "langchain-deepagents-code";
@@ -858,7 +867,7 @@ const OPENCLAW_CONFIG_KEYS = new Set([
   "deviceAuth",
   "minimalBootstrap",
 ]);
-const HERMES_CONFIG_KEYS = new Set(["agent", "webSearch"]);
+const HERMES_CONFIG_KEYS = new Set(["agent", "webSearch", "switchyardRouting"]);
 const DCODE_CONFIG_KEYS = new Set(["agent", "autoApprovalMode", "observabilityEnabled"]);
 const WEB_SEARCH_KEYS = new Set(["enabled", "provider"]);
 const OTEL_KEYS = new Set(["enabled", "endpointUrl", "serviceName", "sampleRate"]);
@@ -1505,7 +1514,16 @@ function validateAgentConfig(
   }
   if (agent === "hermes") {
     rejectUnknownKeys(config, HERMES_CONFIG_KEYS, "agentConfig");
-    return { agent, webSearch: validateWebSearch(config.webSearch, agent) };
+    const base = { agent, webSearch: validateWebSearch(config.webSearch, agent) } as const;
+    if (!Object.hasOwn(config, "switchyardRouting")) return base;
+    try {
+      return {
+        ...base,
+        switchyardRouting: validateHermesSwitchyardRouting(config.switchyardRouting),
+      };
+    } catch (error) {
+      invalid(error instanceof Error ? error.message : "agentConfig.switchyardRouting is invalid");
+    }
   }
 
   rejectUnknownKeys(config, DCODE_CONFIG_KEYS, "agentConfig");

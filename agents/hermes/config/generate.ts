@@ -48,11 +48,20 @@ export function generateHermesConfig({
   const config = policy.config;
   const envLines = policy.env_lines;
   finalizeHermesPlatformToolsets(config, settings);
-  const written = writeHermesConfigFiles(config, envLines, policy, homeDir);
+  const written = writeHermesConfigFiles(
+    config,
+    envLines,
+    policy,
+    settings.switchyardRouting ?? null,
+    homeDir,
+  );
 
   log(`[config] Wrote ${written.configPath} (model=${settings.model}, provider=custom)`);
   log(`[config] Wrote ${written.envPath} (${written.envEntryCount} entries)`);
   log(`[config] Wrote ${written.policyPath} (schema=${policy.schema_version})`);
+  if (written.relayPluginsPath !== null) {
+    log(`[config] Wrote ${written.relayPluginsPath} (native Relay/Switchyard configuration)`);
+  }
 
   return { settings, config, envLines, policy, written };
 }
