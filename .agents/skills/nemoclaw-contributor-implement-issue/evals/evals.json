@@ -116,5 +116,29 @@
       "Uses `nemoclaw-contributor-create-pr`.",
       "Does not begin a code repair before classification."
     ]
+  },
+  {
+    "id": "configured-github-tool",
+    "question": "Implement NVIDIA/NemoClaw issue #8378 with the configured read-only GitHub MCP tool.",
+    "expected_skill": "nemoclaw-contributor-implement-issue",
+    "ground_truth": "The implementation workflow uses the configured GitHub tool to read accepted scope before editing.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-implement-issue`.",
+      "Reads the issue through the configured GitHub MCP tool.",
+      "Does not require or install the `gh` CLI.",
+      "Does not push or publish a pull request."
+    ]
+  },
+  {
+    "id": "missing-github-tool",
+    "question": "Implement NVIDIA/NemoClaw issue #8378. This agent has no agent-provided GitHub tool, GitHub MCP tool, or authenticated gh CLI.",
+    "expected_skill": "nemoclaw-contributor-implement-issue",
+    "ground_truth": "The workflow stops before editing because it cannot confirm accepted scope through configured GitHub access.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-implement-issue`.",
+      "Stops before editing the checkout.",
+      "Asks the user to configure GitHub access for the current environment.",
+      "Does not use curl, another HTTP client, web search, or a different endpoint."
+    ]
   }
 ]

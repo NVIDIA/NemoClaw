@@ -33,6 +33,11 @@ const buildkitBaseDependencyUri = (targetPlatform: string) => {
 };
 
 type FixtureOptions = {
+  attestationArtifactType?: string;
+  attestationConfigData?: string;
+  attestationConfigDigest?: string;
+  attestationSubjectDigest?: string;
+  attestationSubjectSize?: number;
   attestationWorkloadDigest?: string;
   corruptSlsaBlob?: boolean;
   duplicateSlsaLayer?: boolean;
@@ -182,12 +187,22 @@ function runEvidence(options: FixtureOptions = {}, digestOverride?: string) {
   const attestation = JSON.stringify({
     schemaVersion: 2,
     mediaType: "application/vnd.oci.image.manifest.v1+json",
+    artifactType:
+      options.attestationArtifactType ?? "application/vnd.docker.attestation.manifest.v1+json",
     config: {
-      mediaType: "application/vnd.oci.image.config.v1+json",
-      digest: `sha256:${"4".repeat(64)}`,
-      size: 167,
+      mediaType: "application/vnd.oci.empty.v1+json",
+      digest:
+        options.attestationConfigDigest ??
+        "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      size: 2,
+      data: options.attestationConfigData ?? "e30=",
     },
     layers,
+    subject: {
+      mediaType: "application/vnd.oci.image.manifest.v1+json",
+      digest: options.attestationSubjectDigest ?? workloadDigest,
+      size: options.attestationSubjectSize ?? Buffer.byteLength(workload),
+    },
   });
   const attestationDigest = sha256(attestation);
   const candidate = JSON.stringify({
@@ -446,6 +461,25 @@ describe("managed image publication evidence verifier", () => {
 
     expect(fixture.result.status).not.toBe(0);
     expect(fixture.result.stderr).toContain("not bound to the workload");
+    expect(fixture.evidence).toBeNull();
+  });
+
+  it.each([
+    [
+      "artifact type",
+      { attestationArtifactType: "application/vnd.example.attestation.manifest.v1+json" },
+    ],
+    ["subject digest", { attestationSubjectDigest: `sha256:${"8".repeat(64)}` }],
+    ["subject size", { attestationSubjectSize: 1 }],
+    ["inline empty config", { attestationConfigData: "e31=" }],
+    ["inline empty config digest", { attestationConfigDigest: `sha256:${"4".repeat(64)}` }],
+  ])("rejects an attestation artifact with a different %s", (_label, options) => {
+    const fixture = runEvidence(options);
+
+    expect(fixture.result.status).not.toBe(0);
+    expect(fixture.result.stderr).toContain(
+      "attestation manifest is not the canonical workload-bound OCI artifact",
+    );
     expect(fixture.evidence).toBeNull();
   });
 
