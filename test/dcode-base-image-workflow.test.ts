@@ -67,6 +67,7 @@ describe("base-image dependency contracts", () => {
       PLATFORM: "${{ inputs.platform }}",
     });
     expect(validate.run).toContain('reference="${IMAGE}@${DIGEST}"');
+    expect(validate.run).toContain("^sha256:[0-9a-f]{64}$");
     expect(validate.run).toContain('docker run --rm --platform "$PLATFORM"');
     expect(validate.run).toContain("--network none");
     expect(validate.run).toContain("--cap-drop ALL");
@@ -74,7 +75,11 @@ describe("base-image dependency contracts", () => {
     expect(validate.run).toContain("--read-only");
     expect(validate.run).toContain("--user 999:999");
     expect(validate.run).toContain("test -x /usr/bin/dos2unix");
+    expect(validate.run).toContain('test "$(command -v dos2unix)" = /usr/bin/dos2unix');
     expect(validate.run).toContain("dos2unix --version");
+    expect(buildIndex).toBeGreaterThanOrEqual(0);
+    expect(validateIndex).toBeGreaterThanOrEqual(0);
+    expect(exportIndex).toBeGreaterThanOrEqual(0);
     expect(validateIndex).toBeGreaterThan(buildIndex);
     expect(validateIndex).toBeLessThan(exportIndex);
   });
