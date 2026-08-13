@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   prepareInteractiveSession: vi.fn(),
   printInteractiveSessionHints: vi.fn(),
   completeInteractiveSessionSetup: vi.fn(),
+  completeReadinessQualifiedInteractiveSessionSetup: vi.fn(),
   execSandbox: vi.fn(),
   prepareHermesLightTerminalSkin: vi.fn(),
   inspectLaunchReadiness: vi.fn(),
@@ -24,6 +25,8 @@ vi.mock("./connect", () => ({
   prepareInteractiveSession: mocks.prepareInteractiveSession,
   printInteractiveSessionHints: mocks.printInteractiveSessionHints,
   completeInteractiveSessionSetup: mocks.completeInteractiveSessionSetup,
+  completeReadinessQualifiedInteractiveSessionSetup:
+    mocks.completeReadinessQualifiedInteractiveSessionSetup,
 }));
 vi.mock("./exec", () => ({
   execSandbox: mocks.execSandbox,
@@ -316,7 +319,7 @@ describe("launchSandbox", () => {
     expect(mocks.execSandbox).not.toHaveBeenCalled();
   });
 
-  it("uses the accepted lease path without running the complete preflight (#8942)", async () => {
+  it("skips the complete OpenClaw pairing pass after current lease qualification (#9023)", async () => {
     const openclaw = loadAgent("openclaw");
     const sb = sandboxEntry("openclaw");
     mocks.inspectLaunchReadiness.mockResolvedValue({
@@ -330,12 +333,16 @@ describe("launchSandbox", () => {
 
     expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
     expect(mocks.printInteractiveSessionHints).toHaveBeenCalledWith("alpha");
-    expect(mocks.completeInteractiveSessionSetup).toHaveBeenCalledWith("alpha", sb);
+    expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).toHaveBeenCalledWith(
+      "alpha",
+      sb,
+    );
+    expect(mocks.completeInteractiveSessionSetup).not.toHaveBeenCalled();
     expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
     expect(mocks.printInteractiveSessionHints).toHaveBeenCalledBefore(
-      mocks.completeInteractiveSessionSetup,
+      mocks.completeReadinessQualifiedInteractiveSessionSetup,
     );
-    expect(mocks.completeInteractiveSessionSetup).toHaveBeenCalledBefore(
+    expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).toHaveBeenCalledBefore(
       mocks.prepareHermesLightTerminalSkin,
     );
     expect(mocks.prepareHermesLightTerminalSkin).toHaveBeenCalledBefore(mocks.execSandbox);
@@ -372,7 +379,10 @@ describe("launchSandbox", () => {
       expect.objectContaining({ epochId: "a".repeat(64) }),
       expect.any(Function),
     );
-    expect(mocks.completeInteractiveSessionSetup).toHaveBeenCalledWith("alpha", sb);
+    expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).toHaveBeenCalledWith(
+      "alpha",
+      sb,
+    );
     expect(mocks.execSandbox).toHaveBeenCalledOnce();
   });
 
@@ -392,6 +402,21 @@ describe("launchSandbox", () => {
     expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
     expect(mocks.execSandbox).toHaveBeenCalledTimes(2);
     expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
+    expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).toHaveBeenCalledTimes(2);
+    expect(mocks.completeInteractiveSessionSetup).not.toHaveBeenCalled();
+  });
+
+  it("runs the existing complete pairing path once after qualification fallback (#9023)", async () => {
+    mocks.prepareInteractiveSession.mockImplementationOnce(async () => {
+      mocks.completeInteractiveSessionSetup("alpha", sandboxEntry("openclaw"));
+      return { agent: loadAgent("openclaw"), sb: sandboxEntry("openclaw") };
+    });
+
+    await launchSandbox("alpha");
+
+    expect(mocks.prepareInteractiveSession).toHaveBeenCalledOnce();
+    expect(mocks.completeInteractiveSessionSetup).toHaveBeenCalledOnce();
+    expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).not.toHaveBeenCalled();
   });
 
   it("publishes recaptured final state only after successful complete preflight (#8942)", async () => {

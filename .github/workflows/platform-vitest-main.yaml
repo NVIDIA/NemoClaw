@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: CI / Platform Vitest Main Watch
+name: CI / Platform Evidence
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: platform-vitest-main-${{ github.ref }}
+  group: platform-evidence-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -81,12 +81,21 @@ jobs:
             test/install-preflight.test.ts
 
   macos-vitest:
+    name: macOS compatibility (${{ matrix.shard }}/4)
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        include:
+          - shard: 1
+            timeout_minutes: 60
+          - shard: 2
+            timeout_minutes: 30
+          - shard: 3
+            timeout_minutes: 30
+          - shard: 4
+            timeout_minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -157,17 +166,82 @@ jobs:
       - name: Run full Vitest suite on macOS
         run: npx vitest run --testTimeout 60000 --shard="${{ matrix.shard }}/4"
 
+      - id: macos_docker
+        name: Detect Docker availability for macOS E2E
+        if: ${{ matrix.shard == 1 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if docker info >/dev/null 2>&1; then
+            echo "docker_ok=true" >>"$GITHUB_OUTPUT"
+            docker version
+          else
+            echo "docker_ok=false" >>"$GITHUB_OUTPUT"
+            echo "Docker is unavailable on the Apple silicon runner."
+          fi
+
+      - name: Run macOS live E2E
+        if: ${{ matrix.shard == 1 && steps.macos_docker.outputs.docker_ok == 'true' && github.ref == 'refs/heads/main' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-macos"
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+        run: >-
+          npx vitest run --project e2e-live
+          test/e2e/live/full-e2e.test.ts
+          --silent=false --reporter=default
+
+      - name: Explain skipped macOS live E2E
+        if: ${{ matrix.shard == 1 && (steps.macos_docker.outputs.docker_ok != 'true' || github.ref != 'refs/heads/main') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "The macOS live E2E did not run because this workflow does not test main."
+          else
+            echo "The macOS live E2E did not run because Docker is unavailable."
+          fi
+          echo "The macOS build and Vitest shard still provide platform evidence."
+
+      - name: Upload macOS E2E logs on failure
+        if: ${{ matrix.shard == 1 && failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-platform-evidence-logs
+          path: |
+            /tmp/nemoclaw-e2e-*.log
+            ${{ github.workspace }}/e2e-artifacts/live
+          if-no-files-found: ignore
+          retention-days: 14
+
   wsl-vitest:
+    name: WSL compatibility (${{ matrix.shard }}/4)
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        include:
+          - shard: 1
+            timeout_minutes: 180
+          - shard: 2
+            timeout_minutes: 90
+          - shard: 3
+            timeout_minutes: 90
+          - shard: 4
+            timeout_minutes: 90
     env:
       WSL_DISTRO: Ubuntu
       WSL_TEST_USER: nemoclaw-ci
       TRUSTED_WSL_HELPER: ${{ github.workspace }}\trusted-wsl-ci\tools\wsl\ci-helper.ps1
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_RECREATE_SANDBOX: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-wsl"
     steps:
       - name: Force LF line endings for checkout
         shell: powershell
@@ -297,3 +371,71 @@ jobs:
             -t 'requires both fixed files to match|reclaims a root-owned collapsed config|leaves a root-owned recovery baseline untouched'
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script $script
+
+      - id: wsl_docker
+        name: Detect Docker availability in WSL
+        if: ${{ matrix.shard == 1 }}
+        shell: powershell
+        run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          $script = @'
+          if docker info >/dev/null 2>&1; then
+            echo DOCKER_OK=1
+          else
+            echo DOCKER_OK=0
+          fi
+          '@
+          $result = Invoke-WslScript -Distro $env:WSL_DISTRO -Script $script -CaptureOutput
+          if ($result -match 'DOCKER_OK=1') {
+            'docker_ok=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host 'Docker is available in WSL'
+          } else {
+            'docker_ok=false' | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host 'Docker is unavailable in WSL'
+          }
+
+      - name: Run WSL live E2E
+        if: ${{ matrix.shard == 1 && steps.wsl_docker.outputs.docker_ok == 'true' && github.ref == 'refs/heads/main' }}
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
+          $exports = @(
+            'export NVIDIA_INFERENCE_API_KEY=' + (ConvertTo-BashLiteral -Value ([string]$env:NVIDIA_INFERENCE_API_KEY))
+            'export GITHUB_TOKEN=' + (ConvertTo-BashLiteral -Value ([string]$env:GITHUB_TOKEN))
+            'export NEMOCLAW_NON_INTERACTIVE=' + (ConvertTo-BashLiteral -Value $env:NEMOCLAW_NON_INTERACTIVE)
+            'export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=' + (ConvertTo-BashLiteral -Value $env:NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE)
+            'export NEMOCLAW_RECREATE_SANDBOX=' + (ConvertTo-BashLiteral -Value $env:NEMOCLAW_RECREATE_SANDBOX)
+            'export NEMOCLAW_SANDBOX_NAME=' + (ConvertTo-BashLiteral -Value $env:NEMOCLAW_SANDBOX_NAME)
+          ) -join "`n"
+          $script = @"
+          set -euo pipefail
+          cd $workdir
+          $exports
+          export NEMOCLAW_RUN_LIVE_E2E=1
+          npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
+          "@
+          Invoke-WslScript -Distro $env:WSL_DISTRO -Script $script
+
+      - name: Explain skipped WSL live E2E
+        if: ${{ matrix.shard == 1 && (steps.wsl_docker.outputs.docker_ok != 'true' || github.ref != 'refs/heads/main') }}
+        shell: powershell
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/main') {
+            Write-Host 'The WSL live E2E did not run because this workflow does not test main.'
+          } else {
+            Write-Host 'The WSL live E2E did not run because Docker is unavailable.'
+          }
+          Write-Host 'The WSL build and Vitest shard still provide platform evidence.'
+
+      - name: Upload WSL E2E log on failure
+        if: ${{ matrix.shard == 1 && failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wsl-platform-evidence-install-log
+          path: C:\Users\runneradmin\AppData\Local\Temp\nemoclaw-e2e-install.log
+          if-no-files-found: ignore
+          retention-days: 14

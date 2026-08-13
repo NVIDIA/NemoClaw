@@ -180,6 +180,23 @@ describe("E2E inference adapter", () => {
     );
   });
 
+  it("returns the unique launch reply requested by the mock prompt (#9046)", async () => {
+    const adapter = await createAdapter({ env: {} });
+    const expectedReply = "NEMOCLAW_0123456789AB_FIRST_OK";
+    const prompt =
+      "Join these four fragments with underscores and put only the result on its own line: " +
+      "NEMOCLAW, 0123456789AB, FIRST, OK. Do not use tools.";
+
+    expect(await adapter.directChat(prompt)).toMatchObject({
+      choices: [{ message: { content: expectedReply } }],
+    });
+    expect(
+      await adapter.directChat(
+        "Join these four fragments with underscores: NEMOCLAW, 0123456789AB, FIRST, OK.",
+      ),
+    ).toMatchObject({ choices: [{ message: { content: "PONG" } }] });
+  });
+
   it("keeps unrelated ambient secrets out of adapter and fake-server child environments", async () => {
     const secretName = "UNRELATED_E2E_SENTINEL_SECRET";
     const secretValue = "sentinel-value-that-must-not-propagate";
