@@ -264,7 +264,9 @@ function makeVmRestoreToEnv(
     'cmd=""; for arg do cmd="$arg"; done',
     'if printf "%s" "$cmd" | grep -q "openclaw.json"; then',
     '  if printf "%s" "$cmd" | grep -q "cat --"; then cat "$REMOTE_OPENCLAW_JSON"; exit 0; fi',
-    '  if printf "%s" "$cmd" | grep -q ".nemoclaw-restore"; then touch "$SNAPSHOT_RESTORE_MARKER"; cat > "$REMOTE_OPENCLAW_JSON"; exit 0; fi',
+    '  touch "$SNAPSHOT_RESTORE_MARKER"',
+    '  if printf "%s" "$cmd" | grep -q ".nemoclaw-restore"; then cat > "$REMOTE_OPENCLAW_JSON"; exit 0; fi',
+    '  exit 92',
     "fi",
     "exit 0",
   ]);
