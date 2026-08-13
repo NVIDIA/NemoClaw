@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
 
 import {
   AGENTS_DIR,
@@ -67,27 +68,46 @@ describe("agent definitions", () => {
     expect(() => loadAgent("pi", {})).toThrow("Pi is not selectable in this release");
   });
 
-  it("exposes the Pi candidate manifest to qualification authority only (#7925)", () => {
-    const qualifiedEnv = { NEMOCLAW_PI_QUALIFICATION: "1" };
+  it("does not let an ordinary environment setting expose Pi (#7925)", () => {
+    const ordinaryEnv = { NEMOCLAW_PI_QUALIFICATION: "1" };
 
-    expect(listAgents(qualifiedEnv)).toContain("pi");
-
-    const agent = loadAgent("pi", qualifiedEnv);
-    expect(agent.name).toBe("pi");
-    expect(agent.expectedVersion).toBe("0.84.1");
-    expect(agent.runtime?.kind).toBe("terminal");
-    expect(agent.config?.dir).toBe("/sandbox/.pi/agent");
+    expect(listAgents(ordinaryEnv)).not.toContain("pi");
+    expect(resolveAgentNameAlias("pi", listAgents(ordinaryEnv))).toBeNull();
+    expect(() => loadAgent("pi", ordinaryEnv)).toThrow("Pi is not selectable in this release");
   });
 
-  it("keeps Pi credential and trust state outside portable backup (#7925)", () => {
-    const agent = loadAgent("pi", { NEMOCLAW_PI_QUALIFICATION: "1" });
+  it("keeps the Pi candidate manifest readable without public resolution (#7925)", () => {
+    const manifest = YAML.parse(
+      fs.readFileSync(path.join(AGENTS_DIR, "pi", "manifest.yaml"), "utf8"),
+    ) as {
+      name: string;
+      expected_version: string;
+      runtime: { kind: string };
+      config: { dir: string };
+      state_dirs: { path: string; backup?: boolean }[];
+      state_files: { path: string; restore: Record<string, unknown> }[];
+    };
 
-    expect(agent.backupStateDirs).toEqual(["sessions", "prompts", "themes"]);
-    expect(agent.nonBackupStateDirs).toEqual(["tools", "bin"]);
-    expect(agent.stateFiles.map((file) => file.path)).toEqual(["settings.json"]);
-    const restore = agent.stateFiles[0]?.restore;
+    expect(manifest.name).toBe("pi");
+    expect(manifest.expected_version).toBe("0.84.1");
+    expect(manifest.runtime.kind).toBe("terminal");
+    expect(manifest.config.dir).toBe("/sandbox/.pi/agent");
+    expect(manifest.state_dirs.filter(({ backup }) => backup !== false).map(({ path }) => path)).toEqual([
+      "sessions",
+      "prompts",
+      "themes",
+    ]);
+    expect(manifest.state_dirs.filter(({ backup }) => backup === false).map(({ path }) => path)).toEqual([
+      "tools",
+      "bin",
+    ]);
+    expect(manifest.state_files.map((file) => file.path)).toEqual(["settings.json"]);
+    const restore = manifest.state_files[0]?.restore as {
+      merge?: string;
+      user_keys?: unknown[];
+    };
     expect(restore?.merge).toBe("key-allowlist");
-    expect(restore?.userKeys).toEqual([
+    expect(restore?.user_keys).toEqual([
       { key: "theme", type: "string", maxLength: 128 },
       { key: "hideThinkingBlock", type: "boolean" },
       { key: "showCacheMissNotices", type: "boolean" },
