@@ -693,7 +693,7 @@ export const E2E_CATALOGUE_SHARED_PATHS = [
 
 const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const DISPLAY_NAME_PATTERN = /^[A-Z][A-Za-z0-9 .'+()-]+: [^/\r\n]{1,72}$/u;
-const DISPLAY_NAME_METADATA_PATTERN = /\b(?:catalogue|e2e|live)\b|(?:issue|#)\s*\d+/iu;
+const DISPLAY_NAME_METADATA_PATTERN = /\b(?:catalogue|e2e|live)\b|(?:issue[-\s]*|#\s*)\d+/iu;
 const TEST_FILE_PATTERN = /^test\/e2e\/live\/[A-Za-z0-9._-]+[.]test[.]ts$/u;
 const ENVIRONMENT_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/u;
 const SELECTOR_PATTERN = /^[A-Za-z0-9_./^$=:@+-]+$/u;
@@ -712,9 +712,18 @@ export function validateE2eTargetCatalogue(
       throw new Error(`E2E target catalogue contains an invalid or duplicate ID: ${entry.id}`);
     }
     ids.add(entry.id);
+    const displayName = entry.displayName.toLowerCase();
+    const implementationIdentifiers = [
+      entry.id,
+      entry.runner,
+      entry.environment.NEMOCLAW_SANDBOX_NAME,
+    ].filter((identifier): identifier is string => identifier !== undefined);
     if (
       !DISPLAY_NAME_PATTERN.test(entry.displayName) ||
       DISPLAY_NAME_METADATA_PATTERN.test(entry.displayName) ||
+      implementationIdentifiers.some((identifier) =>
+        displayName.includes(identifier.toLowerCase()),
+      ) ||
       displayNames.has(entry.displayName)
     ) {
       throw new Error(

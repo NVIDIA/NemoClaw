@@ -291,6 +291,24 @@ describe("E2E workflow plan", () => {
         { ...networkPolicy, displayName: "E2E: validates issue #7912 live" },
       ]),
     ).toThrow("invalid or duplicate display name");
+    for (const displayName of [
+      "Network: enforces network-policy rules",
+      "Network: runs on ubuntu-latest",
+      "Network: validates issue-2478 recovery",
+    ]) {
+      expect(() => validateE2eTargetCatalogue([{ ...networkPolicy, displayName }])).toThrow(
+        "invalid or duplicate display name",
+      );
+    }
+    expect(() =>
+      validateE2eTargetCatalogue([
+        {
+          ...networkPolicy,
+          displayName: "Network: uses isolated-sandbox for policy checks",
+          environment: { NEMOCLAW_SANDBOX_NAME: "isolated-sandbox" },
+        },
+      ]),
+    ).toThrow("invalid or duplicate display name");
     expect(() =>
       validateE2eTargetCatalogue([
         networkPolicy,
