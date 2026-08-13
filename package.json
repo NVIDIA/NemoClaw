@@ -141,7 +141,6 @@
     "@commitlint/config-conventional": "^20.5.0",
     "@earendil-works/pi-coding-agent": "0.80.6",
     "@j178/prek": "^0.3.6",
-    "@oxlint/plugins": "1.78.0",
     "@types/node": "^25.5.2",
     "@vitest/coverage-v8": "^4.1.0",
     "eslint-plugin-sonarjs": "4.2.0",

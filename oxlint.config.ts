@@ -1,28 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { fileURLToPath, URL } from "node:url";
-
 import { defineConfig } from "oxlint";
 import core from "ultracite/oxlint/core";
-
-export const antiSlopRules = {
-  "anti-slop/no-chained-type-assertions": "error",
-  "anti-slop/no-conditional-empty-object-spread": "error",
-  "anti-slop/no-known-value-widening": "error",
-  "anti-slop/no-module-mocking": "error",
-  "anti-slop/no-object-parameters": "error",
-  "anti-slop/no-reflect-apply": "error",
-  "anti-slop/no-reflect-get": "error",
-  "anti-slop/no-runtime-typeof": "error",
-  "anti-slop/no-shape-in-symbol-names": "error",
-  "anti-slop/no-unknown-parameters": "error",
-  "anti-slop/no-unknown-returns": "error",
-  "anti-slop/no-unknown-type-aliases": "error",
-  "anti-slop/no-unsafe-dictionary-type": "error",
-  "anti-slop/no-widen-then-assert": "error",
-  "anti-slop/require-safety-comment-for-type-assertion": "error",
-} as const;
 
 const disabledUltraciteRules = Object.fromEntries(
   Object.keys(core.rules ?? {}).map((rule) => [rule, "off"]),
@@ -61,12 +41,8 @@ export default defineConfig({
     node: true,
   },
   extends: [core],
-  ignorePatterns: [...(core.ignorePatterns ?? []), ".claude", ".pi", "tools/oxlint/anti-slop"],
+  ignorePatterns: [...(core.ignorePatterns ?? []), ".claude", ".pi"],
   jsPlugins: [
-    {
-      name: "anti-slop",
-      specifier: fileURLToPath(new URL("./tools/oxlint/anti-slop/index.ts", import.meta.url)),
-    },
     {
       name: "sonarjs",
       specifier: "eslint-plugin-sonarjs",

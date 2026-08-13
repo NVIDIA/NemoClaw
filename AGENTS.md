@@ -154,7 +154,6 @@ For shell scripts use `#` comments. For Markdown use HTML comments.
 - `bin/` launcher and remaining `scripts/*.js`: **CommonJS** (`require`/`module.exports`), Node.js 22.19+
 - `test/`: **ESM** (`import`/`export`)
 - Oxlint uses `oxlint.config.ts`. The isolated `oxlint.type-aware.config.ts` configuration enforces `typescript/no-floating-promises` for plugin sources.
-  The pre-commit `anti-slop` hook applies `oxlint.anti-slop.config.ts` to added JavaScript and TypeScript files that Oxlint does not exclude.
 
 - SonarJS contributor-tool use is constrained by [`tools/lint/DEPENDENCY-REVIEW.md`](tools/lint/DEPENDENCY-REVIEW.md).
 - Keep function complexity low; existing complexity hotspots are tracked separately

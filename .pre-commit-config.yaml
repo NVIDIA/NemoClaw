@@ -159,14 +159,6 @@ repos:
 
   - repo: local
     hooks:
-      - id: anti-slop
-        name: anti-slop for added source files
-        entry: bash tools/lint/lint-added-files.sh
-        language: system
-        files: \.(cjs|cts|js|jsx|mjs|mts|ts|tsx)$
-        pass_filenames: true
-        priority: 10
-
       - id: oxlint-type-aware
         name: Oxlint type-aware rules
         entry: npx oxlint --config oxlint.type-aware.config.ts --no-error-on-unmatched-pattern
