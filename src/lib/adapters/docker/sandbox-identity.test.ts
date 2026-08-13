@@ -35,6 +35,9 @@ describe("probeSandboxNameContainers", () => {
     const dockerRun = vi.fn((_args: readonly string[], _opts?: unknown) => ({ status: 0, stdout: "" }));
     probeSandboxNameContainers("destroytest", { dockerRun } as never);
     const argv = dockerRun.mock.calls[0][0] as readonly string[];
+    // `-a` keeps stopped containers visible: a stopped foreign container that
+    // borrows the sandbox-name label must still make the identity ambiguous.
+    expect(argv).toContain("-a");
     expect(argv).toContain("label=openshell.ai/sandbox-name=destroytest");
     expect(argv.some((a) => a.includes("managed-by="))).toBe(false);
   });

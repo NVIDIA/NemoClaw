@@ -64,6 +64,7 @@ type DestroyHarnessOptions = {
   registeredSandboxCount?: number;
   restoreMcpError?: string;
   sandboxPresent?: boolean;
+  sandboxIdentityProbeOutput?: string;
   shieldsDown?: boolean;
   shieldsUpError?: Error;
   workload?: SandboxWorkloadReceipt;
@@ -240,9 +241,19 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
         : names;
       return matchedNames.length > 0 ? `${matchedNames.join("\n")}\n` : "";
     });
-  const dockerRunSpy = vi
-    .spyOn(dockerRun, "dockerRun")
-    .mockReturnValue({ status: 0 } as ReturnType<typeof dockerRun.dockerRun>);
+  // The destroy identity guard (#8999) probes `docker ps -a --filter
+  // label=...sandbox-name=<name>` before any destructive step. Feed that probe
+  // from `sandboxIdentityProbeOutput` (raw tab-separated rows) so a flow test
+  // can exercise an ambiguous identity; every other dockerRun stays a no-op.
+  const dockerRunSpy = vi.spyOn(dockerRun, "dockerRun").mockImplementation((args: unknown) => {
+    const argv = Array.isArray(args) ? args.map(String) : [];
+    const isIdentityProbe =
+      argv[0] === "ps" && argv.some((a) => a.includes("label=openshell.ai/sandbox-name="));
+    return {
+      status: 0,
+      stdout: isIdentityProbe ? (options.sandboxIdentityProbeOutput ?? "") : "",
+    } as ReturnType<typeof dockerRun.dockerRun>;
+  });
   const selectGatewaySpy = vi
     .spyOn(destroyGateway, "selectGatewayForSandboxDestroy")
     .mockImplementation(() => undefined);

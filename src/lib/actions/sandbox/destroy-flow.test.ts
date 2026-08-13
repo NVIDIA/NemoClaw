@@ -428,4 +428,27 @@ describe("destroySandbox flow", () => {
       harness.runOpenshellSpy,
     );
   });
+
+  it("refuses destroy and never reaches sandbox delete when a foreign container shares the sandbox-name label (#8999)", async () => {
+    // The full public path, not just the guard unit: an ambiguous Docker
+    // identity must abort before any destructive step. The probe returns a real
+    // managed sandbox plus a foreign container that borrows the sandbox-name
+    // label (no managed marker, different workspace).
+    const harness = createDestroyHarness({
+      openshellDriver: "docker",
+      sandboxIdentityProbeOutput:
+        "alpha-managed\topenshell\tdefault\tsb-real\nalpha-foreign\t\tforeign\t\n",
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(harness.events).not.toContain("delete");
+    const reachedDelete = harness.runOpenshellSpy.mock.calls.some(
+      ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "delete",
+    );
+    expect(reachedDelete).toBe(false);
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy).toHaveBeenCalled();
+  });
 });

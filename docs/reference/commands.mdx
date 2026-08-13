@@ -2207,6 +2207,11 @@ If you want to upgrade the sandbox while preserving state, use `$$nemoclaw <name
 If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds.
 Pass `--yes`, `-y`, or `--force`, or set `NEMOCLAW_NON_INTERACTIVE=1`, to authorize deletion without prompting in scripted workflows.
 
+When the sandbox's recorded driver is `docker`, `destroy` verifies container identity before any destructive step: it lists every container carrying the target's `openshell.ai/sandbox-name` label and refuses when the name no longer maps to a single container, for example a foreign container that borrows the label without the `openshell.ai/managed-by=openshell` marker or under a different `openshell.ai/sandbox-workspace`.
+The refusal exits non-zero and leaves both the sandbox and the conflicting container intact; inspect, remove, or relabel the conflicting container, then re-run.
+This check runs before deletion regardless of `--force`, `--yes`, or `NEMOCLAW_NON_INTERACTIVE=1`, so those flags do not skip it, and a successful Docker identity probe is required for the local cleanup a reachable-gateway `--force` performs.
+If the Docker daemon cannot be probed, `destroy` also refuses rather than delete a container it cannot identify; make Docker reachable, then re-run.
+
 <AgentOnly variant="hermes">
 
 If the Hermes sandbox has managed MCP entries, shields must be down before destroy can scrub their adapter configuration.
