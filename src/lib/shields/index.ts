@@ -4727,9 +4727,9 @@ function startFreshShieldsDownTimer(input: {
 
 function completeInterruptedShieldsDown(
   sandboxName: string,
+  opts: ShieldsDownOpts,
   state: LoadedShieldsState,
   retainedProviderTarget: AgentConfigTarget | null,
-  opts: ShieldsDownOpts,
 ): boolean {
   if (!state.shieldsDown) return false;
 
@@ -4847,7 +4847,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     recoveredProviderTarget = retainedProviderTarget;
   }
   const initialMode = deriveShieldsMode(state, state._hasStateFile);
-  if (completeInterruptedShieldsDown(sandboxName, state, retainedProviderTarget, opts)) return;
+  if (completeInterruptedShieldsDown(sandboxName, opts, state, retainedProviderTarget)) return;
 
   const timeoutSeconds = parseDuration(opts.timeout || `${DEFAULT_TIMEOUT_SECONDS}`);
   const reason = opts.reason || null;
