@@ -137,14 +137,17 @@ import {
   agentDispatchDeadlineSeconds,
   agentDispatchStdio,
   isSilentAgentDispatch,
+  isTimedOutAgentDispatch,
   OPENCLAW_AGENT_BOOLEAN_FLAGS,
   OPENCLAW_AGENT_VALUE_FLAGS,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
+  TIMED_OUT_AGENT_TURN_EXIT_CODE,
 } from "./passthrough-dispatch";
 import {
   hasAgentPassthroughHelpToken,
   printAgentPassthroughHelp,
   writeSilentAgentDispatchFailure,
+  writeTimedOutAgentTurnFailure,
 } from "./passthrough-help";
 import {
   type AgentJsonPassthroughProcess,
@@ -239,6 +242,14 @@ export function runAgentNonJsonPassthrough(
   if (errorMessage) {
     proc.stderr.write(`  Failed to invoke openshell: ${errorMessage}\n`);
     proc.stderr.write("  Ensure 'openshell' is installed and on PATH.\n");
+  }
+
+  // Last, so the partial trace is already on the wire: a turn whose deadline
+  // fired must not exit 0 just because the transport did. An upstream non-zero
+  // code is preserved as-is.
+  if (code === 0 && isTimedOutAgentDispatch(stdout, stderr)) {
+    writeTimedOutAgentTurnFailure(proc, sandboxName);
+    return proc.exit(TIMED_OUT_AGENT_TURN_EXIT_CODE);
   }
   return proc.exit(code);
 }

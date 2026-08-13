@@ -934,6 +934,43 @@ describe("runAgentNonJsonPassthrough", () => {
     expect(stderrWrites.join("")).toBe("");
   });
 
+  it("fails loud instead of reporting success when the turn's deadline fired (#8723)", () => {
+    const { stdoutWrites, stderrWrites, exit, proc } = makeNonJsonProcMock();
+    const timedOut =
+      "LLM request failed.\nRequest timed out before a response was generated. Please try again, or increase `agents.defaults.timeoutSeconds` in your config.\n";
+    const spawnSyncMock = makeSpawnMock(timedOut, "", 0);
+    expect(() =>
+      runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "-m", "ping"], proc, {
+        getOpenshellBinary: stubBinary,
+        spawnSync: spawnSyncMock,
+      }),
+    ).toThrow("__exit:1");
+    expect(exit).toHaveBeenCalledWith(1);
+    // The partial trace still reaches the caller ahead of the verdict.
+    expect(stdoutWrites.join("")).toBe(timedOut);
+    const errText = stderrWrites.join("");
+    expect(errText).toMatch(/timed out before producing a result/);
+    expect(errText).toContain("nemoclaw 'my-sb' sessions export <key>");
+    expect(errText).toContain("models.providers.<id>.timeoutSeconds");
+    expect(errText).toMatch(/may have already applied side effects/);
+  });
+
+  it("keeps an upstream non-zero code for a turn that also reported a timeout (#8723)", () => {
+    const { exit, proc } = makeNonJsonProcMock();
+    const spawnSyncMock = makeSpawnMock(
+      "Request timed out before a response was generated.\n",
+      "",
+      3,
+    );
+    expect(() =>
+      runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "-m", "ping"], proc, {
+        getOpenshellBinary: stubBinary,
+        spawnSync: spawnSyncMock,
+      }),
+    ).toThrow("__exit:3");
+    expect(exit).toHaveBeenCalledWith(3);
+  });
+
   it("passes through non-zero exit code on clean failure without embedded-fallback", () => {
     const { stderrWrites, exit, proc } = makeNonJsonProcMock();
     const spawnSyncMock = makeSpawnMock("", "Error: agent session not found\n", 1);

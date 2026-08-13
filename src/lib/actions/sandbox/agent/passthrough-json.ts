@@ -24,6 +24,7 @@ import {
 import {
   writeIncompleteAgentTurnFailure,
   writeSilentAgentDispatchFailure,
+  writeTimedOutAgentTurnFailure,
 } from "./passthrough-help";
 
 const AGENT_JSON_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
@@ -128,10 +129,17 @@ export function runAgentJsonPassthrough(
 
   // Last, so the partial trace and its provenance are already on the wire: a
   // turn the payload marks incomplete must not exit 0 just because the envelope
-  // reported success. An upstream non-zero code is preserved as-is.
+  // reported success. An upstream non-zero code is preserved as-is. A payload
+  // that declares a timeout phase gets the deadline-specific guidance instead
+  // of the generic incomplete-turn text; both are the same failure to the
+  // caller and share one exit code.
   const incompleteTurn = (deps.incompleteTurnSignal ?? openClawAgentIncompleteTurnSignal)(stdout);
   if (incompleteTurn && code === 0) {
-    writeIncompleteAgentTurnFailure(proc, sandboxName, incompleteTurn.markers);
+    if (incompleteTurn.timeoutPhase) {
+      writeTimedOutAgentTurnFailure(proc, sandboxName, incompleteTurn.timeoutPhase);
+    } else {
+      writeIncompleteAgentTurnFailure(proc, sandboxName, incompleteTurn.markers);
+    }
     return proc.exit(INCOMPLETE_AGENT_TURN_EXIT_CODE);
   }
   return proc.exit(code);

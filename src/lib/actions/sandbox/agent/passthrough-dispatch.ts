@@ -41,6 +41,27 @@
 //    - Removal condition: drop the TTY carve-out if `openclaw agent` gains a
 //      documented interactive stdin mode reachable through this wrapper.
 //
+// 8. Timed-out turn guard (deadline contract).
+//
+//    - Invalid state: the turn's deadline fires, OpenClaw reports the timeout,
+//      and the dispatch still exits 0 (#8723). Measured on three platforms and
+//      on both transports, so a run that never answered is indistinguishable
+//      from one that did, and a CI job or evaluation harness records the
+//      timed-out turn as a pass. The empty-dispatch guard above cannot catch
+//      it: the timeout report itself makes the streams non-empty.
+//    - Source boundary: OpenClaw owns the deadline and the exit code, and that
+//      code is the same whether this wrapper or a bare `openshell sandbox exec`
+//      runs the turn. NemoClaw owns what it reports to its own caller, so it
+//      classifies a timeout the way it already classifies an embedded-fallback
+//      run rather than forwarding a success.
+//    - Detection differs per transport because the evidence does. The JSON
+//      transport reads the declared `meta.timeoutPhase` field, in
+//      `openClawAgentIncompleteTurnSignal`. The non-JSON transport has only
+//      text, so it matches the sentence OpenClaw prints, exactly as the
+//      embedded-fallback branch matches its own banner.
+//    - Removal condition: drop this guard when `openclaw agent` exits non-zero
+//      for a turn whose deadline fired.
+//
 // Regression tests: `passthrough-dispatch.test.ts` owns the classifier and the
 // stdio shape; `passthrough-help.test.ts` owns the diagnostic text.
 
@@ -80,6 +101,34 @@ export function isSilentAgentDispatch(
   stderr: string,
 ): boolean {
   return !result.error && result.status === 0 && stdout.length === 0 && stderr.length === 0;
+}
+
+/**
+ * Exit code for a turn whose deadline fired without producing a result.
+ * Matches the wrapper's other non-recoverable dispatch failures.
+ */
+export const TIMED_OUT_AGENT_TURN_EXIT_CODE = 1;
+
+/**
+ * The sentence OpenClaw prints when a turn's deadline fires.
+ *
+ * Read from the OpenClaw 2026.7.1 bundle, where it is a single string literal
+ * in one file, and observed verbatim on stdout, sometimes below tool-failure
+ * lines. Only the invariant clause is matched so the configuration advice that
+ * follows it can be reworded upstream without disabling the guard.
+ */
+const OPENCLAW_AGENT_TIMEOUT_PATTERN = /Request timed out before a response was generated/i;
+
+/**
+ * True when the captured output reports that the turn's deadline fired.
+ *
+ * Text is the only evidence the non-JSON transport has, so this mirrors the
+ * embedded-fallback branch and accepts its risk: a turn that answers by quoting
+ * the sentence is misread as a timeout. Callers gate on an otherwise successful
+ * exit, so an upstream non-zero code is never rewritten.
+ */
+export function isTimedOutAgentDispatch(stdout: string, stderr: string): boolean {
+  return OPENCLAW_AGENT_TIMEOUT_PATTERN.test(`${stdout}\n${stderr}`);
 }
 
 /** Documented `openclaw agent` options that consume the next argv element. */

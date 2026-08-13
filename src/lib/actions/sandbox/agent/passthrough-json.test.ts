@@ -337,6 +337,51 @@ describe("runAgentJsonPassthrough", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
+  it("exits non-zero with deadline guidance for a turn the payload marks timed out (#8723)", () => {
+    // The shape measured on a real timed-out run: the envelope reports a
+    // timeout, the payload holds the partial answer, and `livenessState` is
+    // whatever the run happened to reach, so only `timeoutPhase` classifies it.
+    const payload = JSON.stringify({
+      status: "timeout",
+      result: {
+        payloads: [{ text: "1\n2\n3" }],
+        meta: {
+          replayInvalid: false,
+          livenessState: "blocked",
+          timeoutPhase: "provider",
+          providerStarted: true,
+        },
+      },
+    });
+    const spawnSync = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      stdout: payload,
+      stderr: "",
+      pid: 123,
+      output: [null, payload, ""],
+    }));
+    const { exit, proc, stderr, stdout } = makeProc();
+
+    expect(() =>
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: () => "openshell",
+        spawnSync,
+        stdinIsTty: () => false,
+      }),
+    ).toThrow("__exit:1");
+
+    expect(stdout.join("")).toBe(payload);
+    const errText = stderr.join("");
+    expect(errText).toContain("timed out in the provider phase before producing a result");
+    expect(errText).toContain("nemoclaw 'alpha' sessions export <key>");
+    expect(errText).toContain("models.providers.<id>.timeoutSeconds");
+    // The generic incomplete-turn text is replaced, not appended.
+    expect(errText).not.toContain("did not complete");
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
   it("exits non-zero when an incomplete response omits optional payloads", () => {
     const payload = JSON.stringify({
       status: "ok",

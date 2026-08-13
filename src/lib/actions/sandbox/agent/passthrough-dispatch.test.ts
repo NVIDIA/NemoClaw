@@ -8,8 +8,10 @@ import {
   agentDispatchDeadlineSeconds,
   agentDispatchStdio,
   isSilentAgentDispatch,
+  isTimedOutAgentDispatch,
   requestedAgentTimeoutSeconds,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
+  TIMED_OUT_AGENT_TURN_EXIT_CODE,
 } from "./passthrough-dispatch";
 
 describe("isSilentAgentDispatch", () => {
@@ -109,5 +111,43 @@ describe("agentDispatchDeadlineSeconds", () => {
 
   it("holds the deadline buffer above the longest aborted-run finish measured (#8723)", () => {
     expect(AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS).toBeGreaterThan(20);
+  });
+});
+
+describe("isTimedOutAgentDispatch", () => {
+  const timeoutReport =
+    "Request timed out before a response was generated. Please try again, or increase `agents.defaults.timeoutSeconds` in your config.";
+
+  it("classifies the timeout report OpenClaw writes to stdout (#8723)", () => {
+    expect(isTimedOutAgentDispatch(`${timeoutReport}\n`, "")).toBe(true);
+  });
+
+  it("classifies a timeout report that arrives below tool-failure lines (#8723)", () => {
+    const captured = `LLM request failed.\nTool Call failed\n${timeoutReport}\n`;
+    expect(isTimedOutAgentDispatch(captured, "")).toBe(true);
+  });
+
+  it("classifies a timeout report routed to stderr instead (#8723)", () => {
+    expect(isTimedOutAgentDispatch("", `${timeoutReport}\n`)).toBe(true);
+  });
+
+  it("keeps classifying when the configuration advice is reworded upstream (#8723)", () => {
+    const reworded = "Request timed out before a response was generated. Raise the deadline.";
+    expect(isTimedOutAgentDispatch(reworded, "")).toBe(true);
+  });
+
+  it("leaves an ordinary answer unclassified (#8723)", () => {
+    expect(isTimedOutAgentDispatch("PONG\n", "openclaw warning\n")).toBe(false);
+  });
+
+  it("leaves an unrelated timed-out message unclassified (#8723)", () => {
+    const mcpFailure = "McpError: MCP error -32001: Request timed out\n";
+    expect(isTimedOutAgentDispatch(mcpFailure, "")).toBe(false);
+  });
+});
+
+describe("TIMED_OUT_AGENT_TURN_EXIT_CODE", () => {
+  it("reports a turn failure rather than success (#8723)", () => {
+    expect(TIMED_OUT_AGENT_TURN_EXIT_CODE).toBe(1);
   });
 });
