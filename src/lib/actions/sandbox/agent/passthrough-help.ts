@@ -118,6 +118,8 @@ export function printAgentPassthroughHelp(): void {
   console.log("  upstream command help from inside the sandbox.");
   console.log("");
   console.log("  Hermes sandboxes are rejected with a");
-  console.log("  redirect to the OpenAI-compatible API on port 8642 inside the sandbox.");
+  console.log("  redirect to the OpenAI-compatible API inside the sandbox.");
+  console.log("  The rejection message names the sandbox's API port.");
+  console.log("  Run `openshell forward list` to read its host bind.");
   console.log("");
 }

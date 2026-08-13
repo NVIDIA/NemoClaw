@@ -171,7 +171,10 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     isRecord(value) &&
     hasExactKeys(value, [
       "id",
+      "display_name",
+      "host_packages",
       "install_mode",
+      "install_non_interactive",
       "restore_cli",
       "runner",
       "test_file",
@@ -179,6 +182,8 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     ]) &&
     typeof value.id === "string" &&
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.id) &&
+    typeof value.display_name === "string" &&
+    /^[A-Z][A-Za-z0-9 .'+()-]+: [^/\r\n]{1,72}$/u.test(value.display_name) &&
     typeof value.runner === "string" &&
     /^[A-Za-z0-9._-]+$/u.test(value.runner) &&
     typeof value.test_file === "string" &&
@@ -186,6 +191,9 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     typeof value.timeout_minutes === "number" &&
     Number.isInteger(value.timeout_minutes) &&
     value.timeout_minutes > 0 &&
+    typeof value.host_packages === "string" &&
+    /^(?:|expect|iptables|expect iptables)$/u.test(value.host_packages) &&
+    typeof value.install_non_interactive === "boolean" &&
     (value.install_mode === "none" ||
       value.install_mode === "authenticated" ||
       value.install_mode === "credential-free") &&
@@ -201,11 +209,14 @@ function isCatalogueMatrixRowForProfile(
   const target = E2E_TARGET_CATALOGUE.find((entry) => entry.id === value.id);
   return (
     target?.profile === profile &&
+    target.displayName === value.display_name &&
     target.runner === value.runner &&
     target.testFile === value.test_file &&
     target.timeoutMinutes === value.timeout_minutes &&
     target.installMode === value.install_mode &&
-    target.restoreCli === value.restore_cli
+    target.installNonInteractive === value.install_non_interactive &&
+    target.restoreCli === value.restore_cli &&
+    target.hostPackages.join(" ") === value.host_packages
   );
 }
 
@@ -427,7 +438,11 @@ export function buildE2eWorkflowPlan(
     if (
       changedFiles.some((file) => FULL_SUITE_OWNING_PATHS.some((owner) => pathMatches(file, owner)))
     ) {
-      return buildE2eWorkflowPlan(selectors);
+      const plan = buildE2eWorkflowPlan(selectors);
+      return {
+        ...plan,
+        selectedJobs: [...new Set([...plan.selectedJobs, JETSON_DISPATCH_TARGET])],
+      };
     }
     const focusedLegacyJobs = focusedE2eJobsForChangedFiles(changedFiles, inventory);
     const directlySelectedCatalogueTargets = catalogueTargetsForChangedFiles(changedFiles);
@@ -456,6 +471,7 @@ export function buildE2eWorkflowPlan(
     if (selectedJobSet.has("mcp-bridge")) {
       selectedJobSet.add("openshell-credential-generation-window");
     }
+    selectedJobSet.add(JETSON_DISPATCH_TARGET);
     const selectedJobs = [...selectedJobSet];
     const selectedTests = credentialFreeTests.filter((row) => changedFiles.includes(row.file));
     const selectedCatalogueIds = new Set([

@@ -4,9 +4,8 @@
 /**
  * Acknowledgement package contract for `policy restore`.
  *
- * Declining confirmation must report cancellation so the operator knows no
- * mutation occurred. A non-interactive refusal must print the same usage line
- * as the prompt EOF path.
+ * A session without terminal input must require explicit acknowledgement and
+ * must not interpret pipe input as an interactive confirmation.
  *
  * These tests drive the compiled CLI (`dist/nemoclaw.js`) over a real stdin
  * pipe. The helper stubs registry and baseline lookups. It replaces
@@ -75,15 +74,18 @@ require(${CLI_PATH});
 }
 
 describe("policy restore acknowledgement", () => {
-  it("reports the cancellation when the operator declines the confirmation", () => {
+  it("requires explicit acknowledgement when pipe input contains a decline", () => {
     const result = runPolicyRestore({ input: "n\n", nonInteractive: false });
 
     expect(result.error).toBeUndefined();
     expect(result.signal).toBeNull();
     expect(result.stdout).toContain("re-allows:");
-    expect(result.stdout).toContain("Cancelled.");
+    expect(result.stderr).toContain(
+      "Non-interactive restore requires explicit acknowledgement: pass --force (or --yes).",
+    );
+    expect(result.stderr).toContain(USAGE);
     expect(result.stdout).not.toContain(RESTORED_MARKER);
-    expect(result.status).toBe(0);
+    expect(result.status).toBe(1);
   }, 45_000);
 
   it("prints the usage line when non-interactive mode has no acknowledgement", () => {
@@ -99,13 +101,13 @@ describe("policy restore acknowledgement", () => {
     expect(result.status).toBe(1);
   }, 45_000);
 
-  it("prints the same usage line when the confirmation prompt hits stdin EOF", () => {
+  it("prints the non-interactive usage line when stdin is an ended pipe", () => {
     const result = runPolicyRestore({ input: "", nonInteractive: false });
 
     expect(result.error).toBeUndefined();
     expect(result.signal).toBeNull();
     expect(result.stderr).toContain(
-      "No input available on stdin, so policy restore cannot prompt.",
+      "Non-interactive restore requires explicit acknowledgement: pass --force (or --yes).",
     );
     expect(result.stderr).toContain(USAGE);
     expect(result.stdout).not.toContain(RESTORED_MARKER);

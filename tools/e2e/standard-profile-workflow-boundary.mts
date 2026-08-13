@@ -27,16 +27,19 @@ const PROFILE_JOBS = {
   standard: {
     job: "catalogue-standard",
     matrix: "catalogue_standard_matrix",
+    credentialBoundary: "no provider credential",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME"],
   },
   "nvidia-api": {
     job: "catalogue-nvidia-api",
     matrix: "catalogue_nvidia_api_matrix",
+    credentialBoundary: "NVIDIA API key",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_API_KEY"],
   },
   "nvidia-inference": {
     job: "catalogue-nvidia-inference",
     matrix: "catalogue_nvidia_inference_matrix",
+    credentialBoundary: "NVIDIA inference API key",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_INFERENCE_API_KEY"],
   },
 } as const;
@@ -83,6 +86,9 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     if (job.needs !== "generate-matrix" || job.uses !== PROFILE_WORKFLOW) {
       errors.push(`${contract.job} must call the standard E2E profile after matrix generation`);
     }
+    if (job.name !== "${{ matrix.display_name }}") {
+      errors.push(`${contract.job} must use the planned outcome-first display name`);
+    }
     const matrixOutput = `needs.generate-matrix.outputs.${contract.matrix}`;
     if (
       job.if !== `\${{ ${matrixOutput} != '[]' }}` ||
@@ -94,13 +100,20 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     for (const [name, expected] of Object.entries({
       candidate_repository: "${{ inputs.checkout_repository || github.repository }}",
       candidate_sha: "${{ inputs.checkout_sha || github.sha }}",
+      risk_signal_expected_sha:
+        "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}",
+      risk_signal_correlation_id:
+        "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}",
       cli_artifact_provenance: "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
+      credential_boundary: contract.credentialBoundary,
       target_id: "${{ matrix.id }}",
       runner: "${{ matrix.runner }}",
       test_file: "${{ matrix.test_file }}",
       timeout_minutes: "${{ matrix.timeout_minutes }}",
       install_mode: "${{ matrix.install_mode }}",
+      install_non_interactive: "${{ matrix.install_non_interactive }}",
       restore_cli: "${{ matrix.restore_cli }}",
+      host_packages: "${{ matrix.host_packages }}",
       trusted_main:
         "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}",
     })) {
@@ -125,13 +138,18 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const requiredInputs = {
     candidate_repository: "string",
     candidate_sha: "string",
+    risk_signal_expected_sha: "string",
+    risk_signal_correlation_id: "string",
     cli_artifact_provenance: "string",
+    credential_boundary: "string",
     target_id: "string",
     runner: "string",
     test_file: "string",
     timeout_minutes: "number",
     install_mode: "string",
+    install_non_interactive: "boolean",
     restore_cli: "boolean",
+    host_packages: "string",
     trusted_main: "boolean",
   };
   if (
@@ -161,25 +179,60 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   }
 
   const runJob = record(record(profile.jobs).run);
+  if (
+    Object.keys(runJob).sort().join(",") !==
+    ["env", "name", "runs-on", "steps", "timeout-minutes"].sort().join(",")
+  ) {
+    errors.push("standard E2E profile must expose only its reviewed job settings");
+  }
   if (runJob["runs-on"] !== "${{ inputs.runner }}") {
     errors.push("standard E2E profile must use the catalogue runner");
+  }
+  if (runJob.name !== "${{ inputs.credential_boundary }}") {
+    errors.push("standard E2E profile must show the planned credential boundary");
   }
   if (runJob["timeout-minutes"] !== "${{ inputs.timeout_minutes }}") {
     errors.push("standard E2E profile must use the catalogue timeout");
   }
   const jobEnv = record(runJob.env);
-  for (const [name, expected] of Object.entries({
+  const expectedJobEnv = {
     E2E_JOB: "1",
     E2E_TARGET_ID: "${{ inputs.target_id }}",
     E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/${{ inputs.target_id }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.candidate_sha }}",
+    NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.risk_signal_correlation_id }}",
+    NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA: "${{ inputs.risk_signal_expected_sha }}",
+    NEMOCLAW_E2E_SHARD: "default",
     NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: "${{ inputs.candidate_sha }}",
-  })) {
+  };
+  if (Object.keys(jobEnv).sort().join(",") !== Object.keys(expectedJobEnv).sort().join(",")) {
+    errors.push("standard E2E profile must expose only its reviewed job environment");
+  }
+  for (const [name, expected] of Object.entries(expectedJobEnv)) {
     if (jobEnv[name] !== expected) errors.push(`standard E2E profile must set ${name}`);
   }
 
   const workflowSteps = steps(runJob.steps);
+  const expectedStepNames = [
+    undefined,
+    "Authenticate to Docker Hub",
+    "Install target host dependencies",
+    "Prepare E2E workspace",
+    "Restore exact-commit CLI artifact",
+    "Install OpenShell CLI",
+    "Install OpenShell CLI without workflow credentials",
+    "Run catalogue E2E target",
+    "Write E2E evidence manifest",
+    "Upload E2E artifacts",
+    "Clean up Docker auth",
+  ];
+  if (
+    workflowSteps.length !== expectedStepNames.length ||
+    workflowSteps.some((step, index) => step.name !== expectedStepNames[index])
+  ) {
+    errors.push("standard E2E profile must keep its reviewed step set and order");
+  }
   const checkout = workflowSteps.find((step) => step.uses?.startsWith("actions/checkout@"));
   requirePinnedAction(errors, checkout, "checkout");
   const checkoutWith = record(checkout?.with);
@@ -209,6 +262,24 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   }
 
   const prepare = requireStep(errors, workflowSteps, "Prepare E2E workspace");
+
+  const hostDependencies = requireStep(errors, workflowSteps, "Install target host dependencies");
+  if (
+    hostDependencies?.if !== "${{ inputs.host_packages != '' }}" ||
+    hostDependencies.uses !== E2E_ACTION_PROVENANCE.hostDependencies.reference ||
+    record(hostDependencies.with).packages !== "${{ inputs.host_packages }}"
+  ) {
+    errors.push(
+      "standard E2E profile must install only the planned host packages with the reviewed action",
+    );
+  }
+  if (
+    hostDependencies &&
+    prepare &&
+    workflowSteps.indexOf(hostDependencies) >= workflowSteps.indexOf(prepare)
+  ) {
+    errors.push("standard E2E profile must install host dependencies before workspace prep");
+  }
   if (
     prepare?.uses !== E2E_ACTION_PROVENANCE.prepareWorkspace.reference ||
     record(prepare?.with)["build-cli"] !== "false"
@@ -227,6 +298,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const authenticatedInstall = requireStep(errors, workflowSteps, "Install OpenShell CLI");
   if (
     authenticatedInstall?.if !== "${{ inputs.install_mode == 'authenticated' }}" ||
+    record(authenticatedInstall.env).NEMOCLAW_NON_INTERACTIVE !==
+      "${{ inputs.install_non_interactive && '1' || '' }}" ||
     authenticatedInstall.run !== "bash scripts/install-openshell.sh"
   ) {
     errors.push("standard E2E profile must gate authenticated OpenShell installation by mode");
@@ -238,6 +311,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   );
   if (
     credentialFreeInstall?.if !== "${{ inputs.install_mode == 'credential-free' }}" ||
+    record(credentialFreeInstall.env).NEMOCLAW_NON_INTERACTIVE !==
+      "${{ inputs.install_non_interactive && '1' || '' }}" ||
     !String(credentialFreeInstall.run).includes("env -u DOCKER_CONFIG") ||
     !String(credentialFreeInstall.run).includes("-u NVIDIA_INFERENCE_API_KEY")
   ) {
@@ -268,9 +343,12 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const upload = requireStep(errors, workflowSteps, "Upload E2E artifacts");
   if (
     upload?.if !== "always()" ||
-    upload.uses !== E2E_ACTION_PROVENANCE.uploadArtifacts.reference
+    upload.uses !== E2E_ACTION_PROVENANCE.uploadArtifacts.reference ||
+    Object.keys(record(upload.with)).length !== 0
   ) {
-    errors.push("standard E2E profile must always upload artifacts with the reviewed action");
+    errors.push(
+      "standard E2E profile must always upload its target-derived artifact path with the reviewed action",
+    );
   }
   const evidence = requireStep(errors, workflowSteps, "Write E2E evidence manifest");
   const evidenceEnv = record(evidence?.env);

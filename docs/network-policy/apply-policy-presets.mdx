@@ -66,8 +66,12 @@ Omit the preset name to use the interactive picker:
 $$nemoclaw my-assistant policy add
 ```
 
+The picker requires a terminal on stdin.
+A run without a terminal, such as an SSH command without `-t`, a service unit, or a CI job, exits non-zero and reports that no input is available on stdin.
+
 Pass a preset name with `--yes` for scripted workflows.
 Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` to use the same non-interactive flow through an environment variable.
+With that variable set, a missing preset name instead reports that non-interactive mode requires a preset name.
 
 ## Reapply an Edited Preset
 

@@ -12,6 +12,7 @@ const getSandboxMock = vi.hoisted(() =>
     () =>
       null as {
         agent?: string | null;
+        hermesApiPort?: number | null;
         provider?: string | null;
         model?: string | null;
         endpointUrl?: string | null;
@@ -149,6 +150,19 @@ describe("runAgentPassthrough", () => {
     expect(exit).toHaveBeenCalledWith(2);
     expect(writes.join("")).toMatch(/cannot dispatch to sandbox 'alpha' because it runs 'hermes'/);
     expect(writes.join("")).toMatch(/port 8642/);
+  });
+
+  it("redirects to the sandbox's own API port rather than the default (#8543)", async () => {
+    getSandboxMock.mockReturnValue({ agent: "hermes", hermesApiPort: 8643 });
+    const { writes, proc } = makeProcMock();
+    await expect(
+      runAgentPassthrough("beta", { extraArgs: ["-m", "hi"] }, { process: proc }),
+    ).rejects.toThrow("__exit:2");
+    const stderr = writes.join("");
+    expect(stderr).toMatch(/port 8643/);
+    expect(stderr).toMatch(/openshell forward start --background 8643 beta/);
+    expect(stderr).toMatch(/http:\/\/127\.0\.0\.1:8643\/v1\/chat\/completions/);
+    expect(stderr).not.toMatch(/8642/);
   });
 
   it("holds CUA mutation authority through the exact headless child execution (#7755)", async () => {

@@ -92,6 +92,7 @@ describe("inference selection validation", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
     const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const teardownOrphanManagedGatewayOnAbort = vi.fn();
     const helpers = createInferenceSelectionValidationHelpers({
       isNonInteractive: () => true,
       agentProductName: () => "OpenClaw",
@@ -100,6 +101,7 @@ describe("inference selection validation", () => {
         ok: false,
         failures: [{ name: "Chat Completions API", httpStatus: 403 }],
       }),
+      teardownOrphanManagedGatewayOnAbort,
       promptValidationRecovery,
     });
 
@@ -115,6 +117,7 @@ describe("inference selection validation", () => {
       expect(exit).toHaveBeenCalledWith(1);
       expect(process.exitCode).toBe(1);
       expect(promptValidationRecovery).not.toHaveBeenCalled();
+      expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledOnce();
       expect(error.mock.calls.map((args) => args.join(" "))).toEqual([
         "  NVIDIA Endpoints endpoint validation failed.",
         "  Validation probe summary: Chat Completions API: HTTP 403.",
@@ -454,6 +457,7 @@ describe("inference selection validation", () => {
       probeAnthropicEndpoint,
       promptValidationRecovery: vi.fn(async () => "selection" as const),
       resolveEndpointHost: async () => [{ address: "169.254.169.254", family: 4 }],
+      teardownOrphanManagedGatewayOnAbort: vi.fn(),
     });
 
     try {
@@ -467,6 +471,81 @@ describe("inference selection validation", () => {
       ).rejects.toThrow("Non-interactive endpoint validation failed.");
       expect(probeAnthropicEndpoint).not.toHaveBeenCalled();
       expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      process.exitCode = originalExitCode;
+      exit.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it("tears down an orphan managed gateway before non-interactive validation exit (#8952)", async () => {
+    const originalExitCode = process.exitCode;
+    const teardownOrphanManagedGatewayOnAbort = vi.fn();
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => true,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeAnthropicEndpoint: vi.fn(),
+      teardownOrphanManagedGatewayOnAbort,
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+      resolveEndpointHost: async () => [{ address: "169.254.169.254", family: 4 }],
+    });
+
+    try {
+      await expect(
+        helpers.validateCustomAnthropicSelection(
+          "Custom Anthropic",
+          "https://metadata-name.example/v1",
+          "model-a",
+          "COMPATIBLE_ANTHROPIC_API_KEY",
+        ),
+      ).rejects.toThrow("Non-interactive endpoint validation failed.");
+      expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledTimes(1);
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(teardownOrphanManagedGatewayOnAbort.mock.invocationCallOrder[0]).toBeLessThan(
+        exit.mock.invocationCallOrder[0] ?? 0,
+      );
+    } finally {
+      process.exitCode = originalExitCode;
+      exit.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it("still exits when abort teardown throws during non-interactive validation (#8952)", async () => {
+    const originalExitCode = process.exitCode;
+    const teardownOrphanManagedGatewayOnAbort = vi.fn(() => {
+      throw new Error("teardown boom");
+    });
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => true,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeAnthropicEndpoint: vi.fn(),
+      teardownOrphanManagedGatewayOnAbort,
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+      resolveEndpointHost: async () => [{ address: "169.254.169.254", family: 4 }],
+    });
+
+    try {
+      await expect(
+        helpers.validateCustomAnthropicSelection(
+          "Custom Anthropic",
+          "https://metadata-name.example/v1",
+          "model-a",
+          "COMPATIBLE_ANTHROPIC_API_KEY",
+        ),
+      ).rejects.toThrow("Non-interactive endpoint validation failed.");
+      expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledTimes(1);
+      expect(error.mock.calls.map((call) => String(call[0])).join("\n")).toContain("teardown boom");
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(teardownOrphanManagedGatewayOnAbort.mock.invocationCallOrder[0]).toBeLessThan(
+        exit.mock.invocationCallOrder[0] ?? 0,
+      );
     } finally {
       process.exitCode = originalExitCode;
       exit.mockRestore();
@@ -796,6 +875,7 @@ exit 0
       probeOpenAiLikeEndpoint,
       promptValidationRecovery,
       resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
+      teardownOrphanManagedGatewayOnAbort: vi.fn(),
     });
 
     try {

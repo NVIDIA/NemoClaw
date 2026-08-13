@@ -33,6 +33,14 @@ describe("checks runner", () => {
     });
   });
 
+  it("registers the defaulted dependent flag check (#8883)", () => {
+    expect(CHECKS).toContainEqual({
+      name: "no-defaulted-dependent-flags",
+      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
+      args: ["scripts/checks/no-defaulted-dependent-flags.mts"],
+    });
+  });
+
   it("runs Windows command shims through cmd.exe", () => {
     expect(
       buildCheckSpawnInvocation(sampleCheck, "win32", {

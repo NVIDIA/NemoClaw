@@ -193,8 +193,8 @@ describe("larger-runner workflow routing boundary", () => {
     workflow.jobs["channels-stop-start"]["runs-on"] = "ubuntu-latest";
     workflow.jobs["mcp-bridge-dev"]["runs-on"] =
       "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['mcp-bridge-deepagents'] }}";
-    workflow.jobs["network-policy"]["runs-on"] = "${{ vars.E2E_LARGER_RUNNER_LABEL }}";
-    workflow.jobs["gateway-guard-recovery"]["runs-on"] =
+    workflow.jobs["brave-search"]["runs-on"] = "${{ vars.E2E_LARGER_RUNNER_LABEL }}";
+    workflow.jobs["skill-agent"]["runs-on"] =
       "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['common-egress-agent'] }}";
 
     expect(validateE2eWorkflow(workflow)).toEqual(
@@ -205,8 +205,8 @@ describe("larger-runner workflow routing boundary", () => {
         "security-posture job must route each matrix entry through the trusted runner map",
         "channels-stop-start job must route each matrix entry through the trusted runner map",
         "mcp-bridge-dev job must remain on ubuntu-latest",
-        "network-policy job must not consume E2E_LARGER_RUNNER_LABEL directly",
-        "gateway-guard-recovery job must not use the larger-runner routing map",
+        "brave-search job must not consume E2E_LARGER_RUNNER_LABEL directly",
+        "skill-agent job must not use the larger-runner routing map",
       ]),
     );
   });

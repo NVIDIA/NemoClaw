@@ -98,21 +98,6 @@ Install the following before you begin.
 - Docker (running)
 - [hadolint](https://github.com/hadolint/hadolint) (Dockerfile linter — `brew install hadolint` on macOS)
 
-### Windows Line Endings
-
-`.gitattributes` pins the files whose exact bytes the repository checks assert, so a new clone keeps LF even when `core.autocrlf` is `true`.
-
-Git does not rewrite a file that is already in your working tree.
-If you cloned before that rule existed, the file keeps CRLF, `git status` reports no change, and `npm run checks:repository` reports `use LF line endings`.
-
-Commit or stash your work first, because the next commands discard uncommitted changes.
-Then normalize the checkout once:
-
-```bash
-git rm --cached -r .
-git reset --hard
-```
-
 ## Getting Started
 
 From the repository root, prepare the checkout with one command:
@@ -221,7 +206,7 @@ These are the primary npm scripts for day-to-day development:
 | `npm run check` | Run the broad repo-wide pre-commit and full CLI/plugin coverage baseline |
 | `npm run check:diff` | Compatibility alias for `npm run validate:pr` |
 | `npm run checks` | Compatibility alias for `npm run checks:repository`; prints scope guidance before delegating |
-| `npm run format` | Auto-format Biome-supported source files |
+| `npm run format` | Auto-format added JavaScript and TypeScript files that Oxfmt does not exclude |
 | `npm run typecheck:cli` | Type-check the root TypeScript project using `tsconfig.cli.json` |
 | `npm --prefix nemoclaw run typecheck` | Type-check plugin production and test sources without emitting files |
 | `npm test` | Build package artifacts and run every non-live Vitest project for broad changes |
@@ -398,6 +383,11 @@ All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-bina
 | **commit-msg** | commitlint (Conventional Commits) |
 | **pre-push** | Path-scoped incremental CLI/plugin TypeScript checks and checked-JavaScript checks |
 
+The Oxfmt hook formats added JavaScript and TypeScript files that its configuration does not exclude.
+The hook reads its base ref from `NEMOCLAW_FORMAT_BASE_REF`, which defaults to `origin/main`.
+A file is added when the selected base commit has no file at that path.
+If Git cannot resolve the ref named by `NEMOCLAW_FORMAT_BASE_REF`, the Oxfmt hook exits with status 2 before invoking Oxfmt.
+
 For PR preparation, normal `pre-commit`, `commit-msg`, and `pre-push` hooks are valid verification when they pass and were not bypassed with `--no-verify`.
 If hooks were skipped, missing, failed, or uncertain, refresh the remote-tracking base with `git fetch origin main`, then run `npm run validate:pr` once to reproduce those checks for the current diff.
 
@@ -406,6 +396,27 @@ The `validate:pr` command applies the same path selection, so do not rerun type 
 CI runs the complete type-check gates independently; local path selection is a fast-feedback optimization, not the authoritative trust boundary.
 
 If you still have `core.hooksPath` set from an old Husky setup, Git will ignore `.git/hooks`. Run `git config --unset core.hooksPath` in this repo, then `npm install` so `prek install` (via `prepare`) can register the hooks.
+
+If you cloned this repo on Windows before `.gitattributes` set `* text=auto eol=lf`, your working tree can still contain CRLF line endings.
+The rule now keeps every tracked text file on LF while Git continues to detect binary files automatically.
+These line endings cause repository checks to fail.
+
+Warning: `git reset --hard` discards tracked changes.
+Commit all changes, or stash tracked and untracked changes with `git stash push --include-untracked`.
+Run `git status --short`, and continue only if the command produces no output.
+From the root of this repo, remove tracked files from the Git index:
+
+```bash
+git rm --cached -r .
+```
+
+Then restore the Git index and working tree from the current commit:
+
+```bash
+git reset --hard
+```
+
+Git checks out tracked text files with LF line endings.
 
 `npm run checks:repository` runs only the custom checks collected under `scripts/checks`; lint and the repository-check hook use it internally. The `npm run checks` alias remains available for compatibility and prints the canonical routine and narrow command names before delegating.
 

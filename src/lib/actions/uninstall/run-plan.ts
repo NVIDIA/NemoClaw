@@ -284,6 +284,14 @@ const HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES: readonly string[] = [
   "https-pin-runtime-adapter.log",
 ];
 
+const OLLAMA_AUTH_PROXY_STATE_ENTRIES: readonly string[] = [
+  "ollama-proxy-token",
+  "ollama-backend",
+  "ollama-proxy-port",
+  "ollama-auth-proxy.pid",
+  "ollama-auth-proxy.status",
+];
+
 // These entries can exist in the shared root without representing a running
 // default-port environment. Any other shared-root entry is treated
 // conservatively as default-port state when uninstalling a non-default port.
@@ -297,6 +305,7 @@ const SHARED_HOST_STATE_ENTRIES = new Set([
   `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
   MANAGED_VLLM_API_KEY_FILE,
   ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
+  ...OLLAMA_AUTH_PROXY_STATE_ENTRIES,
 ]);
 
 function isSharedHostStateEntry(entry: string): boolean {
@@ -320,6 +329,21 @@ function managedClusterBindingStateEntries(stateDir: string): readonly string[] 
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
+}
+
+function scopedStatePreservationEntries(
+  stateDir: string,
+  selectedIsDefault: boolean,
+): readonly string[] {
+  return [
+    ...(selectedIsDefault ? OLLAMA_AUTH_PROXY_STATE_ENTRIES : []),
+    ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
+    MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
+    ...managedClusterBindingStateEntries(stateDir),
+    DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
+    `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
+    MANAGED_VLLM_API_KEY_FILE,
+  ];
 }
 
 function dormantHostGlobalLifecycleState(sharedRoot: string): boolean {
@@ -776,14 +800,30 @@ function stopMatchingPids(pattern: string, runtime: UninstallRuntime, label: str
 // the default (11435) on malformed input — uninstall is best-effort.
 const DEFAULT_OLLAMA_PROXY_PORT = 11435;
 
-function resolveOllamaProxyPort(runtime: UninstallRuntime): number {
-  const raw = runtime.env.NEMOCLAW_OLLAMA_PROXY_PORT;
-  if (raw === undefined || raw === "") return DEFAULT_OLLAMA_PROXY_PORT;
+function parseOllamaProxyPort(raw: unknown): number | null {
+  if (raw === undefined || raw === "") return null;
   const trimmed = String(raw).trim();
-  if (!/^\d+$/.test(trimmed)) return DEFAULT_OLLAMA_PROXY_PORT;
+  if (!/^\d+$/.test(trimmed)) return null;
   const parsed = Number(trimmed);
-  if (parsed < 1024 || parsed > 65535) return DEFAULT_OLLAMA_PROXY_PORT;
+  if (parsed < 1024 || parsed > 65535) return null;
   return parsed;
+}
+
+function resolveOllamaProxyPort(paths: UninstallPaths, runtime: UninstallRuntime): number {
+  const persistedPortPath = path.join(paths.nemoclawStateDir, "ollama-proxy-port");
+  if (runtime.existsSync(persistedPortPath)) {
+    let opened: OpenRegularFile | null = null;
+    try {
+      opened = runtime.openRegularFile(persistedPortPath);
+      const persistedPort = parseOllamaProxyPort(opened.readBytes(32).toString("utf8").trim());
+      if (persistedPort !== null) return persistedPort;
+    } catch {
+      // Uninstall remains best-effort and falls back to the configured port.
+    } finally {
+      opened?.close();
+    }
+  }
+  return parseOllamaProxyPort(runtime.env.NEMOCLAW_OLLAMA_PROXY_PORT) ?? DEFAULT_OLLAMA_PROXY_PORT;
 }
 
 function isOllamaAuthProxyPid(pid: number, runtime: UninstallRuntime): boolean {
@@ -853,6 +893,11 @@ function stopOllamaAuthProxy(
   // never killed. See issue #2759.
   const stopped = new Set<number>();
 
+  if (!scanOrphans) {
+    runtime.log("Preserving the shared Ollama auth proxy for the remaining gateway ports");
+    return;
+  }
+
   // 1. Try the persisted PID file. The proxy stays bound across NemoClaw
   //    sessions; the PID file is the most reliable signal. The path mirrors
   //    `PROXY_PID_PATH` in `src/lib/onboard-ollama-proxy.ts` (`~/.nemoclaw`).
@@ -869,11 +914,6 @@ function stopOllamaAuthProxy(
     }
   }
 
-  if (!scanOrphans) {
-    if (stopped.size === 0) runtime.log("No selected-gateway Ollama auth proxy found");
-    return;
-  }
-
   // 2. Fall back to the configured proxy port for orphans whose PID file is
   //    gone (e.g. a previous uninstall already wiped state but the process
   //    survived). Filter via cmdline so we never kill unrelated listeners.
@@ -883,7 +923,7 @@ function stopOllamaAuthProxy(
     }
     return;
   }
-  const proxyPort = resolveOllamaProxyPort(runtime);
+  const proxyPort = resolveOllamaProxyPort(paths, runtime);
   const lsof = runtime.run("lsof", ["-ti", `:${proxyPort}`], { env: runtime.env });
   const pids = splitNonEmptyLines(lsof.stdout).map(Number).filter(Number.isFinite);
   for (const pid of pids) {
@@ -2380,14 +2420,7 @@ function executePlan(
               : []),
             ...(scopedToSelectedGateway && selectedIsDefault ? ["source"] : []),
             ...(scopedToSelectedGateway
-              ? [
-                  ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
-                  MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
-                  ...managedClusterBindingStateEntries(paths.nemoclawStateDir),
-                  DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
-                  `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
-                  MANAGED_VLLM_API_KEY_FILE,
-                ]
+              ? scopedStatePreservationEntries(paths.nemoclawStateDir, selectedIsDefault)
               : []),
           ],
           runtime,
