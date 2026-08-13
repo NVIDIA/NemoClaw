@@ -19,7 +19,7 @@ The package is a root development dependency and is not included in production a
 `npm pack --dry-run --json --ignore-scripts` omits the SonarJS package code.
 The locked npm cache seed generated from `nemoclaw/package-lock.json` also omits SonarJS.
 
-Review this dependency again if any of these facts changes:
+Review this dependency again if any of these facts change:
 
 - Package version.
 - Declared license.
