@@ -1280,7 +1280,7 @@ RUN set -eu; \
         "jq=1.8.2-1" \
         "vim-common=2:9.2.0858-1" \
         "vim-tiny=2:9.2.0858-1" \
-        "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1" \
+        "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" \
         "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
         "perl-base=5.44.0-1nemoclaw1" \
         "perl=5.44.0-1nemoclaw1" \
@@ -1291,7 +1291,7 @@ RUN set -eu; \
     test "$(dpkg-query -W -f='${Version}' jq)" = "1.8.2-1"; \
     test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0858-1"; \
     test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0858-1"; \
-    test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw1"; \
+    test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw2"; \
     test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u4+nemoclaw1"; \
     test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1"; \
     test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1"; \
