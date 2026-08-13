@@ -196,7 +196,7 @@ exit 0
         path.join(binDir, "openshell"),
         `#!/usr/bin/env bash
 if [ "$1" = "forward" ] && [ "$2" = "start" ]; then
-  printf '\\033[31mlistener rejected\\033[0m \\033]0;changed title\\007diagnostic\\n' >&2
+  printf '\\033]0;changed title\\033\\listener \\235changed C1 title\\234rejected \\23331mdiagnostic\\2330m\\n' >&2
   exit 1
 fi
 exit 0
@@ -210,7 +210,10 @@ exit 0
       expect(result.stdout).toContain("OpenShell reported: listener rejected diagnostic");
       expect(result.stdout).not.toContain("\u001b");
       expect(result.stdout).not.toContain("\u0007");
+      expect(result.stdout).not.toContain("\u009b");
+      expect(result.stdout).not.toContain("\u009d");
       expect(result.stdout).not.toContain("changed title");
+      expect(result.stdout).not.toContain("changed C1 title");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

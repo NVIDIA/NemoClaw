@@ -574,9 +574,8 @@ restore_onboard_forward_after_post_checks() {
   sanitize_forward_start_diagnostic() {
     if command_exists node && node -e '
       const fs = require("fs");
-      const diagnostic = fs.readFileSync(0, "utf8")
-        .replace(/\x1B\][^\x07]*(?:\x07|\x1B\\|$)/g, "")
-        .replace(/\x1B(?:\[[0-?]*[ -/]*[@-~]|[@-_])/g, "")
+      const { stripVTControlCharacters } = require("node:util");
+      const diagnostic = stripVTControlCharacters(fs.readFileSync(0, "utf8"))
         .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ");
       process.stdout.write(diagnostic);
     ' 2>/dev/null; then
