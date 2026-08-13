@@ -67,19 +67,15 @@ describe("findAvailableHermesApiPort", () => {
 
 describe("reserveCreateSandboxHermesApiPort", () => {
   it("keeps concurrent selections distinct before either host forward exists", async () => {
-    const held = new Set<number>();
-    const reservePort = async (port: number) => {
-      if (held.has(port)) {
-        throw Object.assign(new Error(`port ${port} is already held`), { code: "EADDRINUSE" });
-      }
-      held.add(port);
-      return {
-        port,
-        async release() {
-          held.delete(port);
-        },
-      };
-    };
+    const firstRelease = vi.fn(async () => undefined);
+    const secondRelease = vi.fn(async () => undefined);
+    const reservePort = vi
+      .fn()
+      .mockResolvedValueOnce({ port: 8642, release: firstRelease })
+      .mockRejectedValueOnce(
+        Object.assign(new Error("port 8642 is already held"), { code: "EADDRINUSE" }),
+      )
+      .mockResolvedValueOnce({ port: 8643, release: secondRelease });
     const firstEnv: NodeJS.ProcessEnv = {};
     const secondEnv: NodeJS.ProcessEnv = {};
 
@@ -104,9 +100,12 @@ describe("reserveCreateSandboxHermesApiPort", () => {
 
     expect(first.effectivePort).toBe(8642);
     expect(second.effectivePort).toBe(8643);
+    expect(reservePort.mock.calls).toEqual([[8642], [8642], [8643]]);
     expect(firstEnv[HERMES_API_PORT_ENV]).toBe("8642");
     expect(secondEnv[HERMES_API_PORT_ENV]).toBe("8643");
     await Promise.all([first.reservation?.release(), second.reservation?.release()]);
+    expect(firstRelease).toHaveBeenCalledOnce();
+    expect(secondRelease).toHaveBeenCalledOnce();
   });
 
   it("releases a held port when sandbox preparation fails", async () => {
