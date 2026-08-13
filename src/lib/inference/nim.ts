@@ -91,9 +91,9 @@ export interface GpuDetection {
   // (#8096), or a plausible, non-placeholder NVIDIA GPU name on an ARM64
   // Linux host without `/proc/driver/nvidia` (#9000). Diagnostic marker that
   // this detection cleared a live proof rather than firmware/name trust. The
-  // sandbox GPU preflight reaches the Docker Desktop WSL compatibility branch via its own
-  // `detectWslDockerDesktopStatus()` check, which stays false on a native
-  // Linux host; this flag does not gate that branch.
+  // sandbox GPU preflight reaches the Docker Desktop WSL compatibility branch
+  // through its own `detectWslDockerDesktopStatus()` check, which stays false
+  // on a native Linux host; this flag does not gate that branch.
   wslDockerDesktopGpuProofPassed?: boolean;
 }
 
@@ -500,9 +500,8 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
             // `/proc/driver/nvidia`, e.g. Windows-ARM WSL2 where the GPU is
             // paravirtualized through `/dev/dxg` and the proc interface never
             // exists. The same bounded CUDA proof used for a placeholder name
-            // is required here; a plausible name must not skip the strongest
-            // available evidence (#9000). The plausibility check runs first so a name
-            // the filter below would discard never starts the Docker workload.
+            // is required here (#9000). The plausibility check runs first so a
+            // name the filter below would discard never starts the Docker workload.
             // Without a passing proof this path stays fail-closed as before.
             const plausible = parsed.every((p: ParsedGpu) => isPlausibleNvidiaGpuName(p.name));
             if (!plausible || !passesBoundedCudaProof()) {
@@ -540,9 +539,9 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           // computeConstrained to exclude those Ollama bootstrap models (#3707).
           // This covers the N1X part on WSL2 and on native Linux (#8096), and
           // conservatively any proof-passed GPU with a plausible,
-          // non-placeholder NVIDIA name (#9000): such a host lacks firmware
-          // and kernel-driver identity, so the memory-shared N1X profile is the
-          // safe assumption.
+          // non-placeholder NVIDIA name (#9000). Such a host lacks firmware
+          // and kernel-driver identity. Mark it compute-constrained to prevent
+          // selection of compute-intensive bootstrap models without device evidence.
           ...(platform === "jetson" || wslDockerDesktopGpuProofPassed
             ? { computeConstrained: true }
             : {}),
