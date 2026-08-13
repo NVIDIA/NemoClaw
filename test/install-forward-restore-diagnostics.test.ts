@@ -32,6 +32,10 @@ function prepareCheckout(prefix: string): { root: string; binDir: string } {
     path.join(stateDir, "onboard-session.json"),
     JSON.stringify({ sandboxName: SANDBOX, agent: "hermes" }),
   );
+  fs.writeFileSync(
+    path.join(stateDir, "sandboxes.json"),
+    JSON.stringify({ sandboxes: { [SANDBOX]: { hermesApiPort: Number(PORT) } } }),
+  );
   for (const command of ["sleep"]) {
     writeExecutable(path.join(binDir, command), "#!/usr/bin/env bash\nexit 0\n");
   }
