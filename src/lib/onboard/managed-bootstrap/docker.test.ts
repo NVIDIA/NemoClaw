@@ -477,9 +477,9 @@ describe("Docker managed bootstrap adapter", () => {
       durablePreparation: durable,
     });
     const dateNow = vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(2_000);
-    vi.mocked(fake.deps.runOpenshell).mockImplementationOnce(() => ({ status: 1 })).mockReturnValue({
-      status: 0,
-    });
+    vi.mocked(fake.deps.runOpenshell!)
+      .mockImplementationOnce(() => ({ status: 1 }))
+      .mockReturnValue({ status: 0 });
 
     await expect(
       adapter.awaitBootstrap({
