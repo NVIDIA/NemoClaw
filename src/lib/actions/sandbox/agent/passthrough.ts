@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:child_process";
-
 // Source-of-truth boundary for the `nemoclaw <name> agent` passthrough.
 //
 // The wrapper enforces three host-side mirrors of upstream contracts, one
@@ -83,19 +81,18 @@ import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:ch
 // 6. Dispatch delivery contract and stdin posture. Both captured transports
 //    fail loud when the exec returns success with no bytes on either stream,
 //    and neither hands an interactive terminal to the non-interactive
-//    dispatch. Both transports also pin the sandbox's owning gateway with an
-//    explicit `-g`, restoring the per-subprocess authority #7113 established
-//    for `execSandbox`; PR #8191 dropped it here when it moved this path off
-//    `execSandbox`, and the JSON path never had it. The source-boundary
-//    analysis and the classifier live in `passthrough-dispatch.ts`; the
-//    operator-facing failure text lives beside the help copy in
-//    `passthrough-help.ts`.
+//    dispatch. Both transports pin the sandbox's owning gateway and use the
+//    shared asynchronous exec supervisor, which forwards host termination to
+//    OpenShell before returning the signal-derived exit status. The complete
+//    source-boundary analysis and classifier live in
+//    `passthrough-dispatch.ts`; the operator-facing failure text lives beside
+//    the help copy in `passthrough-help.ts`.
 //
 // Regression tests: `passthrough.test.ts` covers the Hermes redirect, the
-// forwarded argv, the registry-miss fallback to OpenClaw, registry and
-// manifest-resolution fail-closed paths, quoted manifest command rejection,
-// the enforced `--no-tty` argv shape, the non-Ready phase recovery path, the
-// unparseable phase fail-closed path, the OpenClaw no-selector rejection, and
+// forwarded argv, SIGTERM exit status, the registry-miss fallback to OpenClaw,
+// registry and manifest-resolution fail-closed paths, quoted manifest command
+// rejection, the enforced `--no-tty` argv shape, the non-Ready phase recovery
+// path, the unparseable phase fail-closed path, the OpenClaw no-selector rejection, and
 // the `--flag=value` selector-acceptance branch, plus the OpenClaw JSON
 // captured transport path used to append failure provenance without polluting
 // machine-readable stdout. The focused shields and Ollama modules own their
@@ -134,8 +131,9 @@ import {
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { getKnownSandboxTargetGatewayName } from "../gateway-target";
 import {
-  agentDispatchStdio,
+  type AgentDispatchRunner,
   isSilentAgentDispatch,
+  runAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
 } from "./passthrough-dispatch";
 import {
@@ -151,10 +149,7 @@ import {
 import { OLLAMA_LOCAL_PROVIDER, runOllamaRestartRecovery } from "./passthrough-ollama-recovery";
 import { maybeEmitShieldsRelockWarning } from "./passthrough-shields-warning";
 
-export {
-  hasAgentPassthroughHelpToken,
-  printAgentPassthroughHelp,
-} from "./passthrough-help";
+export { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
 
 const OPENCLAW_AGENT_VALUE_FLAGS = new Set([
   "-a",
@@ -182,33 +177,21 @@ const OPENCLAW_AGENT_BOOLEAN_FLAGS = new Set(["--deliver"]);
 const OPENCLAW_EMBEDDED_FALLBACK_PATTERN =
   /EMBEDDED FALLBACK|\[agent\/embedded\]|fallbackFrom[": ]+gateway|transport[": ]+embedded/i;
 
-const AGENT_NON_JSON_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
-
-function nonJsonAsText(value: string | Buffer | null | undefined): string {
-  if (Buffer.isBuffer(value)) return value.toString("utf-8");
-  return typeof value === "string" ? value : "";
-}
-
 export type AgentNonJsonPassthroughDeps = {
   getOpenshellBinary?: () => string;
   getGatewayName?: (sandboxName: string) => string | null;
+  runDispatch?: AgentDispatchRunner;
   stdinIsTty?: () => boolean;
-  spawnSync?: (
-    command: string,
-    args: readonly string[],
-    options: SpawnSyncOptions,
-  ) => SpawnSyncReturns<string | Buffer>;
 };
 
-export function runAgentNonJsonPassthrough(
+export async function runAgentNonJsonPassthrough(
   sandboxName: string,
   command: readonly string[],
   proc: NonNullable<AgentPassthroughDeps["process"]>,
   deps: AgentNonJsonPassthroughDeps = {},
-): never {
+): Promise<never> {
   const binary = (deps.getOpenshellBinary ?? defaultGetOpenshellBinary)();
-  const spawnSyncImpl = deps.spawnSync ?? spawnSync;
-  const result = spawnSyncImpl(
+  const result = await (deps.runDispatch ?? runAgentDispatch)(
     binary,
     buildOpenshellExecArgs(
       sandboxName,
@@ -217,13 +200,10 @@ export function runAgentNonJsonPassthrough(
       (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName) ?? undefined,
     ),
     {
-      encoding: "utf-8",
-      maxBuffer: AGENT_NON_JSON_MAX_BUFFER_BYTES,
-      stdio: agentDispatchStdio((deps.stdinIsTty ?? isStdinTty)()),
+      stdinIsTty: (deps.stdinIsTty ?? isStdinTty)(),
     },
   );
-  const stdout = nonJsonAsText(result.stdout);
-  const stderr = nonJsonAsText(result.stderr);
+  const { stderr, stdout } = result;
 
   if (isSilentAgentDispatch(result, stdout, stderr)) {
     writeSilentAgentDispatchFailure(proc, sandboxName, command);
@@ -649,7 +629,7 @@ export async function runAgentPassthrough(
   }
   if (isOpenClawPassthroughCommand(command) && requestsOpenClawJsonOutput(extraArgs)) {
     const execJson = deps.execJson ?? runAgentJsonPassthrough;
-    execJson(sandboxName, command, {
+    await execJson(sandboxName, command, {
       exit: proc.exit.bind(proc),
       stdout: proc.stdout ?? process.stdout,
       stderr: proc.stderr,
@@ -658,7 +638,7 @@ export async function runAgentPassthrough(
   }
   if (isOpenClawPassthroughCommand(command)) {
     const execNonJson = deps.execNonJson ?? runAgentNonJsonPassthrough;
-    execNonJson(sandboxName, command, proc);
+    await execNonJson(sandboxName, command, proc);
     return;
   }
   const exec = deps.exec ?? execSandbox;

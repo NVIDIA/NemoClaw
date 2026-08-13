@@ -1286,6 +1286,8 @@ Otherwise, it writes the captured output to the corresponding host streams and r
 The in-sandbox NemoClaw plugin writes its registration banner to `stderr`, so the banner does not prefix the agent reply on `stdout` in non-JSON mode.
 Because a delivered turn always writes to one of the two streams, the wrapper reports a dispatch with status `0` and no output as a failure.
 The wrapper prints recovery guidance to `stderr` and exits with status `1`.
+Pressing `Ctrl+C` interrupts the OpenShell child, and sending `SIGTERM` to the host wrapper forwards `SIGTERM` to that child.
+NemoClaw waits for OpenShell to stop the in-sandbox turn, replays captured output, and returns status `130` for `SIGINT` or `143` for `SIGTERM`.
 The diagnostic shell-quotes the sandbox name and forwarded arguments, then redacts detected credential values before writing the recovery command to `stderr`.
 If redaction changes the recovery command, the diagnostic tells you not to replay it; otherwise, it labels the command as runnable inside the sandbox.
 For a registered sandbox, both captured paths pin the sandbox's recorded gateway with an explicit `-g`.
@@ -4534,7 +4536,7 @@ OpenClaw-specific onboarding configuration:
 | `NEMOCLAW_WEB_SEARCH_PROVIDER` | `brave`, `tavily`, or `none` | Selects Brave Search or Tavily Search in non-interactive onboarding, or disables web search explicitly. When unset, `BRAVE_API_KEY` implicitly selects Brave before `TAVILY_API_KEY` can implicitly select Tavily. |
 | `BRAVE_API_KEY` | Brave Search API key | Supplies and implicitly selects Brave Search when no web search provider is set. NemoClaw validates the key and stores it in OpenShell rather than the sandbox. |
 | `TAVILY_API_KEY` | Tavily Search API key | Supplies and implicitly selects Tavily Search when no provider is set and no Brave key is available. NemoClaw validates the key and stores it in OpenShell rather than the sandbox. |
-| `NEMOCLAW_AGENT_TIMEOUT` | positive integer (seconds) | Overrides `agents.defaults.timeoutSeconds` and `models.providers.<provider-id>.timeoutSeconds` in the built OpenClaw config. Raise for slow inference. |
+| `NEMOCLAW_AGENT_TIMEOUT` | positive integer (seconds) | Build-time setting that overrides `agents.defaults.timeoutSeconds` and `models.providers.<provider-id>.timeoutSeconds` in the built OpenClaw config. Set it before onboarding builds the sandbox image. Setting it only for a later `$$nemoclaw <name> agent` invocation does not change the existing image. Raise for slow inference. |
 | `NEMOCLAW_MCP_SHADOW_DIAGNOSTICS` | literal `1` to enable | Forwards opt-in successful Streamable HTTP MCP timing diagnostics to a newly created or rebuilt OpenClaw sandbox. It does not change timeouts, retries, requests, or responses. Unset it and rebuild after evidence collection to restore failure-only logging. Other values are ignored. |
 | `NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS` | positive number of seconds | Sets the post-pairing poll cadence for the in-sandbox OpenClaw auto-pair watcher. Defaults to `5` so late allowlisted CLI and browser scope upgrades are approved before clients time out. Raise only on load-sensitive gateways. |
 | `NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS` | positive integer | Sets how many fast polls run after the watcher observes a fresh allowlisted scope-upgrade request. Defaults to `5`; set lower only when you need to reduce gateway polling. |
