@@ -215,6 +215,7 @@ function makeVmRestoreToEnv(
   prefix: string,
   entry: Record<string, unknown> = { imageTag: "openshell/sandbox-from:fast-path-test" },
   cloneIdentity = "fixture-clone-1",
+  cloneReady = true,
 ): Record<string, string> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
@@ -230,6 +231,7 @@ function makeVmRestoreToEnv(
 
   const cloneReadyMarker = path.join(home, "clone-1-ready");
   const cloneRunningMarker = path.join(home, "clone-1-running");
+  const markCloneReady = cloneReady ? `touch ${JSON.stringify(cloneReadyMarker)}` : ":";
   const gatewayLifecycleLog = path.join(home, "gateway-lifecycle.log");
   const dashboardBind = process.env.WSL_DISTRO_NAME ? "0.0.0.0" : "127.0.0.1";
   writeExecutable(path.join(localBin, "openshell"), [
@@ -243,7 +245,7 @@ function makeVmRestoreToEnv(
     "    esac",
     '    printf "NEMOCLAW_DCODE_PROBE=no-runtime\\n"; exit 0 ;;',
     '  "sandbox ssh-config") for sandbox_ref in "$@"; do :; done; printf "Host openshell-%s\\n  HostName 127.0.0.1\\n  User sandbox\\n" "$sandbox_ref"; exit 0 ;;',
-    `  "sandbox create") touch ${JSON.stringify(cloneReadyMarker)} ${JSON.stringify(cloneRunningMarker)}; printf "created clone-1\\n"; exit 0 ;;`,
+    `  "sandbox create") ${markCloneReady}; touch ${JSON.stringify(cloneRunningMarker)}; printf "created clone-1\\n"; exit 0 ;;`,
     `  "forward list") printf "SANDBOX BIND PORT PID STATUS\\nclone-1 ${dashboardBind} ${String(dashboardPort)} 4242 running\\n"; exit 0 ;;`,
     '  "forward stop") exit 1 ;;',
     "esac",
@@ -338,7 +340,7 @@ describe("snapshot VM-driver gateway guard", () => {
 
   // `snapshot restore --to <new>` on VM driver must use the registered
   // imageTag, not the legacy `docker exec ... kubectl` probe.
-  it("snapshot restore --to records a fresh clone lifecycle identity before pairing verification (#8942)", () => {
+  it("snapshot restore --to records a new clone lifecycle generation and live identity (#8942)", () => {
     const env = makeVmRestoreToEnv("nemoclaw-snap-vm-gw-restore-to-", {
       imageTag: "openshell/sandbox-from:fast-path-test",
       lifecycleGeneration: "source-generation",
@@ -382,7 +384,28 @@ describe("snapshot VM-driver gateway guard", () => {
 
     const r = runCli("alpha snapshot restore baseline --to clone-1", env);
     expect(r.code, r.out).toBe(1);
-    expect(r.out).toContain("valid live identity");
+    expect(r.out).toContain("owning gateway did not provide a valid Ready identity");
+    expect(r.out).toContain("Snapshot state was not restored and the clone was not registered.");
+    expect(r.out).toContain("openshell sandbox delete -g 'nemoclaw' 'clone-1'");
+    const registryState = JSON.parse(
+      fs.readFileSync(path.join(env.HOME, ".nemoclaw", "sandboxes.json"), "utf8"),
+    );
+    expect(registryState.sandboxes["clone-1"]).toBeUndefined();
+  }, 15000);
+
+  it("snapshot restore --to reports owner-scoped recovery when a created clone is not Ready (#8942)", () => {
+    const env = makeVmRestoreToEnv(
+      "nemoclaw-snap-vm-gw-restore-to-not-ready-",
+      { imageTag: "openshell/sandbox-from:fast-path-test" },
+      "fixture-clone-1",
+      false,
+    );
+
+    const r = runCli("alpha snapshot restore baseline --to clone-1", env);
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("owning gateway did not provide a valid Ready identity");
+    expect(r.out).toContain("Snapshot state was not restored and the clone was not registered.");
+    expect(r.out).toContain("openshell sandbox delete -g 'nemoclaw' 'clone-1'");
     const registryState = JSON.parse(
       fs.readFileSync(path.join(env.HOME, ".nemoclaw", "sandboxes.json"), "utf8"),
     );
