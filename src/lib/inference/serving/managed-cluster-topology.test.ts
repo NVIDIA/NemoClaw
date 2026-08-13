@@ -57,6 +57,31 @@ function readiness(overrides: Partial<SystemReadinessReport> = {}): SystemReadin
   return { ...base, ...overrides } as SystemReadinessReport;
 }
 
+function remediableStorageReadiness(): SystemReadinessReport {
+  const base = readiness();
+  return {
+    ...base,
+    capabilities: [
+      ...base.capabilities.map((capability) =>
+        capability.id === "host.docker.storage_compatible"
+          ? { ...capability, state: "absent" as const }
+          : capability,
+      ),
+      { id: "host.docker.storage_remediation_available", state: "present" as const },
+    ],
+    findings: [
+      {
+        id: "host.docker.storage_incompatible",
+        severity: "blocking" as const,
+        summary: "The Docker storage configuration cannot support nested overlay mounts.",
+        capabilityIds: ["host.docker.storage_compatible"],
+      },
+    ],
+    status: "incompatible",
+    exitCode: 2,
+  } as SystemReadinessReport;
+}
+
 function rail(
   node: "head" | "worker",
   index: 0 | 1,
@@ -356,6 +381,50 @@ describe("managed DGX Spark cluster topology qualification", () => {
     });
   });
 
+  it("qualifies nodes whose only blocking readiness finding has an available storage remediation", () => {
+    const input = qualificationInput();
+    input.local.readiness = remediableStorageReadiness();
+    input.peers[0]!.readiness = remediableStorageReadiness();
+
+    expect(qualifyManagedClusterTopology(input)).toMatchObject({ outcome: "qualified" });
+  });
+
+  it("fails closed when the storage conflict has no available remediation", () => {
+    const input = qualificationInput();
+    const report = remediableStorageReadiness();
+    report.capabilities = report.capabilities.map((capability) =>
+      capability.id === "host.docker.storage_remediation_available"
+        ? { ...capability, state: "absent" as const }
+        : capability,
+    );
+    input.peers[0]!.readiness = report;
+
+    expect(qualifyManagedClusterTopology(input)).toMatchObject({
+      outcome: "no-match",
+      code: "readiness-incompatible",
+    });
+  });
+
+  it("fails closed when another blocking readiness finding joins the remediable storage conflict", () => {
+    const input = qualificationInput();
+    const report = remediableStorageReadiness();
+    report.findings = [
+      ...report.findings,
+      {
+        id: "host.gpu.nvidia_runtime_missing",
+        severity: "blocking" as const,
+        summary: "Docker NVIDIA runtime support is missing for Jetson/Tegra sandbox GPU.",
+        capabilityIds: ["host.gpu.container_toolkit_available"],
+      },
+    ];
+    input.peers[0]!.readiness = report;
+
+    expect(qualifyManagedClusterTopology(input)).toMatchObject({
+      outcome: "no-match",
+      code: "readiness-incompatible",
+    });
+  });
+
   it("leaves serving runtime capability policy to preset resolution", () => {
     const input = qualificationInput();
     input.peers[0]!.readiness.capabilities = input.peers[0]!.readiness.capabilities.map(
@@ -473,6 +542,26 @@ describe("managed DGX Spark cluster topology qualification", () => {
     expect(qualifyManagedClusterTopology(input)).toMatchObject({
       outcome: "no-match",
       code,
+    });
+  });
+
+  it.each([
+    { target: "local" as const, nodeId: "spark-head", suffix: "head" },
+    { target: "peer" as const, nodeId: "spark-worker", suffix: "worker" },
+  ])("reports the $target node and sorted physical-port identities", ({
+    target,
+    nodeId,
+    suffix,
+  }) => {
+    const input = qualificationInput();
+    const node = target === "local" ? input.local : input.peers[0]!;
+    node.rails[0]!.physicalPortId = `cx7-right-${suffix}`;
+    node.rails[1]!.physicalPortId = `cx7-left-${suffix}`;
+
+    expect(qualifyManagedClusterTopology(input)).toMatchObject({
+      outcome: "no-match",
+      code: "fabric-multiple",
+      message: `The candidate logical rails on node ${nodeId} belong to more than one physical port: cx7-left-${suffix}, cx7-right-${suffix}.`,
     });
   });
 

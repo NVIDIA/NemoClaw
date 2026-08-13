@@ -706,8 +706,8 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     );
 
     expect(result.status, result.stderr || result.stdout).toBe(0);
-    expect(configAfter.gateway.auth.token).toEqual(expect.any(String));
     expect(configAfter.gateway.auth.token).not.toBe("");
+    expect(Number.isNaN(Date.parse(configAfter.meta.lastTouchedAt))).toBe(false);
     expect(envFile).toContain("export OPENCLAW_GATEWAY_PORT='18790'");
     expect(envFile).toContain("export NEMOCLAW_OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
     expect(envFile).not.toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");

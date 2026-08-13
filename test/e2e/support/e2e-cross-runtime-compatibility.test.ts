@@ -6,7 +6,6 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { buildRiskPlan } from "../../../tools/advisors/risk-plan.mts";
-import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { buildLiveTargetMatrix } from "../registry/run.ts";
 
 function digestOutput(value: unknown): string {
@@ -28,9 +27,6 @@ describe("cross-runtime foundation compatibility", () => {
         ]),
       ),
     ).toBe("6272aab16cf4b9555bdc4b3f4c0cdd24b5faa55118cbd61cbb4b30a3d418a63a");
-    expect(digestOutput(buildE2eWorkflowPlan())).toBe(
-      "273638f6608247bb2fd3749a1c939d6d99e153fa546b5f7ea969d056ae8a946f",
-    );
   });
 
   it("preserves exact risk-plan outputs for established policy cases", () => {

@@ -29,7 +29,7 @@ type WorkflowStep = WorkflowRecord & {
 
 const JOB_ID = PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID;
 const PROTECTED_RUNTIME_JOB_ID = "managed-image-protected-runtime";
-const SELECTOR = `\${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',${JOB_ID},') || contains(format(',{0},', inputs.targets), ',${JOB_ID},') || contains(format(',{0},', inputs.jobs), ',${PROTECTED_RUNTIME_JOB_ID},') || contains(format(',{0},', inputs.targets), ',${PROTECTED_RUNTIME_JOB_ID},')) }}`;
+const SELECTOR = `\${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${JOB_ID}') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${PROTECTED_RUNTIME_JOB_ID}')) }}`;
 const ACTIVATION_PATH = PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH;
 const DIRECT_TEST_PATH = "test/e2e/live/managed-image-multiarch-startup.test.ts";
 const REGISTRY_IMAGE =
@@ -108,8 +108,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   }
 
   if (job.needs !== "generate-matrix") errors.push(`${JOB_ID} must depend on generate-matrix`);
-  if (job.if !== SELECTOR)
-    errors.push(`${JOB_ID} must run on main pushes and retain manual selectors`);
+  if (job.if !== SELECTOR) errors.push(`${JOB_ID} must use the trusted execution plan`);
   if (job["runs-on"] !== "${{ matrix.runner }}") {
     errors.push(`${JOB_ID} must run on the native matrix runner`);
   }

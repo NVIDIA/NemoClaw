@@ -1,0 +1,52 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.108
+
+NemoClaw v0.0.108 adds read-only host mounts and an Experimental Muse Glimmer profile for one DGX Spark.
+It improves onboarding recovery, messaging credential rotation, inference validation, MCP registration, snapshots, and Hermes configuration.
+It also strengthens managed images, gateway credentials, runtime state, and release qualification.
+
+- On Linux and Windows Subsystem for Linux 2 (WSL2), `nemoclaw onboard` and `nemoclaw <sandbox> rebuild` can now mount an existing host directory read-only beneath `/sandbox` with `--host-mount`.
+  NemoClaw validates each source, destination, and symlink boundary before mutation, persists accepted mounts for `rebuild` and interrupted `onboard --resume`, removes their declaration during `destroy`, and reports them in sandbox status.
+  For more information, refer to [Understand Sandbox State](/user-guide/openclaw/manage-sandboxes/state-and-backups/understand-sandbox-state) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+  Related change: [PR #8280](https://github.com/NVIDIA/NemoClaw/pull/8280).
+- The explicit-only Experimental Muse Glimmer managed vLLM profile now runs on one DGX Spark with its validated checkpoint, ARM64 image, parser settings, and resource limits.
+  Two-node DGX Spark setup can remediate a Docker storage conflict before launch only when it is the sole blocking readiness finding and the host reports that remediation is available, and strict tool-call validation escalates its bounded token budget through 256, 1,024, and 4,096 tokens before reporting failure.
+  NVIDIA Nemotron 3.5 Lightning guidance also distinguishes the `reasoning` and `max_tokens` fields required by direct OpenAI-compatible callers.
+  For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm), [Set Up vLLM on Two DGX Sparks](/user-guide/openclaw/inference/local-inference/set-up-vllm-on-two-dgx-sparks), and [Understand Provider Validation](/user-guide/openclaw/inference/validate-inference/understand-provider-validation).
+  Related changes: [PR #8802](https://github.com/NVIDIA/NemoClaw/pull/8802), [PR #8814](https://github.com/NVIDIA/NemoClaw/pull/8814), [PR #8839](https://github.com/NVIDIA/NemoClaw/pull/8839), and [PR #8894](https://github.com/NVIDIA/NemoClaw/pull/8894).
+- Onboarding recovery now preserves the selected configuration after review, hides suggestions for incomplete route-only sandboxes, and keeps an already healthy Docker authority.
+  Explicit fresh recreation, repeated Docker recreation, dashboard port reservation, unavailable-provider guidance, decorated OpenShell readiness output, and readiness handoffs now converge through the same bounded lifecycle authority.
+  The recovery path also handles registered messaging routes, empty dashboard URLs, managed runtime ownership, OpenClaw MCP workspace state, and LangChain Deep Agents Code re-onboarding verification without masking terminal failures.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [System Readiness](/user-guide/openclaw/reference/system-readiness), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+  Related changes: [PR #8724](https://github.com/NVIDIA/NemoClaw/pull/8724), [PR #8820](https://github.com/NVIDIA/NemoClaw/pull/8820), [PR #8823](https://github.com/NVIDIA/NemoClaw/pull/8823), [PR #8842](https://github.com/NVIDIA/NemoClaw/pull/8842), [PR #8851](https://github.com/NVIDIA/NemoClaw/pull/8851), [PR #8863](https://github.com/NVIDIA/NemoClaw/pull/8863), [PR #8901](https://github.com/NVIDIA/NemoClaw/pull/8901), [PR #8929](https://github.com/NVIDIA/NemoClaw/pull/8929), and [PR #8931](https://github.com/NVIDIA/NemoClaw/pull/8931).
+- Messaging credential changes now rebuild the sandbox when durable gateway registration no longer matches the reviewed selection.
+  Compact persisted authority is compared without exposing credentials, and ambiguous or failed gateway reads remain terminal instead of being treated as an absent registration.
+  For more information, refer to [Credential Rotation](/user-guide/openclaw/security/credential-rotation) and [Manage Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/manage-messaging-channels).
+  Related changes: [PR #8859](https://github.com/NVIDIA/NemoClaw/pull/8859) and [PR #8939](https://github.com/NVIDIA/NemoClaw/pull/8939).
+- Managed Model Context Protocol (MCP) registration now targets the OpenClaw workspace configuration, while agent dispatch exits nonzero when a turn does not produce a delivered response.
+  Incomplete-turn markers, gateway selection, and non-interactive execution are preserved so scripts do not receive false success.
+  For more information, refer to [Manage MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+  Related changes: [PR #8646](https://github.com/NVIDIA/NemoClaw/pull/8646), [PR #8846](https://github.com/NVIDIA/NemoClaw/pull/8846), and [PR #8857](https://github.com/NVIDIA/NemoClaw/pull/8857).
+- Hermes configuration writes now validate the complete candidate configuration, require explicit approval for private service URLs, and restart only after the accepted state is durable.
+  Snapshot clones preserve their allocated gateway port so the restored sandbox and registry agree before startup.
+  For more information, refer to the [Hermes Quickstart](/user-guide/hermes/get-started/quickstart), [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots), and [Troubleshooting](/user-guide/hermes/reference/troubleshooting).
+  Related changes: [PR #8845](https://github.com/NVIDIA/NemoClaw/pull/8845) and [PR #8907](https://github.com/NVIDIA/NemoClaw/pull/8907).
+- Legacy OpenShell gateway replacement now retires only verified managed state, corporate CA staging preserves trusted ownership, and Shields state remains readable after runtime locking.
+  NemoClaw creates managed state with owner-only permissions, strips the gateway token from descendant processes, and preserves authenticated gateway metadata through sandbox launch.
+  For more information, refer to [Configure Corporate CA Trust](/user-guide/openclaw/security/configure-corporate-ca-trust), [Gateway and Secret Controls](/user-guide/openclaw/security/security-controls/gateway-authentication-controls), and [Credential Storage](/user-guide/openclaw/security/credential-storage).
+  Related changes: [PR #8811](https://github.com/NVIDIA/NemoClaw/pull/8811), [PR #8812](https://github.com/NVIDIA/NemoClaw/pull/8812), [PR #8822](https://github.com/NVIDIA/NemoClaw/pull/8822), [PR #8860](https://github.com/NVIDIA/NemoClaw/pull/8860), [PR #8872](https://github.com/NVIDIA/NemoClaw/pull/8872), and [PR #8921](https://github.com/NVIDIA/NemoClaw/pull/8921).
+- Managed images now use Node.js 22.23.2, updated runtime dependencies, an audited Hono lock, and `setpriv` instead of legacy `gosu` privilege transitions.
+  BuildKit attestation verification is part of image validation, while Sigstore auditing runs outside image builds and the Hermes sandbox base is pinned to the refreshed reviewed digest.
+  For more information, refer to [Process Controls](/user-guide/openclaw/security/security-controls/process-controls), [Trusted Computing Base](/user-guide/openclaw/security/trusted-computing-base), and [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes).
+  Related changes: [PR #8819](https://github.com/NVIDIA/NemoClaw/pull/8819), [PR #8858](https://github.com/NVIDIA/NemoClaw/pull/8858), [PR #8862](https://github.com/NVIDIA/NemoClaw/pull/8862), [PR #8864](https://github.com/NVIDIA/NemoClaw/pull/8864), [PR #8914](https://github.com/NVIDIA/NemoClaw/pull/8914), [PR #8927](https://github.com/NVIDIA/NemoClaw/pull/8927), and [PR #8928](https://github.com/NVIDIA/NemoClaw/pull/8928).
+- Contributor guidance now covers JavaScript heap exhaustion during setup, required macOS command-line dependencies, byte-asserted line endings, and the v0.0.106 audit follow-ups.
+  For more information, refer to the [documentation contribution guide](https://github.com/NVIDIA/NemoClaw/blob/main/docs/CONTRIBUTING.md) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+  Related changes: [PR #8689](https://github.com/NVIDIA/NemoClaw/pull/8689), [PR #8700](https://github.com/NVIDIA/NemoClaw/pull/8700), [PR #8779](https://github.com/NVIDIA/NemoClaw/pull/8779), and [PR #8831](https://github.com/NVIDIA/NemoClaw/pull/8831).
+- Release qualification now reports one consolidated result across required end-to-end jobs, lifecycle integration coverage shares isolated host-process scenarios, and qualification checks share one dotted-version comparator.
+  NemoClaw no longer contains the Jetson dispatch backend and retains controller contract coverage.
+  The release train also adds deterministic recovery fixtures, bounded SSH and preflight waits, formatted Hermes diagnostics, centralized onboarding wiring, and runtime-aligned live probes.
+  Related changes: [PR #8780](https://github.com/NVIDIA/NemoClaw/pull/8780), [PR #8840](https://github.com/NVIDIA/NemoClaw/pull/8840), [PR #8841](https://github.com/NVIDIA/NemoClaw/pull/8841), [PR #8843](https://github.com/NVIDIA/NemoClaw/pull/8843), [PR #8850](https://github.com/NVIDIA/NemoClaw/pull/8850), [PR #8854](https://github.com/NVIDIA/NemoClaw/pull/8854), [PR #8861](https://github.com/NVIDIA/NemoClaw/pull/8861), [PR #8871](https://github.com/NVIDIA/NemoClaw/pull/8871), [PR #8874](https://github.com/NVIDIA/NemoClaw/pull/8874), [PR #8875](https://github.com/NVIDIA/NemoClaw/pull/8875), [PR #8881](https://github.com/NVIDIA/NemoClaw/pull/8881), [PR #8899](https://github.com/NVIDIA/NemoClaw/pull/8899), [PR #8905](https://github.com/NVIDIA/NemoClaw/pull/8905), [PR #8906](https://github.com/NVIDIA/NemoClaw/pull/8906), [PR #8909](https://github.com/NVIDIA/NemoClaw/pull/8909), [PR #8911](https://github.com/NVIDIA/NemoClaw/pull/8911), and [PR #8932](https://github.com/NVIDIA/NemoClaw/pull/8932).

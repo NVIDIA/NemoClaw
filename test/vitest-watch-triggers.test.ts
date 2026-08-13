@@ -13,7 +13,6 @@ import {
 } from "./helpers/vitest-watch-triggers";
 
 const E2E_WORKFLOW_CONTRACTS = [
-  "test/e2e/support/channels-add-remove-workflow-boundary.test.ts",
   "test/e2e/support/dcode-profile-import-gate-workflow-boundary.test.ts",
   "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
   "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
@@ -30,9 +29,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/jetson-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-compatibility.test.ts",
-  "test/e2e/support/openclaw-discord-workflow-boundary.test.ts",
   "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
-  "test/e2e/support/openclaw-slack-workflow-boundary.test.ts",
   "test/e2e/support/openshell-gateway-auth-contract-workflow-boundary.test.ts",
   "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
   "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
@@ -41,7 +38,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/sandbox-operations-workflow-boundary.test.ts",
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
   "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
-  "test/e2e/support/spark-install-workflow-boundary.test.ts",
+  "test/e2e/support/standard-profile-workflow-boundary.test.ts",
   "test/e2e/support/trusted-hermes-swap-workflow-boundary.test.ts",
   "test/e2e/support/tunnel-lifecycle-workflow-boundary.test.ts",
   "test/e2e/support/upload-e2e-artifacts-workflow-boundary.test.ts",
@@ -61,8 +58,7 @@ const OPAQUE_INPUTS = [
   "agents/hermes/mcp-config-transaction.py",
   "test/e2e/lib/ci-compatible-inference.sh",
   "scripts/setup-jetson.sh",
-  "tools/e2e/jetson-dispatch-cleanup.sh",
-  "tools/e2e/colossus-jetson-dispatch-deploy.sh",
+  "tools/e2e/contracts/v1/jetson-dispatch.json",
   ".github/workflows/base-image.yaml",
   "scripts/export-managed-base-image-contract.sh",
   "scripts/checks/validate-managed-base-index.sh",
@@ -70,6 +66,7 @@ const OPAQUE_INPUTS = [
   "test/e2e/manifests/openclaw-nvidia.yaml",
   "test/e2e/docs/parity-inventory.generated.json",
   ".github/workflows/e2e.yaml",
+  ".github/workflows/e2e-standard-profile.yaml",
   ".github/actions/docker-auth-setup/action.yaml",
   ".github/actions/docker-auth-cleanup/action.yaml",
   ".github/scripts/docker-auth-setup.sh",
@@ -132,11 +129,8 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/hosted-inference.test.ts",
     ]);
     expect(triggeredBy("scripts/setup-jetson.sh")).toEqual(["test/setup-jetson.test.ts"]);
-    expect(triggeredBy("tools/e2e/jetson-dispatch-cleanup.sh")).toEqual([
-      "test/e2e/support/jetson-dispatch-worker.test.ts",
-    ]);
-    expect(triggeredBy("tools/e2e/colossus-jetson-dispatch-deploy.sh")).toEqual([
-      "test/e2e/support/colossus-jetson-dispatch-deploy.test.ts",
+    expect(triggeredBy("tools/e2e/contracts/v1/jetson-dispatch.json")).toEqual([
+      "test/e2e/support/jetson-dispatch-client.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/base-image.yaml")).toEqual([
       "test/managed-base-image-contract.test.ts",
@@ -147,6 +141,10 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/managed-base-image-contract.test.ts",
       "test/managed-image-publication-workflow.test.ts",
       "test/dcode-base-image-workflow.test.ts",
+    ]);
+    expect(triggeredBy(".github/actions/build-base-image-platform/action.yaml")).toEqual([
+      "test/dcode-base-image-workflow.test.ts",
+      "test/openclaw-dependency-review.test.ts",
     ]);
     expect(triggeredBy("scripts/checks/validate-managed-base-index.sh")).toEqual([
       "test/validate-managed-base-index.test.ts",
@@ -169,6 +167,9 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/e2e-migration-policy.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual(E2E_WORKFLOW_CONTRACTS);
+    expect(triggeredBy(".github/workflows/e2e-standard-profile.yaml")).toEqual([
+      "test/e2e/support/standard-profile-workflow-boundary.test.ts",
+    ]);
     for (const authPath of [
       ".github/actions/docker-auth-setup/action.yaml",
       ".github/actions/docker-auth-cleanup/action.yaml",
