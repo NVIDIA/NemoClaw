@@ -214,6 +214,23 @@ describe("agentDispatchDeadlineSeconds", () => {
   it("holds the deadline buffer above the longest aborted-run finish measured (#8723)", () => {
     expect(AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS).toBeGreaterThan(20);
   });
+
+  it("stays unbounded when the buffered deadline leaves the safe-integer range (#8723)", () => {
+    const ceiling = String(Number.MAX_SAFE_INTEGER);
+    expect(requestedAgentTimeoutSeconds(["openclaw", "agent", "--timeout", ceiling])).toBe(
+      Number.MAX_SAFE_INTEGER,
+    );
+    // The buffer would round past the ceiling, so the argv would carry a
+    // deadline that differs from the one the caller asked for.
+    expect(agentDispatchDeadlineSeconds(["openclaw", "agent", "--timeout", ceiling])).toBeUndefined();
+  });
+
+  it("still bounds the largest deadline that survives the buffer (#8723)", () => {
+    const largest = String(Number.MAX_SAFE_INTEGER - AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS);
+    expect(agentDispatchDeadlineSeconds(["openclaw", "agent", "--timeout", largest])).toBe(
+      Number.MAX_SAFE_INTEGER,
+    );
+  });
 });
 
 describe("isTimedOutAgentDispatch", () => {

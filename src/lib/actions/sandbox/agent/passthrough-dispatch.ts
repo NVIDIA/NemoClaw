@@ -353,8 +353,16 @@ function parseDeadlineSeconds(raw: string | undefined): number | null {
  * The host transport deadline for an `openclaw agent` argv, or undefined when
  * the argv requested none. Undefined leaves `openshell sandbox exec` on its own
  * default, which is no timeout.
+ *
+ * A requested deadline near the safe-integer ceiling stays unbounded rather
+ * than becoming a bound the host cannot represent. Past that ceiling the buffer
+ * addition rounds, so the wait would silently differ from the number written to
+ * the command line. That matches how this module treats every other value it
+ * cannot read.
  */
 export function agentDispatchDeadlineSeconds(argv: readonly string[]): number | undefined {
   const requested = requestedAgentTimeoutSeconds(argv);
-  return requested === null ? undefined : requested + AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS;
+  if (requested === null) return undefined;
+  const deadline = requested + AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS;
+  return Number.isSafeInteger(deadline) ? deadline : undefined;
 }
