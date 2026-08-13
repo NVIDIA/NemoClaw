@@ -225,13 +225,13 @@ async function recoverResumeSandboxName(
   if (recordedSandboxName) return session;
   const requestedSandboxName = input.requestedSandboxName;
   if (requestedSandboxName) {
-    // #8953: the guard below tells the operator to re-run with --name (or
+    // #8953: the guard below tells the operator to rerun with --name (or
     // NEMOCLAW_SANDBOX_NAME). Record that name as the checkpointed sandbox
     // identity so the resume trust gates reuse it instead of silently
-    // recovering the prompt default. Only the checkpoint decision is
-    // recorded here: the sandbox prompt-progress marker stays false because
-    // the name did not come from a completed sandbox prompt, and setting it
-    // would misread a pre-sandbox failure as an interrupted provider review.
+    // recovering the prompt default. Record only the checkpoint decision.
+    // The sandbox prompt-progress marker stays false because no completed
+    // sandbox prompt produced this name. Setting it would misread a
+    // pre-sandbox failure as an interrupted provider review.
     await deps.updateSession((current) => {
       const checkpointAgent = input.agentFlag || current.agent || input.envAgent || "openclaw";
       recordCheckpointSandboxIdentity(current, requestedSandboxName, checkpointAgent);
