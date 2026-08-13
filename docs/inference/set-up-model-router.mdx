@@ -19,6 +19,21 @@ During onboarding, NemoClaw starts the router proxy on host port `4000`, waits f
 The sandbox does not call port `4000` directly.
 On a host without cached routing-model files, Model Router downloads and loads its routing model before the health endpoint responds.
 NemoClaw gives a running router up to 10 minutes to pass its health check and stops onboarding sooner if the process exits.
+NemoClaw tries to append router process output to `~/.nemoclaw/state/model-router.log`.
+A nondefault gateway port uses `~/.nemoclaw/gateways/<port>/state/model-router.log`.
+NemoClaw creates or reopens the log with owner-only permissions.
+Each Model Router start appends to the same file.
+NemoClaw does not truncate or rotate the file.
+If output capture fails, router startup continues without captured output.
+If the router does not pass its health check, NemoClaw tries one final health read.
+When that read returns an unhealthy-endpoint error, the startup error includes a redacted excerpt.
+When output capture succeeded, the startup error also includes the log path.
+When the log contains readable output from this run, the error includes a redacted excerpt.
+The owner-only log contains unredacted router output.
+Review the log before you share it.
+NemoClaw does not provide log-only cleanup.
+A successful [uninstall](../../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) stops the selected Model Router and removes its log with the selected gateway's operational state.
+Review the uninstall scope before you use it for log removal.
 
 ```text
 Sandbox agent -> OpenShell -> Model Router on port 4000 -> NVIDIA API

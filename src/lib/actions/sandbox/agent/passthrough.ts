@@ -129,7 +129,7 @@ import {
   buildOpenshellExecArgs,
   computeExitCode,
   execSandbox,
-  wrapExecCommandWithRuntimeEnv,
+  wrapOpenClawAgentCommandWithRuntimeEnv,
 } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { getKnownSandboxTargetGatewayName } from "../gateway-target";
@@ -212,7 +212,7 @@ export function runAgentNonJsonPassthrough(
     binary,
     buildOpenshellExecArgs(
       sandboxName,
-      wrapExecCommandWithRuntimeEnv(command),
+      wrapOpenClawAgentCommandWithRuntimeEnv(command),
       { tty: false },
       (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName) ?? undefined,
     ),

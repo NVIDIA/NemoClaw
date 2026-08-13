@@ -12,6 +12,7 @@ import { getSandboxInferenceConfig } from "../src/lib/inference/config";
 import {
   createProductionModelRouterCommandProvisioner,
   isManagedModelRouterCurrent,
+  poolTargetsOnlyNvidiaEndpoints,
   startModelRouter,
 } from "../src/lib/onboard/model-router";
 import {
@@ -287,6 +288,10 @@ describe("onboard Model Router setup", () => {
     const stateDir = path.join(homeDir, ".nemoclaw", "state");
     const litellmConfigPath = path.join(stateDir, "litellm-proxy.yaml");
     fs.mkdirSync(path.dirname(poolConfigPath), { recursive: true });
+    fs.writeFileSync(
+      poolConfigPath,
+      'models:\n  - litellm_model: "openai/nvidia/test"\n    api_base: "https://integrate.api.nvidia.com/v1"\n',
+    );
     fs.mkdirSync(path.dirname(routerCommand), { recursive: true });
     fs.writeFileSync(
       routerCommand,
@@ -379,6 +384,60 @@ describe("onboard Model Router setup", () => {
     );
   });
 
+  it("writes router output to an owner-only log in the state directory (#8962)", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-log-"));
+    tempDirs.add(tmpDir);
+    const rootDir = path.join(tmpDir, "repo");
+    const homeDir = path.join(tmpDir, "home");
+    const routerCommand = path.join(tmpDir, "managed", "model-router");
+    const port = 45_692;
+    let healthProbe = 0;
+    let pid: number | null = null;
+
+    fs.mkdirSync(path.join(rootDir, "nemoclaw-blueprint", "router"), { recursive: true });
+    fs.mkdirSync(path.dirname(routerCommand), { recursive: true });
+    fs.writeFileSync(
+      routerCommand,
+      [
+        `#!${process.execPath}`,
+        "const args = process.argv.slice(2);",
+        'if (args[0] === "proxy-config") process.exit(0);',
+        'console.error("ROUTER-STDERR-MARKER: endpoint auth failed");',
+        "setTimeout(() => process.exit(0), 5000);",
+        "setInterval(() => {}, 1000);",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      pid = await startModelRouter(
+        { port, pool_config_path: "router/test-pool.yaml" },
+        {
+          rootDir,
+          homeDir,
+          ensureModelRouterCommand: () => routerCommand,
+          resolveProviderCredential: () => null,
+          isRouterHealthy: async () => {
+            healthProbe += 1;
+            return healthProbe > 1;
+          },
+          sleep: async () => undefined,
+        },
+      );
+      const logPath = path.join(homeDir, ".nemoclaw", "state", "model-router.log");
+      await vi.waitFor(() => {
+        assert.match(
+          fs.readFileSync(logPath, "utf8"),
+          /ROUTER-STDERR-MARKER: endpoint auth failed/,
+        );
+      });
+      assert.equal(fs.statSync(logPath).mode & 0o777, 0o600);
+    } finally {
+      await stopTestProcess(pid);
+    }
+  });
+
   it("starts a Model Router whose health check passes after 61 retry intervals", async () => {
     const pid = 12_345;
     const sleep = vi.fn(async () => undefined);
@@ -442,6 +501,7 @@ describe("onboard Model Router setup", () => {
           resolveProviderCredential: () => null,
           buildSubprocessEnv: () => ({}),
           isRouterHealthy,
+          getRouterHealthSnapshot: async () => ({ healthy: false, body: null }),
           sleep,
           isProcessAlive: () => true,
           terminateProcess,
@@ -454,6 +514,392 @@ describe("onboard Model Router setup", () => {
     assert.equal(isRouterHealthy.mock.calls.length, 301);
     assert.equal(sleep.mock.calls.length, 300);
     assert.deepEqual(terminateProcess.mock.calls, [[pid]]);
+  });
+
+  it("sets OPENAI_API_KEY to the routed credential when an ambient OPENAI_API_KEY exists (#8962)", async () => {
+    const pid = 12_345;
+    let spawnedEnv: Record<string, string> | null = null;
+    let healthProbe = 0;
+
+    await startModelRouter(
+      { port: 45_690, pool_config_path: "router/test-pool.yaml", credential_env: "ROUTER_API_KEY" },
+      {
+        rootDir: "/test/repo",
+        homeDir: "/test/home",
+        ensureModelRouterCommand: () => "/test/model-router",
+        mkdirSync: () => undefined,
+        runProxyConfig: () => ({ status: 0 }),
+        spawnProxy: (_command, _args, options) => {
+          spawnedEnv = options.env;
+          return {
+            pid,
+            onError: () => undefined,
+            onExit: () => undefined,
+            unref: () => undefined,
+          };
+        },
+        readPoolConfig: () =>
+          'models:\n  - litellm_model: "openai/nvidia/test"\n    api_base: "https://integrate.api.nvidia.com/v1"\n',
+        resolveProviderCredential: (name) =>
+          ({ ROUTER_API_KEY: "router-secret", OPENAI_API_KEY: "stale-openai" })[name] ?? null,
+        buildSubprocessEnv: (extra) => ({ ...extra }),
+        isRouterHealthy: async () => {
+          healthProbe += 1;
+          return healthProbe > 1;
+        },
+        sleep: async () => undefined,
+        isProcessAlive: () => true,
+        terminateProcess: () => undefined,
+        getProviderKey: () => "",
+      },
+    );
+
+    assert.deepEqual(spawnedEnv, {
+      ROUTER_API_KEY: "router-secret",
+      OPENAI_API_KEY: "router-secret",
+    });
+  });
+
+  it("does not classify uncertain pool shapes as NVIDIA-only (#8962)", () => {
+    const uncertainPools = [
+      null,
+      "not: [valid",
+      "routing: {}\n",
+      "models: []\n",
+      'models:\n  - litellm_model: "openai/gpt-test"\n',
+      'models:\n  - api_base: ""\n',
+      'models:\n  - api_base: "not-a-url"\n',
+      'models:\n  - api_base: "http://integrate.api.nvidia.com/v1"\n',
+    ];
+
+    for (const pool of uncertainPools) {
+      assert.equal(poolTargetsOnlyNvidiaEndpoints(pool), false, String(pool));
+    }
+  });
+
+  it("classifies the shipped NVIDIA pool as NVIDIA-only (#8962)", () => {
+    const shippedPool = [
+      "models:",
+      "  - name: nemotron",
+      '    api_base: "https://integrate.api.nvidia.com/v1"',
+      "",
+    ].join("\n");
+
+    assert.equal(poolTargetsOnlyNvidiaEndpoints(shippedPool), true);
+  });
+
+  it("appends the last router health error and log path to the startup timeout error (#8962)", async () => {
+    const pid = 12_345;
+    const unhealthyBody = JSON.stringify({
+      healthy_endpoints: [],
+      unhealthy_endpoints: [
+        { api_base: "https://integrate.api.nvidia.com/v1", error: "AuthenticationError: bad key" },
+      ],
+    });
+
+    await assert.rejects(
+      startModelRouter(
+        { port: 45_691, pool_config_path: "router/test-pool.yaml" },
+        {
+          rootDir: "/test/repo",
+          homeDir: "/test/home",
+          ensureModelRouterCommand: () => "/test/model-router",
+          mkdirSync: () => undefined,
+          runProxyConfig: () => ({ status: 0 }),
+          spawnProxy: () => ({
+            pid,
+            onError: () => undefined,
+            onExit: () => undefined,
+            unref: () => undefined,
+          }),
+          resolveProviderCredential: () => null,
+          buildSubprocessEnv: () => ({}),
+          isRouterHealthy: async () => false,
+          getRouterHealthSnapshot: async () => ({ healthy: false, body: unhealthyBody }),
+          openRouterLog: () => ({ fd: 99, startOffset: 0 }),
+          closeRouterLog: () => undefined,
+          readRouterLogTail: () => "",
+          sleep: async () => undefined,
+          isProcessAlive: () => true,
+          terminateProcess: () => undefined,
+          getProviderKey: () => "",
+        },
+      ),
+      /failed to become healthy on port 45691[\s\S]*last health error: AuthenticationError: bad key[\s\S]*model-router\.log/,
+    );
+  });
+
+  it("returns the router PID when the final health snapshot proves recovery (#8962)", async () => {
+    const pid = 12_345;
+    const terminateProcess = vi.fn();
+    const healthyBody = JSON.stringify({
+      healthy_endpoints: [{ api_base: "https://integrate.api.nvidia.com/v1" }],
+      unhealthy_endpoints: [],
+    });
+
+    const startedPid = await startModelRouter(
+      { port: 45_693, pool_config_path: "router/test-pool.yaml" },
+      {
+        rootDir: "/test/repo",
+        homeDir: "/test/home",
+        ensureModelRouterCommand: () => "/test/model-router",
+        mkdirSync: () => undefined,
+        runProxyConfig: () => ({ status: 0 }),
+        spawnProxy: () => ({
+          pid,
+          onError: () => undefined,
+          onExit: () => undefined,
+          unref: () => undefined,
+        }),
+        resolveProviderCredential: () => null,
+        buildSubprocessEnv: () => ({}),
+        isRouterHealthy: async () => false,
+        getRouterHealthSnapshot: async () => ({ healthy: true, body: healthyBody }),
+        sleep: async () => undefined,
+        isProcessAlive: () => true,
+        terminateProcess,
+        getProviderKey: () => "",
+      },
+    );
+
+    assert.equal(startedPid, pid);
+    assert.equal(terminateProcess.mock.calls.length, 0);
+  });
+
+  it("redacts a credential-shaped health error from the startup error (#8962)", async () => {
+    const pid = 12_345;
+    const secret = "nvapi-HEALTHSECRETHEALTHSECRETHEALTHSECRETHEALTH";
+    const credentialBody = JSON.stringify({
+      healthy_endpoints: [],
+      unhealthy_endpoints: [{ error: `AuthenticationError: api_key ${secret} invalid` }],
+    });
+
+    await assert.rejects(
+      startModelRouter(
+        { port: 45_697, pool_config_path: "router/test-pool.yaml" },
+        {
+          rootDir: "/test/repo",
+          homeDir: "/test/home",
+          ensureModelRouterCommand: () => "/test/model-router",
+          mkdirSync: () => undefined,
+          runProxyConfig: () => ({ status: 0 }),
+          spawnProxy: () => ({
+            pid,
+            onError: () => undefined,
+            onExit: () => undefined,
+            unref: () => undefined,
+          }),
+          resolveProviderCredential: () => null,
+          buildSubprocessEnv: () => ({}),
+          isRouterHealthy: async () => false,
+          getRouterHealthSnapshot: async () => ({ healthy: false, body: credentialBody }),
+          sleep: async () => undefined,
+          isProcessAlive: () => true,
+          terminateProcess: () => undefined,
+          getProviderKey: () => "",
+        },
+      ),
+      (error: Error) => {
+        assert.match(
+          error.message,
+          /last health error: AuthenticationError: api_key <REDACTED> invalid/,
+        );
+        assert.doesNotMatch(error.message, /HEALTHSECRET/);
+        assert.doesNotMatch(error.message, /nvapi-HEAL/);
+        return true;
+      },
+    );
+  });
+
+  it("still fails when the final snapshot is 2xx with zero healthy endpoints (#8962)", async () => {
+    const pid = 12_345;
+    const terminateProcess = vi.fn();
+    const allUnhealthyBody = JSON.stringify({
+      healthy_endpoints: [],
+      unhealthy_endpoints: [{ error: "AuthenticationError: bad key" }],
+    });
+
+    await assert.rejects(
+      startModelRouter(
+        { port: 45_694, pool_config_path: "router/test-pool.yaml" },
+        {
+          rootDir: "/test/repo",
+          homeDir: "/test/home",
+          ensureModelRouterCommand: () => "/test/model-router",
+          mkdirSync: () => undefined,
+          runProxyConfig: () => ({ status: 0 }),
+          spawnProxy: () => ({
+            pid,
+            onError: () => undefined,
+            onExit: () => undefined,
+            unref: () => undefined,
+          }),
+          resolveProviderCredential: () => null,
+          buildSubprocessEnv: () => ({}),
+          isRouterHealthy: async () => false,
+          getRouterHealthSnapshot: async () => ({ healthy: true, body: allUnhealthyBody }),
+          sleep: async () => undefined,
+          isProcessAlive: () => true,
+          terminateProcess,
+          getProviderKey: () => "",
+        },
+      ),
+      /failed to become healthy on port 45694[\s\S]*last health error: AuthenticationError: bad key/,
+    );
+
+    assert.deepEqual(terminateProcess.mock.calls, [[pid]]);
+  });
+
+  it("fully redacts credential material from the startup error log tail (#8962)", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-redact-"));
+    tempDirs.add(tmpDir);
+    const rootDir = path.join(tmpDir, "repo");
+    const homeDir = path.join(tmpDir, "home");
+    const logPath = path.join(homeDir, ".nemoclaw", "state", "model-router.log");
+    const secret = "nvapi-SECRETSECRETSECRETSECRETSECRETSECRETSECRET";
+    const pid = 12_345;
+
+    await assert.rejects(
+      startModelRouter(
+        { port: 45_696, pool_config_path: "router/test-pool.yaml" },
+        {
+          rootDir,
+          homeDir,
+          ensureModelRouterCommand: () => "/test/model-router",
+          runProxyConfig: () => ({ status: 0 }),
+          spawnProxy: () => {
+            fs.appendFileSync(logPath, `AuthenticationError: api_key ${secret} rejected\n`);
+            return {
+              pid,
+              onError: () => undefined,
+              onExit: () => undefined,
+              unref: () => undefined,
+            };
+          },
+          resolveProviderCredential: () => null,
+          buildSubprocessEnv: () => ({}),
+          isRouterHealthy: async () => false,
+          getRouterHealthSnapshot: async () => ({ healthy: false, body: null }),
+          sleep: async () => undefined,
+          isProcessAlive: () => false,
+          terminateProcess: () => undefined,
+          getProviderKey: () => "",
+        },
+      ),
+      (error: Error) => {
+        assert.match(error.message, /Last router log lines:/);
+        assert.match(error.message, /AuthenticationError: api_key <REDACTED> rejected/);
+        assert.doesNotMatch(error.message, /SECRETSECRET/);
+        assert.doesNotMatch(error.message, /nvapi-SECR/);
+        return true;
+      },
+    );
+  });
+
+  it("keeps an ambient OPENAI_API_KEY for non-NVIDIA and unproven pools (#8962)", async () => {
+    const pid = 12_345;
+    let spawnedEnv: Record<string, string> | null = null;
+    const pools = [
+      [
+        "models:",
+        "  - name: custom-openai",
+        '    litellm_model: "openai/gpt-test"',
+        '    api_base: "https://api.openai.com/v1"',
+        "",
+      ].join("\n"),
+      'models:\n  - litellm_model: "openai/gpt-test"\n',
+    ];
+
+    for (const pool of pools) {
+      let healthProbe = 0;
+      await startModelRouter(
+        {
+          port: 45_695,
+          pool_config_path: "router/test-pool.yaml",
+          credential_env: "ROUTER_API_KEY",
+        },
+        {
+          rootDir: "/test/repo",
+          homeDir: "/test/home",
+          ensureModelRouterCommand: () => "/test/model-router",
+          mkdirSync: () => undefined,
+          runProxyConfig: () => ({ status: 0 }),
+          spawnProxy: (_command, _args, options) => {
+            spawnedEnv = options.env;
+            return {
+              pid,
+              onError: () => undefined,
+              onExit: () => undefined,
+              unref: () => undefined,
+            };
+          },
+          readPoolConfig: () => pool,
+          resolveProviderCredential: (name) =>
+            ({ ROUTER_API_KEY: "router-secret", OPENAI_API_KEY: "operator-openai" })[name] ?? null,
+          buildSubprocessEnv: (extra) => ({ ...extra }),
+          isRouterHealthy: async () => {
+            healthProbe += 1;
+            return healthProbe > 1;
+          },
+          sleep: async () => undefined,
+          isProcessAlive: () => true,
+          terminateProcess: () => undefined,
+          getProviderKey: () => "",
+        },
+      );
+
+      assert.deepEqual(spawnedEnv, {
+        ROUTER_API_KEY: "router-secret",
+        OPENAI_API_KEY: "operator-openai",
+      });
+    }
+  });
+
+  it("preserves routed credential fallback for an unproven pool (#8962)", async () => {
+    const pid = 12_345;
+    let spawnedEnv: Record<string, string> | null = null;
+    let healthProbe = 0;
+
+    await startModelRouter(
+      {
+        port: 45_699,
+        pool_config_path: "router/test-pool.yaml",
+        credential_env: "ROUTER_API_KEY",
+      },
+      {
+        rootDir: "/test/repo",
+        homeDir: "/test/home",
+        ensureModelRouterCommand: () => "/test/model-router",
+        mkdirSync: () => undefined,
+        runProxyConfig: () => ({ status: 0 }),
+        spawnProxy: (_command, _args, options) => {
+          spawnedEnv = options.env;
+          return {
+            pid,
+            onError: () => undefined,
+            onExit: () => undefined,
+            unref: () => undefined,
+          };
+        },
+        readPoolConfig: () => 'models:\n  - litellm_model: "openai/gpt-test"\n',
+        resolveProviderCredential: (name) =>
+          name === "ROUTER_API_KEY" ? "router-secret" : null,
+        buildSubprocessEnv: (extra) => ({ ...extra }),
+        isRouterHealthy: async () => {
+          healthProbe += 1;
+          return healthProbe > 1;
+        },
+        sleep: async () => undefined,
+        isProcessAlive: () => true,
+        terminateProcess: () => undefined,
+        getProviderKey: () => "",
+      },
+    );
+
+    assert.deepEqual(spawnedEnv, {
+      ROUTER_API_KEY: "router-secret",
+      OPENAI_API_KEY: "router-secret",
+    });
   });
 
   it("stops when the 10-minute Model Router startup deadline expires", async () => {
@@ -486,6 +932,10 @@ describe("onboard Model Router setup", () => {
           resolveProviderCredential: () => null,
           buildSubprocessEnv: () => ({}),
           isRouterHealthy,
+          getRouterHealthSnapshot: async (_port: number, timeoutMs = 0) => {
+            nowMs += timeoutMs;
+            return { healthy: false, body: null };
+          },
           sleep,
           now: () => nowMs,
           isProcessAlive: () => true,
@@ -493,12 +943,15 @@ describe("onboard Model Router setup", () => {
           getProviderKey: () => "",
         },
       ),
-      /failed to become healthy on port 45681 within 600 seconds \(completed health checks: 120\)/,
+      // The poll owns 570 seconds and the final diagnostic snapshot owns the
+      // remaining 30, so a failed startup never exceeds the 600 seconds the
+      // error reports (#8962).
+      /failed to become healthy on port 45681 within 600 seconds \(completed health checks: 114\)/,
     );
 
     assert.equal(nowMs, 600_000);
-    assert.equal(isRouterHealthy.mock.calls.length, 121);
-    assert.equal(sleep.mock.calls.length, 120);
+    assert.equal(isRouterHealthy.mock.calls.length, 115);
+    assert.equal(sleep.mock.calls.length, 114);
     assert.deepEqual(terminateProcess.mock.calls, [[pid]]);
   });
 

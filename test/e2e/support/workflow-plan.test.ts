@@ -122,14 +122,6 @@ describe("E2E workflow plan", () => {
         OPENSHELL_GATEWAY: "nemoclaw",
       },
     });
-    expect(catalogueTarget("issue-4434-tui-unreachable-inference")).toMatchObject({
-      profile: "nvidia-inference",
-      timeoutMinutes: 120,
-      installMode: "authenticated",
-      installNonInteractive: true,
-      hostPackages: ["expect", "iptables"],
-      environment: { NEMOCLAW_ISSUE_4434_LIVE: "1" },
-    });
     expect(catalogueTarget("network-policy")).toMatchObject({
       profile: "nvidia-inference",
       timeoutMinutes: 90,
@@ -237,7 +229,7 @@ describe("E2E workflow plan", () => {
     });
 
     const plan = buildE2eWorkflowPlan({
-      jobs: "gateway-guard-recovery,hermes-slack,issue-4434-tui-unreachable-inference,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
+      jobs: "gateway-guard-recovery,hermes-slack,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
     });
     expect(plan.catalogueMatrices["nvidia-inference"]).toEqual(
       expect.arrayContaining([
@@ -251,11 +243,6 @@ describe("E2E workflow plan", () => {
           display_name: "Messaging: isolates Hermes Slack credentials and reaches Slack APIs",
           runner: "linux-amd64-cpu4",
           test_file: "test/e2e/live/hermes-slack-e2e.test.ts",
-        }),
-        expect.objectContaining({
-          id: "issue-4434-tui-unreachable-inference",
-          host_packages: "expect iptables",
-          install_non_interactive: true,
         }),
         expect.objectContaining({
           id: "network-policy",
@@ -282,6 +269,24 @@ describe("E2E workflow plan", () => {
     const retainedJobs = readFreeStandingJobsInventory().allowedJobs;
     for (const target of ["hermes-slack", "openclaw-inference-switch", "sandbox-operations"]) {
       expect(retainedJobs).not.toContain(target);
+    }
+  });
+
+  it.each([
+    [
+      "issue-4434-tui-unreachable-inference",
+      "the nvidia-inference profile uses gateway-managed inference, which this test skips by design",
+    ],
+    [
+      "overlayfs-autofix",
+      "the managed Linux Docker gateway bypasses the legacy overlayfs autofix path",
+    ],
+  ])("excludes %s from catalogue planning with a reason (#9022)", (id, reason) => {
+    expect(E2E_TARGET_CATALOGUE.map((target) => target.id)).not.toContain(id);
+    for (const selector of ["jobs", "targets"] as const) {
+      expect(() => buildE2eWorkflowPlan({ [selector]: id })).toThrow(
+        `E2E catalogue target ${id} is not scheduled: ${reason}`,
+      );
     }
   });
 
