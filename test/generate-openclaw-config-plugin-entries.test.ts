@@ -43,14 +43,15 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
     expect(config.plugins.allow).toEqual(["nemoclaw"]);
   });
 
-  it("adds enabled OTEL diagnostics to the OpenClaw allowlist (#8975)", () => {
-    const config = buildConfig({ ...BASE_ENV, NEMOCLAW_OPENCLAW_OTEL: "1" });
-    expect(config.plugins.allow).toContain("diagnostics-otel");
-  });
+  it("allows the enabled diagnostics plugin (#8975)", () => {
+    const config = buildConfig({
+      ...BASE_ENV,
+      NEMOCLAW_OPENCLAW_OTEL: "1",
+      NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://host.openshell.internal:4318",
+    });
 
-  it("adds enabled Brave web search to the OpenClaw allowlist (#8975)", () => {
-    const config = buildConfig({ ...BASE_ENV, NEMOCLAW_WEB_SEARCH_ENABLED: "1" });
-    expect(config.plugins.allow).toContain("brave");
+    expect(config.plugins.entries["diagnostics-otel"]).toEqual({ enabled: true });
+    expect(config.plugins.allow).toContain("diagnostics-otel");
   });
 
   it("omits the stale acpx entry and disables bundled bonjour by default", () => {

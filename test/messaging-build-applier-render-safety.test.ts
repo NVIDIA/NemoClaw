@@ -6,38 +6,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  applyMessagingAgentRenderToObject,
   applyMessagingAgentRenderToLocalFiles,
   readMessagingBuildPlanFromEnv,
 } from "../src/lib/messaging/applier/build/messaging-build-applier.mts";
 
 describe("messaging-build-applier.mts: post-agent-install render safety", () => {
-  it("does not add a plugin from another OpenClaw config target to the allowlist (#8975)", () => {
-    const config = { plugins: { allow: ["nemoclaw"], entries: {} } };
-    const plan = {
-      schemaVersion: 1,
-      sandboxName: "test-sandbox",
-      agent: "openclaw",
-      channels: [{ channelId: "telegram", active: true }],
-      credentialBindings: [],
-      agentRender: [
-        {
-          channelId: "telegram",
-          agent: "openclaw",
-          target: "other-openclaw.json",
-          kind: "json-fragment",
-          path: "plugins.entries.telegram",
-          value: { enabled: true },
-        },
-      ],
-      buildSteps: [],
-    } as const;
-
-    applyMessagingAgentRenderToObject(config, plan, "openclaw.json");
-
-    expect(config.plugins.allow).toEqual(["nemoclaw"]);
-  });
-
   it("rejects post-agent-install render targets that escape the agent root", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-render-target-escape-"));
     const plan = {

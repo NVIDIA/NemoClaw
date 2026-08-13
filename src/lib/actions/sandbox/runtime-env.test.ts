@@ -135,15 +135,16 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
     ]);
     const result = spawnSync(wrapped[0], wrapped.slice(1), {
       encoding: "utf-8",
-      env: { ...process.env, OPENCLAW_GATEWAY_TOKEN: "super-secret-gateway-token" },
+      env: { ...process.env, OPENCLAW_GATEWAY_TOKEN: "test-gateway-token" },
     });
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toBe("TOKEN=[]");
-    expect(result.stdout).not.toContain("super-secret-gateway-token");
+    expect(result.stdout).not.toContain("test-gateway-token");
     expect(result.stderr).not.toContain("UNDICI-EHPA");
     expect(result.stderr).not.toContain("proxy warning");
     expect(result.stderr).toContain("NEMOCLAW-TEST");
     expect(result.stderr).toContain("other warning");
+    expect(result.stderr).not.toContain("test-gateway-token");
   });
 });

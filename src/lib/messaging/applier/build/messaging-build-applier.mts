@@ -282,10 +282,7 @@ export function applyMessagingAgentRenderToObject(
   const rules = credentialPlaceholderRules(plan);
   const renderEntries = enabledAgentRender(plan).filter((render) => render.target === target);
   for (const render of renderEntries) {
-    if (
-      render.kind !== "json-fragment" ||
-      typeof render.path !== "string"
-    ) {
+    if (render.kind !== "json-fragment" || typeof render.path !== "string") {
       continue;
     }
     const value = preserveCredentialPlaceholders(
