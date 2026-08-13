@@ -677,9 +677,8 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
     fi
 
 # Anchor the corporate CA for build-time TLS too, not just runtime. The
-# OpenClaw/mcporter reinstall path runs npm audit signatures, which fetches the
-# sigstore TUF root over TLS; behind a TLS-intercepting corporate proxy that
-# fetch needs the operator CA or it fails with SELF_SIGNED_CERT_IN_CHAIN. Node
+# OpenClaw/mcporter reinstall path makes registry-backed npm requests; behind a
+# TLS-intercepting corporate proxy those requests need the operator CA. Node
 # ignores a missing file, so this is a no-op when no CA was baked; at runtime
 # nemoclaw-start overrides it with the merged OpenShell + corporate bundle.
 ENV NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem
@@ -805,15 +804,20 @@ COPY --from=codex-acp-runtime /usr/local/bin/codex-acp /usr/local/bin/codex-acp
 RUN command -v codex-acp >/dev/null
 
 # Upgrade OpenClaw if the base image is stale.
-# Reuse exact OpenClaw and locked-mcporter base installs only when the protected
-# provenance marker matches this build target; otherwise reinstall both.
+# Reuse exact OpenClaw and locked-mcporter base installs only from a published
+# NemoClaw base whose package provenance marker matches this build target;
+# otherwise reinstall both.
 #
 # The GHCR base image (sandbox-base:latest) may lag behind the version pinned in
 # Dockerfile.base, and legacy/custom bases may report the target version without
-# proving which archive and lifecycle produced it. Current official/local bases
-# emit the marker only after installing and auditing both dependencies. The
-# final image consumes it before applying NemoClaw patches so it cannot
-# masquerade as a pristine base when reused as a custom BASE_IMAGE.
+# proving which archive and lifecycle produced it. The marker records package
+# and advisory-audit metadata, not trusted-CI signature attestation. Only a
+# digest-pinned base from the official GHCR publication path supplies that
+# independent gate. Mutable tags and local bases cannot authorize reuse even
+# when their marker matches; the existing version checks reinstall the locked
+# runtimes or reject a newer base. The final image consumes the marker before
+# applying NemoClaw patches so a custom base cannot masquerade as a pristine
+# published base.
 #
 # OPENCLAW_VERSION is the NemoClaw runtime build target. It must be at least the
 # blueprint minimum, which also supports the legacy direct-blueprint image path.
@@ -875,7 +879,7 @@ RUN --network=default set -eu; \
     OPENCLAW_PROVENANCE_PATH=/usr/local/share/nemoclaw/openclaw-base-provenance-v1; \
     OPENCLAW_EXPECTED_PROVENANCE="$(mktemp)"; \
     printf '%s\n' \
-        'schema=3' \
+        'schema=4' \
         "package=openclaw@${OPENCLAW_VERSION}" \
         "integrity=${EXPECTED_INTEGRITY}" \
         "tarball=${EXPECTED_TARBALL}" \
@@ -888,14 +892,14 @@ RUN --network=default set -eu; \
         "mcporter-audit-policy-sha256=${MCPORTER_AUDIT_POLICY_SHA256}" \
         "mcporter-audit-status=${MCPORTER_EXPECTED_AUDIT_STATUS}" \
         "mcporter-audit-exceptions=${MCPORTER_EXPECTED_AUDIT_EXCEPTIONS}" \
-        'mcporter-recipe=locked-ci+reviewed-audit+signatures-v2' \
+        'mcporter-recipe=locked-ci+reviewed-audit-v3' \
         > "$OPENCLAW_EXPECTED_PROVENANCE"; \
-    TRUSTED_BASE_IMAGE=0; \
+    CI_GATED_BASE_IMAGE=0; \
     case "$BASE_IMAGE" in \
-        ghcr.io/nvidia/nemoclaw/sandbox-base:*|ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:*|nemoclaw-sandbox-base-local|nemoclaw-sandbox-base-local:*) TRUSTED_BASE_IMAGE=1 ;; \
+        ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:*) CI_GATED_BASE_IMAGE=1 ;; \
     esac; \
     USE_REVIEWED_BASE_RUNTIME=0; \
-    if [ "$TRUSTED_BASE_IMAGE" = "1" ] \
+    if [ "$CI_GATED_BASE_IMAGE" = "1" ] \
         && [ -f "$OPENCLAW_PROVENANCE_PATH" ] \
         && [ ! -L "$OPENCLAW_PROVENANCE_PATH" ] \
         && [ "$(stat -c '%u:%g:%a' "$OPENCLAW_PROVENANCE_PATH" 2>/dev/null || true)" = "0:0:444" ] \
@@ -981,7 +985,6 @@ RUN --network=default set -eu; \
         node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
             --directory /usr/local/lib/nemoclaw/mcporter-runtime \
             --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high; \
-        npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit signatures; \
     fi
 
 # Patch OpenClaw media fetch for proxy-only sandbox (NVIDIA/NemoClaw#1755).

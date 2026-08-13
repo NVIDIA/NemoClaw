@@ -116,7 +116,7 @@ export interface VerifyDeploymentOptions {
    * returns from createSandbox before the gateway process or the host port
    * forward have finished coming up. Each entry below adds one extra attempt
    * after the initial try, scheduled at the given delay from the previous
-   * attempt. The defaults give roughly a 25 s budget per probe before the
+   * attempt. The defaults give a 90 s budget per probe before the
    * wizard surfaces a ✗ marker.
    * Tests pass `[]` to disable retry.
    */
@@ -131,7 +131,9 @@ export interface VerifyDeploymentOptions {
   diagnoseCustomOpenClawRuntime?: boolean;
 }
 
-const DEFAULT_RETRY_DELAYS_MS: readonly number[] = [1000, 2000, 5000, 7000, 10000];
+const DEFAULT_RETRY_DELAYS_MS: readonly number[] = [
+  1000, 2000, 5000, 7000, 10000, 15000, 20000, 30000,
+];
 // OpenClaw cron stops its provider preflight after 2.5 seconds. Require a
 // response within 2 seconds so onboarding leaves time for client overhead.
 const INFERENCE_ROUTE_REACHABILITY_MAX_SECONDS = 2;
