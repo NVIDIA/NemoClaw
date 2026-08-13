@@ -70,8 +70,18 @@ describe("credential rotation documentation", () => {
 
     expect(guide).toContain("WECHAT_BOT_TOKEN");
     expect(guide).toContain("MSTEAMS_APP_PASSWORD");
+    expect(guide).toContain("Telegram, Discord, Slack, WeChat, or Microsoft Teams");
     expect(guide).toContain("backs up supported workspace and manifest-declared state");
     expect(guide).toContain("Files outside those state paths are not preserved.");
+    expect(guide).toContain("If the recorded channel state changes during rotation");
+    expect(guide).toContain("A channel stopped with `channels stop` remains inactive");
+    expect(guide).toContain("The sandbox registry stores the credential hash");
+    expect(guide).toContain("OpenShell retains the registered credential");
+    expect(guide).toContain(
+      "Discord and Microsoft Teams require non-empty replacement input but cannot prove upstream credential validity before recreation.",
+    );
+    expect(guide).toContain("verify a live messaging request after onboarding finishes");
+    expect(guide).not.toContain("validates each changed value");
     expect(guide).not.toContain("restores the sandbox");
     expect(guide).toContain(
       "Plan for recreation downtime when automating messaging or web search rotation.",

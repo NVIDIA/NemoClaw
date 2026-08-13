@@ -37,7 +37,7 @@ The command uses deterministic exit codes:
 
 | Exit code | Status | Meaning |
 | --- | --- | --- |
-| `0` | `supported` | Required readiness checks passed. |
+| `0` | `supported` | Required readiness checks passed, or the sole blocking finding is a Docker storage conflict with a supported remediation path. |
 | `2` | `incompatible` | A blocking or fatal finding prevents onboarding. |
 | `3` | `inconclusive` | NemoClaw could not determine a required capability. |
 
@@ -97,10 +97,14 @@ Do not use `observedAt` as build identity.
 
 ## Interpret Docker storage
 
-The report rejects an unsupported `DOCKER_HOST` before it uses Docker daemon evidence.
+The report rejects an unsupported explicit `DOCKER_HOST` before it uses Docker daemon evidence.
 `host.docker.host_invalid` records whether the configured endpoint is invalid, `host.docker.endpoint_supported` is absent when a configured endpoint is not an absolute local `unix://` socket, and the blocking `host.docker.host_invalid` finding identifies that condition.
 TCP, SSH, relative Unix socket, and unsafe path values do not fall back to the default Docker socket.
-Unset `DOCKER_HOST` continues to use Docker's default local socket.
+When `DOCKER_HOST` is unset, NemoClaw first probes the Docker CLI's selected authority, including `DOCKER_CONTEXT` and its `DOCKER_CONFIG` directory when set, without a host override.
+If that authority is unreachable, NemoClaw probes a bounded set of local Unix sockets and accepts only an endpoint with valid server-version evidence.
+When it selects a fallback socket, NemoClaw clears the unreachable `DOCKER_CONTEXT` so later Docker commands use the selected `DOCKER_HOST`.
+A mixed set of reachable Docker and Podman fallbacks, or a fallback with an unknown server identity, produces no automatic `DOCKER_HOST` override.
+A reachable Podman endpoint remains classified as Podman and does not satisfy the standard Docker runtime requirement.
 
 The Docker storage capabilities separate the current host configuration from NemoClaw's supported remediation path.
 
@@ -109,11 +113,14 @@ The Docker storage capabilities separate the current host configuration from Nem
 | `host.docker.storage_compatible` | The current Docker storage configuration supports nested overlay mounts without remediation. |
 | `host.docker.storage_remediation_available` | NemoClaw can build a patched cluster image for a non-WSL Linux host using Docker with an `overlayfs` containerd-snapshotter conflict. |
 
-Use `host.docker.storage_compatible` for pre-mutation host diagnosis.
-For public NemoClaw lifecycle admission, require either `host.docker.storage_compatible` or `host.docker.storage_remediation_available`.
+Use `host.docker.storage_compatible` when a consumer requires compatibility before mutation.
+The strict internal readiness report remains `incompatible` with exit code `2` until a consumer applies its operation-specific admission policy.
+Public NemoClaw lifecycle admission can accept either `host.docker.storage_compatible` or `host.docker.storage_remediation_available`.
 When remediation is available, `host.docker.storage_compatible` remains `absent`.
-The report also retains `host.docker.storage_incompatible`, status `incompatible`, and exit code `2` because `host probe` does not change the host.
-Evaluate every other blocking finding before you run onboarding.
+If `host.docker.storage_incompatible` is the sole blocking finding and `host.docker.storage_remediation_available` is `present`, `host probe` publishes status `supported` and exit code `0`.
+The public report retains `host.docker.storage_incompatible` as a warning.
+Any other blocking or fatal finding prevents this public projection.
+The public status indicates a supported remediation path, not that the current Docker storage configuration is compatible.
 The remediation capability does not prove that a later image build or gateway attachment succeeds.
 Use these storage capabilities when the lifecycle may create or recreate a gateway.
 Gateway attachment is a separate readiness decision.

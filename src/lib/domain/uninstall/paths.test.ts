@@ -32,6 +32,7 @@ describe("uninstall paths", () => {
       ...OPENSHELL_MANAGED_BINARIES.map((binary) => path.join("/xdg/bin", binary)),
     ]);
     expect(paths.helperServiceGlob).toBe(path.join("/tmp/nemo", "nemoclaw-services-*"));
+    expect(paths.huggingFaceModelCacheDir).toBe(path.join("/home/test", ".cache", "huggingface"));
     expect(paths.runtimeTempGlobs).toEqual([
       path.join("/tmp/nemo", "nemoclaw-create-*.log"),
       path.join("/tmp/nemo", "nemoclaw-tg-ssh-*.conf"),

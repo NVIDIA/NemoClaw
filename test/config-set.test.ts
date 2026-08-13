@@ -21,6 +21,8 @@ const {
   resolveAgentConfig,
   buildConfigSetRestartGuidance,
   buildRecomputeSandboxConfigHashScript,
+  hermesCompatHashRecoveryError,
+  isHermesCompatHashRecoveryError,
 } = require("../src/lib/sandbox/config");
 const { selectDirectSandboxContainer } = require("../src/lib/sandbox/privileged-exec");
 
@@ -122,6 +124,20 @@ describe("config set helpers", () => {
       }
     });
 
+    it("does not name Hermes in the OpenClaw restart note (#8614)", () => {
+      const output = buildConfigSetRestartGuidance("alpha", "openclaw").join("\n");
+
+      expect(output).not.toContain("Hermes");
+      expect(output).toContain("--restart");
+    });
+
+    it("names Hermes in the Hermes restart note (#8614)", () => {
+      const output = buildConfigSetRestartGuidance("alpha", "hermes").join("\n");
+
+      expect(output).toContain("Hermes may restart");
+      expect(output).toContain("--restart");
+    });
+
     it("uses runtime-specific guidance for custom agents", () => {
       const output = buildConfigSetRestartGuidance("custom-box", "custom-agent").join("\n");
 
@@ -129,6 +145,28 @@ describe("config set helpers", () => {
       expect(output).toContain("NemoClaw does not manage restarts for this agent");
       expect(output).not.toContain("--restart");
       expect(output).not.toContain("gateway restart");
+    });
+  });
+
+  describe("Hermes config-write recovery gate", () => {
+    it("names recover for a compat-hash refusal before a config write (#8614)", () => {
+      expect(
+        isHermesCompatHashRecoveryError(
+          new Error(
+            "compat hash does not match frozen Hermes inputs during non-root reconciliation",
+          ),
+        ),
+      ).toBe(true);
+      expect(isHermesCompatHashRecoveryError(new Error("compat hash verification failed"))).toBe(
+        true,
+      );
+      expect(isHermesCompatHashRecoveryError(new Error("Hermes schema validation rejected"))).toBe(
+        false,
+      );
+      const refusal = hermesCompatHashRecoveryError("triage-8614");
+      expect(refusal.name).toBe("SandboxConfigError");
+      expect(refusal.message).toContain("nemoclaw 'triage-8614' recover");
+      expect(refusal.message).toContain("not applied");
     });
   });
 
@@ -744,6 +782,16 @@ describe("config set helpers", () => {
             configSetAllowsOpenShellBridge("openclaw", "models.providers", relativePath),
         }),
       ).rejects.toThrow(/private/i);
+    });
+
+    it("keeps DNS pinning for public hosts after private URLs are enabled (#8614)", async () => {
+      const lookup = async () => [{ address: "93.184.216.34", family: 4 }];
+
+      await expect(
+        rewriteConfigUrlsWithDnsPinning("http://api.example.com/v1", lookup, {
+          allowPrivateUrls: true,
+        }),
+      ).resolves.toBe("http://93.184.216.34/v1");
     });
 
     it("recursively rewrites nested HTTP URLs and leaves non-URLs unchanged", async () => {

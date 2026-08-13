@@ -422,6 +422,7 @@ describe("fetch-guard patch regression guard", () => {
     expect(invocation.calls).toMatch(
       /node --experimental-strip-types \/scripts\/lib\/reviewed-npm-audit\.mts --directory \S+ --exceptions \S+ --graph mcporter-runtime --threshold high/,
     );
+    expect(invocation.calls).not.toContain("audit signatures");
     readRequiredMatch(
       DOCKERFILE_BASE,
       /(npm --prefix \/usr\/local\/lib\/nemoclaw\/mcporter-runtime ci\s*\\\s*--ignore-scripts --omit=dev --no-audit --no-fund --no-progress)/,

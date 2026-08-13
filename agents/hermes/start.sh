@@ -19,6 +19,105 @@ set -euo pipefail
 
 # SECURITY: Lock down PATH before resolving or sourcing root startup helpers.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+NEMOCLAW_RUNTIME_STATE_MUTATION_RETRY_ARGV=("$@")
+
+# The provider gate is a fixed root-owned file beneath a search-only directory
+# outside /sandbox, so the sandbox identity cannot rename either the gate or
+# its parent.  Run the immutable validator as this shell's direct child before
+# sourcing helpers or reading mutable state; its permit is bound to this exact
+# process identity.  Invalid or uninspectable gate state is a hold, never an
+# availability-to-integrity downgrade.
+readonly NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON="/opt/hermes/.venv/bin/python3"
+readonly NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER="/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py"
+readonly NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_SETPRIV="/usr/bin/setpriv"
+
+if [ ! -x "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON" ] \
+  || [ ! -f "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" ] \
+  || [ -L "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" ] \
+  || { [ "$EUID" -eq 0 ] && [ ! -x "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_SETPRIV" ]; }; then
+  printf '%s\n' '[SECURITY] Required runtime state mutation startup gate is unavailable.' >&2
+  exit 1
+fi
+
+nemoclaw_runtime_state_mutation_gate() {
+  local action="$1"
+  if [ "$EUID" -eq 0 ]; then
+    "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_SETPRIV" \
+      --reuid=sandbox --regid=sandbox --init-groups -- \
+      "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON" -I \
+      "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" "$action" >/dev/null
+    return
+  fi
+  "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON" -I \
+    "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" "$action" >/dev/null
+}
+
+nemoclaw_runtime_state_mutation_retry_exec() {
+  local status
+  if nemoclaw_runtime_state_mutation_gate restart; then
+    status=0
+  else
+    status=$?
+  fi
+  if [ "$status" -eq 12 ]; then
+    exec /usr/local/bin/nemoclaw-start \
+      "${NEMOCLAW_RUNTIME_STATE_MUTATION_RETRY_ARGV[@]}"
+  fi
+  printf '%s\n' '[SECURITY] Runtime state mutation retry was not authenticated; holding startup.' >&2
+  kill -STOP "$$"
+}
+trap nemoclaw_runtime_state_mutation_retry_exec USR2
+
+while :; do
+  if nemoclaw_runtime_state_mutation_gate admit; then
+    break
+  else
+    _nemoclaw_runtime_state_mutation_gate_status=$?
+  fi
+  case "$_nemoclaw_runtime_state_mutation_gate_status" in
+    10) break ;;
+    75)
+      printf '%s\n' '[SECURITY] Hermes startup held by an active runtime state mutation.' >&2
+      /bin/sleep 1 || true
+      ;;
+    *)
+      printf '%s\n' '[SECURITY] Runtime state mutation startup gate failed.' >&2
+      exit 1
+      ;;
+  esac
+done
+unset _nemoclaw_runtime_state_mutation_gate_status
+
+# Publish a candidate only after the complete gateway topology is healthy.
+# The shell then stops itself until the root controller has independently
+# authenticated the candidate, frozen the exact process tree, and published a
+# release receipt.  Calling this with no active mutation is a cheap no-op.
+nemoclaw_runtime_state_mutation_checkpoint() {
+  local status
+  if nemoclaw_runtime_state_mutation_gate checkpoint; then
+    return 0
+  else
+    status=$?
+  fi
+  if [ "$status" -ne 11 ]; then
+    printf '%s\n' '[SECURITY] Runtime state mutation startup checkpoint was refused; holding startup.' >&2
+    kill -STOP "$$"
+    return 1
+  fi
+  kill -STOP "$$"
+  if nemoclaw_runtime_state_mutation_gate resume; then
+    return 0
+  else
+    status=$?
+  fi
+  if [ "$status" -eq 12 ]; then
+    exec /usr/local/bin/nemoclaw-start \
+      "${NEMOCLAW_RUNTIME_STATE_MUTATION_RETRY_ARGV[@]}"
+  fi
+  printf '%s\n' '[SECURITY] Runtime state mutation release receipt was not authenticated; holding startup.' >&2
+  kill -STOP "$$"
+  return 1
+}
 
 # managed-entrypoint-env-wrapper begin
 _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER="/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh"
@@ -127,6 +226,7 @@ exec > >(tee -a "$_START_LOG") 2> >(tee -a "$_START_LOG" >&2)
 drop_capabilities /usr/local/bin/nemoclaw-start "$@"
 
 NEMOCLAW_CMD=("$@")
+NEMOCLAW_RUNTIME_STATE_MUTATION_RETRY_ARGV=("${NEMOCLAW_CMD[@]}")
 
 _chat_ui_url_port() {
   [ -n "${CHAT_UI_URL:-}" ] || return 1
@@ -356,6 +456,54 @@ verify_hermes_config_integrity() {
     HERMES_RESTART_FAILURE_CODE=mcp-integrity
     return 1
   fi
+}
+
+prepare_hermes_lazy_dependencies() {
+  local -a installer=(
+    env
+    HOME=/sandbox
+    UV_CACHE_DIR=/sandbox/.hermes/cache/uv
+    UV_NO_CACHE=1
+    HERMES_HOME="$HERMES_DIR"
+    HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages
+  )
+
+  # The separated gateway identity deliberately has no write access to the
+  # durable dependency tree. Route the allowlisted installer through sandbox;
+  # same-UID OpenShell startup is already running under that identity.
+  if [ "$(id -u)" -eq 0 ]; then
+    installer+=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
+  fi
+  installer+=("$_HERMES_PYTHON" -I -c)
+
+  "${installer[@]}" '
+import os
+from pathlib import Path
+
+import yaml
+
+config_path = Path(os.environ["HERMES_HOME"]) / "config.yaml"
+try:
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+except Exception as exc:
+    raise SystemExit(f"[SECURITY] Unable to inspect Hermes memory configuration: {exc}") from exc
+
+memory = config.get("memory") if isinstance(config, dict) else None
+provider = memory.get("provider") if isinstance(memory, dict) else None
+if provider != "hindsight":
+    raise SystemExit(0)
+
+from tools.lazy_deps import activate_durable_lazy_target, ensure
+
+activate_durable_lazy_target()
+try:
+    ensure("memory.hindsight", prompt=False)
+except Exception as exc:
+    raise SystemExit(
+        "[SECURITY] Unable to prepare the approved Hindsight dependency "
+        f"under the sandbox-owned lazy-install target: {exc}"
+    ) from exc
+'
 }
 
 # configure_messaging_channels is provided by sandbox-init.sh (shared).
@@ -1820,6 +1968,7 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 export HERMES_HOME="${HERMES_DIR}"
+export HERMES_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"
 PROXYEOF
     cat <<'TUIENVEOF'
 if [ -f /opt/hermes/ui-tui/dist/entry.js ]; then
@@ -2232,7 +2381,8 @@ prepare_hermes_gateway_restart() {
   # sandboxes instead of chowning attacker-controlled paths or adopting a new
   # hash here.
   HERMES_RESTART_FAILURE_CODE=hash-mismatch
-  verify_hermes_config_integrity
+  verify_hermes_config_integrity || return 1
+  prepare_hermes_lazy_dependencies
 }
 
 hermes_restart_unseal_on_exit() {
@@ -2908,6 +3058,11 @@ handle_hermes_gateway_control_request() {
     return 1
   fi
   refresh_hermes_supervised_child_pids
+  nemoclaw_runtime_state_mutation_checkpoint || {
+    stop_hermes_gateway_fail_closed
+    gateway_control_fail internal "$old_pid"
+    return 1
+  }
   gateway_control_complete ok "$old_pid" "$GATEWAY_PID"
 }
 
@@ -2923,6 +3078,7 @@ prepare_hermes_nonroot_runtime() {
   # startup mutations below so their outputs remain covered as well.
   validate_hermes_env_secret_boundary || return 1
   inspect_hermes_mcp_integrity "${HERMES_DIR}/.config-hash" || return 1
+  prepare_hermes_lazy_dependencies || return 1
   ensure_hermes_runtime_api_server_key compat || return 1
   apply_shields_up_runtime_env || return 1
   validate_hermes_env_secret_boundary || return 1
@@ -2936,6 +3092,7 @@ prepare_hermes_nonroot_runtime() {
 
 prepare_hermes_root_runtime() {
   verify_hermes_config_integrity || return 1
+  prepare_hermes_lazy_dependencies || return 1
   ensure_hermes_config_root_mode || return 1
   ensure_hermes_runtime_api_server_key both || return 1
   apply_shields_up_runtime_env || return 1
@@ -3136,6 +3293,7 @@ recover_hermes_gateway_current_user() {
             return 1
           fi
           refresh_hermes_supervised_child_pids
+          nemoclaw_runtime_state_mutation_checkpoint || return 1
           return 0
         fi
         echo "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy" >&2
@@ -3228,6 +3386,7 @@ bootstrap_hermes_gateway_current_user() {
       return 1
     fi
     refresh_hermes_supervised_child_pids
+    nemoclaw_runtime_state_mutation_checkpoint || return 1
     return 0
   fi
 
@@ -3243,6 +3402,7 @@ bootstrap_hermes_gateway_current_user() {
   sleep 2 || true
   recover_hermes_gateway_current_user || return 1
   refresh_hermes_supervised_child_pids
+  nemoclaw_runtime_state_mutation_checkpoint || return 1
 }
 
 # ── Main ─────────────────────────────────────────────────────────
@@ -3371,6 +3531,7 @@ if ! "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" publish-startup-ready 
   echo "[gateway-control] failed to publish Hermes startup readiness" >&2
   exit 1
 fi
+nemoclaw_runtime_state_mutation_checkpoint || exit 1
 print_dashboard_urls
 
 # PID 1 remains alive even when Hermes stops its gateway. Host recovery uses

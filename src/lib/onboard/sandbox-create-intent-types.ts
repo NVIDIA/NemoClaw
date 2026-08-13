@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { BaselineExclusionEntry } from "../state/registry";
+import type { SandboxHostMount } from "../state/registry/types";
 import type { DockerGpuRoutePlan } from "./docker-gpu-route";
 import type { InitialSandboxPolicy } from "./initial-policy";
 import type { MessagingTokenDef } from "./messaging-prep";
@@ -54,6 +55,7 @@ export type SandboxCreateIntent = {
   readonly policy: SandboxCreatePolicyRequest;
   readonly gpuCreateArgs: readonly string[];
   readonly resourceCreateArgs: readonly string[];
+  readonly hostMounts?: readonly SandboxHostMount[];
   readonly gpuRoutePlan: DockerGpuRoutePlan;
   readonly sandboxGpuLogMessage: string | null;
   readonly disabledChannelNames: readonly string[];
@@ -77,6 +79,7 @@ export type ResolveSandboxCreateIntentInput = {
   sandboxGpuConfig: SandboxGpuCreateConfig;
   gpuCreateArgs: readonly string[];
   resourceCreateArgs?: readonly string[];
+  hostMounts?: readonly SandboxHostMount[];
   gpuRoutePlan: DockerGpuRoutePlan;
   sandboxGpuLogMessage: string | null;
   extraPlaceholderKeys?: readonly string[];

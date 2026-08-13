@@ -168,7 +168,7 @@ describe("sandbox messaging credential drift", () => {
     });
 
     expect(calls.note).toHaveBeenCalledWith(
-      "  [resume] Messaging credential changed; validating and recreating sandbox.",
+      "  [resume] Messaging credential changed; recreating sandbox after configured checks.",
     );
     expect(calls.setupMessaging).toHaveBeenCalled();
     expect(calls.removeSandbox).not.toHaveBeenCalled();
@@ -683,7 +683,7 @@ describe("sandbox messaging credential drift", () => {
     );
   });
 
-  it("aborts a late-named recreation when channel state changes before the sandbox lock (#7853)", async () => {
+  it("aborts a late-named recreation when channel state changes before the sandbox lock (#3631)", async () => {
     const activePlan = makeMinimalPlan("my-assistant", "openclaw", ["telegram"]);
     const stoppedPlan = {
       ...makeMinimalPlan("my-assistant", "openclaw", ["telegram"], ["telegram"]),
@@ -715,5 +715,43 @@ describe("sandbox messaging credential drift", () => {
     expect(calls.stageCredentialProviders).not.toHaveBeenCalled();
     expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
+  });
+
+  it("allows rebuild recreation when manifest-derived messaging fields are rehydrated", async () => {
+    const plan = makeMinimalPlan("my-assistant", "openclaw", ["telegram"]);
+    const rehydratedPlan = {
+      ...plan,
+      buildSteps: [
+        {
+          channelId: "telegram",
+          kind: "build-arg",
+          outputId: "telegram-config",
+          required: true,
+          value: "enabled",
+        },
+      ],
+    } satisfies typeof plan;
+    let sandboxLockHeld = false;
+    const { deps, calls } = createDeps({
+      getRegistrySandboxMessagingAuthority: () => ({
+        authoritative: true,
+        plan: sandboxLockHeld ? rehydratedPlan : plan,
+      }),
+      withSandboxMutationLock: async (_sandboxName, operation) => {
+        sandboxLockHeld = true;
+        try {
+          return await operation();
+        } finally {
+          sandboxLockHeld = false;
+        }
+      },
+    });
+
+    await handleSandboxState(baseOptions(deps));
+
+    expect(calls.error).not.toHaveBeenCalledWith(
+      expect.stringContaining("Messaging channel state"),
+    );
+    expect(calls.createSandbox).toHaveBeenCalledOnce();
   });
 });

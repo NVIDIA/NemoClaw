@@ -149,6 +149,74 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     );
   });
 
+  it("prints a bounded sanitized Hermes gateway-log tail after supervisor failure (#8614)", () => {
+    const restore = silenceConsole();
+    try {
+      const logLines = Array.from({ length: 15 }, (_, index) => `line-${index}`);
+      logLines[1] = "token=sk-proj-abcdefghijklmnopqrstuvwxyz0123456789";
+      logLines[14] = "Bearer super-secret-token-value";
+      const executeSandboxExecCommand = vi.fn(() => ({
+        status: 0,
+        stdout: logLines.join("\n"),
+        stderr: "",
+      }));
+      const deps = baseDeps({
+        getSessionAgent: () => ({ name: "hermes" }),
+        getSandbox: () => ({ name: "triage-8614", agent: "hermes" }),
+        requestGatewaySupervisorAction: vi.fn(() => ({
+          status: 1,
+          stdout: "GATEWAY_FAILED",
+          stderr: "",
+        })),
+        executeSandboxExecCommand,
+      });
+
+      const result = restartSandboxGateway("triage-8614", { quiet: true, deps });
+      const output = (console.error as ReturnType<typeof vi.fn>).mock.calls.flat().join("\n");
+
+      expect(result).toMatchObject({ ok: false, failureLayer: "launch failure" });
+      expect(executeSandboxExecCommand).toHaveBeenCalledWith(
+        "triage-8614",
+        "tail -n 12 /tmp/gateway.log 2>/dev/null || true",
+      );
+      expect(output).toContain("Hermes gateway log tail (sanitized):");
+      expect(output).toContain("line-3");
+      expect(output).toContain("Bearer <REDACTED>");
+      expect(output).not.toContain("line-2");
+      expect(output).not.toContain("sk-proj-abcdefghijklmnopqrstuvwxyz0123456789");
+      expect(output).not.toContain("super-secret-token-value");
+      const tail = output.split("Hermes gateway log tail (sanitized):\n")[1]?.split("\n") ?? [];
+      expect(tail).toHaveLength(12);
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not read a gateway-log tail for non-Hermes failures (#8614)", () => {
+    const restore = silenceConsole();
+    try {
+      const executeSandboxExecCommand = vi.fn(() => ({
+        status: 0,
+        stdout: "unexpected",
+        stderr: "",
+      }));
+      const deps = baseDeps({
+        requestGatewaySupervisorAction: vi.fn(() => ({
+          status: 1,
+          stdout: "GATEWAY_FAILED",
+          stderr: "",
+        })),
+        executeSandboxExecCommand,
+      });
+
+      restartSandboxGateway("alpha", { quiet: true, deps });
+
+      expect(executeSandboxExecCommand).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
   it("force-restarts through PID 1 even when a gateway might already be healthy", () => {
     const restore = silenceConsole();
     try {

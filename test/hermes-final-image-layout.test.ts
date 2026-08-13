@@ -247,6 +247,7 @@ describe("Hermes final image layout", () => {
           "COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts",
           "COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts",
           "COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts",
+          "COPY agents/hermes/security-dependencies.patch /scripts/hermes-security-dependencies.patch",
         ],
       },
       {
@@ -299,7 +300,11 @@ describe("Hermes final image layout", () => {
           "COPY agents/hermes/cron-restore-control.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
           "COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.101.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.101.json",
           "COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py",
+          "COPY scripts/runtime-state-mutation-control.py /usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
+          "COPY scripts/runtime-state-mutation-startup-gate.py /usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py",
+          "COPY scripts/runtime_state_mutation_hermes_publisher.py /usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py",
           "COPY agents/hermes/state-lock-plan.json /usr/local/share/nemoclaw/state-lock-plan.json",
+          "COPY agents/hermes/runtime-state-mutation-publisher-v1.json /usr/local/share/nemoclaw/runtime-state-mutation-publisher-v1.json",
           "COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/",
         ],
       },
@@ -450,6 +455,12 @@ describe("Hermes final image layout", () => {
       "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py 'root:root 700'",
       "/sandbox/.nemoclaw 'root:root 1755'",
       "/usr/local/share/nemoclaw/state-lock-plan.json 'root:root 444'",
+      "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py 'root:root 500'",
+      "/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py 'root:root 555'",
+      "/usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py 'root:root 500'",
+      "/var/lib/nemoclaw/runtime-state-mutation 'root:root 711'",
+      "/run/nemoclaw/runtime-state-mutation-startup 'root:root 711'",
+      "/usr/local/share/nemoclaw/runtime-state-mutation-publisher-v1.json 'root:root 444'",
       "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444'",
       "/usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755'",
       "/usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py 'root:root 755'",
@@ -457,6 +468,16 @@ describe("Hermes final image layout", () => {
     ]) {
       expect(finalStage).toContain(`check_metadata ${metadataContract}`);
     }
+    expect(finalStage).toContain("/opt/hermes/.venv/bin/python3 -I -c 'import runpy, yaml;");
+    expect(finalStage).toContain(
+      'runpy.run_path("/usr/local/lib/nemoclaw/runtime-state-mutation-control.py"',
+    );
+    expect(finalStage).toContain(
+      'runpy.run_path("/usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py"',
+    );
+    expect(finalStage).toContain(
+      'runpy.run_path("/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py"',
+    );
     expect(doctorLayer).toContain(
       "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix",
     );

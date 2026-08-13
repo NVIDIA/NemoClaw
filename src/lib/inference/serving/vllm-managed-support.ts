@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+export { captureNvidiaSmi, resolveNvidiaSmiCommand } from "../gpu-trust.js";
 export { ensureDualStationVllmApiKey, loadDualStationVllmApiKey } from "../vllm-api-key.js";
 export {
   buildLocalDualStationDockerEnv,

@@ -45,6 +45,8 @@ describe("shields policy transition", () => {
 
     const runner = requireSource("../runner.js");
     const agentConfig = requireSource("../sandbox/agent-config.js");
+    const privilegedExec = requireSource("../sandbox/privileged-exec.js");
+    const dockerExec = requireSource("../adapters/docker/exec.js");
     vi.spyOn(runner, "validateName").mockImplementation((name: unknown) => String(name));
     runSpy = vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
     runCaptureSpy = vi.spyOn(runner, "runCapture").mockImplementation(() => {
@@ -66,6 +68,10 @@ describe("shields policy transition", () => {
       },
       stateLockPlanInImage: false,
     });
+    vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(
+      (_sandboxName: unknown, cmd: unknown) => cmd as string[],
+    );
+    vi.spyOn(dockerExec, "dockerExecFileSync").mockReturnValue("");
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     shields = requireSource(SHIELDS_MODULE);
@@ -80,7 +86,7 @@ describe("shields policy transition", () => {
   });
 
   it("never relaxes policy or persists mutable state when the base-policy read fails", () => {
-    expect(() => shields.shieldsDown("openclaw", { skipTimer: true, throwOnError: true })).toThrow(
+    expect(() => shields.shieldsDown("openclaw", { throwOnError: true })).toThrow(
       "Cannot capture current policy",
     );
     expect(runSpy).not.toHaveBeenCalled();
@@ -98,7 +104,7 @@ describe("shields policy transition", () => {
   ])("never relaxes policy or persists mutable state for exit-zero %s output", (_name, output) => {
     runCaptureSpy.mockReturnValue(output);
 
-    expect(() => shields.shieldsDown("openclaw", { skipTimer: true, throwOnError: true })).toThrow(
+    expect(() => shields.shieldsDown("openclaw", { throwOnError: true })).toThrow(
       "Cannot capture current policy",
     );
     expect(runSpy).not.toHaveBeenCalled();
@@ -138,7 +144,6 @@ describe("shields down policy rejection", () => {
     expect(() =>
       harness.shieldsDown("openclaw", {
         reason: "verify",
-        skipTimer: true,
         throwOnError: true,
       }),
     ).toThrow(/Could not apply/);
@@ -1105,19 +1110,12 @@ describe("shields-down rollback flow", () => {
   it("restores fresh mutable-default state when the timer handoff fails", () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     const harness = createHarness({
+      timerDiesAfterUnlock: true,
       fork: () => ({
         pid: 4242,
         disconnect: vi.fn(),
         unref: vi.fn(),
-        send: vi.fn(() => {
-          const transitionName = fs
-            .readdirSync(stateDir)
-            .find((entry) => entry.startsWith("shields-transition-openclaw-"));
-          const transitionPath = path.join(stateDir, transitionName!);
-          const transition = JSON.parse(fs.readFileSync(transitionPath, "utf-8"));
-          fs.writeFileSync(transitionPath, JSON.stringify({ ...transition, phase: "active" }));
-          return true;
-        }),
+        send: vi.fn(() => true),
         kill: vi.fn(() => true),
       }),
     });
@@ -1128,7 +1126,7 @@ describe("shields-down rollback flow", () => {
         reason: "rollback coverage",
         throwOnError: true,
       }),
-    ).toThrow("Shields-down recovery ownership changed during the transition");
+    ).toThrow(/live future auto-restore timer authority/u);
 
     expect(fs.existsSync(path.join(stateDir, "shields-openclaw.json"))).toBe(false);
     expect(harness.getOpenClawPosture()).toBe("mutable");
@@ -1145,20 +1143,13 @@ describe("shields-down rollback flow", () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     const harness = createHarness({
       confirmOpenClawInodeFlags: true,
+      timerDiesAfterUnlock: true,
       timerAuthorityRevokedSequence: [true, false],
       fork: () => ({
         pid: 4242,
         disconnect: vi.fn(),
         unref: vi.fn(),
-        send: vi.fn(() => {
-          const transitionName = fs
-            .readdirSync(stateDir)
-            .find((entry) => entry.startsWith("shields-transition-openclaw-"));
-          const transitionPath = path.join(stateDir, transitionName!);
-          const transition = JSON.parse(fs.readFileSync(transitionPath, "utf-8"));
-          fs.writeFileSync(transitionPath, JSON.stringify({ ...transition, phase: "active" }));
-          return true;
-        }),
+        send: vi.fn(() => true),
         kill: vi.fn(() => true),
       }),
     });
@@ -1169,7 +1160,7 @@ describe("shields-down rollback flow", () => {
         reason: "timer authority coverage",
         throwOnError: true,
       }),
-    ).toThrow("Shields-down recovery ownership changed during the transition");
+    ).toThrow(/live future auto-restore timer authority/u);
 
     expect(harness.getOpenClawPosture()).toBe("locked");
     expect(
@@ -1189,19 +1180,12 @@ describe("shields-down rollback flow", () => {
     const originalRmSync = fs.rmSync.bind(fs);
     const harness = createHarness({
       confirmOpenClawInodeFlags: true,
+      timerDiesAfterUnlock: true,
       fork: () => ({
         pid: 4242,
         disconnect: vi.fn(),
         unref: vi.fn(),
-        send: vi.fn(() => {
-          const transitionName = fs
-            .readdirSync(stateDir)
-            .find((entry) => entry.startsWith("shields-transition-openclaw-"));
-          const transitionPath = path.join(stateDir, transitionName!);
-          const transition = JSON.parse(fs.readFileSync(transitionPath, "utf-8"));
-          fs.writeFileSync(transitionPath, JSON.stringify({ ...transition, phase: "active" }));
-          return true;
-        }),
+        send: vi.fn(() => true),
         kill: vi.fn(() => true),
       }),
     });
@@ -1215,7 +1199,7 @@ describe("shields-down rollback flow", () => {
         reason: "state restoration coverage",
         throwOnError: true,
       }),
-    ).toThrow("Shields-down recovery ownership changed during the transition");
+    ).toThrow(/live future auto-restore timer authority/u);
 
     expect(harness.getOpenClawPosture()).toBe("locked");
     expect(JSON.parse(fs.readFileSync(statePath, "utf-8"))).toMatchObject({ shieldsDown: false });
@@ -1232,19 +1216,12 @@ describe("shields-down rollback flow", () => {
     const originalRmSync = fs.rmSync.bind(fs);
     const harness = createHarness({
       failOpenClawGuardActions: ["lock"],
+      timerDiesAfterUnlock: true,
       fork: () => ({
         pid: 4242,
         disconnect: vi.fn(),
         unref: vi.fn(),
-        send: vi.fn(() => {
-          const transitionName = fs
-            .readdirSync(stateDir)
-            .find((entry) => entry.startsWith("shields-transition-openclaw-"));
-          const transitionPath = path.join(stateDir, transitionName!);
-          const transition = JSON.parse(fs.readFileSync(transitionPath, "utf-8"));
-          fs.writeFileSync(transitionPath, JSON.stringify({ ...transition, phase: "active" }));
-          return true;
-        }),
+        send: vi.fn(() => true),
         kill: vi.fn(() => true),
       }),
     });
@@ -1258,7 +1235,7 @@ describe("shields-down rollback flow", () => {
         reason: "manual recovery coverage",
         throwOnError: true,
       }),
-    ).toThrow("Shields-down recovery ownership changed during the transition");
+    ).toThrow(/live future auto-restore timer authority/u);
 
     expect(harness.getOpenClawPosture()).toBe("mutable");
     expect(JSON.parse(fs.readFileSync(statePath, "utf-8"))).toMatchObject({ shieldsDown: true });
@@ -1320,7 +1297,6 @@ describe("shields-down rollback flow", () => {
       harness.shieldsDown("openclaw", {
         timeout: "5m",
         reason: "containment coverage",
-        skipTimer: true,
         throwOnError: true,
       }),
     ).toThrow(/startup-not-ready/);

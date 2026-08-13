@@ -9,6 +9,7 @@ import {
 } from "../../../inference/web-search";
 import type { Session } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
+import { persistedSandboxHostMountsEqual } from "../../../state/registry/host-mount";
 import { normalizeToolDisclosure, toolDisclosureOrDefault } from "../../../tool-disclosure";
 
 export interface SandboxResumeSignals {
@@ -20,6 +21,7 @@ export interface SandboxResumeSignals {
   readonly compatibleEndpointReasoningChanged: boolean;
   readonly webSearchConfigChanged: boolean;
   readonly sandboxGpuConfigChanged: boolean;
+  readonly hostMountConfigChanged: boolean;
   readonly recreateSandboxRequested: boolean;
   readonly recreateJournalHandoff?: boolean;
   readonly messagingChannelConfigChanged: boolean;
@@ -30,6 +32,10 @@ export interface SandboxResumeSignals {
   readonly toolDisclosureMigrationNeeded: boolean;
   readonly toolDisclosureChanged: boolean;
   readonly inferenceSelectionChanged: boolean;
+}
+
+export function hasHostMountConfigDrift(left: unknown, right: unknown): boolean {
+  return !persistedSandboxHostMountsEqual(left, right);
 }
 
 interface InferenceRouteResumeInput {
@@ -123,6 +129,13 @@ export function replacesSameNameSandbox(decision: SandboxResumeDecision): boolea
   return decision.kind === "recreate" && decision.removeRegistryEntry;
 }
 
+export function requiresSandboxRecreation(
+  decision: Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>,
+  explicitlyRequested: boolean,
+): boolean {
+  return explicitlyRequested || decision.kind !== "create";
+}
+
 export function mcpRegistryRemovalBlockReason(
   decision: SandboxResumeDecision,
   sandboxName: string | null,
@@ -155,6 +168,7 @@ function canReuseSandbox(signals: SandboxResumeSignals): boolean {
     !signals.inferenceSelectionChanged &&
     !signals.webSearchConfigChanged &&
     !signals.sandboxGpuConfigChanged &&
+    !signals.hostMountConfigChanged &&
     !signals.recreateSandboxRequested &&
     !signals.messagingChannelConfigChanged &&
     !signals.messagingCredentialChanged &&
@@ -246,6 +260,13 @@ function runtimeConfigurationResumeDecision(
       removeRegistryEntry: true,
     };
   }
+  if (signals.hostMountConfigChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Read-only host mount declarations changed; recreating sandbox.",
+      removeRegistryEntry: false,
+    };
+  }
   if (signals.messagingChannelConfigChanged) {
     return {
       kind: "recreate",
@@ -256,7 +277,7 @@ function runtimeConfigurationResumeDecision(
   if (signals.messagingCredentialChanged) {
     return {
       kind: "recreate",
-      note: "  [resume] Messaging credential changed; validating and recreating sandbox.",
+      note: "  [resume] Messaging credential changed; recreating sandbox after configured checks.",
       removeRegistryEntry: true,
     };
   }
