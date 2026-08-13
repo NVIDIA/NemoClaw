@@ -184,11 +184,29 @@ it.runIf(process.platform !== "win32")(
 );
 
 it.runIf(process.platform !== "win32")(
+  "accepts an exact reply wrapped in a terminated OSC-8 hyperlink (#9023)",
+  () => {
+    for (const terminator of ["\u0007", "\u001b\\"]) {
+      const reply =
+        `\u001b]8;;https://example.invalid/reply${terminator}` +
+        `PONG\u001b]8;;${terminator}`;
+      const result = runLaunchTurnFixture(0, reply);
+
+      expect(result.signal, result.stderr).toBeNull();
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("NEMOCLAW_LAUNCH_TURN_OK");
+    }
+  },
+);
+
+it.runIf(process.platform !== "win32")(
   "rejects a reply token embedded in extra prose (#8942)",
   () => {
     for (const reply of [
       "The answer is PONG, with extra prose.",
       "The answer is \u001b[31mPONG\u001b[0m, with extra prose.",
+      "\u001b]8;;https://example.invalid/reply\u0007PONG with extra prose\u001b]8;;\u0007",
+      "\u001b]8;;https://example.invalid/replyPONG",
     ]) {
       const result = runLaunchTurnFixture(0, reply, true);
 

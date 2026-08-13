@@ -91,6 +91,7 @@ printf '%s\r' "$NEMOCLAW_LAUNCH_PROMPT" >&3
 reply_seen=0
 has_exact_reply() {
   tail -c "+$((response_start + 1))" "$capture" \
+    | sed -E $'s/\x1B][^\x07\x1B]*(\x07|\x1B\\\\)//g' \
     | sed -E $'s/\x1B\\[[0-?]*[ -\\/]*[@-~]//g' \
     | tr '\r' '\n' \
     | LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' \
