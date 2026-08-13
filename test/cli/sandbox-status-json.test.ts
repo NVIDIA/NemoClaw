@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  inferenceInvocationStubLines,
   runWithEnv,
   testTimeoutOptions,
   writeHealthyDockerStub,
@@ -20,6 +21,8 @@ function createInferenceRouteStatusSetup(options: {
   routeExit?: number;
   upstreamHttpStatus?: string;
   upstreamExit?: number;
+  invocationHttpStatus?: string;
+  invocationExit?: number;
 }) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-route-"));
   const localBin = path.join(home, "bin");
@@ -70,6 +73,7 @@ function createInferenceRouteStatusSetup(options: {
       "  exit 0",
       "fi",
       'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+      ...inferenceInvocationStubLines(options.invocationHttpStatus, options.invocationExit),
       ...(options.executeRouteCommand
         ? [
             '  while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done',
@@ -156,6 +160,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+        ...inferenceInvocationStubLines(),
         "  echo 'OK 200'",
         "  exit 0",
         "fi",
@@ -272,14 +277,42 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       probed: true,
       endpoint: "https://inference.local/v1/models",
     });
-    expect(parsed.inferenceHealth.subprobes).toEqual([
+    expect(parsed.inferenceHealth.subprobes).toContainEqual(
       expect.objectContaining({ ok: true, probed: false, probeLabel: "upstream" }),
-    ]);
+    );
   });
 
   it.each([
     401, 403,
-  ])("sandbox status --json treats an inference.local HTTP %s as healthy (#6192)", (httpStatus) => {
+  ])("sandbox status --json fails an inference.local HTTP %s that rejects an agent request", (httpStatus) => {
+    const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
+      routeOutput: `OK ${httpStatus}`,
+      invocationHttpStatus: String(httpStatus),
+      invocationExit: 1,
+    });
+
+    const result = runWithEnv(`${sandboxName} status --json`, {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(result.code).toBe(1);
+    const parsed = JSON.parse(result.out);
+    expect(parsed.inferenceHealth).toMatchObject({
+      ok: false,
+      probed: true,
+      failureLabel: "unauthorized",
+      endpoint: "https://inference.local/v1/models",
+    });
+    expect(parsed.inferenceHealth.detail).toContain(String(httpStatus));
+    expect(parsed.inferenceHealth.subprobes).toContainEqual(
+      expect.objectContaining({ ok: true, probeLabel: "route reachability" }),
+    );
+  });
+
+  it.each([
+    401, 403,
+  ])("sandbox status --json keeps an inference.local HTTP %s reachable when it still serves an agent request (#6192)", (httpStatus) => {
     const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
       routeOutput: `OK ${httpStatus}`,
     });
@@ -334,6 +367,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       [
         "#!/usr/bin/env bash",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+        ...inferenceInvocationStubLines(),
         "  echo 'OK 200'",
         "  exit 0",
         "fi",
@@ -649,6 +683,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+        ...inferenceInvocationStubLines(),
         "  echo 'OK 200'",
         "  exit 0",
         "fi",

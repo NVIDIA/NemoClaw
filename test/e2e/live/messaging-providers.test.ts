@@ -56,7 +56,6 @@ import { runInstalledTelegramRuntimeProof } from "./messaging-providers-telegram
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
-// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "messaging providers preserve placeholder, policy, runtime, and send contracts",
   {

@@ -245,6 +245,32 @@ describe("legacy non-default gateway state migration", () => {
     expect(fs.existsSync(path.join(selected, "credentials.json"))).toBe(true);
   });
 
+  it("keeps host-shared Ollama proxy state out of a non-default gateway migration", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selected = path.join(shared, "gateways", "9123");
+    writeJson(path.join(shared, "sandboxes.json"), {
+      defaultSandbox: "port-box",
+      sandboxes: {
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    writeJson(path.join(shared, "credentials.json"), { NVIDIA_API_KEY: "selected-secret" });
+    fs.writeFileSync(path.join(shared, "ollama-proxy-token"), "host-token\n");
+    fs.writeFileSync(path.join(shared, "ollama-proxy-port"), "11435\n");
+    fs.writeFileSync(path.join(shared, "ollama-auth-proxy.pid"), "4242\n");
+
+    const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
+
+    expect(result.warnings).toEqual([]);
+    for (const entry of ["ollama-proxy-token", "ollama-proxy-port", "ollama-auth-proxy.pid"]) {
+      expect(fs.existsSync(path.join(shared, entry))).toBe(true);
+      expect(fs.existsSync(path.join(selected, entry))).toBe(false);
+    }
+    expect(fs.existsSync(path.join(shared, "credentials.json"))).toBe(false);
+    expect(fs.existsSync(path.join(selected, "credentials.json"))).toBe(true);
+  });
+
   it.each([
     8080, 9123,
   ])("removes only generated stale migration-intent directories for gateway port %i", (gatewayPort) => {

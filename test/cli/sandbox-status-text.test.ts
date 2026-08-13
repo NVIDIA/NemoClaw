@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   healthyInferenceRouteStubLines,
+  inferenceInvocationStubLines,
   runWithEnv,
   testTimeoutOptions,
   writeHealthyDockerStub,
@@ -222,6 +223,7 @@ describe("CLI sandbox status text output", () => {
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+        ...inferenceInvocationStubLines(),
         "  echo 'OK 200'",
         "  exit 0",
         "fi",
@@ -260,7 +262,7 @@ describe("CLI sandbox status text output", () => {
     expect(r.out).toContain("Run `nemoclaw alpha rebuild` to restore.");
   });
 
-  it("sandbox <name> status reports reachable inference and an unprobed upstream when openshellDriver is not docker", () => {
+  it("sandbox <name> status reports served inference, its reachability hop, and an unprobed upstream when openshellDriver is not docker", () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-non-docker-driver-"),
     );
@@ -310,7 +312,10 @@ describe("CLI sandbox status text output", () => {
     expect(r.out).toContain("Sandbox: alpha");
     expect(r.out).toContain("Provider: openai-api");
     expect(r.out).toContain("Model:    gpt-4o-mini");
-    expect(r.out).toContain("Inference: reachable (https://inference.local/v1/models)");
+    expect(r.out).toContain("Inference: healthy (https://inference.local/v1/models)");
+    expect(r.out).toContain(
+      "Inference (route reachability): reachable (https://inference.local/v1/models)",
+    );
     expect(r.out).toContain("Inference (upstream): not probed");
   });
 

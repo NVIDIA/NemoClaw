@@ -39,6 +39,7 @@ import {
   buildLocalManagedVllmDockerEnv,
   buildRemoteVllmDockerEnv,
   buildVllmDockerEnv,
+  captureNvidiaSmi,
   ensureDualStationVllmApiKey,
   loadDualStationVllmApiKey,
   type MaterializedHostLocalVllmSelection,
@@ -47,6 +48,7 @@ import {
   recoverInstalledManagedClusterVllmEndpoint,
   resolveHostLocalVllmSelection,
   resolveManagedVllmBridgeHost,
+  resolveNvidiaSmiCommand,
   resolveVllmInstallModel,
   runtimeAuthFingerprint,
   tryInstallManagedClusterManagedVllm,
@@ -391,7 +393,7 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
   if (!runCapture(["sh", "-c", "command -v docker"], { ignoreError: true }).trim()) {
     return { ok: false, reason: "docker not found on PATH" };
   }
-  if (!runCapture(["sh", "-c", "command -v nvidia-smi"], { ignoreError: true }).trim()) {
+  if (!resolveNvidiaSmiCommand({ runCaptureImpl: runCapture })) {
     return { ok: false, reason: "nvidia-smi not found — vLLM requires NVIDIA drivers" };
   }
   if (!runCapture(["sh", "-c", "command -v curl"], { ignoreError: true }).trim()) {
@@ -401,10 +403,9 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
 }
 
 export function readGpuComputeCapabilities(): number[] {
-  const out = runCapture(
-    ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader,nounits"],
-    { ignoreError: true },
-  );
+  const out = captureNvidiaSmi(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"], {
+    runCaptureImpl: runCapture,
+  });
   if (!out) return [];
   const capabilities: number[] = [];
   for (const line of out.split("\n")) {

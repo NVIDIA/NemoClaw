@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/** Runs local repository checks that are not first-class Biome rules. */
+/** Runs repository checks that Oxlint does not provide. */
 
 import { type SpawnSyncOptions, spawnSync } from "node:child_process";
 import path from "node:path";
@@ -52,6 +52,11 @@ export const CHECKS: readonly CheckCommand[] = [
     name: "dependency-pins",
     command: TSX,
     args: ["scripts/checks/dependency-pins.mts"],
+  },
+  {
+    name: "no-defaulted-dependent-flags",
+    command: TSX,
+    args: ["scripts/checks/no-defaulted-dependent-flags.mts"],
   },
   {
     name: "no-coverage-ignore",

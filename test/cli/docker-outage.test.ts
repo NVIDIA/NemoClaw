@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { launchReadinessRegistryFixture } from "../helpers/launch-readiness-fixture";
 import { runWithEnv, testTimeout, writeSandboxRegistry } from "./helpers";
 import type { SandboxEntry } from "./helpers";
 
@@ -28,6 +29,7 @@ describe("Docker daemon outage classification (#4428)", () => {
     // The Docker-outage reclassification only applies to Docker-driver
     // sandboxes (#4428); record the driver so the gate matches.
     writeSandboxRegistry(home, "v053-baseline", {
+      ...launchReadinessRegistryFixture(),
       policies: ["npm"],
       openshellDriver: driver,
     } as unknown as Partial<SandboxEntry>);

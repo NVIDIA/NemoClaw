@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
 
 import {
   AGENTS_DIR,
@@ -56,6 +57,69 @@ describe("agent definitions", () => {
     expect(() => loadAgent("nemocua", disabledEnv)).toThrow(
       "use the controlled Brev Launchable activation",
     );
+  });
+
+  it("keeps the Pi candidate manifest out of agent selection by default (#7925)", () => {
+    expect(fs.existsSync(path.join(AGENTS_DIR, "pi", "manifest.yaml"))).toBe(true);
+
+    expect(listAgents({})).not.toContain("pi");
+    expect(getAgentChoices().map((choice) => choice.name)).not.toContain("pi");
+    expect(resolveAgentNameAlias("pi", listAgents({}))).toBeNull();
+    expect(() => loadAgent("pi", {})).toThrow("Pi is not selectable in this release");
+  });
+
+  it("does not let an ordinary environment setting expose Pi (#7925)", () => {
+    const ordinaryEnv = { NEMOCLAW_PI_QUALIFICATION: "1" };
+
+    expect(listAgents(ordinaryEnv)).not.toContain("pi");
+    expect(resolveAgentNameAlias("pi", listAgents(ordinaryEnv))).toBeNull();
+    expect(() => loadAgent("pi", ordinaryEnv)).toThrow("Pi is not selectable in this release");
+  });
+
+  it("keeps the Pi candidate manifest readable without public resolution (#7925)", () => {
+    const manifest = YAML.parse(
+      fs.readFileSync(path.join(AGENTS_DIR, "pi", "manifest.yaml"), "utf8"),
+    ) as {
+      name: string;
+      expected_version: string;
+      runtime: { kind: string };
+      config: { dir: string };
+      state_dirs: { path: string; backup?: boolean }[];
+      state_files: { path: string; restore: Record<string, unknown> }[];
+    };
+
+    expect(manifest.name).toBe("pi");
+    expect(manifest.expected_version).toBe("0.84.1");
+    expect(manifest.runtime.kind).toBe("terminal");
+    expect(manifest.config.dir).toBe("/sandbox/.pi/agent");
+    expect(manifest.state_dirs.filter(({ backup }) => backup !== false).map(({ path }) => path)).toEqual([
+      "sessions",
+      "prompts",
+      "themes",
+    ]);
+    expect(manifest.state_dirs.filter(({ backup }) => backup === false).map(({ path }) => path)).toEqual([
+      "tools",
+      "bin",
+    ]);
+    expect(manifest.state_files.map((file) => file.path)).toEqual(["settings.json"]);
+    const restore = manifest.state_files[0]?.restore as {
+      merge?: string;
+      user_keys?: unknown[];
+    };
+    expect(restore?.merge).toBe("key-allowlist");
+    expect(restore?.user_keys).toEqual([
+      { key: "theme", type: "string", max_length: 128 },
+      { key: "hideThinkingBlock", type: "boolean" },
+      { key: "showCacheMissNotices", type: "boolean" },
+      { key: "quietStartup", type: "boolean" },
+      { key: "steeringMode", type: "enum", values: ["all", "one-at-a-time"] },
+      { key: "followUpMode", type: "enum", values: ["all", "one-at-a-time"] },
+      {
+        key: "defaultThinkingLevel",
+        type: "enum",
+        values: ["off", "minimal", "low", "medium", "high", "xhigh"],
+      },
+    ]);
   });
 
   it("orders OpenClaw first in interactive choices", () => {

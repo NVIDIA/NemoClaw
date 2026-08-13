@@ -23,6 +23,7 @@ function runRuntimeEnvValidator(envOverrides: Record<string, string>) {
     env: {
       HOME: os.tmpdir(),
       PATH: process.env.PATH ?? "",
+      HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
       ...envOverrides,
     },
   });

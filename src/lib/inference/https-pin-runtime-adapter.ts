@@ -55,7 +55,6 @@ import {
   VLLM_PORT,
   validateHttpsPinRuntimeAdapterPort,
 } from "../core/ports";
-import { compactText } from "../core/url-utils";
 import { getVersion } from "../core/version";
 import { ROOT, run, runCapture } from "../runner";
 import { buildMinimalCredentialAdapterEnv } from "../subprocess-env";
@@ -83,7 +82,6 @@ import {
   sendForwardError,
 } from "./https-pin-runtime-adapter-forward";
 import {
-  appendLocalAdapterJsonLine,
   DEFAULT_LOCAL_ADAPTER_STATE_DIR,
   ensureLocalAdapterStateDir,
   isLocalAdapterProcess,
@@ -99,6 +97,7 @@ import {
   writeLocalAdapterJsonFile,
   writeLocalAdapterSecretFile,
 } from "./local-adapter-lifecycle";
+import { type AdapterLogger, createLocalAdapterLogger } from "./runtime-adapter/logger";
 
 const STATE_DIR = DEFAULT_LOCAL_ADAPTER_STATE_DIR;
 const TOKEN_PATH = path.join(STATE_DIR, "https-pin-runtime-adapter-token");
@@ -162,43 +161,9 @@ const ORPHANED_ROUTE_RECOVERY_BOUNDARY = {
     "Retire orphaning/manual re-registration only when a reviewed secure recovery source or capability can rehydrate every registered route after respawn without persisting plaintext credentials, exposing them to OpenShell or a sandbox, or weakening per-route token and pinned-address isolation.",
 } as const;
 
-type AdapterLogFields = Record<string, string | number | boolean | null | undefined>;
-type AdapterLogger = (event: string, fields?: AdapterLogFields) => void;
-
-function normalizeLogField(
-  value: string | number | boolean | null | undefined,
-): string | number | boolean | null {
-  if (value === undefined) return null;
-  if (typeof value === "string") return compactText(value).slice(0, 180);
-  return value;
-}
-
-function defaultAdapterLogger(event: string, fields: AdapterLogFields = {}): void {
-  try {
-    const payload: Record<string, string | number | boolean | null> = {
-      ts: new Date().toISOString(),
-      event: normalizeLogField(event) as string,
-    };
-    for (const [key, value] of Object.entries(fields)) {
-      payload[key] = normalizeLogField(value);
-    }
-    appendLocalAdapterJsonLine(LOG_PATH, payload);
-  } catch {
-    /* best-effort diagnostics only */
-  }
-}
-
-function logAdapterEvent(
-  logger: AdapterLogger,
-  event: string,
-  fields: AdapterLogFields = {},
-): void {
-  try {
-    logger(event, fields);
-  } catch {
-    /* best-effort diagnostics only */
-  }
-}
+const { defaultLogger: defaultAdapterLogger, logEvent: logAdapterEvent } = createLocalAdapterLogger(
+  { logPath: LOG_PATH },
+);
 
 function authMatches(actual: string | string[] | undefined, token: string): boolean {
   const header = Array.isArray(actual) ? actual[0] : actual;

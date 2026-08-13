@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
-
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 import { defaultUninstallPaths, OPENSHELL_MANAGED_BINARIES } from "./paths";
 import { buildUninstallPlan, flattenUninstallPlan } from "./plan";
@@ -22,7 +21,7 @@ describe("uninstall plan", () => {
       "OpenShell resources",
       "NemoClaw CLI",
       "Docker resources",
-      "Ollama models",
+      "Model stores",
       "State and binaries",
     ]);
     expect(flattenUninstallPlan(plan)).toEqual(
@@ -33,7 +32,11 @@ describe("uninstall plan", () => {
         { kind: "delete-related-docker-containers" },
         { kind: "delete-related-docker-images" },
         { kind: "delete-docker-volume", name: "openshell-cluster-nemoclaw" },
-        { kind: "preserve-ollama-models", names: ["nemotron-3-super:120b", "nemotron-3-nano:30b"] },
+        { kind: "preserve-ollama-models" },
+        {
+          kind: "preserve-hugging-face-cache-data",
+          path: path.join("/home/test", ".cache", "huggingface"),
+        },
         { kind: "delete-managed-swap" },
         ...OPENSHELL_MANAGED_BINARIES.map((binary) => ({
           kind: "delete-openshell-install-path" as const,
@@ -53,29 +56,59 @@ describe("uninstall plan", () => {
     expect(stoppingServicesStep?.actions).toEqual(
       expect.arrayContaining([{ kind: "stop-ollama-auth-proxy" }, { kind: "stop-model-router" }]),
     );
+    expect(
+      stoppingServicesStep?.actions.some(
+        (action) => action.kind === "preserve-hugging-face-cache-data",
+      ),
+    ).toBe(false);
+    const modelStoresStep = plan.steps.find((step) => step.name === "Model stores");
+    expect(modelStoresStep?.actions).toEqual([
+      { kind: "preserve-ollama-models" },
+      {
+        kind: "preserve-hugging-face-cache-data",
+        path: path.join("/home/test", ".cache", "huggingface"),
+      },
+    ]);
   });
 
   it("respects delete-models, keep-openshell, custom gateway, and foreign shim decisions", () => {
     const paths = defaultUninstallPaths({ home: "/home/test", xdgBinHome: "/bin" });
-    const actions = flattenUninstallPlan(
-      buildUninstallPlan(paths, {
-        deleteModels: true,
-        gatewayName: "custom",
-        keepOpenShell: true,
-        shim: {
-          kind: "preserve-foreign-file",
-          reason: "regular file is not an installer-managed shim",
-          remove: false,
-        },
-      }),
-    );
+    const plan = buildUninstallPlan(paths, {
+      deleteModels: true,
+      gatewayName: "custom",
+      keepOpenShell: true,
+      shim: {
+        kind: "preserve-foreign-file",
+        reason: "regular file is not an installer-managed shim",
+        remove: false,
+      },
+    });
+    const actions = flattenUninstallPlan(plan);
 
     expect(actions).toEqual(
       expect.arrayContaining([{ kind: "delete-docker-volume", name: "openshell-cluster-custom" }]),
     );
+    expect(actions).toEqual(expect.arrayContaining([{ kind: "delete-all-ollama-models" }]));
     expect(actions).toEqual(
-      expect.arrayContaining([{ kind: "delete-ollama-model", name: "nemotron-3-super:120b" }]),
+      expect.arrayContaining([
+        {
+          kind: "delete-hugging-face-cache-data",
+          path: path.join("/home/test", ".cache", "huggingface"),
+        },
+      ]),
     );
+    expect(plan.steps.find((step) => step.name === "Model stores")?.actions).toEqual([
+      { kind: "delete-all-ollama-models" },
+      {
+        kind: "delete-hugging-face-cache-data",
+        path: path.join("/home/test", ".cache", "huggingface"),
+      },
+    ]);
+    expect(
+      plan.steps
+        .find((step) => step.name === "Stopping services")
+        ?.actions.some((action) => action.kind === "delete-hugging-face-cache-data"),
+    ).toBe(false);
     expect(actions).toEqual(
       expect.arrayContaining([
         {

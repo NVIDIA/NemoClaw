@@ -530,6 +530,38 @@ export function measureDirectorySizeBytes(
 }
 
 /**
+ * Return allocated bytes that removing the directory tree selected for replacement will reclaim.
+ * The walk uses lstat so symlinks never contribute target storage. Files with
+ * other hard links do not count because removing this tree might not release
+ * their blocks. Any unreadable or malformed tree returns zero.
+ */
+export function measureReclaimableDirectorySizeBytes(targetPath: string): bigint {
+  try {
+    const root = fs.lstatSync(targetPath, { bigint: true });
+    if (!root.isDirectory() || root.isSymbolicLink()) return 0n;
+
+    const walk = (directory: string): bigint => {
+      let total = 0n;
+      for (const name of fs.readdirSync(directory)) {
+        const entryPath = path.join(directory, name);
+        const stat = fs.lstatSync(entryPath, { bigint: true });
+        if (stat.isDirectory()) {
+          total += walk(entryPath);
+          continue;
+        }
+        if (!stat.isFile() || stat.nlink !== 1n) continue;
+        total += stat.blocks * 512n;
+      }
+      return total;
+    };
+
+    return walk(targetPath);
+  } catch {
+    return 0n;
+  }
+}
+
+/**
  * Measure the filesystem that will contain a host cache path. On a fresh
  * install the cache directory may not exist yet, so walk to its nearest
  * existing ancestor without creating anything before the capacity decision.

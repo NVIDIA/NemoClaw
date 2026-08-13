@@ -14,6 +14,7 @@ export const BASE_IMAGE_INPUT_PATHS = [
   "agents/openclaw/mcporter-runtime/package.json",
   "agents/openclaw/mcporter-runtime/package-lock.json",
   "scripts/security/build-perl-security-packages.sh",
+  "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
   "scripts/lib/openclaw-npm-remediation.mts",
   "scripts/lib/reviewed-npm-archive.mts",
   "scripts/patch-bundled-npm-brace-expansion.mts",

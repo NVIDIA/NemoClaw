@@ -49,6 +49,7 @@ let applyPresetMock: MockInstance;
 let gatewayStateMock: MockInstance;
 let npmCompatibilityStateMock: MockInstance;
 let refreshSpy: MockInstance;
+let stdinIsTty: PropertyDescriptor | undefined;
 
 async function captureExit(action: () => Promise<void>): Promise<number | undefined> {
   const outcome: unknown = await action().then(
@@ -61,6 +62,8 @@ async function captureExit(action: () => Promise<void>): Promise<number | undefi
 
 beforeEach(() => {
   delete process.env.NEMOCLAW_NON_INTERACTIVE;
+  stdinIsTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
 
   logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -104,6 +107,9 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.NEMOCLAW_NON_INTERACTIVE;
+  stdinIsTty
+    ? Object.defineProperty(process.stdin, "isTTY", stdinIsTty)
+    : Reflect.deleteProperty(process.stdin, "isTTY");
 });
 
 describe("addSandboxPolicy drift-aware named re-add", () => {

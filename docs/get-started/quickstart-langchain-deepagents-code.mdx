@@ -80,7 +80,10 @@ Review the [Prerequisites](prerequisites) before you begin.
     nemo-deepagents launch my-deepagents
     ```
 
-    `nemo-deepagents launch` runs the same preflight as `connect`, then starts `dcode` in your terminal.
+    `nemo-deepagents launch` runs the complete preflight or, on Linux, validates an existing fixed 24-hour launch-readiness lease before it starts `dcode` in your terminal.
+    On macOS, `launch` runs the complete preflight every time and does not publish a launch-readiness lease.
+    On Linux, if the recorded configuration or live runtime has changed, NemoClaw durably invalidates prior evidence before it runs the complete preflight.
+    If old evidence might remain acceptable and cannot be invalidated, `launch` stops before preflight or recovery and tells you to repair the secure OS per-user runtime authority or NemoClaw state permissions.
     To open a sandbox shell first and start `dcode` yourself, run these commands instead.
 
     ```bash
@@ -150,7 +153,7 @@ NemoClaw/OpenShell keeps real provider credentials in credential handling and do
 Deep Agents Code reaches `inference.local` through the managed OpenShell L7 proxy rather than direct sandbox DNS.
 The image launcher normalizes the runtime proxy environment for interactive, login-shell, and direct-exec paths and removes inherited proxy credentials and bypass entries before `dcode` starts.
 Managed interactive sessions pre-complete Deep Agents Code's optional first-run onboarding, skip its dependency and model selection screens, then open the TUI with the model selected during NemoClaw onboarding.
-The image includes `ripgrep`, and ordinary sessions suppress the optional Tavily warning unless web search is configured or invoked.
+The image includes `ripgrep` and `dos2unix`, and ordinary sessions suppress the optional Tavily warning unless web search is configured or invoked.
 
   </Accordion>
 
