@@ -362,6 +362,19 @@ describe("launch readiness validation", () => {
     });
   });
 
+  it("falls back when the stored OpenClaw identity lacks pairing qualification (#9023)", async () => {
+    const currentDeps = await createAcceptedLease();
+    expect(publishedIdentity).not.toBeNull();
+    publishedIdentity = { ...publishedIdentity!, session: null };
+
+    await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+      kind: "fallback",
+      category: "session",
+      fence: { epochId: EPOCH },
+      recoveryBlocked: false,
+    });
+  });
+
   it("falls back when any exact OpenClaw pairing qualification value changes (#9023)", async () => {
     const currentDeps = await createAcceptedLease();
     const stored = publishedIdentity?.session;

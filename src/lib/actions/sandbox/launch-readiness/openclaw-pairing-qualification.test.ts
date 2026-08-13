@@ -283,6 +283,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         },
       ],
     ])("rejects %s and requires the complete pairing path (#9023)", (_label, mutate) => {
+      expect(() => observe()).not.toThrow();
       mutate();
       expect(() => observe()).toThrow("OpenClaw pairing qualification is unavailable");
     });
