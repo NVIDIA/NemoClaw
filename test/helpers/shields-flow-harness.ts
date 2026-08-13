@@ -7,6 +7,7 @@ import path from "node:path";
 import { expect, type MockInstance, vi } from "vitest";
 import YAML from "yaml";
 import { buildMcpBridgePolicyYaml } from "../../src/lib/actions/sandbox/mcp-bridge-policy-render";
+import type { AgentConfigTarget } from "../../src/lib/sandbox/agent-config";
 import type { SandboxEntry } from "../../src/lib/state/registry";
 
 const shieldsModulePath = "./index.js";
@@ -41,6 +42,7 @@ export type ShieldsFlowHarnessOptions = {
   failStateSave?: boolean;
   initialOpenClawPosture?: "locked" | "mutable";
   invokedAs?: "nemoclaw" | "nemohermes";
+  agentConfigTarget?: AgentConfigTarget;
   openClawGuardFailure?: {
     code: string;
     path: string;
@@ -64,6 +66,7 @@ export type ShieldsFlowHarnessOptions = {
   livePolicyYaml?: string;
   run?: (cmd: unknown) => { status: number };
   sandboxEntry?: SandboxEntry;
+  sandboxName?: string;
   timerAuthorityRevokedSequence?: readonly boolean[];
 };
 
@@ -220,6 +223,7 @@ export function createShieldsFlowHarness(
   const audit = requireDist("./audit.js");
   const tempFiles = requireDist("../onboard/temp-files.js");
   const stateDirLock = requireDist("./state-dir-lock.js");
+  const relockReconfirm = requireDist("./relock-reconfirm.js");
   const childProcess = requireDist("node:child_process");
   const policySetBodies: string[] = [];
   let openClawPosture: "locked" | "mutable" = options.initialOpenClawPosture ?? "mutable";
@@ -287,7 +291,7 @@ export function createShieldsFlowHarness(
     path.join(tmpDir, "permissive.yaml"),
   );
   fs.writeFileSync(path.join(tmpDir, "permissive.yaml"), "version: 1\nnetwork_policies: {}\n");
-  vi.spyOn(agentConfig, "resolveAgentConfig").mockReturnValue({
+  const resolvedAgentConfig = options.agentConfigTarget ?? {
     agentName: "openclaw",
     configDir: "/sandbox/.openclaw",
     configFile: "openclaw.json",
@@ -295,11 +299,18 @@ export function createShieldsFlowHarness(
     format: "json",
     stateLockPlan,
     stateLockPlanInImage: true,
-  });
+  };
+  vi.spyOn(agentConfig, "resolveAgentConfig").mockReturnValue(resolvedAgentConfig);
   vi.spyOn(registry, "getSandbox").mockReturnValue(
-    options.sandboxEntry ?? { name: "openclaw", openshellDriver: "docker" },
+    options.sandboxEntry ?? {
+      name: options.sandboxName ?? "openclaw",
+      agent: resolvedAgentConfig.agentName,
+      openshellDriver: "docker",
+    },
   );
-  vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [{ name: "openclaw" }] });
+  vi.spyOn(registry, "listSandboxes").mockReturnValue({
+    sandboxes: [{ name: options.sandboxName ?? "openclaw", agent: resolvedAgentConfig.agentName }],
+  });
   const permissiveRuntime = requireDist(
     "./permissive-runtime.js",
   ) as typeof import("../../src/lib/shields/permissive-runtime.js");
@@ -330,6 +341,47 @@ export function createShieldsFlowHarness(
           ? Number((rawOptions as { timeout?: unknown }).timeout)
           : undefined;
       dockerSpawnCalls.push({ args, timeout });
+      const hermesGuard = args.some((arg) => arg.endsWith("hermes-runtime-config-guard.py"));
+      const hermesLockToken = "a".repeat(64);
+      if (hermesGuard && args.includes("--help")) {
+        return {
+          status: 0,
+          signal: null,
+          stdout: [
+            "begin-shields-transition",
+            "run-state-dir-transition",
+            "apply-shields-transition",
+            "finish-shields-transition",
+            "prepare-shields-abort",
+            "abort-shields-transition",
+            "--rollback-shields-mode",
+            "--state-lock-plan-json",
+          ].join("\n"),
+          stderr: "",
+          pid: 0,
+          output: [],
+        } as never;
+      }
+      if (hermesGuard && args.includes("begin-shields-transition")) {
+        return {
+          status: 0,
+          signal: null,
+          stdout: `lock_token=${hermesLockToken} original_locked=1`,
+          stderr: "",
+          pid: 0,
+          output: [],
+        } as never;
+      }
+      if (hermesGuard && args.includes("apply-shields-transition")) {
+        return {
+          status: 0,
+          signal: null,
+          stdout: "shields_mode=mutable chattr_applied=0",
+          stderr: "",
+          pid: 0,
+          output: [],
+        } as never;
+      }
       const readsStateLockPlan =
         args.includes("cat") && args.includes("/usr/local/share/nemoclaw/state-lock-plan.json");
       const action = ["preflight", "lock", "unlock", "unlock-failed-startup"].find((candidate) =>
@@ -396,10 +448,30 @@ export function createShieldsFlowHarness(
   );
   vi.spyOn(dockerExec, "dockerExecFileSync").mockImplementation((argv: unknown) => {
     const args = Array.isArray(argv) ? argv.map(String) : [];
+    const hermesGuard = args.some((arg) => arg.endsWith("hermes-runtime-config-guard.py"));
+    const hermesLockToken = "a".repeat(64);
+    if (hermesGuard && args.includes("--help")) {
+      return [
+        "begin-shields-transition",
+        "run-state-dir-transition",
+        "apply-shields-transition",
+        "finish-shields-transition",
+        "prepare-shields-abort",
+        "abort-shields-transition",
+        "--rollback-shields-mode",
+        "--state-lock-plan-json",
+      ].join("\n");
+    }
+    if (hermesGuard && args.includes("begin-shields-transition")) {
+      return `lock_token=${hermesLockToken} original_locked=1`;
+    }
+    if (hermesGuard && args.includes("apply-shields-transition")) {
+      return "shields_mode=mutable chattr_applied=0";
+    }
     return options.dockerExecFileSync
       ? options.dockerExecFileSync(argv)
       : args.includes("sha256sum")
-        ? "a".repeat(64) + "  /sandbox/.openclaw/openclaw.json\n"
+        ? "a".repeat(64) + `  ${resolvedAgentConfig.configPath}\n`
         : args.includes("lsattr") && options.confirmOpenClawInodeFlags
           ? `${openClawPosture === "locked" ? "----i---------e-----" : "----------------------"} ${String(args.at(-1))}\n`
           : args.includes("stat")
@@ -407,16 +479,25 @@ export function createShieldsFlowHarness(
               ? openClawPosture === "locked"
                 ? "1775 root:sandbox\n"
                 : "755 sandbox:sandbox\n"
-              : args.at(-1) === "/sandbox/.openclaw"
+              : args.at(-1) === resolvedAgentConfig.configDir
                 ? openClawPosture === "locked"
                   ? "755 root:root\n"
-                  : "2770 sandbox:sandbox\n"
+                  : resolvedAgentConfig.agentName === "hermes"
+                    ? "3770 sandbox:sandbox\n"
+                    : "2770 sandbox:sandbox\n"
                 : openClawPosture === "locked"
                   ? "444 root:root\n"
-                  : "660 sandbox:sandbox\n"
+                  : resolvedAgentConfig.agentName === "hermes"
+                    ? "640 sandbox:sandbox\n"
+                    : "660 sandbox:sandbox\n"
             : "";
   });
   const auditSpy = vi.spyOn(audit, "appendAuditEntry").mockImplementation(() => undefined);
+  vi.spyOn(relockReconfirm, "waitForHermesInferenceRouteConvergence").mockReturnValue({
+    ok: true,
+    attempts: 1,
+    httpStatus: 200,
+  });
   if (options.timerAuthorityRevokedSequence) {
     const timerAuthorityRevocations = [...options.timerAuthorityRevokedSequence];
     const finalTimerAuthorityRevocation = timerAuthorityRevocations.at(-1) ?? true;

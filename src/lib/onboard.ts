@@ -2581,16 +2581,6 @@ async function createSandboxWithBaseImageResolution(
     process.removeListener("exit", cleanupBuildCtx);
   }
 
-  if (manageDashboard) {
-    console.log("  Waiting for NemoClaw dashboard to become ready...");
-    sandboxReadinessTracing.waitForDashboardReadyWithTrace({
-      sandboxName,
-      port: effectiveDashboardPort,
-      runCaptureOpenshell,
-      sleep: sleepSeconds,
-    });
-  }
-
   if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
     await dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady(
       effectiveSandboxGpuConfig,

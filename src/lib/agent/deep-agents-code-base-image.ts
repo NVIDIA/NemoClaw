@@ -9,6 +9,16 @@ import { sandboxBaseImageHasSecurityInventory } from "../sandbox-base-image/secu
 import type { AgentDefinition } from "./defs";
 
 const DEEPAGENTS_CODE_DISTRIBUTION = "deepagents-code";
+const DEEPAGENTS_CODE_DOS2UNIX_PROBE_OK = "nemoclaw-dcode-dos2unix-ok";
+const DEEPAGENTS_CODE_BASE_IMAGE_PROBE_GUARDS = [
+  "--network",
+  "none",
+  "--cap-drop",
+  "ALL",
+  "--security-opt",
+  "no-new-privileges",
+  "--read-only",
+] as const;
 
 type DeepAgentsCodeResolutionOptions = Pick<
   ResolveBaseImageOptions,
@@ -29,13 +39,7 @@ export function deepAgentsCodeBaseImageMatchesVersion(
     [
       "run",
       "--rm",
-      "--network",
-      "none",
-      "--cap-drop",
-      "ALL",
-      "--security-opt",
-      "no-new-privileges",
-      "--read-only",
+      ...DEEPAGENTS_CODE_BASE_IMAGE_PROBE_GUARDS,
       "--entrypoint",
       "/opt/venv/bin/python3",
       imageRef,
@@ -57,6 +61,35 @@ export function deepAgentsCodeBaseImageMatchesVersion(
   return installedVersion === expectedVersion;
 }
 
+/**
+ * Reject a published or cached Deep Agents Code base image that omits
+ * dos2unix, which workspace and repository workflows require.
+ */
+export function deepAgentsCodeBaseImageHasDos2Unix(imageRef: string): boolean {
+  const output = dockerCapture(
+    [
+      "run",
+      "--rm",
+      ...DEEPAGENTS_CODE_BASE_IMAGE_PROBE_GUARDS,
+      "--user",
+      "999:999",
+      "--entrypoint",
+      "/bin/sh",
+      imageRef,
+      "-eu",
+      "-c",
+      [
+        "test -x /usr/bin/dos2unix",
+        'test "$(command -v dos2unix)" = /usr/bin/dos2unix',
+        "dos2unix --version >/dev/null",
+        `printf '%s\\n' "${DEEPAGENTS_CODE_DOS2UNIX_PROBE_OK}"`,
+      ].join("; "),
+    ],
+    { ignoreError: true, timeout: 20_000 },
+  );
+  return output.trim() === DEEPAGENTS_CODE_DOS2UNIX_PROBE_OK;
+}
+
 export function createDeepAgentsCodeBaseImageResolutionOptions(
   agent: AgentDefinition,
   dockerfilePath: string,
@@ -76,9 +109,10 @@ export function createDeepAgentsCodeBaseImageResolutionOptions(
     inputPaths: [path.join(agentRoot, "manifest.yaml"), path.join(agentRoot, "requirements.lock")],
     validateImage: (imageRef) =>
       deepAgentsCodeBaseImageMatchesVersion(imageRef, expectedVersion) &&
+      deepAgentsCodeBaseImageHasDos2Unix(imageRef) &&
       sandboxBaseImageHasSecurityInventory(imageRef),
     validationDescription:
-      `${DEEPAGENTS_CODE_DISTRIBUTION}==${expectedVersion} and ` +
+      `${DEEPAGENTS_CODE_DISTRIBUTION}==${expectedVersion}, dos2unix, and ` +
       "the immutable security package inventory",
   };
 }

@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { testTimeoutOptions } from "../../helpers/timeouts";
+import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   cleanupWhenCommandAvailable,
@@ -224,6 +225,31 @@ async function assertSandboxRunning(
   expect(sandboxList.exitCode, output).toBe(0);
   expect(plainStdout, output).toContain(SANDBOX_NAME);
   expect(plainStdout, output).toMatch(/\b(?:Ready|Running)\b/i);
+}
+
+async function sandboxIdentity(
+  host: import("../fixtures/clients/host.ts").HostCliClient,
+  artifactName: string,
+): Promise<string> {
+  const sandboxGet = await host.command("openshell", ["sandbox", "get", SANDBOX_NAME], {
+    artifactName,
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  const output = resultText(sandboxGet);
+  expect(sandboxGet.exitCode, output).toBe(0);
+  const sandboxId = parseOpenShellSandboxId(output);
+  expect(sandboxId, output).not.toBeNull();
+  return sandboxId ?? "";
+}
+
+async function assertSandboxReused(
+  host: import("../fixtures/clients/host.ts").HostCliClient,
+  beforeId: string,
+  artifactName: string,
+): Promise<void> {
+  expect(await sandboxIdentity(host, `${artifactName}-identity`)).toBe(beforeId);
+  await assertSandboxRunning(host, `${artifactName}-running`);
 }
 
 async function deleteSandboxIfOpenshellExists(
@@ -502,6 +528,10 @@ test(
     await assertSandboxRunning(host, "phase-2-sandbox-running-after-telegram-rotation");
 
     progress.phase("reuse the sandbox after the unchanged Telegram token");
+    const beforeTelegramReuseId = await sandboxIdentity(
+      host,
+      "phase-3-before-same-telegram-identity",
+    );
     const afterTelegramSame = await runOnboard(
       host,
       fakeOpenAI.baseUrl,
@@ -510,8 +540,11 @@ test(
     );
     const afterTelegramSameText = resultText(afterTelegramSame);
     expect(afterTelegramSame.exitCode, afterTelegramSameText).toBe(0);
-    expect(afterTelegramSameText).toContain(`Sandbox '${SANDBOX_NAME}' exists and is ready`);
-    expect(afterTelegramSameText).toContain("reusing it");
+    await assertSandboxReused(
+      host,
+      beforeTelegramReuseId,
+      "phase-3-after-same-telegram",
+    );
 
     progress.phase("rotate only the Discord provider");
     const discord = await runOnboard(
@@ -534,6 +567,10 @@ test(
     await assertSandboxRunning(host, "phase-4-sandbox-running-after-discord-rotation");
 
     progress.phase("reuse the sandbox after the unchanged Discord token");
+    const beforeDiscordReuseId = await sandboxIdentity(
+      host,
+      "phase-5-before-same-discord-identity",
+    );
     const afterDiscordSame = await runOnboard(
       host,
       fakeOpenAI.baseUrl,
@@ -542,8 +579,11 @@ test(
     );
     const afterDiscordSameText = resultText(afterDiscordSame);
     expect(afterDiscordSame.exitCode, afterDiscordSameText).toBe(0);
-    expect(afterDiscordSameText).toContain(`Sandbox '${SANDBOX_NAME}' exists and is ready`);
-    expect(afterDiscordSameText).toContain("reusing it");
+    await assertSandboxReused(
+      host,
+      beforeDiscordReuseId,
+      "phase-5-after-same-discord",
+    );
 
     progress.phase("rotate only the Slack providers");
     const slack = await runOnboard(host, fakeOpenAI.baseUrl, TOKEN_B, "phase-6-rotate-slack");
@@ -557,6 +597,10 @@ test(
     await assertSandboxRunning(host, "phase-6-sandbox-running-after-slack-rotation");
 
     progress.phase("reuse the sandbox and record rotation evidence");
+    const beforeSlackReuseId = await sandboxIdentity(
+      host,
+      "phase-7-before-same-slack-identity",
+    );
     const afterSlackSame = await runOnboard(
       host,
       fakeOpenAI.baseUrl,
@@ -565,8 +609,7 @@ test(
     );
     const afterSlackSameText = resultText(afterSlackSame);
     expect(afterSlackSame.exitCode, afterSlackSameText).toBe(0);
-    expect(afterSlackSameText).toContain(`Sandbox '${SANDBOX_NAME}' exists and is ready`);
-    expect(afterSlackSameText).toContain("reusing it");
+    await assertSandboxReused(host, beforeSlackReuseId, "phase-7-after-same-slack");
 
     await artifacts.target.complete({
       id: "token-rotation",

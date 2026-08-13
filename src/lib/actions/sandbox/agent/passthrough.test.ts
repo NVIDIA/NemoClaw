@@ -62,6 +62,7 @@ vi.mock("../../../../../nemoclaw/src/onboard/config.js", () => ({
 }));
 
 import registerPlugin, { type OpenClawPluginApi } from "../../../../../nemoclaw/src/index";
+import { buildOpenshellExecArgs } from "../exec";
 import {
   type AgentNonJsonPassthroughDeps,
   type AgentPassthroughDeps,
@@ -887,5 +888,73 @@ describe("runAgentNonJsonPassthrough", () => {
     ).toThrow("__exit:1");
     expect(exit).toHaveBeenCalledWith(1);
     expect(stderrWrites.join("")).toContain("Error: agent session not found");
+  });
+
+  it("fails loud instead of reporting success when the dispatch delivers nothing", () => {
+    const { stdoutWrites, stderrWrites, exit, proc } = makeNonJsonProcMock();
+    const spawnSyncMock = makeSpawnMock("", "", 0);
+    expect(() =>
+      runAgentNonJsonPassthrough(
+        "my-sb",
+        ["openclaw", "agent", "--session-key", "agent:main:main", "-m", "ping"],
+        proc,
+        {
+          getGatewayName: () => null,
+          getOpenshellBinary: stubBinary,
+          spawnSync: spawnSyncMock,
+          stdinIsTty: () => false,
+        },
+      ),
+    ).toThrow("__exit:1");
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(stdoutWrites).toEqual([]);
+    expect(stderrWrites.join("")).toContain("without producing any output");
+  });
+
+  it("keeps a stderr-only turn a success so quiet turns do not misfire", () => {
+    const { exit, proc } = makeNonJsonProcMock();
+    const spawnSyncMock = makeSpawnMock("", "openclaw warning\n", 0);
+    expect(() =>
+      runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "--agent", "main"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: stubBinary,
+        spawnSync: spawnSyncMock,
+        stdinIsTty: () => false,
+      }),
+    ).toThrow("__exit:0");
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("pins the sandbox's owning gateway when building the dispatch argv", () => {
+    const { proc } = makeNonJsonProcMock();
+    const spawnSyncMock = makeSpawnMock("PONG\n", "", 0);
+    expect(() =>
+      runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "--agent", "main"], proc, {
+        getGatewayName: () => "nemoclaw-8081",
+        getOpenshellBinary: stubBinary,
+        spawnSync: spawnSyncMock,
+        stdinIsTty: () => false,
+      }),
+    ).toThrow("__exit:0");
+    expect(buildOpenshellExecArgs).toHaveBeenCalledWith(
+      "my-sb",
+      expect.anything(),
+      { tty: false },
+      "nemoclaw-8081",
+    );
+  });
+
+  it("withholds an interactive terminal from the non-interactive dispatch", () => {
+    const { proc } = makeNonJsonProcMock();
+    const spawnSyncMock = makeSpawnMock("PONG\n", "", 0);
+    expect(() =>
+      runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "--agent", "main"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: stubBinary,
+        spawnSync: spawnSyncMock,
+        stdinIsTty: () => true,
+      }),
+    ).toThrow("__exit:0");
+    expect(vi.mocked(spawnSyncMock).mock.calls[0]?.[2].stdio).toEqual(["ignore", "pipe", "pipe"]);
   });
 });
