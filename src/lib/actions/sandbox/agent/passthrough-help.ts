@@ -3,6 +3,7 @@
 
 import { CLI_NAME } from "../../../cli/branding";
 import { shellQuote } from "../../../core/shell-quote";
+import { sanitizeReadinessText } from "../../../readiness/sanitize";
 import { redactFull } from "../../../security/redact";
 
 /** Stderr sink for the passthrough's operator-facing failure text. */
@@ -101,13 +102,14 @@ export function writeTimedOutAgentTurnFailure(
   sandboxName: string,
   timeoutPhase?: string,
 ): void {
-  const target = shellQuote(sandboxName);
+  const sandboxDisplay = sanitizeReadinessText(sandboxName, 200);
+  const target = shellQuote(sandboxDisplay);
   const diagnosticPhase =
     timeoutPhase && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(timeoutPhase) ? timeoutPhase : undefined;
   proc.stderr.write(
     diagnosticPhase
-      ? `  The agent turn in sandbox '${sandboxName}' timed out in the ${diagnosticPhase} phase before producing a result.\n`
-      : `  The agent turn in sandbox '${sandboxName}' timed out before producing a result.\n`,
+      ? `  The agent turn in sandbox '${sandboxDisplay}' timed out in the ${diagnosticPhase} phase before producing a result.\n`
+      : `  The agent turn in sandbox '${sandboxDisplay}' timed out before producing a result.\n`,
   );
   proc.stderr.write(
     "  Reporting this as a failure: the deadline fired and no result reached this command.\n",

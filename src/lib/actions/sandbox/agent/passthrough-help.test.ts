@@ -189,6 +189,20 @@ describe("writeTimedOutAgentTurnFailure", () => {
     expect(written).not.toContain("\u001b");
   });
 
+  it.each([undefined, "provider"])(
+    "renders a sandbox name safely when the timeout phase is %s (#8723)",
+    (phase) => {
+      const { lines, proc } = collectStderr();
+
+      writeTimedOutAgentTurnFailure(proc, "sandbox\n  forged\u001b[31m", phase);
+
+      const written = lines.join("");
+      expect(written).toContain(String.raw`sandbox\u000a  forged\u001b[31m`);
+      expect(written).not.toContain("sandbox\n  forged");
+      expect(written).not.toContain("\u001b");
+    },
+  );
+
   it("warns that the partial trace may already have applied side effects (#8723)", () => {
     const { lines, proc } = collectStderr();
 
