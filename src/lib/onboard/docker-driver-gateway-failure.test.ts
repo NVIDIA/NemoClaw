@@ -151,7 +151,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       reportDockerDriverGatewayStartFailure(log, makeExitState(), {
         exitOnFailure: false,
       });
-      const lines = errSpy.mock.calls.map((c: string[]) => c.join(" "));
+      const lines: string[] = errSpy.mock.calls.map((c: string[]) => c.join(" "));
       const joined = lines.join("\n");
       expect(joined).toContain("written by a newer OpenShell than the installed one");
       expect(joined).toContain(`State database: ${path.join(dir, "openshell.db")}`);
