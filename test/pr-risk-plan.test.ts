@@ -932,7 +932,7 @@ describe("deterministic PR risk plan", () => {
   it("keeps every risk-plan job wired into the canonical E2E workflow", () => {
     const allowedJobs = new Set([
       ...readFreeStandingJobsInventory().allowedJobs,
-      ...E2E_TARGET_CATALOGUE.map(({ id }) => id),
+      ...E2E_TARGET_CATALOGUE.flatMap(({ id, targetId }) => [id, targetId]),
     ]);
     const configuredJobs = new Set(RISK_RULES.flatMap((rule) => rule.requiredJobs));
 

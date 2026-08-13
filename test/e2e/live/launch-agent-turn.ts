@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -47,6 +49,22 @@ timeout --kill-after=5s 250s \
 session_pid=$!
 exec 3>"$input"
 
+capture_ready=0
+for _ in {1..100}; do
+  if [[ -f "$capture" ]]; then
+    capture_ready=1
+    break
+  fi
+  if ! kill -0 "$session_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.1
+done
+if [[ "$capture_ready" != 1 ]]; then
+  echo "launch did not create a terminal capture" >&2
+  exit 1
+fi
+
 if [[ -n "$NEMOCLAW_LAUNCH_READY_TEXT" ]]; then
   ready_seen=0
   for _ in {1..60}; do
@@ -71,9 +89,23 @@ response_start="$(wc -c <"$capture")"
 printf '%s\r' "$NEMOCLAW_LAUNCH_PROMPT" >&3
 
 reply_seen=0
+has_exact_reply() {
+  tail -c "+$((response_start + 1))" "$capture" \
+    | sed -E $'s/\x1B\\[[0-?]*[ -\\/]*[@-~]//g' \
+    | tr '\r' '\n' \
+    | LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' \
+    | awk -v expected="$NEMOCLAW_LAUNCH_EXPECTED_REPLY" '
+        {
+          line = $0
+          sub(/^[[:space:]]+/, "", line)
+          sub(/[[:space:]]+$/, "", line)
+          if (line == expected) found = 1
+        }
+        END { exit found ? 0 : 1 }
+      '
+}
 for _ in {1..180}; do
-  if grep -Fq -- "$NEMOCLAW_LAUNCH_EXPECTED_REPLY" \
-    < <(tail -c "+$((response_start + 1))" "$capture"); then
+  if has_exact_reply; then
     reply_seen=1
     break
   fi
@@ -123,6 +155,9 @@ export interface LaunchAgentTurnOptions {
   readyText?: string;
   redactionValues: string[];
   sandboxName: string;
+  expectedReply?: string;
+  prompt?: string;
+  beforeLaunchTurns?: () => Promise<void> | void;
 }
 
 export async function runLaunchAgentTurn(
@@ -138,8 +173,8 @@ export async function runLaunchAgentTurn(
       NEMOCLAW_LAUNCH_COMMAND: options.cliCommand,
       NEMOCLAW_LAUNCH_ENTRYPOINT: options.cliEntrypoint ?? "",
       NEMOCLAW_LAUNCH_EXIT_COMMAND: options.exitCommand ?? "",
-      NEMOCLAW_LAUNCH_EXPECTED_REPLY: EXPECTED_REPLY,
-      NEMOCLAW_LAUNCH_PROMPT: PROMPT,
+      NEMOCLAW_LAUNCH_EXPECTED_REPLY: options.expectedReply ?? EXPECTED_REPLY,
+      NEMOCLAW_LAUNCH_PROMPT: options.prompt ?? PROMPT,
       NEMOCLAW_LAUNCH_READY_TEXT: options.readyText ?? "",
       NEMOCLAW_LAUNCH_SANDBOX: options.sandboxName,
       TERM: "xterm-256color",
@@ -151,4 +186,43 @@ export async function runLaunchAgentTurn(
     throw new Error(`launch agent turn failed: ${resultText(result)}`);
   }
   return result;
+}
+
+function uniqueTurnContract(artifactName: string, ordinal: "FIRST" | "SECOND") {
+  const fragment = createHash("sha256")
+    .update(`${artifactName}:${ordinal}`)
+    .digest("hex")
+    .slice(0, 12);
+  const expectedReply = `NEMOCLAW_${fragment.toUpperCase()}_${ordinal}_OK`;
+  return {
+    expectedReply,
+    prompt:
+      `Join these four fragments with underscores and put only the result on its own line: ` +
+      `NEMOCLAW, ${fragment.toUpperCase()}, ${ordinal}, OK. Do not use tools.`,
+  };
+}
+
+export async function runLaunchReadinessLeaseTurns(options: LaunchAgentTurnOptions): Promise<void> {
+  const probeArgs = options.cliEntrypoint
+    ? [options.cliEntrypoint, options.sandboxName, "connect", "--probe-only"]
+    : [options.sandboxName, "connect", "--probe-only"];
+  const probe = await options.host.command(options.cliCommand, probeArgs, {
+    artifactName: `${options.artifactName}-probe`,
+    env: options.env,
+    redactionValues: options.redactionValues,
+    timeoutMs: 360_000,
+  });
+  if (probe.exitCode !== 0) {
+    throw new Error(`launch readiness producer failed: ${resultText(probe)}`);
+  }
+
+  await options.beforeLaunchTurns?.();
+
+  for (const ordinal of ["FIRST", "SECOND"] as const) {
+    await runLaunchAgentTurn({
+      ...options,
+      artifactName: `${options.artifactName}-${ordinal.toLowerCase()}`,
+      ...uniqueTurnContract(options.artifactName, ordinal),
+    });
+  }
 }

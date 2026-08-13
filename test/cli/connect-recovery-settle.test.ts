@@ -12,6 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { launchReadinessRegistryFixture } from "../helpers/launch-readiness-fixture";
 import { runWithEnv, writeSandboxRegistry } from "./helpers";
 
 const DECODE_SANDBOX_EXEC_COMMAND_LINES = [
@@ -22,13 +23,14 @@ const DECODE_SANDBOX_EXEC_COMMAND_LINES = [
 
 describe("CLI dispatch", () => {
   it("fails probe-only when the authenticated settle probe detects a listener wedge (#4710)", () => {
+    const sandboxName = "probe-wedge-alpha";
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-wedge-"));
     const localBin = path.join(home, "bin");
     const markerFile = path.join(home, "openshell-calls");
     const stateFile = path.join(home, "probe-state");
     const readyCountFile = path.join(home, "ready-count");
     fs.mkdirSync(localBin, { recursive: true });
-    writeSandboxRegistry(home);
+    writeSandboxRegistry(home, sandboxName, launchReadinessRegistryFixture());
     fs.writeFileSync(stateFile, "stopped");
     fs.writeFileSync(
       path.join(localBin, "openshell"),
@@ -40,19 +42,19 @@ describe("CLI dispatch", () => {
         `ready_count_file=${JSON.stringify(readyCountFile)}`,
         'printf \'%s\\n\' "$*" >> "$marker_file"',
         'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-        "  echo 'alpha  Ready'",
+        `  echo '${sandboxName}  Ready'`,
         "  exit 0",
         "fi",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        `if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "\${!#}" = "${sandboxName}" ]; then`,
         "  echo 'Sandbox:'",
         "  echo",
         "  echo '  Id: abc'",
-        "  echo '  Name: alpha'",
+        `  echo '  Name: ${sandboxName}'`,
         "  echo '  Namespace: openshell'",
         "  echo '  Phase: Ready'",
         "  exit 0",
         "fi",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
+        `if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [[ "$*" == *"--name ${sandboxName}"* ]]; then`,
         '  cmd="$8"',
         '  cmd="$(decode_sandbox_exec_cmd "$cmd")"',
         '  case "$cmd" in',
@@ -100,7 +102,7 @@ describe("CLI dispatch", () => {
         'printf \'docker %s\\n\' "$*" >> "$marker_file"',
         'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
         'if [ "$1" = "ps" ]; then',
-        "  printf 'container-id\\topenshell-alpha\\n'",
+        `  printf 'container-id\\topenshell-${sandboxName}\\n'`,
         "  exit 0",
         "fi",
         'if [[ "$*" == *"--env LD_PRELOAD="* ]] && [[ "$*" == *"--env PYTHONPATH="* ]] && [[ "$*" == *"--user root container-id /usr/local/bin/nemoclaw-gateway-control recover "* ]]; then',
@@ -123,7 +125,7 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha connect --probe-only", {
+    const r = runWithEnv(`${sandboxName} connect --probe-only`, {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
       NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "3",
@@ -133,7 +135,7 @@ describe("CLI dispatch", () => {
 
     expect(r.code).toBe(1);
     expect(r.out).toContain(
-      "Probe failed: OpenClaw gateway is not running in 'alpha' and automatic recovery failed.",
+      `Probe failed: OpenClaw gateway is not running in '${sandboxName}' and automatic recovery failed.`,
     );
     expect(r.out).toContain("#4710 wedge signature");
     expect(r.out).toContain("config change requires gateway restart (plugins.installs)");

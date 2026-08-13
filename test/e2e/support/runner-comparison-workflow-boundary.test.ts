@@ -4,267 +4,80 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  HERMES_REBUILD_SWAP_STEP,
-  RUNNER_COMPARISON_COMMAND,
   RUNNER_COMPARISON_FINALIZE_STEP,
   RUNNER_COMPARISON_INITIALIZE_STEP,
   validateRunnerComparisonWorkflow,
-  validateRunnerComparisonWorkflowBoundary,
 } from "../../../tools/e2e/runner-comparison-workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
-type WorkflowStep = Record<string, unknown> & {
-  "continue-on-error"?: boolean;
-  if?: string;
-  name?: string;
-  run?: string;
-  shell?: string;
-  uses?: string;
-};
-type WorkflowMatrix = Record<string, unknown> & {
-  include?: Array<Record<string, unknown>>;
-};
-type Workflow = {
-  jobs: Record<string, { steps: WorkflowStep[]; strategy?: { matrix?: WorkflowMatrix } }>;
-};
+type Step = { name?: string; if?: string; run?: string };
+type Job = { steps: Step[] };
+type Workflow = { jobs: Record<string, Job> };
 
-const JOBS = [
-  "agent-turn-latency",
-  "channels-stop-start",
-  "common-egress-agent",
-  "hermes-discord",
-  "hermes-e2e",
-  "hermes-inference-switch",
-  "hermes-shields-config",
-  "mcp-bridge",
-  "rebuild-hermes",
-  "rebuild-hermes-stale-base",
-  "security-posture",
-] as const;
-const REBUILD_JOBS = ["rebuild-hermes", "rebuild-hermes-stale-base"] as const;
-
-function loadWorkflow(): Workflow {
-  return structuredClone(readWorkflow()) as Workflow;
+function workflow(): Workflow {
+  return readWorkflow() as Workflow;
 }
 
-function step(workflow: Workflow, jobId: string, name: string): WorkflowStep {
-  const found = workflow.jobs[jobId]!.steps.find((candidate) => candidate.name === name);
-  expect(found, `${jobId} is missing ${name}`).toBeDefined();
-  return found!;
-}
-
-function telemetrySteps(workflow: Workflow, jobId: string): WorkflowStep[] {
-  return workflow.jobs[jobId]!.steps.filter((candidate) =>
-    candidate.run?.includes("tools/e2e/runner-comparison.mts"),
-  );
-}
-
-describe("runner comparison E2E workflow boundary (#7140)", () => {
-  it("accepts 12 routed workflow lane identities / 14 concrete job executions", () => {
-    const workflow = loadWorkflow();
-
-    expect(validateRunnerComparisonWorkflowBoundary(workflow)).toEqual([]);
-    expect(JOBS.flatMap((jobId) => telemetrySteps(workflow, jobId))).toHaveLength(JOBS.length * 2);
-
-    const commonEgressScenarios = workflow.jobs[
-      "common-egress-agent"
-    ]!.strategy!.matrix!.include?.map((entry) => entry.scenario);
-    expect(commonEgressScenarios).toEqual([
-      "openclaw-balanced-weather",
-      "openclaw-open-reference",
-      "hermes-open-reference",
-    ]);
-    const mcpAgents = workflow.jobs["mcp-bridge"]!.strategy!.matrix!.agent as unknown[];
-    expect(mcpAgents).toEqual(["openclaw", "hermes", "deepagents"]);
-    const mcpLanes = mcpAgents.filter((agent) =>
-      ["hermes", "deepagents"].includes(String(agent)),
-    ).length;
-    const inferenceSwitchModes = workflow.jobs[
-      "hermes-inference-switch"
-    ]!.strategy!.matrix!.include?.map((entry) => entry.mode);
-    expect(inferenceSwitchModes).toEqual(["anthropic"]);
-    const routedLanes = JOBS.length - 1 + mcpLanes;
-    const concreteExecutions =
-      routedLanes + commonEgressScenarios!.length - 1 + inferenceSwitchModes!.length - 1;
-    expect(routedLanes).toBe(12);
-    expect(concreteExecutions).toBe(14);
+describe("runner comparison workflow boundary", () => {
+  it("keeps telemetry on the three retained routed jobs", () => {
+    expect(validateRunnerComparisonWorkflow(workflow())).toEqual([]);
   });
 
-  it("locks the matrix topology that produces fourteen concrete executions", () => {
-    const workflow = loadWorkflow();
-    workflow.jobs["mcp-bridge"]!.strategy!.matrix!.agent = ["openclaw", "hermes", "hermes"];
-    workflow.jobs["channels-stop-start"]!.strategy!.matrix!.agent = ["openclaw", "openclaw"];
-    workflow.jobs["common-egress-agent"]!.strategy!.matrix!.include = [
-      { scenario: "openclaw-balanced-weather" },
-      { scenario: "openclaw-balanced-weather" },
-      { scenario: "hermes-open-reference" },
-    ];
-    workflow.jobs["security-posture"]!.strategy!.matrix!.include = [
-      { agent: "openclaw" },
-      { agent: "openclaw" },
-    ];
-    workflow.jobs["hermes-inference-switch"]!.strategy!.matrix!.include = [
-      { mode: "anthropic" },
-      { mode: "anthropic" },
-    ];
+  it("requires both telemetry steps in a retained consumer", () => {
+    const value = workflow();
+    value.jobs["hermes-e2e"]!.steps = value.jobs["hermes-e2e"]!.steps.filter(
+      (step) => step.name !== RUNNER_COMPARISON_INITIALIZE_STEP,
+    );
 
-    expect(validateRunnerComparisonWorkflow(workflow)).toEqual(
-      expect.arrayContaining([
-        "channels-stop-start matrix must contain exactly openclaw, hermes for runner comparison telemetry",
-        "common-egress-agent matrix must contain exactly openclaw-balanced-weather, openclaw-open-reference, hermes-open-reference for runner comparison telemetry",
-        "mcp-bridge matrix must contain exactly openclaw, hermes, deepagents for runner comparison telemetry",
-        "security-posture matrix must contain exactly openclaw, hermes for runner comparison telemetry",
-        "hermes-inference-switch matrix must contain exactly anthropic for runner comparison telemetry",
-      ]),
+    expect(validateRunnerComparisonWorkflow(value)).toContain(
+      "hermes-e2e must invoke runner comparison telemetry exactly twice",
     );
   });
 
-  it("rejects runner comparison consumers outside the eleven comparison jobs", () => {
-    const workflow = loadWorkflow();
-    workflow.jobs["brave-search"]!.steps.push(
-      structuredClone(telemetrySteps(workflow, "common-egress-agent")[0]!),
-    );
+  it("rejects telemetry in an unreviewed retained job", () => {
+    const value = workflow();
+    value.jobs["token-rotation"]!.steps.push({
+      name: RUNNER_COMPARISON_INITIALIZE_STEP,
+      run: "npx tsx tools/e2e/runner-comparison.mts initialize",
+    });
 
-    expect(validateRunnerComparisonWorkflow(workflow)).toContain(
-      "brave-search must not collect runner comparison telemetry",
-    );
-  });
-
-  it.each(JOBS)("requires exactly one initialize and one finalize step in %s", (jobId) => {
-    const missing = loadWorkflow();
-    missing.jobs[jobId]!.steps = missing.jobs[jobId]!.steps.filter(
-      (candidate) => candidate.name !== RUNNER_COMPARISON_FINALIZE_STEP,
-    );
-    expect(validateRunnerComparisonWorkflow(missing)).toContain(
-      `${jobId} must invoke runner comparison telemetry exactly twice`,
-    );
-
-    const duplicated = loadWorkflow();
-    duplicated.jobs[jobId]!.steps.push(
-      structuredClone(step(duplicated, jobId, RUNNER_COMPARISON_INITIALIZE_STEP)),
-    );
-    expect(validateRunnerComparisonWorkflow(duplicated)).toContain(
-      `${jobId} must invoke runner comparison telemetry exactly twice`,
+    expect(validateRunnerComparisonWorkflow(value)).toContain(
+      "token-rotation must not collect runner comparison telemetry",
     );
   });
 
-  it.each(
-    JOBS,
-  )("places %s telemetry after workspace preparation, artifact restore when used, and required rebuild swap, and before artifact scanning or upload", (jobId) => {
-    const lateInitialize = loadWorkflow();
-    const lateSteps = lateInitialize.jobs[jobId]!.steps;
-    const initializeIndex = lateSteps.indexOf(
-      step(lateInitialize, jobId, RUNNER_COMPARISON_INITIALIZE_STEP),
-    );
-    [lateSteps[initializeIndex], lateSteps[initializeIndex + 1]] = [
-      lateSteps[initializeIndex + 1]!,
-      lateSteps[initializeIndex]!,
-    ];
-    const expectedInitializeError = REBUILD_JOBS.includes(jobId as (typeof REBUILD_JOBS)[number])
-      ? `${jobId} must establish rebuild swap before initializing runner comparison telemetry`
-      : `${jobId} must initialize runner comparison telemetry immediately after CLI artifact restore`;
-    expect(validateRunnerComparisonWorkflow(lateInitialize)).toContain(expectedInitializeError);
+  it("keeps finalization best-effort and always-run", () => {
+    const value = workflow();
+    const finalize = value.jobs["hermes-e2e"]!.steps.find(
+      (step) => step.name === RUNNER_COMPARISON_FINALIZE_STEP,
+    )!;
+    finalize.if = "${{ always() }}";
 
-    const afterPublication = loadWorkflow();
-    const publicationSteps = afterPublication.jobs[jobId]!.steps;
-    const finalizeIndex = publicationSteps.indexOf(
-      step(afterPublication, jobId, RUNNER_COMPARISON_FINALIZE_STEP),
-    );
-    [publicationSteps[finalizeIndex], publicationSteps[finalizeIndex + 1]] = [
-      publicationSteps[finalizeIndex + 1]!,
-      publicationSteps[finalizeIndex]!,
-    ];
-    expect(validateRunnerComparisonWorkflow(afterPublication)).toContain(
-      `${jobId} must finalize runner comparison telemetry immediately before artifact scanning or upload`,
+    expect(validateRunnerComparisonWorkflow(value)).toContain(
+      "hermes-e2e must use the exact always-run trusted finalize telemetry step",
     );
   });
 
-  it.each(
-    REBUILD_JOBS,
-  )("initializes %s telemetry only after workflow-managed swap reaches its final capacity", (jobId) => {
-    const workflow = loadWorkflow();
-    const jobSteps = workflow.jobs[jobId]!.steps;
-    const swap = step(workflow, jobId, HERMES_REBUILD_SWAP_STEP);
-    const initialize = step(workflow, jobId, RUNNER_COMPARISON_INITIALIZE_STEP);
-    const swapIndex = jobSteps.indexOf(swap);
-    const initializeIndex = jobSteps.indexOf(initialize);
-
-    expect(initializeIndex).toBe(swapIndex + 1);
-
-    [jobSteps[swapIndex], jobSteps[initializeIndex]] = [initialize, swap];
-    expect(validateRunnerComparisonWorkflow(workflow)).toContain(
-      `${jobId} must establish rebuild swap before initializing runner comparison telemetry`,
-    );
-  });
-
-  it.each(REBUILD_JOBS)("rejects %s telemetry when rebuild swap is delayed", (jobId) => {
-    const workflow = loadWorkflow();
-    const jobSteps = workflow.jobs[jobId]!.steps;
-    const swapIndex = jobSteps.indexOf(step(workflow, jobId, HERMES_REBUILD_SWAP_STEP));
-    jobSteps.splice(swapIndex, 0, { name: "Unexpected step before rebuild swap" });
-
-    expect(validateRunnerComparisonWorkflow(workflow)).toContain(
-      `${jobId} must establish rebuild swap before initializing runner comparison telemetry`,
-    );
-  });
-
-  it("rejects weakened trusted-main and always-run guards", () => {
-    const workflow = loadWorkflow();
-    step(workflow, "common-egress-agent", RUNNER_COMPARISON_INITIALIZE_STEP).if =
-      "${{ github.repository == 'NVIDIA/NemoClaw' }}";
-    step(workflow, "rebuild-hermes", RUNNER_COMPARISON_FINALIZE_STEP).if =
-      "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}";
-
-    expect(validateRunnerComparisonWorkflow(workflow)).toEqual(
-      expect.arrayContaining([
-        "common-egress-agent must use the exact trusted initialize telemetry step",
-        "rebuild-hermes must use the exact always-run trusted finalize telemetry step",
-      ]),
-    );
-  });
-
-  it("keeps non-routed matrix counterparts out of comparison telemetry", () => {
-    const workflow = loadWorkflow();
-    for (const name of [RUNNER_COMPARISON_INITIALIZE_STEP, RUNNER_COMPARISON_FINALIZE_STEP]) {
-      const comparison = step(workflow, "mcp-bridge", name);
-      comparison.if = comparison.if!.replace(
-        "(matrix.agent == 'hermes' || matrix.agent == 'deepagents')",
-        "(matrix.agent == 'openclaw' || matrix.agent == 'hermes' || matrix.agent == 'deepagents')",
+  it.each(["common-egress-agent", "hermes-e2e", "mcp-bridge"])(
+    "keeps %s telemetry at the bootstrap and publication boundaries",
+    (jobId) => {
+      const value = workflow();
+      const steps = value.jobs[jobId]!.steps;
+      const initializeIndex = steps.findIndex(
+        (step) => step.name === RUNNER_COMPARISON_INITIALIZE_STEP,
       );
-      for (const jobId of ["channels-stop-start", "security-posture"]) {
-        const hermesComparison = step(workflow, jobId, name);
-        hermesComparison.if = hermesComparison.if!.replace(
-          "matrix.agent == 'hermes'",
-          "(matrix.agent == 'openclaw' || matrix.agent == 'hermes')",
-        );
-      }
-    }
+      const finalizeIndex = steps.findIndex(
+        (step) => step.name === RUNNER_COMPARISON_FINALIZE_STEP,
+      );
+      steps.splice(initializeIndex, 0, { name: "Unexpected bootstrap gap" });
+      steps.splice(finalizeIndex + 2, 0, { name: "Unexpected publication gap" });
 
-    expect(validateRunnerComparisonWorkflow(workflow)).toEqual(
-      expect.arrayContaining([
-        "mcp-bridge must use the exact trusted initialize telemetry step",
-        "mcp-bridge must use the exact always-run trusted finalize telemetry step",
-        "channels-stop-start must use the exact trusted initialize telemetry step",
-        "channels-stop-start must use the exact always-run trusted finalize telemetry step",
-        "security-posture must use the exact trusted initialize telemetry step",
-        "security-posture must use the exact always-run trusted finalize telemetry step",
-      ]),
-    );
-  });
-
-  it("rejects invocation shape, mode, and best-effort drift", () => {
-    const workflow = loadWorkflow();
-    const initialize = step(
-      workflow,
-      "rebuild-hermes-stale-base",
-      RUNNER_COMPARISON_INITIALIZE_STEP,
-    );
-    initialize["continue-on-error"] = false;
-    initialize.run = `${RUNNER_COMPARISON_COMMAND} finalize`;
-    initialize.env = { UNREVIEWED: "1" };
-
-    expect(validateRunnerComparisonWorkflow(workflow)).toContain(
-      "rebuild-hermes-stale-base must use the exact trusted initialize telemetry step",
-    );
-  });
+      expect(validateRunnerComparisonWorkflow(value)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(`${jobId} must initialize runner comparison telemetry`),
+          expect.stringContaining(`${jobId} must finalize runner comparison telemetry`),
+        ]),
+      );
+    },
+  );
 });

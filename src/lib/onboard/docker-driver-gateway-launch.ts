@@ -54,14 +54,25 @@ export type DockerDriverGatewayRuntimeIdentity = {
   identityGatewayBin: string | null;
 };
 
+export type DockerDriverGatewayLog = {
+  fd: number;
+  startOffset: number;
+};
+
 export function openDockerDriverGatewayLog(
   logPath: string,
   options: { exitOnFailure?: boolean } = {},
-): number {
+): DockerDriverGatewayLog {
   const appendNoFollow =
     fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW;
   try {
-    return fs.openSync(logPath, appendNoFollow, 0o600);
+    const fd = fs.openSync(logPath, appendNoFollow, 0o600);
+    try {
+      return { fd, startOffset: fs.fstatSync(fd).size };
+    } catch (error) {
+      fs.closeSync(fd);
+      throw error;
+    }
   } catch (error) {
     console.error(
       `  Failed to open OpenShell Docker-driver gateway log '${logPath}': ${String(error)}`,
