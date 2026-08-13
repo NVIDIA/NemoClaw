@@ -216,7 +216,8 @@ The test file is always one owning path.
 List each additional source file or directory whose change requires the target.
 Changes to shared catalogue execution paths select every catalogue target.
 
-The workflow partitions catalogue targets into three credential profiles:
+`E2E_TARGET_CATALOGUE` is one logical target set.
+The planner partitions that set into three GitHub Actions matrices, one for each credential profile:
 
 - `standard` receives no NVIDIA API credential.
 - `nvidia-api` receives `NVIDIA_API_KEY` on trusted `main` runs.
@@ -235,7 +236,8 @@ TUI exact-ref checks use this shared value instead of a target-specific checkout
 Each target writes its artifacts and `evidence-manifest.json` under `e2e-artifacts/live/<target-id>`.
 A selector does not add an artifact directory or change the target ID.
 The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets use this shape on `linux-amd64-gpu-rtxpro6000-latest-1`.
-Keep a dedicated workflow job when a target needs a different setup boundary, a multi-job handoff, or credential access outside the three profiles.
+Retained workflow jobs are exceptions to the catalogue shape.
+Keep one only when a target needs a different setup or evidence boundary, a multi-job handoff, or credential access outside the three profiles.
 
 ### Catalogue Execution Evidence
 

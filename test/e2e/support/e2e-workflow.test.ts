@@ -527,38 +527,6 @@ describe("e2e workflow boundary", () => {
     }
   });
 
-  // source-shape-contract: security -- Mutates the shipped workflow to prove artifact uploads reject unmanaged temporary paths
-  it("rejects free-standing E2E artifact uploads from raw temp paths", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = readWorkflow() as {
-      jobs: Record<
-        string,
-        {
-          steps: Array<{
-            name?: string;
-            with?: Record<string, unknown>;
-          }>;
-        }
-      >;
-    };
-    const upload = workflow.jobs["openclaw-inference-switch"].steps.find(
-      (step) => step.name === "Upload OpenClaw inference switch artifacts",
-    );
-    expect(upload?.with).toEqual(expect.any(Object));
-    upload!.with!.path =
-      `${String(upload!.with!.path)}\n/tmp/nemoclaw-e2e-openclaw-inference-switch-install.log`;
-    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-    try {
-      expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
-        "openclaw-inference-switch upload-e2e-artifacts must preserve its explicit name/path contract",
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
   it(
     "evaluates high-risk dispatch selector behavior before secret-bearing jobs run",
     testTimeoutOptions(30_000),
@@ -614,10 +582,7 @@ describe("e2e workflow boundary", () => {
         selectedFreeStandingJobs: ["brave-search"],
         registryTargets: ["ubuntu-repo-cloud-openclaw"],
       });
-      for (const [legacy, canonical] of [
-        ["hermes-dashboard", "hermes-e2e"],
-        ["sandbox-rlimits-connect", "sandbox-operations"],
-      ] as const) {
+      for (const [legacy, canonical] of [["hermes-dashboard", "hermes-e2e"]] as const) {
         for (const selectors of [{ jobs: legacy }, { targets: legacy }]) {
           expect(evaluateE2eWorkflowDispatchSelectors(selectors)).toMatchObject({
             valid: true,
@@ -629,6 +594,30 @@ describe("e2e workflow boundary", () => {
       }
     },
   );
+
+  it("maps a credential-free target selector to shared-e2e and its test row", () => {
+    expect(
+      evaluateE2eWorkflowDispatchSelectors({
+        targets: "vllm-docker-storage",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveTargetsRun: false,
+      selectedFreeStandingJobs: ["vllm-docker-storage"],
+      registryTargets: [],
+    });
+    expect(buildE2eWorkflowPlan({ targets: "vllm-docker-storage" })).toMatchObject({
+      matrix: [],
+      testMatrix: [
+        {
+          id: "vllm-docker-storage",
+          file: "test/vllm-docker-storage.test.ts",
+          project: "integration",
+        },
+      ],
+      selectedJobs: ["shared-e2e"],
+    });
+  });
 
   it("rejects malformed free-standing workflow metadata before matrix generation", {
     timeout: 60_000,

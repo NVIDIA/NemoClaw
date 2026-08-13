@@ -140,7 +140,18 @@ describe("MCP lifecycle lock acquisition", () => {
   it("does not strand synchronous recovery behind an expired legacy short-token marker", () => {
     writeTimerMarker("legacy-token", new Date(Date.now() - 1_000).toISOString());
 
-    expect(withMcpLifecycleLockSync(SANDBOX_NAME, () => "entered", options())).toBe("entered");
+    // Drive the deadline from a stepping clock: marker recovery does real
+    // filesystem work, and a loaded CI runner can exceed the real 1-second
+    // budget (NVIDIA/NemoClaw#8900 shard 11). Unlike the async sibling's
+    // pinned clock, stepping keeps a genuine strand bounded — the budget
+    // still expires after 1,000 clock reads instead of blocking the worker.
+    let tick = 0;
+    expect(
+      withMcpLifecycleLockSync(SANDBOX_NAME, () => "entered", {
+        ...options(),
+        monotonicNow: () => tick++,
+      }),
+    ).toBe("entered");
   });
 
   it("rejects asynchronous admission when restoreAt passes after main publication", async () => {
