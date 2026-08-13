@@ -39,26 +39,25 @@ Review the [Prerequisites](prerequisites) before you begin.
     Run the hosted installer.
 
     ```bash
-    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes NEMOCLAW_SANDBOX_NAME=my-hermes bash
     ```
   </Step>
 
   <Step title="Complete Onboarding">
-    Select **Hermes Agent** when the installer prompts you to choose an agent.
+    The explicit `NEMOCLAW_AGENT=hermes` setting keeps Hermes selected through interactive or Express setup.
 
     <Note>
-      On supported platforms, the installer can display `Run express install with these settings? [Y/n]:` before the agent-selection prompt.
+      On supported platforms other than N1x, the installer can display `Run express install with these settings? [Y/n]:` before ordinary onboarding.
+      N1x instead displays `Run the Deferred N1x preview with these settings? [Y/n]:`.
       Press Enter to use the recommended express install mode for that platform.
       This mode applies preset settings and runs the remaining onboarding non-interactively.
-      Express install mode installs OpenClaw by default.
-      If you accept, refer to [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart).
-      On supported non-N1x express platforms, enter `n` if you want to select Hermes, a sandbox name, an inference provider, and a model interactively.
+      Express install mode preserves the explicit Hermes selection in the install command.
+      On supported non-N1x express platforms, enter `n` if you want to select a sandbox name, an inference provider, and a model interactively.
       On N1x, entering `n` stops installation because the Deferred managed-vLLM preview is the only admitted onboarding path.
       Refer to [Use Docker and supported platforms](#use-docker-and-supported-platforms) for more information.
     </Note>
 
-    When prompted for the sandbox name, enter `my-hermes` or press Enter to accept the suggested `hermes` name.
-    If you accept the suggested name, use `hermes` instead of `my-hermes` in the commands that follow.
+    The install command creates the `my-hermes` sandbox used in the commands that follow.
     Choose an inference provider and model, then provide its credential when prompted.
     For a first run, skip optional web search and messaging setup, then accept the suggested network policy tier.
   </Step>

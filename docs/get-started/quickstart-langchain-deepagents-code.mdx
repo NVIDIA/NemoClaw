@@ -42,26 +42,25 @@ Review the [Prerequisites](prerequisites) before you begin.
     Run the hosted installer.
 
     ```bash
-    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code NEMOCLAW_SANDBOX_NAME=my-deepagents bash
     ```
   </Step>
 
   <Step title="Complete Onboarding">
-    Select **LangChain Deep Agents Code** when the installer prompts you to choose an agent.
+    The explicit `NEMOCLAW_AGENT=langchain-deepagents-code` setting keeps Deep Agents selected through interactive or Express setup.
 
     <Note>
-      On supported platforms, the installer can display `Run express install with these settings? [Y/n]:` before the agent-selection prompt.
+      On supported platforms other than N1x, the installer can display `Run express install with these settings? [Y/n]:` before ordinary onboarding.
+      N1x instead displays `Run the Deferred N1x preview with these settings? [Y/n]:`.
       Press Enter to use the recommended express install mode for that platform.
       This mode applies preset settings and runs the remaining onboarding non-interactively.
-      Express install mode installs OpenClaw by default.
-      If you accept, refer to [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart).
-      On supported non-N1x express platforms, enter `n` if you want to select LangChain Deep Agents Code, a sandbox name, an inference provider, and a model interactively.
+      Express install mode preserves the explicit Deep Agents selection in the install command.
+      On supported non-N1x express platforms, enter `n` if you want to select a sandbox name, an inference provider, and a model interactively.
       On N1x, entering `n` stops installation because the Deferred managed-vLLM preview is the only admitted onboarding path.
       Refer to [Use Docker and supported platforms](#use-docker-and-supported-platforms) for more information.
     </Note>
 
-    When prompted for the sandbox name, enter `my-deepagents` or press Enter to accept the suggested `deepagents-code` name.
-    If you accept the suggested name, use `deepagents-code` instead of `my-deepagents` in the commands that follow.
+    The install command creates the `my-deepagents` sandbox used in the commands that follow.
     Choose an inference provider and model, then provide its credential when prompted.
     Accept the suggested network policy tier for a first run.
   </Step>
