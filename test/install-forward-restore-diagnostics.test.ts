@@ -189,6 +189,33 @@ exit 0
     }
   });
 
+  it("removes terminal controls from an OpenShell forward-start diagnostic (#8884)", () => {
+    const { root, binDir } = prepareCheckout("nemohermes-forward-control-diagnostic-");
+    try {
+      writeExecutable(
+        path.join(binDir, "openshell"),
+        `#!/usr/bin/env bash
+if [ "$1" = "forward" ] && [ "$2" = "start" ]; then
+  printf '\\033[31mlistener rejected\\033[0m \\033]0;changed title\\007diagnostic\\n' >&2
+  exit 1
+fi
+exit 0
+`,
+      );
+      writeExecutable(path.join(binDir, "curl"), "#!/usr/bin/env bash\nexit 7\n");
+
+      const result = runRestore(root, binDir, { NEMOCLAW_SKIP_FORWARD_WATCHER: "1" });
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("OpenShell reported: listener rejected diagnostic");
+      expect(result.stdout).not.toContain("\u001b");
+      expect(result.stdout).not.toContain("\u0007");
+      expect(result.stdout).not.toContain("changed title");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("redacts the complete diagnostic when the compiled redactor is unavailable (#8884)", () => {
     const { root, binDir } = prepareCheckout("nemohermes-forward-redactor-fallback-");
     const token = "nvapi-forward-fallback-secret-1234567890";
@@ -291,6 +318,22 @@ describe("Hermes host forward watcher", () => {
       "nemohermes-watcher-unreadable-",
       "  :",
       1,
+    );
+    try {
+      const calls = runWatcherTick(watcherScript, binDir, openshell);
+
+      expect(calls).toContain("forward list");
+      expect(calls).not.toContain(`forward stop ${PORT} ${SANDBOX}`);
+      expect(calls).not.toContain(`forward start --background ${PORT} ${SANDBOX}`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not replace a forward with an unrecognized OpenShell status (#8884)", () => {
+    const { root, binDir, openshell, watcherScript } = watcherScriptForListing(
+      "nemohermes-watcher-pending-",
+      `  echo "${SANDBOX} 127.0.0.1 ${PORT} 123 pending"`,
     );
     try {
       const calls = runWatcherTick(watcherScript, binDir, openshell);

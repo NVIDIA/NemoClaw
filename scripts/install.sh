@@ -571,6 +571,20 @@ restore_onboard_forward_after_post_checks() {
     printf "<REDACTED>"
   }
 
+  sanitize_forward_start_diagnostic() {
+    if command_exists node && node -e '
+      const fs = require("fs");
+      const diagnostic = fs.readFileSync(0, "utf8")
+        .replace(/\x1B\][^\x07]*(?:\x07|\x1B\\|$)/g, "")
+        .replace(/\x1B(?:\[[0-?]*[ -/]*[@-~]|[@-_])/g, "")
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ");
+      process.stdout.write(diagnostic);
+    ' 2>/dev/null; then
+      return 0
+    fi
+    printf "<REDACTED>"
+  }
+
   stop_agent_forward_if_owned() {
     local forward_list owner status
     "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 && return 0
@@ -604,7 +618,7 @@ restore_onboard_forward_after_post_checks() {
     if [[ -n "$diagnostic_file" ]]; then
       "$openshell_bin" forward start --background "$port" "$sandbox_name" \
         >"$diagnostic_file" 2>&1 || true
-      start_diagnostic="$(awk '
+      start_diagnostic="$(sanitize_forward_start_diagnostic <"$diagnostic_file" | awk '
         {
           gsub(/[[:space:]]+/, " ")
           sub(/^ /, "")
@@ -612,7 +626,7 @@ restore_onboard_forward_after_post_checks() {
           if ($0 != "") joined = (joined == "" ? $0 : joined "; " $0)
         }
         END { printf "%s", joined }
-      ' <"$diagnostic_file" 2>/dev/null || true)"
+      ' 2>/dev/null || true)"
       start_diagnostic="$(
         printf "%s" "$start_diagnostic" | redact_forward_start_diagnostic
       )"
