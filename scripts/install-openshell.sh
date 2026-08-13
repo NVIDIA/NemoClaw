@@ -6,8 +6,9 @@ set -euo pipefail
 
 # Exit codes consumed by the TypeScript lifecycle adapter. Keep these stable:
 # they are the machine-readable contract between formula presence, repair, and
-# the temporary Homebrew trust boundary. Raw Homebrew diagnostics are never
-# used to decide whether standalone ownership is safe.
+# the temporary Homebrew trust boundary. Raw Homebrew diagnostics never
+# authorize standalone startup while a formula or installed keg can retain
+# gateway lifecycle authority.
 readonly OPENSHELL_HOMEBREW_FORMULA_ABSENT=65
 readonly OPENSHELL_HOMEBREW_FORMULA_REPAIR=66
 readonly OPENSHELL_HOMEBREW_TRUST_FAILED=67

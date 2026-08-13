@@ -471,7 +471,7 @@ function runTrustedHomebrewFormulaOperation(
 
 const HOMEBREW_FORMULA_REPAIR_GUIDANCE =
   "OpenShell's Homebrew formula is installed but cannot satisfy NemoClaw's pinned checksum and temporary trust contract. " +
-  "Rerun scripts/install-openshell.sh, then rerun onboarding.";
+  "Run curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash, then rerun onboarding.";
 
 function throwHomebrewFormulaOperationFailure(operation: string, result: CommandResult): never {
   if (result.status === OPENSHELL_HOMEBREW_FORMULA_REPAIR) {
@@ -1472,7 +1472,7 @@ export async function startPackageManagedDockerDriverGateway({
     stopBeforeStandaloneFallback();
     const authorityMessage =
       "The installed OpenShell Homebrew formula remains lifecycle authority; " +
-      "repair its service or rerun scripts/install-openshell.sh before retrying onboarding.";
+      "run curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash before retrying onboarding.";
     if (exitOnFailure) process.exit(1);
     throw new OpenShellGatewayServiceTrustError(authorityMessage);
   }

@@ -116,7 +116,11 @@ An inability to grant or remove trust is a hard failure.
 If the service fails inspection, startup, shutdown, or its health check, NemoClaw prints the formula log command and stops so Homebrew remains lifecycle authority.
 A host without Homebrew, or with no staged formula and no installed OpenShell keg, uses the standalone macOS gateway.
 A legacy installation, missing pin, changed formula, failed Homebrew operation, or invalid official-tap identity stops with repair guidance instead of changing lifecycle authority.
-Rerunning `scripts/install-openshell.sh` downloads and stages the pinned formula before onboarding is retried.
+Rerunning the standard NemoClaw installer downloads and stages the pinned formula before onboarding is retried:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
 On both platforms, standalone startup requires exclusive ownership of the gateway port.
 A positively untrusted upstream package service is declined as described above.
 Trust failures in a marked NemoClaw service or Homebrew formula, and unsafe environment configuration, remain hard failures.
