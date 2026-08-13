@@ -22,10 +22,10 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest run --config vitest.config.ts",
-    "lint": "biome lint src",
-    "lint:fix": "biome lint --write src",
-    "format": "biome format --write src",
-    "format:check": "biome format src",
+    "lint": "oxlint src && oxlint --config ../oxlint.type-aware.config.ts src",
+    "lint:fix": "oxlint --fix src && oxlint --config ../oxlint.type-aware.config.ts src",
+    "format": "npm --prefix .. run format",
+    "format:check": "npm --prefix .. run format:check",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
     "check": "npm run lint && npm run format:check && npm run typecheck",
     "clean": "rm -rf dist/"
@@ -37,8 +37,10 @@
     "yaml": "2.8.3"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.14",
     "@types/node": "^22.0.0",
+    "oxfmt": "0.63.0",
+    "oxlint": "1.78.0",
+    "oxlint-tsgolint": "7.0.2001",
     "typescript": "6.0.3",
     "vitest": "^4.1.9"
   },

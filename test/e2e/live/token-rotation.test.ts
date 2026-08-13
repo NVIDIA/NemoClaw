@@ -290,7 +290,6 @@ async function destroyGatewayIfOpenshellExists(
   );
 }
 
-// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "messaging token rotation rebuilds only the changed provider and reuses unchanged credentials",
   {

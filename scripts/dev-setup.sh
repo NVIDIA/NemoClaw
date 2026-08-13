@@ -15,6 +15,8 @@ WARN_COUNT=0
 FAIL_COUNT=0
 OUTPUT_FORMAT="human"
 JSON_RESULTS=""
+NODE_HEAP_REMEDIATION_CLI="Run: NODE_OPTIONS=--max-old-space-size=5120 npm run typecheck:cli"
+NODE_HEAP_REMEDIATION_PLUGIN="Run: NODE_OPTIONS=--max-old-space-size=5120 npm --prefix nemoclaw run build"
 
 usage() {
   cat <<'EOF'
@@ -227,33 +229,40 @@ check_executable() {
   fi
 }
 
-check_quiet_command() {
+is_node_heap_oom_output() {
+  local output_file="$1"
+
+  grep -Eq \
+    "JavaScript heap out of memory|Ineffective mark-compacts near heap limit|Allocation failed - JavaScript heap out of memory" \
+    "${output_file}" 2>/dev/null
+}
+
+print_node_heap_oom_guidance() {
+  local remediation="$1"
+
+  printf 'Node.js exhausted its V8 heap while running this type check.\n' >&2
+  printf 'Next: %s\n' "${remediation}" >&2
+}
+
+check_quiet_command_with_heap_hint() {
   local label="$1"
   local remediation="$2"
-  local classification command_status matcher_status pipeline_result
-  local -a pipeline_status
-  shift 2
+  local heap_remediation="$3"
+  local output_file
+  shift 3
 
-  # Drain the complete stream and retain one classification word. This bounds
-  # shell memory and keeps command output out of the doctor report.
-  pipeline_result="$(
-    "$@" 2>&1 | awk '
-      index($0, "JavaScript heap out of memory") { found = 1 }
-      END { printf "%s", found ? "heap" : "other" }
-    '
-    pipeline_status=("${PIPESTATUS[@]}")
-    printf '|%s|%s' "${pipeline_status[0]}" "${pipeline_status[1]}"
-  )"
-  IFS='|' read -r classification command_status matcher_status <<<"${pipeline_result}"
-
-  if [ "${command_status}" = "0" ] && [ "${matcher_status}" = "0" ]; then
+  output_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-dev-doctor.XXXXXX")" || {
+    fail "${label}: failed" "${remediation}"
+    return
+  }
+  if "$@" >"${output_file}" 2>&1; then
+    rm -f "${output_file}"
     pass "${label}"
-  elif [ "${classification}" = "heap" ] && [ "${matcher_status}" = "0" ]; then
-    # Node.js derives its default old-space limit from host memory, so this
-    # reports the host size rather than a fault in the checked sources.
-    fail "${label}: ran out of Node.js heap" \
-      "Raise the limit, then rerun: export NODE_OPTIONS=--max-old-space-size=5120"
+  elif is_node_heap_oom_output "${output_file}"; then
+    rm -f "${output_file}"
+    fail "${label}: ran out of Node.js heap" "${heap_remediation}"
   else
+    rm -f "${output_file}"
     fail "${label}: failed" "${remediation}"
   fi
 }
@@ -332,6 +341,31 @@ run_setup_step() {
   return 1
 }
 
+run_setup_step_with_heap_hint() {
+  local label="$1"
+  local heap_remediation="$2"
+  local output_file
+  shift 2
+
+  printf '\n==> %s\n' "${label}"
+  output_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-dev-setup.XXXXXX")" || {
+    printf 'Setup stopped while attempting: %s\n' "${label}" >&2
+    return 1
+  }
+  if "$@" >"${output_file}" 2>&1; then
+    rm -f "${output_file}"
+    return 0
+  fi
+  if is_node_heap_oom_output "${output_file}"; then
+    print_node_heap_oom_guidance "${heap_remediation}"
+  else
+    cat "${output_file}" >&2
+  fi
+  rm -f "${output_file}"
+  printf 'Setup stopped while attempting: %s\n' "${label}" >&2
+  return 1
+}
+
 repair_repository() {
   local setup_failed=0 hooks_path
 
@@ -382,8 +416,10 @@ repair_repository() {
   run_setup_step "Build the CLI" npm run build:cli || return 1
   run_setup_step "Build and type-check the plugin" npm --prefix nemoclaw run build || return 1
   # Keep the explicit checks aligned with the broader pre-push and CI contracts.
-  run_setup_step "Type-check the CLI" npm run typecheck:cli || return 1
-  run_setup_step "Type-check the plugin without emitting files" \
+  run_setup_step_with_heap_hint "Type-check the CLI" "${NODE_HEAP_REMEDIATION_CLI}" \
+    npm run typecheck:cli || return 1
+  run_setup_step_with_heap_hint "Type-check the plugin without emitting files" \
+    "${NODE_HEAP_REMEDIATION_PLUGIN}" \
     "${REPO_ROOT}/nemoclaw/node_modules/.bin/tsc" --noEmit \
     -p "${REPO_ROOT}/nemoclaw/tsconfig.json" || return 1
   run_setup_step "Install repository Git hooks" "${REPO_ROOT}/node_modules/.bin/prek" install || return 1
@@ -612,11 +648,13 @@ run_doctor() {
     "Run: cd nemoclaw && npm run build" "${REPO_ROOT}/nemoclaw/src" \
     "${REPO_ROOT}/nemoclaw/tsconfig.json" "${REPO_ROOT}/nemoclaw/package.json"
   if [ -x "${root_tsc}" ]; then
-    check_quiet_command "CLI type check" "Run: npm run typecheck:cli" \
+    check_quiet_command_with_heap_hint "CLI type check" "Run: npm run typecheck:cli" \
+      "${NODE_HEAP_REMEDIATION_CLI}" \
       "${root_tsc}" -p "${REPO_ROOT}/tsconfig.cli.json"
   fi
   if [ -x "${plugin_tsc}" ]; then
-    check_quiet_command "Plugin type check" "Run: npm --prefix nemoclaw run build" \
+    check_quiet_command_with_heap_hint "Plugin type check" "Run: npm --prefix nemoclaw run build" \
+      "${NODE_HEAP_REMEDIATION_PLUGIN}" \
       "${plugin_tsc}" --noEmit -p "${REPO_ROOT}/nemoclaw/tsconfig.json"
   fi
 

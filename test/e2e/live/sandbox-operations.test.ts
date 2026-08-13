@@ -699,7 +699,6 @@ async function assertGatewayRecovery(
   return recoveryOutcome;
 }
 
-// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",
   {

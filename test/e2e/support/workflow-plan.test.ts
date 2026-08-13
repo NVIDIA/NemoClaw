@@ -139,6 +139,7 @@ describe("E2E workflow plan", () => {
     });
     expect(catalogueTarget("hermes-slack")).toEqual({
       id: "hermes-slack",
+      displayName: "Messaging: isolates Hermes Slack credentials and reaches Slack APIs",
       profile: "nvidia-inference",
       runner: "linux-amd64-cpu4",
       testFile: "test/e2e/live/hermes-slack-e2e.test.ts",
@@ -168,6 +169,7 @@ describe("E2E workflow plan", () => {
     });
     expect(catalogueTarget("openclaw-inference-switch")).toEqual({
       id: "openclaw-inference-switch",
+      displayName: "Inference: OpenClaw switches providers and remains responsive",
       profile: "standard",
       runner: "ubuntu-latest",
       testFile: "test/e2e/live/openclaw-inference-switch.test.ts",
@@ -197,6 +199,7 @@ describe("E2E workflow plan", () => {
     });
     expect(catalogueTarget("sandbox-operations")).toEqual({
       id: "sandbox-operations",
+      displayName: "Sandbox: preserves lifecycle and multi-sandbox operations",
       profile: "nvidia-inference",
       runner: "ubuntu-latest",
       testFile: "test/e2e/live/sandbox-operations.test.ts",
@@ -229,6 +232,7 @@ describe("E2E workflow plan", () => {
         }),
         expect.objectContaining({
           id: "hermes-slack",
+          display_name: "Messaging: isolates Hermes Slack credentials and reaches Slack APIs",
           runner: "linux-amd64-cpu4",
           test_file: "test/e2e/live/hermes-slack-e2e.test.ts",
         }),
@@ -254,7 +258,10 @@ describe("E2E workflow plan", () => {
       ]),
     );
     expect(plan.catalogueMatrices.standard).toContainEqual(
-      expect.objectContaining({ id: "openclaw-inference-switch" }),
+      expect.objectContaining({
+        id: "openclaw-inference-switch",
+        display_name: "Inference: OpenClaw switches providers and remains responsive",
+      }),
     );
     const retainedJobs = readFreeStandingJobsInventory().allowedJobs;
     for (const target of ["hermes-slack", "openclaw-inference-switch", "sandbox-operations"]) {
@@ -270,6 +277,44 @@ describe("E2E workflow plan", () => {
     expect(() => validateE2eTargetCatalogue([{ ...target, selector: "safe; sudo true" }])).toThrow(
       "invalid test selector",
     );
+  });
+
+  it("rejects malformed, implementation-derived, and duplicate display names", () => {
+    const networkPolicy = catalogueTarget("network-policy");
+    const cloudInference = catalogueTarget("cloud-inference");
+
+    expect(() =>
+      validateE2eTargetCatalogue([{ ...networkPolicy, displayName: "network-policy" }]),
+    ).toThrow("invalid or duplicate display name");
+    expect(() =>
+      validateE2eTargetCatalogue([
+        { ...networkPolicy, displayName: "E2E: validates issue #7912 live" },
+      ]),
+    ).toThrow("invalid or duplicate display name");
+    for (const displayName of [
+      "Network: enforces network-policy rules",
+      "Network: runs on ubuntu-latest",
+      "Network: validates issue-2478 recovery",
+    ]) {
+      expect(() => validateE2eTargetCatalogue([{ ...networkPolicy, displayName }])).toThrow(
+        "invalid or duplicate display name",
+      );
+    }
+    expect(() =>
+      validateE2eTargetCatalogue([
+        {
+          ...networkPolicy,
+          displayName: "Network: uses isolated-sandbox for policy checks",
+          environment: { NEMOCLAW_SANDBOX_NAME: "isolated-sandbox" },
+        },
+      ]),
+    ).toThrow("invalid or duplicate display name");
+    expect(() =>
+      validateE2eTargetCatalogue([
+        networkPolicy,
+        { ...cloudInference, displayName: networkPolicy.displayName },
+      ]),
+    ).toThrow("invalid or duplicate display name");
   });
 
   it("withholds credentialed catalogue profiles from PR candidate runs", () => {
