@@ -14,10 +14,10 @@
 | Declared license | `LGPL-3.0-only` |
 | Lifecycle scripts | None declared |
 
-NemoClaw executes this package only during contributor and CI lint checks. The package is not a
-production dependency. The `files` array in the root `package.json` does not include `tools/`, and
-`npm pack --dry-run --json --ignore-scripts` does not include the SonarJS package code.
-The locked npm cache seed generated from `nemoclaw/package-lock.json` does not include SonarJS.
+NemoClaw executes this package only during contributor and CI lint checks.
+The package is a root development dependency and is not included in production artifacts.
+`npm pack --dry-run --json --ignore-scripts` omits the SonarJS package code.
+The locked npm cache seed generated from `nemoclaw/package-lock.json` also omits SonarJS.
 
 Review this dependency again if any of these facts changes:
 
