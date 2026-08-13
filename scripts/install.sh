@@ -463,7 +463,7 @@ resolve_onboarded_agent() {
 }
 
 restore_onboard_forward_after_post_checks() {
-  local sandbox_name agent_name agent_display port openshell_bin openshell_dir attempt selected_state_dir state_dir pid_file watcher_script watcher_pid
+  local sandbox_name agent_name agent_display port openshell_bin openshell_dir attempt selected_state_dir state_dir pid_file watcher_script watcher_pid start_diagnostic diagnostic_file
   sandbox_name="$(resolve_default_sandbox_name)"
   agent_name="$(resolve_onboarded_agent)"
   agent_display="$(agent_display_name "$agent_name")"
@@ -532,12 +532,33 @@ restore_onboard_forward_after_post_checks() {
     fi
   }
 
+  start_diagnostic=""
+  diagnostic_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-forward-start-XXXXXX" 2>/dev/null)" \
+    || diagnostic_file=""
+
   for attempt in 1 2 3; do
     stop_agent_forward_if_owned
     if [ "$attempt" -gt 1 ]; then
       sleep 2
     fi
-    "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 || true
+    if [[ -n "$diagnostic_file" ]]; then
+      "$openshell_bin" forward start --background "$port" "$sandbox_name" \
+        >"$diagnostic_file" 2>&1 || true
+      start_diagnostic="$(awk '
+        {
+          gsub(/[[:space:]]+/, " ")
+          sub(/^ /, "")
+          sub(/ $/, "")
+          if ($0 != "") joined = (joined == "" ? $0 : joined "; " $0)
+        }
+        END { printf "%s", joined }
+      ' <"$diagnostic_file" 2>/dev/null || true)"
+      if [[ "${#start_diagnostic}" -gt 300 ]]; then
+        start_diagnostic="${start_diagnostic:0:300} [truncated]"
+      fi
+    else
+      "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 || true
+    fi
     watcher_pid=""
     if [[ "${NEMOCLAW_SKIP_FORWARD_WATCHER:-}" != "1" ]] && command_exists node; then
       watcher_script="${pid_file}.js"
@@ -552,10 +573,27 @@ function healthy() {
     stdio: "ignore",
   }).status === 0;
 }
+function listedStatus() {
+  const listed = spawnSync(openshellBin, ["forward", "list"], { encoding: "utf-8" });
+  if (listed.status !== 0 || typeof listed.stdout !== "string") return null;
+  for (const line of listed.stdout.split("\n")) {
+    const columns = line.trim().split(/\s+/);
+    if (columns[0] === sandboxName && columns[2] === port) {
+      return (columns[4] || "").toLowerCase();
+    }
+  }
+  return "";
+}
 function tick() {
   if (healthy()) return;
-  run(["forward", "stop", port, sandboxName]);
-  run(["forward", "start", "--background", port, sandboxName]);
+  const status = listedStatus();
+  if (status === null) return;
+  if (status === "dead") {
+    run(["forward", "stop", port, sandboxName]);
+    run(["forward", "start", "--background", port, sandboxName]);
+    return;
+  }
+  if (status === "") run(["forward", "start", "--background", port, sandboxName]);
 }
 tick();
 setInterval(tick, 10_000);
@@ -576,10 +614,12 @@ NODE
     sleep 4
     if command_exists curl \
       && curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+      [[ -n "$diagnostic_file" ]] && rm -f "$diagnostic_file"
       return 0
     fi
     watcher_pid="$(cat "$pid_file" 2>/dev/null || true)"
     if ! command_exists curl && [[ -n "$watcher_pid" ]] && kill -0 "$watcher_pid" >/dev/null 2>&1; then
+      [[ -n "$diagnostic_file" ]] && rm -f "$diagnostic_file"
       return 0
     fi
     if [[ -n "$watcher_pid" ]]; then
@@ -587,8 +627,12 @@ NODE
     fi
     rm -f "$pid_file"
   done
+  [[ -n "$diagnostic_file" ]] && rm -f "$diagnostic_file"
 
   warn "Could not restore ${agent_display} host forward on port ${port}."
+  if [[ -n "$start_diagnostic" ]]; then
+    warn "OpenShell reported: ${start_diagnostic:0:300}"
+  fi
   warn "Run: openshell forward start --background ${port} ${sandbox_name}"
   return 1
 }
