@@ -448,7 +448,8 @@ function validateGuardedProductionBuild(
     const requiredDefaultTrustFragments = [
       "set -euo pipefail",
       "docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 64 --memory 256m --entrypoint /bin/sh nemoclaw-hermes-production -eu -c",
-      'test "$NODE_EXTRA_CA_CERTS" = /usr/local/share/nemoclaw/corporate-ca.pem',
+      'test -z "${NODE_EXTRA_CA_CERTS:-}"',
+      'test -z "${CURL_CA_BUNDLE:-}"',
       "test ! -e /usr/local/share/nemoclaw/corporate-ca.pem",
       "test ! -L /usr/local/share/nemoclaw/corporate-ca.pem",
       "test -x /usr/local/bin/hermes",

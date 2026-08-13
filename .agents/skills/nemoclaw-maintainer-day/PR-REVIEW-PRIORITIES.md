@@ -57,7 +57,7 @@ The team follows a daily ship cycle. All maintainer skills operate within this r
 2. **During the day** (`/nemoclaw-maintainer-day`) — land PRs using the maintainer loop. Version labels make progress visible on dashboards.
 3. **Evening** (`/nemoclaw-maintainer-evening`) — Check shipped work and the pre-tag changelog PR.
    Confirm that the pre-tag changelog PR contains `docs/changelog/YYYY-MM-DD.mdx` for the release.
-   Identify open items and prepare the QA summary. Record the candidate SHA and passing `Release qualification` check.
+   Identify open items and prepare the QA summary. Record the candidate SHA and qualifying full manual `Release qualification` check that the release script accepts.
    Cut the tag after confirmation. Move open items to the next patch label and delete the released label.
    Prepare the Announcement.
 4. **Overnight** — A QA team in another time zone validates the tag.

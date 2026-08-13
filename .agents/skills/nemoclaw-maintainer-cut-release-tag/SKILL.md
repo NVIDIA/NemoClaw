@@ -40,7 +40,8 @@ The downstream scheduled reconciliation remains available if the event-driven di
 - Treat the dated MDX entry as the canonical release history. A conventional Release Notes page or post-tag Announcement draft cannot replace it.
 - If `origin/main` changes after plan generation, regenerate the plan before cutting the tag.
 - Before asking for release confirmation, satisfy the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence) for that commit.
-- Use a passing `Release qualification` check at the candidate SHA. Run full mode only when the candidate SHA has no passing check.
+- Use a passing `Release qualification` check from a full manual run at the candidate SHA.
+- Let `scripts/release-cut-tag.sh` perform the final canonical GitHub evidence check before a signing preflight or tag push.
 - Ask the maintainer to paste the confirmation phrase from the plan before cutting the tag.
 - Push only the semver tag (`vX.Y.Z`) from the agent-controlled step.
 - Never push `latest` or `lkg` from this skill.
@@ -123,38 +124,12 @@ Read the generated `plan.json` and show the maintainer:
 Unless Step 1 records an explicit waiver, verify that the plan's next tag matches the H2 version heading in the dated changelog entry at the candidate SHA.
 When the entry is waived, show the recorded waiver reason in the plan presentation and confirmation handoff instead.
 
-For the plan's full `origin/main` SHA, require a completed, successful `Release qualification` check from `.github/workflows/e2e.yaml`.
+For the plan's full `origin/main` SHA, require a completed, successful `Release qualification` check from a full manual `.github/workflows/e2e.yaml` run.
 The workflow planner derives the required jobs from the workflow's E2E metadata, and the check requires every result, including `Exact staging Brev Launchable`, to succeed.
+Push runs publish `Relevant E2E` and are not release evidence.
 Do not maintain a second release-gating list or rebuild GitHub job status from artifacts.
 
-Find successful E2E runs for the candidate SHA:
-
-```bash
-CANDIDATE_SHA="<full-plan-sha>"
-RUNS="$(gh run list \
-  --repo NVIDIA/NemoClaw \
-  --workflow e2e.yaml \
-  --branch main \
-  --commit "$CANDIDATE_SHA" \
-  --status success \
-  --limit 20 \
-  --json databaseId,headSha,status,conclusion,url)"
-```
-
-For each candidate run, fetch its latest jobs once and accept it only when:
-
-```bash
-gh api "repos/NVIDIA/NemoClaw/actions/runs/<run-id>/jobs?filter=latest&per_page=100"
-```
-
-- `headSha` equals the full plan candidate SHA;
-- the workflow status is `completed` and its conclusion is `success`; and
-- one job named `Release qualification` is completed with a `success` conclusion.
-
-Record the workflow URL and `Release qualification` job URL.
-A successful trusted push to `main` and a successful full manual run dispatched against `main` provide the same evidence.
-Do not accept a selective dispatch, a skipped check, or a check from another SHA.
-
+Use an existing qualifying full manual run for the candidate SHA when one exists.
 If no qualifying run exists, load `nemoclaw-maintainer-e2e` and dispatch one full run with:
 
 - empty selectors;
@@ -162,21 +137,29 @@ If no qualifying run exists, load `nemoclaw-maintainer-e2e` and dispatch one ful
 - `allow_jetson_dispatch=false`; and
 - `allow_dgx_spark_runner_queue=false`.
 
-Monitor the dispatched correlation ID with one bounded status query, then require its `Release qualification` job to succeed.
+Monitor the dispatched correlation ID with bounded status queries, then require its `Release qualification` job to succeed.
 
 Before showing the confirmation prompt, present the candidate SHA, workflow URL, and `Release qualification` job URL.
-Immediately before asking, refresh `origin/main` once and compare its full SHA with the plan.
-If it moved, discard the earlier check, regenerate the plan, and require a passing `Release qualification` check for the new SHA.
-This does not freeze `main` or prevent merges.
 No release-note-only delta exception is currently defined.
 
-Exercise the configured Git signing backend before asking for confirmation:
+Run the release script's signing preflight before asking for confirmation:
 
 ```bash
 npm run release:cut -- --plan <plan.json> --preflight-only
 ```
 
-Require status 0. This preflight creates and deletes one local temporary tag. It does not push a ref. Git selects the maintainer's configured OpenPGP, SSH, or X.509 signer.
+For the canonical `NVIDIA/NemoClaw` remote, the script first searches completed, successful manual `.github/workflows/e2e.yaml` runs at the exact planned commit.
+It accepts the first run with exactly one completed, successful `Release qualification` job.
+A run with zero or multiple jobs of that name is not evidence.
+The script fails closed when no qualifying run exists or GitHub cannot provide the evidence.
+Local fixture remotes skip this production gate only when tests set `NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL=1` and the shared classifier confirms a noncanonical origin.
+Canonical-equivalent `NVIDIA/NemoClaw` remotes always run the gate, even when that override is set.
+A local fixture cannot authorize a release.
+Require status 0.
+The preflight also creates and deletes one local temporary tag without pushing a ref.
+Git selects the maintainer's configured OpenPGP, SSH, or X.509 signer.
+If the script reports that `origin/main` moved, discard the earlier check, regenerate the plan, and require qualifying full manual E2E for the new SHA.
+This does not freeze `main` or prevent merges.
 
 Ask the maintainer to paste this phrase:
 
@@ -194,7 +177,9 @@ Run the cut script with the plan and the maintainer's phrase:
 npm run release:cut -- --plan <plan.json> --confirm "CONFIRM RELEASE vX.Y.Z <full-origin-main-sha>"
 ```
 
-The script verifies a clean worktree, unchanged `origin/main`, tag availability, target reachability, and remote peeled tag state, then creates and pushes the signed annotated tag using the configured signing key. It writes:
+The script verifies a clean worktree, unchanged origin remote and `origin/main`, canonical exact-SHA GitHub evidence, tag availability, target reachability, and remote peeled tag state.
+It then creates and pushes the signed annotated tag using the configured signing key.
+It writes:
 
 ```text
 <release-dir>/cut-result.json
@@ -312,7 +297,7 @@ If the Announcement is valid, return its URL with the release artifacts and mark
 - Planned changelog entry is missing or malformed: stop before plan generation and run the pre-tag `nemoclaw-contributor-update-docs` workflow. Use post-release recovery only when the tag already exists.
 - Full-mode E2E waits in the Launchable concurrency queue: keep the run pending until the earlier Launchable E2E job finishes.
 - Full-mode E2E ran for another SHA: reject the run and dispatch full mode for the plan candidate SHA.
-- `Release qualification` was skipped or failed: inspect the failed result and rerun the affected E2E work. Do not release without a passing check.
+- No qualifying `Release qualification` exists: inspect the GitHub result and run full E2E for the planned SHA only when no qualifying full run already exists. Do not release until the release script accepts the canonical check.
 - Launchable E2E or cleanup fails: inspect the diagnostic artifacts, correct the failure, and rerun the affected E2E work. Do not infer Launchable success from another workflow result.
 - `origin/main` moved after plan generation: regenerate the plan and ask for the new confirmation phrase.
 - Remote semver tag already exists: stop; do not retag unless the maintainer explicitly starts protected-tag remediation.
