@@ -157,16 +157,27 @@ file_flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, 'O_CLOEXEC', 0) | getattr
 
 def directory_metadata(fd):
     metadata = os.fstat(fd)
-    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_mode & 0o022:
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_gid != os.getegid()
+        or metadata.st_mode & 0o002
+    ):
         raise OSError('unsafe directory')
-    return (metadata.st_dev, metadata.st_ino, metadata.st_mode & 0o777)
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_uid,
+        metadata.st_gid,
+        metadata.st_mode & 0o7777,
+    )
 
 def file_metadata(fd):
     metadata = os.fstat(fd)
     if (
         not stat.S_ISREG(metadata.st_mode)
         or metadata.st_nlink != 1
-        or metadata.st_mode & 0o022
+        or metadata.st_gid != os.getegid()
+        or metadata.st_mode & 0o007
         or metadata.st_size < 1
         or metadata.st_size > MAX_ENTRY_BYTES
     ):
@@ -174,9 +185,11 @@ def file_metadata(fd):
     return (
         metadata.st_dev,
         metadata.st_ino,
+        metadata.st_uid,
+        metadata.st_gid,
         metadata.st_size,
         metadata.st_mtime_ns,
-        metadata.st_mode & 0o777,
+        metadata.st_mode & 0o7777,
     )
 
 def state_root_is_current(fd):
@@ -240,7 +253,15 @@ def read_entry(directory_fd, name):
                 raise OSError('entry too large')
         after = file_metadata(fd)
         current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-        if before != after or (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns, current.st_mode & 0o777) != after:
+        if before != after or (
+            current.st_dev,
+            current.st_ino,
+            current.st_uid,
+            current.st_gid,
+            current.st_size,
+            current.st_mtime_ns,
+            current.st_mode & 0o7777,
+        ) != after:
             raise OSError('entry changed')
         return b''.join(chunks), after
     finally:

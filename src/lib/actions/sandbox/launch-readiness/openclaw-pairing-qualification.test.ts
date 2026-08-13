@@ -45,8 +45,8 @@ def approval_request_decision(device):
 `;
 
 function writeJson(filePath: string, value: unknown): void {
-  fs.writeFileSync(filePath, `${JSON.stringify(value)}\n`, { mode: 0o600 });
-  fs.chmodSync(filePath, 0o600);
+  fs.writeFileSync(filePath, `${JSON.stringify(value)}\n`, { mode: 0o660 });
+  fs.chmodSync(filePath, 0o660);
 }
 
 function localScriptSpawn(
@@ -70,12 +70,12 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pairing-qualification-"));
     stateDirectory = path.join(root, ".openclaw");
-    fs.mkdirSync(path.join(stateDirectory, "devices"), { mode: 0o700, recursive: true });
-    fs.mkdirSync(path.join(stateDirectory, "identity"), { mode: 0o700, recursive: true });
+    fs.mkdirSync(path.join(stateDirectory, "devices"), { mode: 0o2770, recursive: true });
+    fs.mkdirSync(path.join(stateDirectory, "identity"), { mode: 0o2770, recursive: true });
     stateDirectory = fs.realpathSync(stateDirectory);
-    fs.chmodSync(stateDirectory, 0o700);
-    fs.chmodSync(path.join(stateDirectory, "devices"), 0o700);
-    fs.chmodSync(path.join(stateDirectory, "identity"), 0o700);
+    fs.chmodSync(stateDirectory, 0o2770);
+    fs.chmodSync(path.join(stateDirectory, "devices"), 0o2770);
+    fs.chmodSync(path.join(stateDirectory, "identity"), 0o2770);
     const publicKeyBytes = Buffer.alloc(32, 7);
     publicKey = publicKeyBytes.toString("base64url");
     deviceId = createHash("sha256").update(publicKeyBytes).digest("hex");
@@ -140,7 +140,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     );
   }
 
-  it("emits a credential-free qualification from stable OpenClaw-owned state (#9023)", () => {
+  it("emits a credential-free qualification from supported shared OpenClaw state (#9023)", () => {
     const qualification = observe();
     const serialized = JSON.stringify(qualification);
 
@@ -227,6 +227,10 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     [
       "unsafe paired permissions",
       () => fs.chmodSync(path.join(stateDirectory, "devices", "paired.json"), 0o666),
+    ],
+    [
+      "world-readable device credentials",
+      () => fs.chmodSync(path.join(stateDirectory, "identity", "device-auth.json"), 0o604),
     ],
     [
       "mismatched client credential",

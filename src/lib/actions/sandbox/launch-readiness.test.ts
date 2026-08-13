@@ -365,13 +365,13 @@ describe("launch readiness validation", () => {
   it("falls back when any exact OpenClaw pairing qualification value changes (#9023)", async () => {
     const currentDeps = await createAcceptedLease();
     const stored = publishedIdentity?.session;
-    if (!stored || stored.kind !== "openclaw-pairing")
-      throw new Error("missing test qualification");
+    expect(stored).toMatchObject({ kind: "openclaw-pairing" });
+    const qualification = stored as LaunchReadinessOpenClawSessionQualification;
     const changedQualifications: LaunchReadinessOpenClawSessionQualification[] = [
-      { ...stored, openclawVersion: "1.0.1" },
-      { ...stored, deviceIdentitySha256: "2".repeat(64) },
-      { ...stored, pairingStateSha256: "3".repeat(64) },
-      { ...stored, policySha256: "4".repeat(64) },
+      { ...qualification, openclawVersion: "1.0.1" },
+      { ...qualification, deviceIdentitySha256: "2".repeat(64) },
+      { ...qualification, pairingStateSha256: "3".repeat(64) },
+      { ...qualification, policySha256: "4".repeat(64) },
     ];
 
     for (const changed of changedQualifications) {
@@ -388,9 +388,9 @@ describe("launch readiness validation", () => {
   it("falls back when the OpenClaw gateway or lifecycle binding changes (#9023)", async () => {
     const currentDeps = await createAcceptedLease();
     const stored = publishedIdentity?.session;
-    if (!stored || stored.kind !== "openclaw-pairing")
-      throw new Error("missing test qualification");
-    currentDeps.observeOpenClawPairingQualification = () => stored;
+    expect(stored).toMatchObject({ kind: "openclaw-pairing" });
+    const qualification = stored as LaunchReadinessOpenClawSessionQualification;
+    currentDeps.observeOpenClawPairingQualification = () => qualification;
     currentDeps.fenceLease = () => ({
       ...fence(),
       gatewayName: sandbox.gatewayName ?? GATEWAY_NAME,
