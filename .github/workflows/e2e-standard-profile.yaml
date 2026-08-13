@@ -12,6 +12,12 @@ on:
       candidate_sha:
         required: true
         type: string
+      risk_signal_expected_sha:
+        required: true
+        type: string
+      risk_signal_correlation_id:
+        required: true
+        type: string
       cli_artifact_provenance:
         required: true
         type: string
@@ -69,6 +75,9 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/${{ inputs.target_id }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.candidate_sha }}
+      NEMOCLAW_E2E_CORRELATION_ID: ${{ inputs.risk_signal_correlation_id }}
+      NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA: ${{ inputs.risk_signal_expected_sha }}
+      NEMOCLAW_E2E_SHARD: default
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ inputs.candidate_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

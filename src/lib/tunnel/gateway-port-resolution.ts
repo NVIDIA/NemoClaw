@@ -16,6 +16,25 @@ function isValidPort(value: number | undefined): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
 }
 
+/**
+ * Parse an operator-set `NEMOCLAW_GATEWAY_PORT` (not the 8080 default).
+ * Returns null when unset, empty, or not a usable port integer.
+ */
+export function resolveExplicitGatewayPortEnv(env: NodeJS.ProcessEnv = process.env): number | null {
+  const raw = env.NEMOCLAW_GATEWAY_PORT;
+  if (raw === undefined) return null;
+  const trimmed = String(raw).trim();
+  if (trimmed === "" || !/^\d+$/.test(trimmed)) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) return null;
+  return parsed;
+}
+
+/** True when the operator set a usable NEMOCLAW_GATEWAY_PORT override. */
+export function hasExplicitGatewayPortEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  return resolveExplicitGatewayPortEnv(env) !== null;
+}
+
 export function makeGatewayDebug(env: NodeJS.ProcessEnv): (message: string) => void {
   const enabled = (env.NODE_DEBUG ?? "").includes("nemoclaw:gateway");
   return enabled ? (message: string) => console.error(`[nemoclaw:gateway] ${message}`) : () => {};
