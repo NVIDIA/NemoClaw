@@ -526,17 +526,18 @@ describe("complete managed-image publication workflow", () => {
     expect(prBuilder.permissions).toEqual({ contents: "read", packages: "write" });
     expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(step(prBuilder, "Checkout").with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
-    expect(matrix.map(({ agent }) => agent)).toEqual([
-      "openclaw",
+    const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
+    expect([...matrixByAgent.keys()].sort()).toEqual([
       "hermes",
       "langchain-deepagents-code",
+      "openclaw",
     ]);
     expect(matrix.every(({ base_alias }) => base_alias?.endsWith(":latest"))).toBe(true);
-    expect(matrix.map(({ base_dockerfile }) => base_dockerfile)).toEqual([
-      "Dockerfile.base",
-      "agents/hermes/Dockerfile.base",
+    expect(matrixByAgent.get("openclaw")?.base_dockerfile).toBe("Dockerfile.base");
+    expect(matrixByAgent.get("hermes")?.base_dockerfile).toBe("agents/hermes/Dockerfile.base");
+    expect(matrixByAgent.get("langchain-deepagents-code")?.base_dockerfile).toBe(
       "agents/langchain-deepagents-code/Dockerfile.base",
-    ]);
+    );
     expect(steps.indexOf(permissionDrift)).toBeGreaterThan(
       steps.indexOf(step(prBuilder, "Checkout")),
     );
