@@ -16,9 +16,15 @@ import { type ContextWindowDeps, resolveContextWindowForModel } from "./context-
 
 // The default deps reach ../runner through a lazy CJS require, so swap the
 // export on the loaded module instead of mocking the specifier.
+type CaptureStub = { stdout: string; exitCode: number | null; timedOut: boolean };
+
 const runner = require("../runner") as {
-  runCapture: (cmd: readonly string[], opts?: { ignoreError?: boolean }) => string;
+  runCaptureEx: (cmd: readonly string[]) => CaptureStub;
 };
+
+function captured(timedOut = false): CaptureStub {
+  return { stdout: "", exitCode: 0, timedOut };
+}
 
 function makeDeps(over: Partial<ContextWindowDeps> = {}): ContextWindowDeps {
   return {
@@ -91,34 +97,63 @@ describe("resolveContextWindowForModel", () => {
 });
 
 describe("resolveContextWindowForModel default deps (#8974)", () => {
-  const originalRunCapture = runner.runCapture;
+  const originalRunCaptureEx = runner.runCaptureEx;
 
   afterEach(() => {
-    runner.runCapture = originalRunCapture;
+    runner.runCaptureEx = originalRunCaptureEx;
   });
 
   it("ollama-local: runs the blocking probe command, not a backgrounded warm-up", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const captured: unknown[][] = [];
-    runner.runCapture = (cmd, opts) => {
-      captured.push([cmd, opts]);
-      return "";
+    const commands: string[][] = [];
+    runner.runCaptureEx = (cmd) => {
+      commands.push([...cmd]);
+      return captured();
     };
     vi.mocked(getOllamaProbeCommand).mockReturnValue(["curl", "ollama-probe"]);
     vi.mocked(resolveOllamaRuntimeContextWindow).mockReturnValue(16384);
 
     expect(resolveContextWindowForModel("ollama-local", "qwen3.5:9b")).toBe(16384);
     expect(getOllamaProbeCommand).toHaveBeenCalledWith("qwen3.5:9b");
-    expect(captured).toEqual([[["curl", "ollama-probe"], { ignoreError: true }]]);
+    expect(commands).toEqual([["curl", "ollama-probe"]]);
     expect(logSpy).toHaveBeenCalledWith("  Priming Ollama model: qwen3.5:9b");
+  });
+
+  it("ollama-local: retries the load at 300 s when the first probe times out", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    let attempts = 0;
+    runner.runCaptureEx = () => {
+      attempts += 1;
+      return captured(attempts === 1);
+    };
+    vi.mocked(getOllamaProbeCommand).mockReturnValue(["curl", "ollama-probe"]);
+    vi.mocked(resolveOllamaRuntimeContextWindow).mockReturnValue(16384);
+
+    expect(resolveContextWindowForModel("ollama-local", "qwen3.5:9b")).toBe(16384);
+    expect(attempts).toBe(2);
+    expect(getOllamaProbeCommand).toHaveBeenLastCalledWith("qwen3.5:9b", 300);
+  });
+
+  it("ollama-local: does not retry when the first probe fails without timing out", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    let attempts = 0;
+    runner.runCaptureEx = () => {
+      attempts += 1;
+      return captured();
+    };
+    vi.mocked(getOllamaProbeCommand).mockReturnValue(["curl", "ollama-probe"]);
+    vi.mocked(resolveOllamaRuntimeContextWindow).mockReturnValue(null);
+
+    expect(resolveContextWindowForModel("ollama-local", "qwen3.5:9b")).toBeNull();
+    expect(attempts).toBe(1);
   });
 
   it("ollama-local: reads the runtime window only after the model load returns", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const order: string[] = [];
-    runner.runCapture = () => {
+    runner.runCaptureEx = () => {
       order.push("load");
-      return "";
+      return captured();
     };
     vi.mocked(getOllamaProbeCommand).mockReturnValue(["curl", "ollama-probe"]);
     vi.mocked(resolveOllamaRuntimeContextWindow).mockImplementation(() => {

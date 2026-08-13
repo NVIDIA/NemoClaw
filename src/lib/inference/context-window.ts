@@ -16,6 +16,7 @@ import {
   getManagedVllmProviderBinding,
   getOllamaProbeCommand,
   probeVllmModels,
+  type RunCaptureExFn,
   type RunCaptureFn,
   resolveOllamaRuntimeContextWindow,
 } from "./local";
@@ -42,13 +43,17 @@ const defaultContextWindowDeps: ContextWindowDeps = {
   loadOllamaModel: (model: string): void => {
     // Lazy require: ../runner is CJS and a top-level require fails to resolve
     // under the test runner. Runs only for the real (non-injected) deps.
-    const { runCapture } = require("../runner") as { runCapture: RunCaptureFn };
+    const { runCaptureEx } = require("../runner") as { runCaptureEx: RunCaptureExFn };
     console.log(`  Priming Ollama model: ${model}`);
-    // Blocking probe. Onboarding runs the same command and waits for it, with
-    // an added 300 s retry this call site does not need. A backgrounded warm-up
-    // returns before the daemon has the model resident, and `/api/ps` then
-    // reports nothing to read the served window from.
-    runCapture(getOllamaProbeCommand(model), { ignoreError: true });
+    // Blocking probe, the command onboarding also waits for. A backgrounded
+    // warm-up returns before the daemon has the model resident, and `/api/ps`
+    // then reports nothing to read the served window from. Cold-loading a large
+    // model can exceed the 120 s default on unified-memory and tight-VRAM
+    // hosts, so retry once at 300 s as onboarding does. A fast failure such as
+    // connection-refused keeps `timedOut` false and skips the retry.
+    if (runCaptureEx(getOllamaProbeCommand(model)).timedOut) {
+      runCaptureEx(getOllamaProbeCommand(model, 300));
+    }
   },
   // currentContextWindow = null → always probe (we recompute on every switch
   // rather than honoring an unverifiable "user pinned it" guard).
