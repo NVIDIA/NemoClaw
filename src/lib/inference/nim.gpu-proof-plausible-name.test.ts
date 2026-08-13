@@ -293,6 +293,30 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
     ]);
   });
 
+  it("reports the absent kernel interface in the names-only unified-memory check (#9000)", () => {
+    const { reasons, onTrustGateRejection } = collectReasons();
+    const runCaptureImpl = vi.fn((command: readonly string[]) => {
+      if (isNvidiaSmiMemoryQuery(command)) return "";
+      if (command[0] === "nvidia-smi" && command.some((arg) => arg === "--query-gpu=name")) {
+        return "NVIDIA Orin\n";
+      }
+      return "";
+    });
+    onWsl2Arm64WithoutKernelInterface(() => {
+      expect(
+        detectGpu({
+          proveArm64WslDockerDesktopGpu: null,
+          runCaptureImpl,
+          isWsl: true,
+          onTrustGateRejection,
+        }),
+      ).toBeNull();
+    });
+    expect(reasons).toEqual([
+      "/proc/driver/nvidia is absent for the nvidia-smi names-only unified-memory check",
+    ]);
+  });
+
   it("reports a placeholder GPU name when its CUDA proof fails (#9000)", () => {
     const { reasons, onTrustGateRejection } = collectReasons();
     onWsl2Arm64WithoutKernelInterface(() => {

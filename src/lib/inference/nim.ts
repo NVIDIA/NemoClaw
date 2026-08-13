@@ -619,6 +619,15 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         : firmwareIsUnifiedMemory
           ? gpuNames
           : [];
+    if (
+      taggedNames.length > 0 &&
+      !firmwareIsUnifiedMemory &&
+      !allowTaggedOnGenericFirmware
+    ) {
+      deps.onTrustGateRejection?.(
+        "/proc/driver/nvidia is absent for the nvidia-smi names-only unified-memory check",
+      );
+    }
     if (unifiedGpuNames.length > 0) {
       const totalMemoryMB = readHostMemoryMB(runCaptureImpl);
       const count = unifiedGpuNames.length;

@@ -76,9 +76,7 @@ export interface FatalRuntimePreflightResult {
   sandboxGpuConfig: SandboxGpuConfig;
   // Which trust-gate check rejected the newest GPU detection, so preflight can
   // name the failed check instead of the bare "no GPU detected" (#9000).
-  // Absent when detection found a GPU, never ran the trust gate, or rejected
-  // rows through a filter that records no reason (the primary plausible-name
-  // filter, or the fallback trust-tier check on unified-memory-tagged names).
+  // Absent when detection found a GPU or did not reject an nvidia-smi report.
   gpuTrustGateRejection?: string;
 }
 
