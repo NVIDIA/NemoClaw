@@ -1563,7 +1563,7 @@ enabled_openshell_gateway_user_service_activation_path() {
   local config_dirs data_dirs directory
   local -a unit_roots=()
   if [[ -n "${SYSTEMD_UNIT_PATH:-}" ]]; then
-    printf 'SYSTEMD_UNIT_PATH=%s\n' "$SYSTEMD_UNIT_PATH"
+    printf 'SYSTEMD_UNIT_PATH=%q\n' "$SYSTEMD_UNIT_PATH"
     return 2
   fi
   user_config_home="$(openshell_user_config_home)"

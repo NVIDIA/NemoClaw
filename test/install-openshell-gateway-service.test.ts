@@ -493,7 +493,7 @@ describe("install.sh OpenShell gateway service", () => {
 
   it("fails closed when SYSTEMD_UNIT_PATH overrides the unit search path (#8926)", () => {
     const home = makeTempRoot();
-    const systemdUnitPath = path.join(home, "custom-systemd", "user");
+    const systemdUnitPath = `${path.join(home, "custom-systemd", "user")}\nspoofed-log-line`;
     const systemctl = writeUpstreamSystemctlStub(home, {
       diagnostic: "Failed to connect to bus: No medium found",
       status: 1,
@@ -512,7 +512,9 @@ describe("install.sh OpenShell gateway service", () => {
     );
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain(`SYSTEMD_UNIT_PATH=${systemdUnitPath}`);
+    expect(result.stderr).toContain("SYSTEMD_UNIT_PATH=");
+    expect(result.stderr).toContain("\\nspoofed-log-line");
+    expect(result.stderr).not.toContain("\nspoofed-log-line");
     expect(result.stdout).not.toContain("existing standalone gateway");
   });
 
