@@ -111,8 +111,8 @@ jobs:
       CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
       # Retains the reviewed discovery-permission repair and the current
       # managed-image security inventory. The previous staging source pinned
-      # Vim 9.2.0782, which cannot satisfy the candidate's 9.2.0858 contract.
-      STAGING_QA_SOURCE_SHA: af2a73f0d6ce8f08a2975560f376470387c535d0
+      # libssh2 nemoclaw1, which cannot satisfy the candidate's nemoclaw2 contract.
+      STAGING_QA_SOURCE_SHA: ce96811ddb418ad01c040521a1fe912b5bcb405e
       STAGING_QA_BASE_IMAGE: nemoclaw-deepagents-code-base:staging-31396519688
       STAGING_QA_FINAL_IMAGE: nemoclaw-managed-pr/langchain-deepagents-code-staging-qa
     steps:
