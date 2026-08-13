@@ -129,6 +129,15 @@ describe("standard E2E execution profile boundary", () => {
     checkout.with!["persist-credentials"] = true;
     const auth = steps.find((step) => step.name === "Authenticate to Docker Hub")!;
     auth.with!["auth-required"] = "${{ !inputs.trusted_main && '1' || '0' }}";
+    const hostDependencies = steps.find(
+      (step) => step.name === "Install target host dependencies",
+    )!;
+    hostDependencies.uses =
+      "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@0000000000000000000000000000000000000000";
+    const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+    const hostDependenciesIndex = steps.indexOf(hostDependencies);
+    steps.splice(hostDependenciesIndex, 1);
+    steps.splice(prepareIndex + 1, 0, hostDependencies);
     const execute = steps.find((step) => step.name === "Run catalogue E2E target")!;
     execute.run = "npm test";
     execute.env = {
@@ -148,6 +157,8 @@ describe("standard E2E execution profile boundary", () => {
           "standard E2E profile checkout action must use a full commit SHA",
           "standard E2E profile must check out the exact candidate without credentials",
           "standard E2E profile Docker Hub auth-required must be guarded by trusted_main",
+          "standard E2E profile must install only the planned host packages with the reviewed action",
+          "standard E2E profile must install host dependencies before workspace prep",
           "standard E2E profile must run the planned catalogue target with guarded secrets",
           "standard E2E profile must set NEMOCLAW_E2E_EXPECTED_SHA",
           "standard E2E profile must always upload artifacts with the reviewed action",

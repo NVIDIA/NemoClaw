@@ -200,51 +200,6 @@ describe("e2e workflow boundary", () => {
     );
   });
 
-  it("keeps the retained network-policy live probes isolated with cleanup reserve (#7617)", () => {
-    const workflow = readWorkflow() as {
-      jobs: Record<
-        string,
-        {
-          env: Record<string, unknown>;
-          steps: Array<{ name?: string; run?: string; with?: Record<string, unknown> }>;
-          strategy: {
-            "fail-fast": boolean;
-            matrix: { include: Array<Record<string, string>> };
-          };
-          "timeout-minutes": number;
-        }
-      >;
-    };
-    const job = workflow.jobs["network-policy"]!;
-    const source = fs.readFileSync("test/e2e/live/network-policy.test.ts", "utf8");
-    expect(source).toContain("const TEST_TIMEOUT_MS = 65 * 60_000;");
-
-    job["timeout-minutes"] = 65;
-    job.strategy["fail-fast"] = true;
-    job.strategy.matrix.include.pop();
-    job.env.E2E_ARTIFACT_DIR = "${{ github.workspace }}/e2e-artifacts/live/network-policy";
-    delete job.env.NEMOCLAW_E2E_SHARD;
-    delete job.env.NEMOCLAW_SANDBOX_NAME;
-    const run = job.steps.find((step) => step.name === "Run network-policy live test")!;
-    run.run = run.run!.replace('--selector "${{ matrix.selector }}"', "--selector all");
-    const upload = job.steps.find((step) => step.name === "Upload network-policy artifacts")!;
-    delete upload.with;
-
-    expect(validateE2eWorkflow(workflow)).toEqual(
-      expect.arrayContaining([
-        "network-policy scenario jobs must keep the 90 minute timeout",
-        "network-policy scenario matrix must disable fail-fast",
-        "network-policy job must keep only the isolated live-probes scenario",
-        "network-policy job must isolate artifacts by matrix.scenario",
-        "network-policy job must bind NEMOCLAW_E2E_SHARD to matrix.scenario",
-        "network-policy job must bind its sandbox name to matrix.sandbox",
-        `step 'Run network-policy live test' run script must include --selector "\${{ matrix.selector }}"`,
-        "network-policy upload-e2e-artifacts invocation must not override its contract",
-        "network-policy upload-e2e-artifacts must preserve its explicit name/path contract",
-      ]),
-    );
-  });
-
   it("keeps common-egress scenarios isolated with bounded concurrency and cleanup reserve", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
@@ -572,37 +527,6 @@ describe("e2e workflow boundary", () => {
     }
   });
 
-  it("starts hosted OpenClaw proofs in the first wave after matrix generation", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = readWorkflow() as {
-      jobs: Record<string, { needs?: string | string[] }>;
-    };
-    const serializedDependencies = {
-      "openclaw-tui-chat-correlation": [
-        "generate-matrix",
-        "token-rotation",
-        "channels-stop-start",
-        "full-e2e",
-      ],
-    };
-
-    for (const [jobName, dependencies] of Object.entries(serializedDependencies)) {
-      workflow.jobs[jobName]!.needs = dependencies;
-    }
-    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-    try {
-      expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
-        expect.arrayContaining([
-          "openclaw-tui-chat-correlation job must depend on generate-matrix",
-        ]),
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
   // source-shape-contract: security -- Mutates the shipped workflow to prove artifact uploads reject unmanaged temporary paths
   it("rejects free-standing E2E artifact uploads from raw temp paths", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
@@ -641,7 +565,7 @@ describe("e2e workflow boundary", () => {
     () => {
       expect(
         evaluateE2eWorkflowDispatchSelectors({
-          targets: "network-policy,../escape",
+          targets: "brave-search,../escape",
         }),
       ).toMatchObject({
         valid: false,
@@ -650,44 +574,44 @@ describe("e2e workflow boundary", () => {
       });
       expect(
         evaluateE2eWorkflowDispatchSelectors({
-          jobs: "network-policy",
-          targets: "network-policy",
+          jobs: "brave-search",
+          targets: "brave-search",
         }),
       ).toMatchObject({
         valid: true,
         liveTargetsRun: false,
-        selectedFreeStandingJobs: ["network-policy"],
+        selectedFreeStandingJobs: ["brave-search"],
         registryTargets: [],
       });
       expect(
         evaluateE2eWorkflowDispatchSelectors({
-          jobs: "network-policy",
+          jobs: "brave-search",
           targets: "ubuntu-repo-cloud-langchain-deepagents-code",
         }),
       ).toMatchObject({
         valid: true,
         liveTargetsRun: true,
-        selectedFreeStandingJobs: ["network-policy"],
+        selectedFreeStandingJobs: ["brave-search"],
         registryTargets: ["ubuntu-repo-cloud-langchain-deepagents-code"],
       });
       expect(
         evaluateE2eWorkflowDispatchSelectors({
-          targets: "network-policy",
+          targets: "brave-search",
         }),
       ).toMatchObject({
         valid: true,
         liveTargetsRun: false,
-        selectedFreeStandingJobs: ["network-policy"],
+        selectedFreeStandingJobs: ["brave-search"],
         registryTargets: [],
       });
       expect(
         evaluateE2eWorkflowDispatchSelectors({
-          targets: "network-policy,ubuntu-repo-cloud-openclaw",
+          targets: "brave-search,ubuntu-repo-cloud-openclaw",
         }),
       ).toMatchObject({
         valid: true,
         liveTargetsRun: true,
-        selectedFreeStandingJobs: ["network-policy"],
+        selectedFreeStandingJobs: ["brave-search"],
         registryTargets: ["ubuntu-repo-cloud-openclaw"],
       });
       for (const [legacy, canonical] of [

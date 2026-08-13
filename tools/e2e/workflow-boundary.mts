@@ -242,15 +242,6 @@ const MATRIX_ROUTED_JOB_RUNNER_EXPRESSIONS = {
   "security-posture":
     "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('security-posture-{0}', matrix.agent)] }}",
 } as const;
-const NETWORK_POLICY_SCENARIO_MATRIX = {
-  include: [
-    {
-      scenario: "live-probes",
-      selector: "^network-policy:.+probes$",
-      sandbox: "e2e-net-policy",
-    },
-  ],
-} as const;
 const COMMON_EGRESS_AGENT_SCENARIO_MATRIX = {
   include: [
     {
@@ -1104,15 +1095,6 @@ function validateFreeStandingJobSelector(
   }
 }
 
-function validateGatewayGuardRecoveryJob(errors: string[], jobs: WorkflowRecord): void {
-  const job = asRecord(jobs["gateway-guard-recovery"]);
-  if (Object.keys(job).length === 0) return;
-  const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
-    errors.push("gateway-guard-recovery job must enable hosted-compatible inference mode");
-  }
-}
-
 function validateInferenceRoutingJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "inference-routing";
   const steps = asSteps(asRecord(jobs[jobName]).steps);
@@ -1422,174 +1404,6 @@ function validateSkillAgentJob(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, runVitest, "export OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/skill-agent.test.ts");
-}
-
-function validateNetworkPolicyJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "network-policy";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing network-policy job");
-    return;
-  }
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("network-policy job must run on ubuntu-latest");
-  }
-  if (job["timeout-minutes"] !== 90) {
-    errors.push("network-policy scenario jobs must keep the 90 minute timeout");
-  }
-  if (job.needs !== "generate-matrix") {
-    errors.push("network-policy job must depend on generate-matrix");
-  }
-  validateFreeStandingJobSelector(errors, jobs, jobName, "network-policy");
-  if (job.name !== "Network policy (${{ matrix.scenario }})") {
-    errors.push("network-policy job name must identify matrix.scenario");
-  }
-  const strategy = asRecord(job.strategy);
-  if (strategy["fail-fast"] !== false) {
-    errors.push("network-policy scenario matrix must disable fail-fast");
-  }
-  if (!isDeepStrictEqual(asRecord(strategy.matrix), NETWORK_POLICY_SCENARIO_MATRIX)) {
-    errors.push("network-policy job must keep only the isolated live-probes scenario");
-  }
-
-  const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("network-policy job must set NEMOCLAW_RUN_LIVE_E2E=1");
-  }
-  if (
-    jobEnv.E2E_ARTIFACT_DIR !==
-    "${{ github.workspace }}/e2e-artifacts/live/network-policy/${{ matrix.scenario }}"
-  ) {
-    errors.push("network-policy job must isolate artifacts by matrix.scenario");
-  }
-  if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
-    errors.push("network-policy job must point NEMOCLAW_CLI_BIN at the repo CLI");
-  }
-  if (jobEnv.NEMOCLAW_E2E_SHARD !== "${{ matrix.scenario }}") {
-    errors.push("network-policy job must bind NEMOCLAW_E2E_SHARD to matrix.scenario");
-  }
-  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "${{ matrix.sandbox }}") {
-    errors.push("network-policy job must bind its sandbox name to matrix.sandbox");
-  }
-  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
-    errors.push("network-policy job must force OPENSHELL_GATEWAY=nemoclaw");
-  }
-  for (const secret of [
-    "NVIDIA_INFERENCE_API_KEY",
-    "DOCKERHUB_USERNAME",
-    "DOCKERHUB_TOKEN",
-    "GITHUB_TOKEN",
-  ]) {
-    requireEnvDoesNotExposeSecret(errors, "network-policy job", jobEnv, secret);
-  }
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    const stepName = step.name ?? step.uses ?? "<unnamed>";
-    const stepEnv = asRecord(step.env);
-    if (step.name !== "Run network-policy live test") {
-      requireEnvDoesNotExposeSecret(
-        errors,
-        `network-policy step '${stepName}'`,
-        stepEnv,
-        "NVIDIA_INFERENCE_API_KEY",
-      );
-    }
-    if (step.name !== "Authenticate to Docker Hub") {
-      requireEnvDoesNotExposeSecret(
-        errors,
-        `network-policy step '${stepName}'`,
-        stepEnv,
-        "DOCKERHUB_USERNAME",
-      );
-      requireEnvDoesNotExposeSecret(
-        errors,
-        `network-policy step '${stepName}'`,
-        stepEnv,
-        "DOCKERHUB_TOKEN",
-      );
-    }
-    requireEnvDoesNotExposeSecret(
-      errors,
-      `network-policy step '${stepName}'`,
-      stepEnv,
-      "GITHUB_TOKEN",
-    );
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("network-policy job missing checkout step");
-  requireFullShaAction(errors, checkout, "network-policy checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("network-policy checkout step must set persist-credentials=false");
-  }
-
-  validateHostDependencyActionStep(
-    errors,
-    jobName,
-    steps,
-    "Install network-policy host dependencies",
-    ["expect"],
-  );
-
-  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
-  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
-  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
-  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
-  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
-  requireRunContains(errors, installOpenShell, "-u NVIDIA_INFERENCE_API_KEY");
-  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
-
-  const runVitest = requireJobStep(errors, jobName, steps, "Run network-policy live test");
-  const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push("network-policy live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets");
-  }
-  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
-  requireRunContains(errors, runVitest, "test/e2e/live/network-policy.test.ts");
-  requireRunContains(errors, runVitest, '--selector "${{ matrix.selector }}"');
-}
-
-function validateIssue4434HostDependencies(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "issue-4434-tui-unreachable-inference";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push(`workflow missing ${jobName} job`);
-    return;
-  }
-  validateHostDependencyActionStep(
-    errors,
-    jobName,
-    asSteps(job.steps),
-    "Install issue #4434 host dependencies",
-    ["expect", "iptables"],
-  );
-}
-
-function validateOpenclawTuiChatCorrelationHostDependencies(
-  errors: string[],
-  jobs: WorkflowRecord,
-): void {
-  const jobName = "openclaw-tui-chat-correlation";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push(`workflow missing ${jobName} job`);
-    return;
-  }
-  const steps = asSteps(job.steps);
-  validateHostDependencyActionStep(
-    errors,
-    jobName,
-    steps,
-    "Install OpenClaw TUI host dependencies",
-    ["expect"],
-  );
-  const install = requireJobStep(errors, jobName, steps, "Install OpenClaw TUI host dependencies");
-  const prepare = requireJobStep(errors, jobName, steps, "Prepare E2E workspace");
-  if (install && prepare && steps.indexOf(install) >= steps.indexOf(prepare)) {
-    errors.push(`${jobName} host dependencies must be installed before workspace prep`);
-  }
 }
 
 function validateCommonEgressAgentJob(errors: string[], jobs: WorkflowRecord): void {
@@ -3736,21 +3550,10 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateHermesE2EJob(errors, jobs);
   validateHermesTimeoutHeadroom(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "hermes-discord", "hermes-discord");
-  validateNetworkPolicyJob(errors, jobs);
   validateCommonEgressAgentJob(errors, jobs);
   validateRebuildHermesJob(errors, jobs, { staleBase: false });
   validateRebuildHermesJob(errors, jobs, { staleBase: true });
   validateTokenRotationJob(errors, jobs);
-  validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery", "gateway-guard-recovery");
-  validateGatewayGuardRecoveryJob(errors, jobs);
-  validateFreeStandingJobSelector(
-    errors,
-    jobs,
-    "issue-4434-tui-unreachable-inference",
-    "issue-4434-tui-unreachable-inference",
-  );
-  validateIssue4434HostDependencies(errors, jobs);
-  validateOpenclawTuiChatCorrelationHostDependencies(errors, jobs);
   errors.push(...validateSandboxOperationsWorkflow({ jobs }));
   validateFreeStandingJobSelector(
     errors,

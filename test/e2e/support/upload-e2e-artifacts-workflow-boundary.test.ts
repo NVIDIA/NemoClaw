@@ -105,7 +105,7 @@ describe("upload-e2e-artifacts workflow boundary", () => {
   it("rejects checkout-local, direct, and unreviewed remote upload actions", () => {
     const workflow = mutableWorkflow();
     uploadStep(workflow.jobs["inference-routing"]).uses = LOCAL_UPLOAD_ACTION;
-    uploadStep(workflow.jobs["network-policy"]).uses = DIRECT_UPLOAD_ACTION;
+    uploadStep(workflow.jobs["brave-search"]).uses = DIRECT_UPLOAD_ACTION;
     uploadStep(workflow.jobs["shared-e2e"]).uses =
       "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@main";
 
@@ -113,8 +113,8 @@ describe("upload-e2e-artifacts workflow boundary", () => {
       expect.arrayContaining([
         "inference-routing must not load upload-e2e-artifacts from the target checkout",
         "inference-routing must use upload-e2e-artifacts exactly once",
-        "network-policy must not invoke actions/upload-artifact directly",
-        "network-policy must use upload-e2e-artifacts exactly once",
+        "brave-search must not invoke actions/upload-artifact directly",
+        "brave-search must use upload-e2e-artifacts exactly once",
         "shared-e2e must use the reviewed immutable upload-e2e-artifacts reference",
         "shared-e2e must use upload-e2e-artifacts exactly once",
       ]),
@@ -197,12 +197,11 @@ describe("upload-e2e-artifacts workflow boundary", () => {
 
   it("rejects default, explicit-exception, caller-key, and caller-if drift", () => {
     const workflow = mutableWorkflow();
-    const defaultJob = workflow.jobs["gateway-guard-recovery"];
-    uploadStep(defaultJob).with = { name: "e2e-gateway-guard-recovery" };
+    const defaultJob = workflow.jobs["brave-search"];
+    uploadStep(defaultJob).with = { name: "e2e-brave-search" };
     defaultJob.env!.E2E_TARGET_ID = "not a selector id";
 
     uploadStep(workflow.jobs["hermes-slack"]).with!.path = "e2e-artifacts/live/hermes-slack/";
-    uploadStep(workflow.jobs["network-policy"]).with!.name = "e2e-network-policy";
     uploadStep(workflow.jobs["common-egress-agent"]).with!.name = "e2e-common-egress-agent";
     uploadStep(workflow.jobs["mcp-bridge"]).if = "always()";
     uploadStep(workflow.jobs["openshell-gateway-auth-contract"]).if = "always()";
@@ -210,18 +209,17 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     workflow.jobs["shared-e2e"].env!.E2E_EXECUTION_PROFILE = "credential-free";
     workflow.jobs["shared-e2e"].env!.E2E_JOB = "1";
     workflow.jobs["shared-e2e"].env!.E2E_TARGET_ID = "shared-e2e";
-    const orderedJob = workflow.jobs["network-policy"];
+    const orderedJob = workflow.jobs["brave-search"];
     const orderedUpload = uploadStep(orderedJob);
     orderedJob.steps!.splice(orderedJob.steps!.indexOf(orderedUpload), 1);
     orderedJob.steps!.unshift(orderedUpload);
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toEqual(
       expect.arrayContaining([
-        "gateway-guard-recovery upload-e2e-artifacts invocation must not override its contract",
-        "gateway-guard-recovery upload-e2e-artifacts must use the action defaults",
-        "gateway-guard-recovery default upload caller must declare a valid E2E_TARGET_ID",
+        "brave-search upload-e2e-artifacts invocation must not override its contract",
+        "brave-search upload-e2e-artifacts must use the action defaults",
+        "brave-search default upload caller must declare a valid E2E_TARGET_ID",
         "hermes-slack upload-e2e-artifacts must preserve its explicit name/path contract",
-        "network-policy upload-e2e-artifacts must preserve its explicit name/path contract",
         "common-egress-agent upload-e2e-artifacts must preserve its explicit name/path contract",
         "mcp-bridge upload-e2e-artifacts invocation must remain gated by its reviewed pre-upload checks",
         "openshell-gateway-auth-contract upload-e2e-artifacts invocation must remain gated by its reviewed pre-upload checks",
@@ -229,7 +227,7 @@ describe("upload-e2e-artifacts workflow boundary", () => {
         "shared-e2e must not declare E2E_JOB",
         "shared-e2e upload-e2e-artifacts invocation must not override its contract",
         "shared-e2e default upload caller E2E_TARGET_ID must be '${{ matrix.id }}'",
-        "network-policy upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup",
+        "brave-search upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup",
       ]),
     );
   });
@@ -249,14 +247,14 @@ describe("upload-e2e-artifacts workflow boundary", () => {
 
   it("derives execution jobs even when a marker and its upload disappear together", () => {
     const workflow = mutableWorkflow();
-    const removedJob = workflow.jobs["gateway-guard-recovery"];
+    const removedJob = workflow.jobs["brave-search"];
     delete removedJob.env!.E2E_JOB;
     removedJob.steps = removedJob.steps!.filter(
       (step) => step.uses !== UPLOAD_E2E_ARTIFACTS_ACTION,
     );
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
-      "gateway-guard-recovery must use upload-e2e-artifacts exactly once",
+      "brave-search must use upload-e2e-artifacts exactly once",
     );
   });
 });
