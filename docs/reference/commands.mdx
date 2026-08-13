@@ -1037,6 +1037,20 @@ During that lease, another `launch` still verifies these conditions:
 - The recorded inference selection matches the live route, and `inference.local` returns HTTP 2xx from its semantic probe when inference is configured. This is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 - The agent runtime and its required host-side forwards pass their semantic health checks.
 
+<AgentOnly variant="openclaw">
+
+For OpenClaw, `connect --probe-only` also settles the existing allowlisted pairing flow before it publishes the lease.
+The readiness evidence binds the OpenClaw version and trusted registry and agent manifest configuration.
+Its credential-free pairing qualification binds the canonical CLI client, exact paired device identity, required operator role and scopes, owning OpenShell gateway, sandbox lifecycle identity, and fixed lease epoch.
+Before accepting that evidence, `launch` makes a bounded, read-only observation of the current OpenClaw-owned pairing state through the owning OpenShell gateway.
+It skips the complete pairing approval pass only when the evidence still matches exactly and no relevant allowlisted request is pending.
+Missing, unreadable, malformed, ambiguous, or changed pairing evidence runs the complete pairing approval pass.
+A relevant allowlisted pending request also runs that complete path, so late scope requests remain eligible for approval.
+
+</AgentOnly>
+
+Hermes and LangChain Deep Agents Code retain their existing session setup on the lease-accepted path.
+
 After these checks pass, `launch` can skip duplicate recovery, readiness polling, and inference-route repair.
 The lease does not replace a health check or authorize repair.
 For missing, expired, malformed, inaccessible, mismatched, or unhealthy evidence, NemoClaw fences any prior acceptable evidence before it runs the complete preflight.

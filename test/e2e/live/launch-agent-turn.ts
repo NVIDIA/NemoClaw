@@ -89,12 +89,15 @@ response_start="$(wc -c <"$capture")"
 printf '%s\r' "$NEMOCLAW_LAUNCH_PROMPT" >&3
 
 reply_seen=0
-has_exact_reply() {
+normalized_response() {
   tail -c "+$((response_start + 1))" "$capture" \
+    | sed -E $'s/\x1B][^\x07\x1B]*(\x07|\x1B\\\\)//g' \
     | sed -E $'s/\x1B\\[[0-?]*[ -\\/]*[@-~]//g' \
     | tr '\r' '\n' \
-    | LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' \
-    | awk -v expected="$NEMOCLAW_LAUNCH_EXPECTED_REPLY" '
+    | LC_ALL=C tr -d '\000-\010\013\014\016-\037\177'
+}
+has_exact_reply() {
+  normalized_response | awk -v expected="$NEMOCLAW_LAUNCH_EXPECTED_REPLY" '
         {
           line = $0
           sub(/^[[:space:]]+/, "", line)
@@ -103,6 +106,20 @@ has_exact_reply() {
         }
         END { exit found ? 0 : 1 }
       '
+}
+has_post_reply_ready() {
+  normalized_response | awk \
+    -v expected="$NEMOCLAW_LAUNCH_EXPECTED_REPLY" \
+    -v ready="$NEMOCLAW_LAUNCH_READY_TEXT" '
+      {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        if (line == expected) reply = 1
+        if (reply && index(line, ready) != 0) found = 1
+      }
+      END { exit found ? 0 : 1 }
+    '
 }
 for _ in {1..180}; do
   if has_exact_reply; then
@@ -114,6 +131,24 @@ for _ in {1..180}; do
   fi
   sleep 1
 done
+
+if [[ "$reply_seen" = 1 && -n "$NEMOCLAW_LAUNCH_READY_TEXT" ]]; then
+  post_reply_ready_seen=0
+  for _ in {1..60}; do
+    if has_post_reply_ready; then
+      post_reply_ready_seen=1
+      break
+    fi
+    if ! kill -0 "$session_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$post_reply_ready_seen" != 1 ]]; then
+    echo "launch did not return to the expected TUI state after the reply" >&2
+    exit 1
+  fi
+fi
 
 if [[ -n "$NEMOCLAW_LAUNCH_EXIT_COMMAND" ]]; then
   printf '%s\r' "$NEMOCLAW_LAUNCH_EXIT_COMMAND" >&3
