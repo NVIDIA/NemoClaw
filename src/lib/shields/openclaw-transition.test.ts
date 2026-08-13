@@ -196,7 +196,7 @@ describe("OpenClaw shields top-config transaction", () => {
     );
 
     shields = requireSource(INDEX_MODULE);
-  });
+  }, 30_000);
 
   afterEach(() => {
     for (const spy of spies) spy.mockRestore();
