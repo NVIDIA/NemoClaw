@@ -2977,7 +2977,8 @@ preinstall_backup_and_retire_legacy_gateway() {
 # 5. Onboard
 # ---------------------------------------------------------------------------
 
-# Authorize the sudo commands that follow, preferring passwordless sudo.
+# Authorize the sudo commands that follow, preferring passwordless sudo, and
+# print the sudo invocation the caller must use.
 #
 # `sudo -v` validates the user's credentials rather than a specific command, so
 # on hosts whose sudoers mix a password-based entry (Ubuntu's %sudo group) with
@@ -2985,11 +2986,40 @@ preinstall_backup_and_retire_legacy_gateway() {
 # runs passwordless. Callers with no terminal to answer that prompt — the deploy
 # notebook, CI — stall there instead of repairing the spec (NVBug 6570793).
 #
-# Probe with `sudo -n true` first and prompt only when a terminal can answer,
-# matching the TTY-aware sudo prefix in src/lib/onboard/ollama-systemd.ts.
+# A successful `sudo -n true` probe proves only that `true` is passwordless and
+# caches no credentials, so a command-specific sudoers entry can still prompt on
+# the systemctl/mkdir/nvidia-ctk calls that follow. Print `sudo -n` in that case
+# so those calls fail instead of stalling mid-repair — the same contract as
+# NEMOCLAW_NON_INTERACTIVE_SUDO_MODE's default. After an answered `sudo -v` a
+# terminal demonstrably exists, so print plain `sudo`; that keeps the repair
+# working where sudoers sets timestamp_timeout=0 and caches nothing.
+#
+# Terminal availability follows the installer's existing model — stdin when it
+# is a TTY, else /dev/tty when it can be opened — so the documented
+# `curl … | bash` install still prompts instead of skipping the repair.
+# The printed invocation is this function's only stdout; anything else it emits
+# must go to stderr or the caller would run it as a command.
 authorize_sudo() {
-  sudo -n true >/dev/null 2>&1 && return 0
-  [[ -t 0 ]] && sudo -v
+  if sudo -n true >/dev/null 2>&1; then
+    printf 'sudo -n'
+    return 0
+  fi
+  if [ -t 0 ]; then
+    sudo -v >&2 || return 1
+    printf 'sudo'
+    return 0
+  fi
+  if { exec 3</dev/tty; } 2>/dev/null; then
+    info "Installer stdin is piped; authorizing sudo on /dev/tty..." >&2
+    if ! sudo -v <&3 >&2; then
+      exec 3<&-
+      return 1
+    fi
+    exec 3<&-
+    printf 'sudo'
+    return 0
+  fi
+  return 1
 }
 
 repair_installer_stale_nvidia_cdi_spec() {
@@ -3009,13 +3039,14 @@ repair_installer_stale_nvidia_cdi_spec() {
     return 0
   fi
   if [[ "$(id -u)" -ne 0 ]]; then
-    sudo_cmd=(sudo)
+    local authorized_sudo=""
     info "You may be asked for your password to authorize these host-level admin changes."
     info "NemoClaw does not store your password."
-    if ! authorize_sudo; then
+    if ! authorized_sudo="$(authorize_sudo)"; then
       warn "Could not obtain sudo credentials for NVIDIA CDI refresh service repair."
       return 0
     fi
+    read -r -a sudo_cmd <<<"$authorized_sudo"
   fi
   if "${sudo_cmd[@]}" systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service >/dev/null 2>&1 \
     && "${sudo_cmd[@]}" systemctl start nvidia-cdi-refresh.service >/dev/null 2>&1; then
@@ -3092,13 +3123,14 @@ repair_installer_nvidia_cdi_spec() {
   info "NemoClaw will first enable NVIDIA's CDI refresh service."
   info "If that service does not generate the spec, NemoClaw will run nvidia-ctk cdi generate directly."
   if [[ "$(id -u)" -ne 0 ]]; then
-    sudo_cmd=(sudo)
+    local authorized_sudo=""
     info "You may be asked for your password to authorize these host-level admin changes."
     info "NemoClaw does not store your password."
-    if ! authorize_sudo; then
+    if ! authorized_sudo="$(authorize_sudo)"; then
       warn "Could not obtain sudo credentials for NVIDIA CDI device spec generation."
       return 0
     fi
+    read -r -a sudo_cmd <<<"$authorized_sudo"
   fi
 
   local cdi_list_output=""
