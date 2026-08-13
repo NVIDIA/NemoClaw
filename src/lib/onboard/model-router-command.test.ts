@@ -121,7 +121,9 @@ describe("model-router venv disk-space gate (#8973)", () => {
       relativeVenvDir: "relative-model-router-venv",
     });
 
-    expect(() => provisioner.ensureModelRouterCommand()).toThrow(/needs at least 3 GiB free/);
+    expect(() => provisioner.ensureModelRouterCommand()).toThrow(
+      /needs at least 3 GiB of free or reclaimable capacity/,
+    );
     expect(probeStorage).toHaveBeenCalledWith(
       path.resolve("relative-model-router-venv"),
       "Model Router venv",
@@ -180,7 +182,9 @@ describe("model-router venv disk-space gate (#8973)", () => {
     });
     fs.mkdirSync(venvDir, { recursive: true });
 
-    expect(() => provisioner.ensureModelRouterCommand()).toThrow(/needs at least 3 GiB free/);
+    expect(() => provisioner.ensureModelRouterCommand()).toThrow(
+      /needs at least 3 GiB of free or reclaimable capacity/,
+    );
     expect(measureDirectorySize).not.toHaveBeenCalled();
     expect(prepareModelRouterVenv).not.toHaveBeenCalled();
   });
