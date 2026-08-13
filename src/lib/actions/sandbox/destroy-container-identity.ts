@@ -139,8 +139,22 @@ export function classifyDestroyContainerIdentity(
     };
   }
 
+  const managedMissingLabels = managed.filter((row) => !row.workspace || !row.sandboxId);
+  if (managedMissingLabels.length > 0) {
+    return {
+      status: "ambiguous",
+      sandboxName,
+      reason:
+        `${String(managedMissingLabels.length)} managed container(s) for '${sandboxName}' are ` +
+        `missing a required '${OPENSHELL_SANDBOX_WORKSPACE_LABEL}' or '${OPENSHELL_SANDBOX_ID_LABEL}' ` +
+        "label, so the identity cannot be proven",
+      foreign,
+      managed,
+    };
+  }
+
   const workspaces = new Set(managed.map((row) => row.workspace));
-  const sandboxIds = new Set(managed.map((row) => row.sandboxId).filter(Boolean));
+  const sandboxIds = new Set(managed.map((row) => row.sandboxId));
   if (workspaces.size > 1 || sandboxIds.size > 1) {
     return {
       status: "ambiguous",
@@ -163,7 +177,8 @@ export function formatAmbiguousDestroyIdentity(
 ): string[] {
   const describe = (row: SandboxNameLabeledContainer): string =>
     `${row.id.slice(0, 12)} (${OPENSHELL_MANAGED_BY_LABEL}=${row.managedBy || "<none>"}, ` +
-    `${OPENSHELL_SANDBOX_WORKSPACE_LABEL}=${row.workspace || "<none>"})`;
+    `${OPENSHELL_SANDBOX_WORKSPACE_LABEL}=${row.workspace || "<none>"}, ` +
+    `${OPENSHELL_SANDBOX_ID_LABEL}=${row.sandboxId || "<none>"})`;
   const lines = [
     `Refusing to destroy sandbox '${verdict.sandboxName}': ${verdict.reason}.`,
     "Destroy fails closed because the sandbox-name no longer identifies a single container, " +
@@ -176,7 +191,7 @@ export function formatAmbiguousDestroyIdentity(
     lines.push(`  Managed sandbox container: ${describe(row)}`);
   }
   lines.push(
-    "Remove or relabel the unexpected container(s), then re-run " +
+    "Inspect, remove, or relabel the conflicting container(s), then re-run " +
       `'${cliName} ${verdict.sandboxName} destroy --yes'.`,
   );
   return lines;

@@ -115,14 +115,14 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
     expect(classify).not.toHaveBeenCalled();
   });
 
-  it("proceeds but warns when the Docker probe cannot prove identity", () => {
+  it("fails closed when the Docker probe cannot prove identity (#8999)", () => {
     const warn = vi.fn();
     const proceed = assertUnambiguousDestroyContainerIdentity("destroytest", {
       getSandbox: vi.fn(() => dockerSandbox) as never,
       classify: vi.fn(() => ({ status: "probe-failed" as const, detail: "daemon down" })) as never,
       warn,
     });
-    expect(proceed).toBe(true);
+    expect(proceed).toBe(false);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("daemon down"));
   });
 

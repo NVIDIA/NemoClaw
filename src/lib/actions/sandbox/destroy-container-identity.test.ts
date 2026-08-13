@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   classifyDestroyContainerIdentity,
+  type DestroyContainerIdentityVerdict,
   formatAmbiguousDestroyIdentity,
 } from "./destroy-container-identity";
 
@@ -20,6 +21,20 @@ function fakeDockerRun(rows: Row[], status = 0): { status: number; stdout: strin
     .map((r) => [r.id, r.managedBy ?? "", r.workspace ?? "", r.sandboxId ?? ""].join("\t"))
     .join("\n");
   return { status, stdout };
+}
+
+// Narrowing assertion helpers keep test bodies linear (no branching): they
+// assert the verdict shape and let TypeScript narrow the union afterwards.
+function expectAmbiguous(
+  verdict: DestroyContainerIdentityVerdict,
+): asserts verdict is Extract<DestroyContainerIdentityVerdict, { status: "ambiguous" }> {
+  expect(verdict.status).toBe("ambiguous");
+}
+
+function expectProbeFailed(
+  verdict: DestroyContainerIdentityVerdict,
+): asserts verdict is Extract<DestroyContainerIdentityVerdict, { status: "probe-failed" }> {
+  expect(verdict.status).toBe("probe-failed");
 }
 
 const MANAGED = {
@@ -52,8 +67,7 @@ describe("classifyDestroyContainerIdentity", () => {
     // sandbox-name label with a different workspace and no managed marker.
     const dockerRun = vi.fn(() => fakeDockerRun([MANAGED, FOREIGN]));
     const verdict = classifyDestroyContainerIdentity("destroytest", { dockerRun });
-    expect(verdict.status).toBe("ambiguous");
-    if (verdict.status !== "ambiguous") throw new Error("unreachable");
+    expectAmbiguous(verdict);
     expect(verdict.foreign).toHaveLength(1);
     expect(verdict.foreign[0].id).toBe(FOREIGN.id);
     expect(verdict.managed).toHaveLength(1);
@@ -63,8 +77,7 @@ describe("classifyDestroyContainerIdentity", () => {
   it("refuses a foreign-only match with no managed container behind it", () => {
     const dockerRun = vi.fn(() => fakeDockerRun([FOREIGN]));
     const verdict = classifyDestroyContainerIdentity("destroytest", { dockerRun });
-    expect(verdict.status).toBe("ambiguous");
-    if (verdict.status !== "ambiguous") throw new Error("unreachable");
+    expectAmbiguous(verdict);
     expect(verdict.managed).toHaveLength(0);
     expect(verdict.foreign).toHaveLength(1);
   });
@@ -77,8 +90,7 @@ describe("classifyDestroyContainerIdentity", () => {
       ]),
     );
     const verdict = classifyDestroyContainerIdentity("destroytest", { dockerRun });
-    expect(verdict.status).toBe("ambiguous");
-    if (verdict.status !== "ambiguous") throw new Error("unreachable");
+    expectAmbiguous(verdict);
     expect(verdict.reason).toContain("workspace");
   });
 
@@ -92,11 +104,35 @@ describe("classifyDestroyContainerIdentity", () => {
     expect(classifyDestroyContainerIdentity("destroytest", { dockerRun }).status).toBe("ambiguous");
   });
 
+  it("refuses a managed container missing its sandbox-id label (identity unprovable) (#8999)", () => {
+    // A second same-name row that is managed and in the same workspace but has
+    // no sandbox-id must not be waved through as a single clear identity: the
+    // blank label used to be filtered out before the uniqueness check.
+    const dockerRun = vi.fn(() =>
+      fakeDockerRun([
+        MANAGED,
+        { id: "dddd000000000000", managedBy: "openshell", workspace: "default", sandboxId: "" },
+      ]),
+    );
+    const verdict = classifyDestroyContainerIdentity("destroytest", { dockerRun });
+    expectAmbiguous(verdict);
+    expect(verdict.reason).toContain("missing a required");
+    expect(verdict.managed).toHaveLength(2);
+  });
+
+  it("refuses a lone managed container missing its workspace label (#8999)", () => {
+    const dockerRun = vi.fn(() =>
+      fakeDockerRun([{ id: "eeee000000000000", managedBy: "openshell", workspace: "", sandboxId: "sb-real" }]),
+    );
+    const verdict = classifyDestroyContainerIdentity("destroytest", { dockerRun });
+    expectAmbiguous(verdict);
+    expect(verdict.reason).toContain("missing a required");
+  });
+
   it("does not block when the Docker probe fails (ambiguity unprovable)", () => {
     const dockerRun = vi.fn(() => ({ status: 1, stdout: "", stderr: "Cannot connect to daemon" }));
     const verdict = classifyDestroyContainerIdentity("destroytest", { dockerRun });
-    expect(verdict.status).toBe("probe-failed");
-    if (verdict.status !== "probe-failed") throw new Error("unreachable");
+    expectProbeFailed(verdict);
     expect(verdict.detail).toContain("daemon");
   });
 
@@ -118,15 +154,17 @@ describe("classifyDestroyContainerIdentity", () => {
 });
 
 describe("formatAmbiguousDestroyIdentity", () => {
-  it("names the refusal, both container roles, and the recovery step", () => {
+  it("names the refusal, both container roles with sandbox-id, and neutral recovery", () => {
     const verdict = classifyDestroyContainerIdentity("destroytest", {
       dockerRun: () => fakeDockerRun([MANAGED, FOREIGN]),
     });
-    if (verdict.status !== "ambiguous") throw new Error("expected ambiguous verdict");
+    expectAmbiguous(verdict);
     const lines = formatAmbiguousDestroyIdentity(verdict, "nemoclaw").join("\n");
     expect(lines).toContain("Refusing to destroy sandbox 'destroytest'");
     expect(lines).toContain("Unexpected container:");
     expect(lines).toContain("Managed sandbox container:");
+    expect(lines).toContain("sandbox-id=sb-real");
+    expect(lines).toContain("Inspect, remove, or relabel the conflicting container");
     expect(lines).toContain("nemoclaw destroytest destroy --yes");
   });
 });

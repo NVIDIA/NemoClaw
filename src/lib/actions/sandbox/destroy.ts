@@ -478,8 +478,9 @@ export type AssertUnambiguousDestroyIdentityDeps = {
  * silently remove the real sandbox: the name alone can no longer prove which
  * container is meant, so the only safe action is to refuse (#8999). The check
  * is Docker-only — Podman lifecycle enforces exact single-container identity in
- * its own resolver — and a probe that cannot reach Docker is non-blocking so a
- * normal destroy is never wedged by an unreachable daemon.
+ * its own resolver. A probe that cannot reach Docker also fails closed: the
+ * lower layer can still delete through the gateway, so an unverifiable identity
+ * must not be allowed to proceed.
  *
  * Returns `true` when destroy may proceed and `false` when it was refused.
  */
@@ -501,11 +502,14 @@ export function assertUnambiguousDestroyContainerIdentity(
     return false;
   }
   if (verdict.status === "probe-failed") {
-    // Ambiguity can neither be proven nor ruled out; proceed under the
-    // destroy's existing lower-layer guards rather than wedge a normal destroy.
+    // Identity can neither be proven nor ruled out, and the lower layer can
+    // still delete through the gateway — so fail closed rather than destroy a
+    // target we cannot identify (#8999).
     warn(
-      `Could not verify container identity for '${sandboxName}' before destroy: ${verdict.detail}`,
+      `Refusing to destroy '${sandboxName}': could not verify container identity before ` +
+        `destroy: ${verdict.detail}. Ensure Docker is reachable, then re-run.`,
     );
+    return false;
   }
   return true;
 }
