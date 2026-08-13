@@ -108,7 +108,7 @@ describe("agent definitions", () => {
     };
     expect(restore?.merge).toBe("key-allowlist");
     expect(restore?.user_keys).toEqual([
-      { key: "theme", type: "string", maxLength: 128 },
+      { key: "theme", type: "string", max_length: 128 },
       { key: "hideThinkingBlock", type: "boolean" },
       { key: "showCacheMissNotices", type: "boolean" },
       { key: "quietStartup", type: "boolean" },
