@@ -15,7 +15,10 @@ import type { GatewaySelectResult } from "./gateway-select";
 import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
 export { buildSandboxExecStdio, shouldInheritSandboxExecStdin } from "./exec-stdio";
-export { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
+export {
+  wrapExecCommandWithRuntimeEnv,
+  wrapOpenClawAgentCommandWithRuntimeEnv,
+} from "./runtime-env";
 
 export type SandboxExecOptions = {
   workdir?: string;
