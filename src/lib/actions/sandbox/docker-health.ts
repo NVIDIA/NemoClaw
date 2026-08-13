@@ -16,7 +16,7 @@ export interface SandboxDockerHealth {
 
 /**
  * Combined Docker runtime view for a docker-driver sandbox container: the
- * HEALTHCHECK signal plus whether the container is paused (`docker pause`).
+ * HEALTHCHECK signal plus whether the container is running or paused (`docker pause`).
  * A paused container can surface upstream as `Phase: Error` even though the
  * sandbox is intact, so `status` reads `paused` to print a recovery hint
  * without rewriting the authoritative phase. See #4495.
@@ -24,6 +24,7 @@ export interface SandboxDockerHealth {
 export interface SandboxDockerRuntime {
   health: DockerHealthState;
   paused: boolean;
+  running: boolean;
   containerName: string | null;
 }
 
@@ -110,12 +111,12 @@ function normalizePausedState(raw: string): boolean {
 
 /**
  * Resolve an OpenShell-labeled docker-driver sandbox container across all states
- * and read both its HEALTHCHECK state and `.State.Paused` flag. Label-scoped
- * discovery matches the ownership boundary enforced by `start`; preferring its
- * running rows preserves paused-container guidance before falling back to an
- * exited container that `start` can recover (#7222). Returns `health: "none",
- * paused: false` when the sandbox is not on the docker driver or no owned
- * container is found. See #4495.
+ * and read its HEALTHCHECK state, running state, and `.State.Paused` flag.
+ * Label-scoped discovery matches the ownership boundary enforced by `start`;
+ * preferring its running rows preserves paused-container guidance before
+ * falling back to an exited container that `start` can recover (#7222).
+ * Returns `health: "none"`, `paused: false`, and `running: false` when the
+ * sandbox is not on the docker driver or no owned container is found. See #4495.
  */
 export function getSandboxDockerRuntime(
   sandboxName: string,
@@ -124,16 +125,16 @@ export function getSandboxDockerRuntime(
   const deps: ResolveDeps = { ...defaultDeps, ...depsOverride };
   try {
     if (deps.getSandbox(sandboxName)?.openshellDriver !== "docker") {
-      return { health: "none", paused: false, containerName: null };
+      return { health: "none", paused: false, running: false, containerName: null };
     }
   } catch {
-    return { health: "none", paused: false, containerName: null };
+    return { health: "none", paused: false, running: false, containerName: null };
   }
   let labeledContainers: ReturnType<typeof findLabeledSandboxContainers>;
   try {
     labeledContainers = deps.findLabeledSandboxContainers(sandboxName);
   } catch {
-    return { health: "none", paused: false, containerName: null };
+    return { health: "none", paused: false, running: false, containerName: null };
   }
   const runningNames = labeledContainers
     .filter((container) => container.running)
@@ -149,7 +150,12 @@ export function getSandboxDockerRuntime(
       ...deps,
       dockerPsNames: () => allNames,
     });
-  if (!containerName) return { health: "none", paused: false, containerName: null };
+  if (!containerName) {
+    return { health: "none", paused: false, running: false, containerName: null };
+  }
+  const running = labeledContainers.some(
+    (container) => container.name === containerName && container.running,
+  );
   let health: DockerHealthState;
   try {
     health = normalizeHealthState(deps.dockerInspectHealth(containerName));
@@ -162,5 +168,5 @@ export function getSandboxDockerRuntime(
   } catch {
     paused = false;
   }
-  return { health, paused, containerName };
+  return { health, paused, running, containerName };
 }

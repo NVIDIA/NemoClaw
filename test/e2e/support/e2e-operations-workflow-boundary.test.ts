@@ -78,8 +78,34 @@ describe("E2E operations workflow boundary", testTimeoutOptions(15_000), () => {
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "release-qualification needs must exactly match report-to-pr needs",
-        "release-qualification must run only for trusted pushes or full manual runs against main",
+        "release-qualification must run only for a full manual run against main",
         "release-qualification must evaluate planner-selected jobs from needs",
+      ]),
+    );
+  });
+
+  it("pins the relevant E2E aggregate to the trusted push result set (#7912)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const job = workflow.jobs["relevant-e2e"];
+    job.if = "${{ always() }}";
+    job.needs = ["generate-matrix"];
+    job.permissions = { contents: "write" };
+    const checkout = job.steps!.find((step) => step.name === "Check out the E2E result evaluator")!;
+    checkout.uses = "actions/checkout@v7";
+    checkout.with!["sparse-checkout-cone-mode"] = true;
+    const requireResults = job.steps!.find(
+      (step) => step.name === "Require every selected E2E result",
+    )!;
+    requireResults.run = "true";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "relevant-e2e needs must exactly match report-to-pr needs",
+        "relevant-e2e must be the stable aggregate check for main pushes",
+        "relevant-e2e permissions must be contents: read",
+        "relevant-e2e checkout must pin its action to a full SHA",
+        "relevant-e2e must check out only the trusted evaluator",
+        "relevant-e2e must evaluate planner-selected jobs from needs",
       ]),
     );
   });
@@ -213,23 +239,15 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("does not activate generic GPU risk reporting for an automatic main push", () => {
+  it("keeps catalogue-owned GPU targets out of the handwritten workflow jobs", () => {
     const workflow = readE2eOperationsWorkflow();
-    workflow.jobs["llama-cpp-generic-gpu"]!.env!.NEMOCLAW_E2E_EXPECTED_SHA =
-      "${{ inputs.checkout_sha || github.sha }}";
+    workflow.jobs["llama-cpp-generic-gpu"] = {
+      name: "Duplicated catalogue target",
+      steps: [],
+    };
 
     expect(validateE2eWorkflow(workflow)).toContain(
-      "llama-cpp-generic-gpu job must set NEMOCLAW_E2E_EXPECTED_SHA to ${{ inputs.checkout_sha }}",
-    );
-  });
-
-  it("retains generic GPU candidate identity for main and manual PR runs", () => {
-    const workflow = readE2eOperationsWorkflow();
-    workflow.jobs["llama-cpp-generic-gpu"]!.env!.NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA =
-      "${{ inputs.checkout_sha }}";
-
-    expect(validateE2eWorkflow(workflow)).toContain(
-      "llama-cpp-generic-gpu job must set NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA to ${{ inputs.checkout_sha || github.sha }}",
+      "llama-cpp-generic-gpu must run through the catalogue execution profile",
     );
   });
 

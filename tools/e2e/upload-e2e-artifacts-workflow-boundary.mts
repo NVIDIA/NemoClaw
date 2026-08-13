@@ -218,13 +218,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
-    "shields-config",
-    {
-      name: "e2e-shields-config",
-      path: "e2e-artifacts/live/shields-config/\n",
-    },
-  ],
-  [
     "security-posture",
     {
       name: "e2e-security-posture-${{ matrix.agent }}",
