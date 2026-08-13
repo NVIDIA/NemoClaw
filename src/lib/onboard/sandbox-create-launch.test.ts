@@ -86,11 +86,14 @@ describe("buildSandboxRuntimeEnvArgs", () => {
       const envArgs = buildSandboxRuntimeEnvArgs({
         ...base,
         agent: { name: agentName, configPaths: { dir: "/sandbox/.openclaw" } } as any,
-        hermesApiPort: agentName === "hermes" ? 8642 : null,
+        hermesApiPort: agentName === "hermes" ? 8647 : null,
       }).envArgs;
       expect(envArgs, `${agentName} should receive the sandbox name`).toContain(
         "NEMOCLAW_SANDBOX_NAME=my-assistant",
       );
+      if (agentName === "hermes") {
+        expect(envArgs).toContain("NEMOCLAW_HERMES_API_PORT=8647");
+      }
     }
   });
 

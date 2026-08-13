@@ -52,20 +52,23 @@ export async function ensureAgentDashboardForward(options: {
     return 0;
   }
 
-  const declaredPrimaryPort = getAgentPrimaryForwardPort(agent, DASHBOARD_PORT);
-  const usesFixedApiPort = agent.dashboard?.kind === "api";
-  const agentDashboardPort =
-    !usesFixedApiPort && isValidForwardPort(controlUiPort) ? controlUiPort : declaredPrimaryPort;
-  const optionalDashboardPort =
-    usesFixedApiPort && agent.dashboardUi && isValidForwardPort(controlUiPort)
-      ? controlUiPort
-      : null;
   // The manifest names the agent's default API port. This sandbox owns its own,
   // so forward the allocated port instead of the sibling sandbox's default.
   const resolveDeclaredPort = (port: number): number =>
     port === HERMES_OPENAI_API_PORT
       ? (hermesApiPort ?? resolveOnboardHermesApiPort(sandboxName, { warn }))
       : port;
+  const declaredPrimaryPort = getAgentPrimaryForwardPort(agent, DASHBOARD_PORT);
+  const usesFixedApiPort = agent.dashboard?.kind === "api";
+  const agentDashboardPort = usesFixedApiPort
+    ? resolveDeclaredPort(declaredPrimaryPort)
+    : isValidForwardPort(controlUiPort)
+      ? controlUiPort
+      : declaredPrimaryPort;
+  const optionalDashboardPort =
+    usesFixedApiPort && agent.dashboardUi && isValidForwardPort(controlUiPort)
+      ? controlUiPort
+      : null;
   const declaredPorts = getAgentDeclaredForwardPorts(agent)
     .filter((port) => port !== declaredPrimaryPort || port === agentDashboardPort)
     .map(resolveDeclaredPort);

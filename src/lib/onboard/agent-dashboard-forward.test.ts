@@ -158,7 +158,7 @@ describe("ensureAgentDashboardForward", () => {
     expect(process.env.CHAT_UI_URL).toBe("https://hermes.example.test:9120/ui");
   });
 
-  it("keeps an API-kind agent on its declared primary port", async () => {
+  it("forwards an API-kind agent on the sandbox-owned primary port", async () => {
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "") => {
       return Number(new URL(chatUiUrl).port);
     });
@@ -172,15 +172,20 @@ describe("ensureAgentDashboardForward", () => {
           forward_ports: [8642],
         },
         ensureDashboardForward,
-        hermesApiPort: 8642,
+        hermesApiPort: 8647,
         chatUiUrl: "http://127.0.0.1:9120",
         controlUiPort: 9120,
       }),
-    ).toBe(8642);
+    ).toBe(8647);
 
-    expect(ensureDashboardForward).toHaveBeenCalledWith("api-agent", "http://127.0.0.1:8642", {
-      preserveSandboxPorts: [8642],
+    expect(ensureDashboardForward).toHaveBeenCalledWith("api-agent", "http://127.0.0.1:8647", {
+      preserveSandboxPorts: [8647],
     });
+    expect(ensureDashboardForward).not.toHaveBeenCalledWith(
+      "api-agent",
+      "http://127.0.0.1:8642",
+      expect.anything(),
+    );
     expect(process.env.CHAT_UI_URL).toBeUndefined();
   });
 
