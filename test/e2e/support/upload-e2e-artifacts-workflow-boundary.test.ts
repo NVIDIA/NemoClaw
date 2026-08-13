@@ -175,13 +175,13 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     missingJob.steps = missingJob.steps!.filter(
       (step) => step.uses !== UPLOAD_E2E_ARTIFACTS_ACTION,
     );
-    const duplicateJob = workflow.jobs["cloud-inference"];
+    const duplicateJob = workflow.jobs["inference-routing"];
     duplicateJob.steps!.push({ ...uploadStep(duplicateJob) });
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toEqual(
       expect.arrayContaining([
         "shared-e2e must use upload-e2e-artifacts exactly once",
-        "cloud-inference must use upload-e2e-artifacts exactly once",
+        "inference-routing must use upload-e2e-artifacts exactly once",
       ]),
     );
   });
@@ -197,14 +197,13 @@ describe("upload-e2e-artifacts workflow boundary", () => {
 
   it("rejects default, explicit-exception, caller-key, and caller-if drift", () => {
     const workflow = mutableWorkflow();
-    const defaultJob = workflow.jobs["sessions-agents-cli"];
-    uploadStep(defaultJob).with = { name: "e2e-sessions-agents-cli" };
+    const defaultJob = workflow.jobs["gateway-guard-recovery"];
+    uploadStep(defaultJob).with = { name: "e2e-gateway-guard-recovery" };
     defaultJob.env!.E2E_TARGET_ID = "not a selector id";
 
     uploadStep(workflow.jobs["hermes-slack"]).with!.path = "e2e-artifacts/live/hermes-slack/";
     uploadStep(workflow.jobs["network-policy"]).with!.name = "e2e-network-policy";
     uploadStep(workflow.jobs["common-egress-agent"]).with!.name = "e2e-common-egress-agent";
-    uploadStep(workflow.jobs["gpu-e2e"]).if = "success()";
     uploadStep(workflow.jobs["mcp-bridge"]).if = "always()";
     uploadStep(workflow.jobs["openshell-gateway-auth-contract"]).if = "always()";
     uploadStep(workflow.jobs["shared-e2e"]).env = { UNEXPECTED: "1" };
@@ -218,13 +217,12 @@ describe("upload-e2e-artifacts workflow boundary", () => {
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toEqual(
       expect.arrayContaining([
-        "sessions-agents-cli upload-e2e-artifacts invocation must not override its contract",
-        "sessions-agents-cli upload-e2e-artifacts must use the action defaults",
-        "sessions-agents-cli default upload caller must declare a valid E2E_TARGET_ID",
+        "gateway-guard-recovery upload-e2e-artifacts invocation must not override its contract",
+        "gateway-guard-recovery upload-e2e-artifacts must use the action defaults",
+        "gateway-guard-recovery default upload caller must declare a valid E2E_TARGET_ID",
         "hermes-slack upload-e2e-artifacts must preserve its explicit name/path contract",
         "network-policy upload-e2e-artifacts must preserve its explicit name/path contract",
         "common-egress-agent upload-e2e-artifacts must preserve its explicit name/path contract",
-        "gpu-e2e upload-e2e-artifacts invocation must run with always()",
         "mcp-bridge upload-e2e-artifacts invocation must remain gated by its reviewed pre-upload checks",
         "openshell-gateway-auth-contract upload-e2e-artifacts invocation must remain gated by its reviewed pre-upload checks",
         "shared-e2e must not declare E2E_EXECUTION_PROFILE",
@@ -251,14 +249,14 @@ describe("upload-e2e-artifacts workflow boundary", () => {
 
   it("derives execution jobs even when a marker and its upload disappear together", () => {
     const workflow = mutableWorkflow();
-    const removedJob = workflow.jobs["sessions-agents-cli"];
+    const removedJob = workflow.jobs["gateway-guard-recovery"];
     delete removedJob.env!.E2E_JOB;
     removedJob.steps = removedJob.steps!.filter(
       (step) => step.uses !== UPLOAD_E2E_ARTIFACTS_ACTION,
     );
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
-      "sessions-agents-cli must use upload-e2e-artifacts exactly once",
+      "gateway-guard-recovery must use upload-e2e-artifacts exactly once",
     );
   });
 });
