@@ -49,6 +49,7 @@ vi.mock("../exec", () => ({
   execSandbox: execMock,
   buildOpenshellExecArgs: buildOpenshellExecArgsMock,
   wrapExecCommandWithRuntimeEnv: vi.fn((cmd: readonly string[]) => cmd),
+  wrapOpenClawAgentCommandWithRuntimeEnv: vi.fn((cmd: readonly string[]) => cmd),
   computeExitCode: vi.fn((result: { status: number | null }) => ({
     code: result.status ?? 1,
     errorMessage: null,

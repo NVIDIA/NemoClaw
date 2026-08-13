@@ -9,7 +9,11 @@ import {
   type OpenClawIncompleteTurnSignal,
   openClawAgentJsonProvenanceLines,
 } from "../../../openclaw/agent-json-provenance";
-import { buildOpenshellExecArgs, computeExitCode, wrapExecCommandWithRuntimeEnv } from "../exec";
+import {
+  buildOpenshellExecArgs,
+  computeExitCode,
+  wrapOpenClawAgentCommandWithRuntimeEnv,
+} from "../exec";
 import { getKnownSandboxTargetGatewayName } from "../gateway-target";
 import {
   agentDispatchDeadlineSeconds,
@@ -81,7 +85,7 @@ export function runAgentJsonPassthrough(
     binary,
     buildOpenshellExecArgs(
       sandboxName,
-      wrapExecCommandWithRuntimeEnv(command),
+      wrapOpenClawAgentCommandWithRuntimeEnv(command),
       { tty: false, timeoutSeconds: agentDispatchDeadlineSeconds(command) },
       (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName) ?? undefined,
     ),
