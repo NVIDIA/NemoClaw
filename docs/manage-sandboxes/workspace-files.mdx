@@ -77,7 +77,7 @@ These files live at `/sandbox/.openclaw/workspace/` and are collectively called 
 
 ## File Reference
 
-NemoClaw seeds the six template files below only in a new, pristine default workspace.
+NemoClaw seeds the six template files below when the default workspace directory exists, is not a symbolic link, and is empty.
 Set `NEMOCLAW_MINIMAL_BOOTSTRAP=1` before onboarding to skip default workspace template seeding.
 
 | File | Purpose |

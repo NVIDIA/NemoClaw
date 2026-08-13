@@ -64,6 +64,12 @@ describe("agent variant docs", () => {
     const rendered = renderAgentVariantPage(workspaceFiles, "openclaw", {
       sourcePath: "/repo/docs/manage-sandboxes/workspace-files.mdx",
     });
+    expect(rendered).toContain(
+      "when the default workspace directory exists, is not a symbolic link, and is empty",
+    );
+    expect(rendered).toContain(
+      "Set `NEMOCLAW_MINIMAL_BOOTSTRAP=1` before onboarding to skip default workspace template seeding.",
+    );
     const fileReference = rendered.match(
       /## File Reference\n\n([\s\S]*?)\n\n## Where They Live/,
     )?.[1];
