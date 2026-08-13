@@ -1610,12 +1610,17 @@ function preserveExistingOpenClawState(config: JsonObject, configPath: string): 
   if (!isObject(existingPlugins)) {
     return;
   }
+  const currentPlugins = config.plugins;
+  if (Array.isArray(existingPlugins.allow)) {
+    currentPlugins.allow = unique([
+      ...(Array.isArray(currentPlugins.allow) ? currentPlugins.allow : []),
+      ...existingPlugins.allow.filter((pluginId): pluginId is string => typeof pluginId === "string"),
+    ]);
+  }
   const existingInstalls = existingPlugins.installs;
   if (!isObject(existingInstalls) || Object.keys(existingInstalls).length === 0) {
     return;
   }
-
-  const currentPlugins = config.plugins;
   if (!isObject(currentPlugins.installs)) {
     currentPlugins.installs = {};
   }

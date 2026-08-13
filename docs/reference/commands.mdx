@@ -927,6 +927,7 @@ When `$$nemoclaw onboard` detects an NVIDIA GPU on the host, it enables OpenShel
 The `nvidia-smi` probes require a successful result and reject placeholder `JMJWOA-Generic-*` GPU names unless NemoClaw can prove a supported NVIDIA platform or GPU execution.
 NemoClaw treats a recognized NVIDIA product model from `/sys/class/dmi/id/product_name` or `/sys/firmware/devicetree/base/model`, or a known Tegra device node, as authoritative platform identity.
 On eligible native or Docker Desktop-backed WSL ARM64 Linux hosts without that firmware evidence, one bounded Docker CUDA workload can prove GPU execution.
+On those hosts, a single plausible, non-placeholder NVIDIA GPU name also requires that proof when the NVIDIA kernel-driver interface (`/proc/driver/nvidia`) is absent.
 For the proof command, timeout control, and failure recovery, refer to [GPU Setup Fails with a Placeholder GPU Name](troubleshooting#gpu-setup-fails-with-a-placeholder-gpu-name).
 The names-only unified-memory fallback does not run this workload and rejects denylisted names.
 Other non-firmware-vouched hosts also reject denylisted names.
@@ -1186,10 +1187,8 @@ If gateway selection fails, `exec` stops without running the sandbox command.
 
 OpenClaw config resolves under `/sandbox/.openclaw`.
 
-```bash
-$$nemoclaw my-assistant exec -- openclaw agent -m "What is 2+2?"
-$$nemoclaw my-assistant exec --workdir /sandbox/workspace -- ls -la
-```
+Run one OpenClaw turn with `$$nemoclaw my-assistant exec -- openclaw agent --agent main -m "What is 2+2?"`.
+List the default OpenClaw workspace with `$$nemoclaw my-assistant exec --workdir /sandbox/.openclaw/workspace -- ls -la`.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -3607,6 +3606,18 @@ When `dst` does not exist, it is auto-created from the source image.
 For a Docker- or VM-driver source, the source can be stopped when its registry entry records both the sandbox image and a complete inference route.
 For a Kubernetes-driver source, the pod image must remain resolvable through its gateway.
 No re-onboarding is needed when those prerequisites are present.
+For a new destination, NemoClaw requires its owning gateway to report Ready state and a valid live identity.
+It revalidates that identity immediately before registration.
+The destination receives a new lifecycle generation and does not inherit the source sandbox's generation.
+If the destination is not Ready with the same valid identity, the command exits nonzero before registration or state restore.
+The created destination remains unregistered, so `--force` cannot select it for deletion.
+Run the exact owner-scoped deletion command printed by the failure:
+
+```bash
+openshell sandbox delete -g '<owning-gateway>' '<destination>'
+```
+
+After OpenShell deletes the destination, rerun the original `snapshot restore --to` command.
 <AgentOnly variant="openclaw">
 After NemoClaw creates the destination, it waits for the managed OpenClaw supervisor to pass a bounded readiness check before it applies snapshot state.
 If the check fails, the command leaves the destination registered without restored snapshot state and exits nonzero.
@@ -4787,7 +4798,7 @@ Defaults are sized for typical hardware; override only if you see false-positive
 | `NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS` | `30` | Maximum time to wait for an OpenShell MCP provider credential revision to become active or fully revoked inside the sandbox. Integer seconds; raise only when provider synchronization is unusually slow. |
 | `NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS` | per call site (typically `15000`) | Overrides the default timeout for `openshell sandbox exec` calls issued by recovery and lifecycle helpers. Integer milliseconds; non-positive or non-numeric values fall back to the per-call-site default. |
 | `NEMOCLAW_STATUS_PROBE_TIMEOUT_MS` | built-in default | Overrides the timeout for the OpenShell status probe used by `$$nemoclaw <name> status`. Integer milliseconds; non-positive or non-numeric values fall back to the default. |
-| `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` | `180000` | Maximum time for the bounded Docker CUDA workload that proves a placeholder-named GPU on an eligible ARM64 Linux host. A positive finite number of milliseconds overrides the default. Invalid, infinite, zero, and negative values use the default. |
+| `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` | `180000` | Maximum time for the bounded Docker CUDA workload on an eligible ARM64 Linux host. A positive finite number of milliseconds overrides the default. Invalid, infinite, zero, and negative values use the default. |
 
 ### Onboard and Sandbox Readiness Timeouts
 

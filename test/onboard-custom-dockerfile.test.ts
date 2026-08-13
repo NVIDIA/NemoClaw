@@ -185,7 +185,7 @@ describe("onboard custom Dockerfile", () => {
       fs.writeFileSync(path.join(customBuildDir, "credentials.json"), "{}");
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin);
+      writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
       const customDockerfilePath = JSON.stringify(path.join(customBuildDir, "Dockerfile"));
 
