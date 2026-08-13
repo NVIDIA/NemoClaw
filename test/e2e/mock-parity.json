@@ -231,6 +231,12 @@
       ]
     },
     {
+      "live": "test/e2e/live/onboard-policy-preset-sequencing.test.ts",
+      "fast": [
+        "test/e2e/support/onboard-interactive-pty.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/snapshot-commands.test.ts",
       "fast": [
         "test/e2e/support/e2e-workflow.test.ts",
