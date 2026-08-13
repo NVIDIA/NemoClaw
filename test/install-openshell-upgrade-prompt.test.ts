@@ -927,11 +927,13 @@ esac`,
     {
       expectedRetry: "NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1",
       finishGatewayPort: undefined,
+      forbiddenRetry: "NEMOCLAW_GATEWAY_PORT=",
       name: "the default gateway port",
     },
     {
       expectedRetry: "NEMOCLAW_GATEWAY_PORT=9123 NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1",
       finishGatewayPort: "9123",
+      forbiddenRetry: "NEMOCLAW_GATEWAY_PORT=8080",
       name: "a selected non-default gateway port",
     },
   ])("preserves prepared backups and $name when OpenShell installation fails (#8800)", (testCase) => {
@@ -957,9 +959,7 @@ esac`,
     expect(result.stdout + result.stderr).toContain("preserved the sandbox backups");
     expect(result.stdout + result.stderr).toContain("did not start recovery");
     expect(result.stdout + result.stderr).toContain(testCase.expectedRetry);
-    if (testCase.finishGatewayPort === undefined) {
-      expect(result.stdout + result.stderr).not.toContain("NEMOCLAW_GATEWAY_PORT=");
-    }
+    expect(result.stdout + result.stderr).not.toContain(testCase.forbiddenRetry);
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(openshellLog).toContain("openshell install-mode force defer=");
   });
