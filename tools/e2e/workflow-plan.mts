@@ -52,6 +52,7 @@ type WorkflowPlanOptions = {
 
 type WorkflowPlanCliOptions = WorkflowPlanSelectors & {
   ciOutput: boolean;
+  summary: boolean;
 };
 
 type TrustedControllerSelectorMap = {
@@ -558,9 +559,12 @@ export function renderE2eWorkflowPlanSummary(plan: E2eWorkflowPlan): string {
   const lines = [
     "## E2E Execution Plan",
     "",
-    "| Test | Execution | Runner |",
+    "| Target or job | Execution | Runner |",
     "| --- | --- | --- |",
   ];
+  for (const job of plan.selectedJobs) {
+    lines.push(`| \`${job}\` | retained workflow job | declared by job |`);
+  }
   for (const row of plan.matrix) {
     lines.push(`| \`${row.id}\` | typed registry | \`${row.runner}\` |`);
   }
@@ -626,11 +630,15 @@ export function writeE2eWorkflowPlanCiOutput(
 }
 
 function parseArgs(argv: readonly string[]): WorkflowPlanCliOptions {
-  const options: WorkflowPlanCliOptions = { ciOutput: false };
+  const options: WorkflowPlanCliOptions = { ciOutput: false, summary: false };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--ci-output") {
       options.ciOutput = true;
+      continue;
+    }
+    if (arg === "--summary") {
+      options.summary = true;
       continue;
     }
     if (arg !== "--jobs" && arg !== "--targets") {
@@ -641,6 +649,9 @@ function parseArgs(argv: readonly string[]): WorkflowPlanCliOptions {
     if (arg === "--jobs") options.jobs = value;
     else options.targets = value;
     index += 1;
+  }
+  if (options.ciOutput && options.summary) {
+    throw new Error("--ci-output and --summary cannot be combined");
   }
   return options;
 }
@@ -654,7 +665,10 @@ export function runE2eWorkflowPlanCli(argv = process.argv.slice(2)): void {
     );
     return;
   }
-  process.stdout.write(`${JSON.stringify(buildE2eWorkflowPlan(options))}\n`);
+  const plan = buildE2eWorkflowPlan(options);
+  process.stdout.write(
+    options.summary ? renderE2eWorkflowPlanSummary(plan) : `${JSON.stringify(plan)}\n`,
+  );
 }
 
 const invokedFile = process.argv[1] ? path.resolve(process.argv[1]) : "";

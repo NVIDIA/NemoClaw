@@ -597,6 +597,48 @@ describe("E2E workflow plan", () => {
     expect(output).toBe(`${JSON.stringify(parsed)}\n`);
   });
 
+  it("renders the selected matrix and retained jobs as a readable plan", () => {
+    const filtered = spawnSync(TSX, [PLANNER_CLI, "--summary", "--jobs", "hermes-e2e"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+
+    expect(filtered.status, filtered.stderr).toBe(0);
+    expect(filtered.stdout).toBe(`## E2E Execution Plan
+
+| Target or job | Execution | Runner |
+| --- | --- | --- |
+| \`hermes-e2e\` | retained workflow job | declared by job |
+`);
+
+    const complete = spawnSync(TSX, [PLANNER_CLI, "--summary"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+
+    expect(complete.status, complete.stderr).toBe(0);
+    expect(complete.stdout).toContain(
+      "| `cloud-onboard` | retained workflow job | declared by job |",
+    );
+    expect(complete.stdout).toContain(
+      "| `ubuntu-repo-cloud-openclaw` | typed registry | `ubuntu-latest` |",
+    );
+    expect(complete.stdout).toContain("| shared E2E job | `ubuntu-latest` |");
+    expect(complete.stdout).toContain("| `channels-add-remove` | `standard` profile |");
+    expect(complete.stdout).toContain(
+      "| `model-router-provider-routed-inference` | `nvidia-api` profile |",
+    );
+    expect(complete.stdout).toContain("| `cloud-inference` | `nvidia-inference` profile |");
+  });
+
+  it("keeps CI and readable summary output modes separate", () => {
+    expect(() => runE2eWorkflowPlanCli(["--ci-output", "--summary"])).toThrow(
+      "--ci-output and --summary cannot be combined",
+    );
+  });
+
   it("reports CLI failures as workflow annotations", () => {
     const result = spawnSync(
       TSX,
