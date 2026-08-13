@@ -74,6 +74,17 @@ exit 0
 
       fs.writeFileSync(
         path.join(stateDir, "sandboxes.json"),
+        JSON.stringify({ sandboxes: { "created-by-onboard": {} } }),
+      );
+      const restoredLegacyPort = restore();
+      expect(restoredLegacyPort.status).toBe(0);
+      expect(fs.readFileSync(openshellLog, "utf-8")).toContain(
+        "forward start --background 8642 created-by-onboard",
+      );
+      fs.writeFileSync(openshellLog, "");
+
+      fs.writeFileSync(
+        path.join(stateDir, "sandboxes.json"),
         JSON.stringify({
           sandboxes: { "created-by-onboard": { hermesApiPort: 8647 } },
         }),
