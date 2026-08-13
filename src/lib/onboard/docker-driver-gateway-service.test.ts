@@ -9,6 +9,7 @@ import { createVirtualClock } from "./__test-helpers__/virtual-clock";
 import {
   getNemoclawOpenShellGatewayUserServicePath,
   getOpenShellGatewayManagedServiceLogCommand,
+  getOpenShellGatewayManagedServiceStopCommand,
   getOpenShellGatewayUserServiceBinaryPaths,
   getOpenShellGatewayUserServicePaths,
   getOpenShellUserConfigHome,
@@ -510,6 +511,21 @@ describe("docker-driver-gateway-service", () => {
         platform: "linux",
       }),
     ).toBe("journalctl --user --unit openshell-gateway --no-pager --lines=200");
+  });
+
+  it("selects the managed service stop command for the host service manager (#8797)", () => {
+    expect(getOpenShellGatewayManagedServiceStopCommand({ platform: "darwin" })).toBe(
+      "brew services stop openshell",
+    );
+    expect(getOpenShellGatewayManagedServiceStopCommand({ platform: "linux" })).toBe(
+      "systemctl --user stop nemoclaw-openshell-gateway",
+    );
+    expect(
+      getOpenShellGatewayManagedServiceStopCommand({
+        existsSync: (candidate) => candidate === "/lib/systemd/user/openshell-gateway.service",
+        platform: "linux",
+      }),
+    ).toBe("systemctl --user stop openshell-gateway");
   });
 
   it("uses managed service only after metadata and direct gRPC health are ready (#6903)", async () => {

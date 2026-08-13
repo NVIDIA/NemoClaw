@@ -177,6 +177,20 @@ export function getOpenShellGatewayManagedServiceLogCommand(
   );
 }
 
+export function getOpenShellGatewayManagedServiceStopCommand(
+  opts: Pick<OpenShellGatewayUserServiceOptions, "existsSync" | "platform"> = {},
+): string {
+  const platform = opts.platform ?? process.platform;
+  if (platform === "darwin") {
+    return `brew services stop ${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`;
+  }
+  const serviceName =
+    platform === "linux" && hasUpstreamOpenShellGatewayUserService(opts)
+      ? OPENSHELL_GATEWAY_USER_SERVICE
+      : NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE;
+  return `systemctl --user stop ${serviceName}`;
+}
+
 export function getOpenShellGatewayUserServicePaths(): string[] {
   return [
     "/usr/local/lib/systemd/user/openshell-gateway.service",

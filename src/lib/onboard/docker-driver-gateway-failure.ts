@@ -29,7 +29,7 @@ import { redact } from "../security/redact";
 import { classifyGatewayStartFailure } from "../validation";
 
 import type { ChildExitState } from "./child-exit-tracker";
-import { NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE } from "./docker-driver-gateway-service";
+import { getOpenShellGatewayManagedServiceStopCommand } from "./docker-driver-gateway-service";
 import { printDockerDaemonRecovery } from "./gateway-start-failure";
 import { noteOnboardResumeHintShown, onboardRecoveryCommand } from "./resume-hint";
 
@@ -42,58 +42,11 @@ export type ReportDockerDriverGatewayStartFailureOpts = {
   exitOnFailure: boolean;
   /** Byte offset where the current gateway launch began writing the append-only log. */
   launchLogOffset: number;
-  /**
-   * Override the recorded-process liveness check. Tests inject it; production
-   * uses {@link recordedGatewayProcessStopped}.
-   */
-  isGatewayProcessStopped?: (stateDir: string) => boolean;
+  /** Identity-aware selected-state ownership probe supplied by the onboarding runtime. */
+  isGatewayStateInUse?: () => boolean;
+  /** Test seam for host-specific managed-service recovery guidance. */
+  platform?: NodeJS.Platform;
 };
-
-/**
- * Report whether the gateway process recorded for `stateDir` has stopped.
- *
- * `childExit.exited` alone cannot answer this: the reporter is also reached
- * after the health poll budget expires. `process.kill(pid, 0)` cannot answer it
- * either, because `startDockerDriverGateway` spawns the gateway detached and
- * never reaps it, so a crashed gateway stays a zombie and reports as alive.
- * Reading the process state directly separates a zombie from a live gateway.
- *
- * Every uncertain result returns false so the caller withholds the state move.
- * Uncertain results include an unreadable or malformed pid record, and any
- * process-state read error other than a missing entry. Absence of evidence is
- * not evidence that no gateway runs (#8797, advisor finding PRA-1).
- */
-export function recordedGatewayProcessStopped(stateDir: string): boolean {
-  let recorded: string;
-  try {
-    recorded = fs.readFileSync(path.join(stateDir, "openshell-gateway.pid"), "utf-8").trim();
-  } catch {
-    return false;
-  }
-  // Require the whole record to be a positive integer. `Number.parseInt` accepts
-  // a numeric prefix, so it would read "123invalid" as pid 123.
-  if (!/^[1-9]\d*$/.test(recorded)) return false;
-  const pid = Number(recorded);
-  try {
-    // Field 3 of /proc/<pid>/stat is the process state, and `Z` marks a zombie,
-    // which holds no state directory. Field 2 is the executable name wrapped in
-    // parentheses and may contain spaces, so read the state after the last
-    // parenthesis instead of splitting the whole line. A recycled pid can carry
-    // such a name.
-    const stat = fs.readFileSync(`/proc/${String(pid)}/stat`, "utf-8");
-    return (
-      stat
-        .slice(stat.lastIndexOf(")") + 1)
-        .trim()
-        .split(" ")[0] === "Z"
-    );
-  } catch (error) {
-    // Only a missing entry proves the recorded process is gone. A permission
-    // error, or a host without procfs, proves nothing, so fail closed and let
-    // the caller keep the stop-and-rerun guidance.
-    return (error as NodeJS.ErrnoException).code === "ENOENT";
-  }
-}
 
 function findAvailableGatewayStateArchivePath(stateDir: string): string | null {
   for (let suffix = 1; suffix <= 100; suffix += 1) {
@@ -121,15 +74,15 @@ function findAvailableGatewayStateArchivePath(stateDir: string): string | null {
  * The state move needs stronger evidence than the diagnosis, because moving the
  * directory while a gateway process still runs leaves that process without its
  * state. This function prints the move only when the reporter itself established
- * that no gateway process holds the directory: either the child's `exit` event
- * fired, or the recorded gateway process is gone. A user-run check cannot carry
- * that weight, because `Restart=on-failure` in the managed unit can start a
- * replacement between the check and the move.
+ * that no gateway process holds the directory. An observed child exit is not
+ * sufficient because `Restart=on-failure` can start a replacement before this
+ * diagnostic runs. The caller therefore supplies the runtime's identity-aware
+ * state-ownership probe, which also covers replacement processes (#8797).
  */
 function printIncompatibleGatewayDatabaseRecovery(
   logPath: string,
-  childExit: ChildExitState,
-  isGatewayProcessStopped: (stateDir: string) => boolean,
+  isGatewayStateInUse: (() => boolean) | undefined,
+  platform: NodeJS.Platform,
   printError: (message?: string) => void,
 ): void {
   const stateDir = path.dirname(logPath);
@@ -137,11 +90,10 @@ function printIncompatibleGatewayDatabaseRecovery(
   printError(`  Database: ${path.join(stateDir, "openshell.db")}`);
   printError("  The database records a migration that this OpenShell version does not include.");
   printError("  This can happen after an OpenShell downgrade.");
-  const gatewayStopped = childExit.exited || isGatewayProcessStopped(stateDir);
-  if (!gatewayStopped) {
+  if (isGatewayStateInUse?.() !== false) {
     printError("  NemoClaw could not confirm that the gateway process stopped.");
     printError("  Stop the gateway, then run onboarding again:");
-    printError(`    systemctl --user stop ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}`);
+    printError(`    ${getOpenShellGatewayManagedServiceStopCommand({ platform })}`);
     printError(`    ${onboardRecoveryCommand()}`);
     printError(
       "  A gateway process that keeps running after the move writes to a path that no longer holds its state.",
@@ -188,7 +140,8 @@ export function reportDockerDriverGatewayStartFailure(
   {
     exitOnFailure,
     launchLogOffset,
-    isGatewayProcessStopped = recordedGatewayProcessStopped,
+    isGatewayStateInUse,
+    platform = process.platform,
   }: ReportDockerDriverGatewayStartFailureOpts,
 ): void {
   const logBytes = fs.existsSync(logPath) ? fs.readFileSync(logPath) : Buffer.alloc(0);
@@ -219,8 +172,8 @@ export function reportDockerDriverGatewayStartFailure(
   } else if (failure.kind === "database_migration_incompatible") {
     printIncompatibleGatewayDatabaseRecovery(
       logPath,
-      childExit,
-      isGatewayProcessStopped,
+      isGatewayStateInUse,
+      platform,
       console.error,
     );
   }

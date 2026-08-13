@@ -603,15 +603,20 @@ Moving it makes those registrations and credentials unavailable to the fresh gat
 Other sandboxes on the selected gateway can require re-onboarding and credential entry.
 </Warning>
 
-NemoClaw cannot always observe the gateway process exit.
-The start loop also reports this failure after its health poll budget expires.
-When NemoClaw did not observe the exit, it reads the recorded gateway PID and checks whether that process still runs before it offers the state move.
+NemoClaw cannot always observe the gateway process exit because the start loop also reports this failure after its health poll budget expires.
+Before NemoClaw offers the state move, its gateway runtime checks the recorded process and scans current gateway process identities for the runtime namespace tied to the selected state directory.
+This scan also detects a replacement gateway that a service manager starts after the original process exits.
 
-The state move prints only when NemoClaw establishes that no gateway process holds the directory.
-When NemoClaw cannot establish that, it prints the stop command for the managed gateway service, then the profile-specific onboarding command on the following line:
+The state move prints only when this check establishes that no gateway process holds the directory.
+When NemoClaw cannot establish that, it prints the host's managed-service stop command, then the profile-specific onboarding command on the following line.
+On Linux, the stop command targets the detected OpenShell systemd user service.
+On macOS, it targets the OpenShell Homebrew service.
+
+For example, the printed stop command is one of these commands:
 
 ```bash
 systemctl --user stop nemoclaw-openshell-gateway
+brew services stop openshell
 ```
 
 Stop the gateway, then run the onboarding command that NemoClaw prints on the next line.
