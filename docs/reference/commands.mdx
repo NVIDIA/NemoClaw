@@ -4082,6 +4082,8 @@ For a managed dual-Station vLLM runtime, full uninstall revalidates the exact re
 If that cleanup fails, uninstall exits nonzero, preserves its owner-only cleanup receipt, and tells you to resolve the reported peer error before retrying.
 Pair cleanup can partially complete before an error; verify both Stations before the retry.
 For an authenticated host-local vLLM runtime, full uninstall verifies the exact named container, NemoClaw ownership label, persisted API key, and authentication fingerprint before removing the container by its inspected ID.
+When that ownership state is missing, full uninstall removes the reserved `nemoclaw-vllm` container only when Docker reports its NemoClaw managed label and a valid container ID.
+An unlabeled container or malformed inspection remains in place and stops the remaining uninstall steps.
 For managed llama.cpp, full uninstall verifies the exact named container and network ownership before removing both resources by their inspected IDs.
 These host-local checks run before NemoClaw deletes their state.
 If Docker is unavailable or a resource does not match its persisted ownership state, uninstall exits nonzero before the remaining uninstall steps and preserves that state for recovery.

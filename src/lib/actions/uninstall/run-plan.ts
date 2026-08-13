@@ -30,6 +30,8 @@ import {
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
 import {
   cleanupManagedLlamaCppRuntimeForSandbox,
+  HOST_LOCAL_VLLM_CONTAINER_NAME,
+  HOST_LOCAL_VLLM_MANAGED_LABEL,
   type ManagedLlamaCppCleanupTarget,
   resolveManagedLlamaCppCleanupTarget,
 } from "../../inference/local-model-profile/cleanup";
@@ -43,10 +45,6 @@ import {
   MANAGED_VLLM_API_KEY_FILE,
   MCP_LIFECYCLE_LOCK_DIRNAME,
 } from "../../inference/serving/managed-runtime-receipts";
-import {
-  HOST_LOCAL_VLLM_CONTAINER_NAME,
-  HOST_LOCAL_VLLM_MANAGED_LABEL,
-} from "../../inference/serving/vllm-host-local-lifecycle";
 import { buildDockerGatewayDebEnvFile } from "../../onboard/docker-driver-gateway-env";
 import {
   getNemoclawOpenShellGatewayUserServicePath,
@@ -1629,7 +1627,9 @@ function removeOrphanedManagedHostLocalVllm(runtime: UninstallRuntime): boolean 
   );
   if (inspection.status !== 0 || !inspection.stdout.trim()) return true;
   const [containerId, managedLabel, ...extra] = inspection.stdout.trim().split(/\s+/);
-  if (!containerId || managedLabel !== "true" || extra.length > 0) return true;
+  if (!/^[0-9a-f]{64}$/u.test(containerId ?? "") || managedLabel !== "true" || extra.length > 0) {
+    return true;
+  }
   const removal = runtime.runDocker(["rm", "-f", containerId], {
     env: runtime.env,
     timeout: 10_000,

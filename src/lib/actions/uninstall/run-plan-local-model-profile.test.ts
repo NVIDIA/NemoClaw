@@ -134,6 +134,65 @@ describe("uninstall local model profile cleanup", () => {
     expect(errors.join("\n")).toContain("remains after ownership-aware cleanup");
   });
 
+  it("preserves an orphaned host-local vLLM container after malformed inspection output (#8981)", () => {
+    const errors: string[] = [];
+    const runDocker = vi.fn((args: string[]) => {
+      if (args[0] === "container" && args[1] === "inspect") return ok("not-a-container-id true\n");
+      if (args[0] === "ps" && args.at(-1) === "{{.Names}}") return ok("nemoclaw-vllm\n");
+      return ok();
+    });
+
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command === "openshell" || command === "docker",
+        env: { HOME: "/tmp/nemoclaw-uninstall-malformed-vllm" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        error: (message) => errors.push(message),
+        isTty: false,
+        log: () => {},
+        run: vi.fn(okWithKnownGatewayList),
+        runDocker,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(runDocker.mock.calls.some(([args]) => args[0] === "rm")).toBe(false);
+    expect(errors.join("\n")).toContain("remains after ownership-aware cleanup");
+  });
+
+  it("stops uninstall when orphaned host-local vLLM removal fails (#8981)", () => {
+    const errors: string[] = [];
+    const containerId = "c".repeat(64);
+    const runDocker = vi.fn((args: string[]) => {
+      if (args[0] === "container" && args[1] === "inspect") return ok(`${containerId} true\n`);
+      if (args[0] === "rm") return notFound();
+      return ok();
+    });
+
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command === "openshell" || command === "docker",
+        env: { HOME: "/tmp/nemoclaw-uninstall-vllm-removal-failure" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        error: (message) => errors.push(message),
+        isTty: false,
+        log: () => {},
+        run: vi.fn(okWithKnownGatewayList),
+        runDocker,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(runDocker).toHaveBeenCalledWith(
+      ["rm", "-f", containerId],
+      expect.objectContaining({ timeout: 10_000 }),
+    );
+    expect(errors.join("\n")).toContain("Could not remove orphaned managed inference container");
+    expect(runDocker.mock.calls.some(([args]) => args[0] === "ps")).toBe(false);
+  });
+
   it("fails before generic Docker cleanup when a reserved inference name remains", () => {
     const errors: string[] = [];
     const psResults = new Map([
