@@ -54,6 +54,7 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
             provider: "nvidia-nim",
             model: "nvidia/model-a",
             dashboardPort: 18790,
+            gatewayName: "nemoclaw-18080",
           }
         : registeredClone,
     );
