@@ -224,7 +224,11 @@ if (args[0] === "gateway" && args[1] === "info") {
   process.exit(0);
 }
 
-if (args[0] === "sandbox" && args[1] === "get" && args[2] === ${JSON.stringify(sandboxName)}) {
+if (
+  args[0] === "sandbox" &&
+  args[1] === "get" &&
+  args[args.length - 1] === ${JSON.stringify(sandboxName)}
+) {
   process.stdout.write("Sandbox:\\n\\n  \\x1b[2mId:\\x1b[0m abc\\n  Name: ${sandboxName}\\n  Phase: Ready\\n");
   process.exit(0);
 }

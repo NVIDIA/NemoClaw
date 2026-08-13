@@ -46,6 +46,8 @@ export function prepareGitHubHostedRuntimeAuthority(
     throw new Error("GitHub-hosted launch-readiness tests require a numeric user identity");
   }
   const runtimeRoot = `/run/user/${uid}`;
+  const productRoot = `${runtimeRoot}/nemoclaw`;
+  const authorityRoot = `${productRoot}/launch-readiness`;
   const install =
     options.install ??
     ((command: string, args: string[], execOptions: { stdio: "inherit" }): void => {
@@ -64,6 +66,8 @@ export function prepareGitHubHostedRuntimeAuthority(
       "-g",
       String(gid),
       runtimeRoot,
+      productRoot,
+      authorityRoot,
     ],
     { stdio: "inherit" },
   );

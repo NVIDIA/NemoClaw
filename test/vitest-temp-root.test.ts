@@ -72,6 +72,8 @@ describe("Vitest temp root", () => {
         "-g",
         "1002",
         "/run/user/1001",
+        "/run/user/1001/nemoclaw",
+        "/run/user/1001/nemoclaw/launch-readiness",
       ],
       { stdio: "inherit" },
     );
