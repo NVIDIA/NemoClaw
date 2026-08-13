@@ -9,4 +9,5 @@ The vendored TypeScript files differ from that commit in two ways:
 
 - Each file has an SPDX header.
 - `rules/no-conditional-empty-object-spread.ts` unwraps each conditional branch before it checks for an empty object.
+
 The upstream MIT terms are in [LICENSE](LICENSE).
