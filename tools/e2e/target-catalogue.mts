@@ -692,6 +692,16 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: true,
     environment: { ...nonInteractive, NEMOCLAW_SANDBOX_NAME: "e2e-repair" },
   }),
+  target("onboard-policy-preset-sequencing", {
+    displayName: "Onboarding: preserves policy preset step order",
+    profile: "standard",
+    timeoutMinutes: 60,
+    installMode: "authenticated",
+    restoreCli: true,
+    exposeCliBin: true,
+    owningPaths: ["test/e2e/live/onboard-interactive-pty.ts"],
+    environment: { NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1" },
+  }),
   target("onboard-resume", {
     displayName: "Onboarding: resumes interrupted setup from recorded progress",
     profile: "standard",
@@ -1175,6 +1185,14 @@ export function validateE2eTargetCatalogue(
     }
     if (!Number.isInteger(entry.timeoutMinutes) || entry.timeoutMinutes < 1) {
       throw new Error(`E2E target ${entry.id} has an invalid timeout`);
+    }
+    if (
+      entry.id === "onboard-policy-preset-sequencing" &&
+      (entry.installNonInteractive || entry.environment.NEMOCLAW_NON_INTERACTIVE !== undefined)
+    ) {
+      throw new Error(
+        "E2E target onboard-policy-preset-sequencing requires interactive installation and execution",
+      );
     }
     if (entry.owningPaths.length === 0 || !entry.owningPaths.includes(entry.testFile)) {
       throw new Error(`E2E target ${entry.id} must own its test file`);
