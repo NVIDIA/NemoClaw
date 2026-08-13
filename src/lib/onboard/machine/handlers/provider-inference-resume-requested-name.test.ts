@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Resume must honor the sandbox name the operator passed this run via --name
-// or NEMOCLAW_SANDBOX_NAME, as the bare-resume guard instructs (#8953). Kept
-// out of provider-inference.test.ts for the test-file size budget.
+// or NEMOCLAW_SANDBOX_NAME, as the non-interactive resume name check in
+// session-bootstrap.ts instructs (#8953). This file is separate from
+// provider-inference.test.ts because ci/test-file-size-budget.json caps that
+// file at 1500 lines.
 
 import { describe, expect, it, vi } from "vitest";
 

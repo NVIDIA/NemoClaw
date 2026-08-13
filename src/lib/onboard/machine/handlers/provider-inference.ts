@@ -416,12 +416,14 @@ function provenResumeSandboxName(
   requestedSandboxName: string | null,
 ): string | null {
   if (!effectiveResume || !sandboxName) return null;
-  // #8953: when a resume cannot re-prompt, the bare-resume guard instructs
-  // the operator to pass --name (or NEMOCLAW_SANDBOX_NAME). That explicit
-  // current-run name is proof enough to reuse here; the durable checkpoint
-  // identity is still recorded later by the sandbox step's own writer. The
-  // caller passes requestedSandboxName only for non-interactive runs, so an
-  // interactive resume keeps prompting.
+  // #8953: when a resume cannot prompt, the non-interactive resume name
+  // check in session-bootstrap.ts instructs the operator to pass --name
+  // (or NEMOCLAW_SANDBOX_NAME). The operator supplied this name on the
+  // current run, so the resume gate reuses it; the sandbox step still
+  // records the durable checkpoint identity through its own writer.
+  // handleProviderInferenceState passes requestedSandboxName only when
+  // deps.isNonInteractive() returns true, so an interactive resume keeps
+  // prompting.
   return authoritativeResumeConfig ||
     checkpointSandboxIdentityMatches(session, sandboxName) ||
     sandboxName === requestedSandboxName
