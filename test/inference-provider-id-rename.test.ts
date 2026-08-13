@@ -201,6 +201,7 @@ describe("Hermes runtime provider route identifier boundary (#7177)", () => {
       env: {
         HOME: os.tmpdir(),
         PATH: process.env.PATH ?? "",
+        HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
         ...env,
       },
     });

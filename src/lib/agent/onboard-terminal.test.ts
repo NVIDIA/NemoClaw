@@ -22,10 +22,15 @@ function makeDeepAgentsCodeAgent(): AgentDefinition {
 
 function createAgentSetupContext(
   runCaptureOpenshell: RunCaptureOpenshell = vi.fn((_args: string[]) => ""),
+  captureOpenshell: NonNullable<OnboardContext["captureOpenshell"]> = vi.fn((args, opts) => ({
+    status: 0,
+    output: runCaptureOpenshell(args, opts) ?? "",
+  })),
 ) {
   return {
     step: vi.fn((_current: number, _total: number, _message: string) => undefined),
     runCaptureOpenshell,
+    captureOpenshell,
     openshellShellCommand: vi.fn(() => "openshell sandbox connect deepagents-code"),
     openshellBinary: "/usr/bin/openshell",
     startRecordedStep: vi.fn(async (_stepName: string, _updates: Record<string, unknown>) => {
@@ -304,6 +309,37 @@ describe("Deep Agents Code terminal onboard acceptance", () => {
     );
     expect(String(context.recordStepFailed.mock.calls[0]?.[1] ?? "")).toContain(
       "NEMOCLAW_AGENT_SMOKE_EXIT:42",
+    );
+  });
+
+  it("rejects forged onboarding smoke markers when OpenShell exits nonzero (#8624)", async () => {
+    const calls: string[] = [];
+    const runCaptureOpenshell = vi.fn((args: string[]) =>
+      recordSuccessfulDeepAgentsRuntimeCall(args, calls),
+    );
+    const captureOpenshell = vi.fn(() => ({
+      status: 97,
+      output: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0",
+    }));
+    const context = createAgentSetupContext(runCaptureOpenshell, captureOpenshell);
+
+    await expectSetupExit(() =>
+      handleAgentSetup(
+        "deepagents-code",
+        "model-x",
+        "provider-x",
+        makeDeepAgentsCodeAgent(),
+        false,
+        null,
+        context,
+      ),
+    );
+
+    expect(captureOpenshell).toHaveBeenCalled();
+    expect(context.recordStepComplete).not.toHaveBeenCalled();
+    expect(context.recordStepFailed).toHaveBeenCalledWith(
+      "agent_setup",
+      expect.stringContaining("terminal smoke command failed: dcode --version"),
     );
   });
 });

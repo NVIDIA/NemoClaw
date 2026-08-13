@@ -132,6 +132,9 @@ Module._load = function patchedLoad(request, parent, isMain) {
       privilegedSandboxExecArgv(_sandboxName, cmd) {
         return [...cmd];
       },
+      withPrivilegedSandboxExecutionLease(_sandboxName, _operation, fn) {
+        return fn();
+      },
     };
   }
   return originalLoad.call(this, request, parent, isMain);
@@ -213,7 +216,8 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
     expect(OPENCLAW_STATE_LOCK_PLAN.writableSubpaths).toEqual(["agents/*/sessions"]);
   });
 
-  it("uses the Hermes manifest plan for pairing and the private dashboard profile", () => {
+  it("keeps Hermes lazy dependencies gateway-readable while locking writes (#8613)", () => {
+    expect(HERMES_STATE_LOCK_PLAN.readOnlyRoots).toContain("lazy-packages");
     expect(HERMES_STATE_LOCK_PLAN.confidentialRoots).toEqual(["pairing"]);
     expect(HERMES_STATE_LOCK_PLAN.writableSubpaths).toEqual(["profiles/dashboard-home"]);
   });

@@ -67,8 +67,10 @@ Fail closed when identity, state, or timing evidence is missing, malformed, stal
 ### Live E2E
 
 Live E2E does not run automatically for pull requests and is not a merge gate.
-Each push to `main` selects the default workflow E2E jobs in `.github/workflows/e2e.yaml`.
-Push runs skip the Jetson nvmap and DGX Spark llama.cpp jobs because push events cannot set their required workflow dispatch flags.
+Each push to `main` selects the E2E targets and jobs that own changed files.
+Each trusted push also selects the CPU-only Jetson nvmap proof.
+Push runs skip the DGX Spark llama.cpp jobs because push events cannot set their required workflow dispatch flag.
+Manual Jetson runs remain opt-in through `allow_jetson_dispatch`, which defaults to `false`.
 The workflow has no scheduled trigger.
 
 Use the manual PR mode only when a maintainer requests live evidence before merge.
@@ -85,7 +87,7 @@ After a failure, inspect the artifacts and remove resources that target cleanup 
 
 Dispatch the trusted `main` workflow with the current PR number, lowercase 40-character head SHA, head repository, lowercase 40-character base SHA, trusted workflow SHA, and a review reason containing 10 to 500 printable characters.
 Leave job and target selectors empty and keep Launchable disabled.
-Keep `allow_jetson_runner_queue=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
+Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
 If the DGX Spark flag is `true`, GitHub can pause `llama-cpp-dgx-spark-qualification` for the `approve-dgx-spark-image-qualification` environment.
 An authorized environment reviewer must approve it before qualification starts.
 The trusted pre-checkout step requires current `maintain` or `admin` access and validates the exact open PR before candidate code runs.

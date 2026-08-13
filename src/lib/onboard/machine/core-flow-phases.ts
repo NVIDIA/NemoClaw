@@ -75,6 +75,7 @@ export interface SandboxOnboardFlowPhaseOptions<
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
   rebuildPreservedEnv?: readonly import("../../state/preserved-env").PreservedEnvFile[];
+  hostMounts?: readonly import("../../state/registry/types").SandboxHostMount[];
   endpointProvenance: EndpointProvenanceOptions;
   recreateSandbox: (requested?: boolean) => boolean;
   controlUiPort: number | null;
@@ -146,6 +147,7 @@ export function createProviderInferenceOnboardFlowPhase<
       session: context.session,
       gpu: context.gpu,
       sandboxName: context.sandboxName,
+      requestedSandboxName: context.requestedSandboxName,
       agent: context.agent,
       forceProviderSelection: options.forceProviderSelection,
       forceInferenceSetup: options.forceInferenceSetup,
@@ -227,6 +229,7 @@ export function createSandboxOnboardFlowPhase<
       requestedObservabilityEnabled: options.requestedObservabilityEnabled,
       requestedDcodeAutoApprovalMode: options.requestedDcodeAutoApprovalMode,
       rebuildPreservedEnv: options.rebuildPreservedEnv,
+      hostMounts: options.hostMounts,
       recreateSandbox: options.recreateSandbox,
       session: context.session,
       sandboxName: context.sandboxName,

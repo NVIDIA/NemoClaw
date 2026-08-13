@@ -4,6 +4,8 @@
 import { compactText } from "../core/url-utils";
 import { redact } from "../security/redact";
 import { classifyGatewayStartFailure } from "../validation";
+import { isPortableExperimentalProfile } from "./experimental/portable-profile";
+import { onboardRecoveryCommand } from "./resume-hint";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 
@@ -45,7 +47,15 @@ export function reportLegacyGatewayStartResultFailure(
 export function printDockerDaemonRecovery(
   printError: (message?: string) => void,
   platform: NodeJS.Platform = process.platform,
+  portable = isPortableExperimentalProfile(),
 ): void {
+  if (portable) {
+    printError("  The rootless Podman API service is not reachable.");
+    printError("");
+    printError(`  Start Podman, then rerun: ${onboardRecoveryCommand(portable)}`);
+    return;
+  }
+
   printError("  Docker daemon is not running — cannot start the gateway.");
   printError("");
   printError("  Start Docker, then rerun `nemoclaw onboard`:");
@@ -116,7 +126,7 @@ export function createFinalGatewayStartFailureHandler(deps: FinalGatewayStartFai
     printError(
       `    docker volume ls -q --filter "name=openshell-cluster-${gatewayName}" | xargs -r docker volume rm`,
     );
-    printError("    nemoclaw onboard --resume");
+    printError(`    ${onboardRecoveryCommand()}`);
     return exitProcess(1);
   };
 }

@@ -8,7 +8,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
-import { GATEWAY_PORT } from "../core/ports";
+import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
 import { waitUntilAsync } from "../core/wait";
 import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
@@ -35,6 +35,12 @@ export function resolveLocalAdapterStateRoot(
 }
 
 export const DEFAULT_LOCAL_ADAPTER_STATE_DIR = resolveLocalAdapterStateRoot();
+
+export function resolveSharedLocalAdapterStateRoot(homeDir: string = os.homedir()): string {
+  return nemoclawStateRoot(homeDir, DEFAULT_GATEWAY_PORT);
+}
+
+export const SHARED_LOCAL_ADAPTER_STATE_DIR = resolveSharedLocalAdapterStateRoot();
 export const LOCAL_ADAPTER_HEALTH_MAX_RESPONSE_BYTES = 64 * 1024;
 
 export function ensureLocalAdapterStateDir(stateDir = DEFAULT_LOCAL_ADAPTER_STATE_DIR): void {

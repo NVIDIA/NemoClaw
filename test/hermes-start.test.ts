@@ -11,6 +11,7 @@ import { shellQuote } from "../src/lib/core/shell-quote";
 import {
   bashPrintfQ,
   extractShellFunction as extractShellFunctionFromSource,
+  runHermesSandboxInitPreludeWithFakePath,
 } from "./support/hermes-shell-harness";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
@@ -234,6 +235,7 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
         HOME: tmpDir,
         PATH: process.env.PATH ?? "",
         _HERMES_BOUNDARY_VALIDATOR: SECRET_BOUNDARY_VALIDATOR_SCRIPT,
+        HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
         ...envOverrides,
       },
     });
@@ -335,6 +337,7 @@ function runHermesRootStartupMutableRootPreflight() {
       'chmod() { if [ "${1:-}" = "3770" ] && [ "${2:-}" = "$HERMES_DIR" ]; then printf "%s\\n" "$1" > "$CHMOD_LOG"; HERMES_DIR_MODE=770; command chmod 770 "$2"; return 0; fi; command chmod "$@"; }',
       'dir_mode() { printf "%s\\n" "$HERMES_DIR_MODE"; }',
       'verify_hermes_config_integrity() { printf "verify mode=%s\\n" "$(dir_mode)"; }',
+      'prepare_hermes_lazy_dependencies() { printf "lazy mode=%s\\n" "$(dir_mode)"; }',
       'ensure_hermes_runtime_api_server_key() { printf "api-key mode=%s\\n" "$(dir_mode)"; }',
       "apply_shields_up_runtime_env() { :; }",
       "validate_hermes_env_secret_boundary() { :; }",
@@ -402,69 +405,6 @@ function runTirithFinalizerPathResolution(installed: boolean) {
     return {
       expected: installed ? installedPath : fallbackPath,
       result: spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 }),
-    };
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
-}
-
-function runHermesSandboxInitPreludeWithFakePath() {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-init-path-"));
-  const fakeBin = path.join(tmpDir, "bin");
-  const fakeInit = path.join(tmpDir, "sandbox-init.sh");
-  const fakeSupervisor = path.join(tmpDir, "gateway-supervisor.sh");
-  const marker = path.join(tmpDir, "dirname-called");
-  const sourcePathLog = path.join(tmpDir, "source-path.log");
-  const scriptPath = path.join(tmpDir, "run.sh");
-  fs.mkdirSync(fakeBin, { recursive: true });
-  fs.writeFileSync(
-    path.join(fakeBin, "dirname"),
-    ["#!/usr/bin/env bash", `printf called > ${shellQuote(marker)}`, "exit 99"].join("\n"),
-    { mode: 0o700 },
-  );
-  fs.writeFileSync(
-    fakeInit,
-    [
-      `printf "%s\\n" "$PATH" > ${shellQuote(sourcePathLog)}`,
-      "harden_resource_limits() { :; }",
-    ].join("\n"),
-  );
-  fs.writeFileSync(fakeSupervisor, "# supervisor fixture\n");
-
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  const start = src.indexOf(
-    "# SECURITY: Lock down PATH before resolving or sourcing root startup helpers.",
-  );
-  const end = src.indexOf("\nif [ -d /opt/hermes/hermes_cli/web_dist ];", start);
-  const prelude = src
-    .slice(start, end)
-    .replaceAll("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", ENV_WRAPPER)
-    .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", fakeInit)
-    .replaceAll("/usr/local/lib/nemoclaw/gateway-supervisor.sh", fakeSupervisor);
-
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      `export PATH=${shellQuote(`${fakeBin}:${process.env.PATH ?? ""}`)}`,
-      prelude,
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-
-  try {
-    const result = spawnSync("bash", [scriptPath], {
-      encoding: "utf-8",
-      timeout: 5000,
-      env: process.env,
-    });
-    return {
-      result,
-      dirnameCalled: fs.existsSync(marker),
-      sourcePath: fs.existsSync(sourcePathLog)
-        ? fs.readFileSync(sourcePathLog, "utf-8").trim()
-        : "",
     };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -786,11 +726,29 @@ function runRuntimeShellEnvBootstrap() {
 
 describe("agents/hermes/start.sh sandbox init bootstrap", () => {
   it("locks the trusted PATH before sourcing shared sandbox init", () => {
-    const { result, dirnameCalled, sourcePath } = runHermesSandboxInitPreludeWithFakePath();
+    const { result, dirnameCalled, sourcePath } = runHermesSandboxInitPreludeWithFakePath(
+      START_SCRIPT,
+      ENV_WRAPPER,
+    );
 
     expect(result.status, result.stderr).toBe(0);
     expect(dirnameCalled).toBe(false);
     expect(sourcePath).toBe("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+  });
+
+  it("removes its temporary fixture when the prelude markers are absent", () => {
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-missing-prelude-"));
+    const invalidStartScript = path.join(fixtureDir, "start.sh");
+    fs.writeFileSync(invalidStartScript, "#!/usr/bin/env bash\n");
+
+    try {
+      expect(() =>
+        runHermesSandboxInitPreludeWithFakePath(invalidStartScript, ENV_WRAPPER, fixtureDir),
+      ).toThrow("Hermes start.sh prelude markers not found");
+      expect(fs.readdirSync(fixtureDir)).toEqual(["start.sh"]);
+    } finally {
+      fs.rmSync(fixtureDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -802,6 +760,9 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.result.status).toBe(0);
     expect(run.envFileMode).toBe("444");
     expect(run.envFileContent).toContain(`export HERMES_HOME="${run.hermesHome}"`);
+    expect(run.envFileContent).toContain(
+      'export HERMES_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"',
+    );
     expect(run.envFileContent).toContain('export HERMES_TUI_DIR="/opt/hermes/ui-tui"');
     expect(run.envFileContent).not.toContain("AWS_EC2_METADATA_DISABLED");
     expect(run.envFileContent).not.toContain('HERMES_TUI_DIR="${HERMES_TUI_DIR:-');
@@ -1042,6 +1003,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
           "verify_config_integrity_if_locked() { trace integrity; }",
           "validate_hermes_env_secret_boundary() { trace env-boundary; }",
           "inspect_hermes_mcp_integrity() { trace mcp-integrity; }",
+          "prepare_hermes_lazy_dependencies() { trace lazy-dependencies; }",
           "ensure_hermes_runtime_api_server_key() { trace api-key; }",
           "apply_shields_up_runtime_env() { trace shields-env; }",
           "validate_hermes_runtime_env_secret_boundary() { trace runtime-boundary; }",
@@ -1062,6 +1024,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
       "integrity",
       "env-boundary",
       "mcp-integrity",
+      "lazy-dependencies",
       "api-key",
       "shields-env",
       "env-boundary",
@@ -1493,6 +1456,7 @@ describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
 
     expect(run.result.status).toBe(0);
     expect(run.result.stdout).toContain("verify mode=750");
+    expect(run.result.stdout).toContain("lazy mode=750");
     expect(run.result.stdout).toContain("api-key mode=770");
     expect(run.result.stdout).toContain("tirith-state=0");
     expect(run.hermesDirMode).toBe("3770");

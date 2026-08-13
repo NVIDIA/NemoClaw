@@ -102,7 +102,8 @@ For Local Ollama strict tool-call validation, NemoClaw uses the missing-tool-cal
 - The response contains no tool-call JSON in plain message text.
 - The response does not stop at the output token limit after producing only reasoning.
 
-If a response stops at the output token limit after producing only reasoning, NemoClaw retries once with a larger output token limit.
+If a response stops at the output token limit after producing only reasoning, NemoClaw retries with a 1024-token output limit and then, when reasoning still uses the full output token limit, with a 4096-token output limit and a doubled request deadline.
+When reasoning also uses the full 4096-token output limit, onboarding stops and reports `reasoning used the full output-token budget before a tool call` alongside `missing structured tool call`.
 NemoClaw waits 5, 15, and 30 seconds before the second, third, and fourth validation requests.
 If four consecutive responses meet these conditions, onboarding stops and reports `missing structured tool call` without displaying the response body.
 NemoClaw does not apply the missing-tool-call retry schedule to other compatible endpoints.
@@ -170,15 +171,31 @@ The agent inside the sandbox never receives the token directly because the OpenS
 The wizard manages the proxy lifecycle:
 
 - It generates a random 24-byte token and stores it in `~/.nemoclaw/ollama-proxy-token` with `0600` permissions.
-- It starts and verifies the proxy after Ollama.
+- It starts and verifies the proxy only after you accept the onboarding configuration.
 - It removes stale matching proxy processes from previous runs.
 - It probes the sandbox Docker network path before saving the inference route.
-- It stops matching proxy processes during uninstall.
+- It stops matching proxy processes when uninstall removes the final or only gateway that uses the proxy.
+- A scoped uninstall preserves the shared proxy process and state while another gateway remains.
 - It reuses the persisted token after a host reboot and during re-onboarding for the committed local Ollama route.
+- It reuses that same token for every gateway port on the host, because one proxy serves them all.
+- NemoClaw records the selected proxy port in shared host state. Export the same `NEMOCLAW_OLLAMA_PROXY_PORT` for every gateway port on the host. A different value stops before NemoClaw changes the shared proxy process.
+
+<Warning title="Conflicting Legacy Proxy State">
+An older multi-gateway installation can contain proxy token or backend files in more than one gateway state root.
+During Local Ollama onboarding, NemoClaw copies one consistent credential and backend URL into the shared host root.
+If token values conflict, NemoClaw uses a running proxy only when one token receives an authenticated response.
+NemoClaw stops before proxy restart when it cannot select one token or one backend URL.
+For token conflicts, the error lists the token files that require review.
+Keep every token file private.
+Back up the gateway state roots and confirm which token and backend serve the active sandboxes before you remove stale legacy files.
+Rerun onboarding for every affected Local Ollama gateway after you resolve the conflict.
+Scoped uninstall preserves the shared proxy state while a sibling gateway remains; removing the final gateway stops the proxy and removes that state.
+</Warning>
 
 All proxy endpoints require the token, including `GET /api/tags`.
 The host-side proxy liveness check treats any HTTP response, including `401`, as evidence that the proxy answered.
-The authoritative `status` and `doctor` route probe runs inside the sandbox and reports HTTP `200` through `499` as `healthy`, HTTP `500` through `599` as `unhealthy`, and transport failures or unavailable probes as `unreachable` or `not probed`.
+The `status` and `doctor` route probe runs inside the sandbox and reports HTTP `200` through `499` as reachable, HTTP `500` through `599` as `unhealthy`, and transport failures or unavailable probes as `unreachable` or `not probed`.
+`status` then sends one inference request over the reachable route and reports `healthy` when the route served it, or `unauthorized` when the proxy token is no longer accepted.
 
 If Ollama is already bound to a non-loopback address, onboarding restarts it on `127.0.0.1:11434` so the proxy becomes the only network path.
 
@@ -246,6 +263,12 @@ The following command uses `8990` as an example; choose another unused port when
 ```bash
 NEMOCLAW_GATEWAY_PORT=8990 NEMOCLAW_MODEL=qwen3.5:9b $$nemoclaw onboard
 ```
+
+Every gateway port on the host shares one authenticated proxy and one token.
+When token and backend state are compatible, onboarding another gateway port restarts the shared proxy with the token already stored on the host.
+Sandboxes on the gateway you onboarded first keep reaching Ollama after the restart.
+If the restart fails, onboarding reports the port owner or the startup error.
+No sandbox on any gateway port can reach Ollama until you resolve the error and rerun onboarding.
 
 Interactive onboarding filters installed registry-known tags that do not fit current GPU memory.
 If no installed known tag fits, NemoClaw displays starter choices and warns when even the smallest tag might not fit.

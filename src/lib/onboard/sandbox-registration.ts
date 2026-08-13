@@ -19,6 +19,8 @@ import * as registry from "../state/registry";
 import { cloneSandboxWorkloadReceipt } from "../state/registry/workload";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
+import { cloneSandboxHostMounts } from "../state/registry/host-mount";
+import { resolveOnboardHermesApiPort } from "./hermes-api-port";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
@@ -71,12 +73,15 @@ export interface CreatedSandboxRegistryEntryInput {
   preservedMcpState?: SandboxMcpState;
   hermesToolGateways: string[];
   hermesDashboardState: HermesDashboardOnboardState;
+  /** Host port this sandbox exposes its OpenAI-compatible API on. */
+  hermesApiPort?: number | null;
   dashboardPort: number;
   dashboardRemoteBindPrepared?: boolean;
   lifecycleGeneration?: string;
   lifecycleLiveIdentityFingerprint?: string;
   gatewayName: string;
   gatewayPort: number;
+  hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
 }
 
 export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryEntryInput {
@@ -222,12 +227,23 @@ export function buildCreatedSandboxRegistryEntry(
     hermesToolGateways:
       input.hermesToolGateways.length > 0 ? [...input.hermesToolGateways] : undefined,
     ...getHermesDashboardRegistryFields(input.hermesDashboardState),
+    hermesApiPort:
+      input.agent?.name === "hermes"
+        ? (input.hermesApiPort ??
+          resolveOnboardHermesApiPort(input.sandboxName, {
+            // Registration follows a successful create/recreate that applied this environment.
+            allowRegisteredOverride: true,
+          }))
+        : undefined,
     dashboardPort: input.dashboardPort,
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     lifecycleGeneration: input.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
+    ...(input.hostMounts && input.hostMounts.length > 0
+      ? { hostMounts: cloneSandboxHostMounts(input.hostMounts) }
+      : {}),
   };
 }
 

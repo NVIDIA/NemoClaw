@@ -9,11 +9,13 @@ import { isDeepStrictEqual } from "node:util";
 import ts from "typescript";
 import YAML from "yaml";
 import { PR_E2E_MANUAL_CONTROLLER_JOB_IDS, RISK_RULES } from "../advisors/risk-plan.mts";
+import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
+import { catalogueTarget } from "./target-catalogue.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const DEFAULT_ADVISOR_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review-advisor.yaml");
-const META_JOBS = new Set(["report-to-pr", "scorecard"]);
+const META_JOBS = new Set(["release-qualification", "relevant-e2e", "report-to-pr", "scorecard"]);
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const GITHUB_SCRIPT_NODE24_ACTION =
   "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3";
@@ -66,6 +68,7 @@ type WorkflowPermissions = Record<string, unknown> | string;
 type WorkflowJob = {
   env?: Record<string, unknown>;
   if?: string;
+  name?: unknown;
   needs?: unknown;
   permissions?: WorkflowPermissions;
   "runs-on"?: unknown;
@@ -241,8 +244,11 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   ) {
     errors.push("Manual PR E2E concurrency must be scoped to its pull request");
   }
-  if (workflow.concurrency?.["cancel-in-progress"] !== "${{ inputs.checkout_sha != '' }}") {
-    errors.push("Manual PR E2E concurrency must cancel obsolete runs");
+  if (
+    workflow.concurrency?.["cancel-in-progress"] !==
+    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch }}"
+  ) {
+    errors.push("Manual PR E2E concurrency must not cancel an active Jetson dispatch");
   }
 
   const matrixJob = workflow.jobs["generate-matrix"] ?? {};
@@ -271,6 +277,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   const authEnvironment = {
     ACTOR: "${{ github.actor }}",
+    ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
     BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
@@ -293,10 +300,15 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   const authSource = String(authentication.run ?? "");
   const acceptedJobCases = [
-    "::false",
-    ...PR_E2E_MANUAL_CONTROLLER_JOB_IDS.map((jobId) => `${jobId}::false`),
+    "::false:false",
+    ...PR_E2E_MANUAL_CONTROLLER_JOB_IDS.map((jobId) => `${jobId}::false:false`),
+    ":jetson-nvmap-gpu:false:true",
   ].join(" | ");
-  const acceptedJobNames = PR_E2E_MANUAL_CONTROLLER_JOB_IDS.join(", or ");
+  const acceptedNames = [
+    ...PR_E2E_MANUAL_CONTROLLER_JOB_IDS,
+    "jetson-nvmap-gpu with its dispatch flag",
+  ];
+  const acceptedJobNames = `${acceptedNames.slice(0, -1).join(", ")}, or ${acceptedNames.at(-1)}`;
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
     '"$WORKFLOW_REF" == "refs/heads/main"',
@@ -350,6 +362,14 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         jobName === "report-to-pr" &&
         step.name === "Check out the trusted E2E reporting helper" &&
         step.with?.ref === "${{ github.workflow_sha }}";
+      const trustedReleaseQualificationCheckout =
+        jobName === "release-qualification" &&
+        step.name === "Check out the qualification evaluator" &&
+        step.with?.ref === "${{ github.workflow_sha }}";
+      const trustedRelevantE2eCheckout =
+        jobName === "relevant-e2e" &&
+        step.name === "Check out the E2E result evaluator" &&
+        step.with?.ref === "${{ github.workflow_sha }}";
       const trustedLaunchableLaneCheckout =
         jobName === "staging-brev-launchable" &&
         step.name === "Checkout trusted Launchable lane" &&
@@ -374,14 +394,22 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Checkout trusted llama.cpp qualification" &&
         step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
+      const trustedJetsonControllerCheckout =
+        jobName === "jetson-nvmap-gpu" &&
+        step.name === "Check out trusted Jetson controller" &&
+        step.with?.repository === "NVIDIA/NemoClaw" &&
+        step.with?.ref === "${{ github.workflow_sha }}";
       const trustedCheckout =
         trustedHermesFixtureCheckout ||
         trustedReportHelperCheckout ||
+        trustedReleaseQualificationCheckout ||
+        trustedRelevantE2eCheckout ||
         trustedLaunchableLaneCheckout ||
         trustedPublicationCheckout ||
         trustedManagedImageRuntimeCheckout ||
         trustedLlamaCppPlanCheckout ||
-        trustedLlamaCppQualificationCheckout;
+        trustedLlamaCppQualificationCheckout ||
+        trustedJetsonControllerCheckout;
       if (
         step.uses?.startsWith("actions/checkout@") &&
         step.with?.ref !== "${{ inputs.checkout_sha || github.sha }}" &&
@@ -469,7 +497,11 @@ function validatePrGateEvidenceProducers(errors: string[], workflow: OperationsW
   for (const jobId of requiredJobs) {
     const job = workflow.jobs[jobId];
     if (!job) {
-      errors.push(`Risk-plan job is missing from E2E workflow: ${jobId}`);
+      try {
+        catalogueTarget(jobId);
+      } catch {
+        errors.push(`Risk-plan job is missing from E2E workflow or catalogue: ${jobId}`);
+      }
       continue;
     }
     if (job.env?.E2E_JOB !== "1" || job.env?.E2E_TARGET_ID !== jobId) {
@@ -510,6 +542,92 @@ function validateAggregation(errors: string[], workflow: OperationsWorkflow): vo
   const scorecardNeeds = needs(workflow.jobs.scorecard ?? {});
   if (!sameMembers(scorecardNeeds, reportNeeds)) {
     errors.push("scorecard needs must exactly match report-to-pr needs");
+  }
+  const releaseQualificationNeeds = needs(workflow.jobs["release-qualification"] ?? {});
+  if (!sameMembers(releaseQualificationNeeds, reportNeeds)) {
+    errors.push("release-qualification needs must exactly match report-to-pr needs");
+  }
+  const relevantE2eNeeds = needs(workflow.jobs["relevant-e2e"] ?? {});
+  if (!sameMembers(relevantE2eNeeds, reportNeeds)) {
+    errors.push("relevant-e2e needs must exactly match report-to-pr needs");
+  }
+}
+
+function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): void {
+  const job = workflow.jobs["relevant-e2e"] ?? {};
+  const expectedCondition =
+    "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'push' }}";
+  if (job.name !== "Relevant E2E" || job.if !== expectedCondition) {
+    errors.push("relevant-e2e must be the stable aggregate check for main pushes");
+  }
+  if (!isDeepStrictEqual(permissionMap(job.permissions), { contents: "read" })) {
+    errors.push("relevant-e2e permissions must be contents: read");
+  }
+  const checkout = findStep(job, "Check out the E2E result evaluator");
+  const requireResults = findStep(job, "Require every selected E2E result");
+  const steps = job.steps ?? [];
+  requirePinnedAction(errors, checkout, "relevant-e2e checkout");
+  if (
+    steps.length !== 3 ||
+    steps[0] !== checkout ||
+    steps[1] !== requireResults ||
+    checkout.with?.ref !== "${{ github.workflow_sha }}" ||
+    checkout.with?.["persist-credentials"] !== false ||
+    checkout.with?.["sparse-checkout"] !== "tools/e2e/release-qualification.mts" ||
+    checkout.with?.["sparse-checkout-cone-mode"] !== false
+  ) {
+    errors.push("relevant-e2e must check out only the trusted evaluator");
+  }
+  if (
+    requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
+    requireResults.env?.RELEASE_REQUIRED_JOBS !==
+      "${{ needs.generate-matrix.outputs.selected_workflow_jobs }}" ||
+    requireResults.run !==
+      "node --experimental-strip-types --no-warnings tools/e2e/release-qualification.mts"
+  ) {
+    errors.push("relevant-e2e must evaluate planner-selected jobs from needs");
+  }
+}
+
+function validateReleaseQualification(errors: string[], workflow: OperationsWorkflow): void {
+  const job = workflow.jobs["release-qualification"] ?? {};
+  const expectedCondition =
+    "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.jobs == '' && inputs.targets == '' && inputs.include_staging_brev_launchable && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue }}";
+  if (job.if !== expectedCondition) {
+    errors.push("release-qualification must run only for a full manual run against main");
+  }
+  if (job["timeout-minutes"] !== 5) {
+    errors.push("release-qualification must keep the 5-minute timeout");
+  }
+  if (!isDeepStrictEqual(permissionMap(job.permissions), { contents: "read" })) {
+    errors.push("release-qualification permissions must be contents: read");
+  }
+  if (job.env && Object.keys(job.env).length > 0) {
+    errors.push("release-qualification must not expose credentials at job scope");
+  }
+
+  const steps = job.steps ?? [];
+  const checkout = findStep(job, "Check out the qualification evaluator");
+  const requireResults = findStep(job, "Require every release E2E result");
+  requirePinnedAction(errors, checkout, "release-qualification checkout");
+  if (
+    steps.length !== 2 ||
+    steps[0] !== checkout ||
+    checkout.with?.ref !== "${{ github.workflow_sha }}" ||
+    checkout.with?.["persist-credentials"] !== false ||
+    checkout.with?.["sparse-checkout"] !== "tools/e2e/release-qualification.mts" ||
+    checkout.with?.["sparse-checkout-cone-mode"] !== false
+  ) {
+    errors.push("release-qualification must check out only the trusted evaluator");
+  }
+  if (
+    requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
+    requireResults.env?.RELEASE_REQUIRED_JOBS !==
+      "${{ needs.generate-matrix.outputs.release_required_jobs }}" ||
+    requireResults.run !==
+      "node --experimental-strip-types --no-warnings tools/e2e/release-qualification.mts"
+  ) {
+    errors.push("release-qualification must evaluate planner-selected jobs from needs");
   }
 }
 
@@ -639,7 +757,7 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     job.if !==
     "${{ always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '')) }}"
   ) {
-    errors.push("scorecard must run after push and direct-main manual E2E executions");
+    errors.push("scorecard must run after pushes and manual E2E runs dispatched against main");
   }
   if (
     permissions.actions !== "read" ||
@@ -884,11 +1002,15 @@ export function validateE2eOperationsWorkflow(
   workflow: OperationsWorkflow,
   advisorPath = DEFAULT_ADVISOR_PATH,
 ): string[] {
-  const errors: string[] = [];
+  const errors = validateStandardProfileWorkflowBoundary(
+    workflow as unknown as Record<string, unknown>,
+  );
   errors.push(...validateBaseImagePublicationGate(workflow));
   validateManualPrDispatch(errors, workflow);
   validatePrGateEvidenceProducers(errors, workflow);
   validateAggregation(errors, workflow);
+  validateRelevantE2e(errors, workflow);
+  validateReleaseQualification(errors, workflow);
   validateIssueRoutingRetirement(errors, workflow);
   validateScorecard(errors, workflow);
   validateTraceTiming(errors, workflow);

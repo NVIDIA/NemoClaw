@@ -32,6 +32,10 @@ function rootGatewayLifecycleFunctions(src: string, gatewayLog: string): string 
   return [
     pidIdentityFunctions(src),
     extractShellFunction(src, "arm_openclaw_gateway_supervisor_cleanup"),
+    extractShellFunction(src, "launch_openclaw_gateway_process").replaceAll(
+      "/tmp/gateway.log",
+      gatewayLog,
+    ),
     extractShellFunction(src, "launch_openclaw_gateway").replaceAll("/tmp/gateway.log", gatewayLog),
     extractShellFunction(src, "openclaw_supervised_aux_pid_is_live"),
     extractShellFunction(src, "stop_openclaw_supervised_gateway"),
@@ -571,7 +575,7 @@ describe("gateway launch wiring (#4710)", () => {
         [
           "set -uo pipefail",
           `EVENT_LOG=${JSON.stringify(eventLog)}`,
-          "STEP_DOWN_PREFIX_GATEWAY=()",
+          "STEP_DOWN_PREFIX_GATEWAY=(env)",
           "OPENCLAW=/usr/bin/true",
           "_DASHBOARD_PORT=19000",
           "GATEWAY_PID=0",
@@ -582,7 +586,9 @@ describe("gateway launch wiring (#4710)", () => {
           'clear_gateway_pid_record() { printf "clear\\n" >>"$EVENT_LOG"; }',
           'kill() { printf "unexpected-kill:%s\\n" "$*" >>"$EVENT_LOG"; }',
           'wait() { printf "unexpected-wait:%s\\n" "$*" >>"$EVENT_LOG"; }',
+          safeTmpHelpers(src),
           extractShellFunction(src, "arm_openclaw_gateway_supervisor_cleanup"),
+          extractShellFunction(src, "launch_openclaw_gateway_process"),
           launch,
           "launch_openclaw_gateway",
         ].join("\n"),
@@ -590,7 +596,7 @@ describe("gateway launch wiring (#4710)", () => {
       { encoding: "utf-8", timeout: 5000 },
     );
 
-    expect(result.status).toBe(1);
+    expect(result.status, result.stderr).toBe(1);
     expect(result.stderr).toContain("could not capture gateway process identity");
     expect(fs.readFileSync(eventLog, "utf-8")).toBe("clear\n");
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -754,6 +760,7 @@ describe("respawn loop pidfile refresh (#4710)", () => {
         mode: 0o755,
       },
     );
+    fs.writeFileSync(gatewayLog, "gateway booting\n");
 
     fs.writeFileSync(
       scriptPath,

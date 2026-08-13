@@ -74,6 +74,18 @@ export interface SandboxGpuProofResult {
   at: string;
 }
 
+/** Explicit host directories exposed read-only to this sandbox. */
+export interface SandboxHostMount {
+  source: string;
+  target: string;
+  readonly readOnly: true;
+  /** Host filesystem identity captured when the source path was validated. */
+  readonly sourceIdentity?: {
+    readonly device: string;
+    readonly inode: string;
+  };
+}
+
 export interface SandboxEntry extends Partial<InferenceSelection> {
   name: string;
   /** Route-only placeholder created before sandbox creation; never eligible as the default. */
@@ -89,6 +101,7 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   sandboxGpuMode?: "auto" | "1" | "0" | string | null;
   sandboxGpuDevice?: string | null;
   sandboxGpuProof?: SandboxGpuProofResult | null;
+  hostMounts?: SandboxHostMount[];
   openshellDriver?: string | null;
   openshellVersion?: string | null;
   policies?: string[];
@@ -144,6 +157,13 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   hermesDashboardPort?: number | null;
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
+  /**
+   * Host port this sandbox exposes its OpenAI-compatible API on. The sandbox
+   * and the host forward share the number, so two Hermes sandboxes on one host
+   * need two values. Rows written before the port became per-sandbox carry no
+   * value and resolve to the range start.
+   */
+  hermesApiPort?: number | null;
   dashboardPort?: number | null;
   /** Remote dashboard exposure was included in the sandbox's generated config. */
   dashboardRemoteBindPrepared?: boolean;

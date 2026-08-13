@@ -43,6 +43,7 @@ export type SandboxRecord = {
   }>;
   fromDockerfile?: string | null;
   gatewayName?: string | null;
+  gatewayPort?: number | null;
   imageTag?: string | null;
   workload?: SandboxWorkloadReceipt;
   openshellDriver?: string | null;
@@ -273,6 +274,8 @@ vi.mock("../../shields/timer-bound-lock", () => ({
 }));
 
 vi.mock("../../shields/timer-control", () => ({
+  isProcessAlive: vi.fn(() => true),
+  readProcessStartIdentity: vi.fn(() => "snapshot-test-process-start"),
   readTimerMarker: lifecycleMock.readTimerMarkerMock,
 }));
 

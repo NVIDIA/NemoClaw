@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+
 import type { SandboxMessagingPlan } from "./manifest";
+import { compactSandboxMessagingPlanForPersistence } from "./persistence";
 
 export type RegistryMessagingAuthority =
   | {
@@ -23,6 +26,20 @@ export interface MessagingPlanAuthorityInput {
 export interface MessagingPlanAuthorityResult {
   readonly source: "registry" | "staged" | "session" | "none";
   readonly plan: SandboxMessagingPlan | null;
+}
+
+/** Compare the durable channel state while ignoring fields regenerated from manifests. */
+export function sameRegistryMessagingAuthority(
+  left: RegistryMessagingAuthority,
+  right: RegistryMessagingAuthority,
+): boolean {
+  if (left.authoritative !== right.authoritative) return false;
+  if (!left.authoritative || !right.authoritative) return true;
+  if (!left.plan || !right.plan) return left.plan === right.plan;
+  return isDeepStrictEqual(
+    compactSandboxMessagingPlanForPersistence(left.plan),
+    compactSandboxMessagingPlanForPersistence(right.plan),
+  );
 }
 
 function planTargetsSandbox(plan: SandboxMessagingPlan | null, sandboxName: string): boolean {

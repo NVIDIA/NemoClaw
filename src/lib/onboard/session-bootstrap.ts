@@ -12,6 +12,13 @@ import { checkpointProvesSandboxStepComplete } from "./checkpoint-replay";
 import type { ResumeConfigConflict } from "./resume-config";
 import type { StationExpressResumeIntent } from "./station-express-resume";
 
+export {
+  beginHostMountScope,
+  isDockerBindMountsEnabled,
+  reportReadOnlyHostMounts,
+  verifyReadOnlyHostMountSources,
+} from "./host-mount";
+
 export interface OnboardSessionBootstrapInput {
   resume: boolean;
   fresh: boolean;
@@ -25,6 +32,7 @@ export interface OnboardSessionBootstrapInput {
   requestedToolDisclosure?: ToolDisclosure | null;
   requestedObservabilityEnabled?: boolean | null;
   stationExpressIntent?: StationExpressResumeIntent | null;
+  requestedHostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
   servingProfileProvenance?: ServingProfileProvenance | null;
 }
 
@@ -33,7 +41,7 @@ export interface OnboardSessionBootstrapDeps {
   clearSession(): void;
   createSession(overrides?: Partial<Session>): Session;
   saveSession(session: Session): Session;
-  updateSession(mutator: (session: Session) => Session | void): Session;
+  updateSession(mutator: (session: Session) => Session | void): Session | Promise<Session>;
   applySessionRecovery(session: Session): void;
   setOnboardBrandingAgent(agentName: string | null): void;
   getResumeConfigConflicts(
@@ -45,6 +53,7 @@ export interface OnboardSessionBootstrapDeps {
       agent?: string | null;
       toolDisclosure?: ToolDisclosure | null;
       observabilityEnabled?: boolean | null;
+      hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
       authoritativeResumeConfig?: boolean;
     },
   ): ResumeConfigConflict[];
@@ -63,20 +72,16 @@ export interface OnboardSessionBootstrapResult {
 
 export const defaultResolveResumeCheckpoint: () => CheckpointLoadResult = loadResumeCheckpoint;
 
-export function checkpointSandboxName(
+export async function checkpointSandboxName(
   sandboxName: string,
   agent: { name?: string } | null,
   updateSession: OnboardSessionBootstrapDeps["updateSession"],
-): void {
-  if (agent?.name && agent.name !== "openclaw") return;
-  updateSession((current) => {
+): Promise<void> {
+  await updateSession((current) => {
+    const checkpointAgent = agent?.name ?? current.agent ?? "openclaw";
     current.sandboxName = sandboxName;
     current.sandboxPromptProgress.sandboxName = true;
-    recordCheckpointSandboxIdentity(
-      current,
-      sandboxName,
-      current.agent ?? agent?.name ?? "openclaw",
-    );
+    recordCheckpointSandboxIdentity(current, sandboxName, checkpointAgent);
     return current;
   });
 }
@@ -92,10 +97,7 @@ export function getCheckpointedSandboxName(
       ? session.checkpoint.sandboxIdentity.value.name
       : null;
   }
-  return (!agent?.name || agent.name === "openclaw") &&
-    session?.sandboxPromptProgress?.sandboxName === true
-    ? session.sandboxName
-    : null;
+  return session?.sandboxPromptProgress?.sandboxName === true ? session.sandboxName : null;
 }
 
 function mode(nonInteractive: boolean): "non-interactive" | "interactive" {
@@ -212,8 +214,7 @@ function assertRecoverableResumeSandboxName(
   const nameRecoverable = checkpoint
     ? checkpointProvesSandboxStepComplete(session) || isDecisionSelected(checkpoint.sandboxIdentity)
     : session?.steps?.sandbox?.status === "complete" ||
-      ((!session?.agent || session.agent === "openclaw") &&
-        session?.sandboxPromptProgress?.sandboxName === true);
+      session?.sandboxPromptProgress?.sandboxName === true;
   const checkpointedSandboxName =
     checkpoint && isDecisionSelected(checkpoint.sandboxIdentity)
       ? checkpoint.sandboxIdentity.value.name
@@ -256,6 +257,7 @@ async function prepareResumeSession(
     agent: input.agentFlag || null,
     toolDisclosure: input.requestedToolDisclosure ?? null,
     observabilityEnabled: input.requestedObservabilityEnabled ?? null,
+    hostMounts: input.requestedHostMounts,
     authoritativeResumeConfig: input.authoritativeResumeConfig,
   });
   if (resumeConflicts.length > 0) {
@@ -296,7 +298,13 @@ function prepareFreshSession(
       observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
       stationExpressIntent: input.stationExpressIntent ?? null,
       servingProfileProvenance: input.servingProfileProvenance ?? null,
-      metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
+      metadata: {
+        gatewayName: "nemoclaw",
+        fromDockerfile: fromDockerfile || null,
+        ...(input.requestedHostMounts && input.requestedHostMounts.length > 0
+          ? { hostMounts: input.requestedHostMounts.map((mount) => ({ ...mount })) }
+          : {}),
+      },
     }),
   );
   return { session, fromDockerfile };
