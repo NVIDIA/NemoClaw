@@ -92,6 +92,7 @@ describe("inference selection validation", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
     const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const teardownOrphanManagedGatewayOnAbort = vi.fn();
     const helpers = createInferenceSelectionValidationHelpers({
       isNonInteractive: () => true,
       agentProductName: () => "OpenClaw",
@@ -100,7 +101,7 @@ describe("inference selection validation", () => {
         ok: false,
         failures: [{ name: "Chat Completions API", httpStatus: 403 }],
       }),
-      teardownOrphanManagedGatewayOnAbort: vi.fn(),
+      teardownOrphanManagedGatewayOnAbort,
       promptValidationRecovery,
     });
 
@@ -116,6 +117,7 @@ describe("inference selection validation", () => {
       expect(exit).toHaveBeenCalledWith(1);
       expect(process.exitCode).toBe(1);
       expect(promptValidationRecovery).not.toHaveBeenCalled();
+      expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledOnce();
       expect(error.mock.calls.map((args) => args.join(" "))).toEqual([
         "  NVIDIA Endpoints endpoint validation failed.",
         "  Validation probe summary: Chat Completions API: HTTP 403.",
@@ -453,9 +455,9 @@ describe("inference selection validation", () => {
       agentProductName: () => "OpenClaw",
       getCredential: () => "test-key",
       probeAnthropicEndpoint,
-      teardownOrphanManagedGatewayOnAbort: vi.fn(),
       promptValidationRecovery: vi.fn(async () => "selection" as const),
       resolveEndpointHost: async () => [{ address: "169.254.169.254", family: 4 }],
+      teardownOrphanManagedGatewayOnAbort: vi.fn(),
     });
 
     try {
@@ -871,9 +873,9 @@ exit 0
       agentProductName: () => "Deep Agents",
       getCredential: () => "test-key",
       probeOpenAiLikeEndpoint,
-      teardownOrphanManagedGatewayOnAbort: vi.fn(),
       promptValidationRecovery,
       resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
+      teardownOrphanManagedGatewayOnAbort: vi.fn(),
     });
 
     try {
