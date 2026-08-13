@@ -116,7 +116,7 @@ has_post_reply_ready() {
         sub(/^[[:space:]]+/, "", line)
         sub(/[[:space:]]+$/, "", line)
         if (line == expected) reply = 1
-        if (reply && index(line, ready) != 0) found = 1
+        if (reply && line == ready) found = 1
       }
       END { exit found ? 0 : 1 }
     '

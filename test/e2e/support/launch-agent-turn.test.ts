@@ -145,6 +145,7 @@ fi
 printf 'gateway connected | idle\n' | tee -a "$capture"
 IFS= read -r -d $'\r' _
 printf 'PONG\n' | tee -a "$capture"
+printf 'gateway connected | idle\n' | tee -a "$capture"
 if IFS= read -r -t 1 -d $'\r' _; then
   echo "exit arrived before post-reply readiness" >&2
   exit 1
