@@ -10,12 +10,19 @@ import { describe, expect, it } from "vitest";
 
 import { discoverCredentialFreeTests } from "../../../tools/e2e/credential-free-tests.mts";
 import { RETIRED_CONTROLLER_SELECTOR_IDS } from "../../../tools/e2e/retired-selector-compatibility.mts";
+import {
+  catalogueTarget,
+  catalogueTargetsForChangedFiles,
+  E2E_TARGET_CATALOGUE,
+  isPrCandidateCatalogueTarget,
+} from "../../../tools/e2e/target-catalogue.mts";
 import { readFreeStandingJobsInventory } from "../../../tools/e2e/workflow-boundary.mts";
 import {
   buildE2eWorkflowPlan,
   releaseRequiredWorkflowJobs,
   renderE2eWorkflowPlanSummary,
   runE2eWorkflowPlanCli,
+  selectedWorkflowJobs,
   validateE2eWorkflowPlan,
   writeE2eWorkflowPlanCiOutput,
 } from "../../../tools/e2e/workflow-plan.mts";
@@ -37,16 +44,30 @@ function retiredControllerSelectorIds(): string[] {
   return retiredIds;
 }
 
+function expectedCiOutput(plan: ReturnType<typeof buildE2eWorkflowPlan>): string {
+  return [
+    `matrix=${JSON.stringify(plan.matrix)}`,
+    `test_matrix=${JSON.stringify(plan.testMatrix)}`,
+    `catalogue_standard_matrix=${JSON.stringify(plan.catalogueMatrices.standard)}`,
+    `catalogue_nvidia_api_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-api"])}`,
+    `catalogue_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-inference"])}`,
+    `selected_jobs=${JSON.stringify(plan.selectedJobs)}`,
+    `selected_workflow_jobs=${JSON.stringify(selectedWorkflowJobs(plan))}`,
+    `hermes_selected=${plan.hermesSelected}`,
+    `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
+    `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
+    "",
+  ].join("\n");
+}
+
 describe("E2E workflow plan", () => {
-  it("defaults to every supported registry target and tagged credential-free test", () => {
+  it("defaults to every release-required target and tagged credential-free test", () => {
     const plan = buildE2eWorkflowPlan();
 
-    expect(plan).toEqual({
-      matrix: buildLiveTargetMatrix(),
-      testMatrix: discoverCredentialFreeTests(),
-      hermesSelected: true,
-      explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
-    });
+    expect(plan.matrix).toEqual(buildLiveTargetMatrix());
+    expect(plan.testMatrix).toEqual(discoverCredentialFreeTests());
+    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
+    expect(plan.hermesSelected).toBe(true);
     expect(plan.explicitOnlyJobs).toEqual(["llama-cpp-dgx-spark-qualification"]);
     expect(releaseRequiredWorkflowJobs()).toContain("live");
     expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");
@@ -60,6 +81,148 @@ describe("E2E workflow plan", () => {
     expect(plan.matrix).toEqual([]);
     expect(plan.testMatrix.map((row) => row.id)).toEqual([testId]);
     expect(plan.hermesSelected).toBe(true);
+  });
+
+  it("routes a catalogue target through its credential profile", () => {
+    const plan = buildE2eWorkflowPlan({ jobs: "cloud-inference" });
+
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toEqual([
+      "cloud-inference",
+    ]);
+    expect(plan.catalogueMatrices.standard).toEqual([]);
+    expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-inference"]);
+  });
+
+  it("withholds credentialed catalogue profiles from PR candidate runs", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-pr-"));
+    const output = path.join(directory, "github-output");
+    const summary = path.join(directory, "summary.md");
+    const plan = buildE2eWorkflowPlan();
+    plan.catalogueMatrices["nvidia-api"] = [];
+    plan.catalogueMatrices["nvidia-inference"] = [];
+
+    try {
+      writeE2eWorkflowPlanCiOutput(
+        {},
+        {
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: summary,
+          INFERENCE_MODE: "mock",
+          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+        },
+      );
+
+      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("defines PR candidate eligibility once for every catalogue profile", () => {
+    expect(
+      Object.fromEntries(
+        E2E_TARGET_CATALOGUE.map((target) => [
+          target.profile,
+          isPrCandidateCatalogueTarget(target),
+        ]),
+      ),
+    ).toEqual({ standard: true, "nvidia-api": false, "nvidia-inference": false });
+  });
+
+  it("routes homogeneous GPU targets through the standard profile", () => {
+    const expectedRunner = "linux-amd64-gpu-rtxpro6000-latest-1";
+    const gpuDoubleOnboard = catalogueTarget("gpu-double-onboard");
+    const gpuE2e = catalogueTarget("gpu-e2e");
+    const llamaCpp = catalogueTarget("llama-cpp-generic-gpu");
+
+    expect([gpuDoubleOnboard, gpuE2e, llamaCpp]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ profile: "standard", runner: expectedRunner }),
+      ]),
+    );
+    expect([gpuDoubleOnboard.runner, gpuE2e.runner, llamaCpp.runner]).toEqual([
+      expectedRunner,
+      expectedRunner,
+      expectedRunner,
+    ]);
+    expect(gpuE2e.environment.E2E_LLAMA_CPP_DEDICATED_LANE).toBe("1");
+    expect(llamaCpp.environment).toEqual(
+      expect.objectContaining({
+        NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
+        NEMOCLAW_PROVIDER: "install-llama-cpp",
+      }),
+    );
+    expect(llamaCpp.environment).not.toHaveProperty("NEMOCLAW_MODEL");
+  });
+
+  it("selects only catalogue targets that own changed files", () => {
+    const changedFile = "test/e2e/live/snapshot-commands.test.ts";
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
+      "snapshot-commands",
+    ]);
+    expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(["snapshot-commands"]);
+    expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard"]);
+  });
+
+  it("emits a successful no-op plan when no retained E2E owns a changed file", () => {
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: ["docs/index.yml"] });
+
+    expect(selectedWorkflowJobs(plan)).toEqual([]);
+    expect(Object.values(plan.catalogueMatrices).flat()).toEqual([]);
+    expect(plan.matrix).toEqual([]);
+    expect(plan.testMatrix).toEqual([]);
+  });
+
+  it.each([
+    ".github/workflows/e2e.yaml",
+    ".github/actions/prepare-e2e/action.yaml",
+    "test/e2e/fixtures/e2e-test.ts",
+    "tools/e2e/live-vitest-invocation.mts",
+  ])("selects the full suite when shared execution changes: %s", (changedFile) => {
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+    const fullPlan = buildE2eWorkflowPlan();
+
+    expect(plan).toEqual(fullPlan);
+  });
+
+  it("selects catalogue targets without unrelated jobs when their profile changes", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: [".github/workflows/e2e-standard-profile.yaml"] },
+    );
+
+    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
+    expect(plan.selectedJobs).toEqual([]);
+    expect(plan.matrix).toEqual([]);
+    expect(plan.testMatrix).toEqual([]);
+  });
+
+  it("selects every catalogue target when its shared installer changes", () => {
+    expect(catalogueTargetsForChangedFiles(["scripts/install-openshell.sh"])).toEqual(
+      E2E_TARGET_CATALOGUE,
+    );
+  });
+
+  it("uses the PR risk rules to select catalogue targets for changed runtime code", () => {
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: ["src/lib/onboard.ts"] });
+    const targetIds = Object.values(plan.catalogueMatrices)
+      .flat()
+      .map((row) => row.id);
+
+    expect(targetIds).toEqual(expect.arrayContaining(["onboard-repair", "onboard-resume"]));
+  });
+
+  it("uses one risk rule for catalogue and retained workflow jobs", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["src/lib/messaging/applier/agent-config.ts"] },
+    );
+
+    expect(plan.catalogueMatrices.standard.map((row) => row.id)).toContain("channels-add-remove");
+    expect(plan.selectedJobs).toContain("channels-stop-start");
   });
 
   it.each([
@@ -150,16 +313,7 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(
-        [
-          `matrix=${JSON.stringify(plan.matrix)}`,
-          `test_matrix=${JSON.stringify(plan.testMatrix)}`,
-          `hermes_selected=${plan.hermesSelected}`,
-          `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
-          `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
-          "",
-        ].join("\n"),
-      );
+      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
     } finally {
       rmSync(directory, { force: true, recursive: true });
@@ -189,16 +343,7 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(
-        [
-          `matrix=${JSON.stringify(plan.matrix)}`,
-          `test_matrix=${JSON.stringify(plan.testMatrix)}`,
-          `hermes_selected=${plan.hermesSelected}`,
-          `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
-          `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
-          "",
-        ].join("\n"),
-      );
+      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
     } finally {
       rmSync(directory, { force: true, recursive: true });
@@ -211,9 +356,11 @@ describe("E2E workflow plan", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
-    const plan = {
+    const plan: ReturnType<typeof buildE2eWorkflowPlan> = {
       matrix: [],
       testMatrix: [],
+      catalogueMatrices: { standard: [], "nvidia-api": [], "nvidia-inference": [] },
+      selectedJobs: [],
       hermesSelected: false,
       explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
     };
@@ -234,16 +381,7 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(
-        [
-          "matrix=[]",
-          "test_matrix=[]",
-          "hermes_selected=false",
-          `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
-          `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
-          "",
-        ].join("\n"),
-      );
+      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
     } finally {
       rmSync(directory, { force: true, recursive: true });
@@ -257,6 +395,8 @@ describe("E2E workflow plan", () => {
     expect(buildE2eWorkflowPlan({ [selector]: "jetson-nvmap-gpu" })).toEqual({
       matrix: [],
       testMatrix: [],
+      catalogueMatrices: { standard: [], "nvidia-api": [], "nvidia-inference": [] },
+      selectedJobs: ["jetson-nvmap-gpu"],
       hermesSelected: false,
       explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
     });
@@ -266,9 +406,11 @@ describe("E2E workflow plan", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
-    const plan = {
+    const plan: ReturnType<typeof buildE2eWorkflowPlan> = {
       matrix: [],
       testMatrix: [],
+      catalogueMatrices: { standard: [], "nvidia-api": [], "nvidia-inference": [] },
+      selectedJobs: [],
       hermesSelected: false,
       explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
     };
@@ -289,16 +431,7 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(
-        [
-          "matrix=[]",
-          "test_matrix=[]",
-          "hermes_selected=false",
-          `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
-          `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
-          "",
-        ].join("\n"),
-      );
+      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
     } finally {
       rmSync(directory, { force: true, recursive: true });
@@ -396,16 +529,7 @@ describe("E2E workflow plan", () => {
         },
       );
 
-      expect(readFileSync(output, "utf8")).toBe(
-        [
-          `matrix=${JSON.stringify(plan.matrix)}`,
-          `test_matrix=${JSON.stringify(plan.testMatrix)}`,
-          "hermes_selected=false",
-          `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
-          `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
-          "",
-        ].join("\n"),
-      );
+      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
     } finally {
       rmSync(directory, { force: true, recursive: true });
@@ -434,6 +558,18 @@ describe("E2E workflow plan", () => {
     }
   });
 
+  it("requires changed-file evidence for push planning", () => {
+    expect(() =>
+      writeE2eWorkflowPlanCiOutput(
+        {},
+        {
+          EVENT_NAME: "push",
+          INFERENCE_MODE: "mock",
+        },
+      ),
+    ).toThrow("E2E planner requires CHANGED_FILES for a push event");
+  });
+
   it("emits one compact JSON line with the deterministic workflow-output schema", () => {
     let output = "";
     const write = process.stdout.write;
@@ -453,6 +589,8 @@ describe("E2E workflow plan", () => {
     expect(Object.keys(parsed)).toEqual([
       "matrix",
       "testMatrix",
+      "catalogueMatrices",
+      "selectedJobs",
       "hermesSelected",
       "explicitOnlyJobs",
     ]);
@@ -493,16 +631,7 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(
-        [
-          `matrix=${JSON.stringify(plan.matrix)}`,
-          `test_matrix=${JSON.stringify(plan.testMatrix)}`,
-          `hermes_selected=${plan.hermesSelected}`,
-          `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
-          `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
-          "",
-        ].join("\n"),
-      );
+      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
     } finally {
       rmSync(directory, { force: true, recursive: true });
@@ -531,16 +660,7 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(
-        [
-          `matrix=${JSON.stringify(plan.matrix)}`,
-          `test_matrix=${JSON.stringify(plan.testMatrix)}`,
-          `hermes_selected=${plan.hermesSelected}`,
-          `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
-          `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
-          "",
-        ].join("\n"),
-      );
+      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
     } finally {
       rmSync(directory, { force: true, recursive: true });

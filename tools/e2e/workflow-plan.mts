@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { buildLiveTargetMatrix, type LiveTargetMatrixEntry } from "../../test/e2e/registry/run.ts";
+import { buildRiskPlan } from "../advisors/risk-plan.mts";
 import {
   type CredentialFreeTestMatrixRow,
   discoverCredentialFreeTests,
@@ -14,7 +15,22 @@ import {
 import { JETSON_DISPATCH_TARGET } from "./jetson-dispatch-contract.mts";
 import { selectedRetiredControllerJobs } from "./retired-selector-compatibility.mts";
 import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
-import { readFreeStandingJobsInventory } from "./workflow-boundary.mts";
+import {
+  catalogueMatrix,
+  catalogueTarget,
+  catalogueTargetsForChangedFiles,
+  E2E_EXECUTION_PROFILES,
+  E2E_TARGET_CATALOGUE,
+  type E2eCatalogueMatrixRow,
+  type E2eCatalogueTarget,
+  type E2eExecutionProfile,
+  isPrCandidateCatalogueTarget,
+  pathMatches,
+} from "./target-catalogue.mts";
+import {
+  focusedE2eJobsForChangedFiles,
+  readFreeStandingJobsInventory,
+} from "./workflow-boundary.mts";
 
 export type WorkflowPlanSelectors = {
   jobs?: string;
@@ -24,8 +40,14 @@ export type WorkflowPlanSelectors = {
 export type E2eWorkflowPlan = {
   matrix: LiveTargetMatrixEntry[];
   testMatrix: CredentialFreeTestMatrixRow[];
+  catalogueMatrices: Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>;
+  selectedJobs: string[];
   hermesSelected: boolean;
   explicitOnlyJobs: string[];
+};
+
+type WorkflowPlanOptions = {
+  changedFiles?: readonly string[];
 };
 
 type WorkflowPlanCliOptions = WorkflowPlanSelectors & {
@@ -43,6 +65,29 @@ const LEGACY_BOOTSTRAP_INSTALL_JOB_ID = "launchable-smoke";
 const BOOTSTRAP_INSTALL_JOB_ID = "bootstrap-install-smoke";
 const COMMIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const INFERENCE_MODES = new Set(["mock", "internal-nvidia", "public-nvidia"]);
+const CATALOGUE_JOB_BY_PROFILE: Record<E2eExecutionProfile, string> = {
+  standard: "catalogue-standard",
+  "nvidia-api": "catalogue-nvidia-api",
+  "nvidia-inference": "catalogue-nvidia-inference",
+};
+const REGISTRY_OWNING_PATHS = [
+  "nemoclaw-blueprint/",
+  "src/lib/onboard/",
+  "test/e2e/fixtures/",
+  "test/e2e/live/registry-targets.test.ts",
+  "test/e2e/registry/",
+] as const;
+const FULL_SUITE_OWNING_PATHS = [
+  ".github/actions/docker-auth-setup/",
+  ".github/actions/prepare-e2e/",
+  ".github/actions/restore-e2e-cli-artifact/",
+  ".github/actions/upload-e2e-artifacts/",
+  ".github/scripts/docker-auth-cleanup.sh",
+  ".github/workflows/e2e.yaml",
+  "test/e2e/fixtures/",
+  "tools/e2e/live-vitest-invocation.mts",
+  "tools/e2e/workflow-plan.mts",
+] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -120,6 +165,92 @@ function hasUniqueIds(rows: readonly { id: string }[]): boolean {
   return new Set(rows.map((row) => row.id)).size === rows.length;
 }
 
+function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      "id",
+      "install_mode",
+      "restore_cli",
+      "runner",
+      "test_file",
+      "timeout_minutes",
+    ]) &&
+    typeof value.id === "string" &&
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.id) &&
+    typeof value.runner === "string" &&
+    /^[A-Za-z0-9._-]+$/u.test(value.runner) &&
+    typeof value.test_file === "string" &&
+    /^test\/e2e\/live\/[A-Za-z0-9._-]+[.]test[.]ts$/u.test(value.test_file) &&
+    typeof value.timeout_minutes === "number" &&
+    Number.isInteger(value.timeout_minutes) &&
+    value.timeout_minutes > 0 &&
+    (value.install_mode === "none" ||
+      value.install_mode === "authenticated" ||
+      value.install_mode === "credential-free") &&
+    typeof value.restore_cli === "boolean"
+  );
+}
+
+function isCatalogueMatrixRowForProfile(
+  value: unknown,
+  profile: E2eExecutionProfile,
+): value is E2eCatalogueMatrixRow {
+  if (!isCatalogueMatrixRow(value)) return false;
+  const target = E2E_TARGET_CATALOGUE.find((entry) => entry.id === value.id);
+  return (
+    target?.profile === profile &&
+    target.runner === value.runner &&
+    target.testFile === value.test_file &&
+    target.timeoutMinutes === value.timeout_minutes &&
+    target.installMode === value.install_mode &&
+    target.restoreCli === value.restore_cli
+  );
+}
+
+function isCatalogueMatrices(
+  value: unknown,
+): value is Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]> {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, E2E_EXECUTION_PROFILES) &&
+    E2E_EXECUTION_PROFILES.every(
+      (profile) =>
+        Array.isArray(value[profile]) &&
+        value[profile].every((row) => isCatalogueMatrixRowForProfile(row, profile)),
+    )
+  );
+}
+
+function emptyCatalogueMatrices(): Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]> {
+  return { standard: [], "nvidia-api": [], "nvidia-inference": [] };
+}
+
+function catalogueMatrices(
+  targets: readonly E2eCatalogueTarget[],
+): Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]> {
+  return Object.fromEntries(
+    E2E_EXECUTION_PROFILES.map((profile) => [profile, catalogueMatrix(profile, targets)]),
+  ) as Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>;
+}
+
+function registryTargetsForChangedFiles(changedFiles: readonly string[]): LiveTargetMatrixEntry[] {
+  return changedFiles.some((file) =>
+    REGISTRY_OWNING_PATHS.some((owner) => pathMatches(file, owner)),
+  )
+    ? buildLiveTargetMatrix()
+    : [];
+}
+
+function changedFilesFromEnvironment(environment: NodeJS.ProcessEnv): string[] | undefined {
+  if (environment.EVENT_NAME !== "push") return undefined;
+  const declared = environment.CHANGED_FILES;
+  if (declared === undefined) {
+    throw new Error("E2E planner requires CHANGED_FILES for a push event");
+  }
+  return [...new Set(declared.split("\n").filter(Boolean))].sort();
+}
+
 function selectorIds(value: string | undefined, label: "jobs" | "targets"): string[] {
   if (!value) return [];
   if (!SAFE_SELECTOR_LIST_PATTERN.test(value)) {
@@ -189,6 +320,8 @@ function emptyE2eWorkflowPlan(): E2eWorkflowPlan {
   return {
     matrix: [],
     testMatrix: [],
+    catalogueMatrices: emptyCatalogueMatrices(),
+    selectedJobs: [],
     hermesSelected: false,
     explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
   };
@@ -198,13 +331,38 @@ export function releaseRequiredWorkflowJobs(): string[] {
   const inventory = readFreeStandingJobsInventory();
   const sharedTestsRun = discoverCredentialFreeTests().length > 0;
   const liveTargetsRun = buildLiveTargetMatrix().length > 0;
-  return [...inventory.workflowJobs, ...(liveTargetsRun ? ["live"] : [])]
+  const catalogueJobs = E2E_EXECUTION_PROFILES.filter((profile) =>
+    E2E_TARGET_CATALOGUE.some((target) => target.profile === profile && target.releaseRequired),
+  ).map((profile) => CATALOGUE_JOB_BY_PROFILE[profile]);
+  return [
+    ...new Set([
+      ...inventory.workflowJobs,
+      ...catalogueJobs,
+      ...(liveTargetsRun ? ["live"] : []),
+      "staging-brev-launchable",
+    ]),
+  ]
     .filter((job) => !inventory.explicitOnlyJobs.includes(job))
     .filter((job) => job !== SHARED_E2E_JOB_ID || sharedTestsRun)
     .sort();
 }
 
-export function buildE2eWorkflowPlan(selectors: WorkflowPlanSelectors = {}): E2eWorkflowPlan {
+export function selectedWorkflowJobs(plan: E2eWorkflowPlan): string[] {
+  const jobs = new Set(plan.selectedJobs);
+  if (plan.matrix.length > 0) jobs.add("live");
+  if (plan.testMatrix.length > 0) jobs.add(SHARED_E2E_JOB_ID);
+  for (const profile of E2E_EXECUTION_PROFILES) {
+    if (plan.catalogueMatrices[profile].length > 0) {
+      jobs.add(CATALOGUE_JOB_BY_PROFILE[profile]);
+    }
+  }
+  return [...jobs].sort();
+}
+
+export function buildE2eWorkflowPlan(
+  selectors: WorkflowPlanSelectors = {},
+  options: WorkflowPlanOptions = {},
+): E2eWorkflowPlan {
   const jobs = selectorIds(selectors.jobs, "jobs");
   const targets = selectorIds(selectors.targets, "targets");
 
@@ -216,14 +374,17 @@ export function buildE2eWorkflowPlan(selectors: WorkflowPlanSelectors = {}): E2e
     return {
       matrix: [],
       testMatrix: [],
+      catalogueMatrices: emptyCatalogueMatrices(),
+      selectedJobs: [JETSON_DISPATCH_TARGET],
       hermesSelected: false,
       explicitOnlyJobs: [...inventory.explicitOnlyJobs],
     };
   }
   const credentialFreeTests = discoverCredentialFreeTests();
+  const catalogueIds = new Set(E2E_TARGET_CATALOGUE.map((target) => target.id));
 
   if (jobs.length > 0) {
-    const allowedJobs = new Set(inventory.allowedJobs);
+    const allowedJobs = new Set([...inventory.allowedJobs, ...catalogueIds]);
     for (const job of jobs) {
       if (!allowedJobs.has(job)) {
         throw new Error(
@@ -234,11 +395,86 @@ export function buildE2eWorkflowPlan(selectors: WorkflowPlanSelectors = {}): E2e
   }
 
   if (jobs.length > 0 || targets.length > 0) {
-    const registryTargets = targets.filter((target) => !inventory.targetToJob.has(target));
+    const selectedIds = new Set([...jobs, ...targets]);
+    const selectedCatalogueTargets = E2E_TARGET_CATALOGUE.filter((target) =>
+      selectedIds.has(target.id),
+    );
+    const registryTargets = targets.filter(
+      (target) => !inventory.targetToJob.has(target) && !catalogueIds.has(target),
+    );
+    const selectedJobSet = new Set(
+      [...selectedIds]
+        .map((id) => inventory.targetToJob.get(id) ?? id)
+        .filter((id) => inventory.workflowJobs.includes(id)),
+    );
+    if (selectedJobSet.has("mcp-bridge")) {
+      selectedJobSet.add("openshell-credential-generation-window");
+    }
+    const selectedJobs = [...selectedJobSet];
     return {
       matrix: registryTargets.length > 0 ? buildLiveTargetMatrix(registryTargets) : [],
       testMatrix: selectTestRows(credentialFreeTests, [...jobs, ...targets]),
-      hermesSelected: [...jobs, ...targets].includes(HERMES_JOB_ID),
+      catalogueMatrices: catalogueMatrices(selectedCatalogueTargets),
+      selectedJobs,
+      hermesSelected: selectedJobs.includes(HERMES_JOB_ID),
+      explicitOnlyJobs: [...inventory.explicitOnlyJobs],
+    };
+  }
+
+  if (options.changedFiles) {
+    const changedFiles = [...options.changedFiles];
+    if (
+      changedFiles.some((file) => FULL_SUITE_OWNING_PATHS.some((owner) => pathMatches(file, owner)))
+    ) {
+      return buildE2eWorkflowPlan(selectors);
+    }
+    const focusedLegacyJobs = focusedE2eJobsForChangedFiles(changedFiles, inventory);
+    const directlySelectedCatalogueTargets = catalogueTargetsForChangedFiles(changedFiles);
+    const riskPlan = buildRiskPlan({
+      headSha: "0".repeat(40),
+      changedFiles,
+      focusedE2eJobs: [
+        ...focusedLegacyJobs,
+        ...directlySelectedCatalogueTargets.map((target) => {
+          const matchedFiles = changedFiles.filter((file) =>
+            target.owningPaths.some((owner) => pathMatches(file, owner)),
+          );
+          return {
+            id: target.id,
+            matchedFiles: matchedFiles.length > 0 ? matchedFiles : changedFiles,
+          };
+        }),
+      ],
+    });
+    const riskJobIds = riskPlan.requiredJobs.map((job) => job.id);
+    const selectedJobSet = new Set(
+      riskJobIds
+        .map((id) => inventory.targetToJob.get(id) ?? id)
+        .filter((id) => inventory.workflowJobs.includes(id)),
+    );
+    if (selectedJobSet.has("mcp-bridge")) {
+      selectedJobSet.add("openshell-credential-generation-window");
+    }
+    const selectedJobs = [...selectedJobSet];
+    const selectedTests = credentialFreeTests.filter((row) => changedFiles.includes(row.file));
+    const selectedCatalogueIds = new Set([
+      ...directlySelectedCatalogueTargets.map((target) => target.id),
+      ...riskJobIds,
+    ]);
+    const selectedCatalogueTargets = E2E_TARGET_CATALOGUE.filter((target) =>
+      selectedCatalogueIds.has(target.id),
+    );
+    const riskTargetIds = riskPlan.requiredTargets.map((target) => target.id);
+    const registryMatrix = [
+      ...registryTargetsForChangedFiles(changedFiles),
+      ...(riskTargetIds.length > 0 ? buildLiveTargetMatrix(riskTargetIds) : []),
+    ].filter((entry, index, rows) => rows.findIndex((row) => row.id === entry.id) === index);
+    return {
+      matrix: registryMatrix,
+      testMatrix: selectedTests,
+      catalogueMatrices: catalogueMatrices(selectedCatalogueTargets),
+      selectedJobs,
+      hermesSelected: selectedJobs.includes(HERMES_JOB_ID),
       explicitOnlyJobs: [...inventory.explicitOnlyJobs],
     };
   }
@@ -246,6 +482,8 @@ export function buildE2eWorkflowPlan(selectors: WorkflowPlanSelectors = {}): E2e
   return {
     matrix: buildLiveTargetMatrix(),
     testMatrix: credentialFreeTests,
+    catalogueMatrices: catalogueMatrices(E2E_TARGET_CATALOGUE),
+    selectedJobs: inventory.workflowJobs.filter((job) => !inventory.explicitOnlyJobs.includes(job)),
     hermesSelected: true,
     explicitOnlyJobs: [...inventory.explicitOnlyJobs],
   };
@@ -254,12 +492,33 @@ export function buildE2eWorkflowPlan(selectors: WorkflowPlanSelectors = {}): E2e
 export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
   if (
     !isRecord(plan) ||
-    !hasExactKeys(plan, ["matrix", "testMatrix", "hermesSelected", "explicitOnlyJobs"]) ||
+    !hasExactKeys(plan, [
+      "catalogueMatrices",
+      "explicitOnlyJobs",
+      "hermesSelected",
+      "matrix",
+      "selectedJobs",
+      "testMatrix",
+    ])
+  ) {
+    throw new Error("E2E planner returned an invalid output schema");
+  }
+  const catalogueMatricesValue = plan.catalogueMatrices;
+  if (!isCatalogueMatrices(catalogueMatricesValue)) {
+    throw new Error("E2E planner returned an invalid output schema");
+  }
+  const catalogueMatrixRows = E2E_EXECUTION_PROFILES.flatMap(
+    (profile) => catalogueMatricesValue[profile],
+  );
+  if (
     !Array.isArray(plan.matrix) ||
     !plan.matrix.every(isLiveTargetMatrixEntry) ||
     !Array.isArray(plan.testMatrix) ||
     !plan.testMatrix.every(isCredentialFreeTestMatrixRow) ||
-    !hasUniqueIds([...plan.matrix, ...plan.testMatrix]) ||
+    !hasUniqueIds([...plan.matrix, ...plan.testMatrix, ...catalogueMatrixRows]) ||
+    !isStringArray(plan.selectedJobs) ||
+    !plan.selectedJobs.every((job) => /^[A-Za-z0-9_-]+$/u.test(job)) ||
+    !hasUniqueIds(plan.selectedJobs.map((id) => ({ id }))) ||
     typeof plan.hermesSelected !== "boolean" ||
     !isStringArray(plan.explicitOnlyJobs) ||
     !plan.explicitOnlyJobs.every((job) => /^[A-Za-z0-9_-]+$/u.test(job)) ||
@@ -281,6 +540,20 @@ function expectedHermesSelection(
   return (selected.length === 0 && !retiredSelectorSelected) || selected.includes(HERMES_JOB_ID);
 }
 
+function withoutCredentialedCatalogueProfiles(plan: E2eWorkflowPlan): E2eWorkflowPlan {
+  const eligibleRows = (rows: E2eCatalogueMatrixRow[]) =>
+    rows.filter((row) => isPrCandidateCatalogueTarget(catalogueTarget(row.id)));
+  return {
+    ...plan,
+    catalogueMatrices: Object.fromEntries(
+      E2E_EXECUTION_PROFILES.map((profile) => [
+        profile,
+        eligibleRows(plan.catalogueMatrices[profile]),
+      ]),
+    ) as Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>,
+  };
+}
+
 export function renderE2eWorkflowPlanSummary(plan: E2eWorkflowPlan): string {
   const lines = [
     "## E2E Execution Plan",
@@ -293,6 +566,11 @@ export function renderE2eWorkflowPlanSummary(plan: E2eWorkflowPlan): string {
   }
   for (const row of plan.testMatrix) {
     lines.push(`| \`${row.id}\` | shared E2E job | \`ubuntu-latest\` |`);
+  }
+  for (const profile of E2E_EXECUTION_PROFILES) {
+    for (const row of plan.catalogueMatrices[profile]) {
+      lines.push(`| \`${row.id}\` | \`${profile}\` profile | \`${row.runner}\` |`);
+    }
   }
   return `${lines.join("\n")}\n`;
 }
@@ -308,14 +586,20 @@ export function writeE2eWorkflowPlanCiOutput(
   const controllerMap = mapTrustedControllerJobs(selectors, environment);
   const plannerSelectors = controllerMap.selectors;
   const hasPlannerSelectors = Boolean(plannerSelectors.jobs || plannerSelectors.targets);
-  const plan = validateE2eWorkflowPlan(
+  const changedFiles = hasPlannerSelectors ? undefined : changedFilesFromEnvironment(environment);
+  const planned =
     controllerMap.retiredSelectorSelected && !hasPlannerSelectors
       ? emptyE2eWorkflowPlan()
-      : buildE2eWorkflowPlan(plannerSelectors),
+      : buildE2eWorkflowPlan(plannerSelectors, { changedFiles });
+  const plan = validateE2eWorkflowPlan(
+    COMMIT_SHA_PATTERN.test(environment.NEMOCLAW_E2E_EXPECTED_SHA ?? "")
+      ? withoutCredentialedCatalogueProfiles(planned)
+      : planned,
   );
   if (
+    !changedFiles &&
     plan.hermesSelected !==
-    expectedHermesSelection(plannerSelectors, controllerMap.retiredSelectorSelected)
+      expectedHermesSelection(plannerSelectors, controllerMap.retiredSelectorSelected)
   ) {
     throw new Error("E2E planner changed the trusted Hermes selection");
   }
@@ -327,6 +611,11 @@ export function writeE2eWorkflowPlanCiOutput(
     [
       `matrix=${JSON.stringify(plan.matrix)}`,
       `test_matrix=${JSON.stringify(plan.testMatrix)}`,
+      `catalogue_standard_matrix=${JSON.stringify(plan.catalogueMatrices.standard)}`,
+      `catalogue_nvidia_api_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-api"])}`,
+      `catalogue_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-inference"])}`,
+      `selected_jobs=${JSON.stringify(plan.selectedJobs)}`,
+      `selected_workflow_jobs=${JSON.stringify(selectedWorkflowJobs(plan))}`,
       `hermes_selected=${plan.hermesSelected}`,
       `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
       `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,

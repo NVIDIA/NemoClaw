@@ -4796,6 +4796,31 @@ function completeInterruptedShieldsDown(
   return true;
 }
 
+function persistIncompleteShieldsDownPosture(
+  sandboxName: string,
+  transition: ShieldsDownTransition,
+  timerAuthority: TimerMarker,
+  rollback: ShieldsDownRollbackResult,
+): ShieldsDownTransition {
+  if (rollback.outcome !== "manual_intervention_required" || rollback.timerAuthorityRevoked) {
+    return transition;
+  }
+
+  try {
+    assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
+    transition = { ...transition, phase: "active" };
+    writeShieldsDownTransition(transition, "preparing");
+    assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "active");
+  } catch (transitionError) {
+    const transitionMessage =
+      transitionError instanceof Error ? transitionError.message : String(transitionError);
+    console.error(
+      `  CRITICAL: Could not persist the incomplete Shields down posture. Treat the config as mutable and recover it manually. ${transitionMessage}`,
+    );
+  }
+  return transition;
+}
+
 function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts = {}): void {
   validateName(sandboxName, "sandbox name");
 
@@ -5155,24 +5180,13 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       opts.allowLegacyHermesProtocol === true,
       protocol,
     );
-    if (
-      transition &&
-      timerAuthority &&
-      rollback.outcome === "manual_intervention_required" &&
-      !rollback.timerAuthorityRevoked
-    ) {
-      try {
-        assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
-        transition = { ...transition, phase: "active" };
-        writeShieldsDownTransition(transition, "preparing");
-        assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "active");
-      } catch (transitionError) {
-        const transitionMessage =
-          transitionError instanceof Error ? transitionError.message : String(transitionError);
-        console.error(
-          `  CRITICAL: Could not persist the incomplete Shields down posture. Treat the config as mutable and recover it manually. ${transitionMessage}`,
-        );
-      }
+    if (transition && timerAuthority) {
+      transition = persistIncompleteShieldsDownPosture(
+        sandboxName,
+        transition,
+        timerAuthority,
+        rollback,
+      );
     }
     if (transition && rollback.timerAuthorityRevoked) {
       clearShieldsDownTransition(sandboxName, transition.processToken);
