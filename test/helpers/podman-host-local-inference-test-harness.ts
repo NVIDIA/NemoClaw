@@ -99,6 +99,7 @@ export interface PodmanHostLocalInferenceHarness {
     probeFailureText: string;
     ollamaPsModels: unknown[];
     runLostAcknowledgement: boolean;
+    runAcknowledgementText: string | null;
     startLostAcknowledgement: boolean;
     stopLostAcknowledgement: boolean;
     removeLostAcknowledgement: boolean;
@@ -106,7 +107,9 @@ export interface PodmanHostLocalInferenceHarness {
     reuseNameAfterRemoval: boolean;
     runSemanticMismatchText: string | null;
     probeRunLostAcknowledgement: boolean;
+    probeRunAcknowledgementText: string | null;
     probeWaitFailure: boolean;
+    probeRemoveLostAcknowledgement: boolean;
     probeRemoveLeavesContainer: boolean;
     probeReuseNameAfterRemoval: boolean;
     probeInheritedImageLabel: boolean;
@@ -114,6 +117,7 @@ export interface PodmanHostLocalInferenceHarness {
     parentExtraControlledLabel: boolean;
     parentExitDuringProof: "ready" | "gpu" | "inference" | null;
     startLeavesContainerStopped: boolean;
+    toolArguments: unknown;
     capturedEnvironmentValues: Readonly<Record<string, string>>[];
     writerFailuresRemaining: number;
   };
@@ -249,6 +253,7 @@ interface ProbeWaitState {
   readonly probeFailureText: string;
   readonly ollamaPsModels: readonly unknown[];
   readonly probeWaitFailure: boolean;
+  readonly toolArguments: unknown;
   readonly driftAfterReady: boolean;
   readonly driftAfterInference: boolean;
   cdiDevices: string[];
@@ -284,7 +289,11 @@ function completeProbeWait(
           finish_reason: body.tool_choice === "required" ? "tool_calls" : "stop",
           message:
             body.tool_choice === "required"
-              ? { tool_calls: [{ function: { name: "nemoclaw_probe", arguments: "{}" } }] }
+              ? {
+                  tool_calls: [
+                    { function: { name: "nemoclaw_probe", arguments: state.toolArguments } },
+                  ],
+                }
               : { content: "provider-native completion" },
         },
       ],
@@ -363,6 +372,7 @@ export function createPodmanHostLocalInferenceTestHarness(
     driftAfterReady: false,
     driftAfterInference: false,
     runLostAcknowledgement: false,
+    runAcknowledgementText: null as string | null,
     startLostAcknowledgement: false,
     stopLostAcknowledgement: false,
     removeLostAcknowledgement: false,
@@ -370,7 +380,9 @@ export function createPodmanHostLocalInferenceTestHarness(
     reuseNameAfterRemoval: false,
     runSemanticMismatchText: null as string | null,
     probeRunLostAcknowledgement: false,
+    probeRunAcknowledgementText: null as string | null,
     probeWaitFailure: false,
+    probeRemoveLostAcknowledgement: false,
     probeRemoveLeavesContainer: false,
     probeReuseNameAfterRemoval: false,
     probeInheritedImageLabel: false,
@@ -378,6 +390,7 @@ export function createPodmanHostLocalInferenceTestHarness(
     parentExtraControlledLabel: false,
     parentExitDuringProof: null as "ready" | "gpu" | "inference" | null,
     startLeavesContainerStopped: false,
+    toolArguments: "{}" as unknown,
     capturedEnvironmentValues: [] as Readonly<Record<string, string>>[],
     writerFailuresRemaining: 0,
   };
@@ -523,7 +536,7 @@ export function createPodmanHostLocalInferenceTestHarness(
           };
           return state.probeRunLostAcknowledgement
             ? result(125, "", "transport closed after probe create")
-            : result(0, `${PROBE_CONTAINER_ID}\n`);
+            : result(0, state.probeRunAcknowledgementText ?? `${PROBE_CONTAINER_ID}\n`);
         }
         // Locate the immutable workload reference independent of optional flags.
         const immutableImage = immutableManagedImage(args);
@@ -548,7 +561,7 @@ export function createPodmanHostLocalInferenceTestHarness(
         }
         return state.runLostAcknowledgement
           ? result(125, "", "transport closed after create")
-          : result(0, `${CONTAINER_ID}\n`);
+          : result(0, state.runAcknowledgementText ?? `${CONTAINER_ID}\n`);
       }
       if (args[0] === "wait") {
         if (!currentProbe || currentProbe.id !== args[1]) return result(125, "", "missing probe");
@@ -612,7 +625,7 @@ export function createPodmanHostLocalInferenceTestHarness(
                 }
               : null;
           }
-          return state.removeLostAcknowledgement
+          return state.probeRemoveLostAcknowledgement
             ? result(125, "", "transport closed after probe remove")
             : result(0, `${PROBE_CONTAINER_ID}\n`);
         }

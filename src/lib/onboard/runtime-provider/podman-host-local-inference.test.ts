@@ -134,6 +134,37 @@ describe("Podman host-local inference lifecycle", () => {
     },
   );
 
+  it("accepts whitespace in the provider-native empty tool arguments object", () => {
+    const harness = createPodmanHostLocalInferenceTestHarness();
+    harness.state.toolArguments = " \n { \n } \t";
+    const runtime = operationRuntime(harness);
+
+    const prepared = runtime.startManaged(harness.input, harness.writer);
+
+    expect(prepared.receipt.inference).toMatchObject({ toolCallingRequired: true });
+    expect(harness.probe()).toBeNull();
+    expect(harness.container()).toMatchObject({ running: true });
+  });
+
+  it.each([
+    ["malformed", "{"],
+    ["an array", "[]"],
+    ["null", "null"],
+    ["a nonempty object", '{"unexpected":true}'],
+  ] as const)("rejects %s provider-native tool arguments", (_label, toolArguments) => {
+    const harness = createPodmanHostLocalInferenceTestHarness();
+    harness.state.toolArguments = toolArguments;
+    const runtime = operationRuntime(harness);
+
+    expect(() => runtime.startManaged(harness.input, harness.writer)).toThrow(
+      "did not return the required tool call",
+    );
+    expect(harness.failures.at(-1)).toMatchObject({ phase: "inference" });
+    expect(harness.probe()).toBeNull();
+    expect(harness.container()).toBeNull();
+    expect(harness.written).toHaveLength(0);
+  });
+
   it("uses exact named disposable probes with no anonymous or cross-authority launch surface", () => {
     const harness = createPodmanHostLocalInferenceTestHarness();
     harness.state.probeInheritedImageLabel = true;
@@ -199,6 +230,54 @@ describe("Podman host-local inference lifecycle", () => {
     expect(
       harness.failures.some(({ message }) => message.includes("probe create returned exit")),
     ).toBe(true);
+  });
+
+  it.each([
+    ["malformed", "not-a-full-container-id", "must be a full immutable ID"],
+    ["a different full ID", `${"d".repeat(64)}\n`, "disagrees with exact name inspection"],
+  ] as const)(
+    "captures %s successful disposable-probe create acknowledgement and removes all residue",
+    (_label, acknowledgement, expectedFailure) => {
+      const harness = createPodmanHostLocalInferenceTestHarness();
+      harness.state.probeRunAcknowledgementText = acknowledgement;
+      const runtime = operationRuntime(harness);
+
+      expect(() => runtime.startManaged(harness.input, harness.writer)).toThrow(expectedFailure);
+      expect(
+        harness.failures.some(
+          ({ phase, message }) => phase === "ready" && message.includes(expectedFailure),
+        ),
+      ).toBe(true);
+      const evidenceIndex = harness.events.indexOf("evidence:ready");
+      const removeIndex = harness.events.findIndex((event) =>
+        event.includes(`podman:rm --force ${"c".repeat(64)}`),
+      );
+      expect(evidenceIndex).toBeGreaterThanOrEqual(0);
+      expect(removeIndex).toBeGreaterThan(evidenceIndex);
+      expect(harness.probe()).toBeNull();
+      expect(harness.container()).toBeNull();
+      expect(harness.written).toHaveLength(0);
+    },
+  );
+
+  it("accepts a lost disposable-probe remove acknowledgement only after exact absence proof", () => {
+    const harness = createPodmanHostLocalInferenceTestHarness();
+    harness.state.probeRemoveLostAcknowledgement = true;
+    const runtime = operationRuntime(harness);
+
+    const prepared = runtime.startManaged(harness.input, harness.writer);
+
+    expect(prepared.receipt.service).toBe("nim");
+    expect(harness.probe()).toBeNull();
+    expect(harness.container()).toMatchObject({ running: true });
+    expect(
+      harness.failures.some(
+        ({ message }) =>
+          message.includes("probe removal returned exit 125") &&
+          message.includes("transport closed after probe remove"),
+      ),
+    ).toBe(true);
+    expect(harness.written).toHaveLength(0);
   });
 
   it("retains an already-present deterministic probe name without trusting copyable labels", () => {
@@ -806,6 +885,34 @@ describe("Podman host-local inference lifecycle", () => {
     expect(prepared.rollback()).toMatchObject({ status: "removed", priorState: "absent" });
   });
 
+  it.each([
+    ["malformed", "not-a-full-container-id", "must be a full immutable ID"],
+    ["a different full ID", `${"b".repeat(64)}\n`, "disagrees with exact name inspection"],
+  ] as const)(
+    "captures %s successful managed create acknowledgement and removes all residue",
+    (_label, acknowledgement, expectedFailure) => {
+      const harness = createPodmanHostLocalInferenceTestHarness();
+      harness.state.runAcknowledgementText = acknowledgement;
+      const runtime = operationRuntime(harness);
+
+      expect(() => runtime.startManaged(harness.input, harness.writer)).toThrow(expectedFailure);
+      expect(
+        harness.failures.some(
+          ({ phase, message }) => phase === "start" && message.includes(expectedFailure),
+        ),
+      ).toBe(true);
+      const evidenceIndex = harness.events.indexOf("evidence:start");
+      const removeIndex = harness.events.findIndex((event) =>
+        event.includes(`podman:rm --force ${"a".repeat(64)}`),
+      );
+      expect(evidenceIndex).toBeGreaterThanOrEqual(0);
+      expect(removeIndex).toBeGreaterThan(evidenceIndex);
+      expect(harness.container()).toBeNull();
+      expect(harness.probe()).toBeNull();
+      expect(harness.written).toHaveLength(0);
+    },
+  );
+
   it("captures a lost start acknowledgement before recovery proof and restores stopped state", () => {
     const harness = createPodmanHostLocalInferenceTestHarness();
     const operation = createPodmanHostLocalInferenceOperation({
@@ -1120,10 +1227,16 @@ describe("Podman host-local inference lifecycle", () => {
     prepared.validateBeforeCommit();
     const receipt = prepared.commit();
     harness.state.removeLostAcknowledgement = true;
+    harness.failures.length = 0;
 
     expect(runtime.destroy(receipt)).toMatchObject({ status: "removed" });
     expect(harness.container()).toBeNull();
-    expect(harness.failures.at(-1)).toMatchObject({ phase: "cleanup" });
+    expect(harness.failures).toEqual([
+      expect.objectContaining({
+        phase: "cleanup",
+        message: expect.stringContaining("transport closed after remove"),
+      }),
+    ]);
   });
 
   it("captures a lost stop acknowledgement only after exact at-rest proof", () => {

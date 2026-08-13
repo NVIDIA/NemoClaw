@@ -1768,11 +1768,29 @@ function executeExactProbe(
     );
   }
   if (run.status === 0 && !run.error) {
-    const reportedId = exactContainerId(run.stdout.trim());
-    if (reportedId !== container.runtimeId) {
-      captureFailure("Podman inference probe create returned a different runtime identity.");
-      throw new PodmanInferenceIndeterminateCleanupError(
-        "Podman inference probe create identity disagrees with exact name inspection.",
+    let acknowledgementFailure: Error | null = null;
+    try {
+      const reportedId = exactContainerId(run.stdout.trim());
+      if (reportedId !== container.runtimeId) {
+        throw new Error(
+          "Podman inference probe create identity disagrees with exact name inspection.",
+        );
+      }
+    } catch (error) {
+      acknowledgementFailure =
+        error instanceof Error ? error : new Error(errorEvidence(redactor, error));
+      captureFailure(acknowledgementFailure);
+    }
+    if (acknowledgementFailure !== null) {
+      cleanupExactProbe(engine, container, spec, phase, onFailureEvidence, redactor);
+      try {
+        assertAuthority();
+      } catch (error) {
+        captureFailure(error);
+        throw new PodmanInferenceCapturedFailureError(errorEvidence(redactor, error));
+      }
+      throw new PodmanInferenceCapturedFailureError(
+        errorEvidence(redactor, acknowledgementFailure),
       );
     }
   }
@@ -2170,7 +2188,24 @@ function probeOpenAiInference(
           typeof toolFunction === "object" && toolFunction !== null
             ? record(toolFunction, "inference tool function").arguments
             : null;
-        if (toolName !== "nemoclaw_probe" || toolArguments !== "{}") {
+        let decodedToolArguments: unknown = null;
+        if (
+          typeof toolArguments === "string" &&
+          Buffer.byteLength(toolArguments, "utf8") <= 16 * 1024
+        ) {
+          try {
+            decodedToolArguments = JSON.parse(toolArguments);
+          } catch {
+            decodedToolArguments = null;
+          }
+        }
+        if (
+          toolName !== "nemoclaw_probe" ||
+          typeof decodedToolArguments !== "object" ||
+          decodedToolArguments === null ||
+          Array.isArray(decodedToolArguments) ||
+          Object.keys(decodedToolArguments).length !== 0
+        ) {
           throw new Error(`${service} inference proof did not return the required tool call.`);
         }
         return;
@@ -2908,16 +2943,16 @@ export function createPodmanHostLocalInferenceRuntime(
           );
         }
         const inspected = inspectContainer(engine, foundId);
+        acknowledgedCleanupCandidate = requireAcknowledgedSpecCleanupIdentity(
+          inspected,
+          spec,
+          foundId,
+        );
         if (result.status === 0 && !result.error) {
           const reportedId = exactContainerId(result.stdout.trim());
           if (reportedId !== foundId) {
             throw new Error("Podman inference create result disagrees with exact name inspection.");
           }
-          acknowledgedCleanupCandidate = requireAcknowledgedSpecCleanupIdentity(
-            inspected,
-            spec,
-            reportedId,
-          );
         }
         created = requireSpecIdentity(inspected, spec);
         acknowledgedCleanupCandidate ??= created;
