@@ -160,6 +160,9 @@ describe("CLI launch routing process contracts (#6006)", () => {
     expect(result.code).toBe(0);
     expect(result.out).toContain("launch <name>");
     expect(result.out).toContain("Connect to a sandbox and start its agent");
+    expect(result.out.replace(/\s+/g, " ")).toContain(
+      "Validate a current launch-readiness lease or run the complete connect preflight",
+    );
     expect(result.out).toContain("SANDBOXNAME");
   });
 
@@ -181,24 +184,19 @@ describe("CLI launch routing process contracts (#6006)", () => {
 
       expect(result.code).toBe(1);
       expect(result.out).toContain(
-        "Sandbox 'alpha;echo pwned' is registered locally, but is not present in the live OpenShell gateway.",
+        "Sandbox 'alpha;echo pwned' is not registered in the local NemoClaw state.",
       );
       // The token never reaches an in-sandbox command: no interactive exec ran.
       expect(harness.launchExecArgv()).toBeNull();
       expect(harness.callLines().some((call) => call.includes("--tty"))).toBe(false);
 
-      // Every `openshell` call that carries the token carries it as one argv
-      // element. No call splits it into a second command, which is what a
-      // shell-interpolated (rather than argv-passed) sandbox name would do.
+      // Local registry rejection happens before any OpenShell command can
+      // receive the untrusted token.
       const tokenCalls = harness
         .callArgvs()
         .filter((argv) => argv.some((element) => element.includes("pwned")));
-      expect(tokenCalls.length).toBeGreaterThan(0);
-      for (const argv of tokenCalls) {
-        expect(argv).toContain("alpha;echo pwned");
-        expect(argv).not.toContain("echo");
-        expect(argv).not.toContain("pwned");
-      }
+      expect(tokenCalls).toEqual([]);
+      expect(harness.callLines()).toEqual([]);
     },
   );
 

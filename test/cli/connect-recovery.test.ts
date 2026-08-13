@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { LAUNCH_READINESS_FIXTURE_POLICY } from "../helpers/launch-readiness-fixture";
 import { nonWslPlatformNodeOptions } from "../helpers/platform-override-node-options";
 import {
   runWithEnv,
@@ -23,6 +24,29 @@ type GatewayControlDockerStubOptions = {
   stateFile: string;
   recoveryStatus?: number;
 };
+
+const launchReadinessObservationStubLines = [
+  'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
+  `  printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}`,
+  "  exit 0",
+  "fi",
+  'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+  "  printf '%s\\n' 'Gateway inference:' '  Provider: nvidia-prod' '  Model: test-model'",
+  "  exit 0",
+  "fi",
+];
+
+const expectedProbeOnlyExitCode = process.platform === "darwin" ? 1 : 0;
+const PLATFORM_EVIDENCE_UNAVAILABLE = "launch-readiness evidence is unavailable on this platform";
+
+function expectProbeOnlyPublicationOutcome(result: { code: number; out: string }): void {
+  expect(result.code, result.out).toBe(expectedProbeOnlyExitCode);
+  if (process.platform === "darwin") {
+    expect(result.out).toContain(PLATFORM_EVIDENCE_UNAVAILABLE);
+  } else {
+    expect(result.out).not.toContain(PLATFORM_EVIDENCE_UNAVAILABLE);
+  }
+}
 
 function writeGatewayControlDockerStub(
   localBin: string,
@@ -234,6 +258,7 @@ describe("CLI connect recovery process contracts", () => {
           "fi",
           'if [ "$1" = "forward" ] && [ "$2" = "list" ]; then echo "alpha 127.0.0.1 18789 12345 running"; exit 0; fi',
           'if [ "$1" = "forward" ]; then exit 99; fi',
+          ...launchReadinessObservationStubLines,
           "exit 0",
         ].join("\n"),
         { mode: 0o755 },
@@ -255,7 +280,7 @@ describe("CLI connect recovery process contracts", () => {
           PATH: `${localBin}:${process.env.PATH || ""}`,
         });
 
-        expect(result.code, result.out).toBe(0);
+        expectProbeOnlyPublicationOutcome(result);
         expect(result.out).toContain(expectedOutput);
         expect(result.out).not.toContain(unexpectedOutput);
         const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
@@ -314,6 +339,7 @@ describe("CLI connect recovery process contracts", () => {
           "fi",
           'if [ "$1" = "forward" ] && [ "$2" = "list" ]; then echo "alpha 127.0.0.1 18789 12345 running"; exit 0; fi',
           'if [ "$1" = "forward" ]; then exit 99; fi',
+          ...launchReadinessObservationStubLines,
           "exit 0",
         ].join("\n"),
         { mode: 0o755 },
@@ -389,6 +415,7 @@ describe("CLI connect recovery process contracts", () => {
         "fi",
         'if [ "$1" = "forward" ] && [ "$2" = "list" ]; then { echo "alpha 127.0.0.1 18789 12345 running"; echo "alpha 127.0.0.1 8642 12346 running"; }; exit 0; fi',
         'if [ "$1" = "forward" ]; then exit 99; fi',
+        ...launchReadinessObservationStubLines,
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
@@ -404,7 +431,7 @@ describe("CLI connect recovery process contracts", () => {
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
 
-      expect(result.code, result.out).toBe(0);
+      expectProbeOnlyPublicationOutcome(result);
       expect(result.out).toContain("Probe complete: recovered Hermes Agent gateway");
       const openshellLog = fs.readFileSync(openshellCalls, "utf8");
       expect(openshellLog).toContain("sandbox exec --name alpha -- sh -c");

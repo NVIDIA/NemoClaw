@@ -86,6 +86,13 @@ export async function launchSandbox(
       session = { agent: decision.agent, sb: decision.sb };
       break;
     }
+    if (
+      decision.category === "missing" &&
+      decision.gatewayName === null &&
+      decision.gatewayPort === null
+    ) {
+      throw new Error(`Sandbox '${sandboxName}' is not registered in the local NemoClaw state.`);
+    }
     if (decision.recoveryBlocked) throw new Error(LAUNCH_READINESS_FENCE_REPAIR);
     const fallbackDecision = decision;
     const publicationRequest = publicationFromDecision(sandboxName, fallbackDecision);

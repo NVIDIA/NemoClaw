@@ -7,6 +7,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+  LAUNCH_READINESS_FIXTURE_POLICY,
+  launchReadinessRegistryFixture,
+} from "./helpers/launch-readiness-fixture";
 import { nonWslPlatformNodeOptions } from "./helpers/platform-override-node-options";
 import { execTimeout, testTimeoutOptions } from "./helpers/timeouts";
 
@@ -126,6 +130,7 @@ function setupFixture(opts: {
       sandboxes: {
         [sandboxName]: {
           name: sandboxName,
+          ...launchReadinessRegistryFixture(),
           model: "nvidia/test-model",
           provider: "nvidia-prod",
           gpuEnabled: false,
@@ -265,7 +270,8 @@ if (args[0] === "forward") {
 }
 
 if (args[0] === "policy" && args[1] === "get") {
-  process.exit(1);
+  process.stdout.write(${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)});
+  process.exit(0);
 }
 
 if (args[0] === "inference" && args[1] === "get") {

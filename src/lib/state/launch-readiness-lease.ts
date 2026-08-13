@@ -1453,7 +1453,7 @@ export function fenceLaunchReadinessLease(
     };
     writeRecord(context, directory, fence);
     return fence;
-  } catch (error) {
+  } catch {
     throw new LaunchReadinessFenceError(false, true);
   } finally {
     closeDirectory(directory);

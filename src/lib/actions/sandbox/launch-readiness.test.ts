@@ -612,45 +612,46 @@ describe("launch readiness validation", () => {
     });
   });
 
-  it.each([
-    300, 401, 403, 404, 503,
-  ])("rejects HTTP %i from the owning OpenShell gateway inference probe during inspection and publication (#8942)", async (httpStatus) => {
-    sandbox = {
-      ...sandbox,
-      provider: "nvidia",
-      model: "model-a",
-      credentialEnv: "NVIDIA_API_KEY",
-    };
-    routeOutput = "Gateway Inference:\n\n  Provider: nvidia\n  Model: model-a\n";
-    const currentDeps = await createAcceptedLease();
-    currentDeps.inferenceProbe = vi.fn((_sandboxName, _agent, gatewayName) => ({
-      healthy: httpStatus < 500,
-      broken: httpStatus >= 500,
-      httpStatus,
-      detail: `${httpStatus < 500 ? "OK" : "BROKEN"} ${httpStatus}`,
-    }));
+  it.each([300, 401, 403, 404, 503])(
+    "rejects HTTP %i from the owning OpenShell gateway inference probe during inspection and publication (#8942)",
+    async (httpStatus) => {
+      sandbox = {
+        ...sandbox,
+        provider: "nvidia",
+        model: "model-a",
+        credentialEnv: "NVIDIA_API_KEY",
+      };
+      routeOutput = "Gateway Inference:\n\n  Provider: nvidia\n  Model: model-a\n";
+      const currentDeps = await createAcceptedLease();
+      currentDeps.inferenceProbe = vi.fn((_sandboxName, _agent, _gatewayName) => ({
+        healthy: httpStatus < 500,
+        broken: httpStatus >= 500,
+        httpStatus,
+        detail: `${httpStatus < 500 ? "OK" : "BROKEN"} ${httpStatus}`,
+      }));
 
-    await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
-      kind: "fallback",
-      category: "health",
-    });
-    await expect(
-      publishLaunchReadiness(
-        {
-          sandboxName: SANDBOX,
-          gatewayName: GATEWAY_NAME,
-          gatewayPort: GATEWAY_PORT,
-          epochId: EPOCH,
-        },
-        currentDeps,
-      ),
-    ).resolves.toEqual({ kind: "validation-failed", category: "health" });
-    expect(currentDeps.inferenceProbe).toHaveBeenCalledWith(
-      SANDBOX,
-      expect.objectContaining({ name: "openclaw" }),
-      GATEWAY_NAME,
-    );
-  });
+      await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+        kind: "fallback",
+        category: "health",
+      });
+      await expect(
+        publishLaunchReadiness(
+          {
+            sandboxName: SANDBOX,
+            gatewayName: GATEWAY_NAME,
+            gatewayPort: GATEWAY_PORT,
+            epochId: EPOCH,
+          },
+          currentDeps,
+        ),
+      ).resolves.toEqual({ kind: "validation-failed", category: "health" });
+      expect(currentDeps.inferenceProbe).toHaveBeenCalledWith(
+        SANDBOX,
+        expect.objectContaining({ name: "openclaw" }),
+        GATEWAY_NAME,
+      );
+    },
+  );
 
   it("accepts strict HTTP 2xx inference evidence from the owning OpenShell gateway (#8942)", async () => {
     sandbox = {

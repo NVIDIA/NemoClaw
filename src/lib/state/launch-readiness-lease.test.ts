@@ -502,15 +502,22 @@ describe("launch readiness lease storage", () => {
     const authorityPath = launchReadinessAuthorityPath(SANDBOX, runtimeRoot);
     expect(path.basename(authorityPath)).toMatch(/^[a-f0-9]{64}\.json$/);
     expect(fs.statSync(path.dirname(authorityPath)).mode & 0o777).toBe(0o700);
-    expect(fs.statSync(authorityPath).mode & 0o777).toBe(0o600);
+    const authorityFd = fs.openSync(authorityPath, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
+    try {
+      expect(fs.fstatSync(authorityFd).mode & 0o777).toBe(0o600);
 
-    const authority = JSON.parse(fs.readFileSync(authorityPath, "utf8")) as Record<string, unknown>;
-    authority.extra = true;
-    fs.writeFileSync(authorityPath, JSON.stringify(authority), { mode: 0o600 });
-    expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("unsafe");
+      const authority = JSON.parse(fs.readFileSync(authorityFd, "utf8")) as Record<string, unknown>;
+      authority.extra = true;
+      fs.ftruncateSync(authorityFd, 0);
+      fs.writeSync(authorityFd, JSON.stringify(authority), 0, "utf8");
+      expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("unsafe");
 
-    fs.writeFileSync(authorityPath, "x".repeat(LAUNCH_READINESS_MAX_BYTES + 1), { mode: 0o600 });
-    expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("unsafe");
+      fs.ftruncateSync(authorityFd, 0);
+      fs.writeSync(authorityFd, "x".repeat(LAUNCH_READINESS_MAX_BYTES + 1), 0, "utf8");
+      expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("unsafe");
+    } finally {
+      fs.closeSync(authorityFd);
+    }
   });
 
   it("rejects an authority copied to a restored runtime root", () => {
@@ -700,35 +707,37 @@ describe("launch readiness lease storage", () => {
     fs.chmodSync(authorityDir, 0o700);
   });
 
-  it.each([
-    "file",
-    "directory",
-    "ancestor",
-  ] as const)("keeps a restored unsafe persistent %s invalid across processes", (unsafePart) => {
-    publish();
-    const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
-    const receiptDir = path.dirname(receiptPath);
-    const target =
-      unsafePart === "file"
-        ? receiptPath
-        : unsafePart === "directory"
-          ? receiptDir
-          : path.dirname(receiptDir);
-    const before = fs.statSync(receiptPath);
-    const originalMode = fs.statSync(target).mode & 0o777;
-    fs.chmodSync(target, unsafePart === "file" ? 0o640 : 0o770);
+  it.each(["file", "directory", "ancestor"] as const)(
+    "keeps a restored unsafe persistent %s invalid across processes",
+    (unsafePart) => {
+      publish();
+      const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
+      const receiptDir = path.dirname(receiptPath);
+      const target =
+        unsafePart === "file"
+          ? receiptPath
+          : unsafePart === "directory"
+            ? receiptDir
+            : path.dirname(receiptDir);
+      const before = fs.statSync(receiptPath);
+      const originalMode = fs.statSync(target).mode & 0o777;
+      fs.chmodSync(target, unsafePart === "file" ? 0o640 : 0o770);
 
-    expectFenceFailure(() => fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()), false);
-    fs.chmodSync(target, originalMode);
-    const restored = fs.statSync(receiptPath);
-    expect({ dev: restored.dev, ino: restored.ino }).toEqual({ dev: before.dev, ino: before.ino });
-    expect(readInFreshProcess()).toBe("identity");
+      expectFenceFailure(() => fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()), false);
+      fs.chmodSync(target, originalMode);
+      const restored = fs.statSync(receiptPath);
+      expect({ dev: restored.dev, ino: restored.ino }).toEqual({
+        dev: before.dev,
+        ino: before.ino,
+      });
+      expect(readInFreshProcess()).toBe("identity");
 
-    epochs = [EPOCH_C];
-    const newFence = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
-    publishLaunchReadinessLease(SANDBOX, GATEWAY_PORT, newFence.epochId, identity(), options());
-    expect(readInFreshProcess()).toBe("valid");
-  });
+      epochs = [EPOCH_C];
+      const newFence = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+      publishLaunchReadinessLease(SANDBOX, GATEWAY_PORT, newFence.epochId, identity(), options());
+      expect(readInFreshProcess()).toBe("valid");
+    },
+  );
 
   it("rejects the unchanged persistent inode after simulated read-only remount fencing", () => {
     publish();

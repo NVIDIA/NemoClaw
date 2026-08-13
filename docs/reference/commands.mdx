@@ -1066,6 +1066,8 @@ $$nemoclaw launch <name>
 ```
 
 The sandbox name is required, and the command takes no flags.
+The sandbox must already exist in the local NemoClaw state.
+If it is not registered locally, `launch` exits before it runs an OpenShell command or readiness recovery and reports that the sandbox is not registered in the local NemoClaw state.
 When the agent exits, you return to the host shell.
 
 <AgentOnly variant="openclaw">

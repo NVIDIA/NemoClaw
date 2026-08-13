@@ -100,6 +100,7 @@ export { runConnectAutoPairApprovalPass, waitForManagedGatewaySupervisor };
 
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
+  requireLaunchReadinessPublication?: boolean;
 };
 
 export type SandboxStartupRecoveryResult = ReturnType<typeof checkAndRecoverSandboxProcesses> & {
@@ -1257,7 +1258,7 @@ export async function prepareInteractiveSession(
 
 export async function connectSandbox(
   sandboxName: string,
-  { probeOnly = false }: SandboxConnectOptions = {},
+  { probeOnly = false, requireLaunchReadinessPublication = true }: SandboxConnectOptions = {},
 ): Promise<void> {
   if (probeOnly) {
     let readiness = await inspectLaunchReadiness(sandboxName);
@@ -1310,6 +1311,7 @@ export async function connectSandbox(
       process.exit(1);
     }
     if (publication.kind === "evidence-failed") {
+      if (!requireLaunchReadinessPublication) return;
       console.error(
         readiness.kind === "fallback" && readiness.authorityUnsupported === true
           ? "  Probe failed: complete probe and recovery succeeded, but launch-readiness evidence is unavailable on this platform."

@@ -662,6 +662,53 @@ describe("connectSandbox flow", () => {
     );
   });
 
+  it("lets a public lifecycle command continue after recovery when evidence publication is unavailable (#8942)", async () => {
+    const harness = createConnectHarness({
+      readinessDecision: {
+        kind: "fallback",
+        category: "unsafe",
+        fence: null,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: true,
+        recoveryBlocked: false,
+        authorityUnsupported: true,
+      },
+      readinessPublicationResult: { kind: "evidence-failed" },
+    });
+
+    await expect(
+      harness.connectSandbox("alpha", {
+        probeOnly: true,
+        requireLaunchReadinessPublication: false,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalledOnce();
+    expect(harness.ensureLiveSandboxSpy).toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps authoritative runtime validation failures blocking for public lifecycle commands (#8942)", async () => {
+    const harness = createConnectHarness({
+      readinessPublicationResult: { kind: "validation-failed", category: "health" },
+    });
+
+    await expect(
+      harness.connectSandbox("alpha", {
+        probeOnly: true,
+        requireLaunchReadinessPublication: false,
+      }),
+    ).rejects.toThrow("process.exit(1)");
+
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalledOnce();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "final launch-readiness validation failed due to health",
+    );
+  });
+
   it("probe-only stops before mutation when the fenced epoch cannot be revalidated (#8942)", async () => {
     const harness = createConnectHarness();
     harness.launchReadinessMutationGateSpy.mockResolvedValueOnce({ kind: "unsafe" });

@@ -6,6 +6,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect } from "vitest";
+import {
+  LAUNCH_READINESS_FIXTURE_POLICY,
+  launchReadinessRegistryFixture,
+} from "../helpers/launch-readiness-fixture";
 import { nonWslPlatformNodeOptions } from "../helpers/platform-override-node-options";
 import { execTimeout } from "../helpers/timeouts";
 
@@ -133,7 +137,12 @@ function writeRegistryState(
     path.join(registryDir, "sandboxes.json"),
     JSON.stringify({
       defaultSandbox: sandboxName,
-      sandboxes: { [sandboxName]: sandboxEntry },
+      sandboxes: {
+        [sandboxName]: {
+          ...launchReadinessRegistryFixture(),
+          ...sandboxEntry,
+        },
+      },
     }),
     { mode: 0o600 },
   );
@@ -171,7 +180,7 @@ function initStateFile(stateFile: string, options: SetupFixtureOptions) {
       curlCalls: [],
       curlEnvs: [],
       inferenceProbeExitStatuses: options.inferenceProbeExitStatuses ?? [],
-      inferenceProbeResponses: options.inferenceProbeResponses ?? ["OK 200"],
+      inferenceProbeResponses: options.inferenceProbeResponses ?? ["OK 200", "OK 200"],
       inferenceGetCalls: [],
       inferenceSetCalls: [],
       sandboxConnectCalls: [],
@@ -280,6 +289,11 @@ if (args[0] === "inference" && args[1] === "get") {
   state.inferenceGetCalls.push(args.slice(2));
   fs.writeFileSync(stateFile, JSON.stringify(state));
   process.stdout.write(${JSON.stringify(inferenceBlock.replace(/\\n/g, "\n"))});
+  process.exit(0);
+}
+
+if (args[0] === "policy" && args[1] === "get") {
+  process.stdout.write(${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)});
   process.exit(0);
 }
 

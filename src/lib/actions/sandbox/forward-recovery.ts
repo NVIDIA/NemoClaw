@@ -503,6 +503,8 @@ export function areSandboxLaunchForwardsHealthy(
 ): boolean | null {
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox) return false;
+  const owningGatewayName = resolveSandboxGatewayName(sandbox);
+  if (gatewayName && gatewayName !== owningGatewayName) return false;
   const agent = agentRuntime.getSessionAgent(sandboxName);
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return true;
 
@@ -525,8 +527,6 @@ export function areSandboxLaunchForwardsHealthy(
       }
     }
   }
-  const owningGatewayName = resolveSandboxGatewayName(sandbox);
-  if (gatewayName && gatewayName !== owningGatewayName) return false;
   const result = captureOpenshell(["forward", "list", "--gateway", owningGatewayName], {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,

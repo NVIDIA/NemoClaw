@@ -1,14 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
-
 import { afterEach, expect, it, vi } from "vitest";
-
-const requireSource = createRequire(import.meta.url);
-const { areSandboxLaunchForwardsHealthy } = requireSource(
-  "../src/lib/actions/sandbox/forward-recovery.ts",
-) as typeof import("../src/lib/actions/sandbox/forward-recovery.js");
+import * as forwardHealth from "../src/lib/actions/sandbox/forward-health.ts";
+import { areSandboxLaunchForwardsHealthy } from "../src/lib/actions/sandbox/forward-recovery.ts";
+import * as openshellRuntime from "../src/lib/adapters/openshell/runtime.ts";
+import * as agentRuntime from "../src/lib/agent/runtime.ts";
+import * as registry from "../src/lib/state/registry.ts";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -17,13 +15,10 @@ afterEach(() => {
 function mockLaunchForwardObservation(
   result: { status: number | null; output: string },
   reachable = true,
+  gatewayRuntime = true,
 ) {
-  const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-  const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-  const registry = requireSource("../src/lib/state/registry.js");
-  const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
-    runtime: { kind: "gateway" },
+    runtime: { kind: gatewayRuntime ? "gateway" : "terminal" },
     forward_ports: [18790],
   } as never);
   vi.spyOn(registry, "getSandbox").mockReturnValue({
@@ -66,4 +61,11 @@ it("returns unknown when the owner-scoped forward observation fails (#8942)", ()
   mockLaunchForwardObservation({ status: 1, output: "" });
 
   expect(areSandboxLaunchForwardsHealthy("beta", "nemoclaw")).toBeNull();
+});
+
+it("rejects an owning-gateway mismatch before the no-forward shortcut (#8942)", () => {
+  const capture = mockLaunchForwardObservation({ status: 0, output: "" }, true, false);
+
+  expect(areSandboxLaunchForwardsHealthy("beta", "ambient-sibling")).toBe(false);
+  expect(capture).not.toHaveBeenCalled();
 });

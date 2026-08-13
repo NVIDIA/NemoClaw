@@ -11,22 +11,43 @@ const TEMP_ENV_KEYS = ["TMPDIR", "TMP", "TEMP"] as const;
 
 type TempEnvKey = (typeof TEMP_ENV_KEYS)[number];
 
-function prepareGitHubHostedRuntimeAuthority(): void {
+type RuntimeAuthorityInstaller = (
+  command: string,
+  args: string[],
+  options: { stdio: "inherit" },
+) => void;
+
+interface GitHubHostedRuntimeAuthorityOptions {
+  platform?: NodeJS.Platform;
+  githubActions?: string;
+  runnerEnvironment?: string;
+  uid?: number;
+  gid?: number;
+  install?: RuntimeAuthorityInstaller;
+}
+
+export function prepareGitHubHostedRuntimeAuthority(
+  options: GitHubHostedRuntimeAuthorityOptions = {},
+): void {
   if (
-    process.platform !== "linux" ||
-    process.env.GITHUB_ACTIONS !== "true" ||
-    process.env.RUNNER_ENVIRONMENT !== "github-hosted"
+    (options.platform ?? process.platform) !== "linux" ||
+    (options.githubActions ?? process.env.GITHUB_ACTIONS) !== "true" ||
+    (options.runnerEnvironment ?? process.env.RUNNER_ENVIRONMENT) !== "github-hosted"
   ) {
     return;
   }
-  const uid = process.getuid?.();
-  const gid = process.getgid?.();
+  const uid = options.uid ?? process.getuid?.();
+  const gid = options.gid ?? process.getgid?.();
   if (!Number.isSafeInteger(uid) || !Number.isSafeInteger(gid)) {
     throw new Error("GitHub-hosted launch-readiness tests require a numeric user identity");
   }
   const runtimeRoot = `/run/user/${uid}`;
-  if (fs.existsSync(runtimeRoot)) return;
-  execFileSync(
+  const install =
+    options.install ??
+    ((command: string, args: string[], execOptions: { stdio: "inherit" }): void => {
+      execFileSync(command, args, execOptions);
+    });
+  install(
     "sudo",
     [
       "--non-interactive",

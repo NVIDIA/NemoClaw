@@ -8,6 +8,8 @@ import { describe, expect, it } from "vitest";
 
 import { runWithEnv, writeSandboxRegistry } from "./helpers";
 
+const PLATFORM_EVIDENCE_UNAVAILABLE = "launch-readiness evidence is unavailable on this platform";
+
 describe("CLI dispatch for terminal agents", () => {
   it("connect --probe-only runs terminal-agent smoke checks without gateway recovery", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-terminal-"));
@@ -27,6 +29,14 @@ describe("CLI dispatch for terminal agents", () => {
         'printf \'%s\\n\' "$*" >> "$marker_file"',
         'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
         "  echo 'alpha  Ready'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
+        "  printf '%s\\n' 'version: 1' 'network_policies:' '  fixture_api:' '    name: Fixture API' '    endpoints:' '      - host: example.com' '        port: 443' '    binaries:' '      - path: /usr/bin/curl'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  printf '%s\\n' 'Gateway inference:' '  Not configured'",
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
@@ -58,7 +68,10 @@ describe("CLI dispatch for terminal agents", () => {
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
-    expect(r.code).toBe(0);
+    expect(r.code).toBe(process.platform === "darwin" ? 1 : 0);
+    if (process.platform === "darwin") {
+      expect(r.out).toContain(PLATFORM_EVIDENCE_UNAVAILABLE);
+    }
     expect(r.out).toContain("terminal smoke checks passed");
     const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
     expect(calls).toContain("sandbox get -g nemoclaw alpha");

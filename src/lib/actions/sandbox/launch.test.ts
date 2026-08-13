@@ -108,8 +108,8 @@ describe("launchSandbox", () => {
       kind: "fallback",
       category: "missing",
       fence: null,
-      gatewayName: null,
-      gatewayPort: null,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
       fenceFailed: true,
       recoveryBlocked: false,
     });
@@ -294,6 +294,26 @@ describe("launchSandbox", () => {
       expect.objectContaining({ epochId: null }),
       expect.any(Function),
     );
+  });
+
+  it("rejects a sandbox missing from local state before readiness recovery (#8942)", async () => {
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "missing",
+      fence: null,
+      gatewayName: null,
+      gatewayPort: null,
+      fenceFailed: true,
+      recoveryBlocked: true,
+    });
+
+    await expect(launchSandbox("alpha;echo pwned")).rejects.toThrow(
+      "Sandbox 'alpha;echo pwned' is not registered in the local NemoClaw state.",
+    );
+
+    expect(mocks.withLaunchReadinessMutationGate).not.toHaveBeenCalled();
+    expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
+    expect(mocks.execSandbox).not.toHaveBeenCalled();
   });
 
   it("uses the accepted lease path without running the complete preflight (#8942)", async () => {
