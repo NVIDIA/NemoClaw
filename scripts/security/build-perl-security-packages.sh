@@ -100,10 +100,24 @@ git -C "${source_dir}" apply "${net_ping_test_patch}"
     -u NEMOCLAW_PERL_SKIP_RAW_ICMPV4_TESTS
     -u NEMOCLAW_PERL_SKIP_RAW_ICMPV6_TESTS
   )
-  if ./perl -Ilib \
-    -MErrno=EACCES,EPERM \
-    -MSocket=AF_INET,IPPROTO_ICMP,SOCK_RAW \
-    -e 'socket(my $socket, AF_INET, SOCK_RAW, IPPROTO_ICMP) and exit 0; exit 77 if $! == EACCES or $! == EPERM; die "raw IPv4 ICMP socket probe failed: $!\n"'; then
+  probe_net_ping_constructor() {
+    local protocol="$1"
+    ./perl -Ilib \
+      -MErrno=EACCES,EPERM \
+      -MNet::Ping \
+      -e '
+        my $protocol = shift @ARGV;
+        $! = 0;
+        my $ping = eval { Net::Ping->new($protocol) };
+        my $errno = 0 + $!;
+        my $error = $@;
+        exit 0 if $ping and !$error;
+        die "Net::Ping $protocol constructor returned no object\n" unless length $error;
+        exit 77 if $errno == EACCES or $errno == EPERM;
+        die $error;
+      ' "${protocol}"
+  }
+  if probe_net_ping_constructor icmp; then
     printf 'Perl Net::Ping raw IPv4 assertions: execute\n'
   else
     raw_icmpv4_probe_status="$?"
@@ -113,10 +127,7 @@ git -C "${source_dir}" apply "${net_ping_test_patch}"
     printf 'Perl Net::Ping raw IPv4 assertions: skip after permission denial\n'
     perl_test_env+=(NEMOCLAW_PERL_SKIP_RAW_ICMPV4_TESTS=1)
   fi
-  if ./perl -Ilib \
-    -MErrno=EACCES,EPERM \
-    -MSocket=AF_INET6,IPPROTO_ICMPV6,SOCK_RAW \
-    -e 'socket(my $socket, AF_INET6, SOCK_RAW, IPPROTO_ICMPV6) and exit 0; exit 77 if $! == EACCES or $! == EPERM; die "raw IPv6 ICMP socket probe failed: $!\n"'; then
+  if probe_net_ping_constructor icmpv6; then
     printf 'Perl Net::Ping raw IPv6 assertions: execute\n'
   else
     raw_icmpv6_probe_status="$?"

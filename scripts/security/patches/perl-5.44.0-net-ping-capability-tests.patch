@@ -58,7 +58,7 @@ diff --git a/dist/Net-Ping/t/500_ping_icmp.t b/dist/Net-Ping/t/500_ping_icmp.t
 diff --git a/dist/Net-Ping/t/501_ping_icmpv6.t b/dist/Net-Ping/t/501_ping_icmpv6.t
 --- a/dist/Net-Ping/t/501_ping_icmpv6.t
 +++ b/dist/Net-Ping/t/501_ping_icmpv6.t
-@@ -45,8 +45,9 @@ if (0 && !Net::Ping::_isroot()) {
+@@ -45,11 +45,12 @@ if (0 && !Net::Ping::_isroot()) {
 
 
  SKIP: {
@@ -70,6 +70,10 @@ diff --git a/dist/Net-Ping/t/501_ping_icmpv6.t b/dist/Net-Ping/t/501_ping_icmpv6
    my $p;
    eval { $p = new Net::Ping "icmpv6"; };
    if ($@) {
+-    plan skip_all => "no icmpv6 on this machine $@";
++    die $@;
+   }
+   # message_type can't be used
 diff --git a/dist/Net-Ping/t/520_icmp_ttl.t b/dist/Net-Ping/t/520_icmp_ttl.t
 --- a/dist/Net-Ping/t/520_icmp_ttl.t
 +++ b/dist/Net-Ping/t/520_icmp_ttl.t

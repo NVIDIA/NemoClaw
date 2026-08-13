@@ -33,9 +33,10 @@ Each managed base image uses this flow:
 1. Build the existing libssh2 and Python security packages.
 2. Verify the checksum-pinned CPAN archive and the exact hashes of five Net::Ping test files.
 3. Apply the version-bound test patch, then configure and build Perl.
-4. Probe IPv4 and IPv6 raw-ICMP sockets separately with the built interpreter.
+4. Construct IPv4 and IPv6 Net::Ping ICMP objects separately with the built interpreter.
+   Each probe follows the socket type that Net::Ping selects for the effective user.
    An `EPERM` or `EACCES` result enables skips for only the matching address family.
-   Any other probe error stops the build.
+   A missing object or any other constructor error stops the build.
 5. Run the complete upstream test-file selection.
    Only four IPv4 sections and one IPv6 section can emit capability-dependent TAP skips.
    All unrelated assertions still execute, including the remaining assertions in `001_new.t`.
@@ -83,7 +84,7 @@ The image build also executes the reviewed Socket argument-length rejection and 
 | ID | Surface | Failure mode | Disposition | Evidence |
 |---|---|---|---|---|
 | PERL-01 | Source identity | A moving or modified archive changes the runtime behind the package version. | Pin | The CPAN URL contains `5.44.0`, and SHA-256 verification precedes extraction. Five exact test-file hashes and `git apply --check` stop the build if the test patch does not match the reviewed source. |
-| PERL-02 | Test coverage | A sibling image installs an untested native build. | Test | The shared builder runs the complete selection-equivalent upstream test-file set before packaging. Only `EPERM` or `EACCES` from a family-specific raw-ICMP probe enables the matching TAP skips. Any other probe error stops the build. Capability-present builders execute all five raw-ICMP sections. All unrelated assertions execute, including the constructor and validation assertions in `001_new.t`. |
+| PERL-02 | Test coverage | A sibling image installs an untested native build. | Test | The shared builder runs the complete selection-equivalent upstream test-file set before packaging. Only `EPERM` or `EACCES` from a family-specific Net::Ping constructor probe enables the matching TAP skips. Each probe follows Net::Ping's effective-user socket selection. A missing object or any other constructor error stops the build, including a later IPv6 test constructor error. Capability-present builders execute all five raw-ICMP sections. All unrelated assertions execute, including the constructor and validation assertions in `001_new.t`. |
 | PERL-03 | Package ownership | Replacing Perl leaves conflicting Debian package ownership. | Guard | Package metadata declares `Provides`, `Conflicts`, `Breaks`, and `Replaces`; every image runs `dpkg --audit`. |
 | PERL-04 | Image selection | One managed image continues to copy packages from the older native-only stage. | Guard | All three Dockerfiles copy `/out` from `perl-builder`. |
 | PERL-05 | Runtime selection | The expected package exists but another interpreter or module executes. | Runtime proof | Every final image executes the interpreter, module, Socket, and regex checks. |
@@ -108,7 +109,7 @@ The repository tests verify:
 - one shared package definition and checksum identity;
 - exact source-file binding for the version-bound Net::Ping test patch;
 - complete upstream test-file selection before packaging, with only four IPv4 and one IPv6 raw-ICMP sections eligible for capability-dependent TAP skips;
-- build failure for a source mismatch or a socket-probe error other than `EPERM` or `EACCES`;
+- build failure for a source mismatch, a missing probe object, or a constructor error other than `EPERM` or `EACCES`;
 - package ownership and cleanup order;
 - exact runtime and module assertions in all three images;
 - native amd64 and arm64 jobs for both sibling images; and
