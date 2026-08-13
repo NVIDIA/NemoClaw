@@ -62,7 +62,24 @@ describe("E2E operations workflow boundary", testTimeoutOptions(15_000), () => {
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "report-to-pr must run only for manual workflow dispatches",
-        "scorecard must run after push and direct-main manual E2E executions",
+        "scorecard must run after pushes and manual E2E runs dispatched against main",
+      ]),
+    );
+  });
+
+  it("binds release qualification to the trusted full-run result set (#7912)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs["release-qualification"].if = "${{ always() }}";
+    workflow.jobs["release-qualification"].needs = ["generate-matrix"];
+    workflow.jobs["release-qualification"].steps!.find(
+      (step) => step.name === "Require every release E2E result",
+    )!.env!.RELEASE_REQUIRED_JOBS = "live";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "release-qualification needs must exactly match report-to-pr needs",
+        "release-qualification must run only for trusted pushes or full manual runs against main",
+        "release-qualification must evaluate planner-selected jobs from needs",
       ]),
     );
   });

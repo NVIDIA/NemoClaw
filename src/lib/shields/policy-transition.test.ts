@@ -45,6 +45,8 @@ describe("shields policy transition", () => {
 
     const runner = requireSource("../runner.js");
     const agentConfig = requireSource("../sandbox/agent-config.js");
+    const privilegedExec = requireSource("../sandbox/privileged-exec.js");
+    const dockerExec = requireSource("../adapters/docker/exec.js");
     vi.spyOn(runner, "validateName").mockImplementation((name: unknown) => String(name));
     runSpy = vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
     runCaptureSpy = vi.spyOn(runner, "runCapture").mockImplementation(() => {
@@ -66,6 +68,10 @@ describe("shields policy transition", () => {
       },
       stateLockPlanInImage: false,
     });
+    vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(
+      (_sandboxName: unknown, cmd: unknown) => cmd as string[],
+    );
+    vi.spyOn(dockerExec, "dockerExecFileSync").mockReturnValue("");
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     shields = requireSource(SHIELDS_MODULE);
