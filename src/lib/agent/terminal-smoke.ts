@@ -108,9 +108,12 @@ export function runAgentSmokeCommands(
   // Switch to argv-form commands before accepting custom or user-provided manifests here.
   const commands = agent.runtime?.smoke_commands ?? [];
   for (const command of commands) {
-    const result = runCaptureOpenshell(buildAgentSmokeArgs(sandboxName, agent, command, gatewayName), {
-      ignoreError: true,
-    });
+    const result = runCaptureOpenshell(
+      buildAgentSmokeArgs(sandboxName, agent, command, gatewayName),
+      {
+        ignoreError: true,
+      },
+    );
     const output = typeof result === "string" ? result : (result?.output ?? null);
     const requireManagedBoundary = agent.name === "langchain-deepagents-code";
     const exitCode = getSmokeExitCode(output, requireManagedBoundary);
