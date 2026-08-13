@@ -4301,8 +4301,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         liveFinalFlowContext = context;
       },
     });
-    completed = finalFlowResult.session.machine.state === "complete";
-    traceCompleted = completed;
+    traceCompleted = completed = finalFlowResult.session.machine.state === "complete";
     if (!completed) process.exitCode = 1;
   } finally {
     try {
