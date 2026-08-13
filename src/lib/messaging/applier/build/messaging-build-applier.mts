@@ -280,12 +280,9 @@ export function applyMessagingAgentRenderToObject(
 ): void {
   if (!plan) return;
   const rules = credentialPlaceholderRules(plan);
-  for (const render of enabledAgentRender(plan)) {
-    if (
-      render.kind !== "json-fragment" ||
-      render.target !== target ||
-      typeof render.path !== "string"
-    ) {
+  const renderEntries = enabledAgentRender(plan).filter((render) => render.target === target);
+  for (const render of renderEntries) {
+    if (render.kind !== "json-fragment" || typeof render.path !== "string") {
       continue;
     }
     const value = preserveCredentialPlaceholders(
@@ -295,7 +292,7 @@ export function applyMessagingAgentRenderToObject(
     );
     setJsonPath(config, render.path, value);
   }
-  if (plan.agent === "openclaw") allowRenderedOpenClawPlugins(config, enabledAgentRender(plan));
+  if (plan.agent === "openclaw") allowRenderedOpenClawPlugins(config, renderEntries);
 }
 
 export function applyMessagingAgentRenderToEnvLines(

@@ -130,11 +130,12 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
       [
         'process.emitWarning("proxy warning", { code: "UNDICI-EHPA" });',
         'process.emitWarning("other warning", { code: "NEMOCLAW-TEST" });',
+        'process.stderr.write(process.env.OPENCLAW_GATEWAY_TOKEN ?? "TOKEN_UNSET");',
       ].join(""),
     ]);
     const result = spawnSync(wrapped[0], wrapped.slice(1), {
       encoding: "utf-8",
-      env: { ...process.env },
+      env: { ...process.env, OPENCLAW_GATEWAY_TOKEN: "test-gateway-token" },
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -142,5 +143,7 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
     expect(result.stderr).not.toContain("proxy warning");
     expect(result.stderr).toContain("NEMOCLAW-TEST");
     expect(result.stderr).toContain("other warning");
+    expect(result.stderr).toContain("TOKEN_UNSET");
+    expect(result.stderr).not.toContain("test-gateway-token");
   });
 });
