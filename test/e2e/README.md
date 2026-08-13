@@ -203,7 +203,8 @@ npx tsx tools/e2e/credential-free-tests.mts
 `tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
 Each entry owns these target properties:
 
-- Target ID and Vitest file.
+- Stable target ID and Vitest file.
+- Outcome-first display name for GitHub Actions.
 - Source paths that select the target after a push to `main`.
 - Execution profile, runner, and timeout.
 - OpenShell install mode, non-interactive installer selection, and CLI artifact use.
@@ -216,13 +217,23 @@ The test file is always one owning path.
 List each additional source file or directory whose change requires the target.
 Changes to shared catalogue execution paths select every catalogue target.
 
+The target ID remains the machine identifier for selectors, artifact paths, and evidence manifests.
+Give each entry one `displayName` in the form `<area>: <observable outcome>`.
+Do not include this implementation metadata or workflow text in the display name:
+
+- The target ID or an issue number.
+- `Catalogue`, `live`, or `E2E`.
+- A test path.
+- A runner or sandbox ID.
+
 `E2E_TARGET_CATALOGUE` is one logical target set.
 The planner partitions that set into three GitHub Actions matrices, one for each credential profile:
 
-- `standard` receives no NVIDIA API credential.
-- `nvidia-api` receives `NVIDIA_API_KEY` on trusted `main` runs.
-- `nvidia-inference` receives `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs.
+- `standard` displays `no provider credential` and receives no NVIDIA API credential.
+- `nvidia-api` displays `NVIDIA API key` and receives `NVIDIA_API_KEY` on trusted `main` runs.
+- `nvidia-inference` displays `NVIDIA inference API key` and receives `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs.
 
+GitHub Actions renders each catalogue execution as `<display name> / <provider credential boundary>`.
 All three profiles call `.github/workflows/e2e-standard-profile.yaml`.
 Each target selects its runner through the catalogue.
 The reusable workflow owns checkout, Docker authentication, setup, CLI artifact restoration, OpenShell installation, Vitest execution, evidence manifest creation, artifact upload, and Docker credential cleanup.

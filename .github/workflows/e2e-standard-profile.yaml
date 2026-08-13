@@ -21,6 +21,9 @@ on:
       cli_artifact_provenance:
         required: true
         type: string
+      credential_boundary:
+        required: true
+        type: string
       target_id:
         required: true
         type: string
@@ -63,7 +66,7 @@ permissions:
 
 jobs:
   run:
-    name: ${{ inputs.target_id }}
+    name: ${{ inputs.credential_boundary }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
     env:
