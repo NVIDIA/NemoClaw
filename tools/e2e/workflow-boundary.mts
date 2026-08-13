@@ -219,6 +219,13 @@ const MATRIX_ROUTED_JOB_RUNNER_EXPRESSIONS = {
   "mcp-bridge":
     "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('mcp-bridge-{0}', matrix.agent)] }}",
 } as const;
+const CATALOGUE_ROUTED_JOB_NAMES = [
+  "catalogue-standard",
+  "catalogue-nvidia-api",
+  "catalogue-nvidia-inference",
+] as const;
+const CATALOGUE_RUNNER_EXPRESSION =
+  "${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}";
 const COMMON_EGRESS_AGENT_SCENARIO_MATRIX = {
   include: [
     {
@@ -238,9 +245,7 @@ const COMMON_EGRESS_AGENT_SCENARIO_MATRIX = {
 const ROUTED_JOB_NAMES = new Set([
   ...Object.keys(ROUTED_JOB_RUNNER_EXPRESSIONS),
   ...Object.keys(MATRIX_ROUTED_JOB_RUNNER_EXPRESSIONS),
-  "catalogue-standard",
-  "catalogue-nvidia-api",
-  "catalogue-nvidia-inference",
+  ...CATALOGUE_ROUTED_JOB_NAMES,
 ]);
 
 function asRecord(value: unknown): WorkflowRecord {
@@ -919,6 +924,11 @@ function validateLargerRunnerRouting(
   for (const [jobName, expected] of Object.entries(MATRIX_ROUTED_JOB_RUNNER_EXPRESSIONS)) {
     if (asRecord(jobs[jobName])["runs-on"] !== expected) {
       errors.push(`${jobName} job must route each matrix entry through the trusted runner map`);
+    }
+  }
+  for (const jobName of CATALOGUE_ROUTED_JOB_NAMES) {
+    if (asRecord(asRecord(jobs[jobName]).with).runner !== CATALOGUE_RUNNER_EXPRESSION) {
+      errors.push(`${jobName} job must route catalogue runners through the trusted runner map`);
     }
   }
   if (asRecord(jobs["mcp-bridge-dev"])["runs-on"] !== "ubuntu-latest") {

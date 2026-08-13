@@ -27,6 +27,7 @@ type RoutingWorkflow = {
       outputs?: Record<string, string>;
       steps?: WorkflowStep[];
       "runs-on"?: string;
+      with?: Record<string, string>;
     }
   >;
 };
@@ -202,4 +203,16 @@ describe("larger-runner workflow routing boundary", () => {
       ]),
     );
   });
+
+  it.each(["catalogue-standard", "catalogue-nvidia-api", "catalogue-nvidia-inference"])(
+    "rejects bypassing trusted runner routing in %s (#7145)",
+    (jobName) => {
+      const workflow = readWorkflow() as RoutingWorkflow;
+      workflow.jobs[jobName].with!.runner = "${{ matrix.runner }}";
+
+      expect(validateE2eWorkflow(workflow)).toContain(
+        `${jobName} job must route catalogue runners through the trusted runner map`,
+      );
+    },
+  );
 });
