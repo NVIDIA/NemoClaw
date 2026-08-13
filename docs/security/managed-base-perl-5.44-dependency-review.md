@@ -31,11 +31,18 @@ The public vulnerability set includes `CVE-2026-12087`, `CVE-2026-13221`, `CVE-2
 Each managed base image uses this flow:
 
 1. Build the existing libssh2 and Python security packages.
-2. Build Perl from the checksum-pinned CPAN archive.
-3. Run the complete upstream test selection.
-4. Build native `perl-base` and `perl` Debian packages.
-5. Install both packages before deleting the build artifacts.
-6. Execute exact interpreter, module, behavior, and dpkg assertions.
+2. Verify the checksum-pinned CPAN archive and the exact hashes of five Net::Ping test files.
+3. Apply the version-bound test patch, then configure and build Perl.
+4. Construct IPv4 and IPv6 Net::Ping ICMP objects separately with the built interpreter.
+   Each probe follows the socket type that Net::Ping selects for the effective user.
+   An `EPERM` or `EACCES` result enables skips for only the matching address family.
+   A missing object or any other constructor error stops the build.
+5. Run the complete upstream test-file selection.
+   Only four IPv4 sections and one IPv6 section can emit capability-dependent TAP skips.
+   All unrelated assertions still execute, including the remaining assertions in `001_new.t`.
+6. Build native `perl-base` and `perl` Debian packages.
+7. Install both packages before deleting the build artifacts.
+8. Execute exact interpreter, module, behavior, and dpkg assertions.
 
 The package metadata replaces the Debian `libperl5.40` and `perl-modules-5.40` ownership without leaving unmanaged files.
 
@@ -76,8 +83,8 @@ The image build also executes the reviewed Socket argument-length rejection and 
 
 | ID | Surface | Failure mode | Disposition | Evidence |
 |---|---|---|---|---|
-| PERL-01 | Source identity | A moving or modified archive changes the runtime behind the package version. | Pin | The CPAN URL contains `5.44.0`, and SHA-256 verification precedes extraction. |
-| PERL-02 | Test coverage | A sibling image installs an untested native build. | Test | The shared builder runs the complete selection-equivalent upstream suite before packaging. |
+| PERL-01 | Source identity | A moving or modified archive changes the runtime behind the package version. | Pin | The CPAN URL contains `5.44.0`, and SHA-256 verification precedes extraction. Five exact test-file hashes and `git apply --check` stop the build if the test patch does not match the reviewed source. |
+| PERL-02 | Test coverage | A sibling image installs an untested native build. | Test | The shared builder runs the complete selection-equivalent upstream test-file set before packaging. Only `EPERM` or `EACCES` from a family-specific Net::Ping constructor probe enables the matching TAP skips. Each probe follows Net::Ping's effective-user socket selection. A missing object or any other constructor error stops the build, including a later IPv6 test constructor error. Capability-present builders execute all five raw-ICMP sections. All unrelated assertions execute, including the constructor and validation assertions in `001_new.t`. |
 | PERL-03 | Package ownership | Replacing Perl leaves conflicting Debian package ownership. | Guard | Package metadata declares `Provides`, `Conflicts`, `Breaks`, and `Replaces`; every image runs `dpkg --audit`. |
 | PERL-04 | Image selection | One managed image continues to copy packages from the older native-only stage. | Guard | All three Dockerfiles copy `/out` from `perl-builder`. |
 | PERL-05 | Runtime selection | The expected package exists but another interpreter or module executes. | Runtime proof | Every final image executes the interpreter, module, Socket, and regex checks. |
@@ -87,6 +94,7 @@ The image build also executes the reviewed Socket argument-length rejection and 
 ## Downstream boundaries
 
 The change does not modify agent configuration, credentials, network policy, runtime entrypoints, or persistent state.
+The build does not grant `NET_RAW` or another container capability.
 It changes the Perl files and dpkg identities inside the three existing managed base images.
 It also lets a clean unversioned development checkout resolve its exact published source-SHA candidate before the committed-input divergence check requires a local build.
 Dirty base-image inputs still require a local build.
@@ -99,10 +107,12 @@ The change does not add a data migration or a compatibility fallback.
 The repository tests verify:
 
 - one shared package definition and checksum identity;
-- complete upstream test selection before packaging;
+- exact source-file binding for the version-bound Net::Ping test patch;
+- complete upstream test-file selection before packaging, with only four IPv4 and one IPv6 raw-ICMP sections eligible for capability-dependent TAP skips;
+- build failure for a source mismatch, a missing probe object, or a constructor error other than `EPERM` or `EACCES`;
 - package ownership and cleanup order;
 - exact runtime and module assertions in all three images;
 - native amd64 and arm64 jobs for both sibling images; and
 - atomic multi-platform manifest publication.
 
-The remaining external gates are the six production platform builds, manifest publication, and a vulnerability rescan of the published image digests.
+The remaining external gates are Docker-compatible and rootless Podman builds, the six platform builds, sandbox image validation, one real chat turn, manifest publication, and a vulnerability rescan of the published image digests.

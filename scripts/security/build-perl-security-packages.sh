@@ -19,6 +19,7 @@ readonly source_archive="${build_root}/perl.tar.xz"
 readonly source_dir="${build_root}/perl-source"
 readonly perl_root="${build_root}/perl-root"
 readonly perl_meta="${build_root}/perl-meta"
+readonly net_ping_test_patch="/scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch"
 
 cleanup() {
   rm -rf "${build_root}"
@@ -35,6 +36,18 @@ curl --proto '=https' --tlsv1.2 -fsSL \
 printf '%s  %s\n' "${perl_sha256}" "${source_archive}" >"${build_root}/perl.sha256"
 sha256sum -c "${build_root}/perl.sha256"
 tar -xJf "${source_archive}" -C "${source_dir}" --strip-components=1
+
+# The pinned file hashes bind the test-only patch to the reviewed Perl 5.44.0
+# source. Patch context must not move or fuzz across a later source release.
+printf '%s  %s\n' \
+  '74fe9d0a2c6f29f46ac0a24c5ca74fa4e467a9f05b5885c56931d5ce6dd995b1' "${source_dir}/dist/Net-Ping/t/001_new.t" \
+  '0e80aa5bfb5db67e7c7b1247acaa2448c842a777fc675eb01109561ff9aee607' "${source_dir}/dist/Net-Ping/t/110_icmp_inst.t" \
+  '5c3c9fffff2e105348e3f8ac6a3d53bf216e48b242ee6aa98328ce47a2a33d22' "${source_dir}/dist/Net-Ping/t/500_ping_icmp.t" \
+  '9664b5eefad9eb70719245d0f64b6dd9e509ab9019a2ed999b689074d9306aa5' "${source_dir}/dist/Net-Ping/t/501_ping_icmpv6.t" \
+  'f61bca8bbc55eebf3f75a3b087abe8ac225ce26bf064df34cdc4338da900c3d3' "${source_dir}/dist/Net-Ping/t/520_icmp_ttl.t" \
+  | sha256sum -c --strict --quiet -
+git -C "${source_dir}" apply --check "${net_ping_test_patch}"
+git -C "${source_dir}" apply "${net_ping_test_patch}"
 
 (
   cd "${source_dir}"
@@ -83,15 +96,58 @@ tar -xJf "${source_archive}" -C "${source_dir}" --strip-components=1
       'cpan/ExtUtils-Constant/t/Constant.t' \
       "${build_root}/perl-tests-combined.sorted"
   )" -eq 1
+  perl_test_env=(
+    -u NEMOCLAW_PERL_SKIP_RAW_ICMPV4_TESTS
+    -u NEMOCLAW_PERL_SKIP_RAW_ICMPV6_TESTS
+  )
+  probe_net_ping_constructor() {
+    local protocol="$1"
+    ./perl -Ilib \
+      -MErrno=EACCES,EPERM \
+      -MNet::Ping \
+      -e '
+        my $protocol = shift @ARGV;
+        $! = 0;
+        my $ping = eval { Net::Ping->new($protocol) };
+        my $errno = 0 + $!;
+        my $error = $@;
+        exit 0 if $ping and !$error;
+        die "Net::Ping $protocol constructor returned no object\n" unless length $error;
+        exit 77 if $errno == EACCES or $errno == EPERM;
+        die $error;
+      ' "${protocol}"
+  }
+  if probe_net_ping_constructor icmp; then
+    printf 'Perl Net::Ping raw IPv4 assertions: execute\n'
+  else
+    raw_icmpv4_probe_status="$?"
+    if ((raw_icmpv4_probe_status != 77)); then
+      exit "${raw_icmpv4_probe_status}"
+    fi
+    printf 'Perl Net::Ping raw IPv4 assertions: skip after permission denial\n'
+    perl_test_env+=(NEMOCLAW_PERL_SKIP_RAW_ICMPV4_TESTS=1)
+  fi
+  if probe_net_ping_constructor icmpv6; then
+    printf 'Perl Net::Ping raw IPv6 assertions: execute\n'
+  else
+    raw_icmpv6_probe_status="$?"
+    if ((raw_icmpv6_probe_status != 77)); then
+      exit "${raw_icmpv6_probe_status}"
+    fi
+    printf 'Perl Net::Ping raw IPv6 assertions: skip after permission denial\n'
+    perl_test_env+=(NEMOCLAW_PERL_SKIP_RAW_ICMPV6_TESTS=1)
+  fi
   # Perl's test_harness runs the same upstream suite while TEST_JOBS lets its TAP
   # scheduler use each native runner efficiently instead of serializing every
   # script in QEMU.
-  TEST_JOBS=1 \
+  env "${perl_test_env[@]}" \
+    TEST_JOBS=1 \
     TEST_ARGS='../cpan/ExtUtils-Constant/t/Constant.t' \
     make test_harness
-  TEST_JOBS="$(nproc)" \
-  PERL_TEST_HARNESS_ASAP=1 \
-  TEST_ARGS='--nre=^[.][.]/cpan/ExtUtils-Constant/t/Constant[.]t$' \
+  env "${perl_test_env[@]}" \
+    TEST_JOBS="$(nproc)" \
+    PERL_TEST_HARNESS_ASAP=1 \
+    TEST_ARGS='--nre=^[.][.]/cpan/ExtUtils-Constant/t/Constant[.]t$' \
     make -j"$(nproc)" test_harness
   make install DESTDIR="${perl_root}"
 )

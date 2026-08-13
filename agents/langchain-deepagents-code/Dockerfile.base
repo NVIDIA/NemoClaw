@@ -53,6 +53,7 @@ ARG PERL_SHA256
 ARG PERL_PACKAGE_REVISION
 
 COPY scripts/security/build-perl-security-packages.sh /scripts/security/build-perl-security-packages.sh
+COPY scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch /scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         netbase=6.5 \
