@@ -11,8 +11,9 @@ It also strengthens managed images, gateway credentials, runtime state, and rele
 
 - On Linux and Windows Subsystem for Linux 2 (WSL2), `nemoclaw onboard --host-mount <host:/sandbox/path>` can now expose an existing host directory read-only beneath `/sandbox`.
   NemoClaw validates each source, destination, and symlink boundary before mutation.
-  It persists accepted mounts for `nemoclaw <sandbox> rebuild` and interrupted `nemoclaw onboard --resume`.
-  The `destroy` command removes their declaration, and sandbox status reports them.
+  It persists accepted mounts across `nemoclaw <sandbox> rebuild` and interrupted onboarding resumed with `nemoclaw onboard --resume`.
+  The `nemoclaw <sandbox> destroy` command removes their declaration.
+  The `nemoclaw <sandbox> status` command reports them.
   For more information, refer to [Understand Sandbox State](/user-guide/openclaw/manage-sandboxes/state-and-backups/understand-sandbox-state) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
   Related change: [PR #8280](https://github.com/NVIDIA/NemoClaw/pull/8280).
 - The explicit-only Experimental Muse Glimmer managed vLLM profile now runs on one DGX Spark with its validated checkpoint, ARM64 image, parser settings, and resource limits.
