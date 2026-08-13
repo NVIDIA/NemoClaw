@@ -144,6 +144,23 @@ Stdio commands, extra headers, raw credentials, and unrelated top-level configur
 For authenticated MCP setup and credential rotation, refer to [Add an MCP Server](../mcp-servers/add-an-mcp-server) and [Manage MCP Servers](../mcp-servers/manage-mcp-servers).
 This isolated-mode guarantee applies to the managed launchers, not arbitrary Python commands in the sandbox.
 
+### Protect the Managed Login Profile
+
+Managed Deep Agents Code images reserve `/sandbox/.bash_profile` as the first Bash login profile for OpenShell command sessions.
+The file is `root:root` mode `0444`, and `/sandbox` is `root:sandbox` mode `1775`.
+The sticky directory keeps normal workspace writes available while preventing the `sandbox` user from deleting or replacing the root-owned profile.
+
+At each container start, the root entrypoint restores and verifies the profile before it changes to the `sandbox` user.
+If a sandbox-user start cannot verify the profile, it stops and tells you to rebuild the sandbox.
+
+For NemoClaw-managed route and terminal probes, the profile clears `BASH_ENV` and `ENV` and skips `/tmp/nemoclaw-proxy-env.sh`.
+This prevents sandbox startup code from running before the managed probe.
+Ordinary login commands continue to load the credential-free runtime environment, and interactive `.bashrc` behavior does not change.
+Do not edit or replace `/sandbox/.bash_profile`.
+
+Existing Deep Agents Code sandboxes retain their previous image until you rebuild them.
+After you update NemoClaw, finish active tasks and follow [Recover and Rebuild Sandboxes](recover-and-rebuild-sandboxes) to replace each image.
+
 ## Choose an Approval Boundary
 
 Interactive shell execution and other destructive tools remain behind human-in-the-loop approval prompts by default.

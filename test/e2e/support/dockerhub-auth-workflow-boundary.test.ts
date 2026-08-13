@@ -292,11 +292,11 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
   it("rejects alias, ordering, and no-image exemption drift", () => {
     const errors = validateMutation((workflow) => {
       const canonicalAuth = namedStep(workflow.jobs.live, AUTH_STEP_NAME)!;
-      const recoverySteps = workflow.jobs["gateway-guard-recovery"].steps!;
-      const recoveryAuthIndex = recoverySteps.indexOf(
-        namedStep(workflow.jobs["gateway-guard-recovery"], AUTH_STEP_NAME)!,
+      const braveSearchSteps = workflow.jobs["brave-search"].steps!;
+      const braveSearchAuthIndex = braveSearchSteps.indexOf(
+        namedStep(workflow.jobs["brave-search"], AUTH_STEP_NAME)!,
       );
-      recoverySteps[recoveryAuthIndex] = {
+      braveSearchSteps[braveSearchAuthIndex] = {
         ...canonicalAuth,
         env: { ...canonicalAuth.env },
       };
@@ -313,7 +313,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
 
     expect(errors).toEqual(
       expect.arrayContaining([
-        "gateway-guard-recovery Docker Hub auth must reuse the canonical workflow alias",
+        "brave-search Docker Hub auth must reuse the canonical workflow alias",
         "inference-routing Docker Hub auth must run immediately after checkout",
         "shared-e2e no-image job must not receive Docker Hub authentication",
       ]),

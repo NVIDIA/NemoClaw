@@ -462,6 +462,48 @@ resolve_onboarded_agent() {
   fi
 }
 
+# Read the API port the named sandbox was registered with. Each Hermes sandbox
+# allocates its own, so the forward must target this sandbox's port rather than
+# the default a sibling sandbox may already hold.
+resolve_hermes_api_port() {
+  local registry_file
+  registry_file="$(nemoclaw_state_dir)/sandboxes.json"
+  if [[ ! -f "$registry_file" ]] || ! command_exists node; then
+    return 1
+  fi
+  node -e '
+    const fs = require("fs");
+    try {
+      const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const sandboxes = data.sandboxes;
+      const name = process.argv[2];
+      if (
+        !sandboxes ||
+        typeof sandboxes !== "object" ||
+        Array.isArray(sandboxes) ||
+        !Object.prototype.hasOwnProperty.call(sandboxes, name)
+      ) {
+        throw new Error("sandbox state is unavailable");
+      }
+      const entry = sandboxes[name];
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        throw new Error("sandbox state is malformed");
+      }
+      if (!Object.prototype.hasOwnProperty.call(entry, "hermesApiPort")) {
+        process.stdout.write("8642");
+      } else {
+        const port = entry.hermesApiPort;
+        if (!Number.isInteger(port) || port < 8642 || port > 8652) {
+          throw new Error("Hermes API port is malformed");
+        }
+        process.stdout.write(String(port));
+      }
+    } catch {
+      process.exitCode = 1;
+    }
+  ' "$registry_file" "$1" 2>/dev/null
+}
+
 restore_onboard_forward_after_post_checks() {
   local sandbox_name agent_name agent_display port openshell_bin openshell_dir attempt selected_state_dir state_dir pid_file watcher_script watcher_pid
   sandbox_name="$(resolve_default_sandbox_name)"
@@ -469,7 +511,11 @@ restore_onboard_forward_after_post_checks() {
   agent_display="$(agent_display_name "$agent_name")"
 
   case "$agent_name" in
-    hermes) port=8642 ;;
+    hermes)
+      if ! port="$(resolve_hermes_api_port "$sandbox_name")"; then
+        error "Could not restore the Hermes forward because the registered API port for sandbox '$sandbox_name' is unavailable or invalid."
+      fi
+      ;;
     *) return 0 ;;
   esac
 

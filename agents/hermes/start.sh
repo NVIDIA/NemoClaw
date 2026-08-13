@@ -270,8 +270,33 @@ else
   fi
 fi
 
-if [ "$_dashboard_port" -eq 8642 ]; then
-  echo "[SECURITY] Invalid Hermes dashboard port 8642 - reserved for the Hermes OpenAI-compatible API" >&2
+# The API port is a per-sandbox host resource: the host forwards the same
+# number it is exposed on here, so two sandboxes on one host need two values.
+# NemoClaw allocates the port and passes it in; the default keeps a sandbox
+# whose create environment carries no value on the original port.
+HERMES_DEFAULT_API_PORT=8642
+HERMES_API_PORT_RANGE_END=8652
+HERMES_RUNTIME_DIR=/run/nemoclaw
+_api_port_raw="${NEMOCLAW_HERMES_API_PORT:-}"
+if [ -z "$_api_port_raw" ]; then
+  PUBLIC_PORT="$HERMES_DEFAULT_API_PORT"
+else
+  PUBLIC_PORT="$(printf '%s' "$_api_port_raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  _api_port_valid=1
+  case "$PUBLIC_PORT" in
+    *[!0-9]* | '') _api_port_valid=0 ;;
+  esac
+  if [ "$_api_port_valid" -eq 1 ] && { [ "$PUBLIC_PORT" -lt "$HERMES_DEFAULT_API_PORT" ] || [ "$PUBLIC_PORT" -gt "$HERMES_API_PORT_RANGE_END" ]; }; then
+    _api_port_valid=0
+  fi
+  if [ "$_api_port_valid" -ne 1 ]; then
+    echo "[SECURITY] Invalid NEMOCLAW_HERMES_API_PORT='${NEMOCLAW_HERMES_API_PORT}' - must be an integer from ${HERMES_DEFAULT_API_PORT} through ${HERMES_API_PORT_RANGE_END}" >&2
+    exit 1
+  fi
+fi
+
+if [ "$_dashboard_port" -eq "$PUBLIC_PORT" ]; then
+  echo "[SECURITY] Invalid Hermes dashboard port ${_dashboard_port} - reserved for the Hermes OpenAI-compatible API" >&2
   exit 1
 fi
 
@@ -281,7 +306,6 @@ else
   CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${_dashboard_port}}"
 fi
 
-PUBLIC_PORT=8642
 # Hermes binds the API server to 127.0.0.1. Run it on an internal port and
 # use socat to expose the OpenAI-compatible API on PUBLIC_PORT.
 INTERNAL_PORT=18642
@@ -3090,6 +3114,67 @@ prepare_hermes_nonroot_runtime() {
   prepare_tirith_marker_retry || return 1
 }
 
+prepare_hermes_root_runtime_dir() {
+  local runtime_metadata
+  if [ -L "$HERMES_RUNTIME_DIR" ]; then
+    echo "[SECURITY] Refusing Hermes startup because $HERMES_RUNTIME_DIR is a symbolic link" >&2
+    return 1
+  fi
+  if [ ! -e "$HERMES_RUNTIME_DIR" ]; then
+    install -d -m 0755 -o root -g root -- "$HERMES_RUNTIME_DIR" || {
+      echo "[SECURITY] Refusing Hermes startup because $HERMES_RUNTIME_DIR could not be created safely" >&2
+      return 1
+    }
+  fi
+  if [ ! -d "$HERMES_RUNTIME_DIR" ] || [ -L "$HERMES_RUNTIME_DIR" ]; then
+    echo "[SECURITY] Refusing Hermes startup because $HERMES_RUNTIME_DIR is not a real directory" >&2
+    return 1
+  fi
+  runtime_metadata="$(stat -c '%u:%g:%a' -- "$HERMES_RUNTIME_DIR" 2>/dev/null)" || {
+    echo "[SECURITY] Refusing Hermes startup because $HERMES_RUNTIME_DIR metadata is unavailable" >&2
+    return 1
+  }
+  if [ "$runtime_metadata" != "0:0:755" ]; then
+    # The managed runtime can present this directory before the root-separated
+    # gateway starts. Restore the trust boundary from root, and refuse when the
+    # restore is not permitted.
+    chown root:root -- "$HERMES_RUNTIME_DIR" 2>/dev/null
+    chmod 0755 -- "$HERMES_RUNTIME_DIR" 2>/dev/null
+    runtime_metadata="$(stat -c '%u:%g:%a' -- "$HERMES_RUNTIME_DIR" 2>/dev/null)" || runtime_metadata=""
+  fi
+  if [ "$runtime_metadata" != "0:0:755" ]; then
+    echo "[SECURITY] Refusing Hermes startup because $HERMES_RUNTIME_DIR must be root-owned with mode 0755" >&2
+    return 1
+  fi
+  return 0
+}
+
+publish_hermes_root_runtime_marker() {
+  local marker_name="$1"
+  local marker_value="$2"
+  local marker_path temporary_marker
+  case "$marker_name" in
+    '' | *[!A-Za-z0-9_-]*)
+      echo "[SECURITY] Refusing Hermes startup because the runtime marker name is invalid" >&2
+      return 1
+      ;;
+  esac
+  prepare_hermes_root_runtime_dir || return 1
+  marker_path="${HERMES_RUNTIME_DIR}/${marker_name}"
+  temporary_marker="$(mktemp "${HERMES_RUNTIME_DIR}/.${marker_name}.XXXXXX")" || {
+    echo "[SECURITY] Refusing Hermes startup because ${marker_path} could not be prepared" >&2
+    return 1
+  }
+  if ! printf '%s\n' "$marker_value" >"$temporary_marker" \
+    || ! chown root:root "$temporary_marker" \
+    || ! chmod 0444 "$temporary_marker" \
+    || ! mv -f -- "$temporary_marker" "$marker_path"; then
+    rm -f -- "$temporary_marker"
+    echo "[SECURITY] Refusing Hermes startup because ${marker_path} could not be published atomically" >&2
+    return 1
+  fi
+}
+
 prepare_hermes_root_runtime() {
   verify_hermes_config_integrity || return 1
   prepare_hermes_lazy_dependencies || return 1
@@ -3491,10 +3576,12 @@ fi
 # add when the root-lifecycle marker identifies the legacy topology.
 # removalCondition: remove this marker stamp when OpenShell unifies the topology
 # or exposes an attested execution-identity capability.
-install -d -m 0755 -o root -g root /run/nemoclaw
-printf '%s\n' 'root-separated' >/run/nemoclaw/hermes-root-lifecycle
-chown root:root /run/nemoclaw/hermes-root-lifecycle
-chmod 0444 /run/nemoclaw/hermes-root-lifecycle
+publish_hermes_root_runtime_marker hermes-root-lifecycle root-separated || exit 1
+
+# SECURITY: publish the resolved API port as a root-owned read-only marker.
+# Root-separated helpers read this marker. The temporary file receives its
+# final ownership and mode before one atomic rename replaces any stale entry.
+publish_hermes_root_runtime_marker hermes-api-port "$PUBLIC_PORT" || exit 1
 
 # SECURITY: Protect gateway log from sandbox user tampering
 prepare_restricted_log /tmp/gateway.log gateway:gateway 600

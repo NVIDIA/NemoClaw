@@ -100,7 +100,9 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       test_file: "${{ matrix.test_file }}",
       timeout_minutes: "${{ matrix.timeout_minutes }}",
       install_mode: "${{ matrix.install_mode }}",
+      install_non_interactive: "${{ matrix.install_non_interactive }}",
       restore_cli: "${{ matrix.restore_cli }}",
+      host_packages: "${{ matrix.host_packages }}",
       trusted_main:
         "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}",
     })) {
@@ -131,7 +133,9 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     test_file: "string",
     timeout_minutes: "number",
     install_mode: "string",
+    install_non_interactive: "boolean",
     restore_cli: "boolean",
+    host_packages: "string",
     trusted_main: "boolean",
   };
   if (
@@ -209,6 +213,24 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   }
 
   const prepare = requireStep(errors, workflowSteps, "Prepare E2E workspace");
+
+  const hostDependencies = requireStep(errors, workflowSteps, "Install target host dependencies");
+  if (
+    hostDependencies?.if !== "${{ inputs.host_packages != '' }}" ||
+    hostDependencies.uses !== E2E_ACTION_PROVENANCE.hostDependencies.reference ||
+    record(hostDependencies.with).packages !== "${{ inputs.host_packages }}"
+  ) {
+    errors.push(
+      "standard E2E profile must install only the planned host packages with the reviewed action",
+    );
+  }
+  if (
+    hostDependencies &&
+    prepare &&
+    workflowSteps.indexOf(hostDependencies) >= workflowSteps.indexOf(prepare)
+  ) {
+    errors.push("standard E2E profile must install host dependencies before workspace prep");
+  }
   if (
     prepare?.uses !== E2E_ACTION_PROVENANCE.prepareWorkspace.reference ||
     record(prepare?.with)["build-cli"] !== "false"
@@ -227,6 +249,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const authenticatedInstall = requireStep(errors, workflowSteps, "Install OpenShell CLI");
   if (
     authenticatedInstall?.if !== "${{ inputs.install_mode == 'authenticated' }}" ||
+    record(authenticatedInstall.env).NEMOCLAW_NON_INTERACTIVE !==
+      "${{ inputs.install_non_interactive && '1' || '' }}" ||
     authenticatedInstall.run !== "bash scripts/install-openshell.sh"
   ) {
     errors.push("standard E2E profile must gate authenticated OpenShell installation by mode");
@@ -238,6 +262,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   );
   if (
     credentialFreeInstall?.if !== "${{ inputs.install_mode == 'credential-free' }}" ||
+    record(credentialFreeInstall.env).NEMOCLAW_NON_INTERACTIVE !==
+      "${{ inputs.install_non_interactive && '1' || '' }}" ||
     !String(credentialFreeInstall.run).includes("env -u DOCKER_CONFIG") ||
     !String(credentialFreeInstall.run).includes("-u NVIDIA_INFERENCE_API_KEY")
   ) {

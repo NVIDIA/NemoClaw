@@ -24,7 +24,7 @@ export interface AgentSetupStateOptions<Agent> {
       context: unknown,
     ): Promise<void>;
     agentSetupContext(): unknown;
-    ensureAgentDashboardForward(sandboxName: string, agent: Agent): number;
+    ensureAgentDashboardForward(sandboxName: string, agent: Agent): Promise<number> | number;
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     recordStepSkipped(stepName: string): Promise<Session>;
     isOpenclawReady(sandboxName: string): boolean;
@@ -75,7 +75,7 @@ export async function handleAgentSetupState<Agent>({
     // taken by another sandbox. Persist it to the registry so `dashboard-url`
     // reports the live port instead of the default. Discarding the return here
     // regressed multi-sandbox onboarding in the machine handler path (#8214).
-    const dashboardPort = deps.ensureAgentDashboardForward(sandboxName, agent);
+    const dashboardPort = await deps.ensureAgentDashboardForward(sandboxName, agent);
     if (dashboardPort > 0) {
       deps.persistDashboardPort(sandboxName, dashboardPort);
     }

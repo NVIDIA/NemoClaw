@@ -153,7 +153,7 @@ with tempfile.TemporaryDirectory() as root:
         1,
         1000,
         b"bash\0/usr/local/bin/nemoclaw-start\0",
-        b"PATH=/usr/bin\0NEMOCLAW_DASHBOARD_PORT=18789\0",
+        b"PATH=/usr/bin\0NEMOCLAW_DASHBOARD_PORT=18789\0NEMOCLAW_HERMES_API_PORT=8645\0",
     )
     write_process(
         proc_root,
@@ -183,7 +183,7 @@ with tempfile.TemporaryDirectory() as root:
     control._http_healthy_in_gateway_namespace = (
         lambda _reader, _identity, port, path, *_args: (port, path) in {
             (18642, "/health"),
-            (8642, "/health"),
+            (8645, "/health"),
         }
     )
     os.environ["NEMOCLAW_MANAGED_CONTROL_ALLOW_NONROOT_TEST"] = "1"
@@ -204,6 +204,7 @@ with tempfile.TemporaryDirectory() as root:
         initial_proof = {
             "stable_zombie": [zombie.state, len(zombie.cmdline)],
             "supervisor": [supervisor.pid, supervisor.start_time, supervisor.parent_pid],
+            "api_port": hermes.readiness_checks[0][0],
             "gateway": [candidates[0].pid, candidates[0].start_time, candidates[0].parent_pid],
             "healthy": control._gateway_healthy(reader, candidates[0], hermes),
         }
@@ -1310,6 +1311,7 @@ describe("managed gateway root control", () => {
     expect(output).toEqual({
       initial: {
         stable_zombie: ["Z", 0],
+        api_port: 8645,
         supervisor: [40, "222", 1],
         gateway: [41, "333", 40],
         healthy: true,

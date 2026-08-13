@@ -160,6 +160,7 @@ When recovery cannot complete, an interactive command returns an error, or the d
 
 NemoClaw also records durable containment when an owner exits before it can prove that the owner's descendants stopped, or when ownership becomes ambiguous.
 Durable containment, retained exact gates, or the fail-closed state-directory error keeps new mutations blocked until you complete exact-generation operator recovery.
+A `--dry-run` run of a `channels` or `policy` command takes no mutation lock, so you can still preview the change while mutations are blocked.
 
 Stop all NemoClaw processes for the sandbox, then follow the paths, identities, tokens, and removal order in the reported error.
 Verify each recorded generation is unchanged, remove only the exact stale generations first, and remove the exact containment generation last.
