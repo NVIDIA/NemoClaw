@@ -12,10 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChildExitState } from "./child-exit-tracker";
 import { printOnboardResumeHint, resetOnboardResumeHintForTests } from "./resume-hint";
-import {
-  recordedGatewayProcessStopped,
-  reportDockerDriverGatewayStartFailure,
-} from "./docker-driver-gateway-failure";
+import { reportDockerDriverGatewayStartFailure } from "./docker-driver-gateway-failure";
 
 function makeExitState(partial: Partial<ChildExitState> = {}): ChildExitState {
   return {
@@ -163,6 +160,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       reportDockerDriverGatewayStartFailure(log, makeExitState({ exited: true }), {
         exitOnFailure: false,
         launchLogOffset: 0,
+        resolveGatewayStopCommand: () => "systemctl --user stop nemoclaw-openshell-gateway",
       });
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
       expect(joined).toContain("cannot use the existing gateway database");
@@ -173,9 +171,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       expect(joined).toContain("mkdir -m 700");
       expect(joined).toContain("incompatible/gateway-state'");
       expect(joined).toContain("nemoclaw onboard --resume");
-      // An observed exit is evidence on its own, so the stop instruction that
-      // the unconfirmed path prints must not appear here.
-      expect(joined).not.toContain("could not confirm that the gateway process stopped");
+      expect(joined).toContain("systemctl --user stop nemoclaw-openshell-gateway && mkdir -m 700");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -225,7 +221,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
   // this failure, but the start loop reports it after the poll budget expires,
   // so `childExit.exited` is false. Withholding the diagnosis in that state
   // left the reported path with the raw sqlx text and no remedy.
-  it("prints the state move when the recorded gateway process stopped and the exit was not observed (#8797)", () => {
+  it("prints the managed-service stop ahead of the state move when the exit was not observed (#8797)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
     const log = path.join(dir, "openshell-gateway.log");
     fs.writeFileSync(
@@ -240,26 +236,23 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       reportDockerDriverGatewayStartFailure(log, makeExitState(), {
         exitOnFailure: false,
         launchLogOffset: 0,
-        isGatewayProcessStopped: () => true,
+        resolveGatewayStopCommand: () => "systemctl --user stop nemoclaw-openshell-gateway",
       });
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
       expect(joined).toContain("did not become healthy within the timeout");
       expect(joined).toContain("cannot use the existing gateway database");
       expect(joined).toContain(`Database: ${path.join(dir, "openshell.db")}`);
-      expect(joined).toContain(`mkdir -m 700 '${dir}.incompatible'`);
-      expect(joined).not.toContain("could not confirm that the gateway process stopped");
+      expect(joined).toContain(
+        `systemctl --user stop nemoclaw-openshell-gateway && mkdir -m 700 '${dir}.incompatible'`,
+      );
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  // The state move must never be offered while a gateway process can still hold
-  // the directory. `Restart=on-failure` in the managed unit can also start a
-  // replacement, so a user-run check cannot stand in for this probe (#8797).
-  it.each([
-    ["the recorded gateway process is still running", () => false],
-    ["no recorded gateway process can be read", undefined],
-  ] as const)("withholds the state move when %s (#8797)", (_scenario, probe) => {
+  // The recovery must stop the manager that actually runs the gateway on this
+  // host, so macOS gets the Homebrew service (#8797).
+  it("stops the Homebrew service in the recovery on macOS (#8797)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
     const log = path.join(dir, "openshell-gateway.log");
     fs.writeFileSync(
@@ -273,15 +266,38 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       reportDockerDriverGatewayStartFailure(log, makeExitState(), {
         exitOnFailure: false,
         launchLogOffset: 0,
-        isGatewayProcessStopped: probe,
+        resolveGatewayStopCommand: () => "brew services stop openshell",
       });
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
-      expect(joined).toContain("cannot use the existing gateway database");
-      expect(joined).toContain(`Database: ${path.join(dir, "openshell.db")}`);
-      expect(joined).toContain("could not confirm that the gateway process stopped");
-      expect(joined).toContain("systemctl --user stop nemoclaw-openshell-gateway");
-      expect(joined).not.toContain("mkdir -m 700");
-      expect(joined).not.toContain("mv ");
+      expect(joined).toContain("brew services stop openshell && mkdir -m 700");
+      expect(joined).not.toContain("systemctl --user stop");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // A standalone gateway has no service manager to stop, so the chain must not
+  // carry a stop that would fail and abort the archive and the move (#8797).
+  it("omits the stop when no service manager owns the gateway (#8797)", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
+    const log = path.join(dir, "openshell-gateway.log");
+    fs.writeFileSync(
+      log,
+      [
+        "Error:   × execution error: migration error: migration 6 was previously applied but",
+        "  │ is missing in the resolved migrations",
+      ].join("\n"),
+    );
+    try {
+      reportDockerDriverGatewayStartFailure(log, makeExitState(), {
+        exitOnFailure: false,
+        launchLogOffset: 0,
+        resolveGatewayStopCommand: () => null,
+      });
+      const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
+      expect(joined).toContain(`mkdir -m 700 '${dir}.incompatible'`);
+      expect(joined).not.toContain("systemctl --user stop");
+      expect(joined).not.toContain("brew services stop");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -375,72 +391,5 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       launchLogOffset: 0,
     });
     expect(exitSpy).not.toHaveBeenCalled();
-  });
-});
-
-describe("recordedGatewayProcessStopped (#8797)", () => {
-  function withStateDir(pidContents: string | null): string {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-pid-"));
-    if (pidContents !== null)
-      fs.writeFileSync(path.join(dir, "openshell-gateway.pid"), pidContents);
-    return dir;
-  }
-
-  // A missing record is not evidence that no gateway runs, so the caller must
-  // keep withholding the state move (advisor finding PRA-1).
-  it.each([
-    ["no pid file exists", null],
-    ["the pid file holds no number", "not-a-pid\n"],
-    ["the pid file holds a non-positive pid", "0\n"],
-    ["the pid file holds a numeric prefix only", "123invalid\n"],
-  ] as const)("reports not stopped when %s (#8797)", (_scenario, contents) => {
-    const dir = withStateDir(contents);
-    try {
-      expect(recordedGatewayProcessStopped(dir)).toBe(false);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("reports not stopped for a running process (#8797)", () => {
-    const dir = withStateDir(`${String(process.pid)}\n`);
-    try {
-      expect(recordedGatewayProcessStopped(dir)).toBe(false);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  // Absence of evidence is not evidence of absence: only a missing procfs entry
-  // proves the recorded process exited (advisor finding PRA-1).
-  it("reports not stopped when the process state cannot be read (#8797)", () => {
-    // 4194304 reads as ENOENT and would otherwise report stopped, so the
-    // assertion fails if the injected EACCES never reaches the probe.
-    const dir = withStateDir("4194304\n");
-    const readFileSync = fs.readFileSync;
-    const spy = vi.spyOn(fs, "readFileSync").mockImplementation(((target, ...rest) => {
-      if (String(target).startsWith("/proc/")) {
-        const denied = new Error("EACCES") as NodeJS.ErrnoException;
-        denied.code = "EACCES";
-        throw denied;
-      }
-      return (readFileSync as (...args: unknown[]) => unknown)(target, ...rest);
-    }) as typeof fs.readFileSync);
-    try {
-      expect(recordedGatewayProcessStopped(dir)).toBe(false);
-    } finally {
-      spy.mockRestore();
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("reports stopped when the recorded process is gone (#8797)", () => {
-    // 4194304 is above the default pid_max, so no process can hold it.
-    const dir = withStateDir("4194304\n");
-    try {
-      expect(recordedGatewayProcessStopped(dir)).toBe(true);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
   });
 });
