@@ -203,28 +203,49 @@ npx tsx tools/e2e/credential-free-tests.mts
 `tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
 Each entry owns these target properties:
 
-- Target ID and Vitest file.
+- Stable catalogue ID, target ID, shard, and Vitest file.
+- Outcome-first display name for GitHub Actions.
 - Source paths that select the target after a push to `main`.
-- Execution profile, runner, and timeout.
+- Execution profile, runner or key into the trusted runner-routing map, and timeout.
 - OpenShell install mode, non-interactive installer selection, and CLI artifact use.
-- Reviewed host packages.
+- Reviewed host packages and host preparation.
+- Runner telemetry and one reviewed artifact layout.
+- PR Review Advisor selection. Standard-profile targets are selectable by default; a credentialed target must set `prAdvisorSelectable` before the Advisor may recommend its logical target ID.
 - Optional Vitest title selector.
 - Target-specific environment variables.
 - Pre-tag release requirement.
+
+Host preparation is the reviewed E2E runner preparation mode. `none` makes no runner-level
+change, `hermes-swap` provisions swap for Hermes execution, and `rebuild-swap` provisions swap
+for the Hermes image rebuild.
 
 The test file is always one owning path.
 List each additional source file or directory whose change requires the target.
 Changes to shared catalogue execution paths select every catalogue target.
 
-The workflow partitions catalogue targets into three credential profiles:
+Most entries use one ID for catalogue selection, evidence, and artifacts.
+Matrix-style targets use one target ID for evidence and artifacts, with separate catalogue IDs and shards for each concrete execution.
+Give each entry one `displayName` in the form `<area>: <observable outcome>`.
+Do not include this implementation metadata or workflow text in the display name:
 
-- `standard` receives no NVIDIA API credential.
-- `nvidia-api` receives `NVIDIA_API_KEY` on trusted `main` runs.
-- `nvidia-inference` receives `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs.
+- The target ID or an issue number.
+- `Catalogue`, `live`, or `E2E`.
+- A test path.
+- A runner or sandbox ID.
 
+`E2E_TARGET_CATALOGUE` is one logical target set.
+The planner partitions that set into three GitHub Actions matrices, one for each credential profile:
+
+- `standard` displays `no provider credential` and receives no NVIDIA API credential.
+- `nvidia-api` displays `NVIDIA API key` and receives `NVIDIA_API_KEY` on trusted `main` runs.
+- `nvidia-inference` displays `NVIDIA inference API key` and receives `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs.
+
+GitHub Actions renders each catalogue execution as `<display name> / <provider credential boundary>`.
 All three profiles call `.github/workflows/e2e-standard-profile.yaml`.
 Each target selects its runner through the catalogue.
-The reusable workflow owns checkout, Docker authentication, setup, CLI artifact restoration, OpenShell installation, Vitest execution, evidence manifest creation, artifact upload, and Docker credential cleanup.
+The reusable workflow validates the catalogue plan before candidate checkout.
+It derives the artifact path and upload name from the target ID, shard, and reviewed layout.
+It then owns checkout, Docker authentication, reviewed host preparation, setup, CLI artifact restoration, OpenShell installation, runner telemetry, Vitest execution, evidence manifest creation, artifact upload, and Docker credential cleanup.
 Catalogue entries may request only the reviewed `expect` and `iptables` host packages.
 The reusable workflow installs those packages through the pinned host-dependency action before workspace preparation.
 An optional `selector` limits execution to matching tests in the target's declared Vitest file.
@@ -232,10 +253,13 @@ A host package or selector alone does not require a dedicated workflow job.
 When a target selects non-interactive installation, the reusable workflow sets `NEMOCLAW_NON_INTERACTIVE=1` for its OpenShell install step.
 The reusable workflow sets `NEMOCLAW_E2E_EXPECTED_SHA` to the candidate commit for every target.
 TUI exact-ref checks use this shared value instead of a target-specific checkout variable.
-Each target writes its artifacts and `evidence-manifest.json` under `e2e-artifacts/live/<target-id>`.
-A selector does not add an artifact directory or change the target ID.
-The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets use this shape on `linux-amd64-gpu-rtxpro6000-latest-1`.
-Keep a dedicated workflow job when a target needs a different setup boundary, a multi-job handoff, or credential access outside the three profiles.
+On an exact-revision manual PR run, `NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA` carries that commit to the risk-signal reporter; it remains empty on main push runs.
+The standard layout writes product evidence and `evidence-manifest.json` under `e2e-artifacts/live/<target-id>`.
+When `shard` is not `default`, the standard layout adds the shard directory.
+The security-posture matrix uses the reviewed flat-shard layout to preserve its existing artifact names.
+The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets keep the standard layout and select `linux-amd64-gpu-rtxpro6000-latest-1` through the catalogue.
+Retained workflow jobs are exceptions to the catalogue shape.
+Keep one only for a multi-job handoff, a credential boundary outside the three profiles, or an execution contract the reusable profile cannot represent.
 
 ### Catalogue Execution Evidence
 
@@ -270,6 +294,32 @@ npx tsx tools/e2e/workflow-plan.mts --summary >> "$GITHUB_STEP_SUMMARY"
 
 The workflow's `--ci-output` mode uses the same renderer for its job summary.
 The table includes the typed registry matrix, shared test matrix, three catalogue profile matrices, and retained workflow jobs.
+
+## Launch-readiness locked-image acceptance
+
+Use the repository helper to test an existing OpenClaw sandbox without
+rebuilding its locked image:
+
+```bash
+scripts/test-launch-readiness-lease.sh <openclaw-sandbox>
+```
+
+Run this helper on Linux after the sandbox's final durable home and state
+volume is mounted and after final policy and network provisioning is complete.
+The launch-readiness lease path that it validates is currently Linux-only.
+The helper must run as the same numeric user that later runs `launch`, and that user must own the sandbox's NemoClaw state.
+The host must provide that user a secure, independently writable OS runtime authority under `/run/user/<numeric-uid>`; do not redirect it with environment variables.
+The host must provide the util-linux `script` command and GNU `timeout` command.
+
+The helper rebuilds the candidate CLI, runs `connect --probe-only`, and then
+runs two `launch` sessions during the same fixed lease.
+Each pseudo-terminal session sends a unique prompt, requires the exact reply,
+sends `/exit`, and requires process exit status `0`.
+The helper uses exact terminal behavior instead of a wall-clock pass threshold.
+Deterministic unit tests separately prove selection of the complete preflight
+and lease paths, stale-producer exclusion, the fixed time-unsafe quarantine,
+refusal to recover when prior evidence cannot be durably fenced, and the named
+performance stages.
 
 ## Inactive Windows MXC OpenClaw qualification
 

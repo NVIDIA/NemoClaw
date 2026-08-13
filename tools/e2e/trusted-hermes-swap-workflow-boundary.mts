@@ -218,16 +218,9 @@ export const TRUSTED_HERMES_SWAP_SCRIPT = [
 ].join("\n");
 
 const JOB_CONDITIONS = {
-  "agent-turn-latency": `\${{ ${TRUSTED_HERMES_SWAP_IF} }}`,
-  "bedrock-runtime-compatible-anthropic": `\${{ ${TRUSTED_HERMES_SWAP_IF} && matrix.agent == 'hermes' }}`,
-  "channels-stop-start": `\${{ ${TRUSTED_HERMES_SWAP_IF} && matrix.agent == 'hermes' }}`,
   "common-egress-agent": `\${{ ${TRUSTED_HERMES_SWAP_IF} && matrix.scenario == 'hermes-open-reference' }}`,
-  "hermes-discord": `\${{ ${TRUSTED_HERMES_SWAP_IF} }}`,
   "hermes-e2e": `\${{ ${TRUSTED_HERMES_SWAP_IF} && ${TRUSTED_HERMES_E2E_ELIGIBILITY} }}`,
-  "hermes-inference-switch": `\${{ ${TRUSTED_HERMES_SWAP_IF} }}`,
-  "hermes-shields-config": `\${{ ${TRUSTED_HERMES_SWAP_IF} }}`,
   "mcp-bridge": `\${{ ${TRUSTED_HERMES_SWAP_IF} && matrix.agent == 'hermes' }}`,
-  "security-posture": `\${{ ${TRUSTED_HERMES_SWAP_IF} && matrix.agent == 'hermes' }}`,
 } as const;
 
 function asRecord(value: unknown): WorkflowRecord {

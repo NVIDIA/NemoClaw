@@ -81,7 +81,10 @@ Review the [Prerequisites](prerequisites) before you begin.
     nemoclaw launch my-assistant
     ```
 
-    `nemoclaw launch` runs the same preflight as `connect`, then starts `openclaw tui` in your terminal.
+    `nemoclaw launch` runs the complete preflight or, on Linux, validates an existing fixed 24-hour launch-readiness lease before it starts `openclaw tui` in your terminal.
+    On macOS, `launch` runs the complete preflight every time and does not publish a launch-readiness lease.
+    On Linux, if the recorded configuration or live runtime has changed, NemoClaw durably invalidates prior evidence before it runs the complete preflight.
+    If old evidence might remain acceptable and cannot be invalidated, `launch` stops before preflight or recovery and tells you to repair the secure OS per-user runtime authority or NemoClaw state permissions.
     To open a sandbox shell first and start the TUI yourself, run these commands instead.
 
     ```bash

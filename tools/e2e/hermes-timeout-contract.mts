@@ -20,16 +20,4 @@ export const HERMES_TIMEOUT_CONTRACTS = [
     jobName: "hermes-e2e",
     jobTimeoutMinutes: HERMES_E2E_TEST_TIMEOUT_MINUTES + HERMES_TIMEOUT_HEADROOM_MINUTES,
   },
-  {
-    innerTest: "test/e2e/live/hermes-discord.test.ts",
-    innerTimeoutMinutes: HERMES_DISCORD_TEST_TIMEOUT_MINUTES,
-    jobName: "hermes-discord",
-    jobTimeoutMinutes: HERMES_DISCORD_TEST_TIMEOUT_MINUTES + HERMES_TIMEOUT_HEADROOM_MINUTES,
-  },
-  {
-    innerTest: "test/e2e/live/hermes-shields-config.test.ts",
-    innerTimeoutMinutes: HERMES_SHIELDS_CONFIG_TEST_TIMEOUT_MINUTES,
-    jobName: "hermes-shields-config",
-    jobTimeoutMinutes: HERMES_SHIELDS_CONFIG_TEST_TIMEOUT_MINUTES + HERMES_TIMEOUT_HEADROOM_MINUTES,
-  },
 ] as const;

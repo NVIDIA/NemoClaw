@@ -14,6 +14,7 @@ import {
   buildDockerDriverGatewayConfigToml,
   buildDockerDriverGatewayLaunch,
   buildDockerDriverGatewayRuntimeIdentity,
+  openDockerDriverGatewayLog,
   parseGlibcVersionsFromBinaryText,
   resolveDriftGatewayBin,
   shouldUseContainerizedGateway,
@@ -36,6 +37,20 @@ function withTempBinaries<T>(
 }
 
 describe("docker-driver-gateway-launch", () => {
+  it("records the current-launch offset before appending gateway output (#8797)", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-"));
+    const logPath = path.join(dir, "openshell-gateway.log");
+    const previousLog = "previous gateway launch\n";
+    fs.writeFileSync(logPath, previousLog);
+    try {
+      const gatewayLog = openDockerDriverGatewayLog(logPath);
+      expect(gatewayLog.startOffset).toBe(Buffer.byteLength(previousLog));
+      fs.closeSync(gatewayLog.fd);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("extracts GLIBC versions from binary text", () => {
     expect(parseGlibcVersionsFromBinaryText("GLIBC_2.35\0GLIBC_2.39\0GLIBC_2.39")).toEqual([
       "2.35",
