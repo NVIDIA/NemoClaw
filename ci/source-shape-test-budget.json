@@ -258,7 +258,7 @@
     },
     {
       "file": "test/hosted-runner-recovery-workflow.test.ts",
-      "test": "locks recovery identities to the source workflows' runtime names (#7140)",
+      "test": "locks recovery to the platform workflow name (#7140)",
       "category": "security"
     },
     {

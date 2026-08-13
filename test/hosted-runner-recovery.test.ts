@@ -58,17 +58,17 @@ function sourceRun(overrides: SourceOverrides = {}) {
   const id = overrides.id ?? SOURCE_RUN_ID;
   return {
     id,
-    name: "E2E main",
-    path: ".github/workflows/e2e.yaml",
+    name: "CI / Platform Evidence",
+    path: ".github/workflows/platform-vitest-main.yaml",
     workflow_id: 304_268_429,
     created_at: "2026-07-25T10:00:00Z",
-    event: "schedule",
+    event: "push",
     head_branch: "main",
     head_sha: MAIN_SHA,
     run_attempt: 1,
     status: "completed",
     conclusion: "failure",
-    display_title: "E2E main",
+    display_title: "refactor(e2e): consolidate platform evidence",
     html_url: `https://github.com/${REPOSITORY}/actions/runs/${id}`,
     repository: { full_name: REPOSITORY },
     head_repository: { full_name: REPOSITORY },
@@ -77,15 +77,12 @@ function sourceRun(overrides: SourceOverrides = {}) {
 }
 
 function workflowForSource(source: ReturnType<typeof sourceRun>) {
-  const names = new Map([
-    [".github/workflows/e2e.yaml", "E2E"],
-    [".github/workflows/wsl-e2e.yaml", "E2E / WSL"],
-    [".github/workflows/macos-e2e.yaml", "E2E / macOS"],
-    [".github/workflows/platform-vitest-main.yaml", "CI / Platform Vitest Main Watch"],
-  ]);
   return {
     id: source.workflow_id,
-    name: names.get(source.path) ?? "unknown",
+    name:
+      source.path === ".github/workflows/platform-vitest-main.yaml"
+        ? "CI / Platform Evidence"
+        : "unknown",
     path: source.path,
     state: "active",
   };
@@ -315,63 +312,18 @@ function mutationRequests(requests: RecordedGitHubRequest[]) {
 describe("hosted-runner recovery controller", () => {
   it.each([
     {
-      label: "scheduled E2E",
+      label: "platform Ubuntu main push",
       source: sourceRun(),
       job: hostedRunnerLossJob(),
     },
     {
-      label: "manually dispatched main E2E",
-      source: sourceRun({ event: "workflow_dispatch" }),
-      job: hostedRunnerLossJob(),
-    },
-    {
-      label: "WSL main push",
-      source: sourceRun({
-        name: "E2E / WSL",
-        path: ".github/workflows/wsl-e2e.yaml",
-        event: "push",
-        display_title: "main",
-      }),
-      job: internalErrorJob("windows-latest"),
-    },
-    {
-      label: "macOS main push",
-      source: sourceRun({
-        name: "E2E / macOS",
-        path: ".github/workflows/macos-e2e.yaml",
-        event: "push",
-        display_title: "main",
-      }),
-      job: internalErrorJob("macos-26"),
-    },
-    {
-      label: "platform Ubuntu main push",
-      source: sourceRun({
-        name: "CI / Platform Vitest Main Watch",
-        path: ".github/workflows/platform-vitest-main.yaml",
-        event: "push",
-        display_title: "main",
-      }),
-      job: hostedRunnerLossJob(),
-    },
-    {
       label: "platform Windows main push",
-      source: sourceRun({
-        name: "CI / Platform Vitest Main Watch",
-        path: ".github/workflows/platform-vitest-main.yaml",
-        event: "push",
-        display_title: "main",
-      }),
+      source: sourceRun(),
       job: internalErrorJob("windows-latest"),
     },
     {
       label: "platform macOS main push",
-      source: sourceRun({
-        name: "CI / Platform Vitest Main Watch",
-        path: ".github/workflows/platform-vitest-main.yaml",
-        event: "push",
-        display_title: "main",
-      }),
+      source: sourceRun(),
       job: internalErrorJob("macos-26"),
     },
   ])("requests one full rerun for exact $label runner loss (#7140)", async ({ source, job }) => {
@@ -422,55 +374,19 @@ describe("hosted-runner recovery controller", () => {
 
   it.each([
     {
-      label: "E2E on Windows",
+      label: "platform on a self-hosted runner",
       source: sourceRun(),
-      job: hostedRunnerLossJob({ labels: ["windows-latest"] }),
+      job: hostedRunnerLossJob({ labels: ["self-hosted"] }),
     },
     {
-      label: "E2E on macOS",
+      label: "platform on an unapproved runner",
       source: sourceRun(),
-      job: hostedRunnerLossJob({ labels: ["macos-26"] }),
+      job: hostedRunnerLossJob({ labels: ["ubuntu-24.04"] }),
     },
     {
-      label: "E2E with multiple runner labels",
+      label: "platform with multiple runner labels",
       source: sourceRun(),
       job: hostedRunnerLossJob({ labels: ["ubuntu-latest", "self-hosted"] }),
-    },
-    {
-      label: "WSL on Ubuntu",
-      source: sourceRun({
-        name: "E2E / WSL",
-        path: ".github/workflows/wsl-e2e.yaml",
-        event: "push",
-      }),
-      job: hostedRunnerLossJob(),
-    },
-    {
-      label: "WSL with a macOS internal error",
-      source: sourceRun({
-        name: "E2E / WSL",
-        path: ".github/workflows/wsl-e2e.yaml",
-        event: "push",
-      }),
-      job: internalErrorJob("macos-26"),
-    },
-    {
-      label: "macOS on Ubuntu",
-      source: sourceRun({
-        name: "E2E / macOS",
-        path: ".github/workflows/macos-e2e.yaml",
-        event: "push",
-      }),
-      job: hostedRunnerLossJob(),
-    },
-    {
-      label: "macOS with a Windows internal error",
-      source: sourceRun({
-        name: "E2E / macOS",
-        path: ".github/workflows/macos-e2e.yaml",
-        event: "push",
-      }),
-      job: internalErrorJob("windows-latest"),
     },
   ])("does not broaden allowed runner labels for $label (#7140)", async ({ source, job }) => {
     const listing = { total_count: 1, jobs: [job] };
@@ -499,48 +415,8 @@ describe("hosted-runner recovery controller", () => {
     expect(requests.some((request) => request.url.includes("/git/ref/heads/main"))).toBe(false);
   });
 
-  it.each([
-    {
-      label: "WSL pull request",
-      source: sourceRun({
-        name: "E2E / WSL",
-        path: ".github/workflows/wsl-e2e.yaml",
-        event: "pull_request",
-      }),
-    },
-    {
-      label: "macOS manual dispatch",
-      source: sourceRun({
-        name: "E2E / macOS",
-        path: ".github/workflows/macos-e2e.yaml",
-        event: "workflow_dispatch",
-      }),
-    },
-    {
-      label: "platform manual dispatch",
-      source: sourceRun({
-        name: "CI / Platform Vitest Main Watch",
-        path: ".github/workflows/platform-vitest-main.yaml",
-        event: "workflow_dispatch",
-      }),
-    },
-  ])("ignores non-push platform source: $label (#7140)", async ({ source }) => {
-    const requests = setupRoutes({ sources: [source] });
-    await expect(recoverHostedRunnerLoss(recoveryRequest())).resolves.toMatchObject({
-      action: "ignored",
-    });
-    expect(mutationRequests(requests)).toEqual([]);
-  });
-
-  it("ignores an E2E PR child run title (#7140)", async () => {
-    const requests = setupRoutes({
-      sources: [
-        sourceRun({
-          event: "workflow_dispatch",
-          display_title: "E2E PR #42 (12345678-1234-4123-8123-123456789abc)",
-        }),
-      ],
-    });
+  it("ignores a manually dispatched platform run (#7140)", async () => {
+    const requests = setupRoutes({ sources: [sourceRun({ event: "workflow_dispatch" })] });
     await expect(recoverHostedRunnerLoss(recoveryRequest())).resolves.toMatchObject({
       action: "ignored",
     });
@@ -565,20 +441,19 @@ describe("hosted-runner recovery controller", () => {
     expect(mutationRequests(requests)).toEqual([]);
   });
 
-  it("ignores a newer E2E PR child when selecting the latest eligible main run (#7140)", async () => {
+  it("ignores a newer manual run when selecting the latest eligible main push (#7140)", async () => {
     const source = sourceRun();
-    const newerPrChild = sourceRun({
+    const newerManualRun = sourceRun({
       id: SOURCE_RUN_ID + 100,
-      name: "E2E PR #42",
       created_at: "2026-07-25T11:00:00Z",
       event: "workflow_dispatch",
       head_sha: "e".repeat(40),
       conclusion: "success",
-      display_title: "E2E PR #42 (12345678-1234-4123-8123-123456789abc)",
+      display_title: "Manual platform evidence",
     });
     const requests = setupRoutes({
       sources: [source],
-      runListings: [{ total_count: 2, workflow_runs: [newerPrChild, source] }],
+      runListings: [{ total_count: 2, workflow_runs: [newerManualRun, source] }],
     });
     await expect(recoverHostedRunnerLoss(recoveryRequest())).resolves.toMatchObject({
       action: "rerun-requested",
@@ -675,26 +550,25 @@ describe("hosted-runner recovery controller", () => {
 
   it("rejects source evidence that changes on the confirmation read (#7140)", async () => {
     const requests = setupRoutes({
-      sources: [sourceRun(), sourceRun({ display_title: "E2E changed" })],
+      sources: [sourceRun(), sourceRun({ display_title: "changed commit title" })],
     });
     await expect(recoverHostedRunnerLoss(recoveryRequest())).rejects.toThrow(
-      /identity changed during runner-loss evidence collection/u,
+      /evidence changed during runner-loss evidence collection/u,
     );
     expect(mutationRequests(requests)).toEqual([]);
   });
 
   it("rejects latest-run evidence that changes after job collection (#7140)", async () => {
     const source = sourceRun();
-    const olderPrChild = sourceRun({
+    const olderManualRun = sourceRun({
       id: SOURCE_RUN_ID - 100,
-      name: "E2E PR #41",
       created_at: "2026-07-25T09:00:00Z",
       event: "workflow_dispatch",
       conclusion: "success",
-      display_title: "E2E PR #41 (12345678-1234-4123-8123-123456789abc)",
+      display_title: "Manual platform evidence",
     });
     const baseline = { total_count: 1, workflow_runs: [source] };
-    const changed = { total_count: 2, workflow_runs: [source, olderPrChild] };
+    const changed = { total_count: 2, workflow_runs: [source, olderManualRun] };
     const requests = setupRoutes({
       sources: [source],
       runListings: [baseline, changed],
@@ -707,16 +581,15 @@ describe("hosted-runner recovery controller", () => {
 
   it("rejects latest-run evidence that changes between snapshots (#7140)", async () => {
     const source = sourceRun();
-    const olderPrChild = sourceRun({
+    const olderManualRun = sourceRun({
       id: SOURCE_RUN_ID - 100,
-      name: "E2E PR #41",
       created_at: "2026-07-25T09:00:00Z",
       event: "workflow_dispatch",
       conclusion: "success",
-      display_title: "E2E PR #41 (12345678-1234-4123-8123-123456789abc)",
+      display_title: "Manual platform evidence",
     });
     const baseline = { total_count: 1, workflow_runs: [source] };
-    const changed = { total_count: 2, workflow_runs: [source, olderPrChild] };
+    const changed = { total_count: 2, workflow_runs: [source, olderManualRun] };
     const requests = setupRoutes({
       sources: [source],
       runListings: [baseline, baseline, changed, changed],
@@ -743,7 +616,7 @@ describe("hosted-runner recovery controller", () => {
   });
 
   it.each([
-    ["name", { ...workflowForSource(sourceRun()), name: "E2E renamed" }],
+    ["name", { ...workflowForSource(sourceRun()), name: "Platform workflow renamed" }],
     ["path", { ...workflowForSource(sourceRun()), path: ".github/workflows/other.yaml" }],
     ["state", { ...workflowForSource(sourceRun()), state: "disabled_manually" }],
   ])("ignores source workflow metadata with the wrong %s (#7140)", async (_field, workflow) => {
