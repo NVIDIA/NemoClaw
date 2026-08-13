@@ -855,32 +855,51 @@ describe("onboard Model Router setup", () => {
     }
   });
 
-  it("stops before spawn when an unproven pool has no ambient OPENAI_API_KEY (#8962)", async () => {
-    const spawnProxy = vi.fn();
+  it("preserves routed credential fallback for an unproven pool (#8962)", async () => {
+    const pid = 12_345;
+    let spawnedEnv: Record<string, string> | null = null;
+    let healthProbe = 0;
 
-    await assert.rejects(
-      startModelRouter(
-        {
-          port: 45_699,
-          pool_config_path: "router/test-pool.yaml",
-          credential_env: "ROUTER_API_KEY",
+    await startModelRouter(
+      {
+        port: 45_699,
+        pool_config_path: "router/test-pool.yaml",
+        credential_env: "ROUTER_API_KEY",
+      },
+      {
+        rootDir: "/test/repo",
+        homeDir: "/test/home",
+        ensureModelRouterCommand: () => "/test/model-router",
+        mkdirSync: () => undefined,
+        runProxyConfig: () => ({ status: 0 }),
+        spawnProxy: (_command, _args, options) => {
+          spawnedEnv = options.env;
+          return {
+            pid,
+            onError: () => undefined,
+            onExit: () => undefined,
+            unref: () => undefined,
+          };
         },
-        {
-          rootDir: "/test/repo",
-          homeDir: "/test/home",
-          ensureModelRouterCommand: () => "/test/model-router",
-          mkdirSync: () => undefined,
-          runProxyConfig: () => ({ status: 0 }),
-          spawnProxy,
-          readPoolConfig: () => 'models:\n  - litellm_model: "openai/gpt-test"\n',
-          resolveProviderCredential: (name) =>
-            name === "ROUTER_API_KEY" ? "router-secret" : null,
-          getProviderKey: () => "",
+        readPoolConfig: () => 'models:\n  - litellm_model: "openai/gpt-test"\n',
+        resolveProviderCredential: (name) =>
+          name === "ROUTER_API_KEY" ? "router-secret" : null,
+        buildSubprocessEnv: (extra) => ({ ...extra }),
+        isRouterHealthy: async () => {
+          healthProbe += 1;
+          return healthProbe > 1;
         },
-      ),
-      /pool endpoints are not proven NVIDIA-only\. Set OPENAI_API_KEY/,
+        sleep: async () => undefined,
+        isProcessAlive: () => true,
+        terminateProcess: () => undefined,
+        getProviderKey: () => "",
+      },
     );
-    assert.equal(spawnProxy.mock.calls.length, 0);
+
+    assert.deepEqual(spawnedEnv, {
+      ROUTER_API_KEY: "router-secret",
+      OPENAI_API_KEY: "router-secret",
+    });
   });
 
   it("stops when the 10-minute Model Router startup deadline expires", async () => {
