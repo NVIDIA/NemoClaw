@@ -154,6 +154,18 @@ Leaving the agent with `/exit` does not revoke it, and users do not refresh it m
 
 During the lease, `launch` still verifies the owning OpenShell gateway, exact live sandbox identity, registry and agent configuration, effective policy, inference route, required forwards, and semantic runtime health.
 Configured inference must return HTTP 2xx from the semantic `inference.local` probe, which is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
+<AgentOnly variant="openclaw">
+
+For OpenClaw, `connect --probe-only` settles the existing allowlisted pairing flow before it publishes a credential-free pairing qualification with the lease.
+The readiness evidence binds the OpenClaw version and trusted registry and agent manifest configuration.
+Its pairing qualification binds the canonical CLI client, exact paired device identity, required operator role and scopes, owning OpenShell gateway, sandbox lifecycle identity, and fixed lease epoch.
+Before lease acceptance, `launch` makes a bounded, read-only observation of the current OpenClaw-owned pairing state through the owning OpenShell gateway.
+It skips the complete pairing approval pass only when the qualification still matches exactly and no relevant allowlisted request is pending.
+Any missing, unreadable, malformed, ambiguous, or changed observation runs the complete pairing approval pass.
+A relevant allowlisted pending request also runs that complete path.
+
+</AgentOnly>
+Hermes and LangChain Deep Agents Code retain their existing session setup on the lease-accepted path.
 When those checks pass, it can skip duplicate recovery, readiness polling, and inference-route repair.
 The lease is not a health guarantee or repair authority.
 

@@ -588,9 +588,17 @@ is missing in the resolved migrations
 ```
 
 NemoClaw identifies `<selected-state-dir>/openshell.db` as incompatible with the installed OpenShell migration set.
-This failure can occur after an OpenShell downgrade.
-NemoClaw offers state-move recovery only when the current gateway process wrote this error and then exited.
-The diagnostic prints the database path, an unused archive path beside the selected state directory, and the profile-specific onboarding command.
+This failure can happen after an OpenShell downgrade.
+Installing a NemoClaw release that is older than the installed one performs that downgrade, because each release pins one OpenShell version and the installer reinstalls OpenShell at the pin.
+You reach that state in one of three ways:
+
+- You select an older release with `NEMOCLAW_INSTALL_TAG` or `NEMOCLAW_INSTALL_REF`.
+- The default `lkg` release is older than the NemoClaw release already on the host.
+- You install an older OpenShell yourself.
+
+The diagnosis always prints the database path.
+When an unused archive path is available, it also prints that archive path beside the selected state directory and the profile-specific onboarding command.
+When no unused archive path is available, it asks you to keep the gateway stopped and inspect the state directory instead.
 
 <Warning>
 The selected state directory contains the gateway database, mutual TLS private keys, JSON Web Token signing material, and every sandbox and provider registration on the selected gateway.
@@ -598,13 +606,22 @@ Moving it makes those registrations and credentials unavailable to the fresh gat
 Other sandboxes on the selected gateway can require re-onboarding and credential entry.
 </Warning>
 
-Use this recovery only after the diagnostic confirms that the gateway process exited.
-Run the exact commands that NemoClaw prints:
+When a service manager owns the gateway, the printed recovery stops it in the same command chain that moves the state directory.
+NemoClaw cannot establish in advance that the directory stays free, because the managed service restarts the gateway on failure and a replacement can start at any point before the move.
+Running the stop inside the chain removes that gap.
 
-1. Create the printed `.incompatible` archive with owner-only access.
+NemoClaw resolves the owning service before it prints, so the stop names the unit that runs on this host: the upstream OpenShell package unit, the NemoClaw user service, or the Homebrew formula.
+When no service manager owns the gateway, NemoClaw runs it standalone.
+Before it offers the state move in that case, the gateway runtime checks the recorded process and scans current gateway process identities for the runtime namespace tied to the selected state directory.
+It withholds the move unless that scan establishes that the standalone gateway state is unused.
+
+When NemoClaw prints the state move, run the exact commands it prints:
+
+1. Stop the owning gateway service, when the printed chain includes that step.
+2. Create the printed `.incompatible` archive with owner-only access.
    If that path exists, NemoClaw adds a numeric suffix instead of nesting or replacing an earlier archive.
-2. Move the selected state directory into the archive as `gateway-state`.
-3. Run the printed onboarding command only after the archive and move succeed.
+3. Move the selected state directory into the archive as `gateway-state`.
+4. Run the printed onboarding command only after the stop, the archive, and the move succeed.
    Standard onboarding prints `$$nemoclaw onboard --resume`.
    The portable experimental profile prints its required fresh-onboarding command because it does not support resume.
 
