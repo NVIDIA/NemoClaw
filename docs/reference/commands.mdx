@@ -1013,9 +1013,44 @@ $$nemoclaw use <name> --json
 Connect to a sandbox and start its agent in one host-side command.
 Use it instead of running `$$nemoclaw <name> connect` and then typing the agent command inside the sandbox.
 
-`launch` runs the same preflight as [`$$nemoclaw <name> connect`](#$$nemoclaw-name-connect), including the readiness wait, in-sandbox agent process recovery, and inference-route reconciliation.
-It runs every check in that shared preflight.
-After the preflight, `launch` starts the sandbox's agent in your terminal instead of opening a sandbox shell.
+`launch` runs the complete preflight from [`$$nemoclaw <name> connect`](#$$nemoclaw-name-connect) when no launch-readiness lease is usable.
+That path includes the readiness wait, in-sandbox agent process recovery, and inference-route reconciliation.
+A successful complete preflight can publish a credential-free launch-readiness lease with a fixed 24-hour lifetime on Linux.
+Lease acceptance and publication are currently Linux-only and require a secure, independently writable OS per-user runtime authority under `/run/user/<numeric-uid>`.
+It never uses caller-provided environment variables to select this authority.
+On macOS, `launch` runs the complete preflight every time and does not publish a launch-readiness lease.
+
+During that lease, another `launch` still verifies these conditions:
+
+- The owning OpenShell gateway reports the exact sandbox identity in the `Ready` or `Running` state.
+- The sandbox registry, agent manifest, interactive command, policy intent, and effective parsed OpenShell network policy match the recorded identity.
+- The recorded inference selection matches the live route, and `inference.local` returns HTTP 2xx from its semantic probe when inference is configured. This is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
+- The agent runtime and its required host-side forwards pass their semantic health checks.
+
+After these checks pass, `launch` can skip duplicate recovery, readiness polling, and inference-route repair.
+The lease does not replace a health check or authorize repair.
+For missing, expired, malformed, inaccessible, mismatched, or unhealthy evidence, NemoClaw fences any prior acceptable evidence before it runs the complete preflight.
+Ordinary launch continues only when NemoClaw proves that no old authority or evidence can exist, or durably rotates the runtime epoch.
+If an old epoch might exist and cannot be durably rotated, `launch` stops before complete preflight or recovery.
+Its redacted guidance asks you to repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.
+A failed live check never becomes a successful launch because a lease exists.
+
+Immediately before the first mutation in the complete preflight, the producer revalidates its sandbox-global runtime epoch while holding the sandbox lifecycle lock followed by the owning gateway lock.
+It holds both locks through all mutations in the complete preflight, final state capture, and publication.
+If another producer has replaced the epoch, the stale producer makes no changes and re-inspects the newer lease.
+
+The 24-hour lifetime does not extend when you launch repeatedly.
+Exiting the agent with `/exit` does not revoke the lease.
+If state changes before expiry, NemoClaw fences the old evidence and runs the complete preflight.
+A successful preflight in that interval keeps the original start and expiry time.
+After expiry, a successful complete preflight starts a new 24-hour lease only when publication succeeds.
+
+If unsafe or malformed authority history makes the prior lease timeline untrustworthy, NemoClaw durably invalidates the old epoch and starts one conservative 24-hour quarantine.
+Both wall time and monotonic uptime must span the full quarantine, and publication remains disabled during it.
+Repeated attempts do not extend the quarantine.
+After it elapses, the next successful complete preflight can publish a new fixed 24-hour lease.
+You do not create or refresh this lease manually, and `launch` has no lease-control flags.
+After lease validation or the automatic fallback that runs the complete preflight, `launch` starts the sandbox's agent in your terminal instead of opening a sandbox shell.
 
 The agent command comes from the sandbox's agent manifest.
 If the sandbox registry names a non-OpenClaw agent without a readable local agent manifest, `launch` exits before starting an in-sandbox command.
@@ -1031,6 +1066,8 @@ $$nemoclaw launch <name>
 ```
 
 The sandbox name is required, and the command takes no flags.
+The sandbox must already exist in the local NemoClaw state.
+If it is not registered locally, `launch` exits before it runs an OpenShell command or readiness recovery and reports that the sandbox is not registered in the local NemoClaw state.
 When the agent exits, you return to the host shell.
 
 <AgentOnly variant="openclaw">
@@ -1118,11 +1155,24 @@ $$nemoclaw my-assistant connect [--probe-only]
 $$nemoclaw connect
 ```
 
-The `--probe-only` flag waits for the sandbox to become ready, verifies or repairs its in-sandbox agent process and host-side forward, and exits without opening a shell.
+On Linux, the `--probe-only` flag is the infrastructure producer for launch-readiness evidence.
+It validates a usable lease and exits without duplicate recovery.
+Otherwise, it fences prior evidence, waits for the sandbox, verifies or repairs its in-sandbox agent process and host-side forwards, and publishes evidence only after every probe succeeds.
 It rechecks the sandbox on its recorded OpenShell gateway after the readiness wait and never restarts the shared host gateway.
-Use it for health checks and scripted readiness probes.
+If an old runtime epoch might exist and cannot be durably rotated, the command exits nonzero before complete preflight or recovery and gives redacted repair guidance.
+A securely absent runtime authority and receipt let ordinary `launch` run the complete preflight without optimization if new authority creation fails, but `connect --probe-only` still exits nonzero because it could not publish launch-readiness evidence.
+A runtime failure and a failure to publish evidence for an otherwise healthy runtime also exit nonzero with different diagnostics.
 
-Use [`$$nemoclaw launch <name>`](#$$nemoclaw-launch-name) when you want the same preflight followed by the agent instead of a sandbox shell.
+Infrastructure must run the command as the same final numeric user that later runs `launch`.
+Run it only after the final durable home and state volume is mounted and after policy and network provisioning is complete.
+On Linux, that user also needs a secure, independently writable OS per-user runtime authority under `/run/user/<numeric-uid>`.
+Do not redirect this authority with caller environment variables.
+Do not use a graphical or login-session identifier as the deployment ordering boundary.
+On macOS, `connect --probe-only` runs the complete preflight, including recovery and probes, but exits nonzero because it cannot publish authoritative launch-readiness evidence.
+The publication-failure diagnostic is redacted and does not print filesystem paths or environment values.
+Run it for health checks and scripted readiness probes; users continue to run only `$$nemoclaw launch <name>`.
+
+Use [`$$nemoclaw launch <name>`](#$$nemoclaw-launch-name) when you want launch-readiness validation, an automatic fallback that runs the complete preflight, and then the agent instead of a sandbox shell.
 
 ### `$$nemoclaw <name> exec`
 

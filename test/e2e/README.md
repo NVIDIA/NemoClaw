@@ -285,6 +285,32 @@ npx tsx tools/e2e/workflow-plan.mts --summary >> "$GITHUB_STEP_SUMMARY"
 The workflow's `--ci-output` mode uses the same renderer for its job summary.
 The table includes the typed registry matrix, shared test matrix, three catalogue profile matrices, and retained workflow jobs.
 
+## Launch-readiness locked-image acceptance
+
+Use the repository helper to test an existing OpenClaw sandbox without
+rebuilding its locked image:
+
+```bash
+scripts/test-launch-readiness-lease.sh <openclaw-sandbox>
+```
+
+Run this helper on Linux after the sandbox's final durable home and state
+volume is mounted and after final policy and network provisioning is complete.
+The launch-readiness lease path that it validates is currently Linux-only.
+The helper must run as the same numeric user that later runs `launch`, and that user must own the sandbox's NemoClaw state.
+The host must provide that user a secure, independently writable OS runtime authority under `/run/user/<numeric-uid>`; do not redirect it with environment variables.
+The host must provide the util-linux `script` command and GNU `timeout` command.
+
+The helper rebuilds the candidate CLI, runs `connect --probe-only`, and then
+runs two `launch` sessions during the same fixed lease.
+Each pseudo-terminal session sends a unique prompt, requires the exact reply,
+sends `/exit`, and requires process exit status `0`.
+The helper uses exact terminal behavior instead of a wall-clock pass threshold.
+Deterministic unit tests separately prove selection of the complete preflight
+and lease paths, stale-producer exclusion, the fixed time-unsafe quarantine,
+refusal to recover when prior evidence cannot be durably fenced, and the named
+performance stages.
+
 ## Inactive Windows MXC OpenClaw qualification
 
 `windows-mxc-openclaw-process-container.test.ts` is an explicit local
