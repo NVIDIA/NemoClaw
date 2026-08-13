@@ -27,16 +27,19 @@ const PROFILE_JOBS = {
   standard: {
     job: "catalogue-standard",
     matrix: "catalogue_standard_matrix",
+    credentialBoundary: "no provider credential",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME"],
   },
   "nvidia-api": {
     job: "catalogue-nvidia-api",
     matrix: "catalogue_nvidia_api_matrix",
+    credentialBoundary: "NVIDIA API key",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_API_KEY"],
   },
   "nvidia-inference": {
     job: "catalogue-nvidia-inference",
     matrix: "catalogue_nvidia_inference_matrix",
+    credentialBoundary: "NVIDIA inference API key",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_INFERENCE_API_KEY"],
   },
 } as const;
@@ -83,6 +86,9 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     if (job.needs !== "generate-matrix" || job.uses !== PROFILE_WORKFLOW) {
       errors.push(`${contract.job} must call the standard E2E profile after matrix generation`);
     }
+    if (job.name !== "${{ matrix.display_name }}") {
+      errors.push(`${contract.job} must use the planned outcome-first display name`);
+    }
     const matrixOutput = `needs.generate-matrix.outputs.${contract.matrix}`;
     if (
       job.if !== `\${{ ${matrixOutput} != '[]' }}` ||
@@ -95,6 +101,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       candidate_repository: "${{ inputs.checkout_repository || github.repository }}",
       candidate_sha: "${{ inputs.checkout_sha || github.sha }}",
       cli_artifact_provenance: "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
+      credential_boundary: contract.credentialBoundary,
       target_id: "${{ matrix.id }}",
       runner: "${{ matrix.runner }}",
       test_file: "${{ matrix.test_file }}",
@@ -128,6 +135,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     candidate_repository: "string",
     candidate_sha: "string",
     cli_artifact_provenance: "string",
+    credential_boundary: "string",
     target_id: "string",
     runner: "string",
     test_file: "string",
@@ -173,6 +181,9 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   }
   if (runJob["runs-on"] !== "${{ inputs.runner }}") {
     errors.push("standard E2E profile must use the catalogue runner");
+  }
+  if (runJob.name !== "${{ inputs.credential_boundary }}") {
+    errors.push("standard E2E profile must show the planned credential boundary");
   }
   if (runJob["timeout-minutes"] !== "${{ inputs.timeout_minutes }}") {
     errors.push("standard E2E profile must use the catalogue timeout");

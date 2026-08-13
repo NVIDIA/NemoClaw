@@ -1004,7 +1004,7 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   catalogue-standard:
-    name: Catalogue standard (${{ matrix.id }})
+    name: ${{ matrix.display_name }}
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.catalogue_standard_matrix != '[]' }}
     strategy:
@@ -1016,6 +1016,7 @@ jobs:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      credential_boundary: no provider credential
       target_id: ${{ matrix.id }}
       runner: ${{ matrix.runner }}
       test_file: ${{ matrix.test_file }}
@@ -1030,7 +1031,7 @@ jobs:
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
   catalogue-nvidia-api:
-    name: Catalogue NVIDIA API (${{ matrix.id }})
+    name: ${{ matrix.display_name }}
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.catalogue_nvidia_api_matrix != '[]' }}
     strategy:
@@ -1042,6 +1043,7 @@ jobs:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      credential_boundary: NVIDIA API key
       target_id: ${{ matrix.id }}
       runner: ${{ matrix.runner }}
       test_file: ${{ matrix.test_file }}
@@ -1057,7 +1059,7 @@ jobs:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
 
   catalogue-nvidia-inference:
-    name: Catalogue NVIDIA inference (${{ matrix.id }})
+    name: ${{ matrix.display_name }}
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.catalogue_nvidia_inference_matrix != '[]' }}
     strategy:
@@ -1069,6 +1071,7 @@ jobs:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      credential_boundary: NVIDIA inference API key
       target_id: ${{ matrix.id }}
       runner: ${{ matrix.runner }}
       test_file: ${{ matrix.test_file }}
