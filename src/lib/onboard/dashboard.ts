@@ -395,16 +395,23 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
    * carry the port the in-sandbox gateway listens on; the registry entry
    * persisted by onboarding is the only record of that port. The forward and
    * the in-sandbox gateway must share one port number (`openshell forward`
-   * binds the same port on both sides). Post-verify builds its probe chain
-   * and Browser URL from `CHAT_UI_URL`, so after the forward starts this
-   * writes the bound port to `CHAT_UI_URL`. (#8970)
+   * binds the same port on both sides), so when the persisted port cannot be
+   * forwarded this throws instead of reallocating: the resumed gateway only
+   * listens on the persisted port, and a forward on any other port serves
+   * nothing. Post-verify builds its probe chain and Browser URL from
+   * `CHAT_UI_URL`, so after the forward starts this writes the bound port to
+   * `CHAT_UI_URL`. (#8970)
    */
   function ensureFinalizationDashboardForward(sandboxName: string): number {
-    const persistedPort = getPersistedDashboardPort(sandboxName, deps.listSandboxes);
+    const envUrl = process.env.CHAT_UI_URL;
+    const persistedPort = envUrl ? null : getPersistedDashboardPort(sandboxName, deps.listSandboxes);
     const requestedUrl =
-      process.env.CHAT_UI_URL ||
-      (persistedPort === null ? undefined : `http://127.0.0.1:${String(persistedPort)}`);
-    const actualPort = ensureDashboardForward(sandboxName, requestedUrl);
+      envUrl || (persistedPort === null ? undefined : `http://127.0.0.1:${String(persistedPort)}`);
+    const actualPort = ensureDashboardForward(
+      sandboxName,
+      requestedUrl,
+      persistedPort === null ? {} : { allowPortReallocation: false },
+    );
     process.env.CHAT_UI_URL = replaceUrlPort(
       requestedUrl || `http://127.0.0.1:${String(actualPort)}`,
       actualPort,

@@ -80,15 +80,13 @@ describe("finalization dashboard forward", () => {
     expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
   });
 
-  it("publishes the reallocated port when another sandbox holds the persisted port (#8970)", () => {
+  it("fails without reallocating when another sandbox holds the persisted port (#8970)", () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const { helpers } = createFinalizationForwardHarness({
+    const { helpers, openshellArgv } = createFinalizationForwardHarness({
       forwardList:
         "SANDBOX BIND PORT PID STATUS\n" +
         "baseline 127.0.0.1 18789 42000 running\n" +
-        "other-sandbox 127.0.0.1 18790 42002 running\n" +
-        "reonboard-test 127.0.0.1 18791 42001 running",
+        "other-sandbox 127.0.0.1 18790 42002 running",
       listSandboxes: () => ({
         sandboxes: [
           { name: "baseline", dashboardPort: 18789 },
@@ -98,14 +96,14 @@ describe("finalization dashboard forward", () => {
       }),
     });
 
-    try {
-      expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).toBe(18791);
-      expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18791");
-      const warnings = warnSpy.mock.calls.map(([line]) => String(line)).join("\n");
-      expect(warnings).toContain("Port 18790 is taken. Using port 18791 instead.");
-    } finally {
-      warnSpy.mockRestore();
-    }
+    expect(() => helpers.ensureFinalizationDashboardForward("reonboard-test")).toThrow(
+      "Port 18790 is not available for 'reonboard-test' and cannot be reallocated.",
+    );
+    expect(process.env.CHAT_UI_URL).toBeUndefined();
+    const startCalls = openshellArgv.mock.calls
+      .map(([args]) => args.join(" "))
+      .filter((line) => line.startsWith("forward start"));
+    expect(startCalls).toEqual([]);
   });
 
   it("falls back to the default dashboard port when no port is persisted (#8970)", () => {
