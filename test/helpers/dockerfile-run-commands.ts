@@ -16,7 +16,8 @@ export interface ReviewedDockerfileRunCommand {
 }
 
 const CORPORATE_CA_PATH = "/usr/local/share/nemoclaw/corporate-ca.pem";
-const CORPORATE_CA_GUARD = `if [ -f ${CORPORATE_CA_PATH} ]; then export CURL_CA_BUNDLE=${CORPORATE_CA_PATH}; fi;`;
+const CORPORATE_CA_CURL_GUARD = `if [ -f ${CORPORATE_CA_PATH} ]; then export CURL_CA_BUNDLE=${CORPORATE_CA_PATH}; fi;`;
+const CORPORATE_CA_NODE_CURL_GUARD = `if [ -f ${CORPORATE_CA_PATH} ]; then export CURL_CA_BUNDLE=${CORPORATE_CA_PATH}; export NODE_EXTRA_CA_CERTS=${CORPORATE_CA_PATH}; fi;`;
 
 function lineEnd(source: string, start: number): number {
   const newline = source.indexOf("\n", start);
@@ -146,7 +147,11 @@ export function requireSingleReviewedDockerfileRunCommand(
   requiredArguments: readonly string[],
 ): ReviewedDockerfileRunCommand {
   const invocation = [command, ...requiredArguments].join(" ");
-  const reviewedBodies = new Set([invocation, `${CORPORATE_CA_GUARD} ${invocation}`]);
+  const reviewedBodies = new Set([
+    invocation,
+    `${CORPORATE_CA_CURL_GUARD} ${invocation}`,
+    `${CORPORATE_CA_NODE_CURL_GUARD} ${invocation}`,
+  ]);
   const matches: ReviewedDockerfileRunCommand[] = [];
   let unreviewedInstructions = 0;
 

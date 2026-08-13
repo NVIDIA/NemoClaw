@@ -359,7 +359,7 @@ describe("locked OpenClaw production installation (#5896)", () => {
     expect(branchEnd).toBeGreaterThan(installIndex);
     expect(currentInstallBranch).toContain(`--lock-sha256 \"$OPENCLAW_LOCK_SHA256\"`);
     expect(currentInstallBranch).not.toContain("npm install -g");
-    expect(contents).toContain("'schema=3'");
+    expect(contents).toContain("'schema=4'");
     expect(contents).toContain('"lock-sha256=${OPENCLAW_LOCK_SHA256}"');
     expect(contents).toContain("locked-ci+reviewed-lifecycle-v2");
   });

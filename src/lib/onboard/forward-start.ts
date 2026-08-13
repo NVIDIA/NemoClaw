@@ -110,7 +110,8 @@ const OPENSHELL_SANDBOX_NOT_READY_DIAGNOSTIC =
   /^Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"$/i;
 
 function looksLikeSandboxNotReadyForwardStart(diagnostic: string): boolean {
-  return OPENSHELL_SANDBOX_NOT_READY_DIAGNOSTIC.test(diagnostic);
+  const normalized = compactText(diagnostic.replace(/[×│]/gu, " "));
+  return OPENSHELL_SANDBOX_NOT_READY_DIAGNOSTIC.test(normalized);
 }
 
 /**

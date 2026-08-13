@@ -413,7 +413,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(nim, "detectGpu").mockReturnValue(null);
   const routeResults = [...(overrides.dcodeRouteResults ?? [{ ok: true }])];
   const preflightDcodeRouteSpy = vi
-    .spyOn(rebuildInference, "preflightRebuildInferenceRoute")
+    .spyOn(rebuildInference, "probeSandboxInferenceInvocation")
     .mockImplementation(() => routeResults.shift() ?? { ok: true });
   const preparedDcodeBuildContext = {
     buildCtx: "/tmp/dcode-rebuild-context",
