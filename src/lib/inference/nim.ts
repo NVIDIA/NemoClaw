@@ -534,6 +534,9 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           trusted = parsed.filter((p: ParsedGpu) => isPlausibleNvidiaGpuName(p.name));
         }
         if (trusted.length === 0) {
+          deps.onTrustGateRejection?.(
+            "nvidia-smi reported no recognized NVIDIA GPU product names",
+          );
           return null;
         }
         const totalMemoryMB = trusted.reduce((sum: number, p: ParsedGpu) => sum + p.memoryMB, 0);

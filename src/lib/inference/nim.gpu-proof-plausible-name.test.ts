@@ -267,6 +267,25 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
     ]);
   });
 
+  it("reports when the product-name filter rejects every GPU row (#9000)", () => {
+    const { reasons, onTrustGateRejection } = collectReasons();
+    const prover = passingProver();
+    withLinuxArch("x64", () => {
+      withGenericFirmware(() => {
+        expect(
+          detectGpu({
+            proveArm64WslDockerDesktopGpu: prover,
+            runCaptureImpl: makeRunCapture("Graphics Device, 8128, 7000\n"),
+            isWsl: false,
+            onTrustGateRejection,
+          }),
+        ).toBeNull();
+      });
+    });
+    expect(reasons).toEqual(["nvidia-smi reported no recognized NVIDIA GPU product names"]);
+    expect(prover).not.toHaveBeenCalled();
+  });
+
   it("reports a placeholder name rejected by the names-only fallback without attempting the proof (#9000)", () => {
     const { reasons, onTrustGateRejection } = collectReasons();
     const prover = passingProver();
