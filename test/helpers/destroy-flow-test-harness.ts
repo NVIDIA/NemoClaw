@@ -52,8 +52,13 @@ type DestroyHarnessOptions = {
   deleteStatus?: number;
   dockerPsOutput?: string;
   dockerRunResult?: { status: number | null; stdout?: string; stderr?: string };
-  dockerRunResults?: Array<{ status: number | null; stdout?: string; stderr?: string }>;
+  dockerRunResultSequence?: Array<{
+    status: number | null;
+    stdout?: string;
+    stderr?: string;
+  }>;
   onDockerRun?: (call: number) => void;
+  detachedProviders?: string[];
   endpointUrl?: string;
   finalizeMcpBridgeError?: string;
   finalizeMcpError?: string;
@@ -262,10 +267,25 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
         : names;
       return matchedNames.length > 0 ? `${matchedNames.join("\n")}\n` : "";
     });
-  const dockerRunSpy = vi.spyOn(dockerRun, "dockerRun").mockImplementation(() => {
-    const call = dockerRunSpy.mock.calls.length;
-    options.onDockerRun?.(call);
-    const result = options.dockerRunResults?.[call - 1] ?? options.dockerRunResult ?? { status: 0 };
+  let identityProbeCall = 0;
+  const dockerRunSpy = vi.spyOn(dockerRun, "dockerRun").mockImplementation((args: unknown) => {
+    const argv = Array.isArray(args) ? args.map(String) : [];
+    const filterIndex = argv.indexOf("--filter");
+    const isIdentityProbe =
+      argv[0] === "ps" &&
+      argv.includes("-a") &&
+      argv.includes("--no-trunc") &&
+      filterIndex >= 0 &&
+      argv[filterIndex + 1]?.startsWith("label=openshell.ai/sandbox-name=") === true;
+    if (!isIdentityProbe) {
+      return (options.dockerRunResult ?? { status: 0 }) as ReturnType<typeof dockerRun.dockerRun>;
+    }
+    identityProbeCall += 1;
+    options.onDockerRun?.(identityProbeCall);
+    const result =
+      options.dockerRunResultSequence?.[identityProbeCall - 1] ??
+      options.dockerRunResult ??
+      { status: 0 };
     return result as ReturnType<typeof dockerRun.dockerRun>;
   });
   const selectGatewaySpy = vi
@@ -276,7 +296,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     .mockImplementation(() => undefined);
   vi.spyOn(sandboxProviderCleanup, "runSandboxProviderPreDeleteCleanup").mockImplementation(() => {
     events.push("detach");
-    return { detached: [], failures: [] };
+    return { detached: options.detachedProviders ?? [], failures: [] };
   });
   vi.spyOn(sandboxProviderCleanup, "emitProviderDetachResidualHint").mockImplementation(
     () => undefined,

@@ -50,8 +50,11 @@ type SandboxDestroyExecutionInput = {
   sandbox: SandboxEntry | null;
   sandboxConfirmedAbsent: boolean;
   sandboxName: string;
+  // `undefined` disables Docker identity gating for non-Docker providers.
+  // `null` records confirmed absence; an object records the one managed
+  // container observed by the pre-destroy guard.
   expectedContainerIdentity?: SandboxNameLabeledContainer | null;
-  stopInferenceResources?: () => void;
+  stopInferenceResources: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   deps?: {
     readTimerMarker?: typeof readTimerMarker;
@@ -261,7 +264,7 @@ export async function executeSandboxDestroy({
   sandboxConfirmedAbsent,
   sandboxName,
   expectedContainerIdentity,
-  stopInferenceResources = () => undefined,
+  stopInferenceResources,
   runtimeProviders = CURRENT_RUNTIME_PROVIDER_BUNDLES,
   deps = {},
 }: SandboxDestroyExecutionInput): Promise<SandboxDestroyExecutionResult> {
@@ -350,14 +353,19 @@ export async function executeSandboxDestroy({
     // discarded during preparation. Remaining entries are the durable exact
     // provider ownership manifest and must survive an unconfirmed delete.
     const hasMcpOwnership = mcpPreparation.entries.length > 0;
+    const notHardened: HardenedDeleteState = {
+      hardenedForDelete: false,
+      hardeningFailed: false,
+    };
+    const restoreMcpForAbort = async (
+      hardenedState: HardenedDeleteState,
+    ): Promise<string | undefined> =>
+      sandboxConfirmedAbsent
+        ? undefined
+        : await restoreMcpAfterDeleteAbort(sandboxName, mcpPreparation, hardenedState);
     const preparedContinuity = inspectIdentityContinuity();
     if (preparedContinuity.status !== "match") {
-      const mcpRecoveryFailure = sandboxConfirmedAbsent
-        ? undefined
-        : await restoreMcpAfterDeleteAbort(sandboxName, mcpPreparation, {
-            hardenedForDelete: false,
-            hardeningFailed: false,
-          });
+      const mcpRecoveryFailure = await restoreMcpForAbort(notHardened);
       return identityRefusalResult(
         "during destroy preparation",
         preparedContinuity,
@@ -367,12 +375,7 @@ export async function executeSandboxDestroy({
     try {
       stopInferenceResources();
     } catch (error) {
-      const mcpRecoveryFailure = sandboxConfirmedAbsent
-        ? undefined
-        : await restoreMcpAfterDeleteAbort(sandboxName, mcpPreparation, {
-            hardenedForDelete: false,
-            hardeningFailed: false,
-          });
+      const mcpRecoveryFailure = await restoreMcpForAbort(notHardened);
       return {
         ok: false,
         deleteOutput:
@@ -387,12 +390,7 @@ export async function executeSandboxDestroy({
     }
     const postInferenceContinuity = inspectIdentityContinuity();
     if (postInferenceContinuity.status !== "match") {
-      const mcpRecoveryFailure = sandboxConfirmedAbsent
-        ? undefined
-        : await restoreMcpAfterDeleteAbort(sandboxName, mcpPreparation, {
-            hardenedForDelete: false,
-            hardeningFailed: false,
-          });
+      const mcpRecoveryFailure = await restoreMcpForAbort(notHardened);
       return identityRefusalResult(
         "after managed inference cleanup",
         postInferenceContinuity,
@@ -405,9 +403,7 @@ export async function executeSandboxDestroy({
       runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
     const preProviderContinuity = inspectIdentityContinuity();
     if (preProviderContinuity.status !== "match") {
-      const mcpRecoveryFailure = sandboxConfirmedAbsent
-        ? undefined
-        : await restoreMcpAfterDeleteAbort(sandboxName, mcpPreparation, hardened);
+      const mcpRecoveryFailure = await restoreMcpForAbort(hardened);
       return identityRefusalResult(
         "before provider cleanup",
         preProviderContinuity,
@@ -429,9 +425,7 @@ export async function executeSandboxDestroy({
         detachOutcome.detached.length > 0
           ? ` Provider cleanup detached ${detachOutcome.detached.join(", ")}; rerun the owning setup workflow to restore those attachments.`
           : "";
-      const mcpRecoveryFailure = sandboxConfirmedAbsent
-        ? undefined
-        : await restoreMcpAfterDeleteAbort(sandboxName, mcpPreparation, hardened);
+      const mcpRecoveryFailure = await restoreMcpForAbort(hardened);
       return identityRefusalResult(
         "at the delete boundary",
         deleteBoundaryContinuity,

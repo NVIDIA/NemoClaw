@@ -155,6 +155,8 @@ describe("destroySandbox flow", () => {
 
     const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(errorOutput).toContain("could not verify one complete container identity");
+    expect(errorOutput).toContain("Managed sandbox container: aaaa00000000");
+    expect(errorOutput).toContain("Conflicting container: ffff00000000");
     expect(errorOutput).toContain("sb-real");
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
     expect(harness.events).toEqual([]);
@@ -175,7 +177,7 @@ describe("destroySandbox flow", () => {
     const managed = "aaaa000000000000\topenshell\tdefault\tsb-alpha";
     const foreign = "ffff000000000000\t\tforeign\t";
     const harness = createDestroyHarness({
-      dockerRunResults: [
+      dockerRunResultSequence: [
         { status: 0, stdout: managed },
         { status: 0, stdout: [managed, foreign].join("\n") },
       ],
@@ -210,7 +212,7 @@ describe("destroySandbox flow", () => {
   ])("refuses %s before sandbox mutation", async (_scenario, changedIdentity) => {
     const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
     const harness = createDestroyHarness({
-      dockerRunResults: [managed, managed, changedIdentity],
+      dockerRunResultSequence: [managed, managed, changedIdentity],
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
@@ -221,6 +223,7 @@ describe("destroySandbox flow", () => {
     expect(harness.prepareMcpBridgesForDestroySpy).not.toHaveBeenCalled();
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+    expect(harness.dockerRunSpy).toHaveBeenCalledTimes(3);
   });
 
   it("refuses an absent-to-present replacement before sandbox mutation", async () => {
@@ -231,7 +234,7 @@ describe("destroySandbox flow", () => {
     };
     const harness = createDestroyHarness({
       sandboxPresent: false,
-      dockerRunResults: [absent, absent, replacement],
+      dockerRunResultSequence: [absent, absent, replacement],
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
@@ -239,6 +242,7 @@ describe("destroySandbox flow", () => {
     expect(harness.events).toEqual([]);
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+    expect(harness.dockerRunSpy).toHaveBeenCalledTimes(3);
   });
 
   it("restores MCP preparation when identity changes before wipe", async () => {
@@ -249,7 +253,7 @@ describe("destroySandbox flow", () => {
     };
     const harness = createDestroyHarness({
       mcpServers: ["github"],
-      dockerRunResults: [managed, managed, managed, replacement],
+      dockerRunResultSequence: [managed, managed, managed, replacement],
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
@@ -258,6 +262,7 @@ describe("destroySandbox flow", () => {
     expect(harness.stopNimByNameSpy).not.toHaveBeenCalled();
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+    expect(harness.dockerRunSpy).toHaveBeenCalledTimes(4);
   });
 
   it("restores MCP preparation when managed inference cleanup fails before wipe", async () => {
@@ -304,7 +309,7 @@ describe("destroySandbox flow", () => {
       const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
       const harness = createDestroyHarness({
         mcpServers: ["github"],
-        dockerRunResults: [managed, managed, managed, managed, changedIdentity],
+        dockerRunResultSequence: [managed, managed, managed, managed, changedIdentity],
       });
 
       await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
@@ -330,7 +335,16 @@ describe("destroySandbox flow", () => {
       stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta",
     };
     const harness = createDestroyHarness({
-      dockerRunResults: [managed, managed, managed, managed, managed, managed, replacement],
+      detachedProviders: ["provider-a"],
+      dockerRunResultSequence: [
+        managed, // Initial guard before read-only preflight.
+        managed, // Guard after preflight and before mutation.
+        managed, // Execution-entry continuity guard.
+        managed, // Guard after MCP destroy preparation.
+        managed, // Guard after managed inference cleanup.
+        managed, // Guard before provider cleanup.
+        replacement, // Final guard immediately before sandbox deletion.
+      ],
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
@@ -343,6 +357,9 @@ describe("destroySandbox flow", () => {
     ).toBe(false);
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+    expect(harness.dockerRunSpy).toHaveBeenCalledTimes(7);
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(errorOutput).toContain("Provider cleanup detached provider-a");
   });
 
   it("keeps the final exact probe immediately adjacent to sandbox delete", async () => {
