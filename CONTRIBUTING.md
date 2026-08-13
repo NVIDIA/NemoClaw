@@ -400,8 +400,9 @@ All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-bina
 
 The Oxfmt hook formats added JavaScript and TypeScript files that its configuration does not exclude.
 The `anti-slop` hook lints added JavaScript and TypeScript files that its configuration does not exclude.
-The hooks classify a file as added when `origin/main` does not contain its path.
-If the configured base ref is unavailable, the hooks stop without invoking Oxfmt or anti-slop.
+Each hook classifies a file as added when its configured base ref does not contain the path.
+The default base ref is `origin/main`.
+Each hook stops before invoking its tool when its configured base ref is unavailable.
 
 For PR preparation, normal `pre-commit`, `commit-msg`, and `pre-push` hooks are valid verification when they pass and were not bypassed with `--no-verify`.
 If hooks were skipped, missing, failed, or uncertain, refresh the remote-tracking base with `git fetch origin main`, then run `npm run validate:pr` once to reproduce those checks for the current diff.
