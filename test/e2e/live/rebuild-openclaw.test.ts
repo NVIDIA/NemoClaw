@@ -336,7 +336,6 @@ function backupCredentialLeakPaths(backupDir: string, oldGatewayToken: string): 
 // The e2e-live Vitest project owns the NEMOCLAW_RUN_LIVE_E2E collection gate.
 // Accidental cli-test-shard discovery must not build Docker images, mutate
 // ~/.nemoclaw, or call NVIDIA.
-// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "rebuild-openclaw: old OpenClaw sandbox rebuild preserves state and rotates gateway token",
   {

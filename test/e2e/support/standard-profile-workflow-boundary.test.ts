@@ -31,6 +31,21 @@ describe("standard E2E execution profile boundary", () => {
     );
   });
 
+  it("rejects target display-name and credential-boundary drift", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { name: string; with: Record<string, string> }>;
+    };
+    workflow.jobs["catalogue-standard"]!.name = "${{ matrix.id }}";
+    workflow.jobs["catalogue-nvidia-api"]!.with.credential_boundary = "NVIDIA inference API key";
+
+    expect(validateStandardProfileWorkflowBoundary(workflow)).toEqual(
+      expect.arrayContaining([
+        "catalogue-standard must use the planned outcome-first display name",
+        "catalogue-nvidia-api must pass credential_boundary from the trusted execution plan",
+      ]),
+    );
+  });
+
   it("writes normalized evidence and rejects successful empty runs", () => {
     const profile = YAML.parse(
       fs.readFileSync(
@@ -112,6 +127,7 @@ describe("standard E2E execution profile boundary", () => {
       jobs: {
         run: {
           env?: Record<string, unknown>;
+          name?: string;
           steps: Array<{
             if?: string;
             env?: Record<string, unknown>;
@@ -124,6 +140,7 @@ describe("standard E2E execution profile boundary", () => {
       };
     };
     const steps = profile.jobs.run.steps;
+    profile.jobs.run.name = "${{ inputs.target_id }}";
     const checkout = steps.find((step) => step.uses?.startsWith("actions/checkout@"))!;
     checkout.uses = "actions/checkout@v7";
     checkout.with!["persist-credentials"] = true;
@@ -145,10 +162,13 @@ describe("standard E2E execution profile boundary", () => {
       NVIDIA_API_KEY: "${{ !inputs.trusted_main && secrets.NVIDIA_API_KEY || '' }}",
     };
     profile.jobs.run.env!.NEMOCLAW_E2E_EXPECTED_SHA = "${{ github.sha }}";
+    profile.jobs.run.env!.BASH_ENV = "${{ github.workspace }}/scripts/leak.sh";
     const upload = steps.find((step) => step.name === "Upload E2E artifacts")!;
     upload.if = "success()";
+    upload.with = { path: "/tmp/unreviewed-e2e-output" };
     const cleanup = steps.pop()!;
     steps.unshift(cleanup);
+    steps.splice(3, 0, { name: "Run unreviewed helper", run: "bash scripts/helper.sh" });
     fs.writeFileSync(profilePath, YAML.stringify(profile));
 
     try {
@@ -161,7 +181,10 @@ describe("standard E2E execution profile boundary", () => {
           "standard E2E profile must install host dependencies before workspace prep",
           "standard E2E profile must run the planned catalogue target with guarded secrets",
           "standard E2E profile must set NEMOCLAW_E2E_EXPECTED_SHA",
-          "standard E2E profile must always upload artifacts with the reviewed action",
+          "standard E2E profile must expose only its reviewed job environment",
+          "standard E2E profile must show the planned credential boundary",
+          "standard E2E profile must keep its reviewed step set and order",
+          "standard E2E profile must always upload its target-derived artifact path with the reviewed action",
           "standard E2E profile must always clean up Docker authentication last",
         ]),
       );
