@@ -183,10 +183,6 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
       const operation = args[1] as () => unknown;
       return { kind: "entered", value: await operation() };
     }) as never);
-  if (typeof options.isWsl === "boolean") {
-    vi.spyOn(platform, "isWsl").mockReturnValue(options.isWsl);
-  }
-
   const preflightVllmSpy = vi
     .spyOn(connectVllmPreflight, "preflightVllmModelEnvOrExit")
     .mockImplementation(() => undefined);
@@ -282,7 +278,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   // machine. With the gate pinned, the stubbed environment decides, on every
   // host, and a caller's own options still win over the pin (#8868).
   vi.spyOn(platform, "isWsl").mockImplementation((...args: unknown[]) =>
-    realIsWsl({ platform: "linux", ...((args[0] as WslDetectionOptions | undefined) ?? {}) }),
+    typeof options.isWsl === "boolean"
+      ? options.isWsl
+      : realIsWsl({ platform: "linux", ...((args[0] as WslDetectionOptions | undefined) ?? {}) }),
   );
   const primaryRegistryEntry: SandboxEntry = {
     name: "alpha",
