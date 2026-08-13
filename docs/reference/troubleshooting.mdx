@@ -1198,14 +1198,20 @@ Follow these steps to reconnect.
    Only the default port `8080` uses a NemoClaw-managed service.
    If the gateway is externally supervised, inspect and restart it through the supervisor declared by `NEMOCLAW_GATEWAY_MANAGEMENT`, regardless of port.
 
-   On Apple Silicon macOS with Homebrew, inspect and restart the official formula service.
+   On Apple Silicon macOS with Homebrew, let NemoClaw inspect and restart the official formula service.
+   NemoClaw runs each Homebrew operation inside the checksum-verified temporary trust boundary.
+   Continue to the NemoClaw recovery step below instead of running `brew services` directly.
+
+   NemoClaw verifies the staged formula checksum and temporarily trusts only `nvidia/openshell/openshell` around each Homebrew inspection, start, or stop operation.
+   If formula verification fails or Homebrew cannot grant or remove temporary trust, rerun the standard NemoClaw installer and then rerun onboarding:
 
    ```bash
-   brew services list
-   brew services restart openshell
+   curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
    ```
-
-   During onboarding, NemoClaw uses the standalone fallback when the `openshell` formula is missing.
+   The standalone gateway is selected only when Homebrew or both the staged formula and installed keg are absent.
+   When the formula or keg exists, Homebrew remains the lifecycle authority.
+   NemoClaw does not switch to the standalone gateway after a Homebrew inspection, start, or stop failure.
+   Follow the reported repair guidance instead of changing service ownership manually.
    If the installed service fails inspection, startup, or its health check, NemoClaw prints this log command:
 
    ```bash
@@ -1242,7 +1248,7 @@ Follow these steps to reconnect.
 
    The tarball unit is under `$XDG_CONFIG_HOME/systemd/user`, or `~/.config/systemd/user` when `XDG_CONFIG_HOME` is not absolute.
    It starts with your user session; NemoClaw does not enable lingering.
-   If a managed service fails inspection, startup, or its health check, NemoClaw attempts the standalone fallback on either platform.
+   On Linux, NemoClaw attempts the standalone fallback when a managed service fails inspection, startup, or its health check.
    The standalone gateway starts only after NemoClaw verifies exclusive ownership of the gateway port.
    The fallback does not bypass managed-service trust validation or unsafe environment configuration.
    These conditions remain hard failures:
@@ -1319,15 +1325,18 @@ For details, refer to [Create and Restore Snapshots](../manage-sandboxes/state-a
 Destroying the final sandbox with `--cleanup-gateway` stops the packaged OpenShell gateway service before it reaps host gateway processes, so the gateway port is released.
 The service is stopped, not disabled or removed, and the next onboarding run starts it again.
 If the service cannot be stopped, `destroy` exits non-zero and prints the status command for the service.
-Stop the service yourself, then rerun `destroy`.
 
-On Apple Silicon macOS with Homebrew:
+On Apple Silicon macOS with Homebrew, rerun the standard NemoClaw installer to restore the pinned formula and temporary trust contract:
 
 ```bash
-brew services stop openshell
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-On Linux, use the service name that matches the install. For package installs:
+Then rerun `$$nemoclaw <name> destroy --cleanup-gateway` instead of stopping the Homebrew service directly.
+
+On Linux, stop the service yourself, then rerun `destroy`.
+Use the service name that matches the install.
+For package installs:
 
 ```bash
 systemctl --user stop openshell-gateway
