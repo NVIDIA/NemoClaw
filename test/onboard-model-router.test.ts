@@ -758,15 +758,12 @@ describe("onboard Model Router setup", () => {
           getProviderKey: () => "",
         },
       ),
-      // Each worst-case probe burns its 30-second startup allowance plus the
-      // 2-second interval, so the 600-second deadline bounds the loop at 19
-      // checks (#8962).
-      /failed to become healthy on port 45681 within 600 seconds \(completed health checks: 19\)/,
+      /failed to become healthy on port 45681 within 600 seconds \(completed health checks: 120\)/,
     );
 
     assert.equal(nowMs, 600_000);
-    assert.equal(isRouterHealthy.mock.calls.length, 20);
-    assert.equal(sleep.mock.calls.length, 19);
+    assert.equal(isRouterHealthy.mock.calls.length, 121);
+    assert.equal(sleep.mock.calls.length, 120);
     assert.deepEqual(terminateProcess.mock.calls, [[pid]]);
   });
 
