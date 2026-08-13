@@ -106,6 +106,36 @@ describe("releaseGatewayPortForStop", () => {
     expect(release).not.toHaveBeenCalled();
   });
 
+  it("releases an explicit NEMOCLAW_GATEWAY_PORT when no sandbox name is available (#8952)", () => {
+    const release = gatewayRelease(releaseResult({ port: 8814, stopped: [99] }));
+    const warn = vi.fn<(message: string) => void>();
+
+    gatewayStop.releaseGatewayPortForStop(undefined, {
+      env: { NEMOCLAW_GATEWAY_PORT: "8814" },
+      listSandboxes: sandboxList([]),
+      releaseManagedGatewayPort: release,
+      warn,
+    });
+
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledWith(
+      { port: 8814 },
+      expect.objectContaining({ env: { NEMOCLAW_GATEWAY_PORT: "8814" } }),
+    );
+  });
+
+  it("does not release when NEMOCLAW_GATEWAY_PORT is set but not a usable port (#8952)", () => {
+    const release = gatewayRelease(releaseResult({ port: 8814, stopped: [99] }));
+
+    gatewayStop.releaseGatewayPortForStop(undefined, {
+      env: { NEMOCLAW_GATEWAY_PORT: "not-a-port" },
+      listSandboxes: sandboxList([]),
+      releaseManagedGatewayPort: release,
+    });
+
+    expect(release).not.toHaveBeenCalled();
+  });
+
   it("warns without failing stop when gateway release throws", () => {
     const release = vi.fn(() => {
       throw new Error("registry boom");
@@ -201,6 +231,7 @@ describe("stopAll gateway-stop wiring", () => {
       .spyOn(gatewayStop, "releaseGatewayPortForStop")
       .mockImplementation(() => {
         order.push("gateway-release");
+        return "attempted";
       });
     const stopAgentForwards = vi
       .spyOn(agentForwardStop, "stopAgentForwardPortsForStop")
@@ -238,7 +269,7 @@ describe("stopAll gateway-stop wiring", () => {
     vi.stubEnv("PATH", "");
     const releaseForStop = vi
       .spyOn(gatewayStop, "releaseGatewayPortForStop")
-      .mockImplementation(() => {});
+      .mockImplementation(() => "attempted");
     const stopAgentForwards = vi
       .spyOn(agentForwardStop, "stopAgentForwardPortsForStop")
       .mockImplementation(() => {});
@@ -252,5 +283,53 @@ describe("stopAll gateway-stop wiring", () => {
 
     expect(releaseForStop).not.toHaveBeenCalled();
     expect(stopAgentForwards).not.toHaveBeenCalled();
+  });
+
+  it("releases an explicit gateway port on full stop even without a sandbox name (#8952)", () => {
+    const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-orphan-gateway-stop-"));
+    vi.stubEnv("PATH", "");
+    const releaseForStop = vi
+      .spyOn(gatewayStop, "releaseGatewayPortForStop")
+      .mockImplementation(() => "attempted");
+    const stopAgentForwards = vi
+      .spyOn(agentForwardStop, "stopAgentForwardPortsForStop")
+      .mockImplementation(() => {});
+    vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      stopAll({ pidDir, releaseGatewayPort: true });
+    } finally {
+      rmSync(pidDir, { recursive: true, force: true });
+    }
+
+    expect(stopAgentForwards).not.toHaveBeenCalled();
+    expect(releaseForStop).toHaveBeenCalledWith(undefined, {
+      info: expect.any(Function),
+      warn: expect.any(Function),
+    });
+    expect(logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n")).toContain(
+      "All services stopped",
+    );
+  });
+
+  it("does not claim every service stopped when no gateway scope exists (#8952)", () => {
+    const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-unscoped-gateway-stop-"));
+    vi.stubEnv("PATH", "");
+    vi.spyOn(gatewayStop, "releaseGatewayPortForStop").mockImplementation(() => "not-scoped");
+    vi.spyOn(agentForwardStop, "stopAgentForwardPortsForStop").mockImplementation(() => {});
+    vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      stopAll({ pidDir, releaseGatewayPort: true });
+    } finally {
+      rmSync(pidDir, { recursive: true, force: true });
+    }
+
+    const logged = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(logged).not.toContain("All services stopped");
+    expect(logged).toContain("managed gateway not released");
+    expect(logged).toContain("NEMOCLAW_GATEWAY_PORT");
   });
 });
