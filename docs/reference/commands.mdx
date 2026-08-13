@@ -531,6 +531,12 @@ The confirmation permits those legacy entries to recover onto the current manage
 After successful recovery, the installer skips generic onboarding.
 For any registered-sandbox upgrade that you already prepared manually, set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after backing up every registered sandbox and retiring the old gateway.
 This environment variable asserts that those steps are complete, so the installer skips the repeated backup and gateway-retirement phase before it checks whether OpenShell is installed or whether its version is in range.
+For a non-default gateway, preserve the selected port on the `bash` side of the install pipeline.
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT=<selected-port> NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
+```
+
 It reuses the latest backups, forces the pinned OpenShell installation, and starts recovery only after that installation succeeds.
 If the installation fails, rerun with `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` to reuse the prepared state and retry the OpenShell installation.
 

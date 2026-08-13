@@ -91,13 +91,15 @@ If the forced installation fails, the installer does not stage a gateway service
 ## Resume a Manually Prepared Upgrade
 
 Use this path only after you back up every registered sandbox and retire the gateway.
+Set `NEMOCLAW_GATEWAY_PORT` to the port for the gateway that you retired.
 Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` on the `bash` side of the install pipeline when you rerun the installer.
 
 ```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT=<selected-port> NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
 ```
 
-This environment variable asserts that you completed those steps, so the installer skips the repeated backup and gateway-retirement phase before it checks whether OpenShell is installed or whether its version is in range.
+You can omit `NEMOCLAW_GATEWAY_PORT` when you prepared the default gateway on port `8080`.
+`NEMOCLAW_OPENSHELL_UPGRADE_PREPARED` asserts that you completed those steps, so the installer skips the repeated backup and gateway-retirement phase before it checks whether OpenShell is installed or whether its version is in range.
 It reuses the latest backups, forces installation of the OpenShell version pinned by the prepared source, and starts recovery only after that installation succeeds.
 If the forced installation fails, rerun the installer with `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` to reuse the prepared state and retry the OpenShell installation.
 Outside these forced paths, an in-range source checkout preserves an existing OpenShell installation and installs OpenShell only when it is missing.
