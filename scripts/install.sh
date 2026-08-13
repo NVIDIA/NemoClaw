@@ -511,6 +511,20 @@ restore_onboard_forward_after_post_checks() {
     rm -f "$pid_file"
   fi
 
+  redact_forward_start_diagnostic() {
+    local redactor
+    redactor="$(resolve_repo_root)/dist/lib/security/redact.js"
+    if command_exists node && [[ -f "$redactor" ]] \
+      && node -e '
+        const fs = require("fs");
+        const { redactFull } = require(process.argv[1]);
+        process.stdout.write(redactFull(fs.readFileSync(0, "utf8")));
+      ' "$redactor" 2>/dev/null; then
+      return 0
+    fi
+    printf "<REDACTED>"
+  }
+
   stop_agent_forward_if_owned() {
     local forward_list owner status
     "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 && return 0
@@ -553,6 +567,9 @@ restore_onboard_forward_after_post_checks() {
         }
         END { printf "%s", joined }
       ' <"$diagnostic_file" 2>/dev/null || true)"
+      start_diagnostic="$(
+        printf "%s" "$start_diagnostic" | redact_forward_start_diagnostic
+      )"
       if [[ "${#start_diagnostic}" -gt 300 ]]; then
         start_diagnostic="${start_diagnostic:0:300} [truncated]"
       fi
