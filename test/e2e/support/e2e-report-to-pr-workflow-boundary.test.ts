@@ -403,6 +403,33 @@ it("renders comment content from job evidence without a live GitHub mutation", (
 });
 
 it.each([
+  ["catalogue-standard", "no provider credential"],
+  ["catalogue-nvidia-api", "NVIDIA API key"],
+  ["catalogue-nvidia-inference", "NVIDIA inference API key"],
+  ["catalogue-github-read", "GitHub read token"],
+  ["catalogue-brave-nvidia-inference", "Brave and NVIDIA inference API keys"],
+])("attributes %s matrix failures to the catalogue profile", (profile, boundary) => {
+  const report = renderE2eReport({
+    needs: { "generate-matrix": { result: "success" }, [profile]: { result: "failure" } },
+    env: { TEST_MATRIX: "[]" },
+    apiJobs: [
+      {
+        conclusion: "failure",
+        id: 321,
+        name: `Outcome-first target / ${boundary}`,
+        status: "completed",
+      },
+    ],
+    apiJobsLoaded: true,
+    context: REPORT_CONTEXT,
+  });
+
+  expect(report.body).toContain(
+    `[${profile}](${REPORT_CONTEXT.serverUrl}/${REPORT_CONTEXT.repo.owner}/${REPORT_CONTEXT.repo.repo}/actions/runs/123/job/321)`,
+  );
+});
+
+it.each([
   {
     env: { JOB_TARGETS: "", JOBS: "hermes-dashboard" },
     label: "test ID",
@@ -705,59 +732,6 @@ it("links failed shared-matrix entries to their physical job", async () => {
   expect(setFailed).not.toHaveBeenCalled();
   expect(body).toContain(`| [alpha](${jobUrl}) | ❌ failure | — |`);
   expect(body).toContain(`> **Failed tests:** [alpha](${jobUrl}).`);
-});
-
-it("reports one total wall clock span from valid matrix E2E jobs", async () => {
-  const { body, setFailed } = await executeReport({
-    apiJobs: [
-      {
-        completed_at: "2026-07-15T00:05:00Z",
-        conclusion: "success",
-        name: "OpenShell gateway upgrade (v0.1.0)",
-        started_at: "2026-07-15T00:00:00Z",
-        status: "completed",
-      },
-      {
-        completed_at: "2026-07-15T00:11:00Z",
-        conclusion: "success",
-        name: "OpenShell gateway upgrade (v0.2.0)",
-        started_at: "2026-07-15T00:02:00Z",
-        status: "completed",
-      },
-      {
-        completed_at: "2026-07-14T23:40:00Z",
-        conclusion: "success",
-        name: "OpenShell gateway upgrade (reversed-timestamps)",
-        started_at: "2026-07-14T23:50:00Z",
-        status: "completed",
-      },
-      {
-        completed_at: "not-a-timestamp",
-        conclusion: "success",
-        name: "OpenShell gateway upgrade (invalid-timestamp)",
-        started_at: "2026-07-14T23:30:00Z",
-        status: "completed",
-      },
-      {
-        completed_at: "2026-07-15T01:00:00Z",
-        conclusion: "skipped",
-        name: "OpenShell gateway upgrade (skipped)",
-        started_at: "2026-07-14T23:00:00Z",
-        status: "completed",
-      },
-    ],
-    testMatrix: [],
-    jobs: "openshell-gateway-upgrade",
-    needs: {
-      "generate-matrix": { result: "success" },
-      "openshell-gateway-upgrade": { result: "success" },
-    },
-  });
-
-  expect(setFailed).not.toHaveBeenCalled();
-  expect(body).toContain("| openshell-gateway-upgrade | ✅ success | 11m 0s |");
-  expect(body).not.toContain("OpenShell gateway upgrade (v0.1.0)");
-  expect(body).not.toContain("OpenShell gateway upgrade (v0.2.0)");
 });
 
 it("reports one total wall clock span when matrix job names start with their job ID", async () => {

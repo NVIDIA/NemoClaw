@@ -74,10 +74,19 @@ export function openshellResponses(
   args: string[],
   responses: Record<string, OpenshellCaptureResult>,
 ): OpenshellCaptureResult {
-  const result = responses[`${args[0] ?? ""} ${args[1] ?? ""}`] ?? {
-    status: 0,
-    output: "",
-  };
+  const command = `${args[0] ?? ""} ${args[1] ?? ""}`;
+  const sandboxName = String(args.at(-1) ?? "sandbox");
+  const result =
+    responses[command] ??
+    (command === "sandbox get"
+      ? {
+          status: 0,
+          output: `Name: ${sandboxName}\nId: ${sandboxName}-live-id\nPhase: Ready\n`,
+        }
+      : {
+          status: 0,
+          output: "",
+        });
   return captureOpenshellStreams(args, result);
 }
 

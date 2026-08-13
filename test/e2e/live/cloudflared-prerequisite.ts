@@ -11,7 +11,7 @@ import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
-const CLOUDLFARED_STEP_NAME = "Install and verify cloudflared prerequisite";
+const CLOUDFLARED_STEP_NAME = "Install reviewed cloudflared";
 
 interface CloudflaredPin {
   version: string;
@@ -20,19 +20,19 @@ interface CloudflaredPin {
 
 function requirePin(value: unknown, label: string, pattern: RegExp): string {
   if (typeof value !== "string" || !pattern.test(value)) {
-    throw new Error(`inference-routing ${label} is missing or invalid`);
+    throw new Error(`reviewed ${label} is missing or invalid`);
   }
   return value;
 }
 
-export function readInferenceRoutingCloudflaredPin(
-  workflowPath = path.join(REPO_ROOT, ".github", "workflows", "e2e.yaml"),
+export function readReviewedCloudflaredPin(
+  workflowPath = path.join(REPO_ROOT, ".github", "workflows", "e2e-standard-profile.yaml"),
 ): CloudflaredPin {
   const workflow = YAML.parse(fs.readFileSync(workflowPath, "utf8")) as {
     jobs?: Record<string, { steps?: Array<{ name?: string; env?: Record<string, unknown> }> }>;
   };
-  const step = workflow.jobs?.["inference-routing"]?.steps?.find(
-    (candidate) => candidate.name === CLOUDLFARED_STEP_NAME,
+  const step = workflow.jobs?.run?.steps?.find(
+    (candidate) => candidate.name === CLOUDFLARED_STEP_NAME,
   );
   return {
     version: requirePin(
@@ -77,7 +77,7 @@ export async function resolveVerifiedCloudflaredBinary(
     throw new Error("cloudflared is required for the DNS-backed HTTPS routing proof");
   }
 
-  const pin = readInferenceRoutingCloudflaredPin();
+  const pin = readReviewedCloudflaredPin();
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-"));
   cleanup.add(`remove verified cloudflared prerequisite ${root}`, () => {
     fs.rmSync(root, { recursive: true, force: true });
