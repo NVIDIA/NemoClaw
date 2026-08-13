@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   assertPodmanExecutableAuthority,
+  assertPodmanExecutableMetadataAuthority,
   capturePodmanExecutableAuthority,
   type PodmanExecutableAuthorityDeps,
   type PodmanExecutableStat,
@@ -237,6 +238,41 @@ describe("Podman executable authority", () => {
         }),
       ),
     ).toThrow("changed after it was qualified");
+  });
+
+  it("rechecks the canonical path, trusted directory chain, and immutable metadata without rereading bytes", () => {
+    const lstat = vi.fn((filePath: string) =>
+      filePath === EXECUTABLE_PATH ? executableStat() : directoryStat(filePath),
+    );
+    const readFile = vi.fn(() => EXECUTABLE_BYTES);
+    const realpath = vi.fn((filePath: string) => filePath);
+    const deps = authorityDeps({ lstat, readFile, realpath });
+    const authority = capturePodmanExecutableAuthority(EXECUTABLE_PATH, deps);
+    lstat.mockClear();
+    readFile.mockClear();
+    realpath.mockClear();
+
+    assertPodmanExecutableMetadataAuthority(authority, deps);
+
+    expect(lstat).toHaveBeenCalledTimes(8);
+    expect(realpath).toHaveBeenCalledTimes(2);
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it("rejects executable rotation during a metadata-only authority check", () => {
+    const authority = capturePodmanExecutableAuthority(EXECUTABLE_PATH, authorityDeps());
+    let executableReads = 0;
+    const lstat = vi.fn((filePath: string) => {
+      if (filePath !== EXECUTABLE_PATH) return directoryStat(filePath);
+      executableReads += 1;
+      return executableReads === 1 ? executableStat() : executableStat({ ino: 43n });
+    });
+    const readFile = vi.fn(() => EXECUTABLE_BYTES);
+
+    expect(() =>
+      assertPodmanExecutableMetadataAuthority(authority, authorityDeps({ lstat, readFile })),
+    ).toThrow("changed while it was checked");
+    expect(readFile).not.toHaveBeenCalled();
   });
 
   it("rejects inconsistent executable bytes", () => {

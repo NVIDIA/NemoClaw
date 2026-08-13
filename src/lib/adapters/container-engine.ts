@@ -72,7 +72,7 @@ export interface ContainerEngineCommandOptions {
   /** Exact operation-scoped names that may be added to the sanitized child environment. */
   readonly allowedEnvironmentNames?: readonly string[];
   readonly capture?: ContainerEngineCommandCapture;
-  readonly guard?: () => void;
+  readonly guard?: (phase: "before" | "after") => void;
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -270,10 +270,10 @@ function defaultCapture(
 }
 
 function invokeGuarded(
-  guard: (() => void) | undefined,
+  guard: ((phase: "before" | "after") => void) | undefined,
   capture: () => ContainerEngineCommandResult,
 ): ContainerEngineCommandResult {
-  guard?.();
+  guard?.("before");
   let result: ContainerEngineCommandResult | undefined;
   let failure: unknown;
   try {
@@ -282,7 +282,7 @@ function invokeGuarded(
     failure = error;
   }
   try {
-    guard?.();
+    guard?.("after");
   } catch (error) {
     if (failure === undefined) failure = error;
   }

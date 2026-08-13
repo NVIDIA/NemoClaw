@@ -10,6 +10,7 @@ import {
 } from "../container-engine";
 import {
   assertPodmanExecutableAuthority,
+  assertPodmanExecutableMetadataAuthority,
   capturePodmanExecutableAuthority,
   type PodmanExecutableAuthority,
   type PodmanExecutableAuthorityDeps,
@@ -19,6 +20,10 @@ import {
   type PodmanSocketAuthority,
   type PodmanSocketAuthorityDeps,
 } from "./socket-authority";
+
+// Immutable metadata is checked before and after every dispatch. Rehash the
+// full executable before every 64th command within this operation.
+const EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL = 64;
 
 export interface PodmanContainerEngineOptions {
   readonly operation: "host-doctor" | "host-local-inference" | "sandbox-lifecycle";
@@ -96,6 +101,9 @@ export function createPodmanContainerEngine(
     options.operation === "host-local-inference"
       ? capturePodmanExecutableAuthority(executable, options.executableAuthorityDeps)
       : undefined;
+  let executableCommandCount = 0;
+  let hasExecutableAuthorityFailure = false;
+  let executableAuthorityFailure: unknown;
   const endpointAuthorityId = podmanAuthorityId(options.socketAuthority);
   const engine = createContainerEngineCommand({
     operation: options.operation,
@@ -108,7 +116,7 @@ export function createPodmanContainerEngine(
     allowedEnvironmentNames:
       options.operation === "host-local-inference" ? ["NGC_API_KEY", "NIM_NGC_API_KEY"] : [],
     capture: options.capture,
-    guard: () => {
+    guard: (phase) => {
       let failure: unknown;
       try {
         assertAuthority(options.socketAuthority, options.authorityDeps);
@@ -116,11 +124,33 @@ export function createPodmanContainerEngine(
         failure = error;
       }
       if (executableAuthority) {
-        try {
-          assertPodmanExecutableAuthority(executableAuthority, options.executableAuthorityDeps);
-        } catch (error) {
-          if (failure === undefined) failure = error;
+        if (!hasExecutableAuthorityFailure) {
+          try {
+            const shouldRehash =
+              phase === "before" &&
+              executableCommandCount + 1 ===
+                EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL;
+            if (shouldRehash) {
+              assertPodmanExecutableAuthority(executableAuthority, options.executableAuthorityDeps);
+            } else {
+              assertPodmanExecutableMetadataAuthority(
+                executableAuthority,
+                options.executableAuthorityDeps,
+              );
+            }
+          } catch (error) {
+            hasExecutableAuthorityFailure = true;
+            executableAuthorityFailure =
+              error ?? new Error("Podman executable authority check failed without evidence.");
+          }
         }
+        if (failure === undefined && hasExecutableAuthorityFailure) {
+          failure = executableAuthorityFailure;
+        }
+      }
+      if (phase === "after") {
+        executableCommandCount =
+          (executableCommandCount + 1) % EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL;
       }
       if (failure !== undefined) throw failure;
     },
