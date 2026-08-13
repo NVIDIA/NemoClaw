@@ -11,8 +11,14 @@ import { performance } from "node:perf_hooks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  buildAutoPairApprovalScript,
+  parseAutoPairApprovalReceipt,
+  readAutoPairApprovalPolicyModule,
+} from "../auto-pair-approval";
+import {
   buildOpenClawPairingObservationScript,
   observeOpenClawPairingQualification,
+  OPENCLAW_PAIRING_REQUEST_SCOPES,
   OPENCLAW_PAIRING_REQUIRED_SCOPES,
   parseOpenClawPairingObservation,
 } from "./openclaw-pairing-qualification";
@@ -26,12 +32,13 @@ type PairedFixture = Record<
   {
     deviceId: string;
     publicKey: string;
+    scopes: string[];
     approvedScopes: string[];
-    tokens: { operator: { token: string } };
+    tokens: { operator: { token: string; scopes: string[] } };
     [key: string]: unknown;
   }
 >;
-type AuthFixture = { tokens: { operator: { token: string } } };
+type AuthFixture = { tokens: { operator: { token: string; scopes: string[] } } };
 const POLICY = `
 ALLOWED_CLIENTS = {'cli', 'openclaw-cli', 'openclaw-control-ui'}
 ALLOWED_SCOPES = {'operator.pairing', 'operator.read', 'operator.write'}
@@ -108,8 +115,8 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         clientMode: "cli",
         role: "operator",
         roles: ["operator"],
-        scopes: [...OPENCLAW_PAIRING_REQUIRED_SCOPES],
-        approvedScopes: [...OPENCLAW_PAIRING_REQUIRED_SCOPES],
+        scopes: [...OPENCLAW_PAIRING_REQUEST_SCOPES],
+        approvedScopes: [...OPENCLAW_PAIRING_REQUEST_SCOPES],
         tokens: {
           operator: {
             token: TOKEN,
@@ -128,7 +135,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     vi.restoreAllMocks();
   });
 
-  function observe() {
+  function observe(approvalPolicy = POLICY) {
     return observeOpenClawPairingQualification(
       "alpha",
       "nemoclaw-8080",
@@ -136,14 +143,14 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       stateDirectory,
       {
         getOpenshellBinary: () => "openshell",
-        readApprovalPolicy: () => POLICY,
+        readApprovalPolicy: () => approvalPolicy,
         spawnSync: localScriptSpawn as typeof spawnSync,
       },
     );
   }
 
   describe.skipIf(!PYTHON3_AVAILABLE)("state observation", () => {
-    it("emits a credential-free qualification from supported shared OpenClaw state (#9023)", () => {
+    it("emits credential-free qualification from canonical settled OpenClaw state (#9023)", () => {
       const qualification = observe();
       const serialized = JSON.stringify(qualification);
 
@@ -164,6 +171,116 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       expect(performance.getEntriesByName("nemoclaw.openclaw-pairing.qualification")).toHaveLength(
         1,
       );
+    });
+
+    it("qualifies the persisted result of the complete canonical approval transition (#9023)", () => {
+      const approvalPolicy = readAutoPairApprovalPolicyModule();
+      expect(approvalPolicy).toBeTruthy();
+      const requestId = "canonical-cli-write";
+      writeJson(path.join(stateDirectory, "identity", "device-auth.json"), {
+        version: 1,
+        deviceId,
+        tokens: {
+          operator: {
+            token: TOKEN,
+            role: "operator",
+            scopes: ["operator.pairing"],
+          },
+        },
+      });
+      writeJson(path.join(stateDirectory, "devices", "paired.json"), {
+        [deviceId]: {
+          deviceId,
+          publicKey,
+          clientId: "cli",
+          clientMode: "cli",
+          role: "operator",
+          roles: ["operator"],
+          scopes: ["operator.pairing"],
+          approvedScopes: ["operator.pairing"],
+          tokens: {
+            operator: {
+              token: TOKEN,
+              role: "operator",
+              scopes: ["operator.pairing"],
+            },
+          },
+        },
+      });
+      writeJson(path.join(stateDirectory, "devices", "pending.json"), {
+        [requestId]: {
+          requestId,
+          deviceId,
+          publicKey,
+          clientId: "cli",
+          clientMode: "cli",
+          role: "operator",
+          roles: ["operator"],
+          scopes: [...OPENCLAW_PAIRING_REQUEST_SCOPES],
+          isRepair: true,
+        },
+      });
+      const openclawPath = path.join(root, "openclaw");
+      fs.writeFileSync(
+        openclawPath,
+        `#!${process.execPath}
+const fs = require("fs");
+const path = require("path");
+const args = process.argv.slice(2);
+if (args[0] !== "devices" || args[1] !== "approve") process.exit(2);
+const stateDir = process.env.NEMOCLAW_TEST_CLONE_STATE_DIR;
+const pendingPath = path.join(stateDir, "devices", "pending.json");
+const pairedPath = path.join(stateDir, "devices", "paired.json");
+const pending = JSON.parse(fs.readFileSync(pendingPath, "utf8"));
+const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8"));
+const request = pending[args[2]];
+delete pending[args[2]];
+paired[request.deviceId] = {
+  ...paired[request.deviceId],
+  scopes: request.scopes,
+  approvedScopes: request.scopes,
+  tokens: {
+    operator: {
+      token: "rotated-canonical-token",
+      role: "operator",
+      scopes: ["operator.pairing", "operator.read", "operator.write"],
+    },
+  },
+};
+fs.writeFileSync(pendingPath, JSON.stringify(pending));
+fs.writeFileSync(pairedPath, JSON.stringify(paired));
+process.stdout.write("{}\\n");
+`,
+        { mode: 0o755 },
+      );
+      const approval = spawnSync("sh", {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          PATH: `${root}:/usr/bin:/bin`,
+          NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING: "1",
+          NEMOCLAW_TEST_CLONE_STATE_DIR: stateDirectory,
+          OPENCLAW_GATEWAY_PORT: "18789",
+          OPENCLAW_GATEWAY_TOKEN: "gateway-token",
+          OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
+          OPENCLAW_STATE_DIR: stateDirectory,
+        },
+        input: buildAutoPairApprovalScript(
+          Buffer.from(approvalPolicy as string, "utf8").toString("base64"),
+          {
+            emitReceipt: true,
+            localDeviceOnly: true,
+            budget: { maxApprovals: 1 },
+          },
+        ),
+      });
+
+      expect(approval.status).toBe(0);
+      expect(parseAutoPairApprovalReceipt(approval.stdout)).toBe("approved-one");
+      expect(observe(approvalPolicy as string)).toMatchObject({
+        requiredRoles: ["operator"],
+        requiredScopes: ["operator.pairing", "operator.read", "operator.write"],
+      });
     });
 
     it("does not make paired credential values part of the receipt identity (#9023)", () => {
@@ -247,12 +364,39 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         },
       ],
       [
-        "incomplete required scopes",
+        "changed paired request scopes",
+        () => {
+          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          paired[deviceId]!.scopes = ["operator.pairing", "operator.read", "operator.write"];
+          writeJson(pairedPath, paired);
+        },
+      ],
+      [
+        "changed approved request scopes",
         () => {
           const pairedPath = path.join(stateDirectory, "devices", "paired.json");
           const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
           paired[deviceId]!.approvedScopes = ["operator.pairing", "operator.read"];
           writeJson(pairedPath, paired);
+        },
+      ],
+      [
+        "changed paired token scopes",
+        () => {
+          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          paired[deviceId]!.tokens.operator.scopes = ["operator.pairing", "operator.write"];
+          writeJson(pairedPath, paired);
+        },
+      ],
+      [
+        "changed client-auth token scopes",
+        () => {
+          const authPath = path.join(stateDirectory, "identity", "device-auth.json");
+          const auth = JSON.parse(fs.readFileSync(authPath, "utf8")) as AuthFixture;
+          auth.tokens.operator.scopes = ["operator.pairing", "operator.write"];
+          writeJson(authPath, auth);
         },
       ],
       [

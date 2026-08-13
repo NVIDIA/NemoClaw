@@ -16,6 +16,9 @@ const OBSERVATION_TIMEOUT_MS = 3_000;
 const OBSERVATION_MAX_OUTPUT_BYTES = 4 * 1_024;
 
 export const OPENCLAW_PAIRING_REQUIRED_ROLES = ["operator"] as const;
+// Canonical approval preserves the requested pairing/write view on the paired
+// record and adds the implied read scope only to credential-bearing token views.
+export const OPENCLAW_PAIRING_REQUEST_SCOPES = ["operator.pairing", "operator.write"] as const;
 export const OPENCLAW_PAIRING_REQUIRED_SCOPES = [
   "operator.pairing",
   "operator.read",
@@ -127,7 +130,8 @@ import sys
 MARKER = ${JSON.stringify(QUALIFICATION_MARKER)}
 MAX_ENTRY_BYTES = 512 * 1024
 REQUIRED_ROLES = ['operator']
-REQUIRED_SCOPES = ['operator.pairing', 'operator.read', 'operator.write']
+REQUEST_SCOPES = ['operator.pairing', 'operator.write']
+TOKEN_SCOPES = ['operator.pairing', 'operator.read', 'operator.write']
 
 def reject():
     sys.exit(1)
@@ -373,8 +377,8 @@ try:
         or paired_device.get('clientId') != 'cli'
         or paired_device.get('clientMode') != 'cli'
         or normalized_roles(paired_device) != set(REQUIRED_ROLES)
-        or not exact_string_set(paired_device.get('scopes'), REQUIRED_SCOPES)
-        or not exact_string_set(paired_device.get('approvedScopes'), REQUIRED_SCOPES)
+        or not exact_string_set(paired_device.get('scopes'), REQUEST_SCOPES)
+        or not exact_string_set(paired_device.get('approvedScopes'), REQUEST_SCOPES)
     ):
         reject()
     paired_tokens = paired_device.get('tokens')
@@ -384,7 +388,7 @@ try:
         or str(paired_operator.get('role', '') or '').strip() != 'operator'
         or paired_operator.get('revokedAtMs') is not None
         or not str(paired_operator.get('token', '') or '').strip()
-        or not exact_string_set(paired_operator.get('scopes'), REQUIRED_SCOPES)
+        or not exact_string_set(paired_operator.get('scopes'), TOKEN_SCOPES)
     ):
         reject()
     auth_tokens = auth.get('tokens')
@@ -395,7 +399,7 @@ try:
         or not isinstance(auth_operator, dict)
         or str(auth_operator.get('role', '') or '').strip() != 'operator'
         or str(auth_operator.get('token', '') or '').strip() != str(paired_operator.get('token', '') or '').strip()
-        or not exact_string_set(auth_operator.get('scopes'), REQUIRED_SCOPES)
+        or not exact_string_set(auth_operator.get('scopes'), TOKEN_SCOPES)
     ):
         reject()
 
@@ -435,24 +439,24 @@ try:
             'clientId': 'cli',
             'clientMode': 'cli',
             'roles': REQUIRED_ROLES,
-            'scopes': REQUIRED_SCOPES,
-            'approvedScopes': REQUIRED_SCOPES,
+            'pairedRequestScopes': REQUEST_SCOPES,
+            'approvedRequestScopes': REQUEST_SCOPES,
             'pairedToken': {
                 'active': True,
                 'role': 'operator',
-                'scopes': REQUIRED_SCOPES,
+                'scopes': TOKEN_SCOPES,
             },
             'clientAuth': {
                 'deviceId': device_id,
                 'matchesPairedToken': True,
                 'role': 'operator',
-                'scopes': REQUIRED_SCOPES,
+                'scopes': TOKEN_SCOPES,
                 'version': 1,
             },
             'relevantPending': False,
         }, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest(),
         'requiredRoles': REQUIRED_ROLES,
-        'requiredScopes': REQUIRED_SCOPES,
+        'requiredScopes': TOKEN_SCOPES,
     }
     print(MARKER + json.dumps(projection, sort_keys=True, separators=(',', ':')))
 except (OSError, ValueError, TypeError, KeyError, binascii.Error, UnicodeError):
