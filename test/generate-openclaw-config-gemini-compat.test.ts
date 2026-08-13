@@ -95,6 +95,7 @@ describe("generate-openclaw-config.mts: Gemini 3 managed-route compat", () => {
     expect(config.plugins.entries["nemoclaw-gemini-inference-compat"]).toEqual({
       enabled: true,
     });
+    expect(config.plugins.allow).toEqual(["nemoclaw", "nemoclaw-gemini-inference-compat"]);
     expect(config.plugins.load.paths).toEqual([
       "/usr/local/share/nemoclaw/openclaw-plugins/gemini-inference-compat",
     ]);

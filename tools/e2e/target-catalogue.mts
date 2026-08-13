@@ -324,6 +324,19 @@ const GATEWAY_UPGRADE_TARGET_BY_ID = new Map(
   GATEWAY_UPGRADE_TARGETS.map((entry) => [entry.id, entry]),
 );
 
+export const E2E_CATALOGUE_EXCLUSION_REASONS = {
+  "issue-4434-tui-unreachable-inference":
+    "the nvidia-inference profile uses gateway-managed inference, which this test skips by design",
+  "overlayfs-autofix":
+    "the managed Linux Docker gateway bypasses the legacy overlayfs autofix path",
+} as const satisfies Readonly<Record<string, string>>;
+
+export function catalogueExclusionReason(id: string): string | undefined {
+  return Object.hasOwn(E2E_CATALOGUE_EXCLUSION_REASONS, id)
+    ? E2E_CATALOGUE_EXCLUSION_REASONS[id as keyof typeof E2E_CATALOGUE_EXCLUSION_REASONS]
+    : undefined;
+}
+
 export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   target("agent-turn-latency", {
     displayName: "Performance: bounds hosted inference turns for OpenClaw and Hermes",
@@ -762,23 +775,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_SANDBOX_NAME: "e2e-issue-4462",
     },
   }),
-  target("issue-4434-tui-unreachable-inference", {
-    displayName: "TUI: reports unreachable inference and stops the connected spinner",
-    profile: "nvidia-inference",
-    timeoutMinutes: 120,
-    installMode: "authenticated",
-    installNonInteractive: true,
-    restoreCli: true,
-    exposeCliBin: true,
-    hostPackages: ["expect", "iptables"],
-    owningPaths: ["test/e2e/support/issue-4434-tui-capture.ts"],
-    environment: {
-      ...hostedInference,
-      ...nonInteractive,
-      NEMOCLAW_ISSUE_4434_LIVE: "1",
-      OPENSHELL_GATEWAY: "nemoclaw",
-    },
-  }),
   target("inference-routing", {
     displayName: "Inference: rejects unsafe routes and proves runtime identities",
     profile: "standard",
@@ -996,26 +992,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   ...GATEWAY_UPGRADE_TARGETS,
-  target("overlayfs-autofix", {
-    displayName: "Install: uses a patched cluster image for Docker overlayfs",
-    profile: "nvidia-inference",
-    timeoutMinutes: 90,
-    installMode: "none",
-    restoreCli: true,
-    exposeCliBin: true,
-    owningPaths: [
-      "test/e2e/live/overlayfs-autofix-cleanup.ts",
-      "test/e2e/live/overlayfs-autofix-outcome.ts",
-      "src/lib/onboard/docker-driver-platform.ts",
-    ],
-    environment: {
-      ...hostedInference,
-      ...nonInteractive,
-      NEMOCLAW_SANDBOX_NAME: "e2e-overlayfs",
-      NEMOCLAW_E2E_TIMEOUT_SECONDS: "1500",
-      OPENSHELL_GATEWAY: "nemoclaw",
-    },
-  }),
   target("rebuild-openclaw", {
     displayName: "Rebuild: preserves OpenClaw state and rotates the gateway token",
     profile: "nvidia-inference",
@@ -1573,6 +1549,7 @@ export async function runCatalogueTarget(id: string, testFile: string): Promise<
     runPressureCommand("initialize-evidence");
   }
   const { runLiveVitestCommand } = await import("./live-vitest-invocation.mts");
+  process.env.NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST = "1";
   const selector = entry.selector ? ["--selector", entry.selector] : [];
   const exitCode = await runLiveVitestCommand(["run", "--test-path", entry.testFile, ...selector]);
   if (entry.runnerPressure && exitCode !== 0) {

@@ -16,6 +16,7 @@ import { JETSON_DISPATCH_TARGET } from "./jetson-dispatch-contract.mts";
 import { selectedRetiredControllerJobs } from "./retired-selector-compatibility.mts";
 import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import {
+  catalogueExclusionReason,
   catalogueMatrix,
   catalogueTarget,
   catalogueTargetsForChangedFiles,
@@ -417,6 +418,13 @@ export function buildE2eWorkflowPlan(
 ): E2eWorkflowPlan {
   const jobs = selectorIds(selectors.jobs, "jobs");
   const targets = selectorIds(selectors.targets, "targets");
+
+  for (const id of [...jobs, ...targets]) {
+    const reason = catalogueExclusionReason(id);
+    if (reason) {
+      throw new Error(`E2E catalogue target ${id} is not scheduled: ${reason}`);
+    }
+  }
 
   const inventory = readFreeStandingJobsInventory();
   const jetsonDispatchSelected =
