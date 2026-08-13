@@ -260,6 +260,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`,
     options: DashboardForwardOptions = {},
   ): number {
+    chatUiUrl ||= `http://127.0.0.1:${CONTROL_UI_PORT}`;
     const { rollbackSandboxOnFailure, preservedPorts, allowPortReallocation } =
       normalizeDashboardForwardOptions(options);
     const messagingForward = resolveMessagingHostForwardForSandbox(sandboxName);

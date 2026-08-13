@@ -38,7 +38,7 @@ const HOSTED_PROVIDER_ENV_NAMES = [
 ] as const;
 const SECRET_REFERENCE_PATTERN = /\bsecrets\.[A-Za-z0-9_]+\b/u;
 const EXPECTED_SELECTOR =
-  "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && ((inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',hermes-gpu-startup,') || contains(format(',{0},', inputs.targets), ',hermes-gpu-startup,')))) }}";
+  "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'hermes-gpu-startup') }}";
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -108,9 +108,7 @@ export function validateHermesGpuStartupWorkflow(
     errors.push(`${JOB_NAME} job must run on the native RTX PRO 6000 GPU runner`);
   }
   if (job.needs !== "generate-matrix" || job.if !== EXPECTED_SELECTOR) {
-    errors.push(
-      `${JOB_NAME} job must run on main pushes and retain manual selectors behind generate-matrix`,
-    );
+    errors.push(`${JOB_NAME} job must use the trusted execution plan behind generate-matrix`);
   }
   if (job["timeout-minutes"] !== 90) {
     errors.push(`${JOB_NAME} requires a 90 minute timeout`);
