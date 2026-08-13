@@ -2995,7 +2995,7 @@ To skip GPU passthrough entirely, rerun with `--no-gpu` or set `NEMOCLAW_SANDBOX
 
 Automatic GPU onboarding uses the compatibility path directly; it does not make a native attempt first.
 The compatibility path recreates the OpenShell-managed Docker container with NVIDIA GPU flags.
-For OpenClaw, both that compatibility recreation and a managed native recreation propagate eligible host group IDs for the supported Jetson GPU device nodes.
+For OpenClaw, both that compatibility recreation and a managed-bootstrap replacement on the native route propagate eligible host group IDs for the supported Jetson GPU device nodes.
 Docker passes those group IDs through `--group-add` in both replacements.
 OpenShell calls `initgroups()` before it starts processes as the sandbox account.
 That call reloads supplementary groups from the container group database and can replace the inherited Docker memberships.
