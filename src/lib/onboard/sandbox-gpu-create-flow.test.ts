@@ -707,7 +707,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
   });
 
-  it("configures the portable lifecycle after sandbox creation succeeds (#8441)", async () => {
+  it("uses the provided lifecycle generation for portable setup and registration (#8942)", async () => {
     const input = createInput();
     input.lifecycleGeneration = "current-generation";
     const deps = createDeps();
@@ -727,6 +727,25 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       input.sandboxStartupCommand,
       process.env,
       { registryGeneration: "current-generation" },
+    );
+  });
+
+  it("preserves the provided lifecycle generation when portable setup is unavailable (#8942)", async () => {
+    const input = createInput();
+    input.lifecycleGeneration = "fresh-generation";
+    const deps = createDeps();
+    deps.installPortableDemoLifecycle = vi.fn(() => null);
+
+    const result = await runSandboxGpuCreateFlow(input, deps);
+
+    expect(result.lifecycleRegistrationFields).toEqual({
+      lifecycleGeneration: "fresh-generation",
+    });
+    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledWith(
+      input.sandboxName,
+      input.sandboxStartupCommand,
+      process.env,
+      { registryGeneration: "fresh-generation" },
     );
   });
 
