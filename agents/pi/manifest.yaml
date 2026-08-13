@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 name: pi
 display_name: "Pi"
-description: "Terminal coding agent with read, bash, edit, write tools and session management"
+description: "Terminal coding agent with read, bash, edit, and write tools, plus session management"
 version_constraint: ">=0.84.1"
 language: nodejs
 license: MIT

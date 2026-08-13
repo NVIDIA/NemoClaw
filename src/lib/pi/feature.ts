@@ -9,6 +9,6 @@ export function isPiQualificationEnabled(env: NodeJS.ProcessEnv = process.env): 
 
 export function requirePiQualificationEnabled(env: NodeJS.ProcessEnv = process.env): void {
   if (!isPiQualificationEnabled(env)) {
-    throw new Error("Pi is a qualification candidate; it is not a selectable agent yet");
+    throw new Error("Pi is not selectable in this release");
   }
 }
