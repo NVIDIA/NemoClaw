@@ -7,38 +7,43 @@
 diff --git a/dist/Net-Ping/t/001_new.t b/dist/Net-Ping/t/001_new.t
 --- a/dist/Net-Ping/t/001_new.t
 +++ b/dist/Net-Ping/t/001_new.t
-@@ -58,8 +58,10 @@ eval {
+@@ -58,14 +58,10 @@ eval {
  SKIP: {
      # diag "Checking icmp";
      eval { $p = Net::Ping->new('icmp'); };
 -    skip "icmp ping requires root privileges.", 3
 -      if !Net::Ping::_isroot() or $^O eq 'MSWin32';
+-    if($> and $^O ne 'VMS' and $^O ne 'cygwin') {
+-        like($@, qr/icmp ping requires root privilege/, "Need root for icmp");
+-        skip "icmp tests require root", 2;
+-    } else {
+-        isa_ok($p, "Net::Ping");
+-    }
 +    skip "raw IPv4 ICMP socket is unavailable.", 3
 +      if $ENV{NEMOCLAW_PERL_SKIP_RAW_ICMPV4_TESTS}
-+        or !Net::Ping::_isroot()
 +        or $^O eq 'MSWin32';
-     if($> and $^O ne 'VMS' and $^O ne 'cygwin') {
-         like($@, qr/icmp ping requires root privilege/, "Need root for icmp");
-         skip "icmp tests require root", 2;
++    isa_ok($p, "Net::Ping");
+
+     # set IP TOS to "Minimum Delay"
+     $p = Net::Ping->new("icmp", undef, undef, undef, 8);
 diff --git a/dist/Net-Ping/t/110_icmp_inst.t b/dist/Net-Ping/t/110_icmp_inst.t
 --- a/dist/Net-Ping/t/110_icmp_inst.t
 +++ b/dist/Net-Ping/t/110_icmp_inst.t
-@@ -19,8 +19,9 @@ use Test::More tests => 2;
+@@ -19,8 +19,8 @@ use Test::More tests => 2;
  BEGIN {use_ok('Net::Ping')};
 
  SKIP: {
 -  skip "icmp ping requires root privileges.", 1
 -    unless &Net::Ping::_isroot;
 +  skip "raw IPv4 ICMP socket is unavailable.", 1
-+    if $ENV{NEMOCLAW_PERL_SKIP_RAW_ICMPV4_TESTS}
-+      or !&Net::Ping::_isroot;
++    if $ENV{NEMOCLAW_PERL_SKIP_RAW_ICMPV4_TESTS};
    my $p = new Net::Ping "icmp";
    isa_ok($p, 'Net::Ping', 'object can be instantiated for icmp protocol');
  }
 diff --git a/dist/Net-Ping/t/500_ping_icmp.t b/dist/Net-Ping/t/500_ping_icmp.t
 --- a/dist/Net-Ping/t/500_ping_icmp.t
 +++ b/dist/Net-Ping/t/500_ping_icmp.t
-@@ -54,8 +54,10 @@ if (0 && !Net::Ping::_isroot()) {
+@@ -54,8 +54,9 @@ if (0 && !Net::Ping::_isroot()) {
  }
 
  SKIP: {
@@ -46,7 +51,6 @@ diff --git a/dist/Net-Ping/t/500_ping_icmp.t b/dist/Net-Ping/t/500_ping_icmp.t
 -    if !Net::Ping::_isroot() or $^O eq 'MSWin32';
 +  skip "raw IPv4 ICMP socket is unavailable.", 2
 +    if $ENV{NEMOCLAW_PERL_SKIP_RAW_ICMPV4_TESTS}
-+      or !Net::Ping::_isroot()
 +      or $^O eq 'MSWin32';
    my $p = new Net::Ping "icmp";
    is($p->message_type(), 'echo', "default icmp message type is 'echo'");
@@ -54,7 +58,7 @@ diff --git a/dist/Net-Ping/t/500_ping_icmp.t b/dist/Net-Ping/t/500_ping_icmp.t
 diff --git a/dist/Net-Ping/t/501_ping_icmpv6.t b/dist/Net-Ping/t/501_ping_icmpv6.t
 --- a/dist/Net-Ping/t/501_ping_icmpv6.t
 +++ b/dist/Net-Ping/t/501_ping_icmpv6.t
-@@ -45,8 +45,10 @@ if (0 && !Net::Ping::_isroot()) {
+@@ -45,8 +45,9 @@ if (0 && !Net::Ping::_isroot()) {
 
 
  SKIP: {
@@ -62,7 +66,6 @@ diff --git a/dist/Net-Ping/t/501_ping_icmpv6.t b/dist/Net-Ping/t/501_ping_icmpv6
 -    if !Net::Ping::_isroot() or $^O eq 'MSWin32';
 +  skip "raw IPv6 ICMP socket is unavailable.", 1
 +    if $ENV{NEMOCLAW_PERL_SKIP_RAW_ICMPV6_TESTS}
-+      or !Net::Ping::_isroot()
 +      or $^O eq 'MSWin32';
    my $p;
    eval { $p = new Net::Ping "icmpv6"; };
@@ -70,7 +73,7 @@ diff --git a/dist/Net-Ping/t/501_ping_icmpv6.t b/dist/Net-Ping/t/501_ping_icmpv6
 diff --git a/dist/Net-Ping/t/520_icmp_ttl.t b/dist/Net-Ping/t/520_icmp_ttl.t
 --- a/dist/Net-Ping/t/520_icmp_ttl.t
 +++ b/dist/Net-Ping/t/520_icmp_ttl.t
-@@ -18,8 +18,10 @@ use Test::More qw(no_plan);
+@@ -18,8 +18,9 @@ use Test::More qw(no_plan);
  BEGIN {use_ok('Net::Ping')};
 
  SKIP: {
@@ -78,7 +81,6 @@ diff --git a/dist/Net-Ping/t/520_icmp_ttl.t b/dist/Net-Ping/t/520_icmp_ttl.t
 -    if !Net::Ping::_isroot() or $^O eq 'MSWin32';
 +  skip "raw IPv4 ICMP socket is unavailable.", 1
 +    if $ENV{NEMOCLAW_PERL_SKIP_RAW_ICMPV4_TESTS}
-+      or !Net::Ping::_isroot()
 +      or $^O eq 'MSWin32';
    my $p = new Net::Ping ("icmp",undef,undef,undef,undef,undef);
    isa_ok($p, 'Net::Ping');

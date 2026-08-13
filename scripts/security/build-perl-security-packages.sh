@@ -96,7 +96,10 @@ git -C "${source_dir}" apply "${net_ping_test_patch}"
       'cpan/ExtUtils-Constant/t/Constant.t' \
       "${build_root}/perl-tests-combined.sorted"
   )" -eq 1
-  perl_test_env=()
+  perl_test_env=(
+    -u NEMOCLAW_PERL_SKIP_RAW_ICMPV4_TESTS
+    -u NEMOCLAW_PERL_SKIP_RAW_ICMPV6_TESTS
+  )
   if ./perl -Ilib \
     -MErrno=EACCES,EPERM \
     -MSocket=AF_INET,IPPROTO_ICMP,SOCK_RAW \
