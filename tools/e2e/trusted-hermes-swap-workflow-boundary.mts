@@ -218,7 +218,6 @@ export const TRUSTED_HERMES_SWAP_SCRIPT = [
 ].join("\n");
 
 const JOB_CONDITIONS = {
-  "common-egress-agent": `\${{ ${TRUSTED_HERMES_SWAP_IF} && matrix.scenario == 'hermes-open-reference' }}`,
   "hermes-e2e": `\${{ ${TRUSTED_HERMES_SWAP_IF} && ${TRUSTED_HERMES_E2E_ELIGIBILITY} }}`,
   "mcp-bridge": `\${{ ${TRUSTED_HERMES_SWAP_IF} && matrix.agent == 'hermes' }}`,
 } as const;

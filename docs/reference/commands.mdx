@@ -1187,10 +1187,8 @@ If gateway selection fails, `exec` stops without running the sandbox command.
 
 OpenClaw config resolves under `/sandbox/.openclaw`.
 
-```bash
-$$nemoclaw my-assistant exec -- openclaw agent -m "What is 2+2?"
-$$nemoclaw my-assistant exec --workdir /sandbox/workspace -- ls -la
-```
+Run one OpenClaw turn with `$$nemoclaw my-assistant exec -- openclaw agent --agent main -m "What is 2+2?"`.
+List the default OpenClaw workspace with `$$nemoclaw my-assistant exec --workdir /sandbox/.openclaw/workspace -- ls -la`.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
