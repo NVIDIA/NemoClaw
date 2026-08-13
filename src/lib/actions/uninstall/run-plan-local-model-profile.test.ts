@@ -66,9 +66,74 @@ function publishManagedLlamaOwner(
 }
 
 describe("uninstall local model profile cleanup", () => {
+  it("removes an orphaned host-local vLLM container only when its managed label is present (#8981)", () => {
+    const containerId = "a".repeat(64);
+    const runDocker = vi.fn((args: string[]) => {
+      if (args[0] === "container" && args[1] === "inspect") return ok(`${containerId} true\n`);
+      if (args[0] === "rm") return ok();
+      return ok();
+    });
+
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command === "openshell" || command === "docker",
+        env: { HOME: "/tmp/nemoclaw-uninstall-orphaned-vllm" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        log: () => {},
+        run: vi.fn(okWithKnownGatewayList),
+        runDocker,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(runDocker).toHaveBeenCalledWith(
+      ["rm", "-f", containerId],
+      expect.objectContaining({ timeout: 10_000 }),
+    );
+  });
+
+  it("preserves an orphaned host-local vLLM container without the managed label (#8981)", () => {
+    const errors: string[] = [];
+    const runDocker = vi.fn((args: string[]) => {
+      if (args[0] === "container" && args[1] === "inspect") return ok(`${"b".repeat(64)} false\n`);
+      if (args[0] === "ps" && args.at(-1) === "{{.Names}}") return ok("nemoclaw-vllm\n");
+      return ok();
+    });
+
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command === "openshell" || command === "docker",
+        env: { HOME: "/tmp/nemoclaw-uninstall-unlabeled-vllm" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        error: (message) => errors.push(message),
+        isTty: false,
+        log: () => {},
+        run: vi.fn(okWithKnownGatewayList),
+        runDocker,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(runDocker.mock.calls.some(([args]) => args[0] === "rm")).toBe(false);
+    expect(errors.join("\n")).toContain("remains after ownership-aware cleanup");
+  });
+
   it("fails before generic Docker cleanup when a reserved inference name remains", () => {
     const errors: string[] = [];
     const psResults = new Map([
+      [
+        JSON.stringify([
+          "container",
+          "inspect",
+          "--format",
+          '{{.Id}} {{index .Config.Labels "com.nvidia.nemoclaw.managed-vllm"}}',
+          "nemoclaw-vllm",
+        ]),
+        notFound(),
+      ],
       [JSON.stringify(["ps", "-a", "--format", "{{.Names}}"]), ok("nemoclaw-llama-cpp\n")],
       [
         JSON.stringify(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"]),
