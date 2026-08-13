@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
+  type ManagedTransportPhase,
   boundedErrorBodySnippet,
   buildManagedTransportFailure,
   classifyTransportPhase,
@@ -105,7 +109,7 @@ describe("classifyTransportPhase", () => {
     expect(classifyTransportPhase({ tlsFailure: true })).toBe("tls");
     expect(classifyTransportPhase({ causeCode: "CERT_HAS_EXPIRED" })).toBe("tls");
     expect(classifyTransportPhase({ proxyConnectFailure: true, causeCode: "ECONNREFUSED" })).toBe(
-      "proxy_connect",
+      "connect",
     );
     expect(classifyTransportPhase({ causeCode: "ECONNREFUSED" })).toBe("app_connect");
     expect(classifyTransportPhase({ causeCode: "UND_ERR_CONNECT_TIMEOUT" })).toBe("app_connect");
@@ -134,7 +138,7 @@ describe("buildManagedTransportFailure", () => {
         ["server", "envoy"],
         ["set-cookie", "sid=secret"],
       ],
-      sessionIdPresent: true,
+      sessionPresent: true,
       errorBody: { body: '{"error":"upstream"}', contentType: "application/json" },
     });
 
@@ -142,7 +146,7 @@ describe("buildManagedTransportFailure", () => {
     expect(event.target).toBe("mcp.example.com:443/stream");
     expect(event.causeCode).toBe("UND_ERR_SOCKET");
     expect(event.elapsedMs).toBe(1513);
-    expect(event.sessionIdPresent).toBe(true);
+    expect(event.sessionPresent).toBe(true);
     const serialized = JSON.stringify(event);
     expect(serialized).not.toContain("pw");
     expect(serialized).not.toContain("session=abc");
@@ -311,7 +315,7 @@ describe("emitManagedTransportFailure", () => {
         "operation=tools/list",
         "route=trusted_env_proxy",
         "target=mcp.example.com:443/stream",
-        "phase=response_headers",
+        "transport_phase=response_headers",
         "http_status=503",
         "elapsed_ms=1512",
         "cause_code=UND_ERR_SOCKET",
@@ -372,7 +376,7 @@ describe("emitManagedTransportFailure", () => {
     expect(line).not.toContain("\n");
     expect(line).not.toContain("\r");
     // The genuine phase field is intact and appears once as a real top-level field.
-    expect(line).toContain("phase=response_headers");
+    expect(line).toContain("transport_phase=response_headers");
     // Delimiter-bearing values are JSON-quoted, so their `key=value` fragments
     // live inside a quoted token rather than as forged fields.
     expect(line).toContain('operation="tools/list\\nmanaged_transport_failure phase=policy"');
@@ -423,8 +427,53 @@ describe("example non-MCP consumer", () => {
     deliverWebhook("https://hooks.example.com/pay?signature=secret");
 
     expect(lines[0]).toContain("consumer=webhook");
-    expect(lines[0]).toContain("phase=app_connect");
+    expect(lines[0]).toContain("transport_phase=app_connect");
     expect(lines[0]).toContain("target=hooks.example.com:443/pay");
     expect(lines.join("\n")).not.toContain("signature");
+  });
+});
+
+describe("shared vocabulary with the OpenClaw managed transport dist patch", () => {
+  const patchSource = readFileSync(
+    join(process.cwd(), "scripts/patch-openclaw-managed-transport-diagnostics.mts"),
+    "utf8",
+  );
+
+  it("emits the key names the patch documents for shared fields", () => {
+    const lines: string[] = [];
+    emitManagedTransportFailure(
+      buildManagedTransportFailure({
+        consumer: "mcp",
+        operation: "tools/list",
+        route: "trusted_env_proxy",
+        phase: "response_headers",
+        elapsedMs: 100,
+        httpStatus: 503,
+        sessionPresent: true,
+      }),
+      (line) => lines.push(line),
+    );
+
+    for (const sharedKey of ["transport_phase", "session_present"]) {
+      expect(lines[0]).toContain(`${sharedKey}=`);
+      expect(patchSource).toContain(sharedKey);
+    }
+    // trace_id stays distinct from the patch's diagnostic_id, which is
+    // documented as a local identifier that does not correlate across
+    // process boundaries.
+    expect(lines[0]).toContain("trace_id=");
+    expect(lines[0]).not.toContain("diagnostic_id=");
+  });
+
+  it("covers every phase the patch classifier can return", () => {
+    const patchPhases = ["policy", "connect", "tls", "app_connect", "request", "response_headers"];
+    const contractPhases: ManagedTransportPhase[] = [
+      ...(patchPhases as ManagedTransportPhase[]),
+      "response_stream",
+    ];
+    for (const phase of patchPhases) {
+      expect(patchSource).toContain(`return "${phase}"`);
+    }
+    expect(contractPhases).toHaveLength(7);
   });
 });

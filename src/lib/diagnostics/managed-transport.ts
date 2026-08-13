@@ -19,10 +19,15 @@ import { sanitizeTraceAttributes } from "../trace";
 /** The event name shared with OpenShell audit correlation. */
 export const MANAGED_TRANSPORT_FAILURE_EVENT = "managed_transport_failure";
 
-/** The transport phase that failed, in connection order. */
+/**
+ * The transport phase that failed, in connection order. The first six values
+ * match the documented `transport_phase` vocabulary of the OpenClaw managed
+ * transport dist patch; `response_stream` extends it for consumers that
+ * classify failures after response headers arrive.
+ */
 export type ManagedTransportPhase =
   | "policy"
-  | "proxy_connect"
+  | "connect"
   | "tls"
   | "app_connect"
   | "request"
@@ -56,7 +61,7 @@ export interface ManagedTransportFailure {
   xRequestId?: string;
   xEnvoyResponseFlags?: string;
   /** Whether an opaque application session identifier was present; never its value. */
-  sessionIdPresent?: boolean;
+  sessionPresent?: boolean;
   errorBodySnippet?: string;
 }
 
@@ -198,7 +203,7 @@ export function classifyTransportPhase(input: {
 }): ManagedTransportPhase {
   if (input.policyDenied) return "policy";
   if (input.tlsFailure) return "tls";
-  if (input.proxyConnectFailure) return "proxy_connect";
+  if (input.proxyConnectFailure) return "connect";
   const code = input.causeCode ?? "";
   if (
     /^(?:UND_ERR_CONNECT_TIMEOUT|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|ENOTFOUND|EAI_AGAIN)$/.test(
@@ -230,7 +235,7 @@ export interface ManagedTransportFailureInput {
   httpStatus?: number;
   error?: unknown;
   responseHeaders?: Iterable<[string, string]>;
-  sessionIdPresent?: boolean;
+  sessionPresent?: boolean;
   errorBody?: { body: string; contentType?: string };
 }
 
@@ -262,7 +267,7 @@ export function buildManagedTransportFailure(
     ...(causeCode === undefined ? {} : { causeCode }),
     causeChain,
     ...(input.responseHeaders === undefined ? {} : pickSafeResponseHeaders(input.responseHeaders)),
-    ...(input.sessionIdPresent === undefined ? {} : { sessionIdPresent: input.sessionIdPresent }),
+    ...(input.sessionPresent === undefined ? {} : { sessionPresent: input.sessionPresent }),
     ...(input.errorBody === undefined || !isErrorStatus(input.httpStatus)
       ? {}
       : (() => {
@@ -311,12 +316,16 @@ export function emitManagedTransportFailure(
   const push = (key: string, value: string | number | boolean | undefined) => {
     if (value !== undefined) pairs.push(`${key}=${encodeLogField(value)}`);
   };
+  // Key names shared with the OpenClaw managed transport dist patch use its
+  // documented vocabulary: transport_phase and session_present, as read by
+  // the MCP troubleshooting guide. trace_id stays distinct from the patch's
+  // diagnostic_id, which is documented as a local, non-correlating identifier.
   push("consumer", event.consumer);
   push("operation", event.operation);
   push("route", event.route);
   push("proxy", event.proxy);
   push("target", event.target);
-  push("phase", event.phase);
+  push("transport_phase", event.phase);
   push("http_status", event.httpStatus);
   push("elapsed_ms", event.elapsedMs);
   push("cause_code", event.causeCode);
@@ -324,7 +333,7 @@ export function emitManagedTransportFailure(
   push("response_via", event.responseVia);
   push("x_request_id", event.xRequestId);
   push("x_envoy_response_flags", event.xEnvoyResponseFlags);
-  push("session_id_present", event.sessionIdPresent);
+  push("session_present", event.sessionPresent);
   push("trace_id", event.traceId);
   write(pairs.join(" "));
   if (event.causeChain.length > 0) {
