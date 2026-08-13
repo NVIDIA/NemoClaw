@@ -62,7 +62,9 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
       reference: "openshell/sandbox-from:new",
     },
     lifecycleGeneration: "replacement-generation",
-    lifecycleLiveIdentityFingerprint: "replacement-identity",
+    lifecycleLiveIdentityFingerprint: fingerprintSandboxRecreateValue(
+      "openshell-replacement-id",
+    ),
   };
   const phases: Array<string | null> = [];
   const updateSession = vi.fn((mutator: (value: Session) => Session | void) => {
