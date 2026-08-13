@@ -176,7 +176,6 @@ async function expectSandboxExecAlive(
   expect(alive.stdout.trim(), resultText(alive)).toBe("alive");
 }
 
-// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "sandbox survives gateway restart with registry, state, SSH, and live inference intact",
   {

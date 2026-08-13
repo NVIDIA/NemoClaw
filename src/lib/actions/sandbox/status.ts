@@ -64,7 +64,6 @@ function maybeEnsureHermesToolGatewayBroker(sb: registry.SandboxEntry | null): v
   }
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: status composes independent diagnostic surfaces.
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
   const preflight = await getSandboxStatusPreflight(registry.getSandbox(sandboxName));
   // #2666: never let an unexpected throw from the gateway probe (e.g. openshell
