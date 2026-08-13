@@ -457,6 +457,7 @@ describe("inference selection validation", () => {
       probeAnthropicEndpoint,
       promptValidationRecovery: vi.fn(async () => "selection" as const),
       resolveEndpointHost: async () => [{ address: "169.254.169.254", family: 4 }],
+      teardownOrphanManagedGatewayOnAbort: vi.fn(),
     });
 
     try {
@@ -874,6 +875,7 @@ exit 0
       probeOpenAiLikeEndpoint,
       promptValidationRecovery,
       resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
+      teardownOrphanManagedGatewayOnAbort: vi.fn(),
     });
 
     try {
