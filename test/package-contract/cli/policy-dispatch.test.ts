@@ -252,9 +252,17 @@ network_policies:
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-file-no-"));
       const file = path.join(tmp, "custom-rule.yaml");
       fs.writeFileSync(file, "preset:\n  name: custom-rule\nnetwork_policies: {}\n");
-      const result = runPolicyAddExternal(["--from-file", file], {}, "no");
+      const result = runPolicyAddExternal(
+        ["--from-file", file],
+        { NEMOCLAW_NON_INTERACTIVE: undefined },
+        "no",
+      );
       expect(result.status).toBe(0);
       const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      expect(calls).toContainEqual({
+        type: "load",
+        path: file,
+      });
       expect(calls.some((c) => c.type === "prompt")).toBeFalsy();
       expect(calls).toContainEqual({
         type: "apply",
