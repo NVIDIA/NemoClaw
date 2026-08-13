@@ -165,6 +165,12 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   }
 
   const runJob = record(record(profile.jobs).run);
+  if (
+    Object.keys(runJob).sort().join(",") !==
+    ["env", "name", "runs-on", "steps", "timeout-minutes"].sort().join(",")
+  ) {
+    errors.push("standard E2E profile must expose only its reviewed job settings");
+  }
   if (runJob["runs-on"] !== "${{ inputs.runner }}") {
     errors.push("standard E2E profile must use the catalogue runner");
   }
@@ -172,18 +178,41 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     errors.push("standard E2E profile must use the catalogue timeout");
   }
   const jobEnv = record(runJob.env);
-  for (const [name, expected] of Object.entries({
+  const expectedJobEnv = {
     E2E_JOB: "1",
     E2E_TARGET_ID: "${{ inputs.target_id }}",
     E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/${{ inputs.target_id }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.candidate_sha }}",
     NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: "${{ inputs.candidate_sha }}",
-  })) {
+  };
+  if (Object.keys(jobEnv).sort().join(",") !== Object.keys(expectedJobEnv).sort().join(",")) {
+    errors.push("standard E2E profile must expose only its reviewed job environment");
+  }
+  for (const [name, expected] of Object.entries(expectedJobEnv)) {
     if (jobEnv[name] !== expected) errors.push(`standard E2E profile must set ${name}`);
   }
 
   const workflowSteps = steps(runJob.steps);
+  const expectedStepNames = [
+    undefined,
+    "Authenticate to Docker Hub",
+    "Install target host dependencies",
+    "Prepare E2E workspace",
+    "Restore exact-commit CLI artifact",
+    "Install OpenShell CLI",
+    "Install OpenShell CLI without workflow credentials",
+    "Run catalogue E2E target",
+    "Write E2E evidence manifest",
+    "Upload E2E artifacts",
+    "Clean up Docker auth",
+  ];
+  if (
+    workflowSteps.length !== expectedStepNames.length ||
+    workflowSteps.some((step, index) => step.name !== expectedStepNames[index])
+  ) {
+    errors.push("standard E2E profile must keep its reviewed step set and order");
+  }
   const checkout = workflowSteps.find((step) => step.uses?.startsWith("actions/checkout@"));
   requirePinnedAction(errors, checkout, "checkout");
   const checkoutWith = record(checkout?.with);
@@ -294,9 +323,12 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const upload = requireStep(errors, workflowSteps, "Upload E2E artifacts");
   if (
     upload?.if !== "always()" ||
-    upload.uses !== E2E_ACTION_PROVENANCE.uploadArtifacts.reference
+    upload.uses !== E2E_ACTION_PROVENANCE.uploadArtifacts.reference ||
+    Object.keys(record(upload.with)).length !== 0
   ) {
-    errors.push("standard E2E profile must always upload artifacts with the reviewed action");
+    errors.push(
+      "standard E2E profile must always upload its target-derived artifact path with the reviewed action",
+    );
   }
   const evidence = requireStep(errors, workflowSteps, "Write E2E evidence manifest");
   const evidenceEnv = record(evidence?.env);

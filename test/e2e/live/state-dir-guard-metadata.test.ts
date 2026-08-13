@@ -782,7 +782,6 @@ async function runAgentProbe(
   });
 }
 
-// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "installed state-dir guard applies each agent's generated plan without losing metadata (#6059)",
   {
