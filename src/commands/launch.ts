@@ -10,7 +10,7 @@ export default class LaunchCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Connect to a sandbox and start its agent";
   static description =
-    "Run the same preflight as connect, then start the sandbox's agent in one step so an interactive session does not need a second command typed inside the sandbox.";
+    "Validate a current launch-readiness lease or run the complete connect preflight, then start the sandbox's agent in one step so an interactive session does not need a second command typed inside the sandbox.";
   static usage = ["launch <name>"];
   static examples = ["<%= config.bin %> launch alpha"];
   static args = {

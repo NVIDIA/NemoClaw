@@ -403,6 +403,10 @@ const OBSERVED_CHILD_PROGRESS_POLICIES = new Map<string, ObservedChildProgressPo
     "test/e2e/live/windows-mxc-openclaw-process-container-helpers.ts#runWindowsMxcOpenClawProcessContainerQualification",
     { kind: "path", path: "progress" },
   ],
+  [
+    "test/e2e/live/onboard-interactive-pty.ts#driveInteractiveCommand",
+    { kind: "path", path: "options.progress" },
+  ],
 ]);
 
 interface DirectChildProcessBindings {

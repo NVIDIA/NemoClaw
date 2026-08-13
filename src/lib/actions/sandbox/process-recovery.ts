@@ -271,10 +271,22 @@ export function executeGatewaySupervisorAction(
 async function executeSandboxExecCommandForStatus(
   sandboxName: string,
   command: string,
+  gatewayName?: string,
+  capture: typeof captureOpenshellForStatus = captureOpenshellForStatus,
 ): Promise<SandboxCommandResult | null> {
   const markedCommand = buildSandboxExecMarkedCommand(command);
-  const result = await captureOpenshellForStatus(
-    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", markedCommand],
+  const result = await capture(
+    [
+      "sandbox",
+      "exec",
+      "--name",
+      sandboxName,
+      ...(gatewayName ? ["-g", gatewayName] : []),
+      "--",
+      "sh",
+      "-c",
+      markedCommand,
+    ],
     { ignoreError: true },
   );
   if (isCommandTimeout(result) || result.error) return null;
@@ -460,12 +472,20 @@ export function confirmRecoveredSandboxGatewayManaged(
 
 export async function isSandboxGatewayRunningForStatus(
   sandboxName: string,
+  gatewayName?: string,
+  options: {
+    getSessionAgent?: typeof agentRuntime.getSessionAgent;
+    capture?: typeof captureOpenshellForStatus;
+    getHealthProbeUrl?: typeof getSandboxHealthProbeUrl;
+  } = {},
 ): Promise<boolean | null> {
-  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const agent = (options.getSessionAgent ?? agentRuntime.getSessionAgent)(sandboxName);
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return null;
-  const probeUrl = getSandboxHealthProbeUrl(sandboxName);
+  const probeUrl = (options.getHealthProbeUrl ?? getSandboxHealthProbeUrl)(sandboxName);
   const command = `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null || echo 000); case "$HTTP_CODE" in 200|401) echo RUNNING ;; *) echo STOPPED ;; esac`;
-  return parseSandboxGatewayProbe(await executeSandboxExecCommandForStatus(sandboxName, command));
+  return parseSandboxGatewayProbe(
+    await executeSandboxExecCommandForStatus(sandboxName, command, gatewayName, options.capture),
+  );
 }
 
 /**

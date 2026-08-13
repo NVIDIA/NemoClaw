@@ -20,7 +20,10 @@ export async function recoverSandboxWithHermesCronRestore(sandboxName: string): 
       if (agent?.name === "hermes") {
         prepareHermesCronRestoreRecovery(sandboxName);
       }
-      await connectSandbox(sandboxName, { probeOnly: true });
+      await connectSandbox(sandboxName, {
+        probeOnly: true,
+        requireLaunchReadinessPublication: false,
+      });
       if (agent?.name !== "hermes") return;
 
       const outcome = recoverHermesCronRestore(sandboxName);

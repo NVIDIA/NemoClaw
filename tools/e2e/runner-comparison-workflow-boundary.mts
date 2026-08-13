@@ -9,60 +9,23 @@ import { UPLOAD_E2E_ARTIFACTS_ACTION } from "./upload-e2e-artifacts-workflow-bou
 export const RUNNER_COMPARISON_INITIALIZE_STEP = "Initialize runner comparison telemetry";
 export const RUNNER_COMPARISON_FINALIZE_STEP = "Finalize runner comparison telemetry";
 export const RUNNER_COMPARISON_COMMAND = "npx tsx tools/e2e/runner-comparison.mts";
-export const HERMES_REBUILD_SWAP_STEP = "Add swap for Hermes image rebuild";
 
 const TRUSTED_MAIN_GUARD =
   "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == ''";
-const HERMES_AGENT_GUARD = "matrix.agent == 'hermes'";
 const MCP_AGENT_GUARD = "(matrix.agent == 'hermes' || matrix.agent == 'deepagents')";
 const ORDINARY_INITIALIZE_GUARD = `\${{ ${TRUSTED_MAIN_GUARD} }}`;
 const ORDINARY_FINALIZE_GUARD = `\${{ always() && ${TRUSTED_MAIN_GUARD} }}`;
-const HERMES_INITIALIZE_GUARD = `\${{ ${TRUSTED_MAIN_GUARD} && ${HERMES_AGENT_GUARD} }}`;
-const HERMES_FINALIZE_GUARD = `\${{ always() && ${TRUSTED_MAIN_GUARD} && ${HERMES_AGENT_GUARD} }}`;
 const MCP_INITIALIZE_GUARD = `\${{ ${TRUSTED_MAIN_GUARD} && ${MCP_AGENT_GUARD} }}`;
 const MCP_FINALIZE_GUARD = `\${{ always() && ${TRUSTED_MAIN_GUARD} && ${MCP_AGENT_GUARD} }}`;
 
 const COMPARISON_JOBS: ReadonlyMap<string, { initializeIf: string; finalizeIf: string }> = new Map([
   [
-    "agent-turn-latency",
-    { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
-  ],
-  [
-    "channels-stop-start",
-    { initializeIf: HERMES_INITIALIZE_GUARD, finalizeIf: HERMES_FINALIZE_GUARD },
-  ],
-  [
     "common-egress-agent",
     { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
   ],
-  [
-    "hermes-discord",
-    { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
-  ],
   ["hermes-e2e", { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD }],
-  [
-    "hermes-inference-switch",
-    { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
-  ],
-  [
-    "hermes-shields-config",
-    { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
-  ],
   ["mcp-bridge", { initializeIf: MCP_INITIALIZE_GUARD, finalizeIf: MCP_FINALIZE_GUARD }],
-  [
-    "rebuild-hermes",
-    { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
-  ],
-  [
-    "rebuild-hermes-stale-base",
-    { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
-  ],
-  [
-    "security-posture",
-    { initializeIf: HERMES_INITIALIZE_GUARD, finalizeIf: HERMES_FINALIZE_GUARD },
-  ],
 ]);
-const HERMES_REBUILD_SWAP_JOBS = new Set(["rebuild-hermes", "rebuild-hermes-stale-base"]);
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -137,8 +100,8 @@ function publicationIndex(jobSteps: readonly WorkflowStep[]): number {
 }
 
 /**
- * Keep runner diagnostics to 12 routed workflow lane identities / 14 concrete
- * trusted-main job executions. Telemetry is best-effort, but it must span the
+ * Keep runner diagnostics on the three retained routed workflow jobs.
+ * Telemetry is best-effort, but it must span the
  * complete stable-capacity job and finish before evidence is scanned or
  * uploaded. Rebuild jobs establish their fixed swap capacity first because the
  * v2 ledger rejects capacity changes after initialization.
@@ -147,7 +110,6 @@ export function validateRunnerComparisonWorkflow(workflowValue: unknown): string
   const jobs = record(record(workflowValue).jobs);
   const errors: string[] = [];
 
-  requireExactMatrixValues(errors, jobs, "channels-stop-start", "agent", ["openclaw", "hermes"]);
   requireExactMatrixValues(errors, jobs, "common-egress-agent", "scenario", [
     "openclaw-balanced-weather",
     "openclaw-open-reference",
@@ -158,8 +120,6 @@ export function validateRunnerComparisonWorkflow(workflowValue: unknown): string
     "hermes",
     "deepagents",
   ]);
-  requireExactMatrixValues(errors, jobs, "security-posture", "agent", ["openclaw", "hermes"]);
-  requireExactMatrixValues(errors, jobs, "hermes-inference-switch", "mode", ["anthropic"]);
 
   for (const [jobId, value] of Object.entries(jobs)) {
     const jobSteps = steps(record(value).steps);
@@ -200,19 +160,7 @@ export function validateRunnerComparisonWorkflow(workflowValue: unknown): string
     const initializeIndex = jobSteps.indexOf(initialize);
     const finalizeIndex = jobSteps.indexOf(finalize);
     const publish = publicationIndex(jobSteps);
-    if (HERMES_REBUILD_SWAP_JOBS.has(jobId)) {
-      const swapIndex = jobSteps.findIndex((step) => step.name === HERMES_REBUILD_SWAP_STEP);
-      if (
-        prepare < 0 ||
-        bootstrapEnd < prepare ||
-        swapIndex !== bootstrapEnd + 1 ||
-        initializeIndex !== swapIndex + 1
-      ) {
-        errors.push(
-          `${jobId} must establish rebuild swap before initializing runner comparison telemetry`,
-        );
-      }
-    } else if (prepare < 0 || bootstrapEnd < prepare || initializeIndex !== bootstrapEnd + 1) {
+    if (prepare < 0 || bootstrapEnd < prepare || initializeIndex !== bootstrapEnd + 1) {
       errors.push(
         `${jobId} must initialize runner comparison telemetry immediately after ${initializationBoundary}`,
       );

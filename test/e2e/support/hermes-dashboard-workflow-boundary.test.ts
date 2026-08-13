@@ -20,13 +20,13 @@ describe("Hermes dashboard workflow boundary", () => {
     canonicalJob.steps!.find((step) => step.name === "Run Hermes live Vitest test")!.run =
       "echo skipped";
     workflow.jobs["hermes-dashboard"] = structuredClone(canonicalJob);
-    workflow.jobs["hermes-discord"].env!.NEMOCLAW_E2E_HERMES_DASHBOARD = "1";
+    workflow.jobs["token-rotation"].env!.NEMOCLAW_E2E_HERMES_DASHBOARD = "1";
     workflow.jobs["report-to-pr"].needs = ["hermes-dashboard"];
 
     expect(validateHermesDashboardWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "hermes-dashboard must remain consolidated into hermes-e2e",
-        "only hermes-e2e may enable Hermes dashboard E2E coverage (found on hermes-discord)",
+        "only hermes-e2e may enable Hermes dashboard E2E coverage (found on token-rotation)",
         "hermes-e2e must enable Hermes dashboard coverage",
         "hermes-e2e must preserve manual inference-mode selection",
         "hermes-e2e must publish its canonical selector",

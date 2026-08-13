@@ -10,7 +10,7 @@ import ts from "typescript";
 import YAML from "yaml";
 import { PR_E2E_MANUAL_CONTROLLER_JOB_IDS, RISK_RULES } from "../advisors/risk-plan.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
-import { catalogueTarget } from "./target-catalogue.mts";
+import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-catalogue.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -498,7 +498,8 @@ function validatePrGateEvidenceProducers(errors: string[], workflow: OperationsW
     const job = workflow.jobs[jobId];
     if (!job) {
       try {
-        catalogueTarget(jobId);
+        const catalogueId = E2E_TARGET_CATALOGUE.find((target) => target.targetId === jobId)?.id;
+        catalogueTarget(catalogueId ?? jobId);
       } catch {
         errors.push(`Risk-plan job is missing from E2E workflow or catalogue: ${jobId}`);
       }
