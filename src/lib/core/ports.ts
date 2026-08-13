@@ -64,8 +64,23 @@ export const OLLAMA_PORT = parsePort("NEMOCLAW_OLLAMA_PORT", 11434);
 export const OLLAMA_PROXY_PORT = parsePort("NEMOCLAW_OLLAMA_PROXY_PORT", 11435);
 /** llama.cpp existing-server attachment port; fixed by the declarative serving contract. */
 export { LLAMA_CPP_PORT };
-/** Hermes OpenAI-compatible API port (manifest `forward_ports[1]` / start.sh `PUBLIC_PORT`); reserved — never a valid dashboard port, for any agent. (#4984) */
+/** Default Hermes OpenAI-compatible API port (manifest `forward_ports[1]`; the default for start.sh `PUBLIC_PORT`). */
 export const HERMES_OPENAI_API_PORT = 8642;
+/** Start of the auto-allocation range for Hermes API ports (inclusive). */
+export const HERMES_API_PORT_RANGE_START = HERMES_OPENAI_API_PORT;
+/** End of the auto-allocation range for Hermes API ports (inclusive). */
+export const HERMES_API_PORT_RANGE_END = 8652;
+
+/**
+ * The API port is a per-sandbox host resource: each Hermes sandbox exposes its
+ * OpenAI-compatible API on its own port allocated from
+ * `HERMES_API_PORT_RANGE_START` through `HERMES_API_PORT_RANGE_END`, so two
+ * sandboxes can serve inference on one host. Every port in that range is
+ * therefore unavailable as a dashboard port, for any agent.
+ */
+export function isHermesApiPort(port: number): boolean {
+  return port >= HERMES_API_PORT_RANGE_START && port <= HERMES_API_PORT_RANGE_END;
+}
 /** Bedrock Runtime adapter port (default 11436, override via NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT). */
 export const BEDROCK_RUNTIME_ADAPTER_PORT = parsePort(
   "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",

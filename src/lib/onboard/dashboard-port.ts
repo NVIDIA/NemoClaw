@@ -33,6 +33,7 @@ type RunCaptureFn = typeof import("../runner").runCapture;
 type SandboxRegistryEntry = {
   name: string;
   dashboardPort?: number | null;
+  hermesApiPort?: number | null;
   scopeGatewayPort?: number;
 };
 
@@ -224,8 +225,9 @@ function mergeOccupiedPorts(
  * `listSandboxesFn` is an injectable seam for tests; production callers
  * leave it at the host-wide default.
  */
-export function getRegistryOccupiedDashboardPorts(
+function getRegistryOccupiedPorts(
   currentSandboxName: string,
+  selectPort: (entry: SandboxRegistryEntry) => number | null | undefined,
   listSandboxesFn?: ListSandboxesFn,
 ): Map<string, string> {
   const occupied = new Map<string, string>();
@@ -236,6 +238,7 @@ export function getRegistryOccupiedDashboardPorts(
         ({ entry, gatewayPort }) => ({
           name: entry.name,
           dashboardPort: entry.dashboardPort,
+          hermesApiPort: entry.hermesApiPort,
           scopeGatewayPort: gatewayPort,
         }),
       ),
@@ -246,7 +249,7 @@ export function getRegistryOccupiedDashboardPorts(
       (entry.scopeGatewayPort === undefined || entry.scopeGatewayPort === GATEWAY_PORT)
     )
       continue;
-    const port = entry.dashboardPort;
+    const port = selectPort(entry);
     if (typeof port !== "number" || !Number.isInteger(port) || port <= 0) continue;
     const owner =
       entry.scopeGatewayPort !== undefined && entry.scopeGatewayPort !== GATEWAY_PORT
@@ -255,6 +258,105 @@ export function getRegistryOccupiedDashboardPorts(
     occupied.set(String(port), owner);
   }
   return occupied;
+}
+
+/**
+ * Cross-gateway occupancy view for dashboard ports, keyed by port. See
+ * {@link getRegistryOccupiedPorts} for why the registry supplements the
+ * per-gateway forward list.
+ */
+export function getRegistryOccupiedDashboardPorts(
+  currentSandboxName: string,
+  listSandboxesFn?: ListSandboxesFn,
+): Map<string, string> {
+  return getRegistryOccupiedPorts(
+    currentSandboxName,
+    (entry) => entry.dashboardPort,
+    listSandboxesFn,
+  );
+}
+
+/**
+ * Cross-gateway occupancy view for Hermes API ports. The API forward is a
+ * per-sandbox host resource just like the dashboard forward, so allocation
+ * needs the same host-wide registry view that `openshell forward list` cannot
+ * provide on its own.
+ */
+export function getRegistryOccupiedHermesApiPorts(
+  currentSandboxName: string,
+  listSandboxesFn?: ListSandboxesFn,
+): Map<string, string> {
+  return getRegistryOccupiedPorts(
+    currentSandboxName,
+    (entry) => entry.hermesApiPort,
+    listSandboxesFn,
+  );
+}
+
+/** A contiguous host-port range that one sandbox resource is allocated from. */
+export interface HostPortRange {
+  start: number;
+  end: number;
+  /** Names the resource in the range-exhausted error, e.g. "dashboard". */
+  label: string;
+  /** Operator remedy appended to the range-exhausted error. */
+  remedy: string;
+}
+
+const DASHBOARD_RANGE: HostPortRange = {
+  start: DASHBOARD_PORT_RANGE_START,
+  end: DASHBOARD_PORT_RANGE_END,
+  label: "dashboard",
+  remedy: "Free a sandbox or use --control-ui-port <N> with a port outside this range.",
+};
+
+/**
+ * Find the next available port in `range` for the given sandbox. Returns the
+ * preferred port when it is free or already owned by this sandbox, otherwise
+ * scans the range. Shared by the dashboard allocator and the Hermes API-port
+ * allocator so both apply the same forward-list, registry, and host-bind view.
+ */
+export function findAvailablePortInRange(
+  sandboxName: string,
+  preferredPort: number,
+  forwardListOutput: string | null,
+  range: HostPortRange,
+  isPortBoundCheck: (port: number) => boolean = isPortBoundOnHost,
+  registryOccupiedPorts: ReadonlyMap<string, string> = new Map(),
+): number {
+  const occupied = mergeOccupiedPorts(getOccupiedPorts(forwardListOutput), registryOccupiedPorts);
+  const hostBoundPorts: number[] = [];
+  // Try the preferred port first (it may be outside the range when a caller
+  // passes --control-ui-port), then the rest of the range. Each port is probed
+  // at most once so we don't pay for `lsof` + `sudo lsof` + Node bind multiple
+  // times per port.
+  const portsToScan = [
+    preferredPort,
+    ...Array.from({ length: range.end - range.start + 1 }, (_, i) => range.start + i).filter(
+      (p) => p !== preferredPort,
+    ),
+  ];
+  for (const p of portsToScan) {
+    const pStr = String(p);
+    const pOwner = occupied.get(pStr) ?? null;
+    if (pOwner === sandboxName) return p;
+    if (pOwner === null) {
+      if (!isPortBoundCheck(p)) return p;
+      hostBoundPorts.push(p);
+    }
+  }
+
+  const ownerLines = [...occupied.entries()]
+    .filter(([p]) => Number(p) >= range.start && Number(p) <= range.end)
+    .map(([p, s]) => `  ${p} → ${s}`);
+  const hostLines = hostBoundPorts
+    .filter((p) => p >= range.start && p <= range.end)
+    .map((p) => `  ${p} → non-OpenShell host listener`);
+  const lines = [...ownerLines, ...hostLines].join("\n");
+  throw new Error(
+    `All ${range.label} ports in range ${range.start}-${range.end} are occupied:\n${lines}\n` +
+      range.remedy,
+  );
 }
 
 export function findAvailableDashboardPort(
@@ -269,41 +371,13 @@ export function findAvailableDashboardPort(
   // explicit `getRegistryOccupiedDashboardPorts(sandboxName)` result.
   registryOccupiedPorts: ReadonlyMap<string, string> = new Map(),
 ): number {
-  const occupied = mergeOccupiedPorts(getOccupiedPorts(forwardListOutput), registryOccupiedPorts);
-  const hostBoundPorts: number[] = [];
-  // Try the preferred port first (it may be outside the dashboard range when
-  // a caller passes --control-ui-port), then the rest of the range. Each port
-  // is probed at most once so we don't pay for `lsof` + `sudo lsof` + Node
-  // bind multiple times per port.
-  const portsToScan = [
+  return findAvailablePortInRange(
+    sandboxName,
     preferredPort,
-    ...Array.from(
-      { length: DASHBOARD_PORT_RANGE_END - DASHBOARD_PORT_RANGE_START + 1 },
-      (_, i) => DASHBOARD_PORT_RANGE_START + i,
-    ).filter((p) => p !== preferredPort),
-  ];
-  for (const p of portsToScan) {
-    const pStr = String(p);
-    const pOwner = occupied.get(pStr) ?? null;
-    if (pOwner === sandboxName) return p;
-    if (pOwner === null) {
-      if (!isPortBoundCheck(p)) return p;
-      hostBoundPorts.push(p);
-    }
-  }
-
-  const ownerLines = [...occupied.entries()]
-    .filter(
-      ([p]) => Number(p) >= DASHBOARD_PORT_RANGE_START && Number(p) <= DASHBOARD_PORT_RANGE_END,
-    )
-    .map(([p, s]) => `  ${p} → ${s}`);
-  const hostLines = hostBoundPorts
-    .filter((p) => p >= DASHBOARD_PORT_RANGE_START && p <= DASHBOARD_PORT_RANGE_END)
-    .map((p) => `  ${p} → non-OpenShell host listener`);
-  const lines = [...ownerLines, ...hostLines].join("\n");
-  throw new Error(
-    `All dashboard ports in range ${DASHBOARD_PORT_RANGE_START}-${DASHBOARD_PORT_RANGE_END} are occupied:\n${lines}\n` +
-      `Free a sandbox or use --control-ui-port <N> with a port outside this range.`,
+    forwardListOutput,
+    DASHBOARD_RANGE,
+    isPortBoundCheck,
+    registryOccupiedPorts,
   );
 }
 

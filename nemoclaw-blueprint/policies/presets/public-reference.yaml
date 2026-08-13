@@ -85,7 +85,6 @@ network_policies:
       - { path: /usr/bin/node }
       - { path: /usr/local/bin/hermes }
       - { path: /opt/hermes/.venv/bin/python }
-      - { path: /usr/bin/python3 }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
       - { path: /usr/bin/curl }
       - { path: /usr/local/bin/curl }

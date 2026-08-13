@@ -50,7 +50,8 @@ When the default port is already held by another sandbox, `$$nemoclaw onboard` s
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-When the default API port is already held by another sandbox, `$$nemoclaw onboard` scans for the next free port and records it for the sandbox.
+Each Hermes sandbox also needs its own OpenAI-compatible API port.
+When another sandbox or a host listener already holds the default API port `8642`, `$$nemoclaw onboard` scans ports `8642` through `8652`, uses the next free port, and records it for the sandbox.
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
