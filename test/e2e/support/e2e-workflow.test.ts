@@ -630,6 +630,30 @@ describe("e2e workflow boundary", () => {
     },
   );
 
+  it("maps a credential-free target selector to shared-e2e and its test row", () => {
+    expect(
+      evaluateE2eWorkflowDispatchSelectors({
+        targets: "vllm-docker-storage",
+      }),
+    ).toMatchObject({
+      valid: true,
+      liveTargetsRun: false,
+      selectedFreeStandingJobs: ["vllm-docker-storage"],
+      registryTargets: [],
+    });
+    expect(buildE2eWorkflowPlan({ targets: "vllm-docker-storage" })).toMatchObject({
+      matrix: [],
+      testMatrix: [
+        {
+          id: "vllm-docker-storage",
+          file: "test/vllm-docker-storage.test.ts",
+          project: "integration",
+        },
+      ],
+      selectedJobs: ["shared-e2e"],
+    });
+  });
+
   it("rejects malformed free-standing workflow metadata before matrix generation", {
     timeout: 60_000,
   }, () => {
