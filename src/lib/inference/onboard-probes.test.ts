@@ -4,9 +4,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { captureAuthConfigPath } from "../adapters/http/auth-config-test-helpers";
+import { buildOllamaProbeOptions, resetOllamaHostCache } from "./local";
 import {
   HARNESS_COUNTER,
   HARNESS_TMPDIR,
@@ -751,6 +752,72 @@ exit 0
             },
           );
           expect(result).toMatchObject({ ok: true });
+        },
+      );
+    });
+  });
+
+  describe("ambient proxy on the local Ollama route (#8985)", () => {
+    const proxySensitiveCurlBody = `if [ -n "$http_proxy" ] || [ -n "$HTTP_PROXY" ] || [ -n "$all_proxy" ] || [ -n "$ALL_PROXY" ]; then
+  if [ -n "$outfile" ]; then
+    printf '%s' '{"error":"proxy has no route to the requested origin"}' > "$outfile"
+  fi
+  printf '503'
+  exit 0
+fi
+if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`;
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      resetOllamaHostCache();
+    });
+
+    it("validates loopback Ollama while the host has an HTTP proxy configured (#8985)", () => {
+      resetOllamaHostCache();
+      vi.stubEnv("http_proxy", "http://127.0.0.1:8118");
+      vi.stubEnv("HTTP_PROXY", "http://127.0.0.1:8118");
+
+      withFakeCurlProbe(
+        {
+          script: makeFakeCurlScript(proxySensitiveCurlBody),
+          dirPrefix: "nemoclaw-ollama-ambient-proxy-probe-",
+        },
+        () => {
+          const result = probeOpenAiLikeEndpoint(
+            "http://127.0.0.1:11434/v1",
+            "qwen3.5:9b",
+            "",
+            buildOllamaProbeOptions(true),
+          );
+          expect(result).toMatchObject({ ok: true });
+        },
+      );
+    });
+
+    it("reports the proxy status when the same route is probed without the preflight pin (#8985)", () => {
+      vi.stubEnv("http_proxy", "http://127.0.0.1:8118");
+      vi.stubEnv("HTTP_PROXY", "http://127.0.0.1:8118");
+
+      withFakeCurlProbe(
+        {
+          script: makeFakeCurlScript(proxySensitiveCurlBody),
+          dirPrefix: "nemoclaw-ollama-unpinned-proxy-probe-",
+        },
+        () => {
+          const result = probeOpenAiLikeEndpoint("http://127.0.0.1:11434/v1", "qwen3.5:9b", "", {
+            skipResponsesProbe: true,
+          });
+          expect(result).toMatchObject({ ok: false });
+          expect(
+            result.failures.some((failure: { httpStatus: number }) => failure.httpStatus === 503),
+          ).toBe(true);
         },
       );
     });
