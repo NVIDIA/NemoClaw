@@ -774,7 +774,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.strictHashValid).toBe(true);
   });
 
-  it("requires a rebuild to replace a sealed canonical placeholder with its runtime generation (#8893)", () => {
+  it("refuses to replace a sealed canonical placeholder without a rebuild or sandbox recreation (#8893)", () => {
     const originalEnv = "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN\n";
     const run = runHermesRuntimeProviderPlaceholderRefresh({
       envFile: originalEnv,
