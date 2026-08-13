@@ -247,6 +247,7 @@ describe("Hermes final image layout", () => {
           "COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts",
           "COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts",
           "COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts",
+          "COPY agents/hermes/security-dependencies.patch /scripts/hermes-security-dependencies.patch",
         ],
       },
       {
