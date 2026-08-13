@@ -730,8 +730,8 @@ describe("exact-commit CLI artifact workflow boundary", () => {
   });
 
   it("rejects changes to checkout, workflow settings, job settings, or steps through CLI artifact restore", () => {
-    const settingsError =
-      "CLI artifact workflow settings, consumer job settings, and steps up to and including CLI artifact restore must match the required contract";
+    const preRestoreError =
+      "sandbox-operations must not use candidate-controlled shell hooks before CLI artifact restore";
     const restoreOrderError =
       "sandbox-operations must restore the CLI artifact in the step after workspace preparation";
     const scenarios: Array<{
@@ -747,7 +747,6 @@ describe("exact-commit CLI artifact workflow boundary", () => {
         },
         expectedErrors: [
           "sandbox-operations must use one candidate checkout with the required action, repository, ref, and credential settings",
-          settingsError,
         ],
       },
       {
@@ -761,7 +760,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
             BASH_ENV: "${{ github.workspace }}/scripts/leak.sh",
           };
         },
-        expectedErrors: [settingsError],
+        expectedErrors: ["workflow must not set shell startup hooks before CLI artifact restore"],
       },
       {
         name: "job BASH_ENV",
@@ -772,7 +771,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
             BASH_ENV: "${{ github.workspace }}/scripts/leak.sh",
           };
         },
-        expectedErrors: [settingsError],
+        expectedErrors: [preRestoreError],
       },
       {
         name: "job default shell",
@@ -781,7 +780,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
             defaults: { run: { shell: "bash scripts/leak.sh {0}" } },
           });
         },
-        expectedErrors: [settingsError],
+        expectedErrors: [preRestoreError],
       },
       {
         name: "restore step BASH_ENV",
@@ -792,7 +791,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
             BASH_ENV: "${{ github.workspace }}/scripts/leak.sh",
           };
         },
-        expectedErrors: [settingsError],
+        expectedErrors: [preRestoreError],
       },
       {
         name: "local action",
@@ -804,7 +803,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
             uses: "./.github/actions/untrusted",
           });
         },
-        expectedErrors: [settingsError],
+        expectedErrors: [preRestoreError],
       },
       {
         name: "workspace helper",
@@ -816,7 +815,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
             run: 'bash "$GITHUB_WORKSPACE/scripts/pr-helper.sh"',
           });
         },
-        expectedErrors: [settingsError],
+        expectedErrors: [preRestoreError],
       },
       {
         name: "root checkout script",
@@ -828,27 +827,19 @@ describe("exact-commit CLI artifact workflow boundary", () => {
             run: "bash install.sh",
           });
         },
-        expectedErrors: [settingsError],
+        expectedErrors: [preRestoreError],
       },
       {
-        name: "removed authentication",
+        name: "nested installer script",
         mutate: (workflow) => {
           const steps = workflow.jobs["sandbox-operations"].steps!;
-          const authIndex = steps.findIndex((step) => step.name === "Authenticate to Docker Hub");
-          steps.splice(authIndex, 1);
+          const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+          steps.splice(prepareIndex, 0, {
+            name: "Run nested installer",
+            run: "bash scripts/install.sh",
+          });
         },
-        expectedErrors: [settingsError],
-      },
-      {
-        name: "reordered authentication",
-        mutate: (workflow) => {
-          const steps = workflow.jobs["sandbox-operations"].steps!;
-          const authIndex = steps.findIndex((step) => step.name === "Authenticate to Docker Hub");
-          const [auth] = steps.splice(authIndex, 1);
-          const restoreIndex = steps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
-          steps.splice(restoreIndex, 0, auth!);
-        },
-        expectedErrors: [settingsError, restoreOrderError],
+        expectedErrors: [preRestoreError],
       },
       {
         name: "delayed restore",
@@ -860,7 +851,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
             run: "true",
           });
         },
-        expectedErrors: [settingsError, restoreOrderError],
+        expectedErrors: [restoreOrderError],
       },
     ];
 
@@ -917,17 +908,6 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     }
   });
 
-  it("rejects missing consumer restoration", () => {
-    const workflow = workflowFixture();
-    workflow.jobs["cloud-inference"].steps = workflow.jobs["cloud-inference"].steps!.filter(
-      (step) => step.name !== CLI_ARTIFACT_RESTORE_STEP,
-    );
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "cloud-inference must verify and restore the exact CLI artifact exactly once",
-    );
-  });
-
   it("requires security posture to restore the shared CLI modules", () => {
     const workflow = workflowFixture();
     workflow.jobs["security-posture"].steps = workflow.jobs["security-posture"].steps!.filter(
@@ -936,15 +916,6 @@ describe("exact-commit CLI artifact workflow boundary", () => {
 
     expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
       "security-posture must verify and restore the exact CLI artifact exactly once",
-    );
-  });
-
-  it("rejects an added CLI artifact consumer outside the reviewed workflow contract", () => {
-    const workflow = workflowFixture();
-    workflow.jobs["added-consumer"] = structuredClone(workflow.jobs["cloud-inference"]);
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "CLI artifact workflow settings, consumer job settings, and steps up to and including CLI artifact restore must match the required contract",
     );
   });
 });

@@ -458,6 +458,54 @@ verify_hermes_config_integrity() {
   fi
 }
 
+prepare_hermes_lazy_dependencies() {
+  local -a installer=(
+    env
+    HOME=/sandbox
+    UV_CACHE_DIR=/sandbox/.hermes/cache/uv
+    UV_NO_CACHE=1
+    HERMES_HOME="$HERMES_DIR"
+    HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages
+  )
+
+  # The separated gateway identity deliberately has no write access to the
+  # durable dependency tree. Route the allowlisted installer through sandbox;
+  # same-UID OpenShell startup is already running under that identity.
+  if [ "$(id -u)" -eq 0 ]; then
+    installer+=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
+  fi
+  installer+=("$_HERMES_PYTHON" -I -c)
+
+  "${installer[@]}" '
+import os
+from pathlib import Path
+
+import yaml
+
+config_path = Path(os.environ["HERMES_HOME"]) / "config.yaml"
+try:
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+except Exception as exc:
+    raise SystemExit(f"[SECURITY] Unable to inspect Hermes memory configuration: {exc}") from exc
+
+memory = config.get("memory") if isinstance(config, dict) else None
+provider = memory.get("provider") if isinstance(memory, dict) else None
+if provider != "hindsight":
+    raise SystemExit(0)
+
+from tools.lazy_deps import activate_durable_lazy_target, ensure
+
+activate_durable_lazy_target()
+try:
+    ensure("memory.hindsight", prompt=False)
+except Exception as exc:
+    raise SystemExit(
+        "[SECURITY] Unable to prepare the approved Hindsight dependency "
+        f"under the sandbox-owned lazy-install target: {exc}"
+    ) from exc
+'
+}
+
 # configure_messaging_channels is provided by sandbox-init.sh (shared).
 
 print_dashboard_urls() {
@@ -1920,6 +1968,7 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 export HERMES_HOME="${HERMES_DIR}"
+export HERMES_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"
 PROXYEOF
     cat <<'TUIENVEOF'
 if [ -f /opt/hermes/ui-tui/dist/entry.js ]; then
@@ -2332,7 +2381,8 @@ prepare_hermes_gateway_restart() {
   # sandboxes instead of chowning attacker-controlled paths or adopting a new
   # hash here.
   HERMES_RESTART_FAILURE_CODE=hash-mismatch
-  verify_hermes_config_integrity
+  verify_hermes_config_integrity || return 1
+  prepare_hermes_lazy_dependencies
 }
 
 hermes_restart_unseal_on_exit() {
@@ -3028,6 +3078,7 @@ prepare_hermes_nonroot_runtime() {
   # startup mutations below so their outputs remain covered as well.
   validate_hermes_env_secret_boundary || return 1
   inspect_hermes_mcp_integrity "${HERMES_DIR}/.config-hash" || return 1
+  prepare_hermes_lazy_dependencies || return 1
   ensure_hermes_runtime_api_server_key compat || return 1
   apply_shields_up_runtime_env || return 1
   validate_hermes_env_secret_boundary || return 1
@@ -3041,6 +3092,7 @@ prepare_hermes_nonroot_runtime() {
 
 prepare_hermes_root_runtime() {
   verify_hermes_config_integrity || return 1
+  prepare_hermes_lazy_dependencies || return 1
   ensure_hermes_config_root_mode || return 1
   ensure_hermes_runtime_api_server_key both || return 1
   apply_shields_up_runtime_env || return 1

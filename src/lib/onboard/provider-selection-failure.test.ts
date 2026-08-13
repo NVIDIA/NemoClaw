@@ -15,6 +15,7 @@ function report(overrides: Partial<Parameters<typeof reportProviderSelectionFail
 
   reportProviderSelectionFailure({
     reason: { kind: "requested-provider-unavailable", providerKey: "missing" },
+    availableProviderKeys: ["build"],
     isWindowsHostOllama: false,
     rejectWindowsHostOllama: (providerKey, windowsHostSelected) => {
       rejected.push({ providerKey, windowsHostSelected });
@@ -85,7 +86,7 @@ describe("reportProviderSelectionFailure", () => {
     ]);
   });
 
-  it("reports unavailable requested providers", () => {
+  it("tells unavailable requested providers how to recover", () => {
     const { errors, rejected } = report({
       reason: { kind: "requested-provider-unavailable", providerKey: "missing-provider" },
     });
@@ -93,6 +94,35 @@ describe("reportProviderSelectionFailure", () => {
     assert.deepEqual(rejected, []);
     assert.deepEqual(errors, [
       "  Requested provider 'missing-provider' is not available in this environment.",
+      "  Re-run without NEMOCLAW_PROVIDER to choose an available provider, or install and start the requested provider before retrying.",
+    ]);
+  });
+
+  it("routes a missing vLLM server to the available managed runtime", () => {
+    const { errors, rejected } = report({
+      reason: { kind: "requested-provider-unavailable", providerKey: "vllm" },
+      availableProviderKeys: ["build", "install-vllm"],
+    });
+
+    assert.deepEqual(rejected, []);
+    assert.deepEqual(errors, [
+      "  Requested provider 'vllm' is not available in this environment.",
+      "  NEMOCLAW_PROVIDER=vllm requires an already-running local vLLM server, but none was detected.",
+      "  Re-run with NEMOCLAW_PROVIDER=install-vllm to install and start the managed vLLM runtime.",
+    ]);
+  });
+
+  it("does not recommend managed vLLM when the host has no managed runtime option", () => {
+    const { errors, rejected } = report({
+      reason: { kind: "requested-provider-unavailable", providerKey: "vllm" },
+      availableProviderKeys: ["build"],
+    });
+
+    assert.deepEqual(rejected, []);
+    assert.deepEqual(errors, [
+      "  Requested provider 'vllm' is not available in this environment.",
+      "  NEMOCLAW_PROVIDER=vllm requires an already-running local vLLM server, but none was detected.",
+      "  Start a compatible local vLLM server and retry, or choose another provider.",
     ]);
   });
 });

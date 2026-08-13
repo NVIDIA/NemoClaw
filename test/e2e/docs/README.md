@@ -24,6 +24,8 @@ Direct E2E implementations now live in Vitest. The former
 | Live target IDs and metadata | `test/e2e/registry/registry.ts`, `test/e2e/registry/definitions/baseline.ts` |
 | GitHub Actions matrix emission | `test/e2e/registry/run.ts --emit-live-matrix` |
 | Live target execution | `test/e2e/live/registry-targets.test.ts` |
+| Homogeneous target catalogue and execution | [Catalogue Targets](../README.md#catalogue-targets) |
+| Main-push and manual selection | `tools/e2e/workflow-plan.mts` |
 | Phase fixtures and clients | `test/e2e/fixtures/` |
 | Expected-state probes | `test/e2e/registry/expected-states.ts` |
 | Product-facing setup/onboarding state | `test/e2e/manifests/*.yaml` |
@@ -87,7 +89,7 @@ more than one execution provider:
   crossing the legacy Docker phase-fixture path.
 - `parity-evidence.ts` compares normalized lifecycle traces, desired-state
   fingerprints, terminal outcomes, and user-visible projections. It retains
-  exact head/base, engine, architecture, workload, managed-image, capability,
+  exact candidate and base commits, engine, architecture, workload, managed-image, capability,
   and opaque provider receipt evidence without comparing provider internals.
 
 Compile one registry-wide `RuntimeMatrixDefinition`, then attach only a
@@ -289,20 +291,24 @@ test/e2e/
   used by PR Review Advisor. It maps changed runtime surfaces to invariant
   families and canonical `e2e.yaml` jobs; it does not dispatch E2E.
 
-- `.github/workflows/e2e.yaml` selects the default workflow E2E jobs on each push
-  to `main`.
+- `.github/workflows/e2e.yaml` compares the before and candidate commits on each
+  push to `main`, then selects the catalogue targets and retained workflow jobs
+  that own the changed files. `Relevant E2E` reports a successful no-op when no
+  retained E2E owns a changed file.
   Push runs skip `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and
   `llama-cpp-dgx-spark-qualification` because a push event cannot set their
   required workflow dispatch flags.
   Runner, credential, evidence, and cleanup requirements remain job-specific.
-  A maintainer can also dispatch the trusted `main` workflow against the exact
-  head of an open internal or fork PR. The manual path validates the actor, PR
-  number, head repository, head SHA, base SHA, workflow SHA, review reason, and
+  A maintainer can also dispatch the trusted `main` workflow against the latest
+  commit from an open internal or fork PR. The manual path validates the actor,
+  PR number, PR source repository, candidate commit SHA, base commit SHA,
+  workflow SHA, review reason, and
   allowed jobs, targets, and Launchable combination before candidate checkout.
   For a PR revision run, leave `jobs` and
   `targets` empty. The run selects every default-selected free-standing workflow
-  E2E except `Exact staging Brev Launchable`. It also selects all shared credential-free tests and
-  these controller-selected registry targets:
+  E2E except `Exact staging Brev Launchable`, every catalogue target in the
+  `standard` profile, all shared credential-free tests, and these
+  controller-selected registry targets:
   `ubuntu-policy-custom-missing-presets-negative`,
   `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and
   `ubuntu-repo-docker-post-reboot-recovery`. Keep
@@ -310,8 +316,9 @@ test/e2e/
   this default selection. If the DGX Spark flag is `true`, GitHub can pause the
   qualification job for the `approve-dgx-spark-image-qualification` environment.
   An authorized environment reviewer must approve it before qualification starts.
-  The only accepted nonempty
-  `jobs` value is `managed-image-protected-runtime`; `targets` must remain empty.
+  Accepted nonempty `jobs` values are `inference-routing` and
+  `managed-image-protected-runtime`. The `jetson-nvmap-gpu` target is also
+  accepted when `allow_jetson_dispatch` is `true`.
   Refer to [NemoClaw E2E CI](../README.md).
 
 - [Jetson dispatch controller](jetson-dispatch.md) defines the NemoClaw-owned

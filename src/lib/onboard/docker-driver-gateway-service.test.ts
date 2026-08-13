@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { createVirtualClock } from "./__test-helpers__/virtual-clock";
@@ -13,7 +15,9 @@ import {
   getTrustedActiveOpenShellGatewayUserServiceIdentity,
   getTrustedActiveOpenShellGatewayUserServicePid,
   hasOpenShellGatewayUserService,
+  NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER,
+  OPENSHELL_GATEWAY_USER_SERVICE,
   OpenShellGatewayServiceTrustError,
   type SpawnSyncLikeResult,
   startOpenShellGatewayUserService,
@@ -87,6 +91,12 @@ function nonSymlinkStat(): never {
   return { isSymbolicLink: () => false } as never;
 }
 
+function throwErrno(message: string, code: string): never {
+  const error = new Error(message) as NodeJS.ErrnoException;
+  error.code = code;
+  throw error;
+}
+
 function systemdSpawn(
   events: string[],
   fragmentPath = "/lib/systemd/user/openshell-gateway.service",
@@ -111,6 +121,8 @@ describe("docker-driver-gateway-service", () => {
     expect(
       hasOpenShellGatewayUserService({
         existsSync: linuxExists,
+        getUpstreamGatewayVersion: () => "0.0.85",
+        getUpstreamGatewayVersionBounds: () => ({ max: "0.0.85", min: "0.0.85" }),
         platform: "linux",
         spawnSyncImpl: systemdSpawn([]),
       }),
@@ -382,6 +394,8 @@ describe("docker-driver-gateway-service", () => {
       env: { HOME: "/home/nvidia" },
       existsSync: (candidate) =>
         candidate === servicePath || candidate === "/lib/systemd/user/openshell-gateway.service",
+      getUpstreamGatewayVersion: () => "0.0.85",
+      getUpstreamGatewayVersionBounds: () => ({ max: "0.0.85", min: "0.0.85" }),
       home: "/home/nvidia",
       lstatSync: nonSymlinkStat,
       platform: "linux",
@@ -401,6 +415,8 @@ describe("docker-driver-gateway-service", () => {
       commandExists: () => true,
       env: {},
       existsSync: (candidate) => candidate === "/lib/systemd/user/openshell-gateway.service",
+      getUpstreamGatewayVersion: () => "0.0.85",
+      getUpstreamGatewayVersionBounds: () => ({ max: "0.0.85", min: "0.0.85" }),
       platform: "linux",
       spawnSyncImpl: systemdSpawn(events),
       validatePortOwnerForServiceStart: () => {
@@ -457,6 +473,8 @@ describe("docker-driver-gateway-service", () => {
       commandExists: () => true,
       env: {},
       existsSync: (candidate) => candidate === "/lib/systemd/user/openshell-gateway.service",
+      getUpstreamGatewayVersion: () => "0.0.85",
+      getUpstreamGatewayVersionBounds: () => ({ max: "0.0.85", min: "0.0.85" }),
       platform: "linux",
       spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
         if (args.includes(failedCommand)) {
@@ -483,28 +501,24 @@ describe("docker-driver-gateway-service", () => {
     });
   });
 
-  it("declines an upstream systemd service with a foreign executable", () => {
-    const result = startOpenShellGatewayUserService({
-      commandExists: () => true,
-      env: {},
-      existsSync: (candidate) => candidate === "/lib/systemd/user/openshell-gateway.service",
-      platform: "linux",
-      spawnSyncImpl: () =>
-        spawnResult(
-          0,
-          "",
-          trustedShowOutput(
-            "/lib/systemd/user/openshell-gateway.service",
-            "/tmp/openshell-gateway",
+  it("blocks an upstream systemd service with a foreign executable (#8926)", () => {
+    expect(() =>
+      startOpenShellGatewayUserService({
+        commandExists: () => true,
+        env: {},
+        existsSync: (candidate) => candidate === "/lib/systemd/user/openshell-gateway.service",
+        platform: "linux",
+        spawnSyncImpl: () =>
+          spawnResult(
+            0,
+            "",
+            trustedShowOutput(
+              "/lib/systemd/user/openshell-gateway.service",
+              "/tmp/openshell-gateway",
+            ),
           ),
-        ),
-    });
-
-    expect(result).toMatchObject({
-      attempted: false,
-      reason: "service not installed",
-      started: false,
-    });
+      }),
+    ).toThrow("trusted OpenShell gateway");
   });
 
   it("selects the managed service log command without service validation (#8104)", () => {
@@ -650,9 +664,7 @@ describe("docker-driver-gateway-service", () => {
     );
   });
 
-  it("continues to standalone fallback when managed service cleanup fails (#8104)", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
+  it("blocks standalone fallback when managed service cleanup fails without permission (#8926)", async () => {
     await expect(
       startPackageManagedDockerDriverGateway({
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
@@ -670,6 +682,34 @@ describe("docker-driver-gateway-service", () => {
         stopOpenShellGatewayUserService: () => {
           throw new Error("service manager unavailable");
         },
+        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
+      }),
+    ).rejects.toThrow("service manager unavailable");
+  });
+
+  it("continues only when cleanup explicitly permits standalone fallback (#8926)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(
+      startPackageManagedDockerDriverGateway({
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        exitOnFailure: false,
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: () => true,
+        registerDockerDriverGatewayEndpoint: vi.fn(),
+        runCaptureOpenshell: vi.fn(),
+        skipSandboxBridgeReachability: false,
+        startOpenShellGatewayUserService: () => ({
+          attempted: true,
+          reason: "restart failed",
+          started: false,
+        }),
+        stopOpenShellGatewayUserService: () => ({
+          attempted: true,
+          reason: "Failed to connect to bus: No medium found",
+          standaloneFallbackAllowed: true,
+          stopped: false,
+        }),
         verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
       }),
     ).resolves.toBe(false);
@@ -1021,6 +1061,7 @@ describe("docker-driver-gateway-service", () => {
       home,
       lstatSync: nonSymlinkStat,
       platform: "linux",
+      readdirSync: (() => []) as never,
       readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
       spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
     });
@@ -1032,18 +1073,35 @@ describe("docker-driver-gateway-service", () => {
     });
   });
 
-  it("refuses standalone fallback when the systemd service can activate automatically", () => {
+  it.each([
+    OPENSHELL_GATEWAY_USER_SERVICE,
+    NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
+  ])("blocks standalone fallback when the %s service can activate automatically (#8926)", (activationService) => {
     const home = "/home/nvidia";
     const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
-    const activationPath = `${home}/.config/systemd/user/default.target.wants/nemoclaw-openshell-gateway.service`;
+    const activationPath = `${home}/.config/systemd/user/default.target.wants/${activationService}.service`;
 
     const result = stopOpenShellGatewayUserService({
       commandExists: (command) => command === "systemctl",
       env: { HOME: home },
-      existsSync: (candidate) => candidate === servicePath || candidate === activationPath,
+      existsSync: (candidate) => candidate === servicePath,
       home,
-      lstatSync: nonSymlinkStat,
+      lstatSync: ((candidate: string) => ({
+        isSymbolicLink: () => candidate === activationPath,
+      })) as never,
       platform: "linux",
+      readdirSync: ((root: string) =>
+        root === path.dirname(path.dirname(activationPath))
+          ? [
+              {
+                isDirectory: () => true,
+                isSymbolicLink: () => false,
+                name: path.basename(path.dirname(activationPath)),
+              },
+            ]
+          : root === path.dirname(activationPath)
+            ? [path.basename(activationPath)]
+            : []) as never,
       readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
       spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
     });
@@ -1051,7 +1109,341 @@ describe("docker-driver-gateway-service", () => {
     expect(result).toMatchObject({
       attempted: true,
       standaloneFallbackAllowed: false,
+      standaloneFallbackBlocked: true,
       stopped: false,
     });
+    expect(result.reason).toContain("can later claim port 8080");
+  });
+
+  it("blocks standalone fallback when the service query returns an unknown error (#8926)", () => {
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+
+    const result = stopOpenShellGatewayUserService({
+      commandExists: (command) => command === "systemctl",
+      env: { HOME: home },
+      existsSync: (candidate) => candidate === servicePath,
+      home,
+      lstatSync: nonSymlinkStat,
+      platform: "linux",
+      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+      spawnSyncImpl: vi.fn(() =>
+        spawnResult(
+          1,
+          "Failed to connect to bus: No medium found\nFailed to connect to bus: Permission denied",
+        ),
+      ),
+    });
+
+    expect(result).toMatchObject({
+      attempted: true,
+      standaloneFallbackAllowed: false,
+      standaloneFallbackBlocked: true,
+      stopped: false,
+    });
+    expect(result.reason).toContain("Permission denied");
+  });
+
+  it("blocks standalone fallback when systemctl splits known and unknown diagnostics (#8926)", () => {
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+
+    const result = stopOpenShellGatewayUserService({
+      commandExists: (command) => command === "systemctl",
+      env: { HOME: home },
+      existsSync: (candidate) => candidate === servicePath,
+      home,
+      lstatSync: nonSymlinkStat,
+      platform: "linux",
+      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+      spawnSyncImpl: vi.fn(() =>
+        spawnResult(1, "Failed to connect to bus: No medium found", "Permission denied"),
+      ),
+    });
+
+    expect(result).toMatchObject({
+      standaloneFallbackAllowed: false,
+      standaloneFallbackBlocked: true,
+    });
+    expect(result.reason).toContain("Permission denied");
+  });
+
+  it("blocks standalone fallback when the systemctl query throws (#8926)", () => {
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+
+    const result = stopOpenShellGatewayUserService({
+      commandExists: (command) => command === "systemctl",
+      env: { HOME: home },
+      existsSync: (candidate) => candidate === servicePath,
+      home,
+      lstatSync: nonSymlinkStat,
+      platform: "linux",
+      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+      spawnSyncImpl: vi.fn(() => {
+        throw new Error("systemctl invocation failed");
+      }),
+    });
+
+    expect(result).toMatchObject({
+      standaloneFallbackAllowed: false,
+      standaloneFallbackBlocked: true,
+    });
+    expect(result.reason).toContain("systemctl invocation failed");
+  });
+
+  it("rejects multiple effective gateway executables (#8926)", () => {
+    const output = [
+      "FragmentPath=/usr/lib/systemd/user/openshell-gateway.service",
+      "ExecStart={ path=/usr/bin/openshell-gateway ; argv[]=/usr/bin/openshell-gateway ; }; { path=/tmp/foreign/openshell-gateway ; argv[]=/tmp/foreign/openshell-gateway ; }",
+    ].join("\n");
+
+    expect(() =>
+      hasOpenShellGatewayUserService({
+        existsSync: (candidate) => candidate === "/usr/lib/systemd/user/openshell-gateway.service",
+        platform: "linux",
+        spawnSyncImpl: () => spawnResult(0, "", output),
+      }),
+    ).toThrow("trusted OpenShell gateway");
+  });
+
+  it.each([
+    ["user data", "/home/nvidia/.local/share/systemd/user/session.target.wants"],
+    ["user runtime", "/run/user/1000/systemd/user/default.target.wants"],
+    ["user control", "/home/nvidia/.config/systemd/user.control/default.target.wants"],
+    ["runtime control", "/run/user/1000/systemd/user.control/default.target.requires"],
+    ["early generator", "/run/user/1000/systemd/generator.early/default.target.wants"],
+    ["generator", "/run/user/1000/systemd/generator/default.target.requires"],
+    ["late generator", "/run/user/1000/systemd/generator.late/default.target.wants"],
+    ["transient", "/run/user/1000/systemd/transient/default.target.requires"],
+    ["upheld", "/etc/systemd/user/default.target.upholds"],
+    ["global config", "/etc/systemd/user/default.target.requires"],
+    ["package data", "/usr/share/systemd/user/default.target.wants"],
+  ])("blocks fallback for an activation link in the %s root (#8926)", (_root, activationDirectory) => {
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+    const activationPath = `${activationDirectory}/openshell-gateway.service`;
+
+    const result = stopOpenShellGatewayUserService({
+      commandExists: (command) => command === "systemctl",
+      env: { HOME: home, XDG_RUNTIME_DIR: "/run/user/1000" },
+      existsSync: (candidate) => candidate === servicePath,
+      home,
+      lstatSync: ((candidate: string) => ({
+        isSymbolicLink: () => candidate === activationPath,
+      })) as never,
+      platform: "linux",
+      readdirSync: ((root: string) =>
+        root === activationDirectory
+          ? [path.basename(activationPath)]
+          : root === path.dirname(activationDirectory)
+            ? [{ isDirectory: () => true, name: path.basename(activationDirectory) }]
+            : []) as never,
+      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+      spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
+    });
+
+    expect(result).toMatchObject({
+      standaloneFallbackAllowed: false,
+      standaloneFallbackBlocked: true,
+    });
+    expect(result.reason).toContain(activationPath);
+  });
+
+  it("fails closed when SYSTEMD_UNIT_PATH overrides the user unit search path (#8926)", () => {
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+
+    expect(() =>
+      stopOpenShellGatewayUserService({
+        commandExists: (command) => command === "systemctl",
+        env: { HOME: home, SYSTEMD_UNIT_PATH: "/opt/custom-systemd/user" },
+        existsSync: (candidate) => candidate === servicePath,
+        home,
+        lstatSync: nonSymlinkStat,
+        platform: "linux",
+        readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+        spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
+      }),
+    ).toThrow("SYSTEMD_UNIT_PATH");
+  });
+
+  it("blocks fallback when an activation root cannot be inspected (#8926)", () => {
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+
+    expect(() =>
+      stopOpenShellGatewayUserService({
+        commandExists: (command) => command === "systemctl",
+        env: { HOME: home },
+        existsSync: (candidate) => candidate === servicePath,
+        home,
+        lstatSync: ((candidate: string) =>
+          candidate === servicePath
+            ? { isSymbolicLink: () => false }
+            : throwErrno(
+                candidate === `${home}/.local/share/systemd/user` ? "permission denied" : "missing",
+                candidate === `${home}/.local/share/systemd/user` ? "EACCES" : "ENOENT",
+              )) as never,
+        platform: "linux",
+        readdirSync: ((root: string) =>
+          root === `${home}/.local/share/systemd/user`
+            ? throwErrno("permission denied", "EACCES")
+            : throwErrno("missing", "ENOENT")) as never,
+        readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+        spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
+      }),
+    ).toThrow("permission denied");
+  });
+
+  it.each([
+    [
+      "spawn error",
+      {
+        error: new Error("Failed to connect to bus: No medium found"),
+        status: null,
+      },
+    ],
+    [
+      "missing exit status",
+      {
+        status: null,
+        stderr: "Failed to connect to bus: No medium found",
+      },
+    ],
+  ])("blocks fallback for a %s with a known-looking diagnostic (#8926)", (_case, queryResult) => {
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+
+    const result = stopOpenShellGatewayUserService({
+      commandExists: (command) => command === "systemctl",
+      env: { HOME: home },
+      existsSync: (candidate) => candidate === servicePath,
+      home,
+      lstatSync: nonSymlinkStat,
+      platform: "linux",
+      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+      spawnSyncImpl: vi.fn(() => queryResult),
+    });
+
+    expect(result).toMatchObject({
+      standaloneFallbackAllowed: false,
+      standaloneFallbackBlocked: true,
+    });
+  });
+
+  it("blocks fallback for a symlinked activation directory (#8926)", () => {
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+    const userRoot = `${home}/.config/systemd/user`;
+    const activationDirectory = `${userRoot}/default.target.wants`;
+    const activationPath = `${activationDirectory}/openshell-gateway.service`;
+
+    const result = stopOpenShellGatewayUserService({
+      commandExists: (command) => command === "systemctl",
+      env: { HOME: home },
+      existsSync: (candidate) => candidate === servicePath,
+      home,
+      lstatSync: nonSymlinkStat,
+      platform: "linux",
+      readdirSync: ((root: string) =>
+        root === userRoot
+          ? [
+              {
+                isDirectory: () => false,
+                isSymbolicLink: () => true,
+                name: "default.target.wants",
+              },
+            ]
+          : root === activationDirectory
+            ? ["openshell-gateway.service"]
+            : []) as never,
+      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+      spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
+    });
+
+    expect(result).toMatchObject({ standaloneFallbackBlocked: true });
+    expect(result.reason).toContain(activationPath);
+  });
+
+  it("blocks fallback for a dangling activation directory (#8926)", () => {
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+    const userRoot = `${home}/.config/systemd/user`;
+
+    expect(() =>
+      stopOpenShellGatewayUserService({
+        commandExists: (command) => command === "systemctl",
+        env: { HOME: home },
+        existsSync: (candidate) => candidate === servicePath,
+        home,
+        lstatSync: nonSymlinkStat,
+        platform: "linux",
+        readdirSync: ((root: string) =>
+          root === userRoot
+            ? [
+                {
+                  isDirectory: () => false,
+                  isSymbolicLink: () => true,
+                  name: "default.target.wants",
+                },
+              ]
+            : throwErrno("dangling activation directory", "ENOENT")) as never,
+        readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+        spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
+      }),
+    ).toThrow("dangling activation directory");
+  });
+
+  it("blocks fallback for a dangling activation root (#8926)", () => {
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+    const userRoot = `${home}/.config/systemd/user`;
+
+    expect(() =>
+      stopOpenShellGatewayUserService({
+        commandExists: (command) => command === "systemctl",
+        env: { HOME: home },
+        existsSync: (candidate) => candidate === servicePath,
+        home,
+        lstatSync: ((candidate: string) => ({
+          isSymbolicLink: () => candidate === userRoot,
+        })) as never,
+        platform: "linux",
+        readdirSync: ((root: string) => {
+          const error = new Error(
+            root === userRoot ? "dangling activation root" : "missing",
+          ) as NodeJS.ErrnoException;
+          error.code = "ENOENT";
+          throw error;
+        }) as never,
+        readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+        spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
+      }),
+    ).toThrow("dangling activation root");
+  });
+
+  it("does not classify a thrown known diagnostic as a manager result (#8926)", () => {
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+
+    const result = stopOpenShellGatewayUserService({
+      commandExists: (command) => command === "systemctl",
+      env: { HOME: home },
+      existsSync: (candidate) => candidate === servicePath,
+      home,
+      lstatSync: nonSymlinkStat,
+      platform: "linux",
+      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+      spawnSyncImpl: vi.fn(() => {
+        throw new Error("Failed to connect to bus: No medium found");
+      }),
+    });
+
+    expect(result).toMatchObject({
+      standaloneFallbackAllowed: false,
+      standaloneFallbackBlocked: true,
+    });
+    expect(result.reason).toContain("systemctl invocation error");
   });
 });

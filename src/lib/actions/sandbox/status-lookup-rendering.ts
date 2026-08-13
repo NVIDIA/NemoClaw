@@ -225,6 +225,13 @@ function printNonReadySandboxPhaseGuidance({
   dockerRuntime: ReturnType<typeof getSandboxDockerRuntime> | null;
 }): void {
   if (!phase || phase === "Ready") return;
+  if (dockerRuntime?.containerName && !dockerRuntime.running && !dockerRuntime.paused) {
+    console.log("");
+    console.log(`  Sandbox '${sandboxName}' is stopped.`);
+    console.log("  Workspace state is preserved.");
+    console.log(`  Start it again with \`${CLI_NAME} ${sandboxName} start\`.`);
+    return;
+  }
   // A non-ready, non-terminal phase can mean two very different things. If
   // the Docker daemon is down, OpenShell can still return a present-but-
   // Provisioning sandbox (cached/transitional state); steering the user

@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  captureNvidiaSmi,
   isDenylistedNvidiaGpuName,
   isPlausibleNvidiaGpuName,
   nvidiaHostLooksGenuine,
+  resolveNvidiaSmiCommand,
+  WSL_NVIDIA_SMI_PATH,
 } from "./gpu-trust";
 
 const originalDescriptors = new Map<"arch" | "platform", PropertyDescriptor | undefined>();
@@ -67,6 +70,36 @@ afterEach(() => {
 });
 
 describe("GPU trust helpers", () => {
+  it("keeps PATH nvidia-smi authoritative and skips the WSL fallback", () => {
+    const runCaptureImpl = vi.fn<
+      (command: readonly string[], options?: { ignoreError?: boolean }) => string
+    >(() => "NVIDIA RTX 5090");
+
+    expect(captureNvidiaSmi(["--query-gpu=name"], { isWsl: true, runCaptureImpl })).toBe(
+      "NVIDIA RTX 5090",
+    );
+    expect(runCaptureImpl).toHaveBeenCalledTimes(1);
+    expect(runCaptureImpl.mock.calls[0][0][0]).toBe("nvidia-smi");
+  });
+
+  it("resolves the stock WSL driver command for managed vLLM prerequisites (#8794)", () => {
+    const runCaptureImpl = vi.fn((command: readonly string[]) =>
+      command[4] === WSL_NVIDIA_SMI_PATH ? WSL_NVIDIA_SMI_PATH : "",
+    );
+
+    expect(resolveNvidiaSmiCommand({ isWsl: true, runCaptureImpl })).toBe(WSL_NVIDIA_SMI_PATH);
+  });
+
+  it("does not probe the WSL driver path outside WSL", () => {
+    const runCaptureImpl = vi.fn<
+      (command: readonly string[], options?: { ignoreError?: boolean }) => string
+    >(() => "");
+
+    expect(captureNvidiaSmi(["--query-gpu=name"], { isWsl: false, runCaptureImpl })).toBe("");
+    expect(runCaptureImpl).toHaveBeenCalledTimes(1);
+    expect(runCaptureImpl.mock.calls[0][0][0]).toBe("nvidia-smi");
+  });
+
   it("deny-lists JMJWOA generic placeholder GPU names even with NVIDIA prefix", () => {
     expect(isDenylistedNvidiaGpuName("NVIDIA JMJWOA-Generic-GPU")).toBe(true);
     expect(isDenylistedNvidiaGpuName("JMJWOA-Generic-NPU")).toBe(true);
