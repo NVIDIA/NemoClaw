@@ -571,6 +571,39 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 The next installer run must continue past the OpenShell installation step without reporting a version mismatch.
 
+### Installer Reports That the Systemd User Manager Is Unavailable
+
+On Linux, an OpenShell package can install `/usr/lib/systemd/user/openshell-gateway.service` on a host without a reachable systemd user manager.
+The service query can then return this diagnostic:
+
+```text
+Failed to connect to bus: No medium found
+```
+
+The installer accepts only recognized user-manager-unavailable diagnostics for the standalone gateway fallback.
+It checks `.wants`, `.requires`, and `.upholds` links in the standard systemd user unit paths.
+The installer keeps the standalone lifecycle only when neither gateway service has an activation path that can later claim port `8080`.
+The installer also stops when `SYSTEMD_UNIT_PATH` overrides the standard paths.
+The installer does not parse, modify, or remove a package or foreign unit to make this decision.
+
+If an activation path exists, the installer stops because the service can start later and compete for port `8080`.
+Restore the systemd user manager, then inspect both possible services:
+
+```bash
+systemctl --user status openshell-gateway.service
+systemctl --user is-enabled openshell-gateway.service
+systemctl --user status nemoclaw-openshell-gateway.service
+systemctl --user is-enabled nemoclaw-openshell-gateway.service
+```
+
+Resolve the competing service through its package or platform owner.
+Do not delete an activation link or edit a unit file by hand.
+Rerun the installer only after the owner confirms that no enabled user service can claim port `8080`.
+
+Unknown service query errors remain fatal.
+The installer also stops for malformed effective metadata, an untrusted unit or executable path, an executable failure, or a gateway version mismatch.
+Follow the reported condition instead of forcing the standalone fallback.
+
 <AgentOnly variant="openclaw">
 
 ### Sandbox build fails during OpenClaw plugin install

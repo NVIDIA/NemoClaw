@@ -4,7 +4,6 @@
 import {
   DEFAULT_GATEWAY_NAME,
   gatewayVolumeCandidates,
-  NEMOCLAW_OLLAMA_MODELS,
   NEMOCLAW_PROVIDERS,
   type UninstallPaths,
   uninstallStatePaths,
@@ -20,8 +19,9 @@ export interface UninstallPlanOptions {
 
 export type UninstallPlanAction =
   | { kind: "delete-docker-volume"; name: string }
+  | { kind: "delete-all-ollama-models" }
+  | { kind: "delete-hugging-face-cache-data"; path: string }
   | { kind: "delete-managed-swap" }
-  | { kind: "delete-ollama-model"; name: string }
   | { kind: "delete-related-docker-containers" }
   | { kind: "delete-related-docker-images" }
   | { kind: "delete-openshell-install-path"; path: string }
@@ -30,7 +30,8 @@ export type UninstallPlanAction =
   | { kind: "delete-runtime-glob"; pattern: string }
   | { kind: "delete-shim"; reason: string }
   | { kind: "destroy-openshell-gateway"; name: string }
-  | { kind: "preserve-ollama-models"; names: string[] }
+  | { kind: "preserve-hugging-face-cache-data"; path: string }
+  | { kind: "preserve-ollama-models" }
   | { kind: "preserve-openshell-install-paths"; paths: string[] }
   | { kind: "preserve-shim"; reason: string }
   | { kind: "stop-helper-services" }
@@ -106,10 +107,22 @@ export function buildUninstallPlan(
         ],
       },
       {
-        name: "Ollama models",
+        name: "Model stores",
         actions: options.deleteModels
-          ? NEMOCLAW_OLLAMA_MODELS.map((name) => ({ kind: "delete-ollama-model" as const, name }))
-          : [{ kind: "preserve-ollama-models", names: [...NEMOCLAW_OLLAMA_MODELS] }],
+          ? [
+              { kind: "delete-all-ollama-models" },
+              {
+                kind: "delete-hugging-face-cache-data",
+                path: paths.huggingFaceModelCacheDir,
+              },
+            ]
+          : [
+              { kind: "preserve-ollama-models" },
+              {
+                kind: "preserve-hugging-face-cache-data",
+                path: paths.huggingFaceModelCacheDir,
+              },
+            ],
       },
       {
         name: "State and binaries",

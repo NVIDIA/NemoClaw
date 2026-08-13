@@ -93,7 +93,7 @@ Run `$$nemoclaw onboard` to register a sandbox again.
 | `~/.nemoclaw/backups/` | Workspace backups written by legacy backup helpers and some recovery flows. | Only after confirming you no longer need those workspace archives. |
 | `~/.nemoclaw/mounts/` | Default local mount points created by share or mount commands. | Unmount first, then remove unused directories. |
 | `~/.nemoclaw/blueprints/` | Cached blueprint inputs used by onboarding and sandbox recreation. | Avoid manual deletion unless you plan to rerun onboarding from fresh inputs. |
-| `~/.cache/huggingface/` | Shared Hugging Face cache used by managed vLLM and managed llama.cpp model acquisition. The llama.cpp path resolves the exact YAML-declared revision and GGUF file, then verifies its size, SHA-256 digest, and filesystem identity before launch. Other applications can use the same cache. | Only after stopping every process that uses the cache. Destroy and full uninstall preserve this shared cache, including when you pass `--delete-models`. Deleting it makes affected applications download and verify model files again. |
+| `~/.cache/huggingface/` | Shared Hugging Face cache used by managed vLLM and managed llama.cpp model acquisition. The llama.cpp path resolves the exact YAML-declared revision and GGUF file, then verifies its size, SHA-256 digest, and filesystem identity before launch. Other applications can use the same cache. | Only after stopping every process that uses the cache. Sandbox destroy and full uninstall without `--delete-models` preserve it. Full uninstall with `--delete-models` deletes its non-credential data after managed model runtimes stop and only when no sibling gateway remains. The `token` and `stored_tokens` authentication files remain. Affected applications must download and verify their cached files again. |
 
 ## Migration Snapshot Retention
 
@@ -137,8 +137,12 @@ Before full uninstall deletes shared state, it removes only an exact authenticat
 Catalog-selected host-local vLLM also requires its exact owner-only runtime receipt; legacy authenticated containers without catalog profile labels retain their existing cleanup behavior.
 It refuses the remaining uninstall steps when Docker is unavailable or persisted ownership cannot be proved.
 Resolve the reported Docker or ownership error and rerun uninstall with the state still present.
-The shared Hugging Face cache used by managed vLLM and managed llama.cpp remains in place.
-The `--delete-models` flag removes NemoClaw-pulled Ollama models, not the shared Hugging Face cache.
+The shared Hugging Face cache used by managed vLLM and managed llama.cpp remains in place by default.
+With `--delete-models`, full uninstall deletes every model in the local Ollama inventory and all non-credential data in the current user's shared Hugging Face cache.
+The flag can delete cached files that other applications installed or use.
+It preserves the Hugging Face `token` and `stored_tokens` authentication files.
+NemoClaw deletes the non-credential cache data only after managed model runtimes stop and only when no sibling gateway remains.
+An Ollama inventory error, model deletion error, unsafe cache path, or cache-data deletion error makes uninstall exit nonzero.
 
 For operational uninstall steps, refer to:
 

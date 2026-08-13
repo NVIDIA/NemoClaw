@@ -86,22 +86,27 @@ Before adoption, NemoClaw asks systemd for the unit's effective `ExecStart`.
 When systemd returns the service identity, NemoClaw requires trusted package paths for both the unit and its effective binary.
 It then checks the effective binary's version against the blueprint range (`min_openshell_version` through `max_openshell_version`).
 This check prevents a supported user-local OpenShell install from hiding an out-of-range binary selected by the package unit's absolute `ExecStart`.
-NemoClaw declines a known version below the minimum or a known stable version above the maximum.
-An above-maximum development build remains eligible when `NEMOCLAW_OPENSHELL_CHANNEL=dev`, and an undetermined version also remains eligible.
-When the systemd identity query fails, the package unit also remains eligible for later startup inspection.
-NemoClaw declines the package unit when systemd positively identifies an untrusted unit or effective binary.
-For a version rejection, NemoClaw reports the version once.
-After either rejection, it selects an existing marked NemoClaw user service when available.
-Otherwise, onboarding continues with the standalone gateway fallback.
+NemoClaw rejects a known version below the minimum or a known stable version above the maximum.
+An above-maximum development build remains eligible when `NEMOCLAW_OPENSHELL_CHANNEL=dev`.
+An undetermined version or an unsupported version stops package-unit adoption.
+When the systemd identity query reports a recognized unavailable user manager, NemoClaw checks the standard user unit paths before standalone fallback.
+It checks `.wants`, `.requires`, and `.upholds` activation links for both gateway service names.
+An activation path blocks fallback because its service can later claim port `8080`.
+An active `SYSTEMD_UNIT_PATH` override also blocks fallback because NemoClaw cannot verify its activation state.
+Other identity-query failures stop package-unit adoption.
+NemoClaw stops when systemd identifies an untrusted unit or effective binary.
+For a version rejection, NemoClaw reports the version once and blocks another gateway lifecycle.
+Identity and path-trust failures also block another gateway lifecycle.
 After `systemctl --user daemon-reload` and systemd identity validation, startup checks the effective binary's version again before any service-state mutation.
 If a known version is now unsupported, startup does not stop, enable, or restart the package service.
-Onboarding continues with the standalone fallback.
+Onboarding stops instead of starting a standalone gateway.
 For tarball installs, the NemoClaw installer stages a marked user-level `nemoclaw-openshell-gateway.service` based on the upstream unit.
 Onboarding validates and reuses a healthy selected service.
 It enables or restarts the service when startup or verified runtime drift requires it, then checks gateway health.
 The marked service generates the local OpenShell mTLS bundle and reads `$XDG_CONFIG_HOME/openshell/gateway.env`, or `~/.config/openshell/gateway.env` when `XDG_CONFIG_HOME` is not absolute.
 NemoClaw preserves unrelated environment entries, accepts `DOCKER_HOST` only for an absolute local `unix://` socket, and refuses foreign or symlinked managed files.
-If the selected systemd user service fails inspection, startup, or its health check, NemoClaw prints its `journalctl` log command and attempts the standalone fallback.
+For ordinary startup or health failures, NemoClaw prints the `journalctl` log command and attempts the standalone fallback.
+Unknown inspection, trust, and version failures stop onboarding.
 
 On Apple Silicon macOS, Homebrew makes the official OpenShell formula authoritative.
 The installer stages the formula and onboarding starts its `openshell` service.
