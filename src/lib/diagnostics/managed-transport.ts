@@ -93,7 +93,8 @@ export function safeTargetRef(value: string): string {
     }
   }
   const withoutQuery = value.split(/[?#]/, 1)[0] ?? "";
-  return withoutQuery.replace(/^[^@]*@/, "");
+  const finalAt = withoutQuery.lastIndexOf("@");
+  return finalAt === -1 ? withoutQuery : withoutQuery.slice(finalAt + 1);
 }
 
 const MAX_CAUSE_DEPTH = 8;

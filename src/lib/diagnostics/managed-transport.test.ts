@@ -33,6 +33,13 @@ describe("safeTargetRef", () => {
   it("drops query and userinfo from non-URL values", () => {
     expect(safeTargetRef("user:secret@host:8080?token=x")).toBe("host:8080");
   });
+
+  it("drops every userinfo segment before the final at sign", () => {
+    const target = "user:secret@second:credential@host:8080?token=x";
+
+    expect(safeTargetRef(target)).toBe("host:8080");
+    expect(safeTargetRef(target)).not.toContain("credential");
+  });
 });
 
 describe("safeCauseChain", () => {
