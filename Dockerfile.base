@@ -108,8 +108,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Trixie has not published fixes for the reviewed libexpat, jq, or Vim
 # advisories. Install fixed Expat packages from the 20260811T082421Z snapshot
-# and fixed jq and Vim packages from the 20260724T000000Z snapshot, with
-# architecture-specific hashes, until Trixie carries them.
+# and fixed jq and Vim packages from the 20260724T000000Z and
+# 20260727T143429Z snapshots, respectively, with architecture-specific hashes,
+# until Trixie carries them.
 # The checksum and runtime probes put the validating command last in each pipe.
 # The runtime Vim probe verifies the package that this layer installs.
 # hadolint ignore=DL3001,DL4006

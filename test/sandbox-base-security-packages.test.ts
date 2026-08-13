@@ -111,6 +111,15 @@ function securityInventory(architecture: (typeof ARCHITECTURES)[number]): string
   return `${[`architecture=${architecture}`, ...EXPECTED_SECURITY_PACKAGE_INVENTORY].join("\n")}\n`;
 }
 
+function baseAptSecurityFunctionsWithVimPatchRange(
+  architecture: (typeof ARCHITECTURES)[number],
+  patchRange: string,
+): string[] {
+  return baseAptSecurityFunctions(architecture).map((definition) =>
+    definition.replace("Included patches: 1-858", `Included patches: ${patchRange}`),
+  );
+}
+
 function completedImageSecurityCommand(
   image: (typeof SECURITY_IMAGES)[number],
   tmp: string,
@@ -247,6 +256,67 @@ describe("sandbox base security packages", () => {
         { timeoutMs: 15_000 },
       );
       expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it.each(
+    SECURITY_CASES,
+  )("rejects a stale Vim patch range in the base image for %s on %s", (_name, architecture, image) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-vim-patch-range-"));
+    const prepared = sandboxSecurityCommand(image, tmp);
+
+    try {
+      const { result } = runLoggedDockerShell(
+        prepared.command,
+        tmp,
+        [
+          "perl_base_installed=0",
+          "perl_installed=0",
+          'apt-get() { [[ "$*" != *"/perl-base.deb"* ]] || perl_base_installed=1; [[ "$*" != *"/perl.deb"* ]] || perl_installed=1; }',
+          'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
+          'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
+          ...useRealPatchedParser(
+            baseAptSecurityFunctionsWithVimPatchRange(architecture, "1-857"),
+            prepared.pythonShim,
+          ),
+        ],
+        { timeoutMs: 15_000 },
+      );
+      expect(result.status).not.toBe(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it.each(
+    SECURITY_CASES,
+  )("rejects a stale Vim patch range in the completed image for %s on %s", (_name, architecture, image) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-final-vim-patch-range-"));
+    const prepared = completedImageSecurityCommand(image, tmp, architecture);
+
+    try {
+      const { result } = runLoggedDockerShell(
+        prepared.command,
+        tmp,
+        [
+          "perl_base_installed=1",
+          "perl_installed=1",
+          [
+            "stat() {",
+            `  [[ "$#" -eq 3 && "$1" == "-c" && "$2" == "%u:%g:%a" && "$3" == ${JSON.stringify(prepared.inventory)} ]] || return 64`,
+            '  printf "0:0:444\\n"',
+            "}",
+          ].join("\n"),
+          ...useRealPatchedParser(
+            baseAptSecurityFunctionsWithVimPatchRange(architecture, "1-857"),
+            prepared.pythonShim,
+          ),
+        ],
+        { timeoutMs: 15_000 },
+      );
+      expect(result.status).not.toBe(0);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

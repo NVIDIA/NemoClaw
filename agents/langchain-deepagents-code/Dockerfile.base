@@ -78,8 +78,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # Install the reviewed libexpat, jq, and Vim packages from immutable Debian
-# snapshots: Expat from 20260811T082421Z and jq and Vim from 20260724T000000Z,
-# matching the checksum-bound OpenClaw base image packages.
+# snapshots: Expat from 20260811T082421Z, jq from 20260724T000000Z, and Vim
+# from 20260727T143429Z, matching the checksum-bound OpenClaw base packages.
 # hadolint ignore=DL3001,DL4006
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3=3.13.5-1 \
