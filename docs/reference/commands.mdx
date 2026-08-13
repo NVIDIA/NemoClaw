@@ -4002,8 +4002,15 @@ These host-local checks run before NemoClaw deletes their state.
 If Docker is unavailable or a resource does not match its persisted ownership state, uninstall exits nonzero before the remaining uninstall steps and preserves that state for recovery.
 Host-local cleanup can partially complete before an error.
 Restore Docker access or resolve the named ownership conflict, inspect the remaining container and network, and retry uninstall.
-Managed llama.cpp and vLLM model files remain in the shared Hugging Face cache.
-The `--delete-models` flag does not remove this shared cache.
+Managed llama.cpp and vLLM model files remain in the shared Hugging Face cache by default.
+With `--delete-models`, uninstall deletes every model in the local Ollama inventory and all non-credential data in the current user's shared `~/.cache/huggingface/` cache.
+This opt-in can delete cached files that other applications installed or use.
+It preserves the Hugging Face `token` and `stored_tokens` authentication files.
+NemoClaw stops and verifies its managed local and distributed model runtimes before it deletes non-credential data from the local Hugging Face cache.
+It does not scan arbitrary directories or delete model caches on remote peers.
+When sibling gateway environments remain, uninstall preserves both model stores even if you pass `--delete-models`.
+An Ollama inventory error, model deletion error, unsafe cache path, or cache-data deletion error makes uninstall exit nonzero.
+Cleanup can partially complete before an error, so resolve the reported error and rerun uninstall.
 It does not use the legacy `gateway destroy` command for that gateway.
 <AgentOnly variant="openclaw">
 
@@ -4029,7 +4036,7 @@ Uninstall does not otherwise target the declared external directory.
 |---|---|
 | `--yes` | Skip the confirmation prompt |
 | `--keep-openshell` | Leave OpenShell binaries, NemoClaw-managed gateway service files, and local gateway state in place, and do not stop the host gateway process |
-| `--delete-models` | Also remove NemoClaw-pulled Ollama models. The shared Hugging Face cache remains in place. |
+| `--delete-models` | Delete every model reported by the host's local Ollama inventory and all non-credential data in the current user's shared `~/.cache/huggingface/` cache after managed model runtimes stop. Hugging Face authentication files remain. |
 | `--destroy-user-data` | Also remove preserved user data (`rebuild-backups/`, `backups/`, `sandboxes.json`) |
 | `--all-gateway-ports` | Uninstall every gateway port on the host, not only the port `NEMOCLAW_GATEWAY_PORT` selects |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT` |
