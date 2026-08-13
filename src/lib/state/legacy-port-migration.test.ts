@@ -257,12 +257,13 @@ describe("legacy non-default gateway state migration", () => {
     });
     writeJson(path.join(shared, "credentials.json"), { NVIDIA_API_KEY: "selected-secret" });
     fs.writeFileSync(path.join(shared, "ollama-proxy-token"), "host-token\n");
+    fs.writeFileSync(path.join(shared, "ollama-proxy-port"), "11435\n");
     fs.writeFileSync(path.join(shared, "ollama-auth-proxy.pid"), "4242\n");
 
     const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
 
     expect(result.warnings).toEqual([]);
-    for (const entry of ["ollama-proxy-token", "ollama-auth-proxy.pid"]) {
+    for (const entry of ["ollama-proxy-token", "ollama-proxy-port", "ollama-auth-proxy.pid"]) {
       expect(fs.existsSync(path.join(shared, entry))).toBe(true);
       expect(fs.existsSync(path.join(selected, entry))).toBe(false);
     }

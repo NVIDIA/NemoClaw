@@ -34,6 +34,7 @@ const LEGACY_BUNDLE_ENTRIES = [
   "model-router-venv",
   "mounts",
   "ollama-auth-proxy.pid",
+  "ollama-proxy-port",
   "ollama-proxy-token",
   "onboard-failures",
   "openrouter-runtime-adapter.pid",
@@ -41,7 +42,11 @@ const LEGACY_BUNDLE_ENTRIES = [
   "usage-notice.json",
 ] as const;
 const SESSION_BOUND_ENTRIES = ["credentials.json"] as const;
-const HOST_SHARED_BUNDLE_ENTRIES = ["ollama-auth-proxy.pid", "ollama-proxy-token"] as const;
+const HOST_SHARED_BUNDLE_ENTRIES = [
+  "ollama-auth-proxy.pid",
+  "ollama-proxy-port",
+  "ollama-proxy-token",
+] as const;
 type LegacyBundleEntry = (typeof LEGACY_BUNDLE_ENTRIES)[number];
 const LEGACY_BUNDLE_ENTRY_SET: ReadonlySet<string> = new Set(LEGACY_BUNDLE_ENTRIES);
 const HOST_SHARED_BUNDLE_ENTRY_SET: ReadonlySet<string> = new Set(HOST_SHARED_BUNDLE_ENTRIES);

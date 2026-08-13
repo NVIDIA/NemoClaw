@@ -287,6 +287,7 @@ const HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES: readonly string[] = [
 const OLLAMA_AUTH_PROXY_STATE_ENTRIES: readonly string[] = [
   "ollama-proxy-token",
   "ollama-backend",
+  "ollama-proxy-port",
   "ollama-auth-proxy.pid",
   "ollama-auth-proxy.status",
 ];
@@ -799,14 +800,30 @@ function stopMatchingPids(pattern: string, runtime: UninstallRuntime, label: str
 // the default (11435) on malformed input — uninstall is best-effort.
 const DEFAULT_OLLAMA_PROXY_PORT = 11435;
 
-function resolveOllamaProxyPort(runtime: UninstallRuntime): number {
-  const raw = runtime.env.NEMOCLAW_OLLAMA_PROXY_PORT;
-  if (raw === undefined || raw === "") return DEFAULT_OLLAMA_PROXY_PORT;
+function parseOllamaProxyPort(raw: unknown): number | null {
+  if (raw === undefined || raw === "") return null;
   const trimmed = String(raw).trim();
-  if (!/^\d+$/.test(trimmed)) return DEFAULT_OLLAMA_PROXY_PORT;
+  if (!/^\d+$/.test(trimmed)) return null;
   const parsed = Number(trimmed);
-  if (parsed < 1024 || parsed > 65535) return DEFAULT_OLLAMA_PROXY_PORT;
+  if (parsed < 1024 || parsed > 65535) return null;
   return parsed;
+}
+
+function resolveOllamaProxyPort(paths: UninstallPaths, runtime: UninstallRuntime): number {
+  const persistedPortPath = path.join(paths.nemoclawStateDir, "ollama-proxy-port");
+  if (runtime.existsSync(persistedPortPath)) {
+    let opened: OpenRegularFile | null = null;
+    try {
+      opened = runtime.openRegularFile(persistedPortPath);
+      const persistedPort = parseOllamaProxyPort(opened.readBytes(32).toString("utf8").trim());
+      if (persistedPort !== null) return persistedPort;
+    } catch {
+      // Uninstall remains best-effort and falls back to the configured port.
+    } finally {
+      opened?.close();
+    }
+  }
+  return parseOllamaProxyPort(runtime.env.NEMOCLAW_OLLAMA_PROXY_PORT) ?? DEFAULT_OLLAMA_PROXY_PORT;
 }
 
 function isOllamaAuthProxyPid(pid: number, runtime: UninstallRuntime): boolean {
@@ -906,7 +923,7 @@ function stopOllamaAuthProxy(
     }
     return;
   }
-  const proxyPort = resolveOllamaProxyPort(runtime);
+  const proxyPort = resolveOllamaProxyPort(paths, runtime);
   const lsof = runtime.run("lsof", ["-ti", `:${proxyPort}`], { env: runtime.env });
   const pids = splitNonEmptyLines(lsof.stdout).map(Number).filter(Number.isFinite);
   for (const pid of pids) {

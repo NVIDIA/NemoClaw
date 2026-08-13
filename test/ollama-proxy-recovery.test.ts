@@ -743,8 +743,10 @@ describe("ollama auth proxy state across gateway ports", () => {
     readonly otherGatewayScopedToken?: string;
     readonly prefix: string;
     readonly proxyPort?: number;
+    readonly sharedProxyPort?: number;
     readonly recover?: boolean;
     readonly sharedBackend?: string;
+    readonly sharedPid?: number;
     readonly sharedToken?: string;
     readonly gatewayScopedToken?: string;
   }): {
@@ -753,6 +755,8 @@ describe("ollama auth proxy state across gateway ports", () => {
     readonly spawnedTokens: string[];
     readonly activeToken: string | null;
     readonly sharedBackend: string | null;
+    readonly sharedPid: string | null;
+    readonly sharedProxyPort: string | null;
     readonly sharedToken: string | null;
     readonly gatewayScopedBackend: string | null;
     readonly gatewayScopedToken: string | null;
@@ -779,6 +783,14 @@ describe("ollama auth proxy state across gateway ports", () => {
     const optionalStateFiles: ReadonlyArray<readonly [string, string | undefined]> = [
       [path.join(sharedDir, "ollama-proxy-token"), options.sharedToken],
       [path.join(sharedDir, "ollama-backend"), options.sharedBackend],
+      [
+        path.join(sharedDir, "ollama-proxy-port"),
+        options.sharedProxyPort === undefined ? undefined : String(options.sharedProxyPort),
+      ],
+      [
+        path.join(sharedDir, "ollama-auth-proxy.pid"),
+        options.sharedPid === undefined ? undefined : String(options.sharedPid),
+      ],
       [path.join(gatewayScopedDir, "ollama-proxy-token"), options.gatewayScopedToken],
       [path.join(gatewayScopedDir, "ollama-backend"), options.gatewayScopedBackend],
       [path.join(otherGatewayDir, "ollama-proxy-token"), options.otherGatewayScopedToken],
@@ -843,6 +855,8 @@ console.log(JSON.stringify({
   spawnedTokens,
   activeToken: operationError ? null : proxy.getOllamaProxyToken(),
   sharedBackend: readToken(path.join(sharedDir, "ollama-backend")),
+  sharedPid: readToken(path.join(sharedDir, "ollama-auth-proxy.pid")),
+  sharedProxyPort: readToken(path.join(sharedDir, "ollama-proxy-port")),
   sharedToken: readToken(path.join(sharedDir, "ollama-proxy-token")),
   gatewayScopedBackend: readToken(
     path.join(sharedDir, "gateways", ${JSON.stringify(String(options.gatewayScopedPort ?? 8990))}, "ollama-backend"),
@@ -898,7 +912,26 @@ console.log(JSON.stringify({
     });
 
     assert.deepEqual(payload.spawnedProxyPorts, ["12000"]);
+    assert.equal(payload.sharedProxyPort, "12000");
     assert.equal(payload.routeUrl, "http://host.openshell.internal:12000/v1");
+  });
+
+  it("rejects a second gateway proxy port before changing shared proxy state (#8704)", () => {
+    const payload = runSecondGatewayProxyStart({
+      callingGatewayPort: 9000,
+      prefix: "nemoclaw-ollama-proxy-port-conflict-",
+      proxyPort: 12000,
+      sharedPid: 4241,
+      sharedProxyPort: 11435,
+      sharedToken: "first-gateway-token",
+    });
+
+    assert.deepEqual(payload.spawnedProxyPorts, []);
+    assert.deepEqual(payload.spawnedTokens, []);
+    assert.equal(payload.sharedProxyPort, "11435");
+    assert.equal(payload.sharedPid, "4241");
+    assert.equal(payload.sharedToken, "first-gateway-token");
+    assert.match(payload.operationError || "", /already uses port 11435/);
   });
 
   it("adopts a token an earlier gateway-scoped run left behind (#8704)", () => {

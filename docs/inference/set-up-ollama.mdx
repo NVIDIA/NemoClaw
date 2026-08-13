@@ -178,7 +178,7 @@ The wizard manages the proxy lifecycle:
 - A scoped uninstall preserves the shared proxy process and state while another gateway remains.
 - It reuses the persisted token after a host reboot and during re-onboarding for the committed local Ollama route.
 - It reuses that same token for every gateway port on the host, because one proxy serves them all.
-- Export the same `NEMOCLAW_OLLAMA_PROXY_PORT` for every gateway port on the host, because all of them manage that one proxy.
+- NemoClaw records the selected proxy port in shared host state. Export the same `NEMOCLAW_OLLAMA_PROXY_PORT` for every gateway port on the host. A different value stops before NemoClaw changes the shared proxy process.
 
 <Warning title="Conflicting Legacy Proxy State">
 An older multi-gateway installation can contain proxy token or backend files in more than one gateway state root.
