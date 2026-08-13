@@ -196,6 +196,7 @@ export function registerSandbox(entry: SandboxEntry): void {
       hermesDashboardPort: entry.hermesDashboardPort ?? undefined,
       hermesDashboardInternalPort: entry.hermesDashboardInternalPort ?? undefined,
       hermesDashboardTui: entry.hermesDashboardTui === true ? true : undefined,
+      hermesApiPort: entry.hermesApiPort ?? undefined,
       dashboardPort: entry.dashboardPort ?? undefined,
       dashboardRemoteBindPrepared: entry.dashboardRemoteBindPrepared === true ? true : undefined,
       gatewayName: entry.gatewayName ?? undefined,

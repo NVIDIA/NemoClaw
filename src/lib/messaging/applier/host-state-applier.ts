@@ -65,7 +65,7 @@ function clonePlan(plan: SandboxMessagingPlan): SandboxMessagingPlan {
   return MessagingSetupApplier.decodePlan(MessagingSetupApplier.encodePlan(plan));
 }
 
-function mergeSandboxMessagingPlans(
+export function mergeSandboxMessagingPlans(
   existing: SandboxMessagingPlan,
   incoming: SandboxMessagingPlan,
 ): SandboxMessagingPlan {

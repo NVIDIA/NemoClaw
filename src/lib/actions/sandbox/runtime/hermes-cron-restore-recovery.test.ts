@@ -63,7 +63,10 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
     });
     expect(events).toEqual(["prepare", "connect", "recover"]);
     expect(mocks.prepareHermesCronRestoreRecovery).toHaveBeenCalledWith("alpha");
-    expect(mocks.connectSandbox).toHaveBeenCalledWith("alpha", { probeOnly: true });
+    expect(mocks.connectSandbox).toHaveBeenCalledWith("alpha", {
+      probeOnly: true,
+      requireLaunchReadinessPublication: false,
+    });
     expect(mocks.recoverHermesCronRestore).toHaveBeenCalledWith("alpha");
   });
 
@@ -89,7 +92,10 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
     await recoverSandboxWithHermesCronRestore("alpha");
 
     expect(mocks.prepareHermesCronRestoreRecovery).toHaveBeenCalledWith("alpha");
-    expect(mocks.connectSandbox).toHaveBeenCalledWith("alpha", { probeOnly: true });
+    expect(mocks.connectSandbox).toHaveBeenCalledWith("alpha", {
+      probeOnly: true,
+      requireLaunchReadinessPublication: false,
+    });
     expect(mocks.recoverHermesCronRestore).toHaveBeenCalledWith("alpha");
   });
 
@@ -98,7 +104,10 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
 
     await recoverSandboxWithHermesCronRestore("alpha");
 
-    expect(mocks.connectSandbox).toHaveBeenCalledWith("alpha", { probeOnly: true });
+    expect(mocks.connectSandbox).toHaveBeenCalledWith("alpha", {
+      probeOnly: true,
+      requireLaunchReadinessPublication: false,
+    });
     expect(mocks.prepareHermesCronRestoreRecovery).not.toHaveBeenCalled();
     expect(mocks.recoverHermesCronRestore).not.toHaveBeenCalled();
   });

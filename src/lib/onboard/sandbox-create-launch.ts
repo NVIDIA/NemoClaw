@@ -6,6 +6,7 @@ import { formatEnvAssignment } from "../core/url-utils";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { isValidProxyHost, isValidProxyPort } from "./dockerfile-patch";
 import { appendExtraPlaceholderKeysEnvArg } from "./extra-placeholder-keys";
+import { HERMES_API_PORT_ENV, resolveOnboardHermesApiPort } from "./hermes-api-port";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import { appendHermesDashboardEnvArgs } from "./hermes-dashboard";
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
@@ -114,6 +115,8 @@ export interface SandboxCreateLaunchInput {
   extraPlaceholderKeys: readonly string[];
   getDashboardForwardPort(chatUiUrl: string): string;
   hermesDashboardState: HermesDashboardOnboardState;
+  /** Reserved host port for this Hermes sandbox's OpenAI-compatible API. */
+  hermesApiPort?: number | null;
   manageDashboard?: boolean;
   openshellShellCommand: OpenshellShellCommand;
   openshellArgv?: OpenshellArgv;
@@ -192,7 +195,11 @@ export interface SandboxRuntimeEnvArgsInput {
   manageDashboard: boolean;
   getDashboardForwardPort(chatUiUrl: string): string;
   hermesDashboardState: HermesDashboardOnboardState;
+  /** Host port this sandbox exposes its OpenAI-compatible API on. */
+  hermesApiPort?: number | null;
   extraPlaceholderKeys: readonly string[];
+  /** Allow a create/recreate launch to replace a registered Hermes API port. */
+  allowHermesApiPortOverride?: boolean;
   observabilityEnabled?: boolean;
   sandboxName?: string;
   env: NodeJS.ProcessEnv;
@@ -227,6 +234,18 @@ export function buildSandboxRuntimeEnvArgs(input: SandboxRuntimeEnvArgsInput): {
   appendOpenClawDiagnosticRuntimeEnvArgs(envArgs, agent, env);
   appendOpenClawMcpToolsListTimeoutRuntimeEnvArg(envArgs, agent, env);
   appendHermesDashboardEnvArgs(envArgs, input.hermesDashboardState, formatEnvAssignment);
+  // The sandbox and its host forward share the API port number, so the
+  // allocated value has to reach start.sh before the socat relay binds.
+  if (agent?.name === "hermes" && input.sandboxName) {
+    const apiPort =
+      input.hermesApiPort ??
+      resolveOnboardHermesApiPort(input.sandboxName, {
+        env,
+        warn: console.warn,
+        allowRegisteredOverride: input.allowHermesApiPortOverride,
+      });
+    envArgs.push(formatEnvAssignment(HERMES_API_PORT_ENV, String(apiPort)));
+  }
   appendHostProxyEnvArgs(envArgs, env, {
     dropCredentialBearingProxyUrls:
       agent?.name === "langchain-deepagents-code" || input.omitCredentialEnv === true,
@@ -284,9 +303,11 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     manageDashboard,
     getDashboardForwardPort: input.getDashboardForwardPort,
     hermesDashboardState: input.hermesDashboardState,
+    hermesApiPort: input.hermesApiPort,
     extraPlaceholderKeys: input.extraPlaceholderKeys,
     observabilityEnabled: input.observabilityEnabled,
     sandboxName: input.sandboxName,
+    allowHermesApiPortOverride: true,
     env,
   });
 

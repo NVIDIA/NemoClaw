@@ -6,7 +6,7 @@ import path from "node:path";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
-import { isNonInteractiveEnv } from "../../core/non-interactive";
+import { isNonInteractiveEnv, isNonInteractiveSession } from "../../core/non-interactive";
 import {
   prompt as askPrompt,
   getCredential,
@@ -81,7 +81,7 @@ import { policyChannelDependencies } from "./policy-channel-dependencies";
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 
-const isNonInteractive = isNonInteractiveEnv;
+const isNonInteractive = () => isNonInteractiveSession();
 
 /**
  * Report that `NEMOCLAW_NON_INTERACTIVE=1` leaves no interactive picker, and
@@ -94,12 +94,12 @@ function exitPresetNameRequired(usage: string): never {
 }
 
 /**
- * Report that the picker prompt reached stdin EOF, and exit non-zero.
+ * Report that no picker can run in this session, and exit non-zero.
  *
  * Separate from `exitPresetNameRequired` because the conditions differ. That
  * one means the operator set `NEMOCLAW_NON_INTERACTIVE=1`. This one means
- * stdin closed while that variable was unset, so naming the variable would
- * misdirect whoever reads the boot-unit log.
+ * stdin is not a terminal, or closed, while that variable was unset, so naming
+ * the variable would misdirect whoever reads the boot-unit log.
  */
 function exitPromptStdinClosed(usage: string): never {
   console.error("  No input available on stdin, so the preset picker cannot prompt.");
@@ -134,6 +134,15 @@ type ChannelMutationOptions = {
   dryRun?: boolean;
   force?: boolean;
 };
+
+function withSandboxMutationLockUnlessPreview<T>(
+  sandboxName: string,
+  dryRun: boolean | undefined,
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (dryRun) return operation();
+  return withSandboxMutationLock(sandboxName, operation);
+}
 
 /**
  * Internal composition dependencies for channel mutation.
@@ -174,7 +183,9 @@ export async function addSandboxPolicy(
   sandboxName: string,
   options: PolicyAddOptions = {},
 ): Promise<void> {
-  return withSandboxMutationLock(sandboxName, () => addSandboxPolicyUnlocked(sandboxName, options));
+  return withSandboxMutationLockUnlessPreview(sandboxName, options.dryRun, () =>
+    addSandboxPolicyUnlocked(sandboxName, options),
+  );
 }
 
 async function addSandboxPolicyUnlocked(
@@ -367,8 +378,11 @@ async function addSandboxPolicyUnlocked(
     answer = preset.name;
   } else {
     const usage = `${CLI_NAME} <sandbox> policy add <preset> [--yes] [--dry-run]`;
-    if (isNonInteractive()) {
+    if (isNonInteractiveEnv()) {
       exitPresetNameRequired(usage);
+    }
+    if (isNonInteractive()) {
+      exitPromptStdinClosed(usage);
     }
     answer = await pickPresetOrExit(() => policies.selectFromList(allPresets, { applied }), usage);
   }
@@ -1307,7 +1321,7 @@ export async function addSandboxChannel(
   options: ChannelMutationOptions = {},
   dependencies: AddSandboxChannelDependencies = {},
 ): Promise<void> {
-  return withSandboxMutationLock(sandboxName, () =>
+  return withSandboxMutationLockUnlessPreview(sandboxName, options.dryRun, () =>
     addSandboxChannelUnlocked(sandboxName, options, dependencies),
   );
 }
@@ -1717,7 +1731,7 @@ export async function removeSandboxChannel(
   sandboxName: string,
   options: ChannelMutationOptions = {},
 ): Promise<void> {
-  return withSandboxMutationLock(sandboxName, () =>
+  return withSandboxMutationLockUnlessPreview(sandboxName, options.dryRun, () =>
     removeSandboxChannelUnlocked(sandboxName, options),
   );
 }
@@ -1933,7 +1947,7 @@ export async function stopSandboxChannel(
   sandboxName: string,
   options: ChannelMutationOptions = {},
 ): Promise<void> {
-  await withSandboxMutationLock(sandboxName, () =>
+  await withSandboxMutationLockUnlessPreview(sandboxName, options.dryRun, () =>
     sandboxChannelsSetEnabled(sandboxName, options, true),
   );
 }
@@ -1942,7 +1956,7 @@ export async function startSandboxChannel(
   sandboxName: string,
   options: ChannelMutationOptions = {},
 ): Promise<void> {
-  await withSandboxMutationLock(sandboxName, () =>
+  await withSandboxMutationLockUnlessPreview(sandboxName, options.dryRun, () =>
     sandboxChannelsSetEnabled(sandboxName, options, false),
   );
 }
@@ -1951,7 +1965,7 @@ export async function removeSandboxPolicy(
   sandboxName: string,
   options: PolicyRemoveOptions = {},
 ): Promise<void> {
-  return withSandboxMutationLock(sandboxName, () =>
+  return withSandboxMutationLockUnlessPreview(sandboxName, options.dryRun, () =>
     removeSandboxPolicyUnlocked(sandboxName, options),
   );
 }
@@ -1989,8 +2003,11 @@ async function removeSandboxPolicyUnlocked(
     answer = preset.name;
   } else {
     const usage = `${CLI_NAME} <sandbox> policy remove <preset> [--yes] [--dry-run]`;
-    if (isNonInteractive()) {
+    if (isNonInteractiveEnv()) {
       exitPresetNameRequired(usage);
+    }
+    if (isNonInteractive()) {
+      exitPromptStdinClosed(usage);
     }
     answer = await pickPresetOrExit(
       () => policies.selectForRemoval(allPresets, { applied }),
@@ -2047,7 +2064,7 @@ export async function excludeSandboxBaseline(
   sandboxName: string,
   options: PolicyBaselineOptions = {},
 ): Promise<void> {
-  return withSandboxMutationLock(sandboxName, () =>
+  return withSandboxMutationLockUnlessPreview(sandboxName, options.dryRun, () =>
     excludeSandboxBaselineUnlocked(sandboxName, options),
   );
 }
@@ -2133,7 +2150,7 @@ export async function restoreSandboxBaseline(
   sandboxName: string,
   options: PolicyBaselineOptions = {},
 ): Promise<void> {
-  return withSandboxMutationLock(sandboxName, () =>
+  return withSandboxMutationLockUnlessPreview(sandboxName, options.dryRun, () =>
     restoreSandboxBaselineUnlocked(sandboxName, options),
   );
 }

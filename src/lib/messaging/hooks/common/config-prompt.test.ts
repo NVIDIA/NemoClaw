@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { discordManifest, slackManifest, telegramManifest } from "../../channels";
+import { discordManifest, slackManifest, telegramManifest, whatsappManifest } from "../../channels";
 import { runMessagingHook } from "../hook-runner";
 import { MessagingHookRegistry } from "../registry";
 import { COMMON_CONFIG_PROMPT_HOOK_HANDLER_ID, createConfigPromptHook } from "./config-prompt";
@@ -348,5 +348,104 @@ describe("common config-prompt hook implementation", () => {
     });
     expect(env.SLACK_ALLOWED_CHANNELS).toBeUndefined();
     expect(logs.join("\n")).toContain("allowed IDs already set: U01ABC2DEF3");
+  });
+});
+
+// The manifest owns this hook, so resolve it once here. Failing at module load
+// rather than inside the helper keeps the helper free of a setup branch.
+const WHATSAPP_CONFIG_PROMPT_HOOK =
+  whatsappManifest.hooks.find((entry) => entry.id === "whatsapp-config-prompt") ??
+  (() => {
+    throw new Error("missing WhatsApp config-prompt hook");
+  })();
+
+describe("WhatsApp reply mode prompt", () => {
+  function whatsappRun(options: {
+    readonly env: NodeJS.ProcessEnv;
+    readonly answer?: string;
+    readonly questions?: string[];
+    readonly logs?: string[];
+  }) {
+    const registry = new MessagingHookRegistry([
+      {
+        id: COMMON_CONFIG_PROMPT_HOOK_HANDLER_ID,
+        handler: createConfigPromptHook({
+          env: options.env,
+          log: (message) => options.logs?.push(message),
+          // A test that expects no prompt asserts on the recorded questions
+          // instead of throwing from here.
+          prompt: async (question) => {
+            options.questions?.push(question);
+            return options.answer ?? "";
+          },
+        }),
+      },
+    ]);
+
+    return runMessagingHook(WHATSAPP_CONFIG_PROMPT_HOOK, registry, { channelId: "whatsapp" });
+  }
+
+  it("offers both modes and names the default it falls back to (#8312)", async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const questions: string[] = [];
+    const logs: string[] = [];
+
+    await expect(whatsappRun({ env, answer: "", questions, logs })).resolves.toMatchObject({
+      outputs: {
+        mode: {
+          kind: "config",
+          value: "self-chat",
+        },
+      },
+    });
+    expect(questions).toEqual(["  WhatsApp reply mode [self-chat/bot; default: self-chat]: "]);
+    expect(env.WHATSAPP_MODE).toBe("self-chat");
+    // The operator has to learn what bot mode changes before choosing it.
+    expect(logs.join("\n")).toContain("hermes pairing approve whatsapp <code>");
+  });
+
+  it("records bot mode when the operator selects it (#8312)", async () => {
+    const env: NodeJS.ProcessEnv = {};
+
+    await expect(whatsappRun({ env, answer: "bot" })).resolves.toMatchObject({
+      outputs: {
+        mode: {
+          kind: "config",
+          value: "bot",
+        },
+      },
+    });
+    expect(env.WHATSAPP_MODE).toBe("bot");
+  });
+
+  it("keeps the sandbox on self-chat when the answer is not a supported mode (#8312)", async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const logs: string[] = [];
+
+    // Nothing is recorded, so the render falls back to the adapter default
+    // rather than sealing a mode the bridge cannot serve.
+    await expect(whatsappRun({ env, answer: "broadcast", logs })).resolves.toMatchObject({
+      outputs: {},
+    });
+    expect(env.WHATSAPP_MODE).toBeUndefined();
+    expect(logs.join("\n")).toContain("the sandbox replies only in your own self-chat");
+  });
+
+  it("accepts a mode supplied through the environment without prompting (#8312)", async () => {
+    const env: NodeJS.ProcessEnv = { WHATSAPP_MODE: "bot" };
+    const questions: string[] = [];
+    const logs: string[] = [];
+
+    await expect(whatsappRun({ env, questions, logs })).resolves.toMatchObject({
+      outputs: {
+        mode: {
+          kind: "config",
+          value: "bot",
+        },
+      },
+    });
+    // The documented non-interactive path must stay silent.
+    expect(questions).toEqual([]);
+    expect(logs.join("\n")).toContain("WhatsApp reply mode already set: bot");
   });
 });

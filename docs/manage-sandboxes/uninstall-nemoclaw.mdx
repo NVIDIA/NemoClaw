@@ -24,7 +24,7 @@ It preserves resources from a separate OpenClaw installation while continuing to
 |---|---|
 | `--yes` | Skip the confirmation prompt. |
 | `--keep-openshell` | Leave OpenShell binaries, NemoClaw-managed gateway service files, and local gateway state in place, and do not stop the host gateway process. |
-| `--delete-models` | Also remove NemoClaw-pulled Ollama models. |
+| `--delete-models` | Delete every model reported by the host's local Ollama inventory and all non-credential data in the current user's shared `~/.cache/huggingface/` cache after managed model runtimes stop. Hugging Face authentication files remain. |
 | `--destroy-user-data` | Also remove preserved user data in `rebuild-backups/`, `backups/`, and `sandboxes.json`. |
 | `--all-gateway-ports` | Uninstall every gateway port on the host instead of only the selected one. |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT`. |
@@ -32,6 +32,35 @@ It preserves resources from a separate OpenClaw installation while continuing to
 `NEMOCLAW_GATEWAY_PORT` selects the gateway instance to uninstall (`nemoclaw` for port `8080`, or `nemoclaw-<port>` for a non-default port).
 For example, `NEMOCLAW_GATEWAY_PORT=9123 $$nemoclaw uninstall` selects `nemoclaw-9123` and its port-scoped state.
 Do not use `--gateway` to select another instance; when supplied for compatibility, its value must match the derived name or uninstall stops before cleanup.
+
+## Delete Host Models
+
+The `--delete-models` flag is an explicit opt-in for deleting host model files.
+
+<Warning>
+This flag deletes every model that the local Ollama inventory reports, including models installed or used by other applications.
+It also deletes all non-credential data in the current user's `~/.cache/huggingface/` directory, which other applications can use for models, datasets, and other cached assets.
+Affected applications must download and verify their cached files again.
+The Hugging Face `token` and `stored_tokens` authentication files remain, so this cleanup does not sign the current user out.
+</Warning>
+
+Run full uninstall with model deletion:
+
+```bash
+$$nemoclaw uninstall --delete-models
+```
+
+NemoClaw stops and verifies its managed local and distributed model runtimes before it deletes non-credential data from the local Hugging Face cache.
+It validates that `~/.cache/` and `~/.cache/huggingface/` are real, current-user-owned directories that are not symlinks or group- or world-writable.
+It inventories Ollama before it deletes any Ollama model.
+An Ollama inventory error, model deletion error, unsafe cache path, or cache-data deletion error makes uninstall exit nonzero.
+Cleanup can partially complete before an error.
+Resolve the reported error, inspect the remaining models and runtimes, and rerun uninstall.
+
+Without `--delete-models`, uninstall preserves both model stores.
+When sibling gateway environments remain, uninstall preserves both model stores even if you pass `--delete-models`.
+An all-gateway-port sweep deletes them only after every selected gateway cleanup succeeds and no sibling environment remains.
+The flag does not scan arbitrary directories or delete model caches on remote peers.
 
 ## Uninstall Every Gateway Port
 

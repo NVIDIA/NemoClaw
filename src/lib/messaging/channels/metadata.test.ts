@@ -84,6 +84,7 @@ describe("built-in messaging channel metadata", () => {
       "WECHAT_ALLOWED_IDS",
       "SLACK_ALLOWED_USERS",
       "SLACK_ALLOWED_CHANNELS",
+      "WHATSAPP_MODE",
       "WHATSAPP_ALLOWED_IDS",
       "MSTEAMS_APP_ID",
       "MSTEAMS_TENANT_ID",

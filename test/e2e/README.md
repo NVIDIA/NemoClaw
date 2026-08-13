@@ -8,10 +8,13 @@ Direct E2E coverage runs through Vitest.
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
-- `.github/workflows/e2e.yaml` selects the default workflow E2E jobs on each push
-  to `main` and supports trusted manual dispatches for specific PR head commits.
-  Push runs skip the Jetson nvmap and DGX Spark llama.cpp jobs because their
-  required workflow dispatch flags cannot be set by a push event.
+- `.github/workflows/e2e.yaml` compares the commits before and after each push to `main`.
+  It selects targets and jobs that own changed files, then publishes the `Relevant E2E` check.
+  It also supports trusted manual dispatches for the latest PR commit.
+  Full manual runs dispatched against `main` publish the `Release qualification` check for the candidate commit SHA.
+  Each trusted push to `main` selects the CPU-only `jetson-nvmap-gpu` proof.
+  Push runs skip the DGX Spark llama.cpp jobs because their required workflow
+  dispatch flag cannot be set by a push event.
 - `.github/workflows/hosted-runner-recovery.yaml` evaluates first-attempt
   failures from approved `main` workflows and requests one full rerun only when
   every non-passing job has authenticated GitHub-hosted runner-loss evidence.
@@ -163,7 +166,8 @@ and exact-staging Launchable job own its product coverage:
 | `gpu` | Unified E2E | `gpu-e2e` runs on the dedicated GPU runner. |
 | `all` | Retired | The selector only duplicated `credential-sanitization` and `telegram-injection`. |
 
-The retired nightly caller no longer runs. Each push to `main` starts a workflow that selects the default workflow E2E jobs.
+The retired nightly caller no longer runs.
+Each push to `main` selects E2E work from the changed files.
 Manual GPU validation must use `gpu-e2e`.
 It must not provision a generic Brev VM.
 
@@ -193,6 +197,137 @@ discovery command locally to inspect the generated test matrix:
 ```bash
 npx tsx tools/e2e/credential-free-tests.mts
 ```
+
+## Catalogue Targets
+
+`tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
+Each entry owns these target properties:
+
+- Stable catalogue ID, target ID, shard, and Vitest file.
+- Outcome-first display name for GitHub Actions.
+- Source paths that select the target after a push to `main`.
+- Execution profile, runner or key into the trusted runner-routing map, and timeout.
+- OpenShell install mode, non-interactive installer selection, and CLI artifact use.
+- Reviewed host packages, host preparation, and optional cloudflared prerequisite.
+- Runner telemetry and one reviewed artifact layout.
+- PR Review Advisor selection. Standard-profile targets are selectable by default; a credentialed target must set `prAdvisorSelectable` before the Advisor may recommend its logical target ID.
+- Optional Vitest title selector.
+- Target-specific environment variables.
+- Pre-tag release requirement.
+
+Host preparation is the reviewed E2E runner preparation mode.
+`none` makes no runner-level change.
+`hermes-swap` provisions swap for Hermes execution, and `rebuild-swap` provisions swap for the Hermes image rebuild.
+Targets that require cloudflared set `cloudflared: true` in the catalogue.
+The reusable workflow installs the pinned amd64 Debian package after validating its SHA-256 digest and package metadata.
+The installation step does not receive a catalogue profile credential.
+
+The test file is always one owning path.
+List each additional source file or directory whose change requires the target.
+Changes to shared catalogue execution paths select every catalogue target.
+
+Most entries use one ID for catalogue selection, evidence, and artifacts.
+Matrix-style targets use one target ID for evidence and artifacts, with separate catalogue IDs and shards for each concrete execution.
+Give each entry one `displayName` in the form `<area>: <observable outcome>`.
+Do not include this implementation metadata or workflow text in the display name:
+
+- The target ID or an issue number.
+- `Catalogue`, `live`, or `E2E`.
+- A test path.
+- A runner or sandbox ID.
+
+`E2E_TARGET_CATALOGUE` is one logical target set.
+The planner partitions that set into GitHub Actions matrices, one for each execution profile.
+The execution profile owns the credentials available to its target step:
+
+- `standard` displays `no provider credential` and receives no NVIDIA API credential.
+- `nvidia-api` displays `NVIDIA API key` and receives `NVIDIA_API_KEY` on trusted `main` runs.
+- `nvidia-inference` displays `NVIDIA inference API key` and receives `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs.
+- `github-read` displays `GitHub read token` and receives the job-scoped `GITHUB_TOKEN` only for the target step when `trusted_main` is `true`.
+  The reusable workflow enforces this boundary; PR revision callers set `trusted_main` to `false`, so their target steps receive no `GITHUB_TOKEN`.
+- `brave-nvidia-inference` displays `Brave and NVIDIA inference API keys` and receives `BRAVE_API_KEY` and `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs.
+
+GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.
+All catalogue profiles call `.github/workflows/e2e-standard-profile.yaml`.
+Each target selects its runner through the catalogue.
+The reusable workflow validates the catalogue plan before candidate checkout.
+It derives the artifact path and upload name from the target ID, shard, and reviewed layout.
+It then owns checkout, Docker authentication, reviewed host preparation, setup, CLI artifact restoration, OpenShell installation, runner telemetry, Vitest execution, evidence manifest creation, artifact upload, and Docker credential cleanup.
+Catalogue entries may request only the reviewed `expect` and `iptables` host packages.
+The reusable workflow installs those packages through the pinned host-dependency action before workspace preparation.
+An optional `selector` limits execution to matching tests in the target's declared Vitest file.
+A host package or selector alone does not require a dedicated workflow job.
+When a target selects non-interactive installation, the reusable workflow sets `NEMOCLAW_NON_INTERACTIVE=1` for its OpenShell install step.
+The reusable workflow sets `NEMOCLAW_E2E_EXPECTED_SHA` to the candidate commit for every target.
+TUI exact-ref checks use this shared value instead of a target-specific checkout variable.
+On an exact-revision manual PR run, `NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA` carries that commit to the risk-signal reporter; it remains empty on main push runs.
+The standard layout writes product evidence and `evidence-manifest.json` under `e2e-artifacts/live/<target-id>`.
+When `shard` is not `default`, the standard layout adds the shard directory.
+The security-posture matrix uses the reviewed flat-shard layout to preserve its existing artifact names.
+The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets keep the standard layout and select `linux-amd64-gpu-rtxpro6000-latest-1` through the catalogue.
+Retained workflow jobs are exceptions to the catalogue shape.
+Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
+
+### Catalogue Execution Evidence
+
+Every catalogue execution writes `evidence-manifest.json` in its target artifact directory.
+The manifest uses kind `nemoclaw-e2e-evidence-v1`.
+It records `targetId`, the candidate repository and commit, the trusted workflow repository and commit, the GitHub Actions run ID and attempt, the job status, the artifact directory, and `productEvidenceFileCount`.
+A successful target must write at least one product evidence file before the workflow writes a successful manifest.
+If the target reports success without product evidence, manifest creation fails instead of certifying an empty run.
+A catalogue Vitest selection that runs no tests exits nonzero before manifest creation, including when every selected test skips.
+Failed targets still write a manifest for diagnosis, and the existing artifact upload publishes the manifest with the target artifacts.
+The manifest is secret-free diagnostic evidence.
+It does not replace the workflow job result or the `Release qualification` release gate.
+
+Run the planner locally to render the complete default selection as a Markdown table:
+
+```bash
+npx tsx tools/e2e/workflow-plan.mts --summary
+```
+
+Add the existing `--jobs` or `--targets` selector to render a filtered plan:
+
+```bash
+npx tsx tools/e2e/workflow-plan.mts --summary --jobs hermes-e2e
+npx tsx tools/e2e/workflow-plan.mts --summary --targets ubuntu-repo-cloud-openclaw
+```
+
+The command renders a Markdown summary to standard output.
+To publish that output in a GitHub Actions job, append it to `$GITHUB_STEP_SUMMARY`:
+
+```bash
+npx tsx tools/e2e/workflow-plan.mts --summary >> "$GITHUB_STEP_SUMMARY"
+```
+
+The workflow's `--ci-output` mode uses the same renderer for its job summary.
+The table includes the typed registry matrix, shared test matrix, catalogue profile matrices, and retained workflow jobs.
+
+## Launch-readiness locked-image acceptance
+
+Use the repository helper to test an existing OpenClaw sandbox without
+rebuilding its locked image:
+
+```bash
+scripts/test-launch-readiness-lease.sh <openclaw-sandbox>
+```
+
+Run this helper on Linux after the sandbox's final durable home and state
+volume is mounted and after final policy and network provisioning is complete.
+The launch-readiness lease path that it validates is currently Linux-only.
+The helper must run as the same numeric user that later runs `launch`, and that user must own the sandbox's NemoClaw state.
+The host must provide that user a secure, independently writable OS runtime authority under `/run/user/<numeric-uid>`; do not redirect it with environment variables.
+The host must provide the util-linux `script` command and GNU `timeout` command.
+
+The helper rebuilds the candidate CLI, runs `connect --probe-only`, and then
+runs two `launch` sessions during the same fixed lease.
+Each pseudo-terminal session sends a unique prompt, requires the exact reply,
+sends `/exit`, and requires process exit status `0`.
+The helper uses exact terminal behavior instead of a wall-clock pass threshold.
+Deterministic unit tests separately prove selection of the complete preflight
+and lease paths, stale-producer exclusion, the fixed time-unsafe quarantine,
+refusal to recover when prior evidence cannot be durably fenced, and the named
+performance stages.
 
 ## Inactive Windows MXC OpenClaw qualification
 
@@ -439,12 +574,13 @@ graph as the live targets:
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.
 
-A manual run with `jobs=staging-brev-launchable` runs only `Exact staging Brev
-Launchable`. Each push run also selects this job as part of the complete main run.
+A manual run with `jobs=staging-brev-launchable` runs only `Exact staging Brev Launchable`.
+Push runs do not select this job.
 
 A manual run with `include_staging_brev_launchable=true` and empty `jobs` and
 `targets` selectors runs the default workflow E2E selection plus the Launchable E2E job.
-This is the full run required for pre-tag evidence. Each full dispatch uses
+This selection is the full manual `main` run for pre-tag release evidence.
+Each full dispatch uses
 `github.run_id` in its workflow concurrency identity, so another full dispatch
 cannot supersede it while it waits. The trusted `main` workflow dispatch
 verifies that the dispatching and rerunning actors have repository `maintain` or
@@ -454,21 +590,38 @@ environment approval. The job uses the non-cancelling
 `staging-brev-launchable-cpu` group with `queue: max`, so pending Launchable E2E
 runs remain queued instead of replacing one another.
 
-The Jetson nvmap and DGX Spark llama.cpp jobs remain excluded from ordinary and
-full runs unless their independent opt-in flags are `true`.
+For a full manual run dispatched against `main`, `Release qualification` waits for every E2E job that does not require a separate opt-in.
+The check requires each of those jobs to pass, including `Exact staging Brev Launchable`.
+A passing check at the candidate commit SHA is the pre-tag release E2E evidence.
+Ensure that each candidate commit SHA has a qualifying full manual `main` run.
+Dispatch another full run only when no qualifying run exists.
+`scripts/release-cut-tag.sh` searches completed, successful manual `.github/workflows/e2e.yaml` runs at the exact planned `origin/main` commit before a signing preflight or tag push.
+It accepts the first run with exactly one completed, successful `Release qualification` job.
+A run with zero or multiple jobs of that name is not evidence.
+If no qualifying run exists, the script fails closed.
+Local fixture remotes skip the canonical repository gate only when tests set the explicit `NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL=1` override and the shared classifier confirms a noncanonical origin.
+Canonical-equivalent `NVIDIA/NemoClaw` remotes always run the gate, even when that override is set.
+A local fixture cannot authorize a production release.
+Maintainers do not build a local evidence ledger or infer GitHub job status from an artifact.
+The Launchable job retains its test and cleanup artifacts for diagnosis.
+
+Manual ordinary and full runs exclude the Jetson nvmap and DGX Spark llama.cpp
+jobs unless their independent opt-in flags are `true`.
 Set `allow_jetson_dispatch=true` to select `jetson-nvmap-gpu` after the
 operator-owned dispatch service is available at the repository variable
 `JETSON_DISPATCH_URL`. Refer to the
 [Jetson dispatch controller](docs/jetson-dispatch.md) for the trusted workflow,
 HTTP contract, and evidence boundary that NemoClaw owns.
+Each trusted push to `main` selects `jetson-nvmap-gpu` without changing the
+manual input default.
 Set `allow_dgx_spark_runner_queue=true` to select both
 `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`.
 GitHub can pause the qualification job for the
 `approve-dgx-spark-image-qualification` environment before it reaches the DGX
 Spark runner.
-Pre-tag evidence requires both hardware opt-in flags to remain `false`.
-Results from opt-in hardware runs do not enter the required pre-tag E2E
-denominator.
+Manual pre-tag dispatches require both hardware opt-in flags to remain `false`.
+Jetson push results and opt-in hardware results do not enter the required
+pre-tag E2E denominator.
 
 ### Hosted-Runner Recovery
 
@@ -750,25 +903,44 @@ a custom, copied, or no-op adapter.
 
 E2E does not run automatically for pull requests.
 Pull requests retain deterministic CI, including the `e2e-support` Vitest project.
-Each push to `main` selects the default workflow E2E jobs.
-The central workflow skips the Jetson nvmap and DGX Spark llama.cpp jobs on push.
+Each push to `main` compares `github.event.before` with `github.sha`.
+The planner selects catalogue targets, tagged credential-free tests, registry targets, and retained workflow jobs that own changed files.
+The planner also selects the CPU-only `jetson-nvmap-gpu` proof for every trusted push.
+Changes to the central workflow, planner, or shared execution helpers select the complete default E2E set.
+If no other E2E target owns a changed file, `Relevant E2E` requires only the Jetson proof.
+Otherwise, `Relevant E2E` requires every selected workflow job to pass.
+The central workflow skips the DGX Spark llama.cpp jobs on push.
 The central workflow has no scheduled trigger.
 
-The main-push selection includes:
+The workflow planner connects each trusted input to its execution and evidence boundary:
 
-- the staging Brev Launchable journey;
-- the OpenShell gateway authentication contract;
-- the development MCP bridge;
-- managed-image startup on AMD64 and ARM64;
-- managed-image GPU, Ollama, NVIDIA NIM, and vLLM behavior;
-- Hermes GPU startup.
+```mermaid
+flowchart LR
+  push["main push diff"] --> planner["Workflow planner"]
+  manual["Exact-SHA full manual dispatch<br/>or manual selectors"] --> planner
+  planner --> registry["Typed registry matrix"]
+  planner --> shared["Shared test matrix"]
+  planner --> profiles["Catalogue profile matrices"]
+  planner --> retained["Retained workflow jobs"]
+  profiles --> reusable["Reusable profile workflow"]
+  registry --> dedicated["Dedicated GitHub Actions jobs"]
+  shared --> dedicated
+  retained --> dedicated
+  reusable --> evidence["Diagnostic product evidence"]
+  dedicated --> evidence
+  reusable -->|"push job results"| relevant["Relevant E2E"]
+  dedicated -->|"push job results"| relevant
+  reusable -->|"full manual job results"| release["Release qualification"]
+  dedicated -->|"full manual job results"| release
+  release --> gate["Release gate"]
+```
 
-These jobs retain their runner, credential, evidence, and cleanup boundaries.
-A main push can queue repository-owned GPU runners and can create Brev resources.
+Selected jobs retain their runner, credential, evidence, and cleanup boundaries.
+A main push can queue repository-owned GPU runners or create external resources when a selected target requires them.
 The retry workflow reruns failed jobs at most twice.
 
-Each trusted push to `main` selects `Exact staging Brev Launchable`. The job reads
-these credentials from repository Actions secrets:
+`Exact staging Brev Launchable` runs only for a trusted manual dispatch against `main`.
+The job reads these credentials from repository Actions secrets:
 
 - `BREV_API_KEY` authenticates the Brev CLI for workspace operations in the
   organization identified by `BREV_ORG_ID`.
@@ -794,30 +966,38 @@ The controller does not retry manual PR runs or a run superseded by a newer `mai
 For a PR revision run, a repository maintainer or administrator leaves `jobs` and `targets` empty. The run selects:
 
 - every default-selected free-standing workflow E2E except `Exact staging Brev Launchable`;
+- every catalogue target in the `standard` profile;
 - every shared credential-free test; and
 - these controller-selected registry targets: `ubuntu-policy-custom-missing-presets-negative`, `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and `ubuntu-repo-docker-post-reboot-recovery`.
 
+The PR selection does not forward an NVIDIA API key, `BRAVE_API_KEY`, or `GITHUB_TOKEN` to the candidate checkout.
 The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
 It skips `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`
 unless their runner-queue flag is `true`.
 The trusted workflow definition remains on `main` and binds the candidate head to the current PR base SHA.
 It does not run GitHub's synthetic merge commit.
+Before candidate execution, the workflow uploads a `nemoclaw-e2e-dispatch-v2` receipt for the trusted manual run.
+OpenShell PR qualification uses that receipt to bind the candidate repository, candidate commit SHA, base SHA, workflow SHA, run, and selectors.
+The pre-tag `Release qualification` check does not use this receipt.
 
 PR Review Advisor maps changes to either of these shared journaled-recreation handlers to recommended E2E coverage:
 
 - `src/lib/onboard/machine/handlers/sandbox-resume.ts`.
 - `src/lib/onboard/machine/handlers/sandbox.ts`.
 
-The risk plan selects the `openshell-gateway-upgrade` job and the
-`ubuntu-repo-cloud-langchain-deepagents-code` typed target. The job covers the
-installer-driven OpenShell gateway upgrade handoff. The target covers the
-LangChain Deep Agents Code sandbox recreation path.
+The risk plan selects the `openshell-gateway-upgrade` catalogue target and the
+`ubuntu-repo-cloud-langchain-deepagents-code` typed target.
+The catalogue target covers the installer-driven OpenShell gateway upgrade handoff.
+The typed target covers the LangChain Deep Agents Code sandbox recreation path.
 
-An empty-selector manual run exposes these values to candidate-controlled job processes:
+A trusted manual `main` run with empty selectors exposes these values to candidate-controlled job processes:
 
 - Long-lived API keys from repository secrets: `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, and `BRAVE_API_KEY`.
 - Long-lived messaging credentials from repository secrets: `TELEGRAM_BOT_TOKEN_REAL`, `DISCORD_BOT_TOKEN_REAL`, `SLACK_BOT_TOKEN_REAL`, and `SLACK_APP_TOKEN_REAL`.
-- The job-scoped `GITHUB_TOKEN` in the `token-rotation` and `openshell-gateway-upgrade` jobs. It has `checks: read`, `contents: read`, and `pull-requests: read` access. Candidate code can use it while either job runs. GitHub Actions invalidates it after the job.
+- The job-scoped `GITHUB_TOKEN`, exposed only to the target step in the `token-rotation` and `openshell-gateway-upgrade` catalogue executions.
+  It has `contents: read` access.
+  Candidate code can use it while either target runs.
+  GitHub Actions invalidates it after the reusable workflow job.
 - Messaging account and channel identifiers from repository secrets: `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_AUTHORIZED_CHAT_IDS`, `TELEGRAM_CHAT_ID`, `TELEGRAM_CHAT_ID_E2E`, `DISCORD_CHANNEL_ID_E2E`, and `SLACK_CHANNEL_ID_E2E`.
 
 The workflow does not rotate or revoke these API keys or messaging credentials. To remove later access, rotate or revoke every listed credential in the external service that issued it. The workflow cannot erase identifiers copied by candidate code. Review the complete candidate diff before dispatch.
@@ -826,7 +1006,7 @@ After a failure, inspect the workflow artifacts and remove resources that target
 
 For `managed-image-protected-runtime`, the workflow supplies the long-lived `NVIDIA_API_KEY` repository secret only to the trusted qualification step. Trusted host code uses it for NGC login and passes it as `NGC_API_KEY` and `NIM_NGC_API_KEY` to the temporary NIM container. Candidate managed sandboxes receive generated local route tokens instead of this key. The live fixture attempts to stop and remove `nemoclaw-managed-image-nim-e2e`, but Docker stop or removal errors do not fail the test. A surviving container can retain the API key until runner teardown. The final workflow step removes the job's isolated Docker credential directory and fails if that removal does not complete. The workflow does not revoke the NVIDIA API key. Rotate or revoke it in the issuing NVIDIA service to remove later access.
 
-For a manual PR run, provide the current PR number, lowercase 40-character head SHA, head repository, lowercase 40-character base SHA, trusted `main` workflow SHA, and a review reason containing 10 to 500 printable characters.
+For a manual PR run, provide the current PR number, lowercase 40-character candidate commit SHA, PR source repository, lowercase 40-character base commit SHA, trusted `main` workflow SHA, and a review reason containing 10 to 500 printable characters.
 Leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false` to use this PR revision selection.
 Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
 If `allow_dgx_spark_runner_queue=true`, GitHub can pause the qualification job for the `approve-dgx-spark-image-qualification` environment.
@@ -836,11 +1016,11 @@ Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
 The exact candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
 The trusted pre-checkout step requires current `maintain` or `admin` permission and validates the exact open PR and selected mode before candidate code runs.
-A second validation after checkout rejects a changed head, base, or repository before preparation.
+A second validation after checkout rejects a changed candidate commit, base commit, or PR source repository before preparation.
 
 The Actions run is advisory for the pull request and is not a required merge context.
-Treat it as passing evidence only when the `E2E` workflow concludes with `success` for the recorded PR number, head repository, head SHA, base SHA, and trusted workflow SHA.
-A changed head repository, head SHA, or base SHA invalidates the evidence and requires a new manual run.
+Treat it as passing evidence only when the `E2E` workflow concludes with `success` for the recorded PR number, PR source repository, candidate commit SHA, base commit SHA, and trusted workflow SHA.
+A changed PR source repository, candidate commit SHA, or base commit SHA invalidates the evidence and requires a new manual run.
 
 The macOS and WSL workflows also run on configured pushes to `main`.
 The portable-profile workflow runs on `main` when one of its configured paths changes.
@@ -870,10 +1050,9 @@ classify that guidance as required, but rendered advisor guidance remains
 non-authoritative. Model advice is additive and cannot downgrade the
 deterministic floor. PR Review Advisor recommendations remain advisory.
 A maintainer decides whether to dispatch this trusted selection for the current PR
-revision. The manual PR controller accepts the credential-free
-`inference-routing` job; secret-backed jobs such as `network-policy` remain
-available only through manual dispatch from reviewed code on `main` and are
-labeled that way in the Advisor comment.
+revision. The manual PR selection includes the credential-free
+`inference-routing` catalogue target. It does not dispatch secret-backed targets such as
+`network-policy` for PR revisions. The Advisor comment labels that boundary.
 No PR E2E controller dispatches the risk plan.
 
 The `full-e2e` target enforces a separate hard acceptance contract for the

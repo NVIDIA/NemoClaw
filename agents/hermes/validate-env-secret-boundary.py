@@ -32,6 +32,8 @@ SECRET_KEY_RE = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$
 PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
 KEY_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
+HERMES_API_PORT_RANGE_START = 8642
+HERMES_API_PORT_RANGE_END = 8652
 
 ENV_FILE_ALLOWED_NONSECRET_KEYS = frozenset({"API_SERVER_HOST", "API_SERVER_PORT"})
 # API_SERVER_KEY is the bearer token Hermes' own api_server (Hermes v0.16.0+)
@@ -47,6 +49,7 @@ RUNTIME_ALLOWED_NONSECRET_KEYS = frozenset(
         "API_SERVER_HOST",
         "API_SERVER_PORT",
         "GPG_KEY",
+        "NEMOCLAW_HERMES_API_PORT",
         "NEMOCLAW_INFERENCE_API",
         "NEMOCLAW_INFERENCE_PROVIDER_ID",
         "NEMOCLAW_PROVIDER_KEY",
@@ -362,6 +365,15 @@ def is_generated_api_server_key(value: str) -> bool:
     return API_SERVER_KEY_RE.fullmatch(unquote(value)) is not None
 
 
+def is_assigned_hermes_api_port(value: str) -> bool:
+    return (
+        len(value) == 4
+        and value.isascii()
+        and value.isdecimal()
+        and HERMES_API_PORT_RANGE_START <= int(value) <= HERMES_API_PORT_RANGE_END
+    )
+
+
 def is_allowed_raw_secret_value(key: str, value: str) -> bool:
     if key == "OPENCLAW_GATEWAY_TOKEN":
         return True
@@ -463,6 +475,11 @@ def validate_env_file(path: str) -> int:
             if len(violations) < MAX_VIOLATIONS:
                 violations.append(f"{key} (line {lineno})")
             continue
+        if key == "HERMES_LAZY_INSTALL_TARGET":
+            violation_count += 1
+            if len(violations) < MAX_VIOLATIONS:
+                violations.append(f"{key} (line {lineno})")
+            continue
         if key in ENV_FILE_ALLOWED_NONSECRET_KEYS:
             continue
         if key in ENV_FILE_ALLOWED_RAW_SECRET_KEYS and is_allowed_raw_secret_value(
@@ -481,7 +498,9 @@ def validate_env_file(path: str) -> int:
     _emit_violations(
         "[SECURITY] Refusing Hermes startup because /sandbox/.hermes/.env "
         "contains raw secret-shaped values or OpenShell supervisor-only identity "
-        "variables. Store credentials in OpenShell providers and keep only "
+        "variables, or declares HERMES_LAZY_INSTALL_TARGET. Store credentials "
+        "in OpenShell providers, keep the managed lazy-install target outside "
+        "the sealed env file, and keep only "
         "openshell resolver placeholders in the sandbox.",
         violations,
         violation_count - len(violations),
@@ -493,8 +512,21 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
     source = os.environ if env is None else env
     violations: list[str] = []
     violation_count = 0
+    if source.get("HERMES_LAZY_INSTALL_TARGET") != "/sandbox/.hermes/lazy-packages":
+        violation_count += 1
+        if len(violations) < MAX_VIOLATIONS:
+            violations.append("HERMES_LAZY_INSTALL_TARGET")
     for key, value in sorted(source.items()):
         if key in OPENSHELL_SUPERVISOR_ONLY_ENV_KEYS:
+            violation_count += 1
+            if len(violations) < MAX_VIOLATIONS:
+                violations.append(key)
+            continue
+        if key == "HERMES_LAZY_INSTALL_TARGET":
+            continue
+        if key == "NEMOCLAW_HERMES_API_PORT":
+            if is_assigned_hermes_api_port(value):
+                continue
             violation_count += 1
             if len(violations) < MAX_VIOLATIONS:
                 violations.append(key)
@@ -519,7 +551,8 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
     _emit_violations(
         "[SECURITY] Refusing Hermes startup because the process environment "
         "contains raw secret-shaped values or OpenShell supervisor-only identity "
-        "variables. Store credentials in OpenShell providers and keep only "
+        "variables, or does not use the managed HERMES_LAZY_INSTALL_TARGET. "
+        "Store credentials in OpenShell providers and keep only "
         "openshell resolver placeholders in the sandbox.",
         violations,
         violation_count - len(violations),

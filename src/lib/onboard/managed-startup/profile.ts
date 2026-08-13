@@ -867,7 +867,22 @@ const EXTRA_AGENTS_KEYS = new Set(["agents", "defaults", "main"]);
 const MANAGED_STARTUP_AGENT_SET = new Set<string>(MANAGED_STARTUP_AGENTS);
 const DCODE_AUTO_APPROVAL_MODE_SET = new Set<string>(MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES);
 const REASONING_EFFORT_SET = new Set<string>(MANAGED_STARTUP_REASONING_EFFORTS);
-const HERMES_RESERVED_API_PORTS = new Set([8642, 18_642]);
+const HERMES_INTERNAL_API_PORT = 18_642;
+
+const HERMES_API_PORT_RANGE_START = 8642;
+const HERMES_API_PORT_RANGE_END = 8652;
+
+function isHermesApiPort(port: number): boolean {
+  return port >= HERMES_API_PORT_RANGE_START && port <= HERMES_API_PORT_RANGE_END;
+}
+
+// A dashboard must not use the internal API port, and must not use any port in
+// the range that each Hermes sandbox allocates its public API port from.
+function isHermesReservedApiPort(port: number): boolean {
+  return port === HERMES_INTERNAL_API_PORT || isHermesApiPort(port);
+}
+
+const HERMES_RESERVED_API_PORT_LABEL = `${HERMES_API_PORT_RANGE_START}-${HERMES_API_PORT_RANGE_END} or ${HERMES_INTERNAL_API_PORT}`;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -1539,8 +1554,10 @@ function validateDashboard(
       invalid("OpenClaw dashboard.mode must reflect its URL, bind address, and WSL exposure");
     }
     const port = requirePort(dashboard.port, "dashboard.port", 1024);
-    if (port === 8642)
-      invalid("OpenClaw dashboard.port must not use reserved Hermes API port 8642");
+    if (isHermesApiPort(port))
+      invalid(
+        `OpenClaw dashboard.port must not use a reserved Hermes API port (${HERMES_API_PORT_RANGE_START}-${HERMES_API_PORT_RANGE_END})`,
+      );
     if (configuredDashboardPort(url) !== port) {
       invalid("OpenClaw dashboard.port must match dashboard.url");
     }
@@ -1586,8 +1603,10 @@ function validateDashboard(
     if (publicPort === internalPort) {
       invalid("Hermes dashboard publicPort and internalPort must differ");
     }
-    if (HERMES_RESERVED_API_PORTS.has(publicPort) || HERMES_RESERVED_API_PORTS.has(internalPort)) {
-      invalid("Hermes dashboard ports must not use reserved API ports 8642 or 18642");
+    if (isHermesReservedApiPort(publicPort) || isHermesReservedApiPort(internalPort)) {
+      invalid(
+        `Hermes dashboard ports must not use reserved API ports ${HERMES_RESERVED_API_PORT_LABEL}`,
+      );
     }
     if (configuredDashboardPort(url) !== publicPort) {
       invalid("Hermes dashboard.publicPort must match dashboard.url");

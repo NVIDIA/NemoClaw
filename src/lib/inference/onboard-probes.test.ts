@@ -4,9 +4,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { captureAuthConfigPath } from "../adapters/http/auth-config-test-helpers";
+import { buildOllamaProbeOptions, resetOllamaHostCache } from "./local";
 import {
   HARNESS_COUNTER,
   HARNESS_TMPDIR,
@@ -26,6 +27,7 @@ const {
   isSandboxInternalUrl,
   probeOpenAiLikeEndpoint,
   RETRIABLE_HTTP_PROBE_STATUSES,
+  verifyOnboardInferenceSmoke,
 } = require("./onboard-probes");
 const { assertEndpointResolvesPublic } =
   require("./endpoint-ssrf-preflight") as typeof import("./endpoint-ssrf-preflight");
@@ -755,6 +757,72 @@ exit 0
     });
   });
 
+  describe("ambient proxy on the local Ollama route (#8985)", () => {
+    const proxySensitiveCurlBody = `if [ -n "$http_proxy" ] || [ -n "$HTTP_PROXY" ] || [ -n "$all_proxy" ] || [ -n "$ALL_PROXY" ]; then
+  if [ -n "$outfile" ]; then
+    printf '%s' '{"error":"proxy has no route to the requested origin"}' > "$outfile"
+  fi
+  printf '503'
+  exit 0
+fi
+if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`;
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      resetOllamaHostCache();
+    });
+
+    it("validates loopback Ollama while the host has an HTTP proxy configured (#8985)", () => {
+      resetOllamaHostCache();
+      vi.stubEnv("http_proxy", "http://127.0.0.1:8118");
+      vi.stubEnv("HTTP_PROXY", "http://127.0.0.1:8118");
+
+      withFakeCurlProbe(
+        {
+          script: makeFakeCurlScript(proxySensitiveCurlBody),
+          dirPrefix: "nemoclaw-ollama-ambient-proxy-probe-",
+        },
+        () => {
+          const result = probeOpenAiLikeEndpoint(
+            "http://127.0.0.1:11434/v1",
+            "qwen3.5:9b",
+            "",
+            buildOllamaProbeOptions(true),
+          );
+          expect(result).toMatchObject({ ok: true });
+        },
+      );
+    });
+
+    it("reports the proxy status when the same route is probed without the preflight pin (#8985)", () => {
+      vi.stubEnv("http_proxy", "http://127.0.0.1:8118");
+      vi.stubEnv("HTTP_PROXY", "http://127.0.0.1:8118");
+
+      withFakeCurlProbe(
+        {
+          script: makeFakeCurlScript(proxySensitiveCurlBody),
+          dirPrefix: "nemoclaw-ollama-unpinned-proxy-probe-",
+        },
+        () => {
+          const result = probeOpenAiLikeEndpoint("http://127.0.0.1:11434/v1", "qwen3.5:9b", "", {
+            skipResponsesProbe: true,
+          });
+          expect(result).toMatchObject({ ok: false });
+          expect(
+            result.failures.some((failure: { httpStatus: number }) => failure.httpStatus === 503),
+          ).toBe(true);
+        },
+      );
+    });
+  });
+
   describe("retriable HTTP statuses (#2980, #3033)", () => {
     it("retries 429 (rate limit)", () => {
       expect(RETRIABLE_HTTP_PROBE_STATUSES.has(429)).toBe(true);
@@ -1323,4 +1391,41 @@ exit 0
       }
     },
   );
+});
+
+describe("onboard inference smoke abort cleanup", () => {
+  it("tears down the orphan managed gateway before exiting after a failed smoke", async () => {
+    const teardownOrphanManagedGatewayOnAbort = vi.fn();
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.stubEnv("VITEST", "false");
+
+    try {
+      await verifyOnboardInferenceSmoke(
+        {
+          endpointUrl: "https://inference.example.com/v1",
+          forceOpenAiLike: true,
+          model: "example/model",
+          provider: "example-provider",
+        },
+        {
+          probeOpenAiLikeEndpointOptimized: vi.fn().mockResolvedValue({
+            ok: false,
+            message: "smoke failed",
+          }),
+          teardownOrphanManagedGatewayOnAbort,
+        },
+      );
+
+      expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledOnce();
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(teardownOrphanManagedGatewayOnAbort.mock.invocationCallOrder[0]).toBeLessThan(
+        exit.mock.invocationCallOrder[0],
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      error.mockRestore();
+      exit.mockRestore();
+    }
+  });
 });

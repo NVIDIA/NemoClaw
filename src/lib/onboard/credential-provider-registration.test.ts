@@ -42,6 +42,7 @@ function registrationDeps(
     runOpenshell: runOpenshellMock as unknown as CredentialProviderRegistrationDeps["runOpenshell"],
     redact: (input) => input,
     getGatewayName: () => "test-gateway",
+    getCredential: () => null,
     normalizeCredentialValue: (value) => (typeof value === "string" ? value.trim() : ""),
     updateSession,
     stagedLegacyValues: new Map(),
@@ -69,6 +70,80 @@ function sandboxInput(bindings: ReturnType<typeof requiredBindings>) {
 }
 
 describe("credential provider registration", () => {
+  it.each([
+    {
+      condition: "the explicit environment contains the staged value",
+      env: { COMPATIBLE_API_KEY: "legacy-key" },
+      ambientValue: "other-key",
+      expectedMigrated: true,
+    },
+    {
+      condition: "the inherited environment contains the staged value",
+      env: {},
+      ambientValue: "legacy-key",
+      expectedMigrated: true,
+    },
+    {
+      condition: "the provider receives a replacement value",
+      env: { COMPATIBLE_API_KEY: "replacement-key" },
+      ambientValue: "legacy-key",
+      expectedMigrated: false,
+    },
+  ])("records migration according to the value sent when $condition", ({
+    env,
+    ambientValue,
+    expectedMigrated,
+  }) => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const deps = registrationDeps(runOpenshell, session);
+    deps.getCredential = vi.fn(() => ambientValue);
+    deps.stagedLegacyValues = new Map([["COMPATIBLE_API_KEY", "legacy-key"]]);
+    deps.migratedLegacyKeys.add("COMPATIBLE_API_KEY");
+    const registration = createCredentialProviderRegistration(deps);
+
+    const result = registration.upsertProvider(
+      "compatible-endpoint",
+      "openai",
+      "COMPATIBLE_API_KEY",
+      "https://inference.example.com/v1",
+      env,
+      "alternate-gateway",
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(deps.migratedLegacyKeys.has("COMPATIBLE_API_KEY")).toBe(expectedMigrated);
+    expect(deps.persistMigratedLegacyKeys).toHaveBeenCalledOnce();
+    expect(runOpenshell).toHaveBeenCalledWith(
+      expect.arrayContaining(["-g", "alternate-gateway"]),
+      expect.any(Object),
+    );
+  });
+
+  it("does not record migration when provider registration fails", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn((args: string[]) => ({
+      status: args[1] === "get" ? 1 : 9,
+      stdout: "",
+      stderr: "registration failed",
+    }));
+    const deps = registrationDeps(runOpenshell, session);
+    deps.stagedLegacyValues = new Map([["COMPATIBLE_API_KEY", "legacy-key"]]);
+    const registration = createCredentialProviderRegistration(deps);
+
+    const result = registration.upsertProvider(
+      "compatible-endpoint",
+      "openai",
+      "COMPATIBLE_API_KEY",
+      "https://inference.example.com/v1",
+      { COMPATIBLE_API_KEY: "legacy-key" },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(deps.migratedLegacyKeys).toEqual(new Set());
+    expect(deps.persistMigratedLegacyKeys).not.toHaveBeenCalled();
+  });
+
   it("updates exact Brave and messaging providers and records secret-free receipts (#6743)", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const commandResults = new Map([
