@@ -83,6 +83,7 @@ import {
   inspectLaunchReadiness,
   publicationFromDecision,
   publishLaunchReadiness,
+  withLaunchReadinessMutationGate,
 } from "./launch-readiness";
 import {
   checkAndRecoverSandboxProcesses,
@@ -1210,7 +1211,8 @@ export function completeInteractiveSessionSetup(
   sb: SandboxEntry | null,
 ): void {
   maybeEnsureHermesToolGatewayBroker(sb);
-  runConnectAutoPairApprovalPass(sandboxName);
+  const gatewayName = sb ? resolveSandboxGatewayName(sb) : getSandboxTargetGatewayName(sandboxName);
+  runConnectAutoPairApprovalPass(sandboxName, gatewayName);
 }
 
 /**
@@ -1258,31 +1260,49 @@ export async function connectSandbox(
   { probeOnly = false }: SandboxConnectOptions = {},
 ): Promise<void> {
   if (probeOnly) {
-    const readiness = await inspectLaunchReadiness(sandboxName);
-    if (readiness.kind === "accepted") {
-      console.log(`  Probe complete: launch readiness is healthy for '${sandboxName}'.`);
-      return;
+    let readiness = await inspectLaunchReadiness(sandboxName);
+    let publication: Awaited<ReturnType<typeof publishLaunchReadiness>>;
+    while (true) {
+      if (readiness.kind === "accepted") {
+        console.log(`  Probe complete: launch readiness is healthy for '${sandboxName}'.`);
+        return;
+      }
+      if (readiness.fenceFailed) {
+        console.error(
+          readiness.recoveryBlocked
+            ? "  Probe failed: complete probe and recovery did not run because prior launch-readiness evidence could not be fenced. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry."
+            : "  Probe failed: no prior launch-readiness evidence can be accepted, but new launch-readiness authority could not be created. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
+        );
+        process.exit(1);
+      }
+      const publicationRequest = publicationFromDecision(sandboxName, readiness);
+      const gated = await withLaunchReadinessMutationGate(publicationRequest, async () => {
+        await runConnectEntryPreflight(sandboxName, { probeOnly: true });
+        waitForSandboxReadyOrExit(sandboxName, {
+          defaultTimeoutSec: 300,
+          retryCommand: "connect --probe-only",
+        });
+        // Re-pin and re-observe the owning gateway after a potentially long wait
+        // before any in-sandbox process or host-forward mutation. The readiness
+        // polls are already scoped to the owning gateway; this also catches
+        // registry changes.
+        await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
+        await runSandboxConnectProbe(sandboxName);
+        return publishLaunchReadiness(publicationRequest);
+      });
+      if (gated.kind === "changed") {
+        readiness = await inspectLaunchReadiness(sandboxName);
+        continue;
+      }
+      if (gated.kind === "unsafe") {
+        console.error(
+          "  Probe failed: complete probe and recovery did not run because the current launch-readiness epoch could not be safely revalidated. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
+        );
+        process.exit(1);
+      }
+      publication = gated.value;
+      break;
     }
-    if (readiness.fenceFailed) {
-      console.error(
-        "  Probe failed: complete probe and recovery did not run because prior launch-readiness evidence could not be fenced.",
-      );
-      process.exit(1);
-    }
-    await runConnectEntryPreflight(sandboxName, { probeOnly: true });
-    waitForSandboxReadyOrExit(sandboxName, {
-      defaultTimeoutSec: 300,
-      retryCommand: "connect --probe-only",
-    });
-    // Re-pin and re-observe the owning gateway after a potentially long wait
-    // before any in-sandbox process or host-forward mutation. The readiness
-    // polls are already scoped to the owning gateway; this also catches
-    // registry changes.
-    await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
-    await runSandboxConnectProbe(sandboxName);
-    const publication = await publishLaunchReadiness(
-      publicationFromDecision(sandboxName, readiness),
-    );
     if (publication.kind === "validation-failed") {
       console.error(
         `  Probe failed: final launch-readiness validation failed due to ${publication.category}.`,

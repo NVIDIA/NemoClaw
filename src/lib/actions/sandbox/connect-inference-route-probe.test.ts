@@ -64,6 +64,15 @@ describe("sandbox connect inference route probe argv", () => {
     ]);
   });
 
+  it.each([
+    null,
+    { name: "langchain-deepagents-code" },
+  ])("pins the probe to the owning OpenShell gateway for agent %j (#8942)", (agent) => {
+    expect(
+      buildSandboxInferenceRouteProbeArgs("alpha", agent, "nemoclaw-8091").slice(0, 7),
+    ).toEqual(["sandbox", "exec", "--name", "alpha", "-g", "nemoclaw-8091", expect.any(String)]);
+  });
+
   it("verifies the route with OpenShell's CA and discards the response (#6192)", () => {
     const args = buildSandboxInferenceRouteProbeArgs("alpha", { name: "openclaw" });
     const script = args.at(-1) ?? "";

@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   prepareHermesLightTerminalSkin: vi.fn(),
   inspectLaunchReadiness: vi.fn(),
   publishLaunchReadiness: vi.fn(),
+  withLaunchReadinessMutationGate: vi.fn(),
 }));
 
 vi.mock("./connect", () => ({
@@ -33,6 +34,7 @@ vi.mock("./connect-hermes-light-skin", () => ({
 vi.mock("./launch-readiness", () => ({
   inspectLaunchReadiness: mocks.inspectLaunchReadiness,
   publishLaunchReadiness: mocks.publishLaunchReadiness,
+  withLaunchReadinessMutationGate: mocks.withLaunchReadinessMutationGate,
   publicationFromDecision: (sandboxName: string, decision: { fence?: { epochId: string } }) => ({
     sandboxName,
     gatewayName: "nemoclaw",
@@ -109,8 +111,13 @@ describe("launchSandbox", () => {
       gatewayName: null,
       gatewayPort: null,
       fenceFailed: true,
+      recoveryBlocked: false,
     });
     mocks.publishLaunchReadiness.mockResolvedValue({ kind: "published" });
+    mocks.withLaunchReadinessMutationGate.mockImplementation(async (_publication, operation) => ({
+      kind: "entered",
+      value: await operation(),
+    }));
     // Production keeps OpenClaw null in getSessionAgent so its recovery path
     // continues to use the legacy defaults. The launch resolver must still
     // load OpenClaw's trusted manifest before choosing the interactive command.
@@ -283,6 +290,10 @@ describe("launchSandbox", () => {
       "prepareHermesLightTerminalSkin",
       "execSandbox",
     ]);
+    expect(mocks.withLaunchReadinessMutationGate).toHaveBeenCalledWith(
+      expect.objectContaining({ epochId: null }),
+      expect.any(Function),
+    );
   });
 
   it("uses the accepted lease path without running the complete preflight (#8942)", async () => {
@@ -311,6 +322,36 @@ describe("launchSandbox", () => {
     expect(launchedCommand()).toEqual(["bash", "-lc", "openclaw tui"]);
   });
 
+  it("does not mutate after its epoch is replaced by a newer accepted lease (#8942)", async () => {
+    const openclaw = loadAgent("openclaw");
+    const sb = sandboxEntry("openclaw");
+    mocks.inspectLaunchReadiness
+      .mockResolvedValueOnce({
+        kind: "fallback",
+        category: "config",
+        fence: { epochId: "a".repeat(64) },
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: false,
+        recoveryBlocked: false,
+      })
+      .mockResolvedValueOnce({
+        kind: "accepted",
+        category: "accepted",
+        agent: openclaw,
+        sb,
+      });
+    mocks.withLaunchReadinessMutationGate.mockResolvedValueOnce({ kind: "changed" });
+
+    await launchSandbox("alpha");
+
+    expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
+    expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
+    expect(mocks.inspectLaunchReadiness).toHaveBeenCalledTimes(2);
+    expect(mocks.completeInteractiveSessionSetup).toHaveBeenCalledWith("alpha", sb);
+    expect(mocks.execSandbox).toHaveBeenCalledOnce();
+  });
+
   it("keeps repeated launch and exit cycles on the accepted non-sliding lease (#8942)", async () => {
     const openclaw = loadAgent("openclaw");
     const sb = sandboxEntry("openclaw");
@@ -337,6 +378,7 @@ describe("launchSandbox", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       fenceFailed: false,
+      recoveryBlocked: false,
     });
 
     await launchSandbox("alpha");
@@ -353,6 +395,7 @@ describe("launchSandbox", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       fenceFailed: false,
+      recoveryBlocked: false,
     });
     mocks.publishLaunchReadiness.mockResolvedValue({ kind: "evidence-failed" });
 
@@ -360,6 +403,47 @@ describe("launchSandbox", () => {
 
     expect(mocks.prepareInteractiveSession).toHaveBeenCalled();
     expect(mocks.execSandbox).toHaveBeenCalled();
+  });
+
+  it("stops before the complete preflight when a prior launch-readiness epoch may remain acceptable (#8942)", async () => {
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "unsafe",
+      fence: null,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      fenceFailed: true,
+      recoveryBlocked: true,
+    });
+
+    await expect(launchSandbox("alpha")).rejects.toThrow(
+      "Launch readiness evidence could not be safely invalidated",
+    );
+
+    expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
+    expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
+    expect(mocks.execSandbox).not.toHaveBeenCalled();
+  });
+
+  it("stops before the complete preflight when the fenced epoch cannot be revalidated (#8942)", async () => {
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "config",
+      fence: { epochId: "a".repeat(64) },
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      fenceFailed: false,
+      recoveryBlocked: false,
+    });
+    mocks.withLaunchReadinessMutationGate.mockResolvedValue({ kind: "unsafe" });
+
+    await expect(launchSandbox("alpha")).rejects.toThrow(
+      "Launch readiness evidence could not be safely invalidated",
+    );
+
+    expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
+    expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
+    expect(mocks.execSandbox).not.toHaveBeenCalled();
   });
 
   it("does not launch after final semantic validation reports unhealthy state (#8942)", async () => {
@@ -370,6 +454,7 @@ describe("launchSandbox", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       fenceFailed: false,
+      recoveryBlocked: false,
     });
     mocks.publishLaunchReadiness.mockResolvedValue({
       kind: "validation-failed",

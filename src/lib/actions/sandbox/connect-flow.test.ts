@@ -59,7 +59,7 @@ describe("connectSandbox flow", () => {
     );
     expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith("alpha");
     expect(harness.ensureOllamaAuthProxySpy).toHaveBeenCalledTimes(1);
-    expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", "nemoclaw");
     expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "connect", "alpha"],
@@ -69,6 +69,18 @@ describe("connectSandbox flow", () => {
     expect(output).toContain("existing SSH sessions");
     expect(output).toContain("Connecting to sandbox 'alpha'");
     expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it("uses the owning OpenShell gateway for auto-pair when an ambient gateway has the same sandbox name (#8942)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-sibling");
+    const harness = createConnectHarness({
+      registryEntry: { gatewayName: "nemoclaw-8091", gatewayPort: 8091 },
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+
+    expect(process.env.OPENSHELL_GATEWAY).toBe("ambient-sibling");
+    expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", "nemoclaw-8091");
   });
 
   it("restores the terminal and prints reconnect guidance when SSH disconnects", async () => {
@@ -542,6 +554,38 @@ describe("connectSandbox flow", () => {
     );
   });
 
+  it("probe-only skips every mutation when a newer accepted lease replaces its epoch (#8942)", async () => {
+    const sb = { name: "alpha", agent: "openclaw", provider: null, model: null, policies: [] };
+    const harness = createConnectHarness();
+    harness.inspectLaunchReadinessSpy
+      .mockResolvedValueOnce({
+        kind: "fallback",
+        category: "config",
+        fence: { epochId: "a".repeat(64) },
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: false,
+        recoveryBlocked: false,
+      })
+      .mockResolvedValueOnce({
+        kind: "accepted",
+        category: "accepted",
+        agent: { name: "openclaw" },
+        sb,
+      });
+    harness.launchReadinessMutationGateSpy.mockResolvedValueOnce({ kind: "changed" });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.inspectLaunchReadinessSpy).toHaveBeenCalledTimes(2);
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
+      "Probe complete: launch readiness is healthy for 'alpha'.",
+    );
+  });
+
   it("probe-only refuses runtime recovery when prior evidence cannot be fenced (#8942)", async () => {
     const harness = createConnectHarness({
       readinessDecision: {
@@ -551,6 +595,7 @@ describe("connectSandbox flow", () => {
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
         fenceFailed: true,
+        recoveryBlocked: true,
       },
     });
 
@@ -561,6 +606,48 @@ describe("connectSandbox flow", () => {
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
       "complete probe and recovery did not run because prior launch-readiness evidence could not be fenced",
+    );
+  });
+
+  it("probe-only reports failure to create new authority after secure absence is proven (#8942)", async () => {
+    const harness = createConnectHarness({
+      readinessDecision: {
+        kind: "fallback",
+        category: "unsafe",
+        fence: null,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: true,
+        recoveryBlocked: false,
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "no prior launch-readiness evidence can be accepted, but new launch-readiness authority could not be created",
+    );
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).not.toContain(
+      "prior launch-readiness evidence could not be fenced",
+    );
+  });
+
+  it("probe-only stops before mutation when the fenced epoch cannot be revalidated (#8942)", async () => {
+    const harness = createConnectHarness();
+    harness.launchReadinessMutationGateSpy.mockResolvedValueOnce({ kind: "unsafe" });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "current launch-readiness epoch could not be safely revalidated",
     );
   });
 

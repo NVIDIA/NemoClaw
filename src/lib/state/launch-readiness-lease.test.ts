@@ -1,36 +1,43 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  fenceLaunchReadinessLease,
+  checkLaunchReadinessMutationAuthority,
+  fenceLaunchReadinessLease as fenceLeaseStore,
   LAUNCH_READINESS_LEASE_MS,
   LAUNCH_READINESS_MAX_BYTES,
+  LaunchReadinessFenceError,
   type LaunchReadinessIdentity,
   type LaunchReadinessStoreOptions,
+  launchReadinessAuthorityPath,
   launchReadinessReceiptPath,
-  publishLaunchReadinessLease,
-  readLaunchReadinessLease,
+  publishLaunchReadinessLease as publishLeaseStore,
+  readLaunchReadinessLease as readLeaseStore,
 } from "./launch-readiness-lease";
 
 const SANDBOX = "alpha";
 const GATEWAY_PORT = 8080;
+const GATEWAY_NAME = "nemoclaw";
 const EPOCH_A = "a".repeat(64);
 const EPOCH_B = "b".repeat(64);
+const EPOCH_C = "d".repeat(64);
 const DIGEST = "c".repeat(64);
 
-function identity(): LaunchReadinessIdentity {
+function identity(gatewayName = GATEWAY_NAME): LaunchReadinessIdentity {
   return {
     registry: DIGEST,
     agent: DIGEST,
     livePolicy: DIGEST,
     liveInference: DIGEST,
-    gatewayName: "nemoclaw",
+    gatewayName,
     lifecycleGeneration: "generation-1",
     liveIdentityFingerprint: DIGEST,
   };
@@ -39,6 +46,7 @@ function identity(): LaunchReadinessIdentity {
 describe("launch readiness lease storage", () => {
   let root: string;
   let home: string;
+  let runtimeRoot: string;
   let wallMs: number;
   let uptimeMs: number;
   let bootId: string;
@@ -47,8 +55,11 @@ describe("launch readiness lease storage", () => {
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launch-readiness-"));
     home = path.join(root, "home");
+    runtimeRoot = path.join(root, "runtime");
     fs.mkdirSync(home, { mode: 0o700 });
     fs.chmodSync(home, 0o700);
+    fs.mkdirSync(runtimeRoot, { mode: 0o700 });
+    fs.chmodSync(runtimeRoot, 0o700);
     wallMs = 2_000_000_000_000;
     uptimeMs = 100_000;
     bootId = "boot-a";
@@ -56,6 +67,7 @@ describe("launch readiness lease storage", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     fs.rmSync(root, { recursive: true, force: true });
   });
 
@@ -69,8 +81,42 @@ describe("launch readiness lease storage", () => {
       bootId: () => bootId,
       uid: () => process.getuid?.() ?? 0,
       randomEpoch: () => epochs.shift() ?? EPOCH_B,
+      runtimeAuthorityRoot: () => runtimeRoot,
       ...overrides,
     };
+  }
+
+  function fenceLaunchReadinessLease(
+    sandboxName: string,
+    gatewayPort: number,
+    storeOptions: LaunchReadinessStoreOptions,
+  ) {
+    return fenceLeaseStore(sandboxName, GATEWAY_NAME, gatewayPort, storeOptions);
+  }
+
+  function readLaunchReadinessLease(
+    sandboxName: string,
+    gatewayPort: number,
+    storeOptions: LaunchReadinessStoreOptions,
+  ) {
+    return readLeaseStore(sandboxName, GATEWAY_NAME, gatewayPort, storeOptions);
+  }
+
+  function publishLaunchReadinessLease(
+    sandboxName: string,
+    gatewayPort: number,
+    expectedEpochId: string,
+    launchIdentity: LaunchReadinessIdentity,
+    storeOptions: LaunchReadinessStoreOptions,
+  ) {
+    return publishLeaseStore(
+      sandboxName,
+      GATEWAY_NAME,
+      gatewayPort,
+      expectedEpochId,
+      launchIdentity,
+      storeOptions,
+    );
   }
 
   function publish(): ReturnType<typeof publishLaunchReadinessLease> {
@@ -85,6 +131,43 @@ describe("launch readiness lease storage", () => {
     fs.writeFileSync(target, raw, { mode: 0o600 });
   }
 
+  function readInFreshProcess(gatewayName = GATEWAY_NAME, gatewayPort = GATEWAY_PORT): string {
+    const moduleUrl = pathToFileURL(path.resolve("src/lib/state/launch-readiness-lease.ts")).href;
+    const source = `
+      import launchReadinessLease from ${JSON.stringify(moduleUrl)};
+      const { readLaunchReadinessLease } = launchReadinessLease;
+      const result = readLaunchReadinessLease(
+        ${JSON.stringify(SANDBOX)},
+        ${JSON.stringify(gatewayName)},
+        ${gatewayPort},
+        {
+          home: ${JSON.stringify(home)},
+          nowWallMs: () => ${wallMs},
+          nowUptimeMs: () => ${uptimeMs},
+          bootId: () => ${JSON.stringify(bootId)},
+          uid: () => ${process.getuid?.() ?? 0},
+          runtimeAuthorityRoot: () => ${JSON.stringify(runtimeRoot)},
+        },
+      );
+      process.stdout.write(result.kind);
+    `;
+    return execFileSync(
+      process.execPath,
+      ["--import", "tsx", "--input-type=module", "--eval", source],
+      { encoding: "utf8" },
+    );
+  }
+
+  function expectFenceFailure(operation: () => unknown, blocksRecovery: boolean): void {
+    try {
+      operation();
+      throw new Error("Expected launch-readiness fencing to fail.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(LaunchReadinessFenceError);
+      expect((error as LaunchReadinessFenceError).blocksRecovery).toBe(blocksRecovery);
+    }
+  }
+
   it("publishes a fixed 24-hour lease and accepts it on the same boot and user", () => {
     const lease = publish();
     expect(lease.leaseExpiresWallMs - lease.leaseStartedWallMs).toBe(LAUNCH_READINESS_LEASE_MS);
@@ -95,6 +178,39 @@ describe("launch readiness lease storage", () => {
       lease: { epochId: EPOCH_A, sandboxName: SANDBOX },
     });
   });
+
+  it.skipIf(process.platform !== "darwin")(
+    "derives the macOS runtime authority without caller environment input",
+    () => {
+      const sandboxName = `darwin-authority-${process.pid}-${Date.now()}`;
+      const darwinRoot = fs.realpathSync.native(
+        execFileSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], {
+          encoding: "utf8",
+        }).trim(),
+      );
+      const authorityPath = launchReadinessAuthorityPath(sandboxName, darwinRoot);
+      const productionOptions = options({
+        runtimeAuthorityRoot: undefined,
+        randomEpoch: () => EPOCH_A,
+      });
+      try {
+        const fence = fenceLeaseStore(sandboxName, GATEWAY_NAME, GATEWAY_PORT, productionOptions);
+        publishLeaseStore(
+          sandboxName,
+          GATEWAY_NAME,
+          GATEWAY_PORT,
+          fence.epochId,
+          identity(),
+          productionOptions,
+        );
+        expect(
+          readLeaseStore(sandboxName, GATEWAY_NAME, GATEWAY_PORT, productionOptions).kind,
+        ).toBe("valid");
+      } finally {
+        fs.rmSync(authorityPath, { force: true });
+      }
+    },
+  );
 
   it("preserves the original lease envelope when the complete preflight republishes before expiry", () => {
     const first = publish();
@@ -177,7 +293,7 @@ describe("launch readiness lease storage", () => {
         identity(),
         options(),
       ),
-    ).toThrow("disabled after an unsafe clock observation");
+    ).toThrow("disabled while authority or clock history is unsafe");
 
     wallMs = original.publishedWallMs + 1;
     uptimeMs += 2;
@@ -191,7 +307,7 @@ describe("launch readiness lease storage", () => {
         identity(),
         options(),
       ),
-    ).toThrow("disabled after an unsafe clock observation");
+    ).toThrow("disabled while authority or clock history is unsafe");
 
     wallMs = original.leaseExpiresWallMs;
     uptimeMs += LAUNCH_READINESS_LEASE_MS;
@@ -258,6 +374,85 @@ describe("launch readiness lease storage", () => {
     ).toBe(current.epochId);
   });
 
+  it("keeps the newer published lease valid when a paused producer resumes stale", () => {
+    const pausedProducer = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+    const currentProducer = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+    publishLaunchReadinessLease(
+      SANDBOX,
+      GATEWAY_PORT,
+      currentProducer.epochId,
+      identity(),
+      options(),
+    );
+
+    expect(
+      checkLaunchReadinessMutationAuthority(
+        SANDBOX,
+        GATEWAY_NAME,
+        GATEWAY_PORT,
+        pausedProducer.epochId,
+        options(),
+      ),
+    ).toBe("changed");
+    expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options())).toMatchObject({
+      kind: "valid",
+      lease: { epochId: currentProducer.epochId },
+    });
+    expect(() =>
+      publishLaunchReadinessLease(
+        SANDBOX,
+        GATEWAY_PORT,
+        pausedProducer.epochId,
+        identity(),
+        options(),
+      ),
+    ).toThrow("authority changed");
+  });
+
+  it("revalidates the runtime epoch used to enter the recovery mutation window", () => {
+    const stale = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+    expect(
+      checkLaunchReadinessMutationAuthority(
+        SANDBOX,
+        GATEWAY_NAME,
+        GATEWAY_PORT,
+        stale.epochId,
+        options(),
+      ),
+    ).toBe("current");
+
+    const current = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+    expect(
+      checkLaunchReadinessMutationAuthority(
+        SANDBOX,
+        GATEWAY_NAME,
+        GATEWAY_PORT,
+        stale.epochId,
+        options(),
+      ),
+    ).toBe("changed");
+    expect(
+      checkLaunchReadinessMutationAuthority(
+        SANDBOX,
+        GATEWAY_NAME,
+        GATEWAY_PORT,
+        current.epochId,
+        options(),
+      ),
+    ).toBe("current");
+  });
+
+  it("revalidates authoritative absence under the recovery mutation gate", () => {
+    expect(
+      checkLaunchReadinessMutationAuthority(SANDBOX, GATEWAY_NAME, GATEWAY_PORT, null, options()),
+    ).toBe("current");
+
+    fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+    expect(
+      checkLaunchReadinessMutationAuthority(SANDBOX, GATEWAY_NAME, GATEWAY_PORT, null, options()),
+    ).toBe("changed");
+  });
+
   it("rejects a copied fence after the state volume changes during preflight", () => {
     const fence = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
     const stateRoot = path.join(home, ".nemoclaw");
@@ -281,6 +476,95 @@ describe("launch readiness lease storage", () => {
 
     fs.writeFileSync(receiptPath, "x".repeat(LAUNCH_READINESS_MAX_BYTES + 1), { mode: 0o600 });
     expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("unsafe");
+  });
+
+  it("requires an exact bounded private runtime-authority record", () => {
+    publish();
+    const authorityPath = launchReadinessAuthorityPath(SANDBOX, runtimeRoot);
+    expect(path.basename(authorityPath)).toMatch(/^[a-f0-9]{64}\.json$/);
+    expect(fs.statSync(path.dirname(authorityPath)).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(authorityPath).mode & 0o777).toBe(0o600);
+
+    const authority = JSON.parse(fs.readFileSync(authorityPath, "utf8")) as Record<string, unknown>;
+    authority.extra = true;
+    fs.writeFileSync(authorityPath, JSON.stringify(authority), { mode: 0o600 });
+    expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("unsafe");
+
+    fs.writeFileSync(authorityPath, "x".repeat(LAUNCH_READINESS_MAX_BYTES + 1), { mode: 0o600 });
+    expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("unsafe");
+  });
+
+  it("rejects an authority copied to a restored runtime root", () => {
+    publish();
+    const authorityPath = launchReadinessAuthorityPath(SANDBOX, runtimeRoot);
+    const authority = fs.readFileSync(authorityPath, "utf8");
+    const replacementRuntime = path.join(root, "replacement-runtime");
+    const replacementPath = launchReadinessAuthorityPath(SANDBOX, replacementRuntime);
+    fs.mkdirSync(path.dirname(replacementPath), { mode: 0o700, recursive: true });
+    fs.chmodSync(replacementRuntime, 0o700);
+    fs.chmodSync(path.join(replacementRuntime, "nemoclaw"), 0o700);
+    fs.chmodSync(path.dirname(replacementPath), 0o700);
+    fs.writeFileSync(replacementPath, authority, { mode: 0o600 });
+
+    expect(
+      readLaunchReadinessLease(
+        SANDBOX,
+        GATEWAY_PORT,
+        options({ runtimeAuthorityRoot: () => replacementRuntime }),
+      ).kind,
+    ).toBe("identity");
+  });
+
+  it("quarantines unsafe authority history for one fixed non-sliding 24-hour interval before a new envelope", () => {
+    publish();
+    const authorityPath = launchReadinessAuthorityPath(SANDBOX, runtimeRoot);
+    fs.writeFileSync(authorityPath, "{}\n", { mode: 0o600 });
+    epochs = [EPOCH_B, EPOCH_C, "e".repeat(64)];
+
+    const quarantined = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+    expect(quarantined).toMatchObject({
+      publicationState: "time-unsafe",
+      preservedLeaseStartedWallMs: wallMs,
+      preservedLeaseExpiresWallMs: wallMs + LAUNCH_READINESS_LEASE_MS,
+      preservedLeaseElapsedMs: 0,
+    });
+    expect(() =>
+      publishLaunchReadinessLease(
+        SANDBOX,
+        GATEWAY_PORT,
+        quarantined.epochId,
+        identity(),
+        options(),
+      ),
+    ).toThrow("disabled while authority or clock history is unsafe");
+
+    wallMs += LAUNCH_READINESS_LEASE_MS;
+    uptimeMs += LAUNCH_READINESS_LEASE_MS - 1;
+    const stillQuarantined = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+    expect(stillQuarantined).toMatchObject({
+      publicationState: "time-unsafe",
+      preservedLeaseStartedWallMs: quarantined.preservedLeaseStartedWallMs,
+      preservedLeaseExpiresWallMs: quarantined.preservedLeaseExpiresWallMs,
+      preservedLeaseElapsedMs: LAUNCH_READINESS_LEASE_MS - 1,
+    });
+
+    uptimeMs += 1;
+    const recovered = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+    expect(recovered).toMatchObject({
+      publicationState: "ready",
+      preservedLeaseStartedWallMs: null,
+      preservedLeaseExpiresWallMs: null,
+      preservedLeaseElapsedMs: null,
+    });
+    const lease = publishLaunchReadinessLease(
+      SANDBOX,
+      GATEWAY_PORT,
+      recovered.epochId,
+      identity(),
+      options(),
+    );
+    expect(lease.leaseStartedWallMs).toBe(wallMs);
+    expect(lease.leaseExpiresWallMs).toBe(wallMs + LAUNCH_READINESS_LEASE_MS);
   });
 
   it("rejects unsafe receipt permissions and foreign ownership authority", () => {
@@ -332,6 +616,124 @@ describe("launch readiness lease storage", () => {
     fs.renameSync(saved, receiptPath);
     fs.linkSync(receiptPath, `${receiptPath}.link`);
     expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("unsafe");
+  });
+
+  it("uses one sandbox-global authority epoch across owning gateway changes", () => {
+    const gatewayA = "gateway-a";
+    const gatewayB = "gateway-b";
+    const portA = 8080;
+    const portB = 8081;
+    const fenceA = fenceLeaseStore(SANDBOX, gatewayA, portA, options());
+    const first = publishLeaseStore(
+      SANDBOX,
+      gatewayA,
+      portA,
+      fenceA.epochId,
+      identity(gatewayA),
+      options(),
+    );
+    wallMs += 60_000;
+    uptimeMs += 60_000;
+
+    const fenceB = fenceLeaseStore(SANDBOX, gatewayB, portB, options());
+    expect(fenceB.epochId).toBe(EPOCH_B);
+    expect(fenceB.preservedLeaseStartedWallMs).toBe(first.leaseStartedWallMs);
+    expect(fenceB.preservedLeaseExpiresWallMs).toBe(first.leaseExpiresWallMs);
+    expect(readLeaseStore(SANDBOX, gatewayA, portA, options()).kind).toBe("identity");
+    expect(readInFreshProcess(gatewayA, portA)).toBe("identity");
+  });
+
+  it("blocks when a prior runtime epoch exists but its rotation cannot be made durable", () => {
+    const fence = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+    fs.unlinkSync(launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home));
+    const authorityPath = launchReadinessAuthorityPath(SANDBOX, runtimeRoot);
+    const rename = fs.renameSync.bind(fs);
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
+      if (destination === authorityPath) {
+        throw Object.assign(new Error("read-only runtime authority"), { code: "EROFS" });
+      }
+      return rename(source, destination);
+    });
+
+    expect(fence.epochId).toBe(EPOCH_A);
+    expectFenceFailure(() => fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()), true);
+  });
+
+  it("allows the complete preflight only when runtime authority and persistent evidence are securely absent", () => {
+    const mkdir = fs.mkdirSync.bind(fs);
+    vi.spyOn(fs, "mkdirSync").mockImplementation((target, mkdirOptions) => {
+      if (String(target).startsWith(runtimeRoot)) {
+        throw Object.assign(new Error("read-only runtime root"), { code: "EROFS" });
+      }
+      return mkdir(target, mkdirOptions as fs.MakeDirectoryOptions & { recursive: true });
+    });
+
+    expectFenceFailure(() => fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()), false);
+    expect(fs.existsSync(launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home))).toBe(false);
+    expect(fs.existsSync(launchReadinessAuthorityPath(SANDBOX, runtimeRoot))).toBe(false);
+  });
+
+  it("blocks when runtime authority is unsafe even though persistent evidence is missing", () => {
+    fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+    fs.unlinkSync(launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home));
+    const authorityDir = path.dirname(launchReadinessAuthorityPath(SANDBOX, runtimeRoot));
+    fs.chmodSync(authorityDir, 0o500);
+
+    expectFenceFailure(() => fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()), true);
+    fs.chmodSync(authorityDir, 0o700);
+  });
+
+  it.each([
+    "file",
+    "directory",
+    "ancestor",
+  ] as const)("keeps a restored unsafe persistent %s invalid across processes", (unsafePart) => {
+    publish();
+    const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
+    const receiptDir = path.dirname(receiptPath);
+    const target =
+      unsafePart === "file"
+        ? receiptPath
+        : unsafePart === "directory"
+          ? receiptDir
+          : path.dirname(receiptDir);
+    const before = fs.statSync(receiptPath);
+    const originalMode = fs.statSync(target).mode & 0o777;
+    fs.chmodSync(target, unsafePart === "file" ? 0o640 : 0o770);
+
+    expectFenceFailure(() => fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()), false);
+    fs.chmodSync(target, originalMode);
+    const restored = fs.statSync(receiptPath);
+    expect({ dev: restored.dev, ino: restored.ino }).toEqual({ dev: before.dev, ino: before.ino });
+    expect(readInFreshProcess()).toBe("identity");
+
+    epochs = [EPOCH_C];
+    const newFence = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+    publishLaunchReadinessLease(SANDBOX, GATEWAY_PORT, newFence.epochId, identity(), options());
+    expect(readInFreshProcess()).toBe("valid");
+  });
+
+  it("rejects the unchanged persistent inode after simulated read-only remount fencing", () => {
+    publish();
+    const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
+    const before = fs.statSync(receiptPath);
+    const rename = fs.renameSync.bind(fs);
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
+      if (destination === receiptPath) {
+        throw Object.assign(new Error("read-only persistent state"), { code: "EROFS" });
+      }
+      return rename(source, destination);
+    });
+
+    expectFenceFailure(() => fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()), false);
+    vi.restoreAllMocks();
+    const restored = fs.statSync(receiptPath);
+    expect({ dev: restored.dev, ino: restored.ino, ctimeMs: restored.ctimeMs }).toEqual({
+      dev: before.dev,
+      ino: before.ino,
+      ctimeMs: before.ctimeMs,
+    });
+    expect(readInFreshProcess()).toBe("identity");
   });
 
   it("stores receipts by a SHA-256 key while verifying the exact sandbox name", () => {

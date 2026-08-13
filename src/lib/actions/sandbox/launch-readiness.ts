@@ -10,6 +10,7 @@ import { getCuaRuntimeReadinessDigest } from "../../cua/contract";
 import { parseGatewayInference, planInferenceRouteReconcile } from "../../inference/config";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import { normalizeInferenceSelection } from "../../inference/selection";
+import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
 import { resolveGatewayName } from "../../onboard/gateway-binding";
 import {
   observeSandboxOnGateway,
@@ -18,8 +19,10 @@ import {
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
 import {
+  checkLaunchReadinessMutationAuthority,
   fenceLaunchReadinessLease,
   type LaunchReadinessFence,
+  LaunchReadinessFenceError,
   type LaunchReadinessIdentity,
   type LaunchReadinessLeaseRead,
   type LaunchReadinessStoreOptions,
@@ -80,9 +83,11 @@ export type LaunchReadinessDecision =
       gatewayName: string | null;
       gatewayPort: number | null;
       fenceFailed: boolean;
+      recoveryBlocked: boolean;
     };
 
 export interface LaunchReadinessDeps extends LaunchReadinessHealthDeps {
+  checkMutationAuthority?: typeof checkLaunchReadinessMutationAuthority;
   getSandbox?: typeof registry.getSandbox;
   observeSandbox?: SandboxRecreateObserver;
   readLease?: typeof readLaunchReadinessLease;
@@ -108,6 +113,11 @@ export type LaunchReadinessPublicationResult =
     }
   | { kind: "evidence-failed" };
 
+export type LaunchReadinessMutationGateResult<T> =
+  | { kind: "entered"; value: T }
+  | { kind: "changed" }
+  | { kind: "unsafe" };
+
 type LaunchReadinessPublicationValidationCategory = Extract<
   LaunchReadinessPublicationResult,
   { kind: "validation-failed" }
@@ -128,6 +138,10 @@ function normalizedString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
+}
+
+function exactNonemptyString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function canonicalize(value: unknown): unknown {
@@ -159,6 +173,58 @@ export function launchReadinessDigest(value: unknown): string {
 
 function exactContentDigest(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function projectHostMounts(entry: SandboxEntry): unknown[] {
+  return (entry.hostMounts ?? []).map((mount) => {
+    const source = exactNonemptyString(mount.source);
+    const target = exactNonemptyString(mount.target);
+    const device = exactNonemptyString(mount.sourceIdentity?.device);
+    const inode = exactNonemptyString(mount.sourceIdentity?.inode);
+    if (!source || !target || mount.readOnly !== true || !device || !inode) {
+      throw new ObservationError("config");
+    }
+    return {
+      sourceSha256: exactContentDigest(source),
+      target,
+      readOnly: true,
+      sourceIdentity: { device, inode },
+    };
+  });
+}
+
+function projectServingProfile(entry: SandboxEntry): unknown {
+  if (entry.servingProfileProvenance === undefined) return null;
+  const provenance = parseServingProfileProvenance(entry.servingProfileProvenance);
+  if (!provenance) throw new ObservationError("config");
+  return {
+    schemaVersion: provenance.schemaVersion,
+    catalogDigest: provenance.catalogDigest,
+    preset: {
+      id: provenance.preset.id,
+      digest: provenance.preset.digest,
+      displayName: provenance.preset.displayName,
+      supportState: provenance.preset.supportState,
+    },
+    recipe: {
+      id: provenance.recipe.id,
+      digest: provenance.recipe.digest,
+      backend: provenance.recipe.backend,
+    },
+    model: {
+      id: provenance.model.id,
+      revision: provenance.model.revision,
+    },
+    runtimeImage: provenance.runtimeImage,
+    estimatedImageDownloadBytes: provenance.estimatedImageDownloadBytes,
+    estimatedModelDownloadBytes: provenance.estimatedModelDownloadBytes,
+  };
+}
+
+function projectOptionalBoolean(value: unknown): boolean {
+  if (value === undefined) return false;
+  if (typeof value !== "boolean") throw new ObservationError("config");
+  return value;
 }
 
 export function launchReadinessPolicyDigest(content: string): string {
@@ -444,9 +510,21 @@ export function buildLaunchReadinessRegistryProjection(
   }
   const agentName = normalizedString(entry.agent) ?? "openclaw";
   const interactiveCommand = resolveLaunchInteractiveCommand(agent, agentName);
+  const sandboxGpuMode = entry.sandboxGpuMode ?? null;
+  const sandboxGpuDevice = entry.sandboxGpuDevice ?? null;
+  if (sandboxGpuMode !== null && typeof sandboxGpuMode !== "string") {
+    throw new ObservationError("config");
+  }
+  if (sandboxGpuDevice !== null && typeof sandboxGpuDevice !== "string") {
+    throw new ObservationError("config");
+  }
+  const hermesAuthMethod = entry.hermesAuthMethod ?? null;
+  if (hermesAuthMethod !== null && hermesAuthMethod !== "oauth" && hermesAuthMethod !== "api_key") {
+    throw new ObservationError("config");
+  }
 
   return {
-    version: 1,
+    version: 2,
     name: entry.name,
     openshellDriver: driver,
     openshellVersion,
@@ -460,6 +538,13 @@ export function buildLaunchReadinessRegistryProjection(
     imageTag: normalizedString(entry.imageTag),
     workloadIdentitySha256: launchReadinessDigest(projectWorkload(entry.workload)),
     fromDockerfile: normalizedString(entry.fromDockerfile),
+    servingProfileProvenance: projectServingProfile(entry),
+    hostMounts: projectHostMounts(entry),
+    gpuEnabled: projectOptionalBoolean(entry.gpuEnabled),
+    hostGpuDetected: projectOptionalBoolean(entry.hostGpuDetected),
+    sandboxGpuEnabled: projectOptionalBoolean(entry.sandboxGpuEnabled),
+    sandboxGpuMode,
+    sandboxGpuDevice,
     interactiveCommand,
     sandboxGpuProof: entry.sandboxGpuProof
       ? {
@@ -483,6 +568,7 @@ export function buildLaunchReadinessRegistryProjection(
     mcpSha256: launchReadinessDigest(projectMcpState(entry.mcp)),
     hermesToolGateways: [...(entry.hermesToolGateways ?? [])],
     hermesInferenceProvider: normalizedString(entry.hermesInferenceProvider),
+    hermesAuthMethod,
     hermesDashboardEnabled: entry.hermesDashboardEnabled === true,
     hermesDashboardPort: entry.hermesDashboardPort ?? null,
     hermesDashboardInternalPort: entry.hermesDashboardInternalPort ?? null,
@@ -596,6 +682,7 @@ async function captureLaunchIdentity(
 
   await requireLaunchSemanticHealth(
     sandboxName,
+    gatewayName,
     entry,
     agent,
     inference.kind === "configured",
@@ -657,9 +744,18 @@ function fallback(
   gatewayName: string | null,
   gatewayPort: number | null,
   fenceFailed: boolean,
+  recoveryBlocked = false,
 ): LaunchReadinessDecision {
   debugDecision(category);
-  return { kind: "fallback", category, fence, gatewayName, gatewayPort, fenceFailed };
+  return {
+    kind: "fallback",
+    category,
+    fence,
+    gatewayName,
+    gatewayPort,
+    fenceFailed,
+    recoveryBlocked,
+  };
 }
 
 /**
@@ -674,7 +770,7 @@ export async function inspectLaunchReadiness(
   const withGatewayLock = deps.withGatewayLock ?? withGatewayRouteMutationLock;
   return withSandboxLock(sandboxName, async () => {
     const entry = (deps.getSandbox ?? registry.getSandbox)(sandboxName);
-    if (!entry) return fallback("missing", null, null, null, false);
+    if (!entry) return fallback("missing", null, null, null, true, true);
     let gatewayPort: number;
     let gatewayName: string;
     try {
@@ -686,12 +782,13 @@ export async function inspectLaunchReadiness(
       if (entry.gatewayName !== gatewayName) throw new ObservationError("config");
     } catch (error) {
       const category = error instanceof ObservationError ? error.category : "config";
-      return fallback(category, null, null, null, true);
+      return fallback(category, null, null, null, true, true);
     }
     return withGatewayLock(gatewayName, async () => {
       const storageStartedAt = performance.now();
       const read = (deps.readLease ?? readLaunchReadinessLease)(
         sandboxName,
+        gatewayName,
         gatewayPort,
         deps.storeOptions,
       );
@@ -722,21 +819,59 @@ export async function inspectLaunchReadiness(
       try {
         const fence = (deps.fenceLease ?? fenceLaunchReadinessLease)(
           sandboxName,
+          gatewayName,
           gatewayPort,
           deps.storeOptions,
         );
         return fallback(category, fence, gatewayName, gatewayPort, false);
-      } catch {
+      } catch (error) {
+        const recoveryBlocked =
+          error instanceof LaunchReadinessFenceError ? error.blocksRecovery : true;
         return fallback(
           category === "missing" ? "unsafe" : category,
           null,
           gatewayName,
           gatewayPort,
           true,
+          recoveryBlocked,
         );
       } finally {
         recordPerformanceStage("evidence-fence", fenceStartedAt);
       }
+    });
+  });
+}
+
+/**
+ * Enter the complete preflight mutation window only while the producer's
+ * runtime epoch remains authoritative. Both canonical locks stay held until
+ * the operation, final recapture, and publication finish. Nested lifecycle or
+ * gateway lock users are reentrant through the canonical lock implementation.
+ */
+export async function withLaunchReadinessMutationGate<T>(
+  publication: LaunchReadinessPublication,
+  operation: () => Promise<T> | T,
+  deps: LaunchReadinessDeps = {},
+): Promise<LaunchReadinessMutationGateResult<T>> {
+  const { sandboxName, gatewayName, gatewayPort, epochId } = publication;
+  if (!gatewayName || !gatewayPort) return { kind: "unsafe" };
+  const withSandboxLock = deps.withSandboxLock ?? withSandboxMutationLock;
+  const withGatewayLock = deps.withGatewayLock ?? withGatewayRouteMutationLock;
+  return withSandboxLock(sandboxName, async () => {
+    const entry = (deps.getSandbox ?? registry.getSandbox)(sandboxName);
+    if (entry?.gatewayPort !== gatewayPort || entry.gatewayName !== gatewayName) {
+      return { kind: "changed" };
+    }
+    return withGatewayLock(gatewayName, async () => {
+      const authority = (deps.checkMutationAuthority ?? checkLaunchReadinessMutationAuthority)(
+        sandboxName,
+        gatewayName,
+        gatewayPort,
+        epochId,
+        deps.storeOptions,
+      );
+      if (authority !== "current") return { kind: authority };
+      return { kind: "entered", value: await operation() };
     });
   });
 }
@@ -773,6 +908,7 @@ export async function publishLaunchReadiness(
         try {
           (deps.publishLease ?? publishLaunchReadinessLease)(
             sandboxName,
+            gatewayName,
             gatewayPort,
             epochId,
             captured.identity,

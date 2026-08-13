@@ -18,7 +18,11 @@ import {
   inspectLaunchReadiness,
   publicationFromDecision,
   publishLaunchReadiness,
+  withLaunchReadinessMutationGate,
 } from "./launch-readiness";
+
+const LAUNCH_READINESS_FENCE_REPAIR =
+  "Launch readiness evidence could not be safely invalidated. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.";
 
 /**
  * Connect to a sandbox and start its agent in one host-side step (#6006).
@@ -36,6 +40,7 @@ interface LaunchSandboxDeps {
   withSandboxMutationLock?: typeof withSandboxMutationLock;
   inspectLaunchReadiness?: typeof inspectLaunchReadiness;
   publishLaunchReadiness?: typeof publishLaunchReadiness;
+  withLaunchReadinessMutationGate?: typeof withLaunchReadinessMutationGate;
 }
 
 async function launchCuaUnderMutationLocks(
@@ -70,24 +75,39 @@ export async function launchSandbox(
   sandboxName: string,
   deps: LaunchSandboxDeps = {},
 ): Promise<void> {
-  const decision = await (deps.inspectLaunchReadiness ?? inspectLaunchReadiness)(sandboxName);
-  const session =
-    decision.kind === "accepted"
-      ? (() => {
-          printInteractiveSessionHints(sandboxName);
-          completeInteractiveSessionSetup(sandboxName, decision.sb);
-          return { agent: decision.agent, sb: decision.sb };
-        })()
-      : await prepareInteractiveSession(sandboxName);
-  if (decision.kind === "fallback" && decision.fence) {
-    const publication = await (deps.publishLaunchReadiness ?? publishLaunchReadiness)(
-      publicationFromDecision(sandboxName, decision),
-    );
-    if (publication.kind === "validation-failed") {
+  const inspect = deps.inspectLaunchReadiness ?? inspectLaunchReadiness;
+  const enterMutationGate = deps.withLaunchReadinessMutationGate ?? withLaunchReadinessMutationGate;
+  let decision = await inspect(sandboxName);
+  let session: Awaited<ReturnType<typeof prepareInteractiveSession>>;
+  while (true) {
+    if (decision.kind === "accepted") {
+      printInteractiveSessionHints(sandboxName);
+      completeInteractiveSessionSetup(sandboxName, decision.sb);
+      session = { agent: decision.agent, sb: decision.sb };
+      break;
+    }
+    if (decision.recoveryBlocked) throw new Error(LAUNCH_READINESS_FENCE_REPAIR);
+    const fallbackDecision = decision;
+    const publicationRequest = publicationFromDecision(sandboxName, fallbackDecision);
+    const gated = await enterMutationGate(publicationRequest, async () => {
+      const prepared = await prepareInteractiveSession(sandboxName);
+      const publication = fallbackDecision.fence
+        ? await (deps.publishLaunchReadiness ?? publishLaunchReadiness)(publicationRequest)
+        : null;
+      return { prepared, publication };
+    });
+    if (gated.kind === "changed") {
+      decision = await inspect(sandboxName);
+      continue;
+    }
+    if (gated.kind === "unsafe") throw new Error(LAUNCH_READINESS_FENCE_REPAIR);
+    if (gated.value.publication?.kind === "validation-failed") {
       throw new Error(
-        `Launch readiness final validation failed due to ${publication.category}. Retry launch.`,
+        `Launch readiness final validation failed due to ${gated.value.publication.category}. Retry launch.`,
       );
     }
+    session = gated.value.prepared;
+    break;
   }
   const { agent, sb } = session;
   const isCua = sb?.agent === "nemocua";

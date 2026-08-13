@@ -24,6 +24,7 @@ export function runAgentSmokeCommands(
   sandboxName: string,
   agent: AgentDefinition,
   runCaptureOpenshell: RunCaptureOpenshell,
+  gatewayName?: string,
 ): AgentSmokeCommandResult {
   // smoke_commands are shell-form commands from repository-shipped agents/*/manifest.yaml files.
   // Switch to argv-form commands before accepting custom or user-provided manifests here.
@@ -36,6 +37,7 @@ export function runAgentSmokeCommands(
         "exec",
         "-n",
         sandboxName,
+        ...(gatewayName ? ["-g", gatewayName] : []),
         "--",
         "sh",
         "-lc",

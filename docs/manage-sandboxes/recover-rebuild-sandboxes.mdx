@@ -146,14 +146,32 @@ The lease has a fixed 24-hour lifetime that repeated launches do not extend.
 Leaving the agent with `/exit` does not revoke it, and users do not refresh it manually.
 
 During the lease, `launch` still verifies the owning OpenShell gateway, exact live sandbox identity, registry and agent configuration, effective policy, inference route, required forwards, and semantic runtime health.
+Configured inference must return HTTP 2xx from the semantic `inference.local` probe, which is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 When those checks pass, it can skip duplicate recovery, readiness polling, and inference-route repair.
 The lease is not a health guarantee or repair authority.
 
-Missing, unsafe, malformed, expired, mismatched, changed, or unhealthy evidence makes `launch` run the complete preflight automatically.
+For missing, unsafe, malformed, expired, mismatched, changed, or unhealthy evidence, NemoClaw fences any prior acceptable evidence before it runs the complete preflight.
+Ordinary launch continues only when NemoClaw proves that no old authority or evidence can exist, or durably rotates the runtime epoch.
+If an old epoch might exist and cannot be durably rotated, `launch` and `connect --probe-only` stop before complete preflight or recovery.
+Their redacted guidance asks you to repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.
+If NemoClaw securely proves that both the authority and receipt are absent but cannot create new authority, ordinary `launch` can run the complete preflight without optimization; `connect --probe-only` exits nonzero because it could not publish evidence.
 If that preflight succeeds before the lease expires, replacement evidence keeps the original start and expiry time.
 After expiry, a successful complete preflight starts a new 24-hour lease only when publication succeeds.
 
-Infrastructure must run `connect --probe-only` as the same final numeric desktop user that later runs `launch`.
+Before the first mutation in the complete preflight, the producer revalidates its sandbox-global runtime epoch under the sandbox lifecycle lock followed by the owning gateway lock.
+It holds both locks through all mutations in the complete preflight, final state capture, and publication.
+A stale producer makes no changes and re-inspects the newer lease.
+
+If unsafe or malformed authority history makes the prior lease timeline untrustworthy, NemoClaw durably invalidates the old epoch and starts one conservative 24-hour quarantine.
+Publication remains disabled until both wall time and monotonic uptime span the full quarantine.
+Repeated attempts do not extend it.
+After it elapses, the next successful complete preflight can publish a new fixed 24-hour lease.
+
+Lease acceptance requires a secure, independently writable OS per-user runtime authority.
+On Linux, NemoClaw uses `/run/user/<numeric-uid>`; on macOS, it asks the OS for the user's temporary root.
+It never uses caller-provided environment variables to select this authority.
+
+Infrastructure must run `connect --probe-only` as the same final numeric user that later runs `launch`.
 Run it after the final durable home and state volume is mounted and after policy and network provisioning is complete.
 NemoClaw rejects evidence after a bound sandbox, configuration, policy, or network identity changes.
 Deployment ordering remains responsible for external changes that OpenShell and NemoClaw cannot observe.

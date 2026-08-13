@@ -33,12 +33,13 @@ export interface LaunchReadinessHealthDeps {
   listAgents?: typeof listAgents;
   loadAgent?: typeof loadAgent;
   capture?: (args: string[]) => LaunchReadinessCaptureResult;
-  gatewayHealth?: (sandboxName: string) => Promise<boolean | null>;
-  forwardsHealthy?: (sandboxName: string) => boolean | null;
+  gatewayHealth?: (sandboxName: string, gatewayName: string) => Promise<boolean | null>;
+  forwardsHealthy?: (sandboxName: string, gatewayName: string) => boolean | null;
   smoke?: typeof runAgentSmokeCommands;
   inferenceProbe?: (
     sandboxName: string,
     agent: InferenceRouteProbeAgent,
+    gatewayName: string,
   ) => ReturnType<typeof parseSandboxInferenceRouteProbeResult>;
   cuaReadiness?: typeof requireCuaLifecycleReadiness;
 }
@@ -106,9 +107,10 @@ export function resolveTrustedLaunchAgent(
 function probeInferenceRoute(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
+  gatewayName: string,
 ): ReturnType<typeof parseSandboxInferenceRouteProbeResult> {
   return parseSandboxInferenceRouteProbeResult(
-    captureLaunchReadiness(buildSandboxInferenceRouteProbeArgs(sandboxName, agent), {
+    captureLaunchReadiness(buildSandboxInferenceRouteProbeArgs(sandboxName, agent, gatewayName), {
       includeStreams: true,
     }),
   );
@@ -116,6 +118,7 @@ function probeInferenceRoute(
 
 export async function requireLaunchSemanticHealth(
   sandboxName: string,
+  gatewayName: string,
   entry: SandboxEntry,
   agent: AgentDefinition,
   inferenceConfigured: boolean,
@@ -128,8 +131,12 @@ export async function requireLaunchSemanticHealth(
       throw new LaunchReadinessObservationError("health");
     }
   } else if (isTerminalAgent(agent)) {
-    const smoke = (deps.smoke ?? runAgentSmokeCommands)(sandboxName, agent, (args, _options) =>
-      (deps.capture ?? ((captureArgs) => captureLaunchReadiness(captureArgs)))(args),
+    const smoke = (deps.smoke ?? runAgentSmokeCommands)(
+      sandboxName,
+      agent,
+      (args, _options) =>
+        (deps.capture ?? ((captureArgs) => captureLaunchReadiness(captureArgs)))(args),
+      gatewayName,
     );
     if (!smoke.ok) {
       const trustedExit = smoke.output?.match(/(?:^|\n)NEMOCLAW_AGENT_SMOKE_EXIT:(\d+)(?:\n|$)/);
@@ -137,20 +144,28 @@ export async function requireLaunchSemanticHealth(
       throw new LaunchReadinessObservationError("health");
     }
   } else {
-    const running = await (deps.gatewayHealth ?? isSandboxGatewayRunningForStatus)(sandboxName);
+    const running = await (deps.gatewayHealth ?? isSandboxGatewayRunningForStatus)(
+      sandboxName,
+      gatewayName,
+    );
     if (running === null) throw new LaunchReadinessEvidenceError();
     if (!running) throw new LaunchReadinessObservationError("health");
-    const forwards = (deps.forwardsHealthy ?? areSandboxLaunchForwardsHealthy)(sandboxName);
+    const forwards = (deps.forwardsHealthy ?? areSandboxLaunchForwardsHealthy)(
+      sandboxName,
+      gatewayName,
+    );
     if (forwards === null) throw new LaunchReadinessEvidenceError();
     if (!forwards) {
       throw new LaunchReadinessObservationError("health");
     }
   }
   if (inferenceConfigured) {
-    const inference = (deps.inferenceProbe ?? probeInferenceRoute)(sandboxName, agent);
-    if (!inference.healthy) {
-      if (!inference.broken) throw new LaunchReadinessEvidenceError();
+    const inference = (deps.inferenceProbe ?? probeInferenceRoute)(sandboxName, agent, gatewayName);
+    const usable = inference.healthy && inference.httpStatus >= 200 && inference.httpStatus < 300;
+    if (usable) return;
+    if (inference.broken || (inference.httpStatus >= 100 && inference.httpStatus < 600)) {
       throw new LaunchReadinessObservationError("health");
     }
+    throw new LaunchReadinessEvidenceError();
   }
 }

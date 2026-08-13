@@ -10,6 +10,7 @@ import type {
   LaunchReadinessIdentity,
   LaunchReadinessLease,
 } from "../../state/launch-readiness-lease";
+import { LaunchReadinessFenceError } from "../../state/launch-readiness-lease";
 import type { SandboxEntry } from "../../state/registry";
 import {
   buildLaunchReadinessRegistryProjection,
@@ -19,6 +20,7 @@ import {
   launchReadinessPolicyDigest,
   publicationFromDecision,
   publishLaunchReadiness,
+  withLaunchReadinessMutationGate,
 } from "./launch-readiness";
 
 const SANDBOX = "alpha";
@@ -79,6 +81,28 @@ function entry(agent = "openclaw"): SandboxEntry {
   };
 }
 
+function servingProfile(): NonNullable<SandboxEntry["servingProfileProvenance"]> {
+  return {
+    schemaVersion: 1,
+    catalogDigest: `sha256:${"d".repeat(64)}`,
+    preset: {
+      id: "local-gpu",
+      digest: `sha256:${"e".repeat(64)}`,
+      displayName: "Local GPU",
+      supportState: "supported",
+    },
+    recipe: {
+      id: "vllm-local",
+      digest: `sha256:${"f".repeat(64)}`,
+      backend: "vllm",
+    },
+    model: { id: "model-a", revision: "revision-a" },
+    runtimeImage: "example.com/runtime@sha256:immutable",
+    estimatedImageDownloadBytes: 1_000,
+    estimatedModelDownloadBytes: 2_000,
+  };
+}
+
 function fence(): LaunchReadinessFence {
   return {
     schemaVersion: 1,
@@ -93,6 +117,8 @@ function fence(): LaunchReadinessFence {
     homeInode: "2",
     storeDevice: "1",
     storeInode: "3",
+    gatewayName: GATEWAY_NAME,
+    gatewayPort: GATEWAY_PORT,
     publicationState: "ready",
     preservedLeaseStartedWallMs: null,
     preservedLeaseExpiresWallMs: null,
@@ -117,7 +143,37 @@ function lease(identity: LaunchReadinessIdentity): LaunchReadinessLease {
     homeInode: "2",
     storeDevice: "1",
     storeInode: "3",
+    gatewayName: GATEWAY_NAME,
+    gatewayPort: GATEWAY_PORT,
     identity,
+  };
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function serialTestLock(
+  events: string[],
+  label: string,
+): NonNullable<LaunchReadinessDeps["withSandboxLock"]> {
+  let tail = Promise.resolve();
+  return async <T>(_name: string, operation: () => Promise<T> | T): Promise<T> => {
+    const previous = tail;
+    const release = deferred();
+    tail = previous.then(() => release.promise);
+    await previous;
+    events.push(`${label}:start`);
+    try {
+      return await operation();
+    } finally {
+      events.push(`${label}:end`);
+      release.resolve();
+    }
   };
 }
 
@@ -138,6 +194,9 @@ describe("launch readiness validation", () => {
     gatewayPort: number;
   }>;
   let captureRequests: string[][];
+  let gatewayHealthRequests: Array<[string, string]>;
+  let forwardRequests: Array<[string, string]>;
+  let inferenceHealthRequests: Array<[string, string]>;
 
   beforeEach(() => {
     sandbox = entry();
@@ -152,6 +211,9 @@ describe("launch readiness validation", () => {
     externalEvents = [];
     observationRequests = [];
     captureRequests = [];
+    gatewayHealthRequests = [];
+    forwardRequests = [];
+    inferenceHealthRequests = [];
     performance.clearMeasures("nemoclaw.launch-readiness.storage-read");
     performance.clearMeasures("nemoclaw.launch-readiness.live-validation");
     performance.clearMeasures("nemoclaw.launch-readiness.evidence-fence");
@@ -186,17 +248,20 @@ describe("launch readiness validation", () => {
           stderr: "",
         } as ReturnType<NonNullable<LaunchReadinessDeps["capture"]>>;
       },
-      gatewayHealth: async () => {
+      gatewayHealth: async (sandboxName, gatewayName) => {
         externalEvents.push("gateway-health");
+        gatewayHealthRequests.push([sandboxName, gatewayName]);
         return runtimeHealthy;
       },
-      forwardsHealthy: () => {
+      forwardsHealthy: (sandboxName, gatewayName) => {
         externalEvents.push("forward-list");
+        forwardRequests.push([sandboxName, gatewayName]);
         return forwardsHealthy;
       },
       smoke: () => ({ ok: true }),
-      inferenceProbe: () => {
+      inferenceProbe: (sandboxName, _agent, gatewayName) => {
         externalEvents.push("inference-health");
+        inferenceHealthRequests.push([sandboxName, gatewayName]);
         return { healthy: true, broken: false, httpStatus: 200, detail: "OK 200" };
       },
       readLease: () =>
@@ -204,7 +269,7 @@ describe("launch readiness validation", () => {
           ? { kind: "valid", lease: lease(publishedIdentity) }
           : { kind: "missing" },
       fenceLease: () => fence(),
-      publishLease: (_name, _port, _epoch, identity) => {
+      publishLease: (_name, _gateway, _port, _epoch, identity) => {
         publishedIdentity = identity;
         return lease(identity);
       },
@@ -248,6 +313,118 @@ describe("launch readiness validation", () => {
       "gateway-health",
       "forward-list",
     ]);
+  });
+
+  it("revalidates the producer epoch under both canonical locks before mutation", async () => {
+    const currentDeps = deps();
+    const checkMutationAuthority = vi.fn(() => "current" as const);
+    currentDeps.checkMutationAuthority = checkMutationAuthority;
+    lockEvents = [];
+
+    const result = await withLaunchReadinessMutationGate(
+      {
+        sandboxName: SANDBOX,
+        gatewayName: GATEWAY_NAME,
+        gatewayPort: GATEWAY_PORT,
+        epochId: EPOCH,
+      },
+      () => {
+        lockEvents.push("mutation");
+        return "complete";
+      },
+      currentDeps,
+    );
+
+    expect(result).toEqual({ kind: "entered", value: "complete" });
+    expect(checkMutationAuthority).toHaveBeenCalledWith(
+      SANDBOX,
+      GATEWAY_NAME,
+      GATEWAY_PORT,
+      EPOCH,
+      undefined,
+    );
+    expect(lockEvents).toEqual([
+      "sandbox:start",
+      "gateway:start",
+      "mutation",
+      "gateway:end",
+      "sandbox:end",
+    ]);
+  });
+
+  it("delays a later producer's epoch rotation until the current producer releases the mutation locks", async () => {
+    const events: string[] = [];
+    const sandboxLock = serialTestLock(events, "sandbox");
+    const gatewayLock = serialTestLock(events, "gateway");
+    const mutationEntered = deferred();
+    const releaseMutation = deferred();
+    const fenceB = vi.fn(() => {
+      events.push("producer-b:rotate");
+      return { ...fence(), epochId: "b".repeat(64) };
+    });
+    const producerA = withLaunchReadinessMutationGate(
+      {
+        sandboxName: SANDBOX,
+        gatewayName: GATEWAY_NAME,
+        gatewayPort: GATEWAY_PORT,
+        epochId: EPOCH,
+      },
+      async () => {
+        events.push("producer-a:mutation-start");
+        mutationEntered.resolve();
+        await releaseMutation.promise;
+        events.push("producer-a:mutation-end");
+      },
+      {
+        ...deps(),
+        checkMutationAuthority: () => "current",
+        withSandboxLock: sandboxLock,
+        withGatewayLock: gatewayLock,
+      },
+    );
+    await mutationEntered.promise;
+
+    const producerB = inspectLaunchReadiness(SANDBOX, {
+      ...deps(),
+      readLease: () => ({ kind: "missing" }),
+      fenceLease: fenceB,
+      withSandboxLock: sandboxLock,
+      withGatewayLock: gatewayLock,
+    });
+    await Promise.resolve();
+    expect(fenceB).not.toHaveBeenCalled();
+
+    releaseMutation.resolve();
+    await expect(producerA).resolves.toMatchObject({ kind: "entered" });
+    await expect(producerB).resolves.toMatchObject({
+      kind: "fallback",
+      fence: { epochId: "b".repeat(64) },
+    });
+    expect(events.indexOf("producer-a:mutation-end")).toBeLessThan(
+      events.indexOf("producer-b:rotate"),
+    );
+  });
+
+  it("distinguishes blocking authority failures from evidence-free storage failure", async () => {
+    const blockedDeps = deps();
+    blockedDeps.fenceLease = () => {
+      throw new LaunchReadinessFenceError(true, false);
+    };
+    await expect(inspectLaunchReadiness(SANDBOX, blockedDeps)).resolves.toMatchObject({
+      kind: "fallback",
+      fenceFailed: true,
+      recoveryBlocked: true,
+    });
+
+    const unavailableDeps = deps();
+    unavailableDeps.fenceLease = () => {
+      throw new LaunchReadinessFenceError(false, false);
+    };
+    await expect(inspectLaunchReadiness(SANDBOX, unavailableDeps)).resolves.toMatchObject({
+      kind: "fallback",
+      fenceFailed: true,
+      recoveryBlocked: false,
+    });
   });
 
   it("records only accepted-path stages without wall-clock pass thresholds", async () => {
@@ -338,6 +515,7 @@ describe("launch readiness validation", () => {
   });
 
   it("requires exact owning-gateway policy, inference route, and semantic health", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-sibling");
     sandbox = {
       ...sandbox,
       provider: "nvidia",
@@ -370,6 +548,10 @@ describe("launch readiness validation", () => {
       SANDBOX,
     ]);
     expect(captureRequests).toContainEqual(["inference", "get", "-g", GATEWAY_NAME]);
+    expect(gatewayHealthRequests).toContainEqual([SANDBOX, GATEWAY_NAME]);
+    expect(forwardRequests).toContainEqual([SANDBOX, GATEWAY_NAME]);
+    expect(inferenceHealthRequests).toContainEqual([SANDBOX, GATEWAY_NAME]);
+    expect(process.env.OPENSHELL_GATEWAY).toBe("ambient-sibling");
     routeOutput = "Gateway Inference:\n\n  Provider: nvidia\n  Model: model-b\n";
     expect(await inspectLaunchReadiness(SANDBOX, currentDeps)).toMatchObject({
       kind: "fallback",
@@ -387,6 +569,84 @@ describe("launch readiness validation", () => {
       kind: "fallback",
       category: "health",
     });
+  });
+
+  it.each([
+    300, 401, 403, 404, 503,
+  ])("rejects HTTP %i from the owning OpenShell gateway inference probe during inspection and publication (#8942)", async (httpStatus) => {
+    sandbox = {
+      ...sandbox,
+      provider: "nvidia",
+      model: "model-a",
+      credentialEnv: "NVIDIA_API_KEY",
+    };
+    routeOutput = "Gateway Inference:\n\n  Provider: nvidia\n  Model: model-a\n";
+    const currentDeps = await createAcceptedLease();
+    currentDeps.inferenceProbe = vi.fn((_sandboxName, _agent, gatewayName) => ({
+      healthy: httpStatus < 500,
+      broken: httpStatus >= 500,
+      httpStatus,
+      detail: `${httpStatus < 500 ? "OK" : "BROKEN"} ${httpStatus}`,
+    }));
+
+    await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+      kind: "fallback",
+      category: "health",
+    });
+    await expect(
+      publishLaunchReadiness(
+        {
+          sandboxName: SANDBOX,
+          gatewayName: GATEWAY_NAME,
+          gatewayPort: GATEWAY_PORT,
+          epochId: EPOCH,
+        },
+        currentDeps,
+      ),
+    ).resolves.toEqual({ kind: "validation-failed", category: "health" });
+    expect(currentDeps.inferenceProbe).toHaveBeenCalledWith(
+      SANDBOX,
+      expect.objectContaining({ name: "openclaw" }),
+      GATEWAY_NAME,
+    );
+  });
+
+  it("accepts strict HTTP 2xx inference evidence from the owning OpenShell gateway (#8942)", async () => {
+    sandbox = {
+      ...sandbox,
+      provider: "nvidia",
+      model: "model-a",
+      credentialEnv: "NVIDIA_API_KEY",
+    };
+    routeOutput = "Gateway Inference:\n\n  Provider: nvidia\n  Model: model-a\n";
+    const currentDeps = await createAcceptedLease();
+    currentDeps.inferenceProbe = vi.fn((_sandboxName, _agent, gatewayName) => ({
+      healthy: true,
+      broken: false,
+      httpStatus: 299,
+      detail: "OK 299",
+    }));
+
+    await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+      kind: "accepted",
+      category: "accepted",
+    });
+    await expect(
+      publishLaunchReadiness(
+        {
+          sandboxName: SANDBOX,
+          gatewayName: GATEWAY_NAME,
+          gatewayPort: GATEWAY_PORT,
+          epochId: EPOCH,
+        },
+        currentDeps,
+      ),
+    ).resolves.toEqual({ kind: "published" });
+    expect(currentDeps.inferenceProbe).toHaveBeenCalledWith(
+      SANDBOX,
+      expect.objectContaining({ name: "openclaw" }),
+      GATEWAY_NAME,
+    );
   });
 
   it("rejects a caller-controlled OpenShell gateway endpoint", async () => {
@@ -408,7 +668,12 @@ describe("launch readiness validation", () => {
     currentDeps.smoke = smoke;
     await createAcceptedLease(currentDeps);
     expect(await inspectLaunchReadiness(SANDBOX, currentDeps)).toMatchObject({ kind: "accepted" });
-    expect(smoke).toHaveBeenCalled();
+    expect(smoke).toHaveBeenCalledWith(
+      SANDBOX,
+      expect.objectContaining({ name: "langchain-deepagents-code" }),
+      expect.any(Function),
+      GATEWAY_NAME,
+    );
     expect(gatewayHealth).not.toHaveBeenCalled();
   });
 
@@ -438,12 +703,16 @@ describe("launch readiness validation", () => {
         "fromDockerfile",
         "gatewayName",
         "gatewayPort",
+        "gpuEnabled",
+        "hermesAuthMethod",
         "hermesDashboardEnabled",
         "hermesDashboardInternalPort",
         "hermesDashboardPort",
         "hermesDashboardTui",
         "hermesInferenceProvider",
         "hermesToolGateways",
+        "hostGpuDetected",
+        "hostMounts",
         "imageTag",
         "inference",
         "interactiveCommand",
@@ -460,7 +729,11 @@ describe("launch readiness validation", () => {
         "policies",
         "policyPresetsFinalized",
         "policyTier",
+        "sandboxGpuDevice",
+        "sandboxGpuEnabled",
+        "sandboxGpuMode",
         "sandboxGpuProof",
+        "servingProfileProvenance",
         "toolDisclosure",
         "version",
         "webSearchEnabled",
@@ -468,9 +741,28 @@ describe("launch readiness validation", () => {
         "workloadIdentitySha256",
       ].sort(),
     );
+    expect(projection.version).toBe(2);
     const original = launchReadinessDigest(projection);
     const mutations: SandboxEntry[] = [
       { ...sandbox, nemoclawVersion: "changed" },
+      {
+        ...sandbox,
+        hostMounts: [
+          {
+            source: "/private/host/project",
+            target: "/sandbox/project",
+            readOnly: true,
+            sourceIdentity: { device: "1", inode: "2" },
+          },
+        ],
+      },
+      { ...sandbox, gpuEnabled: true },
+      { ...sandbox, hostGpuDetected: true },
+      { ...sandbox, sandboxGpuEnabled: true },
+      { ...sandbox, sandboxGpuMode: "1" },
+      { ...sandbox, sandboxGpuDevice: "0" },
+      { ...sandbox, servingProfileProvenance: servingProfile() },
+      { ...sandbox, hermesAuthMethod: "oauth" },
       { ...sandbox, policies: ["managed_inference", "slack"] },
       {
         ...sandbox,
@@ -511,6 +803,123 @@ describe("launch readiness validation", () => {
     for (const mutation of mutations) {
       expect(
         launchReadinessDigest(buildLaunchReadinessRegistryProjection(mutation, agent)),
+      ).not.toBe(original);
+    }
+  });
+
+  it("binds every host mount field without projecting the host source path (#8942)", () => {
+    const agent = loadAgent("openclaw");
+    const source = "/private/host/customer-project";
+    const mounted: SandboxEntry = {
+      ...sandbox,
+      hostMounts: [
+        {
+          source,
+          target: "/sandbox/project",
+          readOnly: true,
+          sourceIdentity: { device: "11", inode: "22" },
+        },
+      ],
+    };
+    const projection = buildLaunchReadinessRegistryProjection(mounted, agent) as {
+      hostMounts: Array<Record<string, unknown>>;
+    };
+    expect(JSON.stringify(projection)).not.toContain(source);
+    expect(projection.hostMounts).toEqual([
+      {
+        sourceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        target: "/sandbox/project",
+        readOnly: true,
+        sourceIdentity: { device: "11", inode: "22" },
+      },
+    ]);
+
+    const original = launchReadinessDigest(projection);
+    const mutations: SandboxEntry[] = [
+      {
+        ...mounted,
+        hostMounts: [{ ...mounted.hostMounts![0]!, source: `${source}-changed` }],
+      },
+      {
+        ...mounted,
+        hostMounts: [{ ...mounted.hostMounts![0]!, target: "/sandbox/changed" }],
+      },
+      {
+        ...mounted,
+        hostMounts: [
+          {
+            ...mounted.hostMounts![0]!,
+            sourceIdentity: { device: "12", inode: "22" },
+          },
+        ],
+      },
+      {
+        ...mounted,
+        hostMounts: [
+          {
+            ...mounted.hostMounts![0]!,
+            sourceIdentity: { device: "11", inode: "23" },
+          },
+        ],
+      },
+    ];
+    for (const mutation of mutations) {
+      expect(
+        launchReadinessDigest(buildLaunchReadinessRegistryProjection(mutation, agent)),
+      ).not.toBe(original);
+    }
+    expect(() =>
+      buildLaunchReadinessRegistryProjection(
+        {
+          ...mounted,
+          hostMounts: [{ ...mounted.hostMounts![0]!, readOnly: false as true }],
+        },
+        agent,
+      ),
+    ).toThrow();
+  });
+
+  it("binds every semantic serving profile provenance field (#8942)", () => {
+    const agent = loadAgent("openclaw");
+    const originalProfile = servingProfile();
+    const original = launchReadinessDigest(
+      buildLaunchReadinessRegistryProjection(
+        { ...sandbox, servingProfileProvenance: originalProfile },
+        agent,
+      ),
+    );
+    const mutations: NonNullable<SandboxEntry["servingProfileProvenance"]>[] = [
+      { ...originalProfile, catalogDigest: `sha256:${"a".repeat(64)}` },
+      { ...originalProfile, preset: { ...originalProfile.preset, id: "changed" } },
+      {
+        ...originalProfile,
+        preset: { ...originalProfile.preset, digest: `sha256:${"a".repeat(64)}` },
+      },
+      { ...originalProfile, preset: { ...originalProfile.preset, displayName: "Changed" } },
+      {
+        ...originalProfile,
+        preset: { ...originalProfile.preset, supportState: "experimental" },
+      },
+      { ...originalProfile, recipe: { ...originalProfile.recipe, id: "changed" } },
+      {
+        ...originalProfile,
+        recipe: { ...originalProfile.recipe, digest: `sha256:${"a".repeat(64)}` },
+      },
+      { ...originalProfile, recipe: { ...originalProfile.recipe, backend: "changed" } },
+      { ...originalProfile, model: { ...originalProfile.model, id: "changed" } },
+      { ...originalProfile, model: { ...originalProfile.model, revision: "changed" } },
+      { ...originalProfile, runtimeImage: "example.com/changed@sha256:immutable" },
+      { ...originalProfile, estimatedImageDownloadBytes: 1_001 },
+      { ...originalProfile, estimatedModelDownloadBytes: 2_001 },
+    ];
+    for (const mutation of mutations) {
+      expect(
+        launchReadinessDigest(
+          buildLaunchReadinessRegistryProjection(
+            { ...sandbox, servingProfileProvenance: mutation },
+            agent,
+          ),
+        ),
       ).not.toBe(original);
     }
   });

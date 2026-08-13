@@ -460,7 +460,10 @@ export function ensureDeclaredAgentForwardPortsHealthy(
  * Observe every host forward that the interactive preflight would recover,
  * without starting, stopping, or rebinding one.
  */
-export function areSandboxLaunchForwardsHealthy(sandboxName: string): boolean | null {
+export function areSandboxLaunchForwardsHealthy(
+  sandboxName: string,
+  gatewayName?: string,
+): boolean | null {
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox) return false;
   const agent = agentRuntime.getSessionAgent(sandboxName);
@@ -485,8 +488,9 @@ export function areSandboxLaunchForwardsHealthy(sandboxName: string): boolean | 
       }
     }
   }
-  const gatewayName = resolveSandboxGatewayName(sandbox);
-  const result = captureOpenshell(["forward", "list", "--gateway", gatewayName], {
+  const owningGatewayName = resolveSandboxGatewayName(sandbox);
+  if (gatewayName && gatewayName !== owningGatewayName) return false;
+  const result = captureOpenshell(["forward", "list", "--gateway", owningGatewayName], {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });

@@ -35,6 +35,7 @@ export type ConnectHarness = {
   errorSpy: MockInstance;
   logSpy: MockInstance;
   inspectLaunchReadinessSpy: MockInstance;
+  launchReadinessMutationGateSpy: MockInstance;
   publishLaunchReadinessSpy: MockInstance;
   preflightVllmSpy: MockInstance;
   probeLocalProviderHealthSpy: MockInstance;
@@ -91,6 +92,7 @@ export type ConnectHarnessOptions = {
         gatewayName: string | null;
         gatewayPort: number | null;
         fenceFailed: boolean;
+        recoveryBlocked: boolean;
       };
   readinessPublicationResult?: LaunchReadinessPublicationResult;
 };
@@ -156,11 +158,18 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
         fenceFailed: false,
+        recoveryBlocked: false,
       },
     );
   const publishLaunchReadinessSpy = vi
     .spyOn(launchReadiness, "publishLaunchReadiness")
     .mockResolvedValue(options.readinessPublicationResult ?? { kind: "published" });
+  const launchReadinessMutationGateSpy = vi
+    .spyOn(launchReadiness, "withLaunchReadinessMutationGate")
+    .mockImplementation((async (...args: unknown[]) => {
+      const operation = args[1] as () => unknown;
+      return { kind: "entered", value: await operation() };
+    }) as never);
   if (typeof options.isWsl === "boolean") {
     vi.spyOn(platform, "isWsl").mockReturnValue(options.isWsl);
   }
@@ -316,6 +325,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     errorSpy,
     logSpy,
     inspectLaunchReadinessSpy,
+    launchReadinessMutationGateSpy,
     publishLaunchReadinessSpy,
     preflightVllmSpy,
     probeLocalProviderHealthSpy,

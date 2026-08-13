@@ -14,6 +14,9 @@ export const LAUNCH_READINESS_SCHEMA_VERSION = 1;
 export const LAUNCH_READINESS_MAX_BYTES = 16 * 1_024;
 
 const RECEIPT_DIRECTORY = "launch-readiness";
+const AUTHORITY_PRODUCT_DIRECTORY = "nemoclaw";
+const AUTHORITY_DIRECTORY = "launch-readiness";
+const DARWIN_RUNTIME_ROOT_MAX_BYTES = 4 * 1_024;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const BOOT_ID_RE = /^[A-Za-z0-9._:-]{1,160}$/;
 
@@ -43,6 +46,8 @@ export interface LaunchReadinessLease {
   homeInode: string;
   storeDevice: string;
   storeInode: string;
+  gatewayName: string;
+  gatewayPort: number;
   identity: LaunchReadinessIdentity;
 }
 
@@ -59,6 +64,8 @@ export interface LaunchReadinessFence {
   homeInode: string;
   storeDevice: string;
   storeInode: string;
+  gatewayName: string;
+  gatewayPort: number;
   publicationState: "ready" | "time-unsafe";
   preservedLeaseStartedWallMs: number | null;
   preservedLeaseExpiresWallMs: number | null;
@@ -75,6 +82,8 @@ export type LaunchReadinessLeaseRead =
   | { kind: "identity"; lease: LaunchReadinessLease }
   | { kind: "valid"; lease: LaunchReadinessLease };
 
+export type LaunchReadinessMutationAuthorityCheck = "current" | "changed" | "unsafe";
+
 export interface LaunchReadinessStoreOptions {
   home?: string;
   nowWallMs?: () => number;
@@ -82,30 +91,82 @@ export interface LaunchReadinessStoreOptions {
   bootId?: () => string | null;
   uid?: () => number | null;
   randomEpoch?: () => string;
+  /** Test seam only. Production derives the runtime authority root from the OS. */
+  runtimeAuthorityRoot?: () => string | null;
 }
 
-interface StoreContext {
-  home: string;
-  stateRoot: string;
-  receiptDir: string;
-  receiptPath: string;
+interface LaunchReadinessAuthority {
+  schemaVersion: 1;
+  kind: "authority";
+  phase: "fence" | "lease";
+  epochId: string;
+  sandboxName: string;
+  gatewayName: string;
+  gatewayPort: number;
+  observedWallMs: number;
+  observedUptimeMs: number;
+  bootId: string;
+  uid: number;
+  runtimeRootDevice: string;
+  runtimeRootInode: string;
+  storeDevice: string;
+  storeInode: string;
+  publicationState: "ready" | "time-unsafe";
+  preservedLeaseStartedWallMs: number | null;
+  preservedLeaseExpiresWallMs: number | null;
+  preservedLeaseElapsedMs: number | null;
+}
+
+interface BaseContext {
   uid: number;
   nowWallMs: number;
   nowUptimeMs: number;
   bootId: string;
+  randomEpoch: () => string;
+  runtimeAuthorityRoot: (() => string | null) | null;
+}
+
+interface StoreContext extends BaseContext {
+  home: string;
+  stateRoot: string;
+  receiptDir: string;
+  receiptPath: string;
   homeDevice: string;
   homeInode: string;
-  randomEpoch: () => string;
+}
+
+interface AuthorityContext extends BaseContext {
+  runtimeRoot: string;
+  authorityDir: string;
+  authorityPath: string;
+  runtimeRootDevice: string;
+  runtimeRootInode: string;
 }
 
 interface SecureDirectory {
   fd: number;
   stat: fs.Stats;
+  path: string;
+  ancestors: Array<{ path: string; stat: fs.Stats; privateDirectory: boolean }>;
 }
 
-class MissingReceiptError extends Error {}
+class MissingStoreError extends Error {}
 class UnsafeReceiptError extends Error {}
 class MalformedReceiptError extends Error {}
+
+export class LaunchReadinessFenceError extends Error {
+  constructor(
+    readonly blocksRecovery: boolean,
+    readonly priorEpochInvalidated: boolean,
+  ) {
+    super(
+      blocksRecovery
+        ? "Launch readiness evidence cannot be safely invalidated."
+        : "Launch readiness evidence storage is unavailable.",
+    );
+    this.name = "LaunchReadinessFenceError";
+  }
+}
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -190,6 +251,8 @@ function parseRecord(raw: string): LaunchReadinessRecord {
         "homeInode",
         "storeDevice",
         "storeInode",
+        "gatewayName",
+        "gatewayPort",
         "identity",
       ]) ||
       !isEpoch(value.epochId) ||
@@ -212,6 +275,12 @@ function parseRecord(raw: string): LaunchReadinessRecord {
       !/^\d+$/.test(value.storeDevice) ||
       typeof value.storeInode !== "string" ||
       !/^\d+$/.test(value.storeInode) ||
+      typeof value.gatewayName !== "string" ||
+      value.gatewayName.length === 0 ||
+      value.gatewayName.length > 256 ||
+      !Number.isInteger(value.gatewayPort) ||
+      (value.gatewayPort as number) < 1 ||
+      (value.gatewayPort as number) > 65535 ||
       !isIdentity(value.identity)
     ) {
       throw new MalformedReceiptError();
@@ -233,6 +302,8 @@ function parseRecord(raw: string): LaunchReadinessRecord {
         "homeInode",
         "storeDevice",
         "storeInode",
+        "gatewayName",
+        "gatewayPort",
         "publicationState",
         "preservedLeaseStartedWallMs",
         "preservedLeaseExpiresWallMs",
@@ -255,6 +326,12 @@ function parseRecord(raw: string): LaunchReadinessRecord {
       !/^\d+$/.test(value.storeDevice) ||
       typeof value.storeInode !== "string" ||
       !/^\d+$/.test(value.storeInode) ||
+      typeof value.gatewayName !== "string" ||
+      value.gatewayName.length === 0 ||
+      value.gatewayName.length > 256 ||
+      !Number.isInteger(value.gatewayPort) ||
+      (value.gatewayPort as number) < 1 ||
+      (value.gatewayPort as number) > 65535 ||
       (value.publicationState !== "ready" && value.publicationState !== "time-unsafe") ||
       !(
         value.preservedLeaseStartedWallMs === null ||
@@ -286,6 +363,91 @@ function parseRecord(raw: string): LaunchReadinessRecord {
     return value as unknown as LaunchReadinessFence;
   }
   throw new MalformedReceiptError();
+}
+
+function parseAuthority(raw: string): LaunchReadinessAuthority {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw) as unknown;
+  } catch {
+    throw new MalformedReceiptError();
+  }
+  if (
+    !isPlainRecord(value) ||
+    !hasExactKeys(value, [
+      "schemaVersion",
+      "kind",
+      "phase",
+      "epochId",
+      "sandboxName",
+      "gatewayName",
+      "gatewayPort",
+      "observedWallMs",
+      "observedUptimeMs",
+      "bootId",
+      "uid",
+      "runtimeRootDevice",
+      "runtimeRootInode",
+      "storeDevice",
+      "storeInode",
+      "publicationState",
+      "preservedLeaseStartedWallMs",
+      "preservedLeaseExpiresWallMs",
+      "preservedLeaseElapsedMs",
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== "authority" ||
+    (value.phase !== "fence" && value.phase !== "lease") ||
+    !isEpoch(value.epochId) ||
+    typeof value.sandboxName !== "string" ||
+    value.sandboxName.length === 0 ||
+    value.sandboxName.length > 256 ||
+    typeof value.gatewayName !== "string" ||
+    value.gatewayName.length === 0 ||
+    value.gatewayName.length > 256 ||
+    !Number.isInteger(value.gatewayPort) ||
+    (value.gatewayPort as number) < 1 ||
+    (value.gatewayPort as number) > 65535 ||
+    !isSafeInteger(value.observedWallMs) ||
+    !isSafeInteger(value.observedUptimeMs) ||
+    typeof value.bootId !== "string" ||
+    !BOOT_ID_RE.test(value.bootId) ||
+    !isSafeInteger(value.uid) ||
+    typeof value.runtimeRootDevice !== "string" ||
+    !/^\d+$/.test(value.runtimeRootDevice) ||
+    typeof value.runtimeRootInode !== "string" ||
+    !/^\d+$/.test(value.runtimeRootInode) ||
+    typeof value.storeDevice !== "string" ||
+    !/^\d+$/.test(value.storeDevice) ||
+    typeof value.storeInode !== "string" ||
+    !/^\d+$/.test(value.storeInode) ||
+    (value.publicationState !== "ready" && value.publicationState !== "time-unsafe") ||
+    !(
+      value.preservedLeaseStartedWallMs === null || isSafeInteger(value.preservedLeaseStartedWallMs)
+    ) ||
+    !(
+      value.preservedLeaseExpiresWallMs === null || isSafeInteger(value.preservedLeaseExpiresWallMs)
+    ) ||
+    !(value.preservedLeaseElapsedMs === null || isSafeInteger(value.preservedLeaseElapsedMs))
+  ) {
+    throw new MalformedReceiptError();
+  }
+  const hasStart = value.preservedLeaseStartedWallMs !== null;
+  const hasExpiry = value.preservedLeaseExpiresWallMs !== null;
+  const hasElapsed = value.preservedLeaseElapsedMs !== null;
+  if (hasStart !== hasExpiry || hasStart !== hasElapsed) throw new MalformedReceiptError();
+  if (
+    hasStart &&
+    (value.preservedLeaseExpiresWallMs as number) -
+      (value.preservedLeaseStartedWallMs as number) !==
+      LAUNCH_READINESS_LEASE_MS
+  ) {
+    throw new MalformedReceiptError();
+  }
+  if (hasElapsed && (value.preservedLeaseElapsedMs as number) > LAUNCH_READINESS_LEASE_MS) {
+    throw new MalformedReceiptError();
+  }
+  return value as unknown as LaunchReadinessAuthority;
 }
 
 function readLinuxBootId(): string | null {
@@ -340,11 +502,7 @@ function receiptKey(sandboxName: string): string {
   return createHash("sha256").update(sandboxName, "utf8").digest("hex");
 }
 
-function buildContext(
-  sandboxName: string,
-  gatewayPort: number,
-  options: LaunchReadinessStoreOptions,
-): StoreContext {
+function buildBaseContext(options: LaunchReadinessStoreOptions): BaseContext {
   const uid = (options.uid ?? currentUid)();
   const bootId = (options.bootId ?? readTrustedBootId)();
   const nowWallMs = (options.nowWallMs ?? Date.now)();
@@ -360,6 +518,23 @@ function buildContext(
   ) {
     throw new UnsafeReceiptError();
   }
+  return {
+    uid,
+    nowWallMs,
+    nowUptimeMs,
+    bootId,
+    randomEpoch: options.randomEpoch ?? (() => randomBytes(32).toString("hex")),
+    runtimeAuthorityRoot: options.runtimeAuthorityRoot ?? null,
+  };
+}
+
+function buildStoreContext(
+  base: BaseContext,
+  sandboxName: string,
+  gatewayPort: number,
+  options: LaunchReadinessStoreOptions,
+): StoreContext {
+  const { uid } = base;
   const homeAuthority = options.home ?? trustedCurrentUserHome(uid);
   if (!homeAuthority) throw new UnsafeReceiptError();
   const home = path.resolve(homeAuthority);
@@ -374,18 +549,136 @@ function buildContext(
   }
   const stateRoot = nemoclawStateRoot(home, gatewayPort);
   const receiptDir = path.join(stateRoot, RECEIPT_DIRECTORY);
+  const key = receiptKey(sandboxName);
   return {
+    ...base,
     home,
     stateRoot,
     receiptDir,
-    receiptPath: path.join(receiptDir, `${receiptKey(sandboxName)}.json`),
-    uid,
-    nowWallMs,
-    nowUptimeMs,
-    bootId,
+    receiptPath: path.join(receiptDir, `${key}.json`),
     homeDevice: String(homeStat.dev),
     homeInode: String(homeStat.ino),
-    randomEpoch: options.randomEpoch ?? (() => randomBytes(32).toString("hex")),
+  };
+}
+
+function pathComponents(target: string): string[] {
+  if (!path.isAbsolute(target)) throw new UnsafeReceiptError();
+  const parsed = path.parse(target);
+  const result = [parsed.root];
+  let current = parsed.root;
+  for (const component of target.slice(parsed.root.length).split(path.sep).filter(Boolean)) {
+    current = path.join(current, component);
+    result.push(current);
+  }
+  return result;
+}
+
+function validateDerivedRuntimeRoot(
+  candidate: string,
+  uid: number,
+): { path: string; stat: fs.Stats } {
+  let canonical: string;
+  try {
+    canonical = fs.realpathSync.native(candidate);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      throw new MissingStoreError();
+    }
+    throw new UnsafeReceiptError();
+  }
+  if (!path.isAbsolute(canonical)) throw new UnsafeReceiptError();
+  let sawUserOwner = false;
+  let finalStat: fs.Stats | null = null;
+  for (const component of pathComponents(canonical)) {
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(component);
+    } catch {
+      throw new UnsafeReceiptError();
+    }
+    if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o022) !== 0) {
+      throw new UnsafeReceiptError();
+    }
+    if (stat.uid === uid) {
+      sawUserOwner = true;
+    } else if (stat.uid !== 0 || sawUserOwner) {
+      throw new UnsafeReceiptError();
+    }
+    finalStat = stat;
+  }
+  if (!finalStat || finalStat.uid !== uid || (finalStat.mode & 0o777) !== 0o700) {
+    throw new UnsafeReceiptError();
+  }
+  return { path: canonical, stat: finalStat };
+}
+
+function readDarwinRuntimeRoot(): string {
+  let output: string;
+  try {
+    output = execFileSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], {
+      encoding: "utf8",
+      env: { LANG: "C", LC_ALL: "C", PATH: "/usr/bin:/bin" },
+      maxBuffer: DARWIN_RUNTIME_ROOT_MAX_BYTES,
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2_000,
+    });
+  } catch {
+    throw new UnsafeReceiptError();
+  }
+  if (
+    Buffer.byteLength(output) >= DARWIN_RUNTIME_ROOT_MAX_BYTES ||
+    output.includes("\0") ||
+    !/^[^\r\n]{1,4095}\n?$/.test(output)
+  ) {
+    throw new UnsafeReceiptError();
+  }
+  const candidate = output.endsWith("\n") ? output.slice(0, -1) : output;
+  if (!path.isAbsolute(candidate)) throw new UnsafeReceiptError();
+  return candidate;
+}
+
+function derivedRuntimeRoot(uid: number): string {
+  if (process.platform === "linux") return `/run/user/${uid}`;
+  if (process.platform === "darwin") return readDarwinRuntimeRoot();
+  throw new UnsafeReceiptError();
+}
+
+function buildAuthorityContext(base: BaseContext, sandboxName: string): AuthorityContext {
+  const overridden = base.runtimeAuthorityRoot?.();
+  const candidate = overridden ?? derivedRuntimeRoot(base.uid);
+  let runtimeRoot: string;
+  let runtimeStat: fs.Stats;
+  if (overridden !== null && overridden !== undefined) {
+    runtimeRoot = path.resolve(overridden);
+    try {
+      runtimeStat = fs.lstatSync(runtimeRoot);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        throw new MissingStoreError();
+      }
+      throw new UnsafeReceiptError();
+    }
+    if (
+      !runtimeStat.isDirectory() ||
+      runtimeStat.isSymbolicLink() ||
+      runtimeStat.uid !== base.uid ||
+      (runtimeStat.mode & 0o777) !== 0o700
+    ) {
+      throw new UnsafeReceiptError();
+    }
+  } else {
+    const verified = validateDerivedRuntimeRoot(candidate, base.uid);
+    runtimeRoot = verified.path;
+    runtimeStat = verified.stat;
+  }
+  const authorityDir = path.join(runtimeRoot, AUTHORITY_PRODUCT_DIRECTORY, AUTHORITY_DIRECTORY);
+  return {
+    ...base,
+    runtimeRoot,
+    authorityDir,
+    authorityPath: path.join(authorityDir, `${receiptKey(sandboxName)}.json`),
+    runtimeRootDevice: String(runtimeStat.dev),
+    runtimeRootInode: String(runtimeStat.ino),
   };
 }
 
@@ -405,11 +698,11 @@ function assertSecureDirectoryStat(stat: fs.Stats, uid: number, privateDirectory
   if (privateDirectory && (stat.mode & 0o777) !== 0o700) throw new UnsafeReceiptError();
 }
 
-function ancestorPaths(home: string, target: string): string[] {
-  const relative = path.relative(home, target);
+function ancestorPaths(root: string, target: string): string[] {
+  const relative = path.relative(root, target);
   if (relative.startsWith("..") || path.isAbsolute(relative)) throw new UnsafeReceiptError();
-  const paths = [home];
-  let current = home;
+  const paths = [root];
+  let current = root;
   for (const component of relative.split(path.sep).filter(Boolean)) {
     current = path.join(current, component);
     paths.push(current);
@@ -417,15 +710,44 @@ function ancestorPaths(home: string, target: string): string[] {
   return paths;
 }
 
-function ensureSecureDirectory(context: StoreContext, create: boolean): SecureDirectory {
-  const paths = ancestorPaths(context.home, context.receiptDir);
+function fsyncSecureDirectoryPath(directoryPath: string, uid: number): void {
+  const flags =
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_DIRECTORY ?? 0);
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(directoryPath, flags);
+    assertSecureDirectoryStat(fs.fstatSync(fd), uid, false);
+    fs.fsyncSync(fd);
+  } catch {
+    throw new UnsafeReceiptError();
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
+  }
+}
+
+function ensureSecureDirectory(
+  context: BaseContext,
+  root: string,
+  directoryPath: string,
+  create: boolean,
+  privateFrom = directoryPath,
+): SecureDirectory {
+  const paths = ancestorPaths(root, directoryPath);
+  const ancestors: SecureDirectory["ancestors"] = [];
   for (const [index, candidate] of paths.entries()) {
-    const privateDirectory = candidate === context.receiptDir;
+    const privateDirectory =
+      candidate === directoryPath ||
+      candidate.startsWith(`${privateFrom}${path.sep}`) ||
+      candidate === privateFrom;
+    let stat: fs.Stats;
     try {
-      const stat = fs.lstatSync(candidate);
+      stat = fs.lstatSync(candidate);
       assertSecureDirectoryStat(stat, context.uid, privateDirectory);
     } catch (error) {
-      if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT" || !create) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT" && !create) {
+        throw new MissingStoreError();
+      }
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") {
         if (error instanceof UnsafeReceiptError) throw error;
         throw new UnsafeReceiptError();
       }
@@ -433,28 +755,36 @@ function ensureSecureDirectory(context: StoreContext, create: boolean): SecureDi
       try {
         fs.mkdirSync(candidate, { mode: 0o700 });
         fs.chmodSync(candidate, 0o700);
-        assertSecureDirectoryStat(fs.lstatSync(candidate), context.uid, privateDirectory);
+        stat = fs.lstatSync(candidate);
+        assertSecureDirectoryStat(stat, context.uid, privateDirectory);
+        fsyncSecureDirectoryPath(path.dirname(candidate), context.uid);
       } catch {
         throw new UnsafeReceiptError();
       }
     }
+    ancestors.push({ path: candidate, stat, privateDirectory });
   }
 
   const noFollow = fs.constants.O_NOFOLLOW ?? 0;
   const directoryOnly = fs.constants.O_DIRECTORY ?? 0;
   let fd: number;
   try {
-    fd = fs.openSync(context.receiptDir, fs.constants.O_RDONLY | noFollow | directoryOnly);
+    fd = fs.openSync(directoryPath, fs.constants.O_RDONLY | noFollow | directoryOnly);
   } catch {
     throw new UnsafeReceiptError();
   }
   try {
     const descriptorStat = fs.fstatSync(fd);
-    const pathStat = fs.lstatSync(context.receiptDir);
+    const pathStat = fs.lstatSync(directoryPath);
     assertSecureDirectoryStat(descriptorStat, context.uid, true);
     assertSecureDirectoryStat(pathStat, context.uid, true);
     if (!sameIdentity(descriptorStat, pathStat)) throw new UnsafeReceiptError();
-    return { fd, stat: descriptorStat };
+    for (const ancestor of ancestors) {
+      const current = fs.lstatSync(ancestor.path);
+      assertSecureDirectoryStat(current, context.uid, ancestor.privateDirectory);
+      if (!sameIdentity(ancestor.stat, current)) throw new UnsafeReceiptError();
+    }
+    return { fd, stat: descriptorStat, path: directoryPath, ancestors };
   } catch (error) {
     fs.closeSync(fd);
     if (error instanceof UnsafeReceiptError) throw error;
@@ -462,9 +792,14 @@ function ensureSecureDirectory(context: StoreContext, create: boolean): SecureDi
   }
 }
 
-function revalidateDirectory(context: StoreContext, directory: SecureDirectory): void {
+function revalidateDirectory(context: BaseContext, directory: SecureDirectory): void {
+  for (const ancestor of directory.ancestors) {
+    const current = fs.lstatSync(ancestor.path);
+    assertSecureDirectoryStat(current, context.uid, ancestor.privateDirectory);
+    if (!sameIdentity(ancestor.stat, current)) throw new UnsafeReceiptError();
+  }
   const descriptorStat = fs.fstatSync(directory.fd);
-  const pathStat = fs.lstatSync(context.receiptDir);
+  const pathStat = fs.lstatSync(directory.path);
   assertSecureDirectoryStat(descriptorStat, context.uid, true);
   assertSecureDirectoryStat(pathStat, context.uid, true);
   if (!sameIdentity(directory.stat, descriptorStat) || !sameIdentity(directory.stat, pathStat)) {
@@ -486,18 +821,19 @@ function assertSecureReceiptStat(stat: fs.Stats, uid: number): void {
   }
 }
 
-function readRecordAtPath(
-  context: StoreContext,
+function readSecureFileAtPath(
+  context: BaseContext,
   directory: SecureDirectory,
-): LaunchReadinessRecord {
+  filePath: string,
+): string {
   revalidateDirectory(context, directory);
   const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0);
   let fd: number;
   try {
-    fd = fs.openSync(context.receiptPath, flags);
+    fd = fs.openSync(filePath, flags);
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      throw new MissingReceiptError();
+      throw new MissingStoreError();
     }
     throw new UnsafeReceiptError();
   }
@@ -513,7 +849,7 @@ function readRecordAtPath(
     }
     if (total > LAUNCH_READINESS_MAX_BYTES) throw new UnsafeReceiptError();
     const after = fs.fstatSync(fd);
-    const pathStat = fs.lstatSync(context.receiptPath);
+    const pathStat = fs.lstatSync(filePath);
     assertSecureReceiptStat(after, context.uid);
     assertSecureReceiptStat(pathStat, context.uid);
     if (
@@ -525,22 +861,36 @@ function readRecordAtPath(
       throw new UnsafeReceiptError();
     }
     revalidateDirectory(context, directory);
-    return parseRecord(buffer.subarray(0, total).toString("utf8"));
+    return buffer.subarray(0, total).toString("utf8");
   } finally {
     fs.closeSync(fd);
   }
 }
 
-function tempPath(context: StoreContext): string {
+function readRecordAtPath(
+  context: StoreContext,
+  directory: SecureDirectory,
+): LaunchReadinessRecord {
+  return parseRecord(readSecureFileAtPath(context, directory, context.receiptPath));
+}
+
+function readAuthorityAtPath(
+  context: AuthorityContext,
+  directory: SecureDirectory,
+): LaunchReadinessAuthority {
+  return parseAuthority(readSecureFileAtPath(context, directory, context.authorityPath));
+}
+
+function tempPath(filePath: string): string {
   return path.join(
-    context.receiptDir,
-    `.${path.basename(context.receiptPath)}.${randomBytes(12).toString("hex")}.tmp`,
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.${randomBytes(12).toString("hex")}.tmp`,
   );
 }
 
-function proveWritable(context: StoreContext, directory: SecureDirectory): void {
+function proveWritable(context: BaseContext, directory: SecureDirectory, filePath: string): void {
   revalidateDirectory(context, directory);
-  const candidate = tempPath(context);
+  const candidate = tempPath(filePath);
   let fd: number | null = null;
   try {
     fd = fs.openSync(
@@ -569,17 +919,19 @@ function proveWritable(context: StoreContext, directory: SecureDirectory): void 
   }
 }
 
-function writeRecord(
-  context: StoreContext,
+function writeSecureJson(
+  context: BaseContext,
   directory: SecureDirectory,
-  record: LaunchReadinessRecord,
+  filePath: string,
+  value: LaunchReadinessRecord | LaunchReadinessAuthority,
+  verify: (raw: string) => void,
 ): void {
-  const serialized = `${JSON.stringify(record)}\n`;
+  const serialized = `${JSON.stringify(value)}\n`;
   if (Buffer.byteLength(serialized) > LAUNCH_READINESS_MAX_BYTES) {
     throw new UnsafeReceiptError();
   }
   revalidateDirectory(context, directory);
-  const candidate = tempPath(context);
+  const candidate = tempPath(filePath);
   let fd: number | null = null;
   try {
     fd = fs.openSync(
@@ -603,12 +955,9 @@ function writeRecord(
     const tempPathStat = fs.lstatSync(candidate);
     assertSecureReceiptStat(tempPathStat, context.uid);
     if (!sameIdentity(tempStat, tempPathStat)) throw new UnsafeReceiptError();
-    fs.renameSync(candidate, context.receiptPath);
+    fs.renameSync(candidate, filePath);
     fs.fsyncSync(directory.fd);
-    const published = readRecordAtPath(context, directory);
-    if (published.epochId !== record.epochId || published.kind !== record.kind) {
-      throw new UnsafeReceiptError();
-    }
+    verify(readSecureFileAtPath(context, directory, filePath));
   } catch (error) {
     if (fd !== null) fs.closeSync(fd);
     try {
@@ -621,10 +970,150 @@ function writeRecord(
   }
 }
 
+function writeRecord(
+  context: StoreContext,
+  directory: SecureDirectory,
+  record: LaunchReadinessRecord,
+): void {
+  writeSecureJson(context, directory, context.receiptPath, record, (raw) => {
+    const published = parseRecord(raw);
+    if (JSON.stringify(published) !== JSON.stringify(record)) {
+      throw new UnsafeReceiptError();
+    }
+  });
+}
+
+function authorityContextMatches(
+  authority: LaunchReadinessAuthority,
+  context: AuthorityContext,
+  directory: SecureDirectory,
+): boolean {
+  return (
+    authority.sandboxName.length > 0 &&
+    authority.uid === context.uid &&
+    authority.bootId === context.bootId &&
+    authority.runtimeRootDevice === context.runtimeRootDevice &&
+    authority.runtimeRootInode === context.runtimeRootInode &&
+    authority.storeDevice === String(directory.stat.dev) &&
+    authority.storeInode === String(directory.stat.ino)
+  );
+}
+
+function writeAuthority(
+  context: AuthorityContext,
+  directory: SecureDirectory,
+  authority: LaunchReadinessAuthority,
+): LaunchReadinessAuthority {
+  writeSecureJson(context, directory, context.authorityPath, authority, (raw) => {
+    const published = parseAuthority(raw);
+    if (
+      JSON.stringify(published) !== JSON.stringify(authority) ||
+      !authorityContextMatches(published, context, directory)
+    ) {
+      throw new UnsafeReceiptError();
+    }
+  });
+  return authority;
+}
+
+function ensureAuthorityDirectory(context: AuthorityContext, create: boolean): SecureDirectory {
+  return ensureSecureDirectory(
+    context,
+    context.runtimeRoot,
+    context.authorityDir,
+    create,
+    path.join(context.runtimeRoot, AUTHORITY_PRODUCT_DIRECTORY),
+  );
+}
+
+type AuthorityInspection =
+  | { kind: "missing"; context: AuthorityContext | null }
+  | { kind: "present"; context: AuthorityContext; authority: LaunchReadinessAuthority }
+  | { kind: "unsafe"; context: AuthorityContext | null };
+
+function inspectAuthority(base: BaseContext, sandboxName: string): AuthorityInspection {
+  let context: AuthorityContext;
+  let directory: SecureDirectory | null = null;
+  try {
+    context = buildAuthorityContext(base, sandboxName);
+  } catch (error) {
+    return error instanceof MissingStoreError
+      ? { kind: "missing", context: null }
+      : { kind: "unsafe", context: null };
+  }
+  try {
+    directory = ensureAuthorityDirectory(context, false);
+    const authority = readAuthorityAtPath(context, directory);
+    proveWritable(context, directory, context.authorityPath);
+    if (!authorityContextMatches(authority, context, directory)) {
+      return { kind: "unsafe", context };
+    }
+    return { kind: "present", context, authority };
+  } catch (error) {
+    return error instanceof MissingStoreError
+      ? { kind: "missing", context }
+      : { kind: "unsafe", context };
+  } finally {
+    closeDirectory(directory);
+  }
+}
+
+function rotateAuthority(
+  context: AuthorityContext,
+  sandboxName: string,
+  gatewayName: string,
+  gatewayPort: number,
+  prior: LaunchReadinessAuthority | null,
+  epochId: string,
+  publicationDisabled: boolean,
+): LaunchReadinessAuthority {
+  if (!isEpoch(epochId)) throw new UnsafeReceiptError();
+  const directory = ensureAuthorityDirectory(context, true);
+  try {
+    let publication = publicationDisabled
+      ? { timeline: null, state: "time-unsafe" as const }
+      : authorityPublicationTimeline(prior, context);
+    if (publication.state === "time-unsafe" && publication.timeline === null) {
+      const expires = context.nowWallMs + LAUNCH_READINESS_LEASE_MS;
+      if (!Number.isSafeInteger(expires)) throw new UnsafeReceiptError();
+      publication = {
+        state: "time-unsafe",
+        timeline: { started: context.nowWallMs, expires, elapsed: 0 },
+      };
+    }
+    const authority: LaunchReadinessAuthority = {
+      schemaVersion: 1,
+      kind: "authority",
+      phase: "fence",
+      epochId,
+      sandboxName,
+      gatewayName,
+      gatewayPort,
+      observedWallMs: context.nowWallMs,
+      observedUptimeMs: context.nowUptimeMs,
+      bootId: context.bootId,
+      uid: context.uid,
+      runtimeRootDevice: context.runtimeRootDevice,
+      runtimeRootInode: context.runtimeRootInode,
+      storeDevice: String(directory.stat.dev),
+      storeInode: String(directory.stat.ino),
+      publicationState: publication.state,
+      preservedLeaseStartedWallMs: publication.timeline?.started ?? null,
+      preservedLeaseExpiresWallMs: publication.timeline?.expires ?? null,
+      preservedLeaseElapsedMs: publication.timeline?.elapsed ?? null,
+    };
+    return writeAuthority(context, directory, authority);
+  } finally {
+    closeDirectory(directory);
+  }
+}
+
 function recordContextMatches(
   record: LaunchReadinessRecord,
   context: StoreContext,
   storeStat: fs.Stats,
+  gatewayName: string,
+  gatewayPort: number,
 ): boolean {
   return (
     record.uid === context.uid &&
@@ -632,7 +1121,9 @@ function recordContextMatches(
     record.homeDevice === context.homeDevice &&
     record.homeInode === context.homeInode &&
     record.storeDevice === String(storeStat.dev) &&
-    record.storeInode === String(storeStat.ino)
+    record.storeInode === String(storeStat.ino) &&
+    record.gatewayName === gatewayName &&
+    record.gatewayPort === gatewayPort
   );
 }
 
@@ -640,6 +1131,8 @@ function validateLeaseTime(
   lease: LaunchReadinessLease,
   context: StoreContext,
   storeStat: fs.Stats,
+  gatewayName: string,
+  gatewayPort: number,
 ): "valid" | "expired" | "identity" | "malformed" {
   if (lease.leaseExpiresWallMs - lease.leaseStartedWallMs !== LAUNCH_READINESS_LEASE_MS) {
     return "malformed";
@@ -658,7 +1151,7 @@ function validateLeaseTime(
   if (context.nowWallMs >= lease.leaseExpiresWallMs || wallElapsed > LAUNCH_READINESS_LEASE_MS) {
     return "expired";
   }
-  if (!recordContextMatches(lease, context, storeStat)) return "identity";
+  if (!recordContextMatches(lease, context, storeStat, gatewayName, gatewayPort)) return "identity";
   if (context.nowUptimeMs < lease.publishedUptimeMs) return "malformed";
   const monotonicElapsed =
     lease.elapsedAtPublicationMs + (context.nowUptimeMs - lease.publishedUptimeMs);
@@ -678,32 +1171,63 @@ function closeDirectory(directory: SecureDirectory | null): void {
 
 export function readLaunchReadinessLease(
   sandboxName: string,
+  gatewayName: string,
   gatewayPort: number,
   options: LaunchReadinessStoreOptions = {},
 ): LaunchReadinessLeaseRead {
+  let context: StoreContext | null = null;
   let directory: SecureDirectory | null = null;
+  let authorityDirectory: SecureDirectory | null = null;
   try {
-    const context = buildContext(sandboxName, gatewayPort, options);
-    directory = ensureSecureDirectory(context, false);
+    const base = buildBaseContext(options);
+    context = buildStoreContext(base, sandboxName, gatewayPort, options);
+    directory = ensureSecureDirectory(context, context.home, context.receiptDir, false);
     const record = readRecordAtPath(context, directory);
     if (record.kind !== "lease" || record.sandboxName !== sandboxName) return { kind: "missing" };
-    proveWritable(context, directory);
-    const time = validateLeaseTime(record, context, directory.stat);
+    if (record.gatewayName !== record.identity.gatewayName) return { kind: "malformed" };
+    proveWritable(context, directory, context.receiptPath);
+    const time = validateLeaseTime(record, context, directory.stat, gatewayName, gatewayPort);
     if (time === "malformed") return { kind: "malformed" };
     if (time === "expired") return { kind: "expired", lease: record };
     if (time === "identity") return { kind: "identity", lease: record };
+    try {
+      const authorityContext = buildAuthorityContext(base, sandboxName);
+      authorityDirectory = ensureAuthorityDirectory(authorityContext, false);
+      const authority = readAuthorityAtPath(authorityContext, authorityDirectory);
+      proveWritable(authorityContext, authorityDirectory, authorityContext.authorityPath);
+      if (
+        authority.phase !== "lease" ||
+        authority.sandboxName !== sandboxName ||
+        authority.epochId !== record.epochId ||
+        authority.gatewayName !== gatewayName ||
+        authority.gatewayPort !== gatewayPort ||
+        authority.publicationState !== "ready" ||
+        authority.observedWallMs !== record.publishedWallMs ||
+        authority.observedUptimeMs !== record.publishedUptimeMs ||
+        authority.preservedLeaseStartedWallMs !== record.leaseStartedWallMs ||
+        authority.preservedLeaseExpiresWallMs !== record.leaseExpiresWallMs ||
+        authority.preservedLeaseElapsedMs !== record.elapsedAtPublicationMs ||
+        !authorityContextMatches(authority, authorityContext, authorityDirectory)
+      ) {
+        return { kind: "identity", lease: record };
+      }
+    } catch (error) {
+      if (error instanceof MissingStoreError) return { kind: "identity", lease: record };
+      throw new UnsafeReceiptError();
+    }
     return { kind: "valid", lease: record };
   } catch (error) {
-    if (error instanceof MissingReceiptError) return { kind: "missing" };
+    if (error instanceof MissingStoreError) return { kind: "missing" };
     if (error instanceof MalformedReceiptError) return { kind: "malformed" };
     return { kind: "unsafe" };
   } finally {
+    closeDirectory(authorityDirectory);
     closeDirectory(directory);
   }
 }
 
 function recordTimeline(
-  record: LaunchReadinessRecord | null,
+  record: LaunchReadinessRecord | LaunchReadinessAuthority | null,
 ): { started: number; expires: number; elapsed: number } | null {
   const started =
     record?.kind === "lease" ? record.leaseStartedWallMs : record?.preservedLeaseStartedWallMs;
@@ -726,32 +1250,48 @@ function recordTimeline(
   return { started, expires, elapsed };
 }
 
-function publicationTimeline(
-  record: LaunchReadinessRecord | null,
-  context: StoreContext,
+function authorityPublicationTimeline(
+  authority: LaunchReadinessAuthority | null,
+  context: BaseContext,
 ): {
   timeline: { started: number; expires: number; elapsed: number } | null;
   state: "ready" | "time-unsafe";
 } {
-  const timeline = recordTimeline(record);
-  if (!record || !timeline) return { timeline: null, state: "ready" };
-  if (record.kind === "fence" && record.publicationState === "time-unsafe") {
-    return context.nowWallMs >= timeline.expires
+  const timeline = recordTimeline(authority);
+  if (!authority) return { timeline: null, state: "ready" };
+  if (authority.publicationState === "time-unsafe") {
+    if (!timeline) return { timeline: null, state: "time-unsafe" };
+    if (
+      authority.bootId !== context.bootId ||
+      context.nowWallMs < timeline.started ||
+      context.nowWallMs < authority.observedWallMs ||
+      context.nowUptimeMs < authority.observedUptimeMs
+    ) {
+      return { timeline, state: "time-unsafe" };
+    }
+    const monotonicElapsed = timeline.elapsed + (context.nowUptimeMs - authority.observedUptimeMs);
+    const wallElapsed = context.nowWallMs - timeline.started;
+    if (!Number.isSafeInteger(monotonicElapsed) || !Number.isSafeInteger(wallElapsed)) {
+      return { timeline, state: "time-unsafe" };
+    }
+    const elapsed = Math.min(LAUNCH_READINESS_LEASE_MS, monotonicElapsed);
+    return monotonicElapsed >= LAUNCH_READINESS_LEASE_MS &&
+      wallElapsed >= LAUNCH_READINESS_LEASE_MS &&
+      context.nowWallMs >= timeline.expires
       ? { timeline: null, state: "ready" }
-      : { timeline, state: "time-unsafe" };
+      : { timeline: { ...timeline, elapsed }, state: "time-unsafe" };
   }
-  const clockRollback =
+  if (!timeline) return { timeline: null, state: "ready" };
+  if (
+    authority.bootId !== context.bootId ||
     context.nowWallMs < timeline.started ||
-    (record.kind === "lease" && context.nowWallMs < record.publishedWallMs) ||
-    (record.bootId === context.bootId &&
-      context.nowUptimeMs <
-        (record.kind === "lease" ? record.publishedUptimeMs : record.fencedUptimeMs));
-  if (clockRollback) return { timeline, state: "time-unsafe" };
-  const observedUptimeMs =
-    record.kind === "lease" ? record.publishedUptimeMs : record.fencedUptimeMs;
+    context.nowWallMs < authority.observedWallMs ||
+    context.nowUptimeMs < authority.observedUptimeMs
+  ) {
+    return { timeline, state: "time-unsafe" };
+  }
   const elapsed = Math.max(
-    timeline.elapsed +
-      (record.bootId === context.bootId ? context.nowUptimeMs - observedUptimeMs : 0),
+    timeline.elapsed + (context.nowUptimeMs - authority.observedUptimeMs),
     context.nowWallMs - timeline.started,
   );
   if (
@@ -764,34 +1304,149 @@ function publicationTimeline(
   return { timeline: { ...timeline, elapsed }, state: "ready" };
 }
 
+type PersistentInspection = { kind: "missing" } | { kind: "present" } | { kind: "unsafe" };
+
+function inspectPersistentStore(
+  base: BaseContext,
+  sandboxName: string,
+  gatewayPort: number,
+  options: LaunchReadinessStoreOptions,
+): PersistentInspection {
+  let directory: SecureDirectory | null = null;
+  try {
+    const context = buildStoreContext(base, sandboxName, gatewayPort, options);
+    directory = ensureSecureDirectory(context, context.home, context.receiptDir, false);
+    try {
+      readRecordAtPath(context, directory);
+      return { kind: "present" };
+    } catch (error) {
+      if (error instanceof MissingStoreError) return { kind: "missing" };
+      if (error instanceof MalformedReceiptError) return { kind: "present" };
+      return { kind: "unsafe" };
+    }
+  } catch (error) {
+    return error instanceof MissingStoreError ? { kind: "missing" } : { kind: "unsafe" };
+  } finally {
+    closeDirectory(directory);
+  }
+}
+
+/**
+ * Revalidate the sandbox-global runtime epoch immediately before recovery.
+ * The caller must hold the sandbox lifecycle lock followed by the owning
+ * gateway route lock for this check and the complete mutation window.
+ */
+export function checkLaunchReadinessMutationAuthority(
+  sandboxName: string,
+  gatewayName: string,
+  gatewayPort: number,
+  expectedEpochId: string | null,
+  options: LaunchReadinessStoreOptions = {},
+): LaunchReadinessMutationAuthorityCheck {
+  if (
+    !gatewayName ||
+    gatewayName.length > 256 ||
+    !Number.isInteger(gatewayPort) ||
+    gatewayPort < 1 ||
+    gatewayPort > 65535 ||
+    (expectedEpochId !== null && !isEpoch(expectedEpochId))
+  ) {
+    return "unsafe";
+  }
+  try {
+    const base = buildBaseContext(options);
+    const inspection = inspectAuthority(base, sandboxName);
+    if (expectedEpochId === null) {
+      const persistent = inspectPersistentStore(base, sandboxName, gatewayPort, options);
+      if (inspection.kind === "unsafe" || persistent.kind === "unsafe") return "unsafe";
+      return inspection.kind === "missing" && persistent.kind === "missing" ? "current" : "changed";
+    }
+    if (inspection.kind === "unsafe") return "unsafe";
+    if (inspection.kind === "missing") return "changed";
+    const { authority } = inspection;
+    return authority.phase === "fence" &&
+      authority.epochId === expectedEpochId &&
+      authority.sandboxName === sandboxName &&
+      authority.gatewayName === gatewayName &&
+      authority.gatewayPort === gatewayPort
+      ? "current"
+      : "changed";
+  } catch {
+    return "unsafe";
+  }
+}
+
 /**
  * Replace any prior lease with a durable random publication epoch.
  *
  * The caller must hold the sandbox lifecycle lock followed by the owning
- * gateway route lock. The complete preflight must run only after those locks
- * are released.
+ * gateway route lock. After the caller releases those locks following the
+ * initial rotation, it must reacquire both through the mutation gate,
+ * revalidate this epoch, and hold them for the complete preflight and final
+ * publication.
  */
 export function fenceLaunchReadinessLease(
   sandboxName: string,
+  gatewayName: string,
   gatewayPort: number,
   options: LaunchReadinessStoreOptions = {},
 ): LaunchReadinessFence {
+  if (
+    !gatewayName ||
+    gatewayName.length > 256 ||
+    !Number.isInteger(gatewayPort) ||
+    gatewayPort < 1 ||
+    gatewayPort > 65535
+  ) {
+    throw new LaunchReadinessFenceError(true, false);
+  }
+  const base = buildBaseContext(options);
+  const authorityInspection = inspectAuthority(base, sandboxName);
+  const persistentInspection = inspectPersistentStore(base, sandboxName, gatewayPort, options);
+  const epochId = base.randomEpoch();
+  if (!isEpoch(epochId)) throw new LaunchReadinessFenceError(true, false);
+
+  let authorityContext: AuthorityContext;
+  try {
+    authorityContext = authorityInspection.context ?? buildAuthorityContext(base, sandboxName);
+    rotateAuthority(
+      authorityContext,
+      sandboxName,
+      gatewayName,
+      gatewayPort,
+      authorityInspection.kind === "present" ? authorityInspection.authority : null,
+      epochId,
+      authorityInspection.kind === "unsafe",
+    );
+  } catch {
+    const blocksRecovery =
+      authorityInspection.kind !== "missing" || persistentInspection.kind !== "missing";
+    throw new LaunchReadinessFenceError(blocksRecovery, false);
+  }
+
   let directory: SecureDirectory | null = null;
   try {
-    const context = buildContext(sandboxName, gatewayPort, options);
-    directory = ensureSecureDirectory(context, true);
+    const context = buildStoreContext(base, sandboxName, gatewayPort, options);
+    directory = ensureSecureDirectory(context, context.home, context.receiptDir, true);
     let existing: LaunchReadinessRecord | null = null;
     try {
       existing = readRecordAtPath(context, directory);
       if (existing.sandboxName !== sandboxName) existing = null;
     } catch (error) {
-      if (!(error instanceof MissingReceiptError) && !(error instanceof MalformedReceiptError)) {
+      if (!(error instanceof MissingStoreError) && !(error instanceof MalformedReceiptError)) {
         throw error;
       }
     }
-    const publication = publicationTimeline(existing, context);
-    const epochId = context.randomEpoch();
-    if (!isEpoch(epochId)) throw new UnsafeReceiptError();
+    const currentAuthority = inspectAuthority(base, sandboxName);
+    if (
+      currentAuthority.kind !== "present" ||
+      currentAuthority.authority.epochId !== epochId ||
+      currentAuthority.authority.gatewayName !== gatewayName ||
+      currentAuthority.authority.gatewayPort !== gatewayPort
+    ) {
+      throw new UnsafeReceiptError();
+    }
+    const authorityTimeline = authorityPublicationTimeline(currentAuthority.authority, base);
     const fence: LaunchReadinessFence = {
       schemaVersion: LAUNCH_READINESS_SCHEMA_VERSION,
       kind: "fence",
@@ -805,13 +1460,17 @@ export function fenceLaunchReadinessLease(
       homeInode: context.homeInode,
       storeDevice: String(directory.stat.dev),
       storeInode: String(directory.stat.ino),
-      publicationState: publication.state,
-      preservedLeaseStartedWallMs: publication.timeline?.started ?? null,
-      preservedLeaseExpiresWallMs: publication.timeline?.expires ?? null,
-      preservedLeaseElapsedMs: publication.timeline?.elapsed ?? null,
+      gatewayName,
+      gatewayPort,
+      publicationState: authorityTimeline.state,
+      preservedLeaseStartedWallMs: authorityTimeline.timeline?.started ?? null,
+      preservedLeaseExpiresWallMs: authorityTimeline.timeline?.expires ?? null,
+      preservedLeaseElapsedMs: authorityTimeline.timeline?.elapsed ?? null,
     };
     writeRecord(context, directory, fence);
     return fence;
+  } catch (error) {
+    throw new LaunchReadinessFenceError(false, true);
   } finally {
     closeDirectory(directory);
   }
@@ -820,30 +1479,47 @@ export function fenceLaunchReadinessLease(
 /** Publish only when the exact fence epoch is still authoritative. */
 export function publishLaunchReadinessLease(
   sandboxName: string,
+  gatewayName: string,
   gatewayPort: number,
   expectedEpochId: string,
   identity: LaunchReadinessIdentity,
   options: LaunchReadinessStoreOptions = {},
 ): LaunchReadinessLease {
   let directory: SecureDirectory | null = null;
+  let authorityDirectory: SecureDirectory | null = null;
   try {
-    const context = buildContext(sandboxName, gatewayPort, options);
-    directory = ensureSecureDirectory(context, false);
+    const base = buildBaseContext(options);
+    const context = buildStoreContext(base, sandboxName, gatewayPort, options);
+    directory = ensureSecureDirectory(context, context.home, context.receiptDir, false);
     const record = readRecordAtPath(context, directory);
     if (
       record.kind !== "fence" ||
       record.sandboxName !== sandboxName ||
       record.epochId !== expectedEpochId ||
-      !recordContextMatches(record, context, directory.stat)
+      !recordContextMatches(record, context, directory.stat, gatewayName, gatewayPort)
     ) {
       throw new Error("Launch readiness publication authority changed.");
     }
     if (record.publicationState !== "ready") {
       throw new Error(
-        "Launch readiness publication is disabled after an unsafe clock observation.",
+        "Launch readiness publication is disabled while authority or clock history is unsafe.",
       );
     }
-    const publication = publicationTimeline(record, context);
+    const authorityContext = buildAuthorityContext(base, sandboxName);
+    authorityDirectory = ensureAuthorityDirectory(authorityContext, false);
+    const authority = readAuthorityAtPath(authorityContext, authorityDirectory);
+    if (
+      authority.phase !== "fence" ||
+      authority.epochId !== expectedEpochId ||
+      authority.sandboxName !== sandboxName ||
+      authority.gatewayName !== gatewayName ||
+      authority.gatewayPort !== gatewayPort ||
+      !authorityContextMatches(authority, authorityContext, authorityDirectory)
+    ) {
+      throw new Error("Launch readiness publication authority changed.");
+    }
+    proveWritable(authorityContext, authorityDirectory, authorityContext.authorityPath);
+    const publication = authorityPublicationTimeline(authority, base);
     if (publication.state !== "ready") {
       throw new Error("Launch readiness publication time is unsafe.");
     }
@@ -868,14 +1544,43 @@ export function publishLaunchReadinessLease(
       homeInode: context.homeInode,
       storeDevice: String(directory.stat.dev),
       storeInode: String(directory.stat.ino),
+      gatewayName,
+      gatewayPort,
       identity,
     };
-    if (validateLeaseTime(lease, context, directory.stat) !== "valid") {
+    if (validateLeaseTime(lease, context, directory.stat, gatewayName, gatewayPort) !== "valid") {
       throw new Error("Launch readiness lease time envelope is no longer valid.");
     }
+    const leaseAuthority: LaunchReadinessAuthority = {
+      ...authority,
+      phase: "lease",
+      observedWallMs: context.nowWallMs,
+      observedUptimeMs: context.nowUptimeMs,
+      publicationState: "ready",
+      preservedLeaseStartedWallMs: leaseStartedWallMs,
+      preservedLeaseExpiresWallMs: leaseExpiresWallMs,
+      preservedLeaseElapsedMs: elapsedAtPublicationMs,
+    };
+    writeAuthority(authorityContext, authorityDirectory, leaseAuthority);
     writeRecord(context, directory, lease);
+    const finalAuthority = readAuthorityAtPath(authorityContext, authorityDirectory);
+    if (
+      finalAuthority.epochId !== expectedEpochId ||
+      finalAuthority.phase !== "lease" ||
+      finalAuthority.observedWallMs !== lease.publishedWallMs ||
+      finalAuthority.observedUptimeMs !== lease.publishedUptimeMs ||
+      finalAuthority.gatewayName !== gatewayName ||
+      finalAuthority.gatewayPort !== gatewayPort ||
+      finalAuthority.preservedLeaseStartedWallMs !== lease.leaseStartedWallMs ||
+      finalAuthority.preservedLeaseExpiresWallMs !== lease.leaseExpiresWallMs ||
+      finalAuthority.preservedLeaseElapsedMs !== lease.elapsedAtPublicationMs ||
+      !authorityContextMatches(finalAuthority, authorityContext, authorityDirectory)
+    ) {
+      throw new Error("Launch readiness publication authority changed.");
+    }
     return lease;
   } finally {
+    closeDirectory(authorityDirectory);
     closeDirectory(directory);
   }
 }
@@ -888,6 +1593,15 @@ export function launchReadinessReceiptPath(
   return path.join(
     nemoclawStateRoot(path.resolve(home), gatewayPort),
     RECEIPT_DIRECTORY,
+    `${receiptKey(sandboxName)}.json`,
+  );
+}
+
+export function launchReadinessAuthorityPath(sandboxName: string, runtimeRoot: string): string {
+  return path.join(
+    path.resolve(runtimeRoot),
+    AUTHORITY_PRODUCT_DIRECTORY,
+    AUTHORITY_DIRECTORY,
     `${receiptKey(sandboxName)}.json`,
   );
 }
