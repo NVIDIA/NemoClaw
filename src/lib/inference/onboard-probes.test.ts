@@ -26,6 +26,7 @@ const {
   isSandboxInternalUrl,
   probeOpenAiLikeEndpoint,
   RETRIABLE_HTTP_PROBE_STATUSES,
+  verifyOnboardInferenceSmoke,
 } = require("./onboard-probes");
 const { assertEndpointResolvesPublic } =
   require("./endpoint-ssrf-preflight") as typeof import("./endpoint-ssrf-preflight");
@@ -1323,4 +1324,41 @@ exit 0
       }
     },
   );
+});
+
+describe("onboard inference smoke abort cleanup", () => {
+  it("tears down the orphan managed gateway before exiting after a failed smoke", async () => {
+    const teardownOrphanManagedGatewayOnAbort = vi.fn();
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.stubEnv("VITEST", "false");
+
+    try {
+      await verifyOnboardInferenceSmoke(
+        {
+          endpointUrl: "https://inference.example.com/v1",
+          forceOpenAiLike: true,
+          model: "example/model",
+          provider: "example-provider",
+        },
+        {
+          probeOpenAiLikeEndpointOptimized: vi.fn().mockResolvedValue({
+            ok: false,
+            message: "smoke failed",
+          }),
+          teardownOrphanManagedGatewayOnAbort,
+        },
+      );
+
+      expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledOnce();
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(teardownOrphanManagedGatewayOnAbort.mock.invocationCallOrder[0]).toBeLessThan(
+        exit.mock.invocationCallOrder[0],
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      error.mockRestore();
+      exit.mockRestore();
+    }
+  });
 });
