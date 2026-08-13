@@ -205,11 +205,11 @@ async function exitForResumeConflicts(
   deps.exitProcess(1);
 }
 
-function assertRecoverableResumeSandboxName(
+async function recoverResumeSandboxName(
   session: Session | null,
   input: OnboardSessionBootstrapInput,
   deps: OnboardSessionBootstrapDeps,
-): void {
+): Promise<Session | null> {
   const checkpoint = session?.checkpoint ?? null;
   const nameRecoverable = checkpoint
     ? checkpointProvesSandboxStepComplete(session) || isDecisionSelected(checkpoint.sandboxIdentity)
@@ -219,10 +219,27 @@ function assertRecoverableResumeSandboxName(
     checkpoint && isDecisionSelected(checkpoint.sandboxIdentity)
       ? checkpoint.sandboxIdentity.value.name
       : null;
-  const recoveredSandboxName =
-    input.requestedSandboxName ||
-    (nameRecoverable ? checkpointedSandboxName || session?.sandboxName || null : null);
-  if (input.cannotPrompt && !recoveredSandboxName) {
+  const recordedSandboxName = nameRecoverable
+    ? checkpointedSandboxName || session?.sandboxName || null
+    : null;
+  if (recordedSandboxName) return session;
+  const requestedSandboxName = input.requestedSandboxName;
+  if (requestedSandboxName) {
+    // #8953: the guard below tells the operator to re-run with --name (or
+    // NEMOCLAW_SANDBOX_NAME). Record that name as the checkpointed sandbox
+    // identity so the resume trust gates reuse it instead of silently
+    // recovering the prompt default. Only the checkpoint decision is
+    // recorded here: the sandbox prompt-progress marker stays false because
+    // the name did not come from a completed sandbox prompt, and setting it
+    // would misread a pre-sandbox failure as an interrupted provider review.
+    await deps.updateSession((current) => {
+      const checkpointAgent = input.agentFlag || current.agent || input.envAgent || "openclaw";
+      recordCheckpointSandboxIdentity(current, requestedSandboxName, checkpointAgent);
+      return current;
+    });
+    return deps.loadSession();
+  }
+  if (input.cannotPrompt) {
     deps.error(
       "  Cannot resume non-interactive onboard: the previous run was interrupted before sandbox creation completed,",
     );
@@ -231,6 +248,7 @@ function assertRecoverableResumeSandboxName(
     );
     deps.exitProcess(1);
   }
+  return session;
 }
 
 async function prepareResumeSession(
@@ -276,7 +294,7 @@ async function prepareResumeSession(
     return current;
   });
   session = deps.loadSession();
-  assertRecoverableResumeSandboxName(session, input, deps);
+  session = await recoverResumeSandboxName(session, input, deps);
   return { session, fromDockerfile };
 }
 

@@ -465,6 +465,88 @@ describe("prepareOnboardSession", () => {
     expect(deps.exitProcess).toHaveBeenCalledTimes(1);
   });
 
+  it("records the requested sandbox name when resume has none recorded (#8953)", async () => {
+    const session = createSession({ sandboxName: null, agent: "langchain-deepagents-code" });
+    const { deps } = createDeps(session);
+
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: "fvr-p09-resume",
+        cannotPrompt: true,
+        nonInteractive: true,
+      },
+      deps,
+    );
+
+    expect(result.session).toMatchObject({
+      checkpoint: {
+        sandboxIdentity: decisionSelected({
+          name: "fvr-p09-resume",
+          agent: "langchain-deepagents-code",
+        }),
+      },
+    });
+    expect(result.session?.sandboxName).toBeNull();
+    expect(result.session?.sandboxPromptProgress.sandboxName).toBe(false);
+    expect(deps.error).not.toHaveBeenCalled();
+    expect(deps.exitProcess).not.toHaveBeenCalled();
+  });
+
+  it("records the requested sandbox name on interactive resume without one recorded (#8953)", async () => {
+    const session = createSession({ sandboxName: null });
+    const { deps } = createDeps(session);
+
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: "fvr-p09-resume",
+        cannotPrompt: false,
+        nonInteractive: false,
+      },
+      deps,
+    );
+
+    expect(result.session).toMatchObject({
+      checkpoint: {
+        sandboxIdentity: decisionSelected({ name: "fvr-p09-resume", agent: "openclaw" }),
+      },
+    });
+    expect(deps.exitProcess).not.toHaveBeenCalled();
+  });
+
+  it("keeps a recorded sandbox name over the requested one on resume", async () => {
+    const session = createSession({
+      sandboxName: "recorded-box",
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: false,
+        messaging: false,
+        resourceProfile: false,
+      },
+    });
+    const { deps } = createDeps(session);
+
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: "other-box",
+        cannotPrompt: true,
+        nonInteractive: true,
+      },
+      deps,
+    );
+
+    expect(result.session?.sandboxName).toBe("recorded-box");
+    expect(deps.exitProcess).not.toHaveBeenCalled();
+  });
+
   it("allows non-interactive resume with a checkpointed sandbox name", async () => {
     const session = createSession({
       sandboxName: "checkpointed-box",
