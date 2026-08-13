@@ -20,7 +20,8 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(skill).toContain("run pre-tag full E2E");
     expect(skill).toContain("run release-candidate E2E");
     expect(skill).toContain("must not authorize the Brev Launchable path");
-    expect(skill).toContain("publishes the same `Release qualification` check");
+    expect(skill).toContain("Push runs publish `Relevant E2E`");
+    expect(skill).toContain("Only the full `workflow_dispatch` mode");
     expect(skill).toContain(
       "an authorized environment reviewer must approve it before qualification starts",
     );
@@ -41,6 +42,7 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(skill).toContain("provisional release evidence");
     expect(skill).toContain("If the release candidate SHA changes");
     expect(skill).toContain("nemoclaw-maintainer-cut-release-tag");
+    expect(skill).toContain("`scripts/release-cut-tag.sh` verifies the canonical GitHub job");
     expect(skill).not.toContain("validate-full-e2e-evidence.mts");
     expect(skill).not.toContain("evidence ledger");
   });

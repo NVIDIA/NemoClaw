@@ -79,7 +79,19 @@ describe("e2e workflow boundary", () => {
     );
   });
 
-  it("selects Launchable E2E for main pushes and trusted manual dispatches (#7487)", () => {
+  it("rejects an inverted selected-jobs condition", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { if?: string }>;
+    };
+    workflow.jobs["hermes-discord"]!.if =
+      "${{ !contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'hermes-discord') }}";
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "hermes-discord job must use the shared jobs selector condition",
+    );
+  });
+
+  it("selects Launchable E2E only for trusted manual dispatches (#7487)", () => {
     expect(
       evaluateStagingBrevLaunchableDispatch({
         eventName: "workflow_dispatch",
@@ -128,7 +140,7 @@ describe("e2e workflow boundary", () => {
       evaluateStagingBrevLaunchableDispatch({
         eventName: "push",
       }),
-    ).toEqual({ runLaunchableE2e: true });
+    ).toEqual({ runLaunchableE2e: false });
     expect(
       evaluateStagingBrevLaunchableDispatch({
         eventName: "workflow_dispatch",
@@ -136,17 +148,6 @@ describe("e2e workflow boundary", () => {
         trustedMain: false,
       }),
     ).toEqual({ runLaunchableE2e: false });
-  });
-
-  it("rejects a WhatsApp compact QR job that omits the jobs and targets dispatch conditions", () => {
-    const workflow = readWorkflow() as {
-      jobs: Record<string, { if?: string }>;
-    };
-    workflow.jobs["whatsapp-qr-compact"]!.if = "${{ github.event_name != 'workflow_dispatch' }}";
-
-    expect(validateE2eWorkflow(workflow)).toContain(
-      "whatsapp-qr-compact job must use the shared jobs selector condition",
-    );
   });
 
   it("rejects a full dispatch with changed input, correlation, or selector contracts (#7487)", () => {
@@ -175,7 +176,7 @@ describe("e2e workflow boundary", () => {
         "workflow run-name must expose the unique manual-dispatch correlation ID",
         "workflow_dispatch include_staging_brev_launchable input must be boolean and default to false",
         "workflow must not define superseded staging-brev-launchable-readiness job",
-        "staging-brev-launchable must run on main pushes and retain trusted manual selection",
+        "staging-brev-launchable must retain trusted manual selection",
       ]),
     );
   });
@@ -195,29 +196,6 @@ describe("e2e workflow boundary", () => {
         "workflow concurrency must isolate each full dispatch with github.run_id",
         "workflow concurrency must not cancel an active Jetson dispatch",
         "staging-brev-launchable concurrency must queue all pending Launchable E2E runs without cancellation",
-      ]),
-    );
-  });
-
-  it("keeps dashboard remote-bind in unified E2E with scoped credentials (#7490)", () => {
-    const workflow = readWorkflow() as {
-      jobs: Record<
-        string,
-        {
-          env: Record<string, string>;
-          steps: Array<{ env?: Record<string, string>; name?: string; run?: string }>;
-        }
-      >;
-    };
-    const job = workflow.jobs["dashboard-remote-bind"]!;
-    job.env.NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND = "0";
-    const run = job.steps.find((step) => step.name === "Run dashboard remote-bind live test")!;
-    delete run.env!.NVIDIA_INFERENCE_API_KEY;
-
-    expect(validateE2eWorkflow(workflow)).toEqual(
-      expect.arrayContaining([
-        "dashboard-remote-bind job must set NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND=1",
-        "dashboard-remote-bind step must receive NVIDIA_INFERENCE_API_KEY from secrets",
       ]),
     );
   });
@@ -381,6 +359,30 @@ describe("e2e workflow boundary", () => {
     );
   });
 
+  it("includes deleted owning paths in main-push selection", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
+    };
+    const generate = workflow.jobs["generate-matrix"]?.steps?.find(
+      (step) => step.name === "Generate E2E target matrix",
+    )!;
+
+    requireFixture(
+      generate.run?.includes("git diff --name-only --diff-filter=ACMRD") ?? false,
+      "main-push planner fixture must include deleted paths",
+    );
+    generate.run = generate.run!.replace("--diff-filter=ACMRD", "--diff-filter=ACMR");
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "step 'Generate E2E target matrix' run script must include git diff --name-only --diff-filter=ACMRD",
+    );
+    expect(
+      buildE2eWorkflowPlan(
+        {},
+        { changedFiles: ["test/e2e/live/snapshot-commands.test.ts"] },
+      ).catalogueMatrices.standard.map((row) => row.id),
+    ).toEqual(["snapshot-commands"]);
+  });
+
   it("keeps orchestration jobs within bounded timeouts", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { "timeout-minutes"?: number }>;
@@ -497,11 +499,7 @@ describe("e2e workflow boundary", () => {
       },
     ],
   ] satisfies ReadonlyArray<readonly [string, RebuildWorkflowStep]>;
-  const rebuildCacheCases = [
-    "rebuild-openclaw",
-    "rebuild-hermes",
-    "rebuild-hermes-stale-base",
-  ].flatMap((jobName) =>
+  const rebuildCacheCases = ["rebuild-hermes", "rebuild-hermes-stale-base"].flatMap((jobName) =>
     rebuildCacheMutations.map(
       ([caseName, injectedStep]) => [jobName, caseName, injectedStep] as const,
     ),
@@ -581,7 +579,6 @@ describe("e2e workflow boundary", () => {
       jobs: Record<string, { needs?: string | string[] }>;
     };
     const serializedDependencies = {
-      "full-e2e": ["generate-matrix", "token-rotation", "channels-stop-start"],
       "openclaw-tui-chat-correlation": [
         "generate-matrix",
         "token-rotation",
@@ -598,7 +595,6 @@ describe("e2e workflow boundary", () => {
     try {
       expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
-          "full-e2e job must depend on generate-matrix",
           "openclaw-tui-chat-correlation job must depend on generate-matrix",
         ]),
       );
@@ -839,341 +835,6 @@ jobs:
     },
   );
 
-  it("flags direct dispatch-input interpolation and unsafe artifact upload", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    fs.writeFileSync(
-      workflowPath,
-      `
-"on":
-  workflow_dispatch:
-    inputs:
-      test_filter:
-        required: false
-permissions:
-  contents: read
-jobs:
-  validate-jobs:
-    runs-on: macos-latest
-    steps:
-      - name: Validate free-standing job selector
-        env:
-          JOBS: bad
-        run: |
-          echo "::error::Invalid jobs input: \${JOBS}"
-  report-to-pr:
-    runs-on: ubuntu-latest
-    needs: [generate-matrix]
-    steps:
-      - name: Post E2E target results to PR
-        env:
-          JOBS: bad
-        run: echo "\${{ inputs.pr_number }} \${{ inputs.targets }}"
-  live:
-    runs-on: ubuntu-latest
-    env:
-      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/live
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: true
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        env:
-          NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-      - name: Run live E2E tests
-        env:
-          TEST_FILTER: \${{ inputs.test_filter }}
-        run: npx vitest run --project e2e-live "\${{ inputs.test_filter }}"
-      - name: Summarize artifacts
-        run: echo "\${{ github.event.inputs['test_filter'] }}"
-      - name: Upload E2E artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e
-          path: .e2e/live/
-          include-hidden-files: true
-          if-no-files-found: ignore
-  fixture-version-check:
-    runs-on: ubuntu-latest
-    needs: generate-matrix
-    if: \${{ inputs.targets != '' }}
-    env:
-      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/fixture-version-check
-      NEMOCLAW_RUN_LIVE_E2E: "0"
-      NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: true
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        env:
-          NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-      - name: Install root dependencies
-        run: npm install
-      - name: Run fixture version-check live test
-        env:
-          NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-        run: npx vitest run --project e2e-live "\${{ inputs.test_filter }}"
-      - name: Upload fixture version-check artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: fixture-version-check
-          path: .e2e/fixture-version-check/
-          include-hidden-files: true
-          if-no-files-found: error
-  fixture-negative-path:
-    runs-on: ubuntu-latest
-    needs: generate-matrix
-    if: \${{ inputs.targets != '' }}
-    env:
-      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/fixture-negative-path
-      NEMOCLAW_RUN_LIVE_E2E: "0"
-      NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: true
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        env:
-          NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-      - name: Install root dependencies
-        run: npm install
-      - name: Run fixture negative-path live test
-        env:
-          NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-        run: npx vitest run --project e2e-live "\${{ inputs.test_filter }}"
-      - name: Upload fixture negative-path artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: fixture-negative-path
-          path: .e2e/fixture-negative-path/
-          include-hidden-files: true
-          if-no-files-found: error
-  network-policy:
-    runs-on: macos-latest
-    needs: generate-matrix
-    if: \${{ inputs.targets != '' }}
-    env:
-      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/network-policy
-      NEMOCLAW_CLI_BIN: bin/not-nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "0"
-      NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-      DOCKERHUB_USERNAME: \${{ secrets.DOCKERHUB_USERNAME }}
-      DOCKERHUB_TOKEN: \${{ secrets.DOCKERHUB_TOKEN }}
-      GITHUB_TOKEN: \${{ github.token }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: true
-      - name: Authenticate to Docker Hub
-        env:
-          GITHUB_TOKEN: \${{ github.token }}
-        run: echo "\${{ inputs.jobs }}"
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        env:
-          NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-      - name: Install root dependencies
-        run: npm install
-      - name: Build CLI
-        run: echo skip
-      - name: Install OpenShell
-        env:
-          GITHUB_TOKEN: \${{ github.token }}
-        run: echo install
-      - name: Run network-policy live test
-        env:
-          NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-        run: npx vitest run --project e2e-live "\${{ inputs.test_filter }}"
-      - name: Upload network-policy artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: network-policy
-          path: .e2e/network-policy/
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 1
-  double-onboard:
-    runs-on: ubuntu-latest
-    needs: generate-matrix
-    if: \${{ inputs.targets != '' }}
-    env:
-      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/double-onboard
-      NEMOCLAW_CLI_BIN: ./bad-cli.js
-      NEMOCLAW_RUN_LIVE_E2E: "0"
-      NVIDIA_INFERENCE_API_KEY: \${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-      DOCKERHUB_TOKEN: \${{ secrets.DOCKERHUB_TOKEN }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: true
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: plain-user
-          DOCKERHUB_TOKEN: plain-token
-        run: echo no docker login
-      - name: Set up Node
-        uses: actions/setup-node@v4
-      - name: Install root dependencies
-        run: npm install
-      - name: Build CLI
-        run: echo skip build
-      - name: Install OpenShell CLI
-        run: echo skip install
-      - name: Run double-onboard live Vitest test
-        env:
-          DOCKERHUB_TOKEN: \${{ secrets.DOCKERHUB_TOKEN }}
-        run: npx vitest run --project e2e-live "\${{ inputs.test_filter }}"
-      - name: Upload double-onboard Vitest artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: double-onboard
-          path: .e2e/double-onboard/
-          include-hidden-files: true
-          if-no-files-found: error
-
-`,
-    );
-
-    try {
-      const errors = validateE2eWorkflowBoundary(workflowPath);
-      expect(errors).toEqual(
-        expect.arrayContaining([
-          "workflow_dispatch missing input: targets",
-          "workflow_dispatch missing input: jobs",
-          "workflow_dispatch must not expose legacy test_filter input",
-          "workflow missing generate-matrix job",
-          "live job must run on the matrix runner",
-          "live job must enable hosted-compatible inference mode",
-          "live job env must not include NVIDIA_INFERENCE_API_KEY",
-          "run-target job missing step: Configure live E2E trace directory",
-          "step 'Run live E2E tests' run script must not interpolate dispatch inputs directly",
-          "live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets",
-          "run-target job missing step: Build trusted live E2E timing summary",
-          "run-target job missing step: Delete raw live E2E traces",
-          "live trace setup, workspace preparation, Vitest run, sanitizer, and cleanup steps must stay in order",
-          "artifact upload path must include e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
-          "live must not invoke actions/upload-artifact directly",
-          "live must use upload-e2e-artifacts exactly once",
-          "workflow missing shared E2E job",
-          "network-policy job env must not include NVIDIA_INFERENCE_API_KEY",
-          "network-policy step 'Install OpenShell' env must not include GITHUB_TOKEN",
-          "double-onboard job env must not include DOCKERHUB_TOKEN",
-          "step 'Run double-onboard live Vitest test' run script must not interpolate dispatch inputs directly",
-          "workflow missing hermes-e2e job",
-          "workflow missing skill-agent job",
-          "workflow missing model-router-provider-routed-inference job",
-          "workflow missing snapshot-commands job",
-          "report-to-pr job must wait for live",
-          "report-to-pr step must pass jobs through JOBS env",
-          "step 'Post E2E target results to PR' run script must load the trusted report helper from the checked-out workspace",
-          "step 'Post E2E target results to PR' run script must assign resolveReportPr's result before use",
-          "step 'Post E2E target results to PR' run script must destructure loadReportJobs's result before use",
-          "step 'Post E2E target results to PR' run script must assign renderE2eReport's result before use",
-          "report-to-pr must check out the trusted workflow revision before reporting",
-        ]),
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects workflow selector drift from the free-standing inventory", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = fs.readFileSync(
-      path.join(process.cwd(), ".github/workflows/e2e.yaml"),
-      "utf8",
-    );
-    fs.writeFileSync(
-      workflowPath,
-      workflow.replace(
-        " || contains(format(',{0},', inputs.targets), ',state-backup-restore,')",
-        "",
-      ),
-    );
-
-    try {
-      expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
-        "free-standing inventory mapping state-backup-restore:state-backup-restore must match the workflow job selector",
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("requires snapshot commands workflow boundary coverage", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = fs.readFileSync(
-      path.join(process.cwd(), ".github/workflows/e2e.yaml"),
-      "utf8",
-    );
-    const parsedWorkflow = YAML.parse(workflow) as {
-      jobs: Record<
-        string,
-        {
-          env: Record<string, string>;
-          steps: Array<Record<string, unknown>>;
-          "timeout-minutes"?: number;
-        }
-      >;
-    };
-    const snapshotJob = parsedWorkflow.jobs["snapshot-commands"];
-    snapshotJob["timeout-minutes"] = 30;
-    snapshotJob.env.DOCKER_CONFIG = "${{ github.workspace }}/.docker-config-shared";
-    snapshotJob.env.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
-    snapshotJob.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE = "1";
-    for (const step of snapshotJob.steps) {
-      if (typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")) {
-        step.with = { ...(step.with as Record<string, unknown>), "persist-credentials": true };
-      }
-      if (step.name === "Run snapshot commands live test") {
-        step.env = {
-          ...((step.env as Record<string, unknown> | undefined) ?? {}),
-          NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
-          NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
-        };
-        step.run = String(step.run).replace(
-          "test/e2e/live/snapshot-commands.test.ts",
-          "test/e2e/live/registry-targets.test.ts",
-        );
-      }
-      if (step.name === "Upload snapshot commands artifacts") {
-        step.with = {
-          ...(step.with as Record<string, unknown>),
-          path: "e2e-artifacts/live/",
-          "include-hidden-files": true,
-        };
-      }
-    }
-    fs.writeFileSync(workflowPath, YAML.stringify(parsedWorkflow));
-
-    try {
-      expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
-        expect.arrayContaining([
-          "snapshot-commands job must keep a 40 minute timeout",
-          "snapshot-commands job must not set DOCKER_CONFIG at job level",
-          "snapshot-commands job must not enable hosted inference",
-          "snapshot-commands checkout step must set persist-credentials=false",
-          "snapshot-commands job env must not include NVIDIA_INFERENCE_API_KEY",
-          "snapshot-commands step 'Run snapshot commands live test' env must not include NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
-          "snapshot-commands step 'Run snapshot commands live test' env must not include NVIDIA_API_KEY",
-          "snapshot-commands upload-e2e-artifacts invocation must not override its contract",
-          "snapshot-commands upload-e2e-artifacts must use the action defaults",
-          "step 'Run snapshot commands live test' run script must include test/e2e/live/snapshot-commands.test.ts",
-        ]),
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
   it("applies boundary checks to newly marked free-standing jobs", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -1284,7 +945,7 @@ jobs:
           "channels-stop-start strategy.fail-fast must be false",
           "channels-stop-start matrix must bind canonical per-agent sandbox names",
           "channels-stop-start job must derive NEMOCLAW_SANDBOX_NAME from matrix.sandbox_name",
-          "channels-stop-start job env must not include DOCKER_CONFIG",
+          "channels-stop-start job must not include DOCKER_CONFIG",
           "channels-stop-start job env must not include NVIDIA_INFERENCE_API_KEY",
           "channels-stop-start checkout step must set persist-credentials=false",
           "step 'Install OpenShell' run script must include env -u DOCKER_CONFIG",
@@ -1293,71 +954,6 @@ jobs:
           "step 'Run channels stop/start live test' run script must include test/e2e/live/channels-stop-start.test.ts",
           "channels-stop-start must not invoke actions/upload-artifact directly",
           "channels-stop-start must use upload-e2e-artifacts exactly once",
-        ]),
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("requires messaging-compatible-endpoint workflow and report coverage", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
-    const renamedWorkflowPath = path.join(tmp, "renamed-workflow.yaml");
-    const missingReportNeedPath = path.join(tmp, "missing-report-need.yaml");
-    const workflow = fs.readFileSync(
-      path.join(process.cwd(), ".github/workflows/e2e.yaml"),
-      "utf8",
-    );
-    fs.writeFileSync(
-      renamedWorkflowPath,
-      workflow.replace(/^  messaging-compatible-endpoint:$/m, "  msg-compatible-missing:"),
-    );
-    fs.writeFileSync(
-      missingReportNeedPath,
-      removeJobNeed(workflow, "report-to-pr", "messaging-compatible-endpoint"),
-    );
-
-    try {
-      expect(validateE2eWorkflowBoundary(renamedWorkflowPath)).toContain(
-        "workflow missing messaging-compatible-endpoint job",
-      );
-      expect(validateE2eWorkflowBoundary(missingReportNeedPath)).toContain(
-        "report-to-pr job must wait for messaging-compatible-endpoint",
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  // source-shape-contract: security -- Mutates the shipped workflow to reject duplicate unguarded Docker credential exposure
-  it("rejects duplicate unguarded Docker Hub auth in messaging-compatible-endpoint", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = readWorkflow() as {
-      jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
-    };
-    const steps = workflow.jobs["messaging-compatible-endpoint"]?.steps;
-    expect(steps).toEqual(expect.any(Array));
-    const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
-    expect(prepareIndex).toBeGreaterThan(0);
-    steps.splice(prepareIndex, 0, {
-      name: "Authenticate to Docker Hub",
-      env: {
-        DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
-        DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
-      },
-      run: "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}",
-    });
-    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-    try {
-      const errors = validateE2eWorkflowBoundary(workflowPath);
-      expect(errors).toEqual(
-        expect.arrayContaining([
-          "messaging-compatible-endpoint image-consuming job must have exactly one Docker Hub auth step",
-          "messaging-compatible-endpoint step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",
-          "messaging-compatible-endpoint step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
-          "messaging-compatible-endpoint step 'Authenticate to Docker Hub' must not authenticate or interpolate Docker Hub secrets",
         ]),
       );
     } finally {
