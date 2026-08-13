@@ -71,8 +71,9 @@ describe("terminal step failure helper", () => {
     expect(loaded.machine.state).toBe("failed");
   });
 
-  it("simulates the onboard exit listener and ignores successful or complete exits", () => {
+  it("keeps the portable profile captured by the onboard exit listener (#8873)", () => {
     const listeners: Array<(code: number) => void> = [];
+    const errors: string[] = [];
     let complete = false;
     const processLike = {
       once: (event: "exit", listener: (code: number) => void) => {
@@ -82,13 +83,16 @@ describe("terminal step failure helper", () => {
     };
     session.saveSession(session.createSession({ lastStepStarted: "inference" }));
     // The incomplete exit also prints the #6003 resume hint; capture it.
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation((message = "") => errors.push(String(message)));
 
     registerIncompleteOnboardExitFailureHandler(
       session,
       () => complete,
       "Onboarding exited before the step completed.",
       processLike,
+      true,
     );
     listeners[0](0);
     expect(requireLoadedSession().status).toBe("in_progress");
@@ -100,6 +104,8 @@ describe("terminal step failure helper", () => {
     complete = false;
     listeners[0](1);
     errorSpy.mockRestore();
+    expect(errors.join("\n")).toContain("onboard --experimental-profile portable");
+    expect(errors.join("\n")).not.toContain("onboard --resume");
 
     const loaded = requireLoadedSession();
     expect(loaded.steps.inference.status).toBe("failed");

@@ -35,7 +35,10 @@ This lets the in-sandbox OpenShell proxy validate TLS when it opens the upstream
 
 <AgentOnly variant="openclaw">
 
-It sets `NODE_EXTRA_CA_CERTS` before registry-backed build-time Node.js dependency requests that cross a TLS-inspecting proxy.
+When onboarding supplies a corporate CA, the Dockerfile sets `NODE_EXTRA_CA_CERTS` and `CURL_CA_BUNDLE` in each final-stage build step that accesses the npm registry.
+This includes registry-backed npm remediation and runtime dependency installation that cross a TLS-inspecting proxy.
+The build does not retain either variable in the image configuration.
+
 The required `reviewed-npm-audit` CI check materializes the dependency graph from the committed lock and verifies its registry signatures.
 Any nonzero `npm audit signatures` status fails the check.
 The pull request (PR) check must pass before merge.
@@ -58,8 +61,11 @@ Sandboxes still using the staged legacy direct-start path create `/tmp/nemoclaw-
 <AgentOnly variant="hermes">
 
 The Hermes discovery-runtime installer applies the corporate CA before its npm operations.
-The final Hermes image stage decodes the CA immediately after `FROM ${BASE_IMAGE}` and sets `NODE_EXTRA_CA_CERTS` before later npm operations.
-The registry-backed npm remediations set `CURL_CA_BUNDLE` before each download only when the decoded certificate file exists.
+The final Hermes image stage decodes the CA immediately after `FROM ${BASE_IMAGE}`.
+When the decoded CA file exists, the Dockerfile sets `NODE_EXTRA_CA_CERTS` and `CURL_CA_BUNDLE` in each later build step that accesses the npm registry.
+These operations include registry-backed npm remediation and the fallback Hermes dashboard build.
+The build does not retain either variable in the image configuration.
+When the decoded CA file does not exist, these operations use their default trust configuration.
 The Hermes package installer clears inherited `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` values before its build-time `uv pip install` commands.
 When the decoded CA exists, it sets both variables to that file for those commands.
 If the file does not exist, uv and Python use their default trust configuration.

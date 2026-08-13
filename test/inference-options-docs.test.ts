@@ -530,7 +530,7 @@ describe("inference setup navigation", () => {
     expect(endpoint).toContain("Port `8000` is one of NemoClaw's bundled host-gateway ports.");
     expect(vllm).toContain("Docker's `--restart unless-stopped` policy");
     expect(verification).toContain(
-      "The `Inference` row checks the sandbox's `inference.local` path",
+      "The `Inference` row first checks the sandbox's `inference.local` path",
     );
   });
 });
