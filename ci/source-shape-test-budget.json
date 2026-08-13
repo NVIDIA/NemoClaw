@@ -47,6 +47,11 @@
       "category": "compatibility"
     },
     {
+      "file": "test/agent-variant-docs.test.ts",
+      "test": "keeps the OpenClaw workspace inventory aligned with seeded runtime templates",
+      "category": "compatibility"
+    },
+    {
       "file": "test/code-change-considerations.test.ts",
       "test": "keeps the stage-neutral questions in one concise owner",
       "category": "compatibility"

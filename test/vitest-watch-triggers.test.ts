@@ -20,7 +20,6 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/e2e-report-to-pr-workflow-boundary.test.ts",
   "test/e2e/support/e2e-workflow.test.ts",
   "test/e2e/support/e2e-workflow-trace.test.ts",
-  "test/e2e/support/gateway-guard-workflow-boundary.test.ts",
   "test/e2e/support/hermes-dashboard-workflow-boundary.test.ts",
   "test/e2e/support/hermes-workflow-boundary.test.ts",
   "test/hosted-runner-recovery-workflow.test.ts",

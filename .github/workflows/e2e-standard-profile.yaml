@@ -30,9 +30,15 @@ on:
       install_mode:
         required: true
         type: string
+      install_non_interactive:
+        required: true
+        type: boolean
       restore_cli:
         required: true
         type: boolean
+      host_packages:
+        required: true
+        type: string
       trusted_main:
         required: true
         type: boolean
@@ -75,6 +81,12 @@ jobs:
           username: ${{ inputs.trusted_main && secrets.DOCKERHUB_USERNAME || '' }}
           token: ${{ inputs.trusted_main && secrets.DOCKERHUB_TOKEN || '' }}
 
+      - name: Install target host dependencies
+        if: ${{ inputs.host_packages != '' }}
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
+        with:
+          packages: ${{ inputs.host_packages }}
+
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
@@ -88,10 +100,14 @@ jobs:
 
       - name: Install OpenShell CLI
         if: ${{ inputs.install_mode == 'authenticated' }}
+        env:
+          NEMOCLAW_NON_INTERACTIVE: ${{ inputs.install_non_interactive && '1' || '' }}
         run: bash scripts/install-openshell.sh
 
       - name: Install OpenShell CLI without workflow credentials
         if: ${{ inputs.install_mode == 'credential-free' }}
+        env:
+          NEMOCLAW_NON_INTERACTIVE: ${{ inputs.install_non_interactive && '1' || '' }}
         run: |
           set -euo pipefail
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN \

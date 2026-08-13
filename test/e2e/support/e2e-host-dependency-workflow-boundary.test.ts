@@ -109,23 +109,8 @@ describe("E2E host dependency action boundary (#6961)", () => {
       packages: "expect",
     },
     {
-      jobName: "network-policy",
-      stepName: "Install network-policy host dependencies",
-      packages: "expect",
-    },
-    {
       jobName: "cloud-onboard",
       stepName: "Install cloud-onboard DCode TUI host dependencies",
-      packages: "expect",
-    },
-    {
-      jobName: "issue-4434-tui-unreachable-inference",
-      stepName: "Install issue #4434 host dependencies",
-      packages: "expect iptables",
-    },
-    {
-      jobName: "openclaw-tui-chat-correlation",
-      stepName: "Install OpenClaw TUI host dependencies",
       packages: "expect",
     },
   ])("rejects package allowlist drift in $jobName", ({ jobName, stepName, packages }) => {
@@ -233,17 +218,6 @@ exit 64
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
     }
-  });
-
-  it("rejects installing the OpenClaw TUI host dependency after workspace preparation", () => {
-    const workflow = readWorkflow();
-    const steps = workflow.jobs["openclaw-tui-chat-correlation"].steps;
-    const installIndex = requireStepIndex(steps, "Install OpenClaw TUI host dependencies");
-    const prepareIndex = requireStepIndex(steps, "Prepare E2E workspace");
-    [steps[installIndex], steps[prepareIndex]] = [steps[prepareIndex]!, steps[installIndex]!];
-    expect(validateE2eWorkflow(workflow)).toContain(
-      "openclaw-tui-chat-correlation host dependencies must be installed before workspace prep",
-    );
   });
 
   it("keeps cloud-onboard host dependencies before workspace preparation", () => {

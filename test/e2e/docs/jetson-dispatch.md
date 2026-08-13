@@ -97,12 +97,12 @@ instead of editing v1 when an incompatible wire change is required.
 
 ## Trusted GitHub Dispatch
 
-The Jetson job runs only for an explicit `workflow_dispatch` on the trusted
-`main` workflow in `NVIDIA/NemoClaw`. The workflow requires
-`allow_jetson_dispatch=true`, limits candidate checkout to the same repository,
-and sends the exact `checkout_sha` or current trusted ref commit as
-`candidateSha`. GitHub queues later Jetson jobs instead of canceling a running
-job.
+The Jetson job runs automatically for each trusted push to `main` in
+`NVIDIA/NemoClaw`. A manual run requires `allow_jetson_dispatch=true` on the
+trusted `main` workflow. The manual input defaults to `false`. The workflow
+limits a manual candidate checkout to the same repository and sends the exact
+`checkout_sha` or current trusted ref commit as `candidateSha`. GitHub queues
+later Jetson jobs instead of canceling a running job.
 
 The job grants only `contents: read` and `id-token: write`. The controller
 requests a short-lived GitHub OIDC token with audience
@@ -113,9 +113,9 @@ Configure `JETSON_DISPATCH_URL` as a GitHub repository variable. The client
 requires an HTTPS origin without user information, a path, a query, or a
 fragment. Do not put a token or other credential in that variable.
 
-The operator-owned service must already be available and compatible with
-contract version `1.0.0` before a maintainer enables the dispatch flag. Keep
-the flag disabled for ordinary runs and required pre-tag evidence.
+The operator-owned service must remain available and compatible with contract
+version `1.0.0` for trusted `main` pushes. Keep the manual flag disabled for
+ordinary manual runs and required pre-tag dispatches.
 
 ## Evidence
 
