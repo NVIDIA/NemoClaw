@@ -256,6 +256,22 @@ describe("printSandboxCreateRecoveryHints", () => {
     expect(out).toContain("NEMOCLAW_WEB_SEARCH_ENABLED=0");
     expect(out).toContain("onboard --resume");
   });
+
+  it("prints the portable-profile recovery command when the portable env is set", () => {
+    const prev = process.env.NEMOCLAW_EXPERIMENTAL_PROFILE;
+    process.env.NEMOCLAW_EXPERIMENTAL_PROFILE = "portable";
+    try {
+      printSandboxCreateRecoveryHints("");
+      const out = stderr();
+      expect(out).toContain("onboard --experimental-profile portable");
+      expect(out).not.toContain("--resume");
+      expect(out).not.toContain("Or:      nemoclaw onboard");
+    } finally {
+      prev === undefined
+        ? delete process.env.NEMOCLAW_EXPERIMENTAL_PROFILE
+        : (process.env.NEMOCLAW_EXPERIMENTAL_PROFILE = prev);
+    }
+  });
 });
 
 describe("reconstructImageRefCreateCommand", () => {

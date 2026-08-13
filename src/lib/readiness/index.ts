@@ -57,7 +57,11 @@ export {
   collectPlatformIdentity,
   projectPlatformQualification,
 } from "./platform-qualification.js";
-export { createPublicReadinessReport, renderReadinessReport } from "./presentation.js";
+export {
+  createPublicHostProbeReadinessReport,
+  createPublicReadinessReport,
+  renderReadinessReport,
+} from "./presentation.js";
 export { getSystemReadinessReferenceErrors } from "./references.js";
 export type { CollectSystemReadinessOptions } from "./system.js";
 export { composeSystemReadinessReport, createSystemReadinessReport } from "./system.js";

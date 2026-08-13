@@ -39,6 +39,7 @@ describe("Dockerfile RUN command discovery", () => {
     const source = [
       `RUN if [ -f ${corporateCaPath} ]; then ${continuation}`,
       `      export CURL_CA_BUNDLE=${corporateCaPath}; ${continuation}`,
+      `      export NODE_EXTRA_CA_CERTS=${corporateCaPath}; ${continuation}`,
       `    fi; ${continuation}`,
       `    ${command} ${continuation}`,
       `      ${requiredArguments.join(" ")}`,
@@ -50,6 +51,7 @@ describe("Dockerfile RUN command discovery", () => {
 
     expect(match.commandStart).toBe(source.indexOf(command));
     expect(match.instruction.text).toContain(`export CURL_CA_BUNDLE=${corporateCaPath}`);
+    expect(match.instruction.text).toContain(`export NODE_EXTRA_CA_CERTS=${corporateCaPath}`);
     expect(match.instruction.text).toContain("--npm-root /usr/local/lib/node_modules/npm");
     expect(match.instruction.text).not.toContain("ENV NEXT=instruction");
   });
