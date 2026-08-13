@@ -156,7 +156,7 @@ describe("startSandbox", () => {
     );
   });
 
-  it("waits for OpenShell readiness before recovering a sealed-state-free Hermes sandbox (#8978)", () => {
+  it("waits for OpenShell readiness before recovering Hermes sandbox processes (#8978)", () => {
     const waitForSandboxReady = vi.fn();
     const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
 
