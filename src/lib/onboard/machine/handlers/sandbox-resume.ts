@@ -25,6 +25,7 @@ export interface SandboxResumeSignals {
   readonly recreateSandboxRequested: boolean;
   readonly recreateJournalHandoff?: boolean;
   readonly messagingChannelConfigChanged: boolean;
+  readonly messagingCredentialChanged: boolean;
   readonly hermesToolGatewayConfigChanged: boolean;
   readonly observabilityChanged?: boolean;
   readonly dcodeAutoApprovalChanged?: boolean;
@@ -107,14 +108,21 @@ export function resolveToolDisclosureResumeSignals(
 }
 
 export type SandboxResumeDecision =
-  | { readonly kind: "create" }
+  | {
+      readonly kind: "create";
+      readonly validateMessagingCredentialsBeforeMutation?: boolean;
+    }
   | { readonly kind: "reuse" }
   | {
       readonly kind: "recreate";
       readonly note: string;
       readonly removeRegistryEntry: boolean;
+      readonly validateMessagingCredentialsBeforeMutation?: boolean;
     }
-  | { readonly kind: "repair-and-recreate" };
+  | {
+      readonly kind: "repair-and-recreate";
+      readonly validateMessagingCredentialsBeforeMutation?: boolean;
+    };
 
 export function replacesSameNameSandbox(decision: SandboxResumeDecision): boolean {
   if (decision.kind === "repair-and-recreate") return true;
@@ -163,6 +171,7 @@ function canReuseSandbox(signals: SandboxResumeSignals): boolean {
     !signals.hostMountConfigChanged &&
     !signals.recreateSandboxRequested &&
     !signals.messagingChannelConfigChanged &&
+    !signals.messagingCredentialChanged &&
     !signals.hermesToolGatewayConfigChanged &&
     !signals.observabilityChanged &&
     !signals.dcodeAutoApprovalChanged &&
@@ -262,6 +271,13 @@ function runtimeConfigurationResumeDecision(
     return {
       kind: "recreate",
       note: "  [resume] Messaging channel configuration changed; recreating sandbox.",
+      removeRegistryEntry: true,
+    };
+  }
+  if (signals.messagingCredentialChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Messaging credential changed; recreating sandbox after configured checks.",
       removeRegistryEntry: true,
     };
   }

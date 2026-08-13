@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Install Hermes Plugins"
 sidebar-title: "Install Hermes Plugins"
-description: "Install Hermes plugins for NemoClaw-managed sandboxes."
-description-agent: "Explains how to install Hermes plugins in NemoClaw-managed sandboxes, including custom Dockerfile build-directory layout and `.dockerignore` handling. Use when users ask how to install, build, or configure Hermes plugins under NemoClaw."
-keywords: ["install hermes plugins", "hermes plugins nemoclaw", "nemoclaw hermes plugins", "nemohermes dockerignore"]
+description: "Install Hermes plugins and configure the bundled Hindsight memory plugin in NemoClaw-managed sandboxes."
+description-agent: "Explains how to configure the bundled Hindsight memory plugin in a stock sealed Hermes sandbox or install a custom Hermes plugin. Use when users ask about Hindsight, lazy plugin dependencies, or custom Hermes plugins."
+keywords: ["install hermes plugins", "hermes hindsight memory", "hermes lazy dependencies", "nemoclaw hermes plugins", "nemohermes dockerignore"]
 content:
   type: "how_to"
 skill:
@@ -23,6 +23,96 @@ NemoClaw uses the same mechanism for its built-in Hermes integration, which the 
 
 The built-in NemoClaw Hermes plugin provides sandbox status tools, skill reload support, managed-tool broker patches, and runtime grounding for the OpenShell sandbox.
 Do not replace or remove `/sandbox/.hermes/plugins/nemoclaw` when you add your own plugin.
+
+## Configure the Bundled Hindsight Plugin
+
+The stock Hermes image provides a durable lazy-install directory at `/sandbox/.hermes/lazy-packages`.
+Hermes installs the bundled Hindsight plugin dependency in this directory as the sandbox user.
+The dependency does not modify the root virtual environment, and the managed target is not declared in the sealed `.env` file.
+
+NemoClaw supports `hindsight-client==0.6.1` for this workflow.
+Hermes checks this exact version before it loads the plugin.
+This version uses the OpenShell proxy path.
+Do not replace it with a `0.8.x` client because those releases do not use the proxy environment.
+
+Start the self-hosted Hindsight service on the host before you configure the plugin.
+The `local-memory` preset permits only `GET` and `POST` requests from the Hermes Python runtime to `host.openshell.internal` on port `8888`.
+The preset does not permit another private host or port.
+
+Add the preset to the sandbox:
+
+```bash
+nemohermes <name> policy add local-memory --yes
+```
+
+Check the current Shields posture:
+
+```bash
+nemohermes <name> shields status
+```
+
+If Shields are up, open a timed maintenance window before setup changes the Hermes configuration and lazy dependency directory:
+
+```bash
+nemohermes <name> shields down --timeout 15m --reason "Configure Hindsight memory"
+```
+
+Run the Hermes setup command through the NemoClaw CLI:
+
+```bash
+nemohermes <name> exec --tty -- hermes memory setup hindsight
+```
+
+Select `local_external` when Hermes asks for the connection mode.
+Set the API URL to `http://host.openshell.internal:8888`.
+Set the memory bank name for your workload.
+Accept the `hermes` default if you do not need a workload-specific name.
+After the setup command finishes, restart the gateway:
+
+```bash
+nemohermes <name> gateway restart
+```
+
+If you lowered Shields for setup, restore them after the restart:
+
+```bash
+nemohermes <name> shields up
+```
+
+The setup command installs `hindsight-client==0.6.1` under `/sandbox/.hermes/lazy-packages` as the sandbox user.
+When `memory.provider` is `hindsight`, gateway startup repairs a missing approved dependency before it launches.
+After Shields lock the directory, the gateway can import the client, but neither the gateway nor the sandbox user can modify the dependency tree.
+The directory is outside the integrity-sealed `.env`, `config.yaml`, and `.config-hash` files.
+It is part of the Hermes durable state plan, so the dependency remains available after a gateway restart.
+
+Verify the provider and dependency after the restart:
+
+```bash
+nemohermes <name> exec -- hermes memory status
+nemohermes <name> exec -- python -c 'import os, sys; sys.path.insert(0, os.environ["HERMES_LAZY_INSTALL_TARGET"]); import hindsight_client; print(hindsight_client.__version__)'
+nemohermes <name> status
+```
+
+The version command must print `0.6.1`.
+The status command must report a running Hermes gateway without an integrity failure or quarantine.
+
+If an earlier root install changed `/opt/hermes/.venv`, rebuild the sandbox before you use the lazy-install path:
+
+```bash
+nemohermes <name> rebuild --yes
+```
+
+A rebuild replaces the root virtual environment and preserves any captured lazy-install directory as declared Hermes state.
+If the dependency is absent from the restored directory, the next setup or gateway start reinstalls the supported client as the sandbox user.
+
+Do not edit `/sandbox/.hermes/.env` to set `HERMES_LAZY_INSTALL_TARGET`.
+Do not install the dependency into `/opt/hermes/.venv`.
+Both paths change sealed inputs and can make gateway reconciliation fail.
+
+The preset permits one local host route only.
+To use another approved Hindsight host or port, create a custom preset and name the exact endpoint.
+The `--from-file` and `--from-dir` paths accept `--trusted-private-host` for a private host.
+Refer to [Create Custom Policy Presets](../network-policy/configure-policies/create-custom-policy-presets) for that procedure.
 
 ## Choose an Install Path
 
@@ -148,6 +238,7 @@ The following places commonly mix Hermes plugin installation with other NemoClaw
 - Do not put the Dockerfile in a broad directory unless you intend to send that whole directory as the Docker build context.
 - Do not rely on `.dockerignore` to include credential-like paths; NemoClaw excludes those from staged custom build contexts for safety.
 - Do not assume OpenShell policy allows Python package downloads during runtime by default.
+- Do not install a bundled lazy dependency into `/opt/hermes/.venv` or declare its target in the sealed `.env` file.
 
 ## Next Steps
 

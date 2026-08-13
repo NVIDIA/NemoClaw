@@ -69,7 +69,6 @@
     "test-conditionals:scan": "tsx scripts/find-test-conditionals.mts",
     "bump:version": "tsx scripts/bump-version.mts",
     "release:plan": "tsx scripts/release-plan.mts",
-    "release:e2e-evidence": "node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-cut-release-tag/scripts/release-e2e-evidence.mts",
     "release:cut": "bash scripts/release-cut-tag.sh",
     "release:wait-latest": "bash scripts/release-wait-latest.sh",
     "release:notes-data": "tsx scripts/release-notes-data.mts",

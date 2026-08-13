@@ -5,6 +5,7 @@ import type { ProviderSelectionFailureReason } from "./provider-selection";
 
 export interface ReportProviderSelectionFailureInput {
   reason: ProviderSelectionFailureReason;
+  availableProviderKeys: readonly string[];
   isWindowsHostOllama: boolean;
   rejectWindowsHostOllama(providerKey: string, windowsHostSelected: boolean): boolean;
   writeError(message: string): void;
@@ -43,6 +44,20 @@ export function reportProviderSelectionFailure(input: ReportProviderSelectionFai
     case "requested-provider-unavailable":
       input.writeError(
         `  Requested provider '${input.reason.providerKey}' is not available in this environment.`,
+      );
+      if (input.reason.providerKey === "vllm") {
+        input.writeError(
+          "  NEMOCLAW_PROVIDER=vllm requires an already-running local vLLM server, but none was detected.",
+        );
+        input.writeError(
+          input.availableProviderKeys.includes("install-vllm")
+            ? "  Re-run with NEMOCLAW_PROVIDER=install-vllm to install and start the managed vLLM runtime."
+            : "  Start a compatible local vLLM server and retry, or choose another provider.",
+        );
+        break;
+      }
+      input.writeError(
+        "  Re-run without NEMOCLAW_PROVIDER to choose an available provider, or install and start the requested provider before retrying.",
       );
       break;
   }

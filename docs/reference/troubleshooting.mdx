@@ -571,6 +571,39 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 The next installer run must continue past the OpenShell installation step without reporting a version mismatch.
 
+### Installer Reports That the Systemd User Manager Is Unavailable
+
+On Linux, an OpenShell package can install `/usr/lib/systemd/user/openshell-gateway.service` on a host without a reachable systemd user manager.
+The service query can then return this diagnostic:
+
+```text
+Failed to connect to bus: No medium found
+```
+
+The installer accepts only recognized user-manager-unavailable diagnostics for the standalone gateway fallback.
+It checks `.wants`, `.requires`, and `.upholds` links in the standard systemd user unit paths.
+The installer keeps the standalone lifecycle only when neither gateway service has an activation path that can later claim port `8080`.
+The installer also stops when `SYSTEMD_UNIT_PATH` overrides the standard paths.
+The installer does not parse, modify, or remove a package or foreign unit to make this decision.
+
+If an activation path exists, the installer stops because the service can start later and compete for port `8080`.
+Restore the systemd user manager, then inspect both possible services:
+
+```bash
+systemctl --user status openshell-gateway.service
+systemctl --user is-enabled openshell-gateway.service
+systemctl --user status nemoclaw-openshell-gateway.service
+systemctl --user is-enabled nemoclaw-openshell-gateway.service
+```
+
+Resolve the competing service through its package or platform owner.
+Do not delete an activation link or edit a unit file by hand.
+Rerun the installer only after the owner confirms that no enabled user service can claim port `8080`.
+
+Unknown service query errors remain fatal.
+The installer also stops for malformed effective metadata, an untrusted unit or executable path, an executable failure, or a gateway version mismatch.
+Follow the reported condition instead of forcing the standalone fallback.
+
 <AgentOnly variant="openclaw">
 
 ### Sandbox build fails during OpenClaw plugin install
@@ -969,16 +1002,24 @@ Then re-run `$$nemoclaw onboard`.
 
 <AgentOnly variant="openclaw,hermes">
 
-### Updated messaging token is not picked up
+### Sandbox Keeps Using the Previous Messaging Credential
 
-Re-running `$$nemoclaw onboard --non-interactive` with a new `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, or `SLACK_BOT_TOKEN` previously reported success while the sandbox kept polling with the old credential.
-Current NemoClaw stores SHA-256 hashes of messaging credentials in the sandbox registry at creation time and detects when a token has changed.
-When rotation is detected, NemoClaw automatically backs up workspace state, deletes the sandbox, recreates it with the new credential, and restores the backup.
+Rerunning `$$nemoclaw onboard --non-interactive` with a replacement `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `WECHAT_BOT_TOKEN`, or `MSTEAMS_APP_PASSWORD` previously reported success while the sandbox kept using the old credential.
+When you rerun onboarding, NemoClaw evaluates every active messaging credential binding and compares each supplied credential with its SHA-256 hash in the sandbox registry.
+When you provide a replacement credential, NemoClaw runs the channel's configured checks before it backs up supported workspace and manifest-declared state, destroys the sandbox, recreates it, and restores the backup.
+Files outside those state paths are not preserved.
+If an available pre-recreation check fails, onboarding stops before it backs up supported workspace and manifest-declared state or destroys the existing sandbox.
+Discord and Microsoft Teams require non-empty replacement input but cannot prove upstream credential validity before recreation, so send a real test message after onboarding and confirm that the recreated sandbox receives it and responds.
+If the channel state changes during rotation, onboarding stops before it destroys the existing sandbox and asks you to retry with the updated state.
+If you do not supply a credential, or the supplied credential matches the recorded hash, the credential check does not trigger recreation.
+If you replace a credential for a channel that you stopped with `channels stop`, onboarding does not trigger recreation because that channel is inactive.
 
-If you suspect a sandbox is still using a stale token, re-run onboarding so the credential check runs:
+If you suspect a sandbox is still using a stale messaging credential, follow [Rotate a Messaging Credential](../security/credential-rotation#rotate-a-messaging-credential) to export the replacement without putting it in shell history.
+Then rerun onboarding so the credential check runs:
 
 ```bash
-$$nemoclaw onboard --non-interactive
+$$nemoclaw onboard --name <sandbox> \
+  --non-interactive --yes --yes-i-accept-third-party-software
 ```
 
 </AgentOnly>
@@ -1886,8 +1927,9 @@ Check the active provider and endpoint:
 $$nemoclaw <name> status
 ```
 
-The main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox, so it reflects the route the agent actually uses.
-If that line shows `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop.
+The main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox and then sends one inference request over the same route, so it reflects the route the agent uses.
+If that line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop.
+An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
 For local Ollama and local vLLM, `Inference (ollama backend)` or the corresponding local-backend line reports the host-side service separately.
 For Local Ollama, current releases can also print `Inference (auth proxy)` when a proxy token is available.
 If a local backend or auth-proxy diagnostic fails, start the backend or re-run onboarding so NemoClaw can recreate the proxy token, restart the proxy, and refresh the route.
@@ -3408,6 +3450,7 @@ For unattended re-onboards, export the messaging env vars first so the wizard sk
 export TELEGRAM_BOT_TOKEN=...
 export DISCORD_BOT_TOKEN=...
 export SLACK_BOT_TOKEN=...
+export SLACK_APP_TOKEN=...
 nemohermes onboard --resume --non-interactive
 ```
 

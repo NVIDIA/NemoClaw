@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { isCanonicalNemoClawRemote } from "../scripts/release/remote.mts";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const latestScriptPath = path.join(repoRoot, "scripts", "release-latest-tag.sh");
@@ -204,6 +206,62 @@ function readJson(filePath: string): any {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
+function rewritePlanOrigin(planPath: string, originRemote: string): void {
+  const { planHash: _planHash, ...plan } = readJson(planPath);
+  const updated = { ...plan, originRemote };
+  const nextPlan = {
+    ...updated,
+    planHash: createHash("sha256")
+      .update(JSON.stringify(updated, null, 2))
+      .digest("hex"),
+  };
+  fs.writeFileSync(planPath, `${JSON.stringify(nextPlan, null, 2)}\n`, "utf8");
+}
+
+function installReleaseGateStubs(
+  fixture: Fixture,
+  qualification: "missing" | "success",
+  originRemote: string,
+): string {
+  const binDir = path.join(fixture.root, `release-gate-bin-${qualification}`);
+  fs.mkdirSync(binDir);
+  const realGit = execFileSync("sh", ["-c", "command -v git"], {
+    encoding: "utf8",
+  }).trim();
+  fs.writeFileSync(
+    path.join(binDir, "git"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-} \${2:-} \${3:-}" == "remote get-url origin" ]]; then
+  printf '%s\n' ${shellQuote(originRemote)}
+  exit 0
+fi
+if [[ "\${1:-} \${2:-}" == "fetch origin" ]]; then
+  exit 0
+fi
+exec ${shellQuote(realGit)} "$@"
+`,
+  );
+  fs.writeFileSync(
+    path.join(binDir, "gh"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  *'/actions/workflows/e2e.yaml/runs?'*)
+    ${qualification === "success" ? "printf '%s\\t%s\\n' 123 https://github.com/NVIDIA/NemoClaw/actions/runs/123" : ":"}
+    ;;
+  *'/actions/runs/123/jobs?'*)
+    printf '%s\\t%s\\t%s\\n' completed success https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/456
+    ;;
+  *) exit 2 ;;
+esac
+`,
+  );
+  fs.chmodSync(path.join(binDir, "git"), 0o755);
+  fs.chmodSync(path.join(binDir, "gh"), 0o755);
+  return binDir;
+}
+
 function createPlan(
   fixture: Fixture,
   planPath: string,
@@ -237,18 +295,17 @@ function cutFromPlan(
   planPath: string,
   confirmationPhrase: string,
 ): ReturnType<typeof spawnSync> {
-  return runScript(fixture.work, [
-    "bash",
-    cutScriptPath,
-    "--plan",
-    planPath,
-    "--confirm",
-    confirmationPhrase,
-  ]);
+  return runScript(
+    fixture.work,
+    ["bash", cutScriptPath, "--plan", planPath, "--confirm", confirmationPhrase],
+    { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
+  );
 }
 
 function preflightFromPlan(fixture: Fixture, planPath: string): ReturnType<typeof spawnSync> {
-  return runScript(fixture.work, ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"]);
+  return runScript(fixture.work, ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"], {
+    NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1",
+  });
 }
 
 function waitForLatest(fixture: Fixture, planPath: string): ReturnType<typeof spawnSync> {
@@ -271,6 +328,24 @@ afterEach(() => {
 });
 
 describe("release-latest-tag.sh", () => {
+  it.each([
+    "git@github.com:NVIDIA/NemoClaw",
+    "git@github.com:NVIDIA/NemoClaw.git",
+    "https://github.com/NVIDIA/NemoClaw",
+    "https://contributor@github.com/NVIDIA/NemoClaw.git",
+    "ssh://git@github.com/NVIDIA/NemoClaw.git",
+  ])("recognizes canonical NemoClaw origin form %s", (remote) => {
+    expect(isCanonicalNemoClawRemote(remote)).toBe(true);
+  });
+
+  it.each([
+    "/tmp/NVIDIA/NemoClaw",
+    "https://example.com/NVIDIA/NemoClaw.git",
+    "https://github.com/NVIDIA/another-repo.git",
+  ])("rejects noncanonical NemoClaw origin form %s", (remote) => {
+    expect(isCanonicalNemoClawRemote(remote)).toBe(false);
+  });
+
   it("advertises that release cuts create signed annotated tags", () => {
     const result = runScript(repoRoot, ["bash", cutScriptPath, "--help"]);
 
@@ -536,6 +611,80 @@ describe("release-latest-tag.sh", () => {
     expect(
       run(fixture.work, ["git", "tag", "--list", "nemoclaw-release-signing-preflight-*"]),
     ).toBe("");
+  });
+
+  it("requires exact-commit Release qualification before signing preflight", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    createPlan(fixture, planPath, releaseCommit);
+    const originRemote = "git@github.com:NVIDIA/NemoClaw";
+    rewritePlanOrigin(planPath, originRemote);
+    const binDir = installReleaseGateStubs(fixture, "success", originRemote);
+
+    const result = runScript(
+      fixture.work,
+      ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"],
+      { PATH: `${binDir}:${process.env.PATH ?? ""}` },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(`verified Release qualification for ${releaseCommit}`);
+    expect(result.stdout).toContain(
+      "qualification evidence: https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/456",
+    );
+  });
+
+  it.each([
+    "git@github.com:NVIDIA/NemoClaw",
+    "https://contributor@github.com/NVIDIA/NemoClaw.git",
+  ])("rejects signing preflight without exact-commit qualification for %s", (originRemote) => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    createPlan(fixture, planPath, releaseCommit);
+    rewritePlanOrigin(planPath, originRemote);
+    const binDir = installReleaseGateStubs(fixture, "missing", originRemote);
+
+    const result = runScript(
+      fixture.work,
+      ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"],
+      { PATH: `${binDir}:${process.env.PATH ?? ""}` },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      `No completed successful Release qualification check exists for candidate commit ${releaseCommit}`,
+    );
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
+  });
+
+  it("does not let the noncanonical test override bypass a canonical remote", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    createPlan(fixture, planPath, releaseCommit);
+    const originRemote = "https://contributor@github.com/NVIDIA/NemoClaw.git";
+    rewritePlanOrigin(planPath, originRemote);
+    const binDir = installReleaseGateStubs(fixture, "missing", originRemote);
+
+    const result = runScript(
+      fixture.work,
+      ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"],
+      {
+        NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1",
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      `No completed successful Release qualification check exists for candidate commit ${releaseCommit}`,
+    );
+    expect(result.stdout).not.toContain("skipped GitHub qualification");
   });
 
   it("rejects a distinct latest tag object even when it peels to the release commit", () => {
