@@ -87,7 +87,11 @@ const allAgentProofAuthorities = [
   },
 ] as const satisfies readonly { agentName: string; authority: ProviderNeutralAuthority }[];
 
-function providerNeutralResponses(model: string, includeToolCall = true): unknown[] {
+function providerNeutralResponses(
+  model: string,
+  includeToolCall = true,
+  toolArguments: unknown = "{}",
+): unknown[] {
   return [
     { model, choices: [{ message: { content: "PONG" } }] },
     {
@@ -100,7 +104,7 @@ function providerNeutralResponses(model: string, includeToolCall = true): unknow
                   {
                     function: {
                       name: "nemoclaw_route_probe",
-                      arguments: "{}",
+                      arguments: toolArguments,
                     },
                   },
                 ]
@@ -117,6 +121,8 @@ function runProviderNeutralScript(options: {
   model?: string;
   responses?: unknown[];
   denial?: unknown;
+  denialBytes?: readonly number[];
+  denialOversized?: boolean;
 }) {
   const model = options.model ?? "qwen3.5-9b";
   const directAuthority = `host.openshell.internal:${String(options.authority.directHostPort)}`;
@@ -127,6 +133,11 @@ function runProviderNeutralScript(options: {
       error: "policy_denied",
       detail: `POST ${directAuthority}/v1/chat/completions not permitted by policy`,
     } satisfies Record<string, string>);
+  const denialBytes =
+    options.denialBytes ?? Array.from(Buffer.from(JSON.stringify(denial), "utf8"));
+  const denialBody = options.denialOversized
+    ? 'b"x" * 1048577'
+    : `bytes(${JSON.stringify(denialBytes)})`;
   const prelude = `
 import io
 import json
@@ -134,7 +145,7 @@ import urllib.error
 import urllib.request
 
 responses = json.loads(${JSON.stringify(JSON.stringify(responses))})
-denial = json.loads(${JSON.stringify(JSON.stringify(denial))})
+denial_bytes = ${denialBody}
 
 class FakeResponse:
     def __init__(self, status, payload):
@@ -161,7 +172,7 @@ class FakeOpener:
             403,
             "Forbidden",
             {},
-            io.BytesIO(json.dumps(denial).encode("utf-8")),
+            io.BytesIO(denial_bytes),
         )
 
 urllib.request.build_opener = lambda *handlers: FakeOpener()
@@ -425,6 +436,8 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(script).toContain('"tool_choice"');
     expect(script).toContain("direct_denial_contract_version = 1");
     expect(script).toContain('direct_denial_error = "policy_denied"');
+    expect(script).toContain("error.read(max_response_bytes + 1)");
+    expect(script).toContain('denial_bytes.decode("utf-8", errors="strict")');
     expect(script).toContain("direct_deny_timeout_seconds = 10");
     expect(script).toContain("ProxyHandler({})");
     expect(script).not.toContain("curl");
@@ -464,6 +477,40 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("did not return the required tool call");
   });
+
+  it.each(allAgentProofAuthorities)(
+    "accepts semantic empty tool arguments for $agentName",
+    ({ authority }) => {
+      const result = runProviderNeutralScript({
+        authority,
+        responses: providerNeutralResponses("qwen3.5-9b", true, " { } "),
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+    },
+  );
+
+  it.each(
+    allAgentProofAuthorities.flatMap(({ agentName, authority }) =>
+      (["{", "[]", "null", '{"unexpected":true}'] as const).map((toolArguments) => ({
+        agentName,
+        authority,
+        toolArguments,
+      })),
+    ),
+  )(
+    "rejects invalid semantic tool arguments $toolArguments for $agentName",
+    ({ authority, toolArguments }) => {
+      const result = runProviderNeutralScript({
+        authority,
+        responses: providerNeutralResponses("qwen3.5-9b", true, toolArguments),
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("returned invalid tool arguments");
+    },
+  );
 
   it("accepts a content-only proof when durable authority marks tool calling optional", () => {
     const authority = {
@@ -509,6 +556,52 @@ describe("compatible endpoint sandbox smoke helpers", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("was not an OpenShell policy denial");
+  });
+
+  it("accepts an exact OpenShell denial with guidance beyond the old 4096-byte window", () => {
+    const authority = allAgentProofAuthorities[2].authority;
+    const directAuthority = `host.openshell.internal:${String(authority.directHostPort)}`;
+    const result = runProviderNeutralScript({
+      authority,
+      denial: {
+        error: "policy_denied",
+        detail: `POST ${directAuthority}/v1/chat/completions not permitted by policy`,
+        agent_guidance: "x".repeat(8192),
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+  });
+
+  it("rejects an oversized OpenShell policy-denial body before parsing", () => {
+    const result = runProviderNeutralScript({
+      authority: allAgentProofAuthorities[2].authority,
+      denialOversized: true,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("policy-denial response exceeded byte limit");
+  });
+
+  it("reports malformed OpenShell policy-denial JSON separately", () => {
+    const result = runProviderNeutralScript({
+      authority: allAgentProofAuthorities[2].authority,
+      denialBytes: Array.from(Buffer.from('{"error":', "utf8")),
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("policy-denial response was not valid JSON");
+  });
+
+  it("reports invalid UTF-8 in an OpenShell policy-denial body separately", () => {
+    const result = runProviderNeutralScript({
+      authority: allAgentProofAuthorities[2].authority,
+      denialBytes: [0xff],
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("policy-denial response was not valid UTF-8");
   });
 
   it("reports OpenShell policy-denial contract format drift separately", () => {

@@ -616,7 +616,7 @@ if tool_calling_required:
         decoded_arguments = json.loads(arguments) if isinstance(arguments, str) else arguments
     except json.JSONDecodeError:
         decoded_arguments = None
-    if not isinstance(decoded_arguments, dict):
+    if not isinstance(decoded_arguments, dict) or decoded_arguments:
         print("inference.local tool proof returned invalid tool arguments", file=sys.stderr)
         sys.exit(1)
 
@@ -645,10 +645,20 @@ try:
         )
         sys.exit(1)
 except urllib.error.HTTPError as error:
+    denial_bytes = error.read(max_response_bytes + 1)
+    if len(denial_bytes) > max_response_bytes:
+        print("direct host inference policy-denial response exceeded byte limit", file=sys.stderr)
+        sys.exit(1)
     try:
-        denial = json.loads(error.read(4096))
-    except (ValueError, TypeError):
-        denial = None
+        denial_text = denial_bytes.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        print("direct host inference policy-denial response was not valid UTF-8", file=sys.stderr)
+        sys.exit(1)
+    try:
+        denial = json.loads(denial_text)
+    except json.JSONDecodeError:
+        print("direct host inference policy-denial response was not valid JSON", file=sys.stderr)
+        sys.exit(1)
     detail = denial.get("detail") if isinstance(denial, dict) else None
     if (
         error.code != direct_denial_http_status
