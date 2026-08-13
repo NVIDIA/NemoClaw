@@ -1225,8 +1225,24 @@ The combined capture limit is `64 MiB`; exceeding it reports an OpenShell invoca
 If the captured output contains an embedded-fallback marker, the wrapper suppresses both streams, prints `recover`, `rebuild --yes`, and `onboard --resume` guidance to `stderr`, and exits with status `1`.
 Otherwise, it writes the captured output to the corresponding host streams and returns the OpenShell command's exit status.
 The in-sandbox NemoClaw plugin writes its registration banner to `stderr`, so the banner does not prefix the agent reply on `stdout` in non-JSON mode.
+Because a delivered turn always writes to one of the two streams, the wrapper reports a dispatch with status `0` and no output as a failure.
+The wrapper prints recovery guidance to `stderr` and exits with status `1`.
+The diagnostic shell-quotes the sandbox name and forwarded arguments, then redacts detected credential values before writing the recovery command to `stderr`.
+If redaction changes the recovery command, the diagnostic tells you not to replay it; otherwise, it labels the command as runnable inside the sandbox.
+For a registered sandbox, both captured paths pin the sandbox's recorded gateway with an explicit `-g`.
+Neither path forwards an interactive terminal on `stdin`; a genuine pipe or redirect is still passed through, so `printf 'ping' | $$nemoclaw my-assistant agent --agent main` keeps working.
 When the top-level OpenClaw `--json` output flag is present, the wrapper uses a captured no-TTY path with a `64 MiB` buffer so `stdout` stays parseable JSON.
-Raw `stderr` is forwarded, and failed-tool or untrusted-child provenance found in the stdout JSON is appended to `stderr`.
+Raw `stderr`, including structured JSON diagnostics, is forwarded unchanged.
+NemoClaw appends failed-tool or untrusted-child provenance only from the `stdout` JSON.
+The wrapper reads completion markers only from the final matching OpenClaw response envelope: a local `{ payloads, meta }` response or a gateway `{ status, result: { payloads, meta } }` response.
+It ignores earlier JSON progress or log records.
+It exits with status `1` when that metadata contains `error.kind: "incomplete_turn"`, `livenessState: "abandoned"`, or `replayInvalid: true`, even when the envelope reports success.
+Marker-shaped values inside tool results, tool-call arguments, or other descendants do not change the exit status.
+A turn can run every tool successfully and still become abandoned before it produces a reply.
+The wrapper writes the unchanged JSON trace to `stdout` before it reports the incomplete turn, so the partial tool trace remains available.
+The wrapper writes the verdict, the detected markers, and verify-before-retry guidance to `stderr`.
+Tool calls in a partial trace may have already applied side effects, so verify what the turn changed before you retry it.
+The wrapper passes through an upstream non-zero exit status unchanged.
 Literal `--json` values consumed by flags such as `-m` or `--reply-channel`, or arguments after `--`, stay on the normal passthrough path.
 Documented value flags written as `--flag=value`, such as `--session-id=s1`, are recognized the same way as separated value flags.
 If an unrecognized OpenClaw option appears before `--json`, NemoClaw also keeps the command on the normal passthrough path so OpenClaw remains the argv source of truth.
@@ -1368,6 +1384,10 @@ The command clears the provisional Shields down record and timer, and `shields s
 If that record cannot be cleared and NemoClaw writes the rejection marker, `shields status` derives `UP` from that marker.
 The auto-restore timer and transition remain the recovery authority.
 If the rejection marker also cannot be written, `shields status` reports the incomplete transition as an error.
+
+If a config path is unsafe, for example a symlink at the Hermes `config.yaml` path, `shields down` refuses that path before it weakens policy, writes a provisional Shields down record, or starts a timer.
+The command returns an error and `shields status` remains `UP`.
+If an unsafe path appears after the preflight and a provisional Shields down record already exists, the command restores the restrictive policy when it can but keeps the Shields down record until config protection is positively re-verified. This fail-closed behavior also applies when unlock fails after a partial mutation, and requires manual intervention if re-lock cannot be confirmed.
 
 If `shields up` reports that the config remains unlocked or drifted, confirm that the sandbox is running and ready, then retry `$$nemoclaw <name> shields up`.
 If the retry still fails, rebuild a known-good baseline with `$$nemoclaw <name> rebuild --yes`.
@@ -1617,6 +1637,13 @@ Starting an already-running sandbox skips the container start and still runs the
 A paused container is unpaused.
 If the container was removed entirely, `start` fails and points you to `$$nemoclaw <name> rebuild`.
 
+After the gateway and forward checks pass, `start` sends one inference request through `https://inference.local` using the sandbox's recorded provider and model.
+A gateway that answers the `/v1/models` probe can still reject an inference request or return an invalid result, so the command exits non-zero in either case.
+It prints the probe result, including the HTTP status when the route returned one, and points you to the sandbox doctor command.
+Each run sends one 16-token request through the stored provider credential, so `start` waits up to 30 seconds for it and consumes provider tokens on a hosted route.
+When the sandbox records no provider or no model, `start` skips the request and exits `0`.
+`doctor` still classifies an HTTP `401` or `403` route response as reachable, so correct the provider credential when `start` reports one of those statuses.
+
 ### `$$nemoclaw <name> status`
 
 Show sandbox-scoped status, health, and inference configuration for one registered sandbox.
@@ -1643,6 +1670,24 @@ Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-ga
 `openshellDriver` and `openshellVersion` are always strings (falling back to `"unknown"` when the registry has no value), so consumers can rely on `typeof` checks.
 `agent` is always a string and reports `openclaw` when the registry records no agent for the sandbox.
 `failureLayer` is `null` when no preflight failure was detected and otherwise one of `docker_unreachable`, `sandbox_container_stopped`, or `sandbox_dashboard_port_conflict`; when set, `inferenceHealth` is suppressed to `null` so automation does not see a stale remote-provider healthy status during a local outage.
+`inferenceHealth.ok` reports whether the inference route returned a structurally valid result for one request sent from inside the sandbox.
+The result must match Chat Completions, Responses, or Anthropic Messages for the selected route.
+An empty body, malformed JSON, provider-error envelope, or wrong response shape reports `unhealthy`, even with a 2xx status.
+The probe captures at most 64 KiB and does not include the response body in diagnostics.
+The route probe treats any final HTTP status from `200` through `499` as reachable, so a route with an invalidated provider credential answers HTTP `401` while the route is up.
+The request uses the live gateway route's provider and model, and falls back to the recorded values when the live route is unreadable.
+When the live provider and model match the recorded route, the request also uses the sandbox's recorded API family, including `openai-responses`.
+During route drift, NemoClaw does not carry the sandbox's recorded API family to the live provider and model.
+Each run sends one 16-token request through the stored provider credential, so `status` waits up to 30 seconds for it and consumes provider tokens on a hosted route.
+When NemoClaw sends an inference request, `inferenceHealth.subprobes` reports the route probe result as the `route reachability` hop, so a failing verdict still shows that the route itself answered.
+`inferenceHealth.failureLabel` reports why the inference request failed:
+
+- `unauthorized` when the route rejected it with HTTP `401` or `403`.
+- `unhealthy` when the route returned another failing HTTP status or an invalid 2xx response body.
+- `unreachable` when the request returned no HTTP status, including a probe that could not run.
+
+A host-side upstream probe under `inferenceHealth.subprobes` stays a diagnostic and does not change `inferenceHealth.ok`, because the sandbox route is the one the agent uses.
+When the route probe failed, or the sandbox records no provider or no model, NemoClaw skips the inference request and `inferenceHealth` reports the route probe result alone.
 `dockerPaused` is `true` when NemoClaw detects that the Docker-driver sandbox container is paused.
 In that case, text output keeps OpenShell's authoritative phase but prints a `docker unpause <container>` recovery hint instead of sending you directly to rebuild.
 For terminal runtime sandboxes, the command also checks cgroup OOM kill counters.
@@ -1686,19 +1731,22 @@ $$nemoclaw my-assistant status --json
 $$nemoclaw sandbox status my-assistant --json
 ```
 
-The command probes `https://inference.local/v1/models` from inside the sandbox as the authoritative inference health check.
-This check exercises the same route that agent traffic uses.
+The command probes `https://inference.local/v1/models` from inside the sandbox, and when that probe reports the route reachable it sends one inference request over the same route.
+That inference request is the authoritative inference health check, and both checks exercise the route that agent traffic uses.
 The main `Inference` line reports one of these states:
 
 | State | Meaning |
 |-------|---------|
-| `reachable` | The route returned an HTTP status from `200` through `499`. Authentication responses such as `401` and `403` confirm route reachability. |
-| `unhealthy` | The route returned an HTTP status from `500` through `599`. |
-| `unreachable` | The route had a transport failure, returned no final HTTP status (`000` or an interim `100` through `199`), or returned an invalid status outside `100` through `599`. |
+| `healthy` | The route returned a structurally valid result for the inference request. |
+| `unauthorized` | The route rejected the inference request with HTTP `401` or `403`. |
+| `reachable` | The route returned an HTTP status from `200` through `499` and NemoClaw did not send an inference request. |
+| `unhealthy` | The route returned HTTP `500` through `599`, another failing status, or an invalid 2xx response body. |
+| `unreachable` | The route had a transport failure, returned no final HTTP status (`000` or an interim `100` through `199`), returned an invalid status outside `100` through `599`, or the inference request returned no HTTP status. |
 | `not probed` | NemoClaw could not run the authoritative route probe from a reachable sandbox. |
 | `not verified` | NemoClaw could not verify the sandbox or gateway state, so it skips inference probing. |
 
-An authentication response confirms that the route is reachable, not that provider credentials are valid.
+An authentication response on the route probe alone confirms that the route is reachable, not that provider credentials are valid.
+`$$nemoclaw <name> doctor` sends no inference request, so it reports an HTTP `401` or `403` route response as reachable and exits `0` where `status` reports `unauthorized`.
 The command can also print direct host-side provider checks such as `Inference (upstream)` and provider-specific subprobes.
 For supported remote providers, this diagnostic sends an authenticated request to the configured model and accepts only a recognized Chat Completions, streaming Chat Completions, or Anthropic Messages response.
 It uses a 3-second connection timeout, a 5-second total timeout, and an 8-token output limit.

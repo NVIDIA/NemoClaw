@@ -949,7 +949,9 @@ describe("runDetachedForwardStartWithRetries", () => {
         events.push("spawn-1");
         fs.writeSync(
           stderr,
-          "Error: code: 'The system is not in a state required for the operation's execution', message: \"sandbox is not ready\"\n",
+          `Error:   × code: 'The system is not in a state required for the operation's
+  │ execution', message: "sandbox is not ready"
+`,
         );
         return { pid: 784 };
       })
@@ -988,7 +990,9 @@ describe("runDetachedForwardStartWithRetries", () => {
     const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
       fs.writeSync(
         stderr,
-        "Permission denied (publickey); previous attempt reported Error: code: 'The system is not in a state required for the operation's execution', message: \"sandbox is not ready\"\n",
+        `Permission denied (publickey); previous attempt reported Error:   × code: 'The system is not in a state required for the operation's
+  │ execution', message: "sandbox is not ready"
+`,
       );
       return { pid: 784 };
     });
@@ -1132,7 +1136,8 @@ describe("looksLikeForwardListenerStartFailure", () => {
   it("matches only definitive listener termination diagnostics", () => {
     expect(
       looksLikeForwardListenerStartFailure(
-        "Error: code: 'The system is not in a state required for the operation's execution', message: \"sandbox is not ready\"",
+        `Error:   × code: 'The system is not in a state required for the operation's
+  │ execution', message: "sandbox is not ready"`,
       ),
     ).toBe(true);
     expect(
