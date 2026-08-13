@@ -13,6 +13,8 @@ import type { SandboxEntry } from "../../src/lib/state/registry";
 type ConnectSandbox = typeof import("../../src/lib/actions/sandbox/connect")["connectSandbox"];
 type GatewayRouteMutationLock =
   typeof import("../../src/lib/inference/gateway-route-mutation-lock")["withGatewayRouteMutationLock"];
+type LaunchReadinessPublicationResult =
+  import("../../src/lib/actions/sandbox/launch-readiness").LaunchReadinessPublicationResult;
 
 export const requireDist = createRequire(import.meta.url);
 export const connectModulePath = "../../src/lib/actions/sandbox/connect.js";
@@ -32,6 +34,9 @@ export type ConnectHarness = {
   ensureLiveSandboxSpy: MockInstance;
   errorSpy: MockInstance;
   logSpy: MockInstance;
+  inspectLaunchReadinessSpy: MockInstance;
+  launchReadinessMutationGateSpy: MockInstance;
+  publishLaunchReadinessSpy: MockInstance;
   preflightVllmSpy: MockInstance;
   probeLocalProviderHealthSpy: MockInstance;
   probeOllamaAuthProxyHealthSpy: MockInstance;
@@ -50,6 +55,7 @@ export type ConnectHarness = {
 export type ConnectHarnessOptions = {
   agentName?: string;
   inferenceGetOutput?: string;
+  isWsl?: boolean;
   inferenceProbeResponses?: Array<
     string | { status?: number | null; output?: string | null; stderr?: string | null }
   >;
@@ -77,6 +83,19 @@ export type ConnectHarnessOptions = {
   spawnStatus?: number | null;
   sttyThrows?: boolean;
   withGatewayRouteMutationLock?: GatewayRouteMutationLock;
+  readinessDecision?:
+    | { kind: "accepted"; category: "accepted"; agent: unknown; sb: SandboxEntry }
+    | {
+        kind: "fallback";
+        category: string;
+        fence: { epochId: string } | null;
+        gatewayName: string | null;
+        gatewayPort: number | null;
+        fenceFailed: boolean;
+        recoveryBlocked: boolean;
+        authorityUnsupported?: true;
+      };
+  readinessPublicationResult?: LaunchReadinessPublicationResult;
 };
 
 function throwSttyFailure(): never {
@@ -119,6 +138,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   );
   const localInference = requireDist("../../src/lib/inference/local.js");
   const ollamaProxy = requireDist("../../src/lib/inference/ollama/proxy.js");
+  const platform = requireDist("../../src/lib/platform.js");
   const gatewayRouteMutationLock = requireDist(
     "../../src/lib/inference/gateway-route-mutation-lock.js",
   );
@@ -127,6 +147,33 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const registry = requireDist("../../src/lib/state/registry.js");
   const sandboxSession = requireDist("../../src/lib/state/sandbox-session.js");
   const vmDnsMonkeypatch = requireDist("../../src/lib/actions/sandbox/vm-dns-monkeypatch.js");
+  const launchReadiness = requireDist("../../src/lib/actions/sandbox/launch-readiness.js");
+
+  const inspectLaunchReadinessSpy = vi
+    .spyOn(launchReadiness, "inspectLaunchReadiness")
+    .mockResolvedValue(
+      options.readinessDecision ?? {
+        kind: "fallback",
+        category: "missing",
+        fence: { epochId: "a".repeat(64) },
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: false,
+        recoveryBlocked: false,
+      },
+    );
+  const publishLaunchReadinessSpy = vi
+    .spyOn(launchReadiness, "publishLaunchReadiness")
+    .mockResolvedValue(options.readinessPublicationResult ?? { kind: "published" });
+  const launchReadinessMutationGateSpy = vi
+    .spyOn(launchReadiness, "withLaunchReadinessMutationGate")
+    .mockImplementation((async (...args: unknown[]) => {
+      const operation = args[1] as () => unknown;
+      return { kind: "entered", value: await operation() };
+    }) as never);
+  if (typeof options.isWsl === "boolean") {
+    vi.spyOn(platform, "isWsl").mockReturnValue(options.isWsl);
+  }
 
   const preflightVllmSpy = vi
     .spyOn(connectVllmPreflight, "preflightVllmModelEnvOrExit")
@@ -278,6 +325,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     ensureLiveSandboxSpy,
     errorSpy,
     logSpy,
+    inspectLaunchReadinessSpy,
+    launchReadinessMutationGateSpy,
+    publishLaunchReadinessSpy,
     preflightVllmSpy,
     probeLocalProviderHealthSpy,
     probeOllamaAuthProxyHealthSpy,
