@@ -275,6 +275,7 @@ The manifest uses kind `nemoclaw-e2e-evidence-v1`.
 It records `targetId`, the candidate repository and commit, the trusted workflow repository and commit, the GitHub Actions run ID and attempt, the job status, the artifact directory, and `productEvidenceFileCount`.
 A successful target must write at least one product evidence file before the workflow writes a successful manifest.
 If the target reports success without product evidence, manifest creation fails instead of certifying an empty run.
+A catalogue Vitest selection that runs no tests exits nonzero before manifest creation, including when every selected test skips.
 Failed targets still write a manifest for diagnosis, and the existing artifact upload publishes the manifest with the target artifacts.
 The manifest is secret-free diagnostic evidence.
 It does not replace the workflow job result or the `Release qualification` release gate.

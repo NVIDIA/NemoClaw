@@ -197,7 +197,7 @@ const { onboard } = require(${onboardPath});
     expect(payload.loaded.machine.state).toBe("failed");
   });
 
-  it("onboard() does not mark a completed session failed on later nonzero exit", () => {
+  it("onboard() maps final machine completion to the process exit status (#8987)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const scriptPath = path.join(tmpDir, "onboard-exit-completed.cjs");
     const openshellPath = writeSuccessfulOpenShell(tmpDir);
@@ -293,10 +293,12 @@ finalPhases.runFinalOnboardFlowSlice = async ({ runtime }) => {
   await runtime.applyResult(advanceTo("policies", { metadata: { state: "openclaw" } }));
   await runtime.applyResult(advanceTo("finalizing", { metadata: { state: "policies" } }));
   await runtime.applyResult(advanceTo("post_verify", { metadata: { state: "finalizing" } }));
-  await runtime.applyResult(completeOnboardMachine(
-    { sandboxName: "complete-seam", provider: "nvidia", model: "nemotron-test" },
-    { state: "post_verify" },
-  ));
+  if (process.env.NEMOCLAW_TEST_FINAL_STATE === "complete") {
+    await runtime.applyResult(completeOnboardMachine(
+      { sandboxName: "complete-seam", provider: "nvidia", model: "nemotron-test" },
+      { state: "post_verify" },
+    ));
+  }
   return { context: null, session: await runtime.session() };
 };
 
@@ -304,6 +306,7 @@ const { onboard } = require(${onboardPath});
 
 (async () => {
   try {
+    process.exitCode = 1;
     await onboard({
       nonInteractive: true,
       autoYes: true,
@@ -311,9 +314,8 @@ const { onboard } = require(${onboardPath});
       noGpu: true,
       sandboxName: "complete-seam",
     });
-    const exitHandler = exitListeners.at(-1);
-    if (!exitHandler) throw new Error("missing exit handler");
-    exitHandler(1);
+    if (exitListeners.length === 0) throw new Error("missing exit handler");
+    for (const exitHandler of exitListeners) exitHandler(1);
     const loaded = onboardSession.loadSession();
     console.log(JSON.stringify({ loaded, exitListeners: exitListeners.length }));
   } finally {
@@ -327,19 +329,23 @@ const { onboard } = require(${onboardPath});
 `,
     );
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: ONBOARD_FIXTURE_PATH,
-        TMPDIR: tmpDir,
-        NEMOCLAW_TEST_NO_SLEEP: "1",
-        NEMOCLAW_OPENSHELL_BIN: openshellPath,
-      },
-      timeout: 60_000,
-    });
+    const runOnboard = (home: string, finalState: "complete" | "incomplete") =>
+      spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: home,
+          PATH: ONBOARD_FIXTURE_PATH,
+          TMPDIR: tmpDir,
+          NEMOCLAW_TEST_FINAL_STATE: finalState,
+          NEMOCLAW_TEST_NO_SLEEP: "1",
+          NEMOCLAW_OPENSHELL_BIN: openshellPath,
+        },
+        timeout: 60_000,
+      });
+
+    const result = runOnboard(tmpDir, "complete");
 
     expect(result.status, result.stderr).toBe(0);
     const lastLine = result.stdout.trim().split(/\n/).at(-1) ?? "";
@@ -352,5 +358,20 @@ const { onboard } = require(${onboardPath});
     expect(payload.loaded.failure).toBeNull();
     expect(payload.loaded.sandboxName).toBe("complete-seam");
     expect(payload.loaded.machine.state).toBe("complete");
+
+    const incompleteHome = path.join(tmpDir, "incomplete-home");
+    fs.mkdirSync(incompleteHome);
+    const incompleteResult = runOnboard(incompleteHome, "incomplete");
+
+    expect(incompleteResult.status, incompleteResult.stderr).toBe(1);
+    const incompleteLastLine = incompleteResult.stdout.trim().split(/\n/).at(-1) ?? "";
+    const incompletePayload = JSON.parse(incompleteLastLine) as {
+      loaded: ReturnType<typeof onboardSession.createSession>;
+      exitListeners: number;
+    };
+    expect(incompletePayload.exitListeners).toBeGreaterThanOrEqual(2);
+    expect(incompletePayload.loaded.status).toBe("in_progress");
+    expect(incompletePayload.loaded.failure).toBeNull();
+    expect(incompletePayload.loaded.machine.state).toBe("post_verify");
   });
 });
