@@ -158,7 +158,7 @@ $$nemoclaw my-assistant doctor
 docker inspect --format '{{json .HostConfig.PortBindings}}' nemoclaw-llama-cpp
 ```
 
-Accept the result when `status` reports `Managed llama.cpp: running`, the inference route is `reachable`, and `doctor` exits with status `0`.
+Accept the result when `status` reports `Managed llama.cpp: running`, the inference route is `healthy`, and `doctor` exits with status `0`.
 The Docker inspection output must be `{}`, confirming that the container has no Docker-published port.
 The host-owned private bridge still listens on loopback.
 These checks do not establish agent and model qualification.
