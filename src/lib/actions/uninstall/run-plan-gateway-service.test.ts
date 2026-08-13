@@ -143,17 +143,17 @@ function uninstall(
       commandExists: (command) => command === "openshell" || commandExists(command),
       run: (command, args, options) => {
         const delegated = run(command, args, options);
-        if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-          return ok(JSON.stringify(gateways));
-        }
-        if (
-          command === "systemctl" &&
-          args.includes("--property=MainPID") &&
-          delegated.stdout === ""
-        ) {
-          return ok("0\n");
-        }
-        return delegated;
+        return (
+          (command === "openshell" &&
+            args[0] === "gateway" &&
+            args[1] === "list" &&
+            ok(JSON.stringify(gateways))) ||
+          (command === "systemctl" &&
+            args.includes("--property=MainPID") &&
+            delegated.stdout === "" &&
+            ok("0\n")) ||
+          delegated
+        );
       },
     },
   );
@@ -321,13 +321,13 @@ describe("uninstall OpenShell gateway user service", () => {
         }),
         run: (command, args) => {
           calls.push([command, ...args]);
-          if (command === "systemctl" && args.includes("--property=MainPID")) {
-            return ok(`${String(pid)}\n`);
-          }
-          if (command === "ps" && args.includes("uid=")) {
-            return ok(`${String(process.getuid?.() ?? -1)}\n`);
-          }
-          return ok();
+          return (
+            (command === "systemctl" &&
+              args.includes("--property=MainPID") &&
+              ok(`${String(pid)}\n`)) ||
+            (command === "ps" && args.includes("uid=") && ok(`${String(process.getuid?.() ?? -1)}\n`)) ||
+            ok()
+          );
         },
       },
       [{ name: "nemoclaw" }, { name: "sibling" }],
@@ -410,6 +410,30 @@ describe("uninstall OpenShell gateway user service", () => {
     const calls: string[][] = [];
     const errors: string[] = [];
 
+    const externalAuthority = externallySupervised
+      ? {
+          resolveGatewayTeardownAuthority: ({
+            gatewayName,
+            gatewayPort,
+          }: {
+            gatewayName: string;
+            gatewayPort: number;
+          }) => ({
+            gatewayName,
+            gatewayPort,
+            mode: "externally-supervised" as const,
+            source: "declared" as const,
+            endpoint: `http://127.0.0.1:${String(gatewayPort)}`,
+            stateDir: path.dirname(configPath),
+            supervisor: {
+              kind: "systemd-user" as const,
+              serviceName: "external-openshell.service",
+              execPath: "/usr/local/bin/openshell-gateway",
+            },
+            requiredCapabilities: [],
+          }),
+        }
+      : {};
     const deps: Partial<UninstallRunDeps> = {
       commandExists: (command) => command === "systemctl",
       run: (command, args) => {
@@ -417,23 +441,8 @@ describe("uninstall OpenShell gateway user service", () => {
         return ok();
       },
       error: (message) => errors.push(message),
+      ...externalAuthority,
     };
-    if (externallySupervised) {
-      deps.resolveGatewayTeardownAuthority = ({ gatewayName, gatewayPort }) => ({
-        gatewayName,
-        gatewayPort,
-        mode: "externally-supervised",
-        source: "declared",
-        endpoint: `http://127.0.0.1:${String(gatewayPort)}`,
-        stateDir: path.dirname(configPath),
-        supervisor: {
-          kind: "systemd-user",
-          serviceName: "external-openshell.service",
-          execPath: "/usr/local/bin/openshell-gateway",
-        },
-        requiredCapabilities: [],
-      });
-    }
 
     const result = uninstall(test, keepOpenShell, deps, [
       { name: "nemoclaw" },

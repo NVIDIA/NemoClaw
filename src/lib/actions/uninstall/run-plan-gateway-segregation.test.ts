@@ -142,13 +142,15 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           rmSync: fs.rmSync,
           run: (command, args) => {
             calls.push({ args, command });
-            if (command === "systemctl" && args.includes("--property=MainPID")) {
-              return ok(`${String(externalPid)}\n`);
-            }
-            if (command === "ps" && args.includes("uid=")) {
-              return ok(`${String(process.getuid?.() ?? -1)}\n`);
-            }
-            return ok();
+            return (
+              (command === "systemctl" &&
+                args.includes("--property=MainPID") &&
+                ok(`${String(externalPid)}\n`)) ||
+              (command === "ps" &&
+                args.includes("uid=") &&
+                ok(`${String(process.getuid?.() ?? -1)}\n`)) ||
+              ok()
+            );
           },
           runDocker: (args) => {
             dockerCalls.push(args);

@@ -37,10 +37,15 @@ function writePreScopedGatewayConfig(
   driver: "docker" | "podman" = "docker",
 ): { configPath: string; env: Record<string, string>; gatewayId: string } {
   const env = baseGatewayEnv(stateDir);
-  if (driver === "podman") {
-    env.OPENSHELL_DRIVERS = "podman";
-    env.OPENSHELL_PODMAN_SOCKET = path.join(stateDir, "podman.sock");
-  }
+  Object.assign(
+    env,
+    driver === "podman"
+      ? {
+          OPENSHELL_DRIVERS: "podman",
+          OPENSHELL_PODMAN_SOCKET: path.join(stateDir, "podman.sock"),
+        }
+      : {},
+  );
   const gatewayId = legacyGatewayIdForStateDir(stateDir);
   const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
   let toml = buildDockerDriverGatewayConfigToml(
@@ -271,40 +276,40 @@ describe("docker-driver-gateway config TOML", () => {
             let stderr = "";
             let proofTimer: NodeJS.Timeout | undefined;
             const startupTimer = setTimeout(() => {
-              if (settled) return;
-              settled = true;
-              spawned.kill("SIGKILL");
-              reject(new Error("child did not finish importing the gateway config module"));
+              settled ||
+                ((settled = true),
+                spawned.kill("SIGKILL"),
+                reject(new Error("child did not finish importing the gateway config module")));
             }, 15_000);
             spawned.stderr.on("data", (chunk: Buffer) => {
               stderr += chunk.toString("utf-8");
             });
             spawned.stdout.on("data", (chunk: Buffer) => {
               stdout += chunk.toString("utf-8");
-              if (ready || !stdout.includes("ready\n")) return;
-              ready = true;
-              clearTimeout(startupTimer);
-              proofTimer = setTimeout(() => {
-                if (settled) return;
-                settled = true;
-                spawned.kill("SIGKILL");
-                reject(new Error("scoped cleanup proof blocked while opening a FIFO config"));
-              }, 2_000);
-              spawned.stdin.write("run\n");
+              (ready || !stdout.includes("ready\n")) ||
+                ((ready = true),
+                clearTimeout(startupTimer),
+                (proofTimer = setTimeout(() => {
+                  settled ||
+                    ((settled = true),
+                    spawned.kill("SIGKILL"),
+                    reject(new Error("scoped cleanup proof blocked while opening a FIFO config")));
+                }, 2_000)),
+                spawned.stdin.write("run\n"));
             });
             spawned.once("error", (error) => {
-              if (settled) return;
-              settled = true;
-              clearTimeout(startupTimer);
-              if (proofTimer) clearTimeout(proofTimer);
-              reject(error);
+              settled ||
+                ((settled = true),
+                clearTimeout(startupTimer),
+                proofTimer && clearTimeout(proofTimer),
+                reject(error));
             });
             spawned.once("exit", (code) => {
-              if (settled) return;
-              settled = true;
-              clearTimeout(startupTimer);
-              if (proofTimer) clearTimeout(proofTimer);
-              resolve({ code, stderr });
+              settled ||
+                ((settled = true),
+                clearTimeout(startupTimer),
+                proofTimer && clearTimeout(proofTimer),
+                resolve({ code, stderr }));
             });
           },
         );
