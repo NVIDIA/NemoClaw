@@ -291,9 +291,10 @@ test/e2e/
 
 - `.github/workflows/e2e.yaml` selects the default workflow E2E jobs on each push
   to `main`.
-  Push runs skip `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and
+  Each trusted push also selects the CPU-only `jetson-nvmap-gpu` proof.
+  Push runs skip `llama-cpp-dgx-spark-plan` and
   `llama-cpp-dgx-spark-qualification` because a push event cannot set their
-  required workflow dispatch flags.
+  required workflow dispatch flag.
   Runner, credential, evidence, and cleanup requirements remain job-specific.
   A maintainer can also dispatch the trusted `main` workflow against the exact
   head of an open internal or fork PR. The manual path validates the actor, PR

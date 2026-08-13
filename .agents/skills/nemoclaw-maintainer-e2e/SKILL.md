@@ -10,7 +10,9 @@ description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw mai
 
 Use `.github/workflows/e2e.yaml` from trusted `main`.
 Every push to `main` selects the default workflow E2E jobs.
-Push runs skip `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification` because push events cannot set the required workflow dispatch flags.
+Each trusted push also selects the CPU-only `jetson-nvmap-gpu` proof.
+Push runs skip `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification` because push events cannot set the required workflow dispatch flag.
+Manual Jetson runs remain opt-in through `allow_jetson_dispatch`, which defaults to `false`.
 A successful push run publishes the same `Release qualification` check as the full `workflow_dispatch` mode described below.
 Do not substitute local `npm run test:live-e2e` unless the maintainer explicitly requests local execution.
 
