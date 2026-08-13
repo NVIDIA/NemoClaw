@@ -57,16 +57,17 @@ type TargetOptions = Omit<
   hostPackages?: readonly E2eHostPackage[];
   installNonInteractive?: boolean;
   runner?: string;
+  testFile?: string;
 };
 
 function target(id: string, options: TargetOptions): E2eCatalogueTarget {
-  const testFile = `test/e2e/live/${id}.test.ts`;
   const {
     owningPaths = [],
     environment = {},
     hostPackages = [],
     installNonInteractive = false,
     runner = "ubuntu-latest",
+    testFile = `test/e2e/live/${id}.test.ts`,
     ...execution
   } = options;
   return {
@@ -239,6 +240,27 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
+  target("hermes-slack", {
+    profile: "nvidia-inference",
+    runner: "linux-amd64-cpu4",
+    testFile: "test/e2e/live/hermes-slack-e2e.test.ts",
+    timeoutMinutes: 75,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: true,
+    owningPaths: ["test/e2e/live/hermes-slack-e2e-helpers.ts"],
+    environment: {
+      ...hostedInference,
+      ...nonInteractive,
+      NEMOCLAW_AGENT: "hermes",
+      NEMOCLAW_POLICY_TIER: "open",
+      NEMOCLAW_RECREATE_SANDBOX: "1",
+      NEMOCLAW_SANDBOX_NAME: "e2e-hermes-slack",
+      OPENSHELL_GATEWAY: "nemoclaw",
+      SLACK_APP_TOKEN: "xapp-test-hermes-slack-app-token",
+      SLACK_BOT_TOKEN: "xoxb-test-hermes-slack-token",
+    },
+  }),
   target("issue-2478-crash-loop-recovery", {
     profile: "standard",
     timeoutMinutes: 30,
@@ -407,6 +429,25 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
+  target("openclaw-inference-switch", {
+    profile: "standard",
+    timeoutMinutes: 90,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: true,
+    owningPaths: ["test/e2e/live/openclaw-inference-switch-helpers.ts"],
+    environment: {
+      ...nonInteractive,
+      NEMOCLAW_AGENT: "openclaw",
+      NEMOCLAW_E2E_SHARD: "anthropic",
+      NEMOCLAW_SANDBOX_NAME: "e2e-oc-inf-switch",
+      NEMOCLAW_SWITCH_PROVIDER: "compatible-anthropic-endpoint",
+      NEMOCLAW_SWITCH_MODEL: "mock-anthropic-model",
+      NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
+      NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "1",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
   target("openclaw-tui-chat-correlation", {
     profile: "nvidia-inference",
     timeoutMinutes: 75,
@@ -485,6 +526,22 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       ...hostedInference,
       ...nonInteractive,
       NEMOCLAW_SANDBOX_NAME: "e2e-survival",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
+  target("sandbox-operations", {
+    profile: "nvidia-inference",
+    timeoutMinutes: 60,
+    installMode: "credential-free",
+    installNonInteractive: true,
+    restoreCli: true,
+    exposeCliBin: true,
+    environment: {
+      ...hostedInference,
+      ...nonInteractive,
+      // Open policy permits the inference and log probes.
+      // TC-SBX-11 verifies sandbox-to-sandbox network isolation.
+      NEMOCLAW_POLICY_TIER: "open",
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),

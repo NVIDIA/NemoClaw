@@ -28,7 +28,6 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
   "test/e2e/support/runner-pressure-workflow-boundary.test.ts",
   "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
-  "test/e2e/support/sandbox-operations-workflow-boundary.test.ts",
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
   "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
   "test/e2e/support/standard-profile-workflow-boundary.test.ts",
