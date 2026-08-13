@@ -7,6 +7,7 @@
     "src/lib/onboard/preflight.test.ts": 1875,
     "test/generate-openclaw-config.test.ts": 1915,
     "test/install-preflight.test.ts": 3356,
+    "test/managed-image-publication-workflow.test.ts": 1529,
     "test/nemoclaw-start.test.ts": 4790,
     "test/onboard-messaging.test.ts": 2036,
     "test/onboard-selection.test.ts": 4178
