@@ -402,14 +402,21 @@ describe("launch readiness validation", () => {
     });
     const original = sandbox;
 
-    for (const changed of [
-      { ...original, gatewayName: "nemoclaw-8081", gatewayPort: 8081 },
-      { ...original, lifecycleGeneration: "generation-2" },
-      { ...original, lifecycleLiveIdentityFingerprint: "5".repeat(64) },
+    for (const { changed, category } of [
+      {
+        changed: { ...original, gatewayName: "nemoclaw-8081", gatewayPort: 8081 },
+        category: "identity",
+      },
+      { changed: { ...original, lifecycleGeneration: "generation-2" }, category: "config" },
+      {
+        changed: { ...original, lifecycleLiveIdentityFingerprint: "5".repeat(64) },
+        category: "identity",
+      },
     ]) {
       sandbox = changed;
       await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
         kind: "fallback",
+        category,
         fence: { epochId: EPOCH },
         recoveryBlocked: false,
       });

@@ -10,6 +10,8 @@ import path from "node:path";
 import { nemoclawStateRoot } from "./state-root";
 
 export const LAUNCH_READINESS_LEASE_MS = 24 * 60 * 60 * 1_000;
+// This version covers lease and fence records. Nested session qualifications
+// and the separate runtime authority keep their independent schema versions.
 export const LAUNCH_READINESS_SCHEMA_VERSION = 2;
 export const LAUNCH_READINESS_MAX_BYTES = 16 * 1_024;
 

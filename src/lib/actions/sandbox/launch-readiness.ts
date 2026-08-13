@@ -700,9 +700,11 @@ async function captureLaunchIdentity(
   let session: LaunchReadinessIdentity["session"] = null;
   if (agentName === "openclaw") {
     const openclawVersion = normalizedString(entry.agentVersion);
-    const expectedVersion = normalizedString(agent.expected_version);
     const stateDirectory = normalizedString(agent.config?.dir);
-    if (!openclawVersion || !expectedVersion || !stateDirectory) {
+    // Pairing qualification requires a versioned trusted definition. The
+    // receipt binds the sandbox's recorded version, including supported stale
+    // versions that the normal launch warning permits.
+    if (!openclawVersion || !normalizedString(agent.expected_version) || !stateDirectory) {
       throw new OpenClawPairingQualificationError();
     }
     try {
