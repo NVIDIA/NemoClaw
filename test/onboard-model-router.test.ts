@@ -670,6 +670,51 @@ describe("onboard Model Router setup", () => {
     assert.deepEqual(terminateProcess.mock.calls, [[pid]]);
   });
 
+  it("fully redacts credential material from the startup error log tail (#8962)", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-redact-"));
+    tempDirs.add(tmpDir);
+    const rootDir = path.join(tmpDir, "repo");
+    const homeDir = path.join(tmpDir, "home");
+    const logPath = path.join(homeDir, ".nemoclaw", "state", "model-router.log");
+    const secret = "nvapi-SECRETSECRETSECRETSECRETSECRETSECRETSECRET";
+    const pid = 12_345;
+
+    await assert.rejects(
+      startModelRouter(
+        { port: 45_696, pool_config_path: "router/test-pool.yaml" },
+        {
+          rootDir,
+          homeDir,
+          ensureModelRouterCommand: () => "/test/model-router",
+          runProxyConfig: () => ({ status: 0 }),
+          spawnProxy: () => {
+            fs.appendFileSync(logPath, `AuthenticationError: api_key ${secret} rejected\n`);
+            return {
+              pid,
+              onError: () => undefined,
+              onExit: () => undefined,
+              unref: () => undefined,
+            };
+          },
+          resolveProviderCredential: () => null,
+          buildSubprocessEnv: () => ({}),
+          isRouterHealthy: async () => false,
+          getRouterHealthSnapshot: async () => ({ healthy: false, body: null }),
+          sleep: async () => undefined,
+          isProcessAlive: () => false,
+          terminateProcess: () => undefined,
+          getProviderKey: () => "",
+        },
+      ),
+      (error: Error) => {
+        assert.match(error.message, /Last router log lines:/);
+        assert.doesNotMatch(error.message, /SECRETSECRET/);
+        assert.doesNotMatch(error.message, /nvapi-SECR/);
+        return true;
+      },
+    );
+  });
+
   it("keeps an ambient OPENAI_API_KEY when the pool names a non-NVIDIA endpoint (#8962)", async () => {
     const pid = 12_345;
     let spawnedEnv: Record<string, string> | null = null;

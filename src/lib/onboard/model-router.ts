@@ -15,7 +15,7 @@ import {
 } from "../credentials/store";
 import { ROOT, run, runCapture } from "../runner";
 import { hashCredential } from "../security/credential-hash";
-import { redact, redactSensitiveText } from "../security/redact";
+import { redact, redactFull, redactSensitiveText } from "../security/redact";
 import { rejectSymlinksOnPath } from "../state/config-io";
 import type { Session } from "../state/onboard-session";
 import * as onboardSession from "../state/onboard-session";
@@ -265,7 +265,9 @@ function createStartModelRouterDeps(): StartModelRouterDeps {
       // Bounded read of this run's bytes only: an append-only log carries
       // earlier runs' output, and an unbounded readFileSync fails outright
       // past the V8 string limit. Redact before splitting so multi-line
-      // secret blocks still match their patterns.
+      // secret blocks still match their patterns. The tail lands in the
+      // thrown startup error, so it takes full redaction, not the partial
+      // form that keeps a four-character secret prefix.
       try {
         const flags =
           fs.constants.O_RDONLY |
@@ -280,7 +282,7 @@ function createStartModelRouterDeps(): StartModelRouterDeps {
           if (length <= 0) return "";
           const buffer = Buffer.alloc(length);
           fs.readSync(fd, buffer, 0, length, from);
-          return redact(buffer.toString("utf8"))
+          return redactFull(redact(buffer.toString("utf8")))
             .split(/\r?\n|\r/)
             .filter(Boolean)
             .slice(-ROUTER_LOG_TAIL_LINES)
