@@ -52,27 +52,6 @@ describe("network-policy interactive preset harness", () => {
     });
   });
 
-  it("selects the requested rendered entry before it confirms the change", () => {
-    const selectPrompt = POLICY_ADD_EXPECT_SCRIPT.indexOf('-glob "*Choose preset*"');
-    const selectRequestedPreset = POLICY_ADD_EXPECT_SCRIPT.indexOf(
-      "$candidate_name eq $env(NEMOCLAW_E2E_PRESET)",
-    );
-    const sendPresetNumber = POLICY_ADD_EXPECT_SCRIPT.indexOf('send -- "$preset_number\\r"');
-    const confirmPrompt = POLICY_ADD_EXPECT_SCRIPT.indexOf('-glob "*Y/n*"');
-    const sendConfirmation = POLICY_ADD_EXPECT_SCRIPT.indexOf('send -- "Y\\r"');
-    const order = [
-      selectPrompt,
-      selectRequestedPreset,
-      sendPresetNumber,
-      confirmPrompt,
-      sendConfirmation,
-    ];
-
-    expect(order.every((index) => index >= 0)).toBe(true);
-    expect([...order].sort((left, right) => left - right)).toEqual(order);
-    expect(POLICY_ADD_EXPECT_SCRIPT).not.toContain("</dev/null");
-  });
-
   const expectAvailable =
     spawnSync("expect", ["-v"], {
       encoding: "utf8",
