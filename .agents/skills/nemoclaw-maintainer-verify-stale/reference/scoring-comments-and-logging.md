@@ -3,13 +3,13 @@
 
 # verify-stale — Scoring, Comments, Project Fields, and Logging Reference
 
-Use after a latest result exists or after a by-design/inconclusive branch is selected. Covers confidence scoring, redaction, concise comments, authorized Project updates, infra failures, and activity logging.
+Use after a newest-release result exists or after a by-design or inconclusive branch is selected. Covers confidence scoring, redaction, concise comments, authorized Project updates, infrastructure failures, and activity logging.
 
 ## Contents
 
 - [Step 9: Score Confidence](#step-9-score-confidence)
 - [Step 10: Compose and Post the Comment](#step-10-compose-and-post-the-comment)
-- [Step 11: Infra Failure Handling](#step-11-infra-failure-handling)
+- [Step 11: Infrastructure Failure Handling](#step-11-infrastructure-failure-handling)
 - [Step 12: Log to Activity](#step-12-log-to-activity)
 - [Cadence](#cadence)
 - [Out of Scope (v1)](#out-of-scope-v1)
@@ -23,17 +23,18 @@ Start at 0. Apply each rule that fires.
 
 | Signal | Delta |
 |---|---|
-| Reproducer ran cleanly on **latest** (8d), exit 0, no bug symptom observed | +50 |
-| Commits between reported version and `$LATEST` touch the implicated component (see "Path extraction" below) | +25 |
-| A merged PR mentions this issue number or its symptom (see "PR search" below) | +25 |
-| Reproducer was LLM-synthesized at any point (Step 8b synth or Step 8c retry) | −30 |
-| Any partial error, warning, or flaky behavior in the latest run (8d) | −50 |
+| The same reviewed reproducer matched the reported symptom on `$REPORTED_VERSION`, then produced the expected exit and no reported symptom on the newest release tag | +50 |
+| After that reported-release symptom match, the reported-release retry had mixed results and the newest-release run did not show the symptom | +25 instead of the +50 newest-release signal |
+| A reviewed diff between the tags changes the implicated behavior in a way that addresses the symptom | +25 |
+| A merged PR explicitly states that it fixes this issue or the reproduced symptom | +25 |
+| Reproducer received the −30 confidence penalty after an LLM introduced a command or state change that affects the reproduced behavior | −30 |
+| Any partial error, warning, or intermittent behavior in the newest-release run | −50 |
 
 Total is clamped to `[0, 100]`.
 
-### Path extraction (for the +25 commits signal)
+### Path extraction (for the +25 behavior-change signal)
 
-The skill needs to know *which* path to `git log v<reported>..$LATEST -- <path>` against. Apply in order, stop at the first that yields a non-empty path:
+The skill needs to know which path to use with `git log "$REPORTED_VERSION".."$LATEST" -- <path>`. Apply in order and stop at the first non-empty path:
 
 1. **Stack trace / file path mentions in the issue body.** Grep the body for absolute paths under known install roots, then map to repo paths:
    - `/usr/local/lib/nemoclaw/<rel>` → `<rel>` in repo (e.g., `scripts/generate-openclaw-config.py`)
@@ -50,7 +51,7 @@ The skill needs to know *which* path to `git log v<reported>..$LATEST -- <path>`
    - `integration: *` with no body path → skip the +25 signal; no generic integration directory owns every integration.
 3. **Title keywords.** "policy" → `nemoclaw-blueprint/policies/`, `nemoclaw/src/blueprint/`. "inference" → `docs/inference/` is docs-only; skip the +25 signal unless source 1 surfaces actual code paths.
 
-If none of the above produces a path, **skip the +25 signal entirely** rather than guessing. Floating the +25 on every issue would inflate scores meaninglessly.
+If none of the above produces a path, skip the signal rather than guessing. A commit that merely touches the directory does not earn points. Inspect the diff and state how the changed behavior addresses the reproduced symptom.
 
 ### PR search (for the +25 PR signal)
 
@@ -70,30 +71,30 @@ if [ -z "$DIRECT_REF" ] || [ "$DIRECT_REF" = "[]" ]; then
 fi
 ```
 
-Apply +25 if either query returns at least one PR with `mergedAt` strictly after the tag date of `$REPORTED_VERSION` (look up via `git log -1 --format=%cI v$REPORTED_VERSION`). PRs merged before the reporter even filed the issue can't have fixed it.
+Apply +25 only when the PR text or linked issue-closing metadata says it fixes this issue or the reproduced symptom. Require `mergedAt` to be after the issue's `createdAt`, and require the PR commit to be reachable from `$LATEST`. `REPORTED_VERSION` already includes the leading `v`; do not construct `v$REPORTED_VERSION`.
 
 If neither query returns anything, **skip the +25 signal**.
 
-**Baseline-validation gating.** The +50 weight assumes the reproducer was *validated* — i.e., it produced the bug symptom on baseline (Step 8b/8c match). If `BASELINE_INSTALL_FAILED=1` (Step 8a fall-through, baseline pass skipped — including the sandbox-build-rot case from Step 11), the +50 still applies but **cap the total at 84**. Corroboration signals (commits-touched-area, PR-mention) still raise the score within the cap but cannot lift it above 84. Without runtime baseline confirmation we don't have enough on our own to claim ≥85 — the cap forces the verdict into the 60–84 band where the reporter is asked to confirm. The previous draft of this rule had an "unless commits-touched OR PR-mention also fires" escape hatch that let inferred fix evidence bypass the cap entirely; that produced a misleading 100/100 on the #2007 e2e run despite zero baseline confirmation, and was tightened here.
+**Baseline-validation gate.** `fixed-on-latest` requires the same reviewed reproducer to expose the reported symptom on `$REPORTED_VERSION`. If the baseline install or build fails, or the baseline result does not match, select `verify-inconclusive`. Commit or PR evidence can explain the result but cannot replace the runtime baseline gate. The static by-design branch remains separate because it requires explicit intent evidence.
 
-**Action (when latest run was clean — bug not reproduced):**
+**Action when the newest-release run has the expected result and does not show the bug:**
 
 | Score | Verdict | Proposed Project action | Comment |
 |---|---|---|---|
 | ≥85 | `fixed-on-latest` | `Needs Review` | Evidence-rich; ask the reporter to confirm. |
-| 60–84 | `fixed-on-latest` | `Needs Review` | Evidence-rich; ask the reporter to confirm and state the confidence cap. |
+| 60–84 | `fixed-on-latest` | `Needs Review` | Evidence-rich; ask the reporter to confirm. |
 | <60 | `verify-inconclusive` | No field change | Short, honest "couldn't verify" explanation. |
 
 Verdict names are comment and log vocabulary, not GitHub labels. Prepare the comment, Project update, assignment, and durable verdict marker as a dry run with `human_review_required: true`; apply only the accepted write set.
 
-**Special case: latest output matches the issue symptom (bug still reproduces on latest).**
+**Special case: the newest-release output matches the reported symptom.**
 
-This is not a flake — the skill positively confirmed the bug is still live. Don't apply the +50 weight (the bug isn't fixed) and skip the score table entirely.
+This result confirms that the bug still reproduces on the newest release tag. Do not apply the +50 weight. Skip the score table.
 
-- Post a 30–80 word "still reproduces on latest" comment without transcripts. Keep the redacted baseline/latest transcripts in the local activity log as evidence.
+- Post a 30–80 word comment that states the bug still reproduces on the newest release tag. Do not include transcripts. Keep the reported-release and newest-release transcripts as temporary local evidence; the optional activity log stores only the structured summary from Step 12.
 - Make no Project field or label change.
 - Include the marker `<!-- nemoclaw-verify-stale v1 verdict=still-reproduces YYYY-MM-DD -->` with today's date so the candidate filter applies the 7-day TTL (Step 3 idempotency).
-- Next weekly run picks the issue back up after the TTL — if the bug gets fixed in the meantime, that run catches it.
+- A later scheduled or manual run can pick the issue back up after the TTL and catch a newly landed fix.
 
 The skill **never closes issues** in any branch. Project fields, assignments, and public comments require explicit approval of the proposed write set.
 
@@ -101,61 +102,65 @@ The skill **never closes issues** in any branch. Project fields, assignments, an
 
 ## Step 10: Compose and Post the Comment
 
-**Redaction pass before posting.** Run on **every** chunk of text quoted in the comment — issue body excerpts, baseline transcript, latest transcript, synth-repro scripts. Replace each match with `[REDACTED]`. The transcripts especially leak — they include full stdout/stderr from real installs and runs.
-
-**HTML → text pre-pass for issue body excerpts.** NV QA bodies are HTML; tokens nested in `<pre>` tags or HTML attributes (e.g. `<a href="https://user:tok@host/...">`) slip past the regex patterns below if the input still has tags. Convert to plain text first, then redact:
+**Redaction pass before inspection or posting.** Run the bundled helper on every evidence excerpt, including issue body excerpts, reported-release and newest-release transcripts, log captures, and synthesized scripts. Inspect and quote only the redacted output. Keep raw evidence in the owner-only `$EVIDENCE_DIR` and let the cleanup trap remove it.
 
 ```bash
-TEXT=$(printf '%s' "$BODY_EXCERPT" | python3 -c '
-import html, re, sys
-b = sys.stdin.read()
-b = re.sub(r"<br\s*/?>", "\n", b)
-b = re.sub(r"</?(p|div|tr|td|th|li|pre)[^>]*>", "\n", b)
-b = re.sub(r"<[^>]+>", "", b)
-print(html.unescape(b))
-')
-# Now apply the regex table below to $TEXT.
+REDACTOR=.agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.py
+printf '%s' "$BODY_EXCERPT" | python3 "$REDACTOR" --html \
+  >"$EVIDENCE_DIR/body-excerpt.redacted.txt"
+python3 "$REDACTOR" "$EVIDENCE_DIR/latest-transcript.log" \
+  >"$EVIDENCE_DIR/latest-transcript.redacted.log"
 ```
 
-Transcripts and synth-repro scripts are already plain text and skip the pre-pass.
+The `--html` option converts NV QA's HTML-form bodies to text before redaction, preventing tokens in tags or attributes from bypassing the text patterns. Plain-text transcripts and scripts omit that option.
 
 **Order matters and the patterns below are in execution order.** Longest, most-specific patterns first; generic catchalls last. Otherwise the catchall masks specific matches and you lose track of what was actually redacted (JWT vs session blob vs random base64).
 
-Patterns live in a fenced block (not a Markdown table) because patterns 8 and 9 use regex alternation `|` — Markdown tables would treat the literal `|` as a column delimiter, and escaping it as `\|` makes the regex match a literal pipe instead of an alternation, which silently breaks credential redaction.
+The helper implements the patterns below in this order. Update the helper and its policy test together when the list changes. Patterns live in a fenced block because Markdown tables treat regex alternation `|` as a column delimiter. Escaping it as `\|` would change the regex to a literal pipe.
 
 ```regex
 1.  eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}
     → JWT tokens
 
-2.  gh[pousr]_[A-Za-z0-9]{36,}
+2.  (?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,})
     → GitHub PATs / install tokens
 
 3.  (?i)nvapi-[A-Za-z0-9_-]{20,}
     → NVIDIA API keys (NIM / build.nvidia.com)
 
-4.  AKIA[0-9A-Z]{16}
+4.  (?i)\bsk-(?:ant-|proj-|or-v1-)?[A-Za-z0-9_-]{20,}\b
+    → OpenAI, Anthropic, and OpenRouter API keys
+
+5.  \bAIza[A-Za-z0-9_-]{20,}\b
+    → Google Gemini API keys
+
+6.  AKIA[0-9A-Z]{16}
     → AWS access key IDs
 
-5.  (?i)aws_secret_access_key\s*=\s*\S+
+7.  (?i)aws_secret_access_key\s*=\s*\S+
     → AWS secret keys
 
-6.  (?i)authorization:\s*\S+
-    → HTTP auth headers (often Bearer + JWT)
+8.  (?i)^(\s*(?:[><*]\s*)?)(["']?(?:authorization|proxy-authorization|cookie|set-cookie)["']?\s*(?::|=))[^\n]*
+    and a structured-field variant whose quoted value accepts escaped characters
+    → HTTP authentication and session headers in line, assignment, JSON, and curl verbose forms
 
-7.  URLs containing `@` before the host (e.g., https://user:pw@host/...)
+9.  (?i)(\bBearer\s+)\S+
+    → Standalone bearer credentials
+
+10. URLs containing `@` before the host, such as `https://user:pw@host/`
     → Basic-auth credentials in URLs
 
-8.  (?i)(token|secret|password|api[_-]?key|bearer)[^\n]*[:=][^\n]*
-    → Inline credentials in env/config/log output
+11. (?i)(token|secret|password|api[_-]?key|bearer)[^\n]*[:=][^\n]*
+    → Inline credentials in environment, configuration, and log output
 
-9.  \b\w+\.(nvidia\.internal|nv-internal\.com|nvidia\.dev)\b
-    → Internal hostnames (extend list per team)
+12. \b\w+\.(nvidia\.internal|nv-internal\.com|nvidia\.dev)\b
+    → Internal hostnames
 
-10. [a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}
-    → Email addresses (PII)
+13. [a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}
+    → Email addresses
 
-11. \b[A-Za-z0-9+/]{60,}={0,2}\b
-    → Long base64 blobs (likely keys/sessions; tune length to taste — too short hits legit data)
+14. \b[A-Za-z0-9+/]{60,}={0,2}\b
+    → Long base64 blobs that can contain credentials or session data
 ```
 
 **File paths under the reporter's home directory** (`/Users/<name>/`, `/home/<name>/`) → replace with `~/`. Run last; catches incidental username PII.
@@ -185,19 +190,17 @@ Patterns live in a fenced block (not a Markdown table) because patterns 8 and 9 
 - Redundant verbal framing of what the evidence already shows ("the table above proves…").
 - "Verification mode" pleasantries beyond one factual line.
 
-**Mandatory cap caveat.** When the score is capped (Step 9 baseline-validation gating, or any Step 11 degraded-mode path), the rendered Verdict section must include a one-line caveat naming the cap and the reason. Example: `Capped at 84 because Step 9's baseline-validation gate did not run (sandbox-build rot on v0.0.18: Dockerfile symlink layer removed by #2227).` Don't make readers reverse-engineer why the score didn't go higher — name it.
+**Mandatory hardware-substitution caveat.** When the issue carries `platform: dgx-spark` or `platform: gb10` and Step 7 created a Brev instance with different silicon, the rendered comment must include a one-line `Hardware substitution` note. Name the Brev SKU and reported hardware. State that performance, memory-architecture, and driver results require confirmation on the reported hardware.
 
-**Mandatory hardware-substitution caveat.** When the issue carries `platform: dgx-spark` or `platform: gb10` and Step 7 provisioned a Brev SKU that is not the same silicon, the rendered comment must include a one-line "Hardware substitution" note. Name both the actual Brev SKU and the reported hardware, and state that performance, memory-architecture, and driver results require confirmation on the real target.
+**Mandatory `Verification mode` header line.** Each template must name what ran. Use `runtime reproduction on Brev <SKU>; reported release and newest release tag both installed and run` for the standard template, `static analysis at the verified release tag; no runtime reproduction` for the by-design template, and `runtime reproduction on Brev <SKU>; reported symptom observed on the newest release tag` for still-reproduces. The reader must not have to infer whether the verdict came from runtime evidence or static analysis.
 
-**Mandatory `Verification mode` header line.** All three templates below include a `**Verification mode:**` line in the metadata block, naming what we did and didn't actually run (e.g., "runtime reproduction on Brev <SKU>; baseline + latest both installed and run" for the standard template; "static analysis at the verified-on tag — no runtime reproduction" for the by-design template; "runtime reproduction on Brev <SKU>; bug confirmed live on latest" for still-reproduces). Reader should never have to guess whether the verdict came from real install logs or from static analysis.
-
-**Link-pass self-verification (all templates).** Same rule as Step 8.5d's link pass, applied to every template. Resolve at least one rendered Markdown link from each section that has them (`What's structurally fixed` / `Vestigial references` / `Existing CI coverage` for by-design; `Relevant changes since` / transcript code-anchor citations for the standard template) via `gh api repos/NVIDIA/NemoClaw/contents/<path>?ref=<tag>` (returns 200 + base64 if path exists at tag, 404 otherwise) or `curl -fsI <blob-url>`. A 404 on a citation in the rendered comment is worse than no citation — it advertises verification work that didn't actually happen. If any link fails to resolve, fix it or bail to `verify-inconclusive`.
+**Link-pass self-verification (all templates).** Same rule as Step 8.5d's link pass, applied to every template. Resolve at least one rendered Markdown link from each section that has links via `gh api repos/NVIDIA/NemoClaw/contents/<path>?ref=<tag>` or `curl -fsI <blob-url>`. If any link fails, fix it or select `verify-inconclusive`.
 
 **Mandatory closing block — reporter @-mention with confirmation language.** Every template below **except `Still-reproduces`** ends with this @-mention of the original reporter:
 
-> @\<reporter\> — please confirm the symptom is gone on a recent build (≥ v0.0.\<Z\>) and reopen with a fresh reproducer if you observe otherwise.
+> @<reporter> — please test v0.0.<Z> or newer and reply with a reproducer if the symptom remains.
 
-The skill cannot independently confirm a closed-as-fixed verdict — only the reporter knows whether their original symptom is gone in their environment. The @-mention is what converts a "skill says it's fixed" claim into actionable confirmation work for QA. Customize `<Z>` per case (the version that shipped the fix or `$LATEST`), but never omit the line.
+Only the reporter can confirm whether the original symptom is gone in their environment. The @-mention converts a verification result into actionable confirmation work for QA. Customize `<Z>` per case (the version that shipped the fix or `$LATEST`), but never omit the line.
 
 **Mandatory unanswered-question prefix and dual @-mention.** When Step 3 sets `UNANSWERED_MAINT_LOGIN` (a maintainer's question is older than 7 days and the reporter never replied), the verdict comment changes shape:
 
@@ -211,48 +214,32 @@ The skill cannot independently confirm a closed-as-fixed verdict — only the re
 
 2. **Replace the closing reporter-only @-mention with a dual @-mention** that names BOTH the maintainer (acknowledging the open question) and the reporter (per the standard confirmation pattern):
 
-   > @\<UNANSWERED_MAINT_LOGIN\> — flagging that your question above is still open; the verification below may answer it. @\<reporter\> — please confirm the symptom is gone on a recent build (≥ v0.0.\<Z\>) and reopen with a fresh reproducer if you observe otherwise.
+   > @<UNANSWERED_MAINT_LOGIN> — your question above is still open; the verification below may answer it. @<reporter> — please test v0.0.<Z> or newer and reply with a reproducer if the symptom remains.
 
-   **Applies to `fixed-on-latest` and `by-design` only.** Still-reproduces has no closing reporter @-mention by design (see L174), so there's nothing to replace; its only nod to the unanswered maintainer is the lead paragraph from step 1.
+   **Applies to `fixed-on-latest` and `by-design` only.** Still-reproduces has no closing reporter mention, as defined in **Per-verdict length defaults**. Its only reference to the unanswered maintainer is the lead paragraph from step 1.
 
 The skill becomes the *unsticking voice* on a thread that has gone quiet — never a clueless interruption when discussion is fresh (Step 3 already filtered the within-7-day case).
 
-**Comment template (fixed / inconclusive — bug not reproduced on latest):**
+**Comment template (fixed — bug not reproduced on the newest release tag):**
 
 ````markdown
 ## Stale-issue verification — automated
 
 **Reported on:** v0.0.31
 **Verified on:** v0.0.34 (commit abc1234)
-**Verification mode:** runtime reproduction on Brev `<instance-class>` — baseline (v0.0.31) and latest (v0.0.34) both installed and run; comparison made on the captured transcripts. (Or: "runtime reproduction on Brev `<instance-class>` — baseline-install-skipped (`.openclaw-data` rot, see Step 11), latest-only run; verdict capped at 84.")
+**Verification mode:** runtime reproduction on Brev `<instance-class>` — the same reviewed reproducer exposed the symptom on v0.0.31 and ran on v0.0.34.
 **Environment:** Brev <instance-class> (<instance-type>) / Ubuntu 22.04 / <CUDA version if GPU>
 
 ### Baseline (reported version)
 
-- Install: succeeded · skipped (install rotted)
-- Reproducer: extracted verbatim · synthesized (−30 penalty)
-- Result: bug symptom matched (validated) · could not validate (skipped Step 8c gate)
+- Install: requested release tag resolved
+- Reproducer: reconstructed from reported steps · synthesized and reviewed (−30 confidence penalty)
+- Result: matched `<one redacted symptom line or state comparison>` (exit `<code>`)
 
-<details><summary>Baseline transcript</summary>
-
-```text
-<full baseline transcript>
-```
-
-</details>
-
-### Latest
+### Newest Release
 
 - Install: succeeded
-- Result: not reproducible — clean run, no bug symptom observed
-
-<details><summary>Latest transcript</summary>
-
-```text
-<full latest transcript>
-```
-
-</details>
+- Result: expected behavior observed; `<one redacted diagnostic line or state comparison>` (exit `<code>`)
 
 ### Verdict
 
@@ -260,35 +247,60 @@ The skill becomes the *unsticking voice* on a thread that has gone quiet — nev
 
 <details><summary>Relevant changes since v0.0.31</summary>
 
-- abc1234 — fix: <commit subject>
-- def5678 — refactor: <commit subject>
+- abc1234 — fix: <reviewed change that directly addresses the reported symptom>
+- def5678 — fix: <second reviewed change that directly addresses the reported symptom>
 
 </details>
 
-@<reporter> — please confirm the symptom is gone on a recent build (≥ v0.0.<Z>) and reopen with a fresh reproducer if you observe otherwise.
+@<reporter> — please test v0.0.<Z> or newer and reply with a reproducer if the symptom remains.
 
 <!-- nemoclaw-verify-stale v1 verdict=fixed-on-latest YYYY-MM-DD -->
 ````
 
-For a score below 60, use the same evidence structure only as far as needed for the shorter inconclusive comment, state `Verdict: verify-inconclusive; no Project field change proposed`, and end with:
+**Comment template (inconclusive — reported-release verification stopped):**
 
-```text
+````markdown
+## Stale-issue verification — inconclusive
+
+**Reported on:** v0.0.31
+**Verified on:** n/a; newest release tag not run
+**Verification mode:** reported-release verification stopped before the baseline gate completed.
+
+### Reported Release
+
+- Install: requested release tag resolved; install or build failed · succeeded
+- Reproducer: n/a · reconstructed or synthesized and reviewed
+- Result: `<one redacted failure line or no-match explanation>`
+
+### Newest Release
+
+- Install: n/a; not run because the reported-release gate did not complete
+- Result: n/a
+
+### Verdict
+
+**Verdict:** `verify-inconclusive`; no Project field change proposed.
+
+@<reporter> — please reply with the missing environment detail or a revised reproducer named above.
+
 <!-- nemoclaw-verify-stale v1 verdict=verify-inconclusive YYYY-MM-DD -->
-```
+````
 
-**Comment template (still reproduces — Step 9 special case).** Keep this minimal — per L174 it caps at 30–80 words, drops transcripts (issue body has them), and omits the closing reporter @-mention (the reporter knows their own bug is real). Only the unanswered-question lead paragraph (when fired) adds an @-mention; no closing dual @-mention even then.
+**Comment template (still reproduces — Step 9 special case).** Keep this template to 30–80 words, as defined in **Per-verdict length defaults**. Do not include transcripts or a closing reporter mention. Only the unanswered-question lead paragraph adds a mention.
 
 ````markdown
 ## Stale-issue verification — still reproducible
 
 **Reported on:** v0.0.31
 **Verified on:** v0.0.34
-**Verification mode:** runtime reproduction on Brev `<instance-class>` — bug confirmed live on latest.
+**Verification mode:** runtime reproduction on Brev `<instance-class>` — reported symptom observed on the newest release tag.
 
-Skill ran the reported reproducer on v0.0.34 and observed the same symptom. No Project field or label change proposed; will re-verify on the next weekly pass.
+The skill ran the reviewed reproducer on v0.0.34 and observed the same symptom. No Project field or label change proposed; eligible for re-verification after the seven-day marker TTL.
 
 <!-- nemoclaw-verify-stale v1 verdict=still-reproduces YYYY-MM-DD -->
 ````
+
+If Step 8c introduced a command or state change that affects the reproduced behavior, replace `reviewed reproducer` with `synthesized and reviewed reproducer`.
 
 If a partial-fix PR is in flight that targets the same surface, add one sentence naming it between the verification line and the marker: `Partial fix tracked in #NNNN (not yet released).` Keep the total under 80 words.
 
@@ -307,62 +319,69 @@ Wait for explicit approval of that write set. Comment approval does not authoriz
 **Pre-post state-check.** A long-running verification can race with a maintainer closing the issue independently. Re-check `state == OPEN` immediately before applying an accepted write set. If closed, skip every write and report that the maintainer's close action is now authoritative.
 
 ```bash
-STATE=$(gh issue view "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --json state --jq .state)
+CURRENT_ISSUE=$(gh issue view "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --json state,updatedAt)
+STATE=$(printf '%s' "$CURRENT_ISSUE" | jq -r .state)
 if [ "$STATE" != "OPEN" ]; then
   echo "[verify-stale] #$ISSUE_NUMBER closed since verification started — skipping Project, assignment, and comment writes"
   exit 0
 fi
+
+CURRENT_UPDATED_AT=$(printf '%s' "$CURRENT_ISSUE" | jq -r .updatedAt)
+if [ "$CURRENT_UPDATED_AT" != "$ISSUE_UPDATED_AT" ]; then
+  echo "[verify-stale] #$ISSUE_NUMBER changed during verification — refresh comments and Project fields, then present a revised write set for approval"
+  exit 0
+fi
 ```
 
-**Apply the accepted write set in canonical order.** Resolve Project 199, Status-field, option, and item IDs from live GitHub data immediately before writing; do not use hardcoded IDs. For an accepted `fixed-on-latest` plan, set Project Status `Needs Review`, then self-assign only if that assignment was accepted. Treat the Project update and accepted assignment as one fail-fast write set: if either write fails, stop before posting the comment. For inconclusive and still-reproduces verdicts, do not change Project fields or assignment. Post the accepted comment last.
+**Apply the accepted write set in canonical order.** Resolve and validate Project 199, Status-field, option, item, and assignee IDs from live GitHub data immediately before writing; do not use hardcoded IDs. For an accepted `fixed-on-latest` plan, set Project Status `Needs Review`, then self-assign only if that assignment was accepted. For inconclusive and still-reproduces verdicts, do not change Project fields or assignment. Post the accepted comment last.
 
-If Project resolution, update, or accepted assignment fails, stop without posting the comment so the accepted write set is not partially represented. Record the Project update, assignment, and comment outcome in the activity log.
+GitHub does not make these calls transactional. If a Project update succeeds and a later assignment or comment fails, report the exact partial state and stop; do not silently retry with changed text or roll back an accepted field change without new approval. Record each Project, assignment, and comment outcome in the activity log or structured task output.
 
 ---
 
-## Step 11: Infra Failure Handling
+## Step 11: Infrastructure Failure Handling
 
-Two different failure types, two different responses.
+Handle each failure category according to the rules below.
 
-**Latest-install failure** (Step 8d) or reuse-check / provisioning / harness errors: hard infra failure.
+**Install failure on the newest release tag**, reuse-check failure, instance-creation failure, failure to invoke a harness, or failure to retrieve harness evidence: hard infrastructure failure.
+
+After performance evidence retrieval succeeds, fewer than 10 successful exits or numeric samples selects `verify-inconclusive`, as defined in Step 8e.
 
 - Print the error.
-- Apply no Project field or label change — infra failures must not pollute the verification record.
+- Apply no Project field or label change. Infrastructure failures must not change the verification record.
 - Post a short comment **only if explicitly requested by the invoking user**. Default is silent move-on.
 - Continue to the next candidate in batch mode.
 
-The next weekly run retries naturally.
+A later scheduled or manual run retries naturally.
 
-**Baseline-install failure** (Step 8a, reported version won't install on a modern image): not a hard failure — degraded mode.
+**Resolved release tag mismatch:** hard infrastructure failure.
 
-- Set `BASELINE_INSTALL_FAILED=1`, skip 8b/8c, jump to 8d.
-- Step 9 applies the score cap (max 84) — corroboration signals raise the score within the cap but cannot lift past it.
-- Note "baseline-install-skipped" in the final comment so a reviewer knows the verification ran without the script-validation gate.
+- Set `RESOLVED_TAG_MISMATCH=1`.
+- Do not assign a verdict or score.
+- Do not propose or post a GitHub comment.
+- Report the requested and resolved release tags in local task output.
 
-**Baseline-build failure** (Step 8a binary install succeeded, but the in-image `Dockerfile` build during sandbox creation failed on a layer that was structurally removed in a later release): also degraded mode, distinct from binary install rot. Surfaced during the #2007 e2e run on v0.0.18 (`/sandbox/.openclaw-data/workspace/media` symlink layer, removed entirely by #2227).
+**Baseline-install failure** after confirming `$REPORTED_VERSION` (the reported release does not install on the selected image): inconclusive verification.
 
-- Set `BASELINE_INSTALL_FAILED=1` (same flag — Step 9's cap-at-84 rule keys off it regardless of which phase rotted).
-- Skip 8b/8c, jump to 8d.
-- Note "baseline-build-skipped" in the final comment with the specific failing layer/file so a reviewer can see *why* the v0.0.X image no longer builds (the why is usually a follow-on PR that removed the rotted layer).
-- Do not retry the build with a patched Dockerfile — that breaks faithfulness. We're claiming "couldn't independently re-trigger the original symptom on baseline," not "we made the old version work somehow."
+- Set `BASELINE_INSTALL_FAILED=1` and select `verify-inconclusive`.
+- Do not verify the newest release tag solely to produce a fixed verdict. The baseline gate cannot establish that the reviewed script exposed the bug.
+- Keep PR and commit findings as local context. Include only a concise, redacted explanation if the maintainer approves an inconclusive comment.
 
-Both baseline-rot variants share the same downstream effect: Step 9 cap, Step 10 caveat, @-mention reporter to confirm. Distinguishing them in the comment helps a reviewer understand the failure mode without re-running.
+**Baseline-build failure** (Step 8a binary install succeeded, but the in-image `Dockerfile` build failed): inconclusive verification, distinct from binary install failure.
 
-This degradation is expected — old releases rot at multiple phases (binary installer URL drift, base-image dependencies vanish, in-image Dockerfile layers get removed by structural refactors). We still want to extract whatever signal we can from the latest run plus PR/commit evidence, just at a more conservative confidence ceiling.
+- Set `BASELINE_INSTALL_FAILED=1` and select `verify-inconclusive`.
+- Note the specific failing layer or file in local evidence. Include one redacted diagnostic line in an approved comment.
+- Do not patch the old Dockerfile. That would change the reported-release environment.
 
-**Empirical reality after two e2e runs:** baseline-build-rot is the **dominant** failure mode for any reported version more than ~5–7 patches behind, not an edge case. Both #2007 (v0.0.18, 17 patches behind) and #2592 (v0.0.28, 7 patches behind) hit it. The cap-at-84 with reporter @-mention is the **modal** verdict shape for stale-issue verification, not the exception. Reframe expectations accordingly:
+Old releases can fail because installer assets, base-image dependencies, or build layers have changed. That is evidence about reproducibility, not evidence that the reported bug is fixed.
 
-- For issues reported >5 patches behind `$LATEST`, plan for the cap-at-84 path. Pre-flight (PR-search, pickaxe) carries more weight than baseline runtime evidence.
-- For issues reported within 1–4 patches of `$LATEST`, baseline is more likely to install cleanly and the full +50 path is reachable.
-- The skill's design assumes baseline + latest both run cleanly; in practice latest-only with cap-at-84 is the workhorse path. The score-cap is doing real work, not just a fallback.
-
-**Keep-box-on-inconclusive.** When `verify-inconclusive` lands (Step 8c gave up, or Step 9 score < 60), **skip the cleanup trap** for this run if the box was provisioned by this run — set `PROVISIONED_NEW=0` before the trap fires so the EXIT handler is a no-op. Print the `brev shell "$INSTANCE_NAME"` command and an explicit `brev delete "$INSTANCE_NAME"` reminder in the run output so the maintainer can triage and clean up manually. Reused boxes stay regardless. Ship-failed verifications benefit from an inspectable artifact; an unbounded sleep-and-delete in the background isn't reliable across session ends, so we leave deletion explicit.
+**Instance cleanup on inconclusive results.** Keep the approved cleanup trap active. Do not change `PROVISIONED_NEW` to bypass deletion. Retain an instance created by the run only after separate maintainer approval that names the cost, cleanup owner, and deletion deadline; set `KEEP_INSTANCE=1` only for that accepted plan.
 
 ---
 
 ## Step 12: Log to Activity
 
-After each issue (verified, inconclusive, by-design, or infra-failed), append to `${VERIFY_STALE_LOG_DIR:-$HOME/development/daily-rhythm/activity}/nemoclaw-verify-stale-log.md`. The default path matches the personal-organizer convention; export `VERIFY_STALE_LOG_DIR` to point elsewhere (CI, shared volume, etc.). Create the directory if missing — do not assume it exists.
+After each issue, append to `$VERIFY_STALE_LOG_DIR/nemoclaw-verify-stale-log.md` only when the maintainer or invoking automation configured `VERIFY_STALE_LOG_DIR`. Otherwise return the same structured summary in the task output and do not create a persistent file. Never assume a personal organizer, GitLab mirror, home-directory layout, or shared volume.
 
 ```markdown
 ### NVIDIA/NemoClaw#<number> — <title>
@@ -370,13 +389,13 @@ After each issue (verified, inconclusive, by-design, or infra-failed), append to
 **Reported on:** v0.0.31
 **Verified on:** v0.0.34
 **Environment:** CPU | GPU (<instance type>)
-**Box:** reused <name> | provisioned <name> | local (no Brev — Step 6.7 short-circuit)
-**Baseline install:** succeeded | failed (degraded mode)
-**Baseline match:** validated (verbatim) | validated (synth) | failed (verify-inconclusive) | skipped
-**Latest install:** succeeded | failed (infra error)
-**Latest result:** not-reproduced (clean) | still-reproduces | partial / flake | n/a (skipped 8d)
+**Brev instance:** reused <name> | created <name> | local (no Brev instance created)
+**Baseline install:** succeeded | failed (verify-inconclusive)
+**Baseline match:** validated (reconstructed) | validated (synth) | failed (verify-inconclusive) | skipped
+**Newest-release install:** succeeded | failed (infrastructure error)
+**Newest-release result:** expected result, no symptom | still-reproduces | partial | intermittent | n/a (Step 8d skipped)
 **Confidence:** 88 / 100 | n/a (still-reproduces)
-**Verdict marker:** fixed-on-latest | verify-inconclusive | by-design | still-reproduces | none (infra)
+**Verdict marker:** fixed-on-latest | verify-inconclusive | by-design | still-reproduces | none (infrastructure failure)
 **Project Status:** moved to Needs Review | moved to Won't Fix | unchanged | update failed
 **Assignee:** @<GH_IDENTITY> | not assigned (verdict: <X>)
 **Brev wall time (approx):** N min
@@ -390,7 +409,6 @@ Create the file if missing, with this header:
 # NemoClaw — Verify Stale Log
 
 A running record of stale-issue verification runs on NVIDIA/NemoClaw.
-Persisted via daily-rhythm to GitLab.
 
 ---
 ```
@@ -405,7 +423,7 @@ At end of a batch session, prepend a session summary:
 **Recorded `verify-inconclusive` verdicts:** N
 **Local-first short-circuits (no Brev cost):** N
 **Skipped (Windows / macOS / integration / no version):** N
-**Infra failures:** N
+**Infrastructure failures:** N
 **Brev wall time:** N min · approx $X.XX
 
 ---
@@ -417,7 +435,7 @@ Never stage or commit the log to the NemoClaw repo.
 
 ## Cadence
 
-- **Weekly cron** — Monday morning, batch mode, ≤15 issues (the Step 1 cap, sliced after Step 3/4 filters).
+- **Scheduled automation** — batch mode, ≤15 issues. The automation owner chooses the cadence and log location.
 - **Manual** — invoke with a single issue number anytime.
 
 ---
@@ -425,8 +443,8 @@ Never stage or commit the log to the NemoClaw repo.
 ## Out of Scope (v1)
 
 - Auto-closing issues. The skill may make only the explicitly approved Project, assignment, and comment writes described above; a human separately decides whether to close.
-- macOS verification *via the Brev path*. Brev offers no macOS instances. The Step 6.7 local-first short-circuit *does* run on a maintainer's macOS laptop — so manual single-issue runs against pure-CLI bugs work on macOS. The weekly batch cron is Linux-only because that path always uses Brev.
-- Issues requiring third-party integration credentials (Slack, Discord, Telegram, Hermes, OpenClaw, WeChat).
+- macOS verification *via the Brev path*. Brev offers no macOS instances. The Step 6.7 local-first short-circuit *does* run on a maintainer's macOS laptop, so manual single-issue runs against pure-CLI bugs work on macOS. Any batch candidate that needs Brev is verified on Linux and must follow the platform skip rules.
+- Issues requiring third-party messaging credentials (Slack, Discord, Telegram, WeChat).
 - Service-account bot identity. v1 runs under each maintainer's own GitHub credentials.
 - Verdict labels. `fixed-on-latest`, `verify-inconclusive`, and `status: wont-fix` are not canonical labels; durable comment markers and Project fields carry the workflow state.
 

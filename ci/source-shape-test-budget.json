@@ -596,6 +596,16 @@
       "file": "test/growth-guardrails-workflow-boundary.test.ts",
       "test": "flags %s",
       "category": "security"
+    },
+    {
+      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
+      "test": "returns a credential-free JSON manifest byte for byte",
+      "category": "security"
+    },
+    {
+      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
+      "test": "leaves an installed package manifest that names a credential-shaped dependency",
+      "category": "security"
     }
   ]
 }
