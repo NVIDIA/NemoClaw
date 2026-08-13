@@ -2,11 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { defineConfig } from "oxlint";
-import core from "ultracite/oxlint/core";
 
-const disabledUltraciteRules = Object.fromEntries(
-  Object.keys(core.rules ?? {}).map((rule) => [rule, "off"]),
-);
+import { oxcIgnorePatterns } from "./oxc.ignore-patterns.ts";
 
 const strictComplexityFiles = [
   "src/lib/actions/sandbox/status.ts",
@@ -40,16 +37,15 @@ export default defineConfig({
     browser: true,
     node: true,
   },
-  extends: [core],
-  ignorePatterns: [...(core.ignorePatterns ?? []), ".claude", ".pi"],
+  ignorePatterns: oxcIgnorePatterns,
   jsPlugins: [
     {
       name: "sonarjs",
       specifier: "eslint-plugin-sonarjs",
     },
   ],
+  plugins: ["import", "typescript"],
   rules: {
-    ...disabledUltraciteRules,
     "sonarjs/cognitive-complexity": ["error", 149],
     "no-undef": "error",
   },

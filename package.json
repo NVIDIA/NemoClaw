@@ -151,7 +151,6 @@
     "tsx": "^4.21.0",
     "typebox": "1.1.38",
     "typescript": "6.0.3",
-    "ultracite": "7.10.3",
     "vitest": "^4.1.9"
   }
 }

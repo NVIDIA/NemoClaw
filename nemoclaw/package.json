@@ -42,7 +42,6 @@
     "oxlint": "1.78.0",
     "oxlint-tsgolint": "7.0.2001",
     "typescript": "6.0.3",
-    "ultracite": "7.10.3",
     "vitest": "^4.1.9"
   },
   "engines": {

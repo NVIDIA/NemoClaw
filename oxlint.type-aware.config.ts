@@ -2,11 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { defineConfig } from "oxlint";
-import core from "ultracite/oxlint/core";
 
-const disabledUltraciteRules = Object.fromEntries(
-  Object.keys(core.rules ?? {}).map((rule) => [rule, "off"]),
-);
+import { oxcIgnorePatterns } from "./oxc.ignore-patterns.ts";
 
 export default defineConfig({
   categories: {
@@ -18,13 +15,12 @@ export default defineConfig({
     style: "off",
     suspicious: "off",
   },
-  extends: [core],
-  ignorePatterns: [...(core.ignorePatterns ?? []), ".claude", ".pi"],
+  ignorePatterns: oxcIgnorePatterns,
   options: {
     typeAware: true,
   },
+  plugins: ["typescript"],
   rules: {
-    ...disabledUltraciteRules,
     "typescript/no-floating-promises": "error",
   },
 });
