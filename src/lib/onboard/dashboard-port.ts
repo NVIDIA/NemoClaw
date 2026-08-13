@@ -525,6 +525,62 @@ export async function withDashboardPortReservationScope<T>(
   }
 }
 
+interface DashboardPortScopedSandboxEntryPointDeps<
+  Args extends unknown[],
+  Result,
+  BaseImageResolutionContext,
+  ComputePlan,
+> {
+  createBaseImageResolutionContext(): BaseImageResolutionContext;
+  createSandboxWithBaseImageResolution(
+    baseImageResolutionContext: BaseImageResolutionContext,
+    computePlan: ComputePlan,
+    managedWorkloadRebuild: null,
+    temporaryManagedRuntime: boolean,
+    temporaryManagedRuntimeCatalog: null,
+    dashboardPortReservationScope: DashboardPortReservationScope,
+    ...args: Args
+  ): Promise<Result>;
+  resolveComputePlan(): ComputePlan;
+}
+
+export function createDashboardPortScopedSandboxEntryPoints<
+  Args extends unknown[],
+  Result,
+  BaseImageResolutionContext,
+  ComputePlan,
+>(
+  deps: DashboardPortScopedSandboxEntryPointDeps<
+    Args,
+    Result,
+    BaseImageResolutionContext,
+    ComputePlan
+  >,
+): {
+  createSandbox: (...args: Args) => Promise<Result>;
+  createSandboxWithTemporaryManagedRuntime: (...args: Args) => Promise<Result>;
+} {
+  const create = async (temporaryManagedRuntime: boolean, args: Args): Promise<Result> => {
+    const computePlan = deps.resolveComputePlan();
+    return withDashboardPortReservationScope((dashboardPortReservationScope) =>
+      deps.createSandboxWithBaseImageResolution(
+        deps.createBaseImageResolutionContext(),
+        computePlan,
+        null,
+        temporaryManagedRuntime,
+        null,
+        dashboardPortReservationScope,
+        ...args,
+      ),
+    );
+  };
+
+  return {
+    createSandbox: (...args) => create(false, args),
+    createSandboxWithTemporaryManagedRuntime: (...args) => create(true, args),
+  };
+}
+
 /**
  * Preflight scan of the dashboard port range. If every port in
  * [DASHBOARD_PORT_RANGE_START, DASHBOARD_PORT_RANGE_END] is bound on

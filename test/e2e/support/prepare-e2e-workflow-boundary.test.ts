@@ -117,7 +117,7 @@ describe("prepare-e2e workflow boundary", () => {
     const untrustedPrepare = untrustedJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
     untrustedPrepare.uses = "./.github/actions/prepare-e2e";
 
-    const orderedJob = workflow.jobs["network-policy"];
+    const orderedJob = workflow.jobs["brave-search"];
     const orderedPrepareIndex = orderedJob.steps!.findIndex(
       (step) => step.name === PREPARE_E2E_STEP,
     );
@@ -139,8 +139,8 @@ describe("prepare-e2e workflow boundary", () => {
         "shared-e2e prepare-e2e invocation must not override its canonical contract",
         "inference-routing must not load prepare-e2e from the target checkout",
         "inference-routing must use prepare-e2e exactly once",
-        "network-policy must check out the repository before prepare-e2e",
-        "network-policy must authenticate to Docker Hub before prepare-e2e",
+        "brave-search must check out the repository before prepare-e2e",
+        "brave-search must authenticate to Docker Hub before prepare-e2e",
       ]),
     );
   });

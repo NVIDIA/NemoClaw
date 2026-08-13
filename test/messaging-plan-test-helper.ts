@@ -168,6 +168,13 @@ function legacyMessagingConfigEnv(env: Record<string, string>): Record<string, s
   assignMentionMode(next, "TELEGRAM_REQUIRE_MENTION", telegramConfig.requireMention);
   assignString(next, "TELEGRAM_GROUP_POLICY", telegramConfig.groupPolicy);
 
+  const whatsappConfig = decodeJsonEnv<Record<string, unknown>>(
+    env,
+    "NEMOCLAW_WHATSAPP_CONFIG_B64",
+    {},
+  );
+  assignString(next, "WHATSAPP_MODE", whatsappConfig.mode);
+
   const discordGuilds = decodeJsonEnv<Record<string, unknown>>(
     env,
     "NEMOCLAW_DISCORD_GUILDS_B64",

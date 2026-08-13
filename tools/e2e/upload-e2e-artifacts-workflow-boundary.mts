@@ -190,13 +190,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
-    "network-policy",
-    {
-      name: "e2e-network-policy-${{ matrix.scenario }}",
-      path: "e2e-artifacts/live/network-policy/${{ matrix.scenario }}/",
-    },
-  ],
-  [
     "common-egress-agent",
     {
       name: "e2e-common-egress-agent-${{ matrix.scenario }}",
@@ -215,13 +208,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     {
       name: "e2e-hermes-slack",
       path: "e2e-artifacts/live/hermes-slack-e2e/",
-    },
-  ],
-  [
-    "shields-config",
-    {
-      name: "e2e-shields-config",
-      path: "e2e-artifacts/live/shields-config/\n",
     },
   ],
   [

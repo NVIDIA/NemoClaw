@@ -16,68 +16,12 @@ import {
   runManagedImagePromotion,
   runPublicationBarrier,
 } from "./helpers/managed-image-publication-barrier";
-
-type Step = {
-  env?: Record<string, unknown>;
-  id?: string;
-  if?: string;
-  name?: string;
-  run?: string;
-  uses?: string;
-  with?: Record<string, unknown>;
-  "working-directory"?: string;
-};
-
-type MatrixEntry = {
-  agent?: string;
-  arch?: string;
-  artifact_platform?: string;
-  base_alias?: string;
-  base_image?: string;
-  base_repository?: string;
-  display_name?: string;
-  dockerfile?: string;
-  image?: string;
-  repository?: string;
-  platform?: string;
-  required_binary?: string;
-  runner?: string;
-};
-
-type Job = {
-  env?: Record<string, unknown>;
-  if?: string;
-  needs?: string | string[];
-  permissions?: Record<string, string>;
-  "runs-on"?: string;
-  steps?: Step[];
-  strategy?: {
-    "fail-fast"?: boolean;
-    matrix?: { include?: MatrixEntry[] };
-  };
-  "timeout-minutes"?: number;
-  uses?: string;
-};
-
-type Workflow = {
-  concurrency?: {
-    "cancel-in-progress"?: string | boolean;
-    group?: string;
-  };
-  env?: Record<string, string>;
-  jobs?: Record<string, Job>;
-  on?: {
-    pull_request?: {
-      branches?: string[];
-      paths?: string[];
-    };
-    push?: {
-      paths?: string[];
-    };
-    workflow_call?: unknown;
-  };
-  permissions?: Record<string, string>;
-};
+import type {
+  Job,
+  MatrixEntry,
+  Step,
+  Workflow,
+} from "./helpers/managed-image-publication-workflow-types";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
@@ -525,12 +469,18 @@ describe("complete managed-image publication workflow", () => {
     expect(prBuilder.permissions).toEqual({ contents: "read", packages: "write" });
     expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(step(prBuilder, "Checkout").with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
-    expect(matrix.map(({ agent }) => agent)).toEqual([
-      "openclaw",
+    const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
+    expect([...matrixByAgent.keys()].sort()).toEqual([
       "hermes",
       "langchain-deepagents-code",
+      "openclaw",
     ]);
     expect(matrix.every(({ base_alias }) => base_alias?.endsWith(":latest"))).toBe(true);
+    expect(matrixByAgent.get("openclaw")?.base_dockerfile).toBe("Dockerfile.base");
+    expect(matrixByAgent.get("hermes")?.base_dockerfile).toBe("agents/hermes/Dockerfile.base");
+    expect(matrixByAgent.get("langchain-deepagents-code")?.base_dockerfile).toBe(
+      "agents/langchain-deepagents-code/Dockerfile.base",
+    );
     expect(steps.indexOf(permissionDrift)).toBeGreaterThan(
       steps.indexOf(step(prBuilder, "Checkout")),
     );
@@ -545,6 +495,11 @@ describe("complete managed-image publication workflow", () => {
       "PR base resolution is missing",
     );
     expect(resolveBase).toContain('.platform.architecture == "amd64"');
+    expect(resolveBase).toContain(
+      'git diff --quiet "$BASE_SHA" "$CANDIDATE_SHA" -- "$BASE_DOCKERFILE"',
+    );
+    expect(resolveBase).toContain('--file "$BASE_DOCKERFILE"');
+    expect(resolveBase).toContain('--tag "$LOCAL_BASE_REFERENCE"');
     expect(resolveBase).toContain('reference="${BASE_REPOSITORY}@${digest}"');
     expect(resolveBase).toContain('actual="sha256:$(sha256sum "$exact_raw"');
 
@@ -713,7 +668,7 @@ describe("complete managed-image publication workflow", () => {
     expect(qaBuilder.permissions).toEqual({ contents: "read" });
     expect(qaBuilder.env).toMatchObject({
       CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
-      STAGING_QA_SOURCE_SHA: "250d4abd2d602f864659c06d170699347b5d38bc",
+      STAGING_QA_SOURCE_SHA: "ce96811ddb418ad01c040521a1fe912b5bcb405e",
       STAGING_QA_BASE_IMAGE: "nemoclaw-deepagents-code-base:staging-31396519688",
     });
     expect(qaBuilder.env).not.toHaveProperty("STAGING_PRODUCER_SHA");
@@ -898,11 +853,17 @@ fi
           ...process.env,
           ALIAS_RAW: aliasRaw,
           BASE_ALIAS: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+          BASE_DOCKERFILE: "Dockerfile.base",
           BASE_REPOSITORY: "ghcr.io/nvidia/nemoclaw/sandbox-base",
+          BASE_SHA: spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim(),
+          CANDIDATE_SHA: spawnSync("git", ["rev-parse", "HEAD"], {
+            encoding: "utf8",
+          }).stdout.trim(),
           DISPLAY_NAME: "OpenClaw",
           EXACT_RAW: exactRaw,
           GITHUB_OUTPUT: output,
           GITHUB_STEP_SUMMARY: summary,
+          LOCAL_BASE_REFERENCE: "nemoclaw-managed-pr/openclaw-base:test",
           PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
           RUNNER_TEMP: temporaryRoot,
         },
