@@ -1032,7 +1032,6 @@ jobs:
       host_packages: ${{ matrix.host_packages }}
       host_preparation: ${{ matrix.host_preparation }}
       runner_comparison: ${{ matrix.runner_comparison }}
-      runner_pressure: ${{ matrix.runner_pressure }}
       compatible_api_key: ${{ matrix.compatible_api_key }}
       shard: ${{ matrix.shard }}
       artifact_layout: ${{ matrix.artifact_layout }}
@@ -1070,7 +1069,6 @@ jobs:
       host_packages: ${{ matrix.host_packages }}
       host_preparation: ${{ matrix.host_preparation }}
       runner_comparison: ${{ matrix.runner_comparison }}
-      runner_pressure: ${{ matrix.runner_pressure }}
       compatible_api_key: ${{ matrix.compatible_api_key }}
       shard: ${{ matrix.shard }}
       artifact_layout: ${{ matrix.artifact_layout }}
@@ -1109,7 +1107,6 @@ jobs:
       host_packages: ${{ matrix.host_packages }}
       host_preparation: ${{ matrix.host_preparation }}
       runner_comparison: ${{ matrix.runner_comparison }}
-      runner_pressure: ${{ matrix.runner_pressure }}
       compatible_api_key: ${{ matrix.compatible_api_key }}
       shard: ${{ matrix.shard }}
       artifact_layout: ${{ matrix.artifact_layout }}

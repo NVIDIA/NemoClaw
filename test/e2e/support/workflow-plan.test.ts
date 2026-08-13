@@ -297,6 +297,12 @@ describe("E2E workflow plan", () => {
     expect(() =>
       validateE2eTargetCatalogue([{ ...target, artifactLayout: "flat-shard", shard: "default" }]),
     ).toThrow("flat artifact layout requires a named shard");
+    expect(() =>
+      validateE2eTargetCatalogue([
+        target,
+        { ...target, id: "duplicate-evidence", displayName: "Evidence: duplicates a shard" },
+      ]),
+    ).toThrow("duplicates an evidence target and shard");
   });
 
   it.each([

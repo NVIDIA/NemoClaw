@@ -86,7 +86,8 @@ describe("standard E2E execution profile boundary", () => {
     steps.find((step) => step.name === "Validate catalogue execution plan")!.run = "echo skipped";
     steps.find((step) => step.name === "Provision trusted Hermes E2E swap")!.run +=
       "\necho candidate-controlled";
-    steps.find((step) => step.name === "Add swap for Hermes image rebuild")!.if = "always()";
+    steps.find((step) => step.name === "Add swap for Hermes image rebuild")!.run =
+      "echo unsafe swap";
     steps.find((step) => step.name === "Initialize runner comparison telemetry")!.run =
       "echo skipped";
     steps.find((step) => step.name === "Run catalogue E2E target")!.env!.COMPATIBLE_API_KEY =
@@ -130,24 +131,28 @@ describe("standard E2E execution profile boundary", () => {
     const githubOutput = path.join(directory, "github-output");
     const githubEnvironment = path.join(directory, "github-environment");
     const environment = {
-      ...process.env,
       ARTIFACT_LAYOUT: "target-shard",
+      BASH_ENV: "/dev/null",
       CANDIDATE_REPOSITORY: "NVIDIA/NemoClaw",
       CANDIDATE_SHA: "a".repeat(40),
       CATALOGUE_ID: "hermes-inference-switch",
+      ENV: "/dev/null",
       GITHUB_ENV: githubEnvironment,
       GITHUB_OUTPUT: githubOutput,
       GITHUB_WORKSPACE_VALUE: directory,
       HOST_PACKAGES: "",
       HOST_PREPARATION: "hermes-swap",
       INSTALL_MODE: "credential-free",
+      LC_ALL: "C",
+      PATH: process.env.PATH ?? "",
       SHARD: "anthropic",
       TARGET_ID: "hermes-inference-switch",
       TEST_FILE: "test/e2e/live/hermes-inference-switch.test.ts",
     };
 
     try {
-      const valid = spawnSync("bash", ["-c", planScript], {
+      const shellArguments = ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c"];
+      const valid = spawnSync("bash", [...shellArguments, planScript], {
         encoding: "utf8",
         env: environment,
       });
@@ -161,7 +166,7 @@ describe("standard E2E execution profile boundary", () => {
           "NEMOCLAW_E2E_SHARD=anthropic\n",
       );
 
-      const unsafe = spawnSync("bash", ["-c", planScript], {
+      const unsafe = spawnSync("bash", [...shellArguments, planScript], {
         encoding: "utf8",
         env: { ...environment, TARGET_ID: "../../runner-temp" },
       });

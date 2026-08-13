@@ -926,9 +926,9 @@ function validateLargerRunnerRouting(
   }
 
   for (const [jobName, jobValue] of Object.entries(jobs)) {
-    const runsOn = stringValue(asRecord(jobValue)["runs-on"]);
     if (
-      runsOn.includes("needs.generate-matrix.outputs.runner_routing") &&
+      jobName !== "generate-matrix" &&
+      JSON.stringify(jobValue).includes("needs.generate-matrix.outputs.runner_routing") &&
       !ROUTED_JOB_NAMES.has(jobName)
     ) {
       errors.push(`${jobName} job must not use the larger-runner routing map`);

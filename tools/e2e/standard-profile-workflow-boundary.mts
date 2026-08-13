@@ -135,7 +135,6 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       host_packages: "${{ matrix.host_packages }}",
       host_preparation: "${{ matrix.host_preparation }}",
       runner_comparison: "${{ matrix.runner_comparison }}",
-      runner_pressure: "${{ matrix.runner_pressure }}",
       compatible_api_key: "${{ matrix.compatible_api_key }}",
       shard: "${{ matrix.shard }}",
       artifact_layout: "${{ matrix.artifact_layout }}",
@@ -180,7 +179,6 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     host_packages: "string",
     host_preparation: "string",
     runner_comparison: "boolean",
-    runner_pressure: "boolean",
     compatible_api_key: "boolean",
     shard: "string",
     artifact_layout: "string",
@@ -285,6 +283,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     'artifact_directory="${artifact_directory}-${SHARD}"',
     'artifact_directory="${artifact_directory}/${SHARD}"',
     'printf \'artifact_directory=%s\\n\' "$artifact_directory" >>"$GITHUB_OUTPUT"',
+    'printf \'upload_name=%s\\n\' "$upload_name" >>"$GITHUB_OUTPUT"',
     'printf \'E2E_ARTIFACT_DIR=%s/%s\\n\' "$GITHUB_WORKSPACE_VALUE" "$artifact_directory" >>"$GITHUB_ENV"',
     'printf \'NEMOCLAW_E2E_SHARD=%s\\n\' "$SHARD" >>"$GITHUB_ENV"',
   ];
@@ -318,7 +317,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   if (
     trustedSwap?.if !== "${{ inputs.host_preparation == 'hermes-swap' }}" ||
     trustedSwap.id !== "trusted_hermes_swap" ||
-    trustedSwap.shell !== "/bin/bash --noprofile --norc -e -o pipefail {0}" ||
+    trustedSwap.shell !== EXECUTION_PLAN_SHELL ||
     trustedSwap.run !== TRUSTED_HERMES_SWAP_SCRIPT ||
     !isDeepStrictEqual(record(trustedSwap.env), {
       BASH_ENV: "/dev/null",
@@ -402,9 +401,36 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     errors.push("standard E2E profile must restore the planned exact-commit CLI artifact");
   }
   const rebuildSwap = requireStep(errors, workflowSteps, "Add swap for Hermes image rebuild");
+  const rebuildSwapRun = String(rebuildSwap?.run ?? "");
+  const rebuildSwapFragments = [
+    '[[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${REF}" != "refs/heads/main" ]]',
+    '[[ "${RUNNER_ENVIRONMENT_KIND}" != "github-hosted"',
+    'fail "refusing unexpected pre-existing rebuild swap path"',
+    "required_disk_bytes=$((swap_file_bytes + reserve_bytes))",
+    "trap cleanup_partial_swap EXIT",
+    '/usr/bin/sudo -n /usr/bin/fallocate -l "${swap_file_bytes}" "${swap_file}"',
+    '/usr/bin/sudo -n /usr/sbin/swapoff "${swap_file}" || true',
+    'fail "rebuild swap did not become active"',
+  ];
   if (
     rebuildSwap?.if !== "${{ inputs.host_preparation == 'rebuild-swap' }}" ||
-    !String(rebuildSwap.run).includes("fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap") ||
+    rebuildSwap.shell !== EXECUTION_PLAN_SHELL ||
+    !isDeepStrictEqual(record(rebuildSwap.env), {
+      BASH_ENV: "/dev/null",
+      CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+      DISPATCH_SHA: "${{ github.sha }}",
+      ENV: "/dev/null",
+      EVENT_NAME: "${{ github.event_name }}",
+      EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
+      LC_ALL: "C",
+      REF: "${{ github.ref }}",
+      REPOSITORY: "${{ github.repository }}",
+      RUNNER_ARCH_KIND: "${{ runner.arch }}",
+      RUNNER_ENVIRONMENT_KIND: "${{ runner.environment }}",
+      RUNNER_OS_KIND: "${{ runner.os }}",
+      WORKFLOW_SHA: "${{ github.workflow_sha }}",
+    }) ||
+    rebuildSwapFragments.some((fragment) => !rebuildSwapRun.includes(fragment)) ||
     workflowSteps.indexOf(rebuildSwap ?? {}) !== workflowSteps.indexOf(restore ?? {}) + 1
   ) {
     errors.push("standard E2E profile must add the reviewed Hermes rebuild swap after CLI restore");

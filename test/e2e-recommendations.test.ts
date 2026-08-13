@@ -13,6 +13,7 @@ import {
   extractFreeStandingE2eJobs,
   normalizeE2eCoverageResult,
   normalizeE2eTargetAdvisorResult,
+  trustedE2eRecommendationInventory,
 } from "../tools/advisors/e2e-recommendations.mts";
 import { isCommandShapedE2eText } from "../tools/advisors/e2e-text.mts";
 
@@ -67,6 +68,55 @@ function metadata(
 }
 
 describe("E2E recommendation normalizer", () => {
+  it("maps changed catalogue tests to their logical advisor selectors", () => {
+    const inventory = trustedE2eRecommendationInventory();
+    const trustedJobIds = new Set([...inventory.allowedJobIds, ...inventory.manualOnlyJobIds]);
+
+    expect([...trustedJobIds]).toEqual(
+      expect.arrayContaining([
+        "bedrock-runtime-compatible-anthropic",
+        "channels-stop-start",
+        "security-posture",
+      ]),
+    );
+
+    const channels = normalizeE2eTargetAdvisorResult(
+      { required: [], optional: [], confidence: "high" },
+      metadata({ changedFiles: ["test/e2e/live/channels-stop-start.test.ts"] }),
+    );
+    expect(channels.required.map(({ id }) => id)).toContain("channels-stop-start");
+    expect(channels.required.map(({ id }) => id)).not.toContain("channels-stop-start-openclaw");
+    expect(channels.required.map(({ id }) => id)).not.toContain("channels-stop-start-hermes");
+
+    const bedrock = normalizeE2eTargetAdvisorResult(
+      { required: [], optional: [], confidence: "high" },
+      metadata({ changedFiles: ["test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts"] }),
+    );
+    expect(bedrock.required.map(({ id }) => id)).toContain(
+      "bedrock-runtime-compatible-anthropic",
+    );
+    expect(bedrock.required.map(({ id }) => id)).not.toContain(
+      "bedrock-runtime-compatible-anthropic-openclaw",
+    );
+
+    const rejected = normalizeE2eTargetAdvisorResult(
+      {
+        required: [
+          {
+            id: "rebuild-openclaw",
+            workflow: E2E_WORKFLOW,
+            selectorType: "job",
+            reason: "unrelated credentialed selector",
+          },
+        ],
+        optional: [],
+        confidence: "high",
+      },
+      metadata({ changedFiles: [] }),
+    );
+    expect(rejected.required.map(({ id }) => id)).not.toContain("rebuild-openclaw");
+  });
+
   it("loads the trusted inventory without repository development dependencies", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-recommendations-runtime-"));
     try {

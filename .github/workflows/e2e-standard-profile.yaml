@@ -63,9 +63,6 @@ on:
       runner_comparison:
         required: true
         type: boolean
-      runner_pressure:
-        required: true
-        type: boolean
       compatible_api_key:
         required: true
         type: boolean
@@ -379,14 +376,103 @@ jobs:
 
       - name: Add swap for Hermes image rebuild
         if: ${{ inputs.host_preparation == 'rebuild-swap' }}
-        shell: bash
-        run: |
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          ENV: /dev/null
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          LC_ALL: C
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
+          RUNNER_OS_KIND: ${{ runner.os }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |-
           set -euo pipefail
-          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
-          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
-          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
-          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
-          swapon --show
+          readonly swap_file="/mnt/nemoclaw-hermes-rebuild.swap"
+          readonly swap_file_bytes=34359738368
+          readonly reserve_bytes=17179869184
+          swap_created=0
+          swap_active=0
+
+          fail() {
+            printf 'Trusted Hermes rebuild swap setup failed: %s\n' "$1" >&2
+            exit 1
+          }
+
+          if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${REF}" != "refs/heads/main" ]]; then
+            fail "workflow must run from NVIDIA/NemoClaw main"
+          fi
+          if [[ "${EVENT_NAME}" != "push" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then
+            fail "workflow event must be push or workflow_dispatch"
+          fi
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${CHECKOUT_SHA}" ]]; then
+            if [[ ! "${CHECKOUT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+              fail "checkout SHA must be lowercase 40-hex"
+            fi
+            if [[ ! "${EXPECTED_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ || "${WORKFLOW_SHA}" != "${EXPECTED_WORKFLOW_SHA}" || "${WORKFLOW_SHA}" != "${DISPATCH_SHA}" ]]; then
+              fail "workflow source must match the trusted dispatch revision"
+            fi
+          else
+            if [[ -n "${CHECKOUT_SHA}" || -n "${EXPECTED_WORKFLOW_SHA}" ]]; then
+              fail "direct main runs must not request an alternate checkout or workflow revision"
+            fi
+            if [[ ! "${WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ || "${WORKFLOW_SHA}" != "${DISPATCH_SHA}" ]]; then
+              fail "direct main workflow source must match the run revision"
+            fi
+          fi
+          if [[ "${RUNNER_ENVIRONMENT_KIND}" != "github-hosted" || "${RUNNER_OS_KIND}" != "Linux" || "${RUNNER_ARCH_KIND}" != "X64" ]]; then
+            fail "rebuild swap requires an ephemeral GitHub-hosted Linux x64 runner"
+          fi
+          if [[ "$(/usr/bin/stat -c "%F:%u:%g" -- /mnt)" != "directory:0:0" ]]; then
+            fail "/mnt must be a root-owned directory"
+          fi
+          if /usr/bin/sudo -n /usr/bin/test -e "${swap_file}" || /usr/bin/sudo -n /usr/bin/test -L "${swap_file}"; then
+            fail "refusing unexpected pre-existing rebuild swap path"
+          fi
+          available_bytes="$(/usr/bin/df --block-size=1 --output=avail /mnt | /usr/bin/tail -n 1 | /usr/bin/tr -d "[:space:]")"
+          required_disk_bytes=$((swap_file_bytes + reserve_bytes))
+          if [[ ! "${available_bytes}" =~ ^[0-9]+$ ]] || (( available_bytes < required_disk_bytes )); then
+            fail "insufficient disk capacity for rebuild swap and reserve"
+          fi
+
+          cleanup_partial_swap() {
+            status="$?"
+            if (( status != 0 && swap_created == 1 )); then
+              if (( swap_active == 1 )); then
+                /usr/bin/sudo -n /usr/sbin/swapoff "${swap_file}" || true
+              fi
+              /usr/bin/sudo -n /usr/bin/rm -f -- "${swap_file}" || true
+            fi
+            trap - EXIT
+            exit "${status}"
+          }
+          trap cleanup_partial_swap EXIT
+
+          /usr/bin/sudo -n /usr/bin/fallocate -l "${swap_file_bytes}" "${swap_file}"
+          swap_created=1
+          /usr/bin/sudo -n /usr/bin/chmod 0600 "${swap_file}"
+          file_metadata="$(/usr/bin/sudo -n /usr/bin/stat -c "%F:%u:%g:%a:%s" -- "${swap_file}")"
+          if [[ "${file_metadata}" != "regular file:0:0:600:${swap_file_bytes}" ]]; then
+            fail "rebuild swap file metadata does not match the reviewed allocation"
+          fi
+          remaining_bytes="$(/usr/bin/df --block-size=1 --output=avail /mnt | /usr/bin/tail -n 1 | /usr/bin/tr -d "[:space:]")"
+          if [[ ! "${remaining_bytes}" =~ ^[0-9]+$ ]] || (( remaining_bytes < reserve_bytes )); then
+            fail "rebuild swap allocation did not preserve the required disk reserve"
+          fi
+          /usr/bin/sudo -n /usr/sbin/mkswap --quiet "${swap_file}"
+          /usr/bin/sudo -n /usr/sbin/swapon "${swap_file}"
+          swap_active=1
+          if ! /usr/bin/sudo -n /usr/sbin/swapon --show=NAME --noheadings --raw | /usr/bin/grep -Fx -- "${swap_file}" >/dev/null; then
+            fail "rebuild swap did not become active"
+          fi
+
+          trap - EXIT
+          /usr/bin/sudo -n /usr/sbin/swapon --show
 
       - name: Initialize runner comparison telemetry
         if: ${{ inputs.runner_comparison && inputs.trusted_main }}

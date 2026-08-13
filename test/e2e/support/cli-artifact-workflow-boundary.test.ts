@@ -730,8 +730,9 @@ describe("exact-commit CLI artifact workflow boundary", () => {
 
   it("leaves job timeouts to their dedicated workflow validators", () => {
     const workflow = workflowFixture();
-    const timeoutMinutes = workflow.jobs["hermes-e2e"]["timeout-minutes"];
-    workflow.jobs["hermes-e2e"]["timeout-minutes"] = Number(timeoutMinutes) + 1;
+    const timeoutMinutes = Number(workflow.jobs["hermes-e2e"]["timeout-minutes"]);
+    expect(Number.isFinite(timeoutMinutes)).toBe(true);
+    workflow.jobs["hermes-e2e"]["timeout-minutes"] = timeoutMinutes + 1;
 
     expect(validateCliArtifactWorkflowBoundary(workflow)).toEqual([]);
   });

@@ -210,6 +210,7 @@ Each entry owns these target properties:
 - OpenShell install mode, non-interactive installer selection, and CLI artifact use.
 - Reviewed host packages and host preparation.
 - Runner telemetry and one reviewed artifact layout.
+- PR Review Advisor selection. Standard-profile targets are selectable by default; a credentialed target must set `prAdvisorSelectable` before the Advisor may recommend its logical target ID.
 - Optional Vitest title selector.
 - Target-specific environment variables.
 - Pre-tag release requirement.
@@ -252,7 +253,7 @@ On an exact-revision manual PR run, `NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA` carr
 The standard layout writes product evidence and `evidence-manifest.json` under `e2e-artifacts/live/<target-id>`.
 When `shard` is not `default`, the standard layout adds the shard directory.
 The security-posture matrix uses the reviewed flat-shard layout to preserve its existing artifact names.
-The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets use this shape on `linux-amd64-gpu-rtxpro6000-latest-1`.
+The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets keep the standard layout and select `linux-amd64-gpu-rtxpro6000-latest-1` through the catalogue.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, a credential boundary outside the three profiles, or an execution contract the reusable profile cannot represent.
 

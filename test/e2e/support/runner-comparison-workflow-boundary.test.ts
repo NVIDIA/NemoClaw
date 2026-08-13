@@ -57,4 +57,27 @@ describe("runner comparison workflow boundary", () => {
       "hermes-e2e must use the exact always-run trusted finalize telemetry step",
     );
   });
+
+  it.each(["common-egress-agent", "hermes-e2e", "mcp-bridge"])(
+    "keeps %s telemetry at the bootstrap and publication boundaries",
+    (jobId) => {
+      const value = workflow();
+      const steps = value.jobs[jobId]!.steps;
+      const initializeIndex = steps.findIndex(
+        (step) => step.name === RUNNER_COMPARISON_INITIALIZE_STEP,
+      );
+      const finalizeIndex = steps.findIndex(
+        (step) => step.name === RUNNER_COMPARISON_FINALIZE_STEP,
+      );
+      steps.splice(initializeIndex, 0, { name: "Unexpected bootstrap gap" });
+      steps.splice(finalizeIndex + 2, 0, { name: "Unexpected publication gap" });
+
+      expect(validateRunnerComparisonWorkflow(value)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(`${jobId} must initialize runner comparison telemetry`),
+          expect.stringContaining(`${jobId} must finalize runner comparison telemetry`),
+        ]),
+      );
+    },
+  );
 });

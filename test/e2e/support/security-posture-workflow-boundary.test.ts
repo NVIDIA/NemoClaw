@@ -21,6 +21,7 @@ describe("security-posture catalogue boundary", () => {
         profile: "nvidia-inference",
         installMode: "credential-free",
         restoreCli: true,
+        artifactLayout: "flat-shard",
         environment: {
           NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS: "1",
           NEMOCLAW_E2E_SECURITY_POSTURE: "1",

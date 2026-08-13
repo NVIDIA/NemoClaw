@@ -41,6 +41,7 @@ export interface E2eCatalogueTarget {
   runnerComparison: boolean;
   runnerPressure: boolean;
   compatibleApiKey: boolean;
+  prAdvisorSelectable: boolean;
   shard: string;
   artifactLayout: E2eArtifactLayout;
   selector?: string;
@@ -83,6 +84,7 @@ type TargetOptions = Omit<
   | "runnerComparison"
   | "runnerPressure"
   | "compatibleApiKey"
+  | "prAdvisorSelectable"
   | "shard"
   | "artifactLayout"
 > & {
@@ -97,6 +99,7 @@ type TargetOptions = Omit<
   runnerComparison?: boolean;
   runnerPressure?: boolean;
   compatibleApiKey?: boolean;
+  prAdvisorSelectable?: boolean;
   shard?: string;
   artifactLayout?: E2eArtifactLayout;
   testFile?: string;
@@ -116,6 +119,7 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     runnerComparison = false,
     runnerPressure = false,
     compatibleApiKey = false,
+    prAdvisorSelectable = false,
     shard = "default",
     artifactLayout = "target-shard",
     testFile = `test/e2e/live/${id}.test.ts`,
@@ -136,6 +140,7 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     runnerComparison,
     runnerPressure,
     compatibleApiKey,
+    prAdvisorSelectable,
     shard,
     artifactLayout,
     installNonInteractive,
@@ -156,6 +161,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   target("agent-turn-latency", {
     displayName: "Performance: bounds hosted inference turns for OpenClaw and Hermes",
     profile: "nvidia-inference",
+    prAdvisorSelectable: true,
     timeoutMinutes: 110,
     installMode: "authenticated",
     installNonInteractive: true,
@@ -216,6 +222,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   target("bootstrap-install-smoke", {
     displayName: "Install: bootstraps NemoClaw and completes hosted inference",
     profile: "nvidia-inference",
+    prAdvisorSelectable: true,
     timeoutMinutes: 30,
     installMode: "none",
     restoreCli: false,
@@ -253,6 +260,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     targetId: "channels-stop-start",
     displayName: "Messaging: OpenClaw preserves channels across stop and start",
     profile: "nvidia-inference",
+    prAdvisorSelectable: true,
     testFile: "test/e2e/live/channels-stop-start.test.ts",
     timeoutMinutes: 90,
     installMode: "credential-free",
@@ -278,6 +286,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     targetId: "channels-stop-start",
     displayName: "Messaging: Hermes preserves channels across stop and start",
     profile: "nvidia-inference",
+    prAdvisorSelectable: true,
     testFile: "test/e2e/live/channels-stop-start.test.ts",
     timeoutMinutes: 90,
     installMode: "credential-free",
@@ -447,6 +456,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   target("hermes-discord", {
     displayName: "Messaging: Hermes preserves Discord configuration across rebuild",
     profile: "nvidia-inference",
+    prAdvisorSelectable: true,
     timeoutMinutes: 90,
     installMode: "none",
     restoreCli: true,
@@ -804,6 +814,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   target("rebuild-hermes", {
     displayName: "Rebuild: preserves Hermes state and recovers cron dispatch",
     profile: "nvidia-inference",
+    prAdvisorSelectable: true,
     owningPaths: ["test/e2e/live/rebuild-hermes-cron-restore.ts"],
     timeoutMinutes: 90,
     installMode: "credential-free",
@@ -830,6 +841,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   target("rebuild-hermes-stale-base", {
     displayName: "Rebuild: refreshes a stale Hermes base and restores state",
     profile: "nvidia-inference",
+    prAdvisorSelectable: true,
     testFile: "test/e2e/live/rebuild-hermes.test.ts",
     owningPaths: ["test/e2e/live/rebuild-hermes-cron-restore.ts"],
     timeoutMinutes: 90,
@@ -890,6 +902,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     targetId: "security-posture",
     displayName: "Security: OpenClaw retains the required sandbox posture",
     profile: "nvidia-inference",
+    prAdvisorSelectable: true,
     testFile: "test/e2e/live/full-e2e.test.ts",
     timeoutMinutes: 75,
     installMode: "credential-free",
@@ -915,6 +928,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     targetId: "security-posture",
     displayName: "Security: Hermes retains the required sandbox posture",
     profile: "nvidia-inference",
+    prAdvisorSelectable: true,
     testFile: "test/e2e/live/hermes-e2e.test.ts",
     timeoutMinutes: 75,
     installMode: "credential-free",
@@ -1006,6 +1020,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   target("skill-agent", {
     displayName: "Skills: OpenClaw reads an injected sandbox skill",
     profile: "nvidia-inference",
+    prAdvisorSelectable: true,
     timeoutMinutes: 30,
     installMode: "authenticated",
     restoreCli: true,
@@ -1074,6 +1089,7 @@ export function validateE2eTargetCatalogue(
 ): readonly E2eCatalogueTarget[] {
   const ids = new Set<string>();
   const displayNames = new Set<string>();
+  const evidencePaths = new Set<string>();
   for (const entry of targets) {
     if (!ID_PATTERN.test(entry.id) || ids.has(entry.id)) {
       throw new Error(`E2E target catalogue contains an invalid or duplicate ID: ${entry.id}`);
@@ -1125,6 +1141,11 @@ export function validateE2eTargetCatalogue(
     if (entry.artifactLayout === "flat-shard" && entry.shard === "default") {
       throw new Error(`E2E target ${entry.id} flat artifact layout requires a named shard`);
     }
+    const evidencePath = `${entry.targetId}/${entry.shard}`;
+    if (evidencePaths.has(evidencePath)) {
+      throw new Error(`E2E target ${entry.id} duplicates an evidence target and shard`);
+    }
+    evidencePaths.add(evidencePath);
     if (!E2E_INSTALL_MODES.includes(entry.installMode)) {
       throw new Error(`E2E target ${entry.id} has an invalid install mode`);
     }
@@ -1167,6 +1188,20 @@ export function catalogueTarget(id: string): E2eCatalogueTarget {
 
 export function isPrCandidateCatalogueTarget(target: E2eCatalogueTarget): boolean {
   return target.profile === "standard";
+}
+
+export function isPrAdvisorSelectableCatalogueTarget(target: E2eCatalogueTarget): boolean {
+  return target.prAdvisorSelectable || isPrCandidateCatalogueTarget(target);
+}
+
+export function catalogueRecommendationSelectorIds(): string[] {
+  return [
+    ...new Set(
+      E2E_TARGET_CATALOGUE.filter(isPrAdvisorSelectableCatalogueTarget).map(
+        ({ targetId }) => targetId,
+      ),
+    ),
+  ].sort();
 }
 
 export function catalogueTargetsForChangedFiles(
