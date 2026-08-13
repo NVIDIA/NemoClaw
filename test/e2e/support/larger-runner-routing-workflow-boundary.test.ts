@@ -154,8 +154,8 @@ describe("larger-runner workflow routing boundary", () => {
   it("keeps every catalogue runner key in the trusted routing map (#7145)", () => {
     const usedRunnerKeys = [
       ...new Set(E2E_TARGET_CATALOGUE.map((target) => target.runnerKey).filter(Boolean)),
-    ];
-    expect(usedRunnerKeys).toEqual([...E2E_CATALOGUE_RUNNER_KEYS]);
+    ].sort();
+    expect(usedRunnerKeys).toEqual([...E2E_CATALOGUE_RUNNER_KEYS].sort());
     for (const runnerKey of E2E_CATALOGUE_RUNNER_KEYS) {
       expect(standardRouting).toHaveProperty(runnerKey, "ubuntu-latest");
     }
