@@ -64,7 +64,7 @@ describe("PR review advisor", () => {
     expect(result.reviewCompleteness.requiresHumanReview).toBe(true);
   });
 
-  it("normalizes combined E2E guidance with deterministic floors and canonical selectors", () => {
+  it("normalizes deterministic floors without exposing manual-only PR selectors", () => {
     const changedFiles = ["src/lib/actions/upgrade-sandboxes.ts"];
     const reviewMetadata = metadata({ changedFiles });
     reviewMetadata.deterministic.riskPlan = buildRiskPlan({
@@ -113,15 +113,11 @@ describe("PR review advisor", () => {
       "state-backup-restore",
     ]);
     expect(result.e2e.coverage.optionalTests).toEqual([]);
-    expect(result.e2e.targets.required.map((target) => target.id)).toEqual([
-      "rebuild-openclaw",
-      "state-backup-restore",
-    ]);
+    expect(result.e2e.targets.required).toEqual([]);
     expect(result.e2e.targets.optional).toEqual([]);
-    expect(result.e2e.targets.required[1]).not.toHaveProperty("dispatchCommand");
     expect(JSON.stringify(result.e2e)).not.toContain("rm -rf");
     expect(result.e2e.coverage.confidence).toBe("medium");
-    expect(result.e2e.targets.confidence).toBe("medium");
+    expect(result.e2e.targets.confidence).toBe("low");
 
     const comment = buildComment({ summary: renderSummary(result), result });
     expect(comment).toContain("### E2E guidance");
@@ -129,7 +125,9 @@ describe("PR review advisor", () => {
       "Advisory only. A maintainer can dispatch the default E2E suite for the commit under review.",
     );
     expect(comment).toContain("<code>rebuild-openclaw</code>");
-    expect(comment).toContain("**Recommended E2E:**");
+    expect(comment).toContain("<code>state-backup-restore</code>");
+    expect(comment).toContain("**Recommended E2E:** _None_");
+    expect(comment).toContain("**Manual-only E2E:**");
     expect(comment.match(/<code>rebuild-openclaw<\/code>/gu)).toHaveLength(1);
     expect(comment).not.toContain("Recommended coverage");
     expect(comment).not.toContain("Recommended selectors");

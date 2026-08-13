@@ -592,7 +592,7 @@ test(
     });
     expect(checkoutRef.exitCode, resultText(checkoutRef)).toBe(0);
     const refEvidence = verifyNemoClawRefFidelity({
-      expectedRef: process.env.NEMOCLAW_TUI_EXPECTED_CHECKOUT_SHA,
+      expectedRef: process.env.NEMOCLAW_E2E_EXPECTED_SHA,
       actualRef: checkoutRef.stdout.trim(),
       cliPath: host.commandPath,
       expectedCliPath: CLI_ENTRYPOINT,

@@ -29,7 +29,15 @@ Choose the mode that matches the component responsible for process lifecycle ope
 | `externally-supervised` | A declared platform supervisor | Validates and attaches to the running gateway without managing its process. |
 
 When nothing is declared, NemoClaw keeps its existing managed behavior.
-It uses the packaged gateway user service when that service is installed and otherwise manages a standalone gateway.
+On Linux, the installer selects a packaged gateway user service only after the systemd user manager reports the effective unit and executable identity.
+The installer verifies that identity and the gateway version before NemoClaw uses the service.
+It does not parse a static package unit as the effective service identity.
+
+If the systemd user manager reports a recognized unavailable condition, the installer can keep the existing standalone gateway lifecycle.
+This fallback requires no `.wants`, `.requires`, or `.upholds` activation link for either gateway service in the standard systemd user unit paths.
+The installer stops when `SYSTEMD_UNIT_PATH` overrides those paths because it cannot verify the activation state.
+An activation path stops installation until you restore the user manager or resolve the competing service through its owner.
+Other service query errors, malformed metadata, untrusted paths, executable failures, and version mismatches stop installation.
 
 ## Declare the mode
 

@@ -48,6 +48,19 @@ function okWithKnownGatewayList(command: string, args: readonly string[]): RunRe
     : ok();
 }
 
+function runWithOllamaInventory(inventory: RunResult, failedModels: readonly string[] = []) {
+  const failures = new Set(failedModels);
+  const run: NonNullable<UninstallRunDeps["run"]> = (command, args) =>
+    command === "openshell" && args[0] === "gateway" && args[1] === "list"
+      ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+      : command === "ollama" && args[0] === "list"
+        ? inventory
+        : command === "ollama" && args[0] === "rm" && failures.has(args[1] ?? "")
+          ? notFound()
+          : ok();
+  return vi.fn(run);
+}
+
 function publishManagedLlamaOwner(
   homeDir: string,
   gatewayPort: number,
@@ -133,30 +146,34 @@ describe("uninstall local model profile cleanup", () => {
     expect(errors.join("\n")).toContain("could not inventory reserved managed inference");
   });
 
-  it("states that uninstall preserves the shared Hugging Face cache", () => {
+  it("states that model deletion removes every Ollama model and non-credential Hugging Face cache data", () => {
     const logs: string[] = [];
     const result = runUninstallPlan(
       { assumeYes: false, deleteModels: true, keepOpenShell: true },
       {
-        commandExists: () => false,
+        commandExists: (command) => command === "openshell",
         env: { HOME: "/tmp/nemoclaw-uninstall-model-confirmation" } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: true,
         log: (line) => logs.push(line),
         readLine: () => "no",
-        run: vi.fn(),
+        run: vi.fn(okWithKnownGatewayList),
       },
     );
 
     expect(result.exitCode).toBe(0);
-    expect(logs).toContain("  · Shared Hugging Face model cache: kept");
+    expect(logs).toContain("  · All installed Ollama models");
+    expect(logs).toContain(
+      "  · Shared Hugging Face cache data: deleted; authentication files kept",
+    );
     expect(logs).toContain("Aborted.");
   });
 
-  it("does not run managed cleanup for a shared Hugging Face cache without runtime state", () => {
+  it("requests shared Hugging Face cache-data cleanup during Model stores", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-llama-cache-"));
     const cacheDir = path.join(tmpHome, ".cache", "huggingface");
-    const runLocalModelRuntimeCleanup = vi.fn(() => ok());
+    const log = vi.fn();
+    const runHuggingFaceCacheDataCleanup = vi.fn(() => ok());
     try {
       const result = runUninstallPlan(
         { assumeYes: true, deleteModels: true, keepOpenShell: true },
@@ -165,17 +182,191 @@ describe("uninstall local model profile cleanup", () => {
           env: { HOME: tmpHome } as NodeJS.ProcessEnv,
           existsSync: (target) => target === cacheDir,
           isTty: false,
-          log: () => {},
+          log,
           run: vi.fn(okWithKnownGatewayList),
-          runLocalModelRuntimeCleanup,
+          runHuggingFaceCacheDataCleanup,
         },
       );
 
       expect(result.exitCode).toBe(0);
-      expect(runLocalModelRuntimeCleanup).not.toHaveBeenCalled();
+      expect(runHuggingFaceCacheDataCleanup).toHaveBeenCalledWith(
+        expect.objectContaining({ stdio: "inherit" }),
+      );
+      const modelStoresLogIndex = log.mock.calls.findIndex(
+        ([line]) => line === "[5/6] Model stores",
+      );
+      expect(modelStoresLogIndex).toBeGreaterThanOrEqual(0);
+      expect(log.mock.invocationCallOrder[modelStoresLogIndex]).toBeLessThan(
+        runHuggingFaceCacheDataCleanup.mock.invocationCallOrder[0],
+      );
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
+  });
+
+  it("deletes every model returned by Ollama inventory", () => {
+    const run = runWithOllamaInventory(
+      ok(
+        [
+          "NAME                   ID              SIZE      MODIFIED",
+          "team/first:latest      111111111111    5 GB      1 hour ago",
+          "second:q4              222222222222    3 GB      2 hours ago",
+        ].join("\n"),
+      ),
+    );
+
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: true, keepOpenShell: true },
+      {
+        commandExists: (command) => command === "openshell" || command === "ollama",
+        env: { HOME: "/tmp/nemoclaw-uninstall-all-ollama-models" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        log: () => {},
+        run,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(run).toHaveBeenCalledWith(
+      "ollama",
+      ["list"],
+      expect.objectContaining({
+        env: expect.objectContaining({ OLLAMA_HOST: "127.0.0.1:11434" }),
+        timeout: 10_000,
+      }),
+    );
+    expect(
+      run.mock.calls
+        .filter(([command, args]) => command === "ollama" && args[0] === "rm")
+        .map(([, args]) => args[1]),
+    ).toEqual(["team/first:latest", "second:q4"]);
+    expect(
+      run.mock.calls
+        .filter(([command, args]) => command === "ollama" && args[0] === "rm")
+        .map(([, , options]) => options?.timeout),
+    ).toEqual([60_000, 60_000]);
+  });
+
+  it("ignores a remote Ollama environment override during model cleanup", () => {
+    const run = runWithOllamaInventory(ok("NAME ID SIZE MODIFIED\nlocal-model 111 1 GB now\n"));
+
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: true, keepOpenShell: true },
+      {
+        commandExists: (command) => command === "openshell" || command === "ollama",
+        env: {
+          HOME: "/tmp/nemoclaw-uninstall-local-ollama-only",
+          OLLAMA_HOST: "https://remote.example.test:11434",
+        } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        log: () => {},
+        run,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    for (const [command, , options] of run.mock.calls.filter(([command]) => command === "ollama")) {
+      expect(command).toBe("ollama");
+      expect(options?.env?.OLLAMA_HOST).toBe("127.0.0.1:11434");
+    }
+  });
+
+  it("fails without deleting any Ollama model when inventory is malformed", () => {
+    const errors: string[] = [];
+    const run = runWithOllamaInventory(
+      ok("NAME ID SIZE MODIFIED\n--unsafe 111111111111 1 GB now\n"),
+    );
+
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: true, keepOpenShell: true },
+      {
+        commandExists: (command) => command === "openshell" || command === "ollama",
+        env: { HOME: "/tmp/nemoclaw-uninstall-malformed-ollama" } as NodeJS.ProcessEnv,
+        error: (message) => errors.push(message),
+        existsSync: () => false,
+        isTty: false,
+        log: () => {},
+        run,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(run.mock.calls.some(([command, args]) => command === "ollama" && args[0] === "rm")).toBe(
+      false,
+    );
+    expect(errors.join("\n")).toContain("No Ollama models were removed");
+  });
+
+  it("fails without deleting any Ollama model when inventory execution fails", () => {
+    const run = runWithOllamaInventory({
+      status: 1,
+      stdout: "",
+      stderr: "daemon unavailable",
+    });
+
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: true, keepOpenShell: true },
+      {
+        commandExists: (command) => command === "openshell" || command === "ollama",
+        env: { HOME: "/tmp/nemoclaw-uninstall-failed-ollama-inventory" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        log: () => {},
+        run,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(run.mock.calls.some(([command, args]) => command === "ollama" && args[0] === "rm")).toBe(
+      false,
+    );
+  });
+
+  it("attempts every inventoried Ollama removal and fails when one removal fails", () => {
+    const run = runWithOllamaInventory(
+      ok("NAME ID SIZE MODIFIED\nfirst 111 1 GB now\nsecond 222 1 GB now\n"),
+      ["first"],
+    );
+
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: true, keepOpenShell: true },
+      {
+        commandExists: (command) => command === "openshell" || command === "ollama",
+        env: { HOME: "/tmp/nemoclaw-uninstall-partial-ollama" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        log: () => {},
+        run,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(
+      run.mock.calls
+        .filter(([command, args]) => command === "ollama" && args[0] === "rm")
+        .map(([, args]) => args[1]),
+    ).toEqual(["first", "second"]);
+  });
+
+  it("does not inventory or remove Ollama models without delete-models", () => {
+    const run = vi.fn(okWithKnownGatewayList);
+
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command === "openshell" || command === "ollama",
+        env: { HOME: "/tmp/nemoclaw-uninstall-keep-models" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        log: () => {},
+        run,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(run.mock.calls.some(([command]) => command === "ollama")).toBe(false);
   });
 
   it("cleans selected gateway-owned llama.cpp state before scoped uninstall removes state", () => {
@@ -304,7 +495,7 @@ describe("uninstall local model profile cleanup", () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(errors.join("\n")).toContain("Host-local model cleanup did not complete");
+    expect(errors.join("\n")).toContain("Host-local model runtime cleanup did not complete");
     expect(runDocker.mock.calls.some(([args]) => args[0] === "rm")).toBe(false);
   });
 });

@@ -47,6 +47,11 @@
       "category": "compatibility"
     },
     {
+      "file": "test/agent-variant-docs.test.ts",
+      "test": "keeps the OpenClaw workspace inventory aligned with seeded runtime templates",
+      "category": "compatibility"
+    },
+    {
       "file": "test/code-change-considerations.test.ts",
       "test": "keeps the stage-neutral questions in one concise owner",
       "category": "compatibility"
@@ -58,7 +63,7 @@
     },
     {
       "file": "test/corporate-ca-build-tls-anchor.test.ts",
-      "test": "decodes the CA and exports NODE_EXTRA_CA_CERTS before the reinstall audit-signatures step",
+      "test": "uses conditional Node and curl trust in every final-stage registry step",
       "category": "security"
     },
     {
@@ -79,6 +84,11 @@
     {
       "file": "test/corporate-ca-build-tls-anchor.test.ts",
       "test": "uses the corporate CA conditionally for all Hermes registry remediations",
+      "category": "security"
+    },
+    {
+      "file": "test/dashboard-remote-bind-lifecycle.test.ts",
+      "test": "rejects a mutated checked-in security inventory instruction (#6024)",
       "category": "security"
     },
     {
@@ -203,11 +213,6 @@
     },
     {
       "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects duplicate unguarded Docker Hub auth in messaging-compatible-endpoint",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
       "test": "rejects free-standing E2E artifact uploads from raw temp paths",
       "category": "security"
     },
@@ -225,16 +230,6 @@
       "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
       "test": "routes only the measured heavy lanes on trusted main (#7145)",
       "category": "security"
-    },
-    {
-      "file": "test/e2e/support/onboard-policy-preset-sequencing-workflow-boundary.test.ts",
-      "test": "rejects onboard-policy-preset-sequencing forced back into non-interactive mode",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/onboard-policy-preset-sequencing-workflow-boundary.test.ts",
-      "test": "selects onboard-policy-preset-sequencing.test.ts with interactive mode enabled",
-      "category": "compatibility"
     },
     {
       "file": "test/e2e/support/podman-cpu-proof-workflow.test.ts",
@@ -369,6 +364,11 @@
     {
       "file": "test/openclaw-2026-6-npm-remediation.test.ts",
       "test": "replaces the reviewed OpenClaw core tar and brace-expansion graph",
+      "category": "security"
+    },
+    {
+      "file": "test/node-tar-dockerfile-contract.test.ts",
+      "test": "rejects an isolated unreviewed Deep Agents Code Node base pin",
       "category": "security"
     },
     {
@@ -600,6 +600,16 @@
     {
       "file": "test/growth-guardrails-workflow-boundary.test.ts",
       "test": "flags %s",
+      "category": "security"
+    },
+    {
+      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
+      "test": "returns a credential-free JSON manifest byte for byte",
+      "category": "security"
+    },
+    {
+      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
+      "test": "leaves an installed package manifest that names a credential-shaped dependency",
       "category": "security"
     }
   ]

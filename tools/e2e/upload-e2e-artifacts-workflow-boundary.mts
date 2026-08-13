@@ -115,7 +115,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
       name: "staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}",
       path: [
         "${{ steps.workspace.outputs.work_dir }}/lane.log",
-        "${{ steps.workspace.outputs.work_dir }}/dispatch.json",
         "${{ steps.workspace.outputs.work_dir }}/launchable-e2e.json",
         "${{ steps.workspace.outputs.work_dir }}/full-e2e.log",
         "${{ steps.workspace.outputs.work_dir }}/cleanup.json",
@@ -191,13 +190,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
-    "network-policy",
-    {
-      name: "e2e-network-policy-${{ matrix.scenario }}",
-      path: "e2e-artifacts/live/network-policy/${{ matrix.scenario }}/",
-    },
-  ],
-  [
     "common-egress-agent",
     {
       name: "e2e-common-egress-agent-${{ matrix.scenario }}",
@@ -216,13 +208,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     {
       name: "e2e-hermes-slack",
       path: "e2e-artifacts/live/hermes-slack-e2e/",
-    },
-  ],
-  [
-    "shields-config",
-    {
-      name: "e2e-shields-config",
-      path: "e2e-artifacts/live/shields-config/\n",
     },
   ],
   [

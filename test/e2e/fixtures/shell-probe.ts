@@ -28,6 +28,8 @@ export interface ShellProbeRunOptions {
   redactionValues?: string[];
   /** Retain at most the last N bytes from each output stream. */
   captureLimitBytes?: number;
+  /** Persist redacted, size-bounded output and result metadata; set false to write neither. */
+  persistArtifacts?: boolean;
   /** Timestamp-only output observer; chunk contents never cross this boundary. */
   onOutput?: (event: ShellProbeOutputEvent) => void;
 }
@@ -201,11 +203,14 @@ export class ShellProbe {
     const artifactBase = `shell/${activityName}`;
     const writeArtifacts = async (
       result: Omit<ShellProbeResult, "artifacts">,
-    ): Promise<ShellProbeResult["artifacts"]> => ({
-      stdout: await this.artifacts.writeText(`${artifactBase}.stdout.txt`, result.stdout),
-      stderr: await this.artifacts.writeText(`${artifactBase}.stderr.txt`, result.stderr),
-      result: await this.artifacts.writeJson(`${artifactBase}.result.json`, result),
-    });
+    ): Promise<ShellProbeResult["artifacts"]> => {
+      if (options.persistArtifacts === false) return { stdout: "", stderr: "", result: "" };
+      return {
+        stdout: await this.artifacts.writeText(`${artifactBase}.stdout.txt`, result.stdout),
+        stderr: await this.artifacts.writeText(`${artifactBase}.stderr.txt`, result.stderr),
+        result: await this.artifacts.writeJson(`${artifactBase}.result.json`, result),
+      };
+    };
 
     const stdout = createTextCapture(options.captureLimitBytes);
     const stderr = createTextCapture(options.captureLimitBytes);

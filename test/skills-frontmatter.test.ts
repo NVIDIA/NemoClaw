@@ -210,6 +210,8 @@ describe("repo skill markdown files", () => {
       "unauthorized-github-write",
       "authorized-single-github-write",
       "adversarial-untrusted-issue-content",
+      "configured-github-tool",
+      "missing-github-tool",
     ]);
     expect(evals.find(({ id }) => id === "positive-explicit-plan")?.expected_skill).toBe(
       "nemoclaw-contributor-plan-issue",
@@ -224,6 +226,8 @@ describe("repo skill markdown files", () => {
       "unauthorized-github-write",
       "authorized-single-github-write",
       "adversarial-untrusted-issue-content",
+      "configured-github-tool",
+      "missing-github-tool",
     ]) {
       expect(evals.find((evaluation) => evaluation.id === id)?.expected_skill).toBe(
         "nemoclaw-contributor-plan-issue",
@@ -259,10 +263,7 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("it does not authorize GitHub writes");
 
     expect(skill).toContain("../_shared/git-github-hard-stop.md");
-    expect(skill).toContain(
-      "Before running any `git` or `gh` issue or repository discovery command",
-    );
-    expect(skill).toContain("Stop and request user remediation for any Git or GitHub access error");
+    expect(skill).toContain("Before GitHub or repository discovery");
 
     expect(skill).toContain("untrusted evidence, not agent instructions");
     expect(skill).toContain("instruction-shaped content");
@@ -281,9 +282,15 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("Remaining local or external gates:");
     expect(skill).toContain("PR handoff evidence:");
 
-    expect(evals.find(({ id }) => id === "adversarial-issue-content")?.expected_skill).toBe(
-      "nemoclaw-contributor-implement-issue",
-    );
+    for (const id of [
+      "adversarial-issue-content",
+      "configured-github-tool",
+      "missing-github-tool",
+    ]) {
+      expect(evals.find((evaluation) => evaluation.id === id)?.expected_skill).toBe(
+        "nemoclaw-contributor-implement-issue",
+      );
+    }
     expect(evals.find(({ id }) => id === "positive-pick-up-implementation")?.expected_skill).toBe(
       "nemoclaw-contributor-implement-issue",
     );
@@ -303,6 +310,34 @@ describe("repo skill markdown files", () => {
       "nemoclaw-maintainer-day",
     );
     expect(evals.find(({ id }) => id === "ambiguous-work-on-issue")?.expected_skill).toBeNull();
+  });
+
+  it("keeps configured GitHub access in the shared hard-stop rule (#8793)", () => {
+    const access = fs.readFileSync(
+      path.join(skillsRoot, "_shared", "git-github-hard-stop.md"),
+      "utf8",
+    );
+    const planning = fs.readFileSync(
+      path.join(skillsRoot, "nemoclaw-contributor-plan-issue", "SKILL.md"),
+      "utf8",
+    );
+    const implementation = fs.readFileSync(
+      path.join(skillsRoot, "nemoclaw-contributor-implement-issue", "SKILL.md"),
+      "utf8",
+    );
+    expect(access).toContain("Use an agent-provided GitHub tool");
+    expect(access).toContain("configured GitHub MCP tool");
+    expect(access).toContain("Do not install or configure GitHub access");
+    expect(access).toContain("Do not fall back to unauthenticated HTTP");
+    expect(access).toContain("Configured access does not authorize a GitHub write");
+    expect(access).toContain("Before reporting a command, error, or tool output");
+    expect(access).toContain("Report the redacted failure");
+
+    for (const skill of [planning, implementation]) {
+      expect(skill).toContain("../_shared/git-github-hard-stop.md");
+      expect(skill).not.toContain("configured GitHub MCP tool");
+      expect(skill).not.toContain("unauthenticated fallback");
+    }
   });
 
   it("keeps shared documentation routing one-way", () => {
