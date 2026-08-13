@@ -88,10 +88,10 @@ export interface GpuDetection {
   // Set when a GPU was accepted only because a bounded Docker `--gpus` CUDA
   // proof passed: a denylisted `JMJWOA-Generic-*` placeholder name on
   // Windows-ARM N1X (WSL2 + Docker Desktop, #4565) or native ARM64 Linux
-  // (#8096), or an honestly-named GPU on an ARM64 Linux host without
-  // `/proc/driver/nvidia` (#9000). Diagnostic marker that this detection
-  // cleared a live proof rather than firmware/name trust. The sandbox GPU
-  // preflight reaches the Docker Desktop WSL compatibility branch via its own
+  // (#8096), or a plausible, non-placeholder NVIDIA GPU name on an ARM64
+  // Linux host without `/proc/driver/nvidia` (#9000). Diagnostic marker that
+  // this detection cleared a live proof rather than firmware/name trust. The
+  // sandbox GPU preflight reaches the Docker Desktop WSL compatibility branch via its own
   // `detectWslDockerDesktopStatus()` check, which stays false on a native
   // Linux host; this flag does not gate that branch.
   wslDockerDesktopGpuProofPassed?: boolean;
@@ -99,8 +99,9 @@ export interface GpuDetection {
 
 export interface DetectGpuDeps {
   // Optional accept-path for native or Docker Desktop-backed WSL ARM64 Linux
-  // hosts that report a `JMJWOA-Generic-*` GPU (#4565/#8096) or an honest name
-  // without `/proc/driver/nvidia` (#9000). Injected in tests; in production
+  // hosts that report a `JMJWOA-Generic-*` GPU (#4565/#8096) or a plausible,
+  // non-placeholder NVIDIA GPU name without `/proc/driver/nvidia` (#9000).
+  // Injected in tests; in production
   // `detectGpu()` lazily builds the default prover only when it is about to
   // reject an ARM64 host that the proof could still clear.
   proveArm64WslDockerDesktopGpu?: Arm64WslDockerDesktopGpuProver | null;
@@ -495,12 +496,12 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           wslDockerDesktopGpuProofPassed = true;
         } else {
           if (!nvidiaHostLooksGenuine()) {
-            // An honestly-named GPU on a host without `/proc/driver/nvidia`,
-            // e.g. Windows-ARM WSL2 where the GPU is paravirtualized through
-            // `/dev/dxg` and the proc interface never exists. The same bounded
-            // CUDA proof that clears a placeholder name clears a real name;
-            // reporting an honest name must not skip the strongest available
-            // evidence (#9000). The plausibility check runs first so a name
+            // A plausible, non-placeholder NVIDIA GPU name on a host without
+            // `/proc/driver/nvidia`, e.g. Windows-ARM WSL2 where the GPU is
+            // paravirtualized through `/dev/dxg` and the proc interface never
+            // exists. The same bounded CUDA proof used for a placeholder name
+            // is required here; a plausible name must not skip the strongest
+            // available evidence (#9000). The plausibility check runs first so a name
             // the filter below would discard never starts the Docker workload.
             // Without a passing proof this path stays fail-closed as before.
             const plausible = parsed.every((p: ParsedGpu) => isPlausibleNvidiaGpuName(p.name));
@@ -538,9 +539,10 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           // cannot serve a computeIntensive model in-loop, so tag it
           // computeConstrained to exclude those Ollama bootstrap models (#3707).
           // This covers the N1X part on WSL2 and on native Linux (#8096), and
-          // conservatively any honest-named proof-passed GPU (#9000): such a
-          // host lacks firmware and kernel-driver identity, so the memory-
-          // shared N1X profile is the safe assumption.
+          // conservatively any proof-passed GPU with a plausible,
+          // non-placeholder NVIDIA name (#9000): such a host lacks firmware
+          // and kernel-driver identity, so the memory-shared N1X profile is the
+          // safe assumption.
           ...(platform === "jetson" || wslDockerDesktopGpuProofPassed
             ? { computeConstrained: true }
             : {}),

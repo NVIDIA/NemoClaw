@@ -1,16 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Focused coverage for the honest-name Docker CUDA proof escape in detectGpu()
-// (#9000). Lives outside nim.test.ts because that file is at its legacy
-// line budget and cannot grow.
+// Focused coverage for the plausible-name Docker CUDA proof escape in
+// detectGpu() (#9000). Lives outside nim.test.ts because that file is at its
+// legacy line budget and cannot grow.
 
 import { describe, expect, it, vi } from "vitest";
 import { detectGpu } from "./nim";
 
 const fs = require("fs");
 
-const HONEST_NAME = "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)";
+const PLAUSIBLE_NAME = "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)";
 
 const isNvidiaSmiMemoryQuery = (command: readonly string[]): boolean =>
   command[0] === "nvidia-smi" && command.some((arg) => arg.includes("name,memory.total"));
@@ -76,47 +76,47 @@ function onWsl2Arm64WithoutKernelInterface(fn: () => void): void {
   });
 }
 
-describe("detectGpu honest-name CUDA proof escape (#9000)", () => {
-  it("trusts a single honestly-named GPU when the bounded CUDA proof passes (#9000)", () => {
+describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name (#9000)", () => {
+  it("trusts one plausible, non-placeholder NVIDIA GPU name when the bounded CUDA proof passes (#9000)", () => {
     const prover = passingProver();
     onWsl2Arm64WithoutKernelInterface(() => {
       const result = detectGpu({
         proveArm64WslDockerDesktopGpu: prover,
-        runCaptureImpl: makeRunCapture(`${HONEST_NAME}, 8128, 7000\n`),
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`),
         isWsl: true,
       });
       expect(result).toMatchObject({
         type: "nvidia",
-        name: HONEST_NAME,
+        name: PLAUSIBLE_NAME,
         count: 1,
         totalMemoryMB: 8128,
         computeConstrained: true,
         wslDockerDesktopGpuProofPassed: true,
       });
-      expect(prover).toHaveBeenCalledWith([HONEST_NAME]);
+      expect(prover).toHaveBeenCalledWith([PLAUSIBLE_NAME]);
     });
   });
 
-  it("stays fail-closed for an honest name when the CUDA proof fails (#9000)", () => {
+  it("stays fail-closed for a plausible, non-placeholder NVIDIA GPU name when the CUDA proof fails (#9000)", () => {
     const prover = failingProver();
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
           proveArm64WslDockerDesktopGpu: prover,
-          runCaptureImpl: makeRunCapture(`${HONEST_NAME}, 8128, 7000\n`),
+          runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`),
           isWsl: true,
         }),
       ).toBeNull();
-      expect(prover).toHaveBeenCalledWith([HONEST_NAME]);
+      expect(prover).toHaveBeenCalledWith([PLAUSIBLE_NAME]);
     });
   });
 
-  it("stays fail-closed for an honest name when no prover is available (#9000)", () => {
+  it("stays fail-closed for a plausible, non-placeholder NVIDIA GPU name when no prover is available (#9000)", () => {
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
           proveArm64WslDockerDesktopGpu: null,
-          runCaptureImpl: makeRunCapture(`${HONEST_NAME}, 8128, 7000\n`),
+          runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`),
           isWsl: true,
         }),
       ).toBeNull();
@@ -137,14 +137,14 @@ describe("detectGpu honest-name CUDA proof escape (#9000)", () => {
     });
   });
 
-  it("rejects a multi-row honest-named response without attempting the proof (#9000)", () => {
+  it("rejects multiple plausible, non-placeholder NVIDIA GPU rows without attempting the proof (#9000)", () => {
     const prover = passingProver();
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
           proveArm64WslDockerDesktopGpu: prover,
           runCaptureImpl: makeRunCapture(
-            `${HONEST_NAME}, 8128, 7000\nNVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n`,
+            `${PLAUSIBLE_NAME}, 8128, 7000\nNVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n`,
           ),
           isWsl: true,
         }),
@@ -160,10 +160,10 @@ describe("detectGpu honest-name CUDA proof escape (#9000)", () => {
         withNvidiaKernelInterface(true, () => {
           const result = detectGpu({
             proveArm64WslDockerDesktopGpu: prover,
-            runCaptureImpl: makeRunCapture(`${HONEST_NAME}, 8128, 7000\n`),
+            runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`),
             isWsl: true,
           });
-          expect(result).toMatchObject({ type: "nvidia", name: HONEST_NAME, count: 1 });
+          expect(result).toMatchObject({ type: "nvidia", name: PLAUSIBLE_NAME, count: 1 });
           expect(result?.wslDockerDesktopGpuProofPassed).toBeUndefined();
           expect(prover).not.toHaveBeenCalled();
         });
