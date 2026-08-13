@@ -927,6 +927,7 @@ When `$$nemoclaw onboard` detects an NVIDIA GPU on the host, it enables OpenShel
 The `nvidia-smi` probes require a successful result and reject placeholder `JMJWOA-Generic-*` GPU names unless NemoClaw can prove a supported NVIDIA platform or GPU execution.
 NemoClaw treats a recognized NVIDIA product model from `/sys/class/dmi/id/product_name` or `/sys/firmware/devicetree/base/model`, or a known Tegra device node, as authoritative platform identity.
 On eligible native or Docker Desktop-backed WSL ARM64 Linux hosts without that firmware evidence, one bounded Docker CUDA workload can prove GPU execution.
+On those hosts, a single non-placeholder GPU name also requires that proof when the NVIDIA kernel-driver interface (`/proc/driver/nvidia`) is absent.
 For the proof command, timeout control, and failure recovery, refer to [GPU Setup Fails with a Placeholder GPU Name](troubleshooting#gpu-setup-fails-with-a-placeholder-gpu-name).
 The names-only unified-memory fallback does not run this workload and rejects denylisted names.
 Other non-firmware-vouched hosts also reject denylisted names.
