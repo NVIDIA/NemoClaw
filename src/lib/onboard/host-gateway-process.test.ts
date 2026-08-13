@@ -66,7 +66,9 @@ function psResponses(
       `ps -p ${pid} -o args=`,
       ok(opts.cmdline ?? `/home/test/.local/bin/openshell-gateway --port 8080\n`),
     ],
-    ...(opts.uid === undefined ? [] : ([[`ps -p ${pid} -o uid=`, ok(`${opts.uid}\n`)]] as const)),
+    ...(opts.uid === undefined
+      ? []
+      : [[`ps -p ${pid} -o uid=`, ok(`${opts.uid}\n`)] as [string, RunResult]]),
   ];
 }
 
