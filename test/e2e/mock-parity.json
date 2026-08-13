@@ -110,6 +110,16 @@
       ]
     },
     {
+      "live": "test/e2e/live/launch-readiness-lease-acceptance.test.ts",
+      "fast": [
+        "src/lib/actions/sandbox/launch-readiness-gateway-health.test.ts",
+        "src/lib/actions/sandbox/launch-readiness.test.ts",
+        "src/lib/state/launch-readiness-lease.test.ts",
+        "test/e2e/support/launch-agent-turn.test.ts",
+        "test/launch-readiness-forward-observation.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/bootstrap-install-smoke.test.ts",
       "fast": [
         "test/brev-launchable-ci-cpu-checksum.test.ts",
