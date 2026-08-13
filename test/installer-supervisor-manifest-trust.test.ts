@@ -72,25 +72,39 @@ function addSandboxBuildPins(source: string): string {
   return `${source.slice(0, functionStart)}${mutatedFunction}${source.slice(functionEnd)}`;
 }
 
+function replaceRequired(
+  source: string,
+  replacements: readonly (readonly [string, string])[],
+): string {
+  return replacements.reduce((result, [expected, replacement]) => {
+    assert.ok(result.includes(expected), `selection fixture must contain ${expected}`);
+    return result.replaceAll(expected, replacement);
+  }, source);
+}
+
 function selectOpenShellV00103(): {
   blueprint: string;
   brevInstaller: string;
   installer: string;
 } {
   const installer = addSandboxBuildPins(
-    INSTALLER_TEMPLATE.replace('MIN_VERSION="0.0.101"', 'MIN_VERSION="0.0.103"')
-      .replace('MAX_VERSION="0.0.101"', 'MAX_VERSION="0.0.103"')
-      .replace('DEV_MIN_VERSION="0.0.101"', 'DEV_MIN_VERSION="0.0.103"')
-      .replaceAll("v0.0.101:", "v0.0.103:"),
+    replaceRequired(INSTALLER_TEMPLATE, [
+      ['MIN_VERSION="0.0.101"', 'MIN_VERSION="0.0.103"'],
+      ['MAX_VERSION="0.0.101"', 'MAX_VERSION="0.0.103"'],
+      ['DEV_MIN_VERSION="0.0.101"', 'DEV_MIN_VERSION="0.0.103"'],
+      ["v0.0.101:", "v0.0.103:"],
+    ]),
   );
-  const brevInstaller = BREV_TEMPLATE.replace(
-    'stable | auto) OPENSHELL_VERSION="v0.0.101" ;;',
-    'stable | auto) OPENSHELL_VERSION="v0.0.103" ;;',
-  ).replaceAll("v0.0.101:", "v0.0.103:");
-  const blueprint = BLUEPRINT_TEMPLATE.replace(
-    'max_openshell_version: "0.0.101"',
-    'max_openshell_version: "0.0.103"',
-  );
+  const brevInstaller = replaceRequired(BREV_TEMPLATE, [
+    [
+      'stable | auto) OPENSHELL_VERSION="v0.0.101" ;;',
+      'stable | auto) OPENSHELL_VERSION="v0.0.103" ;;',
+    ],
+    ["v0.0.101:", "v0.0.103:"],
+  ]);
+  const blueprint = replaceRequired(BLUEPRINT_TEMPLATE, [
+    ['max_openshell_version: "0.0.101"', 'max_openshell_version: "0.0.103"'],
+  ]);
   return { blueprint, brevInstaller, installer };
 }
 
