@@ -119,7 +119,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
           replacementLockSha256: digest,
         },
       ],
-      nodeVersion: "22.23.1",
+      nodeVersion: "22.23.2",
       registryOrigin: "https://registry.npmjs.org/",
       schemaVersion: 2,
       severityThreshold: "high",

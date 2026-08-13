@@ -58,7 +58,7 @@
     },
     {
       "file": "test/corporate-ca-build-tls-anchor.test.ts",
-      "test": "decodes the CA and exports NODE_EXTRA_CA_CERTS before the reinstall audit-signatures step",
+      "test": "decodes the CA and exports NODE_EXTRA_CA_CERTS before registry-backed dependency requests (#8925)",
       "category": "security"
     },
     {
@@ -79,6 +79,11 @@
     {
       "file": "test/corporate-ca-build-tls-anchor.test.ts",
       "test": "uses the corporate CA conditionally for all Hermes registry remediations",
+      "category": "security"
+    },
+    {
+      "file": "test/dashboard-remote-bind-lifecycle.test.ts",
+      "test": "rejects a mutated checked-in security inventory instruction (#6024)",
       "category": "security"
     },
     {
@@ -359,6 +364,11 @@
     {
       "file": "test/openclaw-2026-6-npm-remediation.test.ts",
       "test": "replaces the reviewed OpenClaw core tar and brace-expansion graph",
+      "category": "security"
+    },
+    {
+      "file": "test/node-tar-dockerfile-contract.test.ts",
+      "test": "rejects an isolated unreviewed Deep Agents Code Node base pin",
       "category": "security"
     },
     {

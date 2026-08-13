@@ -10,6 +10,7 @@
 /docs/resources/starter-prompt.md text eol=lf
 /docs/resources/prompt-assets/*.md text eol=lf
 /docs/resources/local-credential-form.html text eol=lf
+/tools/e2e/contracts/v1/jetson-dispatch.json text eol=lf
 
 /skills/nemoclaw/** linguist-generated=true
 /skills/nemoclaw/**/*.md diff=markdown

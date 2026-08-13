@@ -618,6 +618,7 @@ export function createSetupNim(
           if (providerSelection.kind === "failure") {
             reportProviderSelectionFailure({
               reason: providerSelection.reason,
+              availableProviderKeys: options.map((option) => option.key),
               isWindowsHostOllama,
               rejectWindowsHostOllama,
               writeError: deps.error,

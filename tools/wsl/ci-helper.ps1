@@ -302,15 +302,15 @@ function Install-WslUbuntuDependencies {
 function Get-WslNodeInstallScript {
     return @'
 set -euo pipefail
-node_version="22.23.1"
+node_version="22.23.2"
 case "$(uname -m)" in
   x86_64)
     node_arch="x64"
-    node_sha256="9749e988f437343b7fa832c69ded82a312e41a03116d766797ac14f6f9eee578"
+    node_sha256="d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307"
     ;;
   aarch64 | arm64)
     node_arch="arm64"
-    node_sha256="0294e8b915ab75f92c7513d2fcb830ae06e10684e6c603e99a87dbf8835389c1"
+    node_sha256="fff4078c5def658577f92c88db7db3bc0072924bfb93fe52c1e744a54e94abb8"
     ;;
   *)
     echo "Unsupported Node.js architecture: $(uname -m)" >&2
