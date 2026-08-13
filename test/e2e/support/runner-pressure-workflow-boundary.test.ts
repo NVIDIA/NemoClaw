@@ -25,7 +25,10 @@ import {
 } from "../../../tools/e2e/target-catalogue.mts";
 
 describe("runner-pressure catalogue boundary", () => {
-  afterEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+  });
 
   it.each(["rebuild-hermes", "rebuild-hermes-stale-base"])(
     "keeps %s on the shared rebuild lifecycle",
@@ -61,10 +64,8 @@ describe("runner-pressure catalogue boundary", () => {
         "E2E_TEST_OUTCOME_FILE",
         "NEMOCLAW_CLI_BIN",
       ];
-      const previousEnvironment = new Map(
-        environmentNames.map((name) => [name, process.env[name]] as const),
-      );
-      process.env.E2E_ARTIFACT_DIR = directory;
+      for (const name of environmentNames) vi.stubEnv(name, process.env[name] ?? "");
+      vi.stubEnv("E2E_ARTIFACT_DIR", directory);
       mocks.spawnSync.mockReturnValue({ status: 0 });
       mocks.runLiveVitestCommand.mockResolvedValue(exitCode);
 
@@ -81,10 +82,6 @@ describe("runner-pressure catalogue boundary", () => {
           ...finalCommands,
         ]);
       } finally {
-        for (const [name, value] of previousEnvironment) {
-          if (value === undefined) delete process.env[name];
-          else process.env[name] = value;
-        }
         fs.rmSync(directory, { force: true, recursive: true });
       }
     },
