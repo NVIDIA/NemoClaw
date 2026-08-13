@@ -87,8 +87,19 @@ describe("agent definitions", () => {
     expect(agent.stateFiles.map((file) => file.path)).toEqual(["settings.json"]);
     const restore = agent.stateFiles[0]?.restore;
     expect(restore?.merge).toBe("key-allowlist");
-    expect(restore?.userKeys?.map((entry) => entry.key)).not.toContain("defaultProjectTrust");
-    expect(restore?.userKeys?.map((entry) => entry.key)).not.toContain("shellPath");
+    expect(restore?.userKeys).toEqual([
+      { key: "theme", type: "string", maxLength: 128 },
+      { key: "hideThinkingBlock", type: "boolean" },
+      { key: "showCacheMissNotices", type: "boolean" },
+      { key: "quietStartup", type: "boolean" },
+      { key: "steeringMode", type: "enum", values: ["all", "one-at-a-time"] },
+      { key: "followUpMode", type: "enum", values: ["all", "one-at-a-time"] },
+      {
+        key: "defaultThinkingLevel",
+        type: "enum",
+        values: ["off", "minimal", "low", "medium", "high", "xhigh"],
+      },
+    ]);
   });
 
   it("orders OpenClaw first in interactive choices", () => {

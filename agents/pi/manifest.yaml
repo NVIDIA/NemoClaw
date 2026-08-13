@@ -65,10 +65,12 @@ state_files:
         - key: defaultThinkingLevel
           type: enum
           values:
+            - off
             - minimal
             - low
             - medium
             - high
+            - xhigh
 device_pairing: false
 inference:
   provider_type: openai_compatible

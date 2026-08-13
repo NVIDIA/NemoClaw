@@ -33,9 +33,10 @@ export interface ManagedImageRuntimeIdentity {
 }
 
 /**
- * Numeric sandbox identities baked into the reviewed all-agent image bases.
- * Runtime providers consume this workload contract without adding
- * engine-specific agent switches to central orchestration.
+ * Shipped images bake in these numeric sandbox identities. Candidate
+ * qualification verifies the declared identity before activation. Runtime
+ * providers consume this workload contract without adding agent switches to
+ * central orchestration.
  */
 export const MANAGED_IMAGE_RUNTIME_IDENTITIES = Object.freeze({
   openclaw: Object.freeze({ uid: 998, gid: 998, workdir: "/sandbox" }),
@@ -68,7 +69,8 @@ export interface ManagedImageSourceIdentity {
 }
 
 /**
- * Immutable identity consumed by buildless onboarding.
+ * Immutable identity consumed by stock buildless onboarding for shipped
+ * agents and by protected qualification for candidates.
  *
  * The validated cohort binds all shipped agent images to one publication.
  * Other publication evidence (mutable aliases and base-image provenance) stays
