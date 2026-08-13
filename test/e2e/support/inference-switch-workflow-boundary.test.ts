@@ -12,7 +12,8 @@ import {
 describe("inference-switch catalogue boundary", () => {
   it("keeps both agents on their reviewed provider-switch contracts", () => {
     expect(() => validateE2eTargetCatalogue(E2E_TARGET_CATALOGUE)).not.toThrow();
-    expect(catalogueTarget("openclaw-inference-switch")).toMatchObject({
+    const openclaw = catalogueTarget("openclaw-inference-switch");
+    expect(openclaw).toMatchObject({
       profile: "standard",
       testFile: "test/e2e/live/openclaw-inference-switch.test.ts",
       environment: {
@@ -20,7 +21,9 @@ describe("inference-switch catalogue boundary", () => {
         NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "1",
       },
     });
-    expect(catalogueTarget("hermes-inference-switch")).toMatchObject({
+
+    const hermes = catalogueTarget("hermes-inference-switch");
+    expect(hermes).toMatchObject({
       profile: "standard",
       testFile: "test/e2e/live/hermes-inference-switch.test.ts",
       hostPreparation: "hermes-swap",
@@ -32,5 +35,8 @@ describe("inference-switch catalogue boundary", () => {
         NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "1",
       },
     });
+    for (const target of [openclaw, hermes]) {
+      expect(target.environment).not.toHaveProperty("NEMOCLAW_E2E_USE_HOSTED_INFERENCE");
+    }
   });
 });

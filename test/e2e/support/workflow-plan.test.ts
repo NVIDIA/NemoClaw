@@ -283,8 +283,11 @@ describe("E2E workflow plan", () => {
     }
   });
 
-  it("rejects unreviewed host packages and unsafe selectors", () => {
+  it("rejects unreviewed catalogue execution metadata", () => {
     const target = catalogueTarget("network-policy");
+    expect(() =>
+      validateE2eTargetCatalogue([{ ...target, runnerKey: "unknown-runner" }]),
+    ).toThrow("invalid runner routing key");
     expect(() =>
       validateE2eTargetCatalogue([{ ...target, hostPackages: ["curl"] as never }]),
     ).toThrow("invalid or duplicate host packages");

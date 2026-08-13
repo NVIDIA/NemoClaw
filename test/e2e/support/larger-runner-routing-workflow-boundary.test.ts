@@ -8,6 +8,10 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import {
+  E2E_CATALOGUE_RUNNER_KEYS,
+  E2E_TARGET_CATALOGUE,
+} from "../../../tools/e2e/target-catalogue.mts";
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 import { requireFixture } from "./require-fixture";
@@ -145,6 +149,16 @@ describe("larger-runner workflow routing boundary", () => {
       "rebuild-hermes-stale-base": largerRunner,
       "security-posture-hermes": largerRunner,
     });
+  });
+
+  it("keeps every catalogue runner key in the trusted routing map (#7145)", () => {
+    const usedRunnerKeys = [
+      ...new Set(E2E_TARGET_CATALOGUE.map((target) => target.runnerKey).filter(Boolean)),
+    ];
+    expect(usedRunnerKeys).toEqual([...E2E_CATALOGUE_RUNNER_KEYS]);
+    for (const runnerKey of E2E_CATALOGUE_RUNNER_KEYS) {
+      expect(standardRouting).toHaveProperty(runnerKey, "ubuntu-latest");
+    }
   });
 
   // source-shape-contract: security -- Executes the shipped pre-checkout router to prove malformed administrator labels fail before job routing

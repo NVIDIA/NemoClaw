@@ -15,6 +15,16 @@ export type E2eInstallMode = (typeof E2E_INSTALL_MODES)[number];
 export const E2E_HOST_PACKAGES = ["expect", "iptables"] as const;
 export type E2eHostPackage = (typeof E2E_HOST_PACKAGES)[number];
 
+export const E2E_CATALOGUE_RUNNER_KEYS = [
+  "channels-stop-start-hermes",
+  "hermes-discord",
+  "hermes-inference-switch",
+  "hermes-shields-config",
+  "rebuild-hermes",
+  "rebuild-hermes-stale-base",
+  "security-posture-hermes",
+] as const;
+
 export const E2E_HOST_PREPARATIONS = ["none", "hermes-swap", "rebuild-swap"] as const;
 export type E2eHostPreparation = (typeof E2E_HOST_PREPARATIONS)[number];
 
@@ -1079,6 +1089,7 @@ const DISPLAY_NAME_METADATA_PATTERN = /\b(?:catalogue|e2e|live)\b|(?:issue[-\s]*
 const TEST_FILE_PATTERN = /^test\/e2e\/live\/[A-Za-z0-9._-]+[.]test[.]ts$/u;
 const ENVIRONMENT_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/u;
 const SELECTOR_PATTERN = /^[A-Za-z0-9_./^$=:@+-]+$/u;
+const E2E_CATALOGUE_RUNNER_KEY_SET = new Set<string>(E2E_CATALOGUE_RUNNER_KEYS);
 
 export function pathMatches(file: string, owner: string): boolean {
   return owner.endsWith("/") ? file.startsWith(owner) : file === owner;
@@ -1126,7 +1137,11 @@ export function validateE2eTargetCatalogue(
     if (!/^[A-Za-z0-9._-]+$/u.test(entry.runner)) {
       throw new Error(`E2E target ${entry.id} has an invalid runner`);
     }
-    if (entry.runnerKey !== "" && !ID_PATTERN.test(entry.runnerKey)) {
+    if (
+      entry.runnerKey !== "" &&
+      (!ID_PATTERN.test(entry.runnerKey) ||
+        !E2E_CATALOGUE_RUNNER_KEY_SET.has(entry.runnerKey))
+    ) {
       throw new Error(`E2E target ${entry.id} has an invalid runner routing key`);
     }
     if (!E2E_HOST_PREPARATIONS.includes(entry.hostPreparation)) {
