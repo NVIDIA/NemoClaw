@@ -14,7 +14,7 @@ vi.mock("./vllm-runtime-context", () => ({ resolveVllmContextWindowFromModels: v
 import { getOllamaProbeCommand, resolveOllamaRuntimeContextWindow } from "./local";
 import { type ContextWindowDeps, resolveContextWindowForModel } from "./context-window";
 
-// The default deps reach ../runner through a lazy CJS require, so swap the
+// The default dependencies reach ../runner through a lazy CJS require, so swap the
 // export on the loaded module instead of mocking the specifier.
 type CaptureStub = { stdout: string; exitCode: number | null; timedOut: boolean };
 
@@ -96,7 +96,7 @@ describe("resolveContextWindowForModel", () => {
   });
 });
 
-describe("resolveContextWindowForModel default deps (#8974)", () => {
+describe("resolveContextWindowForModel default dependencies (#8974)", () => {
   const originalRunCaptureEx = runner.runCaptureEx;
 
   afterEach(() => {

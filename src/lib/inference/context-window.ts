@@ -49,8 +49,8 @@ const defaultContextWindowDeps: ContextWindowDeps = {
     // warm-up returns before the daemon has the model resident, and `/api/ps`
     // then reports nothing to read the served window from. Cold-loading a large
     // model can exceed the 120 s default on unified-memory and tight-VRAM
-    // hosts, so retry once at 300 s as onboarding does. A fast failure such as
-    // connection-refused keeps `timedOut` false and skips the retry.
+    // hosts, so retry once at 300 s as onboarding does.
+    // A connection-refused result keeps `timedOut` false and skips the retry.
     if (runCaptureEx(getOllamaProbeCommand(model)).timedOut) {
       runCaptureEx(getOllamaProbeCommand(model, 300));
     }
