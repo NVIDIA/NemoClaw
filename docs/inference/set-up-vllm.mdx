@@ -36,7 +36,7 @@ Follow [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) or [Set Up
 
 ## Use an Existing Server
 
-When vLLM is already running on `localhost:8000`, NemoClaw detects it and queries `/v1/models` for the loaded model.
+On hosts other than N1x, when vLLM is already running on `localhost:8000`, NemoClaw detects it and queries `/v1/models` for the loaded model.
 
 Run onboarding.
 
@@ -46,8 +46,7 @@ $$nemoclaw onboard
 
 Select **Local vLLM**.
 On generic hosts, the entry includes an experimental label.
-On N1x, the entry for an already-running server has no status label.
-Only the managed **Install vLLM** or **Start vLLM** entry carries the **Deferred preview** label.
+N1x does not offer the existing-server entry; it offers only the managed **Install vLLM** or **Start vLLM** entry with the **Deferred preview** label.
 NemoClaw validates the detected endpoint and records the model reported by `/v1/models`.
 
 On hosts other than N1x, when an install request encounters an already-running server, NemoClaw selects that server instead of starting another container.
@@ -418,7 +417,7 @@ If no server is running, it selects the managed install or start entry.
 If neither local entry is available, it selects NVIDIA Endpoints.
 On DGX Station and other hosts, an unset provider keeps NVIDIA Endpoints as the automatic default.
 
-Use an already-running server.
+On hosts other than N1x, use an already-running server.
 
 ```bash
 NEMOCLAW_PROVIDER=vllm \

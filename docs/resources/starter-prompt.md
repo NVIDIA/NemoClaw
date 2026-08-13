@@ -91,7 +91,7 @@ Do not load a platform asset for any other computer.
 If no platform asset applies, or its offered install path is declined, ask: "Which inference runtime or provider would you like?"
 Choices:
 
-1. Existing vLLM, only when a ready server is detected on `localhost:8000`.
+1. Existing vLLM, only when the computer is not N1x and a ready server is detected on `localhost:8000`.
 2. Managed vLLM, optimized local inference with a large download.
 3. Local Ollama, only when the selected agent and platform support it.
 4. NVIDIA Endpoints, which requires an NVIDIA API key.
@@ -183,7 +183,7 @@ Use this provider mapping for non-interactive setup:
 - OpenAI-compatible: `NEMOCLAW_PROVIDER=custom`, endpoint, model, `COMPATIBLE_API_KEY`.
 - Anthropic-compatible: `NEMOCLAW_PROVIDER=anthropicCompatible`, endpoint, model, `COMPATIBLE_ANTHROPIC_API_KEY`.
 - Ollama: `NEMOCLAW_PROVIDER=ollama`, optional `NEMOCLAW_MODEL`.
-- Existing vLLM: `NEMOCLAW_PROVIDER=vllm`.
+- Existing vLLM: `NEMOCLAW_PROVIDER=vllm`; unavailable on N1x.
 - Managed vLLM: `NEMOCLAW_PROVIDER=install-vllm`; use an approved optional model override only when the selected platform supports it.
 
 Do not offer Hermes Provider for OpenClaw or Deep Agents.
