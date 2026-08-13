@@ -401,7 +401,7 @@ All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-bina
 The Oxfmt hook formats added JavaScript and TypeScript files that its configuration does not exclude.
 The hook reads its base ref from `NEMOCLAW_FORMAT_BASE_REF`, which defaults to `origin/main`.
 A file is added when the selected base commit has no file at that path.
-If Git cannot resolve `NEMOCLAW_FORMAT_BASE_REF`, the Oxfmt hook exits with status 2 before invoking Oxfmt.
+If Git cannot resolve the ref named by `NEMOCLAW_FORMAT_BASE_REF`, the Oxfmt hook exits with status 2 before invoking Oxfmt.
 
 For PR preparation, normal `pre-commit`, `commit-msg`, and `pre-push` hooks are valid verification when they pass and were not bypassed with `--no-verify`.
 If hooks were skipped, missing, failed, or uncertain, refresh the remote-tracking base with `git fetch origin main`, then run `npm run validate:pr` once to reproduce those checks for the current diff.

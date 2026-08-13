@@ -155,7 +155,7 @@ For shell scripts use `#` comments. For Markdown use HTML comments.
 - `test/`: **ESM** (`import`/`export`)
 - Oxlint uses `oxlint.config.ts`. The isolated `oxlint.type-aware.config.ts` configuration enforces `typescript/no-floating-promises` for plugin sources.
 
-- SonarJS contributor-tool use is constrained by [`tools/lint/DEPENDENCY-REVIEW.md`](tools/lint/DEPENDENCY-REVIEW.md).
+- Use SonarJS only within the boundaries documented in [`tools/lint/DEPENDENCY-REVIEW.md`](tools/lint/DEPENDENCY-REVIEW.md).
 - Keep function complexity low; existing complexity hotspots are tracked separately
 - Unused vars pattern: prefix with `_`
 
