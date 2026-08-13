@@ -11,10 +11,12 @@ vi.mock("./experimental/portable-host-preparation", () => ({
 
 import type { DetectGpuDeps, GpuDetection } from "../inference/nim";
 import type { GatewayReadinessProjection } from "../readiness/gateway";
+import type { SystemReadinessReport } from "../readiness/types";
 import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
 import {
   assertOnboardGatewayReadiness,
   assertOnboardHostReadiness,
+  assertOnboardSystemReadiness,
   runFatalOnboardRuntimePreflight,
   runOnboardRuntimeEffectfulPreflightChecks,
   runReadinessGatedRuntimePreflight,
@@ -89,6 +91,61 @@ afterEach(() => {
 });
 
 describe("report-backed runtime readiness (#7411)", () => {
+  it("requires explicit managed-vLLM intent for the Deferred N1x readiness exception (#8574)", () => {
+    const readiness: SystemReadinessReport = {
+      schemaVersion: "1.1.0",
+      status: "incompatible",
+      exitCode: 2,
+      mutated: false,
+      provenance: {
+        nemoclawVersion: "0.1.0",
+        sourceRevision: "a".repeat(40),
+        observedAt: "2026-08-12T00:00:00.000Z",
+      },
+      observations: [],
+      capabilities: [
+        { id: "host.docker.available", state: "present" },
+        { id: "host.docker.daemon_reachable", state: "present" },
+        { id: "host.docker.runtime_supported", state: "present" },
+        { id: "host.docker.storage_compatible", state: "present" },
+        { id: "host.docker.storage_remediation_available", state: "absent" },
+        { id: "host.gpu.nvidia_available", state: "present" },
+        { id: "host.gpu.container_toolkit_available", state: "present" },
+        { id: "host.gpu.cdi_healthy", state: "present" },
+        { id: "host.platform.supported", state: "absent" },
+        { id: "host.platform.n1x", state: "present" },
+      ],
+      qualifications: [],
+      findings: [
+        {
+          id: "host.platform.n1x_validation_pending",
+          severity: "blocking",
+          summary: "N1x validation is pending.",
+        },
+      ],
+      evidence: [],
+    };
+    const exit = vi.fn(() => {
+      throw new Error("exit");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(() =>
+      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: false,
+        exitProcess: exit as never,
+      }),
+    ).toThrow("exit");
+
+    vi.stubEnv("NEMOCLAW_PROVIDER", "install-vllm");
+    expect(
+      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: false,
+        exitProcess: exit as never,
+      }),
+    ).toBe(readiness);
+  });
+
   it("rejects ambiguous gateway ownership before the caller can run effects", () => {
     const exit = vi.fn(() => {
       throw new Error("exit");

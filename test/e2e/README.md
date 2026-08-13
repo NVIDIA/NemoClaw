@@ -663,9 +663,9 @@ The runner-allocation and internal-error failures handled by Hosted Runner
 Recovery originate in GitHub Actions, outside repository-controlled workflow
 code. Hosted Runner Recovery contains these failures without claiming to repair
 their source. Remove `.github/workflows/hosted-runner-recovery.yaml` and its
-controller only after the three platform workflows record 30 consecutive days
-with no first-attempt failure accepted by the recovery classifier, or after those
-workflows stop using GitHub-hosted runners. Each accepted Hosted Runner Recovery
+controller only after the platform-evidence workflow records 30 consecutive days
+with no first-attempt failure accepted by the recovery classifier, or after that
+workflow stops using GitHub-hosted runners. Each accepted Hosted Runner Recovery
 request resets that observation window.
 
 ### Runner comparison telemetry
@@ -788,7 +788,7 @@ to the portable free-memory value and labels that value as `memory free`.
 The comparison time series is diagnostic-only and is not an input to terminal
 classification or retry policy. Runner-comparison telemetry does not affect
 `E2E / Main Retry` decisions. Hosted Runner Recovery remains limited to
-authenticated runner-loss evidence for its three platform workflows.
+authenticated runner-loss evidence for its platform-evidence workflow.
 
 Treat a missing summary as unavailable evidence, not as low utilization. A
 hard runner loss can prevent finalization or artifact upload. When you compare

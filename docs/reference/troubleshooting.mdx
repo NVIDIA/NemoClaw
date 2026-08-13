@@ -2170,10 +2170,11 @@ Ollama can serve local chat and some simple tool surfaces, but agent loops with 
 | Long system prompts or sender metadata | Risky | Yes |
 | Multi-turn tool dispatch | Risky | Yes |
 
-For persistent agent use, [set up vLLM](../inference/local-inference/set-up-vllm) with automatic tool choice and the tool-call parser that matches the model family.
+On hosts other than N1x, [set up vLLM](../inference/local-inference/set-up-vllm) with automatic tool choice and the tool-call parser that matches the model family for persistent agent use.
 After the parser-aware server is ready, re-run onboarding.
-For a server detected on `localhost:8000`, select the **Local vLLM** entry marked **running (suggested)**; for another address, select **Other OpenAI-compatible endpoint**.
+Select the **Local vLLM** entry marked **running (suggested)** for a server detected on `localhost:8000`; for another address, select **Other OpenAI-compatible endpoint**.
 On generic hosts, the Local vLLM entry includes an experimental label; on DGX Spark or DGX Station, it does not.
+On N1x, stop any server that occupies port `8000`, then use only the Deferred managed-vLLM preview; existing and compatible servers are not admitted.
 
 Do not rely on direct edits to `openclaw.json` for a persistent provider change.
 NemoClaw-managed rebuilds can overwrite those edits, while onboarding keeps the sandbox image, OpenShell route, and host-managed credentials aligned.
