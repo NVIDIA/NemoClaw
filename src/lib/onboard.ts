@@ -1901,11 +1901,13 @@ async function startDockerDriverGateway({
 
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const logPath = path.join(stateDir, "openshell-gateway.log");
-  const logFd = dockerDriverGatewayLaunch.openDockerDriverGatewayLog(logPath, { exitOnFailure });
+  const gatewayLog = dockerDriverGatewayLaunch.openDockerDriverGatewayLog(logPath, {
+    exitOnFailure,
+  });
   console.log("  Starting OpenShell Docker-driver gateway...");
   console.log(`  Gateway log: ${logPath}`);
   dockerDriverGatewayLaunch.prepareAndLogDockerDriverGatewayLaunch(gatewayLaunch);
-  const child = dockerDriverGatewayLaunch.spawnDockerDriverGateway(gatewayLaunch, logFd);
+  const child = dockerDriverGatewayLaunch.spawnDockerDriverGateway(gatewayLaunch, gatewayLog.fd);
   const childExit = trackChildExit(child); // #3111 zombie-safe liveness
   child.unref();
   const childPid = child.pid ?? 0;
@@ -1951,7 +1953,10 @@ async function startDockerDriverGateway({
     return;
   }
 
-  reportDockerDriverGatewayStartFailure(logPath, childExit, { exitOnFailure });
+  reportDockerDriverGatewayStartFailure(logPath, childExit, {
+    exitOnFailure,
+    launchLogOffset: gatewayLog.startOffset,
+  });
   if (gatewayStartup === "exited") {
     throw new Error("Docker-driver gateway failed to start because the process exited");
   }
