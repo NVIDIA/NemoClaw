@@ -1430,8 +1430,18 @@ export function buildConfig(env: Env = process.env): JsonObject {
   if (openclawOtel) {
     pluginEntries["diagnostics-otel"] = { enabled: true };
   }
+  const webSearchProvider =
+    env.NEMOCLAW_WEB_SEARCH_ENABLED === "1" ? resolveWebSearchProvider(env) : undefined;
 
-  const plugins: JsonObject = { entries: pluginEntries };
+  const plugins: JsonObject = {
+    allow: unique([
+      "nemoclaw",
+      ...openclawPlugins.map((plugin) => plugin.id),
+      ...(openclawOtel ? ["diagnostics-otel"] : []),
+      ...(webSearchProvider ? [webSearchProvider] : []),
+    ]),
+    entries: pluginEntries,
+  };
   const pluginLoadPaths: string[] = [];
   for (const plugin of openclawPlugins) {
     pluginEntries[plugin.id] = { enabled: true };
@@ -1539,12 +1549,11 @@ export function buildConfig(env: Env = process.env): JsonObject {
     tools.web.search = { enabled: false };
   }
 
-  if (env.NEMOCLAW_WEB_SEARCH_ENABLED === "1") {
+  if (webSearchProvider) {
     // OpenClaw 2026.5.x keeps provider-owned credentials under
     // plugins.entries.<provider>.config rather than inline on tools.web.search.
     // Brave is installed externally during the image build; Tavily ships as a
     // bundled OpenClaw extension. Both use the same plugin-scoped config shape.
-    const webSearchProvider = resolveWebSearchProvider(env);
     const credentialEnv = WEB_SEARCH_PROVIDERS[webSearchProvider].credentialEnv;
     tools.web.search = { enabled: true, provider: webSearchProvider };
     config.plugins.entries[webSearchProvider] = {
@@ -1614,7 +1623,9 @@ function preserveExistingOpenClawState(config: JsonObject, configPath: string): 
   if (Array.isArray(existingPlugins.allow)) {
     currentPlugins.allow = unique([
       ...(Array.isArray(currentPlugins.allow) ? currentPlugins.allow : []),
-      ...existingPlugins.allow.filter((pluginId): pluginId is string => typeof pluginId === "string"),
+      ...existingPlugins.allow.filter(
+        (pluginId): pluginId is string => typeof pluginId === "string",
+      ),
     ]);
   }
   const existingInstalls = existingPlugins.installs;
