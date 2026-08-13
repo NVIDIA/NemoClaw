@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { type MockInstance, vi } from "vitest";
+import { expect, type MockInstance, vi } from "vitest";
 import type { SandboxEntry } from "../../src/lib/state/registry";
 
 const INDEX_MODULE = "./index.js";
@@ -83,6 +83,156 @@ export type HermesShieldsProviderConsumerHarness = {
   verifyLockSpy: MockInstance;
   cleanup: () => void;
 };
+
+export type InterruptedHermesRecoveryState = {
+  readonly statePath: string;
+  readonly timerPath: string;
+  readonly transitionPath: string;
+};
+
+export function writeInterruptedHermesRecoveryState(
+  loadSource: NodeRequire,
+): InterruptedHermesRecoveryState {
+  const statePaths = loadSource("../state/paths.js") as typeof import("../../src/lib/state/paths");
+  const stateDir = statePaths.resolveNemoclawStateDir();
+  const processToken = "f".repeat(32);
+  const snapshotPath = path.join(stateDir, "shields-policy-interrupted-recovery.yaml");
+  const statePath = path.join(stateDir, `shields-${hermesProviderConsumerSandbox.name}.json`);
+  const timerPath = path.join(stateDir, `shields-timer-${hermesProviderConsumerSandbox.name}.json`);
+  const transitionPath = path.join(
+    stateDir,
+    `shields-transition-${hermesProviderConsumerSandbox.name}-${processToken}.json`,
+  );
+  fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  restrictive: {}\n");
+  const forwardPolicy = writeBoundForwardPolicy(
+    stateDir,
+    hermesProviderConsumerSandbox.name,
+    processToken,
+  );
+  fs.writeFileSync(
+    statePath,
+    JSON.stringify({
+      shieldsDown: true,
+      shieldsDownAt: "2026-08-09T00:10:00.000Z",
+      shieldsDownTimeout: 300,
+      shieldsDownReason: "interrupted recovery failure",
+      shieldsDownPolicy: "permissive",
+      shieldsPolicySnapshotPath: snapshotPath,
+    }),
+  );
+  fs.writeFileSync(
+    timerPath,
+    JSON.stringify({
+      pid: 4545,
+      sandboxName: hermesProviderConsumerSandbox.name,
+      snapshotPath,
+      restoreAt: new Date(Date.now() + 60_000).toISOString(),
+      processToken,
+      timerProcessStartIdentity: "live-timer-start",
+      allowLegacyHermesProtocol: false,
+      agentName: "hermes",
+      configPath: hermesProviderConsumerTarget.configPath,
+      configDir: hermesProviderConsumerTarget.configDir,
+    }),
+  );
+  writeTimerAuthorizationProof(loadSource, hermesProviderConsumerSandbox.name);
+  fs.writeFileSync(
+    transitionPath,
+    JSON.stringify({
+      version: 1,
+      phase: "preparing",
+      ownerPid: 4545,
+      ownerStartIdentity: "dead-recovery-owner",
+      processToken,
+      sandboxName: hermesProviderConsumerSandbox.name,
+      snapshotPath,
+      forwardPolicy,
+    }),
+  );
+  return { statePath, timerPath, transitionPath };
+}
+
+export function configureInterruptedHermesRecoverySimulation(
+  harness: HermesShieldsProviderConsumerHarness,
+): void {
+  const simulation = createRetainedUnlockSimulation([], harness.commands);
+  const defaultDockerExec = harness.dockerExecSpy.getMockImplementation();
+  harness.runSpy.mockImplementation(simulation.run);
+  harness.lifecycleGateSpy.mockImplementation(simulation.hasActiveClaim);
+  harness.transitionSpy.mockImplementation(simulation.transition);
+  harness.dockerExecSpy.mockImplementation((command: unknown) => {
+    const args = command as string[];
+    return args.includes(HERMES_PROVIDER_CAPABILITY_PATH)
+      ? defaultDockerExec?.(command)
+      : simulation.dockerExec(command);
+  });
+  harness.verifyLockSpy.mockReturnValue({ issues: ["lockdown verification failed"] });
+}
+
+export function expectInterruptedHermesRecoveryFailure(
+  harness: HermesShieldsProviderConsumerHarness,
+  recovery: InterruptedHermesRecoveryState,
+  error: RegExp,
+): void {
+  expect(() =>
+    harness.shields.shieldsDown(hermesProviderConsumerSandbox.name, { throwOnError: true }),
+  ).toThrow(error);
+  expect(JSON.parse(fs.readFileSync(recovery.transitionPath, "utf-8"))).toMatchObject({
+    phase: "preparing",
+  });
+  expect(JSON.parse(fs.readFileSync(recovery.statePath, "utf-8"))).toMatchObject({
+    shieldsDown: true,
+  });
+  expect(harness.auditSpy).not.toHaveBeenCalled();
+  expect(vi.mocked(console.error).mock.calls.flat().map(String).join("\n")).toContain(
+    "Interrupted config unlock recovery is incomplete",
+  );
+}
+
+type InterruptedHermesRecoveryFailureSetup = (
+  harness: HermesShieldsProviderConsumerHarness,
+  recovery: InterruptedHermesRecoveryState,
+) => void;
+
+export const interruptedHermesRecoveryFailures: ReadonlyArray<
+  readonly [string, InterruptedHermesRecoveryFailureSetup, RegExp]
+> = [
+  [
+    "timer authority changes",
+    (harness, recovery) => {
+      harness.routeSpy.mockImplementation(() => {
+        const marker = JSON.parse(fs.readFileSync(recovery.timerPath, "utf-8"));
+        fs.writeFileSync(
+          recovery.timerPath,
+          JSON.stringify({ ...marker, timerProcessStartIdentity: "replacement-timer-start" }),
+        );
+        return { ok: true, attempts: 1, httpStatus: 200 };
+      });
+    },
+    /auto-restore authority changed|timer generation/iu,
+  ],
+  [
+    "the provider unlock fails",
+    (harness) => {
+      const retainedTransition = harness.transitionSpy.getMockImplementation();
+      harness.transitionSpy.mockImplementation((input: { target: string; rollback: string }) => {
+        if (input.target === "mutable" && input.rollback === "mutable") {
+          throw new Error("provider unlock failed");
+        }
+        return retainedTransition?.(input);
+      });
+    },
+    /provider unlock failed/u,
+  ],
+  [
+    "inference route convergence fails",
+    (harness) => {
+      harness.routeSpy.mockReturnValue({ ok: false, attempts: 3, httpStatus: 503 });
+    },
+    /inference route did not converge/u,
+  ],
+];
 
 export function writeBoundForwardPolicy(
   stateDir: string,

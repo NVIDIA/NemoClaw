@@ -9,14 +9,18 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import {
   HERMES_PROVIDER_CAPABILITY_PATH as CAPABILITY_PATH,
+  configureInterruptedHermesRecoverySimulation,
   createFailingCapabilityProbeResponse,
   createHermesShieldsProviderConsumerHarness,
   createRetainedUnlockSimulation,
   createTimerAuthorizationSender,
   createTransitionFailureForPosture,
+  expectInterruptedHermesRecoveryFailure,
+  interruptedHermesRecoveryFailures,
   hermesProviderConsumerSandbox as sandbox,
   hermesProviderConsumerTarget as target,
   writeBoundForwardPolicy,
+  writeInterruptedHermesRecoveryState,
   writeTimerAuthorizationProof,
 } from "../../../test/helpers/hermes-shields-provider-consumer-harness";
 
@@ -1100,6 +1104,16 @@ describe("legacy Hermes shields compatibility", () => {
       );
       assertSideEffects({ routeSpy, runSpy, transitionPath, transitionSpy });
       expect(auditSpy).not.toHaveBeenCalled();
+    });
+
+    it.each(
+      interruptedHermesRecoveryFailures,
+    )("does not commit interrupted recovery when %s", (_failure, arrangeFailure, expectedError) => {
+      const recovery = writeInterruptedHermesRecoveryState(requireSource);
+      configureInterruptedHermesRecoverySimulation(harness);
+      arrangeFailure(harness, recovery);
+
+      expectInterruptedHermesRecoveryFailure(harness, recovery, expectedError);
     });
 
     it("recovers a retained lock before verifying an already-UP Shields record", () => {
