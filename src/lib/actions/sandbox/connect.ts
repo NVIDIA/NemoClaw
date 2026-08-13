@@ -80,6 +80,11 @@ import {
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import {
+  inspectLaunchReadiness,
+  publicationFromDecision,
+  publishLaunchReadiness,
+} from "./launch-readiness";
+import {
   checkAndRecoverSandboxProcesses,
   executeSandboxExecCommand,
   type GatewayRestartFailureLayer,
@@ -1168,19 +1173,8 @@ async function runConnectEntryPreflight(
   }
 }
 
-/**
- * Everything an interactive sandbox session needs before SSH is spawned:
- * the shared connect entry preflight plus process recovery, readiness wait,
- * inference-route reconcile, and the auto-pair approval pass. Shared by
- * `connect` and `launch`; both are always non-probe-only. Any
- * `process.exit(...)` reached here ends the process exactly as it does on the
- * connect path.
- */
-export async function prepareInteractiveSession(
-  sandboxName: string,
-): Promise<{ agent: AgentDefinition | null; sb: SandboxEntry | null }> {
-  await runConnectEntryPreflight(sandboxName, { probeOnly: false });
-
+/** Print version and active-session hints on both interactive launch paths. */
+export function printInteractiveSessionHints(sandboxName: string): void {
   // Version staleness check — warn but don't block
   try {
     const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
@@ -1208,6 +1202,27 @@ export async function prepareInteractiveSession(
   } catch {
     /* non-fatal — don't block connect on session detection failure */
   }
+}
+
+/** Preserve session setup after the complete preflight or lease acceptance. */
+export function completeInteractiveSessionSetup(
+  sandboxName: string,
+  sb: SandboxEntry | null,
+): void {
+  maybeEnsureHermesToolGatewayBroker(sb);
+  runConnectAutoPairApprovalPass(sandboxName);
+}
+
+/**
+ * Run the complete interactive preflight before SSH or agent launch, including
+ * process recovery, readiness polling, inference-route repair, and session
+ * setup. Any `process.exit(...)` ends the process as it does on `connect`.
+ */
+export async function prepareInteractiveSession(
+  sandboxName: string,
+): Promise<{ agent: AgentDefinition | null; sb: SandboxEntry | null }> {
+  await runConnectEntryPreflight(sandboxName, { probeOnly: false });
+  printInteractiveSessionHints(sandboxName);
 
   const processCheck = checkAndRecoverSandboxProcesses(sandboxName);
   if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
@@ -1233,17 +1248,7 @@ export async function prepareInteractiveSession(
   // After the sandbox is Ready, verify and recover the route before SSH.
   const agent = agentRuntime.getSessionAgent(sandboxName);
   sb = await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
-  maybeEnsureHermesToolGatewayBroker(sb);
-
-  // ── Auto-pair late scope-upgrade approval (#4263) ───────────────
-  // Defense in depth: even with the in-sandbox watcher running in
-  // slow-mode keepalive, a brief approval pass before opening SSH
-  // catches any pending allowlisted CLI/webchat scope upgrades that
-  // piled up between startup and now (e.g., watcher crashed, watcher
-  // deadline exhausted, multi-sandbox gateway contention). The same pass
-  // is reachable without SSH via `doctor --fix` for dashboard-only users
-  // (#4616). Uses the tight connect budget (#4504).
-  runConnectAutoPairApprovalPass(sandboxName);
+  completeInteractiveSessionSetup(sandboxName, sb);
 
   return { agent, sb };
 }
@@ -1253,6 +1258,17 @@ export async function connectSandbox(
   { probeOnly = false }: SandboxConnectOptions = {},
 ): Promise<void> {
   if (probeOnly) {
+    const readiness = await inspectLaunchReadiness(sandboxName);
+    if (readiness.kind === "accepted") {
+      console.log(`  Probe complete: launch readiness is healthy for '${sandboxName}'.`);
+      return;
+    }
+    if (readiness.fenceFailed) {
+      console.error(
+        "  Probe failed: complete probe and recovery did not run because prior launch-readiness evidence could not be fenced.",
+      );
+      process.exit(1);
+    }
     await runConnectEntryPreflight(sandboxName, { probeOnly: true });
     waitForSandboxReadyOrExit(sandboxName, {
       defaultTimeoutSec: 300,
@@ -1260,9 +1276,26 @@ export async function connectSandbox(
     });
     // Re-pin and re-observe the owning gateway after a potentially long wait
     // before any in-sandbox process or host-forward mutation. The readiness
-    // polls are already owner-scoped; this also catches registry changes.
+    // polls are already scoped to the owning gateway; this also catches
+    // registry changes.
     await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
-    return await runSandboxConnectProbe(sandboxName);
+    await runSandboxConnectProbe(sandboxName);
+    const publication = await publishLaunchReadiness(
+      publicationFromDecision(sandboxName, readiness),
+    );
+    if (publication.kind === "validation-failed") {
+      console.error(
+        `  Probe failed: final launch-readiness validation failed due to ${publication.category}.`,
+      );
+      process.exit(1);
+    }
+    if (publication.kind === "evidence-failed") {
+      console.error(
+        "  Probe failed: complete probe and recovery succeeded, but final launch-readiness evidence could not be verified or published.",
+      );
+      process.exit(1);
+    }
+    return;
   }
 
   const { agent, sb } = await prepareInteractiveSession(sandboxName);

@@ -521,6 +521,83 @@ describe("connectSandbox flow", () => {
     );
   });
 
+  it("probe-only accepts healthy launch evidence without duplicate recovery or publication (#8942)", async () => {
+    const sb = { name: "alpha", agent: "openclaw", provider: null, model: null, policies: [] };
+    const harness = createConnectHarness({
+      readinessDecision: {
+        kind: "accepted",
+        category: "accepted",
+        agent: { name: "openclaw" },
+        sb,
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
+      "Probe complete: launch readiness is healthy for 'alpha'.",
+    );
+  });
+
+  it("probe-only refuses runtime recovery when prior evidence cannot be fenced (#8942)", async () => {
+    const harness = createConnectHarness({
+      readinessDecision: {
+        kind: "fallback",
+        category: "unsafe",
+        fence: null,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: true,
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "complete probe and recovery did not run because prior launch-readiness evidence could not be fenced",
+    );
+  });
+
+  it("probe-only distinguishes completed recovery from final evidence failure (#8942)", async () => {
+    const harness = createConnectHarness({
+      readinessPublicationResult: { kind: "evidence-failed" },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "complete probe and recovery succeeded, but final launch-readiness evidence could not be verified or published",
+    );
+  });
+
+  it("probe-only reports final semantic validation failure as a runtime failure (#8942)", async () => {
+    const harness = createConnectHarness({
+      readinessPublicationResult: { kind: "validation-failed", category: "health" },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "final launch-readiness validation failed due to health",
+    );
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).not.toContain(
+      "complete probe and recovery succeeded",
+    );
+  });
+
   it("probe-only mode exits before reporting success when inference.local returns no trusted result (#8502)", async () => {
     const harness = createConnectHarness({
       registryEntry: {

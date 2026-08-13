@@ -6,17 +6,27 @@ import { requireCuaLifecycleReadiness } from "../../cua/lifecycle-readiness";
 import { resolveSandboxGatewayName } from "../../gateway-runtime-action";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import { withMcpLifecycleLock as withSandboxMutationLock } from "../../state/mcp-lifecycle-lock-acquisition";
-import { prepareInteractiveSession } from "./connect";
+import {
+  completeInteractiveSessionSetup,
+  prepareInteractiveSession,
+  printInteractiveSessionHints,
+} from "./connect";
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import { execSandbox } from "./exec";
 import { getKnownSandboxTarget } from "./gateway-target";
+import {
+  inspectLaunchReadiness,
+  publicationFromDecision,
+  publishLaunchReadiness,
+} from "./launch-readiness";
 
 /**
  * Connect to a sandbox and start its agent in one host-side step (#6006).
  *
- * The preflight is the same one `connect` runs, and it must run first: the
- * agent started over `exec` without process recovery renders a TUI that sits
- * disconnected because the gateway was never checked or restarted.
+ * Launch either validates a launch-readiness lease or runs the same complete
+ * preflight as `connect` before starting the agent. Starting over `exec`
+ * without either path can leave the TUI disconnected from an unhealthy
+ * gateway.
  */
 interface LaunchSandboxDeps {
   getSandbox?: typeof getKnownSandboxTarget;
@@ -24,6 +34,8 @@ interface LaunchSandboxDeps {
   resolveSandboxGatewayName?: typeof resolveSandboxGatewayName;
   withGatewayRouteMutationLock?: typeof withGatewayRouteMutationLock;
   withSandboxMutationLock?: typeof withSandboxMutationLock;
+  inspectLaunchReadiness?: typeof inspectLaunchReadiness;
+  publishLaunchReadiness?: typeof publishLaunchReadiness;
 }
 
 async function launchCuaUnderMutationLocks(
@@ -58,7 +70,26 @@ export async function launchSandbox(
   sandboxName: string,
   deps: LaunchSandboxDeps = {},
 ): Promise<void> {
-  const { agent, sb } = await prepareInteractiveSession(sandboxName);
+  const decision = await (deps.inspectLaunchReadiness ?? inspectLaunchReadiness)(sandboxName);
+  const session =
+    decision.kind === "accepted"
+      ? (() => {
+          printInteractiveSessionHints(sandboxName);
+          completeInteractiveSessionSetup(sandboxName, decision.sb);
+          return { agent: decision.agent, sb: decision.sb };
+        })()
+      : await prepareInteractiveSession(sandboxName);
+  if (decision.kind === "fallback" && decision.fence) {
+    const publication = await (deps.publishLaunchReadiness ?? publishLaunchReadiness)(
+      publicationFromDecision(sandboxName, decision),
+    );
+    if (publication.kind === "validation-failed") {
+      throw new Error(
+        `Launch readiness final validation failed due to ${publication.category}. Retry launch.`,
+      );
+    }
+  }
+  const { agent, sb } = session;
   const isCua = sb?.agent === "nemocua";
   const agentCommand = isCua
     ? agentRuntime.getTerminalCommand(agent, "interactive")
