@@ -3329,8 +3329,9 @@ preinstall_backup_and_retire_legacy_gateway() {
 # 5. Onboard
 # ---------------------------------------------------------------------------
 
-# Authorize the sudo commands that follow, preferring passwordless sudo, and
-# print the sudo invocation the caller must use.
+# Check whether sudo can run without prompting. If it cannot, validate the
+# user's credentials through a terminal. Print the non-prompting sudo invocation
+# that the caller must use.
 #
 # `sudo -v` validates the user's credentials rather than a specific command, so
 # on hosts whose sudoers mix a password-based entry (Ubuntu's %sudo group) with
@@ -3338,13 +3339,13 @@ preinstall_backup_and_retire_legacy_gateway() {
 # runs passwordless. Callers with no terminal to answer that prompt — the deploy
 # notebook, CI — stall there instead of repairing the spec (NVBug 6570793).
 #
-# A successful `sudo -n true` probe proves only that `true` is passwordless and
-# caches no credentials, so a command-specific sudoers entry can still prompt on
-# the systemctl/mkdir/nvidia-ctk calls that follow. Print `sudo -n` in that case
-# so those calls fail instead of stalling mid-repair — the same contract as
-# NEMOCLAW_NON_INTERACTIVE_SUDO_MODE's default. After an answered `sudo -v` a
-# terminal demonstrably exists, so print plain `sudo`; that keeps the repair
-# working where sudoers sets timestamp_timeout=0 and caches nothing.
+# A successful `sudo -n true` probe proves only that sudo can run `true` without
+# prompting at that moment. It does not establish that the later systemctl,
+# mkdir, or nvidia-ctk commands can run without prompting. Every later command
+# therefore uses `sudo -n` and establishes its own authorization without
+# another prompt. After an answered `sudo -v`, the credential timestamp lets
+# those exact commands run noninteractively. If sudoers does not retain the
+# timestamp, the command fails instead of prompting again.
 #
 # Terminal availability follows the installer's existing model — stdin when it
 # is a TTY, else /dev/tty when it can be opened — so the documented
@@ -3356,19 +3357,23 @@ authorize_sudo() {
     printf 'sudo -n'
     return 0
   fi
+  if installer_non_interactive \
+    && [ "${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" != "prompt" ]; then
+    return 1
+  fi
   if [ -t 0 ]; then
     sudo -v >&2 || return 1
-    printf 'sudo'
+    printf 'sudo -n'
     return 0
   fi
   if { exec 3</dev/tty; } 2>/dev/null; then
-    info "Installer stdin is piped; authorizing sudo on /dev/tty..." >&2
+    info "Installer stdin is piped; validating sudo credentials through /dev/tty..." >&2
     if ! sudo -v <&3 >&2; then
       exec 3<&-
       return 1
     fi
     exec 3<&-
-    printf 'sudo'
+    printf 'sudo -n'
     return 0
   fi
   return 1

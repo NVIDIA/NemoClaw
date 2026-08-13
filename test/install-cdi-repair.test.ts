@@ -126,6 +126,8 @@ describe("installer NVIDIA CDI repair", () => {
     toolkitInstalled = true,
     passwordlessSudo = "all",
     terminal = "none",
+    nonInteractive = false,
+    nonInteractiveSudoMode = "",
   }: {
     systemctlScript: string;
     isWsl?: boolean;
@@ -148,11 +150,14 @@ describe("installer NVIDIA CDI repair", () => {
      * `curl … | bash` install: stdin is the script pipe, but /dev/tty is open.
      */
     terminal?: "none" | "tty" | "pipe-with-tty";
+    nonInteractive?: boolean;
+    nonInteractiveSudoMode?: "" | "prompt";
   }) {
     const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-install-cdi-repair-");
     const sourceRoot = path.join(tmp, "source");
     const cdiDir = path.join(tmp, "cdi");
     const cdiState = path.join(tmp, "cdi-generated");
+    const sudoAuthorized = path.join(tmp, "sudo-authorized");
     const sudoLog = path.join(tmp, "sudo.log");
     const systemctlLog = path.join(tmp, "systemctl.log");
     fs.mkdirSync(path.join(sourceRoot, "dist", "lib", "onboard"), { recursive: true });
@@ -212,10 +217,12 @@ if [ "\${1:-}" = "-n" ]; then
   case "$PASSWORDLESS_SUDO" in
     all) shift ;;
     probe-only) [ "\${2:-}" = "true" ] || exit 1; shift ;;
-    *) exit 1 ;;
+    *) [ -f "$SUDO_AUTHORIZED" ] || exit 1; shift ;;
   esac
 fi
 if [ "\${1:-}" = "-v" ]; then
+  [ -t 0 ] || exit 1
+  : > "$SUDO_AUTHORIZED"
   exit 0
 fi
 exec "$@"
@@ -266,9 +273,12 @@ run_installer_host_preflight
       CDI_DIR: cdiDir,
       CDI_STATE: cdiState,
       CDI_STALE_FILE: path.join(cdiDir, "nvidia.yaml"),
+      SUDO_AUTHORIZED: sudoAuthorized,
       SUDO_LOG: sudoLog,
       SYSTEMCTL_LOG: systemctlLog,
       PASSWORDLESS_SUDO: passwordlessSudo,
+      NON_INTERACTIVE: nonInteractive ? "1" : "",
+      NEMOCLAW_NON_INTERACTIVE_SUDO_MODE: nonInteractiveSudoMode,
     };
     const result =
       terminal === "none"
@@ -320,8 +330,7 @@ exit 99
       /^enable --now nvidia-cdi-refresh\.path nvidia-cdi-refresh\.service$/m,
     );
     expect(sudoLog).toMatch(/^-n true$/m);
-    // The probe authorized nothing beyond `true` and cached no credentials, so
-    // the repair's own commands keep `-n` and fail fast instead of prompting.
+    // The later command keeps `-n`, so it cannot prompt after the probe.
     expect(sudoLog).toMatch(/^-n systemctl enable --now /m);
     expect(sudoLog).not.toMatch(/^-v$/m);
     expect(sudoLog).not.toMatch(/nvidia-ctk cdi generate/);
@@ -400,12 +409,11 @@ exit 99
     expect(output).toMatch(/Enabled NVIDIA CDI refresh service/);
     expect(sudoLog).toMatch(/^-n true$/m);
     expect(sudoLog).toMatch(/^-v$/m);
-    // An answered prompt proves a terminal exists and may have cached nothing
-    // (timestamp_timeout=0), so the repair runs prompt-capable sudo.
+    // The exact repair command must use the timestamp without another prompt.
     expect(systemctlLog).toMatch(
       /^enable --now nvidia-cdi-refresh\.path nvidia-cdi-refresh\.service$/m,
     );
-    expect(sudoLog).toMatch(/^systemctl enable --now /m);
+    expect(sudoLog).toMatch(/^-n systemctl enable --now /m);
   });
 
   it("prompts for NVIDIA CDI repair when stdin is piped but /dev/tty is open", () => {
@@ -426,15 +434,92 @@ exit 99
     // `curl … | bash` leaves stdin as the script pipe. Testing only `[ -t 0 ]`
     // would skip the repair here even though the user can answer on /dev/tty.
     expect(cdiStateExists).toBe(true);
-    expect(output).toMatch(/Installer stdin is piped; authorizing sudo on \/dev\/tty/);
+    expect(output).toMatch(
+      /Installer stdin is piped; validating sudo credentials through \/dev\/tty/,
+    );
     expect(output).toMatch(/Enabled NVIDIA CDI refresh service/);
     expect(output).not.toMatch(
       /Could not obtain sudo credentials for NVIDIA CDI device spec generation/,
     );
+    expect(sudoLog).toMatch(/^-n true$/m);
     expect(sudoLog).toMatch(/^-v$/m);
+    expect(sudoLog).toMatch(/^-n systemctl enable --now /m);
     expect(systemctlLog).toMatch(
       /^enable --now nvidia-cdi-refresh\.path nvidia-cdi-refresh\.service$/m,
     );
+  });
+
+  it.each(["tty", "pipe-with-tty"] as const)(
+    "does not prompt for NVIDIA CDI repair in non-interactive %s mode",
+    (terminal) => {
+      const { cdiStateExists, output, sudoLog, systemctlLog } = runNvidiaCdiInstallerRepairTest({
+        nonInteractive: true,
+        passwordlessSudo: "none",
+        terminal,
+        systemctlScript: `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
+touch "$CDI_STATE"
+exit 0
+`,
+      });
+
+      expect(cdiStateExists).toBe(false);
+      expect(output).toMatch(
+        /Could not obtain sudo credentials for NVIDIA CDI device spec generation/,
+      );
+      expect(output).not.toMatch(/validating sudo credentials/);
+      expect(sudoLog).toMatch(/^-n true$/m);
+      expect(sudoLog).not.toMatch(/^-v$/m);
+      expect(systemctlLog).toBe("");
+    },
+  );
+
+  it("allows an explicit sudo prompt during non-interactive piped installation", () => {
+    const { cdiStateExists, output, sudoLog, systemctlLog } = runNvidiaCdiInstallerRepairTest({
+      nonInteractive: true,
+      nonInteractiveSudoMode: "prompt",
+      passwordlessSudo: "none",
+      terminal: "pipe-with-tty",
+      systemctlScript: `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
+if [ "\${1:-}" = "enable" ]; then
+  touch "$CDI_STATE"
+  exit 0
+fi
+exit 99
+`,
+    });
+
+    expect(cdiStateExists).toBe(true);
+    expect(output).toMatch(/validating sudo credentials through \/dev\/tty/);
+    expect(sudoLog).toMatch(/^-v$/m);
+    expect(sudoLog).toMatch(/^-n systemctl enable --now /m);
+    expect(systemctlLog).toMatch(
+      /^enable --now nvidia-cdi-refresh\.path nvidia-cdi-refresh\.service$/m,
+    );
+  });
+
+  it("keeps direct CDI generation non-prompting after /dev/tty authorization", () => {
+    const { cdiDir, cdiStateExists, output, sudoLog } = runNvidiaCdiInstallerRepairTest({
+      passwordlessSudo: "none",
+      terminal: "pipe-with-tty",
+      systemctlScript: `#!/usr/bin/env bash
+set -euo pipefail
+exit 1
+`,
+    });
+
+    expect(cdiStateExists).toBe(true);
+    expect(output).toMatch(
+      /Installer stdin is piped; validating sudo credentials through \/dev\/tty/,
+    );
+    expect(output).toMatch(/Generated NVIDIA CDI device spec/);
+    expect(sudoLog).toMatch(/^-v$/m);
+    expect(sudoLog).toMatch(/^-n systemctl enable --now /m);
+    expect(sudoLog).toContain(`-n mkdir -p ${cdiDir}`);
+    expect(sudoLog).toContain(`-n nvidia-ctk cdi generate --output=${cdiDir}/nvidia.yaml`);
   });
 
   it("keeps NVIDIA CDI repair non-prompting when only the sudo probe is passwordless", () => {
@@ -449,9 +534,8 @@ exit 0
 `,
     });
 
-    // `sudo -n true` proves only that `true` is passwordless. The repair's own
-    // commands must stay non-prompting, so they fail rather than stall — even
-    // here, where /dev/tty exists and prompt-capable sudo would have succeeded.
+    // In this fixture, only `true` can run without a prompt. The repair commands
+    // keep `-n`, so they fail instead of prompting through /dev/tty.
     expect(cdiStateExists).toBe(false);
     expect(sudoLog).toMatch(/^-n true$/m);
     expect(sudoLog).toMatch(/^-n systemctl enable --now /m);
