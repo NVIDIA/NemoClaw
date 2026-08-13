@@ -2976,6 +2976,22 @@ preinstall_backup_and_retire_legacy_gateway() {
 # ---------------------------------------------------------------------------
 # 5. Onboard
 # ---------------------------------------------------------------------------
+
+# Authorize the sudo commands that follow, preferring passwordless sudo.
+#
+# `sudo -v` validates the user's credentials rather than a specific command, so
+# on hosts whose sudoers mix a password-based entry (Ubuntu's %sudo group) with
+# a NOPASSWD drop-in it still demands a password even though `sudo <command>`
+# runs passwordless. Callers with no terminal to answer that prompt — the deploy
+# notebook, CI — stall there instead of repairing the spec (NVBug 6570793).
+#
+# Probe with `sudo -n true` first and prompt only when a terminal can answer,
+# matching the TTY-aware sudo prefix in src/lib/onboard/ollama-systemd.ts.
+authorize_sudo() {
+  sudo -n true >/dev/null 2>&1 && return 0
+  [[ -t 0 ]] && sudo -v
+}
+
 repair_installer_stale_nvidia_cdi_spec() {
   local flagged_file="${1:-}"
   local service_spec_path="/var/run/cdi/nvidia.yaml"
@@ -2996,7 +3012,7 @@ repair_installer_stale_nvidia_cdi_spec() {
     sudo_cmd=(sudo)
     info "You may be asked for your password to authorize these host-level admin changes."
     info "NemoClaw does not store your password."
-    if ! sudo -v; then
+    if ! authorize_sudo; then
       warn "Could not obtain sudo credentials for NVIDIA CDI refresh service repair."
       return 0
     fi
@@ -3079,7 +3095,7 @@ repair_installer_nvidia_cdi_spec() {
     sudo_cmd=(sudo)
     info "You may be asked for your password to authorize these host-level admin changes."
     info "NemoClaw does not store your password."
-    if ! sudo -v; then
+    if ! authorize_sudo; then
       warn "Could not obtain sudo credentials for NVIDIA CDI device spec generation."
       return 0
     fi
