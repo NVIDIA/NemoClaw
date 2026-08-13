@@ -2485,7 +2485,7 @@ async function createSandboxWithBaseImageResolution(
     request: managedStartupRootApplyRequest,
     intendedWorkloadArgv: intendedSandboxStartupCommand,
   });
-  const createdLifecycleGeneration = recreateRuntime.targetGeneration ?? crypto.randomUUID();
+  const createdSandboxLifecycle = sandboxRecreateTransaction.createCreatedSandboxLifecycle(recreateRuntime, { sandboxName, gatewayName: GATEWAY_NAME }, getSandboxRecreateObservation);
   const {
     createResult,
     runtimePatch,
@@ -2507,7 +2507,7 @@ async function createSandboxWithBaseImageResolution(
       createArgv,
       sandboxEnv,
       sandboxStartupCommand,
-      lifecycleGeneration: createdLifecycleGeneration,
+      lifecycleGeneration: createdSandboxLifecycle.generation,
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),
@@ -2579,22 +2579,7 @@ async function createSandboxWithBaseImageResolution(
       resolveSandboxImageTagFromCreateOutput,
     });
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
-  recreateRuntime.recordCreated();
-  const lifecycleTarget = { sandboxName, gatewayName: GATEWAY_NAME };
-  const observedLifecycleRegistration =
-    sandboxRecreateTransaction.captureCreatedSandboxLifecycleRegistration(
-      lifecycleTarget,
-      createdLifecycleGeneration,
-      lifecycleRegistrationFields,
-      getSandboxRecreateObservation,
-    );
-  const pinnedLifecycleRegistration =
-    sandboxRecreateTransaction.selectCreatedSandboxLifecycleRegistration(
-      sandboxName,
-      observedLifecycleRegistration,
-      recreateRuntime.targetGeneration,
-      recreateRuntime.registrationFields,
-    );
+  const pinnedLifecycleRegistration = createdSandboxLifecycle.capture(lifecycleRegistrationFields);
   finalizeCreatedSandbox(
     {
       sandboxName,
@@ -2618,14 +2603,7 @@ async function createSandboxWithBaseImageResolution(
       note,
       error: console.error,
       exitProcess: (code) => process.exit(code),
-      register: (openclawImagePluginInstalls) => {
-        const finalLifecycleRegistration =
-          sandboxRecreateTransaction.revalidateCreatedSandboxLifecycleRegistration(
-            lifecycleTarget,
-            pinnedLifecycleRegistration,
-            getSandboxRecreateObservation,
-          );
-        return sandboxRegistration.registerCreatedSandbox({
+      register: (openclawImagePluginInstalls) => sandboxRegistration.registerCreatedSandbox({
           sandboxName,
           inferenceSelection: sandboxRegistration.selection(sandboxName, provider, model, preferredInferenceApi, createIntent?.endpointSource ?? null),
           runtimeFields: sandboxRuntimeFields,
@@ -2646,12 +2624,11 @@ async function createSandboxWithBaseImageResolution(
           hermesDashboardState: finalHermesDashboardState,
           hermesApiPort: hermesApiPortReservationScope.effectivePort,
           dashboardPort: actualDashboardPort,
-          ...finalLifecycleRegistration,
+          ...createdSandboxLifecycle.revalidate(pinnedLifecycleRegistration),
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
           hostMounts: resolvedCreateIntent.hostMounts,
-        });
-      },
+        }),
     },
   );
   if ("complete" in recreateRuntime) recreateRuntime.complete();

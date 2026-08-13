@@ -327,6 +327,44 @@ export function revalidateCreatedSandboxLifecycleRegistration(
   return registration;
 }
 
+export interface CreatedSandboxLifecycle {
+  readonly generation: string;
+  capture(
+    lifecycleRegistrationFields: Pick<SandboxEntry, "lifecycleGeneration">,
+  ): CreatedSandboxLifecycleRegistration;
+  revalidate(
+    registration: CreatedSandboxLifecycleRegistration,
+  ): CreatedSandboxLifecycleRegistration;
+}
+
+/** Coordinate sandbox setup and registry publication on one lifecycle generation. */
+export function createCreatedSandboxLifecycle(
+  runtime: SandboxRecreateRuntime,
+  target: CreatedSandboxLifecycleTarget,
+  observe: ObserveCreatedSandbox,
+): CreatedSandboxLifecycle {
+  const generation = runtime.targetGeneration ?? randomUUID();
+  return {
+    generation,
+    capture: (lifecycleRegistrationFields) => {
+      runtime.recordCreated();
+      return selectCreatedSandboxLifecycleRegistration(
+        target.sandboxName,
+        captureCreatedSandboxLifecycleRegistration(
+          target,
+          generation,
+          lifecycleRegistrationFields,
+          observe,
+        ),
+        runtime.targetGeneration,
+        runtime.registrationFields,
+      );
+    },
+    revalidate: (registration) =>
+      revalidateCreatedSandboxLifecycleRegistration(target, registration, observe),
+  };
+}
+
 export interface SandboxRecreateSourceProof {
   readonly transactionId: string;
   readonly sandboxName: string;
