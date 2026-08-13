@@ -57,6 +57,57 @@ function findAvailableGatewayStateArchivePath(stateDir: string): string | null {
 }
 
 /**
+ * Print the incompatible-database diagnosis and its state-move recovery.
+ *
+ * The diagnosis prints whether or not this process observed the gateway exit.
+ * `startDockerDriverGateway` also reaches this reporter after the poll budget
+ * expires, and after the child's liveness dropped before its `exit` event
+ * arrived (#5334). A gateway that dies on this failure therefore reports
+ * `childExit.exited === false` on the reported downgrade path, and gating the
+ * whole diagnosis on that flag left that path with no diagnosis at all (#8797).
+ *
+ * The state move keeps an explicit precondition instead: moving the directory
+ * while a gateway process still runs leaves that process without its state.
+ */
+function printIncompatibleGatewayDatabaseRecovery(
+  logPath: string,
+  childExit: ChildExitState,
+  printError: (message?: string) => void,
+): void {
+  const stateDir = path.dirname(logPath);
+  printError("  The installed OpenShell version cannot use the existing gateway database.");
+  printError(`  Database: ${path.join(stateDir, "openshell.db")}`);
+  printError("  The database records a migration that this OpenShell version does not include.");
+  printError("  This can happen after an OpenShell downgrade.");
+  const archivePath = findAvailableGatewayStateArchivePath(stateDir);
+  if (!archivePath) {
+    printError("  NemoClaw could not select an unused archive path for the gateway state.");
+    printError("  Keep the gateway stopped and inspect the state directory before recovery.");
+    noteOnboardResumeHintShown();
+    return;
+  }
+  const [stateDirArg, archivePathArg, archivedStatePathArg] = [
+    stateDir,
+    archivePath,
+    path.join(archivePath, "gateway-state"),
+  ].map((value) => `'${value.replaceAll("'", `'\\''`)}'`);
+  printError(
+    "  The selected gateway state contains credentials and all registrations for this gateway.",
+  );
+  printError("  Keep the archive owner-only until every required registration is restored.");
+  if (!childExit.exited) {
+    printError("  NemoClaw did not observe this gateway process exit.");
+    printError("  Confirm that no gateway process is running before you move the state:");
+    printError("    pgrep -af openshell-gateway");
+  }
+  printError("  Create the archive, move the selected gateway state, then continue onboarding:");
+  printError(
+    `    mkdir -m 700 ${archivePathArg} && mv ${stateDirArg} ${archivedStatePathArg} && ${onboardRecoveryCommand()}`,
+  );
+  noteOnboardResumeHintShown();
+}
+
+/**
  * Print the standard Docker-driver-gateway-start failure diagnostic set
  * to stderr and either exit or return. Always prints:
  *
@@ -96,39 +147,8 @@ export function reportDockerDriverGatewayStartFailure(
   const failure = classifyGatewayStartFailure(tail);
   if (failure.kind === "docker_unreachable") {
     printDockerDaemonRecovery(console.error);
-  } else if (failure.kind === "database_migration_incompatible" && childExit.exited) {
-    const stateDir = path.dirname(logPath);
-    const databasePath = path.join(stateDir, "openshell.db");
-    console.error("  The installed OpenShell version cannot use the existing gateway database.");
-    console.error(`  Database: ${databasePath}`);
-    console.error("  The database records a migration that this OpenShell version does not include.");
-    console.error("  This can happen after an OpenShell downgrade.");
-    const archivePath = findAvailableGatewayStateArchivePath(stateDir);
-    if (archivePath) {
-      const archivedStatePath = path.join(archivePath, "gateway-state");
-      const [stateDirArg, archivePathArg, archivedStatePathArg] = [
-        stateDir,
-        archivePath,
-        archivedStatePath,
-      ].map(
-        (value) => `'${value.replaceAll("'", `'\\''`)}'`,
-      );
-      console.error(
-        "  The selected gateway state contains credentials and all registrations for this gateway.",
-      );
-      console.error("  Keep the archive owner-only until every required registration is restored.");
-      console.error(
-        "  Create the archive, move the selected gateway state, then continue onboarding:",
-      );
-      console.error(
-        `    mkdir -m 700 ${archivePathArg} && mv ${stateDirArg} ${archivedStatePathArg} && ${onboardRecoveryCommand()}`,
-      );
-      noteOnboardResumeHintShown();
-    } else {
-      console.error("  NemoClaw could not select an unused archive path for the gateway state.");
-      console.error("  Keep the gateway stopped and inspect the state directory before recovery.");
-      noteOnboardResumeHintShown();
-    }
+  } else if (failure.kind === "database_migration_incompatible") {
+    printIncompatibleGatewayDatabaseRecovery(logPath, childExit, console.error);
   }
   console.error("  Troubleshooting:");
   console.error(`    tail -100 ${logPath}`);

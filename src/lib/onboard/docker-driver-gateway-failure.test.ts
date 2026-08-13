@@ -173,6 +173,8 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       expect(joined).toContain("mkdir -m 700");
       expect(joined).toContain("incompatible/gateway-state'");
       expect(joined).toContain("nemoclaw onboard --resume");
+      // The liveness precondition belongs to the unobserved-exit path only.
+      expect(joined).not.toContain("did not observe this gateway process exit");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -218,12 +220,21 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
     }
   });
 
-  it("does not print state-move guidance while the current gateway process can still be running (#8797)", () => {
+  // Regression: NemoClaw #8797. On the reported downgrade the gateway dies on
+  // this failure, but the start loop reports it after the poll budget expires,
+  // so `childExit.exited` is false. Withholding the diagnosis in that state
+  // left the reported path with the raw sqlx text and no remedy. The state
+  // move stays available and carries a liveness precondition instead.
+  it("prints the incompatible-database diagnosis with a liveness precondition when the exit was not observed (#8797)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
     const log = path.join(dir, "openshell-gateway.log");
     fs.writeFileSync(
       log,
-      "migration 6 was previously applied and is missing in the resolved migrations\n",
+      [
+        "Starting OpenShell server bind=127.0.0.1:8080",
+        "Error:   × execution error: migration error: migration 6 was previously applied but",
+        "  │ is missing in the resolved migrations",
+      ].join("\n"),
     );
     try {
       reportDockerDriverGatewayStartFailure(log, makeExitState(), {
@@ -232,7 +243,11 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       });
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
       expect(joined).toContain("did not become healthy within the timeout");
-      expect(joined).not.toContain(".incompatible");
+      expect(joined).toContain("cannot use the existing gateway database");
+      expect(joined).toContain(`Database: ${path.join(dir, "openshell.db")}`);
+      expect(joined).toContain("did not observe this gateway process exit");
+      expect(joined).toContain("pgrep -af openshell-gateway");
+      expect(joined).toContain(`mkdir -m 700 '${dir}.incompatible'`);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
