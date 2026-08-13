@@ -45,15 +45,12 @@ const buildOpenshellExecArgsMock = vi.hoisted(() =>
   ),
 );
 
-vi.mock("../exec", () => ({
+vi.mock("../exec", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../exec")>()),
   execSandbox: execMock,
   buildOpenshellExecArgs: buildOpenshellExecArgsMock,
   wrapExecCommandWithRuntimeEnv: vi.fn((cmd: readonly string[]) => cmd),
   wrapOpenClawAgentCommandWithRuntimeEnv: vi.fn((cmd: readonly string[]) => cmd),
-  computeExitCode: vi.fn((result: { status: number | null }) => ({
-    code: result.status ?? 1,
-    errorMessage: null,
-  })),
 }));
 vi.mock("../gateway-state", () => ({ ensureLiveSandboxOrExit: ensureLiveMock }));
 vi.mock("../../../state/registry", () => ({ getSandbox: getSandboxMock }));
@@ -830,12 +827,12 @@ describe("runAgentNonJsonPassthrough", () => {
     };
   }
 
-  function makeSpawnMock(
+  function makeDispatchMock(
     stdout: string,
     stderr: string,
     status: number | null = 0,
-  ): NonNullable<AgentNonJsonPassthroughDeps["spawnSync"]> {
-    return vi.fn(() => ({
+  ): NonNullable<AgentNonJsonPassthroughDeps["runDispatch"]> {
+    return vi.fn(async () => ({
       stdout,
       stderr,
       status,
@@ -848,17 +845,17 @@ describe("runAgentNonJsonPassthrough", () => {
 
   const stubBinary = () => "/usr/local/bin/openshell";
 
-  it("bounds the host transport when the turn requests a deadline (#8723)", () => {
+  it("bounds the host transport when the turn requests a deadline (#8723)", async () => {
     const { proc } = makeNonJsonProcMock();
-    const spawnSyncMock = makeSpawnMock("PONG\n", "", 0);
-    expect(() =>
+    const runDispatchMock = makeDispatchMock("PONG\n", "", 0);
+    await expect(
       runAgentNonJsonPassthrough(
         "my-sb",
         ["openclaw", "agent", "--agent", "main", "--timeout", "30", "-m", "ping"],
         proc,
-        { getOpenshellBinary: stubBinary, spawnSync: spawnSyncMock },
+        { getOpenshellBinary: stubBinary, runDispatch: runDispatchMock },
       ),
-    ).toThrow("__exit:0");
+    ).rejects.toThrow("__exit:0");
     // Outlasts the requested deadline so the in-sandbox turn still reports its
     // own timeout; the host bound only catches a turn that stops answering.
     expect(buildOpenshellExecArgsMock.mock.calls[0]?.[2]?.timeoutSeconds).toBe(60);
@@ -866,29 +863,27 @@ describe("runAgentNonJsonPassthrough", () => {
     expect(buildOpenshellExecArgsMock.mock.calls[0]?.[1]).toContain("30");
   });
 
-  it("leaves the host transport unbounded when the turn requests no deadline (#8723)", () => {
+  it("leaves the host transport unbounded when the turn requests no deadline (#8723)", async () => {
     const { proc } = makeNonJsonProcMock();
-    const spawnSyncMock = makeSpawnMock("PONG\n", "", 0);
-    expect(() =>
-      runAgentNonJsonPassthrough(
-        "my-sb",
-        ["openclaw", "agent", "--agent", "main", "-m", "ping"],
-        proc,
-        { getOpenshellBinary: stubBinary, spawnSync: spawnSyncMock },
-      ),
-    ).toThrow("__exit:0");
+    const runDispatchMock = makeDispatchMock("PONG\n", "", 0);
+    await expect(
+      runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "--agent", "main", "-m", "ping"], proc, {
+        getOpenshellBinary: stubBinary,
+        runDispatch: runDispatchMock,
+      }),
+    ).rejects.toThrow("__exit:0");
     expect(buildOpenshellExecArgsMock.mock.calls[0]?.[2]?.timeoutSeconds).toBeUndefined();
   });
 
-  it("emits a clean embedded-fallback error and exits 1 when EMBEDDED FALLBACK appears in stdout", () => {
+  it("emits a clean embedded-fallback error and exits 1 when EMBEDDED FALLBACK appears in stdout", async () => {
     const { stderrWrites, stdoutWrites, exit, proc } = makeNonJsonProcMock();
-    const spawnSyncMock = makeSpawnMock("EMBEDDED FALLBACK: using local model\nPONG\n", "", 0);
-    expect(() =>
+    const runDispatchMock = makeDispatchMock("EMBEDDED FALLBACK: using local model\nPONG\n", "", 0);
+    await expect(
       runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "--agent", "main"], proc, {
         getOpenshellBinary: stubBinary,
-        spawnSync: spawnSyncMock,
+        runDispatch: runDispatchMock,
       }),
-    ).toThrow("__exit:1");
+    ).rejects.toThrow("__exit:1");
     expect(exit).toHaveBeenCalledWith(1);
     const errText = stderrWrites.join("");
     expect(errText).toMatch(/embedded-fallback mode in sandbox 'my-sb'/);
@@ -898,53 +893,53 @@ describe("runAgentNonJsonPassthrough", () => {
     expect(stdoutWrites.join("")).toBe("");
   });
 
-  it("emits a clean embedded-fallback error and exits 1 when [agent/embedded] appears in stderr", () => {
+  it("emits a clean embedded-fallback error and exits 1 when [agent/embedded] appears in stderr", async () => {
     const { stderrWrites, exit, proc } = makeNonJsonProcMock();
-    const spawnSyncMock = makeSpawnMock(
+    const runDispatchMock = makeDispatchMock(
       "",
       "[agent/embedded] transport active\nsome response\n",
       0,
     );
-    expect(() =>
+    await expect(
       runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "--agent", "main"], proc, {
         getOpenshellBinary: stubBinary,
-        spawnSync: spawnSyncMock,
+        runDispatch: runDispatchMock,
       }),
-    ).toThrow("__exit:1");
+    ).rejects.toThrow("__exit:1");
     expect(exit).toHaveBeenCalledWith(1);
     expect(stderrWrites.join("")).toMatch(/embedded-fallback mode/);
   });
 
-  it("passes through clean stdout and exits with the real exit code when no embedded-fallback pattern is found", () => {
+  it("passes through clean stdout and exits with the real exit code when no embedded-fallback pattern is found", async () => {
     const { stdoutWrites, stderrWrites, exit, proc } = makeNonJsonProcMock();
-    const spawnSyncMock = makeSpawnMock("PONG\n", "", 0);
-    expect(() =>
+    const runDispatchMock = makeDispatchMock("PONG\n", "", 0);
+    await expect(
       runAgentNonJsonPassthrough(
         "my-sb",
         ["openclaw", "agent", "--agent", "main", "-m", "ping"],
         proc,
         {
           getOpenshellBinary: stubBinary,
-          spawnSync: spawnSyncMock,
+          runDispatch: runDispatchMock,
         },
       ),
-    ).toThrow("__exit:0");
+    ).rejects.toThrow("__exit:0");
     expect(exit).toHaveBeenCalledWith(0);
     expect(stdoutWrites.join("")).toBe("PONG\n");
     expect(stderrWrites.join("")).toBe("");
   });
 
-  it("fails loud instead of reporting success when the turn's deadline fired (#8723)", () => {
+  it("fails loud instead of reporting success when the turn's deadline fired (#8723)", async () => {
     const { stdoutWrites, stderrWrites, exit, proc } = makeNonJsonProcMock();
     const timedOut =
       "LLM request failed.\nRequest timed out before a response was generated. Please try again, or increase `agents.defaults.timeoutSeconds` in your config.\n";
-    const spawnSyncMock = makeSpawnMock(timedOut, "", 0);
-    expect(() =>
+    const runDispatchMock = makeDispatchMock(timedOut, "", 0);
+    await expect(
       runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "-m", "ping"], proc, {
         getOpenshellBinary: stubBinary,
-        spawnSync: spawnSyncMock,
+        runDispatch: runDispatchMock,
       }),
-    ).toThrow("__exit:1");
+    ).rejects.toThrow("__exit:1");
     expect(exit).toHaveBeenCalledWith(1);
     // The partial trace still reaches the caller ahead of the verdict.
     expect(stdoutWrites.join("")).toBe(timedOut);
@@ -955,39 +950,59 @@ describe("runAgentNonJsonPassthrough", () => {
     expect(errText).toMatch(/may have already applied side effects/);
   });
 
-  it("keeps an upstream non-zero code for a turn that also reported a timeout (#8723)", () => {
+  it("keeps an upstream non-zero code for a turn that also reported a timeout (#8723)", async () => {
     const { exit, proc } = makeNonJsonProcMock();
-    const spawnSyncMock = makeSpawnMock(
+    const runDispatchMock = makeDispatchMock(
       "Request timed out before a response was generated.\n",
       "",
       3,
     );
-    expect(() =>
+    await expect(
       runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "-m", "ping"], proc, {
         getOpenshellBinary: stubBinary,
-        spawnSync: spawnSyncMock,
+        runDispatch: runDispatchMock,
       }),
-    ).toThrow("__exit:3");
+    ).rejects.toThrow("__exit:3");
     expect(exit).toHaveBeenCalledWith(3);
   });
 
-  it("passes through non-zero exit code on clean failure without embedded-fallback", () => {
+  it("passes through non-zero exit code on clean failure without embedded-fallback", async () => {
     const { stderrWrites, exit, proc } = makeNonJsonProcMock();
-    const spawnSyncMock = makeSpawnMock("", "Error: agent session not found\n", 1);
-    expect(() =>
+    const runDispatchMock = makeDispatchMock("", "Error: agent session not found\n", 1);
+    await expect(
       runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "--agent", "main"], proc, {
         getOpenshellBinary: stubBinary,
-        spawnSync: spawnSyncMock,
+        runDispatch: runDispatchMock,
       }),
-    ).toThrow("__exit:1");
+    ).rejects.toThrow("__exit:1");
     expect(exit).toHaveBeenCalledWith(1);
     expect(stderrWrites.join("")).toContain("Error: agent session not found");
   });
 
-  it("fails loud instead of reporting success when the dispatch delivers nothing", () => {
+  it("returns exit 143 after the supervised OpenShell child receives SIGTERM (#8723)", async () => {
+    const { stderrWrites, exit, proc } = makeNonJsonProcMock();
+    const runDispatchMock = vi.fn(async () => ({
+      status: null,
+      signal: "SIGTERM" as const,
+      stdout: "",
+      stderr: "agent turn interrupted\n",
+    }));
+
+    await expect(
+      runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "--agent", "main"], proc, {
+        getOpenshellBinary: stubBinary,
+        runDispatch: runDispatchMock,
+      }),
+    ).rejects.toThrow("__exit:143");
+
+    expect(exit).toHaveBeenCalledWith(143);
+    expect(stderrWrites.join("")).toContain("agent turn interrupted");
+  });
+
+  it("fails loud instead of reporting success when the dispatch delivers nothing", async () => {
     const { stdoutWrites, stderrWrites, exit, proc } = makeNonJsonProcMock();
-    const spawnSyncMock = makeSpawnMock("", "", 0);
-    expect(() =>
+    const runDispatchMock = makeDispatchMock("", "", 0);
+    await expect(
       runAgentNonJsonPassthrough(
         "my-sb",
         ["openclaw", "agent", "--session-key", "agent:main:main", "-m", "ping"],
@@ -995,41 +1010,41 @@ describe("runAgentNonJsonPassthrough", () => {
         {
           getGatewayName: () => null,
           getOpenshellBinary: stubBinary,
-          spawnSync: spawnSyncMock,
+          runDispatch: runDispatchMock,
           stdinIsTty: () => false,
         },
       ),
-    ).toThrow("__exit:1");
+    ).rejects.toThrow("__exit:1");
     expect(exit).toHaveBeenCalledWith(1);
     expect(stdoutWrites).toEqual([]);
     expect(stderrWrites.join("")).toContain("without producing any output");
   });
 
-  it("keeps a stderr-only turn a success so quiet turns do not misfire", () => {
+  it("keeps a stderr-only turn a success so quiet turns do not misfire", async () => {
     const { exit, proc } = makeNonJsonProcMock();
-    const spawnSyncMock = makeSpawnMock("", "openclaw warning\n", 0);
-    expect(() =>
+    const runDispatchMock = makeDispatchMock("", "openclaw warning\n", 0);
+    await expect(
       runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "--agent", "main"], proc, {
         getGatewayName: () => null,
         getOpenshellBinary: stubBinary,
-        spawnSync: spawnSyncMock,
+        runDispatch: runDispatchMock,
         stdinIsTty: () => false,
       }),
-    ).toThrow("__exit:0");
+    ).rejects.toThrow("__exit:0");
     expect(exit).toHaveBeenCalledWith(0);
   });
 
-  it("pins the sandbox's owning gateway when building the dispatch argv", () => {
+  it("pins the sandbox's owning gateway when building the dispatch argv", async () => {
     const { proc } = makeNonJsonProcMock();
-    const spawnSyncMock = makeSpawnMock("PONG\n", "", 0);
-    expect(() =>
+    const runDispatchMock = makeDispatchMock("PONG\n", "", 0);
+    await expect(
       runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "--agent", "main"], proc, {
         getGatewayName: () => "nemoclaw-8081",
         getOpenshellBinary: stubBinary,
-        spawnSync: spawnSyncMock,
+        runDispatch: runDispatchMock,
         stdinIsTty: () => false,
       }),
-    ).toThrow("__exit:0");
+    ).rejects.toThrow("__exit:0");
     expect(buildOpenshellExecArgs).toHaveBeenCalledWith(
       "my-sb",
       expect.anything(),
@@ -1038,17 +1053,17 @@ describe("runAgentNonJsonPassthrough", () => {
     );
   });
 
-  it("withholds an interactive terminal from the non-interactive dispatch", () => {
+  it("withholds an interactive terminal from the non-interactive dispatch", async () => {
     const { proc } = makeNonJsonProcMock();
-    const spawnSyncMock = makeSpawnMock("PONG\n", "", 0);
-    expect(() =>
+    const runDispatchMock = makeDispatchMock("PONG\n", "", 0);
+    await expect(
       runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "--agent", "main"], proc, {
         getGatewayName: () => null,
         getOpenshellBinary: stubBinary,
-        spawnSync: spawnSyncMock,
+        runDispatch: runDispatchMock,
         stdinIsTty: () => true,
       }),
-    ).toThrow("__exit:0");
-    expect(vi.mocked(spawnSyncMock).mock.calls[0]?.[2].stdio).toEqual(["ignore", "pipe", "pipe"]);
+    ).rejects.toThrow("__exit:0");
+    expect(vi.mocked(runDispatchMock).mock.calls[0]?.[2]).toEqual({ stdinIsTty: true });
   });
 });

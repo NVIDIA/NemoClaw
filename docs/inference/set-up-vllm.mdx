@@ -295,7 +295,9 @@ Two behaviors surprise direct callers of the managed vLLM endpoint; the OpenClaw
 
 - **Read reasoning from `reasoning`, not `reasoning_content`.**
   The pinned vLLM runtime renamed the deprecated `reasoning_content` response field to `reasoning`, so `choices[].message.reasoning_content` is `null` even for prompts that reasoned heavily.
-  The reasoning is not discarded — read `choices[].message.reasoning` (and the `delta.reasoning` field when streaming).
+  The reasoning is not discarded.
+  Read non-streaming reasoning from `choices[].message.reasoning`.
+  For streaming responses, read `choices[].delta.reasoning`.
 - **Send a generous `max_tokens` (at least `1024`, and more for hard prompts).**
   The reasoning trace counts against `max_tokens`.
   With a modest budget the model can spend the entire budget on reasoning before it reaches the answer, returning an empty `content` with `finish_reason=length`.
