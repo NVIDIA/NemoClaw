@@ -202,11 +202,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects credential-backed provider smokes in the PR-safe inference-routing job",
-      "category": "security"
-    },
-    {
       "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
       "test": "keeps every candidate on standard runners when $name (#7145)",
       "category": "security"

@@ -33,7 +33,6 @@ import {
   type OpenShellGatewayAuthContractWorkflow,
   validateOpenShellGatewayAuthContractWorkflow,
 } from "./openshell-gateway-auth-contract-workflow-boundary.mts";
-import { validateOpenShellGatewayUpgradeWorkflow } from "./openshell-gateway-upgrade-workflow-boundary.mts";
 import {
   type OperationsWorkflow,
   validateE2eOperationsWorkflow,
@@ -211,8 +210,6 @@ const RUNNER_ROUTING_SCRIPT = [
   'printf \'runner_routing=%s\\n\' "${runner_routing}" >> "${GITHUB_OUTPUT}"',
 ].join("\n");
 const ROUTED_JOB_RUNNER_EXPRESSIONS = {
-  "common-egress-agent":
-    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['common-egress-agent'] }}",
   "hermes-e2e": "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-e2e'] }}",
 } as const;
 const MATRIX_ROUTED_JOB_RUNNER_EXPRESSIONS = {
@@ -223,6 +220,8 @@ const CATALOGUE_ROUTED_JOB_NAMES = [
   "catalogue-standard",
   "catalogue-nvidia-api",
   "catalogue-nvidia-inference",
+  "catalogue-github-read",
+  "catalogue-brave-nvidia-inference",
 ] as const;
 const CATALOGUE_RUNNER_EXPRESSION =
   "${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}";
@@ -609,8 +608,6 @@ const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
 ]);
 const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
   ["test/e2e/live/openclaw-plugin-runtime-exdev-lifecycle.ts", ["openclaw-plugin-runtime-exdev"]],
-  ["test/e2e/live/openshell-gateway-upgrade-helpers.ts", ["openshell-gateway-upgrade"]],
-  ["test/e2e/live/openshell-gateway-upgrade-old-installer.ts", ["openshell-gateway-upgrade"]],
 ]);
 
 export function focusedE2eJobsForChangedFiles(
@@ -1084,41 +1081,6 @@ function validateFreeStandingJobSelector(
   }
 }
 
-function validateInferenceRoutingJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "inference-routing";
-  const steps = asSteps(asRecord(jobs[jobName]).steps);
-  const cloudflaredPrereq = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install and verify cloudflared prerequisite",
-  );
-  const cloudflaredPrereqEnv = asRecord(cloudflaredPrereq?.env);
-  if (cloudflaredPrereqEnv.CLOUDFLARED_VERSION !== REVIEWED_CLOUDFLARED_VERSION) {
-    errors.push(
-      `inference-routing cloudflared prerequisite step must pin CLOUDFLARED_VERSION=${REVIEWED_CLOUDFLARED_VERSION}`,
-    );
-  }
-  if (cloudflaredPrereqEnv.CLOUDFLARED_DEB_SHA256 !== REVIEWED_CLOUDFLARED_DEB_SHA256) {
-    errors.push(
-      `inference-routing cloudflared prerequisite step must pin CLOUDFLARED_DEB_SHA256=${REVIEWED_CLOUDFLARED_DEB_SHA256}`,
-    );
-  }
-  requireRunContains(
-    errors,
-    cloudflaredPrereq,
-    "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb",
-  );
-  requireRunContains(errors, cloudflaredPrereq, "sha256sum -c -");
-  requireRunContains(errors, cloudflaredPrereq, "dpkg-deb -f");
-  requireRunContains(errors, cloudflaredPrereq, "sudo dpkg -i");
-  requireRunContains(errors, cloudflaredPrereq, "cloudflared version ${CLOUDFLARED_VERSION}");
-  requireRunDoesNotContain(errors, cloudflaredPrereq, "pkg.cloudflare.com");
-  requireRunDoesNotContain(errors, cloudflaredPrereq, "apt-get install");
-  const run = requireJobStep(errors, jobName, steps, "Run inference routing live test");
-  requireRunContains(errors, run, "test/e2e/live/inference-routing.test.ts");
-  requireRunDoesNotContain(errors, run, "inference-routing-provider-smoke.test.ts");
-}
 
 function validateCatalogueOwnedJobs(errors: string[], jobs: WorkflowRecord): void {
   for (const jobName of ["gpu-double-onboard", "gpu-e2e", "llama-cpp-generic-gpu"]) {
@@ -1331,202 +1293,7 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, runVitest, "--reporter=test/e2e/risk-signal-reporter.ts");
 }
 
-function validateCommonEgressAgentJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "common-egress-agent";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing common-egress-agent job");
-    return;
-  }
 
-  validateFreeStandingJobSelector(errors, jobs, jobName, "common-egress-agent");
-  if (job.name !== "Common egress agent (${{ matrix.scenario }})") {
-    errors.push("common-egress-agent job name must identify matrix.scenario");
-  }
-  if (job["timeout-minutes"] !== 60) {
-    errors.push("common-egress-agent scenario jobs must keep the 60 minute timeout");
-  }
-  const strategy = asRecord(job.strategy);
-  if (strategy["fail-fast"] !== false) {
-    errors.push("common-egress-agent scenario matrix must disable fail-fast");
-  }
-  if (strategy["max-parallel"] !== 2) {
-    errors.push("common-egress-agent scenario matrix must cap concurrency at two");
-  }
-  if (!isDeepStrictEqual(asRecord(strategy.matrix), COMMON_EGRESS_AGENT_SCENARIO_MATRIX)) {
-    errors.push("common-egress-agent job must keep the three isolated scenario shards");
-  }
-
-  const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("common-egress-agent job must set NEMOCLAW_RUN_LIVE_E2E=1");
-  }
-  if (
-    jobEnv.E2E_ARTIFACT_DIR !==
-    "${{ github.workspace }}/e2e-artifacts/live/common-egress-agent/${{ matrix.scenario }}"
-  ) {
-    errors.push("common-egress-agent job must isolate artifacts by matrix.scenario");
-  }
-  if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
-    errors.push("common-egress-agent job must point NEMOCLAW_CLI_BIN at the repo CLI");
-  }
-  if (jobEnv.NEMOCLAW_E2E_SHARD !== "${{ matrix.scenario }}") {
-    errors.push("common-egress-agent job must bind NEMOCLAW_E2E_SHARD to matrix.scenario");
-  }
-  if (jobEnv.NEMOCLAW_NON_INTERACTIVE !== "1") {
-    errors.push("common-egress-agent job must set NEMOCLAW_NON_INTERACTIVE=1");
-  }
-  if (jobEnv.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE !== "1") {
-    errors.push("common-egress-agent job must set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1");
-  }
-  if (jobEnv.NEMOCLAW_RECREATE_SANDBOX !== "1") {
-    errors.push("common-egress-agent job must set NEMOCLAW_RECREATE_SANDBOX=1");
-  }
-  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
-    errors.push("common-egress-agent job must force OPENSHELL_GATEWAY=nemoclaw");
-  }
-  for (const secret of [
-    "NVIDIA_INFERENCE_API_KEY",
-    "DOCKERHUB_USERNAME",
-    "DOCKERHUB_TOKEN",
-    "GITHUB_TOKEN",
-  ]) {
-    requireEnvDoesNotExposeSecret(errors, "common-egress-agent job", jobEnv, secret);
-  }
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    const stepName = step.name ?? step.uses ?? "<unnamed>";
-    const stepEnv = asRecord(step.env);
-    if (step.name !== "Run common-egress agent live test") {
-      requireEnvDoesNotExposeSecret(
-        errors,
-        `common-egress-agent step '${stepName}'`,
-        stepEnv,
-        "NVIDIA_INFERENCE_API_KEY",
-      );
-    }
-    const forbiddenSecrets =
-      step.name === DOCKER_HUB_AUTH_STEP
-        ? ["GITHUB_TOKEN"]
-        : ["DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN", "GITHUB_TOKEN"];
-    for (const secret of forbiddenSecrets) {
-      requireEnvDoesNotExposeSecret(
-        errors,
-        `common-egress-agent step '${stepName}'`,
-        stepEnv,
-        secret,
-      );
-    }
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("common-egress-agent job missing checkout step");
-  requireFullShaAction(errors, checkout, "common-egress-agent checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("common-egress-agent checkout step must set persist-credentials=false");
-  }
-
-  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
-  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
-  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
-  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
-  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
-  requireRunContains(errors, installOpenShell, "-u NVIDIA_INFERENCE_API_KEY");
-  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
-
-  const runVitest = requireJobStep(errors, jobName, steps, "Run common-egress agent live test");
-  const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push("common-egress-agent step must receive NVIDIA_INFERENCE_API_KEY from secrets");
-  }
-  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
-  requireRunContains(errors, runVitest, "test/e2e/live/common-egress-agent.test.ts");
-  requireRunContains(errors, runVitest, '--selector "${{ matrix.selector }}"');
-}
-
-function validateTokenRotationJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "token-rotation";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing token-rotation job");
-    return;
-  }
-
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("token-rotation job must run on ubuntu-latest");
-  }
-  validateFreeStandingJobSelector(errors, jobs, jobName, "token-rotation");
-  if (job["timeout-minutes"] !== 45) {
-    errors.push("token-rotation job must keep the legacy 45 minute timeout");
-  }
-  const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("token-rotation job must set NEMOCLAW_RUN_LIVE_E2E=1");
-  }
-  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/token-rotation") {
-    errors.push("token-rotation job must write artifacts under e2e-artifacts/live/token-rotation");
-  }
-  if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
-    errors.push("token-rotation job must point NEMOCLAW_CLI_BIN at the repo CLI");
-  }
-  requireEnvDoesNotExposeSecret(errors, "token-rotation job", jobEnv, "NVIDIA_INFERENCE_API_KEY");
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    if (step.name !== "Run token rotation live test") {
-      requireEnvDoesNotExposeSecret(
-        errors,
-        `token-rotation step '${step.name ?? step.uses ?? "<unnamed>"}'`,
-        asRecord(step.env),
-        "NVIDIA_INFERENCE_API_KEY",
-      );
-    }
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("token-rotation job missing checkout step");
-  requireFullShaAction(errors, checkout, "token-rotation checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("token-rotation checkout step must set persist-credentials=false");
-  }
-
-  const runVitest = requireJobStep(errors, jobName, steps, "Run token rotation live test");
-  const runVitestEnv = asRecord(runVitest?.env);
-  requireEnvDoesNotExposeSecret(
-    errors,
-    "token-rotation step",
-    runVitestEnv,
-    "NVIDIA_INFERENCE_API_KEY",
-  );
-  if (runVitestEnv.GITHUB_TOKEN !== "${{ github.token }}") {
-    errors.push("token-rotation step must receive GITHUB_TOKEN from github.token");
-  }
-  for (const tokenName of [
-    "TELEGRAM_BOT_TOKEN_A",
-    "TELEGRAM_BOT_TOKEN_B",
-    "DISCORD_BOT_TOKEN_A",
-    "DISCORD_BOT_TOKEN_B",
-    "SLACK_BOT_TOKEN_A",
-    "SLACK_BOT_TOKEN_B",
-    "SLACK_APP_TOKEN_A",
-    "SLACK_APP_TOKEN_B",
-  ]) {
-    const tokenValue = stringValue(runVitestEnv[tokenName]);
-    if (
-      tokenValue.length === 0 ||
-      tokenValue.includes("${{") ||
-      !/^(test-fake-token-|dc-|xoxb-fake-|xapp-fake-)/.test(tokenValue)
-    ) {
-      errors.push(`token-rotation step must set ${tokenName}`);
-    }
-  }
-  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
-  requireRunContains(errors, runVitest, "test/e2e/live/token-rotation.test.ts");
-}
 
 function requireNoDockerHubAuthInRun(errors: string[], owner: string, runScript: string): void {
   if (!runScript) return;
@@ -1844,143 +1611,6 @@ function validateHermesTimeoutHeadroom(errors: string[], jobs: WorkflowRecord): 
       );
     }
   }
-}
-
-function runContainsCloudflaredAptInstall(run: string): boolean {
-  return /apt-get\s+install[\s\S]*cloudflared|apt\s+install[\s\S]*cloudflared|pkg\.cloudflare\.com\/cloudflared/.test(
-    run,
-  );
-}
-
-const REVIEWED_CLOUDFLARED_VERSION = "2026.6.1";
-const REVIEWED_CLOUDFLARED_DEB_SHA256 =
-  "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526";
-
-function validateTunnelLifecycleJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "tunnel-lifecycle";
-  const targetName = "tunnel-lifecycle";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing tunnel-lifecycle job");
-    return;
-  }
-
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("tunnel-lifecycle job must run on ubuntu-latest");
-  }
-  if (job["timeout-minutes"] !== 75) {
-    errors.push("tunnel-lifecycle job must keep the 75 minute timeout");
-  }
-  validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
-
-  const jobEnv = asRecord(job.env);
-  if ("DOCKER_CONFIG" in jobEnv) {
-    errors.push("tunnel-lifecycle job must not set DOCKER_CONFIG at job level");
-  }
-  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
-    errors.push("tunnel-lifecycle job must point NEMOCLAW_CLI_BIN at the repo CLI");
-  }
-  if (jobEnv.E2E_JOB !== "1") {
-    errors.push("tunnel-lifecycle job must set E2E_JOB=1");
-  }
-  if (jobEnv.E2E_TARGET_ID !== targetName) {
-    errors.push(`tunnel-lifecycle job must set E2E_TARGET_ID=${targetName}`);
-  }
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("tunnel-lifecycle job must set NEMOCLAW_RUN_LIVE_E2E=1");
-  }
-  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/tunnel-lifecycle") {
-    errors.push(
-      "tunnel-lifecycle job must write artifacts under e2e-artifacts/live/tunnel-lifecycle",
-    );
-  }
-  requireEnvDoesNotExposeSecret(errors, "tunnel-lifecycle job", jobEnv, "NVIDIA_INFERENCE_API_KEY");
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    const stepName = `tunnel-lifecycle step '${step.name ?? step.uses ?? "<unnamed>"}'`;
-    const stepEnv = asRecord(step.env);
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
-    if (step.name !== "Run tunnel lifecycle live test") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
-    }
-    if (step.name !== "Authenticate to Docker Hub") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
-      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
-    }
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) {
-    errors.push("tunnel-lifecycle job missing checkout step");
-  }
-  requireFullShaAction(errors, checkout, "tunnel-lifecycle checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("tunnel-lifecycle checkout step must set persist-credentials=false");
-  }
-
-  const cloudflaredPrereq = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install and verify cloudflared prerequisite",
-  );
-  const cloudflaredPrereqEnv = asRecord(cloudflaredPrereq?.env);
-  requireEnvDoesNotExposeSecret(
-    errors,
-    "tunnel-lifecycle cloudflared prerequisite step",
-    cloudflaredPrereqEnv,
-    "NVIDIA_API_KEY",
-  );
-  requireEnvDoesNotExposeSecret(
-    errors,
-    "tunnel-lifecycle cloudflared prerequisite step",
-    cloudflaredPrereqEnv,
-    "NVIDIA_INFERENCE_API_KEY",
-  );
-  requireRunContains(errors, cloudflaredPrereq, "cloudflared --version");
-  if (cloudflaredPrereqEnv.CLOUDFLARED_VERSION !== REVIEWED_CLOUDFLARED_VERSION) {
-    errors.push(
-      `tunnel-lifecycle cloudflared prerequisite step must pin CLOUDFLARED_VERSION=${REVIEWED_CLOUDFLARED_VERSION}`,
-    );
-  }
-  if (cloudflaredPrereqEnv.CLOUDFLARED_DEB_SHA256 !== REVIEWED_CLOUDFLARED_DEB_SHA256) {
-    errors.push(
-      `tunnel-lifecycle cloudflared prerequisite step must pin CLOUDFLARED_DEB_SHA256=${REVIEWED_CLOUDFLARED_DEB_SHA256}`,
-    );
-  }
-  requireRunContains(
-    errors,
-    cloudflaredPrereq,
-    "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb",
-  );
-  requireRunContains(errors, cloudflaredPrereq, "sha256sum -c -");
-  requireRunContains(errors, cloudflaredPrereq, "dpkg-deb -f");
-  requireRunContains(errors, cloudflaredPrereq, "sudo dpkg -i");
-  requireRunContains(errors, cloudflaredPrereq, "cloudflared version ${CLOUDFLARED_VERSION}");
-  requireRunDoesNotContain(errors, cloudflaredPrereq, "pkg.cloudflare.com");
-  requireRunDoesNotContain(errors, cloudflaredPrereq, "cloudflare-main.gpg");
-  requireRunDoesNotContain(errors, cloudflaredPrereq, "apt-cache madison");
-  requireRunDoesNotContain(errors, cloudflaredPrereq, "apt-get install");
-  requireRunDoesNotContain(errors, cloudflaredPrereq, "cloudflared_resolve_package_version");
-
-  const runVitest = requireJobStep(errors, jobName, steps, "Run tunnel lifecycle live test");
-  const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push(
-      "tunnel-lifecycle live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets",
-    );
-  }
-  if (runContainsCloudflaredAptInstall(stringValue(runVitest?.run))) {
-    errors.push(
-      "tunnel-lifecycle live E2E step must not run cloudflared APT installation with NVIDIA_INFERENCE_API_KEY in scope",
-    );
-  }
-  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
-  requireRunContains(errors, runVitest, "test/e2e/live/tunnel-lifecycle.test.ts");
 }
 
 function validateAllowJetsonDispatchInput(errors: string[], dispatchInputs: WorkflowRecord): void {
@@ -2454,7 +2084,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
       workflow as unknown as OpenShellGatewayAuthContractWorkflow,
     ),
   );
-  errors.push(...validateOpenShellGatewayUpgradeWorkflow(workflow));
   errors.push(...validateE2eOperationsWorkflow(workflow as unknown as OperationsWorkflow));
   errors.push(...validateStandardProfileWorkflowBoundary(workflow));
   errors.push(...validateTrustedHermesSwapWorkflow(workflow));
@@ -2487,6 +2116,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const jobs = asRecord(workflow.jobs);
   if (Object.hasOwn(jobs, "staging-brev-launchable-readiness")) {
     errors.push("workflow must not define superseded staging-brev-launchable-readiness job");
+  }
+  if (Object.hasOwn(jobs, "openshell-gateway-upgrade")) {
+    errors.push("workflow must not define superseded openshell-gateway-upgrade job");
   }
   validateRetiredSelectorCompatibilityJob(errors, jobs);
   const expectedRunName =
@@ -3011,15 +2643,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 
   validateSharedE2eJob(errors, jobs);
   validateStagingBrevLaunchableJob(errors, jobs);
-  validateFreeStandingJobSelector(errors, jobs, "inference-routing", "inference-routing");
-  validateInferenceRoutingJob(errors, jobs);
   validateCatalogueOwnedJobs(errors, jobs);
   validateHermesE2EJob(errors, jobs);
   validateHermesTimeoutHeadroom(errors, jobs);
-  validateCommonEgressAgentJob(errors, jobs);
-  validateTokenRotationJob(errors, jobs);
-
-  validateTunnelLifecycleJob(errors, jobs);
 
   const reportToPr = asRecord(jobs["report-to-pr"]);
   if (Object.keys(reportToPr).length === 0) {

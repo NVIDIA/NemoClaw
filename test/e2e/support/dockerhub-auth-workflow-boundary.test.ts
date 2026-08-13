@@ -292,18 +292,18 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
   it("rejects alias, ordering, and no-image exemption drift", () => {
     const errors = validateMutation((workflow) => {
       const canonicalAuth = namedStep(workflow.jobs.live, AUTH_STEP_NAME)!;
-      const braveSearchSteps = workflow.jobs["brave-search"].steps!;
-      const braveSearchAuthIndex = braveSearchSteps.indexOf(
-        namedStep(workflow.jobs["brave-search"], AUTH_STEP_NAME)!,
+      const messagingSteps = workflow.jobs["messaging-providers"].steps!;
+      const messagingAuthIndex = messagingSteps.indexOf(
+        namedStep(workflow.jobs["messaging-providers"], AUTH_STEP_NAME)!,
       );
-      braveSearchSteps[braveSearchAuthIndex] = {
+      messagingSteps[messagingAuthIndex] = {
         ...canonicalAuth,
         env: { ...canonicalAuth.env },
       };
 
-      const routingSteps = workflow.jobs["inference-routing"].steps!;
+      const routingSteps = workflow.jobs["openclaw-plugin-runtime-exdev"].steps!;
       const routingAuthIndex = routingSteps.indexOf(
-        namedStep(workflow.jobs["inference-routing"], AUTH_STEP_NAME)!,
+        namedStep(workflow.jobs["openclaw-plugin-runtime-exdev"], AUTH_STEP_NAME)!,
       );
       const [routingAuth] = routingSteps.splice(routingAuthIndex, 1);
       routingSteps.splice(routingSteps.length - 1, 0, routingAuth);
@@ -313,8 +313,8 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
 
     expect(errors).toEqual(
       expect.arrayContaining([
-        "brave-search Docker Hub auth must reuse the canonical workflow alias",
-        "inference-routing Docker Hub auth must run immediately after checkout",
+        "messaging-providers Docker Hub auth must reuse the canonical workflow alias",
+        "openclaw-plugin-runtime-exdev Docker Hub auth must run immediately after checkout",
         "shared-e2e no-image job must not receive Docker Hub authentication",
       ]),
     );
@@ -322,7 +322,10 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
 
   it("rejects step-level Docker config overrides outside the canonical auth step", () => {
     const errors = validateMutation((workflow) => {
-      const run = namedStep(workflow.jobs["inference-routing"], "Run inference routing live test");
+      const run = namedStep(
+        workflow.jobs["openclaw-plugin-runtime-exdev"],
+        "Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test",
+      );
       expect(run).toBeDefined();
       run!.env = {
         ...run!.env,
@@ -331,7 +334,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     });
 
     expect(errors).toContain(
-      "inference-routing step 'Run inference routing live test' env must not include DOCKER_CONFIG",
+      "openclaw-plugin-runtime-exdev step 'Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test' env must not include DOCKER_CONFIG",
     );
   });
 
@@ -354,7 +357,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
       cleanup!.run = `${String(cleanup!.run)} || true`;
       cleanup!.env = { DOCKER_CONFIG: "${{ github.workspace }}/docker-config" };
 
-      const routingSteps = workflow.jobs["inference-routing"].steps!;
+      const routingSteps = workflow.jobs["openclaw-plugin-runtime-exdev"].steps!;
       const routingCleanupIndex = routingSteps.findIndex((step) => step.name === CLEANUP_STEP_NAME);
       const [routingCleanup] = routingSteps.splice(routingCleanupIndex, 1);
       routingSteps.splice(2, 0, routingCleanup);
@@ -368,7 +371,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
         "live Docker Hub cleanup step must contain exactly name, if, shell, and run",
         "live Docker Hub cleanup step must always run",
         `live Docker Hub cleanup step must run only ${CLEANUP_HELPER_RUN}`,
-        "inference-routing Docker Hub cleanup must be the final job step",
+        "openclaw-plugin-runtime-exdev Docker Hub cleanup must be the final job step",
       ]),
     );
   });
