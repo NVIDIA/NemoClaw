@@ -707,59 +707,6 @@ it("links failed shared-matrix entries to their physical job", async () => {
   expect(body).toContain(`> **Failed tests:** [alpha](${jobUrl}).`);
 });
 
-it("reports one total wall clock span from valid matrix E2E jobs", async () => {
-  const { body, setFailed } = await executeReport({
-    apiJobs: [
-      {
-        completed_at: "2026-07-15T00:05:00Z",
-        conclusion: "success",
-        name: "OpenShell gateway upgrade (v0.1.0)",
-        started_at: "2026-07-15T00:00:00Z",
-        status: "completed",
-      },
-      {
-        completed_at: "2026-07-15T00:11:00Z",
-        conclusion: "success",
-        name: "OpenShell gateway upgrade (v0.2.0)",
-        started_at: "2026-07-15T00:02:00Z",
-        status: "completed",
-      },
-      {
-        completed_at: "2026-07-14T23:40:00Z",
-        conclusion: "success",
-        name: "OpenShell gateway upgrade (reversed-timestamps)",
-        started_at: "2026-07-14T23:50:00Z",
-        status: "completed",
-      },
-      {
-        completed_at: "not-a-timestamp",
-        conclusion: "success",
-        name: "OpenShell gateway upgrade (invalid-timestamp)",
-        started_at: "2026-07-14T23:30:00Z",
-        status: "completed",
-      },
-      {
-        completed_at: "2026-07-15T01:00:00Z",
-        conclusion: "skipped",
-        name: "OpenShell gateway upgrade (skipped)",
-        started_at: "2026-07-14T23:00:00Z",
-        status: "completed",
-      },
-    ],
-    testMatrix: [],
-    jobs: "openshell-gateway-upgrade",
-    needs: {
-      "generate-matrix": { result: "success" },
-      "openshell-gateway-upgrade": { result: "success" },
-    },
-  });
-
-  expect(setFailed).not.toHaveBeenCalled();
-  expect(body).toContain("| openshell-gateway-upgrade | ✅ success | 11m 0s |");
-  expect(body).not.toContain("OpenShell gateway upgrade (v0.1.0)");
-  expect(body).not.toContain("OpenShell gateway upgrade (v0.2.0)");
-});
-
 it("reports one total wall clock span when matrix job names start with their job ID", async () => {
   const { body, setFailed } = await executeReport({
     apiJobs: [

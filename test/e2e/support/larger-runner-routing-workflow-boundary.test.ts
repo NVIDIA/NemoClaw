@@ -197,23 +197,25 @@ describe("larger-runner workflow routing boundary", () => {
 
   it("rejects routing any lane outside the centralized eligible set (#7145)", () => {
     const workflow = readWorkflow() as RoutingWorkflow;
-    workflow.jobs["common-egress-agent"]["runs-on"] = "ubuntu-latest";
+    workflow.jobs["catalogue-brave-nvidia-inference"].with!.runner = "ubuntu-latest";
     workflow.jobs["hermes-e2e"]["runs-on"] = "ubuntu-latest";
     workflow.jobs["mcp-bridge"]["runs-on"] = "ubuntu-latest";
     workflow.jobs["mcp-bridge-dev"]["runs-on"] =
       "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['mcp-bridge-deepagents'] }}";
-    workflow.jobs["brave-search"]["runs-on"] = "${{ vars.E2E_LARGER_RUNNER_LABEL }}";
-    workflow.jobs["token-rotation"]["runs-on"] =
-      "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['common-egress-agent'] }}";
+    workflow.jobs["messaging-providers"]["runs-on"] = "${{ vars.E2E_LARGER_RUNNER_LABEL }}";
+    workflow.jobs["messaging-providers"].with = {
+      runner:
+        "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['common-egress-agent'] }}",
+    };
 
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
-        "common-egress-agent job must use the trusted larger-runner routing map",
+        "catalogue-brave-nvidia-inference job must route catalogue runners through the trusted runner map",
         "hermes-e2e job must use the trusted larger-runner routing map",
         "mcp-bridge job must route each matrix entry through the trusted runner map",
         "mcp-bridge-dev job must remain on ubuntu-latest",
-        "brave-search job must not consume E2E_LARGER_RUNNER_LABEL directly",
-        "token-rotation job must not use the larger-runner routing map",
+        "messaging-providers job must not consume E2E_LARGER_RUNNER_LABEL directly",
+        "messaging-providers job must not use the larger-runner routing map",
       ]),
     );
   });

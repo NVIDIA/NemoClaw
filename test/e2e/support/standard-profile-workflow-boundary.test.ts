@@ -19,6 +19,29 @@ describe("standard E2E execution profile boundary", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
+  it("rejects a cloudflared PATH shortcut before package verification", () => {
+    const profile = YAML.parse(
+      fs.readFileSync(
+        path.join(REPO_ROOT, ".github", "workflows", "e2e-standard-profile.yaml"),
+        "utf8",
+      ),
+    ) as { jobs: { run: { steps: Array<{ name?: string; run?: string }> } } };
+    const step = profile.jobs.run.steps.find(
+      (candidate) => candidate.name === "Install reviewed cloudflared",
+    )!;
+    step.run = `${step.run}\ncommand -v cloudflared`;
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-standard-profile-"));
+    const profilePath = path.join(directory, "profile.yaml");
+    try {
+      fs.writeFileSync(profilePath, YAML.stringify(profile));
+      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).toContain(
+        "standard E2E profile must install only the reviewed cloudflared package",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects secret crossover between catalogue profiles", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { secrets: Record<string, string> }>;
@@ -88,6 +111,8 @@ describe("standard E2E execution profile boundary", () => {
       "\necho candidate-controlled";
     steps.find((step) => step.name === "Add swap for Hermes image rebuild")!.run =
       "echo unsafe swap";
+    steps.find((step) => step.name === "Install reviewed cloudflared")!.run =
+      "sudo apt-get install cloudflared";
     steps.find((step) => step.name === "Initialize runner comparison telemetry")!.run =
       "echo skipped";
     steps.find((step) => step.name === "Run catalogue E2E target")!.env!.COMPATIBLE_API_KEY =
@@ -106,6 +131,7 @@ describe("standard E2E execution profile boundary", () => {
           "standard E2E profile must derive validated execution paths before candidate checkout",
           "standard E2E profile must preserve trusted Hermes swap before candidate checkout",
           "standard E2E profile must add the reviewed Hermes rebuild swap after CLI restore",
+          "standard E2E profile must install only the reviewed cloudflared package",
           "standard E2E profile must initialize only planned trusted-main runner telemetry",
           "standard E2E profile must run the planned catalogue target with guarded secrets",
           "standard E2E profile must upload only the fixed skill-agent artifact set with the reviewed action",

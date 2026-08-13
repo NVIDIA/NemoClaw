@@ -260,10 +260,7 @@ export function renderE2eReport(input: {
     const jobName = job.name || "";
     const match = /^Shared E2E \(([A-Za-z0-9_-]+)\)$/.exec(jobName);
     const aggregateJobName = aggregateJobNames.find((name) => jobName.startsWith(`${name} (`));
-    const reportEntryName =
-      match?.[1] ??
-      aggregateJobName ??
-      (/^OpenShell gateway upgrade \(.+\)$/.test(jobName) ? "openshell-gateway-upgrade" : jobName);
+    const reportEntryName = match?.[1] ?? aggregateJobName ?? jobName;
     recordWallClockRange(reportEntryName, job);
     recordJobLink(reportEntryName, job);
     if (!match || !selectedTestIds.has(match[1])) continue;
