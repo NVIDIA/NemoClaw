@@ -15,6 +15,7 @@ export type E2eHostPackage = (typeof E2E_HOST_PACKAGES)[number];
 
 export interface E2eCatalogueTarget {
   id: string;
+  displayName: string;
   testFile: string;
   profile: E2eExecutionProfile;
   runner: string;
@@ -32,6 +33,7 @@ export interface E2eCatalogueTarget {
 
 export interface E2eCatalogueMatrixRow {
   id: string;
+  display_name: string;
   runner: string;
   test_file: string;
   timeout_minutes: number;
@@ -62,6 +64,7 @@ type TargetOptions = Omit<
 
 function target(id: string, options: TargetOptions): E2eCatalogueTarget {
   const {
+    displayName,
     owningPaths = [],
     environment = {},
     hostPackages = [],
@@ -72,6 +75,7 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
   } = options;
   return {
     id,
+    displayName,
     testFile,
     owningPaths: [testFile, ...owningPaths],
     releaseRequired: true,
@@ -94,6 +98,7 @@ const nonInteractive = {
 
 export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   target("channels-add-remove", {
+    displayName: "Messaging: adds and removes Telegram configuration",
     profile: "standard",
     timeoutMinutes: 75,
     installMode: "credential-free",
@@ -109,6 +114,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("cloud-inference", {
+    displayName: "Inference: OpenClaw uses hosted inference",
     profile: "nvidia-inference",
     timeoutMinutes: 50,
     installMode: "none",
@@ -121,6 +127,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("concurrent-gateway-ports", {
+    displayName: "Gateway: isolates ports for concurrent sandboxes",
     profile: "standard",
     timeoutMinutes: 90,
     installMode: "authenticated",
@@ -129,6 +136,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environment: nonInteractive,
   }),
   target("cron-preflight-inference-local", {
+    displayName: "Preflight: reaches managed inference without DNS failure",
     profile: "nvidia-inference",
     timeoutMinutes: 45,
     installMode: "authenticated",
@@ -143,6 +151,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("dashboard-remote-bind", {
+    displayName: "Dashboard: retains audit findings when bound remotely",
     profile: "nvidia-inference",
     timeoutMinutes: 65,
     installMode: "none",
@@ -157,6 +166,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("device-auth-health", {
+    displayName: "Health: treats a 401 authentication response as reachable",
     profile: "standard",
     timeoutMinutes: 40,
     installMode: "authenticated",
@@ -170,6 +180,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("double-onboard", {
+    displayName: "Onboarding: reuses the gateway and preserves sibling sandboxes",
     profile: "standard",
     timeoutMinutes: 90,
     installMode: "authenticated",
@@ -178,6 +189,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environment: nonInteractive,
   }),
   target("gpu-double-onboard", {
+    displayName: "Onboarding: preserves Ollama authentication after GPU re-onboarding",
     profile: "standard",
     runner: "linux-amd64-gpu-rtxpro6000-latest-1",
     timeoutMinutes: 100,
@@ -193,6 +205,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("gpu-e2e", {
+    displayName: "Inference: routes an agent turn through GPU Ollama",
     profile: "standard",
     runner: "linux-amd64-gpu-rtxpro6000-latest-1",
     timeoutMinutes: 90,
@@ -210,6 +223,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("full-e2e", {
+    displayName: "OpenClaw: installs, onboards, and completes an agent turn",
     profile: "nvidia-inference",
     timeoutMinutes: 75,
     installMode: "authenticated",
@@ -227,6 +241,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("gateway-guard-recovery", {
+    displayName: "Gateway: restores the guard chain after recreation",
     profile: "nvidia-inference",
     timeoutMinutes: 45,
     installMode: "authenticated",
@@ -241,6 +256,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("hermes-slack", {
+    displayName: "Messaging: isolates Hermes Slack credentials and reaches Slack APIs",
     profile: "nvidia-inference",
     runner: "linux-amd64-cpu4",
     testFile: "test/e2e/live/hermes-slack-e2e.test.ts",
@@ -262,6 +278,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("issue-2478-crash-loop-recovery", {
+    displayName: "Gateway: recovers after process termination and remains stable",
     profile: "standard",
     timeoutMinutes: 30,
     installMode: "authenticated",
@@ -274,6 +291,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("issue-4462-scope-upgrade-approval", {
+    displayName: "Authorization: approves a write-scope upgrade without operator.admin",
     profile: "nvidia-inference",
     timeoutMinutes: 90,
     installMode: "authenticated",
@@ -286,6 +304,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("issue-4434-tui-unreachable-inference", {
+    displayName: "TUI: reports unreachable inference and stops the connected spinner",
     profile: "nvidia-inference",
     timeoutMinutes: 120,
     installMode: "authenticated",
@@ -302,6 +321,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("kimi-inference-compat", {
+    displayName: "Inference: configures a Kimi-compatible endpoint",
     profile: "standard",
     timeoutMinutes: 50,
     installMode: "authenticated",
@@ -315,6 +335,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("llama-cpp-generic-gpu", {
+    displayName: "Inference: completes an agent turn with llama.cpp on a generic NVIDIA GPU",
     profile: "standard",
     runner: "linux-amd64-gpu-rtxpro6000-latest-1",
     timeoutMinutes: 120,
@@ -330,6 +351,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("messaging-compatible-endpoint", {
+    displayName: "Messaging: routes Telegram through a compatible endpoint",
     profile: "standard",
     timeoutMinutes: 45,
     installMode: "none",
@@ -344,6 +366,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("model-router-provider-routed-inference", {
+    displayName: "Inference: Model Router returns a provider-routed response",
     profile: "nvidia-api",
     timeoutMinutes: 45,
     installMode: "none",
@@ -352,6 +375,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environment: { OPENSHELL_GATEWAY: "nemoclaw" },
   }),
   target("network-policy", {
+    displayName: "Network policy: enforces restricted allow and deny rules",
     profile: "nvidia-inference",
     timeoutMinutes: 90,
     installMode: "credential-free",
@@ -377,6 +401,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("ollama-auth-proxy", {
+    displayName: "Inference: Ollama proxy enforces and preserves authentication",
     profile: "standard",
     timeoutMinutes: 45,
     installMode: "none",
@@ -388,6 +413,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("onboard-repair", {
+    displayName: "Onboarding: repairs a missing sandbox and rejects conflicting resume input",
     profile: "standard",
     timeoutMinutes: 75,
     installMode: "authenticated",
@@ -396,6 +422,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environment: { ...nonInteractive, NEMOCLAW_SANDBOX_NAME: "e2e-repair" },
   }),
   target("onboard-resume", {
+    displayName: "Onboarding: resumes interrupted setup from recorded progress",
     profile: "standard",
     timeoutMinutes: 45,
     installMode: "credential-free",
@@ -404,6 +431,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environment: { ...nonInteractive, NEMOCLAW_SANDBOX_NAME: "e2e-resume" },
   }),
   target("openclaw-discord-pairing", {
+    displayName: "Messaging: shares OpenClaw Discord pairing approval",
     profile: "nvidia-inference",
     timeoutMinutes: 60,
     installMode: "credential-free",
@@ -418,6 +446,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("openclaw-skill-cli", {
+    displayName: "Skills: OpenClaw installs and inspects workspace skills",
     profile: "nvidia-inference",
     timeoutMinutes: 60,
     installMode: "none",
@@ -430,6 +459,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("openclaw-inference-switch", {
+    displayName: "Inference: OpenClaw switches providers and remains responsive",
     profile: "standard",
     timeoutMinutes: 90,
     installMode: "none",
@@ -449,6 +479,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("openclaw-tui-chat-correlation", {
+    displayName: "TUI: keeps rapid OpenClaw turns correlated",
     profile: "nvidia-inference",
     timeoutMinutes: 75,
     installMode: "none",
@@ -471,6 +502,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("openclaw-slack-pairing", {
+    displayName: "Messaging: shares OpenClaw Slack pairing approval",
     profile: "nvidia-inference",
     timeoutMinutes: 60,
     installMode: "credential-free",
@@ -486,6 +518,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("overlayfs-autofix", {
+    displayName: "Install: uses a patched cluster image for Docker overlayfs",
     profile: "nvidia-inference",
     timeoutMinutes: 90,
     installMode: "none",
@@ -505,6 +538,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("rebuild-openclaw", {
+    displayName: "Rebuild: preserves OpenClaw state and rotates the gateway token",
     profile: "nvidia-inference",
     timeoutMinutes: 130,
     installMode: "credential-free",
@@ -517,6 +551,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environment: hostedInference,
   }),
   target("sandbox-survival", {
+    displayName: "Lifecycle: preserves sandbox state after an OpenShell gateway restart",
     profile: "nvidia-inference",
     timeoutMinutes: 30,
     installMode: "none",
@@ -530,6 +565,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("sandbox-operations", {
+    displayName: "Sandbox: preserves lifecycle and multi-sandbox operations",
     profile: "nvidia-inference",
     timeoutMinutes: 60,
     installMode: "credential-free",
@@ -546,6 +582,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("sessions-agents-cli", {
+    displayName: "CLI: routes sessions and agents to OpenClaw",
     profile: "nvidia-inference",
     timeoutMinutes: 70,
     installMode: "credential-free",
@@ -559,6 +596,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("shields-config", {
+    displayName: "Shields: restores stopped OpenClaw across posture changes",
     profile: "nvidia-inference",
     timeoutMinutes: 45,
     installMode: "none",
@@ -573,6 +611,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("snapshot-commands", {
+    displayName: "Snapshot: restores selected sandbox state without credential leaks",
     profile: "standard",
     timeoutMinutes: 40,
     installMode: "none",
@@ -591,6 +630,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("spark-install", {
+    displayName: "Install: leaves NemoClaw and OpenShell usable after standard installation",
     profile: "nvidia-inference",
     timeoutMinutes: 45,
     installMode: "none",
@@ -606,6 +646,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("state-backup-restore", {
+    displayName: "Backup: restores workspace files and memory",
     profile: "nvidia-inference",
     timeoutMinutes: 60,
     installMode: "credential-free",
@@ -619,6 +660,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("telegram-injection", {
+    displayName: "Messaging: treats Telegram shell metacharacters as data",
     profile: "nvidia-inference",
     timeoutMinutes: 45,
     installMode: "credential-free",
@@ -632,6 +674,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("whatsapp-qr-compact", {
+    displayName: "Messaging: renders a compact WhatsApp pairing QR code",
     profile: "standard",
     timeoutMinutes: 15,
     installMode: "none",
@@ -649,6 +692,8 @@ export const E2E_CATALOGUE_SHARED_PATHS = [
 ] as const;
 
 const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+const DISPLAY_NAME_PATTERN = /^[A-Z][A-Za-z0-9 .'+()-]+: [^/\r\n]{1,72}$/u;
+const DISPLAY_NAME_METADATA_PATTERN = /\b(?:catalogue|e2e|live)\b|(?:issue[-\s]*|#\s*)\d+/iu;
 const TEST_FILE_PATTERN = /^test\/e2e\/live\/[A-Za-z0-9._-]+[.]test[.]ts$/u;
 const ENVIRONMENT_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/u;
 const SELECTOR_PATTERN = /^[A-Za-z0-9_./^$=:@+-]+$/u;
@@ -661,11 +706,31 @@ export function validateE2eTargetCatalogue(
   targets: readonly E2eCatalogueTarget[],
 ): readonly E2eCatalogueTarget[] {
   const ids = new Set<string>();
+  const displayNames = new Set<string>();
   for (const entry of targets) {
     if (!ID_PATTERN.test(entry.id) || ids.has(entry.id)) {
       throw new Error(`E2E target catalogue contains an invalid or duplicate ID: ${entry.id}`);
     }
     ids.add(entry.id);
+    const displayName = entry.displayName.toLowerCase();
+    const implementationIdentifiers = [
+      entry.id,
+      entry.runner,
+      entry.environment.NEMOCLAW_SANDBOX_NAME,
+    ].filter((identifier): identifier is string => identifier !== undefined);
+    if (
+      !DISPLAY_NAME_PATTERN.test(entry.displayName) ||
+      DISPLAY_NAME_METADATA_PATTERN.test(entry.displayName) ||
+      implementationIdentifiers.some((identifier) =>
+        displayName.includes(identifier.toLowerCase()),
+      ) ||
+      displayNames.has(entry.displayName)
+    ) {
+      throw new Error(
+        `E2E target ${entry.id} has an invalid or duplicate display name: ${entry.displayName}`,
+      );
+    }
+    displayNames.add(entry.displayName);
     if (!TEST_FILE_PATTERN.test(entry.testFile)) {
       throw new Error(`E2E target ${entry.id} has an invalid test file`);
     }
@@ -739,6 +804,7 @@ export function catalogueMatrix(
     .filter((entry) => entry.profile === profile)
     .map((entry) => ({
       id: entry.id,
+      display_name: entry.displayName,
       runner: entry.runner,
       test_file: entry.testFile,
       timeout_minutes: entry.timeoutMinutes,

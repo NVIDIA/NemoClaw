@@ -19,6 +19,7 @@ import {
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER,
   OPENSHELL_GATEWAY_USER_SERVICE,
   OpenShellGatewayServiceTrustError,
+  type SpawnSyncLike,
   type SpawnSyncLikeResult,
   startOpenShellGatewayUserService,
   startPackageManagedDockerDriverGateway,
@@ -42,6 +43,10 @@ Gateway endpoint: https://127.0.0.1:8080/
 
 function spawnResult(status = 0, stderr = "", stdout = ""): SpawnSyncLikeResult {
   return { status, stderr, stdout };
+}
+
+function trustedBrew(spawnSyncImpl: SpawnSyncLike): (args: string[]) => SpawnSyncLikeResult {
+  return (args) => spawnSyncImpl("brew", args);
 }
 
 function trustedShowOutput(
@@ -130,6 +135,7 @@ describe("docker-driver-gateway-service", () => {
     expect(
       hasOpenShellGatewayUserService({
         commandExists: (command) => command === "brew",
+        homebrewFormulaOperation: trustedBrew(brew),
         platform: "darwin",
         spawnSyncImpl: brew,
       }),
@@ -146,34 +152,6 @@ describe("docker-driver-gateway-service", () => {
       "/usr/local/bin/openshell-gateway",
       "/usr/bin/openshell-gateway",
     ]);
-  });
-
-  it("rejects a Homebrew formula outside the official tap (#6903)", () => {
-    expect(() =>
-      hasOpenShellGatewayUserService({
-        commandExists: () => true,
-        platform: "darwin",
-        spawnSyncImpl: vi.fn((_command: string, args: string[]) =>
-          args[0] === "info"
-            ? spawnResult(
-                0,
-                "",
-                JSON.stringify({ formulae: [{ name: "openshell", tap: "other/tap" }] }),
-              )
-            : spawnResult(),
-        ),
-      }),
-    ).toThrow("must come from nvidia/openshell");
-  });
-
-  it("reports no managed service when the Homebrew formula is missing (#8104)", () => {
-    expect(
-      hasOpenShellGatewayUserService({
-        commandExists: () => true,
-        platform: "darwin",
-        spawnSyncImpl: () => spawnResult(1, "formula not installed"),
-      }),
-    ).toBe(false);
   });
 
   it("uses the effective XDG config home and accepts only a marked regular unit (#6903)", () => {
@@ -358,15 +336,12 @@ describe("docker-driver-gateway-service", () => {
       getTrustedActiveOpenShellGatewayUserServiceIdentity({
         commandExists: (command) => command === "brew",
         existsSync: (candidate) => candidate === gatewayBin,
+        homebrewFormulaOperation: trustedBrew(spawnSyncImpl),
         platform: "darwin",
         spawnSyncImpl,
       }),
     ).toEqual({ pid: 4242, executablePath: gatewayBin });
-    expect(spawnSyncImpl).toHaveBeenCalledWith(
-      "brew",
-      ["services", "info", "openshell", "--json"],
-      expect.any(Object),
-    );
+    expect(spawnSyncImpl).toHaveBeenCalledWith("brew", ["services", "info", "openshell", "--json"]);
   });
 
   it.each([
@@ -374,13 +349,15 @@ describe("docker-driver-gateway-service", () => {
     ["foreign", officialRunningServiceInfo({ service_name: "other.openshell" })],
     ["malformed", spawnResult(0, "", "not-json")],
   ])("does not trust a %s Homebrew gateway process (#6903)", (_case, serviceInfo) => {
+    const brew = vi.fn((_command: string, args: string[]) =>
+      args[0] === "info" ? officialFormulaInfo() : serviceInfo,
+    );
     expect(
       getTrustedActiveOpenShellGatewayUserServicePid({
         commandExists: () => true,
+        homebrewFormulaOperation: trustedBrew(brew),
         platform: "darwin",
-        spawnSyncImpl: vi.fn((_command: string, args: string[]) =>
-          args[0] === "info" ? officialFormulaInfo() : serviceInfo,
-        ),
+        spawnSyncImpl: brew,
       }),
     ).toBeNull();
   });
@@ -434,16 +411,18 @@ describe("docker-driver-gateway-service", () => {
 
   it("restarts the official macOS Homebrew service after validation (#6903)", () => {
     const events: string[] = [];
+    const brew = vi.fn((_command: string, args: string[]) => {
+      events.push(args.join(" "));
+      return args[0] === "info" ? officialFormulaInfo() : spawnResult();
+    });
     const result = startOpenShellGatewayUserService({
       commandExists: (command) => command === "brew",
       env: {},
+      homebrewFormulaOperation: trustedBrew(brew),
       platform: "darwin",
       preparePortForServiceStart: () => events.push("prepare-port"),
       prepareServiceEnv: () => events.push("prepare-env"),
-      spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
-        events.push(args.join(" "));
-        return args[0] === "info" ? officialFormulaInfo() : spawnResult();
-      }),
+      spawnSyncImpl: brew,
       validatePortOwnerForServiceStart: () => events.push("validate-port"),
     });
 
@@ -583,12 +562,6 @@ describe("docker-driver-gateway-service", () => {
       "systemd" as const,
       "nemoclaw-openshell-gateway",
     ],
-    [
-      "Homebrew",
-      'tail -n 200 "$(brew --prefix)/var/log/openshell/openshell-gateway.out.log" "$(brew --prefix)/var/log/openshell/openshell-gateway.err.log"',
-      "homebrew" as const,
-      "openshell",
-    ],
   ])("prints the %s log command before standalone fallback (#8104)", async (_case, logCommand, manager, serviceName) => {
     const register = vi.fn(() => true);
     const stopService = vi.fn(() => ({
@@ -622,6 +595,32 @@ describe("docker-driver-gateway-service", () => {
     expect(register).not.toHaveBeenCalled();
     expect(stopService).toHaveBeenCalledOnce();
     expect(warn.mock.calls.flat().join("\n")).toContain(`Logs: ${logCommand}`);
+  });
+
+  it("keeps Homebrew as lifecycle authority when managed startup fails (#7707)", async () => {
+    const stopService = vi.fn();
+
+    await expect(
+      startPackageManagedDockerDriverGateway({
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        exitOnFailure: false,
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: () => true,
+        registerDockerDriverGatewayEndpoint: vi.fn(),
+        runCaptureOpenshell: vi.fn(),
+        skipSandboxBridgeReachability: false,
+        startOpenShellGatewayUserService: () => ({
+          attempted: true,
+          manager: "homebrew",
+          reason: "temporary trust failed",
+          serviceName: "openshell",
+          started: false,
+        }),
+        stopOpenShellGatewayUserService: stopService,
+        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
+      }),
+    ).rejects.toThrow("temporary trust failed");
+    expect(stopService).not.toHaveBeenCalled();
   });
 
   it("stops an unhealthy managed service before standalone fallback (#8104)", async () => {
@@ -662,6 +661,41 @@ describe("docker-driver-gateway-service", () => {
     expect(warn.mock.calls.flat().join("\n")).toContain(
       "journalctl --user --unit nemoclaw-openshell-gateway --no-pager --lines=200",
     );
+  });
+
+  it("stops an unhealthy Homebrew service without changing lifecycle authority (#7707)", async () => {
+    const clock = createVirtualClock();
+    const stopService = vi.fn(() => ({
+      attempted: true,
+      standaloneFallbackAllowed: false,
+      stopped: true,
+    }));
+
+    await expect(
+      startPackageManagedDockerDriverGateway({
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        exitOnFailure: false,
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: () => true,
+        healthPollCount: 1,
+        healthPollInterval: 1,
+        isDockerDriverGatewayReady: async () => false,
+        now: clock.now,
+        registerDockerDriverGatewayEndpoint: () => true,
+        runCaptureOpenshell: () => "unhealthy",
+        skipSandboxBridgeReachability: false,
+        sleepSeconds: clock.advance,
+        startOpenShellGatewayUserService: () => ({
+          attempted: true,
+          manager: "homebrew",
+          serviceName: "openshell",
+          started: true,
+        }),
+        stopOpenShellGatewayUserService: stopService,
+        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
+      }),
+    ).rejects.toThrow("Homebrew formula remains lifecycle authority");
+    expect(stopService).toHaveBeenCalledOnce();
   });
 
   it("blocks standalone fallback when managed service cleanup fails without permission (#8926)", async () => {
@@ -784,8 +818,8 @@ describe("docker-driver-gateway-service", () => {
         hasOpenShellGatewayUserService: () =>
           hasOpenShellGatewayUserService({
             commandExists: () => true,
+            homebrewFormulaOperation: () => spawnResult(65),
             platform: "darwin",
-            spawnSyncImpl: () => spawnResult(1, "formula not installed"),
           }),
         managedServiceLogCommand: getOpenShellGatewayManagedServiceLogCommand({
           platform: "darwin",
@@ -989,6 +1023,7 @@ describe("docker-driver-gateway-service", () => {
 
     const result = stopOpenShellGatewayUserService({
       commandExists: (command) => command === "brew",
+      homebrewFormulaOperation: trustedBrew(brew),
       platform: "darwin",
       spawnSyncImpl: brew,
     });
