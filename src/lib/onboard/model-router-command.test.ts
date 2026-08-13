@@ -136,9 +136,11 @@ describe("model-router venv disk-space gate (#8973)", () => {
     );
   });
 
-  it("installs when free disk space meets the requirement", () => {
+  it("installs when free disk space exactly meets the requirement", () => {
+    // Exactly 3 GiB: pins the >= acceptance boundary so a regression to a
+    // strict > comparison fails here instead of surviving both bracket tests.
     const { provisioner, prepareModelRouterVenv, run, venvDir } = makeProvisioner({
-      availableBytes: 100n * GIB,
+      availableBytes: 3n * GIB,
     });
 
     const command = provisioner.ensureModelRouterCommand();
