@@ -631,7 +631,7 @@ NODE
 
   warn "Could not restore ${agent_display} host forward on port ${port}."
   if [[ -n "$start_diagnostic" ]]; then
-    warn "OpenShell reported: ${start_diagnostic:0:300}"
+    warn "OpenShell reported: ${start_diagnostic}"
   fi
   warn "Run: openshell forward start --background ${port} ${sandbox_name}"
   return 1
