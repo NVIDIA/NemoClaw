@@ -39,6 +39,7 @@ function runInstallerHostAdmissionTest(
   options: {
     experimentalProfile?: string;
     gatewayManagementMode?: string;
+    portableProfileArtifact?: "present" | "missing";
   } = {},
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-host-admission-"));
@@ -65,20 +66,27 @@ exports.assessHost = () => host;
 exports.planHostAdvisories = () => [];
 `,
   );
-  const gatewayDeclaration = options.gatewayManagementMode
-    ? { mode: options.gatewayManagementMode }
-    : null;
   fs.writeFileSync(
     path.join(onboardDir, "gateway-management.js"),
-    `exports.loadGatewayManagementDeclaration = () => (${JSON.stringify({
-      ok: true,
-      declaration: gatewayDeclaration,
-    })});\n`,
+    `const mode = process.env.TEST_GATEWAY_MANAGEMENT_MODE;
+exports.loadGatewayManagementDeclaration = () => ({
+  ok: true,
+  declaration: mode ? { mode } : null,
+});
+`,
   );
-  fs.writeFileSync(
-    path.join(experimentalDir, "portable-profile.js"),
-    `exports.isPortableExperimentalProfile = (env = process.env) => env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable";\n`,
-  );
+  const portableProfileArtifacts =
+    options.portableProfileArtifact === "missing"
+      ? []
+      : [
+          [
+            path.join(experimentalDir, "portable-profile.js"),
+            `exports.isPortableExperimentalProfile = (env = process.env) => env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable";\n`,
+          ] as const,
+        ];
+  for (const [artifactPath, contents] of portableProfileArtifacts) {
+    fs.writeFileSync(artifactPath, contents);
+  }
   fs.writeFileSync(
     path.join(readinessDir, "host.js"),
     `exports.createHostReadinessReport = (_options, collection) => {
@@ -145,7 +153,11 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
   );
   writeNodeStub(fakeBin);
 
-  const { NEMOCLAW_EXPERIMENTAL_PROFILE: _experimentalProfile, ...inheritedEnv } = process.env;
+  const {
+    NEMOCLAW_EXPERIMENTAL_PROFILE: _experimentalProfile,
+    TEST_GATEWAY_MANAGEMENT_MODE: _gatewayManagementMode,
+    ...inheritedEnv
+  } = process.env;
   const childEnv: NodeJS.ProcessEnv = {
     ...inheritedEnv,
     HOME: tmp,
@@ -155,6 +167,7 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
     ...(options.experimentalProfile
       ? { NEMOCLAW_EXPERIMENTAL_PROFILE: options.experimentalProfile }
       : {}),
+    TEST_GATEWAY_MANAGEMENT_MODE: options.gatewayManagementMode ?? "",
   };
 
   const result = spawnSync(
@@ -207,6 +220,21 @@ describe("installer host preflight package contract", () => {
       runtime: "podman",
       isUnsupportedRuntime: true,
     });
+
+    expect(result.status).toBe(1);
+    expect(output).toMatch(/Host preflight found issues/);
+    expect(output).toMatch(/The detected container runtime is unsupported\./);
+  });
+
+  it("keeps an unsupported runtime blocked without the portable classifier artifact (#9007)", () => {
+    const { output, result } = runInstallerHostAdmissionTest(
+      {
+        runtime: "podman",
+        isUnsupportedRuntime: true,
+      },
+      undefined,
+      { experimentalProfile: "portable", portableProfileArtifact: "missing" },
+    );
 
     expect(result.status).toBe(1);
     expect(output).toMatch(/Host preflight found issues/);

@@ -3474,7 +3474,6 @@ run_installer_host_preflight() {
   if ! command_exists node \
     || [[ ! -f "$preflight_module" ]] \
     || [[ ! -f "$gateway_management_module" ]] \
-    || [[ ! -f "$portable_profile_module" ]] \
     || [[ ! -f "$host_readiness_module" ]] \
     || [[ ! -f "$onboard_admission_module" ]]; then
     return 0
@@ -3491,12 +3490,20 @@ run_installer_host_preflight() {
       const onboardAdmissionPath = process.argv[3];
       const gatewayManagementPath = process.argv[4];
       const portableProfilePath = process.argv[5];
+      let explicitlySelectedPortableProfile = false;
+      try {
+        const portableProfile = require(portableProfilePath);
+        if (typeof portableProfile.isPortableExperimentalProfile === "function") {
+          explicitlySelectedPortableProfile = Boolean(
+            portableProfile.isPortableExperimentalProfile()
+          );
+        }
+      } catch {}
       try {
         const { assessHost, planHostAdvisories } = require(preflightPath);
         const { createHostReadinessReport } = require(hostReadinessPath);
         const { evaluateOnboardReadinessAdmission } = require(onboardAdmissionPath);
         const { loadGatewayManagementDeclaration } = require(gatewayManagementPath);
-        const { isPortableExperimentalProfile } = require(portableProfilePath);
         const host = assessHost();
         const actions = planHostAdvisories(host);
         const gatewayManagement = loadGatewayManagementDeclaration();
@@ -3516,7 +3523,7 @@ run_installer_host_preflight() {
         );
         const admission = evaluateOnboardReadinessAdmission(readiness, {
           explicitlyOptedOutGpuPassthrough: false,
-          allowUnsupportedRuntime: isPortableExperimentalProfile(),
+          allowUnsupportedRuntime: explicitlySelectedPortableProfile,
           // The installer starts a NemoClaw-managed onboarding flow. Let the
           // authoritative onboarding gate apply supported storage remediation,
           // but only when the gateway declaration confirms NemoClaw ownership.
