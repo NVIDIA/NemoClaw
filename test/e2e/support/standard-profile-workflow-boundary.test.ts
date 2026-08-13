@@ -31,6 +31,22 @@ describe("standard E2E execution profile boundary", () => {
     );
   });
 
+  it("rejects catalogue callers without the manual PR risk-signal identity", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { with: Record<string, string> }>;
+    };
+    workflow.jobs["catalogue-standard"]!.with.risk_signal_expected_sha =
+      "${{ inputs.checkout_sha || github.sha }}";
+    workflow.jobs["catalogue-standard"]!.with.risk_signal_correlation_id = "";
+
+    expect(validateStandardProfileWorkflowBoundary(workflow)).toEqual(
+      expect.arrayContaining([
+        "catalogue-standard must pass risk_signal_expected_sha from the trusted execution plan",
+        "catalogue-standard must pass risk_signal_correlation_id from the trusted execution plan",
+      ]),
+    );
+  });
+
   it("writes normalized evidence and rejects successful empty runs", () => {
     const profile = YAML.parse(
       fs.readFileSync(
@@ -145,6 +161,8 @@ describe("standard E2E execution profile boundary", () => {
       NVIDIA_API_KEY: "${{ !inputs.trusted_main && secrets.NVIDIA_API_KEY || '' }}",
     };
     profile.jobs.run.env!.NEMOCLAW_E2E_EXPECTED_SHA = "${{ github.sha }}";
+    profile.jobs.run.env!.NEMOCLAW_E2E_CORRELATION_ID = "";
+    delete profile.jobs.run.env!.NEMOCLAW_E2E_SHARD;
     profile.jobs.run.env!.BASH_ENV = "${{ github.workspace }}/scripts/leak.sh";
     const upload = steps.find((step) => step.name === "Upload E2E artifacts")!;
     upload.if = "success()";
@@ -164,6 +182,8 @@ describe("standard E2E execution profile boundary", () => {
           "standard E2E profile must install host dependencies before workspace prep",
           "standard E2E profile must run the planned catalogue target with guarded secrets",
           "standard E2E profile must set NEMOCLAW_E2E_EXPECTED_SHA",
+          "standard E2E profile must set NEMOCLAW_E2E_CORRELATION_ID",
+          "standard E2E profile must set NEMOCLAW_E2E_SHARD",
           "standard E2E profile must expose only its reviewed job environment",
           "standard E2E profile must keep its reviewed step set and order",
           "standard E2E profile must always upload its target-derived artifact path with the reviewed action",

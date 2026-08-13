@@ -94,6 +94,8 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     for (const [name, expected] of Object.entries({
       candidate_repository: "${{ inputs.checkout_repository || github.repository }}",
       candidate_sha: "${{ inputs.checkout_sha || github.sha }}",
+      risk_signal_expected_sha: "${{ inputs.checkout_sha }}",
+      risk_signal_correlation_id: "${{ inputs.correlation_id }}",
       cli_artifact_provenance: "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
       target_id: "${{ matrix.id }}",
       runner: "${{ matrix.runner }}",
@@ -127,6 +129,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const requiredInputs = {
     candidate_repository: "string",
     candidate_sha: "string",
+    risk_signal_expected_sha: "string",
+    risk_signal_correlation_id: "string",
     cli_artifact_provenance: "string",
     target_id: "string",
     runner: "string",
@@ -183,7 +187,9 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     E2E_TARGET_ID: "${{ inputs.target_id }}",
     E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/${{ inputs.target_id }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
-    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.candidate_sha }}",
+    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.risk_signal_expected_sha }}",
+    NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.risk_signal_correlation_id }}",
+    NEMOCLAW_E2E_SHARD: "default",
     NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: "${{ inputs.candidate_sha }}",
   };
   if (Object.keys(jobEnv).sort().join(",") !== Object.keys(expectedJobEnv).sort().join(",")) {
