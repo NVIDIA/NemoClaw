@@ -157,6 +157,13 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   hermesDashboardPort?: number | null;
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
+  /**
+   * Host port this sandbox exposes its OpenAI-compatible API on. The sandbox
+   * and the host forward share the number, so two Hermes sandboxes on one host
+   * need two values. Rows written before the port became per-sandbox carry no
+   * value and resolve to the range start.
+   */
+  hermesApiPort?: number | null;
   dashboardPort?: number | null;
   /** Remote dashboard exposure was included in the sandbox's generated config. */
   dashboardRemoteBindPrepared?: boolean;

@@ -1371,6 +1371,25 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+  it("creates the Hermes lazy dependency target with sandbox ownership (#8613)", () => {
+    const layout = runHermesLayoutBlock(
+      HERMES_DOCKERFILE_BASE,
+      "# Create .hermes with mutable integration dirs",
+      "# Pre-create shell init files",
+    );
+    try {
+      expect(layout.result.status, layout.result.stderr).toBe(0);
+      const lazyPackages = path.join(layout.sandboxRoot, ".hermes", "lazy-packages");
+      const metadata = fs.statSync(lazyPackages);
+      expect(metadata.mode & 0o777).toBe(0o750);
+      expect(layout.calls).toContain(
+        `chown -R sandbox:sandbox ${path.join(layout.sandboxRoot, ".hermes")}`,
+      );
+    } finally {
+      fs.rmSync(layout.tmp, { recursive: true, force: true });
+    }
+  });
+
   it("grants the Hermes gateway group write access to runtime state directories", () => {
     const runs = [
       runHermesLayoutBlock(

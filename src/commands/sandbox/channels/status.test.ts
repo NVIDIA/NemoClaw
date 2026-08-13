@@ -50,11 +50,27 @@ describe("SandboxChannelsStatusCommand readiness flags", () => {
       rootDir,
     );
 
+    expect(showSandboxChannelStatusMock).toHaveBeenCalledWith("alpha", {
+      channel: "slack",
+      asJson: true,
+      quietJson: true,
+      wait: true,
+      timeoutSeconds: undefined,
+    });
+    expect(process.exitCode).toBe(1);
+  });
+
+  it.each([
+    [["alpha"], undefined],
+    [["alpha", "--channel", "slack"], "slack"],
+  ] as const)("accepts the documented no-wait invocation %j (#8883)", async (argv, channel) => {
+    await SandboxChannelsStatusCommand.run([...argv], rootDir);
+
+    expect(showSandboxChannelStatusMock).toHaveBeenCalledTimes(1);
     expect(showSandboxChannelStatusMock).toHaveBeenCalledWith(
       "alpha",
-      expect.objectContaining({ timeoutSeconds: 180 }),
+      expect.objectContaining({ channel, wait: undefined, timeoutSeconds: undefined }),
     );
-    expect(process.exitCode).toBe(1);
   });
 
   it.each([

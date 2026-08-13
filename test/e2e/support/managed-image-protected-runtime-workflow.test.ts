@@ -249,7 +249,7 @@ describe("protected managed-image runtime workflow boundary", () => {
       "${{ contains(format(',{0},', inputs.jobs), ',managed-image-multiarch-startup,') || contains(format(',{0},', inputs.targets), ',managed-image-multiarch-startup,') }}";
 
     expect(validateManagedImageMultiarchWorkflow(value)).toContain(
-      "managed-image-multiarch-startup must run on main pushes and retain manual selectors",
+      "managed-image-multiarch-startup must use the trusted execution plan",
     );
   });
 

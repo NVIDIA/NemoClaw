@@ -128,6 +128,9 @@ Use these details when your first-run path needs more control.
 
   <Accordion title="Use the dashboard and API remotely">
     Hermes forwards its dashboard on port `18789` and its OpenAI-compatible API on port `8642`.
+    A sandbox receives those ports when no other sandbox or host listener already holds them.
+    Otherwise, NemoClaw allocates the next free dashboard port from `18789` through `18799` and the next free API port from `8642` through `8652`.
+    Run `openshell forward list` to read the host bind for each of that sandbox's forwards.
     For a remote dashboard origin or tunnel, set `CHAT_UI_URL` to the externally reachable dashboard origin before onboarding.
 
     ```bash
@@ -145,7 +148,9 @@ Use these details when your first-run path needs more control.
     ssh -L 8642:127.0.0.1:8642 <user>@<host>
     ```
 
-    Configure API clients with the base URL `http://127.0.0.1:8642/v1` after forwarding port `8642`.
+    These commands forward the default ports.
+    Replace them with the sandbox's own ports when `openshell forward list` reports different values.
+    Configure API clients with the base URL `http://127.0.0.1:8642/v1` after forwarding the API port.
     Run `nemohermes my-hermes gateway-token --quiet` to retrieve the API bearer token.
     Pass the token in the client's `Authorization` header.
     Do not append an OpenClaw `#token=` fragment to either URL.
@@ -242,6 +247,8 @@ Use these details when your first-run path needs more control.
     This verification reports a warning instead of aborting onboarding when the configuration or egress path needs attention.
 
     Hermes exposes its browser dashboard on port `18789` and forwards its OpenAI-compatible API on port `8642` for local clients.
+    When another sandbox or a host listener already holds either port, NemoClaw allocates the next free port in that port's range.
+    The ready summary names the port this sandbox uses, and the examples below use the default ports.
     The dashboard assets are built into the sandbox image, so the dashboard starts without running `npm` as the sandbox user under `/opt/hermes`.
     Dashboard chat uses the prebuilt `/opt/hermes/ui-tui` bundle.
     To recover the dashboard manually, use `hermes dashboard --tui --skip-build` so recovery does not try to rebuild assets under root-owned installation paths.

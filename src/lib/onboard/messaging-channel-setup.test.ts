@@ -431,7 +431,11 @@ describe("setupSelectedMessagingChannels", () => {
       { agent: { name: "hermes" } },
     );
 
-    expect(prompt).not.toHaveBeenCalled();
+    // The reply mode is a config question. Pairing still happens in-sandbox by
+    // QR, so nothing asks for a token and no provider is bound (#8312).
+    expect(prompt).toHaveBeenCalledExactlyOnceWith(
+      "  WhatsApp reply mode [self-chat/bot; default: self-chat]: ",
+    );
     expect(getCredential).not.toHaveBeenCalled();
     expect(plan?.credentialBindings).toEqual([]);
     expect(plan?.channels[0]).toMatchObject({
@@ -750,6 +754,12 @@ describe("setupMessagingChannels", () => {
           channelId: "whatsapp",
           active: true,
           inputs: [
+            // Seeded from the manifest default: onboarding never asks for the
+            // mode, and self-chat is the one that needs no allowlist (#8312).
+            {
+              inputId: "mode",
+              value: "self-chat",
+            },
             {
               inputId: "allowedIds",
               value: "15551234567,15557654321",

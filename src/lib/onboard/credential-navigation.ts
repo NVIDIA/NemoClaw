@@ -133,7 +133,6 @@ export async function ensureNamedCredential({
     }
     console.error(validationError);
   }
-  // biome-ignore format: keep optional credential forwarding together.
   return replaceNamedCredential({ envName, label, helpUrl, validator, allowEmpty, exitOnboardFromPrompt });
 }
 
@@ -159,7 +158,6 @@ export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never
     readValue: (question) => readCredentialValue(question, exitOnboardFromPrompt),
     replaceNamedCredential: (envName, label, helpUrl = null, validator = null) =>
       replaceNamedCredential({ envName, label, helpUrl, validator, exitOnboardFromPrompt }),
-    // biome-ignore format: keep optional credential forwarding together.
     ensureNamedCredential: (envName, label, helpUrl = null, validator = null, allowEmpty = false) => ensureNamedCredential({ envName, label, helpUrl, validator, allowEmpty, exitOnboardFromPrompt }),
     shouldReturnToProviderSelection: (result) =>
       shouldReturnToProviderSelection(result, exitOnboardFromPrompt),

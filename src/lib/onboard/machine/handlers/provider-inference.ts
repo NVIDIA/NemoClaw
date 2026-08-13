@@ -116,6 +116,8 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   /** Accepted sandbox GPU-passthrough choice for this flow, including resume. */
   gpuPassthrough: boolean;
   sandboxName: string | null;
+  /** Sandbox name the operator passed this run via --name or NEMOCLAW_SANDBOX_NAME (#8953). */
+  requestedSandboxName?: string | null;
   agent: Agent;
   forceProviderSelection?: boolean;
   /** Force setup for a provider that authoritative rebuild preflight observed missing. */
@@ -636,9 +638,20 @@ function provenResumeSandboxName(
   sandboxName: string | null,
   effectiveResume: boolean,
   authoritativeResumeConfig: boolean,
+  requestedSandboxName: string | null,
 ): string | null {
   if (!effectiveResume || !sandboxName) return null;
-  return authoritativeResumeConfig || checkpointSandboxIdentityMatches(session, sandboxName)
+  // #8953: when a resume cannot prompt, the non-interactive resume name
+  // check in session-bootstrap.ts instructs the operator to pass --name
+  // (or NEMOCLAW_SANDBOX_NAME). The operator supplied this name on the
+  // current run, so the resume gate reuses it; the sandbox step still
+  // records the durable checkpoint identity through its own writer.
+  // handleProviderInferenceState passes requestedSandboxName only when
+  // deps.isNonInteractive() returns true, so an interactive resume keeps
+  // prompting.
+  return authoritativeResumeConfig ||
+    checkpointSandboxIdentityMatches(session, sandboxName) ||
+    sandboxName === requestedSandboxName
     ? sandboxName
     : null;
 }
@@ -754,6 +767,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   gpu,
   gpuPassthrough,
   sandboxName,
+  requestedSandboxName = null,
   agent,
   forceProviderSelection: initialForceProviderSelection = false,
   forceInferenceSetup: initialForceInferenceSetup = false,
@@ -817,6 +831,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     sandboxName,
     effectiveResume,
     authoritativeResumeConfig,
+    deps.isNonInteractive() ? requestedSandboxName : null,
   );
   const stateResults: OnboardStateTransitionResult[] = [];
   const retryStateResults: OnboardStateTransitionResult[] = [];

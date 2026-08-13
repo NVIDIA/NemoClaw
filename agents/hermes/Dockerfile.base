@@ -328,6 +328,7 @@ RUN mkdir -p /sandbox/.hermes/memories \
         /sandbox/.hermes/platforms/whatsapp/session \
         /sandbox/.hermes/gateway \
         /sandbox/.hermes/runtime \
+        /sandbox/.hermes/lazy-packages \
     && chown -R sandbox:sandbox /sandbox/.hermes \
     && chown gateway:sandbox \
         /sandbox/.hermes/cron \
@@ -356,6 +357,7 @@ RUN mkdir -p /sandbox/.hermes/memories \
         /sandbox/.hermes/platforms/whatsapp/session \
         /sandbox/.hermes/gateway \
         /sandbox/.hermes/runtime \
+    && chmod 750 /sandbox/.hermes/lazy-packages \
     && chmod 2770 \
         /sandbox/.hermes/logs \
         /sandbox/.hermes/logs/curator \
@@ -372,6 +374,10 @@ RUN mkdir -p /sandbox/.hermes/memories \
     && : > /sandbox/.hermes/.hermes_history \
     && chown sandbox:sandbox /sandbox/.hermes/.hermes_history \
     && chmod 660 /sandbox/.hermes/.hermes_history
+
+# Hermes installs opt-in dependencies here instead of the sealed root venv.
+# Hermes appends this directory after its trusted site-packages at runtime.
+ENV HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages
 
 # Pre-create shell init files for the sandbox user.
 # The Hermes entrypoint writes proxy vars and

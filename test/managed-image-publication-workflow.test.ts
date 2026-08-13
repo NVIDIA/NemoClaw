@@ -16,69 +16,12 @@ import {
   runManagedImagePromotion,
   runPublicationBarrier,
 } from "./helpers/managed-image-publication-barrier";
-
-type Step = {
-  env?: Record<string, unknown>;
-  id?: string;
-  if?: string;
-  name?: string;
-  run?: string;
-  uses?: string;
-  with?: Record<string, unknown>;
-  "working-directory"?: string;
-};
-
-type MatrixEntry = {
-  agent?: string;
-  arch?: string;
-  artifact_platform?: string;
-  base_alias?: string;
-  base_dockerfile?: string;
-  base_image?: string;
-  base_repository?: string;
-  display_name?: string;
-  dockerfile?: string;
-  image?: string;
-  repository?: string;
-  platform?: string;
-  required_binary?: string;
-  runner?: string;
-};
-
-type Job = {
-  env?: Record<string, unknown>;
-  if?: string;
-  needs?: string | string[];
-  permissions?: Record<string, string>;
-  "runs-on"?: string;
-  steps?: Step[];
-  strategy?: {
-    "fail-fast"?: boolean;
-    matrix?: { include?: MatrixEntry[] };
-  };
-  "timeout-minutes"?: number;
-  uses?: string;
-};
-
-type Workflow = {
-  concurrency?: {
-    "cancel-in-progress"?: string | boolean;
-    group?: string;
-  };
-  env?: Record<string, string>;
-  jobs?: Record<string, Job>;
-  on?: {
-    pull_request?: {
-      branches?: string[];
-      paths?: string[];
-    };
-    push?: {
-      paths?: string[];
-    };
-    workflow_call?: unknown;
-  };
-  permissions?: Record<string, string>;
-};
+import type {
+  Job,
+  MatrixEntry,
+  Step,
+  Workflow,
+} from "./helpers/managed-image-publication-workflow-types";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
@@ -725,7 +668,7 @@ describe("complete managed-image publication workflow", () => {
     expect(qaBuilder.permissions).toEqual({ contents: "read" });
     expect(qaBuilder.env).toMatchObject({
       CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
-      STAGING_QA_SOURCE_SHA: "af2a73f0d6ce8f08a2975560f376470387c535d0",
+      STAGING_QA_SOURCE_SHA: "ce96811ddb418ad01c040521a1fe912b5bcb405e",
       STAGING_QA_BASE_IMAGE: "nemoclaw-deepagents-code-base:staging-31396519688",
     });
     expect(qaBuilder.env).not.toHaveProperty("STAGING_PRODUCER_SHA");

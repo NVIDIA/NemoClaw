@@ -7,6 +7,25 @@ import { describe, expect, it } from "vitest";
 import { dockerfileInstructions } from "./helpers/dockerfile-run-commands";
 
 const DOCKERFILE = join(import.meta.dirname, "../Dockerfile");
+const CORPORATE_CA_PATH = "/usr/local/share/nemoclaw/corporate-ca.pem";
+
+function expectRunUsesConditionalNodeAndCurlTrust(stage: string, commandMarker: string): void {
+  const matches = dockerfileInstructions(stage).filter(
+    (instruction) => instruction.keyword === "RUN" && instruction.body.includes(commandMarker),
+  );
+  expect(matches, commandMarker).toHaveLength(1);
+  const instruction = matches[0];
+
+  const guardIndex = instruction.text.indexOf(`if [ -f ${CORPORATE_CA_PATH} ]; then`);
+  const curlIndex = instruction.text.indexOf(`export CURL_CA_BUNDLE=${CORPORATE_CA_PATH}`);
+  const nodeIndex = instruction.text.indexOf(`export NODE_EXTRA_CA_CERTS=${CORPORATE_CA_PATH}`);
+  const commandIndex = instruction.text.indexOf(commandMarker);
+
+  expect(guardIndex, `${commandMarker}: conditional CA guard`).toBeGreaterThan(-1);
+  expect(curlIndex, `${commandMarker}: curl CA export`).toBeGreaterThan(guardIndex);
+  expect(nodeIndex, `${commandMarker}: Node CA export`).toBeGreaterThan(curlIndex);
+  expect(commandIndex, `${commandMarker}: command order`).toBeGreaterThan(nodeIndex);
+}
 
 describe("corporate proxy CA build-time TLS anchor (#6839)", () => {
   const dockerfile = readFileSync(DOCKERFILE, "utf-8");
@@ -17,40 +36,27 @@ describe("corporate proxy CA build-time TLS anchor (#6839)", () => {
     expect(matches).toHaveLength(1);
   });
 
-  // source-shape-contract: security -- The build-time TLS trust anchor must precede registry-backed dependency requests
-  it("decodes the CA and exports NODE_EXTRA_CA_CERTS before registry-backed dependency requests (#8925)", () => {
+  // source-shape-contract: security -- Every final-stage registry step must establish conditional trust inside its own Docker RUN
+  it("uses conditional Node and curl trust in every final-stage registry step", () => {
     const argIndex = dockerfile.indexOf("ARG NEMOCLAW_CORPORATE_CA_B64=");
-    const decodeIndex = dockerfile.indexOf('RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then');
-    const anchorIndex = dockerfile.indexOf(
-      "ENV NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem",
-    );
-    const curlAnchorIndex = dockerfile.indexOf(
-      "export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem",
-      anchorIndex,
-    );
-    const ipAddressPatchIndex = dockerfile.indexOf(
+    const finalFromIndex = dockerfile.indexOf("FROM ${BASE_IMAGE}");
+    const finalStage = dockerfile.slice(finalFromIndex);
+    const decodeIndex = finalStage.indexOf('RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then');
+    const registryStepMarkers = [
+      "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+      "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
       "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
-      curlAnchorIndex,
-    );
-    const mcporterInstallIndex = dockerfile.indexOf(
-      "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ci",
-    );
+      "/usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh --omit=dev",
+      "OPENCLAW_LOCK_SHA256=none-legacy-fixture",
+    ];
 
-    for (const [name, index] of Object.entries({
-      argIndex,
-      decodeIndex,
-      anchorIndex,
-      curlAnchorIndex,
-      ipAddressPatchIndex,
-      mcporterInstallIndex,
-    })) {
+    expect(dockerfile).not.toContain("ENV NODE_EXTRA_CA_CERTS=");
+    for (const [name, index] of Object.entries({ argIndex, finalFromIndex, decodeIndex })) {
       expect(index, name).toBeGreaterThan(-1);
     }
-    expect(argIndex).toBeLessThan(decodeIndex);
-    expect(decodeIndex).toBeLessThan(anchorIndex);
-    expect(anchorIndex).toBeLessThan(curlAnchorIndex);
-    expect(curlAnchorIndex).toBeLessThan(ipAddressPatchIndex);
-    expect(anchorIndex).toBeLessThan(mcporterInstallIndex);
+    for (const commandMarker of registryStepMarkers) {
+      expectRunUsesConditionalNodeAndCurlTrust(finalStage, commandMarker);
+    }
   });
 });
 
@@ -190,22 +196,13 @@ describe("Hermes corporate proxy CA final-stage trust", () => {
       'RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then',
       argIndex,
     );
-    const nodeAnchorIndex = finalStage.indexOf(
-      "ENV NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem",
-      decodeIndex,
-    );
-    const payloadCopyIndex = finalStage.indexOf(
-      "COPY --from=hermes-npm-patch-payload / /",
-      nodeAnchorIndex,
-    );
-    const conditionalCurlTrust = `RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \\
-      export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \\
-    fi; \\`;
+    const payloadCopyIndex = finalStage.indexOf("COPY --from=hermes-npm-patch-payload / /");
     const remediationCommands = [
       "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
       "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
       "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
     ];
+    const dashboardBuildCommand = "hermes_web_dist=/opt/hermes/hermes_cli/web_dist";
     const agentInstallCommand =
       "node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install";
     const packageInstallRun = dockerfileInstructions(finalStage).find(
@@ -237,35 +234,21 @@ describe("Hermes corporate proxy CA final-stage trust", () => {
       "        \"from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual\"",
       "",
     ].join("\n");
-    const npmCommandIndexes = [...finalStage.matchAll(/^\s*npm\s+(?:ci|run)\b/gmu)].map(
-      (match) => match.index,
-    );
-
     for (const [name, index] of Object.entries({
       finalFromIndex,
       argIndex,
       decodeIndex,
-      nodeAnchorIndex,
       payloadCopyIndex,
     })) {
       expect(index, name).toBeGreaterThan(-1);
     }
+    expect(finalStage).not.toContain("ENV NODE_EXTRA_CA_CERTS=");
     expect(argIndex).toBeLessThan(decodeIndex);
-    expect(decodeIndex).toBeLessThan(nodeAnchorIndex);
-    expect(nodeAnchorIndex).toBeLessThan(payloadCopyIndex);
+    expect(decodeIndex).toBeLessThan(payloadCopyIndex);
     for (const remediationCommand of remediationCommands) {
-      const remediationIndex = finalStage.indexOf(remediationCommand, payloadCopyIndex);
-      expect(remediationIndex, remediationCommand).toBeGreaterThan(payloadCopyIndex);
-      const runIndex = finalStage.lastIndexOf("\nRUN ", remediationIndex) + 1;
-      expect(runIndex, remediationCommand).toBeGreaterThan(payloadCopyIndex);
-      expect(finalStage.slice(runIndex, remediationIndex).trim(), remediationCommand).toBe(
-        conditionalCurlTrust,
-      );
+      expectRunUsesConditionalNodeAndCurlTrust(finalStage, remediationCommand);
     }
-    expect(npmCommandIndexes.length).toBeGreaterThan(0);
-    for (const npmCommandIndex of npmCommandIndexes) {
-      expect(nodeAnchorIndex).toBeLessThan(npmCommandIndex);
-    }
+    expectRunUsesConditionalNodeAndCurlTrust(finalStage, dashboardBuildCommand);
     expect(packageInstallRun?.text).toBe(expectedPackageInstallRun);
     expect(packageInstallRun?.text).not.toContain("else");
     expect(managedUnionInstallRun?.text).toBe(expectedManagedUnionInstallRun);
