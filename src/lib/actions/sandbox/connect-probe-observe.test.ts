@@ -136,7 +136,10 @@ describe("connectSandbox probe-only observe mode", () => {
       expect.objectContaining({ ignoreError: true }),
     );
     const listInvocations = harness.captureOpenshellSpy.mock.calls
-      .map((call, index) => ({ call, order: harness.captureOpenshellSpy.mock.invocationCallOrder[index]! }))
+      .map((call, index) => ({
+        call,
+        order: harness.captureOpenshellSpy.mock.invocationCallOrder[index]!,
+      }))
       .filter(
         ({ call }) =>
           Array.isArray(call?.[0]) &&
