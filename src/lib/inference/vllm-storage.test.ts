@@ -13,6 +13,7 @@ import {
   imageStorageRequirementBytes,
   managedVllmStorageEstimateBytes,
   measureDirectorySizeBytes,
+  measureReclaimableDirectorySizeBytes,
   modelStorageRequirementBytes,
   probeDockerStorage,
   probeHostStorage,
@@ -308,6 +309,30 @@ describe("host cache-storage detection", () => {
         },
       }),
     ).toBe(0n);
+  });
+
+  it("does not count a root symlink as reclaimable directory storage (#8973)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reclaimable-root-"));
+    tempDirs.push(root);
+    const target = path.join(root, "target");
+    const link = path.join(root, "venv");
+    fs.mkdirSync(target);
+    fs.writeFileSync(path.join(target, "packages.bin"), Buffer.alloc(4096));
+    fs.symlinkSync(target, link, "dir");
+
+    expect(measureReclaimableDirectorySizeBytes(link)).toBe(0n);
+  });
+
+  it("counts allocated blocks instead of a sparse file's logical size (#8973)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reclaimable-sparse-"));
+    tempDirs.push(root);
+    const sparseFile = path.join(root, "sparse.bin");
+    fs.closeSync(fs.openSync(sparseFile, "w"));
+    fs.truncateSync(sparseFile, 4 * 1024 ** 3);
+    const stat = fs.lstatSync(sparseFile, { bigint: true });
+
+    expect(measureReclaimableDirectorySizeBytes(root)).toBe(stat.blocks * 512n);
+    expect(measureReclaimableDirectorySizeBytes(root)).toBeLessThan(stat.size);
   });
 
   it("measures the filesystem containing an existing cache directory", () => {

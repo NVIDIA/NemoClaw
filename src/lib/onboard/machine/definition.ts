@@ -27,7 +27,7 @@ export const ONBOARD_MACHINE_STATE_DEFINITIONS = [
     state: "provider_selection",
     terminal: false,
     stepName: "provider_selection",
-    progress: { number: 3, total: 8, title: "Configuring inference (NIM)" },
+    progress: { number: 3, total: 8, title: "Configuring inference provider" },
   },
   {
     state: "inference",

@@ -24,7 +24,6 @@ import {
 } from "../../domain/uninstall/messaging";
 import {
   defaultUninstallPaths,
-  NEMOCLAW_OLLAMA_MODELS,
   NEMOCLAW_PROVIDERS,
   type UninstallPaths,
 } from "../../domain/uninstall/paths";
@@ -120,8 +119,11 @@ export interface UninstallRunDeps {
   run?: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
   runDocker?: (args: string[], options?: SpawnSyncOptions) => RunResult;
   runDualStationRuntimeCleanup?: (receiptPath: string, options?: SpawnSyncOptions) => RunResult;
-  runLocalModelRuntimeCleanup?: (deleteModels: boolean, options?: SpawnSyncOptions) => RunResult;
+  runHuggingFaceCacheDataCleanup?: (options?: SpawnSyncOptions) => RunResult;
+  runLocalModelRuntimeCleanup?: (options?: SpawnSyncOptions) => RunResult;
   runManagedLlamaCppRuntimeCleanup?: (sandboxName: string, gatewayPort: number) => RunResult;
+  stderrHasColors?: boolean;
+  stderrIsTty?: boolean;
 }
 
 export interface UninstallRunOutcome {
@@ -286,6 +288,14 @@ const HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES: readonly string[] = [
   "https-pin-runtime-adapter.log",
 ];
 
+const OLLAMA_AUTH_PROXY_STATE_ENTRIES: readonly string[] = [
+  "ollama-proxy-token",
+  "ollama-backend",
+  "ollama-proxy-port",
+  "ollama-auth-proxy.pid",
+  "ollama-auth-proxy.status",
+];
+
 // These entries can exist in the shared root without representing a running
 // default-port environment. Any other shared-root entry is treated
 // conservatively as default-port state when uninstalling a non-default port.
@@ -299,6 +309,7 @@ const SHARED_HOST_STATE_ENTRIES = new Set([
   `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
   MANAGED_VLLM_API_KEY_FILE,
   ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
+  ...OLLAMA_AUTH_PROXY_STATE_ENTRIES,
 ]);
 
 function isSharedHostStateEntry(entry: string): boolean {
@@ -322,6 +333,21 @@ function managedClusterBindingStateEntries(stateDir: string): readonly string[] 
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
+}
+
+function scopedStatePreservationEntries(
+  stateDir: string,
+  selectedIsDefault: boolean,
+): readonly string[] {
+  return [
+    ...(selectedIsDefault ? OLLAMA_AUTH_PROXY_STATE_ENTRIES : []),
+    ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
+    MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
+    ...managedClusterBindingStateEntries(stateDir),
+    DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
+    `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
+    MANAGED_VLLM_API_KEY_FILE,
+  ];
 }
 
 function dormantHostGlobalLifecycleState(sharedRoot: string): boolean {
@@ -430,8 +456,11 @@ interface UninstallRuntime {
   run: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
   runDocker: (args: string[], options?: SpawnSyncOptions) => RunResult;
   runDualStationRuntimeCleanup: (receiptPath: string, options?: SpawnSyncOptions) => RunResult;
-  runLocalModelRuntimeCleanup: (deleteModels: boolean, options?: SpawnSyncOptions) => RunResult;
+  runHuggingFaceCacheDataCleanup: (options?: SpawnSyncOptions) => RunResult;
+  runLocalModelRuntimeCleanup: (options?: SpawnSyncOptions) => RunResult;
   runManagedLlamaCppRuntimeCleanup: (sandboxName: string, gatewayPort: number) => RunResult;
+  stderrHasColors: boolean;
+  stderrIsTty: boolean;
   warn: (message: string) => void;
 }
 
@@ -486,9 +515,9 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
           ],
           options,
         )),
-    runLocalModelRuntimeCleanup:
-      deps.runLocalModelRuntimeCleanup ??
-      ((deleteModels, options = {}) =>
+    runHuggingFaceCacheDataCleanup:
+      deps.runHuggingFaceCacheDataCleanup ??
+      ((options = {}) =>
         defaultRun(
           process.execPath,
           [
@@ -500,7 +529,25 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
               "local-model-profile",
               "cleanup-entry.js",
             ),
-            deleteModels ? "--delete-models" : "--keep-models",
+            "--delete-cache-data",
+          ],
+          options,
+        )),
+    runLocalModelRuntimeCleanup:
+      deps.runLocalModelRuntimeCleanup ??
+      ((options = {}) =>
+        defaultRun(
+          process.execPath,
+          [
+            path.resolve(
+              __dirname,
+              "..",
+              "..",
+              "inference",
+              "local-model-profile",
+              "cleanup-entry.js",
+            ),
+            "--clean-runtimes",
           ],
           options,
         )),
@@ -519,12 +566,23 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
               stderr: result.reason,
             };
       }),
+    stderrHasColors:
+      deps.stderrHasColors ??
+      (typeof process.stderr.hasColors === "function" && process.stderr.hasColors()),
+    stderrIsTty: deps.stderrIsTty ?? process.stderr.isTTY === true,
     warn: deps.error ?? ((message) => console.warn(message)),
   };
 }
 
 function runtimeBranding(runtime: UninstallRuntime): AgentBranding {
   return getAgentBranding(runtime.env.NEMOCLAW_AGENT);
+}
+
+function yellowWarningText(message: string, runtime: UninstallRuntime): string {
+  if (runtime.env.NO_COLOR !== undefined) return message;
+  if (!runtime.stderrIsTty) return message;
+  if (!runtime.stderrHasColors) return message;
+  return `\x1b[33m${message}\x1b[39m`;
 }
 
 function planStepDisplayName(stepName: string, branding: AgentBranding): string {
@@ -596,12 +654,19 @@ function confirm(
   runtime.log(userDataDispositionLine(options, runtime, paths));
   runtime.log("  · ~/.config/openshell  ~/.config/nemoclaw");
   runtime.log(`  · Global ${branding.display} CLI (npm package: nemoclaw)`);
-  runtime.log(
-    options.deleteModels
-      ? `  · Ollama models: ${NEMOCLAW_OLLAMA_MODELS.join(" ")}`
-      : "  · Ollama models: kept",
-  );
-  runtime.log("  · Shared Hugging Face model cache: kept");
+  if (scopedToSelectedGateway) {
+    runtime.log("  · Ollama models: kept while sibling gateways remain");
+    runtime.log("  · Shared Hugging Face model cache: kept while sibling gateways remain");
+  } else {
+    runtime.log(
+      options.deleteModels ? "  · All installed Ollama models" : "  · Ollama models: kept",
+    );
+    runtime.log(
+      options.deleteModels
+        ? "  · Shared Hugging Face cache data: deleted; authentication files kept"
+        : "  · Shared Hugging Face model cache: kept",
+    );
+  }
   runtime.log("Proceed? [y/N]");
   const reply = runtime.readLine();
   if (reply && /^(y|yes)$/i.test(reply.trim())) return true;
@@ -739,14 +804,30 @@ function stopMatchingPids(pattern: string, runtime: UninstallRuntime, label: str
 // the default (11435) on malformed input — uninstall is best-effort.
 const DEFAULT_OLLAMA_PROXY_PORT = 11435;
 
-function resolveOllamaProxyPort(runtime: UninstallRuntime): number {
-  const raw = runtime.env.NEMOCLAW_OLLAMA_PROXY_PORT;
-  if (raw === undefined || raw === "") return DEFAULT_OLLAMA_PROXY_PORT;
+function parseOllamaProxyPort(raw: unknown): number | null {
+  if (raw === undefined || raw === "") return null;
   const trimmed = String(raw).trim();
-  if (!/^\d+$/.test(trimmed)) return DEFAULT_OLLAMA_PROXY_PORT;
+  if (!/^\d+$/.test(trimmed)) return null;
   const parsed = Number(trimmed);
-  if (parsed < 1024 || parsed > 65535) return DEFAULT_OLLAMA_PROXY_PORT;
+  if (parsed < 1024 || parsed > 65535) return null;
   return parsed;
+}
+
+function resolveOllamaProxyPort(paths: UninstallPaths, runtime: UninstallRuntime): number {
+  const persistedPortPath = path.join(paths.nemoclawStateDir, "ollama-proxy-port");
+  if (runtime.existsSync(persistedPortPath)) {
+    let opened: OpenRegularFile | null = null;
+    try {
+      opened = runtime.openRegularFile(persistedPortPath);
+      const persistedPort = parseOllamaProxyPort(opened.readBytes(32).toString("utf8").trim());
+      if (persistedPort !== null) return persistedPort;
+    } catch {
+      // Uninstall remains best-effort and falls back to the configured port.
+    } finally {
+      opened?.close();
+    }
+  }
+  return parseOllamaProxyPort(runtime.env.NEMOCLAW_OLLAMA_PROXY_PORT) ?? DEFAULT_OLLAMA_PROXY_PORT;
 }
 
 function isOllamaAuthProxyPid(pid: number, runtime: UninstallRuntime): boolean {
@@ -816,6 +897,11 @@ function stopOllamaAuthProxy(
   // never killed. See issue #2759.
   const stopped = new Set<number>();
 
+  if (!scanOrphans) {
+    runtime.log("Preserving the shared Ollama auth proxy for the remaining gateway ports");
+    return;
+  }
+
   // 1. Try the persisted PID file. The proxy stays bound across NemoClaw
   //    sessions; the PID file is the most reliable signal. The path mirrors
   //    `PROXY_PID_PATH` in `src/lib/onboard-ollama-proxy.ts` (`~/.nemoclaw`).
@@ -832,11 +918,6 @@ function stopOllamaAuthProxy(
     }
   }
 
-  if (!scanOrphans) {
-    if (stopped.size === 0) runtime.log("No selected-gateway Ollama auth proxy found");
-    return;
-  }
-
   // 2. Fall back to the configured proxy port for orphans whose PID file is
   //    gone (e.g. a previous uninstall already wiped state but the process
   //    survived). Filter via cmdline so we never kill unrelated listeners.
@@ -846,7 +927,7 @@ function stopOllamaAuthProxy(
     }
     return;
   }
-  const proxyPort = resolveOllamaProxyPort(runtime);
+  const proxyPort = resolveOllamaProxyPort(paths, runtime);
   const lsof = runtime.run("lsof", ["-ti", `:${proxyPort}`], { env: runtime.env });
   const pids = splitNonEmptyLines(lsof.stdout).map(Number).filter(Number.isFinite);
   for (const pid of pids) {
@@ -1432,6 +1513,7 @@ function managedDistributedVllmStateRootStatus(
 function removeManagedDistributedVllmRuntime(
   paths: UninstallPaths,
   runtime: UninstallRuntime,
+  preserveApiKeyWithoutReceipt = false,
 ): boolean {
   const rootStatus = managedDistributedVllmStateRootStatus(paths, runtime);
   if (rootStatus !== "directory") return rootStatus === "absent";
@@ -1479,7 +1561,7 @@ function removeManagedDistributedVllmRuntime(
     return false;
   }
   if (receipts.length === 0) {
-    removePath(apiKeyPath, runtime);
+    if (!preserveApiKeyWithoutReceipt) removePath(apiKeyPath, runtime);
     return true;
   }
   if (state.managedClusterPath && state.stationPaths.length > 0) {
@@ -1508,11 +1590,7 @@ function removeManagedDistributedVllmRuntime(
   return false;
 }
 
-function removeHostLocalModelRuntimes(
-  paths: UninstallPaths,
-  deleteModels: boolean,
-  runtime: UninstallRuntime,
-): boolean {
+function removeHostLocalModelRuntimes(paths: UninstallPaths, runtime: UninstallRuntime): boolean {
   const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
   const hasLlamaState = runtime.existsSync(path.join(sharedRoot, "managed-llama-cpp"));
   const hasManagedKey = runtime.existsSync(path.join(sharedRoot, MANAGED_VLLM_API_KEY_FILE));
@@ -1526,13 +1604,13 @@ function removeHostLocalModelRuntimes(
     }
     return true;
   }
-  const result = runtime.runLocalModelRuntimeCleanup(deleteModels, {
+  const result = runtime.runLocalModelRuntimeCleanup({
     env: runtime.env,
     stdio: "inherit",
   });
   if (result.status === 0) return true;
   runtime.error(
-    "Host-local model cleanup did not complete. NemoClaw did not start the remaining uninstall steps. Resolve the reported ownership or Docker error and retry uninstall.",
+    "Host-local model runtime cleanup did not complete. NemoClaw did not start the remaining uninstall steps. Resolve the reported ownership or Docker error and retry uninstall.",
   );
   return false;
 }
@@ -1617,14 +1695,21 @@ function removeManagedLlamaCppRuntimes(
 
 function removeManagedModelRuntimes(
   paths: UninstallPaths,
-  deleteModels: boolean,
   runtime: UninstallRuntime,
   scopedToSelectedGateway: boolean,
 ): boolean {
   if (!removeManagedLlamaCppRuntimes(runtime, scopedToSelectedGateway)) return false;
   if (scopedToSelectedGateway) return true;
-  if (!removeHostLocalModelRuntimes(paths, deleteModels, runtime)) return false;
-  if (!removeManagedDistributedVllmRuntime(paths, runtime)) return false;
+  const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
+  const hasDistributedReceipt = [
+    MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
+    DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
+  ].some((name) => runtime.existsSync(path.join(sharedRoot, name)));
+  if (!removeManagedDistributedVllmRuntime(paths, runtime, !hasDistributedReceipt)) return false;
+  if (!removeHostLocalModelRuntimes(paths, runtime)) return false;
+  if (!hasDistributedReceipt) {
+    removePath(path.join(sharedRoot, MANAGED_VLLM_API_KEY_FILE), runtime);
+  }
   if (!runtime.commandExists("docker")) return true;
   const inventory = runtime.runDocker(["ps", "-a", "--format", "{{.Names}}"], {
     env: runtime.env,
@@ -1652,7 +1737,9 @@ function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string)
   });
   const ids = splitNonEmptyLines(result.stdout)
     .filter((line) => {
-      const name = line.trim().split(/\s+/).at(-1) ?? "";
+      const fields = dockerInventoryFields(line, 3);
+      const image = fields[1] ?? "";
+      const name = fields[2] ?? "";
       if (!gatewayName) {
         if (MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name)) {
           return false;
@@ -1661,12 +1748,11 @@ function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string)
         // `openshell-*` (cluster and sandbox) and `nemoclaw-*` (gateway compat
         // and managed inference), so that term only ever selected the separate
         // OpenClaw project's containers for `docker rm -f` (#8496).
-        // The whole `{{.ID}} {{.Image}} {{.Names}}` line is matched rather than
-        // the name alone. Probe containers that run with `--rm` and no
-        // `--name`, such as `hermesBaseImageSupportsMcp`, take a random Docker
-        // name. Their NemoClaw image reference is the only way to reclaim one
-        // that an interrupted run orphaned.
-        return /openshell-cluster|openshell|nemoclaw/i.test(line);
+        // Probe containers that run with `--rm` and no `--name`, such as
+        // `hermesBaseImageSupportsMcp`, take a random Docker name. Their
+        // NemoClaw image reference is the only way to reclaim one that an
+        // interrupted run orphaned.
+        return isOwnedDockerContainerName(name) || isOwnedDockerImageRepository(image);
       }
       return (
         name === `openshell-cluster-${gatewayName}` ||
@@ -1697,7 +1783,7 @@ function removeDockerImages(runtime: UninstallRuntime): void {
     // name, so the term only ever selected the separate OpenClaw project's
     // images — including any `ghcr.io/openclaw/*` pulled by an unrelated
     // workload — for `docker rmi -f` (#8496).
-    .filter((line) => /openshell|nemoclaw/i.test(line))
+    .filter((line) => isOwnedDockerImageRepository(dockerInventoryFields(line, 2)[1] ?? ""))
     .map((line) => line.split(/\s+/)[0]);
   if (ids.length === 0) {
     runtime.log(`No ${runtimeBranding(runtime).display}/OpenShell Docker images found`);
@@ -1708,6 +1794,31 @@ function removeDockerImages(runtime: UninstallRuntime): void {
       runtime.log(`Removed Docker image ${id}`);
     else runtime.warn(`Failed to remove Docker image ${id}`);
   }
+}
+
+function dockerInventoryFields(line: string, expectedFields: number): string[] {
+  return line.trim().split(/\s+/, expectedFields);
+}
+
+function dockerImageRepository(imageRef: string): string {
+  const withoutDigest = imageRef.split("@", 1)[0] ?? "";
+  const tagSeparator = withoutDigest.lastIndexOf(":");
+  if (tagSeparator === -1) return withoutDigest;
+  const slashSeparator = withoutDigest.lastIndexOf("/");
+  return tagSeparator > slashSeparator ? withoutDigest.slice(0, tagSeparator) : withoutDigest;
+}
+
+function isOwnedDockerContainerName(name: string): boolean {
+  return /^openshell-(?:cluster-)?/iu.test(name) || /^nemoclaw-/iu.test(name);
+}
+
+function isOwnedDockerImageRepository(imageRef: string): boolean {
+  const repository = dockerImageRepository(imageRef);
+  return (
+    /^nemoclaw-/iu.test(repository) ||
+    /^openshell\//iu.test(repository) ||
+    /^ghcr\.io\/nvidia\/nemoclaw(?:[/-]|$)/iu.test(repository)
+  );
 }
 
 function removeDockerVolume(name: string, runtime: UninstallRuntime): void {
@@ -1724,20 +1835,116 @@ function removeDockerVolume(name: string, runtime: UninstallRuntime): void {
   else runtime.warn(`Failed to remove Docker volume ${name}`);
 }
 
-function removeOllamaModels(options: UninstallRunOptions, runtime: UninstallRuntime): void {
+function parseOllamaModelInventory(output: string): string[] {
+  const rows = output
+    .split(/\r?\n/u)
+    .map((row) => row.trim())
+    .filter(Boolean);
+  const header = rows.shift()?.split(/\s+/u) ?? [];
+  if (header.length < 2 || header[0] !== "NAME" || header[1] !== "ID") {
+    throw new Error("Ollama model inventory did not contain the expected NAME and ID columns");
+  }
+  const models = new Set<string>();
+  for (const row of rows) {
+    const columns = row.split(/\s+/u);
+    const model = columns[0] ?? "";
+    if (
+      columns.length < 2 ||
+      model.length === 0 ||
+      model.length > 512 ||
+      model.startsWith("-") ||
+      /[\u0000-\u001f\u007f]/u.test(model)
+    ) {
+      throw new Error("Ollama model inventory contained an unsafe or malformed model name");
+    }
+    models.add(model);
+  }
+  return [...models];
+}
+
+function localOllamaEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...env, OLLAMA_HOST: "127.0.0.1:11434" };
+}
+
+function removeOllamaModels(options: UninstallRunOptions, runtime: UninstallRuntime): boolean {
   if (!options.deleteModels) {
     runtime.log("Keeping Ollama models as requested.");
-    return;
+    return true;
   }
   if (!runtime.commandExists("ollama")) {
-    runtime.warn("ollama not found; skipping model cleanup.");
-    return;
+    runtime.log("Ollama is not installed; no Ollama model inventory is available to remove.");
+    return true;
   }
-  for (const model of NEMOCLAW_OLLAMA_MODELS) {
-    if (runtime.run("ollama", ["rm", model], { env: runtime.env, stdio: "ignore" }).status === 0)
+  const ollamaEnv = localOllamaEnvironment(runtime.env);
+  const inventory = runtime.run("ollama", ["list"], {
+    env: ollamaEnv,
+    timeout: 10_000,
+  });
+  if (inventory.status !== 0) {
+    runtime.error(
+      `Ollama model inventory failed${inventory.stderr.trim() ? `: ${inventory.stderr.trim()}` : "."}`,
+    );
+    return false;
+  }
+  let models: string[];
+  try {
+    models = parseOllamaModelInventory(inventory.stdout);
+  } catch (error) {
+    runtime.error(`${formatError(error)}. No Ollama models were removed.`);
+    return false;
+  }
+  if (models.length === 0) {
+    runtime.log("No installed Ollama models found.");
+    return true;
+  }
+  let ok = true;
+  for (const model of models) {
+    if (
+      runtime.run("ollama", ["rm", model], {
+        env: ollamaEnv,
+        stdio: "ignore",
+        timeout: 60_000,
+      }).status === 0
+    )
       runtime.log(`Removed Ollama model '${model}'`);
-    else runtime.warn(`Ollama model '${model}' not found or already removed`);
+    else {
+      runtime.error(`Failed to remove Ollama model '${model}'`);
+      ok = false;
+    }
   }
+  return ok;
+}
+
+function removeHostModelStores(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  scopedToSelectedGateway: boolean,
+): boolean {
+  if (scopedToSelectedGateway) {
+    runtime.log(
+      "Sibling gateways remain; kept host-shared Ollama models and the Hugging Face model cache.",
+    );
+    return true;
+  }
+  const ollamaOk = removeOllamaModels(options, runtime);
+  if (!options.deleteModels) {
+    runtime.log("Keeping Hugging Face cache data as requested.");
+    return ollamaOk;
+  }
+  if (!runtime.existsSync(paths.huggingFaceModelCacheDir)) {
+    runtime.log("No Hugging Face cache data found.");
+    return ollamaOk;
+  }
+  const result = runtime.runHuggingFaceCacheDataCleanup({
+    env: runtime.env,
+    stdio: "inherit",
+  });
+  if (result.status === 0) return ollamaOk;
+  runtime.error(
+    "Hugging Face cache-data cleanup did not complete during Model stores. Resolve the reported ownership or path error and retry uninstall.",
+  );
+  return false;
 }
 
 interface OtherGatewayInspection {
@@ -1950,22 +2157,25 @@ function reportOtherGatewayEnvironments(
 ): void {
   if (!inspection.otherGatewayEnvironmentsRemain) return;
   const branding = runtimeBranding(runtime);
-  runtime.log(
-    `Other ${branding.display} gateway-port environments remain on this host and are outside this uninstall:`,
-  );
-  for (const port of inspection.otherGatewayPorts) {
-    runtime.log(`  · gateway '${resolveGatewayName(port)}' on port ${String(port)}`);
-  }
-  if (inspection.unidentifiedOtherGateways) {
-    runtime.log("  · one or more gateway environments whose port could not be read");
-  }
   const [firstPort] = inspection.otherGatewayPorts;
-  if (firstPort !== undefined) {
-    runtime.log(
-      `  Remove one of them: NEMOCLAW_GATEWAY_PORT=${String(firstPort)} ${branding.cli} uninstall`,
-    );
+  const warningLines = [
+    `  ⚠ Other ${branding.display} gateway-port environments remain on this host and are outside this uninstall:`,
+    ...inspection.otherGatewayPorts.map(
+      (port) => `  · gateway '${resolveGatewayName(port)}' on port ${String(port)}`,
+    ),
+    ...(inspection.unidentifiedOtherGateways
+      ? ["  · one or more gateway environments whose port could not be read"]
+      : []),
+    ...(firstPort !== undefined
+      ? [
+          `  Remove one of them: NEMOCLAW_GATEWAY_PORT=${String(firstPort)} ${branding.cli} uninstall`,
+        ]
+      : []),
+    `  Remove every gateway port: ${branding.cli} uninstall --all-gateway-ports`,
+  ];
+  for (const line of warningLines) {
+    runtime.warn(yellowWarningText(line, runtime));
   }
-  runtime.log(`  Remove every gateway port: ${branding.cli} uninstall --all-gateway-ports`);
 }
 
 function removeManagedSwap(
@@ -2085,9 +2295,7 @@ function executePlan(
   for (const [index, step] of plan.steps.entries()) {
     runtime.log(`[${index + 1}/${plan.steps.length}] ${planStepDisplayName(step.name, branding)}`);
     if (step.name === "Stopping services") {
-      if (
-        !removeManagedModelRuntimes(paths, options.deleteModels, runtime, scopedToSelectedGateway)
-      ) {
+      if (!removeManagedModelRuntimes(paths, runtime, scopedToSelectedGateway)) {
         return { ok: false };
       }
       // #8220: a gateway-scoped uninstall still needs the selected OpenShell
@@ -2223,12 +2431,8 @@ function executePlan(
         for (const action of step.actions)
           if (action.kind === "delete-docker-volume") removeDockerVolume(action.name, runtime);
       }
-    } else if (step.name === "Ollama models") {
-      if (scopedToSelectedGateway) {
-        runtime.log("Sibling gateways remain; kept host-shared Ollama models.");
-      } else {
-        removeOllamaModels(options, runtime);
-      }
+    } else if (step.name === "Model stores") {
+      if (!removeHostModelStores(paths, options, runtime, scopedToSelectedGateway)) ok = false;
     } else if (step.name === "State and binaries") {
       removeManagedSwap(paths, runtime, scopedToSelectedGateway);
       if (!scopedToSelectedGateway) {
@@ -2275,14 +2479,7 @@ function executePlan(
               : []),
             ...(scopedToSelectedGateway && selectedIsDefault ? ["source"] : []),
             ...(scopedToSelectedGateway
-              ? [
-                  ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
-                  MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
-                  ...managedClusterBindingStateEntries(paths.nemoclawStateDir),
-                  DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
-                  `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
-                  MANAGED_VLLM_API_KEY_FILE,
-                ]
+              ? scopedStatePreservationEntries(paths.nemoclawStateDir, selectedIsDefault)
               : []),
           ],
           runtime,

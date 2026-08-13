@@ -363,7 +363,6 @@ async function telegramEgressProbe(
   return { result, status: "inconclusive" };
 }
 
-// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "channels add/remove telegram updates registry, gateway, policy, and sandbox state",
   {

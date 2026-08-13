@@ -94,7 +94,6 @@ const SENSITIVE_EXACT_PATHS = new Set([
   "src/lib/inference/serving/managed-runtime-receipts.ts",
   "src/lib/onboard/gateway-host-runtime.ts",
   "test/openshell-e2e-qualification.test.ts",
-  "tools/e2e/openshell-gateway-upgrade-workflow-boundary.mts",
 ]);
 
 const SENSITIVE_PREFIXES = [

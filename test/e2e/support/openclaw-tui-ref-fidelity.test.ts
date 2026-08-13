@@ -45,7 +45,7 @@ describe("OpenClaw TUI NemoClaw ref fidelity", () => {
         cliPath: CLI_PATH,
         expectedCliPath: CLI_PATH,
       }),
-    ).toThrow(/NEMOCLAW_TUI_EXPECTED_CHECKOUT_SHA/u);
+    ).toThrow(/NEMOCLAW_E2E_EXPECTED_SHA/u);
 
     expect(() =>
       verifyNemoClawRefFidelity({

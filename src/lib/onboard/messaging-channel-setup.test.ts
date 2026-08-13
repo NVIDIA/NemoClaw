@@ -140,6 +140,22 @@ describe("getRegistrySandboxMessagingAuthority", () => {
       }),
     ).toEqual({ source: "registry", plan: registryPlan });
   });
+
+  it("keeps a registered sandbox authoritative while its route update is pending", () => {
+    const entry = {
+      name: "alpha",
+      createdAt: "2026-08-12T00:00:00.000Z",
+      pendingRouteReservation: true,
+    } as const;
+    const registryPlan = messagingPlan("alpha", "rebuild");
+    vi.spyOn(registry, "getSandbox").mockReturnValue(entry);
+    vi.spyOn(registry, "getHydratedMessagingPlanFromEntry").mockReturnValue(registryPlan);
+
+    expect(getRegistrySandboxMessagingAuthority("alpha")).toEqual({
+      authoritative: true,
+      plan: registryPlan,
+    });
+  });
 });
 
 describe("setupSelectedMessagingChannels", () => {
@@ -415,7 +431,11 @@ describe("setupSelectedMessagingChannels", () => {
       { agent: { name: "hermes" } },
     );
 
-    expect(prompt).not.toHaveBeenCalled();
+    // The reply mode is a config question. Pairing still happens in-sandbox by
+    // QR, so nothing asks for a token and no provider is bound (#8312).
+    expect(prompt).toHaveBeenCalledExactlyOnceWith(
+      "  WhatsApp reply mode [self-chat/bot; default: self-chat]: ",
+    );
     expect(getCredential).not.toHaveBeenCalled();
     expect(plan?.credentialBindings).toEqual([]);
     expect(plan?.channels[0]).toMatchObject({
@@ -734,6 +754,12 @@ describe("setupMessagingChannels", () => {
           channelId: "whatsapp",
           active: true,
           inputs: [
+            // Seeded from the manifest default: onboarding never asks for the
+            // mode, and self-chat is the one that needs no allowlist (#8312).
+            {
+              inputId: "mode",
+              value: "self-chat",
+            },
             {
               inputId: "allowedIds",
               value: "15551234567,15557654321",

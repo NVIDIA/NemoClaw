@@ -43,7 +43,10 @@ function runTerminalDashboardScenario(scenario: "create" | "reuse") {
   );
 
   fs.mkdirSync(fakeBin, { recursive: true });
-  writeExecutable(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n");
+  writeExecutable(
+    path.join(fakeBin, "openshell"),
+    '#!/usr/bin/env bash\nif [ "${1:-}" = sandbox ] && [ "${2:-}" = get ]; then printf "Sandbox:\\n\\n  Id: fixture-terminal-sandbox\\n  Name: %s\\n  Phase: Ready\\n" "${!#}"; fi\nexit 0\n',
+  );
 
   const script = String.raw`
 const fs = require("node:fs");

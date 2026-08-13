@@ -71,9 +71,76 @@ Pair only one sandbox per WhatsApp account at a time.
 
 For non-interactive onboarding, set `WHATSAPP_ALLOWED_IDS` to a nonempty comma-separated sender list to select WhatsApp for either agent.
 <AgentOnly variant="hermes">
-Hermes also uses these values as its WhatsApp sender allowlist.
-Use digits only, such as `15551234567`.
-Do not include a leading `+`.
+Hermes uses these values as its WhatsApp sender allowlist only when `WHATSAPP_MODE=bot`.
+Refer to [Reply to Other Senders](#reply-to-other-senders).
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+## Reply to Other Senders
+
+`channels add whatsapp` asks which senders the sandbox answers:
+
+```text
+  WhatsApp reply mode [self-chat/bot; default: self-chat]:
+```
+
+Press Enter to keep `self-chat`, where the sandbox replies only to messages the paired account sends to itself and reads no allowlist.
+Answer `bot` to reply to other senders; the sandbox then stops replying to that self-chat.
+Pick `bot` when the sandbox has its own WhatsApp number and you write to it from a different phone, and keep `self-chat` when the sandbox shares your account and you write to yourself.
+Complete the rebuild that `channels add` queues before the selected mode takes effect.
+
+Hermes authorizes senders through its own pairing store in either mode, so the first message the sandbox receives is answered with a pairing code instead of a reply.
+That applies to your own first message in `self-chat` too.
+Approve it once inside the sandbox and the sender is recognized from then on:
+
+```bash
+hermes pairing approve whatsapp <code>
+```
+
+The `bot` mode without an allowlist lets any sender start that pairing request.
+In `self-chat` the bridge drops other senders before they reach the gateway, so only your own account can pair.
+
+The Hermes bridge sends the code to the sender rather than to you.
+Read it from that WhatsApp conversation on your paired phone, or have the sender share it with you.
+`hermes pairing list` shows each waiting request by number and display name.
+It shortens the code to a hash prefix, so use the list to judge whether a request is genuine rather than to read the code.
+Approval runs inside the sandbox, so holding a code does not grant a sender access.
+
+Supply an allowlist instead when the sandbox should answer a fixed set of senders without approving each one:
+
+```bash
+WHATSAPP_ALLOWED_IDS=15551234567 $$nemoclaw <sandbox> channels add whatsapp
+```
+
+For individual sender IDs, use digits only, such as `15551234567`, without a leading `+`.
+
+<Warning>
+The in-sandbox `hermes whatsapp` wizard also asks who may message the bot.
+Answering it writes the allowlist outside the configuration NemoClaw seals, so the next `gateway restart` refuses to relaunch and directs you to rebuild.
+Leave that question blank and set the allowlist through `channels add` instead.
+</Warning>
+
+Returning to `self-chat` stops replies to other senders, but it does not revoke a sender you already approved.
+Revoke that sender when you no longer want them to reach the sandbox:
+
+```bash
+hermes pairing revoke whatsapp <sender-id>
+```
+
+Sandboxes onboarded before NemoClaw stored the WhatsApp mode use `self-chat` after their next rebuild.
+If such a sandbox must continue replying to other senders, run `channels add whatsapp` again and answer `bot`.
+
+Verify the applied mode and allowlist:
+
+```bash
+$$nemoclaw <sandbox> channels status --channel whatsapp
+```
+
+Confirm that the output reports the intended mode and allowlist without a rendered-config mismatch.
+
+<Warning>
+Set `WHATSAPP_ALLOWED_IDS='*'` to let any sender reach the paired account without approving each one.
+</Warning>
 </AgentOnly>
 
 Continue with [Enable Channels During Onboarding](enable-channels-during-onboarding) or [Add Channels After Onboarding](add-channels-after-onboarding).

@@ -18,61 +18,84 @@ Use whenever the reproducer points at removed, intentionally changed, or depreca
 
 ## Step 8.5: Detect "Behavior Changed by Design"
 
-Before scoring, check whether the symptom is intentional. Some bugs are filed against behavior that was **deliberately changed or removed** in a merged PR — running the standard rubric on these produces misleading verdicts. The symptom "still reproduces" but the right answer is "won't fix, see PR #X." Issue #2791 is the prototype: `config set` was removed in PR #2227, the reporter tested a version that already had it gone, and a standard rubric run would have buried that context under a low-confidence `verify-inconclusive` verdict.
+Before scoring, check whether an accepted issue, accepted design decision, merged PR, or maintainer comment explicitly establishes that the behavior changed intentionally. Code deletion or symbol absence alone does not establish intent; either can be an accidental regression, rename, or move.
 
-This step is split into substeps so the rigor is mechanical, not optional. Every claim in the final comment must be backed by a verifiable evidence block — a comment URL with quoted phrase, a commit SHA with diff range, or a grep command with its actual output. Hand-wavy claims fail Step 8.5d's self-verification pass and force a bail to `verify-inconclusive`.
+Use these substeps for every by-design investigation. Support each final-comment claim with a comment URL and quoted phrase, a commit SHA and diff range, or a `grep` command and its output. If Step 8.5d cannot reproduce the evidence, select `verify-inconclusive`.
 
 ### Step 8.5a: Run signal detection
 
-Any single signal is sufficient to trigger the by-design branch.
+Signals 2 and 3 trigger investigation only. A `by-design` verdict requires explicit intent evidence from Signal 1 or from an accepted issue, accepted design decision, or merged PR whose text states the intended replacement or removal. Without that evidence, continue runtime verification or select `verify-inconclusive`.
 
 **Signal 1 — Maintainer attribution in comments.** Any comment by an author with `authorAssociation` of `MEMBER`, `OWNER`, or `COLLABORATOR` matches `removed in #\d+`, `removed in [Pp][Rr] ?#\d+`, `by design`, `wontfix`, `won't fix`, `not a bug`, or `intentional`.
 
 ```bash
-gh issue view "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --json comments \
-  --jq '.comments[]
-        | select(.authorAssociation == "MEMBER" or .authorAssociation == "OWNER" or .authorAssociation == "COLLABORATOR")
-        | select(.body | test("removed in #\\d+|by design|wontfix|won.t fix|not a bug|intentional"; "i"))
-        | {url, author: .author.login, body}'
+printf '%s' "$COMMENTS" \
+  | jq '.[]
+        | select(.author_association == "MEMBER" or .author_association == "OWNER" or .author_association == "COLLABORATOR")
+        | select(.body | test("removed in (pr )?#\\d+|by design|wontfix|won.?t fix|not a bug|intentional"; "i"))
+        | {url: .html_url, author: .user.login,
+           evidence: (.body | match("removed in (pr )?#\\d+|by design|wontfix|won.?t fix|not a bug|intentional"; "i").string)}'
 ```
+
+Use the complete paginated `$COMMENTS` value from candidate selection. `gh issue view --json comments` can truncate older comments and miss the decision that controls the verdict.
 
 Capture for evidence: comment URL + author login + the quoted phrase.
 
-**Signal 2 — Removal commit in range.** A commit between the reported version and `$LATEST` deletes the symbol implicated by the reproducer (CLI subcommand, function, flag). The commit subject does NOT need to mention "remove" / "delete" — many removals ride into a `refactor(...)` or `feat(...)` commit (e.g. PR #2227 removed `--dangerously-skip-permissions` under a `refactor(sandbox): ...` subject). Use git's pickaxe to find the responsible commit by content:
+**Signal 2 — Removal commit in range.** A commit between the reported release and `$LATEST` deletes the symbol implicated by the reproducer. Use Git pickaxe search to locate the change, then inspect the linked PR or accepted decision for explicit intent:
+
+Save the reviewed symbol in `$EVIDENCE_DIR/symbol.txt` without interpolating it into a shell command. Then pass it to Git and `grep` as a quoted fixed string:
 
 ```bash
-# Pickaxe: list every commit whose diff changes the count of <symbol> occurrences.
-# Reverse order so the earliest removal commit lands first in the list.
-git log "$REPORTED_VERSION".."$LATEST" -S'<symbol>' --reverse --oneline -- src/ bin/ nemoclaw/src/
+SYMBOL=$(<"$EVIDENCE_DIR/symbol.txt")
+[ -n "$SYMBOL" ] || { echo "ERROR: reviewed symbol is empty"; exit 1; }
 
-# Subject-keyword narrowing is only a SUPPLEMENTARY lookup — useful when the
-# pickaxe returns many commits and you want to focus on the obviously-removal one.
-git log "$REPORTED_VERSION".."$LATEST" --grep='remove\|delete\|drop\|deprecate' -i --oneline
+# List commits whose diff changes the count of the reviewed symbol.
+git log "$REPORTED_VERSION".."$LATEST" -S"$SYMBOL" \
+  --reverse --oneline -- src/ bin/ nemoclaw/src/
 
-# For each candidate, confirm the diff actually deletes the symbol (not just renames or moves it).
-git log -p <candidate-sha> -- src/ bin/ nemoclaw/src/ | grep -nE '^-.*\b<symbol>\b'
+# Optional subject narrowing after the pickaxe search.
+git log "$REPORTED_VERSION".."$LATEST" \
+  --grep='remove\|delete\|drop\|deprecate' -i --oneline
+
+# Confirm that a selected candidate diff deletes the reviewed symbol.
+git show --format=fuller --patch <candidate-sha> -- src/ bin/ nemoclaw/src/ \
+  | grep -E '^-[^-]' \
+  | grep -nF -- "$SYMBOL"
 ```
 
-Capture for evidence: commit SHA + each `file:line` block of deletions touching the symbol. Note the commit's actual subject — don't assume it says "remove."
+Capture for evidence: commit SHA, the deletion, the linked PR or decision, and the text that establishes intent. A deletion with no intent record is not sufficient for `by-design`.
 
-**Signal 3 — Symbol absent in both reported version and latest.** The implicated symbol (e.g. `config set`) is not present in either tag's source tree — meaning the responsible change landed before the version the reporter tested. This is the #2791 case.
+**Signal 3 — Symbol absent in both release tags.** The implicated symbol is not present in either tag's source tree. This can mean the issue used an obsolete command, but it can also mean the search term is wrong or the implementation moved.
+
+Save the reviewed symbol in `$EVIDENCE_DIR/symbol.txt` without interpolating it into a shell command. Then pass it to Git as a quoted argument:
 
 ```bash
-git grep -n "<symbol>" "$REPORTED_VERSION" -- src/ bin/ nemoclaw/   # expect: zero matches (or shim-only — see sub-case)
-git grep -n "<symbol>" "$LATEST"            -- src/ bin/ nemoclaw/   # expect: zero matches (or shim-only)
+SYMBOL=$(<"$EVIDENCE_DIR/symbol.txt")
+[ -n "$SYMBOL" ] || { echo "ERROR: reviewed symbol is empty"; exit 1; }
+git grep -n -e "$SYMBOL" "$REPORTED_VERSION" -- src/ bin/ nemoclaw/
+git grep -n -e "$SYMBOL" "$LATEST" -- src/ bin/ nemoclaw/
 ```
 
-Capture for evidence: both grep commands and their (empty) outputs.
+Capture for evidence: both grep commands and their outputs. Locate the accepted decision or merged PR that defines the replacement before selecting `by-design`.
 
-**Sub-case for signals 2 and 3 — vestigial deprecation shims.** It's common for a removed symbol to survive in latest *only* as a deprecation message (e.g., a CLI subcommand that prints `"--<flag> was removed; use <X> instead"` and exits non-zero). When a grep returns matches in latest, inspect each `file:line`. If every match is a deprecation stub with no functional effect on the bug-as-filed, signal 2 or 3 still fires; record the shim locations and behavior as a separate evidence block. Do not silently treat shims as functional code, and do not silently treat them as absence.
+**Sub-case for signals 2 and 3 — vestigial deprecation shims.** A removed symbol can remain in `$LATEST` only as a deprecation message, such as a command that reports `--<flag> was removed; use <X> instead` and exits non-zero. Inspect every match. If every match is a deprecation stub with no functional effect on the reported bug, signal 2 or 3 still applies. Record the shim locations and behavior as a separate evidence block. Do not treat a shim as functional code or as absence.
 
 ### Step 8.5b: Pre-check related failure modes
 
-A by-design verdict says "the bug *as filed* can't reproduce." It does NOT say "every bug shaped like this is fixed." Before drafting the comment, search latest's source for code paths that could still produce the issue's described **symptom** (not the literal removed flag/symbol — the symptom).
+A by-design verdict says that the reported reproducer cannot execute under the intended contract. It does not establish that every similar symptom is fixed. Before drafting the comment, search the `$LATEST` source for other paths that can produce the reported symptom.
+
+Save each reviewed redacted symptom keyword as data, then pass both values to Git as quoted arguments:
 
 ```bash
-# Use the issue's symptom keywords, not the removed symbol.
-git grep -nE "<symptom-keyword-1>|<symptom-keyword-2>" "$LATEST" -- src/ nemoclaw/src/
+SYMPTOM_ONE=$(<"$EVIDENCE_DIR/symptom-keyword-1.redacted.txt")
+SYMPTOM_TWO=$(<"$EVIDENCE_DIR/symptom-keyword-2.redacted.txt")
+[ -n "$SYMPTOM_ONE" ] || { echo "ERROR: first symptom keyword is empty"; exit 1; }
+[ -n "$SYMPTOM_TWO" ] || { echo "ERROR: second symptom keyword is empty"; exit 1; }
+
+git grep -n \
+  -e "$SYMPTOM_ONE" \
+  -e "$SYMPTOM_TWO" \
+  "$LATEST" -- src/ nemoclaw/src/
 ```
 
 For #2168 the literal flag is `--dangerously-skip-permissions`, but the symptom is "sandbox created but not registered in CLI." Grepping for `register.*[Ss]andbox`, the readiness-gate / cleanup-failure path in `src/lib/onboard.ts` surfaces as a related-but-different way to produce an orphan sandbox.
@@ -99,10 +122,10 @@ Two passes, both required.
 
 The cost of an incorrect "I checked and X is gone" claim in a public comment, or a 404 on a citation, is higher than spending a minute re-checking. This step exists because LLMs can confidently overstate and confidently invent paths; mechanical re-verification catches both.
 
-### Step 8.5e: If any signal fires
+### Step 8.5e: If explicit intent evidence exists
 
 - **Skip the Step 9 score table** entirely. The "exit 0 + expected output" axis doesn't apply when the expected output is no longer the contract.
-- **Skip Brev provisioning** if the signal fires before Step 7 — a remote run would just confirm what static analysis already proved. (Signals 2 and 3 can run as soon as the reported version is parsed in Step 4.)
+- **Skip Brev instance creation** only if explicit intent evidence is established before Step 7. A remote run would only reconfirm behavior whose intended replacement or removal is already documented. Signals 2 and 3 can start the investigation after parsing the reported version, but cannot skip Brev by themselves.
 - **Prepare a dry run** containing Project Status `Won't Fix`, the public comment, the durable `by-design` marker, and `human_review_required: true`.
 - **Request explicit maintainer approval** for that write set. Do not substitute a status label or write before approval.
 - **On approval, update Project Status first, then post the accepted comment.** If approval is withheld, report the evidence without mutating GitHub.
@@ -134,8 +157,8 @@ The Step 8.5d self-verification pass MUST resolve at least one rendered link (e.
 
 **Reported on:** v0.0.<X>
 **Verified on:** v0.0.<Y> (PR #<NNNN> first shipped in v0.0.<Z>)
-**Verification mode:** static analysis at the verified-on tag — no runtime reproduction. Step 8.5 by-design short-circuits Brev provisioning because the responsible code change is already proven by the diff between `$REPORTED_VERSION` and `$LATEST`.
-**Outcome:** symptom reproduces against the reproducer as filed, but the implicated behavior was intentionally changed.
+**Verification mode:** static analysis at the verified release tag; no runtime reproduction. Step 8.5 skips Brev instance creation because explicit intent evidence establishes the intended removal or replacement.
+**Outcome:** the reproducer invokes behavior that an accepted decision or merged change intentionally removed or replaced.
 
 ### What's structurally fixed
 
@@ -152,7 +175,7 @@ The new workflow is `<one-sentence: how to do what the user was trying to do>`.
 
 ### What's not literally the same bug
 
-`<one-sentence acknowledgement of the related failure mode found in Step 8.5b, with file:line>` — OR — `None. The symptom requires the removed symbol; no related code path produces it on latest.`
+`<one-sentence acknowledgement of the related failure mode found in Step 8.5b, with file:line>` — OR — `None. The symptom requires the removed symbol; no related code path produces it on the newest release tag.`
 
 ### Existing CI coverage
 
@@ -162,7 +185,7 @@ The new workflow is `<one-sentence: how to do what the user was trying to do>`.
 
 ### Recommendation
 
-@<reporter> — please confirm the by-design framing is correct (the implicated `<symbol>` was intentionally removed, the original reproducer can no longer execute) and close as "won't fix / by design" if you agree. If a related symptom (e.g. `<related failure mode from above>`) is hitting you on ≥ v0.0.<Z>, please file a fresh issue with a v0.0.<Z>+ reproducer.
+@<reporter> — please confirm the by-design framing is correct (the implicated `<symbol>` was intentionally removed and the original reproducer can no longer execute). A maintainer will decide closure separately. If a related symptom (e.g. `<related failure mode from above>`) is hitting you on ≥ v0.0.<Z>, please file a fresh issue with a v0.0.<Z>+ reproducer.
 
 `<NVBugs cross-ref line — see below>`
 

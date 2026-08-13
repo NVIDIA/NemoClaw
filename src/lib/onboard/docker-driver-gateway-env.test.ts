@@ -18,6 +18,22 @@ function homeEnv(home: string, xdgConfigHome = ""): NodeJS.ProcessEnv {
   return { HOME: home, XDG_CONFIG_HOME: xdgConfigHome } as NodeJS.ProcessEnv;
 }
 
+function trustedPackageServiceOptions(home: string) {
+  return {
+    env: homeEnv(home),
+    getUpstreamGatewayVersion: () => "openshell-gateway 0.0.85",
+    getUpstreamGatewayVersionBounds: () => ({ max: "0.0.85", min: "0.0.85" }),
+    platform: "linux" as const,
+    spawnSyncImpl: () => ({
+      status: 0,
+      stdout: [
+        "FragmentPath=/usr/lib/systemd/user/openshell-gateway.service",
+        "ExecStart={ path=/usr/bin/openshell-gateway ; argv[]=/usr/bin/openshell-gateway ; }",
+      ].join("\n"),
+    }),
+  };
+}
+
 describe("buildDockerDriverGatewayEnv", () => {
   it("sets Docker-driver gateway networking from NemoClaw configuration", () => {
     const env = buildDockerDriverGatewayEnv({
@@ -208,7 +224,7 @@ describe("writeDockerGatewayDebEnvOverride", () => {
         () => ({
           OPENSHELL_BIND_ADDRESS: "127.0.0.1",
         }),
-        { env: homeEnv(tempHome), platform: "linux" },
+        trustedPackageServiceOptions(tempHome),
       );
 
       const envFileContent = fs.readFileSync(envFile, "utf-8");
@@ -253,7 +269,7 @@ describe("writeDockerGatewayDebEnvOverride", () => {
           () => ({
             OPENSHELL_BIND_ADDRESS: "127.0.0.1",
           }),
-          { env: homeEnv(tempHome), platform: "linux" },
+          trustedPackageServiceOptions(tempHome),
         ),
       ).toThrow("regular file changed during validation");
 
@@ -304,7 +320,7 @@ describe("writeDockerGatewayDebEnvOverride", () => {
         () => ({
           OPENSHELL_BIND_ADDRESS: "127.0.0.1",
         }),
-        { env: homeEnv(tempHome), platform: "linux" },
+        trustedPackageServiceOptions(tempHome),
       );
 
       expect(wrote).toBe(true);

@@ -7,13 +7,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  readOpenShellGatewayUpgradeWorkflow,
-  validateOpenShellGatewayUpgradeWorkflow,
-} from "../../../tools/e2e/openshell-gateway-upgrade-workflow-boundary.mts";
-import {
-  validateE2eWorkflow,
-  validateE2eWorkflowBoundary,
-} from "../../../tools/e2e/workflow-boundary.mts";
+  catalogueTarget,
+  validateE2eTargetCatalogue,
+} from "../../../tools/e2e/target-catalogue.mts";
+import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
+import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 import {
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
@@ -26,44 +24,133 @@ import {
   validateLegacyGatewayUpgradeFixture,
 } from "../live/openshell-gateway-upgrade-helpers.ts";
 
-describe("OpenShell gateway upgrade workflow boundary", () => {
-  it("pins architecture and immediate-predecessor fixtures to the canonical live test (#6114)", () => {
-    const workflow = readOpenShellGatewayUpgradeWorkflow();
-    expect(validateOpenShellGatewayUpgradeWorkflow(workflow)).toEqual([]);
-    expect(validateE2eWorkflowBoundary()).toEqual([]);
-
-    const job = (workflow.jobs as Record<string, Record<string, unknown>>)[
-      "openshell-gateway-upgrade"
+describe("OpenShell gateway upgrade boundary", () => {
+  it("pins architecture and immediate-predecessor fixtures in the catalogue (#6114)", () => {
+    const fixtures = [
+      catalogueTarget("openshell-gateway-upgrade-v0-0-36-x86-64"),
+      catalogueTarget("openshell-gateway-upgrade-v0-0-55-x86-64"),
+      catalogueTarget("openshell-gateway-upgrade-v0-0-55-aarch64"),
+      catalogueTarget("openshell-gateway-upgrade-v0-0-74-x86-64"),
+      catalogueTarget("openshell-gateway-upgrade-v0-0-89-x86-64"),
     ];
-    job["runs-on"] = "ubuntu-latest";
-    const strategy = job.strategy as Record<string, Record<string, unknown>>;
-    const fixtures = strategy.matrix.include as Array<Record<string, unknown>>;
-    fixtures.find((fixture) => fixture.id === "v0.0.55-x86_64")!.sandbox_base_image_ref =
-      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6";
-    fixtures.find((fixture) => fixture.id === "v0.0.55-aarch64")!.runner = "ubuntu-latest";
-    fixtures.find((fixture) => fixture.id === "v0.0.74-x86_64")!.openclaw_version = "latest";
-    fixtures.find((fixture) => fixture.id === "v0.0.89-x86_64")!.openclaw_state_upgrade = "0";
-    const env = job.env as Record<string, unknown>;
-    env.NEMOCLAW_E2E_SHARD = "default";
-    env.NEMOCLAW_CURRENT_OPENCLAW_VERSION = "latest";
-    env.NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF = "0";
-    const run = (job.steps as Array<Record<string, unknown>>).find(
-      (step) => step.name === "Run OpenShell gateway upgrade live Vitest test",
-    )!;
-    run.run = "npx vitest run --project e2e-live unrelated.test.ts";
 
-    expect(validateE2eWorkflow(workflow)).toEqual(
-      expect.arrayContaining([
-        "openshell-gateway-upgrade must run on ${{ matrix.runner }}",
-        "openshell-gateway-upgrade v0.0.55 matrix must pin x86_64 and arm64 upgrade fixtures",
-        "openshell-gateway-upgrade matrix must pin the immediate v0.0.74 x86_64 upgrade fixture",
-        "openshell-gateway-upgrade matrix must pin the v0.0.89 OpenClaw state-upgrade fixture",
-        "openshell-gateway-upgrade must publish one risk-signal shard per legacy fixture",
-        "openshell-gateway-upgrade must bind the current OpenClaw version from its fixture",
-        "openshell-gateway-upgrade must bind the OpenClaw state-upgrade proof flag from its fixture",
-        "openshell-gateway-upgrade step 'Run OpenShell gateway upgrade live Vitest test' must run: npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openshell-gateway-upgrade.test.ts",
-      ]),
+    expect(
+      fixtures.map(({ environment, runner, shard }) => ({
+        runner,
+        shard,
+        nemoclawRef: environment.NEMOCLAW_OLD_NEMOCLAW_REF,
+        commit: environment.NEMOCLAW_OLD_NEMOCLAW_COMMIT,
+        installerSha256: environment.NEMOCLAW_OLD_INSTALLER_SHA256,
+        sandboxBaseImageRef: environment.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF,
+        openShellVersion: environment.NEMOCLAW_OLD_OPENSHELL_VERSION,
+        openClawVersion: environment.NEMOCLAW_OLD_OPENCLAW_VERSION,
+        currentOpenClawVersion: environment.NEMOCLAW_CURRENT_OPENCLAW_VERSION,
+        stateUpgradeProof: environment.NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF,
+      })),
+    ).toEqual([
+      {
+        runner: "ubuntu-latest",
+        shard: "v0-0-36-x86-64",
+        nemoclawRef: "v0.0.36",
+        commit: "3351fbdd4eb7d9b80ec471545083956327da2b10",
+        installerSha256:
+          "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f",
+        sandboxBaseImageRef:
+          "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6",
+        openShellVersion: "0.0.36",
+        openClawVersion: "2026.4.24",
+        currentOpenClawVersion: "",
+        stateUpgradeProof: "",
+      },
+      {
+        runner: "ubuntu-latest",
+        shard: "v0-0-55-x86-64",
+        nemoclawRef: "v0.0.55",
+        commit: "95d483fe2b6569d68e59493c60f19df09a068e8f",
+        installerSha256:
+          "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897",
+        sandboxBaseImageRef:
+          "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108",
+        openShellVersion: "0.0.44",
+        openClawVersion: "2026.5.22",
+        currentOpenClawVersion: "",
+        stateUpgradeProof: "",
+      },
+      {
+        runner: "ubuntu-24.04-arm",
+        shard: "v0-0-55-aarch64",
+        nemoclawRef: "v0.0.55",
+        commit: "95d483fe2b6569d68e59493c60f19df09a068e8f",
+        installerSha256:
+          "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897",
+        sandboxBaseImageRef:
+          "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108",
+        openShellVersion: "0.0.44",
+        openClawVersion: "2026.5.22",
+        currentOpenClawVersion: "",
+        stateUpgradeProof: "",
+      },
+      {
+        runner: "ubuntu-latest",
+        shard: "v0-0-74-x86-64",
+        nemoclawRef: "v0.0.74",
+        commit: "3a05b54e8ec3e1d5550ec5c728de54af872bffe3",
+        installerSha256:
+          "a0cd3feca488d247e53d59d7d8246d2b86e75e95acb5e7d78504b3c0c60fd7db",
+        sandboxBaseImageRef:
+          "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6",
+        openShellVersion: "0.0.72",
+        openClawVersion: "2026.5.27",
+        currentOpenClawVersion: "",
+        stateUpgradeProof: "",
+      },
+      {
+        runner: "ubuntu-latest",
+        shard: "v0-0-89-x86-64",
+        nemoclawRef: "v0.0.89",
+        commit: "1143aa5cce77f3bad1b3b5588bd7fddbe438237e",
+        installerSha256:
+          "00f24959e5ca68104fe91221c0a015dab6a4154618497fa36b969b661f418cc2",
+        sandboxBaseImageRef:
+          "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1",
+        openShellVersion: "0.0.85",
+        openClawVersion: "2026.6.10",
+        currentOpenClawVersion: "2026.7.1",
+        stateUpgradeProof: "1",
+      },
+    ]);
+  });
+
+  it("rejects reintroducing the superseded workflow job", () => {
+    const workflow = readWorkflow() as { jobs: Record<string, unknown> };
+    workflow.jobs["openshell-gateway-upgrade"] = {};
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "workflow must not define superseded openshell-gateway-upgrade job",
     );
+  });
+
+  it("rejects drift from every exact reviewed gateway-upgrade fixture field (#6114)", () => {
+    const fixture = catalogueTarget("openshell-gateway-upgrade-v0-0-55-x86-64");
+    const mutations = [
+      { runner: "ubuntu-24.04-arm" },
+      { shard: "v0-0-55-aarch64" },
+      { environment: { ...fixture.environment, NEMOCLAW_OLD_OPENSHELL_VERSION: "0.0.45" } },
+      { environment: { ...fixture.environment, NEMOCLAW_OLD_INSTALLER_SHA256: "0".repeat(64) } },
+      {
+        environment: {
+          ...fixture.environment,
+          NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF:
+            `ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${"0".repeat(64)}`,
+        },
+      },
+    ];
+
+    for (const mutation of mutations) {
+      expect(() => validateE2eTargetCatalogue([{ ...fixture, ...mutation }])).toThrow(
+        /exact reviewed gateway-upgrade fixture/,
+      );
+    }
   });
 
   it("freshens only the retryable old fixture install", () => {
