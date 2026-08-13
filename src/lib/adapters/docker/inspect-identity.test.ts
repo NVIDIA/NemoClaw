@@ -32,6 +32,7 @@ describe("inspectDockerSandboxIdentities", () => {
         },
       ],
     });
+    expect(inspect.mock.calls[0][0]).toContain("-a");
     expect(inspect.mock.calls[0][0]).toContain("label=openshell.ai/sandbox-name=alpha");
     expect(inspect.mock.calls[0][0]).not.toContain("label=openshell.ai/managed-by=openshell");
   });

@@ -2238,6 +2238,7 @@ For one matching container, the command continues only when all these labels hav
 - A nonempty `openshell.ai/sandbox-id`
 
 If the initial inspection cannot complete, more than one container matches, a matching container has conflicting or incomplete labels, or Docker returns malformed identity data, `destroy` exits before changing sandbox resources.
+The identity checks still apply with `--force`, `--yes`, or `NEMOCLAW_NON_INTERACTIVE=1`; those controls authorize confirmation but do not authorize an unproven container identity.
 NemoClaw rechecks the exact identity after read-only preflight, before provider cleanup, and synchronously at the sandbox-deletion boundary.
 If a later recheck detects drift or fails, `destroy` refuses sandbox deletion, restores managed MCP preparation when possible, preserves local ownership state, and reports any earlier cleanup already performed.
 If Docker cannot complete the inspection, correct the reported Docker error before you rerun `destroy`.
