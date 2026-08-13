@@ -1218,7 +1218,7 @@ export async function verifyOnboardInferenceSmoke(options: any) {
   // #8952: tear down an unowned managed gateway before fatal exit.
   try {
     const { teardownOrphanManagedGatewayOnAbort } =
-      require("../onboard/abort-gateway-teardown") as typeof import("../onboard/abort-gateway-teardown");
+      require("../onboard/gateway-destroy") as typeof import("../onboard/gateway-destroy");
     teardownOrphanManagedGatewayOnAbort();
   } catch (error) {
     // Helper never throws; this covers require/load failures only.
