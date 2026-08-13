@@ -708,6 +708,7 @@ describe("onboard Model Router setup", () => {
       ),
       (error: Error) => {
         assert.match(error.message, /Last router log lines:/);
+        assert.match(error.message, /AuthenticationError: api_key <REDACTED> rejected/);
         assert.doesNotMatch(error.message, /SECRETSECRET/);
         assert.doesNotMatch(error.message, /nvapi-SECR/);
         return true;
