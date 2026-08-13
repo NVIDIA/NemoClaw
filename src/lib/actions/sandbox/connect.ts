@@ -1217,10 +1217,24 @@ export function printInteractiveSessionHints(sandboxName: string): void {
 export function completeInteractiveSessionSetup(
   sandboxName: string,
   sb: SandboxEntry | null,
+  runApprovalPass = runConnectAutoPairApprovalPass,
 ): void {
   maybeEnsureHermesToolGatewayBroker(sb);
   const gatewayName = sb ? resolveSandboxGatewayName(sb) : getSandboxTargetGatewayName(sandboxName);
-  runConnectAutoPairApprovalPass(sandboxName, gatewayName);
+  runApprovalPass(sandboxName, gatewayName);
+}
+
+/** Preserve non-OpenClaw setup after current OpenClaw pairing qualification. */
+export function completeReadinessQualifiedInteractiveSessionSetup(
+  sandboxName: string,
+  sb: SandboxEntry | null,
+  runApprovalPass = runConnectAutoPairApprovalPass,
+): void {
+  maybeEnsureHermesToolGatewayBroker(sb);
+  const agentName = String(sb?.agent ?? "").trim();
+  if (agentName === "openclaw") return;
+  const gatewayName = sb ? resolveSandboxGatewayName(sb) : getSandboxTargetGatewayName(sandboxName);
+  runApprovalPass(sandboxName, gatewayName);
 }
 
 /**
