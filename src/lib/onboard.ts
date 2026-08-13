@@ -1361,7 +1361,7 @@ async function preflight(
   preflightOpts: PreflightOptions = {},
 ): Promise<ReturnType<typeof nim.detectGpu>> {
   step(1, 8, "Preflight checks");
-  const { gpu, host, sandboxGpuConfig } =
+  const { gpu, host, sandboxGpuConfig, gpuTrustGateRejection } =
     await onboardPreflightGatewayAuthority.runRuntimePreflight(preflightOpts);
 
   await preflightUtils.checkContainerRuntimeResources(host, {
@@ -1515,6 +1515,9 @@ async function preflight(
     console.log("  ⓘ Local NIM unavailable — requires NVIDIA GPU");
   } else {
     console.log("  ⓘ Local NIM unavailable — no GPU detected");
+    if (gpuTrustGateRejection) {
+      console.log(`    GPU detection rejected the nvidia-smi report: ${gpuTrustGateRejection}`);
+    }
   }
 
   if (sandboxGpuConfig.sandboxGpuEnabled) {
