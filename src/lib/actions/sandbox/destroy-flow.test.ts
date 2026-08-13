@@ -49,6 +49,78 @@ describe("destroySandbox flow", () => {
     expectStrictSandboxPresenceClassification();
   });
 
+  const disputedIdentityDockerRun = (ownedId: string, foreignId: string) => (args: unknown) => {
+    const argv = Array.isArray(args) ? args.map(String) : [];
+    const inspectLines = [
+      JSON.stringify([ownedId, "/openshell-alpha", "openshell", "default"]),
+      JSON.stringify([foreignId, "/alpha-foreign", "", "foreign"]),
+    ].join("\n");
+    return {
+      status: 0,
+      stdout: argv[0] === "ps" ? `${ownedId}\n${foreignId}\n` : `${inspectLines}\n`,
+      stderr: "",
+    };
+  };
+
+  it("refuses destroy before any mutation when a foreign container disputes the sandbox-name label (#8999)", async () => {
+    const harness = createDestroyHarness();
+    harness.dockerRunSpy.mockImplementation(
+      disputedIdentityDockerRun("a".repeat(64), "b".repeat(64)),
+    );
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(harness.events).toEqual([]);
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.selectGatewaySpy).not.toHaveBeenCalled();
+    expect(harness.stopNimByNameSpy).not.toHaveBeenCalled();
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(errorOutput).toContain("Refusing to destroy sandbox 'alpha'");
+    expect(errorOutput).toContain("openshell.ai/sandbox-name=alpha");
+    expect(errorOutput).toContain(
+      "NemoClaw did not change any container, image, or local sandbox state.",
+    );
+    expect(errorOutput).toContain("'destroy --force' skips this check");
+  });
+
+  it("destroys under a disputed sandbox-name label only with --force and a warning (#8999)", async () => {
+    const harness = createDestroyHarness();
+    harness.dockerRunSpy.mockImplementation(
+      disputedIdentityDockerRun("a".repeat(64), "b".repeat(64)),
+    );
+
+    await expect(
+      harness.destroySandbox("alpha", { force: true, cleanupGateway: false }),
+    ).resolves.toBeUndefined();
+
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(harness.events).toContain("delete");
+    const warnOutput = harness.warnSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(warnOutput).toContain("do not share one OpenShell-managed identity");
+    expect(warnOutput).toContain("--force");
+  });
+
+  it("warns and proceeds when Docker cannot answer the identity check (#8999)", async () => {
+    const harness = createDestroyHarness();
+    harness.dockerRunSpy.mockImplementation(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "daemon down",
+    }));
+
+    await expect(
+      harness.destroySandbox("alpha", { yes: true, cleanupGateway: false }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.events).toContain("delete");
+    const warnOutput = harness.warnSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(warnOutput).toContain("skipped the container identity check");
+  });
+
   it("selects the sandbox gateway, deletes live resources, cleans host state, and removes registry state", async () => {
     const harness = createDestroyHarness();
 

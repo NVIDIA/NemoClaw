@@ -8,6 +8,7 @@ export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
 export const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 export const OPENSHELL_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
+export const OPENSHELL_SANDBOX_WORKSPACE_LABEL = "openshell.ai/sandbox-workspace";
 
 const DOCKER_SANDBOX_QUERY_TIMEOUT_MS = 30_000;
 const STALE_DOCKER_ORPHAN_TIMEOUT_MS = 30_000;
@@ -80,6 +81,126 @@ export function queryOpenShellDockerSandboxContainers(
     .map((line) => line.trim())
     .filter(Boolean);
   return { ok: true, ids };
+}
+
+const FULL_CONTAINER_ID_PATTERN = /^[0-9a-f]{64}$/;
+const MAX_LABEL_CLAIM_OUTPUT_BYTES = 1_048_576;
+// One JSON array per container, following the docker-state-mutation.ts
+// labeled-inspect precedent. `index` on a present-but-unlabeled key of a
+// non-nil label map renders "" and `json` escapes hostile label content.
+const SANDBOX_NAME_CLAIM_INSPECT_FORMAT =
+  `[{{json .Id}},{{json .Name}},` +
+  `{{json (index .Config.Labels "${OPENSHELL_MANAGED_BY_LABEL}")}},` +
+  `{{json (index .Config.Labels "${OPENSHELL_SANDBOX_WORKSPACE_LABEL}")}}]`;
+
+export type SandboxNameClaimRow = {
+  readonly id: string;
+  readonly name: string;
+  readonly managedBy: string;
+  readonly workspace: string;
+};
+
+export type SandboxNameClaimQuery =
+  | { ok: true; rows: SandboxNameClaimRow[] }
+  | { ok: false; rows: []; error: string };
+
+function boundedClaimText(value: unknown): string | null {
+  const text = String(value ?? "");
+  if (Buffer.byteLength(text, "utf8") > MAX_LABEL_CLAIM_OUTPUT_BYTES || text.includes("\0")) {
+    return null;
+  }
+  return text;
+}
+
+function parseSandboxNameClaimRow(line: string): SandboxNameClaimRow | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed) || parsed.length !== 4) return null;
+  const [id, name, managedBy, workspace] = parsed;
+  if (typeof id !== "string" || !FULL_CONTAINER_ID_PATTERN.test(id)) return null;
+  if (typeof name !== "string" || typeof managedBy !== "string" || typeof workspace !== "string") {
+    return null;
+  }
+  return { id, name: name.replace(/^\//, ""), managedBy, workspace };
+}
+
+/**
+ * Enumerate every container that claims one sandbox's
+ * `openshell.ai/sandbox-name` label — deliberately WITHOUT the
+ * `openshell.ai/managed-by` filter the other lookups in this module apply, so
+ * a foreign container that copies only the name label stays visible (#8999).
+ * Status-bearing like `queryOpenShellDockerSandboxContainers`: `ok: false`
+ * distinguishes a Docker failure or unparsable answer from zero claims.
+ */
+export function queryDockerSandboxNameClaims(
+  sandboxName: string,
+  deps: DockerSandboxContainerQueryDeps = {},
+): SandboxNameClaimQuery {
+  const run = deps.dockerRun ?? dockerRun;
+  const psResult = run(
+    [
+      "ps",
+      "-a",
+      "--no-trunc",
+      "--filter",
+      `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
+      "--format",
+      "{{.ID}}",
+    ],
+    { ignoreError: true, suppressOutput: true, timeout: DOCKER_SANDBOX_QUERY_TIMEOUT_MS },
+  );
+  if (Number(psResult.status ?? 1) !== 0) {
+    return {
+      ok: false,
+      rows: [],
+      error: commandResultText(psResult) || "docker ps did not complete successfully",
+    };
+  }
+  const psText = boundedClaimText(psResult.stdout);
+  if (psText === null) {
+    return { ok: false, rows: [], error: "docker ps returned an oversized or malformed answer" };
+  }
+  const ids = psText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (ids.length === 0) return { ok: true, rows: [] };
+  if (!ids.every((id) => FULL_CONTAINER_ID_PATTERN.test(id))) {
+    return { ok: false, rows: [], error: "docker ps returned a malformed container identity" };
+  }
+  const inspectResult = run(
+    ["inspect", "--type", "container", "--format", SANDBOX_NAME_CLAIM_INSPECT_FORMAT, ...ids],
+    { ignoreError: true, suppressOutput: true, timeout: DOCKER_SANDBOX_QUERY_TIMEOUT_MS },
+  );
+  if (Number(inspectResult.status ?? 1) !== 0) {
+    return {
+      ok: false,
+      rows: [],
+      error: commandResultText(inspectResult) || "docker inspect did not complete successfully",
+    };
+  }
+  const inspectText = boundedClaimText(inspectResult.stdout);
+  if (inspectText === null) {
+    return {
+      ok: false,
+      rows: [],
+      error: "docker inspect returned an oversized or malformed answer",
+    };
+  }
+  const rows = inspectText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map(parseSandboxNameClaimRow);
+  if (rows.length !== ids.length || rows.some((row) => row === null)) {
+    return { ok: false, rows: [], error: "docker inspect did not answer for every container" };
+  }
+  const sorted = (rows as SandboxNameClaimRow[]).slice().sort((a, b) => a.id.localeCompare(b.id));
+  return { ok: true, rows: sorted };
 }
 
 type StaleDockerOrphanCleanupDeps = {

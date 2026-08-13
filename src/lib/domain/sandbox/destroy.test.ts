@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   getSandboxDeleteOutcome,
+  hasAmbiguousSandboxContainerIdentity,
   hasNoLiveSandboxes,
   hasRunningDockerSandboxContainer,
   isGatewayUnreachableDeleteOutput,
@@ -15,6 +16,45 @@ import {
 } from "./destroy";
 
 describe("sandbox destroy helpers", () => {
+  it("flags a disputed sandbox-name label as ambiguous container identity (#8999)", () => {
+    const owned = {
+      id: "a".repeat(64),
+      name: "openshell-alpha",
+      managedBy: "openshell",
+      workspace: "default",
+    };
+    const foreign = {
+      id: "b".repeat(64),
+      name: "alpha-foreign",
+      managedBy: "",
+      workspace: "foreign",
+    };
+    expect(hasAmbiguousSandboxContainerIdentity([])).toBe(false);
+    expect(hasAmbiguousSandboxContainerIdentity([owned])).toBe(false);
+    expect(hasAmbiguousSandboxContainerIdentity([owned, { ...owned, id: "c".repeat(64) }])).toBe(
+      false,
+    );
+    expect(hasAmbiguousSandboxContainerIdentity([foreign])).toBe(true);
+    expect(hasAmbiguousSandboxContainerIdentity([owned, foreign])).toBe(true);
+    expect(
+      hasAmbiguousSandboxContainerIdentity([
+        owned,
+        { ...owned, id: "d".repeat(64), workspace: "other" },
+      ]),
+    ).toBe(true);
+    expect(
+      hasAmbiguousSandboxContainerIdentity([
+        owned,
+        { ...owned, id: "e".repeat(64), managedBy: "third-party" },
+      ]),
+    ).toBe(true);
+    // Pre-v0.0.99 OpenShell containers carry no workspace label; a retained
+    // one next to the current container must not block destroy.
+    expect(
+      hasAmbiguousSandboxContainerIdentity([owned, { ...owned, id: "f".repeat(64), workspace: "" }]),
+    ).toBe(false);
+  });
+
   it("detects missing sandbox delete output", () => {
     expect(isMissingSandboxDeleteOutput("Error: sandbox alpha not found")).toBe(true);
     expect(isMissingSandboxDeleteOutput("\u001b[31mNotFound\u001b[0m: missing")).toBe(true);

@@ -6,6 +6,7 @@ import { resolveSandboxContainerOwner } from "./container-owner";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 const TERMINAL_OPEN_SHELL_SANDBOX_PHASES = new Set(["Error", "Failed"]);
+const OPENSHELL_MANAGED_BY_VALUE = "openshell";
 
 function stripAnsi(value = ""): string {
   return String(value).replace(ANSI_RE, "");
@@ -44,6 +45,31 @@ export type LiveSandboxProbeSnapshot = {
   liveList: LiveSandboxListSnapshot;
   dockerContainersBySandboxName: ReadonlyMap<string, DockerSandboxContainerSnapshot>;
 };
+
+export type SandboxContainerIdentityRow = {
+  readonly id: string;
+  readonly name: string;
+  readonly managedBy: string;
+  readonly workspace: string;
+};
+
+/**
+ * True when the host containers that carry one sandbox-name label do not
+ * share one OpenShell-managed identity: a container without
+ * `openshell.ai/managed-by=openshell`, or two containers that record
+ * different non-empty `openshell.ai/sandbox-workspace` values, disputes
+ * ownership of the name. An absent workspace label is not a dispute —
+ * OpenShell releases before v0.0.99 wrote no workspace label, and their
+ * retained containers must not block destroy (#8999).
+ */
+export function hasAmbiguousSandboxContainerIdentity(
+  rows: readonly SandboxContainerIdentityRow[],
+): boolean {
+  if (rows.length === 0) return false;
+  const allManaged = rows.every((row) => row.managedBy === OPENSHELL_MANAGED_BY_VALUE);
+  const workspaces = new Set(rows.map((row) => row.workspace).filter(Boolean));
+  return !(allManaged && workspaces.size <= 1);
+}
 
 export function isMissingSandboxDeleteOutput(output = ""): boolean {
   return /\bNotFound\b|\bNot Found\b|sandbox not found|sandbox .* not found|sandbox .* not present|sandbox does not exist|no such sandbox/i.test(

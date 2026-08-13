@@ -466,7 +466,7 @@ async function destroySandboxUnlocked(
   if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
 
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } =
-    prepareSandboxDestroy(sandboxName);
+    prepareSandboxDestroy(sandboxName, { force: normalized.force === true });
   const priorHttpsPinRouteId = parseHttpsPinRouteId(sandbox?.endpointUrl);
   const destructiveResult = await executeSandboxDestroy({
     cleanupShieldsArtifacts: cleanupShieldsDestroyArtifacts,

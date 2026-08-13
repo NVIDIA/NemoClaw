@@ -2207,6 +2207,15 @@ If you want to upgrade the sandbox while preserving state, use `$$nemoclaw <name
 If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds.
 Pass `--yes`, `-y`, or `--force`, or set `NEMOCLAW_NON_INTERACTIVE=1`, to authorize deletion without prompting in scripted workflows.
 
+On Docker-driver sandboxes, including registry entries with no recorded driver, `destroy` first lists every host container that carries the sandbox's `openshell.ai/sandbox-name` label.
+The check runs after the confirmation prompt and before `destroy` stops inference resources or deletes anything.
+`destroy` refuses when a labeled container is missing `openshell.ai/managed-by=openshell`, or when two labeled containers record different non-empty `openshell.ai/sandbox-workspace` values.
+The refusal lists each labeled container, exits non-zero, and changes no container, image, or local sandbox state.
+Inspect each listed container with `docker inspect`.
+Remove a container that is not an OpenShell sandbox with `docker rm -f`, then rerun `destroy`.
+After you verify the destroy target yourself, `destroy --force` skips this check and prints a warning.
+If Docker does not answer the check, or returns output that NemoClaw cannot parse, `destroy` prints a warning, skips this check, and continues.
+
 <AgentOnly variant="hermes">
 
 If the Hermes sandbox has managed MCP entries, shields must be down before destroy can scrub their adapter configuration.
