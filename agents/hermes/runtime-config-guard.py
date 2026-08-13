@@ -4914,7 +4914,12 @@ def _runtime_plan_replacements_and_provider_keys(
             raise UnsafePathError(
                 f"messaging runtime plan env alias regex is invalid: {exc}"
             ) from exc
-        if compiled.search(os.environ.get(env_key, "")):
+        runtime_value = os.environ.get(env_key, "")
+        if runtime_value.startswith(SCOPED_PLACEHOLDER_PREFIX):
+            suffix = runtime_value[len(SCOPED_PLACEHOLDER_PREFIX) :]
+            if not _placeholder_suffix_matches_env_key(suffix, env_key):
+                continue
+        if compiled.search(runtime_value):
             replacements[env_key] = (value, message)
     return replacements, provider_env_keys, True
 

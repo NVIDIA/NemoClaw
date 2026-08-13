@@ -861,6 +861,25 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.strictHashValid).toBe(true);
   });
 
+  it("ignores an overlong Slack credential revision before runtime alias matching (#8893)", () => {
+    const originalEnv = "SLACK_BOT_TOKEN=openshell:resolve:env:v1_SLACK_BOT_TOKEN\n";
+    const hashFileContent = "sentinel\n";
+    const overlongPlaceholder = `openshell:resolve:env:v${"1".repeat(21)}_SLACK_BOT_TOKEN`;
+    const run = runHermesRuntimeProviderPlaceholderRefresh({
+      envFile: originalEnv,
+      envOverrides: {
+        SLACK_BOT_TOKEN: overlongPlaceholder,
+      },
+      runtimePlan: baseMessagingRuntimePlan(),
+      hashFileContent,
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.envFileContent).toBe(originalEnv);
+    expect(run.strictHashContent).toBe(hashFileContent);
+    expect(run.result.stderr).not.toContain(overlongPlaceholder);
+  }, 15_000);
+
   it("refreshes provider placeholders through isolated Python and passes only regular artifacts", () => {
     const present = runExtractedProviderPlaceholderRefresh({ runtimePlanPathKind: "regular" });
     const absent = runExtractedProviderPlaceholderRefresh({ runtimePlanPathKind: "absent" });
