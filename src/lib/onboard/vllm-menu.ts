@@ -20,7 +20,9 @@
  * is null, so the dispatcher can emit the precise "No vLLM install profile
  * available for this host." message. It also lets the caller surface managed
  * vLLM by default for known DGX platforms while generic Linux stays gated, and
- * logs a note when running-vLLM takes precedence over the env-var opt-in.
+ * logs a note when running-vLLM takes precedence over the env-var opt-in. N1x
+ * keeps the managed selection because its readiness exception is limited to
+ * the managed-vLLM preview.
  */
 
 import { VLLM_PORT } from "../core/ports";
@@ -64,7 +66,8 @@ export function buildVllmMenuEntries(opts: BuildVllmMenuOptions): VllmMenuEntry[
   const env = opts.env ?? process.env;
   const userChoseManagedVllm =
     (env.NEMOCLAW_PROVIDER || "").trim().toLowerCase() === MANAGED_VLLM_PROVIDER_KEY;
-  if (opts.vllmRunning) {
+  const keepN1xManagedPreview = userChoseManagedVllm && opts.platform === "n1x";
+  if (opts.vllmRunning && !keepN1xManagedPreview) {
     if (userChoseManagedVllm) {
       log(
         `  Note: NEMOCLAW_PROVIDER=install-vllm requested, but vLLM is already running on localhost:${VLLM_PORT} — selecting the running instance.`,

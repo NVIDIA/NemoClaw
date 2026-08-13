@@ -127,6 +127,22 @@ describe("buildVllmMenuEntries", () => {
     assert.doesNotMatch(running[0].label, /suggested/);
   });
 
+  it("keeps the N1x managed preview selected when vLLM already occupies port 8000 (#8574)", () => {
+    const entries = buildVllmMenuEntries({
+      vllmRunning: true,
+      vllmProfile: { name: "N1x" },
+      experimental: false,
+      platform: "n1x",
+      hasVllmImage: true,
+      env: { NEMOCLAW_PROVIDER: "install-vllm" },
+      log: () => {},
+    });
+
+    assert.deepEqual(entries, [
+      { key: "install-vllm", label: "Start vLLM (N1x) [Deferred preview]" },
+    ]);
+  });
+
   it("keeps generic Linux managed vLLM behind EXPERIMENTAL", () => {
     const entries = buildVllmMenuEntries({
       vllmRunning: false,
