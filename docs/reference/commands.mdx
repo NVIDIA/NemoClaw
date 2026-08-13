@@ -2614,7 +2614,20 @@ With `--channel`, it prints the detailed status for that channel.
 For an OpenClaw WhatsApp sandbox, `--channel whatsapp` probes the sandbox to separately report pairing/session state, the Noise WebSocket connection, inbound event delivery, and policy coverage.
 A paired channel with no observed inbound delivery exits non-zero with verdict `idle` so an unhealthy bridge cannot pass as healthy.
 The detailed WhatsApp probe stays focused on QR/session runtime diagnostics and does not include rendered-config comparison lines.
-For a Hermes WhatsApp sandbox, `--channel whatsapp` probes only whether the default gateway session path and the `profiles/dashboard-home` session path contain `creds.json`.
+For a Hermes WhatsApp sandbox, `--channel whatsapp` first checks the shared gateway path and the `profiles/dashboard-home` path for `creds.json`.
+The status compatibility probe has this contract:
+
+| Property | Contract |
+|------|-------------|
+| Owner | The NemoClaw WhatsApp status hook owns the probe. |
+| Scope | The hook reads only `platforms.whatsapp.extra.session_path` from `/sandbox/.hermes/config.yaml` when the durable session path has no `creds.json`. The hook does not write the field or configure Hermes. |
+| Validation | The value must be an absolute path under `/sandbox/.hermes` with no `.` or `..` segment. |
+| Supported state | The durable Hermes WhatsApp session remains `/sandbox/.hermes/platforms/whatsapp/session`. The compatibility field is not a supported NemoClaw setup or session-storage control. |
+| Support period | Keep the probe only while a supported Hermes image can place dashboard-paired credentials outside the durable path. |
+| Retirement | [Issue #8947](https://github.com/NVIDIA/NemoClaw/issues/8947) tracks removal after every supported Hermes image uses the durable path for dashboard pairing and gateway startup. |
+
+After validation, the command checks the configured path and reports a `Session path override` signal.
+An unsupported path produces a warning, and the report uses the default gateway path.
 If the dashboard path has credentials and the gateway path is empty, the report tells you to run `$$nemoclaw <sandbox> channels remove whatsapp` and then `$$nemoclaw <sandbox> channels add whatsapp`, because a rebuild restores the legacy session instead of dropping it.
 Pair again from the dashboard so credentials use `/sandbox/.hermes/platforms/whatsapp/session`.
 Rerun `$$nemoclaw <sandbox> channels status --channel whatsapp`.
@@ -2657,7 +2670,10 @@ $$nemoclaw my-assistant channels status --channel slack --wait --timeout 180 --j
 
 Each live probe is bounded by an in-sandbox `openshell sandbox exec` with a hard timeout.
 The WhatsApp probe returns strict OpenClaw status JSON to the host, where NemoClaw allowlists pairing, liveness, connection-state, and timestamp fields before rendering the report and discards phone-number and free-text error fields.
-The Hermes WhatsApp probe returns only fixed session-path booleans to the host.
+The Hermes WhatsApp probe returns fixed session-presence booleans to the host.
+When the shared gateway path is empty, a sandbox-local parser can also return the configured WhatsApp session path.
+The parser does not return other Hermes configuration values.
+NemoClaw validates the path before it uses the path in a second session-presence probe.
 The Telegram probe returns only matched gateway log lines to the host, where NemoClaw reduces them to fixed classifications without rendering the raw lines, message bodies, or tokens.
 The Slack probe returns OpenClaw status JSON to the host.
 NemoClaw reduces it to allowlisted account booleans, credential availability, probe success, fixed error categories, and timestamps; the rendered and JSON readiness reports omit tokens and free-text errors.
