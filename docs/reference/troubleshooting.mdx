@@ -1561,13 +1561,32 @@ Use the lightest recovery path first instead of rebuilding immediately.
    docker ps -a --filter "label=openshell.ai/sandbox-name=<name>"
    ```
 
-   If a container is listed, start it:
+1. Run recovery from the host.
+
+<AgentOnly variant="openclaw,hermes">
 
    ```bash
-   docker start <container-name>
+   $$nemoclaw <name> recover
    ```
 
-1. Run status recovery from the host.
+   For a stopped, non-paused Docker-driver container, `recover` starts the existing container before it waits for OpenShell readiness.
+   It leaves a running or paused container unchanged.
+   If Docker cannot start the container, the command continues to the readiness check and reports the resulting failure.
+
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+   ```bash
+   $$nemoclaw <name> status
+   ```
+
+   Deep Agents Code does not provide the `recover` command.
+   Use `$$nemoclaw <name> start` to start its existing container.
+
+</AgentOnly>
+
+1. Check status from the host.
 
    ```bash
    $$nemoclaw <name> status
@@ -1575,16 +1594,6 @@ Use the lightest recovery path first instead of rebuilding immediately.
 
    On Docker-driver hosts, status also attempts non-destructive recovery when OpenShell reports the sandbox as missing but Docker still has a stopped `openshell.ai/sandbox-name=<name>` container or the latest GPU-backup sibling.
    A successful recovery prints that the sandbox was recovered from Docker and then shows the refreshed OpenShell state.
-
-<AgentOnly variant="openclaw,hermes">
-
-1. If the sandbox is running but the agent gateway or dashboard forward is still down, recover the in-sandbox gateway and forwards:
-
-   ```bash
-   $$nemoclaw <name> recover
-   ```
-
-</AgentOnly>
 
 1. Rebuild only if the sandbox cannot be restarted or status still cannot recover it while the local registry entry exists:
 
