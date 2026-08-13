@@ -315,11 +315,7 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.mkdirSync(customBuildDir, { recursive: true });
       fs.writeFileSync(customDockerfilePath, "FROM scratch\nARG NEMOCLAW_MESSAGING_PLAN_B64=\nARG NEMOCLAW_TOOL_DISCLOSURE=progressive\nENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}\n");
-      fs.writeFileSync(
-        path.join(fakeBin, "openshell"),
-        '#!/usr/bin/env bash\nif [ "${1:-}" = sandbox ] && [ "${2:-}" = get ]; then printf "Sandbox:\\n\\n  Id: fixture-hermes-slack-sandbox\\n  Name: %s\\n  Phase: Ready\\n" "${!#}"; fi\nexit 0\n',
-        { mode: 0o755 },
-      );
+      writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
       const script = String.raw`
 const runner = require(${runnerPath});
