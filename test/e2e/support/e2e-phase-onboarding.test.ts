@@ -154,6 +154,29 @@ describe("onboarding phase fixture", () => {
     ]);
   });
 
+  it("accepts an explicit public NVIDIA credential for cloud OpenClaw onboarding", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "onboarded\n"));
+    const secrets = new FakeSecrets();
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets);
+
+    await onboard.from(ready(), {
+      sandboxName: "e2e-public-nvidia",
+      nvidiaInferenceApiKey: "nvapi-public-test-key",
+    });
+
+    expect(secrets.requiredCalls).toEqual([]);
+    expect(runner.calls[0]).toMatchObject({
+      options: {
+        env: expect.objectContaining({
+          NEMOCLAW_PROVIDER: "cloud",
+          NVIDIA_INFERENCE_API_KEY: "nvapi-public-test-key",
+        }),
+        redactionValues: ["nvapi-public-test-key"],
+      },
+    });
+  });
+
   it("opts the canonical Deep Agents Code target into composed observability", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "onboarded\n"));

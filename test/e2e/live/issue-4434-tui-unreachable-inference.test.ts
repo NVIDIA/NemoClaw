@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { isIPv4 } from "node:net";
 import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { isGatewayManagedCompatibleInference } from "../fixtures/ci-compatible-inference.ts";
@@ -9,7 +10,6 @@ import { resultText } from "../fixtures/clients/command.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
 import {
@@ -18,13 +18,19 @@ import {
   hasFullIssue4434Diagnostics,
   stripTerminalControl,
 } from "../support/issue-4434-tui-capture.ts";
+import {
+  PUBLIC_NVIDIA_SWITCH_MODEL,
+  PUBLIC_NVIDIA_SWITCH_PROVIDER,
+  requirePublicNvidiaSwitchKey,
+} from "./public-nvidia-switch-provider.ts";
 
 // This remains a privileged opt-in live repro: it onboards a real cloud
-// OpenClaw sandbox, installs temporary DOCKER-USER DROP rules for the NVIDIA
-// endpoint IPs, proves the managed route through a test endpoint and then stops
-// that endpoint, drives `openclaw tui` through `openshell sandbox exec --tty`,
-// and requires a visible inference error, full #4434 diagnostic fields, and an
-// error status instead of the broken spinner+connected signature from #4434.
+// OpenClaw sandbox, installs temporary DOCKER-USER DROP rules for the public
+// NVIDIA endpoint IPs, proves the managed route through a test endpoint, and
+// then stops that endpoint. It drives `openclaw tui` through
+// `openshell sandbox exec --tty` and requires full #4434 diagnostic fields, a
+// visible inference error, and an error status instead of the broken
+// spinner+connected signature from #4434.
 // This stays local to the live target rather than introducing shared framework
 // helpers. Keep the route provider/model assertion and direct `inference.local`
 // pre-block probe so a status result of "not probed" cannot weaken the precondition.
@@ -34,8 +40,8 @@ const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4434";
 validateSandboxName(SANDBOX_NAME);
 
-const INFERENCE_MODELS_URL = "https://inference-api.nvidia.com/v1/models";
-const BLOCKED_IPS = ["75.2.113.119", "99.83.136.103"];
+const INFERENCE_HOST = "integrate.api.nvidia.com";
+const INFERENCE_MODELS_URL = `https://${INFERENCE_HOST}/v1/models`;
 const DEFAULT_TUI_TIMEOUT_SEC = 180;
 const MAX_TUI_TIMEOUT_SEC = 3600;
 const rawTuiTimeoutSec = Number.parseInt(
@@ -148,9 +154,9 @@ runIssue4434LiveTest(
     timeout: 120 * 60_000,
     meta: {
       e2ePhases: [
-        "confirm Linux firewall and hosted inference prerequisites",
+        "confirm Linux firewall and public NVIDIA inference prerequisites",
         "onboard OpenClaw and confirm the managed route",
-        "block hosted inference egress",
+        "block public NVIDIA inference egress",
         "route inference.local through a fake provider",
         "stop the provider and confirm route failure",
         "capture the OpenClaw TUI failure",
@@ -165,14 +171,18 @@ runIssue4434LiveTest(
       skip("Linux host required for DOCKER-USER iptables repro");
     }
 
-    const hosted = requireHostedInferenceConfig(secrets);
-    const apiKey = hosted.apiKey;
+    const apiKey = requirePublicNvidiaSwitchKey(secrets.required("NVIDIA_API_KEY"));
+    const inference = {
+      model: PUBLIC_NVIDIA_SWITCH_MODEL,
+      providerName: PUBLIC_NVIDIA_SWITCH_PROVIDER,
+    };
 
     await artifacts.target.declare({
       id: "issue-4434-tui-unreachable-inference",
       boundary: [
         "real cloud OpenClaw sandbox",
         "host DOCKER-USER iptables DROP rules",
+        "public NVIDIA inference baseline",
         "managed inference route through a stopped fake OpenAI-compatible endpoint",
         "openshell sandbox exec --tty",
         "openclaw tui",
@@ -186,7 +196,7 @@ runIssue4434LiveTest(
         "-lc",
         [
           "set -euo pipefail",
-          'for command in docker sudo expect curl; do command -v "$command" >/dev/null; done',
+          'for command in docker sudo expect curl getent; do command -v "$command" >/dev/null; done',
           "docker info >/dev/null",
           "sudo -n true >/dev/null",
           "sudo -n iptables --version >/dev/null",
@@ -205,6 +215,7 @@ runIssue4434LiveTest(
     const instance = await onboard.from(ready, {
       sandboxName: SANDBOX_NAME,
       timeoutMs: 20 * 60_000,
+      nvidiaInferenceApiKey: apiKey,
     });
 
     const insertedIps: string[] = [];
@@ -257,12 +268,12 @@ runIssue4434LiveTest(
     );
     expect(route.exitCode, resultText(route)).toBe(0);
     const routePlain = stripTerminalControl(resultText(route));
-    expect(routePlain).toContain(`Provider: ${hosted.providerName}`);
-    expect(routePlain).toContain(`Model: ${hosted.model}`);
+    expect(routePlain).toContain(`Provider: ${inference.providerName}`);
+    expect(routePlain).toContain(`Model: ${inference.model}`);
     const originalRouteTimeout = routePlain.match(/Timeout:\s*(\d+)s/i)?.[1] ?? "0";
     expect(originalRouteTimeout, `could not parse inference timeout\n${routePlain}`).not.toBe("0");
 
-    const preBlockPayload = chatCompletionPayload(hosted.model, "Reply before the fault.");
+    const preBlockPayload = chatCompletionPayload(inference.model, "Reply before the fault.");
     const preBlockProbe = await sandbox.execShell(
       instance.sandboxName,
       trustedSandboxShellScript(
@@ -286,8 +297,23 @@ runIssue4434LiveTest(
     });
     expect(connectProbe.exitCode, resultText(connectProbe)).toBe(0);
 
-    progress.phase("block hosted inference egress");
-    for (const ip of BLOCKED_IPS) {
+    progress.phase("block public NVIDIA inference egress");
+    const endpointAddresses = await host.command("getent", ["ahostsv4", INFERENCE_HOST], {
+      artifactName: "issue4434-public-inference-addresses",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    });
+    expect(endpointAddresses.exitCode, resultText(endpointAddresses)).toBe(0);
+    const blockedIps = [
+      ...new Set(
+        endpointAddresses.stdout
+          .split(/\n/u)
+          .map((line) => line.trim().split(/\s+/u)[0] ?? "")
+          .filter(isIPv4),
+      ),
+    ];
+    expect(blockedIps.length, resultText(endpointAddresses)).toBeGreaterThan(0);
+    for (const ip of blockedIps) {
       const insert = await host.command(
         "sudo",
         ["iptables", "-I", "DOCKER-USER", "-d", ip, "-j", "DROP"],
@@ -314,13 +340,13 @@ runIssue4434LiveTest(
     );
     expect(
       blockedEndpointProbe.exitCode,
-      `inference-api.nvidia.com remained reachable from inside the sandbox after firewall block\n${resultText(blockedEndpointProbe)}`,
+      `${INFERENCE_HOST} remained reachable from inside the sandbox after firewall block\n${resultText(blockedEndpointProbe)}`,
     ).not.toBe(0);
 
     progress.phase("route inference.local through a fake provider");
     const fake = await startFakeOpenAiCompatibleServer({
       host: "0.0.0.0",
-      model: hosted.model,
+      model: inference.model,
       progress,
       publicHost: "host.openshell.internal",
     });
@@ -337,7 +363,7 @@ runIssue4434LiveTest(
 
     const fakeProviderName = `issue-4434-fake-${new URL(fake.baseUrl).port}`;
     const failedRoutePayload = chatCompletionPayload(
-      hosted.model,
+      inference.model,
       `This must fail after ${fakeProviderName} stops.`,
     );
     const createProvider = await host.command(
@@ -382,7 +408,7 @@ runIssue4434LiveTest(
         `failed to delete fake inference provider\n${resultText(removeProvider)}`,
       ).toBe(0);
     });
-    cleanup.add("restore issue #4434 hosted inference route", async () => {
+    cleanup.add("restore issue #4434 public NVIDIA inference route", async () => {
       const restoreRoute = await host.command(
         "openshell",
         [
@@ -392,9 +418,9 @@ runIssue4434LiveTest(
           "nemoclaw",
           "--no-verify",
           "--provider",
-          hosted.providerName,
+          inference.providerName,
           "--model",
-          hosted.model,
+          inference.model,
           "--timeout",
           originalRouteTimeout,
         ],
@@ -406,7 +432,7 @@ runIssue4434LiveTest(
       );
       expect(
         restoreRoute.exitCode,
-        `failed to restore hosted inference route\n${resultText(restoreRoute)}`,
+        `failed to restore public NVIDIA inference route\n${resultText(restoreRoute)}`,
       ).toBe(0);
     });
 
@@ -421,7 +447,7 @@ runIssue4434LiveTest(
         "--provider",
         fakeProviderName,
         "--model",
-        hosted.model,
+        inference.model,
         "--timeout",
         "15",
       ],
@@ -441,7 +467,7 @@ runIssue4434LiveTest(
         async () => {
           fakeRouteProbeAttempt += 1;
           const fakeRoutePayload = chatCompletionPayload(
-            hosted.model,
+            inference.model,
             `Reply through ${fakeProviderName}, attempt ${fakeRouteProbeAttempt}.`,
           );
           const probe = await sandbox.execShell(

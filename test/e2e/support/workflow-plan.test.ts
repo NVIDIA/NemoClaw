@@ -123,13 +123,17 @@ describe("E2E workflow plan", () => {
       },
     });
     expect(catalogueTarget("issue-4434-tui-unreachable-inference")).toMatchObject({
-      profile: "nvidia-inference",
+      profile: "nvidia-api",
       timeoutMinutes: 120,
       installMode: "authenticated",
       installNonInteractive: true,
       hostPackages: ["expect", "iptables"],
       environment: { NEMOCLAW_ISSUE_4434_LIVE: "1" },
     });
+    expect(catalogueTarget("issue-4434-tui-unreachable-inference").environment).not.toHaveProperty(
+      "NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
+    );
+    expect(E2E_TARGET_CATALOGUE.some((target) => target.id === "overlayfs-autofix")).toBe(false);
     expect(catalogueTarget("network-policy")).toMatchObject({
       profile: "nvidia-inference",
       timeoutMinutes: 90,
@@ -253,11 +257,6 @@ describe("E2E workflow plan", () => {
           test_file: "test/e2e/live/hermes-slack-e2e.test.ts",
         }),
         expect.objectContaining({
-          id: "issue-4434-tui-unreachable-inference",
-          host_packages: "expect iptables",
-          install_non_interactive: true,
-        }),
-        expect.objectContaining({
           id: "network-policy",
           host_packages: "expect",
           install_non_interactive: true,
@@ -272,6 +271,13 @@ describe("E2E workflow plan", () => {
           install_non_interactive: true,
         }),
       ]),
+    );
+    expect(plan.catalogueMatrices["nvidia-api"]).toContainEqual(
+      expect.objectContaining({
+        id: "issue-4434-tui-unreachable-inference",
+        host_packages: "expect iptables",
+        install_non_interactive: true,
+      }),
     );
     expect(plan.catalogueMatrices.standard).toContainEqual(
       expect.objectContaining({

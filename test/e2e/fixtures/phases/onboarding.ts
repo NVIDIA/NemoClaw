@@ -70,6 +70,7 @@ export interface OnboardingCleanup {
 export interface OnboardingOptions {
   sandboxName?: string;
   timeoutMs?: number;
+  nvidiaInferenceApiKey?: string;
 }
 
 export type OnboardingExpectedFailure =
@@ -209,7 +210,8 @@ export class OnboardingPhaseFixture {
       throw new Error("cloud-openclaw onboarding requires an available Docker runtime.");
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
-    const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
+    const apiKey =
+      options.nvidiaInferenceApiKey ?? this.secrets.required("NVIDIA_INFERENCE_API_KEY");
     this.registerSandboxCleanup(sandboxName);
     const result = await this.host.nemoclaw(ONBOARD_ARGS, {
       artifactName: "onboard-cloud-openclaw",

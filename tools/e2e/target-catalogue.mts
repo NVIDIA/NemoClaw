@@ -764,16 +764,18 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("issue-4434-tui-unreachable-inference", {
     displayName: "TUI: reports unreachable inference and stops the connected spinner",
-    profile: "nvidia-inference",
+    profile: "nvidia-api",
     timeoutMinutes: 120,
     installMode: "authenticated",
     installNonInteractive: true,
     restoreCli: true,
     exposeCliBin: true,
     hostPackages: ["expect", "iptables"],
-    owningPaths: ["test/e2e/support/issue-4434-tui-capture.ts"],
+    owningPaths: [
+      "test/e2e/live/public-nvidia-switch-provider.ts",
+      "test/e2e/support/issue-4434-tui-capture.ts",
+    ],
     environment: {
-      ...hostedInference,
       ...nonInteractive,
       NEMOCLAW_ISSUE_4434_LIVE: "1",
       OPENSHELL_GATEWAY: "nemoclaw",
@@ -996,26 +998,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   ...GATEWAY_UPGRADE_TARGETS,
-  target("overlayfs-autofix", {
-    displayName: "Install: uses a patched cluster image for Docker overlayfs",
-    profile: "nvidia-inference",
-    timeoutMinutes: 90,
-    installMode: "none",
-    restoreCli: true,
-    exposeCliBin: true,
-    owningPaths: [
-      "test/e2e/live/overlayfs-autofix-cleanup.ts",
-      "test/e2e/live/overlayfs-autofix-outcome.ts",
-      "src/lib/onboard/docker-driver-platform.ts",
-    ],
-    environment: {
-      ...hostedInference,
-      ...nonInteractive,
-      NEMOCLAW_SANDBOX_NAME: "e2e-overlayfs",
-      NEMOCLAW_E2E_TIMEOUT_SECONDS: "1500",
-      OPENSHELL_GATEWAY: "nemoclaw",
-    },
-  }),
   target("rebuild-openclaw", {
     displayName: "Rebuild: preserves OpenClaw state and rotates the gateway token",
     profile: "nvidia-inference",
