@@ -16,6 +16,7 @@ import {
   runManagedImagePromotion,
   runPublicationBarrier,
 } from "./helpers/managed-image-publication-barrier";
+
 type Step = {
   env?: Record<string, unknown>;
   id?: string;

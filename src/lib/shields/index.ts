@@ -4735,8 +4735,8 @@ function completeInterruptedShieldsDown(
 
   // Provider release deliberately precedes route convergence and the final
   // timer-bound transition commit. A process can therefore die after the
-  // durable provider claim is gone while the host transition remains
-  // in preparing. Treat that marker as recovery authority too: verify (or
+  // durable provider claim is gone while the host transition remains in
+  // preparing. Treat that marker as recovery authority too: verify (or
   // repair) mutable posture, converge the route, then commit it active.
   const completionTarget =
     retainedProviderTarget ??
