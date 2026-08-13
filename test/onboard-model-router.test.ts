@@ -750,7 +750,10 @@ describe("onboard Model Router setup", () => {
           resolveProviderCredential: () => null,
           buildSubprocessEnv: () => ({}),
           isRouterHealthy,
-          getRouterHealthSnapshot: async () => ({ healthy: false, body: null }),
+          getRouterHealthSnapshot: async (_port: number, timeoutMs = 0) => {
+            nowMs += timeoutMs;
+            return { healthy: false, body: null };
+          },
           sleep,
           now: () => nowMs,
           isProcessAlive: () => true,
@@ -758,12 +761,15 @@ describe("onboard Model Router setup", () => {
           getProviderKey: () => "",
         },
       ),
-      /failed to become healthy on port 45681 within 600 seconds \(completed health checks: 120\)/,
+      // The poll owns 570 seconds and the final diagnostic snapshot owns the
+      // remaining 30, so a failed startup never exceeds the 600 seconds the
+      // error reports (#8962).
+      /failed to become healthy on port 45681 within 600 seconds \(completed health checks: 114\)/,
     );
 
     assert.equal(nowMs, 600_000);
-    assert.equal(isRouterHealthy.mock.calls.length, 121);
-    assert.equal(sleep.mock.calls.length, 120);
+    assert.equal(isRouterHealthy.mock.calls.length, 115);
+    assert.equal(sleep.mock.calls.length, 114);
     assert.deepEqual(terminateProcess.mock.calls, [[pid]]);
   });
 

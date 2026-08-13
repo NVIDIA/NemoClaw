@@ -56,7 +56,7 @@ describe("getRouterHealthSnapshot (#8962)", () => {
     );
   });
 
-  it("reports unhealthy with no body when the connection is refused", async () => {
+  it("reports unhealthy with no body when the connection is reset", async () => {
     const server = http.createServer();
     server.on("connection", (socket) => socket.destroy());
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

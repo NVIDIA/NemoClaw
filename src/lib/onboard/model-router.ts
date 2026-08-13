@@ -240,18 +240,21 @@ function createStartModelRouterDeps(): StartModelRouterDeps {
         fs.constants.O_WRONLY |
         fs.constants.O_NOFOLLOW |
         (typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0);
+      let fd: number | null = null;
       try {
-        const fd = fs.openSync(logPath, flags, 0o600);
+        fd = fs.openSync(logPath, flags, 0o600);
         const stats = fs.fstatSync(fd);
-        if (!stats.isFile()) {
-          fs.closeSync(fd);
-          throw new Error("not a regular file");
-        }
+        if (!stats.isFile()) throw new Error("not a regular file");
         // O_CREAT does not change the mode of an existing file; enforce the
         // documented owner-only permission on every open.
         fs.fchmodSync(fd, 0o600);
         return { fd, startOffset: stats.size };
       } catch (error) {
+        try {
+          if (fd !== null) fs.closeSync(fd);
+        } catch {
+          // The descriptor is already closed or invalid.
+        }
         // Router output capture is diagnostic; report and never block startup.
         console.error(`  Failed to open Model Router log '${logPath}': ${String(error)}`);
         return null;
@@ -434,7 +437,10 @@ export async function startModelRouter(
     );
   }
 
-  const startupDeadline = deps.now() + ROUTER_STARTUP_TIMEOUT_MS;
+  // Reserve the final-snapshot window inside the startup budget so a failed
+  // startup never exceeds the 600 seconds the error message reports.
+  const startupDeadline =
+    deps.now() + ROUTER_STARTUP_TIMEOUT_MS - ROUTER_FINAL_HEALTH_SNAPSHOT_TIMEOUT_MS;
   let healthAttempts = 0;
   while (healthAttempts < ROUTER_HEALTH_RETRIES && deps.now() < startupDeadline) {
     const delayMs = Math.min(ROUTER_HEALTH_INTERVAL_MS, startupDeadline - deps.now());
