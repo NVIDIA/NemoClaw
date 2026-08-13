@@ -2457,7 +2457,12 @@ finish_nemoclaw_install() {
       [[ "$defer_was_exported" == true ]] && export NEMOCLAW_DEFER_OPENSHELL_INSTALL
     fi
     if [[ "$openshell_install_status" -ne 0 ]]; then
-      error "Could not install the OpenShell version pinned by the prepared source after retiring the gateway. The installer preserved the sandbox backups and did not start recovery. Rerun the installer with NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 to reuse the prepared upgrade state and retry the OpenShell install."
+      local retry_gateway_port retry_gateway_port_env=""
+      retry_gateway_port="$(resolve_nemoclaw_gateway_port)"
+      if [ "$retry_gateway_port" -ne 8080 ]; then
+        retry_gateway_port_env="NEMOCLAW_GATEWAY_PORT=${retry_gateway_port} "
+      fi
+      error "Could not install the OpenShell version pinned by the prepared source after retiring the gateway. The installer preserved the sandbox backups and did not start recovery. Rerun the installer with ${retry_gateway_port_env}NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 to reuse the prepared upgrade state and retry the OpenShell install."
     fi
     _OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY=false
   else
