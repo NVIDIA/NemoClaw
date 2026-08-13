@@ -112,6 +112,7 @@ import { createLocalInferenceRouteApplier } from "./local-inference-route";
 import type { ProviderInferenceSetupOptions } from "./machine/handlers/provider-inference";
 import {
   normalizeHostLocalInferenceReceipt,
+  normalizeHostLocalOllamaModelRef,
   serializeHostLocalInferenceReceipt,
 } from "./runtime-provider/host-local-inference";
 import {
@@ -402,7 +403,13 @@ function resolveHostLocalInferenceRoute(
     throw new Error("Host-local inference selected a malformed runtime-provider identity.");
   }
   const providerInput = request.service === "ollama" ? request.endpoint : request.managed;
-  if (providerInput.model !== model || providerInput.requireToolCalling !== requireToolCalling) {
+  const selectedModel =
+    request.service === "ollama" ? normalizeHostLocalOllamaModelRef(model) : model;
+  const requestedModel =
+    request.service === "ollama"
+      ? normalizeHostLocalOllamaModelRef(providerInput.model)
+      : providerInput.model;
+  if (requestedModel !== selectedModel || providerInput.requireToolCalling !== requireToolCalling) {
     throw new Error("Host-local inference request drifted from the accepted model proof.");
   }
   const providerBundle = selection.resolveRuntimeProvider(sandboxName);
@@ -415,7 +422,10 @@ function resolveHostLocalInferenceRoute(
   const operation = requireRuntimeProviderHostLocalInferenceOperation(
     providerBundle,
     request.service,
-    { env: hostLocalInferenceOperationEnvironment(request.service) },
+    {
+      env: hostLocalInferenceOperationEnvironment(request.service),
+      acceleration: request.service === "ollama" ? request.endpoint.acceleration : "nvidia-gpu",
+    },
   );
   return prepareHostLocalInferenceStartup(operation, request);
 }
@@ -838,18 +848,24 @@ export function createSetupInference(
             if (!hostLocalGatewayMutation || !hostLocalSelection) {
               throw new Error("Host-local inference commit authority is incomplete.");
             }
-            const validated = normalizeHostLocalInferenceReceipt(
-              hostLocalRoute.prepared.validateBeforeCommit(),
-            );
-            if (
-              serializeHostLocalInferenceReceipt(validated) !==
-              serializeHostLocalInferenceReceipt(hostLocalRoute.receipt)
-            ) {
-              throw new Error(
-                "Host-local inference pre-commit validation returned a different receipt authority.",
+            const validatePreparedReceipt = () => {
+              const validated = normalizeHostLocalInferenceReceipt(
+                hostLocalRoute.prepared.validateBeforeCommit(),
               );
-            }
+              if (
+                serializeHostLocalInferenceReceipt(validated) !==
+                serializeHostLocalInferenceReceipt(hostLocalRoute.receipt)
+              ) {
+                throw new Error(
+                  "Host-local inference pre-commit validation returned a different receipt authority.",
+                );
+              }
+            };
+            validatePreparedReceipt();
             await hostLocalGatewayMutation.commit();
+            // The awaited gateway commit is the only async gap between provider
+            // proof and publication. Close it before registry or receipt entry.
+            validatePreparedReceipt();
             if (sandboxName) {
               // The registry writer may complete its atomic replacement before
               // returning false or throwing. From entry onward there is no

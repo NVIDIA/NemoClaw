@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   type HostLocalInferenceReceipt,
   normalizeHostLocalInferenceReceipt,
+  normalizeHostLocalOllamaModelRef,
   parseHostLocalInferenceReceipt,
   serializeHostLocalInferenceReceipt,
 } from "./host-local-inference";
@@ -20,6 +21,7 @@ const ENGINE_AUTHORITY = {
 } as const;
 
 const GPU_UUID = "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+const OLLAMA_MODEL_DIGEST = `sha256:${"8".repeat(64)}`;
 
 function receipt(
   service: "ollama" | "nim" | "vllm" | "llama-cpp" = "vllm",
@@ -60,6 +62,8 @@ function receipt(
         ? {
             kind: "host",
             probeImageRef: `quay.io/curl/curl@sha256:${"d".repeat(64)}`,
+            acceleration: "nvidia-gpu",
+            modelDigest: OLLAMA_MODEL_DIGEST,
           }
         : {
             kind: "container",
@@ -108,6 +112,71 @@ describe("host-local inference receipt contract", () => {
     expect(Object.isFrozen(expected)).toBe(true);
     expect(Object.isFrozen(expected.endpoint)).toBe(true);
     expect(Object.isFrozen(expected.runtime)).toBe(true);
+  });
+
+  it.each([
+    "cpu",
+    "nvidia-gpu",
+  ] as const)("round-trips exact Ollama %s acceleration authority", (acceleration) => {
+    const base = receipt("ollama");
+    expect(base.runtime.kind).toBe("host");
+    const normalized = normalizeHostLocalInferenceReceipt({
+      ...base,
+      runtime: { ...base.runtime, acceleration },
+    });
+
+    expect(normalized.runtime).toMatchObject({ kind: "host", acceleration });
+    expect(parseHostLocalInferenceReceipt(serializeHostLocalInferenceReceipt(normalized))).toEqual(
+      normalized,
+    );
+  });
+
+  it("rejects missing, malformed, or extended Ollama acceleration authority", () => {
+    const base = receipt("ollama");
+    if (base.runtime.kind !== "host") throw new Error("test receipt must use host authority");
+    const { acceleration: _acceleration, ...missingAcceleration } = base.runtime;
+
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({ ...base, runtime: missingAcceleration }),
+    ).toThrow("host runtime authority schema is unsupported");
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({
+        ...base,
+        runtime: { ...base.runtime, acceleration: "auto" },
+      }),
+    ).toThrow("Ollama acceleration authority is malformed");
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({
+        ...base,
+        runtime: { ...base.runtime, accelerationHint: "nvidia-gpu" },
+      }),
+    ).toThrow("host runtime authority schema is unsupported");
+  });
+
+  it("requires immutable Ollama model identity and canonicalizes implicit tags safely", () => {
+    const base = receipt("ollama");
+    if (base.runtime.kind !== "host") throw new Error("test receipt must use host authority");
+    const { modelDigest: _modelDigest, ...missingModelDigest } = base.runtime;
+
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({ ...base, runtime: missingModelDigest }),
+    ).toThrow("host runtime authority schema is unsupported");
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({
+        ...base,
+        runtime: { ...base.runtime, modelDigest: "mutable" },
+      }),
+    ).toThrow("Ollama model digest is malformed");
+    expect(normalizeHostLocalOllamaModelRef("nemotron")).toBe("nemotron:latest");
+    expect(normalizeHostLocalOllamaModelRef("registry.example:5000/acme/nemotron")).toBe(
+      "registry.example:5000/acme/nemotron:latest",
+    );
+    expect(normalizeHostLocalOllamaModelRef("registry.example:5000/acme/nemotron:q4")).toBe(
+      "registry.example:5000/acme/nemotron:q4",
+    );
+    expect(() => normalizeHostLocalOllamaModelRef("nemotron@sha256:deadbeef")).toThrow(
+      "Ollama model is malformed",
+    );
   });
 
   it("requires declarative model authority only for llama.cpp receipts (#8395)", () => {
@@ -211,6 +280,8 @@ describe("host-local inference receipt contract", () => {
         runtime: {
           kind: "host",
           probeImageRef: `quay.io/curl/curl@sha256:${"d".repeat(64)}`,
+          acceleration: "nvidia-gpu",
+          modelDigest: OLLAMA_MODEL_DIGEST,
         },
       }),
     ).toThrow("only Ollama");
@@ -227,7 +298,12 @@ describe("host-local inference receipt contract", () => {
     expect(() =>
       normalizeHostLocalInferenceReceipt({
         ...ollama,
-        runtime: { kind: "host", probeImageRef: "curlimages/curl:latest" },
+        runtime: {
+          kind: "host",
+          probeImageRef: "curlimages/curl:latest",
+          acceleration: "nvidia-gpu",
+          modelDigest: OLLAMA_MODEL_DIGEST,
+        },
       }),
     ).toThrow("runtime image reference is malformed");
 

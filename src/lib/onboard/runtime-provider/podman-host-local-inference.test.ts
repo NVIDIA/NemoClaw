@@ -15,12 +15,27 @@ import {
 } from "./podman-host-local-inference";
 import { qualifyPodmanInferenceAuthority } from "./podman-preflight";
 
+const OLLAMA_MODEL_SIZE = 8 * 1024 ** 3;
+const OLLAMA_MODEL_DIGEST = "7".repeat(64);
+
+function ollamaPsModel(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    name: "nemotron:latest",
+    model: "nemotron:latest",
+    size: OLLAMA_MODEL_SIZE,
+    size_vram: OLLAMA_MODEL_SIZE,
+    digest: OLLAMA_MODEL_DIGEST,
+    ...overrides,
+  };
+}
+
 function operationRuntime(
   harness: ReturnType<typeof createPodmanHostLocalInferenceTestHarness>,
 ): HostLocalInferenceRuntime {
   const operation = createPodmanHostLocalInferenceOperation({
     engine: harness.engine,
     env: harness.env,
+    acceleration: harness.operationAcceleration,
     authorityStore: harness.authorityStore,
     routeAuthorityStore: harness.routeAuthorityStore,
     onFailureEvidence: harness.onFailureEvidence,
@@ -308,13 +323,14 @@ describe("Podman host-local inference lifecycle", () => {
     expect(harness.events.join("\n")).not.toContain("mutated-after-operation-construction");
   });
 
-  it("binds Ollama Ready and OpenAI tool inference before route publication", () => {
+  it("binds Ollama Ready, real inference, and GPU use before route publication", () => {
     const harness = createPodmanHostLocalInferenceTestHarness();
     const runtime = operationRuntime(harness);
     harness.events.length = 0;
 
     const prepared = runtime.qualifyOllama(
       {
+        acceleration: "nvidia-gpu",
         networkName: "nemoclaw-net",
         networkId: harness.input.networkId,
         networkGatewayIp: harness.input.networkGatewayIp,
@@ -328,21 +344,197 @@ describe("Podman host-local inference lifecycle", () => {
 
     expect(harness.routeAuthorityStore.load("ollama")).toBeNull();
     expect(harness.written).toHaveLength(0);
+    expect(prepared.receipt.runtime).toMatchObject({
+      kind: "host",
+      acceleration: "nvidia-gpu",
+      modelDigest: `sha256:${OLLAMA_MODEL_DIGEST}`,
+    });
     const ready = harness.events.findIndex((event) => event.includes("/api/tags"));
     const inference = harness.events.findIndex((event) => event.includes("/v1/chat/completions"));
+    const acceleration = harness.events.findIndex((event) => event.includes("/api/ps"));
     expect(ready).toBeGreaterThanOrEqual(0);
     expect(inference).toBeGreaterThan(ready);
+    expect(acceleration).toBeGreaterThan(inference);
     expect(harness.events[inference]).toContain('"tool_choice":"required"');
 
     prepared.validateBeforeCommit();
     expect(harness.routeAuthorityStore.load("ollama")).toBeNull();
+    const validatedAccelerationProofs = harness.events.filter((event) =>
+      event.includes("/api/ps"),
+    ).length;
     prepared.commit();
+    expect(harness.events.filter((event) => event.includes("/api/ps"))).toHaveLength(
+      validatedAccelerationProofs,
+    );
     expect(harness.routeAuthorityStore.load("ollama")).toMatchObject({
       providerId: "podman",
       service: "ollama",
     });
     expect(harness.events.slice(-2)).toEqual(["route:record", "receipt:write"]);
     expect(() => prepared.rollback()).toThrow("terminal state 'committed'");
+  });
+
+  it("canonicalizes an implicit Ollama tag before provider-native identity proof", () => {
+    const harness = createPodmanHostLocalInferenceTestHarness();
+    const runtime = operationRuntime(harness);
+
+    const prepared = runtime.qualifyOllama(
+      {
+        acceleration: "nvidia-gpu",
+        networkName: harness.input.networkName,
+        networkId: harness.input.networkId,
+        networkGatewayIp: harness.input.networkGatewayIp,
+        hostPort: 11434,
+        probeImageRef: harness.input.probeImageRef,
+        model: "nemotron",
+        requireToolCalling: true,
+      },
+      harness.writer,
+    );
+
+    expect(prepared.receipt.inference?.model).toBe("nemotron:latest");
+    expect(prepared.receipt.runtime).toMatchObject({
+      kind: "host",
+      modelDigest: `sha256:${OLLAMA_MODEL_DIGEST}`,
+    });
+  });
+
+  it("redacts provider-native Ollama acceleration failure before retaining host authority", () => {
+    const harness = createPodmanHostLocalInferenceTestHarness();
+    harness.state.probeFailure = "gpu";
+    const runtime = operationRuntime(harness);
+    let thrown = "";
+
+    try {
+      runtime.qualifyOllama(
+        {
+          acceleration: "nvidia-gpu",
+          networkName: harness.input.networkName,
+          networkId: harness.input.networkId,
+          networkGatewayIp: harness.input.networkGatewayIp,
+          hostPort: 11434,
+          probeImageRef: harness.input.probeImageRef,
+          model: "nemotron:latest",
+          requireToolCalling: true,
+        },
+        harness.writer,
+      );
+    } catch (error) {
+      thrown = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(thrown).toContain("probe exited 22");
+    expect(harness.failures.at(-1)).toMatchObject({ phase: "gpu" });
+    for (const secret of [
+      "nvapi-1234567890abcdef",
+      "bearer-secret-1234",
+      "environment-secret",
+      "user:pass",
+      "query-secret",
+    ]) {
+      expect(thrown).not.toContain(secret);
+      expect(harness.failures.map(({ message }) => message).join("\n")).not.toContain(secret);
+    }
+    expect(harness.routeAuthorityStore.load("ollama")).toBeNull();
+    expect(harness.written).toHaveLength(0);
+  });
+
+  it("retains the host process and unpublished route when precommit acceleration drifts", () => {
+    const harness = createPodmanHostLocalInferenceTestHarness();
+    const runtime = operationRuntime(harness);
+    const prepared = runtime.qualifyOllama(
+      {
+        acceleration: "nvidia-gpu",
+        networkName: harness.input.networkName,
+        networkId: harness.input.networkId,
+        networkGatewayIp: harness.input.networkGatewayIp,
+        hostPort: 11434,
+        probeImageRef: harness.input.probeImageRef,
+        model: "nemotron:latest",
+        requireToolCalling: true,
+      },
+      harness.writer,
+    );
+    harness.state.ollamaPsModels = [ollamaPsModel({ size_vram: 0 })];
+
+    expect(() => prepared.validateBeforeCommit()).toThrow(
+      "complete provider-native NVIDIA GPU offload",
+    );
+    expect(harness.failures.at(-1)).toMatchObject({ phase: "gpu" });
+    expect(prepared.publicationState()).toBe("unpublished");
+    expect(harness.routeAuthorityStore.load("ollama")).toBeNull();
+    expect(harness.written).toHaveLength(0);
+    expect(prepared.rollback()).toMatchObject({
+      status: "retained",
+      priorState: "host-process",
+    });
+  });
+
+  it("rejects Ollama name reuse when the provider-native model digest drifts", () => {
+    const harness = createPodmanHostLocalInferenceTestHarness();
+    const runtime = operationRuntime(harness);
+    const prepared = runtime.qualifyOllama(
+      {
+        acceleration: "nvidia-gpu",
+        networkName: harness.input.networkName,
+        networkId: harness.input.networkId,
+        networkGatewayIp: harness.input.networkGatewayIp,
+        hostPort: 11434,
+        probeImageRef: harness.input.probeImageRef,
+        model: "nemotron:latest",
+        requireToolCalling: true,
+      },
+      harness.writer,
+    );
+    harness.state.ollamaPsModels = [ollamaPsModel({ digest: "8".repeat(64) })];
+
+    expect(() => prepared.validateBeforeCommit()).toThrow("model digest drift");
+    expect(harness.failures.at(-1)).toMatchObject({ phase: "gpu" });
+    expect(harness.routeAuthorityStore.load("ollama")).toBeNull();
+    expect(harness.written).toHaveLength(0);
+    expect(prepared.rollback()).toMatchObject({ status: "retained" });
+  });
+
+  it("keeps synchronous Ollama publication validation authority-only", () => {
+    const harness = createPodmanHostLocalInferenceTestHarness();
+    const runtime = operationRuntime(harness);
+    const prepared = runtime.qualifyOllama(
+      {
+        acceleration: "nvidia-gpu",
+        networkName: harness.input.networkName,
+        networkId: harness.input.networkId,
+        networkGatewayIp: harness.input.networkGatewayIp,
+        hostPort: 11434,
+        probeImageRef: harness.input.probeImageRef,
+        model: "nemotron:latest",
+        requireToolCalling: true,
+      },
+      harness.writer,
+    );
+    prepared.validateBeforeCommit();
+    const providerProofs = harness.events.filter(
+      (event) =>
+        event.includes("/api/tags") ||
+        event.includes("/v1/chat/completions") ||
+        event.includes("/api/ps"),
+    ).length;
+    harness.state.ollamaPsModels = [ollamaPsModel({ size_vram: OLLAMA_MODEL_SIZE / 2 })];
+
+    expect(prepared.commit()).toEqual(prepared.receipt);
+    expect(
+      harness.events.filter(
+        (event) =>
+          event.includes("/api/tags") ||
+          event.includes("/v1/chat/completions") ||
+          event.includes("/api/ps"),
+      ),
+    ).toHaveLength(providerProofs);
+    expect(harness.routeAuthorityStore.load("ollama")).toMatchObject({
+      providerId: "podman",
+      service: "ollama",
+    });
+    expect(harness.written).toHaveLength(1);
+    expect(prepared.publicationState()).toBe("published");
   });
 
   it("redacts provider-native Ollama probe failure from both evidence and thrown diagnostics", () => {
@@ -354,6 +546,7 @@ describe("Podman host-local inference lifecycle", () => {
     try {
       runtime.qualifyOllama(
         {
+          acceleration: "nvidia-gpu",
           networkName: harness.input.networkName,
           networkId: harness.input.networkId,
           networkGatewayIp: harness.input.networkGatewayIp,
@@ -390,6 +583,7 @@ describe("Podman host-local inference lifecycle", () => {
     expect(() =>
       runtime.qualifyOllama(
         {
+          acceleration: "nvidia-gpu",
           networkName,
           networkId: harness.input.networkId,
           networkGatewayIp: harness.input.networkGatewayIp,
@@ -466,6 +660,7 @@ describe("Podman host-local inference lifecycle", () => {
     const runtime = operationRuntime(harness);
     const prepared = runtime.qualifyOllama(
       {
+        acceleration: "nvidia-gpu",
         networkName: "nemoclaw-net",
         networkId: harness.input.networkId,
         networkGatewayIp: harness.input.networkGatewayIp,

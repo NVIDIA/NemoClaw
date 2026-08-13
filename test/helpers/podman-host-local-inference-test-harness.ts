@@ -10,6 +10,7 @@ import type {
   HostLocalInferenceRouteAuthority,
   HostLocalInferenceRouteAuthorityStore,
   HostLocalManagedInferenceInput,
+  HostLocalOllamaAccelerationAuthority,
 } from "../../src/lib/onboard/runtime-provider/host-local-inference";
 import type {
   PersistedEngineAuthority,
@@ -46,6 +47,8 @@ const NETWORK_ID = "6".repeat(64);
 const NETWORK_NAME = "nemoclaw-net";
 const NETWORK_GATEWAY_IP = "10.89.0.1";
 const NETWORK_SUBNET = "10.89.0.0/24";
+const OLLAMA_MODEL_DIGEST = "7".repeat(64);
+const OLLAMA_MODEL_SIZE = 8 * 1024 ** 3;
 
 interface TestContainer {
   readonly id: string;
@@ -64,7 +67,9 @@ interface TestProbeContainer extends TestContainer {
 }
 
 export interface PodmanHostLocalInferenceHarnessOptions {
+  readonly acceleration?: HostLocalOllamaAccelerationAuthority;
   readonly cdiDevices?: readonly string[];
+  readonly omitDiscoveredDevices?: boolean;
   readonly gpuIdentities?: readonly string[];
   readonly authorityId?: string;
   readonly service?: "nim" | "vllm";
@@ -77,11 +82,13 @@ export interface PodmanHostLocalInferenceHarness {
   readonly events: string[];
   readonly failures: PodmanInferenceFailureEvidence[];
   readonly input: HostLocalManagedInferenceInput;
+  readonly operationAcceleration: HostLocalOllamaAccelerationAuthority;
   readonly routeAuthorityStore: HostLocalInferenceRouteAuthorityStore;
   readonly writer: HostLocalInferenceReceiptWriter;
   readonly written: string[];
   readonly state: {
     cdiDevices: string[];
+    omitDiscoveredDevices: boolean;
     driftAfterReady: boolean;
     driftAfterInference: boolean;
     gpuIdentities: string[];
@@ -90,6 +97,7 @@ export interface PodmanHostLocalInferenceHarness {
     networkName: string;
     probeFailure: "ready" | "gpu" | "inference" | null;
     probeFailureText: string;
+    ollamaPsModels: unknown[];
     runLostAcknowledgement: boolean;
     startLostAcknowledgement: boolean;
     stopLostAcknowledgement: boolean;
@@ -231,6 +239,7 @@ interface ProbeWaitState {
   readonly parentExitDuringProof: "ready" | "gpu" | "inference" | null;
   readonly probeFailure: "ready" | "gpu" | "inference" | null;
   readonly probeFailureText: string;
+  readonly ollamaPsModels: readonly unknown[];
   readonly probeWaitFailure: boolean;
   readonly driftAfterReady: boolean;
   readonly driftAfterInference: boolean;
@@ -251,6 +260,8 @@ function completeProbeWait(
   probe.exitCode = 0;
   if (url.includes("/api/tags")) {
     probe.logsStdout = JSON.stringify({ models: [] });
+  } else if (url.includes("/api/ps")) {
+    probe.logsStdout = JSON.stringify({ models: state.ollamaPsModels });
   } else if (url.includes("/v1/health/ready") || url.endsWith("/health")) {
     probe.logsStdout = "ready\n";
   } else if (url.includes("/v1/chat/completions")) {
@@ -274,7 +285,11 @@ function completeProbeWait(
     probe.exitCode = 22;
     probe.logsStderr = "unexpected probe URL";
   }
-  const phase = url.includes("/v1/chat/completions") ? "inference" : "ready";
+  const phase = url.includes("/v1/chat/completions")
+    ? "inference"
+    : url.includes("/api/ps")
+      ? "gpu"
+      : "ready";
   if (state.parentExitDuringProof === phase) {
     if (parent) {
       parent.running = false;
@@ -301,6 +316,17 @@ function digest(value: object): string {
   return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
 }
 
+function discoveredDevicesAuthority(state: {
+  readonly cdiDevices: readonly string[];
+  readonly omitDiscoveredDevices: boolean;
+}): { readonly discoveredDevices?: readonly { readonly source: "cdi"; readonly id: string }[] } {
+  return state.omitDiscoveredDevices
+    ? {}
+    : {
+        discoveredDevices: state.cdiDevices.map((id) => ({ source: "cdi" as const, id })),
+      };
+}
+
 export function createPodmanHostLocalInferenceTestHarness(
   options: PodmanHostLocalInferenceHarnessOptions = {},
 ): PodmanHostLocalInferenceHarness {
@@ -309,6 +335,7 @@ export function createPodmanHostLocalInferenceTestHarness(
   const written: string[] = [];
   const state = {
     cdiDevices: [...(options.cdiDevices ?? [`nvidia.com/gpu=${GPU_UUID}`])],
+    omitDiscoveredDevices: options.omitDiscoveredDevices ?? false,
     gpuIdentities: [...(options.gpuIdentities ?? [GPU_UUID])],
     networkGatewayIp: NETWORK_GATEWAY_IP,
     networkId: NETWORK_ID,
@@ -316,6 +343,15 @@ export function createPodmanHostLocalInferenceTestHarness(
     probeFailure: null as "ready" | "gpu" | "inference" | null,
     probeFailureText:
       "provider\u0001failed\u0002 nvapi-1234567890abcdef Authorization: Bearer bearer-secret-1234 NGC_API_KEY=environment-secret https://user:pass@example.invalid/a?token=query-secret",
+    ollamaPsModels: [
+      {
+        name: "nemotron:latest",
+        model: "nemotron:latest",
+        size: OLLAMA_MODEL_SIZE,
+        size_vram: OLLAMA_MODEL_SIZE,
+        digest: OLLAMA_MODEL_DIGEST,
+      },
+    ] as unknown[],
     driftAfterReady: false,
     driftAfterInference: false,
     runLostAcknowledgement: false,
@@ -405,7 +441,7 @@ export function createPodmanHostLocalInferenceTestHarness(
               os: "linux",
               cgroupVersion: "v2",
               security: { rootless: true },
-              discoveredDevices: state.cdiDevices.map((id) => ({ source: "cdi", id })),
+              ...discoveredDevicesAuthority(state),
             },
           }),
         );
@@ -615,6 +651,7 @@ export function createPodmanHostLocalInferenceTestHarness(
   events.length = 0;
 
   const service = options.service ?? "nim";
+  const operationAcceleration = options.acceleration ?? "nvidia-gpu";
   const secretNames = service === "nim" ? ["NGC_API_KEY"] : [];
   const env = Object.fromEntries(secretNames.map((name) => [name, `test-${service}-secret`]));
   const input: HostLocalManagedInferenceInput = {
@@ -639,6 +676,7 @@ export function createPodmanHostLocalInferenceTestHarness(
     events,
     failures,
     input,
+    operationAcceleration,
     routeAuthorityStore,
     writer,
     written,

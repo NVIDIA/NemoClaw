@@ -4,6 +4,7 @@
 // Ollama local inference provider setup flow.
 // Extracted verbatim from onboard.setupInference (#767).
 
+import { normalizeHostLocalOllamaModelRef } from "../runtime-provider/host-local-inference";
 import type { OllamaDeps, SetupInferenceResult } from "./types";
 
 export async function setupOllamaLocalInference(
@@ -107,7 +108,7 @@ export async function setupOllamaLocalInference(
   if (providerOwnedInferenceProof) {
     if (
       providerOwnedInferenceProof.protocol !== "openai-chat-completions" ||
-      providerOwnedInferenceProof.model !== model ||
+      providerOwnedInferenceProof.model !== normalizeHostLocalOllamaModelRef(model) ||
       providerOwnedInferenceProof.toolCallingRequired !== !allowToolsIncompatible
     ) {
       error("  Provider-owned Ollama proof does not match the accepted model capability request.");

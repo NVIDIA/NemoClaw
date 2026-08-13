@@ -62,7 +62,12 @@ function receipt(service: "ollama" | "nim" | "vllm"): HostLocalInferenceReceipt 
     },
     runtime:
       service === "ollama"
-        ? { kind: "host", probeImageRef: PROBE_IMAGE }
+        ? {
+            kind: "host",
+            probeImageRef: PROBE_IMAGE,
+            acceleration: "nvidia-gpu",
+            modelDigest: `sha256:${"8".repeat(64)}`,
+          }
         : {
             kind: "container",
             runtimeId: `mxc-runtime:${service}`,
@@ -128,6 +133,7 @@ function operation(
 }
 
 const endpoint = {
+  acceleration: "nvidia-gpu",
   model: "qwen3.5:9b",
   requireToolCalling: true,
   networkName: "mxc-runtime-network",
@@ -472,6 +478,10 @@ describe("provider-neutral host-local inference startup routing", () => {
           ...baseRuntime,
           probeImageRef: `quay.io/curl/curl@sha256:${"9".repeat(64)}`,
         },
+      },
+      {
+        ...base,
+        runtime: { ...baseRuntime, acceleration: "cpu" },
       },
     ];
 

@@ -279,7 +279,7 @@ describe("Podman host-local-inference authority", () => {
     expect(runtime.capture).not.toHaveBeenCalledWith(["info", "--format", "json"], 15_000);
   });
 
-  it("reads only exact lowercase host.discoveredDevices authority", () => {
+  it("treats Podman's omitted lowercase host.discoveredDevices field as exact empty authority", () => {
     const nestedOnly = JSON.stringify({
       ...JSON.parse(INFO),
       host: {
@@ -288,11 +288,11 @@ describe("Podman host-local-inference authority", () => {
         unrelated: { cdi: { devices: ["nvidia.com/gpu=all"] } },
       },
     });
-    expect(() =>
+    expect(
       qualifyPodmanInferenceAuthority(
         engine({ operation: "host-local-inference", version: "6.0.0", info: nestedOnly }),
-      ),
-    ).toThrow("host.discoveredDevices authority is unavailable");
+      ).cdiDevices,
+    ).toEqual([]);
 
     const uppercaseOnly = JSON.stringify({ Host: JSON.parse(INFO).host });
     expect(() =>
@@ -300,6 +300,52 @@ describe("Podman host-local-inference authority", () => {
         engine({ operation: "host-local-inference", version: "6.0.0", info: uppercaseOnly }),
       ),
     ).toThrow("rootless Linux Podman service");
+  });
+
+  it("canonicalizes omitted and explicit empty discovered-device inventories identically", () => {
+    const base = JSON.parse(INFO);
+    const omitted = JSON.stringify({
+      ...base,
+      host: { ...base.host, discoveredDevices: undefined },
+    });
+    const empty = JSON.stringify({
+      ...base,
+      host: { ...base.host, discoveredDevices: [] },
+    });
+
+    const omittedReceipt = qualifyPodmanInferenceAuthority(
+      engine({ operation: "host-local-inference", version: "6.0.0", info: omitted }),
+    );
+    const emptyReceipt = qualifyPodmanInferenceAuthority(
+      engine({ operation: "host-local-inference", version: "6.0.0", info: empty }),
+    );
+
+    expect(omittedReceipt.cdiDevices).toEqual([]);
+    expect(emptyReceipt).toEqual(omittedReceipt);
+  });
+
+  it("rejects drift from exact empty authority to a discovered NVIDIA CDI inventory", () => {
+    const first = JSON.parse(INFO);
+    delete first.host.discoveredDevices;
+    const changed = JSON.parse(INFO);
+    const version = {
+      status: 0,
+      stdout: JSON.stringify({ Server: { Version: "6.0.0" } }),
+      stderr: "",
+    };
+    const capture = vi
+      .fn<ContainerEngine["capture"]>()
+      .mockReturnValueOnce(version)
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify(first), stderr: "" })
+      .mockReturnValueOnce(version)
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify(changed), stderr: "" });
+    const runtime = engine({ operation: "host-local-inference", capture });
+    const receipt = qualifyPodmanInferenceAuthority(runtime);
+
+    expect(receipt.cdiDevices).toEqual([]);
+    expect(() => revalidatePodmanInferenceAuthority(runtime, receipt)).toThrow(
+      "server or NVIDIA CDI authority changed before local-inference mutation",
+    );
   });
 
   it("ignores well-formed unrelated devices after strict entry validation", () => {

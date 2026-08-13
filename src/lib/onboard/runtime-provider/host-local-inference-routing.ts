@@ -4,15 +4,17 @@
 import type { RuntimeProviderBundle } from "./contract";
 import {
   HOST_LOCAL_INFERENCE_SANDBOX_HOST,
-  type HostLocalInferenceEndpointInput,
   type HostLocalInferenceOperation,
   type HostLocalInferencePreparedStartup,
   type HostLocalInferenceReceipt,
   type HostLocalInferenceReceiptWriter,
   type HostLocalInferenceRuntime,
   type HostLocalManagedInferenceInput,
+  type HostLocalOllamaAccelerationAuthority,
+  type HostLocalOllamaInferenceInput,
   normalizeHostLocalInferenceImageRef,
   normalizeHostLocalInferenceReceipt,
+  normalizeHostLocalOllamaModelRef,
   serializeHostLocalInferenceReceipt,
 } from "./host-local-inference";
 
@@ -60,7 +62,7 @@ export type HostLocalInferenceStartupRequest =
   | {
       readonly application: HostLocalInferenceApplication;
       readonly service: "ollama";
-      readonly endpoint: HostLocalInferenceEndpointInput & { readonly model: string };
+      readonly endpoint: HostLocalOllamaInferenceInput;
       readonly receiptWriter: HostLocalInferenceReceiptWriter;
     }
   | {
@@ -90,6 +92,8 @@ export interface HostLocalInferenceStartupSelectionInput {
   readonly sandboxName: string;
   readonly provider: string;
   readonly model: string;
+  /** Compute mode accepted from the operation's preflighted host GPU selection. */
+  readonly acceleration: HostLocalOllamaAccelerationAuthority;
   /** Null on exact recovery: the resolver must derive this from durable provider authority. */
   readonly requireToolCalling: boolean | null;
   /** True only when an existing session may consume an injected exact published receipt. */
@@ -154,7 +158,10 @@ function normalizeStartupReceipt(
   receipt: HostLocalInferenceReceipt,
 ): HostLocalInferenceReceipt {
   const normalized = normalizeHostLocalInferenceReceipt(receipt);
-  const model = request.service === "ollama" ? request.endpoint.model : request.managed.model;
+  const model =
+    request.service === "ollama"
+      ? normalizeHostLocalOllamaModelRef(request.endpoint.model)
+      : request.managed.model;
   const toolCallingRequired =
     request.service === "ollama"
       ? request.endpoint.requireToolCalling
@@ -173,7 +180,8 @@ function normalizeStartupReceipt(
   const runtimeMatches =
     request.service === "ollama"
       ? normalized.runtime.kind === "host" &&
-        normalized.runtime.probeImageRef === expectedProbeImageRef
+        normalized.runtime.probeImageRef === expectedProbeImageRef &&
+        normalized.runtime.acceleration === request.endpoint.acceleration
       : normalized.runtime.kind === "container" &&
         normalized.runtime.name === request.managed.containerName &&
         normalized.runtime.imageRef ===

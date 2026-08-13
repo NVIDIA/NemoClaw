@@ -149,10 +149,11 @@ export function createPodmanRuntimeProviderBundle(
             providerId,
             supported: true,
             services: ["ollama", "nim", "vllm"],
-            createOperation: ({ env }) =>
+            createOperation: ({ env, acceleration }) =>
               createPodmanHostLocalInferenceOperation({
                 engine: inferenceEngine,
                 env,
+                acceleration,
                 authorityStore: inferenceOptions.authorityStore,
                 routeAuthorityStore: inferenceOptions.routeAuthorityStore,
                 onFailureEvidence: inferenceOptions.onFailureEvidence,

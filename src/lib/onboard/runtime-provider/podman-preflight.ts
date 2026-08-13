@@ -216,11 +216,10 @@ function safeSchemaText(value: unknown, label: string): string {
 
 function exactNvidiaCdiInventory(info: JsonRecord): readonly string[] {
   const host = record(info.host);
-  if (!host || !Object.hasOwn(host, "discoveredDevices")) {
-    throw new PodmanHostPreflightError(
-      `Podman ${MINIMUM_PODMAN_INFERENCE_VERSION} host.discoveredDevices authority is unavailable`,
-    );
-  }
+  if (!host) throw new PodmanHostPreflightError("Podman host authority is unavailable");
+  // Podman v6 marks discoveredDevices omitempty, so an absent property is the
+  // canonical representation of an empty provider inventory.
+  if (!Object.hasOwn(host, "discoveredDevices")) return Object.freeze([]);
   const discovered = host.discoveredDevices;
   if (!Array.isArray(discovered) || discovered.length > MAX_DISCOVERED_DEVICES) {
     throw new PodmanHostPreflightError("host.discoveredDevices has an unsupported schema");
@@ -250,11 +249,7 @@ function exactNvidiaCdiInventory(info: JsonRecord): readonly string[] {
     }
     if (id.startsWith("nvidia.com/gpu=")) nvidiaDevices.push(id);
   }
-  const inventory = normalizePodmanCdiInventory(nvidiaDevices);
-  if (inventory.length === 0) {
-    throw new PodmanHostPreflightError("Podman did not discover an NVIDIA CDI device");
-  }
-  return inventory;
+  return normalizePodmanCdiInventory(nvidiaDevices);
 }
 
 function requireInferenceEngine(engine: ContainerEngine): void {
@@ -333,7 +328,7 @@ export function normalizePodmanInferenceAuthorityReceipt(
   return Object.freeze({ ...payload, receiptSha256 });
 }
 
-/** Qualify the exact endpoint's authoritative NVIDIA CDI inventory. */
+/** Qualify the exact endpoint's authoritative NVIDIA CDI inventory, including empty. */
 export function qualifyPodmanInferenceAuthority(
   engine: ContainerEngine,
 ): PodmanInferenceAuthorityReceipt {
