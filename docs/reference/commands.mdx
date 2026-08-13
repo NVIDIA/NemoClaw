@@ -1692,10 +1692,10 @@ A paused container is unpaused.
 If the container was removed entirely, `start` fails and points you to `$$nemoclaw <name> rebuild`.
 
 <AgentOnly variant="openclaw,hermes">
-Before it repairs the gateway and host forwards, `start` waits for OpenShell to report the sandbox in the `Ready` phase, using the same `300`-second budget and `NEMOCLAW_CONNECT_TIMEOUT` override as `connect --probe-only`.
+Before it repairs the gateway and host forwards, `start` waits for OpenShell to report the sandbox in the `Ready` or `Running` state, using the same `300`-second budget and `NEMOCLAW_CONNECT_TIMEOUT` override as `connect --probe-only`.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-Before it verifies the managed terminal runtime, `start` waits for OpenShell to report the sandbox in the `Ready` phase, using the same `300`-second budget and `NEMOCLAW_CONNECT_TIMEOUT` override as `connect --probe-only`.
+Before it verifies the managed terminal runtime, `start` waits for OpenShell to report the sandbox in the `Ready` or `Running` state, using the same `300`-second budget and `NEMOCLAW_CONNECT_TIMEOUT` override as `connect --probe-only`.
 </AgentOnly>
 When that deadline expires, `start` keeps the existing container, exits non-zero, and prints the `NEMOCLAW_CONNECT_TIMEOUT` value to use on the next run.
 
