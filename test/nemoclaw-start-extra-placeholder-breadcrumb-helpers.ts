@@ -42,7 +42,6 @@ export interface RunResult {
   result: SpawnSyncReturns<string>;
   // Arbitrary caller-shaped openclaw.json indexed directly by tests
   // (config.channels.telegram…), matching the original inline helper's typing.
-  // biome noExplicitAny is not enforced under test/, so no suppression is needed.
   config: any;
 }
 

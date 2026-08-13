@@ -206,7 +206,7 @@ These are the primary npm scripts for day-to-day development:
 | `npm run check` | Run the broad repo-wide pre-commit and full CLI/plugin coverage baseline |
 | `npm run check:diff` | Compatibility alias for `npm run validate:pr` |
 | `npm run checks` | Compatibility alias for `npm run checks:repository`; prints scope guidance before delegating |
-| `npm run format` | Auto-format Biome-supported source files |
+| `npm run format` | Auto-format added JavaScript and TypeScript files that Oxfmt does not exclude |
 | `npm run typecheck:cli` | Type-check the root TypeScript project using `tsconfig.cli.json` |
 | `npm --prefix nemoclaw run typecheck` | Type-check plugin production and test sources without emitting files |
 | `npm test` | Build package artifacts and run every non-live Vitest project for broad changes |
@@ -382,6 +382,11 @@ All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-bina
 | **pre-commit** | Cheap structural and file-local checks, including fixers, formatters, linters, and skill frontmatter validation |
 | **commit-msg** | commitlint (Conventional Commits) |
 | **pre-push** | Path-scoped incremental CLI/plugin TypeScript checks and checked-JavaScript checks |
+
+The Oxfmt hook formats added JavaScript and TypeScript files that its configuration does not exclude.
+The hook reads its base ref from `NEMOCLAW_FORMAT_BASE_REF`, which defaults to `origin/main`.
+A file is added when the selected base commit has no file at that path.
+If Git cannot resolve the ref named by `NEMOCLAW_FORMAT_BASE_REF`, the Oxfmt hook exits with status 2 before invoking Oxfmt.
 
 For PR preparation, normal `pre-commit`, `commit-msg`, and `pre-push` hooks are valid verification when they pass and were not bypassed with `--no-verify`.
 If hooks were skipped, missing, failed, or uncertain, refresh the remote-tracking base with `git fetch origin main`, then run `npm run validate:pr` once to reproduce those checks for the current diff.

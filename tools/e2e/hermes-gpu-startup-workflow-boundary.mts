@@ -60,7 +60,6 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-// biome-ignore format: Compact declarative shell-proof vocabulary.
 const TOKENS = { "@bash": '/bin/bash "$trusted_fixture" "$@"', "@bin": "/usr/bin", "@daemon": '"$daemon_json"', "@docker": "/etc/docker/daemon.json", "@env": "/usr/bin/sudo -n /usr/bin/env -i", "@fixture": '"$trusted_fixture"', "@gpu": "hermes-gpu-fallback-docker-runtime", "@install": "/usr/bin/sudo /usr/bin/install", "@root": '"$trusted_state_root"', "@run": "run_trusted_fixture", "@sha": '"$TRUSTED_FIXTURE_SHA256"', "@source": '"$trusted_source"', "@state": '"$state_dir"', "@sudo": "/usr/bin/sudo", "@workflow": '"$TRUSTED_WORKFLOW_SHA"' } as const;
 
 function proof(spec: string): string[] {
