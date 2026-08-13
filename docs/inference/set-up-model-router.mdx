@@ -19,6 +19,9 @@ During onboarding, NemoClaw starts the router proxy on host port `4000`, waits f
 The sandbox does not call port `4000` directly.
 On a host without cached routing-model files, Model Router downloads and loads its routing model before the health endpoint responds.
 NemoClaw gives a running router up to 10 minutes to pass its health check and stops onboarding sooner if the process exits.
+NemoClaw writes the router process output to `~/.nemoclaw/state/model-router.log` and creates that file with owner-only permissions.
+If the router does not pass its health check in time, the startup error reports that log path and the last endpoint error that the router returned.
+Review the log before you share it, because it contains unredacted router output.
 
 ```text
 Sandbox agent -> OpenShell -> Model Router on port 4000 -> NVIDIA API

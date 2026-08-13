@@ -1,9 +1,66 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as http from "node:http";
+import type { AddressInfo } from "node:net";
+
 import { describe, expect, it, vi } from "vitest";
 
-import { findModelRouterPidForPort, stopModelRouterProcess } from "./model-router-process";
+import {
+  findModelRouterPidForPort,
+  getRouterHealthSnapshot,
+  stopModelRouterProcess,
+} from "./model-router-process";
+
+async function withHealthServer(
+  handler: http.RequestListener,
+  run: (port: number) => Promise<void>,
+): Promise<void> {
+  const server = http.createServer(handler);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    await run((server.address() as AddressInfo).port);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+describe("getRouterHealthSnapshot (#8962)", () => {
+  it("captures the /health body alongside a 2xx status", async () => {
+    const body = JSON.stringify({
+      healthy_endpoints: [],
+      unhealthy_endpoints: [{ error: "AuthenticationError: bad key" }],
+    });
+    await withHealthServer(
+      (_req, res) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(body);
+      },
+      async (port) => {
+        const snapshot = await getRouterHealthSnapshot(port);
+        expect(snapshot).toEqual({ healthy: true, body });
+      },
+    );
+  });
+
+  it("reports unhealthy with the body for a non-2xx response", async () => {
+    await withHealthServer(
+      (_req, res) => {
+        res.writeHead(503, { "content-type": "text/plain" });
+        res.end("router warming up");
+      },
+      async (port) => {
+        const snapshot = await getRouterHealthSnapshot(port);
+        expect(snapshot).toEqual({ healthy: false, body: "router warming up" });
+      },
+    );
+  });
+
+  it("reports unhealthy with no body when nothing listens on the port", async () => {
+    const snapshot = await getRouterHealthSnapshot(1);
+    expect(snapshot).toEqual({ healthy: false, body: null });
+  });
+});
 
 const ROUTER_ARGS = ["/opt/model-router", "proxy", "--port", "4000"];
 

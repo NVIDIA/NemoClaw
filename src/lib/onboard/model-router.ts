@@ -24,12 +24,15 @@ import {
   formatHostServiceUnreachableMessage,
   probeHostServiceSandboxReachability,
 } from "./host-service-reachability";
+import { redact } from "../security/redact";
 import { createModelRouterCommandProvisioner } from "./model-router-command";
 import {
   doesModelRouterProcessOwnPort,
   findModelRouterPidForPort,
+  getRouterHealthSnapshot,
   isRouterHealthy,
   ROUTER_HEALTH_TIMEOUT_MS as ROUTER_HEALTH_REQUEST_TIMEOUT_MS,
+  type RouterHealthSnapshot,
   stopModelRouterProcess,
 } from "./model-router-process";
 import { prepareModelRouterVenv } from "./model-router-python";
@@ -47,6 +50,11 @@ export {
 const ROUTER_HEALTH_RETRIES = 300;
 const ROUTER_HEALTH_INTERVAL_MS = 2000;
 const ROUTER_STARTUP_TIMEOUT_MS = 10 * 60_000;
+// One diagnostic /health read after the startup poll exhausts its retries.
+// LiteLLM's /health live-probes every upstream endpoint per request, so it
+// can need far longer than the 3-second liveness budget to answer (#8962).
+const ROUTER_FINAL_HEALTH_SNAPSHOT_TIMEOUT_MS = 30_000;
+const ROUTER_LOG_TAIL_LINES = 20;
 const MODEL_ROUTER_RELATIVE_DIR = path.join("nemoclaw-blueprint", "router", "llm-router");
 const MODEL_ROUTER_VENV_DIR = path.join(
   nemoclawStateRoot(os.homedir(), GATEWAY_PORT),
@@ -98,14 +106,19 @@ export type StartModelRouterDeps = {
     args: string[],
     options: {
       detached: true;
-      stdio: "ignore";
+      stdio: "ignore" | ["ignore", number, number];
       cwd: string;
       env: Record<string, string>;
     },
   ) => ModelRouterSpawnedProcess;
+  /** Open the router log for append; null degrades the spawn to stdio "ignore". */
+  openRouterLog: (logPath: string) => number | null;
+  closeRouterLog: (fd: number) => void;
+  readRouterLogTail: (logPath: string) => string;
   resolveProviderCredential: (name: string) => string | null;
   buildSubprocessEnv: (extra: Record<string, string>) => Record<string, string>;
   isRouterHealthy: (port: number, timeoutMs?: number) => Promise<boolean>;
+  getRouterHealthSnapshot: (port: number, timeoutMs?: number) => Promise<RouterHealthSnapshot>;
   sleep: (milliseconds: number) => Promise<void>;
   now: () => number;
   isProcessAlive: (pid: number) => boolean;
@@ -207,9 +220,37 @@ function createStartModelRouterDeps(): StartModelRouterDeps {
         unref: () => child.unref(),
       };
     },
+    openRouterLog: (logPath) => {
+      const appendNoFollow =
+        fs.constants.O_APPEND |
+        fs.constants.O_CREAT |
+        fs.constants.O_WRONLY |
+        fs.constants.O_NOFOLLOW;
+      try {
+        return fs.openSync(logPath, appendNoFollow, 0o600);
+      } catch {
+        // Router output capture is diagnostic; never block startup on it.
+        return null;
+      }
+    },
+    closeRouterLog: (fd) => fs.closeSync(fd),
+    readRouterLogTail: (logPath) => {
+      try {
+        return fs
+          .readFileSync(logPath, "utf-8")
+          .split("\n")
+          .filter(Boolean)
+          .slice(-ROUTER_LOG_TAIL_LINES)
+          .map((line) => redact(line))
+          .join("\n");
+      } catch {
+        return "";
+      }
+    },
     resolveProviderCredential,
     buildSubprocessEnv,
     isRouterHealthy,
+    getRouterHealthSnapshot,
     sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
     now: () => performance.now(),
     isProcessAlive: (pid) => {
@@ -261,9 +302,15 @@ export async function startModelRouter(
   const openAiCredential = deps.resolveProviderCredential("OPENAI_API_KEY");
   if (routedCredential) {
     credEnvVars[credName] = routedCredential;
-    if (!openAiCredential) credEnvVars.OPENAI_API_KEY = routedCredential;
+    // #8962: the generated LiteLLM proxy config authenticates every pool
+    // endpoint through OPENAI_API_KEY, so the validated routed credential
+    // must own that variable. An ambient or legacy-staged OPENAI_API_KEY is
+    // not valid for the default NVIDIA pool endpoints, and onboarding then
+    // reported only a startup timeout.
+    credEnvVars.OPENAI_API_KEY = routedCredential;
+  } else if (openAiCredential) {
+    credEnvVars.OPENAI_API_KEY = openAiCredential;
   }
-  if (openAiCredential) credEnvVars.OPENAI_API_KEY = openAiCredential;
   const _providerKey = deps.getProviderKey();
   if (_providerKey) {
     if (!credEnvVars[credName]) credEnvVars[credName] = _providerKey;
@@ -276,26 +323,36 @@ export async function startModelRouter(
     );
   }
 
-  const child = deps.spawnProxy(
-    routerCommand,
-    [
-      "proxy",
-      "--litellm-config",
-      litellmConfigPath,
-      "--router-config",
-      poolConfigPath,
-      "--host",
-      "0.0.0.0",
-      "--port",
-      String(port),
-    ],
-    {
-      detached: true,
-      stdio: "ignore",
-      cwd: blueprintDir,
-      env: deps.buildSubprocessEnv(credEnvVars),
-    },
-  );
+  // #8962: capture the router's own output; with stdio "ignore" the actual
+  // startup error (for example an endpoint authentication failure) was
+  // unreadable.
+  const logPath = path.join(stateDir, "model-router.log");
+  const logFd = deps.openRouterLog(logPath);
+  let child: ModelRouterSpawnedProcess;
+  try {
+    child = deps.spawnProxy(
+      routerCommand,
+      [
+        "proxy",
+        "--litellm-config",
+        litellmConfigPath,
+        "--router-config",
+        poolConfigPath,
+        "--host",
+        "0.0.0.0",
+        "--port",
+        String(port),
+      ],
+      {
+        detached: true,
+        stdio: logFd === null ? "ignore" : ["ignore", logFd, logFd],
+        cwd: blueprintDir,
+        env: deps.buildSubprocessEnv(credEnvVars),
+      },
+    );
+  } finally {
+    if (logFd !== null) deps.closeRouterLog(logFd);
+  }
   let childExited = false;
   let childExitDetail = "";
   child.onError((err: Error) => {
@@ -340,15 +397,45 @@ export async function startModelRouter(
       break;
     }
   }
+  // One 30-second diagnostic read before termination: the liveness probes
+  // above time out long before LiteLLM's live-checking /health can answer.
+  // When the router process is still running, this snapshot is the only
+  // source of the endpoint error.
+  const finalSnapshot: RouterHealthSnapshot = childExited
+    ? { healthy: false, body: null }
+    : await deps.getRouterHealthSnapshot(port, ROUTER_FINAL_HEALTH_SNAPSHOT_TIMEOUT_MS);
   try {
     deps.terminateProcess(pid);
   } catch {
     // already dead
   }
+  const lastHealthError = firstUnhealthyEndpointError(finalSnapshot.body);
+  const logTail = deps.readRouterLogTail(logPath);
   throw new Error(
     `Model Router failed to become healthy on port ${port} within ${ROUTER_STARTUP_TIMEOUT_MS / 1000} seconds (completed health checks: ${healthAttempts})` +
-      (childExitDetail ? ` (${childExitDetail})` : ""),
+      (childExitDetail ? ` (${childExitDetail})` : "") +
+      (lastHealthError ? ` (last health error: ${lastHealthError})` : "") +
+      `. Router log: ${logPath}` +
+      (logTail ? `\n  Last router log lines:\n${logTail}` : ""),
   );
+}
+
+/**
+ * Redact and cap the first unhealthy-endpoint error so a startup failure
+ * cannot print a credential or an unbounded /health body.
+ */
+function firstUnhealthyEndpointError(body: string | null): string | null {
+  if (!body) return null;
+  try {
+    const parsed = JSON.parse(body) as {
+      unhealthy_endpoints?: readonly { error?: unknown }[];
+    };
+    const error = parsed?.unhealthy_endpoints?.[0]?.error;
+    if (typeof error !== "string" || error.length === 0) return null;
+    return redact(error).slice(0, 300);
+  } catch {
+    return null;
+  }
 }
 
 function getRoutedProfile(): BlueprintInferenceProfile {

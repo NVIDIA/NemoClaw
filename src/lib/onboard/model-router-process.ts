@@ -27,6 +27,56 @@ type ModelRouterCommandLineReaderDeps = {
   listProcPids?: () => number[];
 };
 
+export type RouterHealthSnapshot = {
+  healthy: boolean;
+  body: string | null;
+};
+
+const ROUTER_HEALTH_BODY_MAX_BYTES = 64 * 1024;
+
+/**
+ * Fetch /health and keep the response body for diagnosis (#8962). Unlike
+ * `isRouterHealthy`, this waits for the full body, so callers pass a longer
+ * timeout; `startModelRouter` uses 30 seconds. LiteLLM's /health probes
+ * every upstream endpoint per request and can answer well after the
+ * 3-second liveness budget.
+ */
+export async function getRouterHealthSnapshot(
+  port: number,
+  timeoutMs = ROUTER_HEALTH_TIMEOUT_MS,
+): Promise<RouterHealthSnapshot> {
+  return new Promise<RouterHealthSnapshot>((resolve) => {
+    let settled = false;
+    const settle = (snapshot: RouterHealthSnapshot) => {
+      if (settled) return;
+      settled = true;
+      resolve(snapshot);
+    };
+    const request = http
+      .get(`http://127.0.0.1:${port}/health`, (res: http.IncomingMessage) => {
+        const healthy = (res.statusCode || 0) >= 200 && (res.statusCode || 0) < 300;
+        const chunks: Buffer[] = [];
+        let size = 0;
+        res.on("data", (chunk: Buffer) => {
+          size += chunk.length;
+          if (size <= ROUTER_HEALTH_BODY_MAX_BYTES) chunks.push(chunk);
+        });
+        res.on("end", () =>
+          settle({
+            healthy,
+            body: chunks.length > 0 ? Buffer.concat(chunks).toString("utf8") : null,
+          }),
+        );
+        res.on("error", () => settle({ healthy, body: null }));
+      })
+      .on("error", () => settle({ healthy: false, body: null }));
+    request.setTimeout(timeoutMs, () => {
+      request.destroy();
+      settle({ healthy: false, body: null });
+    });
+  });
+}
+
 export async function isRouterHealthy(
   port: number,
   timeoutMs = ROUTER_HEALTH_TIMEOUT_MS,
