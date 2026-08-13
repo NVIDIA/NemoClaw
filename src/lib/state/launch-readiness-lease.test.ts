@@ -43,6 +43,10 @@ function identity(gatewayName = GATEWAY_NAME): LaunchReadinessIdentity {
   };
 }
 
+function throwReadOnly(message: string): never {
+  throw Object.assign(new Error(message), { code: "EROFS" });
+}
+
 describe("launch readiness lease storage", () => {
   let root: string;
   let home: string;
@@ -663,12 +667,11 @@ describe("launch readiness lease storage", () => {
     fs.unlinkSync(launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home));
     const authorityPath = launchReadinessAuthorityPath(SANDBOX, runtimeRoot);
     const rename = fs.renameSync.bind(fs);
-    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
-      if (destination === authorityPath) {
-        throw Object.assign(new Error("read-only runtime authority"), { code: "EROFS" });
-      }
-      return rename(source, destination);
-    });
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      destination === authorityPath
+        ? throwReadOnly("read-only runtime authority")
+        : rename(source, destination),
+    );
 
     expect(fence.epochId).toBe(EPOCH_A);
     expectFenceFailure(() => fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()), true);
@@ -676,12 +679,11 @@ describe("launch readiness lease storage", () => {
 
   it("allows the complete preflight only when runtime authority and persistent evidence are securely absent", () => {
     const mkdir = fs.mkdirSync.bind(fs);
-    vi.spyOn(fs, "mkdirSync").mockImplementation((target, mkdirOptions) => {
-      if (String(target).startsWith(runtimeRoot)) {
-        throw Object.assign(new Error("read-only runtime root"), { code: "EROFS" });
-      }
-      return mkdir(target, mkdirOptions as fs.MakeDirectoryOptions & { recursive: true });
-    });
+    vi.spyOn(fs, "mkdirSync").mockImplementation((target, mkdirOptions) =>
+      String(target).startsWith(runtimeRoot)
+        ? throwReadOnly("read-only runtime root")
+        : mkdir(target, mkdirOptions as fs.MakeDirectoryOptions & { recursive: true }),
+    );
 
     expectFenceFailure(() => fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()), false);
     expect(fs.existsSync(launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home))).toBe(false);
@@ -733,12 +735,11 @@ describe("launch readiness lease storage", () => {
     const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
     const before = fs.statSync(receiptPath);
     const rename = fs.renameSync.bind(fs);
-    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
-      if (destination === receiptPath) {
-        throw Object.assign(new Error("read-only persistent state"), { code: "EROFS" });
-      }
-      return rename(source, destination);
-    });
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      destination === receiptPath
+        ? throwReadOnly("read-only persistent state")
+        : rename(source, destination),
+    );
 
     expectFenceFailure(() => fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()), false);
     vi.restoreAllMocks();

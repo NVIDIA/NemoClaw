@@ -25,9 +25,8 @@ test.runIf(process.platform === "linux" && SANDBOX_NAME.length > 0)(
     const entry = readRegistrySandboxEntry(SANDBOX_NAME);
     expect(entry.agent).toBe("openclaw");
     expect(entry.workload).toMatchObject({ kind: "managed-image" });
-    if (typeof entry.workload !== "object" || entry.workload === null) {
-      throw new Error("locked-image acceptance requires a managed-image workload receipt");
-    }
+    expect(typeof entry.workload).toBe("object");
+    expect(entry.workload).not.toBeNull();
     const workload = entry.workload as Record<string, unknown>;
     expect(workload.reference).toMatch(/@sha256:[0-9a-f]{64}$/u);
     expect(entry.imageTag).toBe(workload.reference);
