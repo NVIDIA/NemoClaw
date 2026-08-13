@@ -174,8 +174,23 @@ The wizard manages the proxy lifecycle:
 - It starts and verifies the proxy only after you accept the onboarding configuration.
 - It removes stale matching proxy processes from previous runs.
 - It probes the sandbox Docker network path before saving the inference route.
-- It stops matching proxy processes during uninstall.
+- It stops matching proxy processes when uninstall removes the final or only gateway that uses the proxy.
+- A scoped uninstall preserves the shared proxy process and state while another gateway remains.
 - It reuses the persisted token after a host reboot and during re-onboarding for the committed local Ollama route.
+- It reuses that same token for every gateway port on the host, because one proxy serves them all.
+- NemoClaw records the selected proxy port in shared host state. Export the same `NEMOCLAW_OLLAMA_PROXY_PORT` for every gateway port on the host. A different value stops before NemoClaw changes the shared proxy process.
+
+<Warning title="Conflicting Legacy Proxy State">
+An older multi-gateway installation can contain proxy token or backend files in more than one gateway state root.
+During Local Ollama onboarding, NemoClaw copies one consistent credential and backend URL into the shared host root.
+If token values conflict, NemoClaw uses a running proxy only when one token receives an authenticated response.
+NemoClaw stops before proxy restart when it cannot select one token or one backend URL.
+For token conflicts, the error lists the token files that require review.
+Keep every token file private.
+Back up the gateway state roots and confirm which token and backend serve the active sandboxes before you remove stale legacy files.
+Rerun onboarding for every affected Local Ollama gateway after you resolve the conflict.
+Scoped uninstall preserves the shared proxy state while a sibling gateway remains; removing the final gateway stops the proxy and removes that state.
+</Warning>
 
 All proxy endpoints require the token, including `GET /api/tags`.
 The host-side proxy liveness check treats any HTTP response, including `401`, as evidence that the proxy answered.
@@ -248,6 +263,12 @@ The following command uses `8990` as an example; choose another unused port when
 ```bash
 NEMOCLAW_GATEWAY_PORT=8990 NEMOCLAW_MODEL=qwen3.5:9b $$nemoclaw onboard
 ```
+
+Every gateway port on the host shares one authenticated proxy and one token.
+When token and backend state are compatible, onboarding another gateway port restarts the shared proxy with the token already stored on the host.
+Sandboxes on the gateway you onboarded first keep reaching Ollama after the restart.
+If the restart fails, onboarding reports the port owner or the startup error.
+No sandbox on any gateway port can reach Ollama until you resolve the error and rerun onboarding.
 
 Interactive onboarding filters installed registry-known tags that do not fit current GPU memory.
 If no installed known tag fits, NemoClaw displays starter choices and warns when even the smallest tag might not fit.

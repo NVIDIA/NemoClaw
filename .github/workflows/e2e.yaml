@@ -34,7 +34,7 @@ on:
           - internal-nvidia
           - public-nvidia
       allow_jetson_dispatch:
-        description: "Set true for jetson-nvmap-gpu only after the operator-owned dispatch backend is available and JETSON_DISPATCH_URL contains its verified HTTPS origin. Refer to test/e2e/docs/jetson-dispatch.md."
+        description: "Set true for a manual jetson-nvmap-gpu run. Main pushes dispatch it automatically. The operator-owned dispatch backend must be available, and JETSON_DISPATCH_URL must contain its verified HTTPS origin. Refer to test/e2e/docs/jetson-dispatch.md."
         required: false
         default: false
         type: boolean
@@ -4175,7 +4175,7 @@ jobs:
 
   jetson-nvmap-gpu:
     needs: generate-matrix
-    if: ${{ inputs.allow_jetson_dispatch && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'jetson-nvmap-gpu') }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.allow_jetson_dispatch && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'jetson-nvmap-gpu')))) }}
     concurrency:
       group: jetson-nvmap-gpu-dispatch
       queue: max

@@ -2724,11 +2724,11 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
   if (job.needs !== "generate-matrix") {
     errors.push("jetson-nvmap-gpu job must depend on generate-matrix");
   }
-  const trustedSelector =
-    "${{ inputs.allow_jetson_dispatch && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'jetson-nvmap-gpu') }}";
-  if (job.if !== trustedSelector) {
+  const trustedPushOrManualSelector =
+    "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.allow_jetson_dispatch && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'jetson-nvmap-gpu')))) }}";
+  if (job.if !== trustedPushOrManualSelector) {
     errors.push(
-      "jetson-nvmap-gpu job must require the dispatch opt-in, trusted main workflow dispatch, same-repository candidate, and target selectors",
+      "jetson-nvmap-gpu job must run on trusted main pushes and require opt-in for same-repository manual selections",
     );
   }
   if (job["runs-on"] !== "ubuntu-latest") {

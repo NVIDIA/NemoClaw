@@ -786,9 +786,22 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
+      const proxyStateEntries = [
+        "ollama-proxy-token",
+        "ollama-backend",
+        "ollama-auth-proxy.pid",
+        "ollama-auth-proxy.status",
+      ];
+      for (const entry of proxyStateEntries) {
+        const value = entry === "ollama-auth-proxy.pid" ? "4242\n" : `${entry}\n`;
+        fs.writeFileSync(path.join(shared, entry), value);
+        fs.writeFileSync(path.join(selected, entry), `legacy-${value}`);
+      }
 
       const runCalls: Array<{ command: string; args: string[] }> = [];
       const dockerCalls: string[][] = [];
+      const logs: string[] = [];
+      const kill = vi.fn((_pid: number, _signal?: NodeJS.Signals | number) => true);
       const dockerOutputByCommand: Record<string, string> = {
         images: "shared-image nemoclaw:latest",
         ps: [
@@ -809,10 +822,13 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           env: { HOME: tmpHome, NEMOCLAW_GATEWAY_PORT: String(port) } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
-          log: vi.fn(),
+          kill,
+          log: (line) => logs.push(line),
           run: (command, args) => {
             runCalls.push({ command, args });
-            return ok();
+            return command === "ps" && args.includes("4242") && args.includes("args=")
+              ? ok("node /opt/nemoclaw/scripts/ollama-auth-proxy.mts\n")
+              : ok();
           },
           runDocker: (args) => {
             dockerCalls.push(args);
@@ -842,6 +858,13 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(fs.existsSync(servicePath)).toBe(true);
       expect(runCalls.some(({ command }) => command === "systemctl")).toBe(false);
       expect(fs.existsSync(path.join(nemoclawConfig, "keep"))).toBe(true);
+      expect(kill.mock.calls.every(([pid]) => pid !== 4242)).toBe(true);
+      for (const entry of proxyStateEntries) {
+        expect(fs.existsSync(path.join(shared, entry))).toBe(true);
+      }
+      expect(logs).toContain(
+        "Preserving the shared Ollama auth proxy for the remaining gateway ports",
+      );
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
@@ -1192,8 +1215,21 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
+      const proxyStateEntries = [
+        "ollama-proxy-token",
+        "ollama-backend",
+        "ollama-auth-proxy.pid",
+        "ollama-auth-proxy.status",
+      ];
+      for (const entry of proxyStateEntries) {
+        fs.writeFileSync(
+          path.join(stateDir, entry),
+          entry === "ollama-auth-proxy.pid" ? "4242\n" : "seeded\n",
+        );
+      }
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
+      let proxyProcessIsRunning = true;
       const result = runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
@@ -1201,6 +1237,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
+          kill: () => {
+            proxyProcessIsRunning = false;
+            return true;
+          },
           log: (line) => logs.push(line),
           rmSync: fs.rmSync,
           run: (_command, args) => {
@@ -1220,6 +1260,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(openshellCalls).not.toContainEqual(["sandbox", "delete", "--all"]);
       expect(logs.join("\n")).toContain("Sibling gateways remain");
       expect(fs.existsSync(path.join(stateDir, "gateways", "8091"))).toBe(true);
+      expect(proxyProcessIsRunning).toBe(true);
+      for (const entry of proxyStateEntries) {
+        expect(fs.existsSync(path.join(stateDir, entry))).toBe(true);
+      }
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }

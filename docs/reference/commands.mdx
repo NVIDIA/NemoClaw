@@ -4026,6 +4026,7 @@ Uninstall also stops any orphaned `openshell` host processes left behind by prev
 Earlier releases only stopped `openshell forward` processes, so those orphans accumulated across runs.
 
 For Local Ollama setups, uninstall also stops matching Ollama auth proxy processes before deleting `~/.nemoclaw` state so stale proxy listeners do not block a later reinstall.
+When sibling gateways remain, uninstall leaves the shared proxy running for them.
 
 For Hermes setups, uninstall inspects the selected gateway's managed port-forward watcher state, stops each verified watcher process and its sandbox-scoped forward, and leaves sibling gateway state untouched.
 If any watcher or forward cleanup cannot be confirmed, uninstall exits nonzero and preserves the selected gateway's watcher state so you can retry cleanup.

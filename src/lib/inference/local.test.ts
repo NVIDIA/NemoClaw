@@ -631,12 +631,12 @@ describe("local inference helpers", () => {
     expect(result?.subprobes).toBeUndefined();
   });
 
-  it("loads the Ollama proxy token only from the selected nondefault gateway root", async () => {
+  it("loads the Ollama proxy token from the shared host root on a nondefault gateway port (#8704)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-port-token-"));
     const defaultRoot = path.join(home, ".nemoclaw");
     const selectedRoot = path.join(defaultRoot, "gateways", "9123");
     fs.mkdirSync(selectedRoot, { recursive: true });
-    fs.writeFileSync(path.join(defaultRoot, "ollama-proxy-token"), "default-root-token\n");
+    fs.writeFileSync(path.join(defaultRoot, "ollama-proxy-token"), "shared-root-token\n");
     fs.writeFileSync(path.join(selectedRoot, "ollama-proxy-token"), "selected-port-token\n");
     vi.stubEnv("HOME", home);
     vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
@@ -661,8 +661,8 @@ describe("local inference helpers", () => {
       });
 
       expect(result?.ok).toBe(true);
-      expect(authConfig).toContain("selected-port-token");
-      expect(authConfig).not.toContain("default-root-token");
+      expect(authConfig).toContain("shared-root-token");
+      expect(authConfig).not.toContain("selected-port-token");
     } finally {
       vi.unstubAllEnvs();
       vi.resetModules();

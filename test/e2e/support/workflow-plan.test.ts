@@ -164,13 +164,13 @@ describe("E2E workflow plan", () => {
       "snapshot-commands",
     ]);
     expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(["snapshot-commands"]);
-    expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard"]);
+    expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
-  it("emits a successful no-op plan when no retained E2E owns a changed file", () => {
+  it("selects the Jetson proof when no other retained E2E owns a changed file (#8142)", () => {
     const plan = buildE2eWorkflowPlan({}, { changedFiles: ["docs/index.yml"] });
 
-    expect(selectedWorkflowJobs(plan)).toEqual([]);
+    expect(selectedWorkflowJobs(plan)).toEqual(["jetson-nvmap-gpu"]);
     expect(Object.values(plan.catalogueMatrices).flat()).toEqual([]);
     expect(plan.matrix).toEqual([]);
     expect(plan.testMatrix).toEqual([]);
@@ -185,7 +185,10 @@ describe("E2E workflow plan", () => {
     const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
     const fullPlan = buildE2eWorkflowPlan();
 
-    expect(plan).toEqual(fullPlan);
+    expect(plan).toEqual({
+      ...fullPlan,
+      selectedJobs: [...fullPlan.selectedJobs, "jetson-nvmap-gpu"],
+    });
   });
 
   it("selects catalogue targets without unrelated jobs when their profile changes", () => {
@@ -195,7 +198,7 @@ describe("E2E workflow plan", () => {
     );
 
     expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
-    expect(plan.selectedJobs).toEqual([]);
+    expect(plan.selectedJobs).toEqual(["jetson-nvmap-gpu"]);
     expect(plan.matrix).toEqual([]);
     expect(plan.testMatrix).toEqual([]);
   });

@@ -6,6 +6,7 @@
 // NEMOCLAW_AGENT env var. The OpenClaw path never touches this module.
 
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
+import type { CaptureOpenshellResult } from "../adapters/openshell/client";
 import { getAgentBranding } from "../cli/branding";
 import type { JsonObject as LooseObject } from "../core/json-types";
 import { sleepSeconds } from "../core/wait";
@@ -60,6 +61,10 @@ export interface OnboardContext {
     args: string[],
     opts?: { ignoreError?: boolean; timeout?: number },
   ) => string | null;
+  captureOpenshell?: (
+    args: string[],
+    opts?: { ignoreError?: boolean; timeout?: number },
+  ) => CaptureOpenshellResult;
   openshellShellCommand: (args: string[], options?: { openshellBinary?: string }) => string;
   openshellBinary: string;
   startRecordedStep: (stepName: string, updates: LooseObject) => Promise<void>;
@@ -421,6 +426,7 @@ export async function handleAgentSetup(
   const {
     step,
     runCaptureOpenshell,
+    captureOpenshell,
     openshellBinary: openshellBin,
     startRecordedStep,
     recordStepComplete,
@@ -437,6 +443,11 @@ export async function handleAgentSetup(
     cuaObserveLiveAppliedPolicy,
     cuaWithGatewayRouteMutationLock,
   } = ctx;
+
+  const runSmokeCapture =
+    agent.name === "langchain-deepagents-code" && captureOpenshell
+      ? captureOpenshell
+      : runCaptureOpenshell;
 
   const syncNemoClawConfig = (): void => {
     runSandboxConfigSync(sandboxName, {
@@ -462,7 +473,7 @@ export async function handleAgentSetup(
       );
       if (binaryAvailability.available) {
         syncNemoClawConfig();
-        const smokeResult = runAgentSmokeCommands(sandboxName, agent, runCaptureOpenshell);
+        const smokeResult = runAgentSmokeCommands(sandboxName, agent, runSmokeCapture);
         if (smokeResult.ok) {
           await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, {
             beforeFailure: () => startRecordedStep("agent_setup", { sandboxName, provider, model }),
@@ -532,7 +543,7 @@ export async function handleAgentSetup(
   syncNemoClawConfig();
 
   if (isTerminalAgent(agent)) {
-    const smokeResult = runAgentSmokeCommands(sandboxName, agent, runCaptureOpenshell);
+    const smokeResult = runAgentSmokeCommands(sandboxName, agent, runSmokeCapture);
     if (!smokeResult.ok) {
       await failAgentSetup(
         sandboxName,

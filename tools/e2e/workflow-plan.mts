@@ -427,7 +427,11 @@ export function buildE2eWorkflowPlan(
     if (
       changedFiles.some((file) => FULL_SUITE_OWNING_PATHS.some((owner) => pathMatches(file, owner)))
     ) {
-      return buildE2eWorkflowPlan(selectors);
+      const plan = buildE2eWorkflowPlan(selectors);
+      return {
+        ...plan,
+        selectedJobs: [...new Set([...plan.selectedJobs, JETSON_DISPATCH_TARGET])],
+      };
     }
     const focusedLegacyJobs = focusedE2eJobsForChangedFiles(changedFiles, inventory);
     const directlySelectedCatalogueTargets = catalogueTargetsForChangedFiles(changedFiles);
@@ -456,6 +460,7 @@ export function buildE2eWorkflowPlan(
     if (selectedJobSet.has("mcp-bridge")) {
       selectedJobSet.add("openshell-credential-generation-window");
     }
+    selectedJobSet.add(JETSON_DISPATCH_TARGET);
     const selectedJobs = [...selectedJobSet];
     const selectedTests = credentialFreeTests.filter((row) => changedFiles.includes(row.file));
     const selectedCatalogueIds = new Set([
