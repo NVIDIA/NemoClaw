@@ -4301,8 +4301,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         liveFinalFlowContext = context;
       },
     });
-    completed = true;
-    traceCompleted = finalFlowResult.session.machine.state === "complete";
+    completed = finalFlowResult.session.machine.state === "complete";
+    traceCompleted = completed;
+    if (!completed) process.exitCode = 1;
   } finally {
     try {
       await hermesApiPortReservationScope.release();
