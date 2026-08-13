@@ -4017,7 +4017,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           hermesApiKeyAuthMethod: HERMES_AUTH_METHOD_API_KEY,
           hermesApiKeyCredentialEnv: HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
         },
-        // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
         deps: {
           checkGatewayRouteCompatibility,
           preflightGatewayRouteDiscovery,
