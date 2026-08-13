@@ -180,6 +180,7 @@ describe("standard E2E execution profile boundary", () => {
     };
     profile.jobs.run.env!.NEMOCLAW_E2E_EXPECTED_SHA = "${{ github.sha }}";
     profile.jobs.run.env!.NEMOCLAW_E2E_CORRELATION_ID = "";
+    profile.jobs.run.env!.NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA = "${{ github.sha }}";
     delete profile.jobs.run.env!.NEMOCLAW_E2E_SHARD;
     profile.jobs.run.env!.BASH_ENV = "${{ github.workspace }}/scripts/leak.sh";
     const upload = steps.find((step) => step.name === "Upload E2E artifacts")!;
@@ -201,6 +202,7 @@ describe("standard E2E execution profile boundary", () => {
           "standard E2E profile must run the planned catalogue target with guarded secrets",
           "standard E2E profile must set NEMOCLAW_E2E_EXPECTED_SHA",
           "standard E2E profile must set NEMOCLAW_E2E_CORRELATION_ID",
+          "standard E2E profile must set NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA",
           "standard E2E profile must set NEMOCLAW_E2E_SHARD",
           "standard E2E profile must expose only its reviewed job environment",
           "standard E2E profile must show the planned credential boundary",

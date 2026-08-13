@@ -200,8 +200,9 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     E2E_TARGET_ID: "${{ inputs.target_id }}",
     E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/${{ inputs.target_id }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
-    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.risk_signal_expected_sha }}",
+    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.candidate_sha }}",
     NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.risk_signal_correlation_id }}",
+    NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA: "${{ inputs.risk_signal_expected_sha }}",
     NEMOCLAW_E2E_SHARD: "default",
     NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: "${{ inputs.candidate_sha }}",
   };
