@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { launchReadinessRegistryFixture } from "../helpers/launch-readiness-fixture";
 import { runWithEnv, writeSandboxRegistry } from "./helpers";
 
 const PLATFORM_EVIDENCE_UNAVAILABLE = "launch-readiness evidence is unavailable on this platform";
@@ -17,6 +18,7 @@ describe("CLI dispatch for terminal agents", () => {
     const markerFile = path.join(home, "openshell-calls");
     fs.mkdirSync(localBin, { recursive: true });
     writeSandboxRegistry(home, {
+      ...launchReadinessRegistryFixture(),
       agent: "langchain-deepagents-code",
       provider: "",
       model: "",

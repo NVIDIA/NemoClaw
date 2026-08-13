@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
+import { launchReadinessRegistryFixture } from "../helpers/launch-readiness-fixture";
 import { run, runWithEnv, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
 
 const CALL_SEPARATOR = "--- openshell call ---";
@@ -47,7 +48,7 @@ function createLaunchHarness(prefix: string, agent: string): LaunchHarness {
   const callArgvFile = path.join(home, "openshell-call-argv");
   const execArgvFile = path.join(home, "openshell-exec-argv");
   fs.mkdirSync(localBin, { recursive: true });
-  writeSandboxRegistry(home, { agent });
+  writeSandboxRegistry(home, { ...launchReadinessRegistryFixture(), agent });
 
   fs.writeFileSync(
     path.join(localBin, "openshell"),

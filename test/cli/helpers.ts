@@ -9,7 +9,6 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import { SANDBOX_EXEC_STARTED_MARKER } from "../../src/lib/actions/sandbox/sandbox-exec-output";
-import { launchReadinessRegistryFixture } from "../helpers/launch-readiness-fixture";
 import type { OwnedTestResources } from "../helpers/owned-test-resources";
 import { execTimeout, testTimeout, testTimeoutOptions } from "../helpers/timeouts";
 
@@ -268,7 +267,6 @@ export function writeSandboxRegistry(
       sandboxes: {
         [sandboxName]: {
           name: sandboxName,
-          ...launchReadinessRegistryFixture(),
           model: "test-model",
           provider: "nvidia-prod",
           gpuEnabled: false,

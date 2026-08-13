@@ -7,7 +7,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { LAUNCH_READINESS_FIXTURE_POLICY } from "../helpers/launch-readiness-fixture";
+import {
+  LAUNCH_READINESS_FIXTURE_POLICY,
+  launchReadinessRegistryFixture,
+} from "../helpers/launch-readiness-fixture";
 import { nonWslPlatformNodeOptions } from "../helpers/platform-override-node-options";
 import {
   runWithEnv,
@@ -218,7 +221,7 @@ describe("CLI connect recovery process contracts", () => {
       const sshMarkerFile = path.join(home, "ssh-calls");
       const stateFile = path.join(home, "probe-state");
       fs.mkdirSync(localBin, { recursive: true });
-      writeSandboxRegistry(home);
+      writeSandboxRegistry(home, launchReadinessRegistryFixture());
       fs.writeFileSync(stateFile, "stopped");
       fs.writeFileSync(
         path.join(localBin, "openshell"),
@@ -299,7 +302,7 @@ describe("CLI connect recovery process contracts", () => {
       const sshCalls = path.join(home, "ssh-calls");
       const stateFile = path.join(home, "probe-state");
       fs.mkdirSync(localBin, { recursive: true });
-      writeSandboxRegistry(home);
+      writeSandboxRegistry(home, launchReadinessRegistryFixture());
       fs.writeFileSync(stateFile, "stopped");
       fs.writeFileSync(
         path.join(localBin, "openshell"),
@@ -371,7 +374,7 @@ describe("CLI connect recovery process contracts", () => {
     const sshCalls = path.join(home, "ssh-calls");
     const stateFile = path.join(home, "probe-state");
     fs.mkdirSync(localBin, { recursive: true });
-    writeSandboxRegistry(home, { agent: "hermes" });
+    writeSandboxRegistry(home, { ...launchReadinessRegistryFixture(), agent: "hermes" });
     fs.writeFileSync(stateFile, "stopped");
     fs.writeFileSync(
       path.join(localBin, "openshell"),
