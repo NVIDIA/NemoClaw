@@ -130,6 +130,18 @@ describe("OpenShell Homebrew formula operation boundary", () => {
     expect(brewEvents()).not.toContain("list --formula openshell");
   });
 
+  it.each([
+    ["trust", "NEMOCLAW_TEST_TRUST_HELP_STATUS"],
+    ["untrust", "NEMOCLAW_TEST_UNTRUST_HELP_STATUS"],
+  ])("fails closed when Homebrew does not support formula %s (#7707)", (_command, variable) => {
+    const result = runOperation(["list", "--formula", "openshell"], {
+      [variable]: "1",
+    });
+
+    expect(result.status).toBe(67);
+    expect(brewEvents()).not.toContain("list --formula openshell");
+  });
+
   it("fails closed when temporary formula trust cannot be removed (#7707)", () => {
     const result = runOperation(["list", "--formula", "openshell"], {
       NEMOCLAW_TEST_UNTRUST_CLEANUP_STATUS: "1",

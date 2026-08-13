@@ -805,14 +805,14 @@ exit 1`,
       expect(
         unsupportedTrust.status,
         `${unsupportedTrust.stdout}\n${unsupportedTrust.stderr}`,
-      ).toBe(0);
+      ).toBeGreaterThan(0);
+      expect(unsupportedTrust.stderr).toContain(
+        "OpenShell Homebrew formula verification or temporary trust setup failed (status 67)",
+      );
       const unsupportedTrustEvents = fs.readFileSync(brewLog, "utf-8").trim().split("\n");
       expect(unsupportedTrustEvents).toContain("help trust");
       expect(unsupportedTrustEvents).not.toContain("trust --formula nvidia/openshell/openshell");
-      expect(unsupportedTrustEvents).toContain("install --formula nvidia/openshell/openshell");
-      expect(unsupportedTrust.stdout).toContain(
-        "OpenShell Homebrew service staged; onboarding will start it after gateway validation.",
-      );
+      expect(unsupportedTrustEvents).not.toContain("install --formula nvidia/openshell/openshell");
 
       fs.writeFileSync(brewLog, "");
       const missingUntrust = spawnSync("bash", [SCRIPT], {

@@ -52,7 +52,7 @@ run_trusted_openshell_homebrew_operation() {
         || exit "$OPENSHELL_HOMEBREW_FORMULA_REPAIR"
     fi
 
-    # shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap below.
+    # shellcheck disable=SC2317,SC2329 # Invoked indirectly by the EXIT trap below.
     cleanup_openshell_homebrew_formula_trust() {
       status=$?
       trap - EXIT
@@ -64,16 +64,16 @@ run_trusted_openshell_homebrew_operation() {
     trap cleanup_openshell_homebrew_formula_trust EXIT
     trap 'exit 70' HUP INT TERM
 
-    if brew help trust >/dev/null 2>&1; then
-      brew help untrust >/dev/null 2>&1 \
+    brew help trust >/dev/null 2>&1 \
+      || exit "$OPENSHELL_HOMEBREW_TRUST_FAILED"
+    brew help untrust >/dev/null 2>&1 \
+      || exit "$OPENSHELL_HOMEBREW_TRUST_FAILED"
+    brew untrust --formula "$formula_ref" >/dev/null 2>&1 \
+      || exit "$OPENSHELL_HOMEBREW_TRUST_FAILED"
+    trust_active=1
+    if [ "$expected_sha256" != "unverified-dev" ]; then
+      brew trust --formula "$formula_ref" >/dev/null 2>&1 \
         || exit "$OPENSHELL_HOMEBREW_TRUST_FAILED"
-      brew untrust --formula "$formula_ref" >/dev/null 2>&1 \
-        || exit "$OPENSHELL_HOMEBREW_TRUST_FAILED"
-      trust_active=1
-      if [ "$expected_sha256" != "unverified-dev" ]; then
-        brew trust --formula "$formula_ref" >/dev/null 2>&1 \
-          || exit "$OPENSHELL_HOMEBREW_TRUST_FAILED"
-      fi
     fi
 
     "$@" || exit "$OPENSHELL_HOMEBREW_OPERATION_FAILED"
