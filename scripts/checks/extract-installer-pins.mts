@@ -56,7 +56,7 @@ const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 // it verifies formula bytes before each operation, uses formula-scoped trust,
 // and removes that temporary trust after success or failure.
 const TRUSTED_INSTALLER_TEMPLATE_SHA256_ALLOWLIST = [
-  "447d00147ebc33184aefef9631438c2c02516ade281d32b8a797e86393b51083",
+  "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
 ] as const;
 const TRUSTED_BREV_TEMPLATE_SHA256_ALLOWLIST = [
   "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
