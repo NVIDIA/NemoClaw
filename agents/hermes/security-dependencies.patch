@@ -90,6 +90,41 @@ index c630b3c..fd28f6a 100644
  all = [
    # Policy (2026-05-12): `[all]` includes only extras that genuinely
    # CAN'T be lazy-installed via `tools/lazy_deps.py` — i.e. things every
+diff --git a/hermes_cli/memory_setup.py b/hermes_cli/memory_setup.py
+index f6345d2..5bf65a4 100644
+--- a/hermes_cli/memory_setup.py
++++ b/hermes_cli/memory_setup.py
+@@ -123,1 +123,17 @@ def _install_dependencies(provider_name: str) -> None:
++    # NemoClaw seals the Hermes venv and redirects this reviewed dependency
++    # to a durable sandbox-owned target. Reuse the allowlisted lazy installer
++    # so setup never falls back to mutating /opt/hermes or resolving a looser
++    # plugin.yaml range. The setup command itself runs as the sandbox user.
++    if provider_name == "hindsight":
++        from tools.lazy_deps import FeatureUnavailable, ensure
++
++        try:
++            ensure("memory.hindsight", prompt=False)
++        except FeatureUnavailable as exc:
++            raise RuntimeError(
++                "Hindsight dependency installation failed through the managed lazy target"
++            ) from exc
++        print("  Installed hindsight-client==0.6.1")
++        return
++
+     print(f"\n  Installing dependencies: {', '.join(missing)}")
+diff --git a/plugins/memory/hindsight/plugin.yaml b/plugins/memory/hindsight/plugin.yaml
+index 5b37014..f763fd5 100644
+--- a/plugins/memory/hindsight/plugin.yaml
++++ b/plugins/memory/hindsight/plugin.yaml
+@@ -1,7 +1,7 @@
+ name: hindsight
+ version: 1.0.0
+ description: "Hindsight — long-term memory with knowledge graph, entity resolution, and multi-strategy retrieval."
+ pip_dependencies:
+-  - "hindsight-client>=0.6.1"
++  - "hindsight-client==0.6.1"
+ requires_env: []
+ hooks:
 diff --git a/uv.lock b/uv.lock
 index 257f7d6..d2f7607 100644
 --- a/uv.lock

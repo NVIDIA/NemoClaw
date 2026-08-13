@@ -57,7 +57,7 @@ describe("llama.cpp DGX Spark qualification workflow boundary (#8260)", () => {
         "workflow_dispatch allow_dgx_spark_runner_queue input must be boolean",
         "workflow_dispatch allow_dgx_spark_runner_queue input must default to false",
         "workflow_dispatch allow_dgx_spark_runner_queue input must require repository administrator confirmation from the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory and document queued timeout behavior",
-        "llama-cpp-dgx-spark-plan must require allow_dgx_spark_runner_queue and retain manual selectors",
+        "llama-cpp-dgx-spark-plan must require allow_dgx_spark_runner_queue and the trusted execution plan selector",
         "llama-cpp-dgx-spark-qualification must require allow_dgx_spark_runner_queue after the trusted plan is enabled",
       ]),
     );

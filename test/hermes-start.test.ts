@@ -235,6 +235,7 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
         HOME: tmpDir,
         PATH: process.env.PATH ?? "",
         _HERMES_BOUNDARY_VALIDATOR: SECRET_BOUNDARY_VALIDATOR_SCRIPT,
+        HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
         ...envOverrides,
       },
     });
@@ -336,6 +337,7 @@ function runHermesRootStartupMutableRootPreflight() {
       'chmod() { if [ "${1:-}" = "3770" ] && [ "${2:-}" = "$HERMES_DIR" ]; then printf "%s\\n" "$1" > "$CHMOD_LOG"; HERMES_DIR_MODE=770; command chmod 770 "$2"; return 0; fi; command chmod "$@"; }',
       'dir_mode() { printf "%s\\n" "$HERMES_DIR_MODE"; }',
       'verify_hermes_config_integrity() { printf "verify mode=%s\\n" "$(dir_mode)"; }',
+      'prepare_hermes_lazy_dependencies() { printf "lazy mode=%s\\n" "$(dir_mode)"; }',
       'ensure_hermes_runtime_api_server_key() { printf "api-key mode=%s\\n" "$(dir_mode)"; }',
       "apply_shields_up_runtime_env() { :; }",
       "validate_hermes_env_secret_boundary() { :; }",
@@ -758,6 +760,9 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.result.status).toBe(0);
     expect(run.envFileMode).toBe("444");
     expect(run.envFileContent).toContain(`export HERMES_HOME="${run.hermesHome}"`);
+    expect(run.envFileContent).toContain(
+      'export HERMES_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"',
+    );
     expect(run.envFileContent).toContain('export HERMES_TUI_DIR="/opt/hermes/ui-tui"');
     expect(run.envFileContent).not.toContain("AWS_EC2_METADATA_DISABLED");
     expect(run.envFileContent).not.toContain('HERMES_TUI_DIR="${HERMES_TUI_DIR:-');
@@ -998,6 +1003,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
           "verify_config_integrity_if_locked() { trace integrity; }",
           "validate_hermes_env_secret_boundary() { trace env-boundary; }",
           "inspect_hermes_mcp_integrity() { trace mcp-integrity; }",
+          "prepare_hermes_lazy_dependencies() { trace lazy-dependencies; }",
           "ensure_hermes_runtime_api_server_key() { trace api-key; }",
           "apply_shields_up_runtime_env() { trace shields-env; }",
           "validate_hermes_runtime_env_secret_boundary() { trace runtime-boundary; }",
@@ -1018,6 +1024,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
       "integrity",
       "env-boundary",
       "mcp-integrity",
+      "lazy-dependencies",
       "api-key",
       "shields-env",
       "env-boundary",
@@ -1449,6 +1456,7 @@ describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
 
     expect(run.result.status).toBe(0);
     expect(run.result.stdout).toContain("verify mode=750");
+    expect(run.result.stdout).toContain("lazy mode=750");
     expect(run.result.stdout).toContain("api-key mode=770");
     expect(run.result.stdout).toContain("tirith-state=0");
     expect(run.hermesDirMode).toBe("3770");
