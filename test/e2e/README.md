@@ -215,6 +215,10 @@ Each entry owns these target properties:
 - Target-specific environment variables.
 - Pre-tag release requirement.
 
+Host preparation is the reviewed E2E runner preparation mode. `none` makes no runner-level
+change, `hermes-swap` provisions swap for Hermes execution, and `rebuild-swap` provisions swap
+for the Hermes image rebuild.
+
 The test file is always one owning path.
 List each additional source file or directory whose change requires the target.
 Changes to shared catalogue execution paths select every catalogue target.
