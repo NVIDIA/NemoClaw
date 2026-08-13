@@ -190,7 +190,7 @@ function createPhases(
       assessHost: () => ({ memoryGb: 64 }),
       formatSandboxBuildEstimateNote: () => null,
       formatOnboardConfigSummary: () => "summary",
-      promptYesNoOrDefault: vi.fn(async () => true),
+      promptConfigurationReview: vi.fn(async () => "apply" as const),
       cliName: () => "nemoclaw",
       log: vi.fn(),
       error: vi.fn(),
