@@ -46,4 +46,20 @@ describe("installer portable profile runtime override", () => {
     expect(result.stdout).toBe("DOCKER_HOST=unix:///preexisting.sock\n");
     expect(result.stderr).toBe("");
   });
+
+  it("rejects an unknown experimental profile before install effects (#9007)", () => {
+    const result = spawnSync(
+      "bash",
+      [INSTALLER_PAYLOAD, "--experimental-profile", "not-portable"],
+      {
+        encoding: "utf-8",
+        env: { ...process.env, NEMOCLAW_EXPERIMENTAL_PROFILE: "" },
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "Unknown experimental profile: not-portable (expected: portable).",
+    );
+  });
 });
