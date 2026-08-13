@@ -26,7 +26,7 @@ import {
 } from "./host-service-reachability";
 import {
   formatStorageBytes,
-  measureDirectorySizeBytes,
+  measureReclaimableDirectorySizeBytes,
   probeHostStorage,
 } from "../inference/vllm-storage";
 import {
@@ -174,7 +174,7 @@ export function createProductionModelRouterCommandProvisioner(
       packageVersion: () =>
         JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version ?? "unknown",
       probeStorage: probeHostStorage,
-      measureDirectorySize: measureDirectorySizeBytes,
+      measureDirectorySize: measureReclaimableDirectorySizeBytes,
       formatStorageBytes,
       ...overrides,
     },

@@ -62,7 +62,8 @@ export type ModelRouterCommandDeps = {
   sourceFingerprint?: (routerDir: string) => string | null;
   /**
    * Disk-capacity collaborators. Production uses probeHostStorage,
-   * measureDirectorySizeBytes, and formatStorageBytes from vllm-storage.
+   * measureReclaimableDirectorySizeBytes, and formatStorageBytes from
+   * vllm-storage.
    * These are required so this module remains import-pure and tests cannot
    * read capacity from the host filesystem.
    */
