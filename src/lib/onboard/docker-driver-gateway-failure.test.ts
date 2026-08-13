@@ -173,8 +173,9 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       expect(joined).toContain("mkdir -m 700");
       expect(joined).toContain("incompatible/gateway-state'");
       expect(joined).toContain("nemoclaw onboard --resume");
-      // The liveness precondition belongs to the unobserved-exit path only.
-      expect(joined).not.toContain("did not observe this gateway process exit");
+      // An observed exit is evidence on its own, so the stop instruction that
+      // the unconfirmed path prints must not appear here.
+      expect(joined).not.toContain("could not confirm that the gateway process stopped");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -223,9 +224,8 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
   // Regression: NemoClaw #8797. On the reported downgrade the gateway dies on
   // this failure, but the start loop reports it after the poll budget expires,
   // so `childExit.exited` is false. Withholding the diagnosis in that state
-  // left the reported path with the raw sqlx text and no remedy. The state
-  // move stays available and carries a liveness precondition instead.
-  it("prints the incompatible-database diagnosis with a liveness precondition when the exit was not observed (#8797)", () => {
+  // left the reported path with the raw sqlx text and no remedy.
+  it("prints the state move when the liveness probe reports no gateway process and the exit was not observed (#8797)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
     const log = path.join(dir, "openshell-gateway.log");
     fs.writeFileSync(
@@ -240,14 +240,48 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       reportDockerDriverGatewayStartFailure(log, makeExitState(), {
         exitOnFailure: false,
         launchLogOffset: 0,
+        isGatewayProcessAlive: () => false,
       });
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
       expect(joined).toContain("did not become healthy within the timeout");
       expect(joined).toContain("cannot use the existing gateway database");
       expect(joined).toContain(`Database: ${path.join(dir, "openshell.db")}`);
-      expect(joined).toContain("did not observe this gateway process exit");
-      expect(joined).toContain("pgrep -af openshell-gateway");
       expect(joined).toContain(`mkdir -m 700 '${dir}.incompatible'`);
+      expect(joined).not.toContain("could not confirm that the gateway process stopped");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // The state move must never be offered while a gateway process can still hold
+  // the directory. `Restart=on-failure` in the managed unit can also start a
+  // replacement, so a user-run check cannot stand in for this probe (#8797).
+  it.each([
+    ["the liveness probe reports a live gateway", () => true],
+    ["no liveness probe is available", undefined],
+  ] as const)("withholds the state move when %s (#8797)", (_scenario, probe) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
+    const log = path.join(dir, "openshell-gateway.log");
+    fs.writeFileSync(
+      log,
+      [
+        "Error:   × execution error: migration error: migration 6 was previously applied but",
+        "  │ is missing in the resolved migrations",
+      ].join("\n"),
+    );
+    try {
+      reportDockerDriverGatewayStartFailure(log, makeExitState(), {
+        exitOnFailure: false,
+        launchLogOffset: 0,
+        isGatewayProcessAlive: probe,
+      });
+      const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
+      expect(joined).toContain("cannot use the existing gateway database");
+      expect(joined).toContain(`Database: ${path.join(dir, "openshell.db")}`);
+      expect(joined).toContain("could not confirm that the gateway process stopped");
+      expect(joined).toContain("systemctl --user stop nemoclaw-openshell-gateway");
+      expect(joined).not.toContain("mkdir -m 700");
+      expect(joined).not.toContain("mv ");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

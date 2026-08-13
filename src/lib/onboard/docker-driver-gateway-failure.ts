@@ -29,6 +29,7 @@ import { redact } from "../security/redact";
 import { classifyGatewayStartFailure } from "../validation";
 
 import type { ChildExitState } from "./child-exit-tracker";
+import { NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE } from "./docker-driver-gateway-service";
 import { printDockerDaemonRecovery } from "./gateway-start-failure";
 import { noteOnboardResumeHintShown, onboardRecoveryCommand } from "./resume-hint";
 
@@ -41,6 +42,17 @@ export type ReportDockerDriverGatewayStartFailureOpts = {
   exitOnFailure: boolean;
   /** Byte offset where the current gateway launch began writing the append-only log. */
   launchLogOffset: number;
+  /**
+   * Authoritative liveness probe for the selected Docker-driver gateway.
+   *
+   * `childExit.exited` alone cannot decide whether a gateway process still
+   * holds the state directory: the reporter is also reached after the health
+   * poll budget expires,
+   * and `process.kill(pid, 0)` reports a detached zombie as alive. Production
+   * passes `isDockerDriverGatewayProcessAlive`, which reads the recorded pid and
+   * then confirms process identity, so a zombie resolves to "not alive" (#8797).
+   */
+  isGatewayProcessAlive?: () => boolean;
 };
 
 function findAvailableGatewayStateArchivePath(stateDir: string): string | null {
@@ -66,12 +78,18 @@ function findAvailableGatewayStateArchivePath(stateDir: string): string | null {
  * `childExit.exited === false` on the reported downgrade path, and gating the
  * whole diagnosis on that flag left that path with no diagnosis at all (#8797).
  *
- * The state move keeps an explicit precondition instead: moving the directory
- * while a gateway process still runs leaves that process without its state.
+ * The state move needs stronger evidence than the diagnosis, because moving the
+ * directory while a gateway process still runs leaves that process without its
+ * state. This helper prints the move only when the reporter itself established
+ * that no gateway process holds the directory: either the child's `exit` event
+ * fired, or the authoritative liveness probe reported no live process. A user-
+ * run check cannot carry that weight, because `Restart=on-failure` in the
+ * managed unit can start a replacement between the check and the move.
  */
 function printIncompatibleGatewayDatabaseRecovery(
   logPath: string,
   childExit: ChildExitState,
+  isGatewayProcessAlive: (() => boolean) | undefined,
   printError: (message?: string) => void,
 ): void {
   const stateDir = path.dirname(logPath);
@@ -79,6 +97,18 @@ function printIncompatibleGatewayDatabaseRecovery(
   printError(`  Database: ${path.join(stateDir, "openshell.db")}`);
   printError("  The database records a migration that this OpenShell version does not include.");
   printError("  This can happen after an OpenShell downgrade.");
+  const gatewayStopped = childExit.exited || isGatewayProcessAlive?.() === false;
+  if (!gatewayStopped) {
+    printError("  NemoClaw could not confirm that the gateway process stopped.");
+    printError("  Stop the gateway, then run onboarding again:");
+    printError(`    systemctl --user stop ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}`);
+    printError(`    ${onboardRecoveryCommand()}`);
+    printError(
+      "  A gateway process that keeps running after the move writes to a path that no longer holds its state.",
+    );
+    noteOnboardResumeHintShown();
+    return;
+  }
   const archivePath = findAvailableGatewayStateArchivePath(stateDir);
   if (!archivePath) {
     printError("  NemoClaw could not select an unused archive path for the gateway state.");
@@ -95,11 +125,6 @@ function printIncompatibleGatewayDatabaseRecovery(
     "  The selected gateway state contains credentials and all registrations for this gateway.",
   );
   printError("  Keep the archive owner-only until every required registration is restored.");
-  if (!childExit.exited) {
-    printError("  NemoClaw did not observe this gateway process exit.");
-    printError("  Confirm that no gateway process is running before you move the state:");
-    printError("    pgrep -af openshell-gateway");
-  }
   printError("  Create the archive, move the selected gateway state, then continue onboarding:");
   printError(
     `    mkdir -m 700 ${archivePathArg} && mv ${stateDirArg} ${archivedStatePathArg} && ${onboardRecoveryCommand()}`,
@@ -120,7 +145,11 @@ function printIncompatibleGatewayDatabaseRecovery(
 export function reportDockerDriverGatewayStartFailure(
   logPath: string,
   childExit: ChildExitState,
-  { exitOnFailure, launchLogOffset }: ReportDockerDriverGatewayStartFailureOpts,
+  {
+    exitOnFailure,
+    launchLogOffset,
+    isGatewayProcessAlive,
+  }: ReportDockerDriverGatewayStartFailureOpts,
 ): void {
   const logBytes = fs.existsSync(logPath) ? fs.readFileSync(logPath) : Buffer.alloc(0);
   const currentLaunchLog = logBytes
@@ -148,7 +177,12 @@ export function reportDockerDriverGatewayStartFailure(
   if (failure.kind === "docker_unreachable") {
     printDockerDaemonRecovery(console.error);
   } else if (failure.kind === "database_migration_incompatible") {
-    printIncompatibleGatewayDatabaseRecovery(logPath, childExit, console.error);
+    printIncompatibleGatewayDatabaseRecovery(
+      logPath,
+      childExit,
+      isGatewayProcessAlive,
+      console.error,
+    );
   }
   console.error("  Troubleshooting:");
   console.error(`    tail -100 ${logPath}`);

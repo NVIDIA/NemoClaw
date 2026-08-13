@@ -602,11 +602,19 @@ Other sandboxes on the selected gateway can require re-onboarding and credential
 
 NemoClaw cannot always observe the gateway process exit.
 The start loop also reports this failure after its health poll budget expires.
-When NemoClaw did not observe the exit, the diagnostic reports that fact and prints `pgrep -af openshell-gateway`.
-Run that command and confirm that it lists no process before you move the state.
-Moving the state directory while a gateway process still runs leaves that process without its state directory.
+When NemoClaw did not observe the exit, it reads the recorded gateway PID and confirms process identity before it offers the state move.
 
-Run the exact commands that NemoClaw prints:
+The diagnosis prints in both cases. The state move prints only when NemoClaw establishes that no gateway process holds the directory.
+When NemoClaw cannot establish that, it prints the stop command for the managed gateway service instead, followed by the onboarding command:
+
+```bash
+systemctl --user stop nemoclaw-openshell-gateway
+```
+
+Stop the gateway, then run the onboarding command that NemoClaw prints on the next line.
+A gateway process that keeps running after the move writes to a path that no longer holds its state.
+
+When NemoClaw prints the state move, run the exact commands it prints:
 
 1. Create the printed `.incompatible` archive with owner-only access.
    If that path exists, NemoClaw adds a numeric suffix instead of nesting or replacing an earlier archive.
