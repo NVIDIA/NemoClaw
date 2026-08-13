@@ -609,9 +609,13 @@ esac`,
   it("documents the selected gateway port for a manually prepared upgrade", () => {
     const preparedUpgradeCommand =
       "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT=<selected-port> NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash";
+    const retryInstruction =
+      "If the installation fails, rerun the same install-pipeline command to preserve `NEMOCLAW_GATEWAY_PORT` and `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED`.";
 
     expect(fs.readFileSync(UPDATE_SANDBOXES_DOCS, "utf-8")).toContain(preparedUpgradeCommand);
     expect(fs.readFileSync(COMMANDS_DOCS, "utf-8")).toContain(preparedUpgradeCommand);
+    expect(fs.readFileSync(UPDATE_SANDBOXES_DOCS, "utf-8")).toContain(retryInstruction);
+    expect(fs.readFileSync(COMMANDS_DOCS, "utf-8")).toContain(retryInstruction);
   });
 
   it("requires separate managed-image confirmation before preparing a backup (#6114)", () => {
