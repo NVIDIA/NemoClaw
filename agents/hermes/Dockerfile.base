@@ -82,8 +82,8 @@ ARG UV_VERSION=0.11.33
 # node-gyp native build during `npm ci`; the runtime Dockerfile purges build
 # tools again after install.
 # Install the reviewed libexpat, jq, and Vim packages from immutable Debian
-# snapshots: Expat from 20260811T082421Z and jq and Vim from 20260724T000000Z,
-# matching the checksum-bound OpenClaw base image packages.
+# snapshots: Expat from 20260811T082421Z, jq from 20260724T000000Z, and Vim
+# from 20260727T143429Z, matching the checksum-bound OpenClaw base packages.
 # hadolint ignore=DL3001,DL4006
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential=12.12 \
