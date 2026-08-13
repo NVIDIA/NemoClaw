@@ -98,21 +98,6 @@ Install the following before you begin.
 - Docker (running)
 - [hadolint](https://github.com/hadolint/hadolint) (Dockerfile linter — `brew install hadolint` on macOS)
 
-### Windows Line Endings
-
-`.gitattributes` pins the files whose exact bytes the repository checks assert, so a new clone keeps LF even when `core.autocrlf` is `true`.
-
-Git does not rewrite a file that is already in your working tree.
-If you cloned before that rule existed, the file keeps CRLF, `git status` reports no change, and `npm run checks:repository` reports `use LF line endings`.
-
-Commit or stash your work first, because the next commands discard uncommitted changes.
-Then normalize the checkout once:
-
-```bash
-git rm --cached -r .
-git reset --hard
-```
-
 ## Getting Started
 
 From the repository root, prepare the checkout with one command:
@@ -406,6 +391,27 @@ The `validate:pr` command applies the same path selection, so do not rerun type 
 CI runs the complete type-check gates independently; local path selection is a fast-feedback optimization, not the authoritative trust boundary.
 
 If you still have `core.hooksPath` set from an old Husky setup, Git will ignore `.git/hooks`. Run `git config --unset core.hooksPath` in this repo, then `npm install` so `prek install` (via `prepare`) can register the hooks.
+
+If you cloned this repo on Windows before `.gitattributes` set `* text=auto eol=lf`, your working tree can still contain CRLF line endings.
+The rule now keeps every tracked text file on LF while Git continues to detect binary files automatically.
+These line endings cause repository checks to fail.
+
+Warning: `git reset --hard` discards tracked changes.
+Commit all changes, or stash tracked and untracked changes with `git stash push --include-untracked`.
+Run `git status --short`, and continue only if the command produces no output.
+From the root of this repo, remove tracked files from the Git index:
+
+```bash
+git rm --cached -r .
+```
+
+Then restore the Git index and working tree from the current commit:
+
+```bash
+git reset --hard
+```
+
+Git checks out tracked text files with LF line endings.
 
 `npm run checks:repository` runs only the custom checks collected under `scripts/checks`; lint and the repository-check hook use it internally. The `npm run checks` alias remains available for compatibility and prints the canonical routine and narrow command names before delegating.
 

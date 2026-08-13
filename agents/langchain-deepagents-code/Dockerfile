@@ -193,6 +193,7 @@ COPY agents/langchain-deepagents-code/validate-progressive-tool-disclosure.py /o
 COPY agents/langchain-deepagents-code/validate-observability.py /opt/nemoclaw-deepagents-code/validate-observability.py
 COPY agents/langchain-deepagents-code/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-wrapper.sh
 COPY agents/langchain-deepagents-code/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-launcher.sh
+COPY agents/langchain-deepagents-code/dcode-login-profile.sh /usr/local/lib/nemoclaw/dcode-login-profile.sh
 COPY agents/langchain-deepagents-code/dcode-session-supervisor.py /usr/local/lib/nemoclaw/dcode-session-supervisor.py
 COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
 COPY agents/langchain-deepagents-code/start.sh /usr/local/bin/nemoclaw-start
@@ -217,7 +218,7 @@ RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \
     && test -f /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
     && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
     && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh)" = '0:0:444' \
-    && chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/nemoclaw_observability.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py /opt/nemoclaw-deepagents-code/validate-observability.py /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
+    && chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/nemoclaw_observability.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py /opt/nemoclaw-deepagents-code/validate-observability.py /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/dcode-login-profile.sh \
     && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-session-supervisor.py \
     && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/dcode-session-supervisor.py)" = "0:0:755" \
     && install -o root -g root -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-managed-exec \
@@ -350,7 +351,13 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && chmod 660 /sandbox/.deepagents/config.toml
 
 USER root
-RUN chown root:root /sandbox/.nemoclaw \
+RUN chown root:sandbox /sandbox \
+    && chmod 1775 /sandbox \
+    && install -o root -g root -m 0444 /usr/local/lib/nemoclaw/dcode-login-profile.sh /sandbox/.bash_profile \
+    && test "$(stat -c '%U:%G:%a' /sandbox)" = 'root:sandbox:1775' \
+    && test "$(stat -c '%U:%G:%a' /sandbox/.bash_profile)" = 'root:root:444' \
+    && cmp -s /usr/local/lib/nemoclaw/dcode-login-profile.sh /sandbox/.bash_profile \
+    && chown root:root /sandbox/.nemoclaw \
     && chmod 1755 /sandbox/.nemoclaw \
     && chown -R root:root /sandbox/.nemoclaw/blueprints \
     && chmod -R 755 /sandbox/.nemoclaw/blueprints \
@@ -425,7 +432,7 @@ RUN set -eu; \
     test -z "$(dpkg --audit)"
 # End completed-image security package verification.
 
-ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
+ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
 RUN case "$NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER" in \
         root|sandbox) ;; \
         *) echo "ERROR: NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER must be root or sandbox" >&2; exit 1 ;; \

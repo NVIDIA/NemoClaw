@@ -3,6 +3,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
+// The ready summary resolves the sandbox's API port from the registry. Stub the
+// lookup so these unit tests never read the developer's real state file.
+const getSandboxMock = vi.hoisted(() =>
+  vi.fn((): { hermesApiPort?: number | null } | null => null),
+);
+vi.mock("../state/registry", () => ({ getSandbox: getSandboxMock }));
+
 const mocks = vi.hoisted(() => ({
   run: vi.fn(),
 }));
@@ -134,6 +141,7 @@ describe("printDashboardUi with port 8642 outside the chat UI (#2078)", () => {
   beforeEach(() => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     noteSpy.mockReset();
+    getSandboxMock.mockReturnValue(null);
   });
 
   afterEach(() => {
@@ -566,5 +574,100 @@ describe("collectHermesStartupDiagnostics", () => {
 
     expect(output).toContain("SLACK_BOT_TOKEN=");
     expect(output).not.toContain(slackToken);
+  });
+});
+
+describe("printDashboardUi announces per-sandbox Hermes API ports (#8543)", () => {
+  let logSpy: MockInstance<typeof console.log>;
+  const noteSpy = vi.fn();
+
+  const hermesShipped = makeAgent({
+    name: "hermes",
+    displayName: "Hermes Agent",
+    forwardPort: 18789,
+    forward_ports: [18789, 8642],
+    healthProbe: { url: "http://localhost:8642/health", port: 8642, timeout_seconds: 90 },
+    dashboard: {
+      kind: "ui",
+      label: "Dashboard",
+      path: "/",
+      healthPath: "/api/status",
+      auth: "session",
+    },
+  });
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    noteSpy.mockReset();
+    getSandboxMock.mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+  });
+
+  it("announces the sandbox's own API port instead of the manifest default", () => {
+    getSandboxMock.mockReturnValue({ hermesApiPort: 8643 });
+
+    printDashboardUi("hermes-clone", null, hermesShipped, {
+      note: noteSpy,
+      effectiveDashboardPort: 18790,
+      buildControlUiUrls: buildUrlsLoopback,
+    });
+
+    const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
+    expect(output).toContain("Port 8643 must be forwarded before connecting.");
+    expect(output).toContain("http://127.0.0.1:8643/v1");
+    expect(output).not.toContain("Port 8642 must be forwarded before connecting.");
+  });
+
+  it("announces the sandbox's own API port from an API-kind dashboard", () => {
+    const hermesApiDashboard = makeAgent({
+      name: "hermes",
+      displayName: "Hermes Agent",
+      forwardPort: 18789,
+      forward_ports: [18789, 8642],
+      healthProbe: { url: "http://localhost:8642/health", port: 8642, timeout_seconds: 90 },
+      dashboard: {
+        kind: "api",
+        label: "OpenAI-compatible API",
+        path: "/v1",
+        healthPath: "/health",
+        auth: "none",
+      },
+    });
+    getSandboxMock.mockReturnValue({ hermesApiPort: 8645 });
+
+    printDashboardUi("hermes-api-box", null, hermesApiDashboard, {
+      note: noteSpy,
+      buildControlUiUrls: buildUrlsLoopback,
+    });
+
+    const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
+    expect(output).toContain("Hermes Agent OpenAI-compatible API");
+    expect(output).toContain("Port 8645 must be forwarded before connecting.");
+    expect(output).toContain("http://127.0.0.1:8645/");
+    expect(output).not.toContain("http://127.0.0.1:8642/");
+  });
+
+  it("keeps the declared port for an agent that has no per-sandbox API port", () => {
+    getSandboxMock.mockReturnValue({ hermesApiPort: 8643 });
+    const dualAgent = makeAgent({
+      name: "experimental",
+      displayName: "Experimental",
+      forwardPort: 18789,
+      forward_ports: [18789, 9100],
+      healthProbe: { url: "http://localhost:9100/health", port: 9100, timeout_seconds: 30 },
+    });
+
+    printDashboardUi("other-box", null, dualAgent, {
+      note: noteSpy,
+      effectiveDashboardPort: 18790,
+      buildControlUiUrls: buildUrlsLoopback,
+    });
+
+    const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
+    expect(output).toContain("Port 9100 must be forwarded before connecting.");
+    expect(output).not.toContain("8643");
   });
 });

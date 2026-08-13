@@ -780,6 +780,45 @@ describe("ManifestCompiler", () => {
     });
   });
 
+  it("asks only Hermes operators for the WhatsApp reply mode (#8312)", async () => {
+    // The mode reaches the sandbox through the Hermes env, and the OpenClaw
+    // fragment carries no sender policy, so an OpenClaw operator must not be
+    // asked a question nothing consumes. The manifest expresses that with the
+    // hook's agents list; this proves the compiler honors it.
+    const asked: string[] = [];
+    const compileFor = (agent: "openclaw" | "hermes") =>
+      new ManifestCompiler(
+        createBuiltInChannelManifestRegistry(),
+        createBuiltInMessagingHookRegistry({
+          common: {
+            env: {},
+            getCredential: (key) => TEST_CREDENTIALS[key] ?? null,
+            saveCredential: () => {},
+            prompt: async (question) => {
+              asked.push(question);
+              return "";
+            },
+            log: () => {},
+          },
+        }),
+        createBuiltInRenderTemplateResolver(),
+      ).compile({
+        sandboxName: "demo",
+        agent,
+        workflow: "onboard",
+        isInteractive: true,
+        configuredChannels: ["whatsapp"],
+      });
+
+    await compileFor("openclaw");
+
+    expect(asked).toEqual([]);
+
+    await compileFor("hermes");
+
+    expect(asked).toEqual(["  WhatsApp reply mode [self-chat/bot; default: self-chat]: "]);
+  });
+
   it("disables a channel when enrollment opts to skip it", async () => {
     const hooks = new MessagingHookRegistry([
       {

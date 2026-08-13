@@ -30,6 +30,7 @@ import { listMessagingProviderSuffixes } from "../../messaging/channels";
 import {
   findAvailableDashboardPort,
   getRegistryOccupiedDashboardPorts,
+  getRegistryOccupiedHermesApiPorts,
   withDashboardPortReservationLock,
 } from "../../onboard/dashboard-port";
 import { isValidForwardPort } from "../../onboard/dashboard-runtime";
@@ -37,6 +38,7 @@ import {
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
 } from "../../onboard/gateway-binding";
+import { findAvailableHermesApiPort, HERMES_API_PORT_ENV } from "../../onboard/hermes-api-port";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
 import {
   isDcodeAgent,
@@ -281,6 +283,33 @@ function allocateCloneDashboardPort(
   }
 }
 
+// Allocate the clone's own API port. The source owns the host forward for its
+// port, and the sandbox exposes the API on the same number it is forwarded on,
+// so a clone that inherits the source's port gets no inference forward, and its
+// gateway restart never converges. Returns null for an agent that has no
+// per-sandbox API port, so the clone's field stays unset. Callers must invoke
+// this before any destructive step so range exhaustion aborts before the
+// mutation.
+function allocateCloneHermesApiPort(
+  dstName: string,
+  srcEntry: { name?: string; agent?: string | null },
+): number | null {
+  if (srcEntry.agent !== "hermes") return null;
+  const forwards = captureOpenshell(["forward", "list"], { ignoreError: true });
+  try {
+    return findAvailableHermesApiPort(
+      dstName,
+      undefined,
+      forwards.output || "",
+      undefined,
+      getRegistryOccupiedHermesApiPorts(dstName),
+    );
+  } catch (err) {
+    console.error(`  ${err instanceof Error ? err.message : String(err)}`);
+    snapshotExit(1);
+  }
+}
+
 function resolveCloneDashboardEnvArgs(
   srcEntry: SandboxEntry | { name: string },
   dstDashboardPort: number | null,
@@ -367,6 +396,7 @@ async function autoCreateSandboxFromSource(
   createPolicyPath: string,
   dstDashboardPort: number | null,
   dashboardEnvArgs: readonly string[],
+  dstHermesApiPort: number | null,
 ): Promise<void> {
   const openshellBin = getOpenshellBinary();
   const sourceObservabilityEnabled =
@@ -375,6 +405,7 @@ async function autoCreateSandboxFromSource(
     "env",
     `NEMOCLAW_OBSERVABILITY=${sourceObservabilityEnabled ? "1" : "0"}`,
     ...dashboardEnvArgs,
+    ...(dstHermesApiPort === null ? [] : [`${HERMES_API_PORT_ENV}=${dstHermesApiPort}`]),
     "nemoclaw-start",
   ];
   const createEnv = { ...process.env };
@@ -451,6 +482,8 @@ async function autoCreateSandboxFromSource(
     // `Sandbox GPU: enabled (CUDA verified)` based on another sandbox's run (#4231).
     sandboxGpuProof: null,
     dashboardPort: dstDashboardPort,
+    // The spread above carries the source's API port; the clone owns its own.
+    hermesApiPort: dstHermesApiPort,
     // The shared image keeps Hermes' image-baked internal listener port, but
     // the public WebUI port is a per-sandbox host resource and must follow the
     // clone's newly allocated dashboard port so rebuild validation converges.
@@ -1305,6 +1338,7 @@ async function runSnapshotRestoreUnlocked(
       // removes the existing `--force` destination — matching the pre-delete
       // validation the image and gateway-route checks above already do (#3756).
       const dstDashboardPort = allocateCloneDashboardPort(targetSandbox, lockedSourceEntry);
+      const dstHermesApiPort = allocateCloneHermesApiPort(targetSandbox, lockedSourceEntry);
       const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
       const clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry);
       try {
@@ -1328,6 +1362,7 @@ async function runSnapshotRestoreUnlocked(
           clonePolicy.policyPath,
           dstDashboardPort,
           dashboardEnvArgs,
+          dstHermesApiPort,
         );
       } finally {
         clonePolicy.cleanup?.();

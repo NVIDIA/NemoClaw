@@ -289,14 +289,16 @@ Print the Hermes dashboard URL:
 $$nemoclaw headless-agent dashboard-url --quiet
 ```
 
-The Hermes OpenAI-compatible API uses the loopback forward on port `8642`.
+The Hermes OpenAI-compatible API uses the loopback forward on the sandbox's own API port, which onboarding allocates from `8642` through `8652`.
+Run `openshell forward list` and select the `headless-agent` row whose local port is in that range.
+Replace `<api-port>` below with that port.
 For a Hermes sandbox, `gateway-token` is agent-aware and retrieves `API_SERVER_KEY` through the registered `bearer_token` web-auth contract.
 Use it as a bearer token, then clear the shell variable:
 
 ```bash
 TOKEN=$($$nemoclaw headless-agent gateway-token --quiet)
 curl -fsS -H "Authorization: Bearer $TOKEN" \
-  "http://127.0.0.1:8642/v1/models"
+  "http://127.0.0.1:<api-port>/v1/models"
 unset TOKEN
 ```
 
@@ -366,6 +368,10 @@ NemoClaw records the full validated YAML content in the sandbox registry.
 Snapshot restore and rebuild replay that recorded preset even when the original host file is unavailable.
 Keep the source YAML in your configuration repository so operators can review and change it.
 For the preset schema and removal workflow, refer to [Network Policies](../reference/network-policies).
+
+An SSH command without `-t`, a service unit, and a CI job have no terminal on stdin, so the preset picker cannot run there.
+Pass the preset name, `--from-file`, or `--from-dir` in such a session.
+`policy add` and `policy remove` skip their confirmation prompts without a terminal on stdin, so neither needs `--yes` or `NEMOCLAW_NON_INTERACTIVE=1`.
 
 ## Plan for Updates and Rebuilds
 

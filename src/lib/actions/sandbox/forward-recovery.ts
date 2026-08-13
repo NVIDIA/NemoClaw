@@ -10,7 +10,7 @@ import {
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
-import { DASHBOARD_PORT } from "../../core/ports";
+import { DASHBOARD_PORT, HERMES_OPENAI_API_PORT } from "../../core/ports";
 import { waitUntil } from "../../core/wait";
 import { getActiveMessagingHostForward } from "../../messaging/host-forward";
 import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/hydration";
@@ -18,6 +18,10 @@ import type { SandboxMessagingHostForwardPlan } from "../../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { isRemoteDashboardBindRequested } from "../../onboard/dockerfile-remote-dashboard-bind-contract";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import {
+  resolveSandboxHermesApiPort,
+  retargetHermesApiPortInUrl,
+} from "../../onboard/hermes-api-port";
 import { isWsl } from "../../platform";
 import { ROOT } from "../../state/paths";
 import * as registry from "../../state/registry";
@@ -110,6 +114,24 @@ export function resolveSandboxDashboardPort(
   }
 
   return DASHBOARD_PORT;
+}
+
+/**
+ * Resolve the health endpoint to probe inside the sandbox.
+ *
+ * Manifest probe URLs name the agent's default API port. Retarget them at this
+ * sandbox's own port so the probe reaches its relay rather than reporting the
+ * default port as unreachable.
+ */
+export function resolveSandboxHealthProbeUrl(sandboxName: string): string {
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  if (agent && agentRuntime.hasGatewayRuntime(agent)) {
+    return retargetHermesApiPortInUrl(
+      agentRuntime.getHealthProbeUrl(agent),
+      resolveSandboxHermesApiPort(registry.getSandbox(sandboxName) ?? {}),
+    );
+  }
+  return `http://127.0.0.1:${resolveSandboxDashboardPort(sandboxName)}/health`;
 }
 
 /**
@@ -421,6 +443,14 @@ export function recoverMessagingHostForward(
  * primary dashboard port is owned by `ensureSandboxPortForward`; the
  * optional Hermes web dashboard port is owned by
  * `ensureHermesDashboardPortForwardIfEnabled`.
+ *
+ * Manifest entries name the agent's default ports, not this sandbox's. Both
+ * the dashboard port and the Hermes API port are per-sandbox host resources, so
+ * a second sandbox owns neither manifest default. Skip the manifest dashboard
+ * entry, which `ensureSandboxPortForward` already recovers at this sandbox's
+ * dashboard port, and resolve the manifest API entry against the sandbox's
+ * recorded API port, or recovery demands a port that belongs to a sibling
+ * sandbox and reports a failure the sandbox cannot repair.
  */
 export function ensureDeclaredAgentForwardPortsHealthy(
   sandboxName: string,
@@ -431,7 +461,12 @@ export function ensureDeclaredAgentForwardPortsHealthy(
   const declared = (agent as { forward_ports?: unknown }).forward_ports;
   if (!Array.isArray(declared) || declared.length === 0) return null;
   const hermesDashboard = getHermesDashboardRecoveryConfig(sandboxName);
+  const sandbox = registry.getSandbox(sandboxName);
   const skipSet = new Set<number>([primaryPort]);
+  // The manifest's own primary entry is the default dashboard port. This
+  // sandbox's dashboard forward lives at primaryPort and is recovered by
+  // ensureSandboxPortForward, so the default must not be probed again.
+  if (isValidPort(agent.forwardPort)) skipSet.add(agent.forwardPort);
   if (hermesDashboard && Number.isInteger(hermesDashboard.publicPort)) {
     skipSet.add(hermesDashboard.publicPort);
   }
@@ -441,14 +476,16 @@ export function ensureDeclaredAgentForwardPortsHealthy(
     if (typeof candidate !== "number") continue;
     if (!Number.isInteger(candidate) || candidate < 1024 || candidate > 65535) continue;
     if (skipSet.has(candidate)) continue;
+    const port =
+      candidate === HERMES_OPENAI_API_PORT ? resolveSandboxHermesApiPort(sandbox ?? {}) : candidate;
     sawCovered = true;
-    const health = isSandboxPortForwardHealthy(sandboxName, candidate);
+    const health = isSandboxPortForwardHealthy(sandboxName, port);
     if (health === true) continue;
     if (health === "occupied") {
       allHealthy = false;
       continue;
     }
-    if (!ensureSandboxPortForwardForPort(sandboxName, candidate)) {
+    if (!ensureSandboxPortForwardForPort(sandboxName, port)) {
       allHealthy = false;
     }
   }

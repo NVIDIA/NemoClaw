@@ -329,6 +329,7 @@ describe.skipIf(process.platform !== "linux")("managed bootstrap image trampolin
         fs.rmSync(directory, { force: true, recursive: true });
       }
     },
+    30_000,
   );
 
   it("removes inherited shell controls before the root Bash interpreter starts", () => {

@@ -199,6 +199,12 @@ For a Kubernetes-driver source, the pod image must remain resolvable through its
 For dashboard-enabled agents, NemoClaw allocates the destination sandbox its own dashboard port instead of reusing the source port.
 If no port is available, restore stops before deleting an existing `--force` destination.
 
+<AgentOnly variant="hermes">
+NemoClaw also allocates the destination sandbox its own OpenAI-compatible API port from `8642` through `8652` instead of reusing the source port.
+If no port in that range is free, restore stops before deleting an existing `--force` destination.
+Run `openshell forward list` to read the destination sandbox's API port.
+</AgentOnly>
+
 <AgentOnly variant="openclaw">
 After NemoClaw creates the destination, it waits for the managed OpenClaw supervisor to pass a bounded readiness check before it applies snapshot state.
 If the check fails, the command leaves the destination registered without restored snapshot state and exits nonzero.
