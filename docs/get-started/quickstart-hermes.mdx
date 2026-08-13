@@ -83,7 +83,8 @@ Review the [Prerequisites](prerequisites) before you begin.
     nemohermes launch my-hermes
     ```
 
-    `nemohermes launch` runs the same preflight as `connect`, then starts `hermes` in your terminal.
+    `nemohermes launch` runs the complete preflight or validates an existing fixed 24-hour launch-readiness lease, then starts `hermes` in your terminal.
+    If the recorded configuration or live runtime has changed, NemoClaw runs the complete preflight automatically.
     To open a sandbox shell first and start Hermes yourself, run these commands instead.
 
     ```bash
