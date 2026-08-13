@@ -32,15 +32,15 @@ describe("policy and channel sandbox mutation locking", () => {
     lockMocks.withSandboxMutationLock.mockClear();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(defs, "loadAgent").mockReturnValue({ name: "openclaw" } as defs.AgentDefinition);
+    vi.spyOn(defs, "loadAgent").mockReturnValue({ name: "hermes" } as defs.AgentDefinition);
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "alpha",
-      agent: "openclaw",
+      agent: "hermes",
       policies: ["pypi"],
     });
     vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
     vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([
-      { version: 1, agent: "openclaw", key: "nous_research", digest: "reviewed-digest" },
+      { version: 1, agent: "hermes", key: "nous_research", digest: "reviewed-digest" },
     ]);
     vi.spyOn(registry, "getBaselineExclusionTransition").mockReturnValue(null);
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
@@ -60,7 +60,7 @@ describe("policy and channel sandbox mutation locking", () => {
     vi.spyOn(policies, "getPresetValidationWarning").mockReturnValue(null);
     vi.spyOn(policies, "getPresetEndpoints").mockReturnValue(["example.com"]);
     vi.spyOn(policies, "resolveSandboxBaselinePolicy").mockReturnValue({
-      agent: "openclaw",
+      agent: "hermes",
       policyPath: "/repo/policy-additions.yaml",
       content: "version: 1\nnetwork_policies: {}\n",
     });
