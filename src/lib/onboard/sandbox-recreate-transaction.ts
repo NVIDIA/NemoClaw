@@ -215,6 +215,164 @@ export interface SandboxRecreateObservation {
   readonly liveIdentityFingerprint: string | null;
 }
 
+export type CreatedSandboxLifecycleRegistration = Required<
+  Pick<SandboxEntry, "lifecycleGeneration" | "lifecycleLiveIdentityFingerprint">
+>;
+
+export interface CreatedSandboxLifecycleTarget {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+}
+
+type ObserveCreatedSandbox = (
+  sandboxName: string,
+  gatewayName: string,
+) => SandboxRecreateObservation;
+
+function requireLifecycleGeneration(sandboxName: string, lifecycleGeneration: string): void {
+  if (
+    lifecycleGeneration.length === 0 ||
+    lifecycleGeneration.length > 512 ||
+    lifecycleGeneration.trim() !== lifecycleGeneration
+  ) {
+    throw new Error(
+      `Cannot register sandbox '${sandboxName}': its lifecycle generation is invalid.`,
+    );
+  }
+}
+
+function requireReadyIdentity(
+  target: CreatedSandboxLifecycleTarget,
+  observation: SandboxRecreateObservation,
+): string {
+  if (observation.state !== "ready") {
+    throw new Error(
+      `Cannot register sandbox '${target.sandboxName}': its owning gateway did not report it Ready.`,
+    );
+  }
+  const fingerprint = observation.liveIdentityFingerprint;
+  if (!fingerprint || !/^[0-9a-f]{64}$/u.test(fingerprint)) {
+    throw new Error(
+      `Cannot register sandbox '${target.sandboxName}': its owning gateway did not report a valid live identity.`,
+    );
+  }
+  return fingerprint;
+}
+
+/** Pin the Ready sandbox identity observed from its owning gateway after creation. */
+export function captureCreatedSandboxLifecycleRegistration(
+  target: CreatedSandboxLifecycleTarget,
+  lifecycleGeneration: string,
+  lifecycleRegistrationFields: Pick<SandboxEntry, "lifecycleGeneration">,
+  observe: ObserveCreatedSandbox,
+): CreatedSandboxLifecycleRegistration {
+  requireLifecycleGeneration(target.sandboxName, lifecycleGeneration);
+  if (lifecycleRegistrationFields.lifecycleGeneration !== lifecycleGeneration) {
+    throw new Error(
+      `Cannot register sandbox '${target.sandboxName}': lifecycle setup did not preserve its generation.`,
+    );
+  }
+  return {
+    lifecycleGeneration,
+    lifecycleLiveIdentityFingerprint: requireReadyIdentity(
+      target,
+      observe(target.sandboxName, target.gatewayName),
+    ),
+  };
+}
+
+/** Preserve the recreate journal as the authority for replacement registration. */
+export function selectCreatedSandboxLifecycleRegistration(
+  sandboxName: string,
+  observed: CreatedSandboxLifecycleRegistration,
+  recreateTargetGeneration: string | undefined,
+  recreateRegistration: Pick<
+    SandboxEntry,
+    "lifecycleGeneration" | "lifecycleLiveIdentityFingerprint"
+  >,
+): CreatedSandboxLifecycleRegistration {
+  if (!recreateTargetGeneration) return observed;
+  if (
+    recreateTargetGeneration !== observed.lifecycleGeneration ||
+    recreateRegistration.lifecycleGeneration !== observed.lifecycleGeneration ||
+    recreateRegistration.lifecycleLiveIdentityFingerprint !==
+      observed.lifecycleLiveIdentityFingerprint
+  ) {
+    throw new Error(
+      `Cannot register sandbox '${sandboxName}': its recreate transaction no longer matches the created sandbox.`,
+    );
+  }
+  return {
+    lifecycleGeneration: recreateTargetGeneration,
+    lifecycleLiveIdentityFingerprint: recreateRegistration.lifecycleLiveIdentityFingerprint,
+  };
+}
+
+/** Re-observe the owner-scoped identity immediately before registry publication. */
+export function revalidateCreatedSandboxLifecycleRegistration(
+  target: CreatedSandboxLifecycleTarget,
+  registration: CreatedSandboxLifecycleRegistration,
+  observe: ObserveCreatedSandbox,
+): CreatedSandboxLifecycleRegistration {
+  requireLifecycleGeneration(target.sandboxName, registration.lifecycleGeneration);
+  const liveIdentityFingerprint = requireReadyIdentity(
+    target,
+    observe(target.sandboxName, target.gatewayName),
+  );
+  if (liveIdentityFingerprint !== registration.lifecycleLiveIdentityFingerprint) {
+    throw new Error(
+      `Cannot register sandbox '${target.sandboxName}': its live identity changed before registry publication.`,
+    );
+  }
+  return registration;
+}
+
+export interface CreatedSandboxLifecycle {
+  readonly generation: string;
+  capture(
+    lifecycleRegistrationFields: Pick<SandboxEntry, "lifecycleGeneration">,
+  ): CreatedSandboxLifecycleRegistration;
+  revalidate(
+    registration: CreatedSandboxLifecycleRegistration,
+  ): CreatedSandboxLifecycleRegistration;
+}
+
+/** Coordinate sandbox setup and registry publication on one lifecycle generation. */
+export function createCreatedSandboxLifecycle(
+  runtime: SandboxRecreateRuntime,
+  target: CreatedSandboxLifecycleTarget,
+  observe: ObserveCreatedSandbox,
+): CreatedSandboxLifecycle {
+  const generation = runtime.targetGeneration ?? randomUUID();
+  return {
+    generation,
+    capture: (lifecycleRegistrationFields) =>
+      captureCreatedSandboxLifecycleRegistration(
+        target,
+        generation,
+        lifecycleRegistrationFields,
+        observe,
+      ),
+    revalidate: (registration) => {
+      const verified = revalidateCreatedSandboxLifecycleRegistration(
+        target,
+        registration,
+        observe,
+      );
+      runtime.recordCreated({
+        state: "ready",
+        liveIdentityFingerprint: verified.lifecycleLiveIdentityFingerprint,
+      });
+      return selectCreatedSandboxLifecycleRegistration(
+        target.sandboxName,
+        verified,
+        runtime.targetGeneration,
+        runtime.registrationFields,
+      );
+    },
+  };
+}
+
 export interface SandboxRecreateSourceProof {
   readonly transactionId: string;
   readonly sandboxName: string;
@@ -430,7 +588,11 @@ export function recordSandboxRecreateTargetCreated(
   observation: SandboxRecreateObservation,
   now = new Date().toISOString(),
 ): CheckpointSandboxRecreateTransaction {
-  if (observation.state !== "ready" || !observation.liveIdentityFingerprint) {
+  if (
+    observation.state !== "ready" ||
+    !observation.liveIdentityFingerprint ||
+    !/^[0-9a-f]{64}$/u.test(observation.liveIdentityFingerprint)
+  ) {
     throw new Error("The journaled replacement must be ready with a stable OpenShell Id.");
   }
   const checkpoint = baseCheckpoint(session);
@@ -623,7 +785,7 @@ export interface SandboxRecreateRuntime {
   advance(phase: CheckpointSandboxRecreatePhase): void;
   beginDelete(): SandboxRecreateSourcePresence;
   confirmDeleted(): void;
-  recordCreated(): void;
+  recordCreated(observation: SandboxRecreateObservation): void;
 }
 
 const NO_SANDBOX_RECREATE: SandboxRecreateRuntime = {
@@ -641,7 +803,7 @@ const NO_SANDBOX_RECREATE: SandboxRecreateRuntime = {
     );
   },
   confirmDeleted: () => undefined,
-  recordCreated: () => undefined,
+  recordCreated: (_observation) => undefined,
 };
 
 export function createSandboxRecreateRuntime(
@@ -722,8 +884,7 @@ export function createSandboxRecreateRuntime(
       }
       advance("deleted");
     },
-    recordCreated: () => {
-      const observation = observe(sandboxName, transaction.gatewayName);
+    recordCreated: (observation) => {
       sessionStore.updateSession((current) => {
         targetLiveIdentityFingerprint = recordSandboxRecreateTargetCreated(
           current,

@@ -17,9 +17,14 @@ import {
   validateFreeStandingWorkflowInventory,
 } from "../../../tools/e2e/workflow-boundary.mts";
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
+import {
+  catalogueTarget,
+  validateE2eTargetCatalogue,
+} from "../../../tools/e2e/target-catalogue.mts";
 import { readWorkflow, removeJobNeed } from "../../helpers/e2e-workflow-contract";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { assertChannelsStopStartSandboxName } from "../live/channels-stop-start-safety.ts";
+import { COMMON_EGRESS_TEST_TIMEOUT_MS } from "../live/common-egress-agent-helpers.ts";
 import { requireFixture } from "./require-fixture";
 
 describe("e2e workflow boundary", () => {
@@ -202,47 +207,30 @@ describe("e2e workflow boundary", () => {
 
   it("keeps common-egress scenarios isolated with bounded concurrency and cleanup reserve", () => {
     const workflow = readWorkflow() as {
-      jobs: Record<
-        string,
-        {
-          env: Record<string, unknown>;
-          steps: Array<{ name?: string; run?: string; with?: Record<string, unknown> }>;
-          strategy: {
-            "fail-fast": boolean;
-            "max-parallel": number;
-            matrix: { include: Array<Record<string, string>> };
-          };
-          "timeout-minutes": number;
-        }
-      >;
+      jobs: Record<string, { strategy: { "max-parallel"?: number } }>;
     };
-    const job = workflow.jobs["common-egress-agent"]!;
-    const source = fs.readFileSync("test/e2e/live/common-egress-agent.test.ts", "utf8");
-    expect(source).toContain("const TEST_TIMEOUT_MS = 40 * 60_000;");
-
-    job["timeout-minutes"] = 40;
-    job.strategy["fail-fast"] = true;
+    const job = workflow.jobs["catalogue-brave-nvidia-inference"]!;
+    expect(COMMON_EGRESS_TEST_TIMEOUT_MS).toBeLessThan(
+      catalogueTarget("common-egress-agent-openclaw-balanced-weather").timeoutMinutes * 60_000,
+    );
+    expect(
+      [
+        "common-egress-agent-openclaw-balanced-weather",
+        "common-egress-agent-openclaw-open-reference",
+        "common-egress-agent-hermes-open-reference",
+      ].map((id) => {
+        const target = catalogueTarget(id);
+        return { selector: target.selector, shard: target.shard, timeout: target.timeoutMinutes };
+      }),
+    ).toEqual([
+      { selector: "^common-egress.+C1.+$", shard: "openclaw-balanced-weather", timeout: 60 },
+      { selector: "^common-egress.+C2.+$", shard: "openclaw-open-reference", timeout: 60 },
+      { selector: "^common-egress.+C3.+$", shard: "hermes-open-reference", timeout: 60 },
+    ]);
     job.strategy["max-parallel"] = 3;
-    job.strategy.matrix.include.pop();
-    job.env.E2E_ARTIFACT_DIR = "${{ github.workspace }}/e2e-artifacts/live/common-egress-agent";
-    delete job.env.NEMOCLAW_E2E_SHARD;
-    const run = job.steps.find((step) => step.name === "Run common-egress agent live test")!;
-    run.run = run.run!.replace('--selector "${{ matrix.selector }}"', "--selector all");
-    const upload = job.steps.find((step) => step.name === "Upload common-egress agent artifacts")!;
-    delete upload.with;
 
-    expect(validateE2eWorkflow(workflow)).toEqual(
-      expect.arrayContaining([
-        "common-egress-agent scenario jobs must keep the 60 minute timeout",
-        "common-egress-agent scenario matrix must disable fail-fast",
-        "common-egress-agent scenario matrix must cap concurrency at two",
-        "common-egress-agent job must keep the three isolated scenario shards",
-        "common-egress-agent job must isolate artifacts by matrix.scenario",
-        "common-egress-agent job must bind NEMOCLAW_E2E_SHARD to matrix.scenario",
-        `step 'Run common-egress agent live test' run script must include --selector "\${{ matrix.selector }}"`,
-        "common-egress-agent upload-e2e-artifacts invocation must not override its contract",
-        "common-egress-agent upload-e2e-artifacts must preserve its explicit name/path contract",
-      ]),
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "catalogue-brave-nvidia-inference must cap matrix concurrency at 2",
     );
   });
 
@@ -393,52 +381,17 @@ describe("e2e workflow boundary", () => {
     );
   });
 
-  // source-shape-contract: security -- Mutates the shipped workflow to prove PR-safe routing rejects credential-backed smokes and mutable tunnel tooling
-  it("rejects credential-backed provider smokes in the PR-safe inference-routing job", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-inference-routing-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = readWorkflow() as {
-      jobs: Record<
-        string,
-        { steps?: Array<{ name?: string; run?: string; env?: Record<string, string> }> }
-      >;
-    };
-    const run = workflow.jobs["inference-routing"]?.steps?.find(
-      (step) => step.name === "Run inference routing live test",
-    );
-    expect(run).toBeDefined();
-    run!.run = "npx vitest run --project e2e-live inference-routing-provider-smoke.test.ts";
-    const prerequisite = workflow.jobs["inference-routing"]?.steps?.find(
-      (step) => step.name === "Install and verify cloudflared prerequisite",
-    );
-    expect(prerequisite?.env).toBeDefined();
-    prerequisite!.env!.CLOUDFLARED_VERSION = "latest";
-    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+  it("rejects credential-backed provider smokes in the PR-safe inference-routing target", () => {
+    const target = catalogueTarget("inference-routing");
 
-    const digestWorkflowPath = path.join(tmp, "digest-workflow.yaml");
-    const digestWorkflow = readWorkflow() as {
-      jobs: Record<string, { steps?: Array<{ name?: string; env?: Record<string, string> }> }>;
-    };
-    const digestPrerequisite = digestWorkflow.jobs["inference-routing"]?.steps?.find(
-      (step) => step.name === "Install and verify cloudflared prerequisite",
-    );
-    expect(digestPrerequisite?.env).toBeDefined();
-    digestPrerequisite!.env!.CLOUDFLARED_DEB_SHA256 = "mutable";
-    fs.writeFileSync(digestWorkflowPath, YAML.stringify(digestWorkflow));
-
-    try {
-      expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
-        expect.arrayContaining([
-          "step 'Run inference routing live test' run script must include test/e2e/live/inference-routing.test.ts",
-          "step 'Run inference routing live test' run script must not include inference-routing-provider-smoke.test.ts",
-          "inference-routing cloudflared prerequisite step must pin CLOUDFLARED_VERSION=2026.6.1",
-        ]),
+    for (const mutation of [
+      { ...target, profile: "nvidia-inference" as const },
+      { ...target, testFile: "test/e2e/live/inference-routing-provider-smoke.test.ts" },
+      { ...target, cloudflared: false },
+    ]) {
+      expect(() => validateE2eTargetCatalogue([mutation])).toThrow(
+        "E2E target inference-routing must remain credential-free with reviewed cloudflared",
       );
-      expect(validateE2eWorkflowBoundary(digestWorkflowPath)).toContain(
-        "inference-routing cloudflared prerequisite step must pin CLOUDFLARED_DEB_SHA256=ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526",
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 
@@ -455,48 +408,17 @@ describe("e2e workflow boundary", () => {
         liveTargetsRun: false,
         selectedFreeStandingJobs: [],
       });
-      expect(
-        evaluateE2eWorkflowDispatchSelectors({
-          jobs: "brave-search",
-          targets: "brave-search",
-        }),
-      ).toMatchObject({
-        valid: true,
-        liveTargetsRun: false,
-        selectedFreeStandingJobs: ["brave-search"],
-        registryTargets: [],
+      const bravePlan = buildE2eWorkflowPlan({ targets: "brave-search" });
+      expect(bravePlan.catalogueMatrices["brave-nvidia-inference"]).toEqual([
+        expect.objectContaining({ id: "brave-search" }),
+      ]);
+      expect(bravePlan.matrix).toEqual([]);
+      expect(bravePlan.selectedJobs).toEqual([]);
+      const mixedPlan = buildE2eWorkflowPlan({
+        targets: "brave-search,ubuntu-repo-cloud-openclaw",
       });
-      expect(
-        evaluateE2eWorkflowDispatchSelectors({
-          jobs: "brave-search",
-          targets: "ubuntu-repo-cloud-langchain-deepagents-code",
-        }),
-      ).toMatchObject({
-        valid: true,
-        liveTargetsRun: true,
-        selectedFreeStandingJobs: ["brave-search"],
-        registryTargets: ["ubuntu-repo-cloud-langchain-deepagents-code"],
-      });
-      expect(
-        evaluateE2eWorkflowDispatchSelectors({
-          targets: "brave-search",
-        }),
-      ).toMatchObject({
-        valid: true,
-        liveTargetsRun: false,
-        selectedFreeStandingJobs: ["brave-search"],
-        registryTargets: [],
-      });
-      expect(
-        evaluateE2eWorkflowDispatchSelectors({
-          targets: "brave-search,ubuntu-repo-cloud-openclaw",
-        }),
-      ).toMatchObject({
-        valid: true,
-        liveTargetsRun: true,
-        selectedFreeStandingJobs: ["brave-search"],
-        registryTargets: ["ubuntu-repo-cloud-openclaw"],
-      });
+      expect(mixedPlan.catalogueMatrices["brave-nvidia-inference"]).toHaveLength(1);
+      expect(mixedPlan.matrix.map(({ id }) => id)).toEqual(["ubuntu-repo-cloud-openclaw"]);
       for (const [legacy, canonical] of [["hermes-dashboard", "hermes-e2e"]] as const) {
         for (const selectors of [{ jobs: legacy }, { targets: legacy }]) {
           expect(evaluateE2eWorkflowDispatchSelectors(selectors)).toMatchObject({
