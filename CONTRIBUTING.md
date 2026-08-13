@@ -400,9 +400,11 @@ All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-bina
 
 The Oxfmt hook formats added JavaScript and TypeScript files that its configuration does not exclude.
 The `anti-slop` hook lints added JavaScript and TypeScript files that its configuration does not exclude.
-Each hook classifies a file as added when its configured base ref does not contain the path.
-The default base ref is `origin/main`.
-Each hook stops before invoking its tool when its configured base ref is unavailable.
+The Oxfmt hook reads its base ref from `NEMOCLAW_FORMAT_BASE_REF`.
+The `anti-slop` hook reads its base ref from `NEMOCLAW_LINT_BASE_REF`.
+Both settings default to `origin/main`.
+A file is added when the selected base commit has no file at that path.
+If Git cannot resolve the selected base ref to a commit, the hook exits with status 2 before it invokes Oxfmt or Oxlint.
 
 For PR preparation, normal `pre-commit`, `commit-msg`, and `pre-push` hooks are valid verification when they pass and were not bypassed with `--no-verify`.
 If hooks were skipped, missing, failed, or uncertain, refresh the remote-tracking base with `git fetch origin main`, then run `npm run validate:pr` once to reproduce those checks for the current diff.

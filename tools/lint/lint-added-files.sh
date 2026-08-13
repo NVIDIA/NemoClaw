@@ -17,7 +17,7 @@ added_files=()
 for file in "$@"; do
   case "${file}" in
     "" | /* | . | .. | ./* | ../* | */./* | */../* | */. | */..)
-      printf 'ERROR: anti-slop candidate must be a repository-relative path: %q\n' "${file}" >&2
+      printf 'ERROR: anti-slop candidate must be a normalized repository-relative path without \".\" or \"..\" segments: %q\n' "${file}" >&2
       exit 2
       ;;
   esac

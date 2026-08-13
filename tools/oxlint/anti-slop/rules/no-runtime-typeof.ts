@@ -3,17 +3,16 @@
 
 import { defineRule } from "@oxlint/plugins";
 
-/** Disallow runtime typeof checks that narrow unparsed values instead of decoding them. */
+/** Disallow every runtime typeof check. */
 export const noRuntimeTypeofRule = defineRule({
   meta: {
     type: "problem",
     docs: {
-      description:
-        "Disallow runtime typeof checks; external values must be decoded into meaningful types at their I/O boundary.",
+      description: "Disallow every runtime `typeof` check.",
     },
     messages: {
       runtimeTypeof:
-        "A `typeof` check narrows a representation without establishing its contract. Parse input at its I/O boundary, then branch on the domain value.",
+        "`typeof` is not allowed by this rule. Use the value's domain contract. If the value crosses an I/O boundary, parse it before branching.",
     },
   },
   create(context) {
