@@ -20,10 +20,12 @@ function resolverScript(): string {
   const resolver = workflow.jobs?.["pr-build-and-entrypoint"]?.steps?.find(
     ({ name }) => name === "Resolve exact linux/amd64 PR base",
   )?.run;
-  if (!resolver) {
-    throw new Error("PR base resolver script is missing");
-  }
-  return resolver;
+  return (
+    resolver ??
+    (() => {
+      throw new Error("PR base resolver script is missing");
+    })()
+  );
 }
 
 it("builds a changed PR base locally and fails closed on comparison errors", () => {
