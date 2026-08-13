@@ -348,6 +348,10 @@ describe("launchSandbox", () => {
     expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
     expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
     expect(mocks.inspectLaunchReadiness).toHaveBeenCalledTimes(2);
+    expect(mocks.withLaunchReadinessMutationGate).toHaveBeenCalledWith(
+      expect.objectContaining({ epochId: "a".repeat(64) }),
+      expect.any(Function),
+    );
     expect(mocks.completeInteractiveSessionSetup).toHaveBeenCalledWith("alpha", sb);
     expect(mocks.execSandbox).toHaveBeenCalledOnce();
   });
@@ -403,6 +407,29 @@ describe("launchSandbox", () => {
 
     expect(mocks.prepareInteractiveSession).toHaveBeenCalled();
     expect(mocks.execSandbox).toHaveBeenCalled();
+  });
+
+  it("runs the complete preflight and interactive command when macOS evidence is unavailable (#8942)", async () => {
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "unsafe",
+      fence: null,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      fenceFailed: true,
+      recoveryBlocked: false,
+      authorityUnsupported: true,
+    });
+
+    await expect(launchSandbox("alpha")).resolves.toBeUndefined();
+
+    expect(mocks.prepareInteractiveSession).toHaveBeenCalledOnce();
+    expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
+    expect(mocks.withLaunchReadinessMutationGate).toHaveBeenCalledWith(
+      expect.objectContaining({ epochId: null }),
+      expect.any(Function),
+    );
+    expect(mocks.execSandbox).toHaveBeenCalledOnce();
   });
 
   it("stops before the complete preflight when a prior launch-readiness epoch may remain acceptable (#8942)", async () => {

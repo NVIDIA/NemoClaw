@@ -1014,10 +1014,10 @@ Use it instead of running `$$nemoclaw <name> connect` and then typing the agent 
 
 `launch` runs the complete preflight from [`$$nemoclaw <name> connect`](#$$nemoclaw-name-connect) when no launch-readiness lease is usable.
 That path includes the readiness wait, in-sandbox agent process recovery, and inference-route reconciliation.
-A successful complete preflight can publish a credential-free launch-readiness lease with a fixed 24-hour lifetime.
-Lease acceptance also requires a secure, independently writable OS per-user runtime authority.
-On Linux, NemoClaw uses `/run/user/<numeric-uid>`; on macOS, it asks the OS for the user's temporary root.
+A successful complete preflight can publish a credential-free launch-readiness lease with a fixed 24-hour lifetime on Linux.
+Lease acceptance and publication are currently Linux-only and require a secure, independently writable OS per-user runtime authority under `/run/user/<numeric-uid>`.
 It never uses caller-provided environment variables to select this authority.
+On macOS, `launch` runs the complete preflight every time and does not publish a launch-readiness lease.
 
 During that lease, another `launch` still verifies these conditions:
 
@@ -1152,7 +1152,7 @@ $$nemoclaw my-assistant connect [--probe-only]
 $$nemoclaw connect
 ```
 
-The `--probe-only` flag is the infrastructure producer for launch-readiness evidence.
+On Linux, the `--probe-only` flag is the infrastructure producer for launch-readiness evidence.
 It validates a usable lease and exits without duplicate recovery.
 Otherwise, it fences prior evidence, waits for the sandbox, verifies or repairs its in-sandbox agent process and host-side forwards, and publishes evidence only after every probe succeeds.
 It rechecks the sandbox on its recorded OpenShell gateway after the readiness wait and never restarts the shared host gateway.
@@ -1162,9 +1162,11 @@ A runtime failure and a failure to publish evidence for an otherwise healthy run
 
 Infrastructure must run the command as the same final numeric user that later runs `launch`.
 Run it only after the final durable home and state volume is mounted and after policy and network provisioning is complete.
-That user also needs a secure, independently writable OS per-user runtime authority: `/run/user/<numeric-uid>` on Linux, or the user temporary root derived from the OS on macOS.
+On Linux, that user also needs a secure, independently writable OS per-user runtime authority under `/run/user/<numeric-uid>`.
 Do not redirect this authority with caller environment variables.
 Do not use a graphical or login-session identifier as the deployment ordering boundary.
+On macOS, `connect --probe-only` runs the complete preflight, including recovery and probes, but exits nonzero because it cannot publish authoritative launch-readiness evidence.
+The publication-failure diagnostic is redacted and does not print filesystem paths or environment values.
 Run it for health checks and scripted readiness probes; users continue to run only `$$nemoclaw launch <name>`.
 
 Use [`$$nemoclaw launch <name>`](#$$nemoclaw-launch-name) when you want launch-readiness validation, an automatic fallback that runs the complete preflight, and then the agent instead of a sandbox shell.

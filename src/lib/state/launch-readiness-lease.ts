@@ -16,7 +16,6 @@ export const LAUNCH_READINESS_MAX_BYTES = 16 * 1_024;
 const RECEIPT_DIRECTORY = "launch-readiness";
 const AUTHORITY_PRODUCT_DIRECTORY = "nemoclaw";
 const AUTHORITY_DIRECTORY = "launch-readiness";
-const DARWIN_RUNTIME_ROOT_MAX_BYTES = 4 * 1_024;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const BOOT_ID_RE = /^[A-Za-z0-9._:-]{1,160}$/;
 
@@ -151,6 +150,7 @@ interface SecureDirectory {
 }
 
 class MissingStoreError extends Error {}
+class UnsupportedAuthorityError extends Error {}
 class UnsafeReceiptError extends Error {}
 class MalformedReceiptError extends Error {}
 
@@ -158,6 +158,7 @@ export class LaunchReadinessFenceError extends Error {
   constructor(
     readonly blocksRecovery: boolean,
     readonly priorEpochInvalidated: boolean,
+    readonly authorityUnsupported = false,
   ) {
     super(
       blocksRecovery
@@ -612,35 +613,9 @@ function validateDerivedRuntimeRoot(
   return { path: canonical, stat: finalStat };
 }
 
-function readDarwinRuntimeRoot(): string {
-  let output: string;
-  try {
-    output = execFileSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], {
-      encoding: "utf8",
-      env: { LANG: "C", LC_ALL: "C", PATH: "/usr/bin:/bin" },
-      maxBuffer: DARWIN_RUNTIME_ROOT_MAX_BYTES,
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 2_000,
-    });
-  } catch {
-    throw new UnsafeReceiptError();
-  }
-  if (
-    Buffer.byteLength(output) >= DARWIN_RUNTIME_ROOT_MAX_BYTES ||
-    output.includes("\0") ||
-    !/^[^\r\n]{1,4095}\n?$/.test(output)
-  ) {
-    throw new UnsafeReceiptError();
-  }
-  const candidate = output.endsWith("\n") ? output.slice(0, -1) : output;
-  if (!path.isAbsolute(candidate)) throw new UnsafeReceiptError();
-  return candidate;
-}
-
 function derivedRuntimeRoot(uid: number): string {
   if (process.platform === "linux") return `/run/user/${uid}`;
-  if (process.platform === "darwin") return readDarwinRuntimeRoot();
-  throw new UnsafeReceiptError();
+  throw new UnsupportedAuthorityError();
 }
 
 function buildAuthorityContext(base: BaseContext, sandboxName: string): AuthorityContext {
@@ -1028,6 +1003,7 @@ function ensureAuthorityDirectory(context: AuthorityContext, create: boolean): S
 
 type AuthorityInspection =
   | { kind: "missing"; context: AuthorityContext | null }
+  | { kind: "unsupported"; context: null }
   | { kind: "present"; context: AuthorityContext; authority: LaunchReadinessAuthority }
   | { kind: "unsafe"; context: AuthorityContext | null };
 
@@ -1037,6 +1013,9 @@ function inspectAuthority(base: BaseContext, sandboxName: string): AuthorityInsp
   try {
     context = buildAuthorityContext(base, sandboxName);
   } catch (error) {
+    if (error instanceof UnsupportedAuthorityError) {
+      return { kind: "unsupported", context: null };
+    }
     return error instanceof MissingStoreError
       ? { kind: "missing", context: null }
       : { kind: "unsafe", context: null };
@@ -1357,10 +1336,12 @@ export function checkLaunchReadinessMutationAuthority(
     const base = buildBaseContext(options);
     const inspection = inspectAuthority(base, sandboxName);
     if (expectedEpochId === null) {
+      if (inspection.kind === "unsupported") return "current";
       const persistent = inspectPersistentStore(base, sandboxName, gatewayPort, options);
       if (inspection.kind === "unsafe" || persistent.kind === "unsafe") return "unsafe";
       return inspection.kind === "missing" && persistent.kind === "missing" ? "current" : "changed";
     }
+    if (inspection.kind === "unsupported") return "changed";
     if (inspection.kind === "unsafe") return "unsafe";
     if (inspection.kind === "missing") return "changed";
     const { authority } = inspection;
@@ -1402,6 +1383,9 @@ export function fenceLaunchReadinessLease(
   }
   const base = buildBaseContext(options);
   const authorityInspection = inspectAuthority(base, sandboxName);
+  if (authorityInspection.kind === "unsupported") {
+    throw new LaunchReadinessFenceError(false, false, true);
+  }
   const persistentInspection = inspectPersistentStore(base, sandboxName, gatewayPort, options);
   const epochId = base.randomEpoch();
   if (!isEpoch(epochId)) throw new LaunchReadinessFenceError(true, false);

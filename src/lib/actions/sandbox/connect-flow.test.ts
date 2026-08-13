@@ -635,6 +635,33 @@ describe("connectSandbox flow", () => {
     );
   });
 
+  it("probe-only completes macOS recovery before reporting unavailable evidence (#8942)", async () => {
+    const harness = createConnectHarness({
+      readinessDecision: {
+        kind: "fallback",
+        category: "unsafe",
+        fence: null,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: true,
+        recoveryBlocked: false,
+        authorityUnsupported: true,
+      },
+      readinessPublicationResult: { kind: "evidence-failed" },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalledOnce();
+    expect(harness.ensureLiveSandboxSpy).toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
+    expect(harness.errorSpy).toHaveBeenCalledWith(
+      "  Probe failed: complete probe and recovery succeeded, but launch-readiness evidence is unavailable on this platform.",
+    );
+  });
+
   it("probe-only stops before mutation when the fenced epoch cannot be revalidated (#8942)", async () => {
     const harness = createConnectHarness();
     harness.launchReadinessMutationGateSpy.mockResolvedValueOnce({ kind: "unsafe" });

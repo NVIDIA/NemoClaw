@@ -140,8 +140,8 @@ If the terminal runtime reports degraded health, rebuild the sandbox instead of 
 
 ### Understand Launch Readiness Leases
 
-A successful complete preflight for `$$nemoclaw launch <sandbox-name>` can publish a credential-free launch-readiness lease.
-Infrastructure can publish the same evidence with `$$nemoclaw <sandbox-name> connect --probe-only`.
+A successful complete preflight for `$$nemoclaw launch <sandbox-name>` can publish a credential-free launch-readiness lease on Linux.
+Linux infrastructure can publish the same evidence with `$$nemoclaw <sandbox-name> connect --probe-only`.
 The lease has a fixed 24-hour lifetime that repeated launches do not extend.
 Leaving the agent with `/exit` does not revoke it, and users do not refresh it manually.
 
@@ -167,9 +167,12 @@ Publication remains disabled until both wall time and monotonic uptime span the 
 Repeated attempts do not extend it.
 After it elapses, the next successful complete preflight can publish a new fixed 24-hour lease.
 
-Lease acceptance requires a secure, independently writable OS per-user runtime authority.
-On Linux, NemoClaw uses `/run/user/<numeric-uid>`; on macOS, it asks the OS for the user's temporary root.
+Lease acceptance and publication are currently Linux-only and require a secure, independently writable OS per-user runtime authority under `/run/user/<numeric-uid>`.
 It never uses caller-provided environment variables to select this authority.
+
+On macOS, `launch` runs the complete preflight every time and does not publish a launch-readiness lease.
+`connect --probe-only` also runs the complete preflight, including recovery and probes, but exits nonzero because it cannot publish authoritative launch-readiness evidence.
+The publication-failure diagnostic is redacted and does not print filesystem paths or environment values.
 
 Infrastructure must run `connect --probe-only` as the same final numeric user that later runs `launch`.
 Run it after the final durable home and state volume is mounted and after policy and network provisioning is complete.

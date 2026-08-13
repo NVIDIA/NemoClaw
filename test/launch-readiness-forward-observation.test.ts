@@ -14,7 +14,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("checks launch forwards through the sandbox's owning gateway without repair (#8942)", () => {
+function mockLaunchForwardObservation(
+  result: { status: number | null; output: string },
+  reachable = true,
+) {
   const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
   const agentRuntime = requireSource("../src/lib/agent/runtime.js");
   const registry = requireSource("../src/lib/state/registry.js");
@@ -30,8 +33,12 @@ it("checks launch forwards through the sandbox's owning gateway without repair (
     gatewayName: "nemoclaw",
     gatewayPort: 8080,
   });
-  vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-  const capture = vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+  vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(reachable);
+  return vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue(result);
+}
+
+it("checks launch forwards through the sandbox's owning gateway without repair (#8942)", () => {
+  const capture = mockLaunchForwardObservation({
     status: 0,
     output: `SANDBOX  BIND  PORT  PID  STATUS
 beta  127.0.0.1  18789  12345  running
@@ -44,4 +51,19 @@ beta  127.0.0.1  18790  12346  running`,
     ignoreError: true,
     timeout: expect.any(Number),
   });
+});
+
+it("rejects a reachable listener when the owning forward row is missing (#8942)", () => {
+  mockLaunchForwardObservation({
+    status: 0,
+    output: "SANDBOX  BIND  PORT  PID  STATUS",
+  });
+
+  expect(areSandboxLaunchForwardsHealthy("beta", "nemoclaw")).toBe(false);
+});
+
+it("returns unknown when the owner-scoped forward observation fails (#8942)", () => {
+  mockLaunchForwardObservation({ status: 1, output: "" });
+
+  expect(areSandboxLaunchForwardsHealthy("beta", "nemoclaw")).toBeNull();
 });

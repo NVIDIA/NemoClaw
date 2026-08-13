@@ -270,6 +270,7 @@ scripts/test-launch-readiness-lease.sh <openclaw-sandbox>
 
 Run this helper on Linux after the sandbox's final durable home and state
 volume is mounted and after final policy and network provisioning is complete.
+The launch-readiness lease path that it validates is currently Linux-only.
 The helper must run as the same numeric user that later runs `launch`, and that user must own the sandbox's NemoClaw state.
 The host must provide that user a secure, independently writable OS runtime authority under `/run/user/<numeric-uid>`; do not redirect it with environment variables.
 The host must provide the util-linux `script` command and GNU `timeout` command.

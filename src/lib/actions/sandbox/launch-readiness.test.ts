@@ -315,6 +315,19 @@ describe("launch readiness validation", () => {
     ]);
   });
 
+  it("uses a fenced CAS epoch when secure authority is available (#8942)", async () => {
+    const decision = await inspectLaunchReadiness(SANDBOX, deps());
+
+    expect(decision).toMatchObject({
+      kind: "fallback",
+      fence: { epochId: EPOCH },
+      fenceFailed: false,
+      recoveryBlocked: false,
+    });
+    expect(decision).not.toHaveProperty("authorityUnsupported");
+    expect(publicationFromDecision(SANDBOX, decision)).toMatchObject({ epochId: EPOCH });
+  });
+
   it("revalidates the producer epoch under both canonical locks before mutation", async () => {
     const currentDeps = deps();
     const checkMutationAuthority = vi.fn(() => "current" as const);
@@ -350,6 +363,34 @@ describe("launch readiness validation", () => {
       "gateway:end",
       "sandbox:end",
     ]);
+  });
+
+  it("rejects a stale fenced epoch before entering the mutation callback (#8942)", async () => {
+    const currentDeps = deps();
+    const checkMutationAuthority = vi.fn(() => "changed" as const);
+    const mutation = vi.fn();
+    currentDeps.checkMutationAuthority = checkMutationAuthority;
+
+    await expect(
+      withLaunchReadinessMutationGate(
+        {
+          sandboxName: SANDBOX,
+          gatewayName: GATEWAY_NAME,
+          gatewayPort: GATEWAY_PORT,
+          epochId: EPOCH,
+        },
+        mutation,
+        currentDeps,
+      ),
+    ).resolves.toEqual({ kind: "changed" });
+    expect(checkMutationAuthority).toHaveBeenCalledWith(
+      SANDBOX,
+      GATEWAY_NAME,
+      GATEWAY_PORT,
+      EPOCH,
+      undefined,
+    );
+    expect(mutation).not.toHaveBeenCalled();
   });
 
   it("delays a later producer's epoch rotation until the current producer releases the mutation locks", async () => {
@@ -674,6 +715,34 @@ describe("launch readiness validation", () => {
       expect.any(Function),
       GATEWAY_NAME,
     );
+    expect(gatewayHealth).not.toHaveBeenCalled();
+  });
+
+  it("uses the normalized trusted agent name for CUA semantic health (#8942)", async () => {
+    sandbox = entry(" nemocua ");
+    const currentDeps = deps();
+    const cuaReadiness = vi.fn();
+    const gatewayHealth = vi.fn(async () => true);
+    const smoke = vi.fn(() => ({ ok: true }) as const);
+    const cuaAgent = {
+      ...loadAgent("hermes"),
+      name: "nemocua",
+      runtime: {
+        kind: "terminal" as const,
+        interactive_command: "nemocua interactive",
+        headless_command: "nemocua headless",
+      },
+    };
+    currentDeps.listAgents = () => ["nemocua"];
+    currentDeps.loadAgent = () => cuaAgent;
+    currentDeps.cuaReadiness = cuaReadiness;
+    currentDeps.gatewayHealth = gatewayHealth;
+    currentDeps.smoke = smoke;
+
+    await createAcceptedLease(currentDeps);
+    expect(await inspectLaunchReadiness(SANDBOX, currentDeps)).toMatchObject({ kind: "accepted" });
+    expect(cuaReadiness).toHaveBeenCalledTimes(2);
+    expect(smoke).not.toHaveBeenCalled();
     expect(gatewayHealth).not.toHaveBeenCalled();
   });
 
@@ -1053,6 +1122,25 @@ describe("launch readiness validation", () => {
     expect(await publishLaunchReadiness(publication, unavailable)).toEqual({
       kind: "evidence-failed",
     });
+  });
+
+  it("never validates or publishes evidence without a fenced epoch (#8942)", async () => {
+    const currentDeps = deps();
+    const publishLease = vi.fn();
+    currentDeps.publishLease = publishLease;
+
+    await expect(
+      publishLaunchReadiness(
+        {
+          sandboxName: SANDBOX,
+          gatewayName: GATEWAY_NAME,
+          gatewayPort: GATEWAY_PORT,
+          epochId: null,
+        },
+        currentDeps,
+      ),
+    ).resolves.toEqual({ kind: "evidence-failed" });
+    expect(publishLease).not.toHaveBeenCalled();
   });
 
   it("rejects in-progress lifecycle and policy mutations", () => {

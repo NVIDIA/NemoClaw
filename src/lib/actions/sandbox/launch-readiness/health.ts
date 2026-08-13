@@ -86,8 +86,8 @@ export function resolveLaunchInteractiveCommand(
 export function resolveTrustedLaunchAgent(
   entry: SandboxEntry,
   deps: LaunchReadinessHealthDeps,
+  agentName = normalizedString(entry.agent) ?? "openclaw",
 ): AgentDefinition {
-  const agentName = normalizedString(entry.agent) ?? "openclaw";
   const available = (deps.listAgents ?? listAgents)();
   if (!available.includes(agentName)) throw new LaunchReadinessObservationError("config");
   let agent: AgentDefinition;
@@ -119,12 +119,13 @@ function probeInferenceRoute(
 export async function requireLaunchSemanticHealth(
   sandboxName: string,
   gatewayName: string,
+  agentName: string,
   entry: SandboxEntry,
   agent: AgentDefinition,
   inferenceConfigured: boolean,
   deps: LaunchReadinessHealthDeps,
 ): Promise<void> {
-  if (entry.agent === "nemocua") {
+  if (agentName === "nemocua") {
     try {
       (deps.cuaReadiness ?? requireCuaLifecycleReadiness)(entry);
     } catch {

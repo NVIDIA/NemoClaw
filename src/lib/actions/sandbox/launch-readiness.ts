@@ -84,6 +84,7 @@ export type LaunchReadinessDecision =
       gatewayPort: number | null;
       fenceFailed: boolean;
       recoveryBlocked: boolean;
+      authorityUnsupported?: true;
     };
 
 export interface LaunchReadinessDeps extends LaunchReadinessHealthDeps {
@@ -154,7 +155,7 @@ function canonicalize(value: unknown): unknown {
     return value;
   }
   if (Array.isArray(value)) return value.map(canonicalize);
-  if (typeof value === "object" && value !== null) {
+  if (typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value)
         .filter(([, entry]) => entry !== undefined)
@@ -636,7 +637,8 @@ async function captureLaunchIdentity(
   const getSandbox = deps.getSandbox ?? registry.getSandbox;
   const entry = getSandbox(sandboxName);
   if (!entry || entry.name !== sandboxName) throw new ObservationError("identity");
-  const agent = resolveTrustedLaunchAgent(entry, deps);
+  const agentName = normalizedString(entry.agent) ?? "openclaw";
+  const agent = resolveTrustedLaunchAgent(entry, deps, agentName);
   const projection = buildLaunchReadinessRegistryProjection(entry, agent);
   if (entry.gatewayPort !== gatewayPort || entry.gatewayName !== gatewayName) {
     throw new ObservationError("identity");
@@ -683,6 +685,7 @@ async function captureLaunchIdentity(
   await requireLaunchSemanticHealth(
     sandboxName,
     gatewayName,
+    agentName,
     entry,
     agent,
     inference.kind === "configured",
@@ -745,6 +748,7 @@ function fallback(
   gatewayPort: number | null,
   fenceFailed: boolean,
   recoveryBlocked = false,
+  authorityUnsupported = false,
 ): LaunchReadinessDecision {
   debugDecision(category);
   return {
@@ -755,6 +759,7 @@ function fallback(
     gatewayPort,
     fenceFailed,
     recoveryBlocked,
+    ...(authorityUnsupported ? { authorityUnsupported: true as const } : {}),
   };
 }
 
@@ -834,6 +839,7 @@ export async function inspectLaunchReadiness(
           gatewayPort,
           true,
           recoveryBlocked,
+          error instanceof LaunchReadinessFenceError && error.authorityUnsupported,
         );
       } finally {
         recordPerformanceStage("evidence-fence", fenceStartedAt);

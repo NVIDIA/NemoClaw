@@ -93,6 +93,7 @@ export type ConnectHarnessOptions = {
         gatewayPort: number | null;
         fenceFailed: boolean;
         recoveryBlocked: boolean;
+        authorityUnsupported?: true;
       };
   readinessPublicationResult?: LaunchReadinessPublicationResult;
 };

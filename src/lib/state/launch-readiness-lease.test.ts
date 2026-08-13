@@ -68,6 +68,7 @@ describe("launch readiness lease storage", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     fs.rmSync(root, { recursive: true, force: true });
   });
 
@@ -180,35 +181,49 @@ describe("launch readiness lease storage", () => {
   });
 
   it.skipIf(process.platform !== "darwin")(
-    "derives the macOS runtime authority without caller environment input",
+    "disables macOS evidence despite caller-controlled runtime path variables (#8942)",
     () => {
       const sandboxName = `darwin-authority-${process.pid}-${Date.now()}`;
-      const darwinRoot = fs.realpathSync.native(
-        execFileSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], {
-          encoding: "utf8",
-        }).trim(),
-      );
-      const authorityPath = launchReadinessAuthorityPath(sandboxName, darwinRoot);
       const productionOptions = options({
         runtimeAuthorityRoot: undefined,
         randomEpoch: () => EPOCH_A,
       });
-      try {
-        const fence = fenceLeaseStore(sandboxName, GATEWAY_NAME, GATEWAY_PORT, productionOptions);
-        publishLeaseStore(
+      vi.stubEnv("TMPDIR", runtimeRoot);
+      vi.stubEnv("HOME", runtimeRoot);
+      vi.stubEnv("XDG_RUNTIME_DIR", runtimeRoot);
+      vi.stubEnv("DARWIN_USER_TEMP_DIR", runtimeRoot);
+      vi.stubEnv("NEMOCLAW_RUNTIME_AUTHORITY_ROOT", runtimeRoot);
+      vi.stubEnv("LAUNCHD_SOCKET", runtimeRoot);
+      vi.stubEnv("SECURITYSESSIONID", "caller-session");
+      vi.stubEnv("__CF_USER_TEXT_ENCODING", "caller-encoding");
+
+      expectFenceFailure(
+        () => fenceLeaseStore(sandboxName, GATEWAY_NAME, GATEWAY_PORT, productionOptions),
+        false,
+      );
+
+      const testAuthorityOptions = options({ randomEpoch: () => EPOCH_A });
+      const fence = fenceLeaseStore(sandboxName, GATEWAY_NAME, GATEWAY_PORT, testAuthorityOptions);
+      publishLeaseStore(
+        sandboxName,
+        GATEWAY_NAME,
+        GATEWAY_PORT,
+        fence.epochId,
+        identity(),
+        testAuthorityOptions,
+      );
+      expect(readLeaseStore(sandboxName, GATEWAY_NAME, GATEWAY_PORT, productionOptions).kind).toBe(
+        "unsafe",
+      );
+      expect(
+        checkLaunchReadinessMutationAuthority(
           sandboxName,
           GATEWAY_NAME,
           GATEWAY_PORT,
-          fence.epochId,
-          identity(),
+          null,
           productionOptions,
-        );
-        expect(
-          readLeaseStore(sandboxName, GATEWAY_NAME, GATEWAY_PORT, productionOptions).kind,
-        ).toBe("valid");
-      } finally {
-        fs.rmSync(authorityPath, { force: true });
-      }
+        ),
+      ).toBe("current");
     },
   );
 

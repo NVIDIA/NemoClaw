@@ -1267,7 +1267,7 @@ export async function connectSandbox(
         console.log(`  Probe complete: launch readiness is healthy for '${sandboxName}'.`);
         return;
       }
-      if (readiness.fenceFailed) {
+      if (readiness.fenceFailed && readiness.authorityUnsupported !== true) {
         console.error(
           readiness.recoveryBlocked
             ? "  Probe failed: complete probe and recovery did not run because prior launch-readiness evidence could not be fenced. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry."
@@ -1311,7 +1311,9 @@ export async function connectSandbox(
     }
     if (publication.kind === "evidence-failed") {
       console.error(
-        "  Probe failed: complete probe and recovery succeeded, but final launch-readiness evidence could not be verified or published.",
+        readiness.kind === "fallback" && readiness.authorityUnsupported === true
+          ? "  Probe failed: complete probe and recovery succeeded, but launch-readiness evidence is unavailable on this platform."
+          : "  Probe failed: complete probe and recovery succeeded, but final launch-readiness evidence could not be verified or published.",
       );
       process.exit(1);
     }
