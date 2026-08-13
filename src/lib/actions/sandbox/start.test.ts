@@ -519,4 +519,65 @@ describe("startSandbox", () => {
 
     await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow("probe exploded");
   });
+
+  it("reports the recorded route as ready only after it serves an agent request", async () => {
+    const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
+    const h = harness({ probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        provider: "ollama-local",
+        model: "nemotron-3-nano:30b",
+        preferredInferenceApi: "openai-completions",
+      }),
+    );
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(probeInferenceInvocation).toHaveBeenCalledWith(
+      {
+        sandboxName: "my-sandbox",
+        provider: "ollama-local",
+        model: "nemotron-3-nano:30b",
+        preferredInferenceApi: "openai-completions",
+      },
+      {},
+      30_000,
+    );
+    expect(probeInferenceInvocation.mock.invocationCallOrder[0]).toBeGreaterThan(
+      h.verifyGateway.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("exits nonzero when the started gateway will not serve an agent request", async () => {
+    const probeInferenceInvocation = vi.fn(
+      () =>
+        ({
+          ok: false,
+          detail: "sandbox inference invocation probe returned HTTP 401",
+          httpStatus: 401,
+        }) as const,
+    );
+    const h = harness({ probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({ provider: "ollama-local", model: "nemotron-3-nano:30b" }),
+    );
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(1);
+    const output = h.log.mock.calls.map(([line]) => line).join("\n");
+    expect(output).toContain("HTTP 401");
+    expect(output).toContain("doctor");
+  });
+
+  it("stays unattested instead of failing when the sandbox records no route", async () => {
+    const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
+    const h = harness({ probeInferenceInvocation });
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(probeInferenceInvocation).not.toHaveBeenCalled();
+  });
 });

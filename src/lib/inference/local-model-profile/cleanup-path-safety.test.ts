@@ -7,7 +7,11 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { cleanupLocalModelRuntimes, type LocalModelRuntimeCleanupOptions } from "./cleanup";
+import {
+  cleanupHuggingFaceCacheData,
+  cleanupLocalModelRuntimes,
+  type LocalModelRuntimeCleanupOptions,
+} from "./cleanup";
 
 const temporaryDirectories: string[] = [];
 
@@ -36,6 +40,61 @@ afterEach(() => {
 
 describe("host-local model cleanup path safety", () => {
   it.skipIf(process.platform === "win32")(
+    "fails closed when the Hugging Face model cache is a symlink",
+    () => {
+      const homeDir = home();
+      const cacheParent = path.join(homeDir, ".cache");
+      const target = path.join(homeDir, "substituted-cache");
+      fs.mkdirSync(cacheParent);
+      fs.mkdirSync(target);
+      fs.symlinkSync(target, path.join(cacheParent, "huggingface"), "dir");
+
+      expect(cleanupHuggingFaceCacheData({ homeDir })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining("model cache is a symlink"),
+      });
+      expect(fs.existsSync(target)).toBe(true);
+    },
+  );
+
+  it.skipIf(typeof process.getuid !== "function")(
+    "fails closed when the Hugging Face model cache has an unexpected owner",
+    () => {
+      const homeDir = home();
+      const cache = path.join(homeDir, ".cache", "huggingface");
+      fs.mkdirSync(cache, { recursive: true });
+      const observedOwner = fs.lstatSync(cache).uid;
+
+      expect(
+        cleanupHuggingFaceCacheData({
+          homeDir,
+          currentUserId: observedOwner + 1,
+        }),
+      ).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining("cache parent is not owned by the current user"),
+      });
+      expect(fs.existsSync(cache)).toBe(true);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "fails closed when the Hugging Face model cache is group-writable",
+    () => {
+      const homeDir = home();
+      const cache = path.join(homeDir, ".cache", "huggingface");
+      fs.mkdirSync(cache, { recursive: true });
+      fs.chmodSync(cache, 0o770);
+
+      expect(cleanupHuggingFaceCacheData({ homeDir })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining("model cache is not current-user filesystem authority"),
+      });
+      expect(fs.existsSync(cache)).toBe(true);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
     "fails closed when managed llama.cpp state is a symlink",
     () => {
       const homeDir = home();
@@ -46,7 +105,7 @@ describe("host-local model cleanup path safety", () => {
       fs.symlinkSync(target, path.join(stateRoot, "managed-llama-cpp"), "dir");
       const deps = dockerDeps();
 
-      expect(cleanupLocalModelRuntimes({ deleteModels: false, homeDir, deps })).toMatchObject({
+      expect(cleanupLocalModelRuntimes({ homeDir, deps })).toMatchObject({
         ok: false,
         reason: expect.stringContaining("symlink"),
       });
@@ -64,7 +123,7 @@ describe("host-local model cleanup path safety", () => {
       const observedOwner = fs.lstatSync(stateDir).uid;
       const deps = dockerDeps({ currentUserId: observedOwner + 1 });
 
-      expect(cleanupLocalModelRuntimes({ deleteModels: false, homeDir, deps })).toMatchObject({
+      expect(cleanupLocalModelRuntimes({ homeDir, deps })).toMatchObject({
         ok: false,
         reason: expect.stringContaining("not owned by the current user"),
       });
@@ -80,7 +139,7 @@ describe("host-local model cleanup path safety", () => {
     fs.writeFileSync(path.join(stateRoot, "managed-llama-cpp"), "unexpected\n");
     const deps = dockerDeps();
 
-    expect(cleanupLocalModelRuntimes({ deleteModels: false, homeDir, deps })).toMatchObject({
+    expect(cleanupLocalModelRuntimes({ homeDir, deps })).toMatchObject({
       ok: false,
       reason: expect.stringContaining("not a directory"),
     });
