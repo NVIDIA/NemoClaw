@@ -123,7 +123,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("keeps an unrelated recreated-runtime probe failure terminal (#9050)", () => {
+  it("stops after an unknown recreated-runtime probe failure (#9050)", () => {
     const { runCaptureOpenshell, sleep } = replay([`${NAME}   Ready`]);
 
     expect(

@@ -2076,7 +2076,8 @@ The failure path differs when NemoClaw recreates an OpenShell-managed Docker run
 NemoClaw pins the exact OpenShell sandbox ID before recreation.
 Within the same deadline, NemoClaw requires two consecutive `Ready` observations that each confirm the exact ID and successful command execution.
 It retries only OpenShell's exact `sandbox is not ready` response.
-If the deadline expires, the ID changes, or another probe fails, NemoClaw preserves diagnostics and rolls back the direct runtime patch.
+If the deadline expires, the ID changes, or another probe fails, NemoClaw preserves diagnostics and attempts to restore the pre-recreation Docker container.
+If restoration fails, NemoClaw reports that the sandbox and container state is uncertain.
 NemoClaw does not start dashboard or other host forwarding, and it does not delete a sandbox by its mutable name.
 It leaves the sandbox in place for inspection and recovery.
 
