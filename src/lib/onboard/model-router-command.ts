@@ -60,11 +60,12 @@ export type ModelRouterCommandDeps = {
   packageVersion: () => string;
   log?: (message: string) => void;
   sourceFingerprint?: (routerDir: string) => string | null;
-  /** Disk-space gate collaborators (production: probeHostStorage /
-   * measureDirectorySizeBytes / formatStorageBytes from vllm-storage).
-   * Required, not defaulted: a value import of vllm-storage here would
-   * execute the Docker adapter's module-load probe on import, and a
-   * silent default would let tests statfs the real host filesystem. */
+  /**
+   * Disk-capacity collaborators. Production uses probeHostStorage,
+   * measureDirectorySizeBytes, and formatStorageBytes from vllm-storage.
+   * These are required so this module remains import-pure and tests cannot
+   * read capacity from the host filesystem.
+   */
   probeStorage: (targetPath: string, source: string) => StorageProbeResult;
   measureDirectorySize: (targetPath: string) => bigint;
   formatStorageBytes: (bytes: bigint) => string;
@@ -208,20 +209,19 @@ export function createModelRouterCommandProvisioner(
     return installed !== null && installed.startsWith("install:");
   };
 
-  // Fail closed before venv creation when the target filesystem cannot hold
-  // the router's Python environment, instead of letting pip fail mid-install
-  // with `[Errno 28]` and no guidance (#8973). `reclaimableVenvDir` is the
-  // existing venv directory when the install is about to replace it — its
-  // current footprint is freed by the replacement, so it counts toward the
-  // available budget and a tight-disk reinstall is not falsely refused.
+  // Block venv creation when verified capacity is too low, instead of letting
+  // pip fail during installation with `[Errno 28]` and no guidance (#8973).
+  // `reclaimableVenvDir` is an existing venv that this install will replace.
+  // Its current footprint counts toward usable capacity because replacement
+  // removes it before creating the new environment.
   const assertVenvDiskSpace = (reclaimableVenvDir: string | null): void => {
-    // Resolve before probing: the probe fails closed on a relative path, and a
-    // relative NEMOCLAW_MODEL_ROUTER_VENV (supported by prepareModelRouterVenv)
-    // must not silently turn the gate into a no-op.
+    // The probe requires an absolute path. Resolve the supported relative
+    // NEMOCLAW_MODEL_ROUTER_VENV value so capacity is checked at its intended
+    // location.
     const probe = deps.probeStorage(path.resolve(paths.venvDir), "Model Router venv");
     if (!probe.ok) {
-      // Advisory-only when capacity cannot be read (exotic filesystems);
-      // mirrors the managed-vLLM storage guard's unverifiable-capacity path.
+      // Continue when the filesystem does not report capacity, matching the
+      // managed-vLLM storage guard's unverifiable-capacity behavior.
       (deps.log ?? console.log)(
         `  Continuing because free disk space for the Model Router environment could not be verified (${probe.reason}).`,
       );
@@ -235,7 +235,7 @@ export function createModelRouterCommandProvisioner(
     const shortfallMib =
       (MODEL_ROUTER_VENV_REQUIRED_BYTES - availableBytes + MIB_BYTES - 1n) / MIB_BYTES;
     throw new Error(
-      `Model Router installation needs at least ${deps.formatStorageBytes(MODEL_ROUTER_VENV_REQUIRED_BYTES)} free ` +
+      `Model Router installation needs at least ${deps.formatStorageBytes(MODEL_ROUTER_VENV_REQUIRED_BYTES)} of free or reclaimable capacity ` +
         `at ${probe.capacity.path} (~2.1 GiB of Python packages plus download staging), but only ` +
         `${deps.formatStorageBytes(availableBytes)} is available. ` +
         `Free up at least ${String(shortfallMib)} MiB and retry.`,

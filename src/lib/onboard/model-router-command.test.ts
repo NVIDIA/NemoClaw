@@ -102,7 +102,7 @@ describe("model-router venv disk-space gate (#8973)", () => {
     });
 
     expect(() => provisioner.ensureModelRouterCommand()).toThrow(
-      /needs at least 3 GiB free .+ but only 1 GiB is available/,
+      /needs at least 3 GiB of free or reclaimable capacity .+ but only 1 GiB is available/,
     );
     expect(prepareModelRouterVenv).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
