@@ -81,7 +81,7 @@ describe("prepare-e2e workflow boundary", () => {
     )!;
     producerPrepare.with = { "build-cli": "false" };
 
-    const consumerJob = workflow.jobs["token-rotation"];
+    const consumerJob = workflow.jobs["messaging-providers"];
     const consumerPrepare = consumerJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
     delete consumerPrepare.with;
     consumerJob.steps!.splice(consumerJob.steps!.indexOf(consumerPrepare), 0, {
@@ -95,11 +95,11 @@ describe("prepare-e2e workflow boundary", () => {
     sharedJob.env!.E2E_EXECUTION_PROFILE = "credential-free";
     sharedJob.env!.E2E_JOB = "1";
 
-    const untrustedJob = workflow.jobs["inference-routing"];
+    const untrustedJob = workflow.jobs["cloud-onboard"];
     const untrustedPrepare = untrustedJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
     untrustedPrepare.uses = "./.github/actions/prepare-e2e";
 
-    const orderedJob = workflow.jobs["brave-search"];
+    const orderedJob = workflow.jobs["openclaw-plugin-runtime-exdev"];
     const orderedPrepareIndex = orderedJob.steps!.findIndex(
       (step) => step.name === PREPARE_E2E_STEP,
     );
@@ -110,17 +110,17 @@ describe("prepare-e2e workflow boundary", () => {
       expect.arrayContaining([
         "generate-matrix prepare-e2e must own the only default CLI build",
         "generate-matrix prepare-e2e invocation must not override its canonical contract",
-        "token-rotation prepare-e2e must set build-cli to false",
-        "token-rotation prepare-e2e invocation must not override its canonical contract",
-        "token-rotation must not duplicate prepare-e2e step 'Build CLI'",
+        "messaging-providers prepare-e2e must set build-cli to false",
+        "messaging-providers prepare-e2e invocation must not override its canonical contract",
+        "messaging-providers must not duplicate prepare-e2e step 'Build CLI'",
         "shared-e2e must not declare E2E_EXECUTION_PROFILE",
         "shared-e2e must not declare E2E_JOB",
         "shared-e2e prepare-e2e must set build-cli to false",
         "shared-e2e prepare-e2e invocation must not override its canonical contract",
-        "inference-routing must not load prepare-e2e from the target checkout",
-        "inference-routing must use prepare-e2e exactly once",
-        "brave-search must check out the repository before prepare-e2e",
-        "brave-search must authenticate to Docker Hub before prepare-e2e",
+        "cloud-onboard must not load prepare-e2e from the target checkout",
+        "cloud-onboard must use prepare-e2e exactly once",
+        "openclaw-plugin-runtime-exdev must check out the repository before prepare-e2e",
+        "openclaw-plugin-runtime-exdev must authenticate to Docker Hub before prepare-e2e",
       ]),
     );
   });
