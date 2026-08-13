@@ -336,6 +336,7 @@ jobs:
           - agent: openclaw
             display_name: OpenClaw
             dockerfile: Dockerfile
+            base_dockerfile: Dockerfile.base
             base_alias: ghcr.io/nvidia/nemoclaw/sandbox-base:latest
             base_repository: ghcr.io/nvidia/nemoclaw/sandbox-base
             image: nemoclaw-managed-pr/openclaw
@@ -343,6 +344,7 @@ jobs:
           - agent: hermes
             display_name: Hermes
             dockerfile: agents/hermes/Dockerfile
+            base_dockerfile: agents/hermes/Dockerfile.base
             base_alias: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest
             base_repository: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base
             image: nemoclaw-managed-pr/hermes
@@ -350,6 +352,7 @@ jobs:
           - agent: langchain-deepagents-code
             display_name: Deep Agents Code
             dockerfile: agents/langchain-deepagents-code/Dockerfile
+            base_dockerfile: agents/langchain-deepagents-code/Dockerfile.base
             base_alias: ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest
             base_repository: ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
             image: nemoclaw-managed-pr/langchain-deepagents-code
@@ -391,11 +394,36 @@ jobs:
         id: base
         shell: bash
         env:
+          BASE_DOCKERFILE: ${{ matrix.base_dockerfile }}
           BASE_ALIAS: ${{ matrix.base_alias }}
           BASE_REPOSITORY: ${{ matrix.base_repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
           DISPLAY_NAME: ${{ matrix.display_name }}
+          LOCAL_BASE_REFERENCE: nemoclaw-managed-pr/${{ matrix.agent }}-base:${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "ERROR: PR base resolution requires exact base and candidate commit SHAs." >&2
+            exit 1
+          fi
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          fi
+          if ! git diff --quiet "$BASE_SHA" "$CANDIDATE_SHA" -- "$BASE_DOCKERFILE"; then
+            echo "::notice::${DISPLAY_NAME} base Dockerfile changed; building the exact PR base locally"
+            docker buildx build \
+              --platform linux/amd64 \
+              --load \
+              --file "$BASE_DOCKERFILE" \
+              --tag "$LOCAL_BASE_REFERENCE" \
+              .
+            printf 'ref=%s\n' "$LOCAL_BASE_REFERENCE" >> "$GITHUB_OUTPUT"
+            printf '### %s PR base\n\nLocally built from `%s` at `%s`.\n' \
+              "$DISPLAY_NAME" "$BASE_DOCKERFILE" "$CANDIDATE_SHA" \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           alias_raw="$RUNNER_TEMP/pr-base-alias.raw"
           exact_raw="$RUNNER_TEMP/pr-base-exact.raw"
           docker buildx imagetools inspect "$BASE_ALIAS" --raw > "$alias_raw"

@@ -33,6 +33,7 @@ type MatrixEntry = {
   arch?: string;
   artifact_platform?: string;
   base_alias?: string;
+  base_dockerfile?: string;
   base_image?: string;
   base_repository?: string;
   display_name?: string;
@@ -531,6 +532,11 @@ describe("complete managed-image publication workflow", () => {
       "langchain-deepagents-code",
     ]);
     expect(matrix.every(({ base_alias }) => base_alias?.endsWith(":latest"))).toBe(true);
+    expect(matrix.map(({ base_dockerfile }) => base_dockerfile)).toEqual([
+      "Dockerfile.base",
+      "agents/hermes/Dockerfile.base",
+      "agents/langchain-deepagents-code/Dockerfile.base",
+    ]);
     expect(steps.indexOf(permissionDrift)).toBeGreaterThan(
       steps.indexOf(step(prBuilder, "Checkout")),
     );
@@ -545,6 +551,11 @@ describe("complete managed-image publication workflow", () => {
       "PR base resolution is missing",
     );
     expect(resolveBase).toContain('.platform.architecture == "amd64"');
+    expect(resolveBase).toContain(
+      'git diff --quiet "$BASE_SHA" "$CANDIDATE_SHA" -- "$BASE_DOCKERFILE"',
+    );
+    expect(resolveBase).toContain('--file "$BASE_DOCKERFILE"');
+    expect(resolveBase).toContain('--tag "$LOCAL_BASE_REFERENCE"');
     expect(resolveBase).toContain('reference="${BASE_REPOSITORY}@${digest}"');
     expect(resolveBase).toContain('actual="sha256:$(sha256sum "$exact_raw"');
 
@@ -898,11 +909,17 @@ fi
           ...process.env,
           ALIAS_RAW: aliasRaw,
           BASE_ALIAS: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+          BASE_DOCKERFILE: "Dockerfile.base",
           BASE_REPOSITORY: "ghcr.io/nvidia/nemoclaw/sandbox-base",
+          BASE_SHA: spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim(),
+          CANDIDATE_SHA: spawnSync("git", ["rev-parse", "HEAD"], {
+            encoding: "utf8",
+          }).stdout.trim(),
           DISPLAY_NAME: "OpenClaw",
           EXACT_RAW: exactRaw,
           GITHUB_OUTPUT: output,
           GITHUB_STEP_SUMMARY: summary,
+          LOCAL_BASE_REFERENCE: "nemoclaw-managed-pr/openclaw-base:test",
           PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
           RUNNER_TEMP: temporaryRoot,
         },
