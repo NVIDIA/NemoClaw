@@ -469,7 +469,7 @@ function applyPortableEnvironment(
     NEMOCLAW_PREFERRED_API: activation ? "openai-completions" : undefined,
     NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
     NEMOCLAW_POLICY_MODE: "custom",
-    NEMOCLAW_POLICY_PRESETS: "personal-open-internet",
+    NEMOCLAW_POLICY_PRESETS: env.NEMOCLAW_POLICY_PRESETS ?? "personal-open-internet",
     NEMOCLAW_POLICY_TIER: "personal",
   } as const;
   const previousPortableEnv = new Map<string, string | undefined>();

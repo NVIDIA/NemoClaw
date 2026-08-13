@@ -19,10 +19,11 @@ import {
 } from "./runtime/lifecycle-runtime";
 
 function verifyGateway(sandboxName: string): Promise<void> {
-  const { connectSandbox } = require("./connect") as {
-    connectSandbox: (name: string, options?: { probeOnly?: boolean }) => Promise<void>;
-  };
-  return connectSandbox(sandboxName, { probeOnly: true });
+  const { connectSandbox } = require("./connect") as typeof import("./connect");
+  return connectSandbox(sandboxName, {
+    probeOnly: true,
+    requireLaunchReadinessPublication: false,
+  });
 }
 
 type SandboxStartupRecoveryResult = import("./connect").SandboxStartupRecoveryResult;
