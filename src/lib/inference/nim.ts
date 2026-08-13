@@ -599,6 +599,9 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
       !firmwareIsUnifiedMemory &&
       gpuNames.some((name: string) => isDenylistedNvidiaGpuName(name))
     ) {
+      deps.onTrustGateRejection?.(
+        "nvidia-smi reported a placeholder GPU name and the bounded CUDA proof was not attempted",
+      );
       return null;
     }
     const taggedNames = gpuNames.filter((name: string) =>

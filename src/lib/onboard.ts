@@ -587,6 +587,7 @@ import * as recreateJournal from "./onboard/onboard-recreate-journal";
 import type { OpenShellInstallDeps, OpenShellInstallResult } from "./onboard/openshell-install";
 import { createOnboardPolicyApplication } from "./onboard/policy-selection";
 import {
+  printGpuPreflightLines,
   printLowMemoryWarning,
   printMessagingProviderMissing,
   printSwapCreationFailed,
@@ -1499,36 +1500,7 @@ async function preflight(
   dockerDriverGatewayEnv.warnIfGatewayWildcardBindAddress();
 
   // GPU
-  if (gpu && gpu.type === "nvidia") {
-    const lines = nim.formatNvidiaGpuPreflightLines(gpu);
-    console.log(`  ✓ ${lines[0]}`);
-    for (const extra of lines.slice(1)) {
-      console.log(`  ${extra}`);
-    }
-    if (!gpu.nimCapable) {
-      console.log("  ⓘ Local NIM unavailable — GPU VRAM too small");
-    }
-  } else if (gpu && gpu.type === "apple") {
-    console.log(
-      `  ✓ Apple GPU detected: ${gpu.name}${gpu.cores ? ` (${gpu.cores} cores)` : ""}, ${gpu.totalMemoryMB} MB unified memory`,
-    );
-    console.log("  ⓘ Local NIM unavailable — requires NVIDIA GPU");
-  } else {
-    console.log("  ⓘ Local NIM unavailable — no GPU detected");
-    if (gpuTrustGateRejection) {
-      console.log(`    GPU detection rejected the nvidia-smi report: ${gpuTrustGateRejection}`);
-    }
-  }
-
-  if (sandboxGpuConfig.sandboxGpuEnabled) {
-    console.log(
-      `  ✓ Sandbox GPU: enabled (${sandboxGpuConfig.mode}${sandboxGpuConfig.sandboxGpuDevice ? `, device ${sandboxGpuConfig.sandboxGpuDevice}` : ""})`,
-    );
-  } else if (sandboxGpuConfig.mode === "0") {
-    console.log("  ✓ Sandbox GPU: disabled by configuration");
-  } else {
-    console.log("  ⓘ Sandbox GPU: disabled (no NVIDIA GPU detected)");
-  }
+  printGpuPreflightLines({ gpu, sandboxGpuConfig, gpuTrustGateRejection });
 
   // Memory / swap check (Linux only)
   if (process.platform === "linux") {

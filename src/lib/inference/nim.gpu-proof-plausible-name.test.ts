@@ -229,16 +229,18 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
 
   it("reports an unrecognized GPU name without attempting the proof (#9000)", () => {
     const { reasons, onTrustGateRejection } = collectReasons();
+    const prover = passingProver();
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
-          proveArm64WslDockerDesktopGpu: passingProver(),
+          proveArm64WslDockerDesktopGpu: prover,
           runCaptureImpl: makeRunCapture("Graphics Device, 8128, 7000\n"),
           isWsl: true,
           onTrustGateRejection,
         }),
       ).toBeNull();
     });
+    expect(prover).not.toHaveBeenCalled();
     expect(reasons).toEqual([
       "nvidia-smi reported a GPU name that is not a recognized NVIDIA product and the bounded CUDA proof was not attempted",
     ]);
@@ -246,10 +248,11 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
 
   it("reports multiple GPU rows without attempting the proof (#9000)", () => {
     const { reasons, onTrustGateRejection } = collectReasons();
+    const prover = passingProver();
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
-          proveArm64WslDockerDesktopGpu: passingProver(),
+          proveArm64WslDockerDesktopGpu: prover,
           runCaptureImpl: makeRunCapture(
             `${PLAUSIBLE_NAME}, 8128, 7000\nNVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n`,
           ),
@@ -258,8 +261,35 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
         }),
       ).toBeNull();
     });
+    expect(prover).not.toHaveBeenCalled();
     expect(reasons).toEqual([
       "/proc/driver/nvidia is absent and the bounded CUDA proof was not attempted for multiple GPU rows",
+    ]);
+  });
+
+  it("reports a placeholder name rejected by the names-only fallback without attempting the proof (#9000)", () => {
+    const { reasons, onTrustGateRejection } = collectReasons();
+    const prover = passingProver();
+    const namesOnlyRunCapture = vi.fn((command: readonly string[]) =>
+      isNvidiaSmiMemoryQuery(command)
+        ? ""
+        : command[0] === "nvidia-smi" && command.some((arg) => arg === "--query-gpu=name")
+          ? "JMJWOA-Generic-GPU\n"
+          : "",
+    );
+    onWsl2Arm64WithoutKernelInterface(() => {
+      expect(
+        detectGpu({
+          proveArm64WslDockerDesktopGpu: prover,
+          runCaptureImpl: namesOnlyRunCapture,
+          isWsl: true,
+          onTrustGateRejection,
+        }),
+      ).toBeNull();
+    });
+    expect(prover).not.toHaveBeenCalled();
+    expect(reasons).toEqual([
+      "nvidia-smi reported a placeholder GPU name and the bounded CUDA proof was not attempted",
     ]);
   });
 
