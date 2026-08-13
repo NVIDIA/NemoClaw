@@ -11,11 +11,11 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChildExitState } from "./child-exit-tracker";
+import { printOnboardResumeHint, resetOnboardResumeHintForTests } from "./resume-hint";
 import {
-  printOnboardResumeHint,
-  resetOnboardResumeHintForTests,
-} from "./resume-hint";
-import { reportDockerDriverGatewayStartFailure } from "./docker-driver-gateway-failure";
+  recordedGatewayProcessStopped,
+  reportDockerDriverGatewayStartFailure,
+} from "./docker-driver-gateway-failure";
 
 function makeExitState(partial: Partial<ChildExitState> = {}): ChildExitState {
   return {
@@ -375,5 +375,72 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       launchLogOffset: 0,
     });
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("recordedGatewayProcessStopped (#8797)", () => {
+  function withStateDir(pidContents: string | null): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-pid-"));
+    if (pidContents !== null)
+      fs.writeFileSync(path.join(dir, "openshell-gateway.pid"), pidContents);
+    return dir;
+  }
+
+  // A missing record is not evidence that no gateway runs, so the caller must
+  // keep withholding the state move (advisor finding PRA-1).
+  it.each([
+    ["no pid file exists", null],
+    ["the pid file holds no number", "not-a-pid\n"],
+    ["the pid file holds a non-positive pid", "0\n"],
+    ["the pid file holds a numeric prefix only", "123invalid\n"],
+  ] as const)("reports not stopped when %s (#8797)", (_scenario, contents) => {
+    const dir = withStateDir(contents);
+    try {
+      expect(recordedGatewayProcessStopped(dir)).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports not stopped for a running process (#8797)", () => {
+    const dir = withStateDir(`${String(process.pid)}\n`);
+    try {
+      expect(recordedGatewayProcessStopped(dir)).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Absence of evidence is not evidence of absence: only a missing procfs entry
+  // proves the recorded process exited (advisor finding PRA-1).
+  it("reports not stopped when the process state cannot be read (#8797)", () => {
+    // 4194304 reads as ENOENT and would otherwise report stopped, so the
+    // assertion fails if the injected EACCES never reaches the probe.
+    const dir = withStateDir("4194304\n");
+    const readFileSync = fs.readFileSync;
+    const spy = vi.spyOn(fs, "readFileSync").mockImplementation(((target, ...rest) => {
+      if (String(target).startsWith("/proc/")) {
+        const denied = new Error("EACCES") as NodeJS.ErrnoException;
+        denied.code = "EACCES";
+        throw denied;
+      }
+      return (readFileSync as (...args: unknown[]) => unknown)(target, ...rest);
+    }) as typeof fs.readFileSync);
+    try {
+      expect(recordedGatewayProcessStopped(dir)).toBe(false);
+    } finally {
+      spy.mockRestore();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports stopped when the recorded process is gone (#8797)", () => {
+    // 4194304 is above the default pid_max, so no process can hold it.
+    const dir = withStateDir("4194304\n");
+    try {
+      expect(recordedGatewayProcessStopped(dir)).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

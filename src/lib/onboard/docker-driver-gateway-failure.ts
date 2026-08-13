@@ -58,28 +58,40 @@ export type ReportDockerDriverGatewayStartFailureOpts = {
  * never reaps it, so a crashed gateway stays a zombie and reports as alive.
  * Reading the process state directly separates a zombie from a live gateway.
  *
- * An unreadable or absent record returns false. The caller then withholds the
- * state move, because a missing record is not evidence that no gateway runs
- * (#8797, advisor finding PRA-1).
+ * Every uncertain result returns false so the caller withholds the state move.
+ * Uncertain results include an unreadable or malformed pid record, and any
+ * process-state read error other than a missing entry. Absence of evidence is
+ * not evidence that no gateway runs (#8797, advisor finding PRA-1).
  */
 export function recordedGatewayProcessStopped(stateDir: string): boolean {
-  let pid: number;
+  let recorded: string;
   try {
-    pid = Number.parseInt(
-      fs.readFileSync(path.join(stateDir, "openshell-gateway.pid"), "utf-8").trim(),
-      10,
-    );
+    recorded = fs.readFileSync(path.join(stateDir, "openshell-gateway.pid"), "utf-8").trim();
   } catch {
     return false;
   }
-  if (!Number.isInteger(pid) || pid <= 0) return false;
+  // Require the whole record to be a positive integer. `Number.parseInt` accepts
+  // a numeric prefix, so it would read "123invalid" as pid 123.
+  if (!/^[1-9]\d*$/.test(recorded)) return false;
+  const pid = Number(recorded);
   try {
-    // Field 3 of /proc/<pid>/stat is the process state. `Z` marks a zombie,
-    // which holds no state directory.
-    return fs.readFileSync(`/proc/${String(pid)}/stat`, "utf-8").split(" ")[2] === "Z";
-  } catch {
-    // The recorded process is gone, so nothing holds the state directory.
-    return true;
+    // Field 3 of /proc/<pid>/stat is the process state, and `Z` marks a zombie,
+    // which holds no state directory. Field 2 is the executable name wrapped in
+    // parentheses and may contain spaces, so read the state after the last
+    // parenthesis instead of splitting the whole line. A recycled pid can carry
+    // such a name.
+    const stat = fs.readFileSync(`/proc/${String(pid)}/stat`, "utf-8");
+    return (
+      stat
+        .slice(stat.lastIndexOf(")") + 1)
+        .trim()
+        .split(" ")[0] === "Z"
+    );
+  } catch (error) {
+    // Only a missing entry proves the recorded process is gone. A permission
+    // error, or a host without procfs, proves nothing, so fail closed and let
+    // the caller keep the stop-and-rerun guidance.
+    return (error as NodeJS.ErrnoException).code === "ENOENT";
   }
 }
 
@@ -108,7 +120,7 @@ function findAvailableGatewayStateArchivePath(stateDir: string): string | null {
  *
  * The state move needs stronger evidence than the diagnosis, because moving the
  * directory while a gateway process still runs leaves that process without its
- * state. This helper prints the move only when the reporter itself established
+ * state. This function prints the move only when the reporter itself established
  * that no gateway process holds the directory: either the child's `exit` event
  * fired, or the recorded gateway process is gone. A user-run check cannot carry
  * that weight, because `Restart=on-failure` in the managed unit can start a

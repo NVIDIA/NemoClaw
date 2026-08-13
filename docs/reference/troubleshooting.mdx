@@ -585,14 +585,17 @@ is missing in the resolved migrations
 ```
 
 NemoClaw identifies `<selected-state-dir>/openshell.db` as incompatible with the installed OpenShell migration set.
-This failure occurs after an OpenShell downgrade.
+This failure can happen after an OpenShell downgrade.
 Installing a NemoClaw release that is older than the installed one performs that downgrade, because each release pins one OpenShell version and the installer reinstalls OpenShell at the pin.
-You reach that state in one of two ways:
+You reach that state in one of three ways:
 
-- You select an older release with `NEMOCLAW_INSTALL_TAG`.
+- You select an older release with `NEMOCLAW_INSTALL_TAG` or `NEMOCLAW_INSTALL_REF`.
 - The default `lkg` release is older than the NemoClaw release already on the host.
+- You install an older OpenShell yourself.
 
-The diagnostic prints the database path, an unused archive path beside the selected state directory, and the profile-specific onboarding command.
+The diagnosis always prints the database path.
+When NemoClaw establishes that the gateway process stopped and an unused archive path is available, it also prints that archive path beside the selected state directory and the profile-specific onboarding command.
+When no unused archive path is available, it asks you to keep the gateway stopped and inspect the state directory instead.
 
 <Warning>
 The selected state directory contains the gateway database, mutual TLS private keys, JSON Web Token signing material, and every sandbox and provider registration on the selected gateway.
@@ -604,8 +607,8 @@ NemoClaw cannot always observe the gateway process exit.
 The start loop also reports this failure after its health poll budget expires.
 When NemoClaw did not observe the exit, it reads the recorded gateway PID and checks whether that process still runs before it offers the state move.
 
-The diagnosis prints in both cases. The state move prints only when NemoClaw establishes that no gateway process holds the directory.
-When NemoClaw cannot establish that, it prints the stop command for the managed gateway service instead, followed by the onboarding command:
+The state move prints only when NemoClaw establishes that no gateway process holds the directory.
+When NemoClaw cannot establish that, it prints the stop command for the managed gateway service, then the profile-specific onboarding command on the following line:
 
 ```bash
 systemctl --user stop nemoclaw-openshell-gateway
