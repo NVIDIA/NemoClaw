@@ -123,7 +123,7 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
   });
 
-  it("starts a stopped container before the readiness wait polls it (#8967)", async () => {
+  it("starts a stopped container before readiness polling begins (#8967)", async () => {
     const harness = createConnectHarness({
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
     });
@@ -152,6 +152,27 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(harness.dockerStartSpy.mock.invocationCallOrder[0]!).toBeLessThan(
       listInvocations[0]!.order,
     );
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("continues readiness polling when Docker cannot start a stopped container (#8967)", async () => {
+    const harness = createConnectHarness({
+      dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
+      dockerStartStatus: 1,
+      listOutput: "alpha Ready",
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.dockerStartSpy).toHaveBeenCalledOnce();
+    expect(harness.errorSpy.mock.calls.map(([line]) => String(line)).join("\n")).toContain(
+      "Docker could not start container 'openshell-alpha' (exit 1); continuing with readiness checks.",
+    );
+    expect(
+      harness.captureOpenshellSpy.mock.calls.some(
+        ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "list",
+      ),
+    ).toBe(true);
     expect(exitSpy).not.toHaveBeenCalled();
   });
 

@@ -155,9 +155,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
       running: options.dockerRuntime?.running ?? true,
       containerName: options.dockerRuntime?.containerName ?? null,
     });
-  const dockerStartSpy = vi
-    .spyOn(dockerAdapter, "dockerStart")
-    .mockReturnValue({ status: options.dockerStartStatus ?? 0 });
+  const dockerStartSpy = vi.spyOn(dockerAdapter, "dockerStart").mockReturnValue({
+    status: options.dockerStartStatus === undefined ? 0 : options.dockerStartStatus,
+  });
   const inferenceProbeResponses = [...(options.inferenceProbeResponses ?? [])];
   const listOutputs = [...(options.listOutputs ?? [])];
   const captureOpenshellSpy = vi

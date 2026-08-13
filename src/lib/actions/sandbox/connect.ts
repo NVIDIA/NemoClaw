@@ -1255,9 +1255,8 @@ export async function connectSandbox(
 ): Promise<void> {
   if (probeOnly) {
     await runConnectEntryPreflight(sandboxName, { probeOnly: true });
-    // Restart a stopped container so recovery does not poll a dead sandbox all
-    // the way to the timeout; a plain `docker start` brings it back healthy in
-    // seconds with workspace state preserved (#8967).
+    // Restart a stopped container before the readiness wait. Without this step,
+    // OpenShell keeps reporting the stopped sandbox until the wait expires (#8967).
     startStoppedSandboxContainerForProbeRecovery(sandboxName);
     waitForSandboxReadyOrExit(sandboxName, {
       defaultTimeoutSec: 300,

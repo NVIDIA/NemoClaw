@@ -1472,7 +1472,11 @@ A surviving server keeps its recorded endpoint and address pins while its policy
 ### `$$nemoclaw <name> recover`
 
 Repair a stopped in-sandbox gateway and re-establish host-side forwards without opening an SSH session.
-Use this after a direct sandbox container restart, a sandbox crash, or whenever `$$nemoclaw <name> status` reports the gateway is not running but the sandbox is alive.
+Use this after a sandbox crash or whenever `$$nemoclaw <name> status` reports that the sandbox container or agent gateway is not running.
+
+For a stopped, non-paused Docker-driver container, `recover` starts the existing container before it waits for OpenShell readiness.
+It leaves a running or paused container unchanged.
+If Docker cannot start the container, `recover` continues to the readiness check and reports the resulting failure.
 
 `recover` waits up to 30 seconds to acquire the per-sandbox lifecycle lock.
 After acquisition, it holds the lock until gateway recovery and forward repair finish.
