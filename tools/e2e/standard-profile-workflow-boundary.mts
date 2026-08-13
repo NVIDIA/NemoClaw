@@ -94,8 +94,10 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     for (const [name, expected] of Object.entries({
       candidate_repository: "${{ inputs.checkout_repository || github.repository }}",
       candidate_sha: "${{ inputs.checkout_sha || github.sha }}",
-      risk_signal_expected_sha: "${{ inputs.checkout_sha }}",
-      risk_signal_correlation_id: "${{ inputs.correlation_id }}",
+      risk_signal_expected_sha:
+        "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}",
+      risk_signal_correlation_id:
+        "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}",
       cli_artifact_provenance: "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
       target_id: "${{ matrix.id }}",
       runner: "${{ matrix.runner }}",

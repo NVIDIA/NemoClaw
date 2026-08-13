@@ -31,13 +31,14 @@ describe("standard E2E execution profile boundary", () => {
     );
   });
 
-  it("rejects catalogue callers without the manual PR risk-signal identity", () => {
+  it("rejects catalogue callers without dispatch-bound manual PR risk-signal identity", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { with: Record<string, string> }>;
     };
     workflow.jobs["catalogue-standard"]!.with.risk_signal_expected_sha =
       "${{ inputs.checkout_sha || github.sha }}";
-    workflow.jobs["catalogue-standard"]!.with.risk_signal_correlation_id = "";
+    workflow.jobs["catalogue-standard"]!.with.risk_signal_correlation_id =
+      "${{ inputs.correlation_id }}";
 
     expect(validateStandardProfileWorkflowBoundary(workflow)).toEqual(
       expect.arrayContaining([
