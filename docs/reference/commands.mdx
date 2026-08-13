@@ -782,7 +782,10 @@ Kanban backup does not include named boards, attachments, worker logs, scratch w
 </AgentOnly>
 
 Before creating the gateway, the wizard runs preflight checks.
-It verifies that Docker is reachable, rejects unsupported runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
+It verifies that Docker is reachable and prints host remediation guidance when prerequisites are missing.
+Standard onboarding rejects unsupported runtimes such as Podman.
+The explicit portable experimental profile has one installer-preflight admission exception for the Podman unsupported-runtime finding.
+It does not waive any other readiness blocker or make Podman generally supported.
 The preflight also enforces the OpenShell version range declared in the blueprint (`min_openshell_version` and `max_openshell_version`).
 If the installed OpenShell version falls outside this range, onboarding exits with an actionable error and a link to compatible releases.
 For fresh OpenShell installs, NemoClaw queries published OpenShell releases and asks the installer to use a release that fits the blueprint range.

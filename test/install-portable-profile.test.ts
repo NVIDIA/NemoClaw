@@ -51,6 +51,7 @@ describe("installer portable profile runtime override", () => {
 
   it("rejects an unknown experimental profile before install effects (#9007)", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-invalid-profile-"));
+    const processTemp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-invalid-profile-tmp-"));
     const marker = path.join(fixture, "existing-state");
     fs.writeFileSync(marker, "unchanged\n");
     const stateBefore = fs.readdirSync(fixture);
@@ -65,7 +66,7 @@ describe("installer portable profile runtime override", () => {
           ...process.env,
           HOME: fixture,
           NEMOCLAW_EXPERIMENTAL_PROFILE: "",
-          TMPDIR: fixture,
+          TMPDIR: processTemp,
           XDG_CONFIG_HOME: path.join(fixture, "config"),
         },
       },
