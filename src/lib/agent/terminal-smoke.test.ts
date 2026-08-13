@@ -4,7 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { DCODE_MANAGED_EXEC_LAUNCHER } from "../actions/sandbox/connect-inference-route-probe";
-import { loadAgent, type AgentDefinition } from "./defs";
+import { type AgentDefinition, loadAgent } from "./defs";
 import { buildAgentSmokeArgs, runAgentSmokeCommands } from "./terminal-smoke";
 
 function agent(name: string): AgentDefinition {
@@ -60,7 +60,7 @@ describe("terminal agent smoke command invocation", () => {
         "alpha",
         "-g",
         "nemoclaw-8091",
-        "--",
+        "--no-tty",
       ]);
     }
   });

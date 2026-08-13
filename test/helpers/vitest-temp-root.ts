@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,39 @@ const KEEP_TEMP_ENV = "NEMOCLAW_TEST_KEEP_TEMP";
 const TEMP_ENV_KEYS = ["TMPDIR", "TMP", "TEMP"] as const;
 
 type TempEnvKey = (typeof TEMP_ENV_KEYS)[number];
+
+function prepareGitHubHostedRuntimeAuthority(): void {
+  if (
+    process.platform !== "linux" ||
+    process.env.GITHUB_ACTIONS !== "true" ||
+    process.env.RUNNER_ENVIRONMENT !== "github-hosted"
+  ) {
+    return;
+  }
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (!Number.isSafeInteger(uid) || !Number.isSafeInteger(gid)) {
+    throw new Error("GitHub-hosted launch-readiness tests require a numeric user identity");
+  }
+  const runtimeRoot = `/run/user/${uid}`;
+  if (fs.existsSync(runtimeRoot)) return;
+  execFileSync(
+    "sudo",
+    [
+      "--non-interactive",
+      "install",
+      "-d",
+      "-m",
+      "0700",
+      "-o",
+      String(uid),
+      "-g",
+      String(gid),
+      runtimeRoot,
+    ],
+    { stdio: "inherit" },
+  );
+}
 
 function restoreTempEnv(previous: ReadonlyMap<TempEnvKey, string | undefined>): void {
   for (const key of TEMP_ENV_KEYS) {
@@ -71,4 +105,7 @@ export function setupVitestTempRoot(): () => void {
   };
 }
 
-export default setupVitestTempRoot;
+export default function setupVitestEnvironment(): () => void {
+  prepareGitHubHostedRuntimeAuthority();
+  return setupVitestTempRoot();
+}
