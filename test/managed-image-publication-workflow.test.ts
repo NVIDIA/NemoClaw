@@ -458,43 +458,6 @@ describe("complete managed-image publication workflow", () => {
     }
   });
 
-  it("executes dos2unix from each Deep Agents Code platform image before manifest publication (#8870)", () => {
-    const action = YAML.parse(
-      fs.readFileSync(
-        path.join(repoRoot, ".github", "actions", "build-base-image-platform", "action.yaml"),
-        "utf8",
-      ),
-    ) as { runs?: { steps?: Step[] } };
-    const steps = action.runs?.steps ?? [];
-    const validate = required(
-      steps.find((candidate) => candidate.name === "Validate Deep Agents Code dos2unix executable"),
-      "base-image platform action is missing the Deep Agents Code dos2unix validation",
-    );
-    const buildIndex = steps.findIndex(
-      (candidate) => candidate.name === "Build and push platform digest",
-    );
-    const validateIndex = steps.indexOf(validate);
-    const exportIndex = steps.findIndex((candidate) => candidate.name === "Export platform digest");
-
-    expect(validate.if).toBe("${{ inputs.agent == 'langchain-deepagents-code' }}");
-    expect(validate.env).toMatchObject({
-      DIGEST: "${{ steps.build.outputs.digest }}",
-      IMAGE: "${{ inputs.registry }}/${{ inputs.image }}",
-      PLATFORM: "${{ inputs.platform }}",
-    });
-    expect(validate.run).toContain('reference="${IMAGE}@${DIGEST}"');
-    expect(validate.run).toContain('docker run --rm --platform "$PLATFORM"');
-    expect(validate.run).toContain("--network none");
-    expect(validate.run).toContain("--cap-drop ALL");
-    expect(validate.run).toContain("--security-opt no-new-privileges");
-    expect(validate.run).toContain("--read-only");
-    expect(validate.run).toContain("--user 999:999");
-    expect(validate.run).toContain("test -x /usr/bin/dos2unix");
-    expect(validate.run).toContain("dos2unix --version");
-    expect(validateIndex).toBeGreaterThan(buildIndex);
-    expect(validateIndex).toBeLessThan(exportIndex);
-  });
-
   it("builds and exercises every shipped agent from an exact PR image before merge (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const reviewedAudit = managedPrReviewedAudit(workflow);

@@ -13,8 +13,7 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const JOB_NAME = "openshell-gateway-auth-contract";
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
-const MAIN_AND_MANUAL_CONDITION =
-  "${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openshell-gateway-auth-contract,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-auth-contract,') }}";
+const TRUSTED_PLAN_CONDITION = `\${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${JOB_NAME}') }}`;
 const GATEWAY_PROBE_IMAGE =
   "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
 const ARTIFACT_SAFETY_GATED_UPLOAD =
@@ -85,8 +84,8 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   if (job.needs !== "generate-matrix") {
     errors.push(`${JOB_NAME} must depend on generate-matrix`);
   }
-  if (job.if !== MAIN_AND_MANUAL_CONDITION) {
-    errors.push(`${JOB_NAME} must run on main pushes and retain manual selectors`);
+  if (job.if !== TRUSTED_PLAN_CONDITION) {
+    errors.push(`${JOB_NAME} must use the trusted execution plan`);
   }
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push(`${JOB_NAME} must run on ubuntu-latest`);

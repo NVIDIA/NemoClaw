@@ -55,10 +55,10 @@ The version is already known, so use a patch bump unless the maintainer selects 
 Show the commit, changelog, carry-forward plan, label-retirement plan, and release notes draft.
 
 After the release plan captures the candidate SHA, load `nemoclaw-maintainer-e2e`.
-Use a passing `Release qualification` check at the candidate SHA when one exists.
-Otherwise, run full mode and require that check to pass.
+Use an existing qualifying full manual run at the candidate SHA, or run full mode when none exists.
+Require its `Release qualification` check to pass.
 Record the workflow and check URLs.
-Do not ask for the release confirmation phrase without a passing check at the current candidate SHA.
+Do not ask for the release confirmation phrase until `scripts/release-cut-tag.sh` accepts the canonical check at the current candidate SHA.
 
 Tag the confirmed release commit with `vX.Y.Z`.
 Let the workflow move `latest`, carry open work forward, and delete the released label.
