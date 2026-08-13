@@ -9,7 +9,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { CLI_NAME } from "./cli/branding";
-import { noteOnboardResumeHintShown } from "./onboard/resume-hint";
+import { isPortableExperimentalProfile } from "./onboard/experimental/portable-profile";
+import { noteOnboardResumeHintShown, onboardRecoveryCommand } from "./onboard/resume-hint";
 
 import { classifySandboxCreateFailure, planSandboxCreateRecovery } from "./validation";
 
@@ -107,6 +108,8 @@ export function printSandboxCreateRecoveryHints(
   // Every branch below prints tailored `--resume` recovery guidance, so suppress
   // the generic incomplete-exit backstop (#6003).
   noteOnboardResumeHintShown();
+  const portable = isPortableExperimentalProfile();
+  const recoveryCommand = onboardRecoveryCommand(portable);
   const failure = classifySandboxCreateFailure(output);
   if (failure.kind === "image_upload_container_missing") {
     const { arm64ImageRefWorkaround } = planSandboxCreateRecovery(failure, { platform, arch });
@@ -173,14 +176,14 @@ export function printSandboxCreateRecoveryHints(
       );
     }
     console.error(
-      `  If you would rather let NemoClaw rebuild and retry from scratch: ${CLI_NAME} onboard --resume`,
+      `  If you would rather let NemoClaw rebuild and retry from scratch: ${recoveryCommand}`,
     );
     return;
   }
   if (failure.kind === "image_transfer_timeout") {
     console.error("  Hint: image upload into the OpenShell gateway timed out.");
-    console.error(`  Recovery: ${CLI_NAME} onboard --resume`);
-    if (failure.uploadedToGateway) {
+    console.error(`  Recovery: ${recoveryCommand}`);
+    if (failure.uploadedToGateway && !portable) {
       console.error(
         "  Progress reached the gateway upload stage, so resume may be able to reuse existing gateway state.",
       );
@@ -190,7 +193,7 @@ export function printSandboxCreateRecoveryHints(
   }
   if (failure.kind === "image_transfer_reset") {
     console.error("  Hint: the image push/import stream was interrupted.");
-    console.error(`  Recovery: ${CLI_NAME} onboard --resume`);
+    console.error(`  Recovery: ${recoveryCommand}`);
     if (failure.uploadedToGateway) {
       console.error("  The image appears to have reached the gateway before the stream failed.");
     }
@@ -199,7 +202,7 @@ export function printSandboxCreateRecoveryHints(
   }
   if (failure.kind === "sandbox_create_incomplete") {
     console.error("  Hint: sandbox creation started but the create stream did not finish cleanly.");
-    console.error(`  Recovery: ${CLI_NAME} onboard --resume`);
+    console.error(`  Recovery: ${recoveryCommand}`);
     console.error(
       "  Check: openshell sandbox list        # verify whether the sandbox became ready",
     );
@@ -210,7 +213,7 @@ export function printSandboxCreateRecoveryHints(
       "  Hint: TLS certificate mismatch — the gateway certificate changed since the CLI last trusted it.",
     );
     console.error("  Fix:  openshell gateway trust -g nemoclaw");
-    console.error(`  Then: ${CLI_NAME} onboard --resume`);
+    console.error(`  Then: ${recoveryCommand}`);
     return;
   }
   if (failure.kind === "gpu_cdi_injection_failed") {
@@ -220,9 +223,9 @@ export function printSandboxCreateRecoveryHints(
     );
     console.error("        NEMOCLAW_DOCKER_GPU_PATCH=0 does not bypass this path.");
     console.error("  Skip GPU passthrough entirely with either:");
-    console.error(`    ${CLI_NAME} onboard --no-gpu`);
+    console.error(`    ${portable ? recoveryCommand : `${CLI_NAME} onboard`} --no-gpu`);
     console.error("    NEMOCLAW_SANDBOX_GPU=0  (env var, applies to subsequent runs)");
-    console.error(`  Recovery: ${CLI_NAME} onboard --resume --no-gpu`);
+    if (!portable) console.error(`  Recovery: ${recoveryCommand} --no-gpu`);
     return;
   }
   if (failure.kind === "plugin_install_network_denied") {
@@ -237,9 +240,9 @@ export function printSandboxCreateRecoveryHints(
     console.error(
       "        feature that requires this plugin (e.g. NEMOCLAW_WEB_SEARCH_ENABLED=0).",
     );
-    console.error(`  Recovery: ${CLI_NAME} onboard --resume`);
+    console.error(`  Recovery: ${recoveryCommand}`);
     return;
   }
-  console.error(`  Recovery: ${CLI_NAME} onboard --resume`);
-  console.error(`  Or:      ${CLI_NAME} onboard`);
+  console.error(`  Recovery: ${recoveryCommand}`);
+  if (!portable) console.error(`  Or:      ${CLI_NAME} onboard`);
 }

@@ -4,7 +4,6 @@
 import { createRequire } from "module";
 import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
 // Import source directly so tests cannot pass against a stale build.
 import * as nim from "./nim";
 
