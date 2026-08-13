@@ -193,15 +193,6 @@ const { requireValue }: typeof import("./core/require-value") = require("./core/
 const buildCredentialReuse: typeof import("./onboard/build-credential-reuse") = require("./onboard/build-credential-reuse");
 const recoveredProviderReuse: typeof import("./onboard/recovered-provider-reuse") = require("./onboard/recovered-provider-reuse");
 
-type RunnerOptions = {
-  env?: NodeJS.ProcessEnv;
-  stdio?: import("node:child_process").StdioOptions;
-  ignoreError?: boolean;
-  suppressOutput?: boolean;
-  timeout?: number;
-  openshellBinary?: string;
-};
-
 const {
   DASHBOARD_PORT,
   GATEWAY_PORT: DEFAULT_GATEWAY_PORT,
@@ -951,12 +942,6 @@ function upsertProvider(name: string, type: string, credentialEnv: string, baseU
   return result;
 }
 
-type MessagingTokenDef = import("./onboard/messaging-prep").MessagingTokenDef;
-
-type EndpointValidationResult =
-  | { ok: true; api: string | null; retry?: undefined }
-  | { ok: false; retry: "credential" | "selection" | "retry" | "model"; api?: undefined };
-
 const verifyDirectSandboxGpu = sandboxGpuPreflight.createDirectSandboxGpuVerifier({
   runOpenshell,
   compactText,
@@ -1365,8 +1350,7 @@ const onboardPreflightGatewayAuthority =
   preflightGatewayAuthority.createOnboardPreflightGatewayAuthority({
     gatewayName: () => GATEWAY_NAME,
     gatewayPort: () => GATEWAY_PORT,
-    collectGatewayReadiness: (deps) =>
-      preflightGatewayAuthority.collectOnboardGatewayReadiness(deps),
+    collectGatewayReadiness: preflightGatewayAuthority.collectOnboardGatewayReadiness,
     getGatewayOwnerDeps: () => machineGatewayOwnerDeps,
     isNonInteractive,
     ensureOpenshellForOnboard,
@@ -2191,8 +2175,18 @@ async function createSandboxWithBaseImageResolution(
 
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  let recreateRuntime: import("./onboard/sandbox-recreate-transaction").SandboxRecreateRuntime | recreateJournal.OwnedSandboxRecreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(onboardSession, createIntent?.recreateTransaction, sandboxName, GATEWAY_NAME, existingEntry, getSandboxRecreateObservation, note);
+  let recreateRuntime:
+    | import("./onboard/sandbox-recreate-transaction").SandboxRecreateRuntime
+    | recreateJournal.OwnedSandboxRecreateRuntime =
+    sandboxRecreateTransaction.createSandboxRecreateRuntime(
+      onboardSession,
+      createIntent?.recreateTransaction,
+      sandboxName,
+      GATEWAY_NAME,
+      existingEntry,
+      getSandboxRecreateObservation,
+      note,
+    );
   const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
     await dashboardPortReservationScope.release();
     ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({
@@ -2462,8 +2456,18 @@ async function createSandboxWithBaseImageResolution(
     }
 
     if (preservedMcpState) {
-      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-      for (const hint of recreateJournal.managedMcpRecreateRefusalHints({ sandboxName, cliName: cliName(), toolDisclosure: effectiveToolDisclosure, rebuildFlag: dcodeAutoApprovalPlan.rebuildFlag, observabilityFlag: observabilityCommandFlag.explicitObservabilityFlag(createIntent?.observabilityEnabled === true, createIntent?.observabilityRequestedExplicitly === true) })) console.error(hint);
+      for (const hint of recreateJournal.managedMcpRecreateRefusalHints({
+        sandboxName,
+        cliName: cliName(),
+        toolDisclosure: effectiveToolDisclosure,
+        rebuildFlag: dcodeAutoApprovalPlan.rebuildFlag,
+        observabilityFlag: observabilityCommandFlag.explicitObservabilityFlag(
+          createIntent?.observabilityEnabled === true,
+          createIntent?.observabilityRequestedExplicitly === true,
+        ),
+      })) {
+        console.error(hint);
+      }
       process.exit(1);
     }
     if (!createIntent?.recreateTransaction) recreateRuntime = openRecreateJournal();
@@ -3587,9 +3591,10 @@ const {
   printAgentDashboardUi: agentOnboard.printDashboardUi,
 });
 
+const adaptSessionUpdates = (updates: Record<string, unknown>) =>
+  toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]);
 const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
-  toSessionUpdates: (updates: Record<string, unknown>) =>
-    toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+  toSessionUpdates: adaptSessionUpdates,
   maybeForceE2eStepFailure,
 });
 
@@ -4090,8 +4095,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           startRecordedStep,
           recordStepComplete,
           recordStepRejected,
-          toSessionUpdates: (updates) =>
-            toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+          toSessionUpdates: adaptSessionUpdates,
           skippedStepMessage,
           recordStateSkipped,
           recordRepairEvent,
@@ -4219,8 +4223,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
           getSandboxAgentRegistryFields,
           recordStepComplete,
-          toSessionUpdates: (updates) =>
-            toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+          toSessionUpdates: adaptSessionUpdates,
           skippedStepMessage,
           recordStateSkipped,
           recordRepairEvent,
@@ -4275,8 +4278,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         setupOpenclaw,
         syncNemoClawConfigInSandbox,
         recordStepComplete,
-        toSessionUpdates: (updates) =>
-          toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+        toSessionUpdates: adaptSessionUpdates,
       },
       policiesDeps: {
         loadSession: onboardSession.loadSession,
@@ -4292,8 +4294,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         setupPoliciesWithSelection,
         updateSession: onboardSession.updateSession,
         recordStepComplete,
-        toSessionUpdates: (updates) =>
-          toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+        toSessionUpdates: adaptSessionUpdates,
         persistAppliedPolicyPresets: policyPresetCarry.persistFinalizedPolicyPresets,
       },
       finalization: {
@@ -4307,8 +4308,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         ensureAgentDashboardForward: (name, selectedAgent) => selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : ensureDashboardForward(name, process.env.CHAT_UI_URL),
         setDefaultSandbox: registry.setDefault,
         verifyWebSearchInsideSandbox,
-        toSessionUpdates: (updates) =>
-          toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+        toSessionUpdates: adaptSessionUpdates,
         removeLegacyCredentialsFile,
         cleanupStaleHostFiles,
         getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
