@@ -3,10 +3,10 @@
 
 // Source-of-truth boundary for the agent dispatch contract (#8796).
 //
-// Both `nemoclaw <name> agent` transports capture the child's streams and
-// forward its exit code. That makes "the child exited 0" the only success
-// signal, so a dispatch that never ran the turn is indistinguishable from a
-// turn that ran and answered.
+// Both `nemoclaw <name> agent` transports capture the child's streams, forward
+// host termination signals, and return the child's exit status. OpenClaw can
+// still report status 0 when a dispatch produces no result, so the wrapper
+// must classify that ambiguous result before it reports success.
 //
 // 6. Empty-dispatch guard (delivery contract).
 //
@@ -41,12 +41,26 @@
 //    - Removal condition: drop the TTY carve-out if `openclaw agent` gains a
 //      documented interactive stdin mode reachable through this wrapper.
 //
+// 8. Host interruption propagation.
+//
+//    - Invalid state: the former synchronous transports blocked the Node.js
+//      event loop. A host SIGTERM stopped NemoClaw without notifying the
+//      OpenShell child, so the in-sandbox agent turn continued until its own
+//      deadline.
+//    - Source boundary: OpenShell owns remote command cancellation. NemoClaw
+//      owns its direct child and uses the shared sandbox exec supervisor to
+//      forward SIGTERM, wait for OpenShell to exit, and return exit 143.
+//    - Removal condition: none while NemoClaw owns the host-side OpenShell
+//      child lifecycle.
+//
 // Regression tests: `passthrough-dispatch.test.ts` owns the classifier and the
-// stdio shape; `passthrough-help.test.ts` owns the diagnostic text.
+// supervised process lifecycle; `passthrough-help.test.ts` owns the diagnostic
+// text.
 
-import type { StdioOptions } from "node:child_process";
+import { spawn, type StdioOptions } from "node:child_process";
 
 import { isStdinTty } from "../../../core/stdin";
+import { runSandboxExecChild, type SandboxExecChild, type SandboxExecSignalSource } from "../exec";
 
 /**
  * Exit code for a dispatch that reported success without delivering a turn.
@@ -54,11 +68,146 @@ import { isStdinTty } from "../../../core/stdin";
  */
 export const SILENT_AGENT_DISPATCH_EXIT_CODE = 1;
 
-/** The subset of a `spawnSync` return the delivery classifier reads. */
+/** The subset of a child-process result the delivery classifier reads. */
 export type AgentDispatchOutcome = {
-  error?: unknown;
+  error?: Error;
   status: number | null;
+  signal?: NodeJS.Signals | null;
 };
+
+export type AgentDispatchResult = AgentDispatchOutcome & {
+  stderr: string;
+  stdout: string;
+};
+
+type AgentDispatchReadable = {
+  on(event: "data", listener: (chunk: Buffer | string) => void): unknown;
+};
+
+type AgentDispatchCaptureBudget = {
+  bytes: number;
+  overflowed: boolean;
+};
+
+export type AgentDispatchChild = SandboxExecChild & {
+  stderr: AgentDispatchReadable | null;
+  stdout: AgentDispatchReadable | null;
+};
+
+export type AgentDispatchSpawner = (
+  binary: string,
+  args: readonly string[],
+  stdio: StdioOptions,
+) => AgentDispatchChild;
+
+export type AgentDispatchRunner = (
+  binary: string,
+  args: readonly string[],
+  options?: {
+    maxBufferBytes?: number;
+    stdinIsTty?: boolean;
+  },
+) => Promise<AgentDispatchResult>;
+
+export type AgentDispatchRunDeps = {
+  signalSource?: SandboxExecSignalSource;
+  spawnChild?: AgentDispatchSpawner;
+};
+
+const DEFAULT_AGENT_DISPATCH_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+
+const defaultAgentDispatchSpawner: AgentDispatchSpawner = (binary, args, stdio) =>
+  spawn(binary, [...args], { stdio }) as unknown as AgentDispatchChild;
+
+function captureAgentDispatchStream(
+  stream: AgentDispatchReadable | null,
+  child: AgentDispatchChild,
+  chunks: Buffer[],
+  maxBufferBytes: number,
+  budget: AgentDispatchCaptureBudget,
+  setOverflowError: (error: Error) => void,
+): void {
+  stream?.on("data", (chunk) => {
+    if (budget.overflowed) return;
+    const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    const nextSize = budget.bytes + data.byteLength;
+    if (nextSize > maxBufferBytes) {
+      budget.overflowed = true;
+      setOverflowError(
+        new Error(`agent output exceeded the ${maxBufferBytes}-byte combined capture limit`),
+      );
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+      return;
+    }
+    budget.bytes = nextSize;
+    chunks.push(data);
+  });
+}
+
+/**
+ * Capture one agent dispatch while the shared sandbox exec supervisor forwards
+ * host termination signals to OpenShell and waits for the child to exit.
+ */
+export async function runAgentDispatch(
+  binary: string,
+  args: readonly string[],
+  options: {
+    maxBufferBytes?: number;
+    stdinIsTty?: boolean;
+  } = {},
+  deps: AgentDispatchRunDeps = {},
+): Promise<AgentDispatchResult> {
+  const stderrChunks: Buffer[] = [];
+  const stdoutChunks: Buffer[] = [];
+  const captureBudget: AgentDispatchCaptureBudget = { bytes: 0, overflowed: false };
+  let overflowError: Error | undefined;
+  const maxBufferBytes = options.maxBufferBytes ?? DEFAULT_AGENT_DISPATCH_MAX_BUFFER_BYTES;
+  const spawnChild = deps.spawnChild ?? defaultAgentDispatchSpawner;
+  const result = await runSandboxExecChild(
+    binary,
+    args,
+    { tty: false },
+    (runBinary, runArgs) => {
+      const child = spawnChild(
+        runBinary,
+        runArgs,
+        agentDispatchStdio(options.stdinIsTty ?? isStdinTty()),
+      );
+      const setOverflowError = (error: Error) => {
+        overflowError ??= error;
+      };
+      captureAgentDispatchStream(
+        child.stdout,
+        child,
+        stdoutChunks,
+        maxBufferBytes,
+        captureBudget,
+        setOverflowError,
+      );
+      captureAgentDispatchStream(
+        child.stderr,
+        child,
+        stderrChunks,
+        maxBufferBytes,
+        captureBudget,
+        setOverflowError,
+      );
+      return child;
+    },
+    deps.signalSource,
+  );
+  try {
+    return {
+      status: result.status,
+      signal: result.signal,
+      ...(result.error || overflowError ? { error: result.error ?? overflowError } : {}),
+      stderr: Buffer.concat(stderrChunks).toString("utf-8"),
+      stdout: Buffer.concat(stdoutChunks).toString("utf-8"),
+    };
+  } finally {
+    result.releaseSignals?.();
+  }
+}
 
 /**
  * Stdio for a non-interactive agent dispatch. An interactive terminal is
