@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -13,12 +15,30 @@ export type E2eInstallMode = (typeof E2E_INSTALL_MODES)[number];
 export const E2E_HOST_PACKAGES = ["expect", "iptables"] as const;
 export type E2eHostPackage = (typeof E2E_HOST_PACKAGES)[number];
 
+export const E2E_CATALOGUE_RUNNER_KEYS = [
+  "channels-stop-start-hermes",
+  "hermes-discord",
+  "hermes-inference-switch",
+  "hermes-shields-config",
+  "rebuild-hermes",
+  "rebuild-hermes-stale-base",
+  "security-posture-hermes",
+] as const;
+
+export const E2E_HOST_PREPARATIONS = ["none", "hermes-swap", "rebuild-swap"] as const;
+export type E2eHostPreparation = (typeof E2E_HOST_PREPARATIONS)[number];
+
+export const E2E_ARTIFACT_LAYOUTS = ["target-shard", "flat-shard"] as const;
+export type E2eArtifactLayout = (typeof E2E_ARTIFACT_LAYOUTS)[number];
+
 export interface E2eCatalogueTarget {
   id: string;
+  targetId: string;
   displayName: string;
   testFile: string;
   profile: E2eExecutionProfile;
   runner: string;
+  runnerKey: string;
   owningPaths: readonly string[];
   releaseRequired: boolean;
   timeoutMinutes: number;
@@ -27,20 +47,35 @@ export interface E2eCatalogueTarget {
   restoreCli: boolean;
   exposeCliBin: boolean;
   hostPackages: readonly E2eHostPackage[];
+  hostPreparation: E2eHostPreparation;
+  runnerComparison: boolean;
+  runnerPressure: boolean;
+  compatibleApiKey: boolean;
+  prAdvisorSelectable: boolean;
+  shard: string;
+  artifactLayout: E2eArtifactLayout;
   selector?: string;
   environment: Readonly<Record<string, string>>;
 }
 
 export interface E2eCatalogueMatrixRow {
   id: string;
+  target_id: string;
   display_name: string;
   runner: string;
+  runner_key: string;
   test_file: string;
   timeout_minutes: number;
   install_mode: E2eInstallMode;
   install_non_interactive: boolean;
   restore_cli: boolean;
   host_packages: string;
+  host_preparation: E2eHostPreparation;
+  runner_comparison: boolean;
+  runner_pressure: boolean;
+  compatible_api_key: boolean;
+  shard: string;
+  artifact_layout: E2eArtifactLayout;
 }
 
 type TargetOptions = Omit<
@@ -53,12 +88,30 @@ type TargetOptions = Omit<
   | "hostPackages"
   | "installNonInteractive"
   | "runner"
+  | "runnerKey"
+  | "targetId"
+  | "hostPreparation"
+  | "runnerComparison"
+  | "runnerPressure"
+  | "compatibleApiKey"
+  | "prAdvisorSelectable"
+  | "shard"
+  | "artifactLayout"
 > & {
   owningPaths?: readonly string[];
   environment?: Readonly<Record<string, string>>;
   hostPackages?: readonly E2eHostPackage[];
   installNonInteractive?: boolean;
   runner?: string;
+  runnerKey?: string;
+  targetId?: string;
+  hostPreparation?: E2eHostPreparation;
+  runnerComparison?: boolean;
+  runnerPressure?: boolean;
+  compatibleApiKey?: boolean;
+  prAdvisorSelectable?: boolean;
+  shard?: string;
+  artifactLayout?: E2eArtifactLayout;
   testFile?: string;
 };
 
@@ -70,6 +123,15 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     hostPackages = [],
     installNonInteractive = false,
     runner = "ubuntu-latest",
+    runnerKey = "",
+    targetId = id,
+    hostPreparation = "none",
+    runnerComparison = false,
+    runnerPressure = false,
+    compatibleApiKey = false,
+    prAdvisorSelectable = false,
+    shard = "default",
+    artifactLayout = "target-shard",
     testFile = `test/e2e/live/${id}.test.ts`,
     ...execution
   } = options;
@@ -80,8 +142,17 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     owningPaths: [testFile, ...owningPaths],
     releaseRequired: true,
     runner,
+    runnerKey,
+    targetId,
     environment,
     hostPackages,
+    hostPreparation,
+    runnerComparison,
+    runnerPressure,
+    compatibleApiKey,
+    prAdvisorSelectable,
+    shard,
+    artifactLayout,
     installNonInteractive,
     ...execution,
   };
@@ -97,6 +168,88 @@ const nonInteractive = {
 } as const;
 
 export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
+  target("agent-turn-latency", {
+    displayName: "Performance: bounds hosted inference turns for OpenClaw and Hermes",
+    profile: "nvidia-inference",
+    prAdvisorSelectable: true,
+    timeoutMinutes: 110,
+    installMode: "authenticated",
+    installNonInteractive: true,
+    restoreCli: true,
+    exposeCliBin: true,
+    hostPreparation: "hermes-swap",
+    runnerComparison: true,
+    compatibleApiKey: true,
+    environment: {
+      ...hostedInference,
+      ...nonInteractive,
+      NEMOCLAW_E2E_INFERENCE_MODE: "internal-nvidia",
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
+      NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+      NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
+  target("bedrock-runtime-compatible-anthropic-openclaw", {
+    targetId: "bedrock-runtime-compatible-anthropic",
+    displayName: "Inference: OpenClaw routes an Anthropic request through Amazon Bedrock",
+    profile: "standard",
+    testFile: "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
+    timeoutMinutes: 60,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: true,
+    shard: "openclaw",
+    environment: {
+      ...nonInteractive,
+      NEMOCLAW_RECREATE_SANDBOX: "1",
+      NEMOCLAW_AGENT: "openclaw",
+      NEMOCLAW_SANDBOX_NAME: "e2e-oc-bedrock",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
+  target("bedrock-runtime-compatible-anthropic-hermes", {
+    targetId: "bedrock-runtime-compatible-anthropic",
+    displayName: "Inference: Hermes routes an Anthropic request through Amazon Bedrock",
+    profile: "standard",
+    testFile: "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
+    timeoutMinutes: 60,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: true,
+    hostPreparation: "hermes-swap",
+    shard: "hermes",
+    environment: {
+      ...nonInteractive,
+      NEMOCLAW_RECREATE_SANDBOX: "1",
+      NEMOCLAW_AGENT: "hermes",
+      NEMOCLAW_SANDBOX_NAME: "e2e-hm-bedrock",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
+  target("bootstrap-install-smoke", {
+    displayName: "Install: bootstraps NemoClaw and completes hosted inference",
+    profile: "nvidia-inference",
+    prAdvisorSelectable: true,
+    timeoutMinutes: 30,
+    installMode: "none",
+    restoreCli: false,
+    exposeCliBin: false,
+    compatibleApiKey: true,
+    environment: {
+      ...hostedInference,
+      NEMOCLAW_SANDBOX_NAME: "e2e-bootstrap",
+      NEMOCLAW_RECREATE_SANDBOX: "1",
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
+      NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+      NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+      SKIP_DOCKER_PULL: "1",
+    },
+  }),
   target("channels-add-remove", {
     displayName: "Messaging: adds and removes Telegram configuration",
     profile: "standard",
@@ -111,6 +264,61 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-add-remove-e2e",
       TELEGRAM_ALLOWED_IDS: "123456789",
       TELEGRAM_REQUIRE_MENTION: "0",
+    },
+  }),
+  target("channels-stop-start-openclaw", {
+    targetId: "channels-stop-start",
+    displayName: "Messaging: OpenClaw preserves channels across stop and start",
+    profile: "nvidia-inference",
+    prAdvisorSelectable: true,
+    testFile: "test/e2e/live/channels-stop-start.test.ts",
+    timeoutMinutes: 90,
+    installMode: "credential-free",
+    installNonInteractive: true,
+    restoreCli: true,
+    exposeCliBin: true,
+    shard: "openclaw",
+    environment: {
+      ...hostedInference,
+      ...nonInteractive,
+      NEMOCLAW_AGENT: "openclaw",
+      NEMOCLAW_CHANNELS_STOP_START_AGENT: "openclaw",
+      NEMOCLAW_SANDBOX_NAME: "e2e-oc-ch-cycle",
+      OPENSHELL_GATEWAY: "nemoclaw",
+      TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-stop-start-openclaw",
+      DISCORD_BOT_TOKEN: "test-fake-discord-token-stop-start-openclaw",
+      SLACK_BOT_TOKEN: "xoxb-fake-slack-token-stop-start-openclaw",
+      SLACK_APP_TOKEN: "xapp-fake-slack-token-stop-start-openclaw",
+      WECHAT_BOT_TOKEN: "test-fake-wechat-token-stop-start-openclaw",
+    },
+  }),
+  target("channels-stop-start-hermes", {
+    targetId: "channels-stop-start",
+    displayName: "Messaging: Hermes preserves channels across stop and start",
+    profile: "nvidia-inference",
+    prAdvisorSelectable: true,
+    testFile: "test/e2e/live/channels-stop-start.test.ts",
+    timeoutMinutes: 90,
+    installMode: "credential-free",
+    installNonInteractive: true,
+    restoreCli: true,
+    exposeCliBin: true,
+    runnerKey: "channels-stop-start-hermes",
+    hostPreparation: "hermes-swap",
+    runnerComparison: true,
+    shard: "hermes",
+    environment: {
+      ...hostedInference,
+      ...nonInteractive,
+      NEMOCLAW_AGENT: "hermes",
+      NEMOCLAW_CHANNELS_STOP_START_AGENT: "hermes",
+      NEMOCLAW_SANDBOX_NAME: "e2e-hm-ch-cycle",
+      OPENSHELL_GATEWAY: "nemoclaw",
+      TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-stop-start-hermes",
+      DISCORD_BOT_TOKEN: "test-fake-discord-token-stop-start-hermes",
+      SLACK_BOT_TOKEN: "xoxb-fake-slack-token-stop-start-hermes",
+      SLACK_APP_TOKEN: "xapp-fake-slack-token-stop-start-hermes",
+      WECHAT_BOT_TOKEN: "test-fake-wechat-token-stop-start-hermes",
     },
   }),
   target("cloud-inference", {
@@ -252,6 +460,69 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environment: {
       ...hostedInference,
       ...nonInteractive,
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
+  target("hermes-discord", {
+    displayName: "Messaging: Hermes preserves Discord configuration across rebuild",
+    profile: "nvidia-inference",
+    prAdvisorSelectable: true,
+    timeoutMinutes: 90,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: true,
+    runnerKey: "hermes-discord",
+    hostPreparation: "hermes-swap",
+    runnerComparison: true,
+    environment: {
+      ...hostedInference,
+      NEMOCLAW_AGENT: "hermes",
+      NEMOCLAW_POLICY_TIER: "open",
+      NEMOCLAW_SANDBOX_NAME: "e2e-hermes-discord",
+      OPENSHELL_GATEWAY: "nemoclaw",
+      DISCORD_BOT_TOKEN: "test-fake-discord-token-hermes-e2e",
+      DISCORD_SERVER_IDS: "1491590992753590594",
+      DISCORD_ALLOWED_IDS: "1005536447329222676",
+      DISCORD_REQUIRE_MENTION: "0",
+    },
+  }),
+  target("hermes-inference-switch", {
+    displayName: "Inference: Hermes switches to an Anthropic-compatible endpoint",
+    profile: "standard",
+    timeoutMinutes: 55,
+    installMode: "authenticated",
+    installNonInteractive: true,
+    restoreCli: true,
+    exposeCliBin: true,
+    runnerKey: "hermes-inference-switch",
+    hostPreparation: "hermes-swap",
+    runnerComparison: true,
+    shard: "anthropic",
+    environment: {
+      ...nonInteractive,
+      NEMOCLAW_AGENT: "hermes",
+      NEMOCLAW_SANDBOX_NAME: "e2e-hm-inf-switch",
+      NEMOCLAW_SWITCH_PROVIDER: "compatible-anthropic-endpoint",
+      NEMOCLAW_SWITCH_MODEL: "mock-anthropic-model",
+      NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
+      NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "1",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
+  target("hermes-shields-config", {
+    displayName: "Shields: restores stopped Hermes across posture changes",
+    profile: "standard",
+    timeoutMinutes: 60,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: false,
+    runnerKey: "hermes-shields-config",
+    hostPreparation: "hermes-swap",
+    runnerComparison: true,
+    environment: {
+      ...nonInteractive,
+      NEMOCLAW_AGENT: "hermes",
+      NEMOCLAW_SANDBOX_NAME: "e2e-hermes-shields",
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
@@ -550,6 +821,62 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     ],
     environment: hostedInference,
   }),
+  target("rebuild-hermes", {
+    displayName: "Rebuild: preserves Hermes state and recovers cron dispatch",
+    profile: "nvidia-inference",
+    prAdvisorSelectable: true,
+    owningPaths: ["test/e2e/live/rebuild-hermes-cron-restore.ts"],
+    timeoutMinutes: 90,
+    installMode: "credential-free",
+    installNonInteractive: true,
+    restoreCli: true,
+    exposeCliBin: true,
+    runnerKey: "rebuild-hermes",
+    hostPreparation: "rebuild-swap",
+    runnerComparison: true,
+    runnerPressure: true,
+    environment: {
+      ...hostedInference,
+      ...nonInteractive,
+      NEMOCLAW_AGENT: "hermes",
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
+      NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+      NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+      NEMOCLAW_SANDBOX_NAME: "e2e-rebuild-hermes",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
+  target("rebuild-hermes-stale-base", {
+    displayName: "Rebuild: refreshes a stale Hermes base and restores state",
+    profile: "nvidia-inference",
+    prAdvisorSelectable: true,
+    testFile: "test/e2e/live/rebuild-hermes.test.ts",
+    owningPaths: ["test/e2e/live/rebuild-hermes-cron-restore.ts"],
+    timeoutMinutes: 90,
+    installMode: "credential-free",
+    installNonInteractive: true,
+    restoreCli: true,
+    exposeCliBin: true,
+    runnerKey: "rebuild-hermes-stale-base",
+    hostPreparation: "rebuild-swap",
+    runnerComparison: true,
+    runnerPressure: true,
+    environment: {
+      ...hostedInference,
+      ...nonInteractive,
+      NEMOCLAW_AGENT: "hermes",
+      NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E: "1",
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
+      NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+      NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+      NEMOCLAW_SANDBOX_NAME: "e2e-rebuild-base",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
   target("sandbox-survival", {
     displayName: "Lifecycle: preserves sandbox state after an OpenShell gateway restart",
     profile: "nvidia-inference",
@@ -578,6 +905,61 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       // Open policy permits the inference and log probes.
       // TC-SBX-11 verifies sandbox-to-sandbox network isolation.
       NEMOCLAW_POLICY_TIER: "open",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
+  target("security-posture-openclaw", {
+    targetId: "security-posture",
+    displayName: "Security: OpenClaw retains the required sandbox posture",
+    profile: "nvidia-inference",
+    prAdvisorSelectable: true,
+    testFile: "test/e2e/live/full-e2e.test.ts",
+    timeoutMinutes: 75,
+    installMode: "credential-free",
+    installNonInteractive: true,
+    restoreCli: true,
+    exposeCliBin: true,
+    shard: "openclaw",
+    artifactLayout: "flat-shard",
+    environment: {
+      ...hostedInference,
+      ...nonInteractive,
+      NEMOCLAW_AGENT: "openclaw",
+      NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS: "1",
+      NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1",
+      NEMOCLAW_E2E_SECURITY_POSTURE: "1",
+      NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60",
+      NEMOCLAW_RECREATE_SANDBOX: "1",
+      NEMOCLAW_SANDBOX_NAME: "e2e-oc-security",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
+  target("security-posture-hermes", {
+    targetId: "security-posture",
+    displayName: "Security: Hermes retains the required sandbox posture",
+    profile: "nvidia-inference",
+    prAdvisorSelectable: true,
+    testFile: "test/e2e/live/hermes-e2e.test.ts",
+    timeoutMinutes: 75,
+    installMode: "credential-free",
+    installNonInteractive: true,
+    restoreCli: true,
+    exposeCliBin: true,
+    runnerKey: "security-posture-hermes",
+    hostPreparation: "hermes-swap",
+    runnerComparison: true,
+    shard: "hermes",
+    artifactLayout: "flat-shard",
+    environment: {
+      ...hostedInference,
+      ...nonInteractive,
+      NEMOCLAW_AGENT: "hermes",
+      NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS: "1",
+      NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1",
+      NEMOCLAW_E2E_SECURITY_POSTURE: "1",
+      NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60",
+      NEMOCLAW_RECREATE_SANDBOX: "1",
+      NEMOCLAW_SANDBOX_NAME: "e2e-hm-security",
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
@@ -645,6 +1027,16 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
+  target("skill-agent", {
+    displayName: "Skills: OpenClaw reads an injected sandbox skill",
+    profile: "nvidia-inference",
+    prAdvisorSelectable: true,
+    timeoutMinutes: 30,
+    installMode: "authenticated",
+    restoreCli: true,
+    exposeCliBin: true,
+    environment: hostedInference,
+  }),
   target("state-backup-restore", {
     displayName: "Backup: restores workspace files and memory",
     profile: "nvidia-inference",
@@ -697,6 +1089,7 @@ const DISPLAY_NAME_METADATA_PATTERN = /\b(?:catalogue|e2e|live)\b|(?:issue[-\s]*
 const TEST_FILE_PATTERN = /^test\/e2e\/live\/[A-Za-z0-9._-]+[.]test[.]ts$/u;
 const ENVIRONMENT_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/u;
 const SELECTOR_PATTERN = /^[A-Za-z0-9_./^$=:@+-]+$/u;
+const E2E_CATALOGUE_RUNNER_KEY_SET = new Set<string>(E2E_CATALOGUE_RUNNER_KEYS);
 
 export function pathMatches(file: string, owner: string): boolean {
   return owner.endsWith("/") ? file.startsWith(owner) : file === owner;
@@ -707,11 +1100,15 @@ export function validateE2eTargetCatalogue(
 ): readonly E2eCatalogueTarget[] {
   const ids = new Set<string>();
   const displayNames = new Set<string>();
+  const evidencePaths = new Set<string>();
   for (const entry of targets) {
     if (!ID_PATTERN.test(entry.id) || ids.has(entry.id)) {
       throw new Error(`E2E target catalogue contains an invalid or duplicate ID: ${entry.id}`);
     }
     ids.add(entry.id);
+    if (!ID_PATTERN.test(entry.targetId)) {
+      throw new Error(`E2E target ${entry.id} has an invalid evidence target ID`);
+    }
     const displayName = entry.displayName.toLowerCase();
     const implementationIdentifiers = [
       entry.id,
@@ -740,6 +1137,30 @@ export function validateE2eTargetCatalogue(
     if (!/^[A-Za-z0-9._-]+$/u.test(entry.runner)) {
       throw new Error(`E2E target ${entry.id} has an invalid runner`);
     }
+    if (
+      entry.runnerKey !== "" &&
+      (!ID_PATTERN.test(entry.runnerKey) ||
+        !E2E_CATALOGUE_RUNNER_KEY_SET.has(entry.runnerKey))
+    ) {
+      throw new Error(`E2E target ${entry.id} has an invalid runner routing key`);
+    }
+    if (!E2E_HOST_PREPARATIONS.includes(entry.hostPreparation)) {
+      throw new Error(`E2E target ${entry.id} has an invalid host preparation`);
+    }
+    if (!ID_PATTERN.test(entry.shard)) {
+      throw new Error(`E2E target ${entry.id} has an invalid shard`);
+    }
+    if (!E2E_ARTIFACT_LAYOUTS.includes(entry.artifactLayout)) {
+      throw new Error(`E2E target ${entry.id} has an invalid artifact layout`);
+    }
+    if (entry.artifactLayout === "flat-shard" && entry.shard === "default") {
+      throw new Error(`E2E target ${entry.id} flat artifact layout requires a named shard`);
+    }
+    const evidencePath = `${entry.targetId}/${entry.shard}`;
+    if (evidencePaths.has(evidencePath)) {
+      throw new Error(`E2E target ${entry.id} duplicates an evidence target and shard`);
+    }
+    evidencePaths.add(evidencePath);
     if (!E2E_INSTALL_MODES.includes(entry.installMode)) {
       throw new Error(`E2E target ${entry.id} has an invalid install mode`);
     }
@@ -784,6 +1205,20 @@ export function isPrCandidateCatalogueTarget(target: E2eCatalogueTarget): boolea
   return target.profile === "standard";
 }
 
+export function isPrAdvisorSelectableCatalogueTarget(target: E2eCatalogueTarget): boolean {
+  return target.prAdvisorSelectable || isPrCandidateCatalogueTarget(target);
+}
+
+export function catalogueRecommendationSelectorIds(): string[] {
+  return [
+    ...new Set(
+      E2E_TARGET_CATALOGUE.filter(isPrAdvisorSelectableCatalogueTarget).map(
+        ({ targetId }) => targetId,
+      ),
+    ),
+  ].sort();
+}
+
 export function catalogueTargetsForChangedFiles(
   changedFiles: readonly string[],
 ): E2eCatalogueTarget[] {
@@ -804,14 +1239,22 @@ export function catalogueMatrix(
     .filter((entry) => entry.profile === profile)
     .map((entry) => ({
       id: entry.id,
+      target_id: entry.targetId,
       display_name: entry.displayName,
       runner: entry.runner,
+      runner_key: entry.runnerKey,
       test_file: entry.testFile,
       timeout_minutes: entry.timeoutMinutes,
       install_mode: entry.installMode,
       install_non_interactive: entry.installNonInteractive,
       restore_cli: entry.restoreCli,
       host_packages: entry.hostPackages.join(" "),
+      host_preparation: entry.hostPreparation,
+      runner_comparison: entry.runnerComparison,
+      runner_pressure: entry.runnerPressure,
+      compatible_api_key: entry.compatibleApiKey,
+      shard: entry.shard,
+      artifact_layout: entry.artifactLayout,
     }));
 }
 
@@ -824,9 +1267,48 @@ export async function runCatalogueTarget(id: string, testFile: string): Promise<
   if (entry.exposeCliBin) {
     process.env.NEMOCLAW_CLI_BIN = path.join(process.cwd(), "bin", "nemoclaw.js");
   }
+  const runPressureCommand = (command: string): void => {
+    const result = spawnSync(
+      process.execPath,
+      ["--experimental-strip-types", "--no-warnings", "tools/e2e/runner-pressure.mts", command],
+      { env: process.env, stdio: "inherit", timeout: 60_000 },
+    );
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      throw new Error(
+        `runner pressure ${command} exited with status ${result.status ?? "unknown"}`,
+      );
+    }
+  };
+  if (entry.runnerPressure) {
+    const artifactDirectory = process.env.E2E_ARTIFACT_DIR;
+    if (!artifactDirectory) throw new Error("runner pressure requires E2E_ARTIFACT_DIR");
+    fs.mkdirSync(artifactDirectory, { recursive: true });
+    Object.assign(process.env, {
+      DOCKER_OOM_CONTAINER: entry.environment.NEMOCLAW_SANDBOX_NAME,
+      E2E_PHASE: `${entry.targetId}.workflow`,
+      E2E_RESOURCE_BASELINE_FILE: path.join(artifactDirectory, "runner-pressure-baseline.jsonl"),
+      E2E_RESOURCE_PHASE_BASELINES_FILE: path.join(
+        artifactDirectory,
+        "runner-pressure-phase-baselines.jsonl",
+      ),
+      E2E_TERMINAL_CLASSIFICATION_FILE: path.join(
+        artifactDirectory,
+        "runner-pressure-classification.jsonl",
+      ),
+      E2E_TEST_OUTCOME_FILE: path.join(artifactDirectory, "live-test-outcome.json"),
+    });
+    runPressureCommand("snapshot");
+    runPressureCommand("initialize-evidence");
+  }
   const { runLiveVitestCommand } = await import("./live-vitest-invocation.mts");
   const selector = entry.selector ? ["--selector", entry.selector] : [];
-  return runLiveVitestCommand(["run", "--test-path", entry.testFile, ...selector]);
+  const exitCode = await runLiveVitestCommand(["run", "--test-path", entry.testFile, ...selector]);
+  if (entry.runnerPressure && exitCode !== 0) {
+    runPressureCommand("classify");
+    runPressureCommand("validate-classification");
+  }
+  return exitCode;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

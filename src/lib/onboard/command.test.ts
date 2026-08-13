@@ -533,14 +533,15 @@ describe("onboard command options", () => {
     expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
   });
 
-  it("selects only the broad Personal preset for local portable onboarding (#8991)", async () => {
+  it("preserves an explicit preset list during portable onboarding (#8991)", async () => {
+    const explicitPresets = "weather,public-reference,github";
     const env: NodeJS.ProcessEnv = {
       NEMOCLAW_EXPERIMENTAL_PROFILE: "previous-profile",
       NEMOCLAW_PROVIDER: "previous-provider",
       NEMOCLAW_MODEL: "previous-model",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "0",
       NEMOCLAW_POLICY_MODE: "previous-mode",
-      NEMOCLAW_POLICY_PRESETS: "previous-presets",
+      NEMOCLAW_POLICY_PRESETS: explicitPresets,
       NEMOCLAW_POLICY_TIER: "previous-tier",
       NEMOCLAW_TOOL_DISCLOSURE: "progressive",
     };
@@ -571,7 +572,7 @@ describe("onboard command options", () => {
       NEMOCLAW_MODEL: "qwen3-vl:4b",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
       NEMOCLAW_POLICY_MODE: "custom",
-      NEMOCLAW_POLICY_PRESETS: "personal-open-internet",
+      NEMOCLAW_POLICY_PRESETS: explicitPresets,
       NEMOCLAW_POLICY_TIER: "personal",
       NEMOCLAW_TOOL_DISCLOSURE: "direct",
     });
@@ -581,10 +582,48 @@ describe("onboard command options", () => {
       NEMOCLAW_MODEL: "previous-model",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "0",
       NEMOCLAW_POLICY_MODE: "previous-mode",
-      NEMOCLAW_POLICY_PRESETS: "previous-presets",
+      NEMOCLAW_POLICY_PRESETS: explicitPresets,
       NEMOCLAW_POLICY_TIER: "previous-tier",
       NEMOCLAW_TOOL_DISCLOSURE: "progressive",
     });
+  });
+
+  it(
+    "defaults portable onboarding to the broad Personal preset when no list is supplied (#8991)",
+    async () => {
+      const env: NodeJS.ProcessEnv = {};
+      let observedPresets: string | undefined;
+
+      await runOnboardCommand({
+        flags: { "experimental-profile": "portable" },
+        env,
+        loadPortableInferenceDescriptor: async () => null,
+        runOnboard: async () => {
+          observedPresets = env.NEMOCLAW_POLICY_PRESETS;
+        },
+      });
+
+      expect(observedPresets).toBe("personal-open-internet");
+      expect(env.NEMOCLAW_POLICY_PRESETS).toBeUndefined();
+    },
+  );
+
+  it("does not change an explicit preset list outside portable onboarding (#8991)", async () => {
+    const env: NodeJS.ProcessEnv = {
+      NEMOCLAW_POLICY_PRESETS: "weather,public-reference,github",
+    };
+    let observedPresets: string | undefined;
+
+    await runOnboardCommand({
+      flags: {},
+      env,
+      runOnboard: async () => {
+        observedPresets = env.NEMOCLAW_POLICY_PRESETS;
+      },
+    });
+
+    expect(observedPresets).toBe("weather,public-reference,github");
+    expect(env.NEMOCLAW_POLICY_PRESETS).toBe("weather,public-reference,github");
   });
 
   it("configures portable onboarding from an admitted descriptor without exporting its credential", async () => {
@@ -690,6 +729,7 @@ describe("onboard command options", () => {
         "NEMOCLAW_PROVIDER",
         "NEMOCLAW_MODEL",
         "NEMOCLAW_OLLAMA_NO_AUTOSTART",
+        "NEMOCLAW_POLICY_PRESETS",
       ],
     },
     {

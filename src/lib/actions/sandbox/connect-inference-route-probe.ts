@@ -84,13 +84,18 @@ export function classifyInferenceRouteFailureLabel(httpStatus: number): Inferenc
 export function buildSandboxInferenceRouteProbeArgs(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
+  gatewayName?: string,
 ): string[] {
+  const targetArgs = [
+    "sandbox",
+    "exec",
+    "--name",
+    sandboxName,
+    ...(gatewayName ? ["-g", gatewayName] : []),
+  ];
   if (agent?.name === "langchain-deepagents-code") {
     return [
-      "sandbox",
-      "exec",
-      "--name",
-      sandboxName,
+      ...targetArgs,
       "--no-tty",
       "--env",
       "HOME=/usr/local/lib/nemoclaw",
@@ -109,7 +114,7 @@ export function buildSandboxInferenceRouteProbeArgs(
     ];
   }
 
-  return ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", INFERENCE_ROUTE_PROBE_SCRIPT];
+  return [...targetArgs, "--", "sh", "-c", INFERENCE_ROUTE_PROBE_SCRIPT];
 }
 
 /** Parse the shared route-probe output used by connect, status, and doctor. */

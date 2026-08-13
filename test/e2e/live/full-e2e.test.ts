@@ -42,7 +42,7 @@ import {
   fullE2eInferenceProbeEvidence,
   runFullE2eInferenceProbe,
 } from "./full-e2e-inference-probe.ts";
-import { runLaunchAgentTurn } from "./launch-agent-turn.ts";
+import { runLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
 import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
@@ -141,7 +141,7 @@ async function runOpenClawLaunchTurnAfterRecovery(input: {
   );
   expect(recovery.exitCode, resultText(recovery)).toBe(0);
 
-  await runLaunchAgentTurn({
+  await runLaunchReadinessLeaseTurns({
     artifactName: "phase-4-openclaw-launch-turn",
     cliCommand: USE_PREINSTALLED_LAUNCHABLE ? "nemoclaw" : process.execPath,
     ...(!USE_PREINSTALLED_LAUNCHABLE ? { cliEntrypoint: CLI_ENTRYPOINT } : {}),
