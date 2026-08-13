@@ -438,7 +438,7 @@ import { AgentOnly } from "../_components/AgentGuide";
     expect(hermes).not.toContain("platforms.whatsapp.extra.session_path");
   });
 
-  it("keeps the troubleshooting security review link within each agent guide (#6558)", () => {
+  it("keeps the troubleshooting security guidance link within each agent guide (#6558)", () => {
     const troubleshooting = readFileSync(
       new URL("../docs/reference/troubleshooting.mdx", import.meta.url),
       "utf8",
@@ -451,10 +451,10 @@ import { AgentOnly } from "../_components/AgentGuide";
       });
 
       expect(rendered).toContain(
-        "[OpenShell gateway compatibility review](../security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries)",
+        "[Gateway Compatibility Container](../security/security-controls/gateway-authentication-controls#gateway-compatibility-container)",
       );
       expect(rendered).not.toMatch(
-        /\/user-guide\/(?:openclaw|hermes|deepagents)\/security\/openshell-0\.0\.72-compatibility-review/,
+        /\/user-guide\/(?:openclaw|hermes|deepagents)\/security\/security-controls\/gateway-authentication-controls/,
       );
     }
   });

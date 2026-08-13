@@ -3,6 +3,8 @@
 
 # Managed Base Image libssh2 1.11.1 NemoClaw Revision 2 Dependency Review
 
+> Internal engineering evidence. This file is not part of the public documentation set.
+
 Date: August 12, 2026
 
 ## Scope

@@ -25,8 +25,8 @@ const PRODUCTION_DOCKERFILES = [
 const BLUEPRINT = path.join(REPO_ROOT, "nemoclaw-blueprint", "blueprint.yaml");
 const DEPENDENCY_REVIEW_NOTE = path.join(
   REPO_ROOT,
-  "docs",
-  "security",
+  "internal",
+  "security-reviews",
   "openclaw-2026.7.1-dependency-review.md",
 );
 const PRODUCTION_BUILD_ARG_GUARD = path.join(
@@ -803,35 +803,35 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         ).toEqual(sortedEntries(expectedEntries));
       });
 
-      it.each([
-        "latest",
-        "^2026.7.1",
-      ])("rejects a trusted OpenClaw plugin manifest with non-exact version %s", (version) => {
-        const slackManifest = createBuiltInChannelManifestRegistry().get("slack");
-        expect(slackManifest).toBeDefined();
-        const nonExactManifest = {
-          ...slackManifest!,
-          agentPackages: slackManifest!.agentPackages?.map((agentPackage) =>
-            agentPackage.agent === "openclaw" && agentPackage.manager === "openclaw-plugin"
-              ? {
-                  ...agentPackage,
-                  spec: `npm:@openclaw/slack@${version}`,
-                  integrity: PINNED_OPENCLAW_SLACK_INTEGRITY,
-                  integrityByVersion: undefined,
-                }
-              : agentPackage,
-          ),
-        };
+      it.each(["latest", "^2026.7.1"])(
+        "rejects a trusted OpenClaw plugin manifest with non-exact version %s",
+        (version) => {
+          const slackManifest = createBuiltInChannelManifestRegistry().get("slack");
+          expect(slackManifest).toBeDefined();
+          const nonExactManifest = {
+            ...slackManifest!,
+            agentPackages: slackManifest!.agentPackages?.map((agentPackage) =>
+              agentPackage.agent === "openclaw" && agentPackage.manager === "openclaw-plugin"
+                ? {
+                    ...agentPackage,
+                    spec: `npm:@openclaw/slack@${version}`,
+                    integrity: PINNED_OPENCLAW_SLACK_INTEGRITY,
+                    integrityByVersion: undefined,
+                  }
+                : agentPackage,
+            ),
+          };
 
-        expect(() =>
-          reviewedOpenClawPluginIntegrityByPackageSpec(
-            { OPENCLAW_VERSION: PINNED_OPENCLAW_VERSION },
-            [nonExactManifest],
-          ),
-        ).toThrow(
-          `must use an exact-version OpenClaw plugin package: npm:@openclaw/slack@${version}`,
-        );
-      });
+          expect(() =>
+            reviewedOpenClawPluginIntegrityByPackageSpec(
+              { OPENCLAW_VERSION: PINNED_OPENCLAW_VERSION },
+              [nonExactManifest],
+            ),
+          ).toThrow(
+            `must use an exact-version OpenClaw plugin package: npm:@openclaw/slack@${version}`,
+          );
+        },
+      );
     }
 
     if (group === "plugin-install") {

@@ -3,6 +3,8 @@
 
 # Fern 5.80.1 dependency review
 
+> Internal engineering evidence. This file is not part of the public documentation set.
+
 Review date: 2026-07-23
 
 ## Decision

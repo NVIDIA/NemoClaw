@@ -10,7 +10,7 @@ const fernConfig = JSON.parse(
   readFileSync(path.join(repoRoot, "fern", "fern.config.json"), "utf8"),
 ) as { version: string };
 const review = readFileSync(
-  path.join(repoRoot, "docs", "security", "fern-5.92.4-dependency-review.md"),
+  path.join(repoRoot, "internal", "security-reviews", "fern-5.92.4-dependency-review.md"),
   "utf8",
 );
 

@@ -339,6 +339,10 @@ describe("dependency upgrade skill policy", () => {
     expect(skill).toContain("release notes and PR descriptions as leads, not behavior authority");
     expect(skill).toContain("Inspect test selection and observed results");
     expect(skill).toContain("does not establish artifact identity or runtime selection");
+    expect(skill).toContain("Do not write release ledgers");
+    expect(skill).toContain("under `docs/`");
+    expect(skill).toContain("internal/security-reviews/");
+    expect(skill).toContain("link to it from public documentation");
     expect(discovery).toContain("Use the current checkout as the source of truth");
     expect(discovery).toContain("Record discovered specifics in task or PR evidence");
     expect(guide).toContain("`nemoclaw-contributor-update-dependencies`");

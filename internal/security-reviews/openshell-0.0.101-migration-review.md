@@ -3,6 +3,8 @@
 
 # OpenShell 0.0.101 Migration and Security Review
 
+> Internal engineering evidence. This file is not part of the public documentation set.
+
 ## Status and Decision
 
 This review covers two exact source boundaries:
