@@ -651,6 +651,130 @@ ${copyBlock?.[1] ?? ""}
     ]);
   });
 
+  it("detects OpenClaw command drift in the host startup script", () => {
+    const rubrics = read(
+      ".agents/skills/nemoclaw-maintainer-verify-stale/reference/reproduction-rubrics.md",
+    );
+    expect(rubrics).toContain("scripts/nemoclaw-start.sh");
+
+    const repository = fs.mkdtempSync(path.join(os.tmpdir(), "verify-stale-architecture-drift-"));
+    const startupScript = path.join(repository, "scripts", "nemoclaw-start.sh");
+    fs.mkdirSync(path.dirname(startupScript), { recursive: true });
+
+    const git = (...args: string[]) =>
+      spawnSync("git", ["-C", repository, ...args], { encoding: "utf8" });
+
+    try {
+      expect(git("init", "--quiet").status).toBe(0);
+      fs.writeFileSync(startupScript, "#!/usr/bin/env bash\n");
+      expect(git("add", "scripts/nemoclaw-start.sh").status).toBe(0);
+      expect(
+        git(
+          "-c",
+          "user.name=NemoClaw Test",
+          "-c",
+          "user.email=test@example.invalid",
+          "-c",
+          "commit.gpgsign=false",
+          "commit",
+          "--quiet",
+          "-m",
+          "reported release",
+        ).status,
+      ).toBe(0);
+      expect(git("tag", "reported").status).toBe(0);
+
+      fs.appendFileSync(startupScript, "openclaw channels add telegram\n");
+      expect(git("add", "scripts/nemoclaw-start.sh").status).toBe(0);
+      expect(
+        git(
+          "-c",
+          "user.name=NemoClaw Test",
+          "-c",
+          "user.email=test@example.invalid",
+          "-c",
+          "commit.gpgsign=false",
+          "commit",
+          "--quiet",
+          "-m",
+          "latest release",
+        ).status,
+      ).toBe(0);
+
+      const drift = git(
+        "log",
+        "reported..HEAD",
+        "-Sopenclaw channels",
+        "--oneline",
+        "--",
+        "scripts/nemoclaw-start.sh",
+      );
+      expect(drift.status, drift.stderr).toBe(0);
+      expect(drift.stdout).toContain("latest release");
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves pre-existing matching-prefix containers during reset", () => {
+    const provisioning = read(
+      ".agents/skills/nemoclaw-maintainer-verify-stale/reference/brev-provisioning.md",
+    );
+    const ownershipBlock = provisioning.match(
+      /(matching_container_ids\(\) \{[\s\S]*?done <"\$PREEXISTING_CONTAINERS")/u,
+    )?.[1];
+    expect(ownershipBlock).toBeDefined();
+
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "verify-stale-container-reset-"));
+    const binDir = path.join(fixture, "bin");
+    const preExisting = path.join(fixture, "pre-existing");
+    const removed = path.join(fixture, "removed");
+    const state = path.join(fixture, "state");
+    fs.mkdirSync(binDir);
+    fs.writeFileSync(preExisting, "existing-id\n");
+    fs.writeFileSync(state, "owned-id\n");
+    fs.writeFileSync(
+      path.join(binDir, "docker"),
+      `#!/usr/bin/env bash
+set -eu
+case "$1" in
+  ps)
+    printf '%s\n' 'existing-id openshell-existing'
+    if grep -Fxq owned-id "$DOCKER_STATE"; then
+      printf '%s\n' 'owned-id nemoclaw-owned'
+    fi
+    ;;
+  rm)
+    printf '%s\n' "\${@: -1}" >> "$DOCKER_REMOVED"
+    : > "$DOCKER_STATE"
+    ;;
+  inspect)
+    [ "$2" = "existing-id" ]
+    ;;
+  *) exit 1 ;;
+esac
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = spawnSync("bash", ["-c", ownershipBlock as string], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          DOCKER_REMOVED: removed,
+          DOCKER_STATE: state,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          PREEXISTING_CONTAINERS: preExisting,
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(removed, "utf8").trim()).toBe("owned-id");
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it("makes DCO and GitHub verification explicit approval gates", () => {
     const mergeGate = read(".agents/skills/nemoclaw-maintainer-day/MERGE-GATE.md");
     const comparator = read(

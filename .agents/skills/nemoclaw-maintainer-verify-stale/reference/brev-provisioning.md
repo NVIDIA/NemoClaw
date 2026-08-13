@@ -209,6 +209,7 @@ cleanup_verification() {
       test \"\$(cat ~/.verify-stale-owner/token 2>/dev/null)\" = \"$VERIFY_STALE_RUN_ID\" || exit 0
       ${RESET:-:}
       rm -rf ~/.verify-stale-evidence
+      rm -f ~/.verify-stale-preexisting-containers
       rm -rf ~/.verify-stale-running
       rm -rf ~/.verify-stale-owner
     "
@@ -281,6 +282,15 @@ if [ -n "$EXISTING" ]; then
     echo "ERROR: reuse checks failed; no remote verification state will be reset"
     exit 1
   fi
+fi
+
+# Bind reset authority to the container set observed before this run creates state.
+RECORD_CONTAINERS='set -eu
+  umask 077
+  docker ps -a --format "{{.ID}}" | sort -u > ~/.verify-stale-preexisting-containers'
+if ! run_bounded brev exec "$INSTANCE_NAME" "$RECORD_CONTAINERS"; then
+  echo "ERROR: could not record pre-existing container ownership"
+  exit 1
 fi
 
 # Keep every remote script and raw log in one owner-only directory so cleanup is
@@ -450,7 +460,10 @@ that detect a source checkout from the current working directory use the same ve
 
 NemoClaw starts OpenShell sandboxes, runtime services, and listening processes. `rm -rf ~/.nemoclaw` does not remove those resources. Without the reset below, the newest-release install would inherit reported-release state and invalidate the comparison.
 
-The approval plan must name these reset effects before either install: registered sandboxes; containers whose names start with `openshell-` or `nemoclaw-`; processes whose command lines contain `/nemoclaw` or `/openshell` immediately before whitespace or the end of the line; TCP ports `8080`, `18789`, and `9119`; user state directories; and system install paths.
+Before the first install, record the current container identifiers in `~/.verify-stale-preexisting-containers`.
+The reset must preserve every identifier in that file.
+If a matching container does not have a recorded ownership decision, stop with an infrastructure failure.
+The approval plan must name these reset effects before either install: registered sandboxes owned by the verification; verification-owned containers; processes whose command lines contain `/nemoclaw` or `/openshell` immediately before whitespace or the end of the line; TCP ports `8080`, `18789`, and `9119`; user state directories; and system install paths.
 
 ```bash
 RESET=$(cat <<'SCRIPT'
@@ -460,6 +473,10 @@ export PATH="$HOME/.local/bin:$PATH"
 for command in python3 docker pkill pgrep fuser; do
   command -v "$command" >/dev/null 2>&1 || { echo "ERROR: reset requires $command"; exit 1; }
 done
+
+PREEXISTING_CONTAINERS="$HOME/.verify-stale-preexisting-containers"
+[ -f "$PREEXISTING_CONTAINERS" ] \
+  || { echo "ERROR: the approved run did not record pre-existing containers"; exit 1; }
 
 sandbox_names() {
   if ! command -v nemoclaw >/dev/null 2>&1; then
@@ -502,10 +519,26 @@ matching_container_ids() {
   docker ps -a --format '{{.ID}} {{.Names}}' \
     | awk '$2 ~ /^(openshell-|nemoclaw-)/ {print $1}'
 }
-CONTAINERS=$(matching_container_ids)
-[ -z "$CONTAINERS" ] || docker rm -f $CONTAINERS >/dev/null
-[ -z "$(matching_container_ids)" ] \
-  || { echo "ERROR: matching containers remain after reset"; exit 1; }
+owned_container_ids() {
+  matching_container_ids \
+    | while IFS= read -r container_id; do
+        [ -z "$container_id" ] || grep -Fxq "$container_id" "$PREEXISTING_CONTAINERS" \
+          || printf '%s\n' "$container_id"
+      done
+}
+CONTAINERS=$(owned_container_ids)
+if [ -n "$CONTAINERS" ]; then
+  while IFS= read -r container_id; do
+    [ -z "$container_id" ] || docker rm -f -- "$container_id" >/dev/null
+  done <<<"$CONTAINERS"
+fi
+[ -z "$(owned_container_ids)" ] \
+  || { echo "ERROR: verification-owned containers remain after reset"; exit 1; }
+
+while IFS= read -r container_id; do
+  [ -z "$container_id" ] || docker inspect "$container_id" >/dev/null 2>&1 \
+    || { echo "ERROR: reset removed a pre-existing container: $container_id"; exit 1; }
+done <"$PREEXISTING_CONTAINERS"
 
 # Delete state only after sandbox, process, and container cleanup succeeds.
 for path in \
