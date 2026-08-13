@@ -12,7 +12,7 @@ import {
   runAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
 } from "./passthrough-dispatch";
-import type { SandboxExecSignalSource } from "../exec";
+import { computeExitCode, type SandboxExecSignalSource } from "../exec";
 
 function dispatchHarness() {
   const childEvents = new EventEmitter();
@@ -79,8 +79,35 @@ describe("runAgentDispatch", () => {
 
     const result = await pending;
     expect(harness.child.kill).toHaveBeenCalledWith("SIGTERM");
-    expect(result.error).toEqual(new Error("agent stdout exceeded the 4-byte capture limit"));
+    expect(result.error).toEqual(
+      new Error("agent output exceeded the 4-byte combined capture limit"),
+    );
+    expect(computeExitCode(result)).toEqual({
+      code: 1,
+      errorMessage: "agent output exceeded the 4-byte combined capture limit",
+    });
     expect(result.stdout).toBe("");
+  });
+
+  it("enforces one capture bound across stdout and stderr", async () => {
+    const harness = dispatchHarness();
+    const pending = runAgentDispatch(
+      "openshell",
+      ["sandbox", "exec", "--name", "alpha", "--", "openclaw", "agent"],
+      { maxBufferBytes: 6, stdinIsTty: false },
+      { signalSource: harness.signalSource, spawnChild: () => harness.child },
+    );
+
+    harness.stdout.emit("data", "1234");
+    harness.stderr.emit("data", "567");
+
+    const result = await pending;
+    expect(harness.child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(result.error).toEqual(
+      new Error("agent output exceeded the 6-byte combined capture limit"),
+    );
+    expect(result.stdout).toBe("1234");
+    expect(result.stderr).toBe("");
   });
 });
 

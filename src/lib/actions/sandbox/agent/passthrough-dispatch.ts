@@ -84,6 +84,11 @@ type AgentDispatchReadable = {
   on(event: "data", listener: (chunk: Buffer | string) => void): unknown;
 };
 
+type AgentDispatchCaptureBudget = {
+  bytes: number;
+  overflowed: boolean;
+};
+
 export type AgentDispatchChild = SandboxExecChild & {
   stderr: AgentDispatchReadable | null;
   stdout: AgentDispatchReadable | null;
@@ -116,26 +121,25 @@ const defaultAgentDispatchSpawner: AgentDispatchSpawner = (binary, args, stdio) 
 
 function captureAgentDispatchStream(
   stream: AgentDispatchReadable | null,
-  streamName: "stderr" | "stdout",
   child: AgentDispatchChild,
   chunks: Buffer[],
   maxBufferBytes: number,
+  budget: AgentDispatchCaptureBudget,
   setOverflowError: (error: Error) => void,
 ): void {
-  let size = 0;
-  let overflowed = false;
   stream?.on("data", (chunk) => {
-    if (overflowed) return;
+    if (budget.overflowed) return;
     const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += data.byteLength;
-    if (size > maxBufferBytes) {
-      overflowed = true;
+    const nextSize = budget.bytes + data.byteLength;
+    if (nextSize > maxBufferBytes) {
+      budget.overflowed = true;
       setOverflowError(
-        new Error(`agent ${streamName} exceeded the ${maxBufferBytes}-byte capture limit`),
+        new Error(`agent output exceeded the ${maxBufferBytes}-byte combined capture limit`),
       );
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
       return;
     }
+    budget.bytes = nextSize;
     chunks.push(data);
   });
 }
@@ -155,6 +159,7 @@ export async function runAgentDispatch(
 ): Promise<AgentDispatchResult> {
   const stderrChunks: Buffer[] = [];
   const stdoutChunks: Buffer[] = [];
+  const captureBudget: AgentDispatchCaptureBudget = { bytes: 0, overflowed: false };
   let overflowError: Error | undefined;
   const maxBufferBytes = options.maxBufferBytes ?? DEFAULT_AGENT_DISPATCH_MAX_BUFFER_BYTES;
   const spawnChild = deps.spawnChild ?? defaultAgentDispatchSpawner;
@@ -173,18 +178,18 @@ export async function runAgentDispatch(
       };
       captureAgentDispatchStream(
         child.stdout,
-        "stdout",
         child,
         stdoutChunks,
         maxBufferBytes,
+        captureBudget,
         setOverflowError,
       );
       captureAgentDispatchStream(
         child.stderr,
-        "stderr",
         child,
         stderrChunks,
         maxBufferBytes,
+        captureBudget,
         setOverflowError,
       );
       return child;

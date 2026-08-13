@@ -35,15 +35,12 @@ const isTerminalAgentMock = vi.hoisted(() =>
   vi.fn((agent: { runtime?: { kind?: string } }) => agent.runtime?.kind === "terminal"),
 );
 
-vi.mock("../exec", () => ({
+vi.mock("../exec", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../exec")>()),
   execSandbox: execMock,
   buildOpenshellExecArgs: vi.fn((_sb: string, cmd: readonly string[]) => cmd),
   wrapExecCommandWithRuntimeEnv: vi.fn((cmd: readonly string[]) => cmd),
   wrapOpenClawAgentCommandWithRuntimeEnv: vi.fn((cmd: readonly string[]) => cmd),
-  computeExitCode: vi.fn((result: { signal?: NodeJS.Signals | null; status: number | null }) => ({
-    code: result.status ?? (result.signal === "SIGTERM" ? 143 : 1),
-    errorMessage: null,
-  })),
 }));
 vi.mock("../gateway-state", () => ({ ensureLiveSandboxOrExit: ensureLiveMock }));
 vi.mock("../../../state/registry", () => ({ getSandbox: getSandboxMock }));
