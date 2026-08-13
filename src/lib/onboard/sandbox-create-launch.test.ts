@@ -86,15 +86,28 @@ describe("buildSandboxRuntimeEnvArgs", () => {
       const envArgs = buildSandboxRuntimeEnvArgs({
         ...base,
         agent: { name: agentName, configPaths: { dir: "/sandbox/.openclaw" } } as any,
-        hermesApiPort: agentName === "hermes" ? 8647 : null,
+        hermesApiPort: agentName === "hermes" ? 8642 : null,
       }).envArgs;
       expect(envArgs, `${agentName} should receive the sandbox name`).toContain(
         "NEMOCLAW_SANDBOX_NAME=my-assistant",
       );
-      if (agentName === "hermes") {
-        expect(envArgs).toContain("NEMOCLAW_HERMES_API_PORT=8647");
-      }
     }
+  });
+
+  it("injects the sandbox-owned Hermes API port", () => {
+    const envArgs = buildSandboxRuntimeEnvArgs({
+      agent: { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } } as any,
+      chatUiUrl: "",
+      manageDashboard: false,
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      hermesApiPort: 8647,
+      extraPlaceholderKeys: [],
+      env: {} as NodeJS.ProcessEnv,
+      sandboxName: "my-assistant",
+    }).envArgs;
+
+    expect(envArgs).toContain("NEMOCLAW_HERMES_API_PORT=8647");
   });
 
   it("omits NEMOCLAW_SANDBOX_NAME when no sandbox name is known", () => {
