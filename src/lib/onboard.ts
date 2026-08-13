@@ -2113,6 +2113,7 @@ async function createSandboxWithBaseImageResolution(
   tempManagedRuntime: boolean,
   tempManagedRuntimeCatalog: string | null,
   dashboardPortReservationScope: import("./onboard/dashboard-port").DashboardPortReservationScope,
+  hermesApiPortReservationScope: import("./agent/onboard").HermesApiPortReservationScope,
   gpu: ReturnType<typeof nim.detectGpu>,
   model: string,
   provider: string,
@@ -2162,6 +2163,7 @@ async function createSandboxWithBaseImageResolution(
   );
   const manageDashboard = dashboardRuntime.shouldManageDashboardForAgent(agent);
   const isManagedDcodeAgent = usesManagedDcodeIdentity(agent?.name, fromDockerfile);
+  let effectiveHermesApiPort: number | null = null;
   let effectivePort = 0,
     chatUiUrl = "";
   if (manageDashboard) {
@@ -2173,7 +2175,7 @@ async function createSandboxWithBaseImageResolution(
       agentForwardPort: dashboardRuntime.getAgentPrimaryForwardPort(agent, DASHBOARD_PORT),
       defaultPort: DASHBOARD_PORT,
       forwardListOutput: runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
-      warn: (message) => console.warn(message),
+      warn: (message: string) => console.warn(message),
     });
     ({ effectivePort, chatUiUrl } = dashboardSelection);
     dashboardPortReservationScope.current = dashboardSelection.reservation;
@@ -2225,6 +2227,22 @@ async function createSandboxWithBaseImageResolution(
     envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const managedWorkloadRuntime = managedWorkloadOnboard.createManagedWorkloadOnboardRuntime({ computePlan, managedWorkloadRebuild, tempManagedRuntime, tempManagedRuntimeCatalog, agentName: requestedAgentName, legacyDockerfilePath, customDockerfilePath: fromDockerfile ?? (preparedBuildContext ? preparedBuildContext.stagedDockerfile : null), rootDir: ROOT, model, provider, preferredInferenceApi, endpointUrl: createIntent?.endpointUrl ?? null, startupProfile: { chatUiUrl, effectiveDashboardPort: effectivePort, manageDashboard, dashboardBindAddress: process.env.NEMOCLAW_DASHBOARD_BIND, wslExposure: requestedAgentName === "openclaw" && isWsl(), hermesDashboardState, webSearch: webSearchConfig, toolDisclosure: effectiveToolDisclosure, hermesToolGateways, messagingPlan: plannedMessagingState?.plan ?? null, dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode, observabilityEnabled: createIntent?.observabilityEnabled === true, environment: process.env }, note, fallbackBuildEstimate: () => process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1" ? null : formatSandboxBuildEstimateNote(assessHost()) }, { resolveAgentInferenceApi: inferenceConfig.resolveAgentInferenceApi, getSandboxInferenceConfig });
+  const reserveEffectiveHermesApiPort = async (
+    forwardListOutput?: string | null,
+  ): Promise<void> => {
+    if (agent?.name !== "hermes") return;
+    const apiPortSelection = await agentOnboard.reserveCreateSandboxHermesApiPort({
+      sandboxName,
+      env: process.env,
+      getSandbox: registry.getSandbox,
+      allowRegisteredOverride: true,
+      forwardListOutput:
+        forwardListOutput ?? runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
+      warn: (message: string) => console.warn(message),
+    });
+    effectiveHermesApiPort = apiPortSelection.effectivePort;
+    hermesApiPortReservationScope.current = apiPortSelection.reservation;
+  };
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
@@ -2466,6 +2484,7 @@ async function createSandboxWithBaseImageResolution(
       for (const hint of recreateJournal.managedMcpRecreateRefusalHints({ sandboxName, cliName: cliName(), toolDisclosure: effectiveToolDisclosure, rebuildFlag: dcodeAutoApprovalPlan.rebuildFlag, observabilityFlag: observabilityCommandFlag.explicitObservabilityFlag(createIntent?.observabilityEnabled === true, createIntent?.observabilityRequestedExplicitly === true) })) console.error(hint);
       process.exit(1);
     }
+    await reserveEffectiveHermesApiPort();
     if (!createIntent?.recreateTransaction) recreateRuntime = openRecreateJournal();
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     if (recreateRuntime.acceptedTarget) { if ("complete" in recreateRuntime) recreateRuntime.complete(); await restoreReusedSandboxDashboard(true); return sandboxName; }
@@ -2498,7 +2517,13 @@ async function createSandboxWithBaseImageResolution(
     if (recreateRuntime.beginDelete() === "source") { runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact }); runOpenshell(["sandbox", "delete", "-g", recreateRuntime.journaledGatewayName ?? GATEWAY_NAME, sandboxName], { ignoreError: true }); if (!waitForSandboxRecreateDeleteAbsence(sandboxName, recreateRuntime.journaledGatewayName ?? GATEWAY_NAME, note)) throw new Error(`Cannot continue sandbox '${sandboxName}' recreation: OpenShell did not confirm explicit source absence after delete.`); }
     recreateRuntime.confirmDeleted();
     sandboxLifecycle.removeSandboxUnlessSessionReservation(previousEntry, sandboxName);
+    // A live forward owned by this sandbox was the reservation before delete.
+    // Replace it with a host bind before any new sandbox preparation begins.
+    if (agent?.name === "hermes" && hermesApiPortReservationScope.current === null) {
+      await reserveEffectiveHermesApiPort("");
+    }
   }
+  if (!liveExists) await reserveEffectiveHermesApiPort();
   const preparedSandboxWorkload = await managedWorkloadRuntime.ensurePreparedWorkload();
   managedWorkloadRuntime.ensurePreparedProfile(preparedSandboxWorkload);
   applyExtraProviderReconciliation({
@@ -2511,7 +2536,7 @@ async function createSandboxWithBaseImageResolution(
     runtime: managedWorkloadRuntime, workload: preparedSandboxWorkload,
     legacy: { preparedBuildContext, agent, fromDockerfile, createAgentSandbox: (selectedAgent) => baseImageResolutionFlow.createAgentSandboxWithResolution(baseImageResolutionContext, selectedAgent, agentOnboard.createAgentSandbox), patchInput: { preparedBuildContext, agent, fromDockerfile, model, chatUiUrl, provider, endpointUrl: createIntent?.endpointUrl ?? null, compatibleEndpointReasoning: createIntent?.compatibleEndpointReasoning, preferredInferenceApi, webSearchConfig, toolDisclosure: effectiveToolDisclosure, rebuildPreservedEnv: createIntent?.rebuildPreservedEnv, ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}), hermesToolGateways, sandboxGpuConfig: effectiveSandboxGpuConfig, ...baseImageResolutionFlow.getBaseImageResolutionPatchOptions(baseImageResolutionContext), gatewayPort: GATEWAY_PORT } },
     plan: { intent: resolvedCreateIntent, rebindMessagingTokenDefs: async () => (await sandboxCreateIntentResolver.rebind({ sandboxName, enabledChannels, webSearchConfig, agent, ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}) }, resolvedCreateIntent)).messagingTokenDefs, runProviderPreDeleteCleanup: () => runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact, tolerateMissingSandbox: true }), upsertMessagingProviders, getHermesToolGatewayProviderName: (targetSandbox) => getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox), discloseInitialSandboxPolicy },
-    launchInput: { agent, observabilityEnabled: createIntent?.observabilityEnabled === true, chatUiUrl, sandboxName, env: process.env, extraPlaceholderKeys: resolvedCreateIntent.extraPlaceholderKeys, getDashboardForwardPort, hermesDashboardState, manageDashboard, openshellShellCommand, openshellArgv },
+    launchInput: { agent, observabilityEnabled: createIntent?.observabilityEnabled === true, chatUiUrl, sandboxName, env: process.env, extraPlaceholderKeys: resolvedCreateIntent.extraPlaceholderKeys, getDashboardForwardPort, hermesDashboardState, hermesApiPort: effectiveHermesApiPort, manageDashboard, openshellShellCommand, openshellArgv },
     plannedMessagingPlan: plannedMessagingState?.plan ?? null,
     gpu: { provider, config: effectiveSandboxGpuConfig, dockerDriverGateway, gatewayPort: GATEWAY_PORT },
     dependencies: { materializeSandboxCreatePlan: sandboxCreatePlanMaterialization.materializeSandboxCreatePlan, prepareSandboxBuildPatchConfig: sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig },
@@ -2678,6 +2703,7 @@ async function createSandboxWithBaseImageResolution(
           preservedMcpState,
           hermesToolGateways,
           hermesDashboardState: finalHermesDashboardState,
+          hermesApiPort: effectiveHermesApiPort,
           dashboardPort: actualDashboardPort,
           ...lifecycleRegistrationFields,
           ...recreateRuntime.registrationFields,
@@ -2729,6 +2755,7 @@ type CreateSandboxArgs =
     unknown,
     unknown,
     unknown,
+    unknown,
     ...infer Args,
   ]
     ? Args
@@ -2737,7 +2764,7 @@ type CreateSandboxArgs =
 async function createSandbox(...args: CreateSandboxArgs): Promise<string> {
   const computePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  return withDashboardPortReservationScope((dashboardPortReservationScope) => createSandboxWithBaseImageResolution(baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }), computePlan, null, false, null, dashboardPortReservationScope, ...args));
+  return agentOnboard.withHermesApiPortReservationScope((hermesApiPortReservationScope: import("./agent/onboard").HermesApiPortReservationScope) => withDashboardPortReservationScope((dashboardPortReservationScope) => createSandboxWithBaseImageResolution(baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }), computePlan, null, false, null, dashboardPortReservationScope, hermesApiPortReservationScope, ...args)));
 }
 
 async function createSandboxWithTemporaryManagedRuntime(
@@ -2745,7 +2772,7 @@ async function createSandboxWithTemporaryManagedRuntime(
 ): Promise<string> {
   const computePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  return withDashboardPortReservationScope((dashboardPortReservationScope) => createSandboxWithBaseImageResolution(baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }), computePlan, null, true, null, dashboardPortReservationScope, ...args));
+  return agentOnboard.withHermesApiPortReservationScope((hermesApiPortReservationScope: import("./agent/onboard").HermesApiPortReservationScope) => withDashboardPortReservationScope((dashboardPortReservationScope) => createSandboxWithBaseImageResolution(baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }), computePlan, null, true, null, dashboardPortReservationScope, hermesApiPortReservationScope, ...args)));
 }
 
 // ── Step 3: Inference selection ──────────────────────────────────
@@ -3709,6 +3736,7 @@ async function preflightAuthoritativeRebuildTarget(
 const onboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   const hostMountScope = onboardSessionBootstrap.beginHostMountScope(opts.hostMounts);
+  const hermesApiPortReservationScope = agentOnboard.createHermesApiPortReservationScope();
   resetGatewayOwnerBinding();
   setupInferenceFactory.assertNoOpenShellGatewayEndpointOverride();
   const runtimeControlRequests = runtimeControlFlow.applyOnboardRuntimeControlRequests(opts);
@@ -4222,6 +4250,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                 opts.tempManagedRuntime === true,
                 opts.tempManagedRuntimeCatalog ?? null,
                 dashboardPortReservationScope,
+                hermesApiPortReservationScope,
                 ...createArgs,
               ),
             ),
@@ -4275,7 +4304,17 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           cuaRegistry: registry,
         }),
         ensureAgentDashboardForward: (name, selectedAgent) =>
-          selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : 0,
+          selectedAgent
+            ? ensureAgentDashboardForward(name, selectedAgent, {
+                beforeForwardPort: async (port) => {
+                  if (
+                    selectedAgent.name === "hermes" &&
+                    hermesApiPortReservationScope.current?.port === port
+                  )
+                    await hermesApiPortReservationScope.release();
+                },
+              })
+            : 0,
         persistDashboardPort: (name, port) => registry.updateSandbox(name, { dashboardPort: port }),
         recordStepSkipped,
         isOpenclawReady,
@@ -4379,6 +4418,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     traceCompleted = finalFlowResult.session.machine.state === "complete";
   } finally {
     try {
+      await hermesApiPortReservationScope.release();
       releaseOnboardLock();
       onboardRuntimeBoundary.clear();
       onboardTracing.finishOnboardTrace(onboardTrace, traceCompleted);

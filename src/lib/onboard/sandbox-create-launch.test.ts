@@ -86,6 +86,7 @@ describe("buildSandboxRuntimeEnvArgs", () => {
       const envArgs = buildSandboxRuntimeEnvArgs({
         ...base,
         agent: { name: agentName, configPaths: { dir: "/sandbox/.openclaw" } } as any,
+        hermesApiPort: agentName === "hermes" ? 8642 : null,
       }).envArgs;
       expect(envArgs, `${agentName} should receive the sandbox name`).toContain(
         "NEMOCLAW_SANDBOX_NAME=my-assistant",
@@ -100,6 +101,7 @@ describe("buildSandboxRuntimeEnvArgs", () => {
       manageDashboard: true,
       getDashboardForwardPort: () => "19000",
       hermesDashboardState: disabledHermesDashboardState,
+      hermesApiPort: 8642,
       extraPlaceholderKeys: [],
       env: {} as NodeJS.ProcessEnv,
     }).envArgs;
@@ -232,6 +234,7 @@ describe("prepareSandboxCreateLaunch", () => {
       env: {},
       extraPlaceholderKeys: [],
       getDashboardForwardPort: () => "0",
+      hermesApiPort: 8642,
       hermesDashboardState: disabledHermesDashboardState,
       manageDashboard: false,
       openshellShellCommand: (args) => args.join(" "),
@@ -600,6 +603,7 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
       extraPlaceholderKeys: [],
       getDashboardForwardPort: () => "0",
       hermesDashboardState: disabledHermesDashboardState,
+      hermesApiPort: 8642,
       manageDashboard: false,
       openshellShellCommand: (args) => args.join(" "),
       sandboxName: "demo",
@@ -705,6 +709,7 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
       env: {},
       extraPlaceholderKeys: [],
       getDashboardForwardPort: () => "0",
+      hermesApiPort: 8642,
       hermesDashboardState: disabledHermesDashboardState,
       manageDashboard: false,
       openshellShellCommand: (args) => args.join(" "),

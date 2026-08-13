@@ -9,14 +9,27 @@ import {
 } from "../core/ports";
 import * as registry from "../state/registry";
 import {
+  type DashboardPortReservation,
   findAvailablePortInRange,
+  getOccupiedPorts,
   getRegistryOccupiedHermesApiPorts,
   type HostPortRange,
   isPortBoundOnHost,
   type ListSandboxesFn,
+  reserveDashboardPort,
 } from "./dashboard-port";
 
 export const HERMES_API_PORT_ENV = "NEMOCLAW_HERMES_API_PORT";
+
+export interface HermesApiPortReservationScope {
+  current: DashboardPortReservation | null;
+  release(): Promise<void>;
+}
+
+export interface ReservedCreateSandboxHermesApiPortResult {
+  effectivePort: number;
+  reservation: DashboardPortReservation | null;
+}
 
 const HERMES_API_RANGE: HostPortRange = {
   start: HERMES_API_PORT_RANGE_START,
@@ -64,6 +77,107 @@ export function findAvailableHermesApiPort(
     isPortBoundCheck,
     registryOccupiedPorts ?? getRegistryOccupiedHermesApiPorts(sandboxName, listSandboxesFn),
   );
+}
+
+function isAddressInUse(error: unknown): boolean {
+  return typeof error === "object" && error !== null && Reflect.get(error, "code") === "EADDRINUSE";
+}
+
+/**
+ * Select and bind the Hermes API port before sandbox preparation begins.
+ *
+ * The host-wide lifecycle lock serializes NemoClaw allocators until registry
+ * publication. This reservation also closes the gap against unrelated host
+ * listeners and keeps the selected port owned until the host-forward handoff.
+ */
+export async function reserveCreateSandboxHermesApiPort(options: {
+  sandboxName: string;
+  env?: NodeJS.ProcessEnv;
+  getSandbox?: (name: string) => { hermesApiPort?: number | null } | null | undefined;
+  allowRegisteredOverride?: boolean;
+  forwardListOutput?: string | null;
+  isPortBoundCheck?: (port: number) => boolean;
+  registryOccupiedPorts?: ReadonlyMap<string, string>;
+  reservePort?: (port: number) => Promise<DashboardPortReservation>;
+  warn?: (message: string) => void;
+}): Promise<ReservedCreateSandboxHermesApiPortResult> {
+  const env = options.env ?? process.env;
+  const getSandbox = options.getSandbox ?? registry.getSandbox;
+  const registered = getSandbox(options.sandboxName);
+  const hasRequestedPort = Boolean(env[HERMES_API_PORT_ENV]?.trim());
+  const forwardListOutput = options.forwardListOutput ?? null;
+  const forwardOwners = getOccupiedPorts(forwardListOutput);
+  const reservePort = options.reservePort ?? reserveDashboardPort;
+  const reserveSelectedPort = async (
+    effectivePort: number,
+  ): Promise<ReservedCreateSandboxHermesApiPortResult> => {
+    if (forwardOwners.get(String(effectivePort)) === options.sandboxName) {
+      return { effectivePort, reservation: null };
+    }
+    return { effectivePort, reservation: await reservePort(effectivePort) };
+  };
+
+  // Explicit and already-registered ports are identity, not allocation hints.
+  // Preserve them and report a bind collision instead of silently changing the
+  // sandbox's configured endpoint.
+  if (hasRequestedPort || registered) {
+    const effectivePort = resolveOnboardHermesApiPort(options.sandboxName, {
+      env,
+      getSandbox,
+      allowRegisteredOverride: options.allowRegisteredOverride,
+      forwardListOutput,
+    });
+    return reserveSelectedPort(effectivePort);
+  }
+
+  const occupied = new Map(
+    options.registryOccupiedPorts ?? getRegistryOccupiedHermesApiPorts(options.sandboxName),
+  );
+  while (true) {
+    const effectivePort = findAvailableHermesApiPort(
+      options.sandboxName,
+      HERMES_OPENAI_API_PORT,
+      forwardListOutput,
+      options.isPortBoundCheck ?? isPortBoundOnHost,
+      occupied,
+    );
+    try {
+      const result = await reserveSelectedPort(effectivePort);
+      env[HERMES_API_PORT_ENV] = String(effectivePort);
+      if (effectivePort !== HERMES_OPENAI_API_PORT) {
+        options.warn?.(
+          `  ! Port ${HERMES_OPENAI_API_PORT} is taken. Using port ${effectivePort} instead.`,
+        );
+      }
+      return result;
+    } catch (error) {
+      if (!isAddressInUse(error)) throw error;
+      occupied.set(String(effectivePort), "non-OpenShell host listener");
+    }
+  }
+}
+
+export function createHermesApiPortReservationScope(): HermesApiPortReservationScope {
+  return {
+    current: null,
+    async release() {
+      const reservation = this.current;
+      this.current = null;
+      await reservation?.release();
+    },
+  };
+}
+
+/** Release a Hermes API-port reservation after both successful and failed onboarding. */
+export async function withHermesApiPortReservationScope<T>(
+  operation: (scope: HermesApiPortReservationScope) => Promise<T>,
+): Promise<T> {
+  const scope = createHermesApiPortReservationScope();
+  try {
+    return await operation(scope);
+  } finally {
+    await scope.release();
+  }
 }
 
 /**
@@ -125,7 +239,7 @@ export function resolveOnboardHermesApiPort(
   sandboxName: string,
   options: {
     env?: NodeJS.ProcessEnv;
-    getSandbox?: (name: string) => { hermesApiPort?: number | null } | undefined;
+    getSandbox?: (name: string) => { hermesApiPort?: number | null } | null | undefined;
     allowRegisteredOverride?: boolean;
     forwardListOutput?: string | null;
     findAvailablePort?: typeof findAvailableHermesApiPort;

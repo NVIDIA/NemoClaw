@@ -26,6 +26,14 @@ import { normalizeInferenceSelection } from "../inference/selection";
 import { runSandboxConfigSync, sandboxConfigSyncArgs } from "../onboard/config-sync";
 import { isValidForwardPort } from "../onboard/dashboard-runtime";
 import { resolveSandboxHermesApiPort } from "../onboard/hermes-api-port";
+
+export {
+  createHermesApiPortReservationScope,
+  type HermesApiPortReservationScope,
+  reserveCreateSandboxHermesApiPort,
+  withHermesApiPortReservationScope,
+} from "../onboard/hermes-api-port";
+
 import { redact, run } from "../runner";
 import * as registry from "../state/registry";
 import type { SandboxEntry } from "../state/registry/types";

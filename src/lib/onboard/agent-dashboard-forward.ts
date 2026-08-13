@@ -25,7 +25,7 @@ export type AgentDashboardForwardConfig = NonNullable<DashboardRuntimeAgent> & {
   dashboardUi?: unknown;
 };
 
-export function ensureAgentDashboardForward(options: {
+export async function ensureAgentDashboardForward(options: {
   sandboxName: string;
   agent: AgentDashboardForwardConfig;
   ensureDashboardForward: EnsureDashboardForward;
@@ -34,8 +34,9 @@ export function ensureAgentDashboardForward(options: {
   /** Host port allocated to this sandbox's OpenAI-compatible API, when it has one. */
   hermesApiPort?: number | null;
   preserveForwardPorts?: readonly (number | null | undefined)[];
+  beforeForwardPort?: (port: number) => Promise<void> | void;
   warn?: (message: string) => void;
-}): number {
+}): Promise<number> {
   const {
     sandboxName,
     agent,
@@ -44,6 +45,7 @@ export function ensureAgentDashboardForward(options: {
     controlUiPort,
     hermesApiPort,
     preserveForwardPorts = [],
+    beforeForwardPort,
     warn = (message: string) => console.warn(message),
   } = options;
   if (!shouldManageDashboardForAgent(agent)) {
@@ -79,6 +81,7 @@ export function ensureAgentDashboardForward(options: {
     !usesFixedApiPort && chatUiUrl
       ? replaceUrlPort(chatUiUrl, agentDashboardPort)
       : `http://127.0.0.1:${agentDashboardPort}`;
+  await beforeForwardPort?.(agentDashboardPort);
   const actualAgentDashboardPort = ensureDashboardForward(sandboxName, requestedDashboardUrl, {
     preserveSandboxPorts: preservePorts,
   });
@@ -90,6 +93,7 @@ export function ensureAgentDashboardForward(options: {
   for (const port of preservePorts) {
     if (port === agentDashboardPort) continue;
     try {
+      await beforeForwardPort?.(port);
       const forwardUrl =
         port === optionalDashboardPort && chatUiUrl
           ? replaceUrlPort(chatUiUrl, port)

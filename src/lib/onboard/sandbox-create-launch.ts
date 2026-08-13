@@ -115,6 +115,8 @@ export interface SandboxCreateLaunchInput {
   extraPlaceholderKeys: readonly string[];
   getDashboardForwardPort(chatUiUrl: string): string;
   hermesDashboardState: HermesDashboardOnboardState;
+  /** Reserved host port for this Hermes sandbox's OpenAI-compatible API. */
+  hermesApiPort?: number | null;
   manageDashboard?: boolean;
   openshellShellCommand: OpenshellShellCommand;
   openshellArgv?: OpenshellArgv;
@@ -301,6 +303,7 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     manageDashboard,
     getDashboardForwardPort: input.getDashboardForwardPort,
     hermesDashboardState: input.hermesDashboardState,
+    hermesApiPort: input.hermesApiPort,
     extraPlaceholderKeys: input.extraPlaceholderKeys,
     observabilityEnabled: input.observabilityEnabled,
     sandboxName: input.sandboxName,

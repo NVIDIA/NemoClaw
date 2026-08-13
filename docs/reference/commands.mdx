@@ -4311,7 +4311,7 @@ For Hermes, `NEMOCLAW_DASHBOARD_PORT` controls the built-in dashboard forward, w
 The OpenAI-compatible API is separate and serves `/v1` on a per-sandbox port that defaults to `8642`.
 If `8642` is already held by another sandbox or by a non-OpenShell host listener, onboarding scans `8642` through `8652` and uses the next free API port.
 Set `NEMOCLAW_HERMES_API_PORT=<N>` before you onboard a new sandbox to pin a port from `8642` through `8652`.
-Onboarding does not check that a pinned port is free, so when another listener holds it the sandbox gets no API forward and onboarding warns that it could not start the forward.
+If another sandbox or host listener holds the pinned port, onboarding exits instead of selecting a different port.
 The sandbox relay binds the port when the sandbox starts, so set this variable for an existing sandbox only together with `--recreate-sandbox`.
 For an existing sandbox, a different value without `--recreate-sandbox` exits before the host forward changes.
 Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` only when you want Hermes' optional in-browser TUI tab.

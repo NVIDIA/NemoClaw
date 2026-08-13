@@ -3323,7 +3323,8 @@ A Hermes sandbox onboarded before the API port became per-sandbox carries no all
 A Hermes sandbox created after that change receives its own port during onboarding, so a second sandbox needs no further action.
 To move a sandbox that predates the change onto its own port, set `NEMOCLAW_HERMES_API_PORT=<N>` and rerun onboarding with `--recreate-sandbox`.
 Set `<N>` to a free port from `8642` through `8652`.
-Onboarding rejects a value outside that range, and it applies an in-range value without checking whether another sandbox or a host listener already holds it.
+Onboarding rejects a value outside that range.
+It also rejects an in-range value that another sandbox or host listener already holds.
 A recreate keeps the sandbox's registry entry, so `--recreate-sandbox` without the variable keeps the recorded port.
 
 ### Install reports `Could not restore the Hermes forward`

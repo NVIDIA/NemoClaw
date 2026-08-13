@@ -10,20 +10,21 @@ describe("ensureAgentDashboardForward", () => {
     delete process.env.CHAT_UI_URL;
   });
 
-  it("preserves additional host-forward ports during dashboard refresh", () => {
+  it("preserves additional host-forward ports during dashboard refresh", async () => {
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "http://127.0.0.1:18789") => {
       const parsed = new URL(chatUiUrl);
       return Number(parsed.port);
     });
 
     expect(
-      ensureAgentDashboardForward({
+      await ensureAgentDashboardForward({
         sandboxName: "hm",
         agent: {
           forwardPort: 18789,
           forward_ports: [18789, 8642],
         },
         ensureDashboardForward,
+        hermesApiPort: 8642,
         preserveForwardPorts: [3978],
       }),
     ).toBe(18789);
@@ -37,14 +38,14 @@ describe("ensureAgentDashboardForward", () => {
     });
   });
 
-  it("forwards the sandbox's allocated API port instead of the manifest default (#8543)", () => {
+  it("forwards the sandbox's per-sandbox API port instead of the manifest default (#8543)", async () => {
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "http://127.0.0.1:18789") => {
       const parsed = new URL(chatUiUrl);
       return Number(parsed.port);
     });
 
     expect(
-      ensureAgentDashboardForward({
+      await ensureAgentDashboardForward({
         sandboxName: "hm",
         agent: {
           forwardPort: 18789,
@@ -70,19 +71,44 @@ describe("ensureAgentDashboardForward", () => {
     );
   });
 
-  it("keeps an explicit effective port and omits the replaced manifest default (#6277)", () => {
+  it("hands off a reserved port immediately before starting its host forward", async () => {
+    const events: string[] = [];
+    const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "") => {
+      const port = Number(new URL(chatUiUrl).port);
+      events.push(`forward:${port}`);
+      return port;
+    });
+
+    await ensureAgentDashboardForward({
+      sandboxName: "hm",
+      agent: {
+        forwardPort: 18789,
+        forward_ports: [18789, 8642],
+      },
+      ensureDashboardForward,
+      hermesApiPort: 8643,
+      beforeForwardPort: (port) => {
+        events.push(`before:${port}`);
+      },
+    });
+
+    expect(events).toEqual(["before:18789", "forward:18789", "before:8643", "forward:8643"]);
+  });
+
+  it("keeps an explicit effective port and omits the replaced manifest default (#6277)", async () => {
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "") => {
       return Number(new URL(chatUiUrl).port);
     });
 
     expect(
-      ensureAgentDashboardForward({
+      await ensureAgentDashboardForward({
         sandboxName: "hm",
         agent: {
           forwardPort: 18789,
           forward_ports: [18789, 8642],
         },
         ensureDashboardForward,
+        hermesApiPort: 8642,
         controlUiPort: 9120,
         preserveForwardPorts: [3978],
       }),
@@ -103,13 +129,13 @@ describe("ensureAgentDashboardForward", () => {
     expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:9120");
   });
 
-  it("preserves a remote dashboard URL while refreshing its effective port (#6277)", () => {
+  it("preserves a remote dashboard URL while refreshing its effective port (#6277)", async () => {
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "") => {
       return Number(new URL(chatUiUrl).port);
     });
 
     expect(
-      ensureAgentDashboardForward({
+      await ensureAgentDashboardForward({
         sandboxName: "hm",
         agent: {
           dashboard: { kind: "ui" },
@@ -117,6 +143,7 @@ describe("ensureAgentDashboardForward", () => {
           forward_ports: [18789, 8642],
         },
         ensureDashboardForward,
+        hermesApiPort: 8642,
         chatUiUrl: "https://hermes.example.test:9120/ui",
         controlUiPort: 9120,
       }),
@@ -131,13 +158,13 @@ describe("ensureAgentDashboardForward", () => {
     expect(process.env.CHAT_UI_URL).toBe("https://hermes.example.test:9120/ui");
   });
 
-  it("keeps an API-kind agent on its declared primary port", () => {
+  it("keeps an API-kind agent on its declared primary port", async () => {
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "") => {
       return Number(new URL(chatUiUrl).port);
     });
 
     expect(
-      ensureAgentDashboardForward({
+      await ensureAgentDashboardForward({
         sandboxName: "api-agent",
         agent: {
           dashboard: { kind: "api" },
@@ -145,6 +172,7 @@ describe("ensureAgentDashboardForward", () => {
           forward_ports: [8642],
         },
         ensureDashboardForward,
+        hermesApiPort: 8642,
         chatUiUrl: "http://127.0.0.1:9120",
         controlUiPort: 9120,
       }),
@@ -156,14 +184,14 @@ describe("ensureAgentDashboardForward", () => {
     expect(process.env.CHAT_UI_URL).toBeUndefined();
   });
 
-  it("preserves the canonical WebUI forward for an API-kind agent with an optional dashboard", () => {
+  it("preserves the canonical WebUI forward for an API-kind agent with an optional dashboard", async () => {
     process.env.CHAT_UI_URL = "https://hermes.example.test:9120/ui";
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "") => {
       return Number(new URL(chatUiUrl).port);
     });
 
     expect(
-      ensureAgentDashboardForward({
+      await ensureAgentDashboardForward({
         sandboxName: "legacy-hermes",
         agent: {
           dashboard: { kind: "api" },
@@ -172,6 +200,7 @@ describe("ensureAgentDashboardForward", () => {
           forward_ports: [8642],
         },
         ensureDashboardForward,
+        hermesApiPort: 8642,
         chatUiUrl: process.env.CHAT_UI_URL,
         controlUiPort: 9120,
       }),

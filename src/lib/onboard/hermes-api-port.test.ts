@@ -7,9 +7,11 @@ import {
   findAvailableHermesApiPort,
   HERMES_API_PORT_ENV,
   readHermesApiPort,
+  reserveCreateSandboxHermesApiPort,
   resolveOnboardHermesApiPort,
   resolveSandboxHermesApiPort,
   retargetHermesApiPortInUrl,
+  withHermesApiPortReservationScope,
 } from "./hermes-api-port";
 
 const noneBound = () => false;
@@ -59,6 +61,63 @@ describe("findAvailableHermesApiPort", () => {
     expect(() => findAvailableHermesApiPort("beta", 8642, "", () => true, new Map())).toThrow(
       /All Hermes API ports in range 8642-8652 are occupied/,
     );
+  });
+});
+
+describe("reserveCreateSandboxHermesApiPort", () => {
+  it("keeps concurrent selections distinct before either host forward exists", async () => {
+    const held = new Set<number>();
+    const reservePort = async (port: number) => {
+      if (held.has(port)) {
+        throw Object.assign(new Error(`port ${port} is already held`), { code: "EADDRINUSE" });
+      }
+      held.add(port);
+      return {
+        port,
+        async release() {
+          held.delete(port);
+        },
+      };
+    };
+    const firstEnv: NodeJS.ProcessEnv = {};
+    const secondEnv: NodeJS.ProcessEnv = {};
+
+    const first = await reserveCreateSandboxHermesApiPort({
+      sandboxName: "alpha",
+      env: firstEnv,
+      getSandbox: () => undefined,
+      forwardListOutput: "",
+      isPortBoundCheck: noneBound,
+      registryOccupiedPorts: new Map(),
+      reservePort,
+    });
+    const second = await reserveCreateSandboxHermesApiPort({
+      sandboxName: "beta",
+      env: secondEnv,
+      getSandbox: () => undefined,
+      forwardListOutput: "",
+      isPortBoundCheck: noneBound,
+      registryOccupiedPorts: new Map(),
+      reservePort,
+    });
+
+    expect(first.effectivePort).toBe(8642);
+    expect(second.effectivePort).toBe(8643);
+    expect(firstEnv[HERMES_API_PORT_ENV]).toBe("8642");
+    expect(secondEnv[HERMES_API_PORT_ENV]).toBe("8643");
+    await Promise.all([first.reservation?.release(), second.reservation?.release()]);
+  });
+
+  it("releases a held port when sandbox preparation fails", async () => {
+    const release = vi.fn(async () => undefined);
+
+    await expect(
+      withHermesApiPortReservationScope(async (scope) => {
+        scope.current = { port: 8642, release };
+        throw new Error("sandbox preparation failed");
+      }),
+    ).rejects.toThrow(/sandbox preparation failed/);
+    expect(release).toHaveBeenCalledOnce();
   });
 });
 
