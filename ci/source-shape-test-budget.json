@@ -208,11 +208,6 @@
     },
     {
       "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects duplicate unguarded Docker Hub auth in messaging-compatible-endpoint",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
       "test": "rejects free-standing E2E artifact uploads from raw temp paths",
       "category": "security"
     },
