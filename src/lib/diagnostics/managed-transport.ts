@@ -16,7 +16,7 @@ import { sanitizeTraceAttributes } from "../trace";
  * traffic emits nothing.
  */
 
-/** The event name shared with OpenShell audit correlation. */
+/** The event name shared with the OpenClaw managed-transport diagnostics. */
 export const MANAGED_TRANSPORT_FAILURE_EVENT = "managed_transport_failure";
 
 /**
@@ -119,9 +119,15 @@ export function safeCauseChain(error: unknown): SafeTransportCause[] {
   const chain: SafeTransportCause[] = [];
   const seen = new Set<unknown>();
   let current = error;
-  while (current && typeof current === "object" && !seen.has(current)) {
+  let visited = 0;
+  while (
+    current &&
+    typeof current === "object" &&
+    !seen.has(current) &&
+    visited < MAX_CAUSE_DEPTH
+  ) {
+    visited += 1;
     seen.add(current);
-    if (chain.length >= MAX_CAUSE_DEPTH) break;
     const record = current as Record<string, unknown>;
     const entry: SafeTransportCause = {};
     if (typeof record.name === "string") entry.name = safeCauseToken(record.name);
@@ -143,7 +149,7 @@ export function safeCauseChain(error: unknown): SafeTransportCause[] {
  */
 export function redactField(value: string): string {
   const redacted = sanitizeTraceAttributes({ value }).value;
-  return typeof redacted === "string" ? redacted : value;
+  return typeof redacted === "string" ? redacted : "<redacted>";
 }
 
 /** Picks the diagnostic response headers the contract allows, redacting each kept value. */
@@ -214,11 +220,11 @@ export function classifyTransportPhase(input: {
   }
   if (/CERT|TLS|SSL/.test(code)) return "tls";
   if (input.streamInterrupted) return "response_stream";
+  if (/^(?:UND_ERR_BODY_TIMEOUT|UND_ERR_ABORTED)$/.test(code)) return "response_stream";
   if (input.httpStatus !== undefined) return "response_headers";
   if (/^(?:UND_ERR_SOCKET|ECONNRESET|EPIPE|UND_ERR_HEADERS_TIMEOUT)$/.test(code)) {
     return "response_headers";
   }
-  if (/^(?:UND_ERR_BODY_TIMEOUT|UND_ERR_ABORTED)$/.test(code)) return "response_stream";
   return "request";
 }
 
@@ -294,8 +300,7 @@ export function encodeLogField(
   maxLength: number = MAX_LOG_FIELD,
 ): string {
   if (typeof value !== "string") return String(value);
-  const redacted = sanitizeTraceAttributes({ value }).value;
-  const text = (typeof redacted === "string" ? redacted : value).slice(0, maxLength);
+  const text = redactField(value).slice(0, maxLength);
   if (/[\s="\\]|[\u0000-\u001f\u007f]/.test(text)) return JSON.stringify(text);
   return text;
 }

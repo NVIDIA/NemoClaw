@@ -10,6 +10,19 @@ const SCRIPT_PATH = fileURLToPath(import.meta.url);
 
 export const MARKER = "/* nemoclaw managed transport diagnostics (#7957) */";
 
+/** Transport phases emitted by the active OpenClaw managed-transport patch. */
+export const OPENCLAW_MANAGED_TRANSPORT_PHASES = [
+  "policy",
+  "connect",
+  "tls",
+  "app_connect",
+  "request",
+  "response_headers",
+] as const;
+
+const [POLICY_PHASE, CONNECT_PHASE, TLS_PHASE, APP_CONNECT_PHASE, REQUEST_PHASE, RESPONSE_PHASE] =
+  OPENCLAW_MANAGED_TRANSPORT_PHASES;
+
 /** Client identity that only the compiled bundle-mcp session runtime carries. */
 const TARGET_SIGNATURE = '"openclaw-bundle-mcp"';
 
@@ -121,12 +134,12 @@ export const INJECTED_DIAGNOSTIC_HELPER = [
   "}",
   "function nemoClawMtdPhase(chain) {",
   '\tconst text = chain.map((cause) => (cause.code || "") + " " + (cause.message || "")).join(" ");',
-  '\tif (NEMOCLAW_MTD_POLICY_RE.test(text) || NEMOCLAW_MTD_CONNECT_DENIED_RE.test(text)) return "policy";',
-  '\tif (NEMOCLAW_MTD_CONNECT_RE.test(text)) return "connect";',
-  '\tif (chain.some((cause) => NEMOCLAW_MTD_TLS_CODES.includes(cause.code))) return "tls";',
-  '\tif (chain.some((cause) => NEMOCLAW_MTD_CONNECT_CODES.includes(cause.code))) return "app_connect";',
-  '\tif (chain.some((cause) => cause.code === "UND_ERR_HEADERS_TIMEOUT")) return "response_headers";',
-  '\treturn "request";',
+  `\tif (NEMOCLAW_MTD_POLICY_RE.test(text) || NEMOCLAW_MTD_CONNECT_DENIED_RE.test(text)) return ${JSON.stringify(POLICY_PHASE)};`,
+  `\tif (NEMOCLAW_MTD_CONNECT_RE.test(text)) return ${JSON.stringify(CONNECT_PHASE)};`,
+  `\tif (chain.some((cause) => NEMOCLAW_MTD_TLS_CODES.includes(cause.code))) return ${JSON.stringify(TLS_PHASE)};`,
+  `\tif (chain.some((cause) => NEMOCLAW_MTD_CONNECT_CODES.includes(cause.code))) return ${JSON.stringify(APP_CONNECT_PHASE)};`,
+  `\tif (chain.some((cause) => cause.code === "UND_ERR_HEADERS_TIMEOUT")) return ${JSON.stringify(RESPONSE_PHASE)};`,
+  `\treturn ${JSON.stringify(REQUEST_PHASE)};`,
   "}",
   "function nemoClawMtdHeaders(response) {",
   "\tconst safe = {};",
@@ -305,7 +318,7 @@ export const INJECTED_DIAGNOSTIC_HELPER = [
   "\t\t\t}",
   "\t\t\tvoid nemoClawMtdEmitResponseFailure(response, {",
   "\t\t\t\t...common,",
-  '\t\t\t\ttransport_phase: "response_headers",',
+  `\t\t\t\ttransport_phase: ${JSON.stringify(RESPONSE_PHASE)},`,
   "\t\t\t\thttp_status: response ? response.status : undefined,",
   "\t\t\t\telapsed_ms: elapsedMs,",
   "\t\t\t\tsession_present: sessionPresent",

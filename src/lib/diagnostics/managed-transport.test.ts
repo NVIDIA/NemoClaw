@@ -1,13 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { describe, expect, it } from "vitest";
 
+import { OPENCLAW_MANAGED_TRANSPORT_PHASES } from "../../../scripts/patch-openclaw-managed-transport-diagnostics.mts";
+
 import {
-  type ManagedTransportPhase,
   boundedErrorBodySnippet,
   buildManagedTransportFailure,
   classifyTransportPhase,
@@ -15,6 +13,7 @@ import {
   encodeLogField,
   generateTransportTraceId,
   MANAGED_TRANSPORT_FAILURE_EVENT,
+  type ManagedTransportPhase,
   pickSafeResponseHeaders,
   safeCauseChain,
   safeTargetRef,
@@ -66,7 +65,14 @@ describe("safeCauseChain", () => {
 
     let deep: Record<string, unknown> = { name: "leaf" };
     for (let index = 0; index < 20; index += 1) deep = { name: `n${index}`, cause: deep };
-    expect(safeCauseChain(deep).length).toBeLessThanOrEqual(8);
+    const chain = safeCauseChain(deep);
+    expect(chain).toHaveLength(8);
+    expect(chain[0]).toEqual({ name: "n19" });
+    expect(chain[7]).toEqual({ name: "n12" });
+
+    let empty: Record<string, unknown> = {};
+    for (let index = 0; index < 20; index += 1) empty = { cause: empty };
+    expect(safeCauseChain(empty)).toEqual([]);
   });
 });
 
@@ -116,6 +122,9 @@ describe("classifyTransportPhase", () => {
     expect(classifyTransportPhase({ httpStatus: 503 })).toBe("response_headers");
     expect(classifyTransportPhase({ causeCode: "UND_ERR_SOCKET" })).toBe("response_headers");
     expect(classifyTransportPhase({ causeCode: "UND_ERR_BODY_TIMEOUT" })).toBe("response_stream");
+    expect(classifyTransportPhase({ causeCode: "UND_ERR_BODY_TIMEOUT", httpStatus: 200 })).toBe(
+      "response_stream",
+    );
     expect(classifyTransportPhase({ streamInterrupted: true })).toBe("response_stream");
     expect(classifyTransportPhase({})).toBe("request");
   });
@@ -377,6 +386,7 @@ describe("emitManagedTransportFailure", () => {
     expect(line).not.toContain("\r");
     // The genuine phase field is intact and appears once as a real top-level field.
     expect(line).toContain("transport_phase=response_headers");
+    expect(line.match(/(?:^| )transport_phase=/g)).toHaveLength(1);
     // Delimiter-bearing values are JSON-quoted, so their `key=value` fragments
     // live inside a quoted token rather than as forged fields.
     expect(line).toContain('operation="tools/list\\nmanaged_transport_failure phase=policy"');
@@ -434,11 +444,6 @@ describe("example non-MCP consumer", () => {
 });
 
 describe("shared vocabulary with the OpenClaw managed transport dist patch", () => {
-  const patchSource = readFileSync(
-    join(process.cwd(), "scripts/patch-openclaw-managed-transport-diagnostics.mts"),
-    "utf8",
-  );
-
   it("emits the key names the patch documents for shared fields", () => {
     const lines: string[] = [];
     emitManagedTransportFailure(
@@ -456,7 +461,6 @@ describe("shared vocabulary with the OpenClaw managed transport dist patch", () 
 
     for (const sharedKey of ["transport_phase", "session_present"]) {
       expect(lines[0]).toContain(`${sharedKey}=`);
-      expect(patchSource).toContain(sharedKey);
     }
     // trace_id stays distinct from the patch's diagnostic_id, which is
     // documented as a local identifier that does not correlate across
@@ -466,14 +470,23 @@ describe("shared vocabulary with the OpenClaw managed transport dist patch", () 
   });
 
   it("covers every phase the patch classifier can return", () => {
-    const patchPhases = ["policy", "connect", "tls", "app_connect", "request", "response_headers"];
     const contractPhases: ManagedTransportPhase[] = [
-      ...(patchPhases as ManagedTransportPhase[]),
+      ...OPENCLAW_MANAGED_TRANSPORT_PHASES,
       "response_stream",
     ];
-    for (const phase of patchPhases) {
-      expect(patchSource).toContain(`return "${phase}"`);
+    for (const phase of contractPhases) {
+      const lines: string[] = [];
+      emitManagedTransportFailure(
+        buildManagedTransportFailure({
+          consumer: "mcp",
+          operation: "tools/list",
+          route: "direct",
+          phase,
+          elapsedMs: 1,
+        }),
+        (line) => lines.push(line),
+      );
+      expect(lines[0]).toContain(`transport_phase=${phase}`);
     }
-    expect(contractPhases).toHaveLength(7);
   });
 });
