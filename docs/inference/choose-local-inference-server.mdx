@@ -153,8 +153,10 @@ Refer to [Host Files and State](../../reference/host-files-and-state) before del
 
 When you intend to remove the entire NemoClaw installation, run `$$nemoclaw uninstall`.
 Full uninstall verifies exact managed container ownership before it removes the runtime and its state.
-It preserves the shared Hugging Face cache used by vLLM.
-Add `--delete-models` only when you also accept deletion of NemoClaw-pulled Ollama models.
+It preserves the shared Hugging Face cache used by vLLM by default.
+Add `--delete-models` only when you accept deletion of every model reported by the host's local Ollama inventory and all non-credential data in the current user's shared Hugging Face cache.
+This opt-in can delete cached files that other applications installed or use.
+It preserves the Hugging Face `token` and `stored_tokens` authentication files.
 If cleanup reports an ownership or Docker error, leave the state files in place, resolve the reported resource, and rerun uninstall.
 After a successful full uninstall, `docker container inspect nemoclaw-vllm` must report no object.
 
