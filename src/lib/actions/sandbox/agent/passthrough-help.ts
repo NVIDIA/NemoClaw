@@ -120,13 +120,19 @@ export function writeTimedOutAgentTurnFailure(
   proc.stderr.write(
     `    ${CLI_NAME} ${target} sessions export <key>  — export the partial transcript\n`,
   );
-  proc.stderr.write("  A longer deadline is an openclaw.json change, not a flag.\n");
   proc.stderr.write(
-    "  agents.defaults.timeoutSeconds sets the run deadline, which `agent --timeout` overrides for one run.\n",
+    `    ${CLI_NAME} ${target} shields down           — unlock configuration writes\n`,
   );
   proc.stderr.write(
-    "  models.providers.<id>.timeoutSeconds sets the provider request deadline, which `agent --timeout` never changes.\n",
+    `    ${CLI_NAME} ${target} config set --key <deadline-key> --value <seconds> --restart  — raise the deadline\n`,
   );
+  proc.stderr.write(
+    "  Two keys carry a deadline. agents.defaults.timeoutSeconds bounds the run, and\n",
+  );
+  proc.stderr.write(
+    "  `agent --timeout <seconds>` overrides it for a single run. models.providers.<id>.timeoutSeconds\n",
+  );
+  proc.stderr.write("  bounds the provider request, and no flag overrides it.\n");
   proc.stderr.write("  Inspect the partial output and affected resources before retrying.\n");
 }
 

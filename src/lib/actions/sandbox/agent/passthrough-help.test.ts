@@ -189,7 +189,7 @@ describe("writeTimedOutAgentTurnFailure", () => {
     expect(written).toContain("before retrying");
   });
 
-  it("offers the transcript export as the runnable recovery path (#8723)", () => {
+  it("offers the documented commands that read the trace and raise a deadline (#8723)", () => {
     const { lines, proc } = collectStderr();
 
     writeTimedOutAgentTurnFailure(proc, "my-assistant");
@@ -197,6 +197,12 @@ describe("writeTimedOutAgentTurnFailure", () => {
     const written = lines.join("");
     expect(written).toContain("'my-assistant' sessions list");
     expect(written).toContain("'my-assistant' sessions export <key>");
+    expect(written).toContain(
+      "'my-assistant' config set --key <deadline-key> --value <seconds> --restart",
+    );
+    // Writing the config fails while shields are up, so the order is part of
+    // the guidance rather than a detail the reader has to discover.
+    expect(written.indexOf("shields down")).toBeLessThan(written.indexOf("config set"));
   });
 
   it("names both deadlines instead of offering --timeout as the fix (#8723)", () => {
@@ -205,11 +211,9 @@ describe("writeTimedOutAgentTurnFailure", () => {
     writeTimedOutAgentTurnFailure(proc, "my-assistant", "provider");
 
     const written = lines.join("");
-    expect(written).toContain("agents.defaults.timeoutSeconds sets the run deadline");
-    expect(written).toContain(
-      "models.providers.<id>.timeoutSeconds sets the provider request deadline",
-    );
-    expect(written).toContain("never changes");
+    expect(written).toContain("agents.defaults.timeoutSeconds bounds the run");
+    expect(written).toContain("models.providers.<id>.timeoutSeconds");
+    expect(written).toContain("no flag overrides it");
     // A provider-phase timeout does not respond to the flag, so it is never
     // presented as a runnable recovery command.
     expect(written).not.toMatch(/^ {4}\S*nemoclaw.* agent --timeout/m);
