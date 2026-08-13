@@ -33,6 +33,7 @@ type MatrixEntry = {
   arch?: string;
   artifact_platform?: string;
   base_alias?: string;
+  base_dockerfile?: string;
   base_image?: string;
   base_repository?: string;
   display_name?: string;
@@ -158,6 +159,13 @@ function managedPrBuilder(workflow: Workflow): Job {
   return required(
     workflow.jobs?.["pr-build-and-entrypoint"],
     "managed-image workflow is missing its all-agent PR build and runtime gate",
+  );
+}
+
+function managedPrReviewedAudit(workflow: Workflow): Job {
+  return required(
+    workflow.jobs?.["pr-reviewed-npm-audit"],
+    "managed-image workflow is missing its exact PR reviewed npm audit",
   );
 }
 
@@ -452,6 +460,7 @@ describe("complete managed-image publication workflow", () => {
 
   it("builds and exercises every shipped agent from an exact PR image before merge (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
+    const reviewedAudit = managedPrReviewedAudit(workflow);
     const prBuilder = managedPrBuilder(workflow);
     const matrix = prBuilder.strategy?.matrix?.include ?? [];
     const steps = prBuilder.steps ?? [];
@@ -459,18 +468,76 @@ describe("complete managed-image publication workflow", () => {
     const build = step(prBuilder, "Build PR managed image locally");
     const contract = step(prBuilder, "Validate exact PR managed image contract");
 
+    expect(workflow.on?.pull_request?.paths).toEqual(
+      expect.arrayContaining([
+        ".github/actions/ci-reviewed-npm-audit/**",
+        "ci/reviewed-npm-audit.json",
+      ]),
+    );
+    expect(reviewedAudit).toMatchObject({
+      if: "github.event_name == 'pull_request'",
+      permissions: { contents: "read" },
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 15,
+    });
+    const candidateCheckout = step(reviewedAudit, "Checkout commit under review");
+    expect(candidateCheckout.with).toMatchObject({
+      ref: "${{ github.event.pull_request.head.sha }}",
+      path: "candidate",
+      "persist-credentials": false,
+    });
+    const trustedCheckout = step(reviewedAudit, "Checkout trusted reviewed npm audit");
+    expect(trustedCheckout.with).toMatchObject({
+      ref: "${{ github.event.pull_request.base.sha }}",
+      path: ".trusted-reviewed-npm-audit",
+      "persist-credentials": false,
+      "sparse-checkout-cone-mode": false,
+    });
+    expect(trustedCheckout.with?.["sparse-checkout"]).toContain(
+      ".github/actions/ci-reviewed-npm-audit",
+    );
+    expect(trustedCheckout.with?.["sparse-checkout"]).toContain("ci/reviewed-npm-audit.json");
+    const verifyAuditIdentities = step(reviewedAudit, "Verify exact audit source and target");
+    expect(verifyAuditIdentities.env).toEqual({
+      BASE_SHA: "${{ github.event.pull_request.base.sha }}",
+      CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
+    });
+    expect(verifyAuditIdentities.run).toContain(
+      "git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD",
+    );
+    expect(verifyAuditIdentities.run).toContain("git -C candidate rev-parse --verify HEAD");
+    expect(step(reviewedAudit, "Audit exact PR production npm graphs")).toMatchObject({
+      uses: "./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit",
+      with: {
+        "report-dir": "artifacts/reviewed-npm-audit",
+        "target-root": "${{ github.workspace }}/candidate",
+      },
+    });
+    for (const action of reviewedAudit.steps?.filter((candidate) =>
+      candidate.uses?.startsWith("actions/"),
+    ) ?? []) {
+      expect(action.uses, action.name).toMatch(fullShaAction);
+    }
+
+    expect(prBuilder.needs).toBe("pr-reviewed-npm-audit");
     expect(prBuilder.if).toBe("github.event_name == 'pull_request'");
     expect(prBuilder["runs-on"]).toBe("ubuntu-24.04");
     expect(prBuilder["timeout-minutes"]).toBe(90);
     expect(prBuilder.permissions).toEqual({ contents: "read", packages: "write" });
     expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(step(prBuilder, "Checkout").with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
-    expect(matrix.map(({ agent }) => agent)).toEqual([
-      "openclaw",
+    const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
+    expect([...matrixByAgent.keys()].sort()).toEqual([
       "hermes",
       "langchain-deepagents-code",
+      "openclaw",
     ]);
     expect(matrix.every(({ base_alias }) => base_alias?.endsWith(":latest"))).toBe(true);
+    expect(matrixByAgent.get("openclaw")?.base_dockerfile).toBe("Dockerfile.base");
+    expect(matrixByAgent.get("hermes")?.base_dockerfile).toBe("agents/hermes/Dockerfile.base");
+    expect(matrixByAgent.get("langchain-deepagents-code")?.base_dockerfile).toBe(
+      "agents/langchain-deepagents-code/Dockerfile.base",
+    );
     expect(steps.indexOf(permissionDrift)).toBeGreaterThan(
       steps.indexOf(step(prBuilder, "Checkout")),
     );
@@ -485,6 +552,11 @@ describe("complete managed-image publication workflow", () => {
       "PR base resolution is missing",
     );
     expect(resolveBase).toContain('.platform.architecture == "amd64"');
+    expect(resolveBase).toContain(
+      'git diff --quiet "$BASE_SHA" "$CANDIDATE_SHA" -- "$BASE_DOCKERFILE"',
+    );
+    expect(resolveBase).toContain('--file "$BASE_DOCKERFILE"');
+    expect(resolveBase).toContain('--tag "$LOCAL_BASE_REFERENCE"');
     expect(resolveBase).toContain('reference="${BASE_REPOSITORY}@${digest}"');
     expect(resolveBase).toContain('actual="sha256:$(sha256sum "$exact_raw"');
 
@@ -653,9 +725,11 @@ describe("complete managed-image publication workflow", () => {
     expect(qaBuilder.permissions).toEqual({ contents: "read" });
     expect(qaBuilder.env).toMatchObject({
       CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
-      STAGING_QA_SOURCE_SHA: "250d4abd2d602f864659c06d170699347b5d38bc",
+      STAGING_QA_SOURCE_SHA: "af2a73f0d6ce8f08a2975560f376470387c535d0",
       STAGING_QA_BASE_IMAGE: "nemoclaw-deepagents-code-base:staging-31396519688",
     });
+    expect(qaBuilder.env).not.toHaveProperty("STAGING_PRODUCER_SHA");
+    expect(qaBuilder.env).not.toHaveProperty("STAGING_QA_RECORDED_INDEX_DIGEST");
     expect(JSON.stringify(qaBuilder)).not.toContain(":latest");
     expect(prCheckout.with).toMatchObject({
       ref: "${{ github.event.pull_request.head.sha }}",
@@ -836,11 +910,17 @@ fi
           ...process.env,
           ALIAS_RAW: aliasRaw,
           BASE_ALIAS: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+          BASE_DOCKERFILE: "Dockerfile.base",
           BASE_REPOSITORY: "ghcr.io/nvidia/nemoclaw/sandbox-base",
+          BASE_SHA: spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim(),
+          CANDIDATE_SHA: spawnSync("git", ["rev-parse", "HEAD"], {
+            encoding: "utf8",
+          }).stdout.trim(),
           DISPLAY_NAME: "OpenClaw",
           EXACT_RAW: exactRaw,
           GITHUB_OUTPUT: output,
           GITHUB_STEP_SUMMARY: summary,
+          LOCAL_BASE_REFERENCE: "nemoclaw-managed-pr/openclaw-base:test",
           PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
           RUNNER_TEMP: temporaryRoot,
         },

@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { createPublicReadinessReport, renderReadinessReport } from "./presentation";
+import {
+  createPublicHostProbeReadinessReport,
+  createPublicReadinessReport,
+  renderReadinessReport,
+} from "./presentation";
 import type { SystemReadinessReport } from "./types";
 
 type ReadinessOutcome =
@@ -54,6 +58,87 @@ describe("public readiness presentation (#7412)", () => {
     const publicReport = createPublicReadinessReport(report({}, outcome));
 
     expect(publicReport).toMatchObject({ ...outcome, mutated: false });
+  });
+
+  it("admits a sole storage conflict when supported lifecycle remediation is available (#8849)", () => {
+    const strictReport = report(
+      {
+        capabilities: [
+          { id: "host.docker.storage_compatible", state: "absent" },
+          { id: "host.docker.storage_remediation_available", state: "present" },
+        ],
+        findings: [
+          {
+            id: "host.docker.storage_incompatible",
+            severity: "blocking",
+            summary: "The Docker storage configuration cannot support nested overlay mounts.",
+            capabilityIds: ["host.docker.storage_compatible"],
+          },
+        ],
+      },
+      { status: "incompatible", exitCode: 2 },
+    );
+
+    const publicReport = createPublicHostProbeReadinessReport(strictReport);
+
+    expect(publicReport).toMatchObject({ status: "supported", exitCode: 0, mutated: false });
+    expect(publicReport.findings).toContainEqual(
+      expect.objectContaining({
+        id: "host.docker.storage_incompatible",
+        severity: "warning",
+      }),
+    );
+    expect(strictReport).toMatchObject({ status: "incompatible", exitCode: 2 });
+    expect(strictReport.findings[0]).toMatchObject({ severity: "blocking" });
+  });
+
+  it.each([
+    {
+      name: "remediation is unavailable",
+      capabilities: [
+        { id: "host.docker.storage_compatible", state: "absent" as const },
+        { id: "host.docker.storage_remediation_available", state: "absent" as const },
+      ],
+      findings: [
+        {
+          id: "host.docker.storage_incompatible",
+          severity: "blocking" as const,
+          summary: "The Docker storage configuration cannot support nested overlay mounts.",
+          capabilityIds: ["host.docker.storage_compatible"],
+        },
+      ],
+    },
+    {
+      name: "another blocker remains",
+      capabilities: [
+        { id: "host.docker.storage_compatible", state: "absent" as const },
+        { id: "host.docker.storage_remediation_available", state: "present" as const },
+        { id: "host.docker.daemon_reachable", state: "absent" as const },
+      ],
+      findings: [
+        {
+          id: "host.docker.storage_incompatible",
+          severity: "blocking" as const,
+          summary: "The Docker storage configuration cannot support nested overlay mounts.",
+          capabilityIds: ["host.docker.storage_compatible"],
+        },
+        {
+          id: "host.docker.daemon_unreachable",
+          severity: "blocking" as const,
+          summary: "The Docker daemon is unreachable.",
+          capabilityIds: ["host.docker.daemon_reachable"],
+        },
+      ],
+    },
+  ])("keeps host probe incompatible when $name (#8849)", ({ capabilities, findings }) => {
+    const publicReport = createPublicHostProbeReadinessReport(
+      report({ capabilities, findings }, { status: "incompatible", exitCode: 2 }),
+    );
+
+    expect(publicReport).toMatchObject({ status: "incompatible", exitCode: 2 });
+    expect(publicReport.findings.filter(({ severity }) => severity === "blocking")).toEqual(
+      findings,
+    );
   });
 
   it("preserves valid immutable build provenance (#7777)", () => {

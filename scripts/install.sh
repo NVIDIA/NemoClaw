@@ -1320,6 +1320,8 @@ prefer_user_local_openshell() {
 NEMOCLAW_GATEWAY_SERVICE_MARKER="NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1"
 NEMOCLAW_GATEWAY_SERVICE_MARKER_LINE="# ${NEMOCLAW_GATEWAY_SERVICE_MARKER}"
 NEMOCLAW_GATEWAY_SERVICE_NAME="nemoclaw-openshell-gateway"
+UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN=""
+UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR=""
 
 upstream_openshell_gateway_user_service_installed() {
   [[ "$(uname -s)" == "Linux" ]] || return 1
@@ -1342,8 +1344,7 @@ resolve_openshell_gateway_bin_for_user_service() {
   done < <(
     printf '%s\n' "$exec_start" \
       | grep -oE 'path=[^ ;}]+' \
-      | sed 's/^path=//' \
-      | sort -u
+      | sed 's/^path=//'
   )
   [[ "${#gateway_bins[@]}" -eq 1 ]] || return 1
   gateway_bin="${gateway_bins[0]}"
@@ -1351,8 +1352,127 @@ resolve_openshell_gateway_bin_for_user_service() {
   printf '%s\n' "$gateway_bin"
 }
 
+systemd_user_manager_unavailable_diagnostic() {
+  local diagnostic="${1:-}" line recognized=0
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    case "$line" in
+      "") ;;
+      "Failed to connect to bus: No medium found" | \
+        "Failed to connect to bus: Host is down" | \
+        "Failed to connect to bus: No such file or directory" | \
+        "System has not been booted with systemd as init system (PID 1). Can't operate." | \
+        "XDG_RUNTIME_DIR is not set in the environment." | \
+        "Failed to connect to bus: \$DBUS_SESSION_BUS_ADDRESS and \$XDG_RUNTIME_DIR not defined (consider using --machine=<user>@.host --user to connect to bus of other user)")
+        recognized=1
+        ;;
+      *) return 1 ;;
+    esac
+  done <<<"$diagnostic"
+  [[ "$recognized" -eq 1 ]]
+}
+
+trusted_upstream_openshell_gateway_unit_for_service() {
+  case "${1:-}" in
+    /usr/local/lib/systemd/user/openshell-gateway.service | \
+      /usr/lib/systemd/user/openshell-gateway.service | \
+      /lib/systemd/user/openshell-gateway.service)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+trusted_upstream_openshell_gateway_bin_for_service() {
+  case "${1:-}" in
+    /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+inspect_upstream_openshell_gateway_user_service() {
+  local service_output service_status line fragment_path="" exec_start="" gateway_bin
+  local fragment_count=0 exec_start_count=0
+  local -a gateway_bins=()
+  UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN=""
+  UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR=""
+
+  if service_output="$(LC_ALL=C systemctl --user show openshell-gateway.service \
+    --property=FragmentPath --property=ExecStart 2>&1)"; then
+    :
+  else
+    service_status=$?
+    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="systemctl --user show openshell-gateway.service failed: ${service_output:-exit ${service_status}}"
+    if systemd_user_manager_unavailable_diagnostic "$service_output"; then
+      return 2
+    fi
+    return 1
+  fi
+
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    case "$line" in
+      FragmentPath=*)
+        fragment_path="${line#FragmentPath=}"
+        fragment_count=$((fragment_count + 1))
+        ;;
+      ExecStart=*)
+        exec_start="${line#ExecStart=}"
+        exec_start_count=$((exec_start_count + 1))
+        ;;
+      "") ;;
+      *)
+        UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway service returned unexpected metadata."
+        return 1
+        ;;
+    esac
+  done <<<"$service_output"
+
+  if [[ "$fragment_count" -ne 1 || "$exec_start_count" -ne 1 ]]; then
+    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway service did not return one FragmentPath and one ExecStart value."
+    return 1
+  fi
+  if ! trusted_upstream_openshell_gateway_unit_for_service "$fragment_path"; then
+    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway unit path is not trusted: ${fragment_path:-<empty>}"
+    return 1
+  fi
+
+  while IFS= read -r gateway_bin; do
+    gateway_bins+=("$gateway_bin")
+  done < <(
+    printf '%s\n' "$exec_start" \
+      | grep -oE 'path=[^ ;}]+' \
+      | sed 's/^path=//'
+  )
+  if [[ "${#gateway_bins[@]}" -ne 1 ]]; then
+    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway service did not return one executable path."
+    return 1
+  fi
+  gateway_bin="${gateway_bins[0]}"
+  if ! trusted_upstream_openshell_gateway_bin_for_service "$gateway_bin"; then
+    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway executable path is not trusted: $gateway_bin"
+    return 1
+  fi
+  if [[ ! -x "$gateway_bin" ]]; then
+    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway executable is unavailable: $gateway_bin"
+    return 1
+  fi
+
+  UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN="$gateway_bin"
+}
+
 resolve_upstream_openshell_gateway_bin_for_service() {
-  resolve_openshell_gateway_bin_for_user_service openshell-gateway.service
+  if inspect_upstream_openshell_gateway_user_service; then
+    printf '%s\n' "$UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN"
+  else
+    return $?
+  fi
 }
 
 openshell_binary_version() {
@@ -1363,14 +1483,21 @@ openshell_binary_version() {
 }
 
 require_compatible_upstream_openshell_gateway_service() {
-  local nemoclaw_gateway_bin upstream_gateway_bin nemoclaw_version upstream_version
+  local nemoclaw_gateway_bin upstream_gateway_bin nemoclaw_version upstream_version inspect_status
+  if inspect_upstream_openshell_gateway_user_service; then
+    upstream_gateway_bin="$UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN"
+  else
+    inspect_status=$?
+    if [[ "$inspect_status" -eq 2 ]]; then
+      return 2
+    fi
+    error "Could not inspect the effective upstream OpenShell gateway user service. ${UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR} Repair that OpenShell installation, then rerun the installer."
+  fi
   nemoclaw_gateway_bin="$(resolve_openshell_gateway_bin_for_service)" \
     || error "Could not locate the NemoClaw OpenShell gateway binary before checking the existing upstream service."
   if ! trusted_openshell_gateway_bin_for_service "$nemoclaw_gateway_bin"; then
     error "OpenShell gateway user service binary path is not a trusted install path: $nemoclaw_gateway_bin"
   fi
-  upstream_gateway_bin="$(resolve_upstream_openshell_gateway_bin_for_service)" \
-    || error "Could not locate the gateway binary used by the existing upstream OpenShell user service. Remove or repair that OpenShell installation, then rerun the installer."
   nemoclaw_version="$(openshell_binary_version "$nemoclaw_gateway_bin")" \
     || error "Could not determine the NemoClaw OpenShell gateway version at $nemoclaw_gateway_bin."
   upstream_version="$(openshell_binary_version "$upstream_gateway_bin")" \
@@ -1431,6 +1558,85 @@ openshell_user_config_home() {
   fi
 }
 
+enabled_openshell_gateway_user_service_activation_path() {
+  local user_config_home user_data_home runtime_dir unit_root activation_dir service_name activation_path
+  local config_dirs data_dirs directory
+  local -a unit_roots=()
+  if [[ -n "${SYSTEMD_UNIT_PATH:-}" ]]; then
+    printf 'SYSTEMD_UNIT_PATH=%q\n' "$SYSTEMD_UNIT_PATH"
+    return 2
+  fi
+  user_config_home="$(openshell_user_config_home)"
+  user_data_home="${XDG_DATA_HOME:-${HOME}/.local/share}"
+  if [[ "$user_data_home" != /* ]]; then
+    printf '%s\n' "$user_data_home"
+    return 2
+  fi
+  unit_roots+=(
+    "${user_config_home}/systemd/user"
+    "${user_config_home}/systemd/user.control"
+    "${user_data_home%/}/systemd/user"
+    "/etc/systemd/user"
+    "/run/systemd/user"
+    "/usr/local/lib/systemd/user"
+    "/usr/lib/systemd/user"
+    "/lib/systemd/user"
+  )
+  config_dirs="${XDG_CONFIG_DIRS:-/etc/xdg}"
+  data_dirs="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+  local IFS=:
+  for directory in $config_dirs $data_dirs; do
+    [[ -n "$directory" ]] || continue
+    if [[ "$directory" != /* ]]; then
+      printf '%s\n' "$directory"
+      return 2
+    fi
+    unit_roots+=("${directory%/}/systemd/user")
+  done
+  runtime_dir="${XDG_RUNTIME_DIR:-}"
+  if [[ "$runtime_dir" != /* && "${UID:-}" =~ ^[0-9]+$ ]]; then
+    runtime_dir="/run/user/${UID}"
+  fi
+  if [[ "$runtime_dir" == /* ]]; then
+    unit_roots+=(
+      "${runtime_dir%/}/systemd/user.control"
+      "${runtime_dir%/}/systemd/transient"
+      "${runtime_dir%/}/systemd/generator.early"
+      "${runtime_dir%/}/systemd/user"
+      "${runtime_dir%/}/systemd/generator"
+      "${runtime_dir%/}/systemd/generator.late"
+    )
+  fi
+
+  for unit_root in "${unit_roots[@]}"; do
+    if [[ -e "$unit_root" || -L "$unit_root" ]]; then
+      if [[ ! -d "$unit_root" || ! -r "$unit_root" || ! -x "$unit_root" ]]; then
+        printf '%s\n' "$unit_root"
+        return 2
+      fi
+    fi
+    for activation_dir in "$unit_root"/*.wants "$unit_root"/*.requires "$unit_root"/*.upholds; do
+      if [[ -L "$activation_dir" && ! -d "$activation_dir" ]]; then
+        printf '%s\n' "$activation_dir"
+        return 2
+      fi
+      [[ -d "$activation_dir" ]] || continue
+      if [[ ! -r "$activation_dir" || ! -x "$activation_dir" ]]; then
+        printf '%s\n' "$activation_dir"
+        return 2
+      fi
+      for service_name in openshell-gateway "${NEMOCLAW_GATEWAY_SERVICE_NAME}"; do
+        activation_path="${activation_dir}/${service_name}.service"
+        if [[ -e "$activation_path" || -L "$activation_path" ]]; then
+          printf '%s\n' "$activation_path"
+          return 0
+        fi
+      done
+    done
+  done
+  return 1
+}
+
 install_nemoclaw_openshell_gateway_user_service() {
   [[ "$(uname -s)" == "Linux" ]] || return 0
   [[ "$(resolve_nemoclaw_gateway_port)" -eq 8080 ]] || return 0
@@ -1448,8 +1654,25 @@ install_nemoclaw_openshell_gateway_user_service() {
     if [[ -f "$service_path" ]] && ! is_nemoclaw_openshell_gateway_user_service "$service_path"; then
       error "Refusing to replace non-NemoClaw OpenShell gateway user service: $service_path"
     fi
-    require_compatible_upstream_openshell_gateway_service
-    info "OpenShell upstream gateway user service is staged; onboarding will select and start it."
+    local compatibility_status activation_path activation_status
+    if require_compatible_upstream_openshell_gateway_service; then
+      info "OpenShell upstream gateway user service is staged; onboarding will select and start it."
+      return 0
+    else
+      compatibility_status=$?
+    fi
+    if [[ "$compatibility_status" -ne 2 ]]; then
+      error "Could not determine whether the effective upstream OpenShell gateway user service is compatible."
+    fi
+    if activation_path="$(enabled_openshell_gateway_user_service_activation_path)"; then
+      error "The systemd user manager is unavailable, but $activation_path can activate a gateway user service that can later claim port 8080. Restore the systemd user manager and inspect or disable that service before rerunning NemoClaw. The installer did not change the unit or activation path."
+    else
+      activation_status=$?
+      if [[ "$activation_status" -eq 2 ]]; then
+        error "The systemd user manager is unavailable, and the installer could not inspect OpenShell gateway activation configuration at $activation_path. Restore the default unit search path or access to that location, then rerun NemoClaw."
+      fi
+    fi
+    warn "The systemd user manager is unavailable. No enabled OpenShell gateway user service activation path was found, so onboarding will keep the existing standalone gateway on port 8080."
     return 0
   fi
 

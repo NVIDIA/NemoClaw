@@ -15,7 +15,6 @@ export const NEMOCLAW_PROVIDERS = [
   "nvidia-ncp",
   "nim-local",
 ] as const;
-export const NEMOCLAW_OLLAMA_MODELS = ["nemotron-3-super:120b", "nemotron-3-nano:30b"] as const;
 export const OPENSHELL_MANAGED_BINARIES = [
   "openshell",
   "openshell-gateway",
@@ -35,6 +34,7 @@ export const AGENT_ALIAS_CLI_BINARIES = ["nemohermes", "nemo-deepagents"] as con
 
 export interface UninstallPaths {
   helperServiceGlob: string;
+  huggingFaceModelCacheDir: string;
   managedSwapMarkerPath: string;
   nemoclawConfigDir: string;
   nemoclawShimPath: string;
@@ -67,6 +67,7 @@ export function defaultUninstallPaths(options: UninstallPathOptions): UninstallP
   const gatewayLocalStateDir = path.join(options.home, ".local", "state", "nemoclaw");
   return {
     helperServiceGlob: path.join(tmpDir, "nemoclaw-services-*"),
+    huggingFaceModelCacheDir: path.join(options.home, ".cache", "huggingface"),
     managedSwapMarkerPath: path.join(options.home, ".nemoclaw", "managed_swap"),
     nemoclawConfigDir: path.join(options.home, ".config", "nemoclaw"),
     nemoclawShimPath: path.join(options.home, ".local", "bin", "nemoclaw"),

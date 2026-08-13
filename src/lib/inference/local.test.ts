@@ -140,12 +140,17 @@ describe("local inference helpers", () => {
     const commands: string[][] = [];
     const endpoints: string[] = [];
 
-    const host = findReachableOllamaHost((command) => {
-      commands.push([...command]);
-      const endpoint = command.at(-1) ?? "";
-      endpoints.push(endpoint);
-      return endpoint.includes("host.docker.internal") ? "ollama" : "";
-    });
+    const host = findReachableOllamaHost(
+      (command) => {
+        commands.push([...command]);
+        const endpoint = command.at(-1) ?? "";
+        endpoints.push(endpoint);
+        return endpoint.includes("host.docker.internal") ? "ollama" : "";
+      },
+      // Pin the WSL decision: isWsl answers false off Linux before it reads
+      // WSL_DISTRO_NAME, so the stub above cannot reach the WSL candidate order.
+      { isWsl: true },
+    );
 
     expect(host).toBe("host.docker.internal");
     expect(endpoints).toEqual([

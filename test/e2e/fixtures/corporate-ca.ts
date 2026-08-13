@@ -79,13 +79,23 @@ expect_export() {
 }
 
 corp='/usr/local/share/nemoclaw/corporate-ca.pem'
-bundle='/run/nemoclaw/managed-startup-ca-bundle.pem'
-runtime_env='/run/nemoclaw/managed-startup-runtime.env'
+managed_completion='/run/nemoclaw/managed-startup-complete.json'
+if [ -e "$managed_completion" ] || [ -L "$managed_completion" ]; then
+  [ -f "$managed_completion" ] && [ ! -L "$managed_completion" ] || probe_fail invalid-managed-completion
+  bundle='/run/nemoclaw/managed-startup-ca-bundle.pem'
+  runtime_env='/run/nemoclaw/managed-startup-runtime.env'
+  expected_bundle_metadata='0:0:444'
+else
+  bundle='/tmp/nemoclaw-ca-bundle.pem'
+  runtime_env='/tmp/nemoclaw-proxy-env.sh'
+  expected_bundle_metadata="$(id -u):$(id -g):444"
+fi
 
 [ -s "$corp" ] || probe_fail missing-corporate-ca
 [ -s "$bundle" ] || probe_fail missing-merged-bundle
 [ -s "$runtime_env" ] || probe_fail missing-runtime-env
-[ "$(stat -c '%u:%g:%a' "$bundle")" = '0:0:444' ] || probe_fail merged-bundle-owner-mode
+[ ! -L "$bundle" ] || probe_fail symlinked-merged-bundle
+[ "$(stat -c '%u:%g:%a' "$bundle")" = "$expected_bundle_metadata" ] || probe_fail merged-bundle-owner-mode
 grep -F '${CORPORATE_CA_CANARY_LINE}' "$corp" >/dev/null || probe_fail corporate-canary-missing
 grep -F '${CORPORATE_CA_CANARY_LINE}' "$bundle" >/dev/null || probe_fail bundle-canary-missing
 set -- $(wc -c < "$corp")

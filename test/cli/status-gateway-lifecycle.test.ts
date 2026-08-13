@@ -6,7 +6,13 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { execTimeout, runWithEnv, testTimeout, writeSandboxRegistry } from "./helpers";
+import {
+  execTimeout,
+  inferenceInvocationStubLines,
+  runWithEnv,
+  testTimeout,
+  writeSandboxRegistry,
+} from "./helpers";
 
 describe("CLI status gateway lifecycle process contracts", () => {
   it(
@@ -98,6 +104,7 @@ describe("CLI status gateway lifecycle process contracts", () => {
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
+        ...inferenceInvocationStubLines(),
         '  case "$*" in',
         "    *inference.local/v1/models*) echo 'OK 200' ;;",
         "    *) echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'; echo 'RUNNING' ;;",
