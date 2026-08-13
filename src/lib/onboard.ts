@@ -3758,6 +3758,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     span: null,
   };
   let completed = false;
+  let returnedNormally = false;
   try {
     onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
     let selectedMessagingChannels: string[] = [];
@@ -3813,7 +3814,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       process.exit(1);
     }
 
-    registerIncompleteOnboardExitHandlerForSession(onboardSession, () => completed);
+    registerIncompleteOnboardExitHandlerForSession(
+      onboardSession,
+      () => completed || returnedNormally,
+    );
 
     const agent = await selectOnboardAgent({
       agentFlag: opts.agent,
@@ -4318,6 +4322,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       hostMountScope.restore();
     }
   }
+  returnedNormally = true;
 }
 
 module.exports = {
