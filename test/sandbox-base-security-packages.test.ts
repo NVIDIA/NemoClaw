@@ -47,8 +47,8 @@ const EXPECTED_SECURITY_PACKAGE_INVENTORY = [
   "libonig5=6.9.9-1+b1",
   "libjq1=1.8.2-1",
   "jq=1.8.2-1",
-  "vim-common=2:9.2.0782-1",
-  "vim-tiny=2:9.2.0782-1",
+  "vim-common=2:9.2.0858-1",
+  "vim-tiny=2:9.2.0858-1",
   "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1",
   "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1",
   "perl-base=5.44.0-1nemoclaw1",
@@ -111,6 +111,15 @@ function securityInventory(architecture: (typeof ARCHITECTURES)[number]): string
   return `${[`architecture=${architecture}`, ...EXPECTED_SECURITY_PACKAGE_INVENTORY].join("\n")}\n`;
 }
 
+function baseAptSecurityFunctionsWithVimPatchRange(
+  architecture: (typeof ARCHITECTURES)[number],
+  patchRange: string,
+): string[] {
+  return baseAptSecurityFunctions(architecture).map((definition) =>
+    definition.replace("Included patches: 1-858", `Included patches: ${patchRange}`),
+  );
+}
+
 function completedImageSecurityCommand(
   image: (typeof SECURITY_IMAGES)[number],
   tmp: string,
@@ -160,6 +169,12 @@ describe("sandbox base security packages", () => {
       expect(calls).toContain(
         `download https://snapshot.debian.org/archive/debian/20260811T082421Z/pool/main/e/expat/libexpat1_2.8.3-1_${architecture}.deb`,
       );
+      expect(calls).toContain(
+        "download https://snapshot.debian.org/archive/debian/20260727T143429Z/pool/main/v/vim/vim-common_9.2.0858-1_all.deb",
+      );
+      expect(calls).toContain(
+        `download https://snapshot.debian.org/archive/debian/20260727T143429Z/pool/main/v/vim/vim-tiny_9.2.0858-1_${architecture}.deb`,
+      );
       expect(fs.readFileSync(prepared.inventory, "utf-8")).toBe(securityInventory(architecture));
       expect(fs.statSync(prepared.inventory).mode & 0o777).toBe(0o444);
       expect(
@@ -172,8 +187,8 @@ describe("sandbox base security packages", () => {
         `libonig5_6.9.9-1+b1_${architecture}.deb`,
         `libjq1_1.8.2-1_${architecture}.deb`,
         `jq_1.8.2-1_${architecture}.deb`,
-        "vim-common_9.2.0782-1_all.deb",
-        `vim-tiny_9.2.0782-1_${architecture}.deb`,
+        "vim-common_9.2.0858-1_all.deb",
+        `vim-tiny_9.2.0858-1_${architecture}.deb`,
       ]);
       expect(prepared.debianSecurityDebs).not.toBe(prepared.nativeSecurityDebs);
       expect(fs.existsSync(prepared.debianSecurityDebs)).toBe(false);
@@ -248,11 +263,72 @@ describe("sandbox base security packages", () => {
 
   it.each(
     SECURITY_CASES,
-  )("rejects a changed expected checksum before installing packages for %s on %s", (_name, architecture, image) => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-checksum-"));
+  )("rejects a stale Vim patch range in the base image for %s on %s", (_name, architecture, image) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-vim-patch-range-"));
+    const prepared = sandboxSecurityCommand(image, tmp);
+
+    try {
+      const { result } = runLoggedDockerShell(
+        prepared.command,
+        tmp,
+        [
+          "perl_base_installed=0",
+          "perl_installed=0",
+          'apt-get() { [[ "$*" != *"/perl-base.deb"* ]] || perl_base_installed=1; [[ "$*" != *"/perl.deb"* ]] || perl_installed=1; }',
+          'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
+          'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
+          ...useRealPatchedParser(
+            baseAptSecurityFunctionsWithVimPatchRange(architecture, "1-857"),
+            prepared.pythonShim,
+          ),
+        ],
+        { timeoutMs: 15_000 },
+      );
+      expect(result.status).not.toBe(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it.each(
+    SECURITY_CASES,
+  )("rejects a stale Vim patch range in the completed image for %s on %s", (_name, architecture, image) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-final-vim-patch-range-"));
+    const prepared = completedImageSecurityCommand(image, tmp, architecture);
+
+    try {
+      const { result } = runLoggedDockerShell(
+        prepared.command,
+        tmp,
+        [
+          "perl_base_installed=1",
+          "perl_installed=1",
+          [
+            "stat() {",
+            `  [[ "$#" -eq 3 && "$1" == "-c" && "$2" == "%u:%g:%a" && "$3" == ${JSON.stringify(prepared.inventory)} ]] || return 64`,
+            '  printf "0:0:444\\n"',
+            "}",
+          ].join("\n"),
+          ...useRealPatchedParser(
+            baseAptSecurityFunctionsWithVimPatchRange(architecture, "1-857"),
+            prepared.pythonShim,
+          ),
+        ],
+        { timeoutMs: 15_000 },
+      );
+      expect(result.status).not.toBe(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it.each(
+    SECURITY_CASES,
+  )("rejects changed Vim package content before installing packages for %s on %s", (_name, architecture, image) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-vim-checksum-"));
     const prepared = sandboxSecurityCommand(image, tmp, false);
     const command = prepared.command.replace(
-      BASE_APT_SECURITY_HASHES[architecture].libexpat,
+      BASE_APT_SECURITY_HASHES[architecture].vimTiny,
       "0".repeat(64),
     );
 
@@ -270,6 +346,34 @@ describe("sandbox base security packages", () => {
       expect(calls).not.toContain("dpkg-install");
       expect(fs.existsSync(prepared.debianSecurityDebs)).toBe(true);
       expect(fs.existsSync(prepared.nativeSecurityDebs)).toBe(true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it.each(SECURITY_IMAGES)("rejects unsupported package architecture for $name", (image) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-unsupported-arch-"));
+    const prepared = sandboxSecurityCommand(image, tmp, false);
+
+    try {
+      const { calls, result } = runLoggedDockerShell(
+        prepared.command,
+        tmp,
+        [
+          'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+          [
+            "dpkg() {",
+            '  [[ "$#" -eq 1 && "$1" == "--print-architecture" ]] || return 64',
+            '  printf "riscv64\\n"',
+            "}",
+          ].join("\n"),
+        ],
+        { timeoutMs: 15_000 },
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Unsupported architecture for Debian security packages");
+      expect(calls).not.toContain("download ");
+      expect(calls).not.toContain("dpkg-install");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

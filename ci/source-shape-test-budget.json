@@ -82,6 +82,11 @@
       "category": "security"
     },
     {
+      "file": "test/dashboard-remote-bind-lifecycle.test.ts",
+      "test": "rejects a mutated checked-in security inventory instruction (#6024)",
+      "category": "security"
+    },
+    {
       "file": "test/e2e-fixture-dependency-review.test.ts",
       "test": "keeps installed fixture dependencies on exact versions",
       "category": "security"

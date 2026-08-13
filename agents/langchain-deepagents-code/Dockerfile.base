@@ -78,8 +78,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # Install the reviewed libexpat, jq, and Vim packages from immutable Debian
-# snapshots: Expat from 20260811T082421Z and jq and Vim from 20260724T000000Z,
-# matching the checksum-bound OpenClaw base image packages.
+# snapshots: Expat from 20260811T082421Z, jq from 20260724T000000Z, and Vim
+# from 20260727T143429Z, matching the checksum-bound OpenClaw base packages.
 # hadolint ignore=DL3001,DL4006
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3=3.13.5-1 \
@@ -117,21 +117,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
             libonig_sha256="3abee130696244050500bcc7870e3b4cb82ddd87149ece3fd55010c3d4e1d18c"; \
             libjq_sha256="9a5bf964cef39ed8f0f162e20d856e31961d28a57772b5313989b42a8be7e941"; \
             jq_sha256="b973a5d304f666845e8ccefab492e3850d4bc2e7aa2a1e7450862095125f2cc0"; \
-            vim_tiny_sha256="0e6e231d6d2430a92cf76f8a78506090418fa37758c33b31ed50dfbfc76e22ed" \
+            vim_tiny_sha256="df2d037d405f1376d1d8025d022dba81fbfed8695f68a131b788d16d3b68cf83" \
             ;; \
         arm64) \
             libexpat_sha256="660f5f598a06aa56613a2fbf1ffbd408708175f1a6c2fac833842148f0228176"; \
             libonig_sha256="137e708575c0622d347815d19cb471a107546b16e9602805ee27afad7bba107f"; \
             libjq_sha256="eae4a828df2eb53d728f88109d9f9549e0983a90b573cf0c7fa1e4bbc7533a7e"; \
             jq_sha256="c25086443abd04d1457cbb322a0837f9ba986f82b28f44670467c8dc9be1f696"; \
-            vim_tiny_sha256="be30f7e9de0b872bec0128ccd890452c0e0e29d99017d16c0f3aa74164f6700d" \
+            vim_tiny_sha256="3948582a06ba027513d036c446f6dc9b7a9ed344a460ad05f232e2779f484cd1" \
             ;; \
         *) echo "Unsupported architecture for Debian security packages: $arch" >&2; exit 1 ;; \
     esac \
     && security_deb_dir="/tmp/nemoclaw-debian-security" \
     && snapshot_url="https://snapshot.debian.org/archive/debian/20260724T000000Z/pool/main" \
     && expat_snapshot_url="https://snapshot.debian.org/archive/debian/20260811T082421Z/pool/main" \
-    && vim_common_sha256="6b063038246492c4a20e0a212c896dde4d5aa9f59d6fb43ff33d10080bc53a39" \
+    && vim_snapshot_url="https://snapshot.debian.org/archive/debian/20260727T143429Z/pool/main" \
+    && vim_common_sha256="c21aad77632ef790d2352f1c38e688069980bbd530034248dd5e1158da9c9fe3" \
     && mkdir -p "$security_deb_dir" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
@@ -152,11 +153,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/vim-common.deb" \
-        "$snapshot_url/v/vim/vim-common_9.2.0782-1_all.deb" \
+        "$vim_snapshot_url/v/vim/vim-common_9.2.0858-1_all.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/vim-tiny.deb" \
-        "$snapshot_url/v/vim/vim-tiny_9.2.0782-1_${arch}.deb" \
+        "$vim_snapshot_url/v/vim/vim-tiny_9.2.0858-1_${arch}.deb" \
     && printf '%s  %s\n' \
         "$libexpat_sha256" "$security_deb_dir/libexpat1.deb" \
         "$libonig_sha256" "$security_deb_dir/libonig5.deb" \
@@ -183,8 +184,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1" \
     && test "$(dpkg-query -W -f='${Version}' libjq1)" = "1.8.2-1" \
     && test "$(dpkg-query -W -f='${Version}' jq)" = "1.8.2-1" \
-    && test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0782-1" \
-    && test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0782-1" \
+    && test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0858-1" \
+    && test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0858-1" \
     && test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw1" \
     && test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u4+nemoclaw1" \
     && test "$(jq --version)" = "jq-1.8.2" \
@@ -198,6 +199,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && python3 -c "import sys; from pathlib import Path; import html.parser; Path(html.parser.__file__).resolve() == Path('/usr/lib/python3.13/html/parser.py').resolve() or sys.exit('html.parser loaded from an unexpected path'); from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; p._pending == [] or sys.exit('empty feeds accumulated pending entries'); p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); p.rawdata == '' or sys.exit('incremental parsing retained raw data')" \
     && python3 -c "import ctypes, sys; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; lib.libssh2_version(0) == b'1.11.1' or sys.exit('unexpected libssh2 runtime version')" \
     && vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 ' \
+    && vim.tiny --version | grep -Fx 'Included patches: 1-858' \
     && test "$(perl -e 'print $^V')" = "v5.44.0" \
     && test "$(perl -MSocket -e 'print Socket->VERSION')" = "2.041" \
     && test "$(perl -MStorable -e 'print Storable->VERSION')" = "3.41" \
@@ -216,8 +218,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "libonig5=6.9.9-1+b1" \
         "libjq1=1.8.2-1" \
         "jq=1.8.2-1" \
-        "vim-common=2:9.2.0782-1" \
-        "vim-tiny=2:9.2.0782-1" \
+        "vim-common=2:9.2.0858-1" \
+        "vim-tiny=2:9.2.0858-1" \
         "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1" \
         "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
         "perl-base=5.44.0-1nemoclaw1" \
