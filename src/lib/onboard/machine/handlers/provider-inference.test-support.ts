@@ -137,7 +137,7 @@ export function createDeps(
     checkpointSandboxIdentity: vi.fn(async () => undefined),
     prepareLocalProviderForInference: vi.fn(async () => null),
     promptName: vi.fn(async () => "my-assistant"),
-    promptReview: vi.fn(async () => "apply" as const),
+    prompt: vi.fn(async () => "1"),
     log: vi.fn(),
     error: vi.fn(),
     exit: vi.fn((code: number): never => {
@@ -209,7 +209,7 @@ export function createDeps(
         model: string;
         sandboxName: string;
       }) => `summary:${options.provider}/${options.model}/${options.sandboxName}`,
-      promptConfigurationReview: calls.promptReview,
+      prompt: calls.prompt,
       cliName: () => "nemoclaw",
       log: calls.log,
       error: calls.error,

@@ -18,7 +18,7 @@ import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/o
 import { checkpointSandboxIdentityMatches } from "../../checkpoint-replay";
 import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
 import type { RepairLocalInferenceSystemdOverrideOptions } from "../../local-inference-topology";
-import type { OnboardConfigurationReviewAction } from "../../prompt-helpers";
+import { promptOnboardConfigurationReview } from "../../prompt-helpers";
 import {
   describeIgnoredReasoningEffortEnv,
   describeIgnoredReasoningEnv,
@@ -261,7 +261,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       servingProfileProvenance?: ServingProfileProvenance | null;
       notes: string[];
     }): string;
-    promptConfigurationReview(): Promise<OnboardConfigurationReviewAction>;
+    prompt(question: string): Promise<string>;
     cliName(): string;
     log(message?: string): void;
     error(message?: string): void;
@@ -539,7 +539,7 @@ type ConfigurationReviewDeps<Agent> = Pick<
   | "formatOnboardConfigSummary"
   | "isNonInteractive"
   | "log"
-  | "promptConfigurationReview"
+  | "prompt"
   | "promptValidatedSandboxName"
   | "recordStepRejected"
   | "startRecordedStep"
@@ -597,7 +597,10 @@ async function reviewProviderConfiguration<Agent>(
     }
     if (deps.isNonInteractive()) return { sandboxName, editInference: false };
 
-    const action = await deps.promptConfigurationReview();
+    const action = await promptOnboardConfigurationReview({
+      prompt: deps.prompt,
+      log: deps.log,
+    });
     if (action === "apply") return { sandboxName, editInference: false };
     if (action === "edit-inference") return { sandboxName, editInference: true };
     if (action === "exit") {

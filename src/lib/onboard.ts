@@ -381,7 +381,6 @@ const {
   exitOnboardFromPrompt,
   getNavigationChoice,
   isAffirmativeAnswer,
-  promptOnboardConfigurationReview,
   selectFromNumberedMenuOrExit,
   step,
   ...onboardPromptHelpers
@@ -4061,11 +4060,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           assessHost,
           formatSandboxBuildEstimateNote,
           formatOnboardConfigSummary,
-          promptConfigurationReview: () =>
-            promptOnboardConfigurationReview({
-              prompt,
-              log: (message) => console.log(message),
-            }),
+          prompt,
           cliName,
           log: (message) => console.log(message),
           error: (message) => console.error(message),
