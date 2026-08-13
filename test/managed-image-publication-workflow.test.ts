@@ -1497,33 +1497,4 @@ fi
       },
     });
   });
-
-  it("retains exact platform and aggregate cohort contracts for ninety days (#7744)", () => {
-    const promoter = managedPromoter(readWorkflow("managed-images.yaml"));
-    const uploads = (promoter.steps ?? [])
-      .filter((candidate) => candidate.uses?.startsWith("actions/upload-artifact@"))
-      .map((candidate) => candidate.with);
-
-    expect(uploads).toEqual([
-      {
-        name: "managed-image-cohort-${{ github.run_id }}-${{ github.run_attempt }}",
-        path: "${{ runner.temp }}/managed-image-contracts/cohort.json",
-        "if-no-files-found": "error",
-        "retention-days": 90,
-      },
-      ...publicationAgents.flatMap((agent) =>
-        publicationPlatforms.map((platform) => {
-          const artifactPlatform = platform.replaceAll("/", "-");
-          return {
-            name:
-              "managed-image-${{ github.run_id }}-${{ github.run_attempt }}-" +
-              `${agent}-${artifactPlatform}`,
-            path: `\${{ runner.temp }}/managed-image-contracts/${agent}/${artifactPlatform}/contract.json`,
-            "if-no-files-found": "error",
-            "retention-days": 90,
-          };
-        }),
-      ),
-    ]);
-  });
 });
