@@ -309,15 +309,24 @@ test/e2e/
   its result counts to the expected and tested candidate SHA, correlation ID,
   job ID, and shard ID. The workflow boundary requires every selected job shard
   to upload its evidence artifact.
-- `.github/workflows/platform-vitest-main.yaml` runs the full Vitest suite in
-  four independent shards on each of macOS and WSL, with `fail-fast` disabled.
-  Each macOS shard installs the pinned OpenShell formula and has a 30-minute
-  budget. Each WSL shard has a 90-minute budget, and WSL runs its additional
-  root-required contracts on shard 1 only.
-  `.github/workflows/macos-e2e.yaml`, `.github/workflows/wsl-e2e.yaml`, and
-  `.github/workflows/sandbox-images-and-e2e.yaml` call focused E2E targets
-  directly. `.github/workflows/e2e.yaml` selects free-standing jobs, including
-  `whatsapp-qr-compact` and `ollama-auth-proxy`.
+- `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Evidence`.
+  It runs the Ubuntu 26.04 compatibility contracts and four full-suite Vitest shards on each of macOS and WSL.
+  Each macOS shard installs the pinned OpenShell formula.
+  Shard 1 has a 60-minute budget for live E2E; the other shards have 30 minutes.
+  WSL shard 1 has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
+  On shard 1, the workflow runs focused macOS and WSL live E2E only when the run tests `main` and Docker is available.
+  Otherwise, those live tests skip and the platform contracts remain as evidence.
+  This conditional result is platform evidence, not `Release qualification`.
+  The live steps give candidate test code the job-scoped `GITHUB_TOKEN` and repository `NVIDIA_INFERENCE_API_KEY`.
+  The macOS step sets both in its process environment.
+  The WSL step uses the trusted PowerShell helper to forward both into the WSL test process.
+  The workflow sets these credentials only for the live steps, but candidate code can copy either value while a step runs.
+  GitHub invalidates `GITHUB_TOKEN` after the job.
+  `NVIDIA_INFERENCE_API_KEY` remains valid until it expires or is revoked; the workflow does not revoke it.
+- `.github/workflows/portable-profile-e2e.yaml` provides experimental portable-profile evidence on matching `main` changes or manual dispatches.
+- `.github/workflows/podman-cpu-proof.yaml` provides PR-only experimental runtime evidence with Docker disabled.
+- `.github/workflows/sandbox-images-and-e2e.yaml` provides reusable image build and test evidence through manual dispatch and `workflow_call`.
+  `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
 - The `staging-brev-launchable` job validates the exact baked candidate in
   preinstalled mode. Generic Brev VMs with source overlays are not a
   qualification boundary.
