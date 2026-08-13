@@ -314,13 +314,13 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
 
   it("reports the absent kernel interface in the names-only unified-memory check (#9000)", () => {
     const { reasons, onTrustGateRejection } = collectReasons();
-    const runCaptureImpl = vi.fn((command: readonly string[]) => {
-      if (isNvidiaSmiMemoryQuery(command)) return "";
-      if (command[0] === "nvidia-smi" && command.some((arg) => arg === "--query-gpu=name")) {
-        return "NVIDIA Orin\n";
-      }
-      return "";
-    });
+    const runCaptureImpl = vi.fn((command: readonly string[]) =>
+      isNvidiaSmiMemoryQuery(command)
+        ? ""
+        : command[0] === "nvidia-smi" && command.some((arg) => arg === "--query-gpu=name")
+          ? "NVIDIA Orin\n"
+          : "",
+    );
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
