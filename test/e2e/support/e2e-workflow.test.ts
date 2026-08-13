@@ -24,6 +24,7 @@ import {
 import { readWorkflow, removeJobNeed } from "../../helpers/e2e-workflow-contract";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { assertChannelsStopStartSandboxName } from "../live/channels-stop-start-safety.ts";
+import { COMMON_EGRESS_TEST_TIMEOUT_MS } from "../live/common-egress-agent-helpers.ts";
 import { requireFixture } from "./require-fixture";
 
 describe("e2e workflow boundary", () => {
@@ -209,8 +210,9 @@ describe("e2e workflow boundary", () => {
       jobs: Record<string, { strategy: { "max-parallel"?: number } }>;
     };
     const job = workflow.jobs["catalogue-brave-nvidia-inference"]!;
-    const source = fs.readFileSync("test/e2e/live/common-egress-agent.test.ts", "utf8");
-    expect(source).toContain("const TEST_TIMEOUT_MS = 40 * 60_000;");
+    expect(COMMON_EGRESS_TEST_TIMEOUT_MS).toBeLessThan(
+      catalogueTarget("common-egress-agent-openclaw-balanced-weather").timeoutMinutes * 60_000,
+    );
     expect(
       [
         "common-egress-agent-openclaw-balanced-weather",

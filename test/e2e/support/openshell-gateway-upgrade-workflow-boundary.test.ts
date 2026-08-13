@@ -10,6 +10,8 @@ import {
   catalogueTarget,
   validateE2eTargetCatalogue,
 } from "../../../tools/e2e/target-catalogue.mts";
+import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
+import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 import {
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
@@ -117,6 +119,15 @@ describe("OpenShell gateway upgrade boundary", () => {
         stateUpgradeProof: "1",
       },
     ]);
+  });
+
+  it("rejects reintroducing the superseded workflow job", () => {
+    const workflow = readWorkflow() as { jobs: Record<string, unknown> };
+    workflow.jobs["openshell-gateway-upgrade"] = {};
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "workflow must not define superseded openshell-gateway-upgrade job",
+    );
   });
 
   it("rejects drift from every exact reviewed gateway-upgrade fixture field (#6114)", () => {

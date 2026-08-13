@@ -243,7 +243,8 @@ The execution profile owns the credentials available to its target step:
 - `standard` displays `no provider credential` and receives no NVIDIA API credential.
 - `nvidia-api` displays `NVIDIA API key` and receives `NVIDIA_API_KEY` on trusted `main` runs.
 - `nvidia-inference` displays `NVIDIA inference API key` and receives `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs.
-- `github-read` displays `GitHub read token` and receives the job-scoped `GITHUB_TOKEN` only for the target step.
+- `github-read` displays `GitHub read token` and receives the job-scoped `GITHUB_TOKEN` only for the target step when `trusted_main` is `true`.
+  The reusable workflow enforces this boundary; PR revision callers set `trusted_main` to `false`, so their target steps receive no `GITHUB_TOKEN`.
 - `brave-nvidia-inference` displays `Brave and NVIDIA inference API keys` and receives `BRAVE_API_KEY` and `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs.
 
 GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.

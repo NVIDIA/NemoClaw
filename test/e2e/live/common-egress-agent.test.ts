@@ -29,6 +29,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   agentReplyContainsToken,
   classifyPreContractProviderValidationSkip,
+  COMMON_EGRESS_TEST_TIMEOUT_MS,
   parseChatContent,
   parseOpenClawAgentText,
 } from "./common-egress-agent-helpers.ts";
@@ -47,7 +48,6 @@ const OPENCLAW_OPEN_SANDBOX =
 const HERMES_SANDBOX = process.env.NEMOCLAW_COMMON_EGRESS_HERMES_SANDBOX ?? "e2e-hm-open";
 const CHAT_MODEL = process.env.NEMOCLAW_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;
-const TEST_TIMEOUT_MS = 40 * 60_000;
 const AGENT_TURN_TIMEOUT_MS = 3 * 60_000;
 const HERMES_AGENT_TIMEOUT_MS = 150_000;
 const OPENCLAW_AGENT_ATTEMPTS = 3;
@@ -601,7 +601,7 @@ describe.sequential("common-egress agent live targets", () => {
   openClawTest(
     "C1 OpenClaw balanced excludes weather until explicitly added, then permits a verified wttr.in curl",
     {
-      timeout: TEST_TIMEOUT_MS,
+      timeout: COMMON_EGRESS_TEST_TIMEOUT_MS,
       meta: {
         e2ePhases: [
           "validate hosted OpenClaw prerequisites",
@@ -744,7 +744,7 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
   openClawTest(
     "C2 OpenClaw open includes public reference and agent fetches Wikidata",
     {
-      timeout: TEST_TIMEOUT_MS,
+      timeout: COMMON_EGRESS_TEST_TIMEOUT_MS,
       meta: {
         e2ePhases: [
           "validate hosted OpenClaw prerequisites",
@@ -803,7 +803,7 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
   hermesTest(
     "C3 Hermes open includes public reference plus Nous presets and agent fetches Wikidata",
     {
-      timeout: TEST_TIMEOUT_MS,
+      timeout: COMMON_EGRESS_TEST_TIMEOUT_MS,
       meta: {
         e2ePhases: [
           "validate hosted Hermes prerequisites",

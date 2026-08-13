@@ -403,6 +403,33 @@ it("renders comment content from job evidence without a live GitHub mutation", (
 });
 
 it.each([
+  ["catalogue-standard", "no provider credential"],
+  ["catalogue-nvidia-api", "NVIDIA API key"],
+  ["catalogue-nvidia-inference", "NVIDIA inference API key"],
+  ["catalogue-github-read", "GitHub read token"],
+  ["catalogue-brave-nvidia-inference", "Brave and NVIDIA inference API keys"],
+])("attributes %s matrix failures to the catalogue profile", (profile, boundary) => {
+  const report = renderE2eReport({
+    needs: { "generate-matrix": { result: "success" }, [profile]: { result: "failure" } },
+    env: { TEST_MATRIX: "[]" },
+    apiJobs: [
+      {
+        conclusion: "failure",
+        id: 321,
+        name: `Outcome-first target / ${boundary}`,
+        status: "completed",
+      },
+    ],
+    apiJobsLoaded: true,
+    context: REPORT_CONTEXT,
+  });
+
+  expect(report.body).toContain(
+    `[${profile}](${REPORT_CONTEXT.serverUrl}/${REPORT_CONTEXT.repo.owner}/${REPORT_CONTEXT.repo.repo}/actions/runs/123/job/321)`,
+  );
+});
+
+it.each([
   {
     env: { JOB_TARGETS: "", JOBS: "hermes-dashboard" },
     label: "test ID",
