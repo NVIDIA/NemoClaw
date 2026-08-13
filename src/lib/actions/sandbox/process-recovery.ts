@@ -39,6 +39,7 @@ import {
   recoverDeclaredAgentForwardPorts,
   recoverMessagingHostForward,
   resolveSandboxDashboardPort,
+  resolveSandboxHealthProbeUrl,
 } from "./forward-recovery";
 import {
   classifyGatewayRestartFailure,
@@ -130,9 +131,7 @@ function anyAuxiliaryRecovered(results: AuxiliaryRecoveryResult[]): boolean {
 }
 
 function getSandboxHealthProbeUrl(sandboxName: string): string {
-  const agent = agentRuntime.getSessionAgent(sandboxName);
-  if (agent && agentRuntime.hasGatewayRuntime(agent)) return agentRuntime.getHealthProbeUrl(agent);
-  return `http://127.0.0.1:${resolveSandboxDashboardPort(sandboxName)}/health`;
+  return resolveSandboxHealthProbeUrl(sandboxName);
 }
 
 /**
