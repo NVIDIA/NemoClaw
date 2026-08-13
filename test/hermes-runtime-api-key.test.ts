@@ -292,6 +292,7 @@ function runHermesRuntimeProviderPlaceholderRefresh(opts: {
   runtimePlan?: unknown;
   runtimePlanPathKind?: "regular" | "symlink" | "hardlink" | "groupWritable" | "worldWritable";
   hashFileContent?: string;
+  locked?: boolean;
 }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-provider-placeholders-"));
   const hermesHome = path.join(tmpDir, ".hermes");
@@ -307,6 +308,8 @@ function runHermesRuntimeProviderPlaceholderRefresh(opts: {
   opts.hashFileContent === undefined
     ? writeHermesHash(hashPath, configPath, envPath)
     : fs.writeFileSync(hashPath, opts.hashFileContent);
+  const lockEnvFile = opts.locked === true ? () => fs.chmodSync(envPath, 0o444) : undefined;
+  lockEnvFile?.();
   const runtimePlanText = `${JSON.stringify(opts.runtimePlan, null, 2)}\n`;
   const writeRuntimePlanPath = {
     regular: () => fs.writeFileSync(runtimePlanPath, runtimePlanText),
@@ -579,7 +582,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.strictHashValid).toBe(true);
   });
 
-  it("normalizes versioned provider placeholders from the runtime env before refreshing .env", () => {
+  it("preserves the exact OpenShell provider placeholder generation in Hermes .env (#8893)", () => {
     for (const envFile of [
       "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN\n",
       "DISCORD_BOT_TOKEN=openshell:resolve:env:v111_DISCORD_BOT_TOKEN\n",
@@ -593,9 +596,8 @@ describe("agents/hermes/start.sh runtime API server key", () => {
 
       expect(run.result.status, run.result.stderr).toBe(0);
       expect(run.envFileContent).toContain(
-        "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN\n",
+        "DISCORD_BOT_TOKEN=openshell:resolve:env:v222_DISCORD_BOT_TOKEN\n",
       );
-      expect(run.envFileContent).not.toContain("v222_DISCORD_BOT_TOKEN");
       expect(run.envFileContent).not.toContain("v111_DISCORD_BOT_TOKEN");
       expect(run.strictHashValid).toBe(true);
     }
@@ -630,7 +632,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.envFileContent).toContain(`API_SERVER_KEY=${apiServerKey}\n`);
     expect(run.envFileContent).toContain("UNRELATED_VALUE=stable-value\n");
     expect(run.envFileContent).toContain(
-      "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN\n",
+      "DISCORD_BOT_TOKEN=openshell:resolve:env:v222_DISCORD_BOT_TOKEN\n",
     );
     expect(run.envFileContent).not.toContain("API_SERVER_KEY=openshell:resolve:env:API_SERVER_KEY");
     expect(run.envFileContent).not.toContain(
@@ -661,11 +663,10 @@ describe("agents/hermes/start.sh runtime API server key", () => {
       [
         "API_SERVER_PORT=18642",
         "API_SERVER_HOST=127.0.0.1",
-        "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
+        "DISCORD_BOT_TOKEN=openshell:resolve:env:v101_DISCORD_BOT_TOKEN",
         "",
       ].join("\n"),
     );
-    expect(run.envFileContent).not.toContain("openshell:resolve:env:v101_DISCORD_BOT_TOKEN");
     expect(run.strictHashValid).toBe(true);
   });
 
@@ -694,7 +695,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.result.status, run.result.stderr).toBe(0);
     expect(run.envFileContent).toBe(
       [
-        "export DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
+        "export DISCORD_BOT_TOKEN=openshell:resolve:env:v222_DISCORD_BOT_TOKEN",
         "API_SERVER_PORT=18642",
         "",
       ].join("\n"),
@@ -702,12 +703,23 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.strictHashValid).toBe(true);
   });
 
-  it("does not rewrite provider placeholders when .env is already canonical", () => {
+  it.each([
+    {
+      name: "canonical",
+      value: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+    },
+    {
+      name: "revisioned",
+      value: "openshell:resolve:env:v101_DISCORD_BOT_TOKEN",
+    },
+  ])("does not rewrite an exact $name runtime placeholder already persisted in .env (#8893)", ({
+    value,
+  }) => {
     const hashFileContent = "sentinel\n";
     const run = runHermesRuntimeProviderPlaceholderRefresh({
-      envFile: "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN\n",
+      envFile: `DISCORD_BOT_TOKEN=${value}\n`,
       envOverrides: {
-        DISCORD_BOT_TOKEN: "openshell:resolve:env:v101_DISCORD_BOT_TOKEN",
+        DISCORD_BOT_TOKEN: value,
       },
       runtimePlan: {
         schemaVersion: 1,
@@ -722,8 +734,71 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     });
 
     expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.envFileContent).toBe("DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN\n");
+    expect(run.envFileContent).toBe(`DISCORD_BOT_TOKEN=${value}\n`);
     expect(run.strictHashContent).toBe(hashFileContent);
+  });
+
+  it.each([
+    {
+      name: "a placeholder for another environment key",
+      value: "openshell:resolve:env:v222_OTHER_TOKEN",
+    },
+    {
+      name: "an overlong credential revision",
+      value: `openshell:resolve:env:v${"1".repeat(21)}_DISCORD_BOT_TOKEN`,
+    },
+    {
+      name: "a raw credential",
+      value: "raw-discord-token",
+    },
+  ])("ignores $name from the runtime environment (#8893)", ({ value }) => {
+    const originalEnv = "DISCORD_BOT_TOKEN=openshell:resolve:env:v111_DISCORD_BOT_TOKEN\n";
+    const run = runHermesRuntimeProviderPlaceholderRefresh({
+      envFile: originalEnv,
+      envOverrides: { DISCORD_BOT_TOKEN: value },
+      runtimePlan: {
+        schemaVersion: 1,
+        sandboxName: "test-sandbox",
+        agent: "hermes",
+        channels: [{ channelId: "discord", active: true, disabled: false }],
+        disabledChannels: [],
+        credentialBindings: [{ channelId: "discord", providerEnvKey: "DISCORD_BOT_TOKEN" }],
+        runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
+      },
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.envFileContent).toBe(originalEnv);
+    expect(run.envFileContent).not.toContain(value);
+    expect(run.result.stderr).not.toContain(value);
+    expect(run.strictHashValid).toBe(true);
+  });
+
+  it("refuses to replace a sealed canonical placeholder without a rebuild or sandbox recreation (#8893)", () => {
+    const originalEnv = "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN\n";
+    const run = runHermesRuntimeProviderPlaceholderRefresh({
+      envFile: originalEnv,
+      envOverrides: {
+        DISCORD_BOT_TOKEN: "openshell:resolve:env:v222_DISCORD_BOT_TOKEN",
+      },
+      runtimePlan: {
+        schemaVersion: 1,
+        sandboxName: "test-sandbox",
+        agent: "hermes",
+        channels: [{ channelId: "discord", active: true, disabled: false }],
+        disabledChannels: [],
+        credentialBindings: [{ channelId: "discord", providerEnvKey: "DISCORD_BOT_TOKEN" }],
+        runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
+      },
+      locked: true,
+    });
+
+    expect(run.result.status).toBe(1);
+    expect(run.result.stderr).toContain(
+      "cannot update provider placeholders while shields are up; rebuild or recreate the sandbox",
+    );
+    expect(run.envFileContent).toBe(originalEnv);
+    expect(run.strictHashValid).toBe(true);
   });
 
   it("uses manifest runtime aliases for Hermes Slack provider placeholders", () => {
@@ -785,6 +860,25 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     );
     expect(run.strictHashValid).toBe(true);
   });
+
+  it("ignores an overlong Slack credential revision before runtime alias matching (#8893)", () => {
+    const originalEnv = "SLACK_BOT_TOKEN=openshell:resolve:env:v1_SLACK_BOT_TOKEN\n";
+    const hashFileContent = "sentinel\n";
+    const overlongPlaceholder = `openshell:resolve:env:v${"1".repeat(21)}_SLACK_BOT_TOKEN`;
+    const run = runHermesRuntimeProviderPlaceholderRefresh({
+      envFile: originalEnv,
+      envOverrides: {
+        SLACK_BOT_TOKEN: overlongPlaceholder,
+      },
+      runtimePlan: baseMessagingRuntimePlan(),
+      hashFileContent,
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.envFileContent).toBe(originalEnv);
+    expect(run.strictHashContent).toBe(hashFileContent);
+    expect(run.result.stderr).not.toContain(overlongPlaceholder);
+  }, 15_000);
 
   it("refreshes provider placeholders through isolated Python and passes only regular artifacts", () => {
     const present = runExtractedProviderPlaceholderRefresh({ runtimePlanPathKind: "regular" });

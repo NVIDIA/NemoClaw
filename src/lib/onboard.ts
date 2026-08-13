@@ -633,6 +633,7 @@ const {
   isDockerDriverGatewayPortListener,
   isDockerDriverGatewayProcess,
   isDockerDriverGatewayProcessAlive,
+  isDockerDriverGatewayStateInUse,
   isPidAlive,
   rememberDockerDriverGatewayPid,
   resolveOpenShellGatewayBinary,
@@ -1768,8 +1769,6 @@ async function startGatewayWithOptions(
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
 }
-
-/** Reconcile the host Docker-driver gateway under the onboard lock and strict port checks. */
 async function startDockerDriverGateway({
   exitOnFailure = true,
   skipSandboxBridgeReachability = false,
@@ -1898,7 +1897,6 @@ async function startDockerDriverGateway({
   if (!gatewayBin || !gatewayLaunch) {
     throw new Error("OpenShell gateway launch missing after cutover");
   }
-
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const logPath = path.join(stateDir, "openshell-gateway.log");
   const log = dockerDriverGatewayLaunch.openDockerDriverGatewayLog(logPath, { exitOnFailure });
@@ -1924,7 +1922,6 @@ async function startDockerDriverGateway({
       dockerHost: process.env.DOCKER_HOST || null,
     },
   );
-
   const pollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 30);
   const pollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
   const gatewayStartup = await waitForStandaloneDockerDriverGateway({
@@ -1950,8 +1947,11 @@ async function startDockerDriverGateway({
     console.log("  ✓ Docker-driver gateway is healthy");
     return;
   }
-
-  reportGatewayFailure(logPath, childExit, { exitOnFailure, launchLogOffset: log.startOffset });
+  reportGatewayFailure(logPath, childExit, {
+    exitOnFailure,
+    isGatewayStateInUse: isDockerDriverGatewayStateInUse,
+    launchLogOffset: log.startOffset,
+  });
   if (gatewayStartup === "exited") {
     throw new Error("Docker-driver gateway failed to start because the process exited");
   }
