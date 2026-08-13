@@ -4725,6 +4725,77 @@ function startFreshShieldsDownTimer(input: {
   }
 }
 
+function completeInterruptedShieldsDown(
+  sandboxName: string,
+  state: LoadedShieldsState,
+  retainedProviderTarget: AgentConfigTarget | null,
+  opts: ShieldsDownOpts,
+): boolean {
+  if (!state.shieldsDown) return false;
+
+  // Provider release deliberately precedes route convergence and the final
+  // timer-bound transition commit. A process can therefore die after the
+  // durable provider claim is gone while the exact host transition remains
+  // in preparing. Treat that marker as recovery authority too: verify (or
+  // repair) mutable posture, converge the route, then commit it active.
+  const completionTarget =
+    retainedProviderTarget ??
+    resolveReleasedProviderShieldsDownTarget(
+      sandboxName,
+      state,
+      opts.allowLegacyHermesProtocol === true,
+    );
+  if (!completionTarget) return false;
+
+  const completion = prepareRecoveredShieldsDownCompletion(sandboxName, completionTarget, state);
+  // The provisional DOWN record can outlive a process that lost its
+  // provider-unlock response. Recovery first restores the retained plan's
+  // restrictive rollback. Reconcile the recorded mutable posture and verify
+  // it before treating this retry as complete.
+  try {
+    applyRecoveredShieldsDownForwardPolicy(sandboxName, completion);
+    if (retainedProviderTarget) {
+      runHermesProviderProtectionTransition(
+        sandboxName,
+        retainedProviderTarget,
+        "locked",
+        "locked",
+      );
+    }
+    if (completion.authority) {
+      assertRecoveredShieldsDownAuthority(sandboxName, completion, completion.authority.phase);
+    }
+    unlockAgentConfigUnderMutationLock(
+      sandboxName,
+      completionTarget,
+      false,
+      "provider-state-mutation-v2",
+    );
+    if (completion.authority) {
+      assertRecoveredShieldsDownAuthority(sandboxName, completion, completion.authority.phase);
+    }
+    finishRecoveredHermesShieldsDown(sandboxName, completion);
+  } catch (error) {
+    return failRecoveredHermesShieldsDown(
+      sandboxName,
+      completionTarget,
+      state,
+      completion,
+      opts.allowLegacyHermesProtocol === true,
+      error,
+      opts.throwOnError,
+    );
+  }
+  if (!completion.alreadyCommitted) {
+    if (completion.authority) {
+      assertRecoveredShieldsDownAuthority(sandboxName, completion, "active");
+    }
+    appendAuditEntry(completion.audit);
+  }
+  console.log(`  Recovered interrupted config unlock for ${sandboxName}.`);
+  return true;
+}
+
 function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts = {}): void {
   validateName(sandboxName, "sandbox name");
 
@@ -4751,73 +4822,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     recoveredProviderTarget = retainedProviderTarget;
   }
   const initialMode = deriveShieldsMode(state, state._hasStateFile);
-  if (state.shieldsDown) {
-    // Provider release deliberately precedes route convergence and the final
-    // timer-bound transition commit. A process can therefore die after the
-    // durable provider claim is gone while the exact host transition remains
-    // in preparing. Treat that marker as recovery authority too: verify (or
-    // repair) mutable posture, converge the route, then commit it active.
-    const completionTarget =
-      retainedProviderTarget ??
-      resolveReleasedProviderShieldsDownTarget(
-        sandboxName,
-        state,
-        opts.allowLegacyHermesProtocol === true,
-      );
-    if (completionTarget) {
-      const completion = prepareRecoveredShieldsDownCompletion(
-        sandboxName,
-        completionTarget,
-        state,
-      );
-      // The provisional DOWN record can outlive a process that lost its
-      // provider-unlock response. Recovery first restores the retained plan's
-      // restrictive rollback. Reconcile the recorded mutable posture and
-      // verify it before treating this retry as complete.
-      try {
-        applyRecoveredShieldsDownForwardPolicy(sandboxName, completion);
-        if (retainedProviderTarget) {
-          runHermesProviderProtectionTransition(
-            sandboxName,
-            retainedProviderTarget,
-            "locked",
-            "locked",
-          );
-        }
-        if (completion.authority) {
-          assertRecoveredShieldsDownAuthority(sandboxName, completion, completion.authority.phase);
-        }
-        unlockAgentConfigUnderMutationLock(
-          sandboxName,
-          completionTarget,
-          false,
-          "provider-state-mutation-v2",
-        );
-        if (completion.authority) {
-          assertRecoveredShieldsDownAuthority(sandboxName, completion, completion.authority.phase);
-        }
-        finishRecoveredHermesShieldsDown(sandboxName, completion);
-      } catch (error) {
-        return failRecoveredHermesShieldsDown(
-          sandboxName,
-          completionTarget,
-          state,
-          completion,
-          opts.allowLegacyHermesProtocol === true,
-          error,
-          opts.throwOnError,
-        );
-      }
-      if (!completion.alreadyCommitted) {
-        if (completion.authority) {
-          assertRecoveredShieldsDownAuthority(sandboxName, completion, "active");
-        }
-        appendAuditEntry(completion.audit);
-      }
-      console.log(`  Recovered interrupted config unlock for ${sandboxName}.`);
-      return;
-    }
-  }
+  if (completeInterruptedShieldsDown(sandboxName, state, retainedProviderTarget, opts)) return;
 
   const timeoutSeconds = parseDuration(opts.timeout || `${DEFAULT_TIMEOUT_SECONDS}`);
   const reason = opts.reason || null;
