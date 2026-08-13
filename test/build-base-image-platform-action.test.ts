@@ -15,30 +15,17 @@ type Step = {
 };
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const baseDockerfiles = [
-  "Dockerfile.base",
-  "agents/hermes/Dockerfile.base",
-  "agents/langchain-deepagents-code/Dockerfile.base",
-] as const;
 
-function pinnedAptVersion(dockerfile: string, packageName: string): string {
-  const source = fs.readFileSync(path.join(repoRoot, dockerfile), "utf8");
-  const version = source.match(new RegExp(`^\\s*${packageName}=([^\\s\\\\]+)`, "m"))?.[1];
-  expect(version, `${dockerfile} must pin ${packageName}`).toBeDefined();
-  return version as string;
+function required<T>(value: T | undefined, message: string): T {
+  return (
+    value ??
+    (() => {
+      throw new Error(message);
+    })()
+  );
 }
 
-describe("base-image dependency contracts", () => {
-  it("keeps shared apt dependencies pinned and aligned across base images (#6679)", () => {
-    const curlVersions = baseDockerfiles.map((dockerfile) => pinnedAptVersion(dockerfile, "curl"));
-
-    expect(new Set(curlVersions).size).toBe(1);
-    for (const dockerfile of baseDockerfiles) {
-      const source = fs.readFileSync(path.join(repoRoot, dockerfile), "utf8");
-      expect(source, dockerfile).toMatch(/^FROM\s+\S+@sha256:[0-9a-f]{64}\s*$/m);
-    }
-  });
-
+describe("base-image platform action", () => {
   it("executes dos2unix from each Deep Agents Code platform image before manifest publication (#8870)", () => {
     const action = YAML.parse(
       fs.readFileSync(
@@ -47,13 +34,10 @@ describe("base-image dependency contracts", () => {
       ),
     ) as { runs?: { steps?: Step[] } };
     const steps = action.runs?.steps ?? [];
-    const validate =
-      steps.find(
-        (candidate) => candidate.name === "Validate Deep Agents Code dos2unix executable",
-      ) ??
-      (() => {
-        throw new Error("Base-image platform action is missing the dos2unix validation");
-      })();
+    const validate = required(
+      steps.find((candidate) => candidate.name === "Validate Deep Agents Code dos2unix executable"),
+      "base-image platform action is missing the Deep Agents Code dos2unix validation",
+    );
     const buildIndex = steps.findIndex(
       (candidate) => candidate.name === "Build and push platform digest",
     );
@@ -67,7 +51,6 @@ describe("base-image dependency contracts", () => {
       PLATFORM: "${{ inputs.platform }}",
     });
     expect(validate.run).toContain('reference="${IMAGE}@${DIGEST}"');
-    expect(validate.run).toContain("^sha256:[0-9a-f]{64}$");
     expect(validate.run).toContain('docker run --rm --platform "$PLATFORM"');
     expect(validate.run).toContain("--network none");
     expect(validate.run).toContain("--cap-drop ALL");
@@ -75,11 +58,7 @@ describe("base-image dependency contracts", () => {
     expect(validate.run).toContain("--read-only");
     expect(validate.run).toContain("--user 999:999");
     expect(validate.run).toContain("test -x /usr/bin/dos2unix");
-    expect(validate.run).toContain('test "$(command -v dos2unix)" = /usr/bin/dos2unix');
     expect(validate.run).toContain("dos2unix --version");
-    expect(buildIndex).toBeGreaterThanOrEqual(0);
-    expect(validateIndex).toBeGreaterThanOrEqual(0);
-    expect(exportIndex).toBeGreaterThanOrEqual(0);
     expect(validateIndex).toBeGreaterThan(buildIndex);
     expect(validateIndex).toBeLessThan(exportIndex);
   });

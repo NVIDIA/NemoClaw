@@ -139,7 +139,12 @@ export function runWrapper(
     const result = spawnSync(path.join(dir, "hermes"), args, {
       encoding: "utf-8",
       timeout: 10000,
-      env: { PATH: `${pathPrefix}${process.env.PATH ?? ""}`, HOME: dir, ...env },
+      env: {
+        PATH: `${pathPrefix}${process.env.PATH ?? ""}`,
+        HOME: dir,
+        HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
+        ...env,
+      },
     });
 
     const realInvoked = fs.existsSync(marker);
