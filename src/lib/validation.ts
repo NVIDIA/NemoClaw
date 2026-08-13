@@ -41,10 +41,14 @@ export interface GatewayStartFailure {
    * - `docker_unreachable`: the underlying Docker daemon (Colima on macOS,
    *   dockerd on Linux) is not responding. Retrying the openshell health
    *   poll cannot recover from this — the user must start Docker first.
+   * - `gateway_state_version_skew`: the gateway state database records a
+   *   migration that the installed OpenShell does not carry, so the gateway
+   *   refuses to open it. Retrying cannot recover from this — the user must
+   *   install the newer OpenShell again or remove that gateway port's state.
    * - `unknown`: any other failure; callers should fall through to the
    *   normal retry/health-wait behavior.
    */
-  kind: "docker_unreachable" | "unknown";
+  kind: "docker_unreachable" | "gateway_state_version_skew" | "unknown";
 }
 
 export function classifyValidationFailure({
@@ -217,13 +221,16 @@ export function planSandboxCreateRecovery(
  * Classify a non-zero `openshell gateway start` result so the onboard retry
  * loop can short-circuit on unrecoverable failures.
  *
- * The only case we special-case today is "Docker daemon not reachable" — on
- * macOS this surfaces as `Socket not found: /var/run/docker.sock` (Colima
- * stopped) and on Linux as `Cannot connect to the Docker daemon at
- * unix:///var/run/docker.sock. Is the docker daemon running?`. Retrying the
- * health poll against a stopped daemon wastes ~5–15 minutes and produces an
- * unactionable error at the end; bailing out immediately with a clear
- * "start Docker" message is strictly better UX. See NemoClaw #2347.
+ * The first case is "Docker daemon not reachable" — on macOS this surfaces as
+ * `Socket not found: /var/run/docker.sock` (Colima stopped) and on Linux as
+ * `Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the
+ * docker daemon running?`. Retrying the health poll against a stopped daemon
+ * wastes ~5–15 minutes and produces an unactionable error at the end; bailing
+ * out immediately with a clear "start Docker" message is strictly better UX.
+ * See NemoClaw #2347.
+ *
+ * The second case is a gateway state database that a newer OpenShell wrote.
+ * See NemoClaw #8797.
  */
 export function classifyGatewayStartFailure(output = ""): GatewayStartFailure {
   const text = String(output || "");
@@ -237,6 +244,18 @@ export function classifyGatewayStartFailure(output = ""): GatewayStartFailure {
     /docker daemon.*(is not running|not responding|unreachable)/i.test(text)
   ) {
     return { kind: "docker_unreachable" };
+  }
+  // sqlx raises MigrateError::VersionMissing when the state database records a
+  // migration that the running OpenShell binary does not carry. OpenShell
+  // forwards the sqlx text unchanged, and its renderer wraps that sentence
+  // across two lines, so match the two halves separately rather than the whole
+  // phrase. MigrateError::VersionMismatch shares the first half and reports a
+  // modified migration file, so the second half must match as well (#8797).
+  if (
+    /migration \d+ was previously applied/i.test(text) &&
+    /is missing in the resolved migrations/i.test(text)
+  ) {
+    return { kind: "gateway_state_version_skew" };
   }
   return { kind: "unknown" };
 }

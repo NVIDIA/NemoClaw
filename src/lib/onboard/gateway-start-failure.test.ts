@@ -66,6 +66,29 @@ describe("classifyGatewayStartFailure", () => {
     });
   });
 
+  // Regression: NemoClaw #8797. Installing a NemoClaw release that pins an
+  // older OpenShell leaves the gateway state database that the newer OpenShell
+  // wrote in place, and the older gateway then refuses to open it. OpenShell's
+  // renderer wraps the sqlx sentence across two lines, so a pattern that spans
+  // the whole sentence never matches the real output.
+  it("detects a state database that a newer OpenShell wrote (#8797)", () => {
+    const output = [
+      "Starting OpenShell server bind=127.0.0.1:8080",
+      "Error:   × execution error: migration error: migration 6 was previously applied but",
+      "  │ is missing in the resolved migrations",
+    ].join("\n");
+    expect(classifyGatewayStartFailure(output)).toEqual({
+      kind: "gateway_state_version_skew",
+    });
+  });
+
+  it("does not report a modified migration file as a version skew (#8797)", () => {
+    // sqlx MigrateError::VersionMismatch shares the opening clause but means a
+    // changed migration file, which the version-skew guidance does not resolve.
+    const output = "migration error: migration 6 was previously applied but has been modified";
+    expect(classifyGatewayStartFailure(output)).toEqual({ kind: "unknown" });
+  });
+
   it("returns unknown for healthy-but-slow output (should not short-circuit)", () => {
     // Real output seen during a slow first-time k3s bootstrap — the retry
     // loop must stay engaged for these, so we must not misclassify them.

@@ -23,6 +23,7 @@
  */
 
 import fs from "node:fs";
+import path from "node:path";
 
 import { redact } from "../security/redact";
 import { classifyGatewayStartFailure } from "../validation";
@@ -38,6 +39,36 @@ export type ReportDockerDriverGatewayStartFailureOpts = {
    */
   exitOnFailure: boolean;
 };
+
+/**
+ * Print the recovery choices for a gateway state database that a newer
+ * OpenShell wrote.
+ *
+ * The gateway log sits in the gateway's own state directory, so the caller's
+ * log path already locates the database and no extra plumbing is needed.
+ *
+ * The message names that port-scoped directory rather than
+ * `~/.local/state/nemoclaw`, because the parent directory also holds the state
+ * of every other gateway port on the host (#4422, #7279).
+ */
+function printGatewayStateVersionSkewRecovery(
+  logPath: string,
+  printError: (message?: string) => void,
+): void {
+  const stateDir = path.dirname(logPath);
+  printError(
+    "  The gateway state database was written by a newer OpenShell than the installed one.",
+  );
+  printError(`    State database: ${path.join(stateDir, "openshell.db")}`);
+  printError("  Choose one of these actions:");
+  printError(
+    "    - Install a NemoClaw release that pins the OpenShell version that wrote the database.",
+  );
+  printError("    - Remove this gateway port's state directory, then onboard again:");
+  printError(`        rm -rf ${stateDir}`);
+  printError("      The directory holds the OpenShell state for this gateway port only.");
+  printError("      Other gateway ports keep their own directories.");
+}
 
 /**
  * Print the standard Docker-driver-gateway-start failure diagnostic set
@@ -74,8 +105,11 @@ export function reportDockerDriverGatewayStartFailure(
     console.error("  Gateway log tail:");
     for (const line of tail.split("\n")) console.error(`    ${redact(line)}`);
   }
-  if (classifyGatewayStartFailure(tail).kind === "docker_unreachable") {
+  const failure = classifyGatewayStartFailure(tail);
+  if (failure.kind === "docker_unreachable") {
     printDockerDaemonRecovery(console.error);
+  } else if (failure.kind === "gateway_state_version_skew") {
+    printGatewayStateVersionSkewRecovery(logPath, console.error);
   }
   console.error("  Troubleshooting:");
   console.error(`    tail -100 ${logPath}`);

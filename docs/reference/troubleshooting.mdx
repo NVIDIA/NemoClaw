@@ -554,6 +554,28 @@ Upgrade NemoClaw to a version that supports your OpenShell release, or install a
 For fresh installs, NemoClaw passes the blueprint range to `install-openshell.sh` and resolves a compatible published OpenShell release before downloading.
 If GitHub release metadata is unavailable, the script uses its bundled fallback pin and the post-install gate still enforces the configured range.
 
+### Gateway Fails to Start After Installing an Older NemoClaw Release
+
+Each NemoClaw release pins one OpenShell version.
+Installing a NemoClaw release that is older than the installed one reinstalls OpenShell at the older pin.
+This happens when you select an older release with `NEMOCLAW_INSTALL_TAG`, and when the default `lkg` release is older than the NemoClaw release already on the host.
+The gateway state database stays on disk, so the older OpenShell opens a database that a newer OpenShell wrote, and the gateway stops:
+
+```text
+Error:   × execution error: migration error: migration 6 was previously applied but
+  │ is missing in the resolved migrations
+```
+
+`$$nemoclaw onboard` reports the state database path and two recovery choices.
+Choose one of these actions:
+
+- Install a NemoClaw release that pins the OpenShell version that wrote the database.
+- Remove the reported gateway port's state directory, then run `$$nemoclaw onboard` again.
+
+The reported directory is the one that holds that gateway port's OpenShell state, for example `~/.local/state/nemoclaw/openshell-docker-gateway`.
+Removing it deletes the OpenShell gateway state for that port.
+Do not remove `~/.local/state/nemoclaw` itself, because that directory also holds the state of every other gateway port on the host.
+
 ### Installer Reports an OpenShell Gateway Version Mismatch
 
 On Linux, an existing OpenShell package can provide a systemd user service that starts a different gateway version from the user-local version that NemoClaw installs.

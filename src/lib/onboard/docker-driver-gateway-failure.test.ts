@@ -136,6 +136,40 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
     }
   });
 
+  it("names the state database and both recovery choices when a newer OpenShell wrote it (#8797)", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
+    const log = path.join(dir, "openshell-gateway.log");
+    fs.writeFileSync(
+      log,
+      [
+        "Starting OpenShell server bind=127.0.0.1:8080",
+        "Error:   × execution error: migration error: migration 6 was previously applied but",
+        "  │ is missing in the resolved migrations",
+      ].join("\n"),
+    );
+    try {
+      reportDockerDriverGatewayStartFailure(log, makeExitState(), {
+        exitOnFailure: false,
+      });
+      const lines = errSpy.mock.calls.map((c: string[]) => c.join(" "));
+      const joined = lines.join("\n");
+      expect(joined).toContain("written by a newer OpenShell than the installed one");
+      expect(joined).toContain(`State database: ${path.join(dir, "openshell.db")}`);
+      expect(joined).toContain("Install a NemoClaw release that pins the OpenShell version");
+      expect(joined).toContain("holds the OpenShell state for this gateway port only");
+      // The guidance must offer exactly one removal target, and that target
+      // must be the port-scoped state directory. Its parent holds every other
+      // gateway port's state (#4422, #7279).
+      const removalTargets = lines
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith("rm -rf "))
+        .map((line) => line.slice("rm -rf ".length));
+      expect(removalTargets).toEqual([dir]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("calls process.exit(1) when exitOnFailure is true", () => {
     expect(() =>
       reportDockerDriverGatewayStartFailure("/tmp/nonexistent-gateway.log", makeExitState(), {
