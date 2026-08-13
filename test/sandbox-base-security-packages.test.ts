@@ -47,8 +47,8 @@ const EXPECTED_SECURITY_PACKAGE_INVENTORY = [
   "libonig5=6.9.9-1+b1",
   "libjq1=1.8.2-1",
   "jq=1.8.2-1",
-  "vim-common=2:9.2.0782-1",
-  "vim-tiny=2:9.2.0782-1",
+  "vim-common=2:9.2.0858-1",
+  "vim-tiny=2:9.2.0858-1",
   "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1",
   "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1",
   "perl-base=5.44.0-1nemoclaw1",
@@ -160,6 +160,12 @@ describe("sandbox base security packages", () => {
       expect(calls).toContain(
         `download https://snapshot.debian.org/archive/debian/20260811T082421Z/pool/main/e/expat/libexpat1_2.8.3-1_${architecture}.deb`,
       );
+      expect(calls).toContain(
+        "download https://snapshot.debian.org/archive/debian/20260727T143429Z/pool/main/v/vim/vim-common_9.2.0858-1_all.deb",
+      );
+      expect(calls).toContain(
+        `download https://snapshot.debian.org/archive/debian/20260727T143429Z/pool/main/v/vim/vim-tiny_9.2.0858-1_${architecture}.deb`,
+      );
       expect(fs.readFileSync(prepared.inventory, "utf-8")).toBe(securityInventory(architecture));
       expect(fs.statSync(prepared.inventory).mode & 0o777).toBe(0o444);
       expect(
@@ -172,8 +178,8 @@ describe("sandbox base security packages", () => {
         `libonig5_6.9.9-1+b1_${architecture}.deb`,
         `libjq1_1.8.2-1_${architecture}.deb`,
         `jq_1.8.2-1_${architecture}.deb`,
-        "vim-common_9.2.0782-1_all.deb",
-        `vim-tiny_9.2.0782-1_${architecture}.deb`,
+        "vim-common_9.2.0858-1_all.deb",
+        `vim-tiny_9.2.0858-1_${architecture}.deb`,
       ]);
       expect(prepared.debianSecurityDebs).not.toBe(prepared.nativeSecurityDebs);
       expect(fs.existsSync(prepared.debianSecurityDebs)).toBe(false);
@@ -248,11 +254,11 @@ describe("sandbox base security packages", () => {
 
   it.each(
     SECURITY_CASES,
-  )("rejects a changed expected checksum before installing packages for %s on %s", (_name, architecture, image) => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-checksum-"));
+  )("rejects changed Vim package content before installing packages for %s on %s", (_name, architecture, image) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-vim-checksum-"));
     const prepared = sandboxSecurityCommand(image, tmp, false);
     const command = prepared.command.replace(
-      BASE_APT_SECURITY_HASHES[architecture].libexpat,
+      BASE_APT_SECURITY_HASHES[architecture].vimTiny,
       "0".repeat(64),
     );
 
@@ -270,6 +276,34 @@ describe("sandbox base security packages", () => {
       expect(calls).not.toContain("dpkg-install");
       expect(fs.existsSync(prepared.debianSecurityDebs)).toBe(true);
       expect(fs.existsSync(prepared.nativeSecurityDebs)).toBe(true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it.each(SECURITY_IMAGES)("rejects unsupported package architecture for $name", (image) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-unsupported-arch-"));
+    const prepared = sandboxSecurityCommand(image, tmp, false);
+
+    try {
+      const { calls, result } = runLoggedDockerShell(
+        prepared.command,
+        tmp,
+        [
+          'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+          [
+            "dpkg() {",
+            '  [[ "$#" -eq 1 && "$1" == "--print-architecture" ]] || return 64',
+            '  printf "riscv64\\n"',
+            "}",
+          ].join("\n"),
+        ],
+        { timeoutMs: 15_000 },
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Unsupported architecture for Debian security packages");
+      expect(calls).not.toContain("download ");
+      expect(calls).not.toContain("dpkg-install");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
