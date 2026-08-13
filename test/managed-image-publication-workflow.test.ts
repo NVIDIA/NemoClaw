@@ -408,6 +408,7 @@ describe("complete managed-image publication workflow", () => {
     const matrix = prBuilder.strategy?.matrix?.include ?? [];
     const steps = prBuilder.steps ?? [];
     const permissionDrift = step(prBuilder, "Reproduce reviewed discovery permission drift");
+    const setupBuildx = step(prBuilder, "Set up Docker Buildx");
     const build = step(prBuilder, "Build PR managed image locally");
     const contract = step(prBuilder, "Validate exact PR managed image contract");
 
@@ -485,6 +486,7 @@ describe("complete managed-image publication workflow", () => {
       steps.indexOf(step(prBuilder, "Checkout")),
     );
     expect(steps.indexOf(permissionDrift)).toBeLessThan(steps.indexOf(build));
+    expect(setupBuildx.id).toBe("buildx");
 
     for (const action of steps.filter((candidate) => candidate.uses)) {
       expect(action.uses, action.name).toMatch(fullShaAction);
@@ -500,10 +502,14 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(resolveBase).toContain('--file "$BASE_DOCKERFILE"');
     expect(resolveBase).toContain('--tag "$LOCAL_BASE_REFERENCE"');
+    expect(resolveBase).toContain("--builder default");
+    expect(resolveBase).toContain("printf 'builder=default\\n'");
+    expect(resolveBase).toContain("printf 'builder=%s\\n' \"$REMOTE_BASE_BUILDER\"");
     expect(resolveBase).toContain('reference="${BASE_REPOSITORY}@${digest}"');
     expect(resolveBase).toContain('actual="sha256:$(sha256sum "$exact_raw"');
 
     expect(build.with).toMatchObject({
+      builder: "${{ steps.base.outputs.builder }}",
       platforms: "linux/amd64",
       load: true,
       push: false,
@@ -634,6 +640,7 @@ describe("complete managed-image publication workflow", () => {
     expect(login.if).toBe(sameRepository);
     expect(publish.if).toBe(sameRepository);
     expect(publish.with).toMatchObject({
+      builder: "${{ steps.base.outputs.builder }}",
       platforms: "linux/amd64",
       outputs:
         "type=image,name=${{ matrix.repository }},push-by-digest=true,name-canonical=true,push=true",
@@ -865,6 +872,7 @@ fi
           GITHUB_STEP_SUMMARY: summary,
           LOCAL_BASE_REFERENCE: "nemoclaw-managed-pr/openclaw-base:test",
           PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          REMOTE_BASE_BUILDER: "remote-builder",
           RUNNER_TEMP: temporaryRoot,
         },
       });
@@ -875,6 +883,7 @@ fi
       expect(fs.readFileSync(output, "utf8")).toContain(
         `ref=ghcr.io/nvidia/nemoclaw/sandbox-base@${digest}`,
       );
+      expect(fs.readFileSync(output, "utf8")).toContain("builder=remote-builder\n");
 
       writeAlias([descriptor, descriptor]);
       const duplicate = runResolver();

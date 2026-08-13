@@ -79,6 +79,7 @@ exit 90
     GITHUB_OUTPUT: output,
     GITHUB_STEP_SUMMARY: summary,
     LOCAL_BASE_REFERENCE: "nemoclaw-managed-pr/openclaw-base:test",
+    REMOTE_BASE_BUILDER: "remote-builder",
     PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
     RUNNER_TEMP: temporaryRoot,
   };
@@ -90,9 +91,11 @@ exit 90
       env: environment,
     });
     expect(result.status, result.stderr).toBe(0);
-    expect(fs.readFileSync(output, "utf8")).toBe("ref=nemoclaw-managed-pr/openclaw-base:test\n");
+    expect(fs.readFileSync(output, "utf8")).toBe(
+      "ref=nemoclaw-managed-pr/openclaw-base:test\nbuilder=default\n",
+    );
     expect(fs.readFileSync(dockerLog, "utf8")).toContain(
-      "buildx build --platform linux/amd64 --load --file Dockerfile.base --tag nemoclaw-managed-pr/openclaw-base:test .",
+      "buildx build --builder default --platform linux/amd64 --load --file Dockerfile.base --tag nemoclaw-managed-pr/openclaw-base:test .",
     );
     expect(fs.readFileSync(dockerLog, "utf8")).not.toContain("imagetools inspect");
 

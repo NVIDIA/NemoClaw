@@ -383,6 +383,7 @@ jobs:
           done
 
       - name: Set up Docker Buildx
+        id: buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Set up Node.js
@@ -401,6 +402,7 @@ jobs:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
           DISPLAY_NAME: ${{ matrix.display_name }}
           LOCAL_BASE_REFERENCE: nemoclaw-managed-pr/${{ matrix.agent }}-base:${{ github.event.pull_request.head.sha }}
+          REMOTE_BASE_BUILDER: ${{ steps.buildx.outputs.name }}
         run: |
           set -euo pipefail
           if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
@@ -419,12 +421,14 @@ jobs:
           if [ "$diff_status" -eq 1 ]; then
             echo "::notice::${DISPLAY_NAME} base Dockerfile changed; building the exact PR base locally"
             docker buildx build \
+              --builder default \
               --platform linux/amd64 \
               --load \
               --file "$BASE_DOCKERFILE" \
               --tag "$LOCAL_BASE_REFERENCE" \
               .
             printf 'ref=%s\n' "$LOCAL_BASE_REFERENCE" >> "$GITHUB_OUTPUT"
+            printf 'builder=default\n' >> "$GITHUB_OUTPUT"
             printf '### %s PR base\n\nLocally built from `%s` at `%s`.\n' \
               "$DISPLAY_NAME" "$BASE_DOCKERFILE" "$CANDIDATE_SHA" \
               >> "$GITHUB_STEP_SUMMARY"
@@ -467,6 +471,7 @@ jobs:
             exit 1
           fi
           printf 'ref=%s\n' "$reference" >> "$GITHUB_OUTPUT"
+          printf 'builder=%s\n' "$REMOTE_BASE_BUILDER" >> "$GITHUB_OUTPUT"
           printf '### %s PR base\n\n`%s`\n' "$DISPLAY_NAME" "$reference" \
             >> "$GITHUB_STEP_SUMMARY"
 
@@ -486,6 +491,7 @@ jobs:
       - name: Build PR managed image locally
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
+          builder: ${{ steps.base.outputs.builder }}
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
@@ -670,6 +676,7 @@ jobs:
         if: github.event.pull_request.head.repo.full_name == github.repository
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
+          builder: ${{ steps.base.outputs.builder }}
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
