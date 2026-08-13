@@ -24,7 +24,15 @@ import {
   formatHostServiceUnreachableMessage,
   probeHostServiceSandboxReachability,
 } from "./host-service-reachability";
-import { createModelRouterCommandProvisioner } from "./model-router-command";
+import {
+  formatStorageBytes,
+  measureDirectorySizeBytes,
+  probeHostStorage,
+} from "../inference/vllm-storage";
+import {
+  createModelRouterCommandProvisioner,
+  type ModelRouterCommandDeps,
+} from "./model-router-command";
 import {
   doesModelRouterProcessOwnPort,
   findModelRouterPidForPort,
@@ -150,6 +158,7 @@ function modelRouterVenvDir(): string {
 export function createProductionModelRouterCommandProvisioner(
   routerDir = modelRouterPackageDir(),
   venvDir = modelRouterVenvDir(),
+  overrides: Partial<Pick<ModelRouterCommandDeps, "probeStorage" | "measureDirectorySize">> = {},
 ) {
   return createModelRouterCommandProvisioner(
     {
@@ -164,6 +173,10 @@ export function createProductionModelRouterCommandProvisioner(
       prepareModelRouterVenv,
       packageVersion: () =>
         JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version ?? "unknown",
+      probeStorage: probeHostStorage,
+      measureDirectorySize: measureDirectorySizeBytes,
+      formatStorageBytes,
+      ...overrides,
     },
   );
 }
