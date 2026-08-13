@@ -42,6 +42,11 @@ import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
 import { confirmSandboxDestroy } from "./destroy-confirmation";
 import {
+  classifyDestroyContainerIdentity,
+  type DestroyContainerIdentityVerdict,
+  formatAmbiguousDestroyIdentity,
+} from "./destroy-container-identity";
+import {
   executeSandboxDestroy,
   redactDestroyError,
   retirePortableLifecycleAuthority,
@@ -458,12 +463,63 @@ export async function destroySandbox(
   return withMcpLifecycleLock(sandboxName, () => destroySandboxUnlocked(sandboxName, options));
 }
 
+export type AssertUnambiguousDestroyIdentityDeps = {
+  getSandbox?: typeof registry.getSandbox;
+  classify?: typeof classifyDestroyContainerIdentity;
+  warn?: (message: string) => void;
+};
+
+/**
+ * Fail closed before any destructive step when the target `sandbox-name` maps
+ * to more than one container identity on the Docker runtime.
+ *
+ * A foreign container that borrows a real sandbox's `sandbox-name` label (with
+ * a different workspace / without the managed marker) must never let destroy
+ * silently remove the real sandbox: the name alone can no longer prove which
+ * container is meant, so the only safe action is to refuse (#8999). The check
+ * is Docker-only — Podman lifecycle enforces exact single-container identity in
+ * its own resolver — and a probe that cannot reach Docker is non-blocking so a
+ * normal destroy is never wedged by an unreachable daemon.
+ *
+ * Returns `true` when destroy may proceed and `false` when it was refused.
+ */
+export function assertUnambiguousDestroyContainerIdentity(
+  sandboxName: string,
+  deps: AssertUnambiguousDestroyIdentityDeps = {},
+): boolean {
+  const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const classify = deps.classify ?? classifyDestroyContainerIdentity;
+  const warn = deps.warn ?? defaultDestroyWarn;
+  const providerId = normalizeRuntimeProviderIdentity(getSandbox(sandboxName)?.openshellDriver);
+  if (providerId !== "docker") return true;
+
+  const verdict: DestroyContainerIdentityVerdict = classify(sandboxName);
+  if (verdict.status === "ambiguous") {
+    for (const line of formatAmbiguousDestroyIdentity(verdict, CLI_NAME)) {
+      console.error(`  ${line}`);
+    }
+    return false;
+  }
+  if (verdict.status === "probe-failed") {
+    // Ambiguity can neither be proven nor ruled out; proceed under the
+    // destroy's existing lower-layer guards rather than wedge a normal destroy.
+    warn(
+      `Could not verify container identity for '${sandboxName}' before destroy: ${verdict.detail}`,
+    );
+  }
+  return true;
+}
+
 async function destroySandboxUnlocked(
   sandboxName: string,
   options: string[] | DestroySandboxOptions = {},
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
   if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
+
+  if (!assertUnambiguousDestroyContainerIdentity(sandboxName)) {
+    process.exit(1);
+  }
 
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } =
     prepareSandboxDestroy(sandboxName);
