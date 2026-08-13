@@ -800,6 +800,131 @@ function privilegedSandboxExecCapture(sandboxName: string, cmd: string[], timeou
   );
 }
 
+// Reject unsafe config paths before Shields down weakens policy or persists a
+// provisional DOWN record. A symlink planted after shields up is refused by the
+// unlock path, but without this preflight the provisional DOWN/permissive
+// status survives when re-lock also fails on the same path (#8804).
+const SHIELDS_DOWN_CONFIG_PATH_PREFLIGHT_SCRIPT = String.raw`
+# nemoclaw-shields-down-path-preflight
+import errno
+import os
+import stat
+import sys
+
+def die(message):
+    sys.stderr.write(message + "\n")
+    raise SystemExit(1)
+
+def open_flags(want_dir):
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    if want_dir:
+        flags |= getattr(os, "O_DIRECTORY", 0)
+    else:
+        flags |= getattr(os, "O_NONBLOCK", 0)
+    return flags
+
+def open_nofollow(path, want_dir, dir_fd=None):
+    try:
+        if dir_fd is None:
+            return os.open(path, open_flags(want_dir))
+        return os.open(path, open_flags(want_dir), dir_fd=dir_fd)
+    except OSError as exc:
+        label = path if dir_fd is None else "%s/%s" % (sys.argv[1].rstrip("/"), path)
+        if exc.errno in (errno.ELOOP, getattr(errno, "ENOTDIR", errno.EINVAL)):
+            die("refusing symlink path: " + label)
+        if exc.errno == errno.ENOENT:
+            die("missing config path: " + label)
+        die("open failed for %s: %s" % (label, exc))
+
+def child_name(config_dir, path):
+    prefix = config_dir.rstrip("/") + "/"
+    if not path.startswith(prefix):
+        die("refusing config path outside config dir: " + path)
+    name = path[len(prefix):]
+    if not name or "/" in name or name in (".", ".."):
+        die("refusing nested or unsafe config path: " + path)
+    return name
+
+config_dir = sys.argv[1]
+files = sys.argv[2:]
+dir_fd = open_nofollow(config_dir, True)
+try:
+    mode = os.fstat(dir_fd).st_mode
+    if not stat.S_ISDIR(mode):
+        die("refusing non-directory config path: " + config_dir)
+    for path in files:
+        name = child_name(config_dir, path)
+        fd = open_nofollow(name, False, dir_fd=dir_fd)
+        try:
+            mode = os.fstat(fd).st_mode
+            if not stat.S_ISREG(mode):
+                die("refusing non-regular config path: " + path)
+        finally:
+            os.close(fd)
+finally:
+    os.close(dir_fd)
+`;
+
+function errorStderr(error: unknown): string {
+  if (!(error instanceof Error) || !("stderr" in error) || error.stderr == null) return "";
+  return Buffer.isBuffer(error.stderr) ? error.stderr.toString("utf8") : String(error.stderr);
+}
+
+function errorText(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  return `${errorStderr(error)}\n${error.message}`.trim();
+}
+
+function isUnsafeShieldsConfigPathError(error: unknown): boolean {
+  const message = errorText(error);
+  return (
+    /refusing (?:to follow )?symlink(?: path)?/i.test(message) ||
+    /refusing non-(?:regular|directory) config path/i.test(message) ||
+    /refusing unsafe(?:-| )(?:config|sealed|Hermes).*path/i.test(message) ||
+    /canonical config path is not a safe regular file/i.test(message) ||
+    /missing config path:/i.test(message)
+  );
+}
+
+function assertShieldsDownConfigPathsSafe(sandboxName: string, target: AgentConfigTarget): void {
+  const files = [target.configPath, ...(target.sensitiveFiles || [])];
+  try {
+    privilegedSandboxExecCapture(sandboxName, [
+      "python3",
+      "-I",
+      "-c",
+      SHIELDS_DOWN_CONFIG_PATH_PREFLIGHT_SCRIPT,
+      target.configDir,
+      ...files,
+    ]);
+  } catch (error) {
+    const message = errorText(error);
+    const refusal = message
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => isUnsafeShieldsConfigPathError(line));
+    if (refusal) {
+      throw new Error(refusal);
+    }
+    throw new Error(`Unsafe Shields config path check failed: ${message}`);
+  }
+}
+
+function requireShieldsDownConfigPathsSafe(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  throwOnError?: boolean,
+): void {
+  try {
+    assertShieldsDownConfigPathsSafe(sandboxName, target);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`  ERROR: ${message}`);
+    console.error("  Shields down did not take effect. `shields status` continues to report `UP`.");
+    failShieldsCommand(message, throwOnError);
+  }
+}
+
 function hermesShieldsGuardArgs(
   action: string,
   target: AgentConfigTarget,
@@ -1415,6 +1540,30 @@ function deriveShieldsMode(state: ShieldsState, hasStateFile: boolean): ShieldsM
   if (state.shieldsDown === false) return "locked";
   // State file exists but shieldsDown is undefined — treat as mutable default
   return "mutable_default";
+}
+
+function isEquivalentShieldsDownRequest(
+  state: ShieldsState,
+  timeoutSeconds: number,
+  reason: string | null,
+  policyName: string,
+): boolean {
+  return (
+    state.shieldsDown === true &&
+    state.shieldsDownTimeout === timeoutSeconds &&
+    state.shieldsDownReason === reason &&
+    state.shieldsDownPolicy === policyName
+  );
+}
+
+function hasEquivalentShieldsDownTimerAuthority(sandboxName: string, state: ShieldsState): boolean {
+  const marker = readTimerMarker(sandboxName);
+  return (
+    marker !== null &&
+    marker.sandboxName === sandboxName &&
+    marker.snapshotPath === state.shieldsPolicySnapshotPath &&
+    isExactLiveFutureTimerAuthority(marker)
+  );
 }
 
 function describeShieldsMode(mode: ShieldsPostureMode): Omit<ShieldsPosture, "state"> {
@@ -4668,6 +4817,26 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       console.log(`  Recovered interrupted config unlock for ${sandboxName}.`);
       return;
     }
+  }
+
+  const timeoutSeconds = parseDuration(opts.timeout || `${DEFAULT_TIMEOUT_SECONDS}`);
+  const reason = opts.reason || null;
+  const policyName = opts.policy || "permissive";
+  if (state.shieldsDown) {
+    if (isEquivalentShieldsDownRequest(state, timeoutSeconds, reason, policyName)) {
+      if (!hasEquivalentShieldsDownTimerAuthority(sandboxName, state)) {
+        recoverExpiredAutoRestoreInline(sandboxName, state);
+        console.error(
+          "  Cannot accept equivalent shields down request without live auto-restore timer authority.",
+        );
+        return failShieldsCommand(
+          `Cannot accept equivalent shields down request without live auto-restore timer authority for ${sandboxName}`,
+          opts.throwOnError,
+        );
+      }
+      console.log(`  Shields already down for ${sandboxName}; equivalent request accepted.`);
+      return;
+    }
     console.error(
       `  Config is already unlocked for ${sandboxName} (since ${state.shieldsDownAt}).`,
     );
@@ -4686,6 +4855,12 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     ? "provider-state-mutation-v2"
     : requireHermesShieldsProtocol(sandboxName, target, opts.allowLegacyHermesProtocol === true);
 
+  // Refuse an unsafe config path before timer, host state, or policy mutation.
+  // Otherwise unlock rejects the path after the provisional DOWN/permissive
+  // record is already live, and status integrity fails when re-lock cannot
+  // reseal the same unsafe path (#8804).
+  requireShieldsDownConfigPathsSafe(sandboxName, target, opts.throwOnError);
+
   // Kill stale auto-restore markers only when this command will actually
   // transition into shields-down. A repeated shields-down must not cancel the
   // active timer and leave the sandbox unlocked indefinitely.
@@ -4699,9 +4874,6 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     );
   }
 
-  const timeoutSeconds = parseDuration(opts.timeout || `${DEFAULT_TIMEOUT_SECONDS}`);
-  const reason = opts.reason || null;
-  const policyName = opts.policy || "permissive";
   const processToken = opts.processToken ?? randomBytes(16).toString("hex");
   if (!/^[0-9a-f]{32}$/.test(processToken)) {
     throw new Error("Invalid shields-down recovery process token");
@@ -4978,25 +5150,44 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       opts.allowLegacyHermesProtocol === true,
       protocol,
     );
+    if (
+      transition &&
+      timerAuthority &&
+      rollback.outcome === "manual_intervention_required" &&
+      !rollback.timerAuthorityRevoked
+    ) {
+      try {
+        assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
+        transition = { ...transition, phase: "active" };
+        writeShieldsDownTransition(transition, "preparing");
+        assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "active");
+      } catch (transitionError) {
+        const transitionMessage =
+          transitionError instanceof Error ? transitionError.message : String(transitionError);
+        console.error(
+          `  CRITICAL: Could not persist the incomplete Shields down posture. Treat the config as mutable and recover it manually. ${transitionMessage}`,
+        );
+      }
+    }
     if (transition && rollback.timerAuthorityRevoked) {
       clearShieldsDownTransition(sandboxName, transition.processToken);
     }
     console.error(`  ERROR: ${message}`);
-    const timerAuthority = describeRollbackTimerAuthority(
+    const timerAuthorityDescription = describeRollbackTimerAuthority(
       transition !== null,
       rollback.timerAuthorityRevoked,
     );
     if (rollback.outcome === "mutable_default_restored") {
       console.error(
-        `  Config mutation failed; the original mutable-default posture was restored.${timerAuthority}`,
+        `  Config mutation failed; the original mutable-default posture was restored.${timerAuthorityDescription}`,
       );
     } else if (rollback.outcome === "lockdown_restored") {
       console.error(
-        `  Config did not reach the mutable-default state; fail-closed lockdown was restored.${timerAuthority}`,
+        `  Config did not reach the mutable-default state; fail-closed lockdown was restored.${timerAuthorityDescription}`,
       );
     } else {
       console.error(
-        `  Config rollback is incomplete.${timerAuthority} Manual intervention is required.`,
+        `  Config rollback is incomplete.${timerAuthorityDescription} Manual intervention is required.`,
       );
     }
     if (inferenceRouteConvergenceFailed) {

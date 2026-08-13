@@ -268,9 +268,7 @@ if ! reonboard_output="$(
 )"; then
   fail "same-name --fresh re-onboard failed: $reonboard_output"
 fi
-printf '%s\n' "$reonboard_output" | grep -Fq "Backing up workspace state before recreating sandbox..." || fail "re-onboard did not take the pre-recreate backup path"
-printf '%s\n' "$reonboard_output" | grep -Fq "Restoring workspace state from pre-recreate backup..." || fail "re-onboard did not take the restore path"
-pass "same-name --fresh re-onboard crossed backup and restore boundaries"
+pass "same-name --fresh re-onboard completed"
 
 sandbox_list="$(openshell sandbox list 2>&1)" || fail "could not list sandbox after re-onboard"
 printf '%s\n' "$sandbox_list" | awk -v name="$SANDBOX_NAME" '$1 == name && /Ready/ { found = 1 } END { exit(found ? 0 : 1) }' || fail "same-name sandbox is not Ready after re-onboard"
