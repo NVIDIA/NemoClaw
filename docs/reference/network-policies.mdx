@@ -368,7 +368,7 @@ $$nemoclaw <sandbox-name> policy restore <key> --force
 ```
 
 Both restore paths require acknowledgement unless you use `--dry-run`.
-Interactive runs prompt for confirmation when no acknowledgement flag is present.
-Non-interactive runs require `--force`, `--yes`, or `-y`.
+A run with a terminal on stdin prompts for confirmation when no acknowledgement flag is present.
+A run with `NEMOCLAW_NON_INTERACTIVE=1`, or a run without a terminal on stdin, requires `--force`, `--yes`, or `-y`.
 
 Excluding a baseline entry leaves agent features that depend on it unsupported for that sandbox.

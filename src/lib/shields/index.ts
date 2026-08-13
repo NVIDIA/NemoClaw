@@ -4727,16 +4727,16 @@ function startFreshShieldsDownTimer(input: {
 
 function completeInterruptedShieldsDown(
   sandboxName: string,
-  opts: ShieldsDownOpts,
   state: LoadedShieldsState,
   retainedProviderTarget: AgentConfigTarget | null,
+  opts: ShieldsDownOpts,
 ): boolean {
   if (!state.shieldsDown) return false;
 
   // Provider release deliberately precedes route convergence and the final
   // timer-bound transition commit. A process can therefore die after the
-  // durable provider claim is gone while the host transition remains in
-  // preparing. Treat that marker as recovery authority too: verify (or
+  // durable provider claim is gone while the exact host transition remains
+  // in preparing. Treat that marker as recovery authority too: verify (or
   // repair) mutable posture, converge the route, then commit it active.
   const completionTarget =
     retainedProviderTarget ??
@@ -4847,7 +4847,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     recoveredProviderTarget = retainedProviderTarget;
   }
   const initialMode = deriveShieldsMode(state, state._hasStateFile);
-  if (completeInterruptedShieldsDown(sandboxName, opts, state, retainedProviderTarget)) return;
+  if (completeInterruptedShieldsDown(sandboxName, state, retainedProviderTarget, opts)) return;
 
   const timeoutSeconds = parseDuration(opts.timeout || `${DEFAULT_TIMEOUT_SECONDS}`);
   const reason = opts.reason || null;

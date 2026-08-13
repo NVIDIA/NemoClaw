@@ -38,16 +38,18 @@ export const INFERENCE_ROUTE_PROBE_SCRIPT = [
   INFERENCE_ROUTE_CA_VALIDATION,
   INFERENCE_ROUTE_PROBE_CORE_SCRIPT,
 ].join("; ");
-// Invalid state: a DCode login shell runs sandbox-user startup files before the
-// probe, so every inherited output descriptor is attacker-writable evidence.
-// Source boundary: the image-baked launcher reconstructs the managed proxy from
-// root-owned, mode-0444 files and execs a command without loading user profiles.
-// Source-fix constraint: raw OpenShell exec does not inherit the entrypoint's
-// trusted proxy contract, while a login shell cannot provide an output trust
-// boundary. Regression: hostile-profile tests assert that no startup file or
-// inherited descriptor can emit probe evidence. Removal condition: use a raw
-// probe only when OpenShell provides the same trusted proxy environment to every
-// sandbox exec process without shell startup.
+// Invalid state: OpenShell starts sandbox exec through a login shell before the
+// requested command (#8624; OpenShell#2668). Rebuilt DCode images reserve that
+// shell's first-match profile as a root-owned file which skips sandbox startup
+// state for the image-baked launcher. Older images can still emit output and
+// create side effects before this probe begins. The launcher reconstructs the
+// managed proxy from root-owned, mode-0444 files without adding another
+// profile-sourcing shell, and the parser rejects inherited stderr or extra
+// stdout so startup output cannot become accepted probe evidence. Regression:
+// protected- and hostile-profile tests cover both image generations plus
+// inherited descriptors. Removal condition: use a raw probe only when OpenShell
+// provides both a non-login exec path and the trusted proxy environment to every
+// sandbox exec process.
 // This separate regular-file install is intentionally absent from older images:
 // a newer CLI probing one fails before the stateful entrypoint or dcode wrapper
 // can run, so version skew cannot mutate observability state.
@@ -97,9 +99,9 @@ export function buildSandboxInferenceRouteProbeArgs(
       "--env",
       "ENV=",
       "--",
-      // The trusted launcher ignores ambient proxy overrides and does not
-      // source sandbox-user startup files or rewrite persistent runtime
-      // state before executing this probe.
+      // The trusted launcher ignores ambient proxy overrides and does not add
+      // another startup-file read or rewrite persistent runtime state. The
+      // OpenShell transport-level login shell remains tracked in OpenShell#2668.
       DCODE_MANAGED_EXEC_LAUNCHER,
       "/bin/sh",
       "-c",

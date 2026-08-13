@@ -135,6 +135,7 @@ describe("legacy credential reconciliation", () => {
               runOpenshell as unknown as CredentialProviderRegistrationDeps["runOpenshell"],
             redact: (input) => input,
             getGatewayName: () => "nemoclaw",
+            getCredential: (name) => process.env[name] ?? null,
             normalizeCredentialValue: (value) => (typeof value === "string" ? value.trim() : ""),
             updateSession: (mutator) => mutator(session) ?? session,
             stagedLegacyValues,
