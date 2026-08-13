@@ -115,6 +115,7 @@ function runPreinstallUpgradeGuard(
     currentMaxOpenshellVersion?: string;
     currentMinOpenshellVersion?: string;
     finishDeferAsPlain?: boolean;
+    finishGatewayPort?: string;
     finishInstallMode?: "managed" | "source" | "unset";
     finishPreparedInstallSucceeds?: boolean;
     gatewayDestroySucceeds?: boolean;
@@ -156,6 +157,7 @@ function runPreinstallUpgradeGuard(
   const gatewayRemoveSucceeds = options.gatewayRemoveSucceeds === false ? "0" : "1";
   const gatewayServiceStopSucceeds = options.gatewayServiceStopSucceeds === true ? "1" : "0";
   const finishDeferAsPlain = options.finishDeferAsPlain === true ? "1" : "0";
+  const finishGatewayPort = options.finishGatewayPort ?? "";
   const finishInstallMode = options.finishInstallMode ?? "";
   const finishPreparedInstallSucceeds = options.finishPreparedInstallSucceeds === false ? "0" : "1";
   const openshellVersionCommandFails = options.openshellVersionCommandFails === true ? "1" : "0";
@@ -254,6 +256,7 @@ exit 0
       }
       refresh_path() { :; }
       ensure_nemoclaw_shim() { :; }
+      [ -z "${finishGatewayPort}" ] || NEMOCLAW_GATEWAY_PORT="${finishGatewayPort}"
       finish_nemoclaw_install
     fi
     printf 'DEFER=%s\\n' "\${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"
@@ -920,13 +923,14 @@ esac`,
     expect(openshellLog).toBe("openshell install-mode force defer=\n");
   });
 
-  it("preserves prepared backups when the required OpenShell install fails after retirement (#8800)", () => {
+  it("preserves prepared backups and the selected port when OpenShell installation fails (#8800)", () => {
     const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
         currentMaxOpenshellVersion: "0.0.101",
         currentMinOpenshellVersion: "0.0.101",
         finishPreparedInstallSucceeds: false,
+        finishGatewayPort: "9123",
         finishInstallMode: "source",
         gatewayDestroySucceeds: false,
         gatewayProcessStopSucceeds: false,
@@ -941,7 +945,9 @@ esac`,
     expect(result.status).not.toBe(0);
     expect(result.stdout + result.stderr).toContain("preserved the sandbox backups");
     expect(result.stdout + result.stderr).toContain("did not start recovery");
-    expect(result.stdout + result.stderr).toContain("NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1");
+    expect(result.stdout + result.stderr).toContain(
+      "NEMOCLAW_GATEWAY_PORT=9123 NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1",
+    );
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(openshellLog).toContain("openshell install-mode force defer=");
   });
