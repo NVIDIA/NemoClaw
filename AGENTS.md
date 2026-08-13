@@ -154,7 +154,7 @@ For shell scripts use `#` comments. For Markdown use HTML comments.
 - `bin/` launcher and remaining `scripts/*.js`: **CommonJS** (`require`/`module.exports`), Node.js 22.19+
 - `test/`: **ESM** (`import`/`export`)
 - Oxlint uses `oxlint.config.ts`. The isolated `oxlint.type-aware.config.ts` configuration enforces `typescript/no-floating-promises` for plugin sources.
-  Added JavaScript and TypeScript files that Oxlint does not exclude also use `oxlint.anti-slop.config.ts`.
+  The pre-commit `anti-slop` hook applies `oxlint.anti-slop.config.ts` to added JavaScript and TypeScript files that Oxlint does not exclude.
 - Keep function complexity low; existing complexity hotspots are tracked separately
 - Unused vars pattern: prefix with `_`
 
