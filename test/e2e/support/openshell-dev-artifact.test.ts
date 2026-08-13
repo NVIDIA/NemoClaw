@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   OPENSHELL_DEV_ASSET_NAMES,
+  prepareOpenShellDevBinaries,
   resolveOpenShellDevArtifact,
   verifyOpenShellDevArtifact,
 } from "../../../tools/e2e/openshell-dev-artifact.mts";
@@ -205,6 +206,80 @@ describe("OpenShell dev artifact resolver", () => {
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("prepares only the three reviewed regular binaries (#9051)", async () => {
+    const directory = temporaryDirectory();
+    const binaryDirectory = `${directory}-binaries`;
+    try {
+      const resolution = await resolveOpenShellDevArtifact(directory, fixtureFetch());
+      const manifestSha256 = resolution.manifestSha256;
+      if (!manifestSha256) throw new Error("fixture resolution omitted manifest digest");
+      const members = new Map([
+        ["openshell-x86_64-unknown-linux-musl.tar.gz", "openshell"],
+        ["openshell-gateway-x86_64-unknown-linux-gnu.tar.gz", "openshell-gateway"],
+        ["openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz", "openshell-sandbox"],
+      ]);
+
+      prepareOpenShellDevBinaries(
+        directory,
+        binaryDirectory,
+        SOURCE_COMMIT,
+        manifestSha256,
+        (args) => {
+          const archiveName = path.basename(args[1]);
+          const member = members.get(archiveName);
+          if (!member) return { status: 1, stdout: "", stderr: "unexpected archive" };
+          if (args[0] === "-tzf") return { status: 0, stdout: `${member}\n`, stderr: "" };
+          if (args[0] === "-tvzf") {
+            return {
+              status: 0,
+              stdout: `-rwxr-xr-x 0/0 1 2026-01-01 00:00 ${member}\n`,
+              stderr: "",
+            };
+          }
+          if (args[0] === "-xzf") {
+            const outputDirectory = args[args.indexOf("-C") + 1];
+            fs.writeFileSync(path.join(outputDirectory, member), member);
+            return { status: 0, stdout: "", stderr: "" };
+          }
+          return { status: 1, stdout: "", stderr: "unexpected tar operation" };
+        },
+      );
+
+      expect(fs.readdirSync(binaryDirectory).sort()).toEqual([
+        "openshell",
+        "openshell-gateway",
+        "openshell-sandbox",
+      ]);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+      fs.rmSync(binaryDirectory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects an archive with an unexpected member before extraction (#9051)", async () => {
+    const directory = temporaryDirectory();
+    const binaryDirectory = `${directory}-binaries`;
+    try {
+      const resolution = await resolveOpenShellDevArtifact(directory, fixtureFetch());
+      const manifestSha256 = resolution.manifestSha256;
+      if (!manifestSha256) throw new Error("fixture resolution omitted manifest digest");
+
+      expect(() =>
+        prepareOpenShellDevBinaries(
+          directory,
+          binaryDirectory,
+          SOURCE_COMMIT,
+          manifestSha256,
+          () => ({ status: 0, stdout: "../openshell\n", stderr: "" }),
+        ),
+      ).toThrow(/expected exactly one member/);
+      expect(fs.existsSync(binaryDirectory)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+      fs.rmSync(binaryDirectory, { force: true, recursive: true });
     }
   });
 });

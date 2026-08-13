@@ -294,9 +294,10 @@ describe("MCP workflow artifact boundary", () => {
           {
             needs?: string | string[];
             steps: Array<{
-              name?: string;
-              uses?: string;
               env?: Record<string, unknown>;
+              name?: string;
+              run?: string;
+              uses?: string;
               with?: Record<string, unknown>;
             }>;
           }
@@ -307,13 +308,16 @@ describe("MCP workflow artifact boundary", () => {
       const restore = dev.steps.find(
         (step) => step.name === "Restore immutable OpenShell dev artifact",
       );
-      const install = dev.steps.find((step) => step.name === "Install OpenShell CLI");
+      const install = dev.steps.find(
+        (step) => step.name === "Install immutable OpenShell dev artifact",
+      );
       requireFixture(restore?.with, "OpenShell dev artifact restore fixture is missing");
-      requireFixture(install?.env, "OpenShell dev installer fixture is missing");
+      requireFixture(install?.run, "OpenShell dev artifact installation fixture is missing");
       restore.uses = "actions/download-artifact@main";
       restore.with.name = "openshell-dev-latest";
-      install.env.NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL = "1";
-      delete install.env.NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR;
+      install.env = { NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1" };
+      install.run = install.run.replace(" prepare ", " resolve ");
+      install.run += "\nbash scripts/install-openshell.sh\n";
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
@@ -321,8 +325,9 @@ describe("MCP workflow artifact boundary", () => {
           "mcp-bridge-dev must depend on its reviewed artifact producers",
           "mcp-bridge-dev must use the reviewed immutable artifact downloader",
           "mcp-bridge-dev must restore exactly the resolver's content-addressed artifact",
-          "mcp-bridge-dev installer must consume the same-run verified asset directory",
-          "mcp-bridge-dev installer must not authorize moving unverified dev artifacts",
+          "mcp-bridge-dev artifact installation must not receive environment overrides",
+          "mcp-bridge-dev must install only the verified same-run binaries",
+          "mcp-bridge-dev must not modify or invoke the base-trusted release installer",
         ]),
       );
     } finally {

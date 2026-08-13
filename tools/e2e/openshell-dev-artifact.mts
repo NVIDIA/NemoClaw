@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -26,6 +27,13 @@ export const OPENSHELL_DEV_ASSET_NAMES = [
 
 type JsonRecord = Record<string, unknown>;
 type Fetch = typeof fetch;
+type TarResult = {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  error?: Error;
+};
+type TarRunner = (args: string[]) => TarResult;
 
 type ReleaseAsset = {
   id: number;
@@ -511,6 +519,85 @@ export function verifyOpenShellDevArtifact(
   return manifest;
 }
 
+const OPENSHELL_DEV_ARCHIVES = [
+  ["openshell-x86_64-unknown-linux-musl.tar.gz", "openshell"],
+  ["openshell-gateway-x86_64-unknown-linux-gnu.tar.gz", "openshell-gateway"],
+  ["openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz", "openshell-sandbox"],
+] as const;
+
+function runTar(args: string[]): TarResult {
+  const result = spawnSync("tar", args, {
+    encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C" },
+  });
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    error: result.error,
+  };
+}
+
+function checkedTar(tarRunner: TarRunner, args: string[], archiveName: string): string {
+  const result = tarRunner(args);
+  if (result.error || result.status !== 0) {
+    throw new Error(
+      `Unable to inspect or extract OpenShell dev archive ${archiveName}: ${result.error?.message ?? result.stderr.trim()}`,
+    );
+  }
+  return result.stdout;
+}
+
+export function prepareOpenShellDevBinaries(
+  artifactDirectory: string,
+  binaryDirectory: string,
+  expectedSourceCommit: string,
+  expectedManifestSha256: string,
+  tarRunner: TarRunner = runTar,
+): void {
+  verifyOpenShellDevArtifact(artifactDirectory, expectedSourceCommit, expectedManifestSha256);
+  if (!path.isAbsolute(binaryDirectory) || fs.existsSync(binaryDirectory)) {
+    throw new Error("OpenShell dev binary output must be a new absolute directory");
+  }
+  fs.mkdirSync(binaryDirectory, { mode: 0o700 });
+  try {
+    for (const [archiveName, expectedMember] of OPENSHELL_DEV_ARCHIVES) {
+      const archivePath = path.join(artifactDirectory, "assets", archiveName);
+      const members = checkedTar(tarRunner, ["-tzf", archivePath], archiveName).trimEnd();
+      if (members !== expectedMember) {
+        throw new Error(
+          `Unsafe OpenShell dev archive ${archiveName}: expected exactly one member named ${expectedMember}`,
+        );
+      }
+      const verbose = checkedTar(tarRunner, ["-tvzf", archivePath], archiveName).trimEnd();
+      if (
+        verbose.includes("\n") ||
+        !verbose.startsWith("-") ||
+        !verbose.endsWith(` ${expectedMember}`)
+      ) {
+        throw new Error(
+          `Unsafe OpenShell dev archive ${archiveName}: ${expectedMember} must be a regular file`,
+        );
+      }
+      checkedTar(tarRunner, ["-xzf", archivePath, "-C", binaryDirectory], archiveName);
+      const binaryPath = path.join(binaryDirectory, expectedMember);
+      const binaryStat = fs.lstatSync(binaryPath);
+      if (!binaryStat.isFile() || binaryStat.isSymbolicLink()) {
+        throw new Error(`Extracted OpenShell dev binary ${expectedMember} must be a regular file`);
+      }
+      fs.chmodSync(binaryPath, 0o755);
+    }
+    const actualBinaries = fs.readdirSync(binaryDirectory).sort();
+    const expectedBinaries = OPENSHELL_DEV_ARCHIVES.map(([, member]) => member).sort();
+    if (actualBinaries.join("\n") !== expectedBinaries.join("\n")) {
+      throw new Error("OpenShell dev binary directory contains an unexpected file set");
+    }
+  } catch (error) {
+    fs.rmSync(binaryDirectory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 function appendGithubOutput(values: Record<string, string>): void {
   const outputPath = process.env.GITHUB_OUTPUT;
   if (!outputPath) throw new Error("GITHUB_OUTPUT is required");
@@ -524,8 +611,7 @@ function appendGithubOutput(values: Record<string, string>): void {
 }
 
 async function main(): Promise<void> {
-  const [command, outputDirectory, expectedSourceCommit, expectedManifestSha256] =
-    process.argv.slice(2);
+  const [command, outputDirectory, argument3, argument4, argument5] = process.argv.slice(2);
   if (!outputDirectory || !path.isAbsolute(outputDirectory)) {
     throw new Error("an absolute OpenShell dev artifact directory is required");
   }
@@ -552,13 +638,21 @@ async function main(): Promise<void> {
     }
     return;
   }
-  if (command === "verify" && expectedSourceCommit && expectedManifestSha256) {
-    verifyOpenShellDevArtifact(outputDirectory, expectedSourceCommit, expectedManifestSha256);
-    console.log(`Verified OpenShell dev artifact source ${expectedSourceCommit}`);
+  if (command === "verify" && argument3 && argument4) {
+    verifyOpenShellDevArtifact(outputDirectory, argument3, argument4);
+    console.log(`Verified OpenShell dev artifact source ${argument3}`);
+    return;
+  }
+  if (command === "prepare" && argument3 && argument4 && argument5) {
+    if (!path.isAbsolute(argument3)) {
+      throw new Error("an absolute OpenShell dev binary output directory is required");
+    }
+    prepareOpenShellDevBinaries(outputDirectory, argument3, argument4, argument5);
+    console.log(`Prepared OpenShell dev binaries from source ${argument4}`);
     return;
   }
   throw new Error(
-    "usage: openshell-dev-artifact.mts <resolve|verify> <absolute-directory> [source-commit manifest-sha256]",
+    "usage: openshell-dev-artifact.mts resolve <artifact-directory> | verify <artifact-directory> <source-commit> <manifest-sha256> | prepare <artifact-directory> <binary-directory> <source-commit> <manifest-sha256>",
   );
 }
 

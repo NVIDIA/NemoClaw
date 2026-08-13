@@ -293,7 +293,7 @@ function validateJobSecurity(
   }
   if (jobName === "mcp-bridge-dev") {
     const devCleanup = namedStep(job, DEV_DOCKER_CLEANUP_NAME);
-    const install = namedStep(job, "Install OpenShell CLI");
+    const install = namedStep(job, "Install immutable OpenShell dev artifact");
     const expectedDevCleanup = {
       name: DEV_DOCKER_CLEANUP_NAME,
       shell: "bash",
@@ -306,7 +306,7 @@ function validateJobSecurity(
     const installIndex = steps.indexOf(install);
     if (devCleanupIndex <= steps.indexOf(login) || installIndex <= devCleanupIndex) {
       errors.push(
-        "mcp-bridge-dev Docker auth revocation must follow setup and precede the dev installer",
+        "mcp-bridge-dev Docker auth revocation must follow setup and precede development artifact installation",
       );
     }
     if (
@@ -326,7 +326,12 @@ function validateJobExecution(
   const steps = asSteps(job);
   const cloudflared = namedStep(job, "Install and verify cloudflared prerequisite");
   const tls = namedStep(job, "Generate MCP test TLS");
-  const install = namedStep(job, "Install OpenShell CLI");
+  const install = namedStep(
+    job,
+    jobName === "mcp-bridge-dev"
+      ? "Install immutable OpenShell dev artifact"
+      : "Install OpenShell CLI",
+  );
   const run = namedStep(job, "Run MCP OpenShell provider live test");
   const compatibility = namedStep(job, DEV_COMPATIBILITY_STEP_NAME);
   const compatibilitySteps = steps.filter((step) =>
@@ -384,39 +389,34 @@ function validateJobExecution(
   if (steps.indexOf(tls) < 0 || steps.indexOf(install) <= steps.indexOf(tls)) {
     errors.push(`${jobName} must generate HTTPS fixtures before installing OpenShell`);
   }
-  requireEqual(
-    errors,
-    asRecord(install.env).NEMOCLAW_OPENSHELL_FORCE_INSTALL,
-    "1",
-    `${jobName} must force the selected OpenShell install`,
-  );
   const installEnv = asRecord(install.env);
   if (jobName === "mcp-bridge-dev") {
+    if (Object.keys(installEnv).length > 0) {
+      errors.push("mcp-bridge-dev artifact installation must not receive environment overrides");
+    }
+  } else {
     requireEqual(
       errors,
-      installEnv.NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR,
-      `${DEV_ARTIFACT_DIRECTORY}/assets`,
-      "mcp-bridge-dev installer must consume the same-run verified asset directory",
+      installEnv.NEMOCLAW_OPENSHELL_FORCE_INSTALL,
+      "1",
+      `${jobName} must force the selected OpenShell install`,
     );
     if (Object.hasOwn(installEnv, "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL")) {
-      errors.push("mcp-bridge-dev installer must not authorize moving unverified dev artifacts");
+      errors.push("mcp-bridge stable installer must not authorize unverified dev artifacts");
     }
-  } else if (Object.hasOwn(installEnv, "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL")) {
-    errors.push("mcp-bridge stable installer must not authorize unverified dev artifacts");
-  } else {
     const installRun = asString(install.run);
     for (const token of STABLE_RELEASE_PROVENANCE_TOKENS) {
       if (!installRun.includes(token)) {
         errors.push(`mcp-bridge stable release provenance is missing reviewed identity: ${token}`);
       }
     }
+    requireContains(
+      errors,
+      install.run,
+      "bash scripts/install-openshell.sh",
+      `${jobName} must use the repository OpenShell installer`,
+    );
   }
-  requireContains(
-    errors,
-    install.run,
-    "bash scripts/install-openshell.sh",
-    `${jobName} must use the repository OpenShell installer`,
-  );
   if (jobName === "mcp-bridge-dev") {
     const restoreCli = namedStep(job, "Restore exact-commit CLI artifact");
     const restoreArtifact = namedStep(job, "Restore immutable OpenShell dev artifact");
@@ -449,6 +449,27 @@ function validateJobExecution(
         token,
         "mcp-bridge-dev must verify the immutable OpenShell artifact before installation",
       );
+    }
+    for (const token of [
+      DEV_ARTIFACT_TOOL,
+      " prepare ",
+      DEV_ARTIFACT_DIRECTORY,
+      "${{ runner.temp }}/openshell-dev-binaries",
+      "${{ needs.openshell-dev-artifact.outputs.source_commit }}",
+      "${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}",
+      'sudo install -m 755 "${{ runner.temp }}/openshell-dev-binaries/openshell" /usr/local/bin/openshell',
+      'sudo install -m 755 "${{ runner.temp }}/openshell-dev-binaries/openshell-gateway" /usr/local/bin/openshell-gateway',
+      'sudo install -m 755 "${{ runner.temp }}/openshell-dev-binaries/openshell-sandbox" /usr/local/bin/openshell-sandbox',
+    ]) {
+      requireContains(
+        errors,
+        install.run,
+        token,
+        "mcp-bridge-dev must install only the verified same-run binaries",
+      );
+    }
+    if (asString(install.run).includes("scripts/install-openshell.sh")) {
+      errors.push("mcp-bridge-dev must not modify or invoke the base-trusted release installer");
     }
     const devCleanup = namedStep(job, DEV_DOCKER_CLEANUP_NAME);
     if (
