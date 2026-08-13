@@ -56,9 +56,10 @@ function psResponses(
     cmdline?: string;
     exited: Set<number>;
     owner?: string;
+    uid?: number;
   },
 ): [string, RunResult | ((args: string[]) => RunResult)][] {
-  return [
+  const entries: [string, RunResult | ((args: string[]) => RunResult)][] = [
     [`ps -p ${pid} -o stat=`, () => (opts.exited.has(pid) ? notFound() : ok("S\n"))],
     [`ps -p ${pid} -o user=`, ok(`${opts.owner ?? "tester"}\n`)],
     [
@@ -66,6 +67,12 @@ function psResponses(
       ok(opts.cmdline ?? `/home/test/.local/bin/openshell-gateway --port 8080\n`),
     ],
   ];
+  if (opts.uid !== undefined) entries.push([`ps -p ${pid} -o uid=`, ok(`${opts.uid}\n`)]);
+  return entries;
+}
+
+function otherUserUid(): number {
+  return (process.getuid?.() ?? 0) + 1;
 }
 
 describe("host gateway cleanup boundaries", () => {
@@ -350,7 +357,7 @@ describe("stopHostGatewayProcesses", () => {
   it("prints sudo remediation when a privileged host gateway cannot be killed", () => {
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
       [PGREP_KEY, ok("9999042\n")],
-      ...psResponses(9999042, { exited: new Set(), owner: "root" }),
+      ...psResponses(9999042, { exited: new Set(), owner: "root", uid: 0 }),
     ]);
     const { run } = makeRun(responses);
     const warn = vi.fn();
@@ -375,6 +382,68 @@ describe("stopHostGatewayProcesses", () => {
     expect(warn).toHaveBeenCalledWith(
       "Cannot stop root-owned host openshell-gateway process 9999042. Run: sudo kill -9 9999042",
     );
+  });
+
+  it("leaves a swept host gateway owned by another user running without failing cleanup", () => {
+    const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
+      [PGREP_KEY, ok("9999043\n")],
+      ...psResponses(9999043, { exited: new Set(), owner: "otheruser", uid: otherUserUid() }),
+    ]);
+    const { run } = makeRun(responses);
+    const kill = vi.fn(() => false);
+    const warn = vi.fn();
+
+    const result = stopHostGatewayProcesses(
+      {
+        run,
+        kill,
+        env: { USER: "tester" },
+        commandExists: () => true,
+        warn,
+      },
+      {
+        killWaitMs: 0,
+        stateDir: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-")),
+        termWaitMs: 0,
+      },
+    );
+
+    expect(result.foreignUserPids).toEqual([9999043]);
+    expect(result.failed).toEqual([]);
+    expect(result.sudoRemediationPids).toEqual([]);
+    expect(result.stopped).toEqual([]);
+    expect(kill).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      "Kept otheruser-owned host openshell-gateway process 9999043 running. " +
+        "Cleanup does not stop a gateway process that another user owns.",
+    );
+  });
+
+  it("still stops a swept host gateway owned by the current user", () => {
+    const exited = new Set<number>();
+    const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
+      [PGREP_KEY, ok("9999044\n")],
+      ...psResponses(9999044, { exited, uid: process.getuid?.() ?? 0 }),
+    ]);
+    const { run } = makeRun(responses);
+    const kill = vi.fn<HostGatewayProcessDeps["kill"]>((pid, signal) => {
+      if (signal === "SIGTERM") exited.add(pid);
+      return true;
+    });
+
+    const result = stopHostGatewayProcesses(
+      {
+        run,
+        kill,
+        env: { USER: "tester" },
+        commandExists: () => true,
+        log: vi.fn(),
+      },
+      { stateDir: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-")) },
+    );
+
+    expect(result.stopped).toEqual([9999044]);
+    expect(result.foreignUserPids).toEqual([]);
   });
 
   it("skips pgrep sweep when explicit PIDs are passed (drift restart)", () => {
