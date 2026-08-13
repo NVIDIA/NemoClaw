@@ -214,7 +214,7 @@ async function restoreMcpAfterDeleteAbort(
     }
     await restoreMcpBridgesAfterDestroyAbort(sandboxName, preparation);
   } catch (error) {
-    recoveryFailure = error instanceof Error ? error.message : String(error);
+    recoveryFailure = redactDestroyError(error);
   } finally {
     if (openedRollbackWindow) {
       try {
@@ -224,7 +224,7 @@ async function restoreMcpAfterDeleteAbort(
           allowLegacyHermesProtocol: true,
         });
       } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
+        const detail = redactDestroyError(error);
         recoveryFailure = recoveryFailure
           ? `${recoveryFailure}; shields re-lock failed: ${detail}`
           : `shields re-lock failed: ${detail}`;
@@ -266,26 +266,50 @@ export async function executeSandboxDestroy({
   deps = {},
 }: SandboxDestroyExecutionInput): Promise<SandboxDestroyExecutionResult> {
   return withTimerBoundShieldsMutationLockAsync(sandboxName, "destroy sandbox", async () => {
-    const identityStillMatches = (): boolean =>
-      expectedContainerIdentity === undefined ||
-      isSameDestroyContainerIdentity(
-        expectedContainerIdentity,
-        classifyDestroyContainerIdentity(sandboxName, observeDestroyContainerIdentity(sandboxName)),
+    type IdentityContinuity =
+      | { status: "match" }
+      | { status: "changed" }
+      | { status: "ambiguous"; detail: string }
+      | { status: "probe-failed"; detail: string };
+    const inspectIdentityContinuity = (): IdentityContinuity => {
+      if (expectedContainerIdentity === undefined) return { status: "match" };
+      const verdict = classifyDestroyContainerIdentity(
+        sandboxName,
+        observeDestroyContainerIdentity(sandboxName),
       );
-    const identityDriftResult = (
+      if (isSameDestroyContainerIdentity(expectedContainerIdentity, verdict)) {
+        return { status: "match" };
+      }
+      if (verdict.status === "probe-failed") {
+        return { status: "probe-failed", detail: redactDestroyError(verdict.detail) };
+      }
+      if (verdict.status === "ambiguous") {
+        return { status: "ambiguous", detail: redactDestroyError(verdict.reason) };
+      }
+      return { status: "changed" };
+    };
+    const identityRefusalResult = (
       phase: string,
+      continuity: Exclude<IdentityContinuity, { status: "match" }>,
       mcpRecoveryFailure?: string,
+      earlierCleanupDetail = "",
     ): SandboxDestroyExecutionResult => ({
       ok: false,
-      deleteOutput: `Docker container identity changed ${phase}; no sandbox delete was attempted.`,
+      deleteOutput:
+        continuity.status === "probe-failed"
+          ? `Docker container identity could not be inspected ${phase}: ${continuity.detail}. No sandbox delete was attempted.${earlierCleanupDetail}`
+          : continuity.status === "ambiguous"
+            ? `Docker container identity became ambiguous ${phase}: ${continuity.detail}. No sandbox delete was attempted.${earlierCleanupDetail}`
+            : `Docker container identity changed ${phase}; no sandbox delete was attempted.${earlierCleanupDetail}`,
       exitCode: 1,
       gatewayUnreachable: false,
       mcpOwnershipRequiresGateway: false,
       mcpRecoveryFailure,
       shieldsRelockRequiresGateway: false,
     });
-    if (!identityStillMatches()) {
-      return identityDriftResult("before destroy preparation");
+    const initialContinuity = inspectIdentityContinuity();
+    if (initialContinuity.status !== "match") {
+      return identityRefusalResult("before destroy preparation", initialContinuity);
     }
     let runtimeProvider: RuntimeProviderBundle | null = null;
     if (sandbox) {
@@ -326,14 +350,19 @@ export async function executeSandboxDestroy({
     // discarded during preparation. Remaining entries are the durable exact
     // provider ownership manifest and must survive an unconfirmed delete.
     const hasMcpOwnership = mcpPreparation.entries.length > 0;
-    if (!identityStillMatches()) {
+    const preparedContinuity = inspectIdentityContinuity();
+    if (preparedContinuity.status !== "match") {
       const mcpRecoveryFailure = sandboxConfirmedAbsent
         ? undefined
         : await restoreMcpAfterDeleteAbort(sandboxName, mcpPreparation, {
             hardenedForDelete: false,
             hardeningFailed: false,
           });
-      return identityDriftResult("during destroy preparation", mcpRecoveryFailure);
+      return identityRefusalResult(
+        "during destroy preparation",
+        preparedContinuity,
+        mcpRecoveryFailure,
+      );
     }
     try {
       stopInferenceResources();
@@ -356,14 +385,35 @@ export async function executeSandboxDestroy({
         shieldsRelockRequiresGateway: false,
       };
     }
+    const postInferenceContinuity = inspectIdentityContinuity();
+    if (postInferenceContinuity.status !== "match") {
+      const mcpRecoveryFailure = sandboxConfirmedAbsent
+        ? undefined
+        : await restoreMcpAfterDeleteAbort(sandboxName, mcpPreparation, {
+            hardenedForDelete: false,
+            hardeningFailed: false,
+          });
+      return identityRefusalResult(
+        "after managed inference cleanup",
+        postInferenceContinuity,
+        mcpRecoveryFailure,
+        " Managed inference cleanup may already be partial; inspect or restart its resources before retrying.",
+      );
+    }
     const hardened = wipeAndHardenLiveSandbox(sandboxName, sandboxConfirmedAbsent, deps);
     const detachProviders = (): DetachSandboxProvidersResult =>
       runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
-    if (!identityStillMatches()) {
+    const preProviderContinuity = inspectIdentityContinuity();
+    if (preProviderContinuity.status !== "match") {
       const mcpRecoveryFailure = sandboxConfirmedAbsent
         ? undefined
         : await restoreMcpAfterDeleteAbort(sandboxName, mcpPreparation, hardened);
-      return identityDriftResult("before provider cleanup", mcpRecoveryFailure);
+      return identityRefusalResult(
+        "before provider cleanup",
+        preProviderContinuity,
+        mcpRecoveryFailure,
+        " Managed inference cleanup and workspace wipe or hardening may already have run; inspect those resources before retrying.",
+      );
     }
     const detachOutcome: DetachSandboxProvidersResult = sandboxConfirmedAbsent
       ? { detached: [], failures: [] }
@@ -373,7 +423,8 @@ export async function executeSandboxDestroy({
     // The final exact proof runs immediately before OpenShell delete. A Docker-
     // socket actor remains a trusted host authority; this closes the actionable
     // multi-step window without claiming a cross-engine transaction.
-    if (!identityStillMatches()) {
+    const deleteBoundaryContinuity = inspectIdentityContinuity();
+    if (deleteBoundaryContinuity.status !== "match") {
       const detachedDetail =
         detachOutcome.detached.length > 0
           ? ` Provider cleanup detached ${detachOutcome.detached.join(", ")}; rerun the owning setup workflow to restore those attachments.`
@@ -381,8 +432,12 @@ export async function executeSandboxDestroy({
       const mcpRecoveryFailure = sandboxConfirmedAbsent
         ? undefined
         : await restoreMcpAfterDeleteAbort(sandboxName, mcpPreparation, hardened);
-      const result = identityDriftResult("at the delete boundary", mcpRecoveryFailure);
-      return { ...result, deleteOutput: `${result.deleteOutput}${detachedDetail}` };
+      return identityRefusalResult(
+        "at the delete boundary",
+        deleteBoundaryContinuity,
+        mcpRecoveryFailure,
+        ` Managed inference cleanup and workspace wipe or hardening may already have run; inspect those resources before retrying.${detachedDetail}`,
+      );
     }
     const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
       ignoreError: true,

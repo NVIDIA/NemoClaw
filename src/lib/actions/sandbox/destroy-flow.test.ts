@@ -255,10 +255,12 @@ describe("destroySandbox flow", () => {
   });
 
   it("restores MCP preparation when managed inference cleanup fails before wipe", async () => {
-    const secretMarker = "inference-cleanup-secret";
+    const inferenceSecretMarker = "inference-cleanup-secret";
+    const recoverySecretMarker = "mcp-recovery-secret";
     const harness = createDestroyHarness({
       mcpServers: ["github"],
-      stopInferenceError: `OPENAI_API_KEY=${secretMarker}`,
+      restoreMcpError: `OPENAI_API_KEY=${recoverySecretMarker}`,
+      stopInferenceError: `OPENAI_API_KEY=${inferenceSecretMarker}`,
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
@@ -275,8 +277,45 @@ describe("destroySandbox flow", () => {
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(errorOutput).toContain("Could not stop managed inference resources");
-    expect(errorOutput).not.toContain(secretMarker);
+    expect(errorOutput).not.toContain(inferenceSecretMarker);
+    expect(errorOutput).not.toContain(recoverySecretMarker);
   });
+
+  it.each([
+    [
+      "a replacement identity",
+      { status: 0, stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta" },
+      "Docker container identity changed after managed inference cleanup",
+    ],
+    [
+      "a failed Docker reinspection",
+      { status: 1, stderr: "daemon unavailable" },
+      "Docker container identity could not be inspected after managed inference cleanup: daemon unavailable",
+    ],
+  ])(
+    "restores MCP preparation and refuses workspace wipe after %s",
+    async (_scenario, changedIdentity, expectedMessage) => {
+      const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
+      const harness = createDestroyHarness({
+        mcpServers: ["github"],
+        dockerRunResults: [managed, managed, managed, managed, changedIdentity],
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+
+      expect(harness.events).toEqual(["mcp-prepare", "mcp-restore"]);
+      expect(harness.stopNimByNameSpy).toHaveBeenCalledOnce();
+      expect(harness.events).not.toContain("wipe");
+      expect(harness.events).not.toContain("detach");
+      expect(harness.events).not.toContain("delete");
+      expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+      const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(errorOutput).toContain(expectedMessage);
+      expect(errorOutput).toContain("Managed inference cleanup may already be partial");
+    },
+  );
 
   it("revalidates immediately before delete and reports partial provider preparation", async () => {
     const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
@@ -285,7 +324,7 @@ describe("destroySandbox flow", () => {
       stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta",
     };
     const harness = createDestroyHarness({
-      dockerRunResults: [managed, managed, managed, managed, managed, replacement],
+      dockerRunResults: [managed, managed, managed, managed, managed, managed, replacement],
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
