@@ -640,7 +640,7 @@ function listedStatus() {
   const listed = spawnSync(openshellBin, ["forward", "list"], { encoding: "utf-8" });
   if (listed.status !== 0 || typeof listed.stdout !== "string") return null;
   for (const line of listed.stdout.split("\n")) {
-    const columns = line.trim().split(/\s+/);
+    const columns = line.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "").trim().split(/\s+/);
     if (columns[0] === sandboxName && columns[2] === port) {
       return (columns[4] || "").toLowerCase();
     }

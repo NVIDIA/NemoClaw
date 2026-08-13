@@ -189,6 +189,35 @@ exit 0
     }
   });
 
+  it("redacts the complete diagnostic when the compiled redactor is unavailable (#8884)", () => {
+    const { root, binDir } = prepareCheckout("nemohermes-forward-redactor-fallback-");
+    const token = "nvapi-forward-fallback-secret-1234567890";
+    try {
+      writeExecutable(
+        path.join(binDir, "openshell"),
+        `#!/usr/bin/env bash
+if [ "$1" = "forward" ] && [ "$2" = "start" ]; then
+  echo "listener rejected token ${token}" >&2
+  exit 1
+fi
+exit 0
+`,
+      );
+      writeExecutable(path.join(binDir, "curl"), "#!/usr/bin/env bash\nexit 7\n");
+
+      const result = runRestore(root, binDir, {
+        NEMOCLAW_REPO_ROOT: root,
+        NEMOCLAW_SKIP_FORWARD_WATCHER: "1",
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("OpenShell reported: <REDACTED>");
+      expect(result.stdout).not.toContain(token);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("bounds a long OpenShell forward-start diagnostic (#8884)", () => {
     const { root, binDir } = prepareCheckout("nemohermes-forward-long-diagnostic-");
     const diagnostic = `listener failure: ${"a".repeat(320)} excluded suffix`;
@@ -226,6 +255,25 @@ describe("Hermes host forward watcher", () => {
     const { root, binDir, openshell, watcherScript } = watcherScriptForListing(
       `nemohermes-watcher-${status}-`,
       `  echo "${SANDBOX} 127.0.0.1 ${PORT} 123 ${status}"`,
+    );
+    try {
+      const calls = runWatcherTick(watcherScript, binDir, openshell);
+
+      expect(calls).toContain("forward list");
+      expect(calls).not.toContain(`forward stop ${PORT} ${SANDBOX}`);
+      expect(calls).not.toContain(`forward start --background ${PORT} ${SANDBOX}`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    "running",
+    "active",
+  ])("does not replace a forward that OpenShell colorizes as %s (#8884)", (status) => {
+    const { root, binDir, openshell, watcherScript } = watcherScriptForListing(
+      `nemohermes-watcher-color-${status}-`,
+      `  printf '${SANDBOX} 127.0.0.1 ${PORT} 123 \\033[32m${status}\\033[0m\\n'`,
     );
     try {
       const calls = runWatcherTick(watcherScript, binDir, openshell);
