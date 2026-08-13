@@ -493,6 +493,58 @@ export function ensureDeclaredAgentForwardPortsHealthy(
   return allHealthy;
 }
 
+/**
+ * Observe every host forward that the interactive preflight would recover,
+ * without starting, stopping, or rebinding one.
+ */
+export function areSandboxLaunchForwardsHealthy(
+  sandboxName: string,
+  gatewayName?: string,
+): boolean | null {
+  const sandbox = registry.getSandbox(sandboxName);
+  if (!sandbox) return false;
+  const owningGatewayName = resolveSandboxGatewayName(sandbox);
+  if (gatewayName && gatewayName !== owningGatewayName) return false;
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  if (agent && !agentRuntime.hasGatewayRuntime(agent)) return true;
+
+  const primaryPort = resolveSandboxDashboardPort(sandboxName);
+  const requiredPorts = new Set<number>([primaryPort]);
+  const hermesDashboard = getHermesDashboardRecoveryConfig(sandboxName);
+  if (hermesDashboard) requiredPorts.add(hermesDashboard.publicPort);
+  const messagingForward = getSandboxMessagingHostForward(sandboxName);
+  if (messagingForward) requiredPorts.add(messagingForward.port);
+  const declared = (agent as { forward_ports?: unknown } | null)?.forward_ports;
+  if (Array.isArray(declared)) {
+    for (const candidate of declared) {
+      if (
+        typeof candidate === "number" &&
+        Number.isInteger(candidate) &&
+        candidate >= 1024 &&
+        candidate <= 65535
+      ) {
+        requiredPorts.add(candidate);
+      }
+    }
+  }
+  const result = captureOpenshell(["forward", "list", "--gateway", owningGatewayName], {
+    ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
+  if (!result || isCommandTimeout(result) || result.status !== 0) return null;
+  const entries = parseForwardList(result.output) as SandboxForwardListEntry[];
+  for (const port of requiredPorts) {
+    if (
+      classifyForwardHealthWithReachability(entries, sandboxName, String(port), () =>
+        isLocalForwardReachable(port),
+      ) !== true
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function recoverDeclaredAgentForwardPorts(
   sandboxName: string,
   recoveryPort: number,
