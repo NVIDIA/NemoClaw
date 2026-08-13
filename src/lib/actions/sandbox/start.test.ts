@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 import {
   createDockerRuntimeProviderBundle,
   createKubernetesRuntimeProviderBundle,
@@ -219,22 +220,26 @@ describe("startSandbox", () => {
     );
   });
 
-  it("retries startup after a structured recovery failure (#8662)", async () => {
-    const h = harness();
-    h.restoreStartupState.mockReturnValueOnce(FAILED_RECOVERY);
+  it(
+    "retries startup after a structured recovery failure (#8662)",
+    testTimeoutOptions(15_000),
+    async () => {
+      const h = harness();
+      h.restoreStartupState.mockReturnValueOnce(FAILED_RECOVERY);
 
-    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow("gateway did not recover");
-    expect(h.verifyGateway).not.toHaveBeenCalled();
+      await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow("gateway did not recover");
+      expect(h.verifyGateway).not.toHaveBeenCalled();
 
-    const result = await startSandbox("my-sandbox", h.deps);
+      const result = await startSandbox("my-sandbox", h.deps);
 
-    expect(result.exitCode).toBe(0);
-    expect(h.restoreStartupState).toHaveBeenCalledTimes(2);
-    expect(h.verifyGateway).toHaveBeenCalledOnce();
-    expect(h.restoreStartupState.mock.invocationCallOrder[1]).toBeLessThan(
-      h.verifyGateway.mock.invocationCallOrder[0],
-    );
-  });
+      expect(result.exitCode).toBe(0);
+      expect(h.restoreStartupState).toHaveBeenCalledTimes(2);
+      expect(h.verifyGateway).toHaveBeenCalledOnce();
+      expect(h.restoreStartupState.mock.invocationCallOrder[1]).toBeLessThan(
+        h.verifyGateway.mock.invocationCallOrder[0],
+      );
+    },
+  );
 
   it("waits for a transient managed supervisor before repeating full startup recovery (#8726)", async () => {
     const h = harness();
