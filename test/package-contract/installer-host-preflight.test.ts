@@ -145,17 +145,17 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
   );
   writeNodeStub(fakeBin);
 
+  const { NEMOCLAW_EXPERIMENTAL_PROFILE: _experimentalProfile, ...inheritedEnv } = process.env;
   const childEnv: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...inheritedEnv,
     HOME: tmp,
     INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
     PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
     SOURCE_ROOT: sourceRoot,
+    ...(options.experimentalProfile
+      ? { NEMOCLAW_EXPERIMENTAL_PROFILE: options.experimentalProfile }
+      : {}),
   };
-  delete childEnv.NEMOCLAW_EXPERIMENTAL_PROFILE;
-  if (options.experimentalProfile) {
-    childEnv.NEMOCLAW_EXPERIMENTAL_PROFILE = options.experimentalProfile;
-  }
 
   const result = spawnSync(
     "bash",
