@@ -7,6 +7,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import {
+  LAUNCH_READINESS_FIXTURE_POLICY,
+  launchReadinessRegistryFixture,
+} from "../helpers/launch-readiness-fixture";
 import { nonWslPlatformNodeOptions } from "../helpers/platform-override-node-options";
 import {
   runWithEnv,
@@ -23,6 +27,25 @@ type GatewayControlDockerStubOptions = {
   stateFile: string;
   recoveryStatus?: number;
 };
+
+const launchReadinessObservationStubLines = [
+  'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
+  `  printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}`,
+  "  exit 0",
+  "fi",
+  'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+  "  printf '%s\\n' 'Gateway inference:' '  Provider: nvidia-prod' '  Model: test-model'",
+  "  exit 0",
+  "fi",
+];
+
+const expectedProbeOnlyExitCode = process.platform === "darwin" ? 1 : 0;
+const PLATFORM_EVIDENCE_UNAVAILABLE = "launch-readiness evidence is unavailable on this platform";
+
+function expectProbeOnlyPublicationOutcome(result: { code: number; out: string }): void {
+  expect(result.code, result.out).toBe(expectedProbeOnlyExitCode);
+  expect(result.out.includes(PLATFORM_EVIDENCE_UNAVAILABLE)).toBe(process.platform === "darwin");
+}
 
 function writeGatewayControlDockerStub(
   localBin: string,
@@ -198,7 +221,7 @@ describe("CLI connect recovery process contracts", () => {
       const sshMarkerFile = path.join(home, "ssh-calls");
       const stateFile = path.join(home, "probe-state");
       fs.mkdirSync(localBin, { recursive: true });
-      writeSandboxRegistry(home);
+      writeSandboxRegistry(home, launchReadinessRegistryFixture());
       fs.writeFileSync(stateFile, "stopped");
       fs.writeFileSync(
         path.join(localBin, "openshell"),
@@ -218,22 +241,17 @@ describe("CLI connect recovery process contracts", () => {
           "  exit 0",
           "fi",
           'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
-          '  cmd="$8"',
           '  if [[ "$*" == *"inference.local/v1/models"* ]]; then echo "OK 200"; exit 0; fi',
-          '  case "$cmd" in',
-          '    *"inference.local/v1/models"*)',
-          "      echo 'OK 200'",
-          "      exit 0",
-          "      ;;",
-          "    *'curl -so'*)",
-          "      echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
-          '      if [ "$(cat "$state_file")" = recovered ]; then echo RUNNING; else echo STOPPED; fi',
-          "      exit 0",
-          "      ;;",
-          "  esac",
+          '  if [[ "$*" == *"NEMOCLAW_AGENT_SMOKE_EXIT"* ]]; then echo "NEMOCLAW_AGENT_SMOKE_BEGIN"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0; fi',
+          '  if [[ "$*" == *"curl -so"* ]]; then',
+          "    echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
+          '    if [ "$(cat "$state_file")" = recovered ]; then echo RUNNING; else echo STOPPED; fi',
+          "    exit 0",
+          "  fi",
           "fi",
           'if [ "$1" = "forward" ] && [ "$2" = "list" ]; then echo "alpha 127.0.0.1 18789 12345 running"; exit 0; fi',
           'if [ "$1" = "forward" ]; then exit 99; fi',
+          ...launchReadinessObservationStubLines,
           "exit 0",
         ].join("\n"),
         { mode: 0o755 },
@@ -255,7 +273,7 @@ describe("CLI connect recovery process contracts", () => {
           PATH: `${localBin}:${process.env.PATH || ""}`,
         });
 
-        expect(result.code, result.out).toBe(0);
+        expectProbeOnlyPublicationOutcome(result);
         expect(result.out).toContain(expectedOutput);
         expect(result.out).not.toContain(unexpectedOutput);
         const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
@@ -284,7 +302,7 @@ describe("CLI connect recovery process contracts", () => {
       const sshCalls = path.join(home, "ssh-calls");
       const stateFile = path.join(home, "probe-state");
       fs.mkdirSync(localBin, { recursive: true });
-      writeSandboxRegistry(home);
+      writeSandboxRegistry(home, launchReadinessRegistryFixture());
       fs.writeFileSync(stateFile, "stopped");
       fs.writeFileSync(
         path.join(localBin, "openshell"),
@@ -304,9 +322,9 @@ describe("CLI connect recovery process contracts", () => {
           "  exit 0",
           "fi",
           'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
-          '  cmd="$8"',
           '  if [[ "$*" == *"inference.local/v1/models"* ]]; then echo "OK 200"; exit 0; fi',
-          '  if [[ "$cmd" == *"curl -so"* ]]; then',
+          '  if [[ "$*" == *"NEMOCLAW_AGENT_SMOKE_EXIT"* ]]; then echo "NEMOCLAW_AGENT_SMOKE_BEGIN"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0; fi',
+          '  if [[ "$*" == *"curl -so"* ]]; then',
           "    echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
           '    if [ "$(cat "$state_file")" = recovered ]; then echo RUNNING; else echo STOPPED; fi',
           "    exit 0",
@@ -314,6 +332,7 @@ describe("CLI connect recovery process contracts", () => {
           "fi",
           'if [ "$1" = "forward" ] && [ "$2" = "list" ]; then echo "alpha 127.0.0.1 18789 12345 running"; exit 0; fi',
           'if [ "$1" = "forward" ]; then exit 99; fi',
+          ...launchReadinessObservationStubLines,
           "exit 0",
         ].join("\n"),
         { mode: 0o755 },
@@ -355,7 +374,7 @@ describe("CLI connect recovery process contracts", () => {
     const sshCalls = path.join(home, "ssh-calls");
     const stateFile = path.join(home, "probe-state");
     fs.mkdirSync(localBin, { recursive: true });
-    writeSandboxRegistry(home, { agent: "hermes" });
+    writeSandboxRegistry(home, { ...launchReadinessRegistryFixture(), agent: "hermes" });
     fs.writeFileSync(stateFile, "stopped");
     fs.writeFileSync(
       path.join(localBin, "openshell"),
@@ -375,9 +394,9 @@ describe("CLI connect recovery process contracts", () => {
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
-        '  cmd="$8"',
         '  if [[ "$*" == *"inference.local/v1/models"* ]]; then echo "OK 200"; exit 0; fi',
-        '  if [[ "$cmd" == *"curl -so"* ]]; then',
+        '  if [[ "$*" == *"NEMOCLAW_AGENT_SMOKE_EXIT"* ]]; then echo "NEMOCLAW_AGENT_SMOKE_BEGIN"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0; fi',
+        '  if [[ "$*" == *"curl -so"* ]]; then',
         "    echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
         '    if [ "$(cat "$state_file")" = recovered ]; then echo RUNNING; else echo STOPPED; fi',
         "    exit 0",
@@ -389,6 +408,7 @@ describe("CLI connect recovery process contracts", () => {
         "fi",
         'if [ "$1" = "forward" ] && [ "$2" = "list" ]; then { echo "alpha 127.0.0.1 18789 12345 running"; echo "alpha 127.0.0.1 8642 12346 running"; }; exit 0; fi',
         'if [ "$1" = "forward" ]; then exit 99; fi',
+        ...launchReadinessObservationStubLines,
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
@@ -404,7 +424,7 @@ describe("CLI connect recovery process contracts", () => {
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
 
-      expect(result.code, result.out).toBe(0);
+      expectProbeOnlyPublicationOutcome(result);
       expect(result.out).toContain("Probe complete: recovered Hermes Agent gateway");
       const openshellLog = fs.readFileSync(openshellCalls, "utf8");
       expect(openshellLog).toContain("sandbox exec --name alpha -- sh -c");

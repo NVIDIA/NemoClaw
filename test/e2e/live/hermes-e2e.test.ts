@@ -24,7 +24,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { assertHermesCliAdapterLiveContract, stripAnsi } from "./hermes-cli-adapter-live.ts";
 import { HERMES_E2E_PHASES } from "./hermes-e2e-phases.ts";
 import { assertHermesSkillLifecycle } from "./hermes-skill-lifecycle.ts";
-import { runLaunchAgentTurn } from "./launch-agent-turn.ts";
+import { runLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
 import { expectPackageDatabaseReadOnly } from "./package-database-read-only.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes";
@@ -599,7 +599,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     expect(httpStatusOk(dashboardInternal.stdout)).toBe(true);
   }
 
-  progress.phase("restart Hermes gateway, validate supervision, and launch a turn");
+  progress.phase("restart Hermes gateway, validate supervision, and complete two launch turns");
   // Phase 5: host-mediated Hermes gateway restart. This validates the
   // runtime contract behind #2426 against a real OpenShell/Hermes sandbox:
   // The installed supervision tree controls the gateway process, direct
@@ -1257,7 +1257,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   expect(routingTopologyCaptures).toBe(2);
 
   await (process.platform === "linux"
-    ? runLaunchAgentTurn({
+    ? runLaunchReadinessLeaseTurns({
         artifactName: "phase-5-hermes-launch-turn-after-recovery",
         cliCommand: "nemoclaw",
         env,
