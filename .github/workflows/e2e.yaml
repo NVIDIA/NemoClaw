@@ -3053,68 +3053,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  hermes-slack:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'hermes-slack') }}
-    runs-on: linux-amd64-cpu4
-    timeout-minutes: 75
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "hermes-slack"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-slack-e2e
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_AGENT: hermes
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_POLICY_TIER: open
-      NEMOCLAW_RECREATE_SANDBOX: "1"
-      NEMOCLAW_SANDBOX_NAME: e2e-hermes-slack
-      OPENSHELL_GATEWAY: nemoclaw
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Run Hermes Slack live test
-        # Preserves the
-        # linux-amd64-cpu4 Docker/OpenShell/Hermes Slack policy, placeholder,
-        # provider, secret-boundary, and Python Slack egress contracts.
-        env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-          SLACK_BOT_TOKEN: xoxb-test-hermes-slack-token
-          SLACK_APP_TOKEN: xapp-test-hermes-slack-app-token
-        run: |
-          set -euo pipefail
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-slack-e2e.test.ts
-
-      - name: Upload Hermes Slack artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-        with:
-          name: e2e-hermes-slack
-          path: e2e-artifacts/live/hermes-slack-e2e/
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
   hermes-e2e:
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}
@@ -4574,78 +4512,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  sandbox-operations:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'sandbox-operations') }}
-    runs-on: ubuntu-latest
-    # The live test receives 45 minutes for two onboards plus process/gateway
-    # recovery. The remaining 15 minutes cover checkout, build, OpenShell setup,
-    # artifact upload, and unconditional credential/resource cleanup.
-    timeout-minutes: 60
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "sandbox-operations"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/sandbox-operations
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      # Open permits the scenario's inference/log probes; TC-SBX-11 separately
-      # proves that sandbox-to-sandbox network isolation remains enforced.
-      NEMOCLAW_POLICY_TIER: "open"
-      OPENSHELL_GATEWAY: "nemoclaw"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Verify CLI launcher
-        run: |
-          test -x "${NEMOCLAW_CLI_BIN}"
-          "${NEMOCLAW_CLI_BIN}" --version
-
-      - name: Install OpenShell CLI
-        run: |
-          env -u DOCKER_CONFIG \
-            -u DOCKERHUB_USERNAME \
-            -u DOCKERHUB_TOKEN \
-            -u NVIDIA_API_KEY \
-            -u NVIDIA_INFERENCE_API_KEY \
-            -u GITHUB_TOKEN \
-            bash scripts/install-openshell.sh
-
-      - name: Run sandbox operations live test
-        env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/sandbox-operations.test.ts
-
-      - name: Upload sandbox operations artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
   openclaw-plugin-runtime-exdev-release:
     needs: generate-matrix
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openclaw-plugin-runtime-exdev-release') }}
@@ -4779,78 +4645,6 @@ jobs:
       - name: Upload OpenClaw plugin runtime-deps EXDEV artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
-  openclaw-inference-switch:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openclaw-inference-switch') }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - mode: anthropic
-            sandbox_name: e2e-oc-inf-switch
-            switch_provider: compatible-anthropic-endpoint
-            switch_model: mock-anthropic-model
-            switch_inference_api: anthropic-messages
-            switch_mock_anthropic: "1"
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "openclaw-inference-switch"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-inference-switch/${{ matrix.mode }}
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_AGENT: "openclaw"
-      NEMOCLAW_E2E_SHARD: ${{ matrix.mode }}
-      NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
-      NEMOCLAW_SWITCH_PROVIDER: ${{ matrix.switch_provider }}
-      NEMOCLAW_SWITCH_MODEL: ${{ matrix.switch_model }}
-      NEMOCLAW_SWITCH_INFERENCE_API: ${{ matrix.switch_inference_api }}
-      NEMOCLAW_SWITCH_MOCK_ANTHROPIC: ${{ matrix.switch_mock_anthropic }}
-      OPENSHELL_GATEWAY: "nemoclaw"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Run OpenClaw inference switch live test
-        # Preserves the real install.sh/OpenShell/Docker/managed-proxy boundary while
-        # Vitest owns the route, config, registry, inference.local, and agent
-        # assertions.
-        run: |
-          set -euo pipefail
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openclaw-inference-switch.test.ts
-
-      - name: Upload OpenClaw inference switch artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-        with:
-          name: e2e-openclaw-inference-switch-${{ matrix.mode }}
-          path: e2e-artifacts/live/openclaw-inference-switch/${{ matrix.mode }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -5182,7 +4976,6 @@ jobs:
         brave-search,
         hermes-e2e,
         hermes-gpu-startup,
-        hermes-slack,
         hermes-discord,
         common-egress-agent,
         hermes-shields-config,
@@ -5195,10 +4988,8 @@ jobs:
         jetson-nvmap-gpu,
         security-posture,
         cloud-onboard,
-        sandbox-operations,
         openclaw-plugin-runtime-exdev-release,
         openclaw-plugin-runtime-exdev,
-        openclaw-inference-switch,
         bedrock-runtime-compatible-anthropic,
         tunnel-lifecycle,
         channels-stop-start,

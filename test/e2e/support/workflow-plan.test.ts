@@ -137,9 +137,44 @@ describe("E2E workflow plan", () => {
         NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-ultra",
       },
     });
+    expect(catalogueTarget("hermes-slack")).toMatchObject({
+      profile: "nvidia-inference",
+      runner: "linux-amd64-cpu4",
+      testFile: "test/e2e/live/hermes-slack-e2e.test.ts",
+      timeoutMinutes: 75,
+      installMode: "none",
+      environment: {
+        NEMOCLAW_AGENT: "hermes",
+        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+        NEMOCLAW_SANDBOX_NAME: "e2e-hermes-slack",
+        SLACK_BOT_TOKEN: "xoxb-test-hermes-slack-token",
+      },
+    });
+    expect(catalogueTarget("openclaw-inference-switch")).toMatchObject({
+      profile: "standard",
+      timeoutMinutes: 90,
+      installMode: "none",
+      environment: {
+        NEMOCLAW_AGENT: "openclaw",
+        NEMOCLAW_E2E_SHARD: "anthropic",
+        NEMOCLAW_SWITCH_PROVIDER: "compatible-anthropic-endpoint",
+        NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
+      },
+    });
+    expect(catalogueTarget("sandbox-operations")).toMatchObject({
+      profile: "nvidia-inference",
+      timeoutMinutes: 60,
+      installMode: "credential-free",
+      installNonInteractive: true,
+      environment: {
+        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+        NEMOCLAW_POLICY_TIER: "open",
+        OPENSHELL_GATEWAY: "nemoclaw",
+      },
+    });
 
     const plan = buildE2eWorkflowPlan({
-      jobs: "gateway-guard-recovery,issue-4434-tui-unreachable-inference,network-policy,openclaw-tui-chat-correlation",
+      jobs: "gateway-guard-recovery,hermes-slack,issue-4434-tui-unreachable-inference,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
     });
     expect(plan.catalogueMatrices["nvidia-inference"]).toEqual(
       expect.arrayContaining([
@@ -147,6 +182,11 @@ describe("E2E workflow plan", () => {
           id: "gateway-guard-recovery",
           host_packages: "",
           install_non_interactive: true,
+        }),
+        expect.objectContaining({
+          id: "hermes-slack",
+          runner: "linux-amd64-cpu4",
+          test_file: "test/e2e/live/hermes-slack-e2e.test.ts",
         }),
         expect.objectContaining({
           id: "issue-4434-tui-unreachable-inference",
@@ -162,8 +202,20 @@ describe("E2E workflow plan", () => {
           id: "openclaw-tui-chat-correlation",
           host_packages: "expect",
         }),
+        expect.objectContaining({
+          id: "sandbox-operations",
+          install_mode: "credential-free",
+          install_non_interactive: true,
+        }),
       ]),
     );
+    expect(plan.catalogueMatrices.standard).toContainEqual(
+      expect.objectContaining({ id: "openclaw-inference-switch" }),
+    );
+    const retainedJobs = readFreeStandingJobsInventory().allowedJobs;
+    for (const target of ["hermes-slack", "openclaw-inference-switch", "sandbox-operations"]) {
+      expect(retainedJobs).not.toContain(target);
+    }
   });
 
   it("rejects unreviewed host packages and unsafe selectors", () => {

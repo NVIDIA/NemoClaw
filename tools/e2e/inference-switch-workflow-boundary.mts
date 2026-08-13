@@ -6,7 +6,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
-import { PREPARE_E2E_STEP } from "./prepare-e2e-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -34,7 +33,7 @@ export type InferenceSwitchWorkflow = {
 };
 
 type JobSpec = {
-  agent: "hermes" | "openclaw";
+  agent: "hermes";
   job: string;
   scenario: string;
   uploadStep: string;
@@ -47,19 +46,13 @@ const JOBS: JobSpec[] = [
     scenario: "hermes-inference-switch",
     uploadStep: "Upload Hermes inference switch artifacts",
   },
-  {
-    agent: "openclaw",
-    job: "openclaw-inference-switch",
-    scenario: "openclaw-inference-switch",
-    uploadStep: "Upload OpenClaw inference switch artifacts",
-  },
 ];
 
-function expectedModes(agent: JobSpec["agent"]): Array<Record<string, unknown>> {
+function expectedModes(): Array<Record<string, unknown>> {
   return [
     {
       mode: "anthropic",
-      sandbox_name: agent === "hermes" ? "e2e-hm-inf-switch" : "e2e-oc-inf-switch",
+      sandbox_name: "e2e-hm-inf-switch",
       switch_provider: "compatible-anthropic-endpoint",
       switch_model: "mock-anthropic-model",
       switch_inference_api: "anthropic-messages",
@@ -75,7 +68,7 @@ function validateJob(errors: string[], spec: JobSpec, job: WorkflowJob): void {
   if (job.strategy?.["fail-fast"] !== false) {
     errors.push(`${spec.job} mode matrix must not fail fast`);
   }
-  if (!isDeepStrictEqual(job.strategy?.matrix?.include, expectedModes(spec.agent))) {
+  if (!isDeepStrictEqual(job.strategy?.matrix?.include, expectedModes())) {
     errors.push(`${spec.job} must run the canonical Anthropic-compatible mode`);
   }
 
@@ -128,30 +121,6 @@ function validateJob(errors: string[], spec: JobSpec, job: WorkflowJob): void {
   }
 }
 
-function validateOpenClawDockerAuthOrder(errors: string[], job: WorkflowJob): void {
-  const cleanup = job.steps?.find((step) => step.name === "Clean up Docker auth");
-  if (cleanup?.if !== "always()") {
-    errors.push("openclaw-inference-switch Docker auth cleanup must always run");
-  }
-
-  const stepOrder = [
-    "Authenticate to Docker Hub",
-    PREPARE_E2E_STEP,
-    "Run OpenClaw inference switch live test",
-    "Upload OpenClaw inference switch artifacts",
-    "Clean up Docker auth",
-  ].map((name) => job.steps?.findIndex((step) => step.name === name) ?? -1);
-  if (
-    stepOrder.some(
-      (index, position) => index < 0 || (position > 0 && index <= stepOrder[position - 1]),
-    )
-  ) {
-    errors.push(
-      "openclaw-inference-switch must authenticate, prepare, test, upload artifacts, then clean credentials",
-    );
-  }
-}
-
 export function readInferenceSwitchWorkflow(
   workflowPath = DEFAULT_WORKFLOW_PATH,
 ): InferenceSwitchWorkflow {
@@ -161,7 +130,6 @@ export function readInferenceSwitchWorkflow(
 export function validateInferenceSwitchWorkflow(workflow: InferenceSwitchWorkflow): string[] {
   const errors: string[] = [];
   for (const spec of JOBS) validateJob(errors, spec, workflow.jobs[spec.job] ?? {});
-  validateOpenClawDockerAuthOrder(errors, workflow.jobs["openclaw-inference-switch"] ?? {});
   return errors;
 }
 

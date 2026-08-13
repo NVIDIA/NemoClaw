@@ -204,24 +204,10 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
-    "hermes-slack",
-    {
-      name: "e2e-hermes-slack",
-      path: "e2e-artifacts/live/hermes-slack-e2e/",
-    },
-  ],
-  [
     "security-posture",
     {
       name: "e2e-security-posture-${{ matrix.agent }}",
       path: "e2e-artifacts/live/security-posture-${{ matrix.agent }}/",
-    },
-  ],
-  [
-    "openclaw-inference-switch",
-    {
-      name: "e2e-openclaw-inference-switch-${{ matrix.mode }}",
-      path: "e2e-artifacts/live/openclaw-inference-switch/${{ matrix.mode }}/",
     },
   ],
   [
