@@ -101,6 +101,8 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   session: Session | null;
   gpu: Gpu;
   sandboxName: string | null;
+  /** Sandbox name the operator passed this run via --name or NEMOCLAW_SANDBOX_NAME (#8953). */
+  requestedSandboxName?: string | null;
   agent: Agent;
   forceProviderSelection?: boolean;
   /** Force setup for a provider that authoritative rebuild preflight observed missing. */
@@ -411,9 +413,18 @@ function provenResumeSandboxName(
   sandboxName: string | null,
   effectiveResume: boolean,
   authoritativeResumeConfig: boolean,
+  requestedSandboxName: string | null,
 ): string | null {
   if (!effectiveResume || !sandboxName) return null;
-  return authoritativeResumeConfig || checkpointSandboxIdentityMatches(session, sandboxName)
+  // #8953: when a resume cannot re-prompt, the bare-resume guard instructs
+  // the operator to pass --name (or NEMOCLAW_SANDBOX_NAME). That explicit
+  // current-run name is proof enough to reuse here; the durable checkpoint
+  // identity is still recorded later by the sandbox step's own writer. The
+  // caller passes requestedSandboxName only for non-interactive runs, so an
+  // interactive resume keeps prompting.
+  return authoritativeResumeConfig ||
+    checkpointSandboxIdentityMatches(session, sandboxName) ||
+    sandboxName === requestedSandboxName
     ? sandboxName
     : null;
 }
@@ -528,6 +539,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   session,
   gpu,
   sandboxName,
+  requestedSandboxName = null,
   agent,
   forceProviderSelection: initialForceProviderSelection = false,
   forceInferenceSetup: initialForceInferenceSetup = false,
@@ -589,6 +601,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     sandboxName,
     effectiveResume,
     authoritativeResumeConfig,
+    deps.isNonInteractive() ? requestedSandboxName : null,
   );
   const stateResults: OnboardStateTransitionResult[] = [];
   const retryStateResults: OnboardStateTransitionResult[] = [];
