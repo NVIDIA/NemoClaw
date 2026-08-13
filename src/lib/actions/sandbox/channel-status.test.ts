@@ -573,6 +573,28 @@ describe("showSandboxChannelStatus Slack readiness wait", () => {
     expect(configRead.mock.calls.map(([timeoutMs]) => timeoutMs)).toEqual([1_150]);
     expect(sleep).toHaveBeenCalledWith(500);
   });
+
+  it("applies the documented 180-second budget when the caller omits timeoutSeconds (#8883)", async () => {
+    const { deps, gatewayPolicy } = slackWaitHarness([{ connected: false }]);
+
+    const result = await showSandboxChannelStatus("alpha", {
+      deps,
+      channel: "slack",
+      wait: true,
+      timeoutSeconds: undefined,
+      pollIntervalMs: 60_000,
+      asJson: true,
+      quietJson: true,
+    });
+
+    expect(result && "readiness" in result ? result.readiness : null).toMatchObject({
+      state: "timeout",
+      category: "timeout",
+      reason: "timeout",
+      elapsedMs: 180_000,
+    });
+    expect(gatewayPolicy.mock.calls[0]?.[1]).toBe(180_000);
+  });
 });
 
 describe("showSandboxChannelStatus unsupported readiness wait", () => {

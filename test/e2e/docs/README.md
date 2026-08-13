@@ -293,11 +293,12 @@ test/e2e/
 
 - `.github/workflows/e2e.yaml` compares the before and candidate commits on each
   push to `main`, then selects the catalogue targets and retained workflow jobs
-  that own the changed files. `Relevant E2E` reports a successful no-op when no
-  retained E2E owns a changed file.
-  Push runs skip `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and
+  that own the changed files. Each trusted push also selects the CPU-only
+  `jetson-nvmap-gpu` proof. If no other retained E2E owns a changed file,
+  `Relevant E2E` requires only the Jetson proof.
+  Push runs skip `llama-cpp-dgx-spark-plan` and
   `llama-cpp-dgx-spark-qualification` because a push event cannot set their
-  required workflow dispatch flags.
+  required workflow dispatch flag.
   Runner, credential, evidence, and cleanup requirements remain job-specific.
   A maintainer can also dispatch the trusted `main` workflow against the latest
   commit from an open internal or fork PR. The manual path validates the actor,

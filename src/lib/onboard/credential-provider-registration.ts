@@ -33,6 +33,7 @@ export interface CredentialProviderRegistrationDeps {
   runOpenshell: OpenshellCliHelpers["runOpenshell"];
   redact(input: string): string;
   getGatewayName(): string;
+  getCredential(name: string): string | null;
   normalizeCredentialValue(value: unknown): string;
   updateSession(mutator: (session: Session) => Session | void): Session;
   stagedLegacyValues: ReadonlyMap<string, string>;
@@ -127,8 +128,8 @@ function validatePlannedCredentialProviderBindings(
 }
 
 export function createCredentialProviderRegistration(deps: CredentialProviderRegistrationDeps) {
-  const gatewayRunner = () =>
-    createGatewayScopedOpenshellRunner(deps.runOpenshell, deps.getGatewayName());
+  const gatewayRunner = (gatewayName = deps.getGatewayName()) =>
+    createGatewayScopedOpenshellRunner(deps.runOpenshell, gatewayName);
   const ensureWebSearchProviderProfiles = (
     tokenDefs: readonly MessagingTokenDef[],
     runOpenshell: OpenshellCliHelpers["runOpenshell"] = deps.runOpenshell,
@@ -138,6 +139,37 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       runOpenshell,
       redact: deps.redact,
     });
+
+  function upsertProvider(
+    name: string,
+    type: string,
+    credentialEnv: string,
+    baseUrl: string | null,
+    env: NodeJS.ProcessEnv = {},
+    gatewayName = deps.getGatewayName(),
+  ) {
+    const result = providers.upsertProvider(
+      name,
+      type,
+      credentialEnv,
+      baseUrl,
+      env,
+      gatewayRunner(gatewayName),
+    );
+    if (result.ok && credentialEnv) {
+      const stagedValue = deps.stagedLegacyValues.get(credentialEnv);
+      if (stagedValue !== undefined) {
+        const upsertedValue = env[credentialEnv] ?? deps.getCredential(credentialEnv);
+        if (upsertedValue === stagedValue) {
+          deps.migratedLegacyKeys.add(credentialEnv);
+        } else {
+          deps.migratedLegacyKeys.delete(credentialEnv);
+        }
+        deps.persistMigratedLegacyKeys();
+      }
+    }
+    return result;
+  }
 
   function upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],
@@ -230,6 +262,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
   return {
     providerMatchesGatewayCredential,
     stageSandboxCredentialProviders,
+    upsertProvider,
     upsertMessagingProviders,
   };
 }

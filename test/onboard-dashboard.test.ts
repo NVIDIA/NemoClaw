@@ -303,7 +303,7 @@ describe("onboard dashboard helpers", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("starts declared non-dashboard agent port forwards without cleaning up the dashboard forward", () => {
+  it("starts declared non-dashboard agent port forwards without cleaning up the dashboard forward", async () => {
     const forwardList =
       "SANDBOX BIND PORT PID STATUS\n" +
       "my-sandbox 127.0.0.1 18789 12345 running\n" +
@@ -330,7 +330,7 @@ describe("onboard dashboard helpers", () => {
     });
 
     expect(
-      helpers.ensureAgentDashboardForward("my-sandbox", {
+      await helpers.ensureAgentDashboardForward("my-sandbox", {
         forwardPort: 18789,
         forward_ports: [18789, 8642],
       }),
@@ -344,7 +344,7 @@ describe("onboard dashboard helpers", () => {
     ).toHaveLength(1);
   });
 
-  it("skips dashboard forwarding for terminal agents without declared ports", () => {
+  it("skips dashboard forwarding for terminal agents without declared ports", async () => {
     const runOpenshell = vi.fn((_args: string[], _opts?: Record<string, unknown>) => ({
       status: 0,
     }));
@@ -363,7 +363,7 @@ describe("onboard dashboard helpers", () => {
     });
 
     expect(
-      helpers.ensureAgentDashboardForward("my-sandbox", {
+      await helpers.ensureAgentDashboardForward("my-sandbox", {
         runtime: { kind: "terminal" },
         forwardPort: 0,
         forward_ports: [],

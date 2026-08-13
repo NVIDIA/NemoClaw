@@ -190,13 +190,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
-    "network-policy",
-    {
-      name: "e2e-network-policy-${{ matrix.scenario }}",
-      path: "e2e-artifacts/live/network-policy/${{ matrix.scenario }}/",
-    },
-  ],
-  [
     "common-egress-agent",
     {
       name: "e2e-common-egress-agent-${{ matrix.scenario }}",

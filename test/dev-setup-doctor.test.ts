@@ -340,6 +340,64 @@ describe("contributor environment doctor", () => {
     expect(result.output).toContain("Next: Run: npm run build:cli");
   });
 
+  it("names the Node.js heap limit when a type check exhausts it (#8688)", () => {
+    const fixture = createFixture();
+    writeExecutable(
+      path.join(fixture.repo, "node_modules", ".bin", "tsc"),
+      [
+        "#!/usr/bin/env bash",
+        "echo 'tsc-path-that-must-not-be-reported'",
+        "echo 'FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory' >&2",
+        "exit 134",
+      ].join("\n"),
+    );
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("CLI type check: ran out of Node.js heap");
+    expect(result.output).toContain("--max-old-space-size=5120");
+    expect(result.output).not.toContain("tsc-path-that-must-not-be-reported");
+  });
+
+  it("reports the heap remediation after large discarded type-check output (#8688)", () => {
+    const fixture = createFixture();
+    writeExecutable(
+      path.join(fixture.repo, "node_modules", ".bin", "tsc"),
+      [
+        "#!/usr/bin/env bash",
+        "echo 'FATAL ERROR: Allocation failed - JavaScript heap out of memory' >&2",
+        "i=0",
+        'while [ "$i" -lt 8192 ]; do',
+        "  echo 'large-tsc-path-that-must-not-be-reported'",
+        "  i=$((i + 1))",
+        "done",
+        "exit 134",
+      ].join("\n"),
+    );
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("CLI type check: ran out of Node.js heap");
+    expect(result.output).toContain("--max-old-space-size=5120");
+    expect(result.output).not.toContain("large-tsc-path-that-must-not-be-reported");
+  });
+
+  it("keeps the build remediation when a type check fails for another reason (#8688)", () => {
+    const fixture = createFixture();
+    writeExecutable(
+      path.join(fixture.repo, "node_modules", ".bin", "tsc"),
+      ["#!/usr/bin/env bash", "echo 'error TS2304: Cannot find name.' >&2", "exit 2"].join("\n"),
+    );
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("CLI type check: failed");
+    expect(result.output).toContain("Next: Run: npm run typecheck:cli");
+  });
+
   it("redacts failed GitHub and Docker command output", () => {
     const fixture = createFixture();
 

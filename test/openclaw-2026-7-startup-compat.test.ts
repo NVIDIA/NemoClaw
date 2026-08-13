@@ -173,6 +173,10 @@ describe("OpenClaw 2026.7 startup compatibility", () => {
       { mode: 0o700 },
     );
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const launchProcess = extractShellFunction(
+      source,
+      "launch_openclaw_gateway_process",
+    ).replaceAll("/tmp/gateway.log", gatewayLog);
     const launch = extractShellFunction(source, "launch_openclaw_gateway").replaceAll(
       "/tmp/gateway.log",
       gatewayLog,
@@ -195,10 +199,7 @@ describe("OpenClaw 2026.7 startup compatibility", () => {
         // Model the root-created gateway-owned log as unavailable to the
         // launcher until the privilege-transition fixture runs.
         '_nemoclaw_safe_create_tmp_file() { : >"$1"; chmod 000 "$1"; }',
-        extractShellFunction(source, "launch_openclaw_gateway_process").replaceAll(
-          "/tmp/gateway.log",
-          gatewayLog,
-        ),
+        launchProcess,
         launch,
         "launch_openclaw_gateway",
         'wait "$GATEWAY_PID"',

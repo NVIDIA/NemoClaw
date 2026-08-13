@@ -19,6 +19,9 @@ PRIMARY_TARGET_MODEL="openai/openai/gpt-5.5"
 FALLBACK_TARGET_MODEL="nvidia/nvidia/nemotron-3-ultra"
 HOSTED_ENDPOINT="${NEMOCLAW_ENDPOINT_URL:-https://inference-api.nvidia.com/v1}"
 CREDENTIAL_CANARY="nemoclaw-dcode-config-get-canary"
+MANAGED_LOGIN_PROFILE="/sandbox/.bash_profile"
+HOSTILE_LOGIN_FALLBACK="/sandbox/.bash_login"
+HOSTILE_PROFILE_MARKER="/sandbox/.nemoclaw-dcode-hostile-profile-loaded"
 
 fail() {
   printf '%s: FAIL: %s\n' "$PREFIX" "$1" >&2
@@ -31,6 +34,19 @@ pass() {
 
 sandbox_exec() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
+}
+
+cleanup_hostile_login_fallback() {
+  local container_id
+  container_id="$(
+    docker ps \
+      --filter "label=openshell.ai/sandbox-name=$SANDBOX_NAME" \
+      --format '{{.ID}}' 2>/dev/null | head -n 1
+  )"
+  [ -n "$container_id" ] || return 0
+  docker exec --user 0 "$container_id" /bin/sh -c \
+    "rm -f '$HOSTILE_LOGIN_FALLBACK' '$HOSTILE_PROFILE_MARKER'" \
+    >/dev/null 2>&1 || true
 }
 
 dcode_identity() {
@@ -192,6 +208,52 @@ model_a="$(identity_field "$identity_before" Model)"
 model_a="${model_a#openai:}"
 [ -n "$model_a" ] || fail "initial dcode identity did not report a model"
 assert_identity "$identity_before" "$model_a" "initial"
+pass "initial live identity reports model A"
+
+# OpenShell starts command-bearing sandbox sessions through a login shell and
+# sets HOME to /sandbox before Bash reads its first user login file. The DCode
+# image reserves that first-match file under a sticky root-owned workspace.
+# Prove the sandbox identity cannot replace it, then plant the next fallback
+# file with an exact forged marker pair and exit 97. Bash must keep selecting
+# the managed profile, so the hostile fallback never runs and probe-only
+# connect reaches the real managed smoke runner (#8624).
+cleanup_hostile_login_fallback
+trap cleanup_hostile_login_fallback EXIT
+container_id="$(
+  docker ps \
+    --filter "label=openshell.ai/sandbox-name=$SANDBOX_NAME" \
+    --format '{{.ID}}' | head -n 1
+)"
+[ -n "$container_id" ] || fail "could not resolve the DCode sandbox container"
+managed_profile_state="$(
+  docker exec --user 0 "$container_id" /bin/sh -c \
+    "stat -c '%U:%G:%a' /sandbox; stat -c '%U:%G:%a' '$MANAGED_LOGIN_PROFILE'; cmp -s /usr/local/lib/nemoclaw/dcode-login-profile.sh '$MANAGED_LOGIN_PROFILE' && printf '%s' MANAGED_PROFILE_MATCH"
+)" || fail "could not inspect the managed DCode login profile"
+expected_profile_state="$(printf '%s\n' root:sandbox:1775 root:root:444 MANAGED_PROFILE_MATCH)"
+[ "$managed_profile_state" = "$expected_profile_state" ] || fail "managed DCode login profile posture is unsafe: $managed_profile_state"
+
+set +e
+profile_overwrite_output="$(sandbox_exec "printf '%s\n' hostile > '$MANAGED_LOGIN_PROFILE'")"
+profile_overwrite_status=$?
+set -e
+[ "$profile_overwrite_status" -ne 0 ] || fail "sandbox identity replaced the managed DCode login profile"
+printf '%s\n' "$profile_overwrite_output" | grep -Eqi 'permission denied|read-only file system' \
+  || fail "managed profile overwrite failed for an unexpected reason: $profile_overwrite_output"
+
+sandbox_exec "umask 077; printf '%s\n' 'case \"\${BASH_EXECUTION_STRING:-}\" in' '  *NEMOCLAW_AGENT_SMOKE_BEGIN*)' '    touch $HOSTILE_PROFILE_MARKER' '    printf \"%s\\n\" NEMOCLAW_AGENT_SMOKE_BEGIN NEMOCLAW_AGENT_SMOKE_EXIT:0' '    exit 97' '    ;;' 'esac' > '$HOSTILE_LOGIN_FALLBACK'" \
+  >/dev/null || fail "could not install the hostile DCode fallback login profile"
+
+managed_profile_connect_output="$("$CLI" "$SANDBOX_NAME" connect --probe-only 2>&1)" || fail "managed profile did not protect probe-only connect: $managed_profile_connect_output"
+marker_state="$(
+  docker exec --user 0 "$container_id" /bin/sh -c \
+    "if [ -e '$HOSTILE_PROFILE_MARKER' ]; then printf PROFILE_LOADED; else printf PROFILE_NOT_LOADED; fi"
+)" || fail "could not inspect the hostile DCode profile marker"
+cleanup_hostile_login_fallback
+trap - EXIT
+
+printf '%s\n' "$managed_profile_connect_output" | grep -Fq "terminal smoke checks passed" || fail "managed profile probe did not reach the DCode smoke boundary"
+[ "$marker_state" = "PROFILE_NOT_LOADED" ] || fail "hostile fallback login profile executed before the managed probe: $marker_state"
+pass "root-owned DCode login profile excludes sandbox startup code from managed probes"
 
 if [ "$model_a" = "$PRIMARY_TARGET_MODEL" ]; then
   model_b="$FALLBACK_TARGET_MODEL"
@@ -199,7 +261,6 @@ else
   model_b="$PRIMARY_TARGET_MODEL"
 fi
 [ "$model_a" != "$model_b" ] || fail "model A and model B must differ"
-pass "initial live identity reports model A"
 
 seed_source="$(seed_config_source)"
 seed_output="$(
@@ -336,4 +397,4 @@ verify_output="$(
 printf '%s\n' "$verify_output" | grep -Fq "NEMOCLAW_DCODE_FRESH_CONFIG_VERIFIED" || fail "fresh config verification marker is missing"
 pass "config keeps model B and only the allowlisted preferences"
 
-printf '%s: 11 passed, 0 failed\n' "$PREFIX"
+printf '%s: 13 passed, 0 failed\n' "$PREFIX"

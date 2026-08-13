@@ -1039,6 +1039,30 @@ def _load_hermes_config():
     return None
 
 
+def _hermes_api_port():
+    """Read the per-sandbox port the OpenAI-compatible API is exposed on.
+
+    NemoClaw allocates this port per sandbox so two Hermes sandboxes can serve
+    inference on one host. The plugin normally inherits the allocated value
+    from the managed supervisor. The root-separated topology also publishes a
+    root-owned marker for processes that do not inherit that environment.
+    """
+    raw = os.environ.get("NEMOCLAW_HERMES_API_PORT", "").strip()
+    if not raw:
+        try:
+            with open("/run/nemoclaw/hermes-api-port") as f:
+                raw = f.read().strip()
+        except OSError:
+            return 8642
+    if re.fullmatch(r"[0-9]+", raw) is None:
+        return 8642
+    try:
+        port = int(raw)
+    except ValueError:
+        return 8642
+    return port if 8642 <= port <= 8652 else 8642
+
+
 def _get_sandbox_info():
     """Gather sandbox status information."""
     hermes_cfg = _load_hermes_config()
@@ -1059,10 +1083,11 @@ def _get_sandbox_info():
         provider = nemoclaw_cfg.get("provider", provider)
 
     # Check gateway health
+    api_port = _hermes_api_port()
     gateway_ok = False
     try:
         result = subprocess.run(
-            ["curl", "-sf", "http://localhost:8642/health"],
+            ["curl", "-sf", f"http://localhost:{api_port}/health"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -1079,7 +1104,7 @@ def _get_sandbox_info():
         "provider": provider,
         "base_url": base_url,
         "gateway": "running" if gateway_ok else "stopped",
-        "port": 8642,
+        "port": api_port,
     }
 
 

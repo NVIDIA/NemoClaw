@@ -34,6 +34,7 @@ const LEGACY_BUNDLE_ENTRIES = [
   "model-router-venv",
   "mounts",
   "ollama-auth-proxy.pid",
+  "ollama-proxy-port",
   "ollama-proxy-token",
   "onboard-failures",
   "openrouter-runtime-adapter.pid",
@@ -41,8 +42,17 @@ const LEGACY_BUNDLE_ENTRIES = [
   "usage-notice.json",
 ] as const;
 const SESSION_BOUND_ENTRIES = ["credentials.json"] as const;
+const HOST_SHARED_BUNDLE_ENTRIES = [
+  "ollama-auth-proxy.pid",
+  "ollama-proxy-port",
+  "ollama-proxy-token",
+] as const;
 type LegacyBundleEntry = (typeof LEGACY_BUNDLE_ENTRIES)[number];
 const LEGACY_BUNDLE_ENTRY_SET: ReadonlySet<string> = new Set(LEGACY_BUNDLE_ENTRIES);
+const HOST_SHARED_BUNDLE_ENTRY_SET: ReadonlySet<string> = new Set(HOST_SHARED_BUNDLE_ENTRIES);
+const MIGRATABLE_BUNDLE_ENTRIES: readonly LegacyBundleEntry[] = LEGACY_BUNDLE_ENTRIES.filter(
+  (entry) => !HOST_SHARED_BUNDLE_ENTRY_SET.has(entry),
+);
 
 export interface LegacyPortMigrationResult {
   migratedSandboxNames: string[];
@@ -547,7 +557,7 @@ function applyMigrationIntent(
   }
 
   const movedEntries = new Set<LegacyBundleEntry>(intent.metadata.bundleEntries);
-  const entriesLeftAmbiguous = LEGACY_BUNDLE_ENTRIES.filter(
+  const entriesLeftAmbiguous = MIGRATABLE_BUNDLE_ENTRIES.filter(
     (entry) => !movedEntries.has(entry) && lstatNoFollow(home, path.join(sharedRoot, entry)),
   );
   if (intent.metadata.selectedSandboxNames.length > 0 && entriesLeftAmbiguous.length > 0) {
@@ -729,7 +739,7 @@ export function migrateLegacyPortState(
     if (selectedNames.length === 0 && !sessionBelongsToSelected) return result;
 
     const entriesToMove: readonly LegacyBundleEntry[] = wholeLegacyBundleBelongsToSelected
-      ? LEGACY_BUNDLE_ENTRIES
+      ? MIGRATABLE_BUNDLE_ENTRIES
       : sessionBelongsToSelected
         ? SESSION_BOUND_ENTRIES
         : [];
