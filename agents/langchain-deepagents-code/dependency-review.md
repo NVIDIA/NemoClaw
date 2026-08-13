@@ -7,20 +7,22 @@ This file records the reviewed dependency baseline for the Deep Agents Code sand
 Update it whenever `requirements.lock` changes.
 
 - Lockfile: `agents/langchain-deepagents-code/requirements.lock`
-- Lockfile SHA-256: `2e9d59768ea20953c184b52220334e969356ac1a684ff334f0f3767c9f859229`
+- Lockfile SHA-256: `56a1c9462b3a68773c7d223457630a52f6b79c35930d5a9212bd42032b7938c6`
 - Audit command: `uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip`
-- Audit date: August 3, 2026
-- Targeted audit result: `aiohttp 3.14.3, cryptography 50.0.0, uv 0.11.33, MCP 1.28.1, Pillow 12.3.0, and pyasn1 0.6.4 have no known vulnerabilities`
+- Audit date: August 11, 2026
+- Targeted audit result: `aiohttp 3.14.3, cryptography 50.0.0, uv 0.11.33, langgraph-checkpoint-sqlite 3.1.1, MCP 1.28.1, Pillow 12.3.0, and pyasn1 0.6.4 have no known vulnerabilities`
 - Complete-lock audit result: `2 duplicate records in 1 unrelated package`
 
 The Dockerfile installs this lockfile with `pip3 install --require-hashes`, so this review covers the exact package versions selected for the managed image install.
-The lock now selects `aiohttp==3.14.3`, `cryptography==50.0.0`, `uv==0.11.33`, `mcp==1.28.1`, `Pillow==12.3.0`, and `pyasn1==0.6.4`.
-These selections clear `GHSA-cq5v-8q36-5273` and `GHSA-g6cj-pr64-35w5`.
+The lock now selects `aiohttp==3.14.3`, `cryptography==50.0.0`, `uv==0.11.33`, `langgraph-checkpoint-sqlite==3.1.1`, `mcp==1.28.1`, `Pillow==12.3.0`, and `pyasn1==0.6.4`.
+These selections clear `GHSA-cq5v-8q36-5273`, `GHSA-g6cj-pr64-35w5`, and `GHSA-47pj-3jcm-6whg`.
+The direct `langgraph-checkpoint-sqlite==3.1.1` requirement is a hash-locked security constraint for `GHSA-47pj-3jcm-6whg`.
+Remove it when the selected Deep Agents Code graph resolves `3.1.1` or later without the direct constraint and the complete-lock audit remains clear.
 The direct MCP and pyasn1 requirements are temporary, hash-locked constraints for the released Deep Agents Code `0.1.34` graph.
 Deep Agents Code `0.1.45` and later contain the MCP and pyasn1 fixes, but their hook boundary has changed.
 Remove the temporary direct constraints only as part of a separately validated semantic migration to `>=0.1.45` that preserves NemoClaw's managed runtime hooks.
 
-The image build runs `pip3 check` and asserts all seven installed package versions, including Deep Agents Code itself, before publishing.
+The image build runs `pip3 check` and asserts all eight installed package versions, including Deep Agents Code itself, before publishing.
 The complete point-in-time audit now reports only two duplicate database records for `setuptools==82.0.1`; that record is outside the Critical/High remediation scope.
 This review does not claim the complete lock is vulnerability-free.
 

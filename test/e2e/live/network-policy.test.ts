@@ -189,7 +189,7 @@ async function curlStatus(
 async function expectScopedClawHubPluginLifecycle(sandbox: SandboxClient): Promise<void> {
   const install = await sandboxBash(
     sandbox,
-    "HOME=/sandbox openclaw plugins install 'clawhub:@openclaw/kitchen-sink@0.2.14' 2>&1",
+    "HOME=/sandbox openclaw plugins install 'clawhub:@openclaw/brave-plugin@2026.7.1' --force 2>&1",
     {
       artifactName: "tc-net-restricted-clawhub-scoped-plugin-install",
       timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
@@ -203,12 +203,12 @@ async function expectScopedClawHubPluginLifecycle(sandbox: SandboxClient): Promi
   });
   expect(list.exitCode, text(list)).toBe(0);
   expect(text(list), "the installed scoped ClawHub plugin must be enabled").toMatch(
-    /OpenClaw Kitchen Sink[^\r\n]*enabled/i,
+    /Brave[^\r\n]*enabled/i,
   );
 
   const inspect = await sandboxBash(
     sandbox,
-    "HOME=/sandbox openclaw plugins inspect openclaw-kitchen-sink-fixture --runtime 2>&1",
+    "HOME=/sandbox openclaw plugins inspect brave --runtime 2>&1",
     {
       artifactName: "tc-net-restricted-clawhub-scoped-plugin-runtime-inspect",
       timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,

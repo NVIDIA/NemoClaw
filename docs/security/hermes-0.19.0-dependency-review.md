@@ -29,9 +29,9 @@ The Hermes sandbox image build fails if either installed dependency has another 
 The base image also replaces the published `python-multipart==0.0.27` lock resolution with the hash-verified and attested `python-multipart==0.0.32`.
 The base image overlays checksum-pinned Node.js `24.18.1` archives for both supported architectures and installs exact uv `0.11.33`; build-time assertions reject version drift before Hermes is installed.
 
-The `BASE_IMAGE` argument in `agents/hermes/Dockerfile` pins the patched multi-platform Open Container Initiative (OCI) index `sha256:3d54b928baef9df403227e846f73079d13ca8424a27cd5268ca97bac3f030b27`.
-GitHub Actions workflow `.github/workflows/base-image.yaml` run `31031662054`, attempt 1, built and published that replacement image from source commit `a7a7f3e470a75c404d316d2054445e16bb63b48c`, including the exact-source dashboard WhatsApp session-path patch.
-It supersedes index `sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96`, which workflow run `31006872948`, attempt 1, published from source commit `bd668121e918e7b1dda13062bed728f18150360e` after a push to `main`.
+The `BASE_IMAGE` argument in `agents/hermes/Dockerfile` pins the patched multi-platform Open Container Initiative (OCI) index `sha256:4295138eb70f938189430f8dc7b3cd5db0aa762234e64e398a6a5ef60803126c`.
+GitHub Actions workflow `.github/workflows/base-image.yaml` run `31636995117`, attempt 1, built and published that replacement image from source commit `7c721ae4d60fd54e11f4d0c7d0482ccd6ac8cded`, including the exact-source dashboard WhatsApp session-path patch and `libexpat1==2.8.3-1` for both supported architectures.
+It supersedes index `sha256:3d54b928baef9df403227e846f73079d13ca8424a27cd5268ca97bac3f030b27`, which workflow run `31031662054`, attempt 1, published from source commit `a7a7f3e470a75c404d316d2054445e16bb63b48c`.
 The selected image's `linux/amd64` and `linux/arm64` base-image builds passed the exact-source patch guard, locked bridge install, bridge-to-Baileys option assertions, and controlled-proxy WebSocket `CONNECT` regression.
 GitHub Actions must build the Hermes sandbox image from the selected base image, and the required live end-to-end (E2E) checks must pass before approval.
 
@@ -246,26 +246,26 @@ The `BASE_IMAGE` argument in `agents/hermes/Dockerfile` pins the following publi
 | Repository | `NVIDIA/NemoClaw` |
 | Workflow | `Images / Base Images` |
 | Workflow path | `.github/workflows/base-image.yaml` |
-| Trigger | `workflow_dispatch` from `fix/hermes-whatsapp-session-path` |
-| Producer run | `31031662054`, attempt 1, completed successfully |
-| Source commit | `a7a7f3e470a75c404d316d2054445e16bb63b48c` |
-| OCI index | `sha256:3d54b928baef9df403227e846f73079d13ca8424a27cd5268ca97bac3f030b27` |
+| Trigger | `push` to `main` |
+| Producer run | `31636995117`, attempt 1, completed successfully |
+| Source commit | `7c721ae4d60fd54e11f4d0c7d0482ccd6ac8cded` |
+| OCI index | `sha256:4295138eb70f938189430f8dc7b3cd5db0aa762234e64e398a6a5ef60803126c` |
 
 The selected index resolves to these platform manifests and image-configuration labels:
 
 | Platform | Child manifest | `org.opencontainers.image.source` | `org.opencontainers.image.revision` |
 | --- | --- | --- | --- |
-| `linux/amd64` | `sha256:63b5a1944a4613f90fa8f9f92f6a3ccb2ceac6df23bcefad0282ed4167e6c09c` | `https://github.com/NVIDIA/NemoClaw` | `a7a7f3e470a75c404d316d2054445e16bb63b48c` |
-| `linux/arm64` | `sha256:f30b5c2529bbb5c06de38d0c1a7018c27d6c08d5a917503fa354300f12e5568c` | `https://github.com/NVIDIA/NemoClaw` | `a7a7f3e470a75c404d316d2054445e16bb63b48c` |
+| `linux/amd64` | `sha256:f82972cf3d1497e60741ae0c48a870030d792e56652ee35868d30099cd93d831` | `https://github.com/NVIDIA/NemoClaw` | `7c721ae4d60fd54e11f4d0c7d0482ccd6ac8cded` |
+| `linux/arm64` | `sha256:cbb5f8a11a17e5e5c7ce7499f3c6aff507bac15cc348310923436eb2e0f1536c` | `https://github.com/NVIDIA/NemoClaw` | `7c721ae4d60fd54e11f4d0c7d0482ccd6ac8cded` |
 
 Each child manifest has the following per-platform Supply-chain Levels for Software Artifacts (SLSA) provenance:
 
 | Platform | Attestation manifest | SLSA provenance layer | Builder ID |
 | --- | --- | --- | --- |
-| `linux/amd64` | `sha256:6797db760d6c894b624a4e40614b33a611ca02ed772323dd0b097f8ca782beab` | `sha256:f95cea632fa5006fc78c193f7e550d869423818e8ba3ab2b48a6518746a7a43c` | `https://github.com/NVIDIA/NemoClaw/actions/runs/31031662054/attempts/1` |
-| `linux/arm64` | `sha256:3237354f9fe66b71b2e5e2fb9f4c1983c9c9151c53ecfdf7cf3ecbfee4029944` | `sha256:1ca19a6f81b3709df3e05fc39fc40a0425ce6473036909be61fa274569e858c5` | `https://github.com/NVIDIA/NemoClaw/actions/runs/31031662054/attempts/1` |
+| `linux/amd64` | `sha256:097d246b402e3483ddb408b9744c0e8db63a7cb33efcc781357d49c69fbee7b5` | `sha256:8e51f1fd6c647e30f1c2191862d013e7dbe07af28f4d29bcf09bb4770f04ba22` | `https://github.com/NVIDIA/NemoClaw/actions/runs/31636995117/attempts/1` |
+| `linux/arm64` | `sha256:47ae417ac5e5c925674b727020ef1c5eaa5b1090bb862a7a2ed1c40ca7e79cf3` | `sha256:461eaf36474d1e02aed2acb60be69b37a4d464bc0805681d975522948ea258af` | `https://github.com/NVIDIA/NemoClaw/actions/runs/31636995117/attempts/1` |
 
-Both in-toto layers use predicate type `https://slsa.dev/provenance/v1` and bind source `https://github.com/NVIDIA/NemoClaw` to revision `a7a7f3e470a75c404d316d2054445e16bb63b48c`.
+Both in-toto layers use predicate type `https://slsa.dev/provenance/v1` and bind source `https://github.com/NVIDIA/NemoClaw` to revision `7c721ae4d60fd54e11f4d0c7d0482ccd6ac8cded`.
 The selected index has no index-level attestation manifest.
 Each platform attestation manifest contains only its SLSA provenance layer and has no software bill of materials (SBOM) layer.
 
@@ -330,7 +330,7 @@ Each reviewed commit in the following table is an ancestor of `bd668121e918e7b1d
 | `HERMES-9` | High | Pin and test | The selected Python delta adds no advisory regression, and the affected multipart parser is replaced with attested `0.0.32` plus hash and runtime probes. |
 | `HERMES-10` | High | Pin and test | The exact-source patch updates Hermes metadata and its frozen lock together, selects `aiohttp==3.14.3`, `cryptography==50.0.0`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, and `tornado==6.5.7`, and fails the base image build on dependency inconsistency or installed-version drift. The `agents/hermes/Dockerfile` build checks `aiohttp==3.14.3` and `cryptography==50.0.0` in the Hermes sandbox image after messaging package installation. The check runs when `NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION` is `0` or `1`. The base image separately checksum-pins Node.js `24.18.1` and checks uv `0.11.33`. |
 | `HERMES-11` | High | Migrate, test, and runtime-proof | Root npm audit reports zero production findings, and the WhatsApp bridge removes the Baileys RC9 critical, high, and medium advisory entries. Both architectures still require native bridge and message-path evidence. |
-| `HERMES-12` | High | Pin and runtime-proof | Trusted workflow run `30779271312`, attempt 1, built source commit `340c47857596e7cc347541a0b32fe9e24f201bcd` and published OCI index `sha256:956c3d0c812ee6caa56f3b6e307819925d920604adcf73c4a9e6229788967634`. Run `31006872948`, attempt 1, published security-refreshed index `sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96` from source commit `bd668121e918e7b1dda13062bed728f18150360e`, whose platform histories check `aiohttp==3.14.3` and `cryptography==50.0.0`. Trusted workflow run `31031662054`, attempt 1, rebuilt source commit `a7a7f3e470a75c404d316d2054445e16bb63b48c` with the exact-source dashboard WhatsApp session-path patch and published replacement OCI index `sha256:3d54b928baef9df403227e846f73079d13ca8424a27cd5268ca97bac3f030b27`. The final Dockerfile pins that replacement index. The amd64 and arm64 base-image builds in the reviewed runs passed the exact-source patch guard, locked bridge install, bridge-to-Baileys option assertions, and the controlled-proxy WebSocket `CONNECT` regression; the live final-image WhatsApp evidence is recorded under `HERMES-22`. |
+| `HERMES-12` | High | Pin and runtime-proof | Trusted workflow run `30779271312`, attempt 1, built source commit `340c47857596e7cc347541a0b32fe9e24f201bcd` and published OCI index `sha256:956c3d0c812ee6caa56f3b6e307819925d920604adcf73c4a9e6229788967634`. Run `31006872948`, attempt 1, published security-refreshed index `sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96` from source commit `bd668121e918e7b1dda13062bed728f18150360e`, whose platform histories check `aiohttp==3.14.3` and `cryptography==50.0.0`. Trusted workflow run `31031662054`, attempt 1, rebuilt source commit `a7a7f3e470a75c404d316d2054445e16bb63b48c` with the exact-source dashboard WhatsApp session-path patch and published replacement OCI index `sha256:3d54b928baef9df403227e846f73079d13ca8424a27cd5268ca97bac3f030b27`. Run `31636995117`, attempt 1, rebuilt source commit `7c721ae4d60fd54e11f4d0c7d0482ccd6ac8cded` with `libexpat1==2.8.3-1` for amd64 and arm64 and published OCI index `sha256:4295138eb70f938189430f8dc7b3cd5db0aa762234e64e398a6a5ef60803126c`. The final Dockerfile pins that latest index. The amd64 and arm64 base-image builds in the reviewed runs passed the exact-source patch guard, locked bridge install, bridge-to-Baileys option assertions, and the controlled-proxy WebSocket `CONNECT` regression; the live final-image WhatsApp evidence is recorded under `HERMES-22`. |
 | `HERMES-13` | Medium | Document bounded residual | Static `state_files` entries online-back up the default profile only. Cron or Discord ledgers created by a process launched under `profiles/<name>` remain in the raw `profiles` tar capture and can be inconsistent during a concurrent snapshot. Dynamic profile-local SQLite discovery is generic snapshot work outside this upgrade PR. |
 | `HERMES-14` | High | Migrate and test | The browser evaluation denylist changed from default-on to opt-in. Generated configuration explicitly writes `browser.restrict_evaluate: true`, including when managed browser-gateway settings are merged, so the upgrade does not broaden page-context access. |
 | `HERMES-15` | Medium | Migrate and test | The omitted gateway session-reset policy changed from bounded daily and idle expiry to no automatic reset. Generated configuration explicitly writes the complete outgoing reset and notification policy to preserve the retention bound without inheriting mutable dependency defaults. |
@@ -368,7 +368,7 @@ The review records the following source and test evidence.
 The review records the following publication and registry evidence.
 
 - Hermes CI run `29768400292`, PyPI publication run `29768427462`, and Docker publication run `29768440304` completed successfully.
-- GitHub Actions workflow `.github/workflows/base-image.yaml` run `31031662054`, attempt 1, published the selected patched `linux/amd64` and `linux/arm64` base images; run `31006872948`, attempt 1, published the preceding security-refreshed index.
+- GitHub Actions workflow `.github/workflows/base-image.yaml` run `31636995117`, attempt 1, published the selected patched `linux/amd64` and `linux/arm64` base images and OCI index `sha256:4295138eb70f938189430f8dc7b3cd5db0aa762234e64e398a6a5ef60803126c`; run `31031662054`, attempt 1, published the superseded patched index, and run `31006872948`, attempt 1, published the preceding security-refreshed index.
 - PyPI Trusted Publisher attestations bind both `hermes-agent==0.19.0` artifacts to source commit `3ef6bbd201263d354fd83ec55b3c306ded2eb72a`.
 - The npm registry-integrity check matches the `hermes-agent==0.19.0` cross-check value recorded in this review.
 - OCI inspection records the immutable index, both child manifests, image-configuration source and revision labels, per-platform SLSA provenance, and build histories.
