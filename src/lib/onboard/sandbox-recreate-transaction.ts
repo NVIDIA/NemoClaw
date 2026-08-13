@@ -346,26 +346,30 @@ export function createCreatedSandboxLifecycle(
   const generation = runtime.targetGeneration ?? randomUUID();
   return {
     generation,
-    capture: (lifecycleRegistrationFields) => {
-      const observed = captureCreatedSandboxLifecycleRegistration(
+    capture: (lifecycleRegistrationFields) =>
+      captureCreatedSandboxLifecycleRegistration(
         target,
         generation,
         lifecycleRegistrationFields,
         observe,
+      ),
+    revalidate: (registration) => {
+      const verified = revalidateCreatedSandboxLifecycleRegistration(
+        target,
+        registration,
+        observe,
       );
       runtime.recordCreated({
         state: "ready",
-        liveIdentityFingerprint: observed.lifecycleLiveIdentityFingerprint,
+        liveIdentityFingerprint: verified.lifecycleLiveIdentityFingerprint,
       });
       return selectCreatedSandboxLifecycleRegistration(
         target.sandboxName,
-        observed,
+        verified,
         runtime.targetGeneration,
         runtime.registrationFields,
       );
     },
-    revalidate: (registration) =>
-      revalidateCreatedSandboxLifecycleRegistration(target, registration, observe),
   };
 }
 
@@ -584,7 +588,11 @@ export function recordSandboxRecreateTargetCreated(
   observation: SandboxRecreateObservation,
   now = new Date().toISOString(),
 ): CheckpointSandboxRecreateTransaction {
-  if (observation.state !== "ready" || !observation.liveIdentityFingerprint) {
+  if (
+    observation.state !== "ready" ||
+    !observation.liveIdentityFingerprint ||
+    !/^[0-9a-f]{64}$/u.test(observation.liveIdentityFingerprint)
+  ) {
     throw new Error("The journaled replacement must be ready with a stable OpenShell Id.");
   }
   const checkpoint = baseCheckpoint(session);
@@ -795,7 +803,7 @@ const NO_SANDBOX_RECREATE: SandboxRecreateRuntime = {
     );
   },
   confirmDeleted: () => undefined,
-  recordCreated: () => undefined,
+  recordCreated: (_observation) => undefined,
 };
 
 export function createSandboxRecreateRuntime(

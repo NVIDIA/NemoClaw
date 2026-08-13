@@ -404,6 +404,53 @@ describe("sandbox recreate journal", () => {
     });
   });
 
+  it("rejects a malformed identity at the lower runtime boundary (#8942)", () => {
+    const session = createSession({ sandboxName: "alpha" });
+    beginSandboxRecreateTransaction(
+      session,
+      beginInput({ state: "ready", liveIdentityFingerprint: SOURCE_ID }),
+    );
+    let observation: SandboxRecreateObservation = {
+      state: "ready",
+      liveIdentityFingerprint: SOURCE_ID,
+    };
+    const runtime = createSandboxRecreateRuntime(
+      {
+        loadSession: () => session,
+        updateSession: (mutator) => {
+          mutator(session);
+          return session;
+        },
+      },
+      {
+        id: TX_ID,
+        targetGeneration: TARGET_GENERATION,
+        targetIntentFingerprint: TARGET_INTENT,
+      },
+      "alpha",
+      "nemoclaw-31818",
+      SOURCE_ENTRY,
+      () => observation,
+      () => undefined,
+    );
+
+    runtime.advance("deleting");
+    observation = { state: "missing", liveIdentityFingerprint: null };
+    runtime.confirmDeleted();
+    runtime.advance("creating");
+
+    expect(() =>
+      runtime.recordCreated({
+        state: "ready",
+        liveIdentityFingerprint: "not-a-fingerprint",
+      }),
+    ).toThrow(/stable OpenShell Id/u);
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      phase: "creating",
+      targetLiveIdentityFingerprint: null,
+    });
+  });
+
   it("proves the journaled source at the delete edge before onboarding removes it", () => {
     const session = createSession({ sandboxName: "alpha" });
     beginSandboxRecreateTransaction(
@@ -943,7 +990,7 @@ describe("created sandbox lifecycle registration", () => {
       { state: "ready" as const, liveIdentityFingerprint: "not-a-fingerprint" },
       /valid live identity/u,
     ],
-  ])("does not journal a %s replacement before validation", (_label, invalid, expected) => {
+  ])("does not journal a %s replacement before validation (#8942)", (_label, invalid, expected) => {
     const fixture = creatingLifecycleFixture();
     fixture.setObservation(invalid);
 
@@ -956,17 +1003,23 @@ describe("created sandbox lifecycle registration", () => {
     });
 
     fixture.setObservation({ state: "ready", liveIdentityFingerprint: TARGET_ID });
-    expect(fixture.lifecycle.capture({ lifecycleGeneration: TARGET_GENERATION })).toEqual({
+    const captured = fixture.lifecycle.capture({ lifecycleGeneration: TARGET_GENERATION });
+    expect(captured).toEqual({
       lifecycleGeneration: TARGET_GENERATION,
       lifecycleLiveIdentityFingerprint: TARGET_ID,
     });
+    expect(fixture.session.checkpoint?.sandboxRecreate).toMatchObject({
+      phase: "creating",
+      targetLiveIdentityFingerprint: null,
+    });
+    expect(fixture.lifecycle.revalidate(captured)).toEqual(captured);
     expect(fixture.session.checkpoint?.sandboxRecreate).toMatchObject({
       phase: "created",
       targetLiveIdentityFingerprint: TARGET_ID,
     });
   });
 
-  it("can revalidate the journaled identity after transient identity drift", () => {
+  it("does not journal identity drift before registry publication (#8942)", () => {
     const fixture = creatingLifecycleFixture();
     fixture.setObservation({ state: "ready", liveIdentityFingerprint: TARGET_ID });
     const registration = fixture.lifecycle.capture({
@@ -975,9 +1028,17 @@ describe("created sandbox lifecycle registration", () => {
 
     fixture.setObservation({ state: "ready", liveIdentityFingerprint: FOREIGN_ID });
     expect(() => fixture.lifecycle.revalidate(registration)).toThrow(/identity changed/u);
+    expect(fixture.session.checkpoint?.sandboxRecreate).toMatchObject({
+      phase: "creating",
+      targetLiveIdentityFingerprint: null,
+    });
 
     fixture.setObservation({ state: "ready", liveIdentityFingerprint: TARGET_ID });
     expect(fixture.lifecycle.revalidate(registration)).toEqual(registration);
+    expect(fixture.session.checkpoint?.sandboxRecreate).toMatchObject({
+      phase: "created",
+      targetLiveIdentityFingerprint: TARGET_ID,
+    });
   });
 
   it("captures the Ready identity only from the owning gateway", () => {
