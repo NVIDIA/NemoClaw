@@ -108,6 +108,7 @@ describe("startSandbox", () => {
     const result = restoreStoppedSandboxStartupState("my-sandbox", {
       agent: "openclaw",
       restoreLockedStartupAccess: restoreAccess,
+      waitForSandboxReady: vi.fn(),
       restoreProcessState: restoreProcesses,
     });
 
@@ -126,6 +127,7 @@ describe("startSandbox", () => {
     restoreStoppedSandboxStartupState("my-sandbox", {
       agent: "hermes",
       restoreLockedStartupAccess: restoreAccess,
+      waitForSandboxReady: vi.fn(),
       restoreProcessState: restoreProcesses,
     });
 
@@ -133,7 +135,72 @@ describe("startSandbox", () => {
     expect(restoreProcesses).toHaveBeenCalledWith("my-sandbox");
   });
 
-  it("restores startup state before probing readiness after a stopped container starts (#8112)", async () => {
+  it("waits for OpenShell readiness after restoring sealed access and before recovering sandbox processes (#8978)", () => {
+    const restoreAccess = vi.fn();
+    const waitForSandboxReady = vi.fn();
+    const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
+
+    restoreStoppedSandboxStartupState("my-sandbox", {
+      agent: "openclaw",
+      restoreLockedStartupAccess: restoreAccess,
+      waitForSandboxReady,
+      restoreProcessState: restoreProcesses,
+    });
+
+    expect(waitForSandboxReady).toHaveBeenCalledWith("my-sandbox");
+    expect(restoreAccess.mock.invocationCallOrder[0]).toBeLessThan(
+      waitForSandboxReady.mock.invocationCallOrder[0],
+    );
+    expect(waitForSandboxReady.mock.invocationCallOrder[0]).toBeLessThan(
+      restoreProcesses.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("waits for OpenShell readiness before recovering a sealed-state-free Hermes sandbox (#8978)", () => {
+    const waitForSandboxReady = vi.fn();
+    const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
+
+    restoreStoppedSandboxStartupState("my-sandbox", {
+      agent: "hermes",
+      restoreLockedStartupAccess: vi.fn(),
+      waitForSandboxReady,
+      restoreProcessState: restoreProcesses,
+    });
+
+    expect(waitForSandboxReady.mock.invocationCallOrder[0]).toBeLessThan(
+      restoreProcesses.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("starts the container, then waits for readiness, then recovers, then probes the gateway (#8978)", async () => {
+    const restoreAccess = vi.fn();
+    const waitForSandboxReady = vi.fn();
+    const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
+    const h = harness({
+      restoreStartupState: (name: string) =>
+        restoreStoppedSandboxStartupState(name, {
+          agent: "openclaw",
+          restoreLockedStartupAccess: restoreAccess,
+          waitForSandboxReady,
+          restoreProcessState: restoreProcesses,
+        }),
+    });
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    const order = [
+      h.recoverDockerDriverSandbox.mock.invocationCallOrder[0],
+      restoreAccess.mock.invocationCallOrder[0],
+      waitForSandboxReady.mock.invocationCallOrder[0],
+      restoreProcesses.mock.invocationCallOrder[0],
+      h.verifyGateway.mock.invocationCallOrder[0],
+    ];
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(new Set(order).size).toBe(order.length);
+  });
+
+  it("restores startup state before the final gateway and host-forward probe (#8112)", async () => {
     const h = harness();
 
     const result = await startSandbox("my-sandbox", h.deps);
