@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { DCODE_MANAGED_EXEC_LAUNCHER } from "../actions/sandbox/connect-inference-route-probe";
-import type { AgentDefinition } from "./defs";
+import { type AgentDefinition, loadAgent } from "./defs";
 import { buildAgentSmokeArgs, runAgentSmokeCommands } from "./terminal-smoke";
 
 function agent(name: string): AgentDefinition {
@@ -36,6 +36,35 @@ describe("terminal agent smoke command invocation", () => {
     expect(args.at(-1)).toBe("hermes --version");
   });
 
+  it("pins every smoke exec to the owning OpenShell gateway (#8942)", () => {
+    const capture = vi.fn((_args: string[]) => ({
+      status: 0,
+      output: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
+    }));
+
+    expect(
+      runAgentSmokeCommands(
+        "alpha",
+        loadAgent("langchain-deepagents-code"),
+        capture,
+        "nemoclaw-8091",
+      ),
+    ).toEqual({ ok: true });
+
+    expect(capture).toHaveBeenCalled();
+    for (const [args] of capture.mock.calls) {
+      expect(args.slice(0, 7)).toEqual([
+        "sandbox",
+        "exec",
+        "-n",
+        "alpha",
+        "-g",
+        "nemoclaw-8091",
+        "--no-tty",
+      ]);
+    }
+  });
+
   it("does not add a login shell to Deep Agents Code smoke exec (#8624)", () => {
     const issued: string[][] = [];
     const result = runAgentSmokeCommands(
@@ -45,7 +74,7 @@ describe("terminal agent smoke command invocation", () => {
         issued.push(args);
         return {
           status: 0,
-          output: `NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n`,
+          output: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
         };
       },
     );

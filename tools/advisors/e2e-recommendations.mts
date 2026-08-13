@@ -9,7 +9,11 @@ import path from "node:path";
 import { getTarget, listTargets } from "../../test/e2e/registry/registry.ts";
 import { liveTargetSupport } from "../../test/e2e/registry/runtime-support.ts";
 import { moduleTagDeclarations } from "../e2e/module-tags.mts";
-import { E2E_TARGET_CATALOGUE, isPrCandidateCatalogueTarget } from "../e2e/target-catalogue.mts";
+import {
+  catalogueRecommendationSelectorIds,
+  E2E_TARGET_CATALOGUE,
+  isPrAdvisorSelectableCatalogueTarget,
+} from "../e2e/target-catalogue.mts";
 import { containsCommandShapedE2eText } from "./e2e-text.mts";
 import { enumValue, recordItems, stringOrUndefined } from "./json.mts";
 import { buildRiskPlan, isPrE2ePlanningJob, type RiskPlan } from "./risk-plan.mts";
@@ -124,12 +128,25 @@ type E2eTargetNormalizationContext = {
   changedCredentialFreeTests: E2eChangedCredentialFreeTest[];
 };
 
+function catalogueRecommendationJobs(): E2eWorkflowJob[] {
+  const testFilesByTarget = new Map<string, Set<string>>();
+  for (const target of E2E_TARGET_CATALOGUE.filter(isPrAdvisorSelectableCatalogueTarget)) {
+    const testFiles = testFilesByTarget.get(target.targetId) ?? new Set<string>();
+    testFiles.add(target.testFile);
+    testFilesByTarget.set(target.targetId, testFiles);
+  }
+  return [...testFilesByTarget.entries()].map(([id, testFiles]) => ({
+    id,
+    liveTestFiles: [...testFiles].sort(),
+  }));
+}
+
 export function trustedE2eRecommendationInventory(): TrustedE2eRecommendationInventory {
   const workflowText = readTrustedE2eWorkflowText();
   const credentialFreeTests = discoverTrustedCredentialFreeTests();
   const candidateJobIds = new Set(extractAllowedE2eJobIds(workflowText, credentialFreeTests));
   const allJobIds = [
-    ...new Set([...candidateJobIds, ...E2E_TARGET_CATALOGUE.map(({ id }) => id)]),
+    ...new Set([...candidateJobIds, ...E2E_TARGET_CATALOGUE.map(({ targetId }) => targetId)]),
   ].sort();
   return {
     workflow: E2E_WORKFLOW,
@@ -365,17 +382,17 @@ function buildE2eTargetNormalizationContext(
   const trustedWorkflowText = readTrustedE2eWorkflowText();
   const trustedCredentialFreeTests = discoverTrustedCredentialFreeTests();
   const allowedJobIds = new Set(
-    extractAllowedE2eJobIds(trustedWorkflowText, trustedCredentialFreeTests),
+    [
+      ...extractAllowedE2eJobIds(trustedWorkflowText, trustedCredentialFreeTests),
+      ...catalogueRecommendationSelectorIds(),
+    ],
   );
   // The analyzed workflow is untrusted input. It may explain why a changed test has
-  // no trusted workflow job, but it must never introduce a selector absent from the
-  // trusted workflow.
+  // no trusted selector, but it must never introduce one absent from the trusted
+  // workflow or catalogue.
   const freeStandingJobs = [
     ...extractFreeStandingE2eJobs(trustedWorkflowText),
-    ...E2E_TARGET_CATALOGUE.filter(isPrCandidateCatalogueTarget).map(({ id, testFile }) => ({
-      id,
-      liveTestFiles: [testFile],
-    })),
+    ...catalogueRecommendationJobs(),
   ]
     .filter((job) => allowedJobIds.has(job.id))
     .sort((left, right) => left.id.localeCompare(right.id));
@@ -481,7 +498,7 @@ function extractAllowedE2eJobIds(
   if (jobs.some(({ id }) => id === SHARED_E2E_JOB_ID)) {
     allowed.push(...credentialFreeTests.map(({ id }) => id));
   }
-  allowed.push(...E2E_TARGET_CATALOGUE.filter(isPrCandidateCatalogueTarget).map(({ id }) => id));
+  allowed.push(...catalogueRecommendationSelectorIds());
   return [...new Set(allowed)].sort();
 }
 
