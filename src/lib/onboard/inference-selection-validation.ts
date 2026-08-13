@@ -158,7 +158,7 @@ export function createInferenceSelectionValidationHelpers(
         deps.teardownOrphanManagedGatewayOnAbort ??
         (() => {
           const { teardownOrphanManagedGatewayOnAbort } =
-            require("./abort-gateway-teardown") as typeof import("./abort-gateway-teardown");
+            require("./gateway-destroy") as typeof import("./gateway-destroy");
           teardownOrphanManagedGatewayOnAbort();
         });
       teardown();

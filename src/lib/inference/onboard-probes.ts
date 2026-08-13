@@ -1161,7 +1161,7 @@ export function shouldSmokeOpenAiLikeOnboardRoute(
   );
 }
 
-export async function verifyOnboardInferenceSmoke(options: any) {
+export async function verifyOnboardInferenceSmoke(options: any, dependencies: any = {}) {
   if (
     !options.forceOpenAiLike &&
     !shouldSmokeOpenAiLikeOnboardRoute(options.provider, options.credentialEnv)
@@ -1190,7 +1190,9 @@ export async function verifyOnboardInferenceSmoke(options: any) {
   const apiKey = credentialEnv
     ? resolveProviderCredential(credentialEnv) || getCredential(credentialEnv) || ""
     : "";
-  const probe = await probeOpenAiLikeEndpointOptimized(endpointUrl, options.model, apiKey, {
+  const optimizedProbe =
+    dependencies.probeOpenAiLikeEndpointOptimized ?? probeOpenAiLikeEndpointOptimized;
+  const probe = await optimizedProbe(endpointUrl, options.model, apiKey, {
     authMode: getProbeAuthMode(options.provider),
     extraHeaders: getProbeExtraHeaders(options.provider),
     skipResponsesProbe: true,
@@ -1217,8 +1219,11 @@ export async function verifyOnboardInferenceSmoke(options: any) {
   );
   // #8952: tear down an unowned managed gateway before fatal exit.
   try {
-    const { teardownOrphanManagedGatewayOnAbort } =
-      require("../onboard/abort-gateway-teardown") as typeof import("../onboard/abort-gateway-teardown");
+    const teardownOrphanManagedGatewayOnAbort =
+      dependencies.teardownOrphanManagedGatewayOnAbort ??
+      (
+        require("../onboard/gateway-destroy") as typeof import("../onboard/gateway-destroy")
+      ).teardownOrphanManagedGatewayOnAbort;
     teardownOrphanManagedGatewayOnAbort();
   } catch (error) {
     // Helper never throws; this covers require/load failures only.

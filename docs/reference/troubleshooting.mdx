@@ -575,6 +575,40 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 The next installer run must continue past the OpenShell installation step without reporting a version mismatch.
 
+### Docker Driver Gateway Reports a Missing Migration
+
+Onboarding can stop when the Docker driver gateway log contains both parts of this error:
+
+```text
+migration N was previously applied
+is missing in the resolved migrations
+```
+
+NemoClaw identifies `<selected-state-dir>/openshell.db` as incompatible with the installed OpenShell migration set.
+This failure can occur after an OpenShell downgrade.
+NemoClaw offers state-move recovery only when the current gateway process wrote this error and then exited.
+The diagnostic prints the database path, an unused archive path beside the selected state directory, and the profile-specific onboarding command.
+
+<Warning>
+The selected state directory contains the gateway database, mutual TLS private keys, JSON Web Token signing material, and every sandbox and provider registration on the selected gateway.
+Moving it makes those registrations and credentials unavailable to the fresh gateway.
+Other sandboxes on the selected gateway can require re-onboarding and credential entry.
+</Warning>
+
+Use this recovery only after the diagnostic confirms that the gateway process exited.
+Run the exact commands that NemoClaw prints:
+
+1. Create the printed `.incompatible` archive with owner-only access.
+   If that path exists, NemoClaw adds a numeric suffix instead of nesting or replacing an earlier archive.
+2. Move the selected state directory into the archive as `gateway-state`.
+3. Run the printed onboarding command only after the archive and move succeed.
+   Standard onboarding prints `$$nemoclaw onboard --resume`.
+   The portable experimental profile prints its required fresh-onboarding command because it does not support resume.
+
+The archive remains beside the selected state directory and retains the previous gateway records and credentials.
+Keep it owner-only until onboarding completes and every required sandbox and provider registration is restored.
+Delete the archive only after you no longer need its gateway records or credentials for recovery.
+
 ### Installer Reports That the Systemd User Manager Is Unavailable
 
 On Linux, an OpenShell package can install `/usr/lib/systemd/user/openshell-gateway.service` on a host without a reachable systemd user manager.

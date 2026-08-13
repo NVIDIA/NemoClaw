@@ -7,12 +7,18 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { getCredential } from "../credentials/store";
 import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import { servingProfileProvenance } from "../inference/serving/profile-provenance";
 import { resolveOnboardOptions, runOnboardCommand } from "./command";
 import type { OnboardFlags } from "./command-support";
+import { PortableInferenceDescriptorError } from "./experimental/portable-inference-descriptor";
 import { invalidGatewayManagementDeclarationError } from "./gateway-management";
 import { GatewayAuthorityError } from "./gateway-teardown-authority";
+import {
+  LOCAL_MODEL_PROFILE_ENABLED_ENV,
+  LOCAL_MODEL_PROFILE_RUNTIME_ENV,
+} from "./local-model-profile/plan";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -145,6 +151,35 @@ describe("onboard command options", () => {
     expect(errors.join("\n")).toContain("changed since onboarding started");
   });
 
+  it("records installer local-model profile intent before onboarding and reuses it on resume", () => {
+    const catalog = loadServingCatalog();
+    const fresh = resolve(
+      {},
+      {
+        env: {
+          [LOCAL_MODEL_PROFILE_ENABLED_ENV]: "1",
+          [LOCAL_MODEL_PROFILE_RUNTIME_ENV]: "vllm",
+        },
+        loadServingCatalog: () => catalog,
+      },
+    );
+
+    expect(fresh.servingProfile).toBeNull();
+    expect(fresh.servingProfileProvenance?.preset.id).toBe("local-model-profile.vllm.spark.v1");
+
+    const resumed = resolve(
+      { resume: true },
+      {
+        env: {},
+        loadServingCatalog: () => catalog,
+        loadSession: () => ({
+          servingProfileProvenance: fresh.servingProfileProvenance,
+        }),
+      },
+    );
+    expect(resumed.servingProfileProvenance).toEqual(fresh.servingProfileProvenance);
+  });
+
   it("keeps legacy resume compatible but refuses to add new profile intent (#8384)", () => {
     expect(
       resolve({ resume: true }, { loadSession: () => ({}) as never }).servingProfile,
@@ -215,6 +250,7 @@ describe("onboard command options", () => {
       autoYes: true,
       noOllamaAutostart: true,
       experimentalProfile: null,
+      portableInferenceActivation: null,
       servingProfile: null,
       servingProfileProvenance: null,
     });
@@ -243,12 +279,13 @@ describe("onboard command options", () => {
       autoYes: false,
       noOllamaAutostart: false,
       experimentalProfile: null,
+      portableInferenceActivation: null,
       servingProfile: null,
       servingProfileProvenance: null,
     });
   });
 
-  it("maps repeated host mounts when the selected runtime provider supports them", () => {
+  it("maps repeated Linux host mounts and rejects unsupported host platforms", () => {
     const first = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
     const second = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
     const values = [`${first}:/sandbox/project`, `${second}:/sandbox/reference`];
@@ -267,27 +304,26 @@ describe("onboard command options", () => {
           sourceIdentity: { device: expect.any(String), inode: expect.any(String) },
         },
       ]);
+      expect(() => resolve({ "host-mount": values }, { platform: "darwin" })).toThrow("exit:1");
     } finally {
       fs.rmSync(first, { recursive: true, force: true });
       fs.rmSync(second, { recursive: true, force: true });
     }
   });
 
-  it.each([
-    ["darwin", "arm64", "docker", "has not qualified read-only host mounts"],
-    ["win32", "x64", "kubernetes", "Kubernetes hostPath semantics"],
-  ] as const)("reports why the runtime provider selected for %s rejects host mounts", (platform, arch, provider, reason) => {
-    const source = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
-    const error = vi.fn();
-    try {
-      expect(() =>
-        resolve({ "host-mount": [`${source}:/sandbox/project`] }, { platform, arch, error }),
-      ).toThrow("exit:1");
-      expect(error.mock.calls.flat().join("\n")).toContain(`Runtime provider '${provider}'`);
-      expect(error.mock.calls.flat().join("\n")).toContain(reason);
-    } finally {
-      fs.rmSync(source, { recursive: true, force: true });
-    }
+  it("rejects host mounts for the portable Podman profile before path or runtime effects", () => {
+    const errors: string[] = [];
+
+    expect(() =>
+      resolve(
+        {
+          "experimental-profile": "portable",
+          "host-mount": ["/path/that/need/not/exist:/sandbox/project"],
+        },
+        { platform: "linux", error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("requires the OpenShell Docker driver");
   });
 
   it("resolves the portable profile to deterministic unattended defaults", () => {
@@ -300,28 +336,6 @@ describe("onboard command options", () => {
       noGpu: false,
       sandboxGpu: null,
     });
-  });
-
-  it.each([
-    ["the portable flag", { "experimental-profile": "portable" }, {}],
-    ["the portable environment", {}, { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" }],
-  ] as const)("rejects host mounts with Podman's declared reason for %s", (_label, flags, env) => {
-    const source = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
-    const error = vi.fn();
-    try {
-      expect(() =>
-        resolve(
-          { ...flags, "host-mount": [`${source}:/sandbox/project`] },
-          { platform: "linux", env, error },
-        ),
-      ).toThrow("exit:1");
-      expect(error.mock.calls.flat().join("\n")).toContain("Runtime provider 'podman'");
-      expect(error.mock.calls.flat().join("\n")).toContain(
-        "Read-only host mounts are not qualified for the Podman runtime provider.",
-      );
-    } finally {
-      fs.rmSync(source, { recursive: true, force: true });
-    }
   });
 
   it("rejects resume when the portable profile requires a deterministic fresh install", () => {
@@ -499,14 +513,35 @@ describe("onboard command options", () => {
     expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
   });
 
-  it("selects only the broad Personal preset for local portable onboarding (#8991)", async () => {
+  it("records an installer profile without activating the disabled generic preset", async () => {
+    const env: NodeJS.ProcessEnv = {
+      [LOCAL_MODEL_PROFILE_ENABLED_ENV]: "1",
+      [LOCAL_MODEL_PROFILE_RUNTIME_ENV]: "vllm",
+    };
+    await runOnboardCommand({
+      flags: {},
+      env,
+      runOnboard: async (options) => {
+        expect(options.servingProfile).toBeNull();
+        expect(options.servingProfileProvenance?.preset.id).toBe(
+          "local-model-profile.vllm.spark.v1",
+        );
+        expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
+      },
+    });
+
+    expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
+  });
+
+  it("preserves an explicit preset list during portable onboarding (#8991)", async () => {
+    const explicitPresets = "weather,public-reference,github";
     const env: NodeJS.ProcessEnv = {
       NEMOCLAW_EXPERIMENTAL_PROFILE: "previous-profile",
       NEMOCLAW_PROVIDER: "previous-provider",
       NEMOCLAW_MODEL: "previous-model",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "0",
       NEMOCLAW_POLICY_MODE: "previous-mode",
-      NEMOCLAW_POLICY_PRESETS: "previous-presets",
+      NEMOCLAW_POLICY_PRESETS: explicitPresets,
       NEMOCLAW_POLICY_TIER: "previous-tier",
       NEMOCLAW_TOOL_DISCLOSURE: "progressive",
     };
@@ -514,6 +549,7 @@ describe("onboard command options", () => {
     await runOnboardCommand({
       flags: { "experimental-profile": "portable" },
       env,
+      loadPortableInferenceDescriptor: async () => null,
       runOnboard: async () => {
         for (const key of [
           "NEMOCLAW_EXPERIMENTAL_PROFILE",
@@ -536,7 +572,7 @@ describe("onboard command options", () => {
       NEMOCLAW_MODEL: "qwen3-vl:4b",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
       NEMOCLAW_POLICY_MODE: "custom",
-      NEMOCLAW_POLICY_PRESETS: "personal-open-internet",
+      NEMOCLAW_POLICY_PRESETS: explicitPresets,
       NEMOCLAW_POLICY_TIER: "personal",
       NEMOCLAW_TOOL_DISCLOSURE: "direct",
     });
@@ -546,10 +582,111 @@ describe("onboard command options", () => {
       NEMOCLAW_MODEL: "previous-model",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "0",
       NEMOCLAW_POLICY_MODE: "previous-mode",
-      NEMOCLAW_POLICY_PRESETS: "previous-presets",
+      NEMOCLAW_POLICY_PRESETS: explicitPresets,
       NEMOCLAW_POLICY_TIER: "previous-tier",
       NEMOCLAW_TOOL_DISCLOSURE: "progressive",
     });
+  });
+
+  it(
+    "defaults portable onboarding to the broad Personal preset when no list is supplied (#8991)",
+    async () => {
+      const env: NodeJS.ProcessEnv = {};
+      let observedPresets: string | undefined;
+
+      await runOnboardCommand({
+        flags: { "experimental-profile": "portable" },
+        env,
+        loadPortableInferenceDescriptor: async () => null,
+        runOnboard: async () => {
+          observedPresets = env.NEMOCLAW_POLICY_PRESETS;
+        },
+      });
+
+      expect(observedPresets).toBe("personal-open-internet");
+      expect(env.NEMOCLAW_POLICY_PRESETS).toBeUndefined();
+    },
+  );
+
+  it("does not change an explicit preset list outside portable onboarding (#8991)", async () => {
+    const env: NodeJS.ProcessEnv = {
+      NEMOCLAW_POLICY_PRESETS: "weather,public-reference,github",
+    };
+    let observedPresets: string | undefined;
+
+    await runOnboardCommand({
+      flags: {},
+      env,
+      runOnboard: async () => {
+        observedPresets = env.NEMOCLAW_POLICY_PRESETS;
+      },
+    });
+
+    expect(observedPresets).toBe("weather,public-reference,github");
+    expect(env.NEMOCLAW_POLICY_PRESETS).toBe("weather,public-reference,github");
+  });
+
+  it("configures portable onboarding from an admitted descriptor without exporting its credential", async () => {
+    vi.stubEnv("COMPATIBLE_API_KEY", undefined);
+    const env: NodeJS.ProcessEnv = {};
+    const runOnboard = vi.fn(async (options) => {
+      expect(options.portableInferenceActivation).toEqual({
+        schemaVersion: 1,
+        baseUrl: "https://inference.example.test/v1",
+        model: "vendor/model-1",
+        expiresAt: "2026-08-10T18:05:00Z",
+      });
+      expect(env).toMatchObject({
+        NEMOCLAW_PROVIDER: "custom",
+        NEMOCLAW_MODEL: "vendor/model-1",
+        NEMOCLAW_ENDPOINT_URL: "https://inference.example.test/v1",
+        NEMOCLAW_PREFERRED_API: "openai-completions",
+      });
+      expect(env.COMPATIBLE_API_KEY).toBeUndefined();
+      expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+      expect(getCredential("COMPATIBLE_API_KEY")).toBe("runtime-only-secret");
+    });
+
+    await runOnboardCommand({
+      flags: { "experimental-profile": "portable" },
+      env,
+      loadPortableInferenceDescriptor: async () => ({
+        schemaVersion: 1,
+        apiKey: "runtime-only-secret",
+        baseUrl: "https://inference.example.test/v1",
+        model: "vendor/model-1",
+        expiresAt: "2026-08-10T18:05:00Z",
+      }),
+      runOnboard,
+    });
+
+    expect(runOnboard).toHaveBeenCalledOnce();
+    expect(env.NEMOCLAW_PROVIDER).toBeUndefined();
+    expect(env.NEMOCLAW_ENDPOINT_URL).toBeUndefined();
+    expect(getCredential("COMPATIBLE_API_KEY")).toBeNull();
+  });
+
+  it("fails before onboarding when a present portable descriptor is invalid", async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const errors: string[] = [];
+    const runOnboard = vi.fn(async () => {});
+
+    await expect(
+      runOnboardCommand({
+        flags: { "experimental-profile": "portable" },
+        env,
+        loadPortableInferenceDescriptor: async () => {
+          throw new PortableInferenceDescriptorError("Runtime inference descriptor has expired.");
+        },
+        runOnboard,
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    expect(runOnboard).not.toHaveBeenCalled();
+    expect(env).toEqual({});
+    expect(errors).toEqual(["  Runtime inference descriptor has expired."]);
   });
 
   it("scopes an agents manifest to one onboarding run", async () => {
@@ -592,6 +729,7 @@ describe("onboard command options", () => {
         "NEMOCLAW_PROVIDER",
         "NEMOCLAW_MODEL",
         "NEMOCLAW_OLLAMA_NO_AUTOSTART",
+        "NEMOCLAW_POLICY_PRESETS",
       ],
     },
     {
