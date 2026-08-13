@@ -244,37 +244,6 @@ print_node_heap_oom_guidance() {
   printf 'Next: %s\n' "${remediation}" >&2
 }
 
-check_quiet_command() {
-  local label="$1"
-  local remediation="$2"
-  local classification command_status matcher_status pipeline_result
-  local -a pipeline_status
-  shift 2
-
-  # Drain the complete stream and retain one classification word. This bounds
-  # shell memory and keeps command output out of the doctor report.
-  pipeline_result="$(
-    "$@" 2>&1 | awk '
-      index($0, "JavaScript heap out of memory") { found = 1 }
-      END { printf "%s", found ? "heap" : "other" }
-    '
-    pipeline_status=("${PIPESTATUS[@]}")
-    printf '|%s|%s' "${pipeline_status[0]}" "${pipeline_status[1]}"
-  )"
-  IFS='|' read -r classification command_status matcher_status <<<"${pipeline_result}"
-
-  if [ "${command_status}" = "0" ] && [ "${matcher_status}" = "0" ]; then
-    pass "${label}"
-  elif [ "${classification}" = "heap" ] && [ "${matcher_status}" = "0" ]; then
-    # Node.js derives its default old-space limit from host memory, so this
-    # reports the host size rather than a fault in the checked sources.
-    fail "${label}: ran out of Node.js heap" \
-      "Raise the limit, then rerun: export NODE_OPTIONS=--max-old-space-size=5120"
-  else
-    fail "${label}: failed" "${remediation}"
-  fi
-}
-
 check_quiet_command_with_heap_hint() {
   local label="$1"
   local remediation="$2"
@@ -379,7 +348,10 @@ run_setup_step_with_heap_hint() {
   shift 2
 
   printf '\n==> %s\n' "${label}"
-  output_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-dev-setup.XXXXXX")" || return 1
+  output_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-dev-setup.XXXXXX")" || {
+    printf 'Setup stopped while attempting: %s\n' "${label}" >&2
+    return 1
+  }
   if "$@" >"${output_file}" 2>&1; then
     rm -f "${output_file}"
     return 0

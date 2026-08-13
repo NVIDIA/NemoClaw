@@ -522,6 +522,20 @@ describe("contributor environment doctor", () => {
     expect(result.output).not.toContain("Native stack trace");
   });
 
+  it("reports an actionable heap-limit remedy when the plugin type check exhausts V8 memory", () => {
+    const fixture = createFixture();
+    writeNodeHeapOomTool(path.join(fixture.repo, "nemoclaw", "node_modules", ".bin", "tsc"));
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Plugin type check: ran out of Node.js heap");
+    expect(result.output).toContain(
+      "Next: Run: NODE_OPTIONS=--max-old-space-size=5120 npm --prefix nemoclaw run build",
+    );
+    expect(result.output).not.toContain("Native stack trace");
+  });
+
   it("rejects a foreign PATH CLI even when the global package links to this checkout", () => {
     const fixture = createFixture();
     fs.rmSync(path.join(fixture.fakeBin, "nemoclaw"));
@@ -785,6 +799,37 @@ describe("contributor repository setup", () => {
     expect(result.output).not.toContain("Native stack trace");
     expect(result.output).not.toContain("Type-check the plugin without emitting files");
     expect(readCommandLog(fixture)).toContain("npm run typecheck:cli");
+  });
+
+  it("stops plugin type-check setup failures with a heap-limit remedy instead of the V8 stack", () => {
+    const fixture = createFixture();
+    writeNodeHeapOomTool(path.join(fixture.repo, "nemoclaw", "node_modules", ".bin", "tsc"));
+
+    const result = runSetup(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Node.js exhausted its V8 heap while running this type check.");
+    expect(result.output).toContain(
+      "Next: Run: NODE_OPTIONS=--max-old-space-size=5120 npm --prefix nemoclaw run build",
+    );
+    expect(result.output).toContain(
+      "Setup stopped while attempting: Type-check the plugin without emitting files",
+    );
+    expect(result.output).not.toContain("Native stack trace");
+    const commands = readCommandLog(fixture);
+    expect(commands).toContain("npm --prefix nemoclaw run build");
+    expect(commands).not.toContain("prek install");
+  });
+
+  it("names the setup step when the heap-check output capture cannot be created", () => {
+    const fixture = createFixture();
+    writeTool(fixture.fakeBin, "mktemp", "exit 1");
+
+    const result = runSetup(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Setup stopped while attempting: Type-check the CLI");
+    expect(result.output).not.toContain("Install repository Git hooks");
   });
 
   it.each([
