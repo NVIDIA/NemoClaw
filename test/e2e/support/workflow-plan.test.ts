@@ -597,6 +597,38 @@ describe("E2E workflow plan", () => {
     expect(output).toBe(`${JSON.stringify(parsed)}\n`);
   });
 
+  it("renders the selected matrix and retained jobs as a readable plan", () => {
+    const plan = buildE2eWorkflowPlan({ jobs: "hermes-e2e" });
+    let output = "";
+    const write = process.stdout.write;
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      output += chunk.toString();
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      runE2eWorkflowPlanCli(["--summary", "--jobs", "hermes-e2e"]);
+    } finally {
+      process.stdout.write = write;
+    }
+
+    expect(output).toBe(renderE2eWorkflowPlanSummary(plan));
+    expect(output).toContain("| Target or job | Execution | Runner |");
+    expect(output).toContain("| `hermes-e2e` | retained workflow job | declared by job |");
+
+    const completeSummary = renderE2eWorkflowPlanSummary(buildE2eWorkflowPlan());
+    expect(completeSummary).toContain("| typed registry |");
+    expect(completeSummary).toContain("| shared E2E job |");
+    expect(completeSummary).toContain("| `standard` profile |");
+    expect(completeSummary).toContain("| `nvidia-api` profile |");
+    expect(completeSummary).toContain("| `nvidia-inference` profile |");
+  });
+
+  it("keeps CI and readable summary output modes separate", () => {
+    expect(() => runE2eWorkflowPlanCli(["--ci-output", "--summary"])).toThrow(
+      "--ci-output and --summary cannot be combined",
+    );
+  });
+
   it("reports CLI failures as workflow annotations", () => {
     const result = spawnSync(
       TSX,
