@@ -1215,6 +1215,17 @@ export async function verifyOnboardInferenceSmoke(options: any) {
   console.error(
     `  Upstream error: ${compactText(redact(probe.message || "unknown inference failure"))}`,
   );
+  // #8952: tear down an unowned managed gateway before fatal exit.
+  try {
+    const { teardownOrphanManagedGatewayOnAbort } =
+      require("../onboard/abort-gateway-teardown") as typeof import("../onboard/abort-gateway-teardown");
+    teardownOrphanManagedGatewayOnAbort();
+  } catch (error) {
+    // Helper never throws; this covers require/load failures only.
+    console.error(
+      `  Gateway teardown after onboard abort failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   process.exit(1);
 }
 
