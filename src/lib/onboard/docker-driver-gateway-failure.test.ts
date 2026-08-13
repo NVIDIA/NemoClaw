@@ -225,7 +225,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
   // this failure, but the start loop reports it after the poll budget expires,
   // so `childExit.exited` is false. Withholding the diagnosis in that state
   // left the reported path with the raw sqlx text and no remedy.
-  it("prints the state move when the liveness probe reports no gateway process and the exit was not observed (#8797)", () => {
+  it("prints the state move when the recorded gateway process stopped and the exit was not observed (#8797)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
     const log = path.join(dir, "openshell-gateway.log");
     fs.writeFileSync(
@@ -240,7 +240,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       reportDockerDriverGatewayStartFailure(log, makeExitState(), {
         exitOnFailure: false,
         launchLogOffset: 0,
-        isGatewayProcessAlive: () => false,
+        isGatewayProcessStopped: () => true,
       });
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
       expect(joined).toContain("did not become healthy within the timeout");
@@ -257,8 +257,8 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
   // the directory. `Restart=on-failure` in the managed unit can also start a
   // replacement, so a user-run check cannot stand in for this probe (#8797).
   it.each([
-    ["the liveness probe reports a live gateway", () => true],
-    ["no liveness probe is available", undefined],
+    ["the recorded gateway process is still running", () => false],
+    ["no recorded gateway process can be read", undefined],
   ] as const)("withholds the state move when %s (#8797)", (_scenario, probe) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
     const log = path.join(dir, "openshell-gateway.log");
@@ -273,7 +273,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       reportDockerDriverGatewayStartFailure(log, makeExitState(), {
         exitOnFailure: false,
         launchLogOffset: 0,
-        isGatewayProcessAlive: probe,
+        isGatewayProcessStopped: probe,
       });
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
       expect(joined).toContain("cannot use the existing gateway database");

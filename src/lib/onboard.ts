@@ -1951,11 +1951,7 @@ async function startDockerDriverGateway({
     return;
   }
 
-  reportGatewayFailure(logPath, childExit, {
-    exitOnFailure,
-    launchLogOffset: log.startOffset,
-    isGatewayProcessAlive: isDockerDriverGatewayProcessAlive,
-  });
+  reportGatewayFailure(logPath, childExit, { exitOnFailure, launchLogOffset: log.startOffset });
   if (gatewayStartup === "exited") {
     throw new Error("Docker-driver gateway failed to start because the process exited");
   }

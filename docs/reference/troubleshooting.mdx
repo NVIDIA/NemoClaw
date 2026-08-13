@@ -602,7 +602,7 @@ Other sandboxes on the selected gateway can require re-onboarding and credential
 
 NemoClaw cannot always observe the gateway process exit.
 The start loop also reports this failure after its health poll budget expires.
-When NemoClaw did not observe the exit, it reads the recorded gateway PID and confirms process identity before it offers the state move.
+When NemoClaw did not observe the exit, it reads the recorded gateway PID and checks whether that process still runs before it offers the state move.
 
 The diagnosis prints in both cases. The state move prints only when NemoClaw establishes that no gateway process holds the directory.
 When NemoClaw cannot establish that, it prints the stop command for the managed gateway service instead, followed by the onboarding command:
