@@ -31,8 +31,11 @@ type GatewayControlDockerStubOptions = {
 
 const launchReadinessObservationStubLines = [
   'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [[ "$*" == *"-- sh -s"* ]]; then',
-  `  printf '%s\\n' ${JSON.stringify(LAUNCH_READINESS_PAIRING_QUALIFICATION_OUTPUT)}`,
-  "  exit 0",
+  "  qualification_script=$(cat)",
+  '  if [[ "$qualification_script" == *"NEMOCLAW_OPENCLAW_STATE_DIR_B64="* ]]; then',
+  `    printf '%s\\n' ${JSON.stringify(LAUNCH_READINESS_PAIRING_QUALIFICATION_OUTPUT)}`,
+  "    exit 0",
+  "  fi",
   "fi",
   'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
   `  printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}`,
