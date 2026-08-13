@@ -453,6 +453,7 @@ describe("inference selection validation", () => {
       agentProductName: () => "OpenClaw",
       getCredential: () => "test-key",
       probeAnthropicEndpoint,
+      teardownOrphanManagedGatewayOnAbort: vi.fn(),
       promptValidationRecovery: vi.fn(async () => "selection" as const),
       resolveEndpointHost: async () => [{ address: "169.254.169.254", family: 4 }],
     });
@@ -870,6 +871,7 @@ exit 0
       agentProductName: () => "Deep Agents",
       getCredential: () => "test-key",
       probeOpenAiLikeEndpoint,
+      teardownOrphanManagedGatewayOnAbort: vi.fn(),
       promptValidationRecovery,
       resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
