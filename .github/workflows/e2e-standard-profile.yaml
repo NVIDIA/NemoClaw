@@ -54,6 +54,9 @@ on:
       restore_cli:
         required: true
         type: boolean
+      cloudflared:
+        required: true
+        type: boolean
       host_packages:
         required: true
         type: string
@@ -64,6 +67,9 @@ on:
         required: true
         type: boolean
       compatible_api_key:
+        required: true
+        type: boolean
+      github_token:
         required: true
         type: boolean
       shard:
@@ -83,6 +89,8 @@ on:
       NVIDIA_API_KEY:
         required: false
       NVIDIA_INFERENCE_API_KEY:
+        required: false
+      BRAVE_API_KEY:
         required: false
 
 permissions:
@@ -374,6 +382,27 @@ jobs:
         with:
           provenance-json: ${{ inputs.cli_artifact_provenance }}
 
+      - name: Install reviewed cloudflared
+        if: ${{ inputs.cloudflared }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          CLOUDFLARED_VERSION: "2026.6.1"
+          CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526"
+        run: |
+          set -euo pipefail
+          cloudflared_deb="${RUNNER_TEMP}/cloudflared-${CLOUDFLARED_VERSION}-linux-amd64.deb"
+          curl -fL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb" -o "${cloudflared_deb}"
+          printf '%s  %s\n' "${CLOUDFLARED_DEB_SHA256}" "${cloudflared_deb}" | sha256sum -c -
+          package="$(dpkg-deb -f "${cloudflared_deb}" Package)"
+          version="$(dpkg-deb -f "${cloudflared_deb}" Version)"
+          architecture="$(dpkg-deb -f "${cloudflared_deb}" Architecture)"
+          if [[ "${package}" != "cloudflared" || "${version}" != "${CLOUDFLARED_VERSION}" || "${architecture}" != "amd64" ]]; then
+            printf 'Unexpected cloudflared package metadata: package=%s version=%s architecture=%s\n' "${package}" "${version}" "${architecture}" >&2
+            exit 1
+          fi
+          sudo dpkg -i "${cloudflared_deb}"
+          cloudflared --version | grep -F "cloudflared version ${CLOUDFLARED_VERSION}"
+
       - name: Add swap for Hermes image rebuild
         if: ${{ inputs.host_preparation == 'rebuild-swap' }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
@@ -493,7 +522,7 @@ jobs:
         run: |
           set -euo pipefail
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN \
-            -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN \
+            -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u BRAVE_API_KEY -u GITHUB_TOKEN \
             -u COMPATIBLE_API_KEY bash scripts/install-openshell.sh
 
       - name: Run catalogue E2E target
@@ -504,6 +533,8 @@ jobs:
           NVIDIA_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_API_KEY || '' }}
           NVIDIA_INFERENCE_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           COMPATIBLE_API_KEY: ${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
+          BRAVE_API_KEY: ${{ inputs.trusted_main && secrets.BRAVE_API_KEY || '' }}
+          GITHUB_TOKEN: ${{ inputs.github_token && inputs.trusted_main && github.token || '' }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"

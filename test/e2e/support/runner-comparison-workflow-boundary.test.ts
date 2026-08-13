@@ -19,7 +19,7 @@ function workflow(): Workflow {
 }
 
 describe("runner comparison workflow boundary", () => {
-  it("keeps telemetry on the three retained routed jobs", () => {
+  it("keeps telemetry on the retained routed jobs", () => {
     expect(validateRunnerComparisonWorkflow(workflow())).toEqual([]);
   });
 
@@ -36,13 +36,13 @@ describe("runner comparison workflow boundary", () => {
 
   it("rejects telemetry in an unreviewed retained job", () => {
     const value = workflow();
-    value.jobs["token-rotation"]!.steps.push({
+    value.jobs["messaging-providers"]!.steps.push({
       name: RUNNER_COMPARISON_INITIALIZE_STEP,
       run: "npx tsx tools/e2e/runner-comparison.mts initialize",
     });
 
     expect(validateRunnerComparisonWorkflow(value)).toContain(
-      "token-rotation must not collect runner comparison telemetry",
+      "messaging-providers must not collect runner comparison telemetry",
     );
   });
 
@@ -58,7 +58,7 @@ describe("runner comparison workflow boundary", () => {
     );
   });
 
-  it.each(["common-egress-agent", "hermes-e2e", "mcp-bridge"])(
+  it.each(["hermes-e2e", "mcp-bridge"])(
     "keeps %s telemetry at the bootstrap and publication boundaries",
     (jobId) => {
       const value = workflow();

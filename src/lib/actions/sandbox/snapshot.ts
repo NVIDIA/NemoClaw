@@ -86,6 +86,8 @@ import {
 } from "./sandbox-gateway-routing";
 import {
   backupSandboxStateWithManagedAuthority,
+  createSnapshotCloneLifecycle,
+  fingerprintSandboxLiveIdentity,
   confirmSandboxRuntimeRestore,
   type PreparedSandboxRuntimeRestore,
   prepareManagedSnapshotProfileRestore,
@@ -398,6 +400,26 @@ async function autoCreateSandboxFromSource(
   dashboardEnvArgs: readonly string[],
   dstHermesApiPort: number | null,
 ): Promise<void> {
+  const cloneLifecycle = createSnapshotCloneLifecycle(
+    dstName,
+    sourceGatewayName,
+    (sandboxName, gatewayName) => {
+      const get = captureOpenshell(["sandbox", "get", "-g", gatewayName, sandboxName], {
+        ignoreError: true,
+      });
+      const list = captureOpenshell(["sandbox", "list", "-g", gatewayName], {
+        ignoreError: true,
+      });
+      return {
+        state:
+          get.status === 0 && list.status === 0 && isSandboxReady(list.output || "", sandboxName)
+            ? ("ready" as const)
+            : ("not_ready" as const),
+        liveIdentityFingerprint:
+          get.status === 0 ? fingerprintSandboxLiveIdentity(get.output || "") : null,
+      };
+    },
+  );
   const openshellBin = getOpenshellBinary();
   const sourceObservabilityEnabled =
     (srcEntry as { observabilityEnabled?: boolean }).observabilityEnabled === true;
@@ -433,7 +455,7 @@ async function autoCreateSandboxFromSource(
     initialPhase: "create",
     // Wait until the sandbox actually reaches Ready state, not just appears in the list.
     readyCheck: () => {
-      const list = captureOpenshell(["sandbox", "list"], {
+      const list = captureOpenshell(["sandbox", "list", "-g", sourceGatewayName], {
         ignoreError: true,
       });
       if (list.status !== 0) return false;
@@ -449,11 +471,14 @@ async function autoCreateSandboxFromSource(
   }
 
   // Double-check Ready after stream exit.
-  const verify = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  const verify = captureOpenshell(["sandbox", "list", "-g", sourceGatewayName], {
+    ignoreError: true,
+  });
   if (verify.status !== 0 || !isSandboxReady(verify.output || "", dstName)) {
     console.error(`  Sandbox '${dstName}' did not reach Ready state after create.`);
     snapshotExit(1);
   }
+  const lifecycleRegistration = cloneLifecycle.capture();
 
   // DNS proxy is only meaningful for the kubernetes driver (matches onboard.ts).
   const dnsScript = path.join(ROOT, "scripts", "setup-dns-proxy.sh");
@@ -496,6 +521,7 @@ async function autoCreateSandboxFromSource(
     // stop/start, recovery, and later snapshots can address its gateway.
     gatewayName: sourceGatewayName,
     gatewayPort: sourceGatewayPort,
+    ...cloneLifecycle.revalidate(lifecycleRegistration),
   });
 
   const sourceAgent = (srcEntry as SandboxEntry).agent || "openclaw";

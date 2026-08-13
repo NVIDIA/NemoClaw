@@ -16,6 +16,7 @@ import { JETSON_DISPATCH_TARGET } from "./jetson-dispatch-contract.mts";
 import { selectedRetiredControllerJobs } from "./retired-selector-compatibility.mts";
 import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import {
+  catalogueExclusionReason,
   catalogueMatrix,
   catalogueTarget,
   catalogueTargetsForChangedFiles,
@@ -70,6 +71,8 @@ const CATALOGUE_JOB_BY_PROFILE: Record<E2eExecutionProfile, string> = {
   standard: "catalogue-standard",
   "nvidia-api": "catalogue-nvidia-api",
   "nvidia-inference": "catalogue-nvidia-inference",
+  "github-read": "catalogue-github-read",
+  "brave-nvidia-inference": "catalogue-brave-nvidia-inference",
 };
 const REGISTRY_OWNING_PATHS = [
   "nemoclaw-blueprint/",
@@ -171,6 +174,7 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     isRecord(value) &&
     hasExactKeys(value, [
       "artifact_layout",
+      "cloudflared",
       "compatible_api_key",
       "id",
       "display_name",
@@ -206,6 +210,7 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     typeof value.host_packages === "string" &&
     /^(?:|expect|iptables|expect iptables)$/u.test(value.host_packages) &&
     typeof value.install_non_interactive === "boolean" &&
+    typeof value.cloudflared === "boolean" &&
     typeof value.runner_comparison === "boolean" &&
     typeof value.runner_pressure === "boolean" &&
     typeof value.compatible_api_key === "boolean" &&
@@ -239,6 +244,7 @@ function isCatalogueMatrixRowForProfile(
     target.installMode === value.install_mode &&
     target.installNonInteractive === value.install_non_interactive &&
     target.restoreCli === value.restore_cli &&
+    target.cloudflared === value.cloudflared &&
     target.hostPackages.join(" ") === value.host_packages &&
     target.hostPreparation === value.host_preparation &&
     target.runnerComparison === value.runner_comparison &&
@@ -264,7 +270,13 @@ function isCatalogueMatrices(
 }
 
 function emptyCatalogueMatrices(): Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]> {
-  return { standard: [], "nvidia-api": [], "nvidia-inference": [] };
+  return {
+    standard: [],
+    "nvidia-api": [],
+    "nvidia-inference": [],
+    "github-read": [],
+    "brave-nvidia-inference": [],
+  };
 }
 
 function catalogueMatrices(
@@ -406,6 +418,13 @@ export function buildE2eWorkflowPlan(
 ): E2eWorkflowPlan {
   const jobs = selectorIds(selectors.jobs, "jobs");
   const targets = selectorIds(selectors.targets, "targets");
+
+  for (const id of [...jobs, ...targets]) {
+    const reason = catalogueExclusionReason(id);
+    if (reason) {
+      throw new Error(`E2E catalogue target ${id} is not scheduled: ${reason}`);
+    }
+  }
 
   const inventory = readFreeStandingJobsInventory();
   const jetsonDispatchSelected =
@@ -665,6 +684,8 @@ export function writeE2eWorkflowPlanCiOutput(
       `catalogue_standard_matrix=${JSON.stringify(plan.catalogueMatrices.standard)}`,
       `catalogue_nvidia_api_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-api"])}`,
       `catalogue_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-inference"])}`,
+      `catalogue_github_read_matrix=${JSON.stringify(plan.catalogueMatrices["github-read"])}`,
+      `catalogue_brave_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["brave-nvidia-inference"])}`,
       `selected_jobs=${JSON.stringify(plan.selectedJobs)}`,
       `selected_workflow_jobs=${JSON.stringify(selectedWorkflowJobs(plan))}`,
       `hermes_selected=${plan.hermesSelected}`,

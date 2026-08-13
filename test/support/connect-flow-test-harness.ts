@@ -11,9 +11,9 @@ import type { WslDetectionOptions } from "../../src/lib/platform";
 import type { ConfigObject } from "../../src/lib/security/credential-filter";
 import type { SandboxEntry } from "../../src/lib/state/registry";
 
-type ConnectSandbox = typeof import("../../src/lib/actions/sandbox/connect")["connectSandbox"];
+type ConnectSandbox = (typeof import("../../src/lib/actions/sandbox/connect"))["connectSandbox"];
 type GatewayRouteMutationLock =
-  typeof import("../../src/lib/inference/gateway-route-mutation-lock")["withGatewayRouteMutationLock"];
+  (typeof import("../../src/lib/inference/gateway-route-mutation-lock"))["withGatewayRouteMutationLock"];
 type LaunchReadinessPublicationResult =
   import("../../src/lib/actions/sandbox/launch-readiness").LaunchReadinessPublicationResult;
 
