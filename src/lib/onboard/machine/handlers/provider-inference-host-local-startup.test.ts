@@ -81,7 +81,7 @@ function hostLocalStartupSelection(
   input: HostLocalInferenceStartupSelectionInput,
   service: "ollama" | "nim" | "vllm" = "ollama",
   recoveredToolCallingRequired = true,
-  recoveryKind: "published" | "interrupted" = "published",
+  recoveryKind: "fresh" | "published" | "interrupted" = "published",
 ): HostLocalInferenceStartupSelection {
   const requireToolCalling = input.requireToolCalling ?? recoveredToolCallingRequired;
   return {
@@ -106,8 +106,9 @@ function hostLocalStartupSelection(
         : {
             application: input.application,
             service,
-            ...(input.recover
-              ? recoveryKind === "published"
+            ...(recoveryKind === "interrupted"
+              ? { recover: true }
+              : recoveryKind === "published" && input.recover
                 ? {
                     resumeReceipt: publishedManagedReceipt(
                       service,
@@ -115,8 +116,7 @@ function hostLocalStartupSelection(
                       requireToolCalling,
                     ),
                   }
-                : { recover: true }
-              : {}),
+                : {}),
             managed: {
               service,
               model: input.model,
@@ -141,8 +141,9 @@ function hostLocalStartupSelection(
 function hostLocalPublishedResumeSelection(
   input: HostLocalInferenceStartupSelectionInput,
   service: "nim" | "vllm" = "vllm",
+  recoveredToolCallingRequired = true,
 ): HostLocalInferenceStartupSelection {
-  const selected = hostLocalStartupSelection(input, service);
+  const selected = hostLocalStartupSelection(input, service, recoveredToolCallingRequired);
   const managedRequest =
     selected.request.service === "ollama"
       ? (() => {
@@ -156,7 +157,7 @@ function hostLocalPublishedResumeSelection(
       resumeReceipt: publishedManagedReceipt(
         service,
         input.model,
-        input.requireToolCalling ?? true,
+        input.requireToolCalling ?? recoveredToolCallingRequired,
       ),
     },
   };
@@ -184,6 +185,7 @@ describe("provider inference host-local startup selection", () => {
       model: "qwen3.5-9b",
       acceleration: "nvidia-gpu",
       requireToolCalling: true,
+      freshRequireToolCalling: true,
       allowPublishedResume: false,
       recover: false,
       recordToolCallingRequirement: vi.fn(),
@@ -297,6 +299,38 @@ describe("provider inference host-local startup selection", () => {
       });
     },
   );
+
+  it("rejects non-boolean interrupted-recovery authority at the injected provider seam", async () => {
+    const model = "persisted-served-alias";
+    const session = createSession({
+      provider: "vllm-local",
+      model,
+      endpointUrl: null,
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({
+      resolveHostLocalInferenceStartupSelection: (input) => {
+        const selected = hostLocalStartupSelection(input, "vllm", true, "fresh");
+        return {
+          ...selected,
+          request: { ...selected.request, recover: "true" as unknown as boolean },
+        };
+      },
+    });
+
+    await expect(
+      handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        forceInferenceSetup: true,
+        sandboxName: "my-assistant",
+      }),
+    ).rejects.toThrow("invalid recovery authority");
+
+    expect(calls.setupInference).not.toHaveBeenCalled();
+  });
 
   it("keeps fresh Ollama CPU-scoped when GPU passthrough was disabled on NVIDIA", async () => {
     const model = "nemotron:latest";
@@ -482,10 +516,10 @@ describe("provider inference host-local startup selection", () => {
       });
       session.steps.provider_selection.status = "complete";
       const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
-        hostLocalPublishedResumeSelection(input),
+        hostLocalPublishedResumeSelection(input, "vllm", false),
       );
       const { deps, calls } = createDeps({
-        isInferenceRouteReady: vi.fn(() => false),
+        isInferenceRouteReady: vi.fn(() => true),
         resolveHostLocalInferenceStartupSelection: resolver,
       });
 
@@ -493,7 +527,6 @@ describe("provider inference host-local startup selection", () => {
         ...baseOptions(deps, session),
         agent: { name: application },
         resume: true,
-        forceInferenceSetup: true,
         sandboxName: `${application}-sandbox`,
       });
 
@@ -503,20 +536,21 @@ describe("provider inference host-local startup selection", () => {
         provider: "vllm-local",
         model,
         acceleration: "nvidia-gpu",
-        requireToolCalling: true,
+        requireToolCalling: null,
         allowPublishedResume: true,
         recover: false,
       });
       const setupCall = calls.setupInference.mock.calls[0] as unknown as readonly unknown[];
       expect(setupCall[7]).toEqual(
         expect.objectContaining({
+          allowToolsIncompatible: true,
           hostLocalInference: expect.objectContaining({
             request: expect.objectContaining({
               service: "vllm",
               resumeReceipt: expect.objectContaining({
                 providerId: "mxc",
                 service: "vllm",
-                inference: expect.objectContaining({ model }),
+                inference: expect.objectContaining({ model, toolCallingRequired: false }),
               }),
             }),
           }),
@@ -541,39 +575,159 @@ describe("provider inference host-local startup selection", () => {
     },
   );
 
-  it("rejects an injected published receipt on a fresh managed selection", async () => {
-    const model = "fresh-model";
-    const setupNim = vi.fn(async () => ({
-      ...baseSelection,
-      provider: "vllm-local",
-      model,
-      endpointUrl: null,
-      credentialEnv: null,
-      preferredInferenceApi: "openai-completions",
-    }));
-    const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
-      hostLocalPublishedResumeSelection(input),
-    );
-    const { deps, calls } = createDeps({
-      setupNim,
-      resolveHostLocalInferenceStartupSelection: resolver,
-    });
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "recovers an interrupted exact managed startup for %s before route publication",
+    async (application) => {
+      const model = "persisted-served-alias";
+      const session = createSession({
+        provider: "vllm-local",
+        model,
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+      });
+      session.steps.provider_selection.status = "complete";
+      const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
+        hostLocalStartupSelection(input, "vllm", false, "interrupted"),
+      );
+      const { deps, calls } = createDeps({
+        isInferenceRouteReady: vi.fn(() => true),
+        resolveHostLocalInferenceStartupSelection: resolver,
+      });
 
-    await expect(
-      handleProviderInferenceState({
-        ...baseOptions(deps, createSession()),
-        sandboxName: "fresh-sandbox",
-      }),
-    ).rejects.toThrow("recovery authority");
+      const result = await handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        agent: { name: application },
+        resume: true,
+        sandboxName: `${application}-sandbox`,
+      });
 
-    expect(resolver).toHaveBeenCalledWith(
-      expect.objectContaining({
-        allowPublishedResume: false,
+      expect(resolver).toHaveBeenCalledWith({
+        application,
+        sandboxName: `${application}-sandbox`,
+        provider: "vllm-local",
+        model,
+        acceleration: "nvidia-gpu",
+        requireToolCalling: null,
+        allowPublishedResume: true,
         recover: false,
-      }),
-    );
-    expect(calls.setupInference).not.toHaveBeenCalled();
-  });
+      });
+      const setupCall = calls.setupInference.mock.calls[0] as unknown as readonly unknown[];
+      expect(setupCall[7]).toEqual(
+        expect.objectContaining({
+          allowToolsIncompatible: true,
+          hostLocalInference: expect.objectContaining({
+            request: expect.objectContaining({
+              service: "vllm",
+              recover: true,
+              managed: expect.objectContaining({ requireToolCalling: false }),
+            }),
+          }),
+        }),
+      );
+      expect(calls.complete).toHaveBeenCalledWith(
+        "inference",
+        expect.objectContaining({
+          endpointUrl: "https://inference.local/v1",
+          endpointSource: "inference-set",
+        }),
+      );
+      expect(result).toMatchObject({
+        endpointUrl: "https://inference.local/v1",
+        endpointSource: "inference-set",
+        hostLocalInferenceRouteOnly: true,
+      });
+    },
+  );
+
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "rejects a fresh resumed %s runtime that weakens the current tool contract",
+    async (application) => {
+      const model = "persisted-served-alias";
+      const session = createSession({
+        provider: "vllm-local",
+        model,
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+      });
+      session.steps.provider_selection.status = "complete";
+      const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
+        hostLocalStartupSelection(input, "vllm", false, "fresh"),
+      );
+      const { deps, calls } = createDeps({
+        isInferenceRouteReady: vi.fn(() => true),
+        resolveHostLocalInferenceStartupSelection: resolver,
+      });
+
+      await expect(
+        handleProviderInferenceState({
+          ...baseOptions(deps, session),
+          agent: { name: application },
+          resume: true,
+          sandboxName: `${application}-sandbox`,
+        }),
+      ).rejects.toThrow("accepted model proof");
+
+      expect(resolver).toHaveBeenCalledWith(
+        expect.objectContaining({
+          application,
+          requireToolCalling: null,
+          allowPublishedResume: true,
+          recover: false,
+        }),
+      );
+      expect(calls.setupInference).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(
+    (["openclaw", "hermes", "langchain-deepagents-code"] as const).flatMap((application) =>
+      (["published", "interrupted"] as const).map((recoveryKind) => ({
+        application,
+        recoveryKind,
+      })),
+    ),
+  )(
+    "rejects $recoveryKind authority for a fresh $application managed selection",
+    async ({ application, recoveryKind }) => {
+      const model = "fresh-model";
+      const setupNim = vi.fn(async () => ({
+        ...baseSelection,
+        provider: "vllm-local",
+        model,
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+      }));
+      const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
+        recoveryKind === "published"
+          ? hostLocalPublishedResumeSelection(input)
+          : hostLocalStartupSelection(input, "vllm", true, "interrupted"),
+      );
+      const { deps, calls } = createDeps({
+        setupNim,
+        resolveHostLocalInferenceStartupSelection: resolver,
+      });
+
+      await expect(
+        handleProviderInferenceState({
+          ...baseOptions(deps, createSession()),
+          agent: { name: application },
+          sandboxName: `${application}-fresh-sandbox`,
+        }),
+      ).rejects.toThrow("recovery authority");
+
+      expect(resolver).toHaveBeenCalledWith(
+        expect.objectContaining({
+          application,
+          allowPublishedResume: false,
+          recover: false,
+        }),
+      );
+      expect(calls.setupInference).not.toHaveBeenCalled();
+    },
+  );
 
   it("starts a newly selected managed runtime during an unrelated resumed session", async () => {
     const model = "new-managed-model";
@@ -613,7 +767,7 @@ describe("provider inference host-local startup selection", () => {
       model,
       acceleration: "nvidia-gpu",
       requireToolCalling: true,
-      allowPublishedResume: true,
+      allowPublishedResume: false,
       recover: false,
     });
     const setupCall = calls.setupInference.mock.calls[0] as unknown as readonly unknown[];
@@ -625,6 +779,62 @@ describe("provider inference host-local startup selection", () => {
       }),
     );
   });
+
+  it.each(
+    (["openclaw", "hermes", "langchain-deepagents-code"] as const).flatMap((application) =>
+      (["published", "interrupted"] as const).map((recoveryKind) => ({
+        application,
+        recoveryKind,
+      })),
+    ),
+  )(
+    "rejects $recoveryKind authority for a force-selected $application provider in an unrelated resumed session",
+    async ({ application, recoveryKind }) => {
+      const model = "new-managed-model";
+      const session = createSession({
+        provider: "nvidia-prod",
+        model: "nvidia/old-model",
+        endpointUrl: null,
+        credentialEnv: "NVIDIA_API_KEY",
+      });
+      const setupNim = vi.fn(async () => ({
+        ...baseSelection,
+        provider: "vllm-local",
+        model,
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+      }));
+      const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
+        recoveryKind === "published"
+          ? hostLocalPublishedResumeSelection(input)
+          : hostLocalStartupSelection(input, "vllm", true, "interrupted"),
+      );
+      const { deps, calls } = createDeps({
+        setupNim,
+        resolveHostLocalInferenceStartupSelection: resolver,
+      });
+
+      await expect(
+        handleProviderInferenceState({
+          ...baseOptions(deps, session),
+          agent: { name: application },
+          resume: true,
+          forceProviderSelection: true,
+          sandboxName: "my-assistant",
+        }),
+      ).rejects.toThrow("recovery authority");
+
+      expect(resolver).toHaveBeenCalledWith(
+        expect.objectContaining({
+          application,
+          allowPublishedResume: false,
+          recover: false,
+        }),
+      );
+      expect(calls.setupInference).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not bypass injected recovery when a resumed gateway route is already Ready", async () => {
     const model = "persisted-served-alias";
@@ -765,34 +975,45 @@ describe("provider inference host-local startup selection", () => {
     expect(calls.routeReady).not.toHaveBeenCalled();
   });
 
-  it("rejects interrupted-recovery authority for a canonically published managed route", async () => {
-    const model = "persisted-served-alias";
-    const session = createSession({
-      provider: "vllm-local",
-      model,
-      endpointUrl: "https://inference.local/v1",
-      credentialEnv: null,
-      preferredInferenceApi: "openai-completions",
-    });
-    session.steps.provider_selection.status = "complete";
-    const { deps, calls } = createDeps({
-      isInferenceRouteReady: vi.fn(() => true),
-      resolveHostLocalInferenceStartupSelection: (input) =>
-        hostLocalStartupSelection(input, "vllm", true, "interrupted"),
-    });
-    const options = baseOptions(deps, session);
+  it.each(
+    (["openclaw", "hermes", "langchain-deepagents-code"] as const).flatMap((application) =>
+      (["fresh", "interrupted"] as const).map((recoveryKind) => ({
+        application,
+        recoveryKind,
+      })),
+    ),
+  )(
+    "rejects $recoveryKind authority for a canonically published $application managed route",
+    async ({ application, recoveryKind }) => {
+      const model = "persisted-served-alias";
+      const session = createSession({
+        provider: "vllm-local",
+        model,
+        endpointUrl: "https://inference.local/v1",
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+      });
+      session.steps.provider_selection.status = "complete";
+      const { deps, calls } = createDeps({
+        isInferenceRouteReady: vi.fn(() => true),
+        resolveHostLocalInferenceStartupSelection: (input) =>
+          hostLocalStartupSelection(input, "vllm", true, recoveryKind),
+      });
+      const options = baseOptions(deps, session);
 
-    await expect(
-      handleProviderInferenceState({
-        ...options,
-        initial: { ...options.initial, endpointSource: "inference-set" },
-        resume: true,
-        sandboxName: "my-assistant",
-      }),
-    ).rejects.toThrow("recovery authority");
+      await expect(
+        handleProviderInferenceState({
+          ...options,
+          agent: { name: application },
+          initial: { ...options.initial, endpointSource: "inference-set" },
+          resume: true,
+          sandboxName: `${application}-sandbox`,
+        }),
+      ).rejects.toThrow("recovery authority");
 
-    expect(calls.setupInference).not.toHaveBeenCalled();
-  });
+      expect(calls.setupInference).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects a resolver result for a different accepted application", async () => {
     const model = "qwen3.5-9b";

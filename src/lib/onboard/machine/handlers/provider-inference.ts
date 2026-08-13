@@ -378,6 +378,7 @@ export function createCachedHostLocalInferenceSetupResolver(input: {
   model: string;
   acceleration: HostLocalOllamaAccelerationAuthority;
   requireToolCalling: boolean | null;
+  freshRequireToolCalling: boolean;
   allowPublishedResume: boolean;
   recover: boolean;
   recordToolCallingRequirement(requireToolCalling: boolean): void;
@@ -393,6 +394,7 @@ export function createCachedHostLocalInferenceSetupResolver(input: {
         model: input.model,
         acceleration: input.acceleration,
         requireToolCalling: input.requireToolCalling,
+        freshRequireToolCalling: input.freshRequireToolCalling,
         allowPublishedResume: input.allowPublishedResume,
         recover: input.recover,
       });
@@ -452,10 +454,10 @@ function canResumeInferenceRoute(input: {
 }
 
 function hostLocalToolCallingRequirement(
-  canonicalHostLocalResume: boolean,
+  deriveFromDurableAuthority: boolean,
   allowToolsIncompatible: boolean,
 ): boolean | null {
-  return canonicalHostLocalResume ? null : !allowToolsIncompatible;
+  return deriveFromDurableAuthority ? null : !allowToolsIncompatible;
 }
 
 async function prepareSelectedLocalProvider(
@@ -507,6 +509,7 @@ function hostLocalInferenceSetupOptions(
     model: string;
     acceleration: HostLocalOllamaAccelerationAuthority;
     requireToolCalling: boolean | null;
+    freshRequireToolCalling: boolean;
     allowPublishedResume: boolean;
     recover: boolean;
   },
@@ -517,7 +520,16 @@ function hostLocalInferenceSetupOptions(
   if (!application) {
     throw new Error(`Unsupported host-local inference application '${input.application}'.`);
   }
-  const selected = resolver({ ...input, application });
+  const selected = resolver({
+    application,
+    sandboxName: input.sandboxName,
+    provider: input.provider,
+    model: input.model,
+    acceleration: input.acceleration,
+    requireToolCalling: input.requireToolCalling,
+    allowPublishedResume: input.allowPublishedResume,
+    recover: input.recover,
+  });
   if (selected) {
     if (selected.request.application !== application) {
       throw new Error(
@@ -530,6 +542,20 @@ function hostLocalInferenceSetupOptions(
     }
     const providerInput =
       selected.request.service === "ollama" ? selected.request.endpoint : selected.request.managed;
+    if (
+      selected.request.service !== "ollama" &&
+      selected.request.recover !== undefined &&
+      typeof selected.request.recover !== "boolean"
+    ) {
+      throw new Error("Host-local inference startup selection has invalid recovery authority.");
+    }
+    const hasDurableToolCallingAuthority =
+      selected.request.service === "ollama"
+        ? input.recover
+        : selected.request.resumeReceipt !== undefined || selected.request.recover === true;
+    const expectedToolCalling =
+      input.requireToolCalling ??
+      (hasDurableToolCallingAuthority ? null : input.freshRequireToolCalling);
     const selectedModel =
       selected.request.service === "ollama"
         ? normalizeHostLocalOllamaModelRef(providerInput.model)
@@ -542,8 +568,7 @@ function hostLocalInferenceSetupOptions(
       selectedModel !== acceptedModel ||
       (selected.request.service === "ollama" &&
         selected.request.endpoint.acceleration !== input.acceleration) ||
-      (input.requireToolCalling !== null &&
-        providerInput.requireToolCalling !== input.requireToolCalling)
+      (expectedToolCalling !== null && providerInput.requireToolCalling !== expectedToolCalling)
     ) {
       throw new Error(
         "Host-local inference startup selection drifted from the accepted model proof.",
@@ -557,11 +582,15 @@ function hostLocalInferenceSetupOptions(
       }
       const hasPublishedResume = selected.request.resumeReceipt !== undefined;
       const hasInterruptedRecovery = selected.request.recover === true;
-      if (
-        (input.recover && (!hasPublishedResume || hasInterruptedRecovery)) ||
-        (!input.recover &&
-          (hasInterruptedRecovery || (hasPublishedResume && !input.allowPublishedResume)))
-      ) {
+      // These two accepted-state bits encode three fail-closed modes:
+      // canonical route = published only; accepted pre-publication = fresh,
+      // published, or interrupted; every other selection = fresh only.
+      const recoveryAuthorityMatches = input.recover
+        ? input.allowPublishedResume && hasPublishedResume && !hasInterruptedRecovery
+        : input.allowPublishedResume
+          ? !(hasPublishedResume && hasInterruptedRecovery)
+          : !hasPublishedResume && !hasInterruptedRecovery;
+      if (!recoveryAuthorityMatches) {
         throw new Error("Host-local inference startup selection drifted from recovery authority.");
       }
     }
@@ -1140,6 +1169,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       endpointUrl,
       endpointSource,
     });
+    const acceptedHostLocalResume =
+      effectiveResume &&
+      resumeProviderSelection &&
+      isHostLocalInferenceProvider(selectedProvider);
     const resolveCachedHostLocalInferenceSetupOptions = createCachedHostLocalInferenceSetupResolver(
       {
         resolver: deps.resolveHostLocalInferenceStartupSelection,
@@ -1148,10 +1181,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         model: selectedModel,
         acceleration: selectedHostLocalOllamaAcceleration(gpu, gpuPassthrough),
         requireToolCalling: hostLocalToolCallingRequirement(
-          canonicalHostLocalResume,
+          acceptedHostLocalResume,
           allowToolsIncompatible,
         ),
-        allowPublishedResume: effectiveResume,
+        freshRequireToolCalling: !allowToolsIncompatible,
+        allowPublishedResume: acceptedHostLocalResume,
         recover: canonicalHostLocalResume,
         recordToolCallingRequirement: (required) => {
           allowToolsIncompatible = !required;

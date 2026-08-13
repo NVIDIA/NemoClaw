@@ -97,7 +97,7 @@ export interface HostLocalInferenceStartupSelectionInput {
   readonly acceleration: HostLocalOllamaAccelerationAuthority;
   /** Null on exact recovery: the resolver must derive this from durable provider authority. */
   readonly requireToolCalling: boolean | null;
-  /** True only when an existing session may consume an injected exact published receipt. */
+  /** True only when an accepted existing session may consume injected exact recovery authority. */
   readonly allowPublishedResume: boolean;
   /** True only for a route already recorded as the canonical published route. */
   readonly recover: boolean;
@@ -293,6 +293,9 @@ export function prepareHostLocalInferenceStartup(
       throw new Error(
         "Authenticated managed vLLM is unsupported without a gateway credential handoff.",
       );
+    }
+    if (request.recover !== undefined && typeof request.recover !== "boolean") {
+      throw new Error("Managed host-local inference recovery authority is invalid.");
     }
     if (request.recover === true && request.resumeReceipt !== undefined) {
       throw new Error("Managed host-local inference cannot mix recovery and published resume.");

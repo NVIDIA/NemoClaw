@@ -322,6 +322,23 @@ describe("provider-neutral host-local inference startup routing", () => {
     expect(providerRuntime.startManaged).not.toHaveBeenCalled();
   });
 
+  it("rejects non-boolean recovery authority at the provider-neutral runtime boundary", () => {
+    const providerRuntime = runtime();
+    providerRuntime.recoverManaged = vi.fn(() => prepared(receipt("vllm")));
+
+    expect(() =>
+      prepareHostLocalInferenceStartup(operation(providerRuntime), {
+        application: "openclaw",
+        service: "vllm",
+        managed: managed("vllm"),
+        recover: 1 as unknown as boolean,
+        receiptWriter: writer,
+      }),
+    ).toThrow("recovery authority is invalid");
+    expect(providerRuntime.recoverManaged).not.toHaveBeenCalled();
+    expect(providerRuntime.startManaged).not.toHaveBeenCalled();
+  });
+
   it("fails closed on provider-native inference and publication proof drift", () => {
     const driftedProof = runtime();
     const driftedProofStartup = prepared({
