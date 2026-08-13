@@ -10,7 +10,6 @@ import { describe, expect, it } from "vitest";
 import {
   CLI_ARTIFACT_PACKAGE_STEP,
   CLI_ARTIFACT_PUBLISH_STEP,
-  CLI_ARTIFACT_RESTORE_STEP,
   validateCliArtifactRestoreAction,
   validateCliArtifactWorkflowBoundary,
 } from "../../../tools/e2e/cli-artifact-workflow-boundary.mts";
@@ -731,10 +730,9 @@ describe("exact-commit CLI artifact workflow boundary", () => {
 
   it("leaves job timeouts to their dedicated workflow validators", () => {
     const workflow = workflowFixture();
-    for (const jobName of ["hermes-e2e", "hermes-discord", "hermes-shields-config"]) {
-      const timeoutMinutes = workflow.jobs[jobName]["timeout-minutes"];
-      workflow.jobs[jobName]["timeout-minutes"] = Number(timeoutMinutes) + 1;
-    }
+    const timeoutMinutes = Number(workflow.jobs["hermes-e2e"]["timeout-minutes"]);
+    expect(Number.isFinite(timeoutMinutes)).toBe(true);
+    workflow.jobs["hermes-e2e"]["timeout-minutes"] = timeoutMinutes + 1;
 
     expect(validateCliArtifactWorkflowBoundary(workflow)).toEqual([]);
   });
@@ -760,16 +758,5 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
     }
-  });
-
-  it("requires security posture to restore the shared CLI modules", () => {
-    const workflow = workflowFixture();
-    workflow.jobs["security-posture"].steps = workflow.jobs["security-posture"].steps!.filter(
-      (step) => step.name !== CLI_ARTIFACT_RESTORE_STEP,
-    );
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "security-posture must verify and restore the exact CLI artifact exactly once",
-    );
   });
 });
