@@ -110,6 +110,9 @@ export function isPlausibleNvidiaGpuName(name: string): boolean {
 // Non-Linux hosts and non-ARM64 Linux keep the historical nvidia-smi trust path
 // because the observed false-positive source is WoA/ARM64-specific; broaden
 // this gate only if a new spoofing source is reproduced with a regression test.
+// When this predicate returns false, `detectGpu()` still offers the bounded
+// Docker `--gpus` CUDA proof as the only escape (#9000) — proof of a usable
+// device, not name trust, so the fail-closed posture is unchanged.
 export function nvidiaHostLooksGenuine(): boolean {
   if (process.platform !== "linux") return true;
   if (process.arch !== "arm64") return true;
