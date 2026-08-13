@@ -923,14 +923,25 @@ esac`,
     expect(openshellLog).toBe("openshell install-mode force defer=\n");
   });
 
-  it("preserves prepared backups and the selected port when OpenShell installation fails (#8800)", () => {
+  it.each([
+    {
+      expectedRetry: "NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1",
+      finishGatewayPort: undefined,
+      name: "the default gateway port",
+    },
+    {
+      expectedRetry: "NEMOCLAW_GATEWAY_PORT=9123 NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1",
+      finishGatewayPort: "9123",
+      name: "a selected non-default gateway port",
+    },
+  ])("preserves prepared backups and $name when OpenShell installation fails (#8800)", (testCase) => {
     const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1" },
       {
         currentMaxOpenshellVersion: "0.0.101",
         currentMinOpenshellVersion: "0.0.101",
         finishPreparedInstallSucceeds: false,
-        finishGatewayPort: "9123",
+        finishGatewayPort: testCase.finishGatewayPort,
         finishInstallMode: "source",
         gatewayDestroySucceeds: false,
         gatewayProcessStopSucceeds: false,
@@ -945,9 +956,10 @@ esac`,
     expect(result.status).not.toBe(0);
     expect(result.stdout + result.stderr).toContain("preserved the sandbox backups");
     expect(result.stdout + result.stderr).toContain("did not start recovery");
-    expect(result.stdout + result.stderr).toContain(
-      "NEMOCLAW_GATEWAY_PORT=9123 NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1",
-    );
+    expect(result.stdout + result.stderr).toContain(testCase.expectedRetry);
+    if (testCase.finishGatewayPort === undefined) {
+      expect(result.stdout + result.stderr).not.toContain("NEMOCLAW_GATEWAY_PORT=");
+    }
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(openshellLog).toContain("openshell install-mode force defer=");
   });
