@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -12,7 +12,43 @@ const TRANSACTION = path.resolve(
 );
 
 describe("Hermes MCP API port resolution", () => {
-  it("accepts only allocated ports from the stable service-manager environment (#8543)", () => {
+  it("reads the port from a same-identity gateway process environment (#9044)", () => {
+    const gateway = spawn(process.execPath, ["-e", "setTimeout(() => {}, 10000)"], {
+      env: { NEMOCLAW_HERMES_API_PORT: "8645", PATH: process.env.PATH },
+      stdio: "ignore",
+    });
+
+    try {
+      expect(gateway.pid).toBeTypeOf("number");
+      const result = spawnSync(
+        "python3",
+        [
+          "-c",
+          `
+import importlib.util, json, sys, types
+sys.modules["yaml"] = types.SimpleNamespace(YAMLError=type("YAMLError", (Exception,), {}))
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+identity = (int(sys.argv[2]), 333)
+module._gateway_identity = lambda: identity
+print(json.dumps({"port": module._gateway_environment_public_port(identity)}))
+`,
+          TRANSACTION,
+          String(gateway.pid),
+        ],
+        { encoding: "utf8" },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ port: 8645 });
+    } finally {
+      gateway.kill("SIGKILL");
+    }
+  });
+
+  it("reads allocated ports from the identity-bound gateway environment (#9044)", () => {
     const result = spawnSync(
       "python3",
       [
@@ -26,17 +62,15 @@ sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 identity = (41, 333)
 module._gateway_identity = lambda: identity
-module._process_parent_pid = lambda pid: 40
-module._is_service_manager_process = lambda pid: True
+opened = []
 
 accepted = []
 for raw in (b"8642", b"8645", b"8652"):
-    module._read_service_manager_environment = (
-        lambda pid, value=raw: b"PATH=/usr/bin\\0NEMOCLAW_HERMES_API_PORT="
-        + value
-        + b"\\0"
+    module._read_gateway_environment = (
+        lambda pid, value=raw: opened.append(pid)
+        or b"PATH=/usr/bin\\0NEMOCLAW_HERMES_API_PORT=" + value + b"\\0"
     )
-    accepted.append(module._service_manager_gateway_public_port(identity))
+    accepted.append(module._gateway_environment_public_port(identity))
 
 rejected = []
 for raw in (
@@ -45,24 +79,25 @@ for raw in (
     "²".encode("utf-8"),
     b"8645\\0NEMOCLAW_HERMES_API_PORT=8646",
 ):
-    module._read_service_manager_environment = (
-        lambda pid, value=raw: b"NEMOCLAW_HERMES_API_PORT=" + value + b"\\0"
+    module._read_gateway_environment = (
+        lambda pid, value=raw: opened.append(pid)
+        or b"NEMOCLAW_HERMES_API_PORT=" + value + b"\\0"
     )
     try:
-        module._service_manager_gateway_public_port(identity)
+        module._gateway_environment_public_port(identity)
     except PermissionError as error:
         rejected.append(str(error))
 
-module._read_service_manager_environment = lambda pid: b"PATH=/usr/bin\\0"
-absent = module._service_manager_gateway_public_port(identity)
+module._read_gateway_environment = lambda pid: opened.append(pid) or b"PATH=/usr/bin\\0"
+absent = module._gateway_environment_public_port(identity)
 
 module._gateway_identity = lambda: (41, 999)
-module._read_service_manager_environment = (
-    lambda pid: b"NEMOCLAW_HERMES_API_PORT=8645\\0"
+module._read_gateway_environment = (
+    lambda pid: opened.append(pid) or b"NEMOCLAW_HERMES_API_PORT=8645\\0"
 )
 identity_change = ""
 try:
-    module._service_manager_gateway_public_port(identity)
+    module._gateway_environment_public_port(identity)
 except PermissionError as error:
     identity_change = str(error)
 
@@ -71,6 +106,7 @@ print(json.dumps({
     "rejected": rejected,
     "absent": absent,
     "identity_change": identity_change,
+    "opened": opened,
 }))
 `,
         TRANSACTION,
@@ -84,11 +120,54 @@ print(json.dumps({
       rejected: [
         "Hermes API port is outside the allocated range",
         "Hermes API port is outside the allocated range",
-        "Hermes service-manager API port is malformed",
-        "Hermes service-manager API port is ambiguous",
+        "Hermes gateway API port is malformed",
+        "Hermes gateway API port is ambiguous",
       ],
       absent: 8642,
-      identity_change: "Hermes service-manager identity changed while reading",
+      identity_change: "Hermes gateway identity changed while reading",
+      opened: Array(9).fill(41),
+    });
+  });
+
+  it("rejects an unavailable gateway environment without using another identity (#9044)", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        `
+import builtins, importlib.util, json, sys, types
+sys.modules["yaml"] = types.SimpleNamespace(YAMLError=type("YAMLError", (Exception,), {}))
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+opened = []
+real_open = builtins.open
+def denied(path, *args, **kwargs):
+    opened.append(path)
+    raise PermissionError("denied")
+
+builtins.open = denied
+message = ""
+try:
+    module._read_gateway_environment(41)
+except PermissionError as error:
+    message = str(error)
+finally:
+    builtins.open = real_open
+
+print(json.dumps({"message": message, "opened": opened}))
+`,
+        TRANSACTION,
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      message: "Hermes gateway environment is unavailable",
+      opened: ["/proc/41/environ"],
     });
   });
 
@@ -227,7 +306,7 @@ print(json.dumps({
     });
   });
 
-  it("prefers the marker over the service-manager environment (#8543)", () => {
+  it("prefers the root marker over the gateway environment (#8543)", () => {
     const result = spawnSync(
       "python3",
       [
@@ -241,7 +320,7 @@ sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
 module._gateway_identity = lambda: (41, 333)
-module._service_manager_gateway_public_port = lambda identity: 8649
+module._gateway_environment_public_port = lambda identity: 8649
 
 module._root_gateway_public_port_marker = lambda: 8647
 marker_wins = module._resolve_gateway_public_port()
