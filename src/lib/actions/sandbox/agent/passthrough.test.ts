@@ -34,10 +34,20 @@ const loadAgentMock = vi.hoisted(() =>
 const isTerminalAgentMock = vi.hoisted(() =>
   vi.fn((agent: { runtime?: { kind?: string } }) => agent.runtime?.kind === "terminal"),
 );
+const buildOpenshellExecArgsMock = vi.hoisted(() =>
+  vi.fn(
+    (
+      _sb: string,
+      cmd: readonly string[],
+      _options?: { timeoutSeconds?: number },
+      _gateway?: string,
+    ) => cmd,
+  ),
+);
 
 vi.mock("../exec", () => ({
   execSandbox: execMock,
-  buildOpenshellExecArgs: vi.fn((_sb: string, cmd: readonly string[]) => cmd),
+  buildOpenshellExecArgs: buildOpenshellExecArgsMock,
   wrapExecCommandWithRuntimeEnv: vi.fn((cmd: readonly string[]) => cmd),
   computeExitCode: vi.fn((result: { status: number | null }) => ({
     code: result.status ?? 1,
@@ -836,6 +846,38 @@ describe("runAgentNonJsonPassthrough", () => {
   }
 
   const stubBinary = () => "/usr/local/bin/openshell";
+
+  it("bounds the host transport when the turn requests a deadline (#8723)", () => {
+    const { proc } = makeNonJsonProcMock();
+    const spawnSyncMock = makeSpawnMock("PONG\n", "", 0);
+    expect(() =>
+      runAgentNonJsonPassthrough(
+        "my-sb",
+        ["openclaw", "agent", "--agent", "main", "--timeout", "30", "-m", "ping"],
+        proc,
+        { getOpenshellBinary: stubBinary, spawnSync: spawnSyncMock },
+      ),
+    ).toThrow("__exit:0");
+    // Outlasts the requested deadline so the in-sandbox turn still reports its
+    // own timeout; the host bound only catches a turn that stops answering.
+    expect(buildOpenshellExecArgsMock.mock.calls[0]?.[2]?.timeoutSeconds).toBe(60);
+    // The turn still receives the deadline it asked for.
+    expect(buildOpenshellExecArgsMock.mock.calls[0]?.[1]).toContain("30");
+  });
+
+  it("leaves the host transport unbounded when the turn requests no deadline (#8723)", () => {
+    const { proc } = makeNonJsonProcMock();
+    const spawnSyncMock = makeSpawnMock("PONG\n", "", 0);
+    expect(() =>
+      runAgentNonJsonPassthrough(
+        "my-sb",
+        ["openclaw", "agent", "--agent", "main", "-m", "ping"],
+        proc,
+        { getOpenshellBinary: stubBinary, spawnSync: spawnSyncMock },
+      ),
+    ).toThrow("__exit:0");
+    expect(buildOpenshellExecArgsMock.mock.calls[0]?.[2]?.timeoutSeconds).toBeUndefined();
+  });
 
   it("emits a clean embedded-fallback error and exits 1 when EMBEDDED FALLBACK appears in stdout", () => {
     const { stderrWrites, stdoutWrites, exit, proc } = makeNonJsonProcMock();

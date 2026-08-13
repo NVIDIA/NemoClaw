@@ -83,6 +83,62 @@ describe("runAgentJsonPassthrough", () => {
     expect(exit).toHaveBeenCalledWith(0);
   });
 
+  it("bounds the host transport when the turn requests a deadline (#8723)", () => {
+    const spawnSync = vi.fn((_binary: string, _args: readonly string[]) => ({
+      status: 0,
+      signal: null,
+      stdout: "{}",
+      stderr: "openclaw banner\n",
+      pid: 123,
+      output: [null, "{}", "openclaw banner\n"],
+    }));
+    const { proc } = makeProc();
+
+    expect(() =>
+      runAgentJsonPassthrough(
+        "alpha",
+        ["openclaw", "agent", "--json", "--timeout", "30"],
+        proc,
+        {
+          getGatewayName: () => null,
+          getOpenshellBinary: () => "/usr/local/bin/openshell",
+          stdinIsTty: () => false,
+          spawnSync: spawnSync as never,
+        },
+      ),
+    ).toThrow(/__exit:/);
+
+    const argv = [...(spawnSync.mock.calls[0]?.[1] ?? [])];
+    const transportFlags = argv.slice(0, argv.indexOf("--"));
+    // Outlasts the requested deadline so the turn still reports its own timeout.
+    expect(transportFlags).toContain("--timeout");
+    expect(transportFlags[transportFlags.indexOf("--timeout") + 1]).toBe("60");
+  });
+
+  it("leaves the host transport unbounded when the turn requests no deadline (#8723)", () => {
+    const spawnSync = vi.fn((_binary: string, _args: readonly string[]) => ({
+      status: 0,
+      signal: null,
+      stdout: "{}",
+      stderr: "openclaw banner\n",
+      pid: 123,
+      output: [null, "{}", "openclaw banner\n"],
+    }));
+    const { proc } = makeProc();
+
+    expect(() =>
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: () => "/usr/local/bin/openshell",
+        stdinIsTty: () => false,
+        spawnSync: spawnSync as never,
+      }),
+    ).toThrow(/__exit:/);
+
+    const argv = [...(spawnSync.mock.calls[0]?.[1] ?? [])];
+    expect(argv.slice(0, argv.indexOf("--"))).not.toContain("--timeout");
+  });
+
   it("surfaces spawn errors and exits with the computed transport failure code", () => {
     const spawnSync = vi.fn(() => ({
       status: null,

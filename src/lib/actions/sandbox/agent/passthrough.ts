@@ -134,8 +134,11 @@ import {
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { getKnownSandboxTargetGatewayName } from "../gateway-target";
 import {
+  agentDispatchDeadlineSeconds,
   agentDispatchStdio,
   isSilentAgentDispatch,
+  OPENCLAW_AGENT_BOOLEAN_FLAGS,
+  OPENCLAW_AGENT_VALUE_FLAGS,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
 } from "./passthrough-dispatch";
 import {
@@ -155,23 +158,6 @@ export {
   hasAgentPassthroughHelpToken,
   printAgentPassthroughHelp,
 } from "./passthrough-help";
-
-const OPENCLAW_AGENT_VALUE_FLAGS = new Set([
-  "-a",
-  "--agent",
-  "-m",
-  "--message",
-  "--model",
-  "--provider",
-  "--reply-channel",
-  "--session-id",
-  "--session-key",
-  "--thinking",
-  "--timeout",
-  "--to",
-]);
-
-const OPENCLAW_AGENT_BOOLEAN_FLAGS = new Set(["--deliver"]);
 
 // OpenClaw can exit zero after running in embedded-fallback mode and does not
 // expose a stable machine-readable transport discriminator. These patterns mirror
@@ -213,7 +199,7 @@ export function runAgentNonJsonPassthrough(
     buildOpenshellExecArgs(
       sandboxName,
       wrapExecCommandWithRuntimeEnv(command),
-      { tty: false },
+      { tty: false, timeoutSeconds: agentDispatchDeadlineSeconds(command) },
       (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName) ?? undefined,
     ),
     {

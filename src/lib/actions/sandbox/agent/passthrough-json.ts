@@ -12,6 +12,7 @@ import {
 import { buildOpenshellExecArgs, computeExitCode, wrapExecCommandWithRuntimeEnv } from "../exec";
 import { getKnownSandboxTargetGatewayName } from "../gateway-target";
 import {
+  agentDispatchDeadlineSeconds,
   agentDispatchStdio,
   isSilentAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
@@ -81,7 +82,7 @@ export function runAgentJsonPassthrough(
     buildOpenshellExecArgs(
       sandboxName,
       wrapExecCommandWithRuntimeEnv(command),
-      { tty: false },
+      { tty: false, timeoutSeconds: agentDispatchDeadlineSeconds(command) },
       (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName) ?? undefined,
     ),
     {

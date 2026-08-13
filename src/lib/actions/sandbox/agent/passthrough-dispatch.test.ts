@@ -4,8 +4,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS,
+  agentDispatchDeadlineSeconds,
   agentDispatchStdio,
   isSilentAgentDispatch,
+  requestedAgentTimeoutSeconds,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
 } from "./passthrough-dispatch";
 
@@ -55,5 +58,56 @@ describe("agentDispatchStdio", () => {
 describe("SILENT_AGENT_DISPATCH_EXIT_CODE", () => {
   it("reports a dispatch failure rather than success", () => {
     expect(SILENT_AGENT_DISPATCH_EXIT_CODE).toBe(1);
+  });
+});
+
+describe("requestedAgentTimeoutSeconds", () => {
+  const agent = (...args: string[]) => ["openclaw", "agent", ...args];
+
+  it("reads a separated --timeout value (#8723)", () => {
+    expect(requestedAgentTimeoutSeconds(agent("--agent", "main", "--timeout", "30"))).toBe(30);
+  });
+
+  it("reads an equals-form --timeout value (#8723)", () => {
+    expect(requestedAgentTimeoutSeconds(agent("--timeout=45", "-m", "hi"))).toBe(45);
+  });
+
+  it("requests no deadline when the argv carries no --timeout (#8723)", () => {
+    expect(requestedAgentTimeoutSeconds(agent("--agent", "main", "-m", "hi"))).toBeNull();
+  });
+
+  it("returns null for --timeout 0 so the host stays unbounded (#8723)", () => {
+    expect(requestedAgentTimeoutSeconds(agent("--timeout", "0"))).toBeNull();
+  });
+
+  it("ignores a --timeout consumed as another option's value (#8723)", () => {
+    expect(requestedAgentTimeoutSeconds(agent("-m", "--timeout", "--agent", "main"))).toBeNull();
+  });
+
+  it("ignores anything past the -- terminator (#8723)", () => {
+    expect(requestedAgentTimeoutSeconds(agent("--", "--timeout", "30"))).toBeNull();
+  });
+
+  it("refuses a value that cannot be a deadline (#8723)", () => {
+    for (const raw of ["-5", "1.5", "abc", "", "1e3"]) {
+      expect(requestedAgentTimeoutSeconds(agent("--timeout", raw))).toBeNull();
+    }
+    expect(requestedAgentTimeoutSeconds(agent("--timeout"))).toBeNull();
+  });
+});
+
+describe("agentDispatchDeadlineSeconds", () => {
+  it("outlasts the requested deadline so the turn reports its own timeout (#8723)", () => {
+    expect(agentDispatchDeadlineSeconds(["openclaw", "agent", "--timeout", "30"])).toBe(
+      30 + AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS,
+    );
+  });
+
+  it("leaves the transport unbounded when no deadline was requested (#8723)", () => {
+    expect(agentDispatchDeadlineSeconds(["openclaw", "agent", "-m", "hi"])).toBeUndefined();
+  });
+
+  it("holds the deadline buffer above the longest aborted-run finish measured (#8723)", () => {
+    expect(AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS).toBeGreaterThan(20);
   });
 });

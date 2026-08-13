@@ -81,3 +81,82 @@ export function isSilentAgentDispatch(
 ): boolean {
   return !result.error && result.status === 0 && stdout.length === 0 && stderr.length === 0;
 }
+
+/** Documented `openclaw agent` options that consume the next argv element. */
+export const OPENCLAW_AGENT_VALUE_FLAGS = new Set([
+  "-a",
+  "--agent",
+  "-m",
+  "--message",
+  "--model",
+  "--provider",
+  "--reply-channel",
+  "--session-id",
+  "--session-key",
+  "--thinking",
+  "--timeout",
+  "--to",
+]);
+
+/** Documented `openclaw agent` options that consume no argv element. */
+export const OPENCLAW_AGENT_BOOLEAN_FLAGS = new Set(["--deliver"]);
+
+/**
+ * Extra seconds added to a requested `--timeout` before the host transport
+ * stops waiting.
+ *
+ * The in-sandbox turn owns the deadline and answers first while it can still
+ * write to stderr: it reports the timeout, names the config key, and exits.
+ * Only a turn that stops answering reaches the host bound, so the extra seconds
+ * must outlast an ordinary late finish.
+ *
+ * This value is a choice, not a derivation. #8723 timed five aborted runs
+ * finishing 0.1 s to 20.8 s after their deadline, and four further aborted runs
+ * recorded no finish at all, so no measurement establishes an upper bound.
+ * Below roughly five seconds the host truncates the turn's own timeout report;
+ * above roughly a minute the host bound no longer catches a turn that stops
+ * answering. Thirty is inside that range and above every post-deadline finish
+ * #8723 recorded. Choose another value inside that range if a slower model or a
+ * busier host requires it.
+ */
+export const AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS = 30;
+
+/**
+ * The `--timeout` an `openclaw agent` argv requests, or null when the argv
+ * requests none.
+ *
+ * Mirrors the documented flag grammar only far enough to read one value.
+ * Anything unrecognized, malformed, or past a `--` terminator returns null so
+ * the host keeps the wait unbounded rather than shortening a turn without
+ * evidence. `--timeout 0` disables the deadline upstream and returns null here
+ * for the same reason.
+ */
+export function requestedAgentTimeoutSeconds(argv: readonly string[]): number | null {
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index] as string;
+    if (arg === "--") return null;
+    if (arg === "--timeout") return parseDeadlineSeconds(argv[index + 1]);
+    if (arg.startsWith("--timeout=")) return parseDeadlineSeconds(arg.slice("--timeout=".length));
+    if (OPENCLAW_AGENT_VALUE_FLAGS.has(arg)) {
+      index += 1;
+      continue;
+    }
+  }
+  return null;
+}
+
+function parseDeadlineSeconds(raw: string | undefined): number | null {
+  if (raw === undefined || !/^\d+$/.test(raw)) return null;
+  const seconds = Number(raw);
+  return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : null;
+}
+
+/**
+ * The host transport deadline for an `openclaw agent` argv, or undefined when
+ * the argv requested none. Undefined leaves `openshell sandbox exec` on its own
+ * default, which is no timeout.
+ */
+export function agentDispatchDeadlineSeconds(argv: readonly string[]): number | undefined {
+  const requested = requestedAgentTimeoutSeconds(argv);
+  return requested === null ? undefined : requested + AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS;
+}
