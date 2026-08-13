@@ -15,6 +15,7 @@ import {
   catalogueTargetsForChangedFiles,
   E2E_TARGET_CATALOGUE,
   isPrCandidateCatalogueTarget,
+  validateE2eTargetCatalogue,
 } from "../../../tools/e2e/target-catalogue.mts";
 import { readFreeStandingJobsInventory } from "../../../tools/e2e/workflow-boundary.mts";
 import {
@@ -91,6 +92,88 @@ describe("E2E workflow plan", () => {
     ]);
     expect(plan.catalogueMatrices.standard).toEqual([]);
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-inference"]);
+  });
+
+  it("preserves the migrated retained-target execution contracts", () => {
+    expect(catalogueTarget("gateway-guard-recovery")).toMatchObject({
+      profile: "nvidia-inference",
+      timeoutMinutes: 45,
+      installMode: "authenticated",
+      installNonInteractive: true,
+      hostPackages: [],
+      environment: {
+        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+        OPENSHELL_GATEWAY: "nemoclaw",
+      },
+    });
+    expect(catalogueTarget("issue-4434-tui-unreachable-inference")).toMatchObject({
+      profile: "nvidia-inference",
+      timeoutMinutes: 120,
+      installMode: "authenticated",
+      installNonInteractive: true,
+      hostPackages: ["expect", "iptables"],
+      environment: { NEMOCLAW_ISSUE_4434_LIVE: "1" },
+    });
+    expect(catalogueTarget("network-policy")).toMatchObject({
+      profile: "nvidia-inference",
+      timeoutMinutes: 90,
+      installMode: "credential-free",
+      installNonInteractive: true,
+      hostPackages: ["expect"],
+      selector: "^network-policy:.+probes$",
+      environment: {
+        NEMOCLAW_E2E_SHARD: "live-probes",
+        NEMOCLAW_SANDBOX_NAME: "e2e-net-policy",
+      },
+    });
+    expect(catalogueTarget("openclaw-tui-chat-correlation")).toMatchObject({
+      profile: "nvidia-inference",
+      timeoutMinutes: 75,
+      installMode: "none",
+      hostPackages: ["expect"],
+      environment: {
+        NEMOCLAW_PROVIDER: "custom",
+        NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
+        NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+      },
+    });
+
+    const plan = buildE2eWorkflowPlan({
+      jobs: "gateway-guard-recovery,issue-4434-tui-unreachable-inference,network-policy,openclaw-tui-chat-correlation",
+    });
+    expect(plan.catalogueMatrices["nvidia-inference"]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "gateway-guard-recovery",
+          host_packages: "",
+          install_non_interactive: true,
+        }),
+        expect.objectContaining({
+          id: "issue-4434-tui-unreachable-inference",
+          host_packages: "expect iptables",
+          install_non_interactive: true,
+        }),
+        expect.objectContaining({
+          id: "network-policy",
+          host_packages: "expect",
+          install_non_interactive: true,
+        }),
+        expect.objectContaining({
+          id: "openclaw-tui-chat-correlation",
+          host_packages: "expect",
+        }),
+      ]),
+    );
+  });
+
+  it("rejects unreviewed host packages and unsafe selectors", () => {
+    const target = catalogueTarget("network-policy");
+    expect(() =>
+      validateE2eTargetCatalogue([{ ...target, hostPackages: ["curl"] as never }]),
+    ).toThrow("invalid or duplicate host packages");
+    expect(() => validateE2eTargetCatalogue([{ ...target, selector: "safe; sudo true" }])).toThrow(
+      "invalid test selector",
+    );
   });
 
   it("withholds credentialed catalogue profiles from PR candidate runs", () => {

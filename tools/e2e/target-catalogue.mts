@@ -10,6 +10,9 @@ export type E2eExecutionProfile = (typeof E2E_EXECUTION_PROFILES)[number];
 export const E2E_INSTALL_MODES = ["none", "authenticated", "credential-free"] as const;
 export type E2eInstallMode = (typeof E2E_INSTALL_MODES)[number];
 
+export const E2E_HOST_PACKAGES = ["expect", "iptables"] as const;
+export type E2eHostPackage = (typeof E2E_HOST_PACKAGES)[number];
+
 export interface E2eCatalogueTarget {
   id: string;
   testFile: string;
@@ -19,8 +22,11 @@ export interface E2eCatalogueTarget {
   releaseRequired: boolean;
   timeoutMinutes: number;
   installMode: E2eInstallMode;
+  installNonInteractive: boolean;
   restoreCli: boolean;
   exposeCliBin: boolean;
+  hostPackages: readonly E2eHostPackage[];
+  selector?: string;
   environment: Readonly<Record<string, string>>;
 }
 
@@ -30,21 +36,39 @@ export interface E2eCatalogueMatrixRow {
   test_file: string;
   timeout_minutes: number;
   install_mode: E2eInstallMode;
+  install_non_interactive: boolean;
   restore_cli: boolean;
+  host_packages: string;
 }
 
 type TargetOptions = Omit<
   E2eCatalogueTarget,
-  "id" | "testFile" | "owningPaths" | "releaseRequired" | "environment" | "runner"
+  | "id"
+  | "testFile"
+  | "owningPaths"
+  | "releaseRequired"
+  | "environment"
+  | "hostPackages"
+  | "installNonInteractive"
+  | "runner"
 > & {
   owningPaths?: readonly string[];
   environment?: Readonly<Record<string, string>>;
+  hostPackages?: readonly E2eHostPackage[];
+  installNonInteractive?: boolean;
   runner?: string;
 };
 
 function target(id: string, options: TargetOptions): E2eCatalogueTarget {
   const testFile = `test/e2e/live/${id}.test.ts`;
-  const { owningPaths = [], environment = {}, runner = "ubuntu-latest", ...execution } = options;
+  const {
+    owningPaths = [],
+    environment = {},
+    hostPackages = [],
+    installNonInteractive = false,
+    runner = "ubuntu-latest",
+    ...execution
+  } = options;
   return {
     id,
     testFile,
@@ -52,6 +76,8 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     releaseRequired: true,
     runner,
     environment,
+    hostPackages,
+    installNonInteractive,
     ...execution,
   };
 }
@@ -199,6 +225,20 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_SANDBOX_NAME: "e2e-full",
     },
   }),
+  target("gateway-guard-recovery", {
+    profile: "nvidia-inference",
+    timeoutMinutes: 45,
+    installMode: "authenticated",
+    installNonInteractive: true,
+    restoreCli: true,
+    exposeCliBin: true,
+    owningPaths: ["test/e2e/live/gateway-guard-legacy-keepalive-fixture.ts"],
+    environment: {
+      ...hostedInference,
+      ...nonInteractive,
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
   target("issue-2478-crash-loop-recovery", {
     profile: "standard",
     timeoutMinutes: 30,
@@ -221,6 +261,22 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       ...hostedInference,
       ...nonInteractive,
       NEMOCLAW_SANDBOX_NAME: "e2e-issue-4462",
+    },
+  }),
+  target("issue-4434-tui-unreachable-inference", {
+    profile: "nvidia-inference",
+    timeoutMinutes: 120,
+    installMode: "authenticated",
+    installNonInteractive: true,
+    restoreCli: true,
+    exposeCliBin: true,
+    hostPackages: ["expect", "iptables"],
+    owningPaths: ["test/e2e/support/issue-4434-tui-capture.ts"],
+    environment: {
+      ...hostedInference,
+      ...nonInteractive,
+      NEMOCLAW_ISSUE_4434_LIVE: "1",
+      OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
   target("kimi-inference-compat", {
@@ -273,6 +329,31 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: true,
     environment: { OPENSHELL_GATEWAY: "nemoclaw" },
   }),
+  target("network-policy", {
+    profile: "nvidia-inference",
+    timeoutMinutes: 90,
+    installMode: "credential-free",
+    installNonInteractive: true,
+    restoreCli: true,
+    exposeCliBin: true,
+    hostPackages: ["expect"],
+    selector: "^network-policy:.+probes$",
+    owningPaths: [
+      "test/e2e/live/network-policy-denied-log.ts",
+      "test/e2e/live/network-policy-inference.ts",
+      "test/e2e/live/network-policy-interactive.ts",
+      "test/e2e/live/network-policy-transient-provider.ts",
+      "test/e2e/live/package-database-read-only.ts",
+      "test/e2e/live/policy-list-state.ts",
+      "test/e2e/live/restricted-onboard-helpers.ts",
+    ],
+    environment: {
+      ...hostedInference,
+      NEMOCLAW_E2E_SHARD: "live-probes",
+      NEMOCLAW_SANDBOX_NAME: "e2e-net-policy",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
   target("ollama-auth-proxy", {
     profile: "standard",
     timeoutMinutes: 45,
@@ -324,6 +405,28 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       ...hostedInference,
       NEMOCLAW_SANDBOX_NAME: "e2e-oc-skill-cli",
       OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
+  target("openclaw-tui-chat-correlation", {
+    profile: "nvidia-inference",
+    timeoutMinutes: 75,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: true,
+    hostPackages: ["expect"],
+    owningPaths: [
+      "test/e2e/live/issue-6194-tui-expect.ts",
+      "test/e2e/live/openclaw-tui-ref-fidelity.ts",
+      "test/e2e/live/openclaw-tui-run-classification.ts",
+      "test/e2e/support/issue-4434-tui-capture.ts",
+    ],
+    environment: {
+      ...hostedInference,
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
+      NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+      NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+      NEMOCLAW_PREFERRED_API: "openai-completions",
     },
   }),
   target("openclaw-slack-pairing", {
@@ -481,6 +584,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
 ] as const;
 
 export const E2E_CATALOGUE_SHARED_PATHS = [
+  ".github/actions/host-dependency-setup/",
+  ".github/scripts/host-dependency-setup.sh",
   ".github/workflows/e2e-standard-profile.yaml",
   "scripts/install-openshell.sh",
   "tools/e2e/target-catalogue.mts",
@@ -489,6 +594,7 @@ export const E2E_CATALOGUE_SHARED_PATHS = [
 const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const TEST_FILE_PATTERN = /^test\/e2e\/live\/[A-Za-z0-9._-]+[.]test[.]ts$/u;
 const ENVIRONMENT_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/u;
+const SELECTOR_PATTERN = /^[A-Za-z0-9_./^$=:@+-]+$/u;
 
 export function pathMatches(file: string, owner: string): boolean {
   return owner.endsWith("/") ? file.startsWith(owner) : file === owner;
@@ -514,6 +620,15 @@ export function validateE2eTargetCatalogue(
     }
     if (!E2E_INSTALL_MODES.includes(entry.installMode)) {
       throw new Error(`E2E target ${entry.id} has an invalid install mode`);
+    }
+    if (
+      new Set(entry.hostPackages).size !== entry.hostPackages.length ||
+      entry.hostPackages.some((packageName) => !E2E_HOST_PACKAGES.includes(packageName))
+    ) {
+      throw new Error(`E2E target ${entry.id} has invalid or duplicate host packages`);
+    }
+    if (entry.selector !== undefined && !SELECTOR_PATTERN.test(entry.selector)) {
+      throw new Error(`E2E target ${entry.id} has an invalid test selector`);
     }
     if (!Number.isInteger(entry.timeoutMinutes) || entry.timeoutMinutes < 1) {
       throw new Error(`E2E target ${entry.id} has an invalid timeout`);
@@ -571,7 +686,9 @@ export function catalogueMatrix(
       test_file: entry.testFile,
       timeout_minutes: entry.timeoutMinutes,
       install_mode: entry.installMode,
+      install_non_interactive: entry.installNonInteractive,
       restore_cli: entry.restoreCli,
+      host_packages: entry.hostPackages.join(" "),
     }));
 }
 
@@ -585,7 +702,8 @@ export async function runCatalogueTarget(id: string, testFile: string): Promise<
     process.env.NEMOCLAW_CLI_BIN = path.join(process.cwd(), "bin", "nemoclaw.js");
   }
   const { runLiveVitestCommand } = await import("./live-vitest-invocation.mts");
-  return runLiveVitestCommand(["run", "--test-path", entry.testFile]);
+  const selector = entry.selector ? ["--selector", entry.selector] : [];
+  return runLiveVitestCommand(["run", "--test-path", entry.testFile, ...selector]);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

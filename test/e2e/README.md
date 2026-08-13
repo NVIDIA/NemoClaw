@@ -206,7 +206,9 @@ Each entry owns these target properties:
 - Target ID and Vitest file.
 - Source paths that select the target after a push to `main`.
 - Execution profile, runner, and timeout.
-- OpenShell install mode and CLI artifact use.
+- OpenShell install mode, non-interactive installer selection, and CLI artifact use.
+- Reviewed host packages.
+- Optional Vitest title selector.
 - Target-specific environment variables.
 - Pre-tag release requirement.
 
@@ -223,6 +225,15 @@ The workflow partitions catalogue targets into three credential profiles:
 All three profiles call `.github/workflows/e2e-standard-profile.yaml`.
 Each target selects its runner through the catalogue.
 The reusable workflow owns checkout, Docker authentication, setup, CLI artifact restoration, OpenShell installation, Vitest execution, evidence manifest creation, artifact upload, and Docker credential cleanup.
+Catalogue entries may request only the reviewed `expect` and `iptables` host packages.
+The reusable workflow installs those packages through the pinned host-dependency action before workspace preparation.
+An optional `selector` limits execution to matching tests in the target's declared Vitest file.
+A host package or selector alone does not require a dedicated workflow job.
+When a target selects non-interactive installation, the reusable workflow sets `NEMOCLAW_NON_INTERACTIVE=1` for its OpenShell install step.
+The reusable workflow sets `NEMOCLAW_E2E_EXPECTED_SHA` to the candidate commit for every target.
+TUI exact-ref checks use this shared value instead of a target-specific checkout variable.
+Each target writes its artifacts and `evidence-manifest.json` under `e2e-artifacts/live/<target-id>`.
+A selector does not add an artifact directory or change the target ID.
 The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets use this shape on `linux-amd64-gpu-rtxpro6000-latest-1`.
 Keep a dedicated workflow job when a target needs a different setup boundary, a multi-job handoff, or credential access outside the three profiles.
 
@@ -979,9 +990,8 @@ non-authoritative. Model advice is additive and cannot downgrade the
 deterministic floor. PR Review Advisor recommendations remain advisory.
 A maintainer decides whether to dispatch this trusted selection for the current PR
 revision. The manual PR controller accepts the credential-free
-`inference-routing` job; secret-backed jobs such as `network-policy` remain
-available only through manual dispatch from reviewed code on `main` and are
-labeled that way in the Advisor comment.
+`inference-routing` job. It does not dispatch secret-backed targets such as
+`network-policy` for PR revisions. The Advisor comment labels that boundary.
 No PR E2E controller dispatches the risk plan.
 
 The `full-e2e` target enforces a separate hard acceptance contract for the

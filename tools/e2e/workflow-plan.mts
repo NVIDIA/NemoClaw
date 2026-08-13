@@ -171,7 +171,9 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     isRecord(value) &&
     hasExactKeys(value, [
       "id",
+      "host_packages",
       "install_mode",
+      "install_non_interactive",
       "restore_cli",
       "runner",
       "test_file",
@@ -186,6 +188,9 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     typeof value.timeout_minutes === "number" &&
     Number.isInteger(value.timeout_minutes) &&
     value.timeout_minutes > 0 &&
+    typeof value.host_packages === "string" &&
+    /^(?:|expect|iptables|expect iptables)$/u.test(value.host_packages) &&
+    typeof value.install_non_interactive === "boolean" &&
     (value.install_mode === "none" ||
       value.install_mode === "authenticated" ||
       value.install_mode === "credential-free") &&
@@ -205,7 +210,9 @@ function isCatalogueMatrixRowForProfile(
     target.testFile === value.test_file &&
     target.timeoutMinutes === value.timeout_minutes &&
     target.installMode === value.install_mode &&
-    target.restoreCli === value.restore_cli
+    target.installNonInteractive === value.install_non_interactive &&
+    target.restoreCli === value.restore_cli &&
+    target.hostPackages.join(" ") === value.host_packages
   );
 }
 

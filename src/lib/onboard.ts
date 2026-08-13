@@ -491,6 +491,7 @@ const { skippedStepMessage }: typeof import("./onboard/skipped-step-message") =
 const policyPresetCarry: typeof import("./onboard/policy-preset-persistence") = require("./onboard/policy-preset-persistence");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
+  createDashboardPortScopedSandboxEntryPoints,
   findAvailableDashboardPort,
   preflightDashboardPortRangeAvailability,
   reserveCreateSandboxDashboardPort,
@@ -2437,8 +2438,11 @@ async function createSandboxWithBaseImageResolution(
     }
     await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
     if (!createIntent?.recreateTransaction) recreateRuntime = openRecreateJournal();
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    if (recreateRuntime.acceptedTarget) { if ("complete" in recreateRuntime) recreateRuntime.complete(); await restoreReusedSandboxDashboard(true); return sandboxName; }
+    if (recreateRuntime.acceptedTarget) {
+      if ("complete" in recreateRuntime) recreateRuntime.complete();
+      await restoreReusedSandboxDashboard(true);
+      return sandboxName;
+    }
     const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     baseImageResolutionFlow.captureBaseResolution(baseImageResolutionContext, previousEntry?.imageTag);
@@ -2702,19 +2706,39 @@ type CreateSandboxArgs =
     ? Args
     : never;
 
-async function createSandbox(...args: CreateSandboxArgs): Promise<string> {
-  const computePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  return agentOnboard.withHermesApiPortReservationScope((hermesApiPortReservationScope: import("./agent/onboard").HermesApiPortReservationScope) => withSandboxPortReservationScope((dashboardPortReservationScope) => createSandboxWithBaseImageResolution(baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }), computePlan, null, false, null, dashboardPortReservationScope, hermesApiPortReservationScope, ...args)));
-}
-
-async function createSandboxWithTemporaryManagedRuntime(
-  ...args: CreateSandboxArgs
-): Promise<string> {
-  const computePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  return agentOnboard.withHermesApiPortReservationScope((hermesApiPortReservationScope: import("./agent/onboard").HermesApiPortReservationScope) => withSandboxPortReservationScope((dashboardPortReservationScope) => createSandboxWithBaseImageResolution(baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }), computePlan, null, true, null, dashboardPortReservationScope, hermesApiPortReservationScope, ...args)));
-}
+const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
+  createDashboardPortScopedSandboxEntryPoints<
+    CreateSandboxArgs,
+    string,
+    ReturnType<typeof baseImageResolutionFlow.createBaseImageResolutionContext>,
+    ReturnType<typeof dockerDriverPlatform.resolveCurrentOpenShellComputePlan>
+  >({
+    createBaseImageResolutionContext: () =>
+      baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
+    createSandboxWithBaseImageResolution: (
+      baseImageResolutionContext,
+      computePlan,
+      managedWorkloadRebuild,
+      temporaryManagedRuntime,
+      temporaryManagedRuntimeCatalog,
+      dashboardPortReservationScope,
+      ...args
+    ) =>
+      agentOnboard.withHermesApiPortReservationScope(
+        (hermesApiPortReservationScope: import("./agent/onboard").HermesApiPortReservationScope) =>
+          createSandboxWithBaseImageResolution(
+            baseImageResolutionContext,
+            computePlan,
+            managedWorkloadRebuild,
+            temporaryManagedRuntime,
+            temporaryManagedRuntimeCatalog,
+            dashboardPortReservationScope,
+            hermesApiPortReservationScope,
+            ...args,
+          ),
+      ),
+    resolveComputePlan: dockerDriverPlatform.resolveCurrentOpenShellComputePlan,
+  });
 
 // ── Step 3: Inference selection ──────────────────────────────────
 
