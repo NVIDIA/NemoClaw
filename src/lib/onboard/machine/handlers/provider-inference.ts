@@ -451,6 +451,29 @@ function canResumeInferenceRoute(input: {
   );
 }
 
+function hostLocalToolCallingRequirement(
+  canonicalHostLocalResume: boolean,
+  allowToolsIncompatible: boolean,
+): boolean | null {
+  return canonicalHostLocalResume ? null : !allowToolsIncompatible;
+}
+
+async function prepareSelectedLocalProvider(
+  selection: HostLocalInferenceStartupSelection | undefined,
+  provider: string,
+  prepare: (provider: string) => Promise<string | null>,
+): Promise<string | null> {
+  return selection ? null : prepare(provider);
+}
+
+function hostLocalInferenceSessionRoute(
+  routeOnly: boolean,
+  endpointUrl: string | null,
+  endpointSource: InferenceEndpointSource | null,
+): { endpointUrl?: string | null; endpointSource?: InferenceEndpointSource | null } {
+  return routeOnly ? { endpointUrl, endpointSource } : {};
+}
+
 function resolvedHostLocalInferenceRoute(
   selection: HostLocalInferenceStartupSelection | undefined,
   current: {
@@ -1124,7 +1147,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         provider: selectedProvider,
         model: selectedModel,
         acceleration: selectedHostLocalOllamaAcceleration(gpu, gpuPassthrough),
-        requireToolCalling: canonicalHostLocalResume ? null : !allowToolsIncompatible,
+        requireToolCalling: hostLocalToolCallingRequirement(
+          canonicalHostLocalResume,
+          allowToolsIncompatible,
+        ),
         allowPublishedResume: effectiveResume,
         recover: canonicalHostLocalResume,
         recordToolCallingRequirement: (required) => {
@@ -1403,9 +1429,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       // secret-free route. Do not start or persist the legacy host Ollama
       // proxy alongside it; that would leave cross-engine residue before the
       // provider-owned transaction can prove and commit its authority.
-      const preparedOllamaProxyToken = activeHostLocalInferenceSetupOptions.hostLocalInference
-        ? null
-        : await deps.prepareLocalProviderForInference(provider);
+      const preparedOllamaProxyToken = await prepareSelectedLocalProvider(
+        activeHostLocalInferenceSetupOptions.hostLocalInference,
+        provider,
+        deps.prepareLocalProviderForInference,
+      );
       const inferenceOptions = {
         gatewayName,
         allowToolsIncompatible,
@@ -1475,7 +1503,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         compatibleEndpointReasoningEffort,
         nimContainer,
         hermesToolGateways,
-        ...(hostLocalInferenceRouteOnly ? { endpointUrl, endpointSource } : {}),
+        ...hostLocalInferenceSessionRoute(
+          hostLocalInferenceRouteOnly,
+          endpointUrl,
+          endpointSource,
+        ),
         // The forced #6294/#6289 heal succeeded: the gateway registration now
         // matches the adjusted route, so the stale session seed can be replaced.
         ...(healAdjustedInferenceApi ? { preferredInferenceApi } : {}),

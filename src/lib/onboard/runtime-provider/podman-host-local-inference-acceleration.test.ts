@@ -37,8 +37,8 @@ function operationRuntime(
     onFailureEvidence: harness.onFailureEvidence,
     redactSensitive: harness.redactSensitive,
   });
-  if (!operation.managedRuntime) throw new Error("test operation lacks managed runtime");
-  return operation.managedRuntime;
+  expect(operation.managedRuntime).toBeDefined();
+  return operation.managedRuntime as HostLocalInferenceRuntime;
 }
 
 describe("Podman host-local inference acceleration authority", () => {
@@ -161,50 +161,55 @@ describe("Podman host-local inference acceleration authority", () => {
   it.each([
     ["cpu", "nvidia-gpu"],
     ["nvidia-gpu", "cpu"],
-  ] as const)("rejects a %s Ollama receipt through a %s operation without provider mutation", (receiptAcceleration, validationAcceleration) => {
-    const harness = createPodmanHostLocalInferenceTestHarness({
-      acceleration: receiptAcceleration,
-    });
-    harness.state.ollamaPsModels = [
-      ollamaPsModel({
-        size_vram: receiptAcceleration === "cpu" ? 0 : OLLAMA_MODEL_SIZE,
-      }),
-    ];
-    const sourceRuntime = operationRuntime(harness);
-    const prepared = sourceRuntime.qualifyOllama(
-      {
+  ] as const)(
+    "rejects a %s Ollama receipt through a %s operation without provider mutation",
+    (receiptAcceleration, validationAcceleration) => {
+      const harness = createPodmanHostLocalInferenceTestHarness({
         acceleration: receiptAcceleration,
-        networkName: harness.input.networkName,
-        networkId: harness.input.networkId,
-        networkGatewayIp: harness.input.networkGatewayIp,
-        hostPort: 11434,
-        probeImageRef: harness.input.probeImageRef,
-        model: "nemotron:latest",
-        requireToolCalling: true,
-      },
-      harness.writer,
-    );
-    prepared.validateBeforeCommit();
-    prepared.commit();
-    const validationRuntime = createPodmanHostLocalInferenceRuntime({
-      engine: harness.engine,
-      env: harness.env,
-      authorityStore: harness.authorityStore,
-      routeAuthorityStore: harness.routeAuthorityStore,
-      authority: qualifyPodmanInferenceAuthority(harness.engine),
-      operationAcceleration: validationAcceleration,
-      onFailureEvidence: harness.onFailureEvidence,
-      redactSensitive: harness.redactSensitive,
-    });
-    harness.events.length = 0;
-    const validate = validationRuntime.validate;
-    if (!validate) throw new Error("test runtime lacks validation");
+      });
+      harness.state.ollamaPsModels = [
+        ollamaPsModel({
+          size_vram: receiptAcceleration === "cpu" ? 0 : OLLAMA_MODEL_SIZE,
+        }),
+      ];
+      const sourceRuntime = operationRuntime(harness);
+      const prepared = sourceRuntime.qualifyOllama(
+        {
+          acceleration: receiptAcceleration,
+          networkName: harness.input.networkName,
+          networkId: harness.input.networkId,
+          networkGatewayIp: harness.input.networkGatewayIp,
+          hostPort: 11434,
+          probeImageRef: harness.input.probeImageRef,
+          model: "nemotron:latest",
+          requireToolCalling: true,
+        },
+        harness.writer,
+      );
+      prepared.validateBeforeCommit();
+      prepared.commit();
+      const validationRuntime = createPodmanHostLocalInferenceRuntime({
+        engine: harness.engine,
+        env: harness.env,
+        authorityStore: harness.authorityStore,
+        routeAuthorityStore: harness.routeAuthorityStore,
+        authority: qualifyPodmanInferenceAuthority(harness.engine),
+        operationAcceleration: validationAcceleration,
+        onFailureEvidence: harness.onFailureEvidence,
+        redactSensitive: harness.redactSensitive,
+      });
+      harness.events.length = 0;
+      expect(validationRuntime.validate).toBeTypeOf("function");
+      const validate = validationRuntime.validate as NonNullable<
+        HostLocalInferenceRuntime["validate"]
+      >;
 
-    expect(() => validate(prepared.receipt)).toThrow(
-      "receipt acceleration differs from its operation authority",
-    );
-    expect(harness.events).toHaveLength(0);
-  });
+      expect(() => validate(prepared.receipt)).toThrow(
+        "receipt acceleration differs from its operation authority",
+      );
+      expect(harness.events).toHaveLength(0);
+    },
+  );
 
   it("rejects managed lifecycle and GPU translation through CPU operation authority", () => {
     const harness = createPodmanHostLocalInferenceTestHarness({ acceleration: "cpu" });

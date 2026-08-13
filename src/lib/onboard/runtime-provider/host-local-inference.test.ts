@@ -97,6 +97,11 @@ function containerRuntime(value: HostLocalInferenceReceipt) {
   return value.runtime as Extract<HostLocalInferenceReceipt["runtime"], { kind: "container" }>;
 }
 
+function hostRuntime(value: HostLocalInferenceReceipt) {
+  expect(value.runtime.kind).toBe("host");
+  return value.runtime as Extract<HostLocalInferenceReceipt["runtime"], { kind: "host" }>;
+}
+
 describe("host-local inference receipt contract", () => {
   it.each([
     "ollama",
@@ -133,8 +138,8 @@ describe("host-local inference receipt contract", () => {
 
   it("rejects missing, malformed, or extended Ollama acceleration authority", () => {
     const base = receipt("ollama");
-    if (base.runtime.kind !== "host") throw new Error("test receipt must use host authority");
-    const { acceleration: _acceleration, ...missingAcceleration } = base.runtime;
+    const runtime = hostRuntime(base);
+    const { acceleration: _acceleration, ...missingAcceleration } = runtime;
 
     expect(() =>
       normalizeHostLocalInferenceReceipt({ ...base, runtime: missingAcceleration }),
@@ -142,21 +147,21 @@ describe("host-local inference receipt contract", () => {
     expect(() =>
       normalizeHostLocalInferenceReceipt({
         ...base,
-        runtime: { ...base.runtime, acceleration: "auto" },
+        runtime: { ...runtime, acceleration: "auto" },
       }),
     ).toThrow("Ollama acceleration authority is malformed");
     expect(() =>
       normalizeHostLocalInferenceReceipt({
         ...base,
-        runtime: { ...base.runtime, accelerationHint: "nvidia-gpu" },
+        runtime: { ...runtime, accelerationHint: "nvidia-gpu" },
       }),
     ).toThrow("host runtime authority schema is unsupported");
   });
 
   it("requires immutable Ollama model identity and canonicalizes implicit tags safely", () => {
     const base = receipt("ollama");
-    if (base.runtime.kind !== "host") throw new Error("test receipt must use host authority");
-    const { modelDigest: _modelDigest, ...missingModelDigest } = base.runtime;
+    const runtime = hostRuntime(base);
+    const { modelDigest: _modelDigest, ...missingModelDigest } = runtime;
 
     expect(() =>
       normalizeHostLocalInferenceReceipt({ ...base, runtime: missingModelDigest }),
@@ -164,7 +169,7 @@ describe("host-local inference receipt contract", () => {
     expect(() =>
       normalizeHostLocalInferenceReceipt({
         ...base,
-        runtime: { ...base.runtime, modelDigest: "mutable" },
+        runtime: { ...runtime, modelDigest: "mutable" },
       }),
     ).toThrow("Ollama model digest is malformed");
     expect(normalizeHostLocalOllamaModelRef("nemotron")).toBe("nemotron:latest");

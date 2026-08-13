@@ -375,7 +375,7 @@ export function translatePodmanLocalInferenceArgs(
   const requestedGpuDevices = new Set<string>();
   let imageFound = false;
 
-  for (let index = 1; index < source.length; ) {
+  for (let index = 1; index < source.length;) {
     const token = source[index] ?? "";
     if (imageFound) {
       requireSecretFreeCommandArgument(token);

@@ -181,25 +181,28 @@ describe("provider-neutral host-local inference startup routing", () => {
     ["ollama", "ollama-local", "http://host.openshell.internal:11434/v1"],
     ["nim", "vllm-local", "http://host.openshell.internal:8001/v1"],
     ["vllm", "vllm-local", "http://host.openshell.internal:8000/v1"],
-  ] as const)("starts %s without exposing the provider-native host", (service, provider, baseUrl) => {
-    const providerRuntime = runtime();
-    const route = prepareHostLocalInferenceStartup(
-      operation(providerRuntime),
-      service === "ollama"
-        ? { application: "openclaw", service, endpoint, receiptWriter: writer }
-        : {
-            application: "openclaw",
-            service,
-            managed: managed(service),
-            receiptWriter: writer,
-          },
-    );
+  ] as const)(
+    "starts %s without exposing the provider-native host",
+    (service, provider, baseUrl) => {
+      const providerRuntime = runtime();
+      const route = prepareHostLocalInferenceStartup(
+        operation(providerRuntime),
+        service === "ollama"
+          ? { application: "openclaw", service, endpoint, receiptWriter: writer }
+          : {
+              application: "openclaw",
+              service,
+              managed: managed(service),
+              receiptWriter: writer,
+            },
+      );
 
-    expect(route.gatewayProvider).toBe(provider);
-    expect(route.gatewayProviderBaseUrl).toBe(baseUrl);
-    expect(route.gatewayProviderBaseUrl).not.toContain("mxc-provider-native.internal");
-    expect(route.applicationBaseUrl).toBe("https://inference.local/v1");
-  });
+      expect(route.gatewayProvider).toBe(provider);
+      expect(route.gatewayProviderBaseUrl).toBe(baseUrl);
+      expect(route.gatewayProviderBaseUrl).not.toContain("mxc-provider-native.internal");
+      expect(route.applicationBaseUrl).toBe("https://inference.local/v1");
+    },
+  );
 
   it("presents the same inference.local route to every supported application", () => {
     const route = prepareHostLocalInferenceStartup(operation(), {

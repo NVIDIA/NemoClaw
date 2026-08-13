@@ -635,7 +635,7 @@ export function createSetupInference(
           }
         }
 
-        try {
+        const setupSelectedProvider = async (): Promise<SetupInferenceResult | null> => {
           if (provider === deps.hermesProviderAuth.HERMES_PROVIDER_NAME) {
             return inferenceProviders.setupHermesProviderInference(
               {
@@ -819,6 +819,12 @@ export function createSetupInference(
             commonDeps.exitProcess(1);
           }
 
+          return null;
+        };
+
+        try {
+          const providerResult = await setupSelectedProvider();
+          if (providerResult) return providerResult;
           commonDeps.verifyInferenceRoute(provider, model);
           if (hostLocalRoute) {
             deps.log(

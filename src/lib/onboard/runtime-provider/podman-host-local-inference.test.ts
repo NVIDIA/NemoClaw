@@ -81,58 +81,58 @@ describe("Podman host-local inference lifecycle", () => {
     expect(harness.events).toHaveLength(0);
   });
 
-  it.each([
-    "nim",
-    "vllm",
-  ] as const)("proves and publishes a secret-free canonical %s receipt in exact order", (service) => {
-    const harness = createPodmanHostLocalInferenceTestHarness({ service });
-    const runtime = operationRuntime(harness);
-    harness.events.length = 0;
+  it.each(["nim", "vllm"] as const)(
+    "proves and publishes a secret-free canonical %s receipt in exact order",
+    (service) => {
+      const harness = createPodmanHostLocalInferenceTestHarness({ service });
+      const runtime = operationRuntime(harness);
+      harness.events.length = 0;
 
-    const prepared = runtime.startManaged(harness.input, harness.writer);
+      const prepared = runtime.startManaged(harness.input, harness.writer);
 
-    expect(prepared.receipt).toMatchObject({
-      schemaVersion: 2,
-      providerId: "podman",
-      service,
-      endpoint: { host: "host.openshell.internal" },
-      inference: {
-        protocol: "openai-chat-completions",
-        model: `${service}-model`,
-        toolCallingRequired: true,
-      },
-      publication: { priorState: "absent" },
-    });
-    expect(harness.written).toHaveLength(0);
-    expect(
-      Object.values(harness.env)
-        .map(String)
-        .filter((secret) => secret.length > 0)
-        .filter((secret) => harness.events.join("\n").includes(secret)),
-    ).toEqual([]);
-    expect(JSON.stringify(prepared.receipt)).not.toContain("test-secret");
+      expect(prepared.receipt).toMatchObject({
+        schemaVersion: 2,
+        providerId: "podman",
+        service,
+        endpoint: { host: "host.openshell.internal" },
+        inference: {
+          protocol: "openai-chat-completions",
+          model: `${service}-model`,
+          toolCallingRequired: true,
+        },
+        publication: { priorState: "absent" },
+      });
+      expect(harness.written).toHaveLength(0);
+      expect(
+        Object.values(harness.env)
+          .map(String)
+          .filter((secret) => secret.length > 0)
+          .filter((secret) => harness.events.join("\n").includes(secret)),
+      ).toEqual([]);
+      expect(JSON.stringify(prepared.receipt)).not.toContain("test-secret");
 
-    const firstReady = harness.events.findIndex((event) =>
-      event.includes(service === "nim" ? "/v1/health/ready" : "/health"),
-    );
-    const firstGpu = harness.events.findIndex((event) => event.includes("nvidia-smi"));
-    const firstInference = harness.events.findIndex((event) =>
-      event.includes("/v1/chat/completions"),
-    );
-    expect(firstReady).toBeGreaterThanOrEqual(0);
-    expect(firstGpu).toBeGreaterThan(firstReady);
-    expect(firstInference).toBeGreaterThan(firstGpu);
-    expect(harness.events.filter((event) => event.startsWith("environment:"))).toEqual(
-      service === "nim" ? ["environment:NGC_API_KEY"] : [],
-    );
-    expect(harness.events.join("\n")).not.toContain("docker");
+      const firstReady = harness.events.findIndex((event) =>
+        event.includes(service === "nim" ? "/v1/health/ready" : "/health"),
+      );
+      const firstGpu = harness.events.findIndex((event) => event.includes("nvidia-smi"));
+      const firstInference = harness.events.findIndex((event) =>
+        event.includes("/v1/chat/completions"),
+      );
+      expect(firstReady).toBeGreaterThanOrEqual(0);
+      expect(firstGpu).toBeGreaterThan(firstReady);
+      expect(firstInference).toBeGreaterThan(firstGpu);
+      expect(harness.events.filter((event) => event.startsWith("environment:"))).toEqual(
+        service === "nim" ? ["environment:NGC_API_KEY"] : [],
+      );
+      expect(harness.events.join("\n")).not.toContain("docker");
 
-    prepared.validateBeforeCommit();
-    expect(harness.written).toHaveLength(0);
-    expect(prepared.commit()).toEqual(prepared.receipt);
-    expect(harness.written).toHaveLength(1);
-    expect(harness.events.at(-1)).toBe("receipt:write");
-  });
+      prepared.validateBeforeCommit();
+      expect(harness.written).toHaveLength(0);
+      expect(prepared.commit()).toEqual(prepared.receipt);
+      expect(harness.written).toHaveLength(1);
+      expect(harness.events.at(-1)).toBe("receipt:write");
+    },
+  );
 
   it("uses exact named disposable probes with no anonymous or cross-authority launch surface", () => {
     const harness = createPodmanHostLocalInferenceTestHarness();
@@ -245,35 +245,38 @@ describe("Podman host-local inference lifecycle", () => {
     ["absent", null],
     ["running", true],
     ["stopped", false],
-  ] as const)("fails closed on indeterminate probe cleanup and restores the exact %s parent state", (priorState, expectedRunning) => {
-    const harness = createPodmanHostLocalInferenceTestHarness();
-    const operation = createPodmanHostLocalInferenceOperation({
-      engine: harness.engine,
-      env: harness.env,
-      authorityStore: harness.authorityStore,
-      routeAuthorityStore: harness.routeAuthorityStore,
-      onFailureEvidence: harness.onFailureEvidence,
-      redactSensitive: harness.redactSensitive,
-    });
-    const runtime = operation.managedRuntime!;
-    const seedPriorState = {
-      absent: () => undefined,
-      running: () => harness.seedManaged("running", true, operation.bindingSha256),
-      stopped: () => harness.seedManaged("stopped", false, operation.bindingSha256),
-    } as const;
-    seedPriorState[priorState]();
-    harness.state.probeRemoveLeavesContainer = true;
-    harness.events.length = 0;
+  ] as const)(
+    "fails closed on indeterminate probe cleanup and restores the exact %s parent state",
+    (priorState, expectedRunning) => {
+      const harness = createPodmanHostLocalInferenceTestHarness();
+      const operation = createPodmanHostLocalInferenceOperation({
+        engine: harness.engine,
+        env: harness.env,
+        authorityStore: harness.authorityStore,
+        routeAuthorityStore: harness.routeAuthorityStore,
+        onFailureEvidence: harness.onFailureEvidence,
+        redactSensitive: harness.redactSensitive,
+      });
+      const runtime = operation.managedRuntime!;
+      const seedPriorState = {
+        absent: () => undefined,
+        running: () => harness.seedManaged("running", true, operation.bindingSha256),
+        stopped: () => harness.seedManaged("stopped", false, operation.bindingSha256),
+      } as const;
+      seedPriorState[priorState]();
+      harness.state.probeRemoveLeavesContainer = true;
+      harness.events.length = 0;
 
-    const action = () =>
-      priorState === "absent"
-        ? runtime.startManaged(harness.input, harness.writer)
-        : runtime.recoverManaged?.(harness.input, harness.writer);
-    expect(action).toThrow("probe cleanup is indeterminate");
-    expect(harness.container()?.running ?? null).toBe(expectedRunning);
-    expect(harness.probe()).not.toBeNull();
-    expect(harness.written).toHaveLength(0);
-  });
+      const action = () =>
+        priorState === "absent"
+          ? runtime.startManaged(harness.input, harness.writer)
+          : runtime.recoverManaged?.(harness.input, harness.writer);
+      expect(action).toThrow("probe cleanup is indeterminate");
+      expect(harness.container()?.running ?? null).toBe(expectedRunning);
+      expect(harness.probe()).not.toBeNull();
+      expect(harness.written).toHaveLength(0);
+    },
+  );
 
   it("fails closed when a disposable probe name is reused after exact-ID removal", () => {
     const harness = createPodmanHostLocalInferenceTestHarness();
@@ -645,24 +648,24 @@ describe("Podman host-local inference lifecycle", () => {
     expect(harness.written).toHaveLength(0);
   });
 
-  it.each([
-    "nim",
-    "vllm",
-  ] as const)("keeps managed %s rollback-safe when CDI drifts before receipt publication", (service) => {
-    const harness = createPodmanHostLocalInferenceTestHarness({ service });
-    const runtime = operationRuntime(harness);
-    const prepared = runtime.startManaged(harness.input, harness.writer);
-    prepared.validateBeforeCommit();
-    harness.state.cdiDevices = ["nvidia.com/gpu=0"];
+  it.each(["nim", "vllm"] as const)(
+    "keeps managed %s rollback-safe when CDI drifts before receipt publication",
+    (service) => {
+      const harness = createPodmanHostLocalInferenceTestHarness({ service });
+      const runtime = operationRuntime(harness);
+      const prepared = runtime.startManaged(harness.input, harness.writer);
+      prepared.validateBeforeCommit();
+      harness.state.cdiDevices = ["nvidia.com/gpu=0"];
 
-    expect(() => prepared.commit()).toThrow("authority changed");
-    expect(harness.failures.at(-1)).toMatchObject({ phase: "commit" });
-    expect(harness.written).toHaveLength(0);
-    expect(harness.container()).not.toBeNull();
-    expect(prepared.publicationState()).toBe("unpublished");
-    expect(prepared.rollback()).toMatchObject({ status: "removed", priorState: "absent" });
-    expect(harness.container()).toBeNull();
-  });
+      expect(() => prepared.commit()).toThrow("authority changed");
+      expect(harness.failures.at(-1)).toMatchObject({ phase: "commit" });
+      expect(harness.written).toHaveLength(0);
+      expect(harness.container()).not.toBeNull();
+      expect(prepared.publicationState()).toBe("unpublished");
+      expect(prepared.rollback()).toMatchObject({ status: "removed", priorState: "absent" });
+      expect(harness.container()).toBeNull();
+    },
+  );
 
   it("checks Ollama authority immediately before route and receipt publication", () => {
     const harness = createPodmanHostLocalInferenceTestHarness();
@@ -925,46 +928,45 @@ describe("Podman host-local inference lifecycle", () => {
     ).toBe(false);
   });
 
-  it.each([
-    "ready",
-    "gpu",
-    "inference",
-  ] as const)("restarts only the exact prior-running runtime when it exits during %s proof", (phase) => {
-    const harness = createPodmanHostLocalInferenceTestHarness();
-    const runtime = operationRuntime(harness);
-    const initial = runtime.startManaged(harness.input, harness.writer);
-    initial.validateBeforeCommit();
-    const receipt = initial.commit();
-    harness.state.parentExitDuringProof = phase;
-    harness.events.length = 0;
+  it.each(["ready", "gpu", "inference"] as const)(
+    "restarts only the exact prior-running runtime when it exits during %s proof",
+    (phase) => {
+      const harness = createPodmanHostLocalInferenceTestHarness();
+      const runtime = operationRuntime(harness);
+      const initial = runtime.startManaged(harness.input, harness.writer);
+      initial.validateBeforeCommit();
+      const receipt = initial.commit();
+      harness.state.parentExitDuringProof = phase;
+      harness.events.length = 0;
 
-    expect(() => runtime.resumeManaged?.(harness.input, receipt, harness.writer)).toThrow();
+      expect(() => runtime.resumeManaged?.(harness.input, receipt, harness.writer)).toThrow();
 
-    expect(harness.container()).toMatchObject({
-      id: "a".repeat(64),
-      running: true,
-      status: "running",
-    });
-    const parentStarts = harness.events.filter(
-      (event) => event === `podman:start ${"a".repeat(64)}`,
-    );
-    expect(parentStarts).toHaveLength(1);
-    expect(
-      harness.events.some((event) => event.includes(`podman:rm --force ${"a".repeat(64)}`)),
-    ).toBe(false);
-    const evidenceIndex = harness.events.indexOf(`evidence:${phase}`);
-    const startIndex = harness.events.indexOf(`podman:start ${"a".repeat(64)}`);
-    expect(evidenceIndex).toBeGreaterThanOrEqual(0);
-    expect(startIndex).toBeGreaterThan(evidenceIndex);
-    expect(
-      harness.events.some(
-        (event, index) =>
-          index > evidenceIndex &&
-          index < startIndex &&
-          event.includes(`podman:rm --force ${"c".repeat(64)}`),
-      ),
-    ).toBe(phase !== "gpu");
-  });
+      expect(harness.container()).toMatchObject({
+        id: "a".repeat(64),
+        running: true,
+        status: "running",
+      });
+      const parentStarts = harness.events.filter(
+        (event) => event === `podman:start ${"a".repeat(64)}`,
+      );
+      expect(parentStarts).toHaveLength(1);
+      expect(
+        harness.events.some((event) => event.includes(`podman:rm --force ${"a".repeat(64)}`)),
+      ).toBe(false);
+      const evidenceIndex = harness.events.indexOf(`evidence:${phase}`);
+      const startIndex = harness.events.indexOf(`podman:start ${"a".repeat(64)}`);
+      expect(evidenceIndex).toBeGreaterThanOrEqual(0);
+      expect(startIndex).toBeGreaterThan(evidenceIndex);
+      expect(
+        harness.events.some(
+          (event, index) =>
+            index > evidenceIndex &&
+            index < startIndex &&
+            event.includes(`podman:rm --force ${"c".repeat(64)}`),
+        ),
+      ).toBe(phase !== "gpu");
+    },
+  );
 
   it("re-proves a lost rollback-start acknowledgement before preserving the original failure", () => {
     const harness = createPodmanHostLocalInferenceTestHarness();
@@ -1033,32 +1035,32 @@ describe("Podman host-local inference lifecycle", () => {
     { priorState: "absent" as const, expectedRunning: null },
     { priorState: "running" as const, expectedRunning: true },
     { priorState: "stopped" as const, expectedRunning: false },
-  ])("restores exact $priorState state after a same-transaction recovery failure", ({
-    priorState,
-    expectedRunning,
-  }) => {
-    const harness = createPodmanHostLocalInferenceTestHarness();
-    const { operation, runtime } = operationAndRuntime(harness);
-    harness.seedManaged(priorState, true, operation.bindingSha256);
-    harness.state.probeFailure = "inference";
-    harness.events.length = 0;
+  ])(
+    "restores exact $priorState state after a same-transaction recovery failure",
+    ({ priorState, expectedRunning }) => {
+      const harness = createPodmanHostLocalInferenceTestHarness();
+      const { operation, runtime } = operationAndRuntime(harness);
+      harness.seedManaged(priorState, true, operation.bindingSha256);
+      harness.state.probeFailure = "inference";
+      harness.events.length = 0;
 
-    expect(() => runtime.recoverManaged?.(harness.input, harness.writer)).toThrow(
-      "probe exited 22",
-    );
-    expect(harness.container()?.running ?? null).toBe(expectedRunning);
-    const evidenceIndex = harness.events.findIndex((event) => event === "evidence:inference");
-    const cleanupIndices = harness.events
-      .map((event, index) => ({ event, index }))
-      .filter(
-        ({ event }) =>
-          event.includes(`podman:rm --force ${"a".repeat(64)}`) ||
-          event.includes(`podman:stop --time 30 ${"a".repeat(64)}`),
-      )
-      .map(({ index }) => index);
-    expect(evidenceIndex).toBeGreaterThanOrEqual(0);
-    expect(cleanupIndices.every((index) => index > evidenceIndex)).toBe(true);
-  });
+      expect(() => runtime.recoverManaged?.(harness.input, harness.writer)).toThrow(
+        "probe exited 22",
+      );
+      expect(harness.container()?.running ?? null).toBe(expectedRunning);
+      const evidenceIndex = harness.events.findIndex((event) => event === "evidence:inference");
+      const cleanupIndices = harness.events
+        .map((event, index) => ({ event, index }))
+        .filter(
+          ({ event }) =>
+            event.includes(`podman:rm --force ${"a".repeat(64)}`) ||
+            event.includes(`podman:stop --time 30 ${"a".repeat(64)}`),
+        )
+        .map(({ index }) => index);
+      expect(evidenceIndex).toBeGreaterThanOrEqual(0);
+      expect(cleanupIndices.every((index) => index > evidenceIndex)).toBe(true);
+    },
+  );
 
   it("rejects a stale transaction label before recovery mutation", () => {
     const harness = createPodmanHostLocalInferenceTestHarness();

@@ -162,6 +162,16 @@ function hostLocalPublishedResumeSelection(
   };
 }
 
+function expectedOllamaSelection(
+  selected: HostLocalInferenceStartupSelection,
+): Extract<HostLocalInferenceStartupSelection["request"], { service: "ollama" }> {
+  expect(selected.request.service).toBe("ollama");
+  return selected.request as Extract<
+    HostLocalInferenceStartupSelection["request"],
+    { service: "ollama" }
+  >;
+}
+
 describe("provider inference host-local startup selection", () => {
   it("rejects reuse of cached startup authority for a different sandbox", () => {
     const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
@@ -212,77 +222,81 @@ describe("provider inference host-local startup selection", () => {
     (["openclaw", "hermes", "langchain-deepagents-code"] as const).flatMap((application) =>
       (["ollama", "nim", "vllm"] as const).map((service) => ({ application, service })),
     ),
-  )("carries accepted $service startup authority into $application inference setup", async ({
-    application,
-    service,
-  }) => {
-    const model = "qwen3.5-9b";
-    const provider = service === "ollama" ? "ollama-local" : "vllm-local";
-    const setupNim = vi.fn(async () => ({
-      ...baseSelection,
-      provider,
-      model,
-      acceleration: "nvidia-gpu",
-      endpointUrl: null,
-      credentialEnv: null,
-      preferredInferenceApi: "openai-completions",
-    }));
-    const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
-      hostLocalStartupSelection(input, service),
-    );
-    const { deps, calls } = createDeps({
-      setupNim,
-      resolveHostLocalInferenceStartupSelection: resolver,
-    });
-    const session = createSession();
-    calls.complete.mockResolvedValue(session);
-
-    const result = await handleProviderInferenceState({
-      ...baseOptions(deps, session),
-      agent: { name: application },
-      sandboxName: `${application}-sandbox`,
-    });
-
-    expect(resolver).toHaveBeenCalledWith({
-      application,
-      sandboxName: `${application}-sandbox`,
-      provider,
-      model,
-      acceleration: "nvidia-gpu",
-      requireToolCalling: true,
-      allowPublishedResume: false,
-      recover: false,
-    });
-    const setupCall = calls.setupInference.mock.calls[0] as unknown as readonly unknown[];
-    expect(setupCall[7]).toEqual(
-      expect.objectContaining({
-        hostLocalInference: expect.objectContaining({ runtimeProviderId: "mxc" }),
-      }),
-    );
-    expect(setupCall[7]).not.toHaveProperty("preparedOllamaProxyToken");
-    if (service === "ollama") {
-      const hostLocalInference = (
-        setupCall[7] as { hostLocalInference: HostLocalInferenceStartupSelection }
-      ).hostLocalInference;
-      expect(hostLocalInference.request).toMatchObject({
-        service: "ollama",
-        endpoint: { acceleration: "nvidia-gpu", model },
+  )(
+    "carries accepted $service startup authority into $application inference setup",
+    async ({ application, service }) => {
+      const model = "qwen3.5-9b";
+      const provider = service === "ollama" ? "ollama-local" : "vllm-local";
+      const setupNim = vi.fn(async () => ({
+        ...baseSelection,
+        provider,
+        model,
+        acceleration: "nvidia-gpu",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+      }));
+      const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
+        hostLocalStartupSelection(input, service),
+      );
+      const { deps, calls } = createDeps({
+        setupNim,
+        resolveHostLocalInferenceStartupSelection: resolver,
       });
-    }
-    expect(calls.prepareLocalProviderForInference).not.toHaveBeenCalled();
-    expect(result).toMatchObject({
-      endpointUrl: "https://inference.local/v1",
-      endpointSource: "inference-set",
-      hostLocalInferenceRouteOnly: true,
-      hostLocalInferenceSandboxProofAuthority: {
-        service,
-        directHostPort: service === "ollama" ? 11434 : service === "nim" ? 8001 : 8000,
-        directHealthPath:
-          service === "ollama" ? "/api/tags" : service === "nim" ? "/v1/health/ready" : "/health",
-        toolCallingRequired: true,
-      },
-    });
-  });
+      const session = createSession();
+      calls.complete.mockResolvedValue(session);
+
+      const result = await handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        agent: { name: application },
+        sandboxName: `${application}-sandbox`,
+      });
+
+      expect(resolver).toHaveBeenCalledWith({
+        application,
+        sandboxName: `${application}-sandbox`,
+        provider,
+        model,
+        acceleration: "nvidia-gpu",
+        requireToolCalling: true,
+        allowPublishedResume: false,
+        recover: false,
+      });
+      const setupCall = calls.setupInference.mock.calls[0] as unknown as readonly unknown[];
+      expect(setupCall[7]).toEqual(
+        expect.objectContaining({
+          hostLocalInference: expect.objectContaining({ runtimeProviderId: "mxc" }),
+        }),
+      );
+      expect(setupCall[7]).not.toHaveProperty("preparedOllamaProxyToken");
+      expect(
+        service === "ollama"
+          ? (setupCall[7] as { hostLocalInference: HostLocalInferenceStartupSelection })
+              .hostLocalInference.request
+          : null,
+      ).toEqual(
+        service === "ollama"
+          ? expect.objectContaining({
+              service: "ollama",
+              endpoint: expect.objectContaining({ acceleration: "nvidia-gpu", model }),
+            })
+          : null,
+      );
+      expect(calls.prepareLocalProviderForInference).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        endpointUrl: "https://inference.local/v1",
+        endpointSource: "inference-set",
+        hostLocalInferenceRouteOnly: true,
+        hostLocalInferenceSandboxProofAuthority: {
+          service,
+          directHostPort: service === "ollama" ? 11434 : service === "nim" ? 8001 : 8000,
+          directHealthPath:
+            service === "ollama" ? "/api/tags" : service === "nim" ? "/v1/health/ready" : "/health",
+          toolCallingRequired: true,
+        },
+      });
+    },
+  );
 
   it("keeps fresh Ollama CPU-scoped when GPU passthrough was disabled on NVIDIA", async () => {
     const model = "nemotron:latest";
@@ -380,12 +394,12 @@ describe("provider inference host-local startup selection", () => {
       setupNim,
       resolveHostLocalInferenceStartupSelection: (input) => {
         const selected = hostLocalStartupSelection(input);
-        if (selected.request.service !== "ollama") throw new Error("expected Ollama selection");
+        const request = expectedOllamaSelection(selected);
         return {
           ...selected,
           request: {
-            ...selected.request,
-            endpoint: { ...selected.request.endpoint, acceleration: "nvidia-gpu" },
+            ...request,
+            endpoint: { ...request.endpoint, acceleration: "nvidia-gpu" },
           },
         };
       },
@@ -455,78 +469,77 @@ describe("provider inference host-local startup selection", () => {
     );
   });
 
-  it.each([
-    "openclaw",
-    "hermes",
-    "langchain-deepagents-code",
-  ] as const)("heals the narrow published-route session-marker gap for %s from injected exact authority", async (application) => {
-    const model = "persisted-served-alias";
-    const session = createSession({
-      provider: "vllm-local",
-      model,
-      endpointUrl: null,
-      credentialEnv: null,
-      preferredInferenceApi: "openai-completions",
-    });
-    session.steps.provider_selection.status = "complete";
-    const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
-      hostLocalPublishedResumeSelection(input),
-    );
-    const { deps, calls } = createDeps({
-      isInferenceRouteReady: vi.fn(() => false),
-      resolveHostLocalInferenceStartupSelection: resolver,
-    });
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "heals the narrow published-route session-marker gap for %s from injected exact authority",
+    async (application) => {
+      const model = "persisted-served-alias";
+      const session = createSession({
+        provider: "vllm-local",
+        model,
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+      });
+      session.steps.provider_selection.status = "complete";
+      const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
+        hostLocalPublishedResumeSelection(input),
+      );
+      const { deps, calls } = createDeps({
+        isInferenceRouteReady: vi.fn(() => false),
+        resolveHostLocalInferenceStartupSelection: resolver,
+      });
 
-    const result = await handleProviderInferenceState({
-      ...baseOptions(deps, session),
-      agent: { name: application },
-      resume: true,
-      forceInferenceSetup: true,
-      sandboxName: `${application}-sandbox`,
-    });
+      const result = await handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        agent: { name: application },
+        resume: true,
+        forceInferenceSetup: true,
+        sandboxName: `${application}-sandbox`,
+      });
 
-    expect(resolver).toHaveBeenCalledWith({
-      application,
-      sandboxName: `${application}-sandbox`,
-      provider: "vllm-local",
-      model,
-      acceleration: "nvidia-gpu",
-      requireToolCalling: true,
-      allowPublishedResume: true,
-      recover: false,
-    });
-    const setupCall = calls.setupInference.mock.calls[0] as unknown as readonly unknown[];
-    expect(setupCall[7]).toEqual(
-      expect.objectContaining({
-        hostLocalInference: expect.objectContaining({
-          request: expect.objectContaining({
-            service: "vllm",
-            resumeReceipt: expect.objectContaining({
-              providerId: "mxc",
+      expect(resolver).toHaveBeenCalledWith({
+        application,
+        sandboxName: `${application}-sandbox`,
+        provider: "vllm-local",
+        model,
+        acceleration: "nvidia-gpu",
+        requireToolCalling: true,
+        allowPublishedResume: true,
+        recover: false,
+      });
+      const setupCall = calls.setupInference.mock.calls[0] as unknown as readonly unknown[];
+      expect(setupCall[7]).toEqual(
+        expect.objectContaining({
+          hostLocalInference: expect.objectContaining({
+            request: expect.objectContaining({
               service: "vllm",
-              inference: expect.objectContaining({ model }),
+              resumeReceipt: expect.objectContaining({
+                providerId: "mxc",
+                service: "vllm",
+                inference: expect.objectContaining({ model }),
+              }),
             }),
           }),
         }),
-      }),
-    );
-    expect(
-      (setupCall[7] as { hostLocalInference: HostLocalInferenceStartupSelection })
-        .hostLocalInference.request,
-    ).not.toHaveProperty("recover");
-    expect(calls.complete).toHaveBeenCalledWith(
-      "inference",
-      expect.objectContaining({
+      );
+      expect(
+        (setupCall[7] as { hostLocalInference: HostLocalInferenceStartupSelection })
+          .hostLocalInference.request,
+      ).not.toHaveProperty("recover");
+      expect(calls.complete).toHaveBeenCalledWith(
+        "inference",
+        expect.objectContaining({
+          endpointUrl: "https://inference.local/v1",
+          endpointSource: "inference-set",
+        }),
+      );
+      expect(result).toMatchObject({
         endpointUrl: "https://inference.local/v1",
         endpointSource: "inference-set",
-      }),
-    );
-    expect(result).toMatchObject({
-      endpointUrl: "https://inference.local/v1",
-      endpointSource: "inference-set",
-      hostLocalInferenceRouteOnly: true,
-    });
-  });
+        hostLocalInferenceRouteOnly: true,
+      });
+    },
+  );
 
   it("rejects an injected published receipt on a fresh managed selection", async () => {
     const model = "fresh-model";

@@ -52,6 +52,11 @@ function raiseOptional(error: Error | undefined): void {
   return error === undefined ? undefined : raise(error);
 }
 
+function requiredManagedRuntime(operation: HostLocalInferenceOperation): HostLocalInferenceRuntime {
+  expect(operation.managedRuntime).toBeDefined();
+  return operation.managedRuntime as HostLocalInferenceRuntime;
+}
+
 function receipt(
   service: Exclude<HostLocalInferenceService, "llama-cpp">,
   priorState: "absent" | "running" | "stopped" | "host-process" = service === "ollama"
@@ -328,96 +333,97 @@ function fixture(
 }
 
 describe("onboard host-local inference routing", () => {
-  it.each(
-    APPLICATIONS,
-  )("routes %s through inference.local without legacy host probes", async (application) => {
-    const route = fixture(application, "ollama");
-    const legacyRun = vi.fn();
-    const legacyValidate = vi.fn();
-    const legacyWarmup = vi.fn();
-    const legacyOllamaProof = vi.fn();
-    const verify = vi.fn(() => {
-      route.events.push("gateway-route-verify");
-    });
-    const smoke = vi.fn(() => {
-      route.events.push("gateway-smoke");
-    });
-    const reserve = vi.fn(() => {
-      route.events.push("sandbox-reserve");
-      return true;
-    });
-    const harness = createHarness({
-      runOpenshell: (args) =>
-        args.slice(0, 2).join(" ") === "provider get" ? { status: 1 } : undefined,
-      overrides: {
-        applyLocalInferenceRoute: undefined,
-        run: legacyRun,
-        validateLocalProvider: legacyValidate,
-        getOllamaWarmupCommand: legacyWarmup,
-        localInference: {
-          validateOllamaModelWithToolsOverride: legacyOllamaProof,
+  it.each(APPLICATIONS)(
+    "routes %s through inference.local without legacy host probes",
+    async (application) => {
+      const route = fixture(application, "ollama");
+      const legacyRun = vi.fn();
+      const legacyValidate = vi.fn();
+      const legacyWarmup = vi.fn();
+      const legacyOllamaProof = vi.fn();
+      const verify = vi.fn(() => {
+        route.events.push("gateway-route-verify");
+      });
+      const smoke = vi.fn(() => {
+        route.events.push("gateway-smoke");
+      });
+      const reserve = vi.fn(() => {
+        route.events.push("sandbox-reserve");
+        return true;
+      });
+      const harness = createHarness({
+        runOpenshell: (args) =>
+          args.slice(0, 2).join(" ") === "provider get" ? { status: 1 } : undefined,
+        overrides: {
+          applyLocalInferenceRoute: undefined,
+          run: legacyRun,
+          validateLocalProvider: legacyValidate,
+          getOllamaWarmupCommand: legacyWarmup,
+          localInference: {
+            validateOllamaModelWithToolsOverride: legacyOllamaProof,
+          },
+          verifyInferenceRoute: verify,
+          verifyOnboardInferenceSmoke: smoke,
+          updateSandbox: reserve,
         },
-        verifyInferenceRoute: verify,
-        verifyOnboardInferenceSmoke: smoke,
-        updateSandbox: reserve,
-      },
-    });
-    await expect(
-      harness.setupInference(SANDBOX, MODEL, "ollama-local", null, null, null, [], {
-        gatewayName: "nemoclaw",
-        hostLocalInference: route.selection,
-      }),
-    ).resolves.toEqual({ ok: true });
+      });
+      await expect(
+        harness.setupInference(SANDBOX, MODEL, "ollama-local", null, null, null, [], {
+          gatewayName: "nemoclaw",
+          hostLocalInference: route.selection,
+        }),
+      ).resolves.toEqual({ ok: true });
 
-    expect(route.prepareGatewayMutation).toHaveBeenCalledWith({
-      gatewayName: "nemoclaw",
-      sandboxName: SANDBOX,
-      provider: "ollama-local",
-      model: MODEL,
-      providerBaseUrl: "http://host.openshell.internal:11434/v1",
-    });
-    expect(route.providerRuntime.qualifyOllama).toHaveBeenCalledWith(
-      expect.objectContaining({ acceleration: "nvidia-gpu", model: MODEL }),
-      writer,
-    );
-    expect(route.preparedStartups[0]?.receipt.runtime).toMatchObject({
-      kind: "host",
-      acceleration: "nvidia-gpu",
-    });
-    expect(harness.commands.map(({ command }) => command)).toEqual([
-      "provider get -g nemoclaw ollama-local",
-      "provider create -g nemoclaw --name ollama-local --type openai --credential NEMOCLAW_OLLAMA_PROXY_TOKEN --config OPENAI_BASE_URL=http://host.openshell.internal:11434/v1",
-      `inference set -g nemoclaw --no-verify --provider ollama-local --model ${MODEL} --timeout 180`,
-    ]);
-    expect(harness.commands.map(({ command }) => command).join(" ")).not.toContain(
-      "mxc-provider-native.internal",
-    );
-    expect(route.events).toEqual([
-      "provider-ready-proof",
-      "gateway-snapshot",
-      "gateway-route-verify",
-      "runtime-precommit-validation",
-      "gateway-commit",
-      "runtime-precommit-validation",
-      "sandbox-reserve",
-      "runtime-commit",
-    ]);
-    expect(smoke).not.toHaveBeenCalled();
-    expect(reserve).toHaveBeenCalledWith(
-      SANDBOX,
-      expect.objectContaining({
+      expect(route.prepareGatewayMutation).toHaveBeenCalledWith({
+        gatewayName: "nemoclaw",
+        sandboxName: SANDBOX,
         provider: "ollama-local",
         model: MODEL,
-        endpointUrl: "https://inference.local/v1",
-        endpointSource: "inference-set",
-      }),
-    );
-    expect(legacyRun).not.toHaveBeenCalled();
-    expect(legacyValidate).not.toHaveBeenCalled();
-    expect(legacyWarmup).not.toHaveBeenCalled();
-    expect(legacyOllamaProof).not.toHaveBeenCalled();
-    expect(route.gatewayRollback).not.toHaveBeenCalled();
-  });
+        providerBaseUrl: "http://host.openshell.internal:11434/v1",
+      });
+      expect(route.providerRuntime.qualifyOllama).toHaveBeenCalledWith(
+        expect.objectContaining({ acceleration: "nvidia-gpu", model: MODEL }),
+        writer,
+      );
+      expect(route.preparedStartups[0]?.receipt.runtime).toMatchObject({
+        kind: "host",
+        acceleration: "nvidia-gpu",
+      });
+      expect(harness.commands.map(({ command }) => command)).toEqual([
+        "provider get -g nemoclaw ollama-local",
+        "provider create -g nemoclaw --name ollama-local --type openai --credential NEMOCLAW_OLLAMA_PROXY_TOKEN --config OPENAI_BASE_URL=http://host.openshell.internal:11434/v1",
+        `inference set -g nemoclaw --no-verify --provider ollama-local --model ${MODEL} --timeout 180`,
+      ]);
+      expect(harness.commands.map(({ command }) => command).join(" ")).not.toContain(
+        "mxc-provider-native.internal",
+      );
+      expect(route.events).toEqual([
+        "provider-ready-proof",
+        "gateway-snapshot",
+        "gateway-route-verify",
+        "runtime-precommit-validation",
+        "gateway-commit",
+        "runtime-precommit-validation",
+        "sandbox-reserve",
+        "runtime-commit",
+      ]);
+      expect(smoke).not.toHaveBeenCalled();
+      expect(reserve).toHaveBeenCalledWith(
+        SANDBOX,
+        expect.objectContaining({
+          provider: "ollama-local",
+          model: MODEL,
+          endpointUrl: "https://inference.local/v1",
+          endpointSource: "inference-set",
+        }),
+      );
+      expect(legacyRun).not.toHaveBeenCalled();
+      expect(legacyValidate).not.toHaveBeenCalled();
+      expect(legacyWarmup).not.toHaveBeenCalled();
+      expect(legacyOllamaProof).not.toHaveBeenCalled();
+      expect(route.gatewayRollback).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ["nim", 8001],
@@ -450,137 +456,139 @@ describe("onboard host-local inference routing", () => {
     expect(route.gatewayCommit).toHaveBeenCalledOnce();
   });
 
-  it.each(
-    APPLICATIONS,
-  )("recovers an interrupted exact %s managed start before route commit", async (application) => {
-    const route = fixture(application, "vllm", { recover: true, priorState: "stopped" });
-    const harness = createHarness();
+  it.each(APPLICATIONS)(
+    "recovers an interrupted exact %s managed start before route commit",
+    async (application) => {
+      const route = fixture(application, "vllm", { recover: true, priorState: "stopped" });
+      const harness = createHarness();
 
-    await expect(
-      harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
-        hostLocalInference: route.selection,
-      }),
-    ).resolves.toEqual({ ok: true });
+      await expect(
+        harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
+          hostLocalInference: route.selection,
+        }),
+      ).resolves.toEqual({ ok: true });
 
-    expect(route.providerRuntime.recoverManaged).toHaveBeenCalledOnce();
-    expect(route.providerRuntime.startManaged).not.toHaveBeenCalled();
-    expect(route.events[0]).toBe("provider-recovery-proof");
-    expect(route.events).toContain("runtime-precommit-validation");
-    expect(route.gatewayCommit).toHaveBeenCalledOnce();
-  });
+      expect(route.providerRuntime.recoverManaged).toHaveBeenCalledOnce();
+      expect(route.providerRuntime.startManaged).not.toHaveBeenCalled();
+      expect(route.events[0]).toBe("provider-recovery-proof");
+      expect(route.events).toContain("runtime-precommit-validation");
+      expect(route.gatewayCommit).toHaveBeenCalledOnce();
+    },
+  );
 
-  it.each(
-    APPLICATIONS,
-  )("re-proves the published exact %s managed runtime before route commit", async (application) => {
-    const route = fixture(application, "vllm", {
-      resume: true,
-      priorState: "absent",
-      resumeStateAtEntry: "running",
-    });
-    const harness = createHarness();
+  it.each(APPLICATIONS)(
+    "re-proves the published exact %s managed runtime before route commit",
+    async (application) => {
+      const route = fixture(application, "vllm", {
+        resume: true,
+        priorState: "absent",
+        resumeStateAtEntry: "running",
+      });
+      const harness = createHarness();
 
-    await expect(
-      harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
-        hostLocalInference: route.selection,
-      }),
-    ).resolves.toEqual({ ok: true });
+      await expect(
+        harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
+          hostLocalInference: route.selection,
+        }),
+      ).resolves.toEqual({ ok: true });
 
-    expect(route.providerRuntime.resumeManaged).toHaveBeenCalledOnce();
-    expect(route.providerRuntime.recoverManaged).not.toHaveBeenCalled();
-    expect(route.providerRuntime.startManaged).not.toHaveBeenCalled();
-    expect(route.events[0]).toBe("provider-published-resume-proof");
-    expect(route.preparedStartups[0]?.rollbackPriorState).toBe("running");
-    expect(route.events).toContain("runtime-precommit-validation");
-    expect(route.gatewayCommit).toHaveBeenCalledOnce();
-  });
+      expect(route.providerRuntime.resumeManaged).toHaveBeenCalledOnce();
+      expect(route.providerRuntime.recoverManaged).not.toHaveBeenCalled();
+      expect(route.providerRuntime.startManaged).not.toHaveBeenCalled();
+      expect(route.events[0]).toBe("provider-published-resume-proof");
+      expect(route.preparedStartups[0]?.rollbackPriorState).toBe("running");
+      expect(route.events).toContain("runtime-precommit-validation");
+      expect(route.gatewayCommit).toHaveBeenCalledOnce();
+    },
+  );
 
-  it.each(
-    PUBLISHED_RESUME_ROLLBACK_CASES,
-  )("restores $application published resume state-at-entry=$stateAtEntry after post-prepare failure", async ({
-    application,
-    stateAtEntry,
-  }) => {
-    const route = fixture(application, "vllm", {
-      resume: true,
-      // This is the original creation state embedded in the durable receipt;
-      // it is not rollback authority for an already-published runtime.
-      priorState: "absent",
-      resumeStateAtEntry: stateAtEntry,
-    });
-    const harness = createHarness({
-      overrides: { applyLocalInferenceRoute: vi.fn(async () => true) },
-    });
+  it.each(PUBLISHED_RESUME_ROLLBACK_CASES)(
+    "restores $application published resume state-at-entry=$stateAtEntry after post-prepare failure",
+    async ({ application, stateAtEntry }) => {
+      const route = fixture(application, "vllm", {
+        resume: true,
+        // This is the original creation state embedded in the durable receipt;
+        // it is not rollback authority for an already-published runtime.
+        priorState: "absent",
+        resumeStateAtEntry: stateAtEntry,
+      });
+      const harness = createHarness({
+        overrides: { applyLocalInferenceRoute: vi.fn(async () => true) },
+      });
 
-    await expect(
-      harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
-        hostLocalInference: route.selection,
-      }),
-    ).resolves.toEqual({ retry: "selection" });
+      await expect(
+        harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
+          hostLocalInference: route.selection,
+        }),
+      ).resolves.toEqual({ retry: "selection" });
 
-    const preparedStartup = route.preparedStartups[0];
-    expect(route.providerRuntime.resumeManaged).toHaveBeenCalledOnce();
-    expect(route.prepareGatewayMutation).toHaveBeenCalledOnce();
-    expect(preparedStartup?.receipt.publication?.priorState).toBe("absent");
-    expect(preparedStartup?.rollbackPriorState).toBe(stateAtEntry);
-    expect(preparedStartup?.rollback).toHaveReturnedWith(
-      expect.objectContaining({ status: "restored", priorState: stateAtEntry }),
-    );
-    expect(preparedStartup?.rollback).not.toHaveReturnedWith(
-      expect.objectContaining({ status: "removed" }),
-    );
-    expect(route.events.slice(-2)).toEqual(["gateway-rollback", "runtime-rollback"]);
-  });
+      const preparedStartup = route.preparedStartups[0];
+      expect(route.providerRuntime.resumeManaged).toHaveBeenCalledOnce();
+      expect(route.prepareGatewayMutation).toHaveBeenCalledOnce();
+      expect(preparedStartup?.receipt.publication?.priorState).toBe("absent");
+      expect(preparedStartup?.rollbackPriorState).toBe(stateAtEntry);
+      expect(preparedStartup?.rollback).toHaveReturnedWith(
+        expect.objectContaining({ status: "restored", priorState: stateAtEntry }),
+      );
+      expect(preparedStartup?.rollback).not.toHaveReturnedWith(
+        expect.objectContaining({ status: "removed" }),
+      );
+      expect(route.events.slice(-2)).toEqual(["gateway-rollback", "runtime-rollback"]);
+    },
+  );
 
-  it.each(
-    APPLICATIONS,
-  )("rolls back %s gateway denial and exact prior runtime state", async (application) => {
-    const route = fixture(application, "vllm", { priorState: "stopped" });
-    const error = vi.fn(() => route.events.push("redacted-evidence"));
-    const harness = createHarness({
-      overrides: {
-        applyLocalInferenceRoute: vi.fn(async () => true),
-        error,
-      },
-    });
+  it.each(APPLICATIONS)(
+    "rolls back %s gateway denial and exact prior runtime state",
+    async (application) => {
+      const route = fixture(application, "vllm", { priorState: "stopped" });
+      const error = vi.fn(() => route.events.push("redacted-evidence"));
+      const harness = createHarness({
+        overrides: {
+          applyLocalInferenceRoute: vi.fn(async () => true),
+          error,
+        },
+      });
 
-    await expect(
-      harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
-        hostLocalInference: route.selection,
-      }),
-    ).resolves.toEqual({ retry: "selection" });
+      await expect(
+        harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
+          hostLocalInference: route.selection,
+        }),
+      ).resolves.toEqual({ retry: "selection" });
 
-    expect(route.events.slice(-3)).toEqual([
-      "redacted-evidence",
-      "gateway-rollback",
-      "runtime-rollback",
-    ]);
-    expect(route.gatewayCommit).not.toHaveBeenCalled();
-    expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
-    expect(harness.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
-    expect(harness.updateSandbox).not.toHaveBeenCalled();
-  });
+      expect(route.events.slice(-3)).toEqual([
+        "redacted-evidence",
+        "gateway-rollback",
+        "runtime-rollback",
+      ]);
+      expect(route.gatewayCommit).not.toHaveBeenCalled();
+      expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
+      expect(harness.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
+      expect(harness.updateSandbox).not.toHaveBeenCalled();
+    },
+  );
 
-  it.each(
-    APPLICATIONS,
-  )("fails closed for %s when gateway rollback evidence is indeterminate", async (application) => {
-    const route = fixture(application, "vllm", {
-      gatewayRollbackError: new Error("indeterminate gateway cleanup"),
-    });
-    const harness = createHarness({
-      overrides: { applyLocalInferenceRoute: vi.fn(async () => true) },
-    });
+  it.each(APPLICATIONS)(
+    "fails closed for %s when gateway rollback evidence is indeterminate",
+    async (application) => {
+      const route = fixture(application, "vllm", {
+        gatewayRollbackError: new Error("indeterminate gateway cleanup"),
+      });
+      const harness = createHarness({
+        overrides: { applyLocalInferenceRoute: vi.fn(async () => true) },
+      });
 
-    await expect(
-      harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
-        hostLocalInference: route.selection,
-      }),
-    ).rejects.toThrow("EXIT_CALLED:1");
+      await expect(
+        harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
+          hostLocalInference: route.selection,
+        }),
+      ).rejects.toThrow("EXIT_CALLED:1");
 
-    expect(route.events.at(-1)).toBe("gateway-rollback");
-    expect(route.events).not.toContain("runtime-rollback");
-    expect(route.gatewayCommit).not.toHaveBeenCalled();
-    expect(harness.errors.join(" ")).toContain("indeterminate gateway cleanup");
-  });
+      expect(route.events.at(-1)).toBe("gateway-rollback");
+      expect(route.events).not.toContain("runtime-rollback");
+      expect(route.gatewayCommit).not.toHaveBeenCalled();
+      expect(harness.errors.join(" ")).toContain("indeterminate gateway cleanup");
+    },
+  );
 
   it("emits bounded redacted provider-native evidence before gateway mutation", async () => {
     const route = fixture("langchain-deepagents-code", "vllm", {
@@ -642,176 +650,181 @@ describe("onboard host-local inference routing", () => {
     expect(route.events.slice(-2)).toEqual(["gateway-rollback", "runtime-rollback"]);
   });
 
-  it.each(
-    APPLICATIONS,
-  )("rolls back %s when provider authority revalidation fails before commit", async (application) => {
-    const route = fixture(application, "vllm", {
-      validationError: new Error("provider authority changed before commit"),
-    });
-    const reserve = vi.fn(() => true);
-    const harness = createHarness({ overrides: { updateSandbox: reserve } });
+  it.each(APPLICATIONS)(
+    "rolls back %s when provider authority revalidation fails before commit",
+    async (application) => {
+      const route = fixture(application, "vllm", {
+        validationError: new Error("provider authority changed before commit"),
+      });
+      const reserve = vi.fn(() => true);
+      const harness = createHarness({ overrides: { updateSandbox: reserve } });
 
-    await expect(
-      harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
-        hostLocalInference: route.selection,
-      }),
-    ).rejects.toThrow("EXIT_CALLED:1");
-
-    expect(route.events.slice(-3)).toEqual([
-      "runtime-precommit-validation",
-      "gateway-rollback",
-      "runtime-rollback",
-    ]);
-    expect(route.gatewayCommit).not.toHaveBeenCalled();
-    expect(reserve).not.toHaveBeenCalled();
-  });
-
-  it.each(
-    APPLICATIONS,
-  )("rolls back %s when the gateway commit fails before receipt publication", async (application) => {
-    const route = fixture(application, "vllm", {
-      gatewayCommitError: new Error("gateway commit failed"),
-    });
-    const harness = createHarness({
-      overrides: { error: vi.fn(() => route.events.push("redacted-evidence")) },
-    });
-
-    await expect(
-      harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
-        hostLocalInference: route.selection,
-      }),
-    ).rejects.toThrow("EXIT_CALLED:1");
-
-    expect(route.events.slice(-5)).toEqual([
-      "runtime-precommit-validation",
-      "gateway-commit",
-      "redacted-evidence",
-      "gateway-rollback",
-      "runtime-rollback",
-    ]);
-    expect(harness.updateSandbox).not.toHaveBeenCalled();
-    expect(route.events).not.toContain("runtime-commit");
-  });
-
-  it.each(
-    APPLICATIONS,
-  )("retains %s runtime and gateway when sandbox reservation declines at its publication boundary", async (application) => {
-    const route = fixture(application, "vllm");
-    const reserve = vi.fn(() => {
-      route.events.push("sandbox-reserve-refused");
-      return false;
-    });
-    const harness = createHarness({
-      overrides: {
-        updateSandbox: reserve,
-        error: vi.fn(() => route.events.push("redacted-evidence")),
-      },
-    });
-
-    await expect(
-      harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
-        hostLocalInference: route.selection,
-      }),
-    ).rejects.toThrow("EXIT_CALLED:1");
-
-    expect(route.events.slice(-4)).toEqual([
-      "gateway-commit",
-      "runtime-precommit-validation",
-      "sandbox-reserve-refused",
-      "redacted-evidence",
-    ]);
-    expect(route.events).not.toContain("runtime-commit");
-    expect(route.gatewayRollback).not.toHaveBeenCalled();
-    expect(route.events).not.toContain("runtime-rollback");
-  });
-
-  it.each(
-    APPLICATIONS,
-  )("retains %s runtime and gateway when sandbox reservation throws after a possible write", async (application) => {
-    const route = fixture(application, "vllm");
-    const reserve = vi.fn(() => {
-      route.events.push("sandbox-reserve-write-entered");
-      throw new Error("registry save failed after atomic replacement");
-    });
-    const harness = createHarness({
-      overrides: {
-        updateSandbox: reserve,
-        error: vi.fn(() => route.events.push("redacted-evidence")),
-      },
-    });
-
-    await expect(
-      harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
-        hostLocalInference: route.selection,
-      }),
-    ).rejects.toThrow("EXIT_CALLED:1");
-
-    expect(route.events.slice(-4)).toEqual([
-      "gateway-commit",
-      "runtime-precommit-validation",
-      "sandbox-reserve-write-entered",
-      "redacted-evidence",
-    ]);
-    expect(route.events).not.toContain("runtime-commit");
-    expect(route.gatewayRollback).not.toHaveBeenCalled();
-    expect(route.events).not.toContain("runtime-rollback");
-  });
-
-  it.each(
-    APPLICATIONS,
-  )("retains %s runtime and gateway when final receipt validation fails after reservation", async (application) => {
-    const route = fixture(application, "vllm", {
-      commitValidationError: new Error("route publication authority changed before writer entry"),
-    });
-    const reserve = vi.fn(() => {
-      route.events.push("sandbox-reserve");
-      return true;
-    });
-    const failureEvidence: string[] = [];
-    const harness = createHarness({
-      overrides: {
-        updateSandbox: reserve,
-        error: vi.fn((message: string) => {
-          route.events.push("redacted-evidence");
-          failureEvidence.push(message);
+      await expect(
+        harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
+          hostLocalInference: route.selection,
         }),
-      },
-    });
+      ).rejects.toThrow("EXIT_CALLED:1");
 
-    await expect(
-      harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
-        hostLocalInference: route.selection,
-      }),
-    ).rejects.toThrow("EXIT_CALLED:1");
+      expect(route.events.slice(-3)).toEqual([
+        "runtime-precommit-validation",
+        "gateway-rollback",
+        "runtime-rollback",
+      ]);
+      expect(route.gatewayCommit).not.toHaveBeenCalled();
+      expect(reserve).not.toHaveBeenCalled();
+    },
+  );
 
-    expect(route.events.slice(-5)).toEqual([
-      "gateway-commit",
-      "runtime-precommit-validation",
-      "sandbox-reserve",
-      "runtime-commit",
-      "redacted-evidence",
-    ]);
-    expect(route.gatewayRollback).not.toHaveBeenCalled();
-    expect(route.events).not.toContain("runtime-rollback");
-    expect(route.gatewayCommit).toHaveBeenCalledOnce();
-    expect(reserve).toHaveBeenCalledWith(
-      SANDBOX,
-      expect.objectContaining({
-        provider: "vllm-local",
-        model: MODEL,
-        endpointUrl: "https://inference.local/v1",
-        endpointSource: "inference-set",
-        gatewayName: "nemoclaw",
-      }),
-    );
-    expect(route.preparedStartups).toHaveLength(1);
-    expect(route.preparedStartups[0]?.receipt).toEqual(receipt("vllm"));
-    expect(route.preparedStartups[0]?.publicationState()).toBe("unpublished");
-    expect(route.preparedStartups[0]?.rollback).not.toHaveBeenCalled();
-    expect(failureEvidence).toHaveLength(1);
-    expect(failureEvidence[0]).toContain("runtime provider 'mxc'");
-    expect(failureEvidence[0]).toContain("route publication authority changed");
-  });
+  it.each(APPLICATIONS)(
+    "rolls back %s when the gateway commit fails before receipt publication",
+    async (application) => {
+      const route = fixture(application, "vllm", {
+        gatewayCommitError: new Error("gateway commit failed"),
+      });
+      const harness = createHarness({
+        overrides: { error: vi.fn(() => route.events.push("redacted-evidence")) },
+      });
+
+      await expect(
+        harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
+          hostLocalInference: route.selection,
+        }),
+      ).rejects.toThrow("EXIT_CALLED:1");
+
+      expect(route.events.slice(-5)).toEqual([
+        "runtime-precommit-validation",
+        "gateway-commit",
+        "redacted-evidence",
+        "gateway-rollback",
+        "runtime-rollback",
+      ]);
+      expect(harness.updateSandbox).not.toHaveBeenCalled();
+      expect(route.events).not.toContain("runtime-commit");
+    },
+  );
+
+  it.each(APPLICATIONS)(
+    "retains %s runtime and gateway when sandbox reservation declines at its publication boundary",
+    async (application) => {
+      const route = fixture(application, "vllm");
+      const reserve = vi.fn(() => {
+        route.events.push("sandbox-reserve-refused");
+        return false;
+      });
+      const harness = createHarness({
+        overrides: {
+          updateSandbox: reserve,
+          error: vi.fn(() => route.events.push("redacted-evidence")),
+        },
+      });
+
+      await expect(
+        harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
+          hostLocalInference: route.selection,
+        }),
+      ).rejects.toThrow("EXIT_CALLED:1");
+
+      expect(route.events.slice(-4)).toEqual([
+        "gateway-commit",
+        "runtime-precommit-validation",
+        "sandbox-reserve-refused",
+        "redacted-evidence",
+      ]);
+      expect(route.events).not.toContain("runtime-commit");
+      expect(route.gatewayRollback).not.toHaveBeenCalled();
+      expect(route.events).not.toContain("runtime-rollback");
+    },
+  );
+
+  it.each(APPLICATIONS)(
+    "retains %s runtime and gateway when sandbox reservation throws after a possible write",
+    async (application) => {
+      const route = fixture(application, "vllm");
+      const reserve = vi.fn(() => {
+        route.events.push("sandbox-reserve-write-entered");
+        throw new Error("registry save failed after atomic replacement");
+      });
+      const harness = createHarness({
+        overrides: {
+          updateSandbox: reserve,
+          error: vi.fn(() => route.events.push("redacted-evidence")),
+        },
+      });
+
+      await expect(
+        harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
+          hostLocalInference: route.selection,
+        }),
+      ).rejects.toThrow("EXIT_CALLED:1");
+
+      expect(route.events.slice(-4)).toEqual([
+        "gateway-commit",
+        "runtime-precommit-validation",
+        "sandbox-reserve-write-entered",
+        "redacted-evidence",
+      ]);
+      expect(route.events).not.toContain("runtime-commit");
+      expect(route.gatewayRollback).not.toHaveBeenCalled();
+      expect(route.events).not.toContain("runtime-rollback");
+    },
+  );
+
+  it.each(APPLICATIONS)(
+    "retains %s runtime and gateway when final receipt validation fails after reservation",
+    async (application) => {
+      const route = fixture(application, "vllm", {
+        commitValidationError: new Error("route publication authority changed before writer entry"),
+      });
+      const reserve = vi.fn(() => {
+        route.events.push("sandbox-reserve");
+        return true;
+      });
+      const failureEvidence: string[] = [];
+      const harness = createHarness({
+        overrides: {
+          updateSandbox: reserve,
+          error: vi.fn((message: string) => {
+            route.events.push("redacted-evidence");
+            failureEvidence.push(message);
+          }),
+        },
+      });
+
+      await expect(
+        harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
+          hostLocalInference: route.selection,
+        }),
+      ).rejects.toThrow("EXIT_CALLED:1");
+
+      expect(route.events.slice(-5)).toEqual([
+        "gateway-commit",
+        "runtime-precommit-validation",
+        "sandbox-reserve",
+        "runtime-commit",
+        "redacted-evidence",
+      ]);
+      expect(route.gatewayRollback).not.toHaveBeenCalled();
+      expect(route.events).not.toContain("runtime-rollback");
+      expect(route.gatewayCommit).toHaveBeenCalledOnce();
+      expect(reserve).toHaveBeenCalledWith(
+        SANDBOX,
+        expect.objectContaining({
+          provider: "vllm-local",
+          model: MODEL,
+          endpointUrl: "https://inference.local/v1",
+          endpointSource: "inference-set",
+          gatewayName: "nemoclaw",
+        }),
+      );
+      expect(route.preparedStartups).toHaveLength(1);
+      expect(route.preparedStartups[0]?.receipt).toEqual(receipt("vllm"));
+      expect(route.preparedStartups[0]?.publicationState()).toBe("unpublished");
+      expect(route.preparedStartups[0]?.rollback).not.toHaveBeenCalled();
+      expect(failureEvidence).toHaveLength(1);
+      expect(failureEvidence[0]).toContain("runtime provider 'mxc'");
+      expect(failureEvidence[0]).toContain("route publication authority changed");
+    },
+  );
 
   it("re-proves provider-native Ollama placement after asynchronous gateway commit", async () => {
     const provider = createPodmanHostLocalInferenceTestHarness();
@@ -823,8 +836,7 @@ describe("onboard host-local inference routing", () => {
       onFailureEvidence: provider.onFailureEvidence,
       redactSensitive: provider.redactSensitive,
     });
-    const sourceRuntime = providerOperation.managedRuntime;
-    if (!sourceRuntime) throw new Error("test provider lacks host-local inference runtime");
+    const sourceRuntime = requiredManagedRuntime(providerOperation);
     const preparedStartups: Array<{
       prepared: HostLocalInferencePreparedStartup;
       commit: ReturnType<typeof vi.fn>;
@@ -946,72 +958,74 @@ describe("onboard host-local inference routing", () => {
     expect(provider.written).toHaveLength(0);
   });
 
-  it.each(
-    APPLICATIONS,
-  )("fails closed for %s at an indeterminate receipt boundary without destroying the durable route", async (application) => {
-    const route = fixture(application, "vllm", {
-      commitError: new Error("receipt publication indeterminate"),
-    });
-    const reserve = vi.fn(() => {
-      route.events.push("sandbox-reserve");
-      return true;
-    });
-    const harness = createHarness({
-      overrides: {
-        updateSandbox: reserve,
-        error: vi.fn(() => route.events.push("redacted-evidence")),
-      },
-    });
+  it.each(APPLICATIONS)(
+    "fails closed for %s at an indeterminate receipt boundary without destroying the durable route",
+    async (application) => {
+      const route = fixture(application, "vllm", {
+        commitError: new Error("receipt publication indeterminate"),
+      });
+      const reserve = vi.fn(() => {
+        route.events.push("sandbox-reserve");
+        return true;
+      });
+      const harness = createHarness({
+        overrides: {
+          updateSandbox: reserve,
+          error: vi.fn(() => route.events.push("redacted-evidence")),
+        },
+      });
 
-    await expect(
-      harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
-        hostLocalInference: route.selection,
-      }),
-    ).rejects.toThrow("EXIT_CALLED:1");
+      await expect(
+        harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
+          hostLocalInference: route.selection,
+        }),
+      ).rejects.toThrow("EXIT_CALLED:1");
 
-    expect(route.events.slice(-5)).toEqual([
-      "gateway-commit",
-      "runtime-precommit-validation",
-      "sandbox-reserve",
-      "runtime-commit",
-      "redacted-evidence",
-    ]);
-    expect(reserve).toHaveBeenCalledWith(
-      SANDBOX,
-      expect.objectContaining({
-        endpointUrl: "https://inference.local/v1",
-        endpointSource: "inference-set",
-      }),
-    );
-    expect(route.gatewayRollback).not.toHaveBeenCalled();
-    expect(route.events).not.toContain("runtime-rollback");
-  });
+      expect(route.events.slice(-5)).toEqual([
+        "gateway-commit",
+        "runtime-precommit-validation",
+        "sandbox-reserve",
+        "runtime-commit",
+        "redacted-evidence",
+      ]);
+      expect(reserve).toHaveBeenCalledWith(
+        SANDBOX,
+        expect.objectContaining({
+          endpointUrl: "https://inference.local/v1",
+          endpointSource: "inference-set",
+        }),
+      );
+      expect(route.gatewayRollback).not.toHaveBeenCalled();
+      expect(route.events).not.toContain("runtime-rollback");
+    },
+  );
 
-  it.each(
-    APPLICATIONS,
-  )("rejects %s cross-engine authority before runtime or gateway mutation", async (application) => {
-    const route = fixture(application, "vllm", {
-      authorityId: `other-endpoint:${"9".repeat(64)}`,
-    });
-    const legacyDockerNamedRun = vi.fn();
-    const legacyDockerValidation = vi.fn();
-    const harness = createHarness({
-      overrides: {
-        run: legacyDockerNamedRun,
-        validateLocalProvider: legacyDockerValidation,
-      },
-    });
+  it.each(APPLICATIONS)(
+    "rejects %s cross-engine authority before runtime or gateway mutation",
+    async (application) => {
+      const route = fixture(application, "vllm", {
+        authorityId: `other-endpoint:${"9".repeat(64)}`,
+      });
+      const legacyDockerNamedRun = vi.fn();
+      const legacyDockerValidation = vi.fn();
+      const harness = createHarness({
+        overrides: {
+          run: legacyDockerNamedRun,
+          validateLocalProvider: legacyDockerValidation,
+        },
+      });
 
-    await expect(
-      harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
-        hostLocalInference: route.selection,
-      }),
-    ).rejects.toThrow("EXIT_CALLED:1");
+      await expect(
+        harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
+          hostLocalInference: route.selection,
+        }),
+      ).rejects.toThrow("EXIT_CALLED:1");
 
-    expect(route.events).toEqual([]);
-    expect(route.prepareGatewayMutation).not.toHaveBeenCalled();
-    expect(harness.commands).toEqual([]);
-    expect(legacyDockerNamedRun).not.toHaveBeenCalled();
-    expect(legacyDockerValidation).not.toHaveBeenCalled();
-  });
+      expect(route.events).toEqual([]);
+      expect(route.prepareGatewayMutation).not.toHaveBeenCalled();
+      expect(harness.commands).toEqual([]);
+      expect(legacyDockerNamedRun).not.toHaveBeenCalled();
+      expect(legacyDockerValidation).not.toHaveBeenCalled();
+    },
+  );
 });
