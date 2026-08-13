@@ -163,8 +163,12 @@ describe("managed startup Hermes Switchyard runtime artifacts", () => {
       const stat = realFstatSync(descriptor, options as never);
       return new Proxy(stat, {
         get(inner, property) {
-          if (property === "uid" || property === "gid") return options ? 0n : 0;
-          const value = Reflect.get(inner, property);
+          const value =
+            property === "uid" || property === "gid"
+              ? options
+                ? 0n
+                : 0
+              : Reflect.get(inner, property);
           return typeof value === "function" ? value.bind(inner) : value;
         },
       });
