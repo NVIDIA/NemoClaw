@@ -6,11 +6,16 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  withProvenManagedGatewayProcess,
+  writeManagedGatewayRuntimeProof,
+} from "../../../../test/support/uninstall-managed-gateway-test-support";
 
 import {
   buildDockerDriverGatewayConfigToml,
   ensureDockerDriverGatewayJwtBundle,
   gatewayIdForStateDir,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
 } from "../../onboard/docker-driver-gateway-config";
 import {
   getNemoclawOpenShellGatewayUserServicePath,
@@ -32,7 +37,6 @@ interface Fixture {
 }
 
 const tempRoots: string[] = [];
-
 afterEach(() => {
   for (const root of tempRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
@@ -109,6 +113,7 @@ function writeGatewayState(test: Fixture): string {
     { mode: 0o600 },
   );
   fs.chmodSync(configPath, 0o600);
+  writeManagedGatewayRuntimeProof(stateDir, 8080);
   return configPath;
 }
 
@@ -121,7 +126,7 @@ function uninstall(
   const { commandExists = () => false, run = () => ok(), ...overrides } = deps;
   return runUninstallPlan(
     { assumeYes: true, deleteModels: false, keepOpenShell },
-    {
+    withProvenManagedGatewayProcess({
       env: test.env,
       existsSync: (target) => String(target).startsWith(test.root) && fs.existsSync(target),
       isPortFree: () => true,
@@ -155,7 +160,7 @@ function uninstall(
           delegated
         );
       },
-    },
+    }),
   );
 }
 
@@ -283,7 +288,7 @@ describe("uninstall OpenShell gateway user service", () => {
     );
   });
 
-  it("does not delete a sandbox when an external service changes namespace after selection", () => {
+  it("does not delete a sandbox when an external service changes namespace before deletion", () => {
     const test = fixture(true);
     const configPath = writeGatewayState(test);
     const stateDir = path.dirname(configPath);
@@ -302,7 +307,7 @@ describe("uninstall OpenShell gateway user service", () => {
           namespaceReads += 1;
           return {
             NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE:
-              namespaceReads <= 2 ? gatewayIdForStateDir(stateDir) : "default",
+              namespaceReads === 1 ? gatewayIdForStateDir(stateDir) : "default",
           };
         },
         resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
@@ -334,13 +339,55 @@ describe("uninstall OpenShell gateway user service", () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(namespaceReads).toBe(3);
+    expect(namespaceReads).toBe(2);
     expect(
       calls.some(
         ([command, resource, action]) =>
           command === "openshell" && resource === "gateway" && action === "select",
       ),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      calls.some(([command, resource]) => command === "openshell" && resource === "sandbox"),
+    ).toBe(false);
+    expect(fs.readFileSync(registryPath, "utf-8")).toBe(registryBefore);
+  });
+
+  it("does not delete a sandbox when a managed gateway namespace is unproven before deletion", () => {
+    const test = fixture(true);
+    const configPath = writeGatewayState(test);
+    const stateDir = path.dirname(configPath);
+    const registryPath = writeSelectedSandboxRegistry(test, "my-assistant");
+    const registryBefore = fs.readFileSync(registryPath, "utf-8");
+    let namespaceReads = 0;
+    const calls: string[][] = [];
+
+    const result = uninstall(
+      test,
+      false,
+      {
+        commandExists: () => true,
+        readProcessEnvironment: () => {
+          namespaceReads += 1;
+          return {
+            [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: "default",
+          };
+        },
+        run: (command, args) => {
+          calls.push([command, ...args]);
+          return ok();
+        },
+      },
+      [{ name: "nemoclaw" }, { name: "sibling" }],
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(namespaceReads).toBe(1);
+    expect(
+      calls.some(
+        ([command, resource, action]) =>
+          command === "openshell" && resource === "gateway" && action === "select",
+      ),
+    ).toBe(false);
     expect(
       calls.some(([command, resource]) => command === "openshell" && resource === "sandbox"),
     ).toBe(false);
@@ -525,7 +572,14 @@ describe("uninstall OpenShell gateway user service", () => {
 
     // Sandbox deletion succeeded, so this pins the second cleanup boundary: registration
     // removal failed, and uninstall still returns before it removes the gateway service.
-    expect(calls).toContainEqual(["openshell", "sandbox", "delete", "my-assistant"]);
+    expect(calls).toContainEqual([
+      "openshell",
+      "sandbox",
+      "delete",
+      "-g",
+      "nemoclaw",
+      "my-assistant",
+    ]);
     expect(result.exitCode).toBe(1);
     expect(fs.existsSync(servicePath)).toBe(true);
     expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
@@ -575,7 +629,7 @@ describe("uninstall OpenShell gateway user service", () => {
       calls.filter(
         (call) => call[0] === "openshell" && call[1] === "gateway" && call[2] === "select",
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
     expect(
       calls.filter(
         (call) => call[0] === "openshell" && call[1] === "sandbox" && call[2] === "delete",

@@ -69,13 +69,15 @@ describe("final gateway startup failure cleanup", () => {
     expect(errors.join("\n")).not.toContain("gateway destroy");
     if (process.platform === "linux") {
       expect(errors).toContain(
-        "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
+        "  If a privileged process remains, do not use a host-wide process match.",
+      );
+      expect(errors.join("\n")).toContain(
+        "gateway name 'nemoclaw', exact port, command line, PID file, runtime marker, and loaded sandbox namespace",
       );
     } else {
-      expect(errors).not.toContain(
-        "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
-      );
+      expect(errors.join("\n")).not.toContain("host-wide process match");
     }
+    expect(errors.join("\n")).not.toContain("pkill");
     expect(errors).toContain(
       '    docker volume ls -q --filter "name=openshell-cluster-nemoclaw" | xargs -r docker volume rm',
     );

@@ -318,14 +318,15 @@ If forwarding then fails, onboarding removes the new sandbox and tells you to re
 When a previous onboard, upgrade, or sandbox crash leaves a stale `openclaw-gateway` host process holding the dashboard port, `$$nemoclaw onboard --fresh`, `$$nemoclaw <name> destroy` (when destroying the last sandbox), and `$$nemoclaw uninstall` automatically sweep the dashboard port range and signal `SIGTERM` then `SIGKILL` to recover.
 The sweep only targets processes owned by the current user whose command line matches `openclaw-gateway` or `openshell forward` markers, and skips dashboard ports owned by other live sandboxes.
 
-If a non-NemoClaw process is already bound to the dashboard port or the gateway port, identify the conflicting process, verify it is safe to stop, and terminate it:
+If a non-NemoClaw process is already bound to the dashboard port or the gateway port, identify the conflicting process and verify it is safe to stop:
 
 ```bash
-sudo lsof -i :18789
-kill <PID>
+sudo lsof -i :18789 -sTCP:LISTEN -P -n
 ```
 
-If the process does not exit, use `kill -9 <PID>` to force-terminate it.
+Stop it through its service manager when one owns it.
+Otherwise, repeat the listener check immediately before you signal only the PID from that fresh result.
+Repeat the check again before any `SIGKILL`.
 Then retry onboarding.
 
 Alternatively, override the conflicting port instead of stopping the other process.
@@ -1052,13 +1053,13 @@ Re-running onboard then fails preflight with `Port 18789 is not available.
 Blocked by: ssh`.
 
 Current NemoClaw detects this case and kills the orphaned SSH process automatically before retrying the port check.
-If you see the error on an older release, identify the SSH process and terminate it manually:
+If you see the error on an older release, identify the SSH process and verify that it is safe to stop:
 
 ```bash
-sudo lsof -i :18789
-kill <PID>
+sudo lsof -i :18789 -sTCP:LISTEN -P -n
 ```
 
+Repeat the listener check immediately before you signal only the PID from that fresh result.
 Then re-run `$$nemoclaw onboard`.
 
 </AgentOnly>
@@ -2916,11 +2917,12 @@ Run `fix-coredns.sh` to point CoreDNS at the container gateway IP instead, then 
 ### `k3s` cannot find a freshly built image
 
 After building a new sandbox image, `k3s` inside the gateway container sometimes fails to pull it even though the image exists on the host.
-Remove the gateway registration, stop any leftover host gateway process, then re-run setup.
+Remove the gateway registration, then rerun setup.
+If a privileged host gateway remains, do not use a host-wide process match.
+Verify its live owner, exact gateway name and port, command line, PID file, runtime marker, and loaded sandbox namespace immediately before you stop it.
 
 ```bash
 openshell gateway remove nemoclaw
-sudo pkill -f openshell-gateway
 $$nemoclaw onboard --resume
 ```
 

@@ -119,8 +119,9 @@ export function createFinalGatewayStartFailureHandler(deps: FinalGatewayStartFai
     printError("  If gateway cleanup did not complete, run:");
     printError(`    openshell gateway remove ${gatewayName}`);
     if (process.platform === "linux") {
+      printError("  If a privileged process remains, do not use a host-wide process match.");
       printError(
-        "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
+        `  Verify its live owner, gateway name '${gatewayName}', exact port, command line, PID file, runtime marker, and loaded sandbox namespace before stopping it.`,
       );
     }
     printError(

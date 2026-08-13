@@ -5,7 +5,6 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 import {
@@ -25,6 +24,21 @@ import {
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   prepareDockerDriverGatewayConfigEnv,
 } from "./docker-driver-gateway-config";
+import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
+
+const SCOPED_NAMESPACE_PROOF_DRIVER = path.join(
+  process.cwd(),
+  "test/fixtures/gateway-scoped-namespace-proof-driver.cts",
+);
+
+function readRegularFileUtf8(target: string): string {
+  const file = openRegularFileNoFollow(target);
+  try {
+    return file.readUtf8();
+  } finally {
+    file.close();
+  }
+}
 
 function legacyGatewayIdForStateDir(stateDir: string): string {
   const leaf = path.basename(path.resolve(stateDir)).replace(/[^A-Za-z0-9_.-]/g, "-");
@@ -112,9 +126,9 @@ describe("docker-driver-gateway config TOML", () => {
       expect(fs.statSync(publicKeyPath).mode & 0o777).toBe(0o600);
       expect(fs.statSync(kidPath).mode & 0o777).toBe(0o600);
 
-      const signingKeyBeforeRestart = fs.readFileSync(signingKeyPath, "utf-8");
+      const signingKeyBeforeRestart = readRegularFileUtf8(signingKeyPath);
       const restartedEnv = writeGatewayConfig(stateDir);
-      const restartedToml = fs.readFileSync(configPath, "utf-8");
+      const restartedToml = readRegularFileUtf8(configPath);
       expect(restartedEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]).toBe(
         gatewayIdForStateDir(stateDir),
       );
@@ -122,7 +136,7 @@ describe("docker-driver-gateway config TOML", () => {
       expect(parseTomlString(restartedToml, "sandbox_namespace")).toBe(
         gatewayIdForStateDir(stateDir),
       );
-      expect(fs.readFileSync(signingKeyPath, "utf-8")).toBe(signingKeyBeforeRestart);
+      expect(readRegularFileUtf8(signingKeyPath)).toBe(signingKeyBeforeRestart);
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
@@ -253,19 +267,14 @@ describe("docker-driver-gateway config TOML", () => {
       try {
         const configPath = path.join(stateDir, "openshell-gateway.toml");
         expect(spawnSync("mkfifo", [configPath]).status).toBe(0);
-        const moduleUrl = pathToFileURL(
-          path.join(process.cwd(), "src/lib/onboard/docker-driver-gateway-config.ts"),
-        ).href;
         const spawned = spawn(
           process.execPath,
-          [
-            "--import",
-            "tsx",
-            "--input-type=module",
-            "-e",
-            `const loaded = await import(${JSON.stringify(moduleUrl)}); const api = loaded.default ?? loaded; process.stdout.write("ready\\n"); process.stdin.once("data", () => process.exit(api.hasStateScopedSandboxNamespace(${JSON.stringify(stateDir)}) ? 1 : 0));`,
-          ],
-          { cwd: process.cwd(), stdio: "pipe" },
+          ["--import", "tsx", SCOPED_NAMESPACE_PROOF_DRIVER],
+          {
+            cwd: process.cwd(),
+            env: { ...process.env, NEMOCLAW_TEST_GATEWAY_STATE_DIR: stateDir },
+            stdio: "pipe",
+          },
         );
         child = spawned;
         const result = await new Promise<{ code: number | null; stderr: string }>(
@@ -286,7 +295,8 @@ describe("docker-driver-gateway config TOML", () => {
             });
             spawned.stdout.on("data", (chunk: Buffer) => {
               stdout += chunk.toString("utf-8");
-              (ready || !stdout.includes("ready\n")) ||
+              ready ||
+                !stdout.includes("ready\n") ||
                 ((ready = true),
                 clearTimeout(startupTimer),
                 (proofTimer = setTimeout(() => {

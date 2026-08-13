@@ -61,6 +61,7 @@ import {
 import {
   hasStateScopedSandboxNamespace,
   processUsesStateScopedSandboxNamespace,
+  scopedHostGatewayProcessOwnershipFailure,
   type StopHostGatewayOptions,
   stopHostGatewayProcesses,
 } from "../../onboard/host-gateway-process";
@@ -698,8 +699,12 @@ function runOptional(
   return false;
 }
 
-function deleteSelectedGatewaySandbox(runtime: UninstallRuntime, sandboxName: string): boolean {
-  const result = runtime.run("openshell", ["sandbox", "delete", sandboxName], {
+function deleteSelectedGatewaySandbox(
+  runtime: UninstallRuntime,
+  gatewayName: string,
+  sandboxName: string,
+): boolean {
+  const result = runtime.run("openshell", ["sandbox", "delete", "-g", gatewayName, sandboxName], {
     env: runtime.env,
   });
   if (result.status === 0) {
@@ -1330,7 +1335,7 @@ function finishScopedOpenShellCleanup(
   externallySupervised: boolean,
 ): boolean {
   // Removing selected rows checkpoints successful sandbox deletion, so a retry
-  // can skip gateway selection after gateway registration cleanup has started.
+  // can skip sandbox deletion after gateway registration cleanup has started.
   if (!pruneSelectedRowsFromRegistry(paths, sandboxNames, runtime)) return false;
   return removeGatewayRegistration(
     runtime,
@@ -1354,42 +1359,23 @@ function removeOpenShellResources(
   const gatewayLabel = options.gatewayName || resolveGatewayName(GATEWAY_PORT);
   const externallySupervised = isExternallySupervised(teardownAuthority);
   if (scopedToSelectedGateway) {
-    if (sandboxNames.length > 0) {
-      if (
-        !canRemoveScopedOpenShellResources(
-          paths,
-          runtime,
-          scopedToSelectedGateway,
-          teardownAuthority,
-        )
-      ) {
-        return false;
-      }
-      const selected = runtime.run("openshell", ["gateway", "select", gatewayLabel], {
-        env: runtime.env,
-        stdio: "ignore",
-      });
-      if (selected.status !== 0) {
-        runtime.warn(
-          `Could not select gateway '${gatewayLabel}'; refusing sandbox deletion so sibling gateways remain untouched.`,
-        );
-        return false;
-      }
-    }
     let removedSelectedResources = true;
     for (const sandboxName of sandboxNames) {
       if (
         !canRemoveScopedOpenShellResources(
           paths,
+          options,
           runtime,
           scopedToSelectedGateway,
           teardownAuthority,
+          true,
         )
       ) {
         return false;
       }
       removedSelectedResources =
-        deleteSelectedGatewaySandbox(runtime, sandboxName) && removedSelectedResources;
+        deleteSelectedGatewaySandbox(runtime, gatewayLabel, sandboxName) &&
+        removedSelectedResources;
     }
     if (!removedSelectedResources) {
       runtime.warn("Selected gateway cleanup was incomplete; preserving its state for retry.");
@@ -1424,9 +1410,11 @@ function removeOpenShellResources(
 
 function canRemoveScopedOpenShellResources(
   paths: UninstallPaths,
+  options: UninstallRunOptions,
   runtime: UninstallRuntime,
   scopedToSelectedGateway: boolean,
   teardownAuthority: GatewayOwner,
+  requireLiveManagedProcess = false,
 ): boolean {
   if (!scopedToSelectedGateway) return true;
   if (isExternallySupervised(teardownAuthority)) {
@@ -1459,8 +1447,30 @@ function canRemoveScopedOpenShellResources(
     );
     return false;
   }
-  if (hasStateScopedSandboxNamespace(paths.selectedGatewayLocalStateDir)) return true;
-  runtime.warn("Refusing scoped gateway cleanup because its sandbox namespace cannot be proven.");
+  const stateDir = paths.selectedGatewayLocalStateDir;
+  if (!hasStateScopedSandboxNamespace(stateDir)) {
+    runtime.warn("Refusing scoped gateway cleanup because its sandbox namespace cannot be proven.");
+    return false;
+  }
+  if (!requireLiveManagedProcess) return true;
+  const reason = scopedHostGatewayProcessOwnershipFailure(
+    {
+      env: runtime.env,
+      kill: runtime.kill,
+      readProcessEnvironment: runtime.readProcessEnvironment,
+      run: runtime.run,
+    },
+    {
+      gatewayBin: runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN,
+      openShellGatewayName: options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+      openShellGatewayPort: GATEWAY_PORT,
+      stateDir,
+    },
+  );
+  if (reason === null) return true;
+  runtime.warn(
+    `Refusing scoped gateway cleanup because the selected process identity cannot be proven: ${reason}.`,
+  );
   return false;
 }
 
@@ -2356,7 +2366,13 @@ function executePlan(
 ): { ok: boolean } {
   const externallySupervised = isExternallySupervised(teardownAuthority);
   if (
-    !canRemoveScopedOpenShellResources(paths, runtime, scopedToSelectedGateway, teardownAuthority)
+    !canRemoveScopedOpenShellResources(
+      paths,
+      options,
+      runtime,
+      scopedToSelectedGateway,
+      teardownAuthority,
+    )
   ) {
     return { ok: false };
   }
