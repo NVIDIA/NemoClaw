@@ -17,8 +17,8 @@ describe("corporate proxy CA build-time TLS anchor (#6839)", () => {
     expect(matches).toHaveLength(1);
   });
 
-  // source-shape-contract: security -- The build-time TLS trust anchor must precede registry and signature-verifying fetches
-  it("decodes the CA and exports NODE_EXTRA_CA_CERTS before the reinstall audit-signatures step", () => {
+  // source-shape-contract: security -- The build-time TLS trust anchor must precede registry-backed dependency requests
+  it("decodes the CA and exports NODE_EXTRA_CA_CERTS before registry-backed dependency requests (#8925)", () => {
     const argIndex = dockerfile.indexOf("ARG NEMOCLAW_CORPORATE_CA_B64=");
     const decodeIndex = dockerfile.indexOf('RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then');
     const anchorIndex = dockerfile.indexOf(
@@ -32,7 +32,9 @@ describe("corporate proxy CA build-time TLS anchor (#6839)", () => {
       "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
       curlAnchorIndex,
     );
-    const auditSignaturesIndex = dockerfile.indexOf("mcporter-runtime audit signatures");
+    const mcporterInstallIndex = dockerfile.indexOf(
+      "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ci",
+    );
 
     for (const [name, index] of Object.entries({
       argIndex,
@@ -40,7 +42,7 @@ describe("corporate proxy CA build-time TLS anchor (#6839)", () => {
       anchorIndex,
       curlAnchorIndex,
       ipAddressPatchIndex,
-      auditSignaturesIndex,
+      mcporterInstallIndex,
     })) {
       expect(index, name).toBeGreaterThan(-1);
     }
@@ -48,7 +50,7 @@ describe("corporate proxy CA build-time TLS anchor (#6839)", () => {
     expect(decodeIndex).toBeLessThan(anchorIndex);
     expect(anchorIndex).toBeLessThan(curlAnchorIndex);
     expect(curlAnchorIndex).toBeLessThan(ipAddressPatchIndex);
-    expect(anchorIndex).toBeLessThan(auditSignaturesIndex);
+    expect(anchorIndex).toBeLessThan(mcporterInstallIndex);
   });
 });
 
