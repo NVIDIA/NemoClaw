@@ -40,7 +40,7 @@ describe("onboard helpers", () => {
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -207,7 +207,7 @@ const { createSandbox } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
     const script = String.raw`
 const fs = require("node:fs");
@@ -411,7 +411,7 @@ const { createSandbox } = require(${onboardPath});
     const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
     const script = String.raw`
 const fs = require("node:fs");
@@ -566,7 +566,7 @@ const { createSandbox } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -664,7 +664,7 @@ const { createSandbox } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
     const script = String.raw`
 const runner = require(${runnerPath});
