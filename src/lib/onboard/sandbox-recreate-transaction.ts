@@ -593,7 +593,9 @@ export function recordSandboxRecreateTargetCreated(
     !observation.liveIdentityFingerprint ||
     !/^[0-9a-f]{64}$/u.test(observation.liveIdentityFingerprint)
   ) {
-    throw new Error("The journaled replacement must be ready with a stable OpenShell Id.");
+    throw new Error(
+      "The journaled replacement must be Ready with a valid live identity fingerprint.",
+    );
   }
   const checkpoint = baseCheckpoint(session);
   const current = checkpoint.sandboxRecreate;

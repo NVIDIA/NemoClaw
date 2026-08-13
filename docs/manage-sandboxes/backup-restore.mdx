@@ -196,6 +196,20 @@ For a stopped source, its registry entry must record both the sandbox image and 
 NemoClaw stops before creating or replacing the destination when either record is missing, and directs you to run `$$nemoclaw onboard` when no image is recorded.
 For a Kubernetes-driver source, the pod image must remain resolvable through its gateway.
 
+For a new destination, NemoClaw waits for the owning gateway to report the sandbox as Ready with a valid live identity.
+It checks that identity again immediately before registration.
+NemoClaw assigns the destination a new lifecycle generation instead of copying the source sandbox's generation.
+
+If the destination is not Ready with the same valid identity, the restore exits nonzero before registration or state restore.
+The OpenShell sandbox remains created but unregistered, so `--force` cannot select it for deletion.
+Run the exact owner-scoped deletion command printed by the failure:
+
+```bash
+openshell sandbox delete -g '<owning-gateway>' '<destination>'
+```
+
+After OpenShell deletes the destination, rerun the original `snapshot restore --to` command.
+
 For dashboard-enabled agents, NemoClaw allocates the destination sandbox its own dashboard port instead of reusing the source port.
 If no port is available, restore stops before deleting an existing `--force` destination.
 

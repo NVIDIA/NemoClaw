@@ -47,7 +47,7 @@ import {
 } from "../../onboard/observability-policy-presets";
 import { normalizePolicyTierName } from "../../onboard/policy-tier-suppression";
 import * as policies from "../../policy";
-import { ROOT, run, validateName } from "../../runner";
+import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
 import * as shields from "../../shields";
@@ -138,6 +138,16 @@ export class SnapshotCommandError extends Error {
 
 function snapshotExit(exitCode = 1): never {
   throw new SnapshotCommandError([], exitCode);
+}
+
+function failUnregisteredSnapshotClone(sandboxName: string, gatewayName: string): never {
+  throw new SnapshotCommandError([
+    `  Sandbox '${sandboxName}' was created, but NemoClaw could not verify the same valid Ready identity from its owning gateway before registration.`,
+    "  Snapshot state was not restored and the clone was not registered.",
+    "  Remove the unregistered sandbox before retrying:",
+    `    openshell sandbox delete -g ${shellQuote(gatewayName)} ${shellQuote(sandboxName)}`,
+    "  Then rerun the original snapshot restore command.",
+  ]);
 }
 
 function formatSnapshotVersion(b: unknown) {
@@ -475,10 +485,14 @@ async function autoCreateSandboxFromSource(
     ignoreError: true,
   });
   if (verify.status !== 0 || !isSandboxReady(verify.output || "", dstName)) {
-    console.error(`  Sandbox '${dstName}' did not reach Ready state after create.`);
-    snapshotExit(1);
+    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
-  const lifecycleRegistration = cloneLifecycle.capture();
+  let lifecycleRegistration: ReturnType<typeof cloneLifecycle.capture>;
+  try {
+    lifecycleRegistration = cloneLifecycle.capture();
+  } catch {
+    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
+  }
 
   // DNS proxy is only meaningful for the kubernetes driver (matches onboard.ts).
   const dnsScript = path.join(ROOT, "scripts", "setup-dns-proxy.sh");
@@ -493,6 +507,12 @@ async function autoCreateSandboxFromSource(
   // Register dst in the NemoClaw registry, cloning most fields from src.
   // Policies are cleared here — the caller replays them from the snapshot
   // manifest after the restore succeeds and writes them back into this entry.
+  let finalLifecycleRegistration: ReturnType<typeof cloneLifecycle.revalidate>;
+  try {
+    finalLifecycleRegistration = cloneLifecycle.revalidate(lifecycleRegistration);
+  } catch {
+    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
+  }
   registry.registerSandbox({
     ...srcEntry,
     name: dstName,
@@ -521,7 +541,7 @@ async function autoCreateSandboxFromSource(
     // stop/start, recovery, and later snapshots can address its gateway.
     gatewayName: sourceGatewayName,
     gatewayPort: sourceGatewayPort,
-    ...cloneLifecycle.revalidate(lifecycleRegistration),
+    ...finalLifecycleRegistration,
   });
 
   const sourceAgent = (srcEntry as SandboxEntry).agent || "openclaw";
