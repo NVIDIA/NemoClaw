@@ -62,6 +62,23 @@ nvm use 22
 
 Then re-run the installer.
 
+### Contributor Setup Fails with a JavaScript Heap Out-of-Memory Error
+
+This applies to a source checkout, not to an installed release.
+
+Node.js derives its default old-space limit from host memory.
+On a host with 8 GB of RAM, that limit is about 2.2 GB.
+The CLI type check needs more heap than that limit, so `./scripts/dev-setup.sh` stops at the type-check step and Node.js reports `JavaScript heap out of memory`.
+
+Raise the limit, then run setup again:
+
+```bash
+export NODE_OPTIONS=--max-old-space-size=5120
+./scripts/dev-setup.sh
+```
+
+Keep that variable set for later type-check, build, and test commands.
+
 ### Image push fails with out-of-memory errors
 
 The sandbox image is approximately 2.4 GB compressed.
@@ -289,7 +306,10 @@ If another sandbox already owns the dashboard port, onboarding scans ports `1878
 If all ports in that range are occupied, the error lists the owner for each port and suggests using `--control-ui-port` with a port outside the range.
 
 On macOS, the port check also tries a privileged `lsof` probe without prompting for a password so root-owned listeners are detected before the sandbox build starts.
-If a port becomes occupied after preflight but before `openshell forward start` runs, onboarding deletes the just-created sandbox and exits with a retry message instead of leaving a sandbox with an unreachable dashboard URL.
+For a new sandbox, NemoClaw reserves the selected loopback port through sandbox preparation and the image build.
+If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources.
+NemoClaw releases the reservation immediately before `openshell forward start` runs.
+If forwarding then fails, onboarding removes the new sandbox and tells you to resolve the reported error before retrying.
 
 When a previous onboard, upgrade, or sandbox crash leaves a stale `openclaw-gateway` host process holding the dashboard port, `$$nemoclaw onboard --fresh`, `$$nemoclaw <name> destroy` (when destroying the last sandbox), and `$$nemoclaw uninstall` automatically sweep the dashboard port range and signal `SIGTERM` then `SIGKILL` to recover.
 The sweep only targets processes owned by the current user whose command line matches `openclaw-gateway` or `openshell forward` markers, and skips dashboard ports owned by other live sandboxes.
@@ -949,20 +969,24 @@ Then re-run `$$nemoclaw onboard`.
 
 <AgentOnly variant="openclaw,hermes">
 
-### Updated messaging credential is not picked up
+### Sandbox Keeps Using the Previous Messaging Credential
 
 Rerunning `$$nemoclaw onboard --non-interactive` with a replacement `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `WECHAT_BOT_TOKEN`, or `MSTEAMS_APP_PASSWORD` previously reported success while the sandbox kept using the old credential.
 When you rerun onboarding, NemoClaw evaluates every active messaging credential binding and compares each supplied credential with its SHA-256 hash in the sandbox registry.
-When you provide a replacement credential, NemoClaw validates it before it backs up supported workspace and manifest-declared state, destroys the sandbox, recreates it, and restores the backup.
+When you provide a replacement credential, NemoClaw runs the channel's configured checks before it backs up supported workspace and manifest-declared state, destroys the sandbox, recreates it, and restores the backup.
 Files outside those state paths are not preserved.
-If validation fails, onboarding stops before it backs up supported workspace and manifest-declared state or destroys the existing sandbox.
+If an available pre-recreation check fails, onboarding stops before it backs up supported workspace and manifest-declared state or destroys the existing sandbox.
+Discord and Microsoft Teams require non-empty replacement input but cannot prove upstream credential validity before recreation, so send a real test message after onboarding and confirm that the recreated sandbox receives it and responds.
+If the channel state changes during rotation, onboarding stops before it destroys the existing sandbox and asks you to retry with the updated state.
 If you do not supply a credential, or the supplied credential matches the recorded hash, the credential check does not trigger recreation.
 If you replace a credential for a channel that you stopped with `channels stop`, onboarding does not trigger recreation because that channel is inactive.
 
-If you suspect a sandbox is still using a stale messaging credential, re-run onboarding so the credential check runs:
+If you suspect a sandbox is still using a stale messaging credential, follow [Rotate a Messaging Credential](../security/credential-rotation#rotate-a-messaging-credential) to export the replacement without putting it in shell history.
+Then rerun onboarding so the credential check runs:
 
 ```bash
-$$nemoclaw onboard --non-interactive
+$$nemoclaw onboard --name <sandbox> \
+  --non-interactive --yes --yes-i-accept-third-party-software
 ```
 
 </AgentOnly>
@@ -1342,6 +1366,34 @@ For shields changes, the lock remains held through recursive state-directory upd
 If a concurrent config or shields command reports `Hermes config mutation is already in progress`, do not remove `/run/nemoclaw/hermes-config-mutation.lock` manually.
 Wait for the active config, shields, recovery, or restart command to finish, then retry.
 If the command says shields are up, run `$$nemoclaw <name> shields down` before `config set` or `inference set`.
+
+### A Hermes command reports that runtime provider state mutation owns direct-container execution
+
+A current managed Hermes image on the Docker driver can report this retryable refusal while an exact Shields provider fence is active:
+
+```text
+Runtime provider state mutation owns direct-container execution for sandbox '<name>'; retry after the provider fence is released.
+```
+
+The refused command did not start a process inside the sandbox.
+Do not bypass the fence with manual `docker exec`, OpenShell, or SSH commands, and do not delete `~/.nemoclaw/state/runtime-provider-lifecycle/`.
+Wait for the active Shields or recovery command to finish, then reconcile the retained authority from the host:
+
+```bash
+$$nemoclaw <name> shields status
+```
+
+Use the status result as follows:
+
+- If status reports verified `UP`, `DOWN`, or mutable-default posture and exits with status `0`, retry the original command.
+- If status reports `runtime-provider recovery restored lockdown`, retry the intended `shields up` or `shields down` transition because provider verification rejected the persisted mutable posture.
+- If status reports `DOWN (DRIFTED...)` or `NOT CONFIGURED (DRIFTED...)`, run `$$nemoclaw <name> shields up`.
+  Open a new shields-down window only after `shields status` reports `UP` and exits with status `0`.
+
+Hermes can also log `[SECURITY] Hermes startup held by an active runtime state mutation.` before it reads mutable state.
+Do not kill or manually restart the held entrypoint.
+Run `$$nemoclaw <name> shields status` from the host so NemoClaw can recover the exact retained target and authenticate the startup release.
+If recovery still fails, preserve the owner-only lifecycle ledger and the complete error for diagnosis instead of removing a marker or changing in-sandbox permissions.
 
 ### Hermes startup reports `HERMES_CONFIG_MUTATION_ORPHANED`
 
@@ -1842,8 +1894,9 @@ Check the active provider and endpoint:
 $$nemoclaw <name> status
 ```
 
-The main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox, so it reflects the route the agent actually uses.
-If that line shows `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop.
+The main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox and then sends one inference request over the same route, so it reflects the route the agent uses.
+If that line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop.
+An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
 For local Ollama and local vLLM, `Inference (ollama backend)` or the corresponding local-backend line reports the host-side service separately.
 For Local Ollama, current releases can also print `Inference (auth proxy)` when a proxy token is available.
 If a local backend or auth-proxy diagnostic fails, start the backend or re-run onboarding so NemoClaw can recreate the proxy token, restart the proxy, and refresh the route.
@@ -1882,7 +1935,7 @@ Onboarding ends with:
 
 ```text
   Sandbox 'my-assistant' was created but did not become ready within 180s.
-  The orphaned sandbox has been removed — you can safely retry.
+  Retry: $$nemoclaw onboard
 ```
 
 This is a separate budget from `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT`.
@@ -1902,7 +1955,9 @@ $$nemoclaw onboard
 ```
 
 The variable accepts seconds and applies to the readiness wait only.
-When the deadline expires, NemoClaw deletes the partially-created sandbox before printing the retry hint, so the next `$$nemoclaw onboard` starts from a clean state.
+When the deadline expires, NemoClaw tries to delete the partially created sandbox.
+After successful cleanup, the output ends with `Retry: $$nemoclaw onboard`.
+If cleanup fails, NemoClaw instead reports that the failed sandbox could not be removed and prints `Manual cleanup: openshell sandbox delete "<name>"`.
 If readiness still fails after the extended budget, inspect the gateway and sandbox status:
 
 ```bash

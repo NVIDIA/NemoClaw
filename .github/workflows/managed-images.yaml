@@ -16,11 +16,13 @@ on:
   workflow_call:
   pull_request:
     paths:
+      - ".github/actions/ci-reviewed-npm-audit/**"
       - ".github/workflows/managed-images.yaml"
       - ".dockerignore"
       - "Dockerfile"
       - "agents/**"
       - "ci/npm-audit-exceptions.json"
+      - "ci/reviewed-npm-audit.json"
       - "nemoclaw/**"
       - "nemoclaw-blueprint/**"
       - "scripts/**"
@@ -49,6 +51,55 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  pr-reviewed-npm-audit:
+    name: PR reviewed npm audit
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout commit under review
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          persist-credentials: false
+
+      - name: Checkout trusted reviewed npm audit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-reviewed-npm-audit
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-reviewed-npm-audit
+            ci/npm-audit-exceptions.json
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-audit.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Verify exact audit source and target
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD)" = "$BASE_SHA"
+          test "$(git -C candidate rev-parse --verify HEAD)" = "$CANDIDATE_SHA"
+
+      - name: Audit exact PR production npm graphs
+        uses: ./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit
+        with:
+          target-root: ${{ github.workspace }}/candidate
+          report-dir: artifacts/reviewed-npm-audit
+
   pr-staging-qa-deep-code:
     name: Staging QA base permission regression (Deep Agents Code)
     if: github.event_name == 'pull_request'
@@ -269,6 +320,7 @@ jobs:
     # External contributor PRs retain the local build/direct-startup lane after
     # GitHub's maintainer workflow approval. Exact digest publication is limited
     # to branches in NVIDIA/NemoClaw; fork jobs never log in or push.
+    needs: pr-reviewed-npm-audit
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 90

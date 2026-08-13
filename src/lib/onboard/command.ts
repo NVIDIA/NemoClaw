@@ -45,6 +45,7 @@ import {
   resolveLocalModelProfilePlan,
 } from "./local-model-profile/plan";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
+import { parseReadOnlyHostMounts } from "./host-mount";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
 import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
@@ -58,6 +59,7 @@ export interface OnboardCommandOptions {
   recreateSandbox: boolean;
   fromDockerfile: string | null;
   sandboxName: string | null;
+  hostMounts?: import("../state/registry/types").SandboxHostMount[];
   sandboxGpu: "enable" | "disable" | null;
   sandboxGpuDevice: string | null;
   acceptThirdPartySoftware: boolean;
@@ -78,6 +80,7 @@ export interface OnboardCommandOptions {
 
 export interface ResolveOnboardOptionsDeps {
   env: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
   listAgents?: () => string[];
   listServingProfiles?: () => ServingProfileListEntry[];
   loadServingCatalog?: () => CompiledServingCatalog;
@@ -171,6 +174,29 @@ function resolveSandboxGpu(flags: OnboardFlags): "enable" | "disable" | null {
   if (flags["sandbox-gpu"]) return "enable";
   if (flags["no-sandbox-gpu"]) return "disable";
   return null;
+}
+
+function resolveHostMounts(
+  values: readonly string[] | undefined,
+  experimentalProfile: ExperimentalOnboardProfile | null,
+  deps: ResolveOnboardOptionsDeps,
+): import("../state/registry/types").SandboxHostMount[] {
+  if ((values?.length ?? 0) > 0 && experimentalProfile === PORTABLE_EXPERIMENTAL_PROFILE) {
+    fail(
+      deps,
+      "  --host-mount requires the OpenShell Docker driver and cannot be used with --experimental-profile portable.",
+    );
+  }
+  let mounts: import("../state/registry/types").SandboxHostMount[];
+  try {
+    mounts = parseReadOnlyHostMounts(values ?? []);
+  } catch (error) {
+    return fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (mounts.length > 0 && (deps.platform ?? process.platform) !== "linux") {
+    fail(deps, "  --host-mount is currently supported only on Linux and WSL2 hosts.");
+  }
+  return mounts;
 }
 
 function validateObservabilityAgent(
@@ -347,6 +373,7 @@ export function resolveOnboardOptions(
   } catch (error) {
     fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
   }
+  const hostMounts = resolveHostMounts(flags["host-mount"], experimentalProfile, deps);
   return {
     tempManagedRuntime: flags["temp-managed-runtime"] === true,
     tempManagedRuntimeCatalog: resolveFileOption(
@@ -361,6 +388,7 @@ export function resolveOnboardOptions(
     recreateSandbox: flags["recreate-sandbox"] === true,
     fromDockerfile: resolveFileOption("--from", flags.from, deps, true),
     sandboxName: flags.name ?? null,
+    ...(hostMounts.length > 0 ? { hostMounts } : {}),
     sandboxGpu: resolveSandboxGpu(flags),
     sandboxGpuDevice: flags["sandbox-gpu-device"] ?? null,
     acceptThirdPartySoftware:

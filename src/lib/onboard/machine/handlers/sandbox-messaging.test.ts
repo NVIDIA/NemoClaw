@@ -305,6 +305,21 @@ afterEach(() => {
 });
 
 describe("reconcileReusedSandboxMessaging", () => {
+  it("does not clear an equal recorded plan from a different authority", () => {
+    const plan = telegramPlan(hashCredential("123456:registry-token") ?? "");
+    const clearPlanEnv = vi.fn();
+
+    const result = reconcileReusedSandboxMessaging(
+      structuredClone(plan),
+      { name: "openclaw" },
+      { clearPlanEnv },
+      plan,
+    );
+
+    expect(result).toEqual({ plan, selectedChannels: ["telegram"], changed: false });
+    expect(clearPlanEnv).not.toHaveBeenCalled();
+  });
+
   it("removes every unsupported channel artifact from a reused plan", () => {
     const result = reconcileReusedSandboxMessaging(
       mixedChannelPlan(),
@@ -606,7 +621,7 @@ describe("reconcileSandboxMessaging completed checkpoint credentials", () => {
       hashCredential("xapp-previous-slack-app-token") ?? "",
     );
     const deps = reconcileDeps([persistedPlan]);
-    const previousPlanEnv = process.env[MESSAGING_SETUP_APPLIER_ENV_KEY];
+    vi.stubEnv(MESSAGING_SETUP_APPLIER_ENV_KEY, "");
     vi.stubEnv("SLACK_BOT_TOKEN", "invalid-replacement-bot-token");
     vi.stubEnv("SLACK_APP_TOKEN", "invalid-replacement-app-token");
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -624,29 +639,21 @@ describe("reconcileSandboxMessaging completed checkpoint credentials", () => {
         }),
     );
 
-    try {
-      await expect(
-        reconcileSandboxMessaging({
-          resume: true,
-          session: completedCheckpointSession(persistedPlan),
-          sandboxName: "alpha",
-          agent: { name: "openclaw" },
-          credentialValidationPlan: persistedPlan,
-          forceCredentialValidation: true,
-          deps,
-        }),
-      ).rejects.toThrow(
-        "Credential validation did not complete for active messaging channels: slack. The existing sandbox was not changed.",
-      );
+    await expect(
+      reconcileSandboxMessaging({
+        resume: true,
+        session: completedCheckpointSession(persistedPlan),
+        sandboxName: "alpha",
+        agent: { name: "openclaw" },
+        credentialValidationPlan: persistedPlan,
+        forceCredentialValidation: true,
+        deps,
+      }),
+    ).rejects.toThrow(
+      "Credential validation did not complete for active messaging channels: slack. The existing sandbox was not changed.",
+    );
 
-      expect(MessagingSetupApplier.requirePlanFromEnv()).toEqual(persistedPlan);
-    } finally {
-      MessagingSetupApplier.clearPlanEnv();
-      Object.assign(
-        process.env,
-        previousPlanEnv === undefined ? {} : { [MESSAGING_SETUP_APPLIER_ENV_KEY]: previousPlanEnv },
-      );
-    }
+    expect(MessagingSetupApplier.requirePlanFromEnv()).toEqual(persistedPlan);
   });
 
   it("keeps checkpoint-disabled channels disabled while validating registry hashes (#3631)", async () => {

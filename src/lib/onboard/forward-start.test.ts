@@ -527,6 +527,35 @@ describe("runDetachedForwardStartWithDiagnostics", () => {
     }
   });
 
+  it("does not accept a live port when the ownership lookup returns null (#8522)", () => {
+    const fetchList = vi.fn().mockReturnValue(null);
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      fs.writeSync(stderr, "ssh exited before local forward listener opened on 127.0.0.1:18789\n");
+      return { pid: 790 };
+    });
+    const isPortListening = vi.fn().mockReturnValue(true);
+    const realKill = process.kill;
+    const killSpy = vi.fn();
+    (process as { kill: typeof process.kill }).kill = killSpy as unknown as typeof process.kill;
+
+    try {
+      const result = runDetachedForwardStartWithDiagnostics(
+        spawn,
+        fetchList,
+        { port: 18789, sandboxName: "my-sandbox" },
+        { overallTimeoutMs: 180_000, sleepMs: vi.fn(), isPortListening },
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("listener-start-failure");
+      expect(result.diagnostic).toMatch(/openshell forward list failed:.*no forward list result/i);
+      expect(isPortListening).not.toHaveBeenCalled();
+      expect(killSpy).toHaveBeenCalledWith(790, "SIGTERM");
+    } finally {
+      (process as { kill: typeof process.kill }).kill = realKill;
+    }
+  });
+
   it("rejects a live port without the established untracked-forward diagnostic (#7266)", () => {
     const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
     const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
@@ -908,6 +937,88 @@ describe("runDetachedForwardStartWithRetries", () => {
     expect(spawn).toHaveBeenCalledTimes(2);
   });
 
+  it("retries an OpenShell sandbox readiness rejection after a bounded settle delay", () => {
+    const fetchList = vi
+      .fn()
+      .mockReturnValueOnce(forwardListWith([]))
+      .mockReturnValue(forwardListWith([{ sandbox: "my-sandbox", port: 18789 }]));
+    const events: string[] = [];
+    const spawn = vi
+      .fn()
+      .mockImplementationOnce(({ stderr }: { stderr: number }) => {
+        events.push("spawn-1");
+        fs.writeSync(
+          stderr,
+          `Error:   × code: 'The system is not in a state required for the operation's
+  │ execution', message: "sandbox is not ready"
+`,
+        );
+        return { pid: 784 };
+      })
+      .mockImplementationOnce(() => {
+        events.push("spawn-2");
+        return { pid: 785 };
+      });
+    const beforeRetry = vi.fn();
+    const sleep = vi.fn((ms: number) => {
+      events.push(`sleep-${ms}`);
+    });
+
+    const result = runDetachedForwardStartWithRetries(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      beforeRetry,
+      {
+        sleepMs: sleep,
+        isPortListening: vi.fn().mockReturnValue(false),
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(beforeRetry).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledWith(5_000);
+    expect(events).toEqual(["spawn-1", "sleep-5000", "spawn-2"]);
+  });
+
+  it("does not retry a composite authentication diagnostic that mentions readiness", () => {
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const delays: number[] = [];
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      fs.writeSync(
+        stderr,
+        `Permission denied (publickey); previous attempt reported Error:   × code: 'The system is not in a state required for the operation's
+  │ execution', message: "sandbox is not ready"
+`,
+      );
+      return { pid: 784 };
+    });
+
+    const result = runDetachedForwardStartWithRetries(
+      spawn,
+      vi.fn().mockReturnValue(forwardListWith([])),
+      { port: 18789, sandboxName: "my-sandbox" },
+      vi.fn(),
+      {
+        overallTimeoutMs: 1_000,
+        pollIntervalMs: 500,
+        sleepMs: (ms) => {
+          delays.push(ms);
+          now += ms;
+        },
+        isPortListening: vi.fn().mockReturnValue(false),
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("timeout");
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(delays).not.toContain(5_000);
+  });
+
   it("preserves a ControlMaster listener created by the current attempt (#6099)", () => {
     const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
     const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
@@ -1025,6 +1136,12 @@ describe("looksLikeForwardListenerStartFailure", () => {
   it("matches only definitive listener termination diagnostics", () => {
     expect(
       looksLikeForwardListenerStartFailure(
+        `Error:   × code: 'The system is not in a state required for the operation's
+  │ execution', message: "sandbox is not ready"`,
+      ),
+    ).toBe(true);
+    expect(
+      looksLikeForwardListenerStartFailure(
         "local forward listener did not open on 127.0.0.1:18789 within 10000ms",
       ),
     ).toBe(true);
@@ -1035,6 +1152,11 @@ describe("looksLikeForwardListenerStartFailure", () => {
     ).toBe(true);
     expect(looksLikeForwardListenerStartFailure("Permission denied (publickey)")).toBe(false);
     expect(looksLikeForwardListenerStartFailure("gateway transport unavailable")).toBe(false);
+    expect(
+      looksLikeForwardListenerStartFailure(
+        'Permission denied (publickey); previous attempt reported "sandbox is not ready"',
+      ),
+    ).toBe(false);
   });
 });
 
