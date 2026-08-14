@@ -473,12 +473,13 @@ that same artifact with the trusted workflow revision. An exact-argument and
 asset-allowlisted `gh` shim presents only those retained files to the unchanged
 trusted `scripts/install-openshell.sh` path. A separate `curl` shim blocks
 network fallback. The installer still checks the release checksums and archive
-structure before installation. A missing, replaced, or corrupt upstream asset
-fails the resolver as an infrastructure failure. The job error reports the
-failed identifier and source URL, and `resolution.json` records them when the
-artifact directory remains writable. The three product shards do not start in
-that case, so the run cannot report a product failure before reaching product
-assertions.
+structure before installation. Each product shard completes trusted OpenShell
+installation and Docker credential revocation before it restores and executes
+the candidate CLI artifact. A missing, replaced, or corrupt upstream asset fails
+the resolver as an infrastructure failure. The job error reports the failed
+identifier and source URL, and `resolution.json` records them when the artifact
+directory remains writable. The three product shards do not start in that case,
+so the run cannot report a product failure before reaching product assertions.
 
 ## Larger-runner routing
 
