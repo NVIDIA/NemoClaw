@@ -283,6 +283,20 @@ function Resolve-DockerDesktopPath {
     return $null
 }
 
+function Test-DockerDesktopExecutableTrusted {
+    param([Parameter(Mandatory)] [string]$Path)
+
+    try {
+        $signature = Get-AuthenticodeSignature -LiteralPath $Path
+    } catch {
+        return $false
+    }
+    return $signature -and
+        $signature.Status -eq 'Valid' -and
+        $signature.SignerCertificate -and
+        $signature.SignerCertificate.Subject -match 'Docker'
+}
+
 function Resolve-WslExe {
     $candidates = @(
         (Join-Path -Path $env:SystemRoot -ChildPath 'System32\wsl.exe'),
@@ -521,6 +535,10 @@ function Wait-DockerDesktopEngine {
         Write-Status -Level WARN "Docker CLI not found. The script skips the Docker engine readiness check. Checked: $(Format-DockerDesktopCandidatePath -Component 'Cli')."
         return $false
     }
+    if (-not (Test-DockerDesktopExecutableTrusted -Path $dockerCli)) {
+        Write-Status -Level ERROR "Docker CLI at $dockerCli is not signed by a trusted publisher. The script skips the Docker engine readiness check."
+        return $false
+    }
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
@@ -547,6 +565,10 @@ function Start-DockerDesktop {
     $dockerDesktopExe = Resolve-DockerDesktopPath -Component 'Desktop'
     if (-not $dockerDesktopExe) {
         Write-Status -Level WARN "Docker Desktop not found. The script cannot start it. Checked: $(Format-DockerDesktopCandidatePath -Component 'Desktop')."
+        return
+    }
+    if (-not (Test-DockerDesktopExecutableTrusted -Path $dockerDesktopExe)) {
+        Write-Status -Level ERROR "Docker Desktop at $dockerDesktopExe is not signed by a trusted publisher. Refusing to launch it from this elevated process."
         return
     }
 
@@ -577,6 +599,10 @@ function Restart-DockerDesktop {
     $dockerCli = Resolve-DockerDesktopPath -Component 'Cli'
     if (-not $dockerCli) {
         Write-Status -Level WARN "Docker CLI not found. The script cannot restart Docker Desktop. Checked: $(Format-DockerDesktopCandidatePath -Component 'Cli')."
+        return
+    }
+    if (-not (Test-DockerDesktopExecutableTrusted -Path $dockerCli)) {
+        Write-Status -Level ERROR "Docker CLI at $dockerCli is not signed by a trusted publisher. The script cannot restart Docker Desktop."
         return
     }
 
@@ -1484,7 +1510,7 @@ function Write-DockerDesktopNotice {
     if ((Resolve-DockerDesktopPath -Component 'Desktop') -or (Resolve-DockerDesktopPath -Component 'Cli')) {
         return
     }
-    Write-Status -Level WARN 'Docker Desktop was not detected. The standard installer/onboard flow will need Docker available from WSL.'
+    Write-Status -Level WARN "Docker Desktop was not detected. Checked Desktop: $(Format-DockerDesktopCandidatePath -Component 'Desktop'). Checked CLI: $(Format-DockerDesktopCandidatePath -Component 'Cli'). The standard installer/onboard flow will need Docker available from WSL."
 }
 
 function Escape-BashArgument {

@@ -58,6 +58,7 @@ $script:events = @()
 
 function Resolve-DockerDesktopPath { param([string]$Component) if ($Component -eq 'Desktop') { return 'Docker Desktop.exe' } return 'docker.exe' }
 function Test-DockerDesktopRunning { return $false }
+function Test-DockerDesktopExecutableTrusted { param([string]$Path) return $true }
 function Wait-DockerDesktopEngine { param([int]$TimeoutSeconds) $script:events += 'wait-ready'; return $true }
 function Restart-DockerDesktop { $script:events += 'restart' }
 function Minimize-DockerDesktopWindow { $script:events += 'minimize' }
@@ -87,6 +88,7 @@ $script:events = @()
 
 function Resolve-DockerDesktopPath { param([string]$Component) if ($Component -eq 'Desktop') { return 'Docker Desktop.exe' } return 'docker.exe' }
 function Test-DockerDesktopRunning { return $true }
+function Test-DockerDesktopExecutableTrusted { param([string]$Path) return $true }
 function Wait-DockerDesktopEngine { param([int]$TimeoutSeconds) $script:events += 'wait-ready'; return $true }
 function Restart-DockerDesktop { $script:events += 'restart' }
 function Minimize-DockerDesktopWindow { $script:events += 'minimize' }
@@ -194,6 +196,125 @@ Start-DockerDesktop
       for (const candidate of parsed.candidates as string[]) {
         expect(parsed.output).toContain(candidate);
       }
+    },
+  );
+
+  itPowerShell(
+    "treats an unsigned executable as untrusted (#9114)",
+    `
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$path = Join-Path $env:TEMP ('untrusted-' + [guid]::NewGuid().ToString('N') + '.exe')
+Set-Content -LiteralPath $path -Value 'not a real executable' -Encoding UTF8
+try {
+    $trusted = Test-DockerDesktopExecutableTrusted -Path $path
+} finally {
+    Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+}
+[pscustomobject]@{ trusted = $trusted } | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.trusted).toBe(false);
+    },
+  );
+
+  itPowerShell(
+    "refuses to launch an untrusted Docker Desktop executable (#9114)",
+    `
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$script:messages = @()
+$script:startCalls = @()
+
+function Resolve-DockerDesktopPath { param([string]$Component) if ($Component -eq 'Desktop') { return 'Docker Desktop.exe' } return 'docker.exe' }
+function Test-DockerDesktopExecutableTrusted { param([string]$Path) return $false }
+function Start-Process { param([string]$FilePath) $script:startCalls += $FilePath; return [pscustomobject]@{} }
+function Write-Status { param([string]$Message, [string]$Level = 'INFO') $script:messages += "$Level|$Message" }
+
+Start-DockerDesktop
+
+[pscustomobject]@{
+    messages = $script:messages
+    startCalls = $script:startCalls
+} | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.startCalls).toEqual([]);
+      expect(
+        (parsed.messages as string[]).some(
+          (message) => message.startsWith("ERROR|") && message.includes("not signed by a trusted publisher"),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  itPowerShell(
+    "skips the Docker engine readiness check for an untrusted Docker CLI (#9114)",
+    `
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$script:messages = @()
+
+function Resolve-DockerDesktopPath { param([string]$Component) return 'docker.exe' }
+function Test-DockerDesktopExecutableTrusted { param([string]$Path) return $false }
+function Write-Status { param([string]$Message, [string]$Level = 'INFO') $script:messages += "$Level|$Message" }
+
+$engineReady = Wait-DockerDesktopEngine -TimeoutSeconds 1
+
+[pscustomobject]@{
+    engineReady = $engineReady
+    messages = $script:messages
+} | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.engineReady).toBe(false);
+      expect(
+        (parsed.messages as string[]).some(
+          (message) => message.startsWith("ERROR|") && message.includes("not signed by a trusted publisher"),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  itPowerShell(
+    "does not restart Docker Desktop through an untrusted Docker CLI (#9114)",
+    `
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$script:messages = @()
+
+function Resolve-DockerDesktopPath { param([string]$Component) return 'docker.exe' }
+function Test-DockerDesktopExecutableTrusted { param([string]$Path) return $false }
+function Write-Status { param([string]$Message, [string]$Level = 'INFO') $script:messages += "$Level|$Message" }
+
+Restart-DockerDesktop
+
+[pscustomobject]@{
+    messages = $script:messages
+} | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(
+        (parsed.messages as string[]).some(
+          (message) => message.startsWith("ERROR|") && message.includes("not signed by a trusted publisher"),
+        ),
+      ).toBe(true);
     },
   );
 
