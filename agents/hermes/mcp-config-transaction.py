@@ -95,8 +95,11 @@ MAX_ERROR_MESSAGE_LENGTH = 512
 MAX_GATEWAY_PID_RECORD_BYTES = 4096
 MCP_RACE_RECOVERY_ATTEMPTS = 3
 MAX_GATEWAY_PUBLIC_PORT_RECORD_BYTES = 16
-MAX_GATEWAY_ENVIRONMENT_BYTES = 64 * 1024
 GATEWAY_INTERNAL_PORT = 18642
+GATEWAY_NOT_READY_MESSAGE = "Hermes gateway is not running for managed MCP reload"
+MANAGED_API_RELAY_TARGET = f"TCP:127.0.0.1:{GATEWAY_INTERNAL_PORT}".encode()
+MANAGED_API_RELAY_LISTEN_PREFIX = b"TCP-LISTEN:"
+MANAGED_API_RELAY_LISTEN_SUFFIX = b",bind=0.0.0.0,fork,reuseaddr"
 
 
 def _parse_gateway_public_port(raw: str) -> int:
@@ -884,8 +887,7 @@ def _process_parent_pid(pid: int) -> int | None:
     return None
 
 
-def _is_service_manager_process(pid: int) -> bool:
-    arguments = _process_arguments(pid)
+def _is_service_manager_arguments(arguments: list[bytes]) -> bool:
     if not arguments:
         return False
     if arguments == [SERVICE_MANAGER_PATH]:
@@ -895,6 +897,10 @@ def _is_service_manager_process(pid: int) -> bool:
         and len(arguments) == 2
         and arguments[1] == SERVICE_MANAGER_PATH
     )
+
+
+def _is_service_manager_process(pid: int) -> bool:
+    return _is_service_manager_arguments(_process_arguments(pid))
 
 
 def _gateway_has_managed_parent(pid: int) -> bool:
@@ -1040,40 +1046,152 @@ def _gateway_identity() -> tuple[int, object] | None:
     return numeric_pid, start_time
 
 
-def _read_gateway_environment(pid: int) -> bytes:
+def _process_start_identity(pid: int) -> object | None:
+    os.environ["HERMES_HOME"] = HERMES_DIR
+    from gateway.status import get_process_start_time
+
+    return get_process_start_time(pid)
+
+
+def _managed_api_relay_port(arguments: list[bytes]) -> int | None:
+    if (
+        len(arguments) != 3
+        or os.path.basename(arguments[0]) != b"socat"
+        or arguments[2] != MANAGED_API_RELAY_TARGET
+    ):
+        return None
+
+    listen = arguments[1]
+    if not (
+        listen.startswith(MANAGED_API_RELAY_LISTEN_PREFIX)
+        and listen.endswith(MANAGED_API_RELAY_LISTEN_SUFFIX)
+    ):
+        raise PermissionError("Hermes managed API relay arguments are malformed")
+    raw_port = listen[
+        len(MANAGED_API_RELAY_LISTEN_PREFIX) : -len(MANAGED_API_RELAY_LISTEN_SUFFIX)
+    ]
     try:
-        with open(f"/proc/{pid}/environ", "rb") as environment_file:
-            raw = environment_file.read(MAX_GATEWAY_ENVIRONMENT_BYTES + 1)
-    except OSError as error:
-        raise PermissionError("Hermes gateway environment is unavailable") from error
-    if len(raw) > MAX_GATEWAY_ENVIRONMENT_BYTES:
-        raise PermissionError("Hermes gateway environment is too large")
-    return raw
+        decoded = raw_port.decode("ascii")
+    except UnicodeDecodeError as error:
+        raise PermissionError("Hermes managed API relay port is malformed") from error
+    return _parse_gateway_public_port(decoded)
 
 
-def _gateway_environment_public_port(
+def _managed_api_relay_public_port(
     identity: tuple[int, object],
 ) -> int:
+    """Resolve the public port from the service manager's API relay child."""
     gateway_pid = identity[0]
-    environment = _read_gateway_environment(gateway_pid)
-    if _gateway_identity() != identity:
-        raise PermissionError("Hermes gateway identity changed while reading")
+    manager_pid = _process_parent_pid(gateway_pid)
+    if manager_pid is None:
+        raise PermissionError(
+            "Hermes gateway is not running under the managed service lifecycle"
+        )
 
-    prefix = b"NEMOCLAW_HERMES_API_PORT="
-    values = [
-        entry[len(prefix) :]
-        for entry in environment.split(b"\0")
-        if entry.startswith(prefix)
-    ]
-    if len(values) > 1:
-        raise PermissionError("Hermes gateway API port is ambiguous")
-    if not values or not values[0]:
-        return 8642
+    expected_uid = os.geteuid()
     try:
-        decoded = values[0].decode("ascii")
-    except UnicodeDecodeError as error:
-        raise PermissionError("Hermes gateway API port is malformed") from error
-    return _parse_gateway_public_port(decoded)
+        manager_uid = os.stat(f"/proc/{manager_pid}").st_uid
+        manager_arguments = _process_arguments(manager_pid)
+        manager_start = _process_start_identity(manager_pid)
+    except FileNotFoundError:
+        raise RuntimeError(GATEWAY_NOT_READY_MESSAGE) from None
+    except OSError as error:
+        raise PermissionError(
+            "Hermes service manager identity is unavailable"
+        ) from error
+    if (
+        manager_uid != expected_uid
+        or not _is_service_manager_arguments(manager_arguments)
+        or manager_start is None
+    ):
+        raise PermissionError(
+            "Hermes gateway is not running under the managed service lifecycle"
+        )
+
+    # The sandbox user can rewrite same-UID files. An unrelated sandbox process
+    # cannot choose the validated service manager as its parent.
+    candidates: list[tuple[int, object, int, list[bytes]]] = []
+    try:
+        with os.scandir("/proc") as process_entries:
+            process_names = [process_entry.name for process_entry in process_entries]
+    except OSError as error:
+        raise PermissionError("Hermes process table is unavailable") from error
+
+    for name in process_names:
+        if not name.isascii() or not name.isdigit():
+            continue
+        pid = int(name, 10)
+        if pid <= 1 or pid == gateway_pid:
+            continue
+        try:
+            owner_uid = os.stat(f"/proc/{pid}").st_uid
+            parent_pid = _process_parent_pid(pid)
+        except OSError:
+            continue
+        if owner_uid != expected_uid or parent_pid != manager_pid:
+            continue
+        try:
+            arguments = _process_arguments(pid)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise PermissionError(
+                "Hermes managed API relay identity is unavailable"
+            ) from error
+        port = _managed_api_relay_port(arguments)
+        if port is None:
+            continue
+        try:
+            start_identity = _process_start_identity(pid)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise PermissionError(
+                "Hermes managed API relay identity is unavailable"
+            ) from error
+        if start_identity is not None:
+            candidates.append((pid, start_identity, port, arguments))
+
+    if not candidates:
+        raise RuntimeError(GATEWAY_NOT_READY_MESSAGE)
+    if len(candidates) != 1:
+        raise PermissionError("Hermes managed API relay identity is ambiguous")
+
+    relay_pid, relay_start, port, relay_arguments = candidates[0]
+    try:
+        relay_owner_uid = os.stat(f"/proc/{relay_pid}").st_uid
+    except FileNotFoundError:
+        raise RuntimeError(GATEWAY_NOT_READY_MESSAGE) from None
+    except OSError as error:
+        raise PermissionError(
+            "Hermes managed API relay identity is unavailable"
+        ) from error
+    try:
+        relay_parent_pid = _process_parent_pid(relay_pid)
+        current_arguments = _process_arguments(relay_pid)
+        current_start = _process_start_identity(relay_pid)
+        current_manager_uid = os.stat(f"/proc/{manager_pid}").st_uid
+        current_manager_arguments = _process_arguments(manager_pid)
+        current_manager_start = _process_start_identity(manager_pid)
+    except FileNotFoundError:
+        raise RuntimeError(GATEWAY_NOT_READY_MESSAGE) from None
+    except OSError as error:
+        raise PermissionError(
+            "Hermes managed API relay identity is unavailable"
+        ) from error
+    if (
+        relay_owner_uid != expected_uid
+        or relay_parent_pid != manager_pid
+        or current_arguments != relay_arguments
+        or current_start != relay_start
+        or current_manager_uid != manager_uid
+        or current_manager_arguments != manager_arguments
+        or current_manager_start != manager_start
+        or _process_parent_pid(gateway_pid) != manager_pid
+        or _gateway_identity() != identity
+    ):
+        raise RuntimeError(GATEWAY_NOT_READY_MESSAGE)
+    return port
 
 
 def _resolve_gateway_public_port() -> int:
@@ -1084,8 +1202,8 @@ def _resolve_gateway_public_port() -> int:
         raise PermissionError("Hermes root API port marker is unavailable")
     identity = _gateway_identity()
     if identity is None:
-        raise PermissionError("Hermes gateway identity is unavailable")
-    return _gateway_environment_public_port(identity)
+        raise RuntimeError(GATEWAY_NOT_READY_MESSAGE)
+    return _managed_api_relay_public_port(identity)
 
 
 def _configure_gateway_public_port() -> None:
@@ -1247,13 +1365,13 @@ def _assert_non_root_lifecycle_identity() -> None:
         )
     identity = _gateway_identity()
     if identity is None:
-        raise RuntimeError("Hermes gateway is not running for managed MCP reload")
+        raise RuntimeError(GATEWAY_NOT_READY_MESSAGE)
     if not _gateway_has_managed_parent(identity[0]):
         raise RuntimeError(
             "Hermes gateway is not running under the managed service lifecycle"
         )
     if _gateway_identity() != identity:
-        raise RuntimeError("Hermes gateway is not running for managed MCP reload")
+        raise RuntimeError(GATEWAY_NOT_READY_MESSAGE)
 
 
 def probe() -> dict[str, object]:

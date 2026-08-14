@@ -167,7 +167,7 @@ export function createSandboxGpuCreateAttemptRunner(
           heldWorkloadArgv: input.sandboxStartupCommand,
           authorityStore: managedBootstrap.authorityStore,
           ...(deps.createManagedBootstrapAdapter
-            ? { adapterOverride: deps.createManagedBootstrapAdapter() }
+            ? { adapterOverride: deps.createManagedBootstrapAdapter(managedBootstrap.stateRoot) }
             : {}),
           route,
           persistStartupCommand: input.persistStartupCommand === true,
@@ -226,10 +226,11 @@ export function createSandboxGpuCreateAttemptRunner(
         onPoll: () => {
           if (!deferRestartSafeCutover) runtimePatch.maybeApplyDuringCreate();
         },
-        readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent(
-          input.terminalAgent,
-          input.sandboxEnv,
-        ),
+        readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent({
+          isTerminalAgent: input.terminalAgent,
+          startupRunsDuringCreate: managedLifecycle === null,
+          env: input.sandboxEnv,
+        }),
         failureCheck: runtimePatch.createFailureMessage,
         traceEvent: addTraceEvent,
         waitForReadyTermination: deferRestartSafeCutover,

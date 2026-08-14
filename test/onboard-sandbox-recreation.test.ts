@@ -1352,6 +1352,7 @@ childProcess.spawn = (...args) => {
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null, child });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.stderr.emit("data", Buffer.from("Setting up NemoClaw...\n"));
   });
   return child;
 };

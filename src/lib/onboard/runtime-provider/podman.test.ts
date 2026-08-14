@@ -2,9 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { createPodmanHostLocalInferenceTestHarness } from "../../../../test/helpers/podman-host-local-inference-test-harness";
 import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
-import type { ContainerEngine } from "../../adapters/container-engine";
+import {
+  createPodmanContainerEngine,
+  type PodmanContainerEngine,
+  type PodmanExecutableAuthorityDeps,
+  type PodmanExecutableStat,
+  type PodmanSocketAuthority,
+} from "../../adapters/podman";
 import type { SandboxEntry } from "../../state/registry/types";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createPodmanRuntimeProviderBundle } from "./podman";
@@ -26,6 +33,15 @@ import {
 const AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 const CONTAINER_ID = "a".repeat(64);
 const AUTHORITY_ID = "test:podman-socket";
+const REAL_SOCKET_AUTHORITY = {
+  directoryChain: [],
+  device: "8",
+  inode: "9001",
+  mode: "384",
+  ownerUid: "1000",
+  socketPath: "/run/user/1000/podman/podman.sock",
+} as const satisfies PodmanSocketAuthority;
+const PODMAN_EXECUTABLE_BYTES = Buffer.from("qualified-podman-binary", "utf8");
 const SUCCESSFUL_RECOVERY = {
   checked: true,
   wasRunning: true,
@@ -33,12 +49,63 @@ const SUCCESSFUL_RECOVERY = {
   forwardRecovered: false,
 } as const;
 
-function hostDoctorEngine(authorityId = AUTHORITY_ID): ContainerEngine {
+function podmanExecutableAuthorityDeps(): PodmanExecutableAuthorityDeps {
+  const stat: PodmanExecutableStat = {
+    dev: 8n,
+    ino: 42n,
+    mode: 0o100755n,
+    uid: 0n,
+    size: BigInt(PODMAN_EXECUTABLE_BYTES.byteLength),
+    mtimeNs: 1000n,
+    ctimeNs: 2000n,
+    isDirectory: () => false,
+    isFile: () => true,
+    isSymbolicLink: () => false,
+  };
+  const directoryStat: PodmanExecutableStat = {
+    ...stat,
+    ino: 43n,
+    mode: 0o40755n,
+    size: 0n,
+    isDirectory: () => true,
+    isFile: () => false,
+  };
+  return {
+    uid: 1000,
+    lstat: (filePath) => (filePath === "/usr/bin/podman" ? stat : directoryStat),
+    readFile: () => PODMAN_EXECUTABLE_BYTES,
+    realpath: (filePath) => filePath,
+  };
+}
+
+function realOperationEngines(socketAuthority: PodmanSocketAuthority = REAL_SOCKET_AUTHORITY) {
+  const common = {
+    socketAuthority,
+    executable: "/usr/bin/podman",
+    assertAuthority: vi.fn(),
+    capture: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+  } as const;
+  return {
+    hostDoctor: createPodmanContainerEngine({ ...common, operation: "host-doctor" }),
+    hostLocalInference: createPodmanContainerEngine({
+      ...common,
+      operation: "host-local-inference",
+      executableAuthorityDeps: podmanExecutableAuthorityDeps(),
+    }),
+    sandboxLifecycle: createPodmanContainerEngine({
+      ...common,
+      operation: "sandbox-lifecycle",
+    }),
+  };
+}
+
+function hostDoctorEngine(authorityId = AUTHORITY_ID): PodmanContainerEngine {
   return {
     operation: "host-doctor",
     engineId: "podman",
     displayName: "Podman",
     authorityId,
+    endpointAuthorityId: authorityId,
     capture: vi.fn((args: readonly string[]) => {
       switch (args[0]) {
         case "version":
@@ -73,7 +140,7 @@ function hostDoctorEngine(authorityId = AUTHORITY_ID): ContainerEngine {
   };
 }
 
-function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): ContainerEngine {
+function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): PodmanContainerEngine {
   let running = false;
   const sandboxId = `id-${sandboxName}`;
   const containerName = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}-${sandboxId}`;
@@ -82,6 +149,7 @@ function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): Conta
     engineId: "podman",
     displayName: "Podman",
     authorityId,
+    endpointAuthorityId: authorityId,
     capture: vi.fn((args: readonly string[]) => {
       const operation = String(args[0]);
       switch (operation) {
@@ -223,16 +291,108 @@ describe("dormant Podman runtime provider", () => {
     expect(bundle.hostLocalInference).toMatchObject({
       providerId: "podman",
       supported: false,
-      reason: "Podman does not provide the managed llama.cpp host-local-inference lifecycle.",
+      reason: "Podman host-local inference remains disabled without injected candidate authority.",
     });
     expect(() =>
       requireRuntimeProviderHostLocalInferenceOperation(bundle, "llama-cpp", { env: {} }),
     ).toThrow(
-      "Runtime provider 'podman' does not provide the host-local-inference capability required for llama-cpp: Podman does not provide the managed llama.cpp host-local-inference lifecycle.",
+      "Runtime provider 'podman' does not provide the host-local-inference capability required for llama-cpp: Podman host-local inference remains disabled without injected candidate authority.",
     );
     expect(hostDoctor.capture).not.toHaveBeenCalled();
     expect(hostDoctor.captureHost).not.toHaveBeenCalled();
     expect(sandboxLifecycle.capture).not.toHaveBeenCalled();
+  });
+
+  it("exposes only the injected Ollama, NIM, and vLLM candidate operation", () => {
+    const inference = createPodmanHostLocalInferenceTestHarness({ authorityId: AUTHORITY_ID });
+    const bundle = createPodmanRuntimeProviderBundle({
+      engines: {
+        hostDoctor: hostDoctorEngine(),
+        hostLocalInference: inference.engine,
+        sandboxLifecycle: lifecycleEngine("candidate"),
+      },
+      hostLocalInference: {
+        authorityStore: inference.authorityStore,
+        routeAuthorityStore: inference.routeAuthorityStore,
+        onFailureEvidence: inference.onFailureEvidence,
+        redactSensitive: inference.redactSensitive,
+      },
+    });
+
+    expect(bundle.capabilities.hostLocalInference).toBe(true);
+    expect(bundle.hostLocalInference).toMatchObject({
+      providerId: "podman",
+      supported: true,
+      services: ["ollama", "nim", "vllm"],
+    });
+    const operation = requireRuntimeProviderHostLocalInferenceOperation(bundle, "nim", {
+      env: inference.env,
+    });
+    expect(operation).toMatchObject({
+      providerId: "podman",
+      bindingSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      engine: {
+        authorityId: inference.engine.authorityId,
+        endpointAuthorityId: inference.engine.endpointAuthorityId,
+      },
+    });
+    expect(operation.managedRuntime?.services).toEqual(["ollama", "nim", "vllm"]);
+    expect(() =>
+      requireRuntimeProviderHostLocalInferenceOperation(bundle, "llama-cpp", {
+        env: inference.env,
+      }),
+    ).toThrow("service 'llama-cpp' is not enabled");
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
+  });
+
+  it("composes real operation engines on one socket without dropping executable authority", () => {
+    const inference = createPodmanHostLocalInferenceTestHarness();
+    const engines = realOperationEngines();
+    const bundle = createPodmanRuntimeProviderBundle({
+      engines,
+      hostLocalInference: {
+        authorityStore: inference.authorityStore,
+        routeAuthorityStore: inference.routeAuthorityStore,
+        onFailureEvidence: inference.onFailureEvidence,
+        redactSensitive: inference.redactSensitive,
+      },
+    });
+
+    expect(engines.hostDoctor.endpointAuthorityId).toBe(
+      engines.hostLocalInference.endpointAuthorityId,
+    );
+    expect(engines.sandboxLifecycle.endpointAuthorityId).toBe(
+      engines.hostLocalInference.endpointAuthorityId,
+    );
+    expect(engines.hostLocalInference.authorityId).not.toBe(engines.hostDoctor.authorityId);
+    expect(bundle).toMatchObject({
+      capabilities: { hostLocalInference: true },
+      hostLocalInference: {
+        providerId: "podman",
+        supported: true,
+      },
+    });
+  });
+
+  it("rejects real operation engines when one socket endpoint drifts", () => {
+    const engines = realOperationEngines();
+    const inference = createPodmanHostLocalInferenceTestHarness();
+    const driftedLifecycle = realOperationEngines({
+      ...REAL_SOCKET_AUTHORITY,
+      inode: "9002",
+    }).sandboxLifecycle;
+
+    expect(() =>
+      createPodmanRuntimeProviderBundle({
+        engines: { ...engines, sandboxLifecycle: driftedLifecycle },
+        hostLocalInference: {
+          authorityStore: inference.authorityStore,
+          routeAuthorityStore: inference.routeAuthorityStore,
+          onFailureEvidence: inference.onFailureEvidence,
+          redactSensitive: inference.redactSensitive,
+        },
+      }),
+    ).toThrow("same endpoint authority");
   });
 
   it("rejects a mismatched engine scope before bundle registration", () => {

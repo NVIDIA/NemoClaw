@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   type HostLocalInferenceReceipt,
   normalizeHostLocalInferenceReceipt,
+  normalizeHostLocalOllamaModelRef,
   parseHostLocalInferenceReceipt,
   serializeHostLocalInferenceReceipt,
 } from "./host-local-inference";
@@ -19,11 +20,14 @@ const ENGINE_AUTHORITY = {
   bindingSha256: "b".repeat(64),
 } as const;
 
+const GPU_UUID = "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+const OLLAMA_MODEL_DIGEST = `sha256:${"8".repeat(64)}`;
+
 function receipt(
   service: "ollama" | "nim" | "vllm" | "llama-cpp" = "vllm",
 ): HostLocalInferenceReceipt {
   return {
-    schemaVersion: 1,
+    schemaVersion: service === "llama-cpp" ? 1 : 2,
     providerId: "mxc",
     service,
     engineAuthority: ENGINE_AUTHORITY,
@@ -31,12 +35,35 @@ function receipt(
       host: "host.openshell.internal",
       port: service === "ollama" ? 11435 : 8000,
       networkName: "openshell",
+      ...(service === "llama-cpp"
+        ? {}
+        : {
+            networkId: "3".repeat(64),
+            networkGatewayIp: "10.89.0.1",
+            networkAuthoritySha256: "4".repeat(64),
+          }),
     },
+    ...(service === "llama-cpp"
+      ? {}
+      : {
+          inference: {
+            protocol: "openai-chat-completions" as const,
+            model: service === "ollama" ? "nemotron:latest" : "nvidia/nemotron",
+            toolCallingRequired: true,
+          },
+          publication: {
+            transactionId: "1".repeat(64),
+            targetSha256: "2".repeat(64),
+            priorState: service === "ollama" ? "host-process" : "absent",
+          },
+        }),
     runtime:
       service === "ollama"
         ? {
             kind: "host",
             probeImageRef: `quay.io/curl/curl@sha256:${"d".repeat(64)}`,
+            acceleration: "nvidia-gpu",
+            modelDigest: OLLAMA_MODEL_DIGEST,
           }
         : {
             kind: "container",
@@ -45,6 +72,7 @@ function receipt(
             imageRef: `nvcr.io/nvidia/${service}@sha256:${"c".repeat(64)}`,
             probeImageRef: `quay.io/curl/curl@sha256:${"e".repeat(64)}`,
             specSha256: "d".repeat(64),
+            ...(service === "llama-cpp" ? {} : { launchSha256: "e".repeat(64) }),
             ...(service === "llama-cpp"
               ? {
                   model: {
@@ -59,7 +87,7 @@ function receipt(
             gpu:
               service === "llama-cpp"
                 ? { vendor: "nvidia", count: 1 }
-                : { vendor: "nvidia", devices: ["nvidia.com/gpu=all"] },
+                : { vendor: "nvidia", devices: [`nvidia.com/gpu=${GPU_UUID}`] },
           },
   };
 }
@@ -67,6 +95,11 @@ function receipt(
 function containerRuntime(value: HostLocalInferenceReceipt) {
   expect(value.runtime.kind).toBe("container");
   return value.runtime as Extract<HostLocalInferenceReceipt["runtime"], { kind: "container" }>;
+}
+
+function hostRuntime(value: HostLocalInferenceReceipt) {
+  expect(value.runtime.kind).toBe("host");
+  return value.runtime as Extract<HostLocalInferenceReceipt["runtime"], { kind: "host" }>;
 }
 
 describe("host-local inference receipt contract", () => {
@@ -84,6 +117,71 @@ describe("host-local inference receipt contract", () => {
     expect(Object.isFrozen(expected)).toBe(true);
     expect(Object.isFrozen(expected.endpoint)).toBe(true);
     expect(Object.isFrozen(expected.runtime)).toBe(true);
+  });
+
+  it.each([
+    "cpu",
+    "nvidia-gpu",
+  ] as const)("round-trips exact Ollama %s acceleration authority", (acceleration) => {
+    const base = receipt("ollama");
+    expect(base.runtime.kind).toBe("host");
+    const normalized = normalizeHostLocalInferenceReceipt({
+      ...base,
+      runtime: { ...base.runtime, acceleration },
+    });
+
+    expect(normalized.runtime).toMatchObject({ kind: "host", acceleration });
+    expect(parseHostLocalInferenceReceipt(serializeHostLocalInferenceReceipt(normalized))).toEqual(
+      normalized,
+    );
+  });
+
+  it("rejects missing, malformed, or extended Ollama acceleration authority", () => {
+    const base = receipt("ollama");
+    const runtime = hostRuntime(base);
+    const { acceleration: _acceleration, ...missingAcceleration } = runtime;
+
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({ ...base, runtime: missingAcceleration }),
+    ).toThrow("host runtime authority schema is unsupported");
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({
+        ...base,
+        runtime: { ...runtime, acceleration: "auto" },
+      }),
+    ).toThrow("Ollama acceleration authority is malformed");
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({
+        ...base,
+        runtime: { ...runtime, accelerationHint: "nvidia-gpu" },
+      }),
+    ).toThrow("host runtime authority schema is unsupported");
+  });
+
+  it("requires immutable Ollama model identity and canonicalizes implicit tags safely", () => {
+    const base = receipt("ollama");
+    const runtime = hostRuntime(base);
+    const { modelDigest: _modelDigest, ...missingModelDigest } = runtime;
+
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({ ...base, runtime: missingModelDigest }),
+    ).toThrow("host runtime authority schema is unsupported");
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({
+        ...base,
+        runtime: { ...runtime, modelDigest: "mutable" },
+      }),
+    ).toThrow("Ollama model digest is malformed");
+    expect(normalizeHostLocalOllamaModelRef("nemotron")).toBe("nemotron:latest");
+    expect(normalizeHostLocalOllamaModelRef("registry.example:5000/acme/nemotron")).toBe(
+      "registry.example:5000/acme/nemotron:latest",
+    );
+    expect(normalizeHostLocalOllamaModelRef("registry.example:5000/acme/nemotron:q4")).toBe(
+      "registry.example:5000/acme/nemotron:q4",
+    );
+    expect(() => normalizeHostLocalOllamaModelRef("nemotron@sha256:deadbeef")).toThrow(
+      "Ollama model is malformed",
+    );
   });
 
   it("requires declarative model authority only for llama.cpp receipts (#8395)", () => {
@@ -187,6 +285,8 @@ describe("host-local inference receipt contract", () => {
         runtime: {
           kind: "host",
           probeImageRef: `quay.io/curl/curl@sha256:${"d".repeat(64)}`,
+          acceleration: "nvidia-gpu",
+          modelDigest: OLLAMA_MODEL_DIGEST,
         },
       }),
     ).toThrow("only Ollama");
@@ -203,7 +303,12 @@ describe("host-local inference receipt contract", () => {
     expect(() =>
       normalizeHostLocalInferenceReceipt({
         ...ollama,
-        runtime: { kind: "host", probeImageRef: "curlimages/curl:latest" },
+        runtime: {
+          kind: "host",
+          probeImageRef: "curlimages/curl:latest",
+          acceleration: "nvidia-gpu",
+          modelDigest: OLLAMA_MODEL_DIGEST,
+        },
       }),
     ).toThrow("runtime image reference is malformed");
 
@@ -214,6 +319,84 @@ describe("host-local inference receipt contract", () => {
         runtime: { ...vllm.runtime, specSha256: "mutable" },
       }),
     ).toThrow("runtime specification digest is malformed");
+  });
+
+  it("requires the service-specific real-inference authority", () => {
+    const ollama = receipt("ollama");
+    expect(() => normalizeHostLocalInferenceReceipt({ ...ollama, inference: undefined })).toThrow(
+      "inference proof authority must be an object",
+    );
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({
+        ...ollama,
+        inference: {
+          model: "nemotron:latest",
+          protocol: "ollama-generate",
+          toolCallingRequired: true,
+        },
+      }),
+    ).toThrow("protocol is unsupported");
+
+    const vllm = receipt("vllm");
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({
+        ...vllm,
+        inference: { ...vllm.inference, model: "../../secret" },
+      }),
+    ).toThrow("inference model is malformed");
+
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({
+        ...vllm,
+        inference: { ...vllm.inference, toolCallingRequired: "yes" },
+      }),
+    ).toThrow("tool-calling requirement is malformed");
+  });
+
+  it("requires service-specific publication authority", () => {
+    const vllm = receipt("vllm");
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({
+        ...vllm,
+        publication: { ...vllm.publication, targetSha256: "other" },
+      }),
+    ).toThrow("receipt publication target is malformed");
+
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({
+        ...vllm,
+        publication: { ...vllm.publication, priorState: "unknown" },
+      }),
+    ).toThrow("receipt publication prior state is malformed");
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({
+        ...vllm,
+        publication: { ...vllm.publication, priorState: "host-process" },
+      }),
+    ).toThrow("prior state does not match the service lifecycle");
+    const ollama = receipt("ollama");
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({
+        ...ollama,
+        publication: { ...ollama.publication, priorState: "absent" },
+      }),
+    ).toThrow("prior state does not match the service lifecycle");
+  });
+
+  it.each([
+    "ollama",
+    "nim",
+    "vllm",
+  ] as const)("rejects schema-v1 %s receipts without proof authority", (service) => {
+    const modern = receipt(service);
+    const { inference: _inference, publication: _publication, ...legacy } = modern;
+
+    expect(() =>
+      normalizeHostLocalInferenceReceipt({
+        ...legacy,
+        schemaVersion: 1,
+      }),
+    ).toThrow("legacy receipt schema supports only llama.cpp");
   });
 
   it("rejects extensions and noncanonical serialized receipts", () => {

@@ -286,8 +286,8 @@ Use these details when your first-run path needs more control.
     The onboard flow starts both port forwards automatically.
     For a new sandbox, NemoClaw reserves the selected dashboard loopback port through sandbox preparation and the image build.
     If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources.
-    If OpenShell reports `sandbox is not ready`, NemoClaw waits 5 seconds and retries the affected forward up to three times.
-    These retries preserve the existing sandbox and selected host port.
+    If OpenShell returns the exact `sandbox is not ready` response, NemoClaw waits 5 seconds and retries the affected forward up to 12 times.
+    The readiness-specific delays total at most 1 minute and preserve the existing sandbox and selected host port.
     NemoClaw releases the reservation immediately before OpenShell starts the dashboard forward.
     If forwarding then fails, onboarding removes the new sandbox and tells you to resolve the reported error before retrying.
     The Hermes dashboard URL does not include an OpenClaw `#token=` fragment.

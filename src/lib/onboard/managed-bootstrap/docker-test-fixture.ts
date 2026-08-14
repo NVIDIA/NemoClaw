@@ -494,7 +494,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
       [target]
         .filter((value): value is DockerContainerInspect => value?.State !== undefined)
         .forEach((value) => {
-          value.State = { ...value.State, Running: false };
+          value.State = { ...value.State, Running: false, Restarting: false };
         });
       return losesAcknowledgement("container:stop")
         ? { status: 1, stderr: "lost stop acknowledgement" }

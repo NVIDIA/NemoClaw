@@ -59,6 +59,39 @@ function readPreparedPolicy(prepared: {
 }
 
 describe("initial sandbox policy real preset merge", () => {
+  it.each([
+    {
+      path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"],
+      agent: "openclaw",
+    },
+    { path: ["agents", "hermes", "policy-additions.yaml"], agent: "hermes" },
+    {
+      path: ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
+      agent: "langchain-deepagents-code",
+    },
+  ])("keeps $agent on the provider-neutral inference.local route without host-native inference egress", ({
+    path: policyPath,
+    agent,
+  }) => {
+    const effective = readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(repoPath(...policyPath), [], { agentName: agent }),
+    );
+    const endpoints = Object.values(effective.network_policies ?? {}).flatMap(
+      (policy) => policy.endpoints ?? [],
+    );
+
+    expect(endpoints).toContainEqual(
+      expect.objectContaining({ host: "inference.local", port: 443 }),
+    );
+    expect(
+      endpoints.filter(
+        (endpoint) =>
+          endpoint.host === "host.openshell.internal" &&
+          [8000, 8001, 8081, 11434, 11435].includes(endpoint.port ?? 0),
+      ),
+    ).toEqual([]);
+  });
+
   it("uses Hermes channel YAML when the Hermes base policy path implies the agent", () => {
     const prepared = prepareInitialSandboxCreatePolicy(
       repoPath("agents", "hermes", "policy-additions.yaml"),

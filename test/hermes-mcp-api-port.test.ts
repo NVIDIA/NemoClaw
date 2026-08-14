@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -12,43 +12,69 @@ const TRANSACTION = path.resolve(
 );
 
 describe("Hermes MCP API port resolution", () => {
-  it("reads the port from a same-identity gateway process environment (#9044)", () => {
-    const gateway = spawn(process.execPath, ["-e", "setTimeout(() => {}, 10000)"], {
-      env: { NEMOCLAW_HERMES_API_PORT: "8645", PATH: process.env.PATH },
-      stdio: "ignore",
-    });
-
-    try {
-      expect(gateway.pid).toBeTypeOf("number");
-      const result = spawnSync(
-        "python3",
-        [
-          "-c",
-          `
-import importlib.util, json, sys, types
+  it("resolves the port from the managed API relay without process environments (#9044)", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        `
+import builtins, importlib.util, json, sys, types
 sys.modules["yaml"] = types.SimpleNamespace(YAMLError=type("YAMLError", (Exception,), {}))
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
-identity = (int(sys.argv[2]), 333)
-module._gateway_identity = lambda: identity
-print(json.dumps({"port": module._gateway_environment_public_port(identity)}))
-`,
-          TRANSACTION,
-          String(gateway.pid),
-        ],
-        { encoding: "utf8" },
-      );
+identity = (41, 333)
+manager_pid = 40
+relay_pid = 42
+relay_arguments = [
+    b"socat",
+    b"TCP-LISTEN:8645,bind=0.0.0.0,fork,reuseaddr",
+    b"TCP:127.0.0.1:18642",
+]
 
-      expect(result.status, result.stderr).toBe(0);
-      expect(JSON.parse(result.stdout)).toEqual({ port: 8645 });
-    } finally {
-      gateway.kill("SIGKILL");
-    }
+class ProcessEntries:
+    def __enter__(self):
+        return iter(types.SimpleNamespace(name=name) for name in ("self", "1", "41", "42"))
+    def __exit__(self, *_args):
+        return False
+
+owners = {manager_pid: 1000, relay_pid: 1000}
+module._root_gateway_public_port_marker = lambda: None
+module.os.geteuid = lambda: 1000
+module.os.scandir = lambda path: ProcessEntries()
+module.os.stat = lambda path: types.SimpleNamespace(st_uid=owners[int(path.rsplit("/", 1)[1])])
+module._process_parent_pid = lambda pid: manager_pid
+module._process_arguments = lambda pid: [module.SERVICE_MANAGER_PATH] if pid == manager_pid else relay_arguments
+module._process_start_identity = lambda pid: 101 if pid == manager_pid else 202
+module._gateway_identity = lambda: identity
+
+environment_reads = []
+real_open = builtins.open
+def deny_environment(path, *args, **kwargs):
+    if str(path).endswith("/environ"):
+        environment_reads.append(str(path))
+        raise PermissionError("process environments are unavailable")
+    return real_open(path, *args, **kwargs)
+
+builtins.open = deny_environment
+try:
+    port = module._resolve_gateway_public_port()
+finally:
+    builtins.open = real_open
+
+print(json.dumps({"port": port, "environment_reads": environment_reads}))
+`,
+        TRANSACTION,
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ port: 8645, environment_reads: [] });
   });
 
-  it("reads allocated ports from the identity-bound gateway environment (#9044)", () => {
+  it("accepts allocated relay ports and rejects forged relay topology (#9044)", () => {
     const result = spawnSync(
       "python3",
       [
@@ -61,52 +87,63 @@ module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 identity = (41, 333)
-module._gateway_identity = lambda: identity
-opened = []
+manager_pid = 40
+relay_pid = 42
+exact_arguments = [
+    b"socat",
+    b"TCP-LISTEN:8645,bind=0.0.0.0,fork,reuseaddr",
+    b"TCP:127.0.0.1:18642",
+]
 
-accepted = []
-for raw in (b"8642", b"8645", b"8652"):
-    module._read_gateway_environment = (
-        lambda pid, value=raw: opened.append(pid)
-        or b"PATH=/usr/bin\\0NEMOCLAW_HERMES_API_PORT=" + value + b"\\0"
-    )
-    accepted.append(module._gateway_environment_public_port(identity))
+def relay_arguments(raw):
+    return [
+        b"socat",
+        module.MANAGED_API_RELAY_LISTEN_PREFIX + raw + module.MANAGED_API_RELAY_LISTEN_SUFFIX,
+        module.MANAGED_API_RELAY_TARGET,
+    ]
+
+class ProcessEntries:
+    def __enter__(self):
+        return iter((types.SimpleNamespace(name="41"), types.SimpleNamespace(name="42")))
+    def __exit__(self, *_args):
+        return False
+
+def run_candidate(owner=1000, parent=manager_pid, arguments=exact_arguments):
+    owners = {manager_pid: 1000, relay_pid: owner}
+    module.os.geteuid = lambda: 1000
+    module.os.scandir = lambda path: ProcessEntries()
+    module.os.stat = lambda path: types.SimpleNamespace(st_uid=owners[int(path.rsplit("/", 1)[1])])
+    module._process_parent_pid = lambda pid: manager_pid if pid == 41 else parent
+    module._process_arguments = lambda pid: [module.SERVICE_MANAGER_PATH] if pid == manager_pid else arguments
+    module._process_start_identity = lambda pid: 101 if pid == manager_pid else 202
+    module._gateway_identity = lambda: identity
+    try:
+        module._managed_api_relay_public_port(identity)
+    except Exception as error:
+        return type(error).__name__, str(error)
+    raise AssertionError("untrusted relay topology was accepted")
+
+accepted = [module._managed_api_relay_port(relay_arguments(raw)) for raw in (b"8642", b"8645", b"8652")]
 
 rejected = []
-for raw in (
-    b"8641",
-    b"8653",
-    "²".encode("utf-8"),
-    b"8645\\0NEMOCLAW_HERMES_API_PORT=8646",
+for arguments in (
+    relay_arguments(b"8641"),
+    relay_arguments(b"8653"),
+    relay_arguments("²".encode("utf-8")),
+    [b"socat", b"TCP-LISTEN:8645,reuseaddr", module.MANAGED_API_RELAY_TARGET],
 ):
-    module._read_gateway_environment = (
-        lambda pid, value=raw: opened.append(pid)
-        or b"NEMOCLAW_HERMES_API_PORT=" + value + b"\\0"
-    )
     try:
-        module._gateway_environment_public_port(identity)
+        module._managed_api_relay_port(arguments)
     except PermissionError as error:
         rejected.append(str(error))
-
-module._read_gateway_environment = lambda pid: opened.append(pid) or b"PATH=/usr/bin\\0"
-absent = module._gateway_environment_public_port(identity)
-
-module._gateway_identity = lambda: (41, 999)
-module._read_gateway_environment = (
-    lambda pid: opened.append(pid) or b"NEMOCLAW_HERMES_API_PORT=8645\\0"
-)
-identity_change = ""
-try:
-    module._gateway_environment_public_port(identity)
-except PermissionError as error:
-    identity_change = str(error)
 
 print(json.dumps({
     "accepted": accepted,
     "rejected": rejected,
-    "absent": absent,
-    "identity_change": identity_change,
-    "opened": opened,
+    "wrong_owner": run_candidate(owner=2000),
+    "wrong_parent": run_candidate(parent=99),
+    "wrong_executable": run_candidate(arguments=[b"fake-socat", *exact_arguments[1:]]),
+    "wrong_target": run_candidate(arguments=[*exact_arguments[:2], b"TCP:127.0.0.1:18780"]),
 }))
 `,
         TRANSACTION,
@@ -120,44 +157,138 @@ print(json.dumps({
       rejected: [
         "Hermes API port is outside the allocated range",
         "Hermes API port is outside the allocated range",
-        "Hermes gateway API port is malformed",
-        "Hermes gateway API port is ambiguous",
+        "Hermes managed API relay port is malformed",
+        "Hermes managed API relay arguments are malformed",
       ],
-      absent: 8642,
-      identity_change: "Hermes gateway identity changed while reading",
-      opened: Array(9).fill(41),
+      wrong_executable: ["RuntimeError", "Hermes gateway is not running for managed MCP reload"],
+      wrong_owner: ["RuntimeError", "Hermes gateway is not running for managed MCP reload"],
+      wrong_parent: ["RuntimeError", "Hermes gateway is not running for managed MCP reload"],
+      wrong_target: ["RuntimeError", "Hermes gateway is not running for managed MCP reload"],
     });
   });
 
-  it("rejects an unavailable gateway environment without using another identity (#9044)", () => {
+  it("classifies changed relay topology as not ready and rejects ambiguous or unreadable topology (#9044)", () => {
     const result = spawnSync(
       "python3",
       [
         "-c",
         `
-import builtins, importlib.util, json, sys, types
+import importlib.util, json, sys, types
 sys.modules["yaml"] = types.SimpleNamespace(YAMLError=type("YAMLError", (Exception,), {}))
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
+identity = (41, 333)
+manager_pid = 40
+relay_arguments = [
+    b"socat",
+    b"TCP-LISTEN:8645,bind=0.0.0.0,fork,reuseaddr",
+    b"TCP:127.0.0.1:18642",
+]
 
-opened = []
-real_open = builtins.open
-def denied(path, *args, **kwargs):
-    opened.append(path)
-    raise PermissionError("denied")
+class ProcessEntries:
+    def __init__(self, pids):
+        self.pids = pids
+    def __enter__(self):
+        return iter(types.SimpleNamespace(name=str(pid)) for pid in self.pids)
+    def __exit__(self, *_args):
+        return False
 
-builtins.open = denied
-message = ""
-try:
-    module._read_gateway_environment(41)
-except PermissionError as error:
-    message = str(error)
-finally:
-    builtins.open = real_open
+def run_case(mutation):
+    relay_pids = (
+        []
+        if mutation == "missing"
+        else [42, 43]
+        if mutation in ("ambiguous", "candidate_arguments_exit", "candidate_start_exit")
+        else [42]
+    )
+    counters = {
+        "gateway_parent": 0,
+        "manager_arguments": 0,
+        "manager_start": 0,
+        "manager_stat": 0,
+        "relay_arguments": 0,
+        "relay_start": 0,
+    }
+    module.os.geteuid = lambda: 1000
 
-print(json.dumps({"message": message, "opened": opened}))
+    if mutation == "process_table":
+        module.os.scandir = lambda path: (_ for _ in ()).throw(PermissionError("denied"))
+    else:
+        module.os.scandir = lambda path: ProcessEntries([41, *relay_pids])
+
+    def process_stat(path):
+        pid = int(path.rsplit("/", 1)[1])
+        if pid == manager_pid:
+            counters["manager_stat"] += 1
+            changed = mutation == "manager_owner" and counters["manager_stat"] > 1
+            return types.SimpleNamespace(st_uid=1001 if changed else 1000)
+        return types.SimpleNamespace(st_uid=1000)
+
+    def parent_pid(pid):
+        if pid == 41:
+            counters["gateway_parent"] += 1
+            if mutation == "gateway_parent" and counters["gateway_parent"] > 1:
+                return 99
+        return manager_pid
+
+    def process_arguments(pid):
+        if pid == manager_pid:
+            counters["manager_arguments"] += 1
+            if mutation == "manager_arguments" and counters["manager_arguments"] > 1:
+                return [b"/tmp/unmanaged-start"]
+            return [module.SERVICE_MANAGER_PATH]
+        counters["relay_arguments"] += 1
+        if mutation == "candidate_arguments_exit" and counters["relay_arguments"] == 1:
+            raise FileNotFoundError("relay exited")
+        if mutation == "candidate_arguments_denied":
+            raise PermissionError("relay arguments denied")
+        return relay_arguments
+
+    def process_start(pid):
+        if pid == manager_pid:
+            counters["manager_start"] += 1
+            if mutation == "manager_start" and counters["manager_start"] > 1:
+                return 102
+            return 101
+        counters["relay_start"] += 1
+        if mutation == "candidate_start_exit" and counters["relay_start"] == 1:
+            raise FileNotFoundError("relay exited")
+        if mutation == "candidate_start_denied":
+            raise PermissionError("relay start identity denied")
+        if mutation == "relay_start" and counters["relay_start"] > 1:
+            return 203
+        return 202 + (pid - 42)
+
+    module.os.stat = process_stat
+    module._process_parent_pid = parent_pid
+    module._process_arguments = process_arguments
+    module._process_start_identity = process_start
+    module._gateway_identity = lambda: identity
+    try:
+        port = module._managed_api_relay_public_port(identity)
+    except Exception as error:
+        return type(error).__name__, str(error)
+    if mutation in ("candidate_arguments_exit", "candidate_start_exit"):
+        return port
+    raise AssertionError("unstable relay topology was accepted")
+
+results = {case: run_case(case) for case in (
+    "missing",
+    "candidate_arguments_exit",
+    "candidate_arguments_denied",
+    "candidate_start_exit",
+    "candidate_start_denied",
+    "relay_start",
+    "manager_owner",
+    "manager_arguments",
+    "manager_start",
+    "gateway_parent",
+    "ambiguous",
+    "process_table",
+)}
+print(json.dumps(results, sort_keys=True))
 `,
         TRANSACTION,
       ],
@@ -166,8 +297,24 @@ print(json.dumps({"message": message, "opened": opened}))
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
-      message: "Hermes gateway environment is unavailable",
-      opened: ["/proc/41/environ"],
+      ambiguous: ["PermissionError", "Hermes managed API relay identity is ambiguous"],
+      candidate_arguments_denied: [
+        "PermissionError",
+        "Hermes managed API relay identity is unavailable",
+      ],
+      candidate_arguments_exit: 8645,
+      candidate_start_denied: [
+        "PermissionError",
+        "Hermes managed API relay identity is unavailable",
+      ],
+      candidate_start_exit: 8645,
+      gateway_parent: ["RuntimeError", "Hermes gateway is not running for managed MCP reload"],
+      manager_arguments: ["RuntimeError", "Hermes gateway is not running for managed MCP reload"],
+      manager_owner: ["RuntimeError", "Hermes gateway is not running for managed MCP reload"],
+      manager_start: ["RuntimeError", "Hermes gateway is not running for managed MCP reload"],
+      missing: ["RuntimeError", "Hermes gateway is not running for managed MCP reload"],
+      process_table: ["PermissionError", "Hermes process table is unavailable"],
+      relay_start: ["RuntimeError", "Hermes gateway is not running for managed MCP reload"],
     });
   });
 
@@ -306,7 +453,7 @@ print(json.dumps({
     });
   });
 
-  it("prefers the root marker over the gateway environment (#8543)", () => {
+  it("prefers the root marker over managed relay discovery (#8543)", () => {
     const result = spawnSync(
       "python3",
       [
@@ -320,7 +467,7 @@ sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
 module._gateway_identity = lambda: (41, 333)
-module._gateway_environment_public_port = lambda identity: 8649
+module._managed_api_relay_public_port = lambda identity: 8649
 
 module._root_gateway_public_port_marker = lambda: 8647
 marker_wins = module._resolve_gateway_public_port()
@@ -336,13 +483,13 @@ except PermissionError as error:
     root_without_marker = str(error)
 
 module.os.geteuid = lambda: 1000
-same_uid_fallback = module._resolve_gateway_public_port()
+same_uid_relay = module._resolve_gateway_public_port()
 
 module._gateway_identity = lambda: None
 without_identity = ""
 try:
     module._resolve_gateway_public_port()
-except PermissionError as error:
+except RuntimeError as error:
     without_identity = str(error)
 
 module.os.geteuid = real_geteuid
@@ -350,7 +497,7 @@ module.os.geteuid = real_geteuid
 print(json.dumps({
     "marker_wins": marker_wins,
     "root_without_marker": root_without_marker,
-    "same_uid_fallback": same_uid_fallback,
+    "same_uid_relay": same_uid_relay,
     "without_identity": without_identity,
 }))
 `,
@@ -363,8 +510,8 @@ print(json.dumps({
     expect(JSON.parse(result.stdout)).toEqual({
       marker_wins: 8647,
       root_without_marker: "Hermes root API port marker is unavailable",
-      same_uid_fallback: 8649,
-      without_identity: "Hermes gateway identity is unavailable",
+      same_uid_relay: 8649,
+      without_identity: "Hermes gateway is not running for managed MCP reload",
     });
   });
 

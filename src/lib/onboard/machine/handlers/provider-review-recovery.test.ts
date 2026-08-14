@@ -17,7 +17,9 @@ describe("provider inference review recovery", () => {
 
     await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow("exit 1");
 
-    expect(calls.complete).not.toHaveBeenCalledWith("provider_selection", expect.anything());
+    expect(calls.complete.mock.calls.some(([stepName]) => stepName === "provider_selection")).toBe(
+      false,
+    );
     expect(calls.checkpointSandboxIdentity).toHaveBeenCalledWith("my-assistant", null);
     expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
       provider: "nvidia-prod",
@@ -52,16 +54,14 @@ describe("provider inference review recovery", () => {
     expect(calls.setupNim).toHaveBeenCalled();
     expect(calls.setupInference).toHaveBeenCalled();
     expect(result).toMatchObject({ provider: "nvidia-prod", model: "nvidia/test" });
-    expect(calls.setupInference).not.toHaveBeenCalledWith(
-      "rejected-review",
-      "qwen3.5:9b",
-      "ollama-local",
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-    );
+    expect(
+      calls.setupInference.mock.calls.some(
+        ([sandboxName, selectedModel, selectedProvider]) =>
+          sandboxName === "rejected-review" &&
+          selectedModel === "qwen3.5:9b" &&
+          selectedProvider === "ollama-local",
+      ),
+    ).toBe(false);
   });
 
   it("checkpoints a prompted sandbox identity before interactive review (#8686)", async () => {
@@ -139,6 +139,7 @@ describe("provider inference review recovery", () => {
       provider: "nvidia-prod",
       model: "nvidia/test",
     });
+    expect(calls.resolveHostLocalInferenceStartupSelection).not.toHaveBeenCalled();
     expect(calls.prepareLocalProviderForInference).not.toHaveBeenCalled();
   });
 

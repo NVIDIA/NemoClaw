@@ -3,7 +3,10 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createContainerEngineCommand } from "./container-engine";
+import {
+  type ContainerEngineCommandCapture,
+  createContainerEngineCommand,
+} from "./container-engine";
 
 describe("operation-scoped container engine command", () => {
   it("binds endpoint arguments without changing host-only commands", () => {
@@ -15,6 +18,7 @@ describe("operation-scoped container engine command", () => {
       authorityId: "test:podman-socket",
       executable: "podman",
       endpointArgs: ["--url", "unix:///runtime/podman.sock"],
+      allowedEnvironmentNames: ["NEMOCLAW_TEST_API_KEY"],
       capture,
     });
 
@@ -30,6 +34,24 @@ describe("operation-scoped container engine command", () => {
       ["podman", ["unshare", "cat", "/proc/self/uid_map"], 2345],
     ]);
     expect(Object.isFrozen(engine)).toBe(true);
+    expect(engine.endpointAuthorityId).toBe(engine.authorityId);
+  });
+
+  it("separates a shared endpoint identity from a stricter operation authority", () => {
+    const engine = createContainerEngineCommand({
+      operation: "host-local-inference",
+      engineId: "podman",
+      displayName: "Podman",
+      authorityId: "test:socket-and-executable",
+      endpointAuthorityId: "test:socket",
+      executable: "/usr/bin/podman",
+      capture: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+    });
+
+    expect(engine).toMatchObject({
+      authorityId: "test:socket-and-executable",
+      endpointAuthorityId: "test:socket",
+    });
   });
 
   it("keeps separately scoped engines isolated", () => {
@@ -60,6 +82,92 @@ describe("operation-scoped container engine command", () => {
       ["start", "abc"],
       15_000,
     );
+  });
+
+  it("exposes bounded explicit environment only to host-local inference", () => {
+    const capture = vi.fn<ContainerEngineCommandCapture>(() => ({
+      status: 0,
+      stdout: "ok",
+      stderr: "",
+    }));
+    const engine = createContainerEngineCommand({
+      operation: "host-local-inference",
+      engineId: "podman",
+      displayName: "Podman",
+      authorityId: "test:podman-socket",
+      executable: "podman",
+      endpointArgs: ["--url", "unix:///runtime/podman.sock"],
+      allowedEnvironmentNames: ["NEMOCLAW_TEST_API_KEY"],
+      capture,
+    });
+    const explicit = Object.freeze({ NEMOCLAW_TEST_API_KEY: "operation-only-test-value" });
+    const processValueBefore = process.env.NEMOCLAW_TEST_API_KEY;
+
+    expect(
+      engine.captureWithEnvironment?.(["run", "--env", "NEMOCLAW_TEST_API_KEY"], explicit, 1234),
+    ).toMatchObject({ status: 0 });
+    expect(process.env.NEMOCLAW_TEST_API_KEY).toBe(processValueBefore);
+    expect(explicit).toEqual({ NEMOCLAW_TEST_API_KEY: "operation-only-test-value" });
+    expect(capture).toHaveBeenCalledOnce();
+    const invocationEnvironment = capture.mock.calls[0]?.[4];
+    expect(invocationEnvironment).toMatchObject({
+      NEMOCLAW_TEST_API_KEY: "operation-only-test-value",
+      PATH: process.env.PATH,
+    });
+    expect(invocationEnvironment).not.toBe(explicit);
+    expect(Object.isFrozen(invocationEnvironment)).toBe(true);
+  });
+
+  it("does not expose environment capture to other operation scopes", () => {
+    const engine = createContainerEngineCommand({
+      operation: "sandbox-lifecycle",
+      engineId: "podman",
+      displayName: "Podman",
+      authorityId: "test:podman-socket",
+      executable: "podman",
+      capture: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+    });
+
+    expect(engine.captureWithEnvironment).toBeUndefined();
+  });
+
+  it("rejects unsafe or unbounded operation environments before capture", () => {
+    const capture = vi.fn<ContainerEngineCommandCapture>(() => ({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    }));
+    const engine = createContainerEngineCommand({
+      operation: "host-local-inference",
+      engineId: "podman",
+      displayName: "Podman",
+      authorityId: "test:podman-socket",
+      executable: "podman",
+      allowedEnvironmentNames: ["NGC_API_KEY"],
+      capture,
+    });
+
+    expect(() => engine.captureWithEnvironment?.(["run"], { PATH: "/untrusted" })).toThrow(
+      "name is invalid or reserved",
+    );
+    expect(() => engine.captureWithEnvironment?.(["run"], { NGC_API_KEY: "" })).toThrow(
+      "value is invalid",
+    );
+    expect(() => engine.captureWithEnvironment?.(["run"], { LD_PRELOAD: "/tmp/hook.so" })).toThrow(
+      "name is invalid or reserved",
+    );
+    expect(() => engine.captureWithEnvironment?.(["run"], { NIM_NGC_API_KEY: "secret" })).toThrow(
+      "name is invalid or reserved",
+    );
+    expect(() =>
+      engine.captureWithEnvironment?.(
+        ["run"],
+        Object.fromEntries(
+          Array.from({ length: 33 }, (_value, index) => [`SECRET_${String(index)}`, "value"]),
+        ),
+      ),
+    ).toThrow("too many entries");
+    expect(capture).not.toHaveBeenCalled();
   });
 
   it("forwards bounded binary stdin to one endpoint-scoped command", () => {
