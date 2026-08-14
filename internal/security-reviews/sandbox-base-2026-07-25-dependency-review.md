@@ -3,6 +3,8 @@
 
 # Sandbox base dependency review for Vim, jq, Expat, Perl modules, and bundled npm
 
+> Internal engineering evidence. This file is not part of the public documentation set.
+
 Date: 2026-07-25
 
 Last updated: August 11, 2026

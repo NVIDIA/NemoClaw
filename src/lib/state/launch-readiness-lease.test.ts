@@ -40,6 +40,23 @@ function identity(gatewayName = GATEWAY_NAME): LaunchReadinessIdentity {
     gatewayName,
     lifecycleGeneration: "generation-1",
     liveIdentityFingerprint: DIGEST,
+    session: null,
+  };
+}
+
+function openClawIdentity(): LaunchReadinessIdentity {
+  return {
+    ...identity(),
+    session: {
+      schemaVersion: 1,
+      kind: "openclaw-pairing",
+      openclawVersion: "2026.7.1",
+      deviceIdentitySha256: DIGEST,
+      pairingStateSha256: DIGEST,
+      policySha256: DIGEST,
+      requiredRoles: ["operator"],
+      requiredScopes: ["operator.pairing", "operator.read", "operator.write"],
+    },
   };
 }
 
@@ -248,6 +265,28 @@ describe("launch readiness lease storage", () => {
     expect(second.epochId).toBe(EPOCH_B);
     expect(second.leaseStartedWallMs).toBe(first.leaseStartedWallMs);
     expect(second.leaseExpiresWallMs).toBe(first.leaseExpiresWallMs);
+  });
+
+  it("fences a schema-1 receipt through the normal fallback without invalidating authority (#9023)", () => {
+    const first = publish();
+    const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
+    const oldReceipt = JSON.parse(fs.readFileSync(receiptPath, "utf8")) as {
+      schemaVersion: number;
+      identity: Record<string, unknown>;
+    };
+    oldReceipt.schemaVersion = 1;
+    delete oldReceipt.identity.session;
+    fs.writeFileSync(receiptPath, JSON.stringify(oldReceipt), { mode: 0o600 });
+
+    expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("malformed");
+    const next = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+
+    expect(next).toMatchObject({ schemaVersion: 2, epochId: EPOCH_B });
+    expect(next.preservedLeaseStartedWallMs).toBe(first.leaseStartedWallMs);
+    expect(next.preservedLeaseExpiresWallMs).toBe(first.leaseExpiresWallMs);
+    expect(
+      JSON.parse(fs.readFileSync(launchReadinessAuthorityPath(SANDBOX, runtimeRoot), "utf8")),
+    ).toMatchObject({ schemaVersion: 1, epochId: EPOCH_B });
   });
 
   it("starts a new envelope only after the prior lease expires", () => {
@@ -495,6 +534,32 @@ describe("launch readiness lease storage", () => {
 
     fs.writeFileSync(receiptPath, "x".repeat(LAUNCH_READINESS_MAX_BYTES + 1), { mode: 0o600 });
     expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("unsafe");
+  });
+
+  it("stores only the exact credential-free OpenClaw session qualification (#9023)", () => {
+    const fence = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+    publishLaunchReadinessLease(
+      SANDBOX,
+      GATEWAY_PORT,
+      fence.epochId,
+      openClawIdentity(),
+      options(),
+    );
+    const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
+    const raw = fs.readFileSync(receiptPath, "utf8");
+    expect(raw).not.toContain("token");
+    expect(raw).not.toContain("privateKey");
+    expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options())).toMatchObject({
+      kind: "valid",
+      lease: { identity: { session: openClawIdentity().session } },
+    });
+
+    const value = JSON.parse(raw) as {
+      identity: { session: { requiredScopes: string[] } };
+    };
+    value.identity.session.requiredScopes = ["operator.pairing", "operator.write"];
+    fs.writeFileSync(receiptPath, JSON.stringify(value), { mode: 0o600 });
+    expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("malformed");
   });
 
   it("requires an exact bounded private runtime-authority record", () => {

@@ -450,12 +450,13 @@ describe("Hermes durable lazy-install target", () => {
     { case: "above the assigned range", value: "8653" },
     { case: "with a secret-shaped value", value: "secret-port-value" },
   ])("rejects a Hermes API port $case without exposing its value", ({ value }) => {
-      const result = runRuntimeEnvValidation({ NEMOCLAW_HERMES_API_PORT: value });
+    const result = runRuntimeEnvValidation({ NEMOCLAW_HERMES_API_PORT: value });
 
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain("NEMOCLAW_HERMES_API_PORT");
-      expect(result.stderr).not.toContain(value);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("NEMOCLAW_HERMES_API_PORT");
+    expect(result.stderr).not.toContain(value);
   });
+
 
   it("accepts the image-owned lazy target in the runtime environment (#8613)", () => {
     const result = runRuntimeEnvValidation({

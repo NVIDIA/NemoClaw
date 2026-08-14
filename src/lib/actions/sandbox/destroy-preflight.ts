@@ -16,7 +16,10 @@ export type SandboxDestroyPreflight = {
   sandboxConfirmedAbsent: boolean;
 };
 
-function stopSandboxInferenceResources(sandboxName: string, sandbox: SandboxEntry | null): void {
+export function stopSandboxInferenceResources(
+  sandboxName: string,
+  sandbox: SandboxEntry | null,
+): void {
   const nim = require("../../inference/nim") as {
     stopNimContainer: (name: string, opts?: { silent?: boolean }) => void;
     stopNimContainerByName: (name: string) => void;
@@ -76,6 +79,5 @@ export function prepareSandboxDestroy(sandboxName: string): SandboxDestroyPrefli
     assertMcpAdapterConfigMutationsAllowed(sandboxName, sandbox, mcpEntriesRequiringConfigMutation);
   }
 
-  stopSandboxInferenceResources(sandboxName, sandbox);
   return { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent };
 }

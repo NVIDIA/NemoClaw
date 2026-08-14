@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, expect } from "vitest";
 import {
   LAUNCH_READINESS_FIXTURE_POLICY,
+  LAUNCH_READINESS_PAIRING_QUALIFICATION_OUTPUT,
   launchReadinessRegistryFixture,
 } from "../helpers/launch-readiness-fixture";
 import { nonWslPlatformNodeOptions } from "../helpers/platform-override-node-options";
@@ -245,6 +246,10 @@ if (args[0] === "sandbox" && args[1] === "exec") {
   const command = [args.join(" "), input].filter(Boolean).join("\\n");
   if (!command.includes("inference.local/v1/models")) {
     fs.writeFileSync(stateFile, JSON.stringify(state));
+    if (input.includes("NEMOCLAW_OPENCLAW_STATE_DIR_B64=")) {
+      process.stdout.write(${JSON.stringify(`${LAUNCH_READINESS_PAIRING_QUALIFICATION_OUTPUT}\n`)});
+      process.exit(0);
+    }
     // Test hook (#4263 / CodeRabbit): when the connect-time auto-pair
     // approval pass is specifically targeted, simulate the failure
     // path the production code must tolerate. The approval program is carried

@@ -140,11 +140,12 @@ Each capability uses `present`, `absent`, or `unknown`.
 | `host.platform.wsl_native_docker` | Native Docker Engine inside WSL. |
 | `host.platform.wsl_gpu_passthrough` | Docker Desktop GPU passthrough proof. |
 | `host.platform.dgx_spark` | DGX Spark identity on ARM64 with an available NVIDIA GPU. |
+| `host.platform.n1x` | N1x identity from the trusted FastOS marker and exact NVIDIA display PCI device on Linux ARM64 with an available NVIDIA GPU. This capability does not promote the Deferred platform status. |
 | `host.platform.dgx_station` | Qualified DGX Station GB300 identity, Linux ARM64 runtime, Ubuntu 24.04, hardware, and software profile. |
 
 If the combined platform capability is absent and no more specific platform qualification finding applies, the blocking `host.platform.unsupported` finding identifies an unsupported host and runtime combination.
 
-The report adds `host.platform.wsl`, `host.platform.dgx_spark`, or `host.platform.dgx_station` qualifications when those platforms apply.
+The report adds `host.platform.wsl`, `host.platform.dgx_spark`, `host.platform.n1x`, or `host.platform.dgx_station` qualifications when those platforms apply.
 For WSL, Docker Desktop is `qualified`, native Docker is `unqualified`, and an unrecognized reachable runtime is `unknown`.
 The `host.platform.wsl_gpu_passthrough` capability is `present` only after the Docker Desktop proof passes.
 It is `absent` when the proof fails or the host has no NVIDIA GPU, and `unknown` when the proof cannot run conclusively.
@@ -159,6 +160,23 @@ Invalid marker metadata, invalid contents, or another known mismatch produce an 
 An unreadable marker or missing required OS or PCI evidence produces an `unknown` qualification and the blocking `host.platform.dgx_station_inconclusive` finding.
 Both outcomes prevent `host.platform.supported` from becoming `present`.
 When available, bounded Station identity appears under evidence ID `host.platform.identity`.
+
+N1x identity qualification also fails closed.
+The `host.platform.n1x` capability is `present` only when the host runs Linux ARM64, reports an effective NVIDIA GPU, and both identity sources qualify.
+`/etc/fastos-release` must be a regular file of 1 through 4,096 bytes that is owned by UID and GID 0, is not a symbolic link, grants no group or world write access, contains no NUL or carriage-return byte, and contains exactly one `NAME="N1x FASTOS"` line.
+NemoClaw parses the marker as inert text and does not pin its `VERSION` value.
+A display-class PCI device must report NVIDIA vendor ID `0x10de` and device ID `0x2e2a`.
+Generic DMI values do not satisfy either requirement.
+
+A matching identity produces a `qualified` `host.platform.n1x` qualification, but `host.platform.supported` remains `absent` while N1x is Deferred.
+The blocking `host.platform.n1x_validation_pending` finding records the remaining physical NemoClaw Express E2E gate.
+Explicit `NEMOCLAW_PROVIDER=install-vllm` intent, including acceptance of the installer N1x preview prompt, lets onboarding waive only that finding after `host.platform.n1x` is `present`.
+The read-only `host probe` report remains `incompatible` and does not apply that onboarding exception.
+
+Invalid marker metadata, invalid or ambiguous contents, the wrong PCI identity, the wrong architecture, or an unavailable NVIDIA GPU produces an `unqualified` qualification and the blocking `host.platform.n1x_unqualified` finding.
+Unreadable marker or PCI evidence produces an `unknown` qualification and the blocking `host.platform.n1x_inconclusive` finding.
+Neither finding can be waived by managed-vLLM intent.
+Bounded evidence appears under `host.platform.identity` with `product`, `nvidiaPlatform`, `n1xCandidate`, `n1xFastOsMarker`, and `n1xPciGpu` fields.
 
 ## Interpret NVIDIA GPU Integration
 

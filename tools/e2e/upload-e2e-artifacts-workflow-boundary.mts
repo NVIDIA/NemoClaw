@@ -28,6 +28,9 @@ const DEFAULT_ACTION_PATH = join(
 export const UPLOAD_E2E_ARTIFACTS_ACTION_PROVENANCE = E2E_ACTION_PROVENANCE.uploadArtifacts;
 
 export const UPLOAD_E2E_ARTIFACTS_ACTION = UPLOAD_E2E_ARTIFACTS_ACTION_PROVENANCE.reference;
+export const OPENSHELL_DEV_ARTIFACT_DIRECTORY = "${{ runner.temp }}/openshell-dev-artifact";
+export const OPENSHELL_DEV_ARTIFACT_UPLOAD_NAME =
+  "${{ steps.resolve_openshell_dev_artifact.outputs.artifact_name || format('openshell-dev-infrastructure-failure-{0}-{1}', github.run_id, github.run_attempt) }}";
 
 const CHECKOUT_LOCAL_UPLOAD_E2E_ARTIFACTS_ACTION = "./.github/actions/upload-e2e-artifacts";
 const UPLOAD_E2E_ARTIFACTS_ACTION_PREFIX = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
@@ -134,6 +137,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
         "e2e-artifacts/live/${{ matrix.id }}/environment.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
+        "e2e-artifacts/live/${{ matrix.id }}/dcode-base-image.json",
         "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
         "e2e-artifacts/live/risk-signal.json",
         "e2e-artifacts/live/${{ matrix.id }}/actions/",
@@ -193,6 +197,13 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "openshell-dev-artifact",
+    {
+      name: OPENSHELL_DEV_ARTIFACT_UPLOAD_NAME,
+      path: `${OPENSHELL_DEV_ARTIFACT_DIRECTORY}/`,
+    },
+  ],
+  [
     "openshell-credential-generation-window",
     {
       name: "e2e-openshell-credential-generation-window",
@@ -206,6 +217,7 @@ const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
   ["staging-brev-launchable", "${{ always() && steps.workspace.outputs.work_dir != '' }}"],
   ["mcp-bridge", MCP_SCANNED_UPLOAD_CONDITION],
   ["mcp-bridge-dev", MCP_SCANNED_UPLOAD_CONDITION],
+  ["openshell-dev-artifact", "${{ always() }}"],
   ["openshell-credential-generation-window", CREDENTIAL_WINDOW_SCANNED_UPLOAD_CONDITION],
   ["openshell-gateway-auth-contract", GATEWAY_AUTH_SCANNED_UPLOAD_CONDITION],
 ]);
@@ -336,6 +348,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
           jobName === "generate-matrix" ||
           jobName === "jetson-nvmap-gpu" ||
           jobName === "live" ||
+          jobName === "openshell-dev-artifact" ||
           jobName === RETIRED_SELECTOR_COMPATIBILITY_JOB ||
           env.E2E_JOB === "1" ||
           env.NEMOCLAW_RUN_LIVE_E2E === "1" ||

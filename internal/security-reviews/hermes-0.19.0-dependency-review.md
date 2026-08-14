@@ -3,6 +3,8 @@
 
 # Hermes 0.19.0 dependency and compatibility review
 
+> Internal engineering evidence. This file is not part of the public documentation set.
+
 Review date: 2026-07-30
 
 Issue `#8087` review date: August 2, 2026.
