@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 import {
   createDestroyHarness,
   resetDestroyModuleCache,
-} from "../../../../test/helpers/destroy-flow-test-harness";
+} from "../helpers/destroy-flow-test-harness";
 
 // A real detached HTTP server whose command line matches the model-router
 // proxy shape (venv-style interposition: args[0]=node, args[1]=.../model-router).

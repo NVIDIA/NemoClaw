@@ -97,20 +97,28 @@ export async function stopModelRouterForDestroyedSandbox(
 ): Promise<void> {
   const isRoutedProvider = deps.isRoutedProvider ?? isRoutedInferenceProvider;
   if (!isRoutedProvider(sandbox?.provider)) return;
+  const port = resolveDestroyedSandboxRouterPort(sandbox?.endpointUrl);
   const listSandboxes = deps.listSandboxes ?? registry.listSandboxes;
   // Called after registry removal, so every remaining entry is a peer.
-  const routedPeerRemains = listSandboxes().sandboxes.some((entry) =>
-    isRoutedProvider(entry.provider),
+  const routedPeerRemains = listSandboxes().sandboxes.some(
+    (entry) =>
+      isRoutedProvider(entry.provider) &&
+      resolveDestroyedSandboxRouterPort(entry.endpointUrl) === port,
   );
   if (routedPeerRemains) return;
 
-  const port = resolveDestroyedSandboxRouterPort(sandbox?.endpointUrl);
   const ownsPort = deps.ownsPort ?? doesModelRouterProcessOwnPort;
   const findPidForPort = deps.findPidForPort ?? findModelRouterPidForPort;
   const session = deps.loadSession();
   const recordedPid = session?.routerPid ?? null;
   const recordedCredentialHash = session?.routerCredentialHash ?? null;
-  const pid = ownsPort(recordedPid, port) ? (recordedPid as number) : findPidForPort(port);
+  const recordedPidOwnsPort = ownsPort(recordedPid, port);
+  const sessionMatchesDestroyedSandbox =
+    session !== null &&
+    session.sandboxName === sandbox?.name &&
+    resolveDestroyedSandboxRouterPort(session.endpointUrl) === port;
+  const sessionOwnsTargetRouter = recordedPidOwnsPort || sessionMatchesDestroyedSandbox;
+  const pid = recordedPidOwnsPort ? (recordedPid as number) : findPidForPort(port);
 
   if (pid !== null) {
     const log = deps.log ?? console.log;
@@ -133,8 +141,17 @@ export async function stopModelRouterForDestroyedSandbox(
 
   // Clear when either field is set: a session with only a credential hash
   // still carries stale router identity after the last routed sandbox is gone.
-  if (recordedPid !== null || recordedCredentialHash !== null) {
+  if (sessionOwnsTargetRouter && (recordedPid !== null || recordedCredentialHash !== null)) {
     deps.updateSession((current: Session) => {
+      if (
+        current.sessionId !== session?.sessionId ||
+        current.sandboxName !== session?.sandboxName ||
+        current.endpointUrl !== session?.endpointUrl ||
+        current.routerPid !== recordedPid ||
+        current.routerCredentialHash !== recordedCredentialHash
+      ) {
+        return current;
+      }
       current.routerPid = null;
       current.routerCredentialHash = null;
       return current;

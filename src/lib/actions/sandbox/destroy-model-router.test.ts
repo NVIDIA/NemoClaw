@@ -18,7 +18,13 @@ const routedSandbox = {
 } as SandboxEntry;
 
 function createDeps(overrides: Partial<StopModelRouterForDestroyedSandboxDeps> = {}) {
-  const session = { routerPid: 4242, routerCredentialHash: "hash" } as Session;
+  const session = {
+    sessionId: "session-alpha",
+    sandboxName: "alpha",
+    endpointUrl: "http://host.openshell.internal:4100/v1",
+    routerPid: 4242,
+    routerCredentialHash: "hash",
+  } as Session;
   const deps = {
     findPidForPort: vi.fn(() => null),
     isRoutedProvider: vi.fn((provider: string | null | undefined) => provider === "nvidia-router"),
@@ -85,7 +91,13 @@ describe("stopModelRouterForDestroyedSandbox", () => {
   it("keeps the router while another registered routed sandbox remains", async () => {
     const { deps } = createDeps({
       listSandboxes: vi.fn(() => ({
-        sandboxes: [{ name: "beta", provider: "nvidia-router" } as SandboxEntry],
+        sandboxes: [
+          {
+            name: "beta",
+            provider: "nvidia-router",
+            endpointUrl: "http://host.openshell.internal:4100/v1",
+          } as SandboxEntry,
+        ],
         defaultSandbox: null,
       })),
     });
@@ -94,6 +106,25 @@ describe("stopModelRouterForDestroyedSandbox", () => {
 
     expect(deps.stopProcess).not.toHaveBeenCalled();
     expect(deps.updateSession).not.toHaveBeenCalled();
+  });
+
+  it("stops the target router when a routed peer uses a different port", async () => {
+    const { deps } = createDeps({
+      listSandboxes: vi.fn(() => ({
+        sandboxes: [
+          {
+            name: "beta",
+            provider: "nvidia-router",
+            endpointUrl: "http://host.openshell.internal:4200/v1",
+          } as SandboxEntry,
+        ],
+        defaultSandbox: null,
+      })),
+    });
+
+    await stopModelRouterForDestroyedSandbox(routedSandbox, deps);
+
+    expect(deps.stopProcess).toHaveBeenCalledWith(4242, 4100);
   });
 
   it("recovers an orphaned router by port scan when the recorded PID does not own the port", async () => {
@@ -123,7 +154,13 @@ describe("stopModelRouterForDestroyedSandbox", () => {
   });
 
   it("clears a stale credential hash when the session records no router PID (#9098)", async () => {
-    const session = { routerPid: null, routerCredentialHash: "stale" } as Session;
+    const session = {
+      sessionId: "session-alpha",
+      sandboxName: "alpha",
+      endpointUrl: "http://host.openshell.internal:4100/v1",
+      routerPid: null,
+      routerCredentialHash: "stale",
+    } as Session;
     const { deps } = createDeps({
       loadSession: vi.fn(() => session),
       ownsPort: vi.fn(() => false),
@@ -140,9 +177,42 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     expect(session.routerCredentialHash).toBeNull();
   });
 
+  it("does not clear session identity for a different routed sandbox", async () => {
+    const session = {
+      sessionId: "session-beta",
+      sandboxName: "beta",
+      endpointUrl: "http://host.openshell.internal:4200/v1",
+      routerPid: 5252,
+      routerCredentialHash: "beta-hash",
+    } as Session;
+    const { deps } = createDeps({
+      loadSession: vi.fn(() => session),
+      ownsPort: vi.fn(() => false),
+      findPidForPort: vi.fn(() => 5151),
+      updateSession: vi.fn((mutator: (current: Session) => Session | void) => {
+        mutator(session);
+        return session;
+      }),
+    });
+
+    await stopModelRouterForDestroyedSandbox(routedSandbox, deps);
+
+    expect(deps.stopProcess).toHaveBeenCalledWith(5151, 4100);
+    expect(deps.updateSession).not.toHaveBeenCalled();
+    expect(session).toMatchObject({ routerPid: 5252, routerCredentialHash: "beta-hash" });
+  });
+
   it("leaves the session untouched when it records no router PID and no orphan exists", async () => {
     const { deps } = createDeps({
-      loadSession: vi.fn(() => ({ routerPid: null }) as Session),
+      loadSession: vi.fn(
+        () =>
+          ({
+            sessionId: "session-beta",
+            sandboxName: "beta",
+            endpointUrl: "http://host.openshell.internal:4200/v1",
+            routerPid: null,
+          }) as Session,
+      ),
       ownsPort: vi.fn(() => false),
     });
 

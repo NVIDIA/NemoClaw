@@ -2260,7 +2260,7 @@ Model traffic uses the OpenShell-managed `inference.local` route configured by N
 Stop managed local inference resources, remove the host-side Docker image built during onboard, and delete the sandbox.
 This removes the sandbox from the registry.
 For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis.
-When `destroy` removes the last registered Model Router sandbox, it also stops the host Model Router process on a best-effort basis and frees its port.
+When `destroy` removes the last registered Model Router sandbox that uses a host port, it also stops the host Model Router process on a best-effort basis and frees that port.
 
 <Warning>
 This command attempts to wipe the manifest-defined agent state while its persistent volume is mounted, then removes the sandbox.
