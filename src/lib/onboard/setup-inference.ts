@@ -24,6 +24,7 @@ import {
   getOllamaProxyToken,
   persistAndProbeOllamaProxy,
   startOllamaAuthProxy,
+  withOllamaModelOwnershipLock,
 } from "../inference/ollama/proxy";
 import {
   assertNoExplicitOpenShellGatewayEndpoint,
@@ -199,6 +200,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   getSandbox?: typeof import("../state/registry").getSandbox;
   listSandboxes?: typeof import("../state/registry").listSandboxes;
   unloadOllamaModels?: (onlyModels: readonly string[]) => void;
+  withOllamaModelOwnershipLock?: typeof withOllamaModelOwnershipLock;
   localInferenceTimeoutSecs: number;
   vllmLocalCredentialEnv: string;
   getManagedVllmProviderBinding?: () => {
@@ -465,10 +467,14 @@ function releaseSupersededOllamaModel(
   // still owns its model.
   if (!previous || result.retry) return;
   try {
-    const peers = deps.listSandboxes?.().sandboxes ?? [];
-    const superseded = supersededOllamaModel(previous, nextModel, peers);
-    if (!superseded) return;
-    deps.unloadOllamaModels?.([superseded]);
+    const withOwnershipLock =
+      deps.withOllamaModelOwnershipLock ?? withOllamaModelOwnershipLock;
+    withOwnershipLock(() => {
+      const peers = deps.listSandboxes?.().sandboxes ?? [];
+      const superseded = supersededOllamaModel(previous, nextModel, peers);
+      if (!superseded) return;
+      deps.unloadOllamaModels?.([superseded]);
+    });
   } catch {
     /* Best-effort: a failed unload must not fail an onboarding that already committed its route. */
   }

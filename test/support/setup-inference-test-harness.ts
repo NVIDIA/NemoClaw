@@ -357,6 +357,7 @@ export function createDirectSetupInferenceHarnessFactory(
       getSandbox: () => null,
       listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
       unloadOllamaModels,
+      withOllamaModelOwnershipLock: (operation) => operation(),
       ...options.overrides,
     });
     return {

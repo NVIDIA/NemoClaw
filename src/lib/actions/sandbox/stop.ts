@@ -48,16 +48,16 @@ function unloadOllamaModelsBestEffort(
 ): void {
   if (!sandbox.provider?.includes("ollama")) return;
   try {
-    const { sandboxes } = (deps.listSandboxes ?? registry.listSandboxes)();
-    const { exclusivelyHeldOllamaModel } = require("../../inference/ollama/model-ownership") as {
-      exclusivelyHeldOllamaModel: (
-        sandbox: registry.SandboxEntry,
-        peers: readonly registry.SandboxEntry[],
-      ) => string | null;
-    };
-    const model = exclusivelyHeldOllamaModel(sandbox, sandboxes);
-    if (!model) return;
-    (deps.unloadOllamaModels ?? defaultUnloadOllamaModels)([model]);
+    const ownership = require("../../inference/ollama/model-ownership") as typeof import("../../inference/ollama/model-ownership");
+    const proxy = require("../../inference/ollama/proxy") as typeof import("../../inference/ollama/proxy");
+    const withOwnershipLock =
+      deps.withOllamaModelOwnershipLock ?? proxy.withOllamaModelOwnershipLock;
+    withOwnershipLock(() => {
+      const { sandboxes } = (deps.listSandboxes ?? registry.listSandboxes)();
+      const model = ownership.exclusivelyHeldOllamaModel(sandbox, sandboxes);
+      if (!model) return;
+      (deps.unloadOllamaModels ?? defaultUnloadOllamaModels)([model]);
+    });
   } catch {
     /* Best-effort: a failed unload must not fail the stop. */
   }
@@ -73,6 +73,7 @@ export interface SandboxStopDeps {
   teardownSandboxDashboardForward?: typeof teardownSandboxDashboardForward;
   listSandboxes?: typeof registry.listSandboxes;
   unloadOllamaModels?: (onlyModels: readonly string[]) => void;
+  withOllamaModelOwnershipLock?: typeof import("../../inference/ollama/proxy").withOllamaModelOwnershipLock;
   log?: (message: string) => void;
   warn?: (message: string) => void;
 }

@@ -1083,8 +1083,17 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
         getOllamaProxyToken: () => "proxy-token",
         persistAndProbeOllamaProxy: async () => {},
         getSandbox,
-        listSandboxes: () => ({ sandboxes: [priorEntry], defaultSandbox: null }),
+        listSandboxes: () => {
+          events.push("peer-scan");
+          return { sandboxes: [priorEntry], defaultSandbox: null };
+        },
         unloadOllamaModels,
+        withOllamaModelOwnershipLock: (operation) => {
+          events.push("ownership-lock-enter");
+          const value = operation();
+          events.push("ownership-lock-exit");
+          return value;
+        },
         withSandboxMutationLock: async <T,>(_name: string, operation: () => Promise<T> | T) => {
           events.push("lock-enter");
           const value = await operation();
@@ -1101,7 +1110,15 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     }
     // A serialized re-onboard can neither replace the row under the read nor
     // select the captured model before this cleanup runs.
-    expect(events).toEqual(["lock-enter", "read-prior-route", "unload", "lock-exit"]);
+    expect(events).toEqual([
+      "lock-enter",
+      "read-prior-route",
+      "ownership-lock-enter",
+      "peer-scan",
+      "unload",
+      "ownership-lock-exit",
+      "lock-exit",
+    ]);
   });
 
   it("skips the release when the route returns to selection (#9110)", async () => {

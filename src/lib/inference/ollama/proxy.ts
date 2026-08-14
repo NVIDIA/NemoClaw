@@ -85,6 +85,7 @@ const PROXY_PORT_PATH = path.join(PROXY_STATE_DIR, "ollama-proxy-port");
 const PROXY_PID_PATH = path.join(PROXY_STATE_DIR, "ollama-auth-proxy.pid");
 const PROXY_STATUS_PATH = defaultProxyStatusPath(PROXY_STATE_DIR);
 const OLLAMA_PROXY_LIFECYCLE_LOCK = "host-global-ollama-auth-proxy";
+const OLLAMA_MODEL_OWNERSHIP_LOCK = "host-global-ollama-model-ownership";
 const MAX_PROXY_STATE_FILE_BYTES = 64 * 1024;
 
 let ollamaProxyToken: string | null = null;
@@ -102,6 +103,11 @@ function withOllamaProxyLifecycleLock<T>(operation: () => T): T {
   return withMcpLifecycleLockSync(OLLAMA_PROXY_LIFECYCLE_LOCK, operation, {
     stateDir: path.join(PROXY_STATE_DIR, "state"),
   });
+}
+
+/** Serialize model-holder checks and GPU release across sandbox commands. */
+function withOllamaModelOwnershipLock<T>(operation: () => T): T {
+  return withMcpLifecycleLockSync(OLLAMA_MODEL_OWNERSHIP_LOCK, operation);
 }
 
 function withOllamaProxyLifecycleTransaction<T>(operation: () => Promise<T> | T): Promise<T> {
@@ -1292,5 +1298,6 @@ export {
   pullOllamaModel,
   startOllamaAuthProxy,
   unloadOllamaModels,
+  withOllamaModelOwnershipLock,
   withOllamaProxyLifecycleTransaction,
 };
