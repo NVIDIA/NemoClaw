@@ -7,7 +7,7 @@ import { resolveSandboxGatewayName } from "../../gateway-runtime-action";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import { withMcpLifecycleLock as withSandboxMutationLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import {
-  completeInteractiveSessionSetup,
+  completeReadinessQualifiedInteractiveSessionSetup,
   prepareInteractiveSession,
   printInteractiveSessionHints,
 } from "./connect";
@@ -82,7 +82,7 @@ export async function launchSandbox(
   while (true) {
     if (decision.kind === "accepted") {
       printInteractiveSessionHints(sandboxName);
-      completeInteractiveSessionSetup(sandboxName, decision.sb);
+      completeReadinessQualifiedInteractiveSessionSetup(sandboxName, decision.sb);
       session = { agent: decision.agent, sb: decision.sb };
       break;
     }

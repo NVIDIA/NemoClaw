@@ -51,6 +51,7 @@ exit ${exitStatus}
         NEMOCLAW_LAUNCH_EXIT_COMMAND: closeAfterReply ? "" : "/exit",
         NEMOCLAW_LAUNCH_EXPECTED_REPLY: "PONG",
         NEMOCLAW_FIXTURE_REPLY: reply,
+        NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT: "",
         NEMOCLAW_LAUNCH_PROMPT: "prompt",
         NEMOCLAW_LAUNCH_READY_TEXT: "",
         NEMOCLAW_LAUNCH_SANDBOX: "sandbox",
@@ -87,6 +88,7 @@ it.runIf(process.platform === "linux")(
       env: {},
       exitCommand: "/exit",
       host: host as never,
+      postReplyReadyText: "connected | idle",
       readyText: "gateway connected | idle",
       redactionValues: [],
       sandboxName: "alpha",
@@ -108,11 +110,18 @@ it.runIf(process.platform === "linux")(
       "/exit",
       "/exit",
     ]);
+    expect(calls.slice(1).map((call) => call.env?.NEMOCLAW_LAUNCH_READY_TEXT)).toEqual([
+      "gateway connected | idle",
+      "gateway connected | idle",
+    ]);
+    expect(
+      calls.slice(1).map((call) => call.env?.NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT),
+    ).toEqual(["connected | idle", "connected | idle"]);
   },
 );
 
 it.runIf(process.platform !== "win32")(
-  "waits for OpenClaw gateway readiness before sending the launch prompt (#7230)",
+  "waits for 'gateway connected | idle' before the prompt and 'connected | idle' before exit (#9023)",
   () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-turn-ready-"));
     const scriptStub = join(fixtureRoot, "script");
@@ -136,6 +145,12 @@ fi
 printf 'gateway connected | idle\n' | tee -a "$capture"
 IFS= read -r -d $'\r' _
 printf 'PONG\n' | tee -a "$capture"
+printf 'gateway connected | idle\n' | tee -a "$capture"
+if IFS= read -r -t 1 -d $'\r' _; then
+  echo "exit arrived before post-reply readiness" >&2
+  exit 1
+fi
+printf 'connected | idle\n' | tee -a "$capture"
 IFS= read -r -d $'\r' exit_command
 [[ "$exit_command" == "/exit" ]]
 exit 0
@@ -156,6 +171,7 @@ exit 0
           NEMOCLAW_LAUNCH_EXIT_COMMAND: "/exit",
           NEMOCLAW_LAUNCH_EXPECTED_REPLY: "PONG",
           NEMOCLAW_LAUNCH_PROMPT: "prompt",
+          NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT: "connected | idle",
           NEMOCLAW_LAUNCH_READY_TEXT: "gateway connected | idle",
           NEMOCLAW_LAUNCH_SANDBOX: "sandbox",
           PATH: `${fixtureRoot}:${process.env.PATH ?? ""}`,
@@ -184,11 +200,40 @@ it.runIf(process.platform !== "win32")(
 );
 
 it.runIf(process.platform !== "win32")(
+  "accepts an exact reply wrapped in a terminated OSC-8 hyperlink (#9023)",
+  () => {
+    for (const terminator of ["\u0007", "\u001b\\"]) {
+      const reply =
+        `\u001b]8;;https://example.invalid/reply${terminator}` +
+        `PONG\u001b]8;;${terminator}`;
+      const result = runLaunchTurnFixture(0, reply);
+
+      expect(result.signal, result.stderr).toBeNull();
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("NEMOCLAW_LAUNCH_TURN_OK");
+    }
+  },
+);
+
+it.runIf(process.platform !== "win32")(
+  "accepts an exact reply after a CSI erase-in-line sequence",
+  () => {
+    const result = runLaunchTurnFixture(0, "\u001b[2KPONG");
+
+    expect(result.signal, result.stderr).toBeNull();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("NEMOCLAW_LAUNCH_TURN_OK");
+  },
+);
+
+it.runIf(process.platform !== "win32")(
   "rejects a reply token embedded in extra prose (#8942)",
   () => {
     for (const reply of [
       "The answer is PONG, with extra prose.",
       "The answer is \u001b[31mPONG\u001b[0m, with extra prose.",
+      "\u001b]8;;https://example.invalid/reply\u0007PONG with extra prose\u001b]8;;\u0007",
+      "\u001b]8;;https://example.invalid/replyPONG",
     ]) {
       const result = runLaunchTurnFixture(0, reply, true);
 

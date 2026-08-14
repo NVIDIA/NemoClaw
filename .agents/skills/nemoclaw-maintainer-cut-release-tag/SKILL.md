@@ -40,7 +40,7 @@ The downstream scheduled reconciliation remains available if the event-driven di
 - Treat the dated MDX entry as the canonical release history. A conventional Release Notes page or post-tag Announcement draft cannot replace it.
 - If `origin/main` changes after plan generation, regenerate the plan before cutting the tag.
 - Before asking for release confirmation, satisfy the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence) for that commit.
-- Use a passing `Release qualification` check from a full manual run at the candidate SHA.
+- Use a passing `Release qualification` check from a full pre-tag run, with or without an administrator-authorized job waiver.
 - Let `scripts/release-cut-tag.sh` perform the final canonical GitHub evidence check before a signing preflight or tag push.
 - Ask the maintainer to paste the confirmation phrase from the plan before cutting the tag.
 - Push only the semver tag (`vX.Y.Z`) from the agent-controlled step.
@@ -124,12 +124,22 @@ Read the generated `plan.json` and show the maintainer:
 Unless Step 1 records an explicit waiver, verify that the plan's next tag matches the H2 version heading in the dated changelog entry at the candidate SHA.
 When the entry is waived, show the recorded waiver reason in the plan presentation and confirmation handoff instead.
 
-For the plan's full `origin/main` SHA, require a completed, successful `Release qualification` check from a full manual `.github/workflows/e2e.yaml` run.
-The workflow planner derives the required jobs from the workflow's E2E metadata, and the check requires every result, including `Exact staging Brev Launchable`, to succeed.
+For the plan's full `origin/main` SHA, require a completed, successful `Release qualification` check from a pre-tag `.github/workflows/e2e.yaml` run.
+The workflow planner derives the required jobs from the workflow's E2E metadata.
+By default, the check requires every release-required E2E execution result, including `Exact staging Brev Launchable`, to succeed.
+A repository administrator may waive one or more release-required E2E execution jobs for a documented release exception.
+The waiver requires a comma-separated `release_qualification_waived_jobs` list and a `release_qualification_waiver_reason`.
+The reason must begin with an ASCII letter or digit and contain 10-500 characters chosen from ASCII letters, digits, spaces, and `.,:;/_()'-`.
+Both inputs must be nonempty, or both inputs must be empty.
+Both `github.actor` and `github.triggering_actor` must have repository `admin` permission.
+Trusted controller jobs cannot be waived.
+The trusted planner validates the job IDs and removes only those jobs from `release_required_jobs`.
+Every waived job still runs, and `include_staging_brev_launchable=true` remains required.
 Push runs publish `Relevant E2E` and are not release evidence.
-Do not maintain a second release-gating list or rebuild GitHub job status from artifacts.
+Do not maintain a second release-gating list.
+The release qualification waiver artifact is the sole artifact allowed to bind a failed workflow to planner-validated waived job results.
 
-Use an existing qualifying full manual run for the candidate SHA when one exists.
+Use an existing qualifying pre-tag run for the candidate SHA when one exists.
 If no qualifying run exists, load `nemoclaw-maintainer-e2e` and dispatch one full run with:
 
 - empty selectors;
@@ -139,7 +149,23 @@ If no qualifying run exists, load `nemoclaw-maintainer-e2e` and dispatch one ful
 
 Monitor the dispatched correlation ID with bounded status queries, then require its `Release qualification` job to succeed.
 
+When a repository administrator explicitly authorizes a job waiver, use the waiver mode in `nemoclaw-maintainer-e2e`.
+Keep both selectors empty and set:
+
+- `include_staging_brev_launchable=true`;
+- `release_qualification_waived_jobs` to the approved comma-separated job IDs;
+- `release_qualification_waiver_reason` to the recorded reason in the allowed format;
+- `allow_jetson_dispatch=false`; and
+- `allow_dgx_spark_runner_queue=false`.
+
+Require the `generate-matrix` dispatch receipt, written after waiver authorization and before that job's source checkout, to record the requested job IDs, reason, both actor identities, and candidate SHA.
+Require the `Release qualification` summary and waiver artifact to record the planner-validated canonical job IDs and each waived job's completed outcome.
+The successful check confirms that every unwaived release-required job passed.
+A normal full run must conclude with `success`.
+An administrator-waived full run may conclude with `failure` when a waived execution job fails, `Release qualification` succeeds, and the waiver artifact binds that failure to the candidate, run, actors, reason, and canonical waived job IDs.
+
 Before showing the confirmation prompt, present the candidate SHA, workflow URL, and `Release qualification` job URL.
+For a waived run, also present the waived jobs, their outcomes, the waiver reason, and both recorded actor identities.
 No release-note-only delta exception is currently defined.
 
 Run the release script's signing preflight before asking for confirmation:
@@ -148,8 +174,9 @@ Run the release script's signing preflight before asking for confirmation:
 npm run release:cut -- --plan <plan.json> --preflight-only
 ```
 
-For the canonical `NVIDIA/NemoClaw` remote, the script first searches completed, successful manual `.github/workflows/e2e.yaml` runs at the exact planned commit.
-It accepts the first run with exactly one completed, successful `Release qualification` job.
+For the canonical `NVIDIA/NemoClaw` remote, the script first searches completed manual `.github/workflows/e2e.yaml` runs with conclusion `success` or `failure` at the exact planned commit.
+It accepts the first successful run with exactly one completed, successful `Release qualification` job.
+For a failed run, it also requires a valid exact-run waiver artifact with at least one canonical waived job failure.
 A run with zero or multiple jobs of that name is not evidence.
 The script fails closed when no qualifying run exists or GitHub cannot provide the evidence.
 Local fixture remotes skip this production gate only when tests set `NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL=1` and the shared classifier confirms a noncanonical origin.
@@ -297,7 +324,7 @@ If the Announcement is valid, return its URL with the release artifacts and mark
 - Planned changelog entry is missing or malformed: stop before plan generation and run the pre-tag `nemoclaw-contributor-update-docs` workflow. Use post-release recovery only when the tag already exists.
 - Full-mode E2E waits in the Launchable concurrency queue: keep the run pending until the earlier Launchable E2E job finishes.
 - Full-mode E2E ran for another SHA: reject the run and dispatch full mode for the plan candidate SHA.
-- No qualifying `Release qualification` exists: inspect the GitHub result and run full E2E for the planned SHA only when no qualifying full run already exists. Do not release until the release script accepts the canonical check.
+- No qualifying `Release qualification` exists: inspect the GitHub result and run pre-tag E2E for the planned SHA only when no qualifying run already exists. Use a job waiver only with explicit repository administrator authorization. Do not release until the release script accepts the canonical check.
 - Launchable E2E or cleanup fails: inspect the diagnostic artifacts, correct the failure, and rerun the affected E2E work. Do not infer Launchable success from another workflow result.
 - `origin/main` moved after plan generation: regenerate the plan and ask for the new confirmation phrase.
 - Remote semver tag already exists: stop; do not retag unless the maintainer explicitly starts protected-tag remediation.

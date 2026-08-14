@@ -310,6 +310,19 @@ const SPARK_PROFILE: VllmProfile = {
   loadTimeoutSec: 1800,
 };
 
+const N1X_PROFILE: VllmProfile = {
+  name: "N1x",
+  platform: "n1x",
+  image: SPARK_PROFILE.image,
+  imageDownloadSizeBytes: SPARK_PROFILE.imageDownloadSizeBytes,
+  imageUnpackedSizeBytes: SPARK_PROFILE.imageUnpackedSizeBytes,
+  defaultModel: qwen35bNvfp4Model(),
+  containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
+  dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
+  pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
+  loadTimeoutSec: SPARK_PROFILE.loadTimeoutSec,
+};
+
 // DGX Station.
 const STATION_PROFILE: VllmProfile = {
   name: "DGX Station",
@@ -365,13 +378,14 @@ export function detectVllmProfile(
     | {
         spark?: boolean;
         type?: string;
-        platform?: "spark" | "station" | "linux";
+        platform?: "spark" | "station" | "n1x" | "linux";
       }
     | null
     | undefined,
 ): VllmProfile | null {
   if (gpu?.platform === "spark") return SPARK_PROFILE;
   if (gpu?.platform === "station") return STATION_PROFILE;
+  if (gpu?.platform === "n1x") return N1X_PROFILE;
   if (gpu?.spark) return SPARK_PROFILE;
   if (gpu?.type === "nvidia") return GENERIC_LINUX_PROFILE;
   return null;

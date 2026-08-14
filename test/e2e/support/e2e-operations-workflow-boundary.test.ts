@@ -84,6 +84,19 @@ describe("E2E operations workflow boundary", testTimeoutOptions(15_000), () => {
     );
   });
 
+  it("requires release qualification to preserve admin waiver evidence", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const summary = workflow.jobs["release-qualification"].steps!.find(
+      (step) => step.name === "Record release qualification waiver",
+    )!;
+    delete summary.env?.TRIGGERING_ACTOR;
+    summary.run = "true";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "release-qualification must record and upload authorized waived job outcomes, identities, and reason",
+    );
+  });
+
   it("pins the relevant E2E aggregate to the trusted push result set (#7912)", () => {
     const workflow = readE2eOperationsWorkflow();
     const job = workflow.jobs["relevant-e2e"];
@@ -300,64 +313,66 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     ["maintain", "network-policy", "", "false", 1, "accepts only empty selectors"],
     ["maintain", "gpu-e2e", "", "false", 1, "accepts only empty selectors"],
     ["write", "", "", "false", 1, "requires a repository maintainer or administrator"],
-  ])("requires a maintainer role and bounded selector before manual PR E2E for %s with jobs %s and targets %s", (role, jobs, targets, allowJetsonDispatch, expectedStatus, expectedStderr) => {
-    const workflow = readE2eOperationsWorkflow();
-    const authentication = workflow.jobs["generate-matrix"].steps!.find(
-      (step) => step.name === "Authenticate manual PR dispatch",
-    )!;
-    const headSha = "a".repeat(40);
-    const baseSha = "b".repeat(40);
-    const workflowSha = "c".repeat(40);
-    const prefix = [
-      "curl() {",
-      '  case "${@: -1}" in',
-      `    *collaborators*) printf '%s' '{"role_name":"${role}"}' ;;`,
-      `    *pulls/42) printf '%s' '{"state":"open","head":{"repo":{"full_name":"contributor/NemoClaw"},"sha":"${headSha}"},"base":{"sha":"${baseSha}"}}' ;;`,
-      "    *) return 1 ;;",
-      "  esac",
-      "}",
-    ].join("\n");
-    const result = spawnSync(
-      "bash",
-      ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", `${prefix}\n${authentication.run}`],
-      {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          ACTOR: "maintainer",
-          ALLOW_JETSON_DISPATCH: allowJetsonDispatch,
-          BASE_SHA: baseSha,
-          CHECKOUT_REPOSITORY: "contributor/NemoClaw",
-          CHECKOUT_SHA: headSha,
-          EXPECTED_WORKFLOW_SHA: workflowSha,
-          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
-          GITHUB_TOKEN: "token",
-          INCLUDE_LAUNCHABLE: "false",
-          JOBS: jobs,
-          PR_NUMBER: "42",
-          REVIEW_REASON: "Reviewed PR head revision",
-          RUN_ATTEMPT: "1",
-          TARGETS: targets,
-          TRIGGERING_ACTOR: "maintainer",
-          WORKFLOW_EVENT: "workflow_dispatch",
-          WORKFLOW_REF: "refs/heads/main",
-          WORKFLOW_SHA: workflowSha,
+  ])(
+    "requires a maintainer role and bounded selector before manual PR E2E for %s with jobs %s and targets %s",
+    (role, jobs, targets, allowJetsonDispatch, expectedStatus, expectedStderr) => {
+      const workflow = readE2eOperationsWorkflow();
+      const authentication = workflow.jobs["generate-matrix"].steps!.find(
+        (step) => step.name === "Authenticate manual PR dispatch",
+      )!;
+      const headSha = "a".repeat(40);
+      const baseSha = "b".repeat(40);
+      const workflowSha = "c".repeat(40);
+      const prefix = [
+        "curl() {",
+        '  case "${@: -1}" in',
+        `    *collaborators*) printf '%s' '{"role_name":"${role}"}' ;;`,
+        `    *pulls/42) printf '%s' '{"state":"open","head":{"repo":{"full_name":"contributor/NemoClaw"},"sha":"${headSha}"},"base":{"sha":"${baseSha}"}}' ;;`,
+        "    *) return 1 ;;",
+        "  esac",
+        "}",
+      ].join("\n");
+      const result = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", `${prefix}\n${authentication.run}`],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            ACTOR: "maintainer",
+            ALLOW_JETSON_DISPATCH: allowJetsonDispatch,
+            BASE_SHA: baseSha,
+            CHECKOUT_REPOSITORY: "contributor/NemoClaw",
+            CHECKOUT_SHA: headSha,
+            EXPECTED_WORKFLOW_SHA: workflowSha,
+            GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+            GITHUB_TOKEN: "token",
+            INCLUDE_LAUNCHABLE: "false",
+            JOBS: jobs,
+            PR_NUMBER: "42",
+            REVIEW_REASON: "Reviewed PR head revision",
+            RUN_ATTEMPT: "1",
+            TARGETS: targets,
+            TRIGGERING_ACTOR: "maintainer",
+            WORKFLOW_EVENT: "workflow_dispatch",
+            WORKFLOW_REF: "refs/heads/main",
+            WORKFLOW_SHA: workflowSha,
+          },
         },
-      },
-    );
+      );
 
-    expect(result.status, result.stderr).toBe(expectedStatus);
-    expect(result.stderr).toContain(expectedStderr);
-  });
+      expect(result.status, result.stderr).toBe(expectedStatus);
+      expect(result.stderr).toContain(expectedStderr);
+    },
+  );
 
   it("uses central maintainer authorization for protected managed-image qualification", () => {
     const workflow = readE2eOperationsWorkflow();
     const guards = [
       ["managed-image-multiarch-startup", "Validate protected exact-head dispatch"],
       ["managed-image-protected-runtime", "Validate protected runtime exact-head dispatch"],
-    ].map(
-      ([jobName, stepName]) =>
-        workflow.jobs[jobName].steps!.find((step) => step.name === stepName)!,
+    ].map(([jobName, stepName]) =>
+      workflow.jobs[jobName].steps!.find((step) => step.name === stepName)!,
     );
 
     for (const guard of guards) {

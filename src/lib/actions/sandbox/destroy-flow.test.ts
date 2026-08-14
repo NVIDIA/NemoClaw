@@ -23,6 +23,7 @@ import {
 import {
   createDestroyHarness,
   resetDestroyModuleCache,
+  traceDestroyBoundaryCalls,
 } from "../../../../test/helpers/destroy-flow-test-harness";
 
 describe("destroySandbox flow", () => {
@@ -88,18 +89,21 @@ describe("destroySandbox flow", () => {
       false,
     ],
     ["NEMOCLAW_NON_INTERACTIVE=1", "linux", {}, "1", false],
-  ] as const)("applies the final-gateway default for %s on %s (#4662)", async (_scenario, platform, options, nonInteractive, cleanupExpected) => {
-    vi.spyOn(process, "platform", "get").mockReturnValue(platform);
-    vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", nonInteractive);
-    const harness = createDestroyHarness();
+  ] as const)(
+    "applies the final-gateway default for %s on %s (#4662)",
+    async (_scenario, platform, options, nonInteractive, cleanupExpected) => {
+      vi.spyOn(process, "platform", "get").mockReturnValue(platform);
+      vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", nonInteractive);
+      const harness = createDestroyHarness();
 
-    await expect(harness.destroySandbox("alpha", options)).resolves.toBeUndefined();
+      await expect(harness.destroySandbox("alpha", options)).resolves.toBeUndefined();
 
-    expect(harness.promptSpy).not.toHaveBeenCalled();
-    expect(harness.cleanupGatewaySpy.mock.calls).toEqual(
-      cleanupExpected ? [["nemoclaw-19080", harness.runOpenshellSpy]] : [],
-    );
-  });
+      expect(harness.promptSpy).not.toHaveBeenCalled();
+      expect(harness.cleanupGatewaySpy.mock.calls).toEqual(
+        cleanupExpected ? [["nemoclaw-19080", harness.runOpenshellSpy]] : [],
+      );
+    },
+  );
 
   it("stops before local cleanup when OpenShell fails to delete the live sandbox", async () => {
     const harness = createDestroyHarness({
@@ -111,6 +115,268 @@ describe("destroySandbox flow", () => {
 
     expectFailedDeletePreservesHostState(harness, exitSpy);
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses before destructive work when Docker identity cannot be inspected", async () => {
+    const harness = createDestroyHarness({
+      dockerRunResult: { status: 1, stderr: "Docker daemon unavailable" },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      "Docker container identity could not be inspected",
+    );
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.events).toEqual([]);
+    expect(harness.selectGatewaySpy).not.toHaveBeenCalled();
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.updateSessionSpy).not.toHaveBeenCalled();
+    expect(harness.stopAllSpy).not.toHaveBeenCalled();
+    expect(harness.killTimerSpy).not.toHaveBeenCalled();
+    expect(harness.prepareMcpBridgesForDestroySpy).not.toHaveBeenCalled();
+    expect(harness.stopNimByNameSpy).not.toHaveBeenCalled();
+    expect(harness.killStaleProxySpy).not.toHaveBeenCalled();
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+    expect(harness.dockerRunSpy).toHaveBeenCalledOnce();
+  });
+
+  it("refuses before destructive work when multiple Docker identities share the name", async () => {
+    const rows = [
+      "aaaa000000000000\topenshell\tdefault\tsb-real",
+      "ffff000000000000\t\tforeign\t",
+    ].join("\n");
+    const harness = createDestroyHarness({
+      dockerRunResult: { status: 0, stdout: rows },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(errorOutput).toContain("could not verify one complete container identity");
+    expect(errorOutput).toContain("Managed sandbox container: aaaa00000000");
+    expect(errorOutput).toContain("Conflicting container: ffff00000000");
+    expect(errorOutput).toContain("sb-real");
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.events).toEqual([]);
+    expect(harness.events).not.toContain("wipe");
+    expect(harness.events).not.toContain("detach");
+    expect(harness.selectGatewaySpy).not.toHaveBeenCalled();
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.updateSessionSpy).not.toHaveBeenCalled();
+    expect(harness.prepareMcpBridgesForDestroySpy).not.toHaveBeenCalled();
+    expect(harness.stopNimByNameSpy).not.toHaveBeenCalled();
+    expect(harness.killStaleProxySpy).not.toHaveBeenCalled();
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+    expect(harness.dockerRunSpy).toHaveBeenCalledOnce();
+  });
+
+  it("refuses identity drift after read-only destroy preflight (#8999)", async () => {
+    const managed = "aaaa000000000000\topenshell\tdefault\tsb-alpha";
+    const foreign = "ffff000000000000\t\tforeign\t";
+    const harness = createDestroyHarness({
+      dockerRunResultSequence: [
+        { status: 0, stdout: managed },
+        { status: 0, stdout: [managed, foreign].join("\n") },
+      ],
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.selectGatewaySpy).toHaveBeenCalledOnce();
+    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+      ["sandbox", "list", "-o", "json"],
+      expect.any(Object),
+    );
+    expect(harness.events).toEqual([]);
+    expect(harness.stopNimByNameSpy).not.toHaveBeenCalled();
+    expect(harness.killStaleProxySpy).not.toHaveBeenCalled();
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.updateSessionSpy).not.toHaveBeenCalled();
+    expect(harness.prepareMcpBridgesForDestroySpy).not.toHaveBeenCalled();
+    expect(harness.stopAllSpy).not.toHaveBeenCalled();
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+    expect(harness.dockerRunSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    [
+      "a replacement identity",
+      { status: 0, stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta" },
+    ],
+    ["container absence", { status: 0, stdout: "" }],
+    ["a failed revalidation probe", { status: 1, stderr: "daemon unavailable" }],
+  ])("refuses %s before sandbox mutation", async (_scenario, changedIdentity) => {
+    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
+    const harness = createDestroyHarness({
+      dockerRunResultSequence: [managed, managed, changedIdentity],
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.events).toEqual([]);
+    expect(harness.stopNimByNameSpy).not.toHaveBeenCalled();
+    expect(harness.killStaleProxySpy).not.toHaveBeenCalled();
+    expect(harness.prepareMcpBridgesForDestroySpy).not.toHaveBeenCalled();
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+    expect(harness.dockerRunSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it("refuses an absent-to-present replacement before sandbox mutation", async () => {
+    const absent = { status: 0, stdout: "" };
+    const replacement = {
+      status: 0,
+      stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta",
+    };
+    const harness = createDestroyHarness({
+      sandboxPresent: false,
+      dockerRunResultSequence: [absent, absent, replacement],
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.events).toEqual([]);
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+    expect(harness.dockerRunSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it("restores MCP preparation when identity changes before wipe", async () => {
+    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
+    const replacement = {
+      status: 0,
+      stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta",
+    };
+    const harness = createDestroyHarness({
+      mcpServers: ["github"],
+      dockerRunResultSequence: [managed, managed, managed, replacement],
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.events).toEqual(["mcp-prepare", "mcp-restore"]);
+    expect(harness.stopNimByNameSpy).not.toHaveBeenCalled();
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+    expect(harness.dockerRunSpy).toHaveBeenCalledTimes(4);
+  });
+
+  it("restores MCP preparation when managed inference cleanup fails before wipe", async () => {
+    const inferenceSecretMarker = "inference-cleanup-secret";
+    const recoverySecretMarker = "mcp-recovery-secret";
+    const harness = createDestroyHarness({
+      mcpServers: ["github"],
+      restoreMcpError: `OPENAI_API_KEY=${recoverySecretMarker}`,
+      stopInferenceError: `OPENAI_API_KEY=${inferenceSecretMarker}`,
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.events).toEqual(["mcp-prepare", "mcp-restore"]);
+    expect(harness.stopNimByNameSpy).toHaveBeenCalledOnce();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "exec", "alpha"],
+      expect.anything(),
+    );
+    expect(harness.events).not.toContain("wipe");
+    expect(harness.events).not.toContain("detach");
+    expect(harness.events).not.toContain("delete");
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(errorOutput).toContain("Could not stop managed inference resources");
+    expect(errorOutput).not.toContain(inferenceSecretMarker);
+    expect(errorOutput).not.toContain(recoverySecretMarker);
+  });
+
+  it.each([
+    [
+      "a replacement identity",
+      { status: 0, stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta" },
+      "Container identity changed after managed inference cleanup",
+    ],
+    [
+      "a failed Docker reinspection",
+      { status: 1, stderr: "daemon unavailable" },
+      "Container identity could not be inspected after managed inference cleanup: daemon unavailable",
+    ],
+  ])(
+    "restores MCP preparation and refuses workspace wipe after %s",
+    async (_scenario, changedIdentity, expectedMessage) => {
+      const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
+      const harness = createDestroyHarness({
+        mcpServers: ["github"],
+        dockerRunResultSequence: [managed, managed, managed, managed, changedIdentity],
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+
+      expect(harness.events).toEqual(["mcp-prepare", "mcp-restore"]);
+      expect(harness.stopNimByNameSpy).toHaveBeenCalledOnce();
+      expect(harness.events).not.toContain("wipe");
+      expect(harness.events).not.toContain("detach");
+      expect(harness.events).not.toContain("delete");
+      expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+      const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(errorOutput).toContain(expectedMessage);
+      expect(errorOutput).toContain("Managed inference cleanup may already be partial");
+    },
+  );
+
+  it("revalidates immediately before delete and reports partial provider preparation", async () => {
+    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
+    const replacement = {
+      status: 0,
+      stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta",
+    };
+    const harness = createDestroyHarness({
+      detachedProviders: ["provider-a"],
+      dockerRunResultSequence: [
+        managed, // Initial guard before read-only preflight.
+        managed, // Guard after preflight and before mutation.
+        managed, // Execution-entry continuity guard.
+        managed, // Guard after MCP destroy preparation.
+        managed, // Guard after managed inference cleanup.
+        managed, // Guard before provider cleanup.
+        replacement, // Final guard immediately before sandbox deletion.
+      ],
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.events).toEqual(["wipe", "detach", "mcp-restore"]);
+    expect(
+      harness.runOpenshellSpy.mock.calls.some(
+        ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "delete",
+      ),
+    ).toBe(false);
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+    expect(harness.dockerRunSpy).toHaveBeenCalledTimes(7);
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(errorOutput).toContain("Provider cleanup detached provider-a");
+  });
+
+  it("keeps the final exact probe immediately adjacent to sandbox delete", async () => {
+    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
+    const trace: string[] = [];
+    const harness = createDestroyHarness({
+      dockerRunResult: managed,
+      onDockerRun: (call) => trace.push(`probe:${String(call)}`),
+    });
+    traceDestroyBoundaryCalls(harness, trace);
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(trace.slice(-2)).toEqual([
+      `probe:${String(harness.dockerRunSpy.mock.calls.length)}`,
+      "delete",
+    ]);
   });
 
   it("preserves provider and registry ownership when runtime authority is unknown", async () => {

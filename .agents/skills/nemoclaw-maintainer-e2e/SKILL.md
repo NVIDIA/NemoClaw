@@ -14,7 +14,7 @@ Each trusted push also selects the CPU-only `jetson-nvmap-gpu` proof.
 Push runs skip `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification` because push events cannot set the required workflow dispatch flag.
 Manual Jetson runs remain opt-in through `allow_jetson_dispatch`, which defaults to `false`.
 Push runs publish `Relevant E2E` and do not publish `Release qualification`.
-Only the full `workflow_dispatch` mode described below publishes `Release qualification`.
+Only the full `workflow_dispatch` mode, with or without an administrator-authorized job waiver, publishes `Release qualification`.
 Do not substitute local `npm run test:live-e2e` unless the maintainer explicitly requests local execution.
 
 ## Manual PR E2E
@@ -158,6 +158,7 @@ A changed head repository, head SHA, or base SHA invalidates the evidence and re
 | “deploy pre-release full E2E” | Full | empty | `true` |
 | “run pre-tag full E2E” | Full | empty | `true` |
 | “run release-candidate E2E” | Full | empty | `true` |
+| “run pre-tag E2E with an administrator job waiver” | Administrator-waived full | empty | `true` |
 
 A generic E2E request must not authorize the Brev Launchable path.
 Do not infer full mode from words such as “all” or “complete.”
@@ -166,7 +167,10 @@ Ask for clarification only when the request contains conflicting mode phrases.
 Ordinary mode selects every default-selected workflow E2E except `Exact staging Brev Launchable`.
 Launchable mode runs only `Exact staging Brev Launchable`.
 Full mode adds `Exact staging Brev Launchable` to the default E2E selection in the same workflow run.
-The documented invocations for all three modes keep the Jetson dispatch and DGX Spark runner-queue flags set to `false`.
+Administrator-waived full mode runs the full suite but omits the approved execution jobs from release qualification.
+Every waived job still runs.
+Use this mode only when a repository administrator explicitly authorizes the job IDs and supplies the reason.
+The documented invocations for all four modes keep the Jetson dispatch and DGX Spark runner-queue flags set to `false`.
 
 ## Resolve the Candidate
 
@@ -238,12 +242,41 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "correlation_id=${CORRELATION_ID}"
 ```
 
+For administrator-waived full mode, set the approved job IDs and a reason.
+The reason must begin with an ASCII letter or digit and contain 10-500 characters chosen from ASCII letters, digits, spaces, and `.,:;/_()'-`.
+
+```bash
+RELEASE_QUALIFICATION_WAIVED_JOBS='staging-brev-launchable'
+RELEASE_QUALIFICATION_WAIVER_REASON='Repository administrator waived Brev qualification while a Brev administrator replaces an expired credential.'
+gh workflow run .github/workflows/e2e.yaml \
+  --repo NVIDIA/NemoClaw \
+  --ref main \
+  -f targets= \
+  -f jobs= \
+  -f inference_mode=mock \
+  -f include_staging_brev_launchable=true \
+  -f "release_qualification_waived_jobs=${RELEASE_QUALIFICATION_WAIVED_JOBS}" \
+  -f "release_qualification_waiver_reason=${RELEASE_QUALIFICATION_WAIVER_REASON}" \
+  -f allow_jetson_dispatch=false \
+  -f allow_dgx_spark_runner_queue=false \
+  -f "correlation_id=${CORRELATION_ID}"
+```
+
 Do not set `jobs=staging-brev-launchable` for full mode.
 Empty `jobs` and `targets` select every default-selected workflow E2E except `Exact staging Brev Launchable`.
 The `include_staging_brev_launchable` input adds the Launchable E2E job to that same run.
 The trusted `main` workflow verifies that the dispatching and rerunning actors have
 repository `maintain` or `admin` permission before the Launchable path's source
 checkout. That role check is the authorization.
+For administrator-waived full mode, both `github.actor` and `github.triggering_actor` must have repository `admin` permission.
+Both waiver inputs must be nonempty, or both inputs must be empty.
+The trusted planner validates the comma-separated IDs against the release-required E2E execution jobs.
+It rejects unknown, duplicate, and non-release-required IDs.
+Trusted controller jobs cannot be waived.
+The planner removes only the approved IDs from `release_required_jobs` and emits canonical waived-job JSON.
+The `generate-matrix` dispatch receipt is written after waiver authorization and before that job's source checkout.
+It records the requested job IDs, reason, both actor identities, and candidate SHA.
+After trusted planner validation, the `Release qualification` summary and waiver artifact record the canonical job IDs and each waived job's completed outcome.
 A user permitted to dispatch this workflow may set `allow_jetson_dispatch=true`
 to add `jetson-nvmap-gpu` to an empty-selector manual run or enable its explicit
 selection. Set it only after the operator-owned service is available and
@@ -288,11 +321,12 @@ Do not reuse it as evidence.
 Wait for completion:
 
 ```bash
-gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw --exit-status
+gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw
 ```
 
 Launchable and full modes can wait in the non-cancelling Launchable concurrency queue.
 Queued, waiting, or accepted dispatch state is not success.
+Classify the completed workflow and `Release qualification` job with the checks below.
 
 ## Verify the Result
 
@@ -310,23 +344,31 @@ gh api "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID/jobs?filter=latest&per_page=1
 Require `run-$RUN_ID.json` to report:
 
 - `head_sha` equal to `CANDIDATE_SHA`;
-- `status` equal to `completed`; and
-- `conclusion` equal to `success`.
+- `status` equal to `completed`.
+
+For ordinary, Launchable, and unwaived full modes, require `conclusion` equal to `success`.
+For administrator-waived full mode, permit `conclusion` equal to `success` or `failure`.
+A `failure` conclusion is acceptable only when one completed, successful `Release qualification` job and a valid exact-run waiver artifact with at least one canonical waived job failure both exist.
 
 For Launchable mode, also require `jobs-latest-$RUN_ID.json` to contain one completed, successful
 `Exact staging Brev Launchable` job. Return the workflow and job URLs.
 
-For full mode, require `jobs-latest-$RUN_ID.json` to contain one completed, successful
+For a full run, with or without a job waiver, require `jobs-latest-$RUN_ID.json` to contain one completed, successful
 `Release qualification` job. Return its job URL with the workflow URL.
-That job waits for every default-required E2E result, including `Exact staging Brev Launchable`.
+In full mode, that job waits for every default-required E2E result, including `Exact staging Brev Launchable`.
 The Launchable job directly verifies the candidate checkout, in-guest full E2E result, and workspace cleanup before it succeeds.
 Its `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json` artifacts remain available for diagnosis.
 A skipped, cancelled, queued, or failed `Release qualification` job is not evidence.
 A Launchable-only run is not full-mode or pre-tag release evidence.
 
+For administrator-waived full mode, the job waits for every unwaived release-required result.
+A waived execution job may fail without failing `Release qualification`.
+For a failed workflow, require the waiver artifact to bind at least one canonical waived job failure to the candidate SHA, run ID and attempt, actors, and reason.
+Return the canonical waived-job IDs, their outcomes, reason, both actor identities, and candidate SHA with the workflow and job URLs.
+
 ## Bind Release Evidence
 
-If no release plan exists, label a successful full run against `origin/main` as provisional release evidence.
+If no release plan exists, label a full run with a successful `Release qualification` job against `origin/main` as provisional release evidence.
 Return:
 
 - candidate SHA;
@@ -334,12 +376,13 @@ Return:
 - `Release qualification` job URL; and
 - workflow run attempt.
 
-If the release candidate SHA changes, discard the earlier full run and dispatch full mode for the new SHA.
+If the release candidate SHA changes, discard the earlier pre-tag run and dispatch the authorized mode for the new SHA.
 No release-note-only delta exception is currently defined.
 
 When `nemoclaw-maintainer-cut-release-tag` invokes this skill, return the exact-SHA workflow and `Release qualification` job URLs.
 The stable check is provisional pre-tag E2E evidence until `scripts/release-cut-tag.sh` verifies the canonical GitHub job at the planned commit.
-Do not build a second status ledger from artifacts.
+Do not build a second general status ledger from artifacts.
+The waiver artifact is narrow binding evidence for a failed workflow, not a replacement for the `Release qualification` result.
 Do not ask for the release confirmation phrase in this skill.
 
 ## Access Failures

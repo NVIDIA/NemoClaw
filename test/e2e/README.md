@@ -22,10 +22,13 @@ before those targets run; local runners must provide it themselves.
   attempts, requests at most two failed-job reruns, and uploads attempt evidence.
 - The `staging-brev-launchable` job in `.github/workflows/e2e.yaml` validates
   the baked candidate without installing or copying NemoClaw source.
-- `.github/workflows/macos-e2e.yaml`, `.github/workflows/wsl-e2e.yaml`, and
-  `.github/workflows/sandbox-images-and-e2e.yaml` call focused E2E targets directly.
-  `.github/workflows/e2e.yaml` selects free-standing jobs, including
-  `whatsapp-qr-compact` and `ollama-auth-proxy`.
+- `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Evidence` for Ubuntu 26.04, macOS, and WSL.
+  On shard 1, its macOS and WSL live E2E run only when the workflow tests `main` and Docker is available.
+  This workflow does not publish or satisfy `Release qualification`.
+- `.github/workflows/portable-profile-e2e.yaml` publishes experimental portable-profile evidence.
+- `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
+- `.github/workflows/sandbox-images-and-e2e.yaml` provides reusable sandbox-image build and test evidence.
+  `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
 
 ## CI execution shape
 
@@ -143,12 +146,25 @@ The former top-level `test/e2e/test-*.sh` suite has been removed. Keep real
 shell, installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in
 E2E tests when those boundaries are the behavior under test.
 
-## Platform Vitest main watch
+## Platform Evidence
 
-`.github/workflows/platform-vitest-main.yaml` runs the full Vitest suite in
-four independent shards on each of macOS and WSL, with `fail-fast` disabled.
-Each macOS shard has a 30-minute budget and each WSL shard has a 90-minute
-budget. The additional root-required WSL contracts run only on shard 1.
+`.github/workflows/platform-vitest-main.yaml` publishes the `CI / Platform Evidence` workflow.
+It runs the Ubuntu 26.04 compatibility contracts and the full Vitest suite in four shards on macOS and WSL.
+The matrix disables `fail-fast`.
+The first macOS shard has a 60-minute budget for live E2E; the other shards have 30 minutes.
+The first WSL shard has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
+
+On shard 1, the workflow runs focused macOS and WSL live E2E only when the run tests `main` and Docker is available.
+Otherwise, the workflow records the skip and retains the platform contract evidence.
+Therefore, the workflow is platform evidence, not `Release qualification`.
+Only a full manual `.github/workflows/e2e.yaml` run can publish the release check.
+
+The live steps give candidate test code the job-scoped `GITHUB_TOKEN` and repository `NVIDIA_INFERENCE_API_KEY`.
+The macOS step sets both in its process environment.
+The WSL step uses the trusted PowerShell helper to forward both into the WSL test process.
+The workflow sets these credentials only for the live steps, but candidate code can copy either value while a step runs.
+GitHub invalidates `GITHUB_TOKEN` after the job.
+`NVIDIA_INFERENCE_API_KEY` remains valid until it expires or is revoked; the workflow does not revoke it.
 
 ## Retired Brev source-install coverage
 
@@ -443,6 +459,27 @@ trust boundary and are never host-prebuilt by this fixture.
 The runtime target for `openclaw-plugin-runtime-exdev` is 16–17 minutes.
 Push-run timing for the reduced lifecycle has not yet been measured.
 
+## OpenShell development artifact retention
+
+The `openshell-dev-artifact` job resolves the public OpenShell `dev` release
+once for each selected `mcp-bridge-dev` run. It records the source commit and
+the GitHub asset ID, source URL, size, and SHA-256 digest for every required
+Linux x64 archive and checksum file. It rejects release drift during download,
+then uploads the verified bytes under a content-addressed name with the shared
+14-day E2E retention policy.
+
+The OpenClaw, Hermes, and LangChain Deep Agents Code shards restore and verify
+that same artifact with the trusted workflow revision. An exact-argument and
+asset-allowlisted `gh` shim presents only those retained files to the unchanged
+trusted `scripts/install-openshell.sh` path. A separate `curl` shim blocks
+network fallback. The installer still checks the release checksums and archive
+structure before installation. A missing, replaced, or corrupt upstream asset
+fails the resolver as an infrastructure failure. The job error reports the
+failed identifier and source URL, and `resolution.json` records them when the
+artifact directory remains writable. The three product shards do not start in
+that case, so the run cannot report a product failure before reaching product
+assertions.
+
 ## Larger-runner routing
 
 The larger-runner experiment is inactive while the configuration variable
@@ -625,12 +662,10 @@ pre-tag E2E denominator.
 
 ### Hosted-Runner Recovery
 
-Hosted Runner Recovery can request one full rerun for eligible WSL, macOS, and
-platform-watch push runs. It does not handle `E2E main`. The complete non-passing
-job listing must contain only authenticated hosted-runner-loss evidence for the
-workflow's approved runner labels. An ordinary assertion failure, mixed failure
-set, incomplete listing, custom or self-hosted label, changed evidence, or
-ambiguous pagination prevents recovery.
+Hosted Runner Recovery can request one full rerun for an eligible `CI / Platform Evidence` push.
+It does not handle `E2E main`.
+The complete non-passing job listing must contain only authenticated hosted-runner-loss evidence for the workflow's approved runner labels.
+An ordinary assertion failure, mixed failure set, incomplete listing, custom or self-hosted label, changed evidence, or ambiguous pagination prevents recovery.
 
 For eligible `E2E main` push runs, `E2E / Main Retry` asks GitHub Actions to rerun failed jobs and their dependent jobs.
 A successful CLI artifact producer is not rerun.
@@ -649,9 +684,9 @@ The runner-allocation and internal-error failures handled by Hosted Runner
 Recovery originate in GitHub Actions, outside repository-controlled workflow
 code. Hosted Runner Recovery contains these failures without claiming to repair
 their source. Remove `.github/workflows/hosted-runner-recovery.yaml` and its
-controller only after the three platform workflows record 30 consecutive days
-with no first-attempt failure accepted by the recovery classifier, or after those
-workflows stop using GitHub-hosted runners. Each accepted Hosted Runner Recovery
+controller only after the platform-evidence workflow records 30 consecutive days
+with no first-attempt failure accepted by the recovery classifier, or after that
+workflow stops using GitHub-hosted runners. Each accepted Hosted Runner Recovery
 request resets that observation window.
 
 ### Runner comparison telemetry
@@ -774,7 +809,7 @@ to the portable free-memory value and labels that value as `memory free`.
 The comparison time series is diagnostic-only and is not an input to terminal
 classification or retry policy. Runner-comparison telemetry does not affect
 `E2E / Main Retry` decisions. Hosted Runner Recovery remains limited to
-authenticated runner-loss evidence for its three platform workflows.
+authenticated runner-loss evidence for its platform-evidence workflow.
 
 Treat a missing summary as unavailable evidence, not as low utilization. A
 hard runner loss can prevent finalization or artifact upload. When you compare
@@ -1022,9 +1057,10 @@ The Actions run is advisory for the pull request and is not a required merge con
 Treat it as passing evidence only when the `E2E` workflow concludes with `success` for the recorded PR number, PR source repository, candidate commit SHA, base commit SHA, and trusted workflow SHA.
 A changed PR source repository, candidate commit SHA, or base commit SHA invalidates the evidence and requires a new manual run.
 
-The macOS and WSL workflows also run on configured pushes to `main`.
-The portable-profile workflow runs on `main` when one of its configured paths changes.
-Their manual dispatch paths remain available for branch diagnosis.
+The platform-evidence workflow runs on configured pushes to `main` and supports manual dispatch for branch diagnosis.
+The experimental portable-profile workflow runs on `main` when one of its configured paths changes.
+The Podman CPU proof runs only for matching pull request changes.
+The sandbox-image workflow accepts manual and reusable workflow calls for image build and test evidence.
 
 ## Onboard performance budget
 

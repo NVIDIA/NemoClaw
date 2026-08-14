@@ -457,6 +457,7 @@ describe("Hermes durable lazy-install target", () => {
     expect(result.stderr).not.toContain(value);
   });
 
+
   it("accepts the image-owned lazy target in the runtime environment (#8613)", () => {
     const result = runRuntimeEnvValidation({
       HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",

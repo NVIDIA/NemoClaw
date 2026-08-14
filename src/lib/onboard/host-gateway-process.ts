@@ -66,6 +66,7 @@ export interface StopHostGatewayOptions {
 
 export interface StopHostGatewayResult {
   failed: number[];
+  foreignUserPids?: number[];
   /** Whether a requested pgrep fallback completed with a usable result. */
   orphanScanComplete?: boolean;
   ownershipFailures?: string[];
@@ -202,6 +203,31 @@ function pidOwner(pid: number, deps: HostGatewayProcessDeps): string | null {
   const result = deps.run("ps", ["-p", String(pid), "-o", "user="], { env: deps.env });
   if (result.status !== 0) return null;
   return result.stdout.trim() || null;
+}
+
+function pidOwnerUid(pid: number, deps: HostGatewayProcessDeps): number | null {
+  const result = deps.run("ps", ["-p", String(pid), "-o", "uid="], { env: deps.env });
+  if (result.status !== 0) return null;
+  const uid = Number.parseInt(result.stdout.trim(), 10);
+  return Number.isInteger(uid) ? uid : null;
+}
+
+function pidBelongsToAnotherUser(pid: number, deps: HostGatewayProcessDeps): boolean {
+  const currentUid = typeof process.getuid === "function" ? process.getuid() : -1;
+  if (currentUid < 0) return false;
+  const uid = pidOwnerUid(pid, deps);
+  if (uid === null || uid === 0) return false;
+  return uid !== currentUid;
+}
+
+function warnForeignUserGateway(pid: number, deps: HostGatewayProcessDeps): void {
+  const warn = deps.warn ?? ((message: string) => console.warn(message));
+  const owner = pidOwner(pid, deps);
+  const ownerLabel = owner ? `${owner}-owned` : "another user's";
+  warn(
+    `Kept ${ownerLabel} host openshell-gateway process ${pid} running. ` +
+      "Cleanup does not stop a gateway process that another user owns.",
+  );
 }
 
 function readOwnedRuntimeFile(filePath: string, uid: number): string | null {
@@ -417,6 +443,7 @@ export function stopHostGatewayProcesses(
   const candidates = new Map<number, Set<string>>();
   const result: StopHostGatewayResult = {
     failed: [],
+    foreignUserPids: [],
     orphanScanComplete: true,
     ownershipFailures: [],
     skippedDeadPids: [],
@@ -544,6 +571,15 @@ export function stopHostGatewayProcesses(
         clearHostGatewayRuntimeFiles(stateDir, pidFile);
         clearedRuntimeFiles = true;
       }
+      continue;
+    }
+    if (
+      !options.scopedGatewayStop &&
+      !sources.has("pid-file") &&
+      pidBelongsToAnotherUser(pid, deps)
+    ) {
+      (result.foreignUserPids ??= []).push(pid);
+      warnForeignUserGateway(pid, deps);
       continue;
     }
 

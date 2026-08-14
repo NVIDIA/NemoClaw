@@ -4,10 +4,16 @@
 import { CLI_NAME } from "../cli/branding";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 
-export function onboardRecoveryCommand(portable = isPortableExperimentalProfile()): string {
+export function onboardResumeRecoveryCommand(): string {
+  return `${CLI_NAME} onboard --resume`;
+}
+
+export function onboardFreshRecoveryCommand(
+  portable = isPortableExperimentalProfile(),
+): string {
   return portable
-    ? `${CLI_NAME} onboard --experimental-profile portable`
-    : `${CLI_NAME} onboard --resume`;
+    ? `${CLI_NAME} onboard --experimental-profile portable --fresh`
+    : `${CLI_NAME} onboard --fresh`;
 }
 
 // Whether an onboard `--resume` recovery hint has already been emitted this run.
@@ -24,9 +30,7 @@ let resumeHintShown = false;
  * never mention how to resume, so users assume a failed run requires a full
  * reinstall (#6003). The incomplete-exit handler calls this as a catch-all when
  * a resumable step was in progress, covering every exit that does not already
- * print its own recovery guidance. The recovery command adapts to whether the
- * run selected the portable experimental profile (which forces `--fresh` and
- * rejects `--resume`) (#8873).
+ * print its own recovery guidance.
  */
 export function printOnboardResumeHint(
   portable = isPortableExperimentalProfile(),
@@ -36,11 +40,14 @@ export function printOnboardResumeHint(
   resumeHintShown = true;
   log("");
   if (portable) {
-    log("  Onboarding did not finish. Portable onboarding always starts fresh; rerun:");
-    log(`    ${onboardRecoveryCommand(portable)}`);
+    log("  Onboarding did not finish. Resume from the step that failed with:");
+    log(`    ${onboardResumeRecoveryCommand()}`);
+    log("  The portable profile and rootless Podman authority are restored from the checkpoint.");
+    log("  To start over instead, run:");
+    log(`    ${onboardFreshRecoveryCommand(true)}`);
   } else {
     log("  Onboarding did not finish. Resume from the step that failed with:");
-    log(`    ${onboardRecoveryCommand(portable)}`);
+    log(`    ${onboardResumeRecoveryCommand()}`);
     log("  Completed steps are skipped; pass --fresh instead to start over.");
   }
 }

@@ -52,6 +52,7 @@ const managedWorkloadOnboard: typeof import("./onboard/managed-workload/onboard-
   require("./onboard/managed-workload/onboard-orchestration");
 const onboardEntryOptions: typeof import("./onboard/entry-options") = require("./onboard/entry-options");
 const onboardSessionBootstrap: typeof import("./onboard/session-bootstrap") = require("./onboard/session-bootstrap");
+const resumeRuntime: typeof import("./onboard/resume/locked-runtime") = require("./onboard/resume/locked-runtime");
 const channelState: typeof import("./onboard/channel-state") = require("./onboard/channel-state");
 const {
   ensureOllamaLoopbackSystemdOverride,
@@ -488,7 +489,6 @@ const {
 const { skippedStepMessage }: typeof import("./onboard/skipped-step-message") =
   require("./onboard/skipped-step-message");
 const policyPresetCarry: typeof import("./onboard/policy-preset-persistence") = require("./onboard/policy-preset-persistence");
-const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
   findAvailableDashboardPort,
   preflightDashboardPortRangeAvailability,
@@ -587,6 +587,7 @@ import * as recreateJournal from "./onboard/onboard-recreate-journal";
 import type { OpenShellInstallDeps, OpenShellInstallResult } from "./onboard/openshell-install";
 import { createOnboardPolicyApplication } from "./onboard/policy-selection";
 import {
+  printGpuPreflightLines,
   printLowMemoryWarning,
   printMessagingProviderMissing,
   printSwapCreationFailed,
@@ -633,6 +634,7 @@ const {
   isDockerDriverGatewayPortListener,
   isDockerDriverGatewayProcess,
   isDockerDriverGatewayProcessAlive,
+  isDockerDriverGatewayStateInUse,
   isPidAlive,
   rememberDockerDriverGatewayPid,
   resolveOpenShellGatewayBinary,
@@ -1361,7 +1363,7 @@ async function preflight(
   preflightOpts: PreflightOptions = {},
 ): Promise<ReturnType<typeof nim.detectGpu>> {
   step(1, 8, "Preflight checks");
-  const { gpu, host, sandboxGpuConfig } =
+  const { gpu, host, sandboxGpuConfig, gpuTrustGateRejection } =
     await onboardPreflightGatewayAuthority.runRuntimePreflight(preflightOpts);
 
   await preflightUtils.checkContainerRuntimeResources(host, {
@@ -1499,33 +1501,7 @@ async function preflight(
   dockerDriverGatewayEnv.warnIfGatewayWildcardBindAddress();
 
   // GPU
-  if (gpu && gpu.type === "nvidia") {
-    const lines = nim.formatNvidiaGpuPreflightLines(gpu);
-    console.log(`  ✓ ${lines[0]}`);
-    for (const extra of lines.slice(1)) {
-      console.log(`  ${extra}`);
-    }
-    if (!gpu.nimCapable) {
-      console.log("  ⓘ Local NIM unavailable — GPU VRAM too small");
-    }
-  } else if (gpu && gpu.type === "apple") {
-    console.log(
-      `  ✓ Apple GPU detected: ${gpu.name}${gpu.cores ? ` (${gpu.cores} cores)` : ""}, ${gpu.totalMemoryMB} MB unified memory`,
-    );
-    console.log("  ⓘ Local NIM unavailable — requires NVIDIA GPU");
-  } else {
-    console.log("  ⓘ Local NIM unavailable — no GPU detected");
-  }
-
-  if (sandboxGpuConfig.sandboxGpuEnabled) {
-    console.log(
-      `  ✓ Sandbox GPU: enabled (${sandboxGpuConfig.mode}${sandboxGpuConfig.sandboxGpuDevice ? `, device ${sandboxGpuConfig.sandboxGpuDevice}` : ""})`,
-    );
-  } else if (sandboxGpuConfig.mode === "0") {
-    console.log("  ✓ Sandbox GPU: disabled by configuration");
-  } else {
-    console.log("  ⓘ Sandbox GPU: disabled (no NVIDIA GPU detected)");
-  }
+  printGpuPreflightLines({ gpu, sandboxGpuConfig, gpuTrustGateRejection });
 
   // Memory / swap check (Linux only)
   if (process.platform === "linux") {
@@ -1768,8 +1744,6 @@ async function startGatewayWithOptions(
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
 }
-
-/** Reconcile the host Docker-driver gateway under the onboard lock and strict port checks. */
 async function startDockerDriverGateway({
   exitOnFailure = true,
   skipSandboxBridgeReachability = false,
@@ -1898,7 +1872,6 @@ async function startDockerDriverGateway({
   if (!gatewayBin || !gatewayLaunch) {
     throw new Error("OpenShell gateway launch missing after cutover");
   }
-
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const logPath = path.join(stateDir, "openshell-gateway.log");
   const log = dockerDriverGatewayLaunch.openDockerDriverGatewayLog(logPath, { exitOnFailure });
@@ -1924,7 +1897,6 @@ async function startDockerDriverGateway({
       dockerHost: process.env.DOCKER_HOST || null,
     },
   );
-
   const pollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 30);
   const pollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
   const gatewayStartup = await waitForStandaloneDockerDriverGateway({
@@ -1950,8 +1922,11 @@ async function startDockerDriverGateway({
     console.log("  ✓ Docker-driver gateway is healthy");
     return;
   }
-
-  reportGatewayFailure(logPath, childExit, { exitOnFailure, launchLogOffset: log.startOffset });
+  reportGatewayFailure(logPath, childExit, {
+    exitOnFailure,
+    isGatewayStateInUse: isDockerDriverGatewayStateInUse,
+    launchLogOffset: log.startOffset,
+  });
   if (gatewayStartup === "exited") {
     throw new Error("Docker-driver gateway failed to start because the process exited");
   }
@@ -3502,6 +3477,7 @@ const {
   buildOrphanedSandboxRollbackMessage,
   ensureDashboardForward,
   ensureAgentDashboardForward,
+  ensureFinalizationDashboardForward,
   ensureAgentFixedForward,
   fetchGatewayAuthTokenFromSandbox,
   getDashboardForwardPort,
@@ -3522,7 +3498,6 @@ const {
   sleep: sleepSeconds,
   printAgentDashboardUi: agentOnboard.printDashboardUi,
 });
-
 const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
   toSessionUpdates: (updates: Record<string, unknown>) =>
     toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
@@ -3632,7 +3607,8 @@ async function preflightAuthoritativeRebuildTarget(
 }
 
 // ── Main ─────────────────────────────────────────────────────────
-const onboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
+const wrappedOnboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
+const onboard = onboardSessionBootstrap.wrapOnboardDeferredExit(wrappedOnboard);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   const hostMountScope = onboardSessionBootstrap.beginHostMountScope(opts.hostMounts);
   const hermesApiPortReservationScope = agentOnboard.createHermesApiPortReservationScope();
@@ -3658,29 +3634,18 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   const { fresh, nonInteractive, cannotPrompt, resume } = entryOptions;
   const { requestedFromDockerfile, requestedSandboxName } = entryOptions;
   NON_INTERACTIVE = nonInteractive;
+  const validatePolicyTierBeforeRuntime =
+    isNonInteractive() && !resume && opts.experimentalProfile !== "portable";
+  if (validatePolicyTierBeforeRuntime) validatePolicyTierEnvEarly();
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   _preflightDashboardPort =
     opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
-  if (!authoritativeGateway) delete process.env.OPENSHELL_GATEWAY;
-  preparedDcodeRuntime.applyGatewayEnv(process.env);
   const baseImageResolutionContext = baseImageResolutionFlow.createBaseImageResolutionContext({
     fresh,
     initialHint: opts.baseImageResolutionHint,
     initialPreResolvedMetadata: opts.preResolvedBaseImageMetadata,
   });
-  const onboardingComputePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
-  if (isNonInteractive()) validatePolicyTierEnvEarly();
-  const noticeAccepted = await ensureUsageNoticeConsent({
-    nonInteractive: isNonInteractive(),
-    acceptedByFlag: opts.acceptThirdPartySoftware === true,
-    writeLine: console.error,
-  });
-  if (!noticeAccepted) {
-    process.exit(1);
-  }
-  // Validate provider/model hints before preflight so configuration errors are not reported as Docker failures.
-  const stationSessionInput = onboardEntryOptions.prepareSessionInput(runtimeControlRequests, requestedSandboxName, resume, () => resumeConfig.preflightEarlyOnboardEnvForResume(isNonInteractive(), opts.authoritativeResumeConfig === true));
   const ownsOnboardLock = opts.onboardLockAlreadyHeld !== true;
   const lockResult = ownsOnboardLock
     ? onboardSession.acquireOnboardLock(
@@ -3699,47 +3664,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     console.error(`    rm -f "${lockResult.lockFile}"`);
     process.exit(1);
   }
-  // Stage any pre-fix plaintext credentials.json into process.env so the
-  // provider upserts later in this run can pick the values up. The file is
-  // NOT removed here — the secure unlink runs only after onboarding
-  // completes successfully and only when every staged value was actually
-  // pushed to the gateway in this run.
-  stagedLegacyValues.clear();
-  migratedLegacyKeys.clear();
-
-  const stagedLegacyKeys = stageLegacyCredentialsToEnv();
-  for (const key of stagedLegacyKeys) {
-    const value = process.env[key];
-    if (value) stagedLegacyValues.set(key, value);
-  }
-
-  // Only carry forward migration state across processes when the user is
-  // explicitly continuing the same attempt via `--resume`. Even then,
-  // validate each persisted entry against the *current* staged value: if
-  // the legacy file was edited between runs (so the staged secret no
-  // longer matches what the gateway holds), the hash mismatch drops that
-  // key from migratedLegacyKeys and the cleanup gate forces a fresh
-  // upsert before the file can be removed. A fresh / non-resume run
-  // ignores prior persisted state entirely so a stale or unrelated
-  // session record cannot satisfy the cleanup gate.
-  if (resume) {
-    const previousSession = onboardSession.loadSession();
-    const persistedHashes = previousSession?.migratedLegacyValueHashes ?? {};
-    for (const [key, hash] of Object.entries(persistedHashes)) {
-      if (typeof key !== "string" || typeof hash !== "string") continue;
-      const currentValue = stagedLegacyValues.get(key);
-      if (currentValue === undefined) continue;
-      if (legacyValueHash(currentValue) !== hash) continue;
-      migratedLegacyKeys.add(key);
-    }
-  }
-
-  if (stagedLegacyKeys.length > 0) {
-    console.error(
-      `  Staged ${String(stagedLegacyKeys.length)} legacy credential(s) for migration to the OpenShell gateway.`,
-    );
-  }
-
   let lockReleased = false;
   const releaseOnboardLock = () => {
     if (lockReleased || !ownsOnboardLock) return;
@@ -3748,17 +3672,40 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   };
   if (ownsOnboardLock) process.once("exit", releaseOnboardLock);
 
-  if (authoritativeGateway) {
-    GATEWAY_NAME = authoritativeGateway.name;
-    GATEWAY_PORT = authoritativeGateway.port;
-    process.env.OPENSHELL_GATEWAY = authoritativeGateway.name;
-  }
+  let portableEnvScope:
+    | import("./onboard/session-bootstrap").PortableOnboardEnvironmentScope
+    | null = null;
+  // Secure removal remains gated on successful migration of every staged legacy credential.
+  let stagedLegacyKeys: string[] = [];
+
   let onboardTrace: ReturnType<typeof onboardTracing.startOnboardTrace> = {
     collector: null,
     span: null,
   };
-  let completed = false;
+  let completed = false, returnedNormally = false;
   try {
+    const lockedRuntime = await resumeRuntime.prepare(opts, resume, isNonInteractive(), onboardSession.loadSession);
+    portableEnvScope = lockedRuntime.environmentScope;
+    if (!authoritativeGateway) delete process.env.OPENSHELL_GATEWAY;
+    preparedDcodeRuntime.applyGatewayEnv(process.env);
+    if (isNonInteractive() && !validatePolicyTierBeforeRuntime) validatePolicyTierEnvEarly();
+    // Validate provider/model hints only after the locked profile and runtime authority are active.
+    const stationSessionInput = onboardEntryOptions.prepareSessionInput(
+      runtimeControlRequests,
+      requestedSandboxName,
+      resume,
+      () =>
+        resumeConfig.preflightEarlyOnboardEnvForResume(
+          isNonInteractive(),
+          opts.authoritativeResumeConfig === true,
+        ),
+    );
+    const onboardingComputePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
+    if (authoritativeGateway) {
+      GATEWAY_NAME = authoritativeGateway.name;
+      GATEWAY_PORT = authoritativeGateway.port;
+      process.env.OPENSHELL_GATEWAY = authoritativeGateway.name;
+    }
     onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
     let selectedMessagingChannels: string[] = [];
     let { session, fromDockerfile } = await onboardSessionBootstrap.prepareOnboardSessionValidated(
@@ -3771,6 +3718,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         nonInteractive: isNonInteractive(),
         authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
         servingProfileProvenance: opts.servingProfileProvenance ?? null,
+        checkpointProfile: lockedRuntime.checkpointProfile,
+        portableRuntimeAuthority: lockedRuntime.preparedPortableAuthority,
         agentFlag: opts.agent || null,
         envAgent: process.env.NEMOCLAW_AGENT || null,
         requestedHostMounts: opts.hostMounts,
@@ -3792,6 +3741,27 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         exitProcess: (code) => process.exit(code),
       },
     );
+    stagedLegacyValues.clear();
+    migratedLegacyKeys.clear();
+    stagedLegacyKeys = stageLegacyCredentialsToEnv();
+    for (const key of stagedLegacyKeys) {
+      const value = process.env[key];
+      if (value) stagedLegacyValues.set(key, value);
+    }
+    if (resume) {
+      const persistedHashes = session?.migratedLegacyValueHashes ?? {};
+      for (const [key, hash] of Object.entries(persistedHashes)) {
+        if (typeof key !== "string" || typeof hash !== "string") continue;
+        const currentValue = stagedLegacyValues.get(key);
+        if (currentValue === undefined || legacyValueHash(currentValue) !== hash) continue;
+        migratedLegacyKeys.add(key);
+      }
+    }
+    if (stagedLegacyKeys.length > 0) {
+      console.error(
+        `  Staged ${String(stagedLegacyKeys.length)} legacy credential(s) for migration to the OpenShell gateway.`,
+      );
+    }
     const effectiveHostMounts = hostMountScope.activate(session?.metadata.hostMounts);
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
     // Resume backstop: a session may exist without a sandboxName if sandbox
@@ -3813,8 +3783,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       process.exit(1);
     }
 
-    registerIncompleteOnboardExitHandlerForSession(onboardSession, () => completed);
-
+    registerIncompleteOnboardExitHandlerForSession(onboardSession, () => completed || returnedNormally);
     const agent = await selectOnboardAgent({
       agentFlag: opts.agent,
       session,
@@ -4240,7 +4209,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         webSearchProvider: (config) => webSearchProviderForConfig(config),
       },
       finalizationDeps: {
-        ensureAgentDashboardForward: (name, selectedAgent) => selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : ensureDashboardForward(name, process.env.CHAT_UI_URL),
+        ensureAgentDashboardForward: (name, selectedAgent) => selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : ensureFinalizationDashboardForward(name),
         setDefaultSandbox: registry.setDefault,
         verifyWebSearchInsideSandbox,
         toSessionUpdates: (updates) =>
@@ -4304,6 +4273,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   } finally {
     try {
       await hermesApiPortReservationScope.release();
+      portableEnvScope?.restore();
       releaseOnboardLock();
       onboardRuntimeBoundary.clear();
       onboardTracing.finishOnboardTrace(onboardTrace, completed);
@@ -4315,9 +4285,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       else process.env.OPENSHELL_LOCAL_TLS_DIR = previousOpenshellLocalTlsDir;
       resetGatewayOwnerBinding();
     } finally {
+      portableEnvScope?.restore();
       hostMountScope.restore();
     }
   }
+  returnedNormally = true;
 }
 
 module.exports = {

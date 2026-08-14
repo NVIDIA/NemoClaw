@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ContainerEngineCommandCapture } from "../container-engine";
 import {
   createPodmanContainerEngine,
+  localPodmanEnvironment,
   type PodmanExecutableAuthorityDeps,
   type PodmanExecutableStat,
   type PodmanSocketAuthority,
@@ -55,6 +56,21 @@ function executableAuthorityDeps(
 }
 
 describe("Podman container engine command adapter", () => {
+  it("removes ambient remote and Docker TLS selectors from local Podman commands (#9035)", () => {
+    const source = {
+      CONTAINER_HOST: "ssh://attacker.test",
+      CONTAINER_CONNECTION: "attacker",
+      CONTAINER_SSHKEY: "/tmp/attacker-key",
+      DOCKER_TLS: "1",
+      DOCKER_TLS_VERIFY: "1",
+      DOCKER_CERT_PATH: "/tmp/attacker-certs",
+      KEEP: "value",
+    };
+
+    expect(localPodmanEnvironment(source)).toEqual({ KEEP: "value" });
+    expect(source.DOCKER_TLS_VERIFY).toBe("1");
+  });
+
   it("pins the exact socket around each operation-scoped command", () => {
     const assertAuthority = vi.fn();
     const capture = vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" }));

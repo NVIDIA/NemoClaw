@@ -702,6 +702,16 @@ function transitionMachineSnapshot(
     return;
   }
   session.machine = createMachineSnapshot(state, now, current.revision + 1);
+  syncCheckpointMachineState(session, state, now);
+}
+
+export function syncCheckpointMachineState(
+  session: Session,
+  state: OnboardMachineState,
+  updatedAt: string,
+): void {
+  if (!session.checkpoint) return;
+  session.checkpoint = { ...session.checkpoint, machineState: state, updatedAt };
 }
 
 export function createSession(overrides: Partial<Session> = {}): Session {
@@ -911,6 +921,13 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
 
   normalized.machine =
     parseMachineSnapshot(data.machine, normalized.sessionId) ?? inferMachineSnapshot(normalized);
+  if (
+    normalized.checkpoint &&
+    (normalized.checkpoint.sessionId !== normalized.sessionId ||
+      normalized.checkpoint.machineState !== normalized.machine.state)
+  ) {
+    return null;
+  }
   preserveInvalidSessionToolDisclosure(data, normalized);
   preserveInvalidSessionHostMounts(data, normalized);
 

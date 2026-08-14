@@ -458,6 +458,43 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.finalization).toMatchObject({ phase: "committed", commitReceipt });
   });
 
+  it("uses the Docker-GPU reconnect minimum instead of the shorter create timeout", async () => {
+    const fake = fixture();
+    fake.deps.sleep = vi.fn();
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request, snapshot } = authority();
+    const prepared = await adapter.prepareBootstrapReplacement({
+      handle,
+      snapshot,
+      request,
+      replacementOptions: { values: {} },
+    });
+    const durable = durablePreparation(handle, snapshot, prepared);
+    const replacement = await adapter.activateBootstrapReplacement({
+      handle,
+      snapshot,
+      prepared,
+      durablePreparation: durable,
+    });
+    const dateNow = vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(2_000);
+    vi.mocked(fake.deps.runOpenshell!)
+      .mockImplementationOnce(() => ({ status: 1 }))
+      .mockReturnValue({ status: 0 });
+
+    await expect(
+      adapter.awaitBootstrap({
+        handle,
+        snapshot,
+        replacement,
+        timeoutSecs: 1,
+      }),
+    ).resolves.toMatchObject({ runtimeId: NEW_ID });
+
+    expect(fake.deps.runOpenshell).toHaveBeenCalledTimes(2);
+    expect(fake.deps.sleep).toHaveBeenCalledWith(2);
+    dateNow.mockRestore();
+  });
+
   it("preserves commit validation failure details when the replacement cannot be quiesced", async () => {
     const fake = fixture({
       sharedState: "pending",

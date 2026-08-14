@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { resolveOpenShellSandboxId } from "../adapters/openshell/sandbox-identity";
+import {
+  parseOpenShellSandboxId,
+  resolveOpenShellSandboxId,
+} from "../adapters/openshell/sandbox-identity";
 import { printSandboxCreateRecoveryHints } from "../build-context";
 import { getSandboxDeleteOutcome } from "../domain/sandbox/destroy";
 import { streamSandboxCreate } from "../sandbox/create-stream";
@@ -27,6 +30,7 @@ import type {
   SandboxGpuCreateFlowInput,
 } from "./sandbox-gpu-create-flow";
 import * as sandboxGpuPreflight from "./sandbox-gpu-preflight";
+import type { CreatedSandboxReadyIdentityCheck } from "./sandbox-readiness-tracing";
 import * as sandboxReadinessTracing from "./sandbox-readiness-tracing";
 import { addTraceEvent } from "./tracing";
 
@@ -43,6 +47,61 @@ export type SandboxGpuCreateAttemptState = {
 // container's stale Ready row. Require one confirmation poll before advancing
 // to live validation or the GPU proof.
 const REPLACEMENT_STABLE_READY_POLLS = 2;
+
+const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/gu;
+const OPENSHELL_SANDBOX_NOT_READY =
+  /^Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"$/iu;
+
+type OpenShellCommandResult = ReturnType<SandboxGpuCreateFlowDeps["runOpenshell"]>;
+
+function normalizedOpenShellCommandOutput(result: OpenShellCommandResult): string {
+  return `${String(result.stderr ?? "")}\n${String(result.stdout ?? "")}`
+    .replace(ANSI_RE, "")
+    .replace(/[×│]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+type OpenShellSandboxIdentityProbe =
+  | { state: "identified"; sandboxId: string }
+  | { state: "not_ready" }
+  | { state: "failed" };
+
+function probeExactOpenShellSandboxId(
+  sandboxName: string,
+  deps: SandboxGpuCreateFlowDeps,
+): OpenShellSandboxIdentityProbe {
+  const result = deps.runOpenshell(["sandbox", "get", sandboxName], {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  if (result.status === 0 && !result.error) {
+    const sandboxId = parseOpenShellSandboxId(String(result.stdout ?? ""));
+    return sandboxId ? { state: "identified", sandboxId } : { state: "failed" };
+  }
+  return OPENSHELL_SANDBOX_NOT_READY.test(normalizedOpenShellCommandOutput(result))
+    ? { state: "not_ready" }
+    : { state: "failed" };
+}
+
+function checkRecreatedSandboxReadyIdentity(
+  sandboxName: string,
+  expectedSandboxId: string,
+  deps: SandboxGpuCreateFlowDeps,
+): ReturnType<CreatedSandboxReadyIdentityCheck> {
+  const identity = probeExactOpenShellSandboxId(sandboxName, deps);
+  if (identity.state === "not_ready") return "not_ready";
+  if (identity.state === "failed") return "probe_failed";
+  if (identity.sandboxId !== expectedSandboxId) return "identity_changed";
+  const result = deps.runOpenshell(["sandbox", "exec", "--name", sandboxName, "--", "true"], {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  if (result.status === 0 && !result.error) return "ready";
+  return OPENSHELL_SANDBOX_NOT_READY.test(normalizedOpenShellCommandOutput(result))
+    ? "not_ready"
+    : "probe_failed";
+}
 
 class ManagedBootstrapCreateStreamFailure extends Error {
   constructor(readonly result: Awaited<ReturnType<typeof streamSandboxCreate>>) {
@@ -334,6 +393,21 @@ export function createSandboxGpuCreateAttemptRunner(
         );
       }
     }
+    const preRecreateIdentity = deferRestartSafeCutover
+      ? probeExactOpenShellSandboxId(input.sandboxName, deps)
+      : null;
+    const expectedRecreatedSandboxId =
+      preRecreateIdentity?.state === "identified" ? preRecreateIdentity.sandboxId : null;
+    if (deferRestartSafeCutover && !expectedRecreatedSandboxId) {
+      console.error("");
+      console.error(
+        `  Sandbox '${input.sandboxName}' reached Ready, but OpenShell did not return one exact durable sandbox ID before runtime recreation.`,
+      );
+      printSandboxCreateFailureDiagnostics(input.sandboxName, {
+        backupPath: input.restoreBackupPath,
+      });
+      process.exit(createResult.status === 0 ? 1 : createResult.status);
+    }
     await runtimePatch.ensureApplied();
     await runtimePatch.waitForSupervisorReconnectIfNeeded();
     console.log("  Waiting for sandbox to become ready...");
@@ -343,7 +417,14 @@ export function createSandboxGpuCreateAttemptRunner(
       runCaptureOpenshell: deps.runCaptureOpenshell,
       isSandboxReady,
       getSandboxFailurePhase,
-      stableReadyPolls: compatibility || managedBootstrap ? REPLACEMENT_STABLE_READY_POLLS : 1,
+      stableReadyPolls:
+        compatibility || managedBootstrap || expectedRecreatedSandboxId
+          ? REPLACEMENT_STABLE_READY_POLLS
+          : 1,
+      checkReadyIdentity: expectedRecreatedSandboxId
+        ? () =>
+            checkRecreatedSandboxReadyIdentity(input.sandboxName, expectedRecreatedSandboxId, deps)
+        : undefined,
       sleep: deps.sleep,
     });
     if (!readiness.ready) {
@@ -388,7 +469,11 @@ export function createSandboxGpuCreateAttemptRunner(
         backupPath: input.restoreBackupPath,
       });
       if (compatibility) runtimePatch.printReadinessFailureIfEnabled();
-      else {
+      else if (expectedRecreatedSandboxId) {
+        console.error(
+          "  NemoClaw did not start dashboard forwarding. NemoClaw left the sandbox in place for inspection and recovery.",
+        );
+      } else {
         const deletion = deps.runOpenshell(["sandbox", "delete", input.sandboxName], {
           ignoreError: true,
           suppressOutput: true,

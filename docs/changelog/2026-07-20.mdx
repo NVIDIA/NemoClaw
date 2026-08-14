@@ -12,7 +12,6 @@ NemoClaw v0.0.90 keeps managed-image routing identifiers out of secret-shaped bu
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - OpenClaw core, Slack, and Microsoft Teams installations now replace reviewed vulnerable transitive packages with integrity-verified remediated versions while retaining the `openclaw@2026.6.10` release pin.
   Archive validation fails closed, and the dependency audit records the remaining reviewed low- and moderate-severity findings.
-  For more information, refer to the [OpenClaw 2026.6.10 Dependency Review](https://github.com/NVIDIA/NemoClaw/blob/main/docs/security/openclaw-2026.6.10-dependency-review.md).
 - `credentials reset` now recognizes sandbox attachments from wrapped OpenShell diagnostics, validates each sandbox name, detaches affected sandboxes, and retries provider deletion without exposing credential values.
   For more information, refer to [Credential Rotation](/user-guide/openclaw/security/credential-rotation).
 - OpenClaw WhatsApp status now recognizes the current paired-session path and derives in-process bridge activity from redacted gateway-log evidence.

@@ -10,7 +10,9 @@ import path from "node:path";
 import { nemoclawStateRoot } from "./state-root";
 
 export const LAUNCH_READINESS_LEASE_MS = 24 * 60 * 60 * 1_000;
-export const LAUNCH_READINESS_SCHEMA_VERSION = 1;
+// This version covers lease and fence records. Nested session qualifications
+// and the separate runtime authority keep their independent schema versions.
+export const LAUNCH_READINESS_SCHEMA_VERSION = 2;
 export const LAUNCH_READINESS_MAX_BYTES = 16 * 1_024;
 
 const RECEIPT_DIRECTORY = "launch-readiness";
@@ -27,10 +29,24 @@ export interface LaunchReadinessIdentity {
   gatewayName: string;
   lifecycleGeneration: string;
   liveIdentityFingerprint: string;
+  session: LaunchReadinessSessionQualification | null;
 }
 
-export interface LaunchReadinessLease {
+export interface LaunchReadinessOpenClawSessionQualification {
   schemaVersion: 1;
+  kind: "openclaw-pairing";
+  openclawVersion: string;
+  deviceIdentitySha256: string;
+  pairingStateSha256: string;
+  policySha256: string;
+  requiredRoles: ["operator"];
+  requiredScopes: ["operator.pairing", "operator.read", "operator.write"];
+}
+
+export type LaunchReadinessSessionQualification = LaunchReadinessOpenClawSessionQualification;
+
+export interface LaunchReadinessLease {
+  schemaVersion: 2;
   kind: "lease";
   epochId: string;
   sandboxName: string;
@@ -51,7 +67,7 @@ export interface LaunchReadinessLease {
 }
 
 export interface LaunchReadinessFence {
-  schemaVersion: 1;
+  schemaVersion: 2;
   kind: "fence";
   epochId: string;
   sandboxName: string;
@@ -189,6 +205,51 @@ function isEpoch(value: unknown): value is string {
   return typeof value === "string" && SHA256_RE.test(value);
 }
 
+function isExactStringArray(value: unknown, expected: readonly string[]): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length === expected.length &&
+    value.every((entry, index) => entry === expected[index])
+  );
+}
+
+function isSessionQualification(value: unknown): value is LaunchReadinessSessionQualification {
+  if (!isPlainRecord(value)) return false;
+  if (
+    !hasExactKeys(value, [
+      "schemaVersion",
+      "kind",
+      "openclawVersion",
+      "deviceIdentitySha256",
+      "pairingStateSha256",
+      "policySha256",
+      "requiredRoles",
+      "requiredScopes",
+    ])
+  ) {
+    return false;
+  }
+  return (
+    value.schemaVersion === 1 &&
+    value.kind === "openclaw-pairing" &&
+    typeof value.openclawVersion === "string" &&
+    value.openclawVersion.length > 0 &&
+    value.openclawVersion.length <= 128 &&
+    typeof value.deviceIdentitySha256 === "string" &&
+    SHA256_RE.test(value.deviceIdentitySha256) &&
+    typeof value.pairingStateSha256 === "string" &&
+    SHA256_RE.test(value.pairingStateSha256) &&
+    typeof value.policySha256 === "string" &&
+    SHA256_RE.test(value.policySha256) &&
+    isExactStringArray(value.requiredRoles, ["operator"]) &&
+    isExactStringArray(value.requiredScopes, [
+      "operator.pairing",
+      "operator.read",
+      "operator.write",
+    ])
+  );
+}
+
 function isIdentity(value: unknown): value is LaunchReadinessIdentity {
   if (!isPlainRecord(value)) return false;
   if (
@@ -200,6 +261,7 @@ function isIdentity(value: unknown): value is LaunchReadinessIdentity {
       "gatewayName",
       "lifecycleGeneration",
       "liveIdentityFingerprint",
+      "session",
     ])
   ) {
     return false;
@@ -220,7 +282,8 @@ function isIdentity(value: unknown): value is LaunchReadinessIdentity {
     typeof value.livePolicy === "string" &&
     SHA256_RE.test(value.livePolicy) &&
     typeof value.liveInference === "string" &&
-    SHA256_RE.test(value.liveInference)
+    SHA256_RE.test(value.liveInference) &&
+    (value.session === null || isSessionQualification(value.session))
   );
 }
 

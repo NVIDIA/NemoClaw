@@ -183,10 +183,6 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
       const operation = args[1] as () => unknown;
       return { kind: "entered", value: await operation() };
     }) as never);
-  if (typeof options.isWsl === "boolean") {
-    vi.spyOn(platform, "isWsl").mockReturnValue(options.isWsl);
-  }
-
   const preflightVllmSpy = vi
     .spyOn(connectVllmPreflight, "preflightVllmModelEnvOrExit")
     .mockImplementation(() => undefined);
@@ -275,17 +271,17 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const probeOllamaAuthProxyHealthSpy = vi
     .spyOn(ollamaProxy, "probeOllamaAuthProxyHealth")
     .mockReturnValue({ ok: true });
-  if (typeof options.isWsl !== "boolean") {
-    const realIsWsl = platform.isWsl as (opts?: WslDetectionOptions) => boolean;
-    // Pin the platform gate for every isWsl consumer the harness loads: isWsl
-    // answers false off Linux before it reads WSL_DISTRO_NAME, so a case that
-    // stubs that variable cannot reach the WSL route on a macOS contributor
-    // machine. With the gate pinned, the stubbed environment decides, on every
-    // host, and a caller's own options still win over the pin (#8868).
-    vi.spyOn(platform, "isWsl").mockImplementation((...args: unknown[]) =>
-      realIsWsl({ platform: "linux", ...((args[0] as WslDetectionOptions | undefined) ?? {}) }),
-    );
-  }
+  const realIsWsl = platform.isWsl as (opts?: WslDetectionOptions) => boolean;
+  // Pin the platform gate for every isWsl consumer the harness loads: isWsl
+  // answers false off Linux before it reads WSL_DISTRO_NAME, so a case that
+  // stubs that variable cannot reach the WSL route on a macOS contributor
+  // machine. With the gate pinned, the stubbed environment decides, on every
+  // host, and a caller's own options still win over the pin (#8868).
+  vi.spyOn(platform, "isWsl").mockImplementation((...args: unknown[]) =>
+    typeof options.isWsl === "boolean"
+      ? options.isWsl
+      : realIsWsl({ platform: "linux", ...((args[0] as WslDetectionOptions | undefined) ?? {}) }),
+  );
   const primaryRegistryEntry: SandboxEntry = {
     name: "alpha",
     agent: options.agentName ?? "openclaw",

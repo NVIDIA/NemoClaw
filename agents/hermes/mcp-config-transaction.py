@@ -95,7 +95,7 @@ MAX_ERROR_MESSAGE_LENGTH = 512
 MAX_GATEWAY_PID_RECORD_BYTES = 4096
 MCP_RACE_RECOVERY_ATTEMPTS = 3
 MAX_GATEWAY_PUBLIC_PORT_RECORD_BYTES = 16
-MAX_SERVICE_MANAGER_ENVIRONMENT_BYTES = 64 * 1024
+MAX_GATEWAY_ENVIRONMENT_BYTES = 64 * 1024
 GATEWAY_INTERNAL_PORT = 18642
 
 
@@ -1040,36 +1040,24 @@ def _gateway_identity() -> tuple[int, object] | None:
     return numeric_pid, start_time
 
 
-def _read_service_manager_environment(pid: int) -> bytes:
+def _read_gateway_environment(pid: int) -> bytes:
     try:
         with open(f"/proc/{pid}/environ", "rb") as environment_file:
-            raw = environment_file.read(MAX_SERVICE_MANAGER_ENVIRONMENT_BYTES + 1)
-    except FileNotFoundError as error:
-        raise PermissionError(
-            "Hermes service-manager environment is unavailable"
-        ) from error
-    if len(raw) > MAX_SERVICE_MANAGER_ENVIRONMENT_BYTES:
-        raise PermissionError("Hermes service-manager environment is too large")
+            raw = environment_file.read(MAX_GATEWAY_ENVIRONMENT_BYTES + 1)
+    except OSError as error:
+        raise PermissionError("Hermes gateway environment is unavailable") from error
+    if len(raw) > MAX_GATEWAY_ENVIRONMENT_BYTES:
+        raise PermissionError("Hermes gateway environment is too large")
     return raw
 
 
-def _service_manager_gateway_public_port(
+def _gateway_environment_public_port(
     identity: tuple[int, object],
 ) -> int:
     gateway_pid = identity[0]
-    manager_pid = _process_parent_pid(gateway_pid)
-    if manager_pid is None or not _is_service_manager_process(manager_pid):
-        raise PermissionError(
-            "Hermes gateway is not running under the managed service lifecycle"
-        )
-
-    environment = _read_service_manager_environment(manager_pid)
-    if (
-        _gateway_identity() != identity
-        or _process_parent_pid(gateway_pid) != manager_pid
-        or not _is_service_manager_process(manager_pid)
-    ):
-        raise PermissionError("Hermes service-manager identity changed while reading")
+    environment = _read_gateway_environment(gateway_pid)
+    if _gateway_identity() != identity:
+        raise PermissionError("Hermes gateway identity changed while reading")
 
     prefix = b"NEMOCLAW_HERMES_API_PORT="
     values = [
@@ -1078,15 +1066,13 @@ def _service_manager_gateway_public_port(
         if entry.startswith(prefix)
     ]
     if len(values) > 1:
-        raise PermissionError("Hermes service-manager API port is ambiguous")
+        raise PermissionError("Hermes gateway API port is ambiguous")
     if not values or not values[0]:
         return 8642
     try:
         decoded = values[0].decode("ascii")
     except UnicodeDecodeError as error:
-        raise PermissionError(
-            "Hermes service-manager API port is malformed"
-        ) from error
+        raise PermissionError("Hermes gateway API port is malformed") from error
     return _parse_gateway_public_port(decoded)
 
 
@@ -1099,7 +1085,7 @@ def _resolve_gateway_public_port() -> int:
     identity = _gateway_identity()
     if identity is None:
         raise PermissionError("Hermes gateway identity is unavailable")
-    return _service_manager_gateway_public_port(identity)
+    return _gateway_environment_public_port(identity)
 
 
 def _configure_gateway_public_port() -> None:
