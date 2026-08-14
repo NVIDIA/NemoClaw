@@ -9,6 +9,11 @@
 # cohort pointer move. Consumers use that pointer to discover the matching
 # Hermes and Deep Agents Code cohort aliases, so a failed run cannot expose a
 # mixed-agent or mixed-architecture cohort.
+#
+# The Pi candidate lane builds and validates its own per-architecture images and
+# publishes exact candidate digests under a separate contract artifact name. It
+# never contributes to the all-agent cohort, so Pi cannot reach onboarding agent
+# selection before the activation change merges.
 
 name: Images / Managed Images
 
@@ -855,6 +860,205 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  pi-candidate:
+    name: Build and validate the Pi candidate managed image (${{ matrix.arch }})
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    env:
+      BASE_DOCKERFILE: agents/pi/Dockerfile.base
+      CANDIDATE_IMAGE: nemoclaw-managed-candidate/pi
+      DOCKERFILE: agents/pi/Dockerfile
+      LOCAL_BASE_REFERENCE: nemoclaw-managed-candidate/pi-base:${{ github.sha }}
+      PLATFORM: ${{ matrix.platform }}
+      PUBLICATION_COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+      REPOSITORY: ghcr.io/nvidia/nemoclaw/pi-sandbox
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+      # Pi has no published base alias yet, so the candidate lane builds its own
+      # base on the target architecture. The activation change adds the shared
+      # published-base contract with the rest of the release cohort.
+      - name: Build the exact Pi candidate base
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --platform "$PLATFORM" \
+            --load \
+            --file "$BASE_DOCKERFILE" \
+            --tag "$LOCAL_BASE_REFERENCE" \
+            .
+      - name: Validate candidate build args
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/check-production-build-args.sh \
+            -f "$DOCKERFILE" \
+            --build-arg "BASE_IMAGE=${LOCAL_BASE_REFERENCE}" \
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+      - name: Build the Pi candidate managed image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: agents/pi/Dockerfile
+          platforms: ${{ matrix.platform }}
+          load: true
+          push: false
+          tags: nemoclaw-managed-candidate/pi:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            io.nvidia.nemoclaw.agent=pi
+            io.nvidia.nemoclaw.managed-image.contract=1
+            io.nvidia.nemoclaw.managed-image.platform=${{ matrix.platform }}
+            io.nvidia.nemoclaw.managed-image.startup-profile=1
+            io.nvidia.nemoclaw.managed-image.capabilities=1
+            io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          build-args: |
+            BASE_IMAGE=${{ env.LOCAL_BASE_REFERENCE }}
+            NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+          provenance: false
+          sbom: false
+      - name: Validate the Pi candidate runtime contract
+        shell: bash
+        env:
+          IMAGE_REFERENCE: nemoclaw-managed-candidate/pi:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          image_json="$(docker image inspect "$IMAGE_REFERENCE")"
+          if ! jq -e \
+            --arg platform "$PLATFORM" \
+            '
+              length == 1 and (
+                .[0].Config.Labels["io.nvidia.nemoclaw.agent"] == "pi" and
+                .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.platform"] == $platform and
+                .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.startup-profile"] == "1" and
+                .[0].Config.Entrypoint == ["/usr/local/bin/nemoclaw-start"]
+              )
+            ' <<< "$image_json" >/dev/null
+          then
+            echo "ERROR: the Pi candidate image does not carry the managed-image runtime contract." >&2
+            exit 1
+          fi
+          version="$(docker run --rm --entrypoint /usr/local/bin/pi "$IMAGE_REFERENCE" --version)"
+          expected_version="$(node -p 'require("./agents/pi/pi-runtime/package.json").dependencies["@earendil-works/pi-coding-agent"]')"
+          grep -Fq "$expected_version" <<< "$version"
+          docker run --rm --entrypoint /bin/bash "$IMAGE_REFERENCE" -c '
+            set -eu
+            test "$(stat -c %a /sandbox/.pi/agent/models.json)" = 600
+            test "$(stat -c %U /sandbox/.pi/agent/models.json)" = sandbox
+            node -e "const c=require(\"/sandbox/.pi/agent/models.json\"); if (!c.defaultModel || !c.providers.openshell.baseUrl) process.exit(1)"
+            test -x /usr/local/bin/nemoclaw-managed-bootstrap
+          '
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Publish only the canonical digest. The candidate repository has no
+      # consumer alias, so a published candidate stays reachable by digest alone.
+      - name: Publish the Pi candidate image by digest
+        id: publish
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: agents/pi/Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=ghcr.io/nvidia/nemoclaw/pi-sandbox,push-by-digest=true,name-canonical=true,push=true
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            io.nvidia.nemoclaw.agent=pi
+            io.nvidia.nemoclaw.managed-image.contract=1
+            io.nvidia.nemoclaw.managed-image.platform=${{ matrix.platform }}
+            io.nvidia.nemoclaw.managed-image.startup-profile=1
+            io.nvidia.nemoclaw.managed-image.capabilities=1
+            io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          build-args: |
+            BASE_IMAGE=${{ env.LOCAL_BASE_REFERENCE }}
+            NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+          provenance: false
+          sbom: false
+      - name: Record the exact Pi candidate contract
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: the Pi candidate publication did not return an immutable digest." >&2
+            exit 1
+          fi
+          release="v$(node -p 'require("./package.json").version')"
+          contract_dir="$RUNNER_TEMP/managed-candidate-contract"
+          mkdir -p "$contract_dir"
+          jq -n \
+            --arg cohort "$PUBLICATION_COHORT" \
+            --arg digest "$DIGEST" \
+            --arg image "$REPOSITORY" \
+            --arg platform "$PLATFORM" \
+            --arg release "$release" \
+            --arg revision "$GITHUB_SHA" \
+            --arg reference "${REPOSITORY}@${DIGEST}" \
+            '{
+              contractVersion: 1,
+              agent: "pi",
+              platform: $platform,
+              image: $image,
+              digest: $digest,
+              reference: $reference,
+              source: {
+                repository: "NVIDIA/NemoClaw",
+                revision: $revision,
+                release: $release,
+                cohort: $cohort
+              },
+              startupProfileContractVersion: 1,
+              capabilityContractVersion: 1
+            }' > "$contract_dir/contract.json"
+          npx tsx tools/managed-images/validate-candidate-contract.mts \
+            --contract "$contract_dir/contract.json" \
+            --platform "$PLATFORM"
+      # The all-agent activation job downloads managed-pr-contract-* artifacts.
+      # This candidate name is deliberately outside that pattern so a published
+      # Pi digest cannot enter the atomic release cohort.
+      - name: Upload the exact Pi candidate contract
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-candidate-contract-${{ github.run_id }}-${{ github.run_attempt }}-pi-${{ matrix.arch }}
+          path: ${{ runner.temp }}/managed-candidate-contract/contract.json
+          if-no-files-found: error
+          retention-days: 7
   build-and-validate:
     name: Build and validate ${{ matrix.display_name }} managed image (${{ matrix.arch }})
     if: github.event_name != 'pull_request'

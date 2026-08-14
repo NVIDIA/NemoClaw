@@ -397,6 +397,26 @@
       "category": "security"
     },
     {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "publishes candidate contracts outside the all-agent activation pattern",
+      "category": "security"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "builds and validates the candidate image for linux/amd64 and linux/arm64",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "publishes a Pi base image for linux/amd64 and linux/arm64",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "grants network capability only to image-owned binaries",
+      "category": "security"
+    },
+    {
       "file": "test/platform-vitest-main-workflow.test.ts",
       "test": "pins and verifies the Node.js archive in the trusted WSL helper",
       "category": "security"
@@ -466,7 +486,6 @@
       "test": "executes pull request installer hash checks only from the PR base SHA",
       "category": "security"
     },
-
     {
       "file": "test/runtime-provider-source-shape.test.ts",
       "test": "keeps migrated provider identities and implementations behind the one bundle composition",
