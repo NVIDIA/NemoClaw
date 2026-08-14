@@ -5180,14 +5180,12 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       opts.allowLegacyHermesProtocol === true,
       protocol,
     );
-    if (transition && timerAuthority) {
-      transition = persistIncompleteShieldsDownPosture(
-        sandboxName,
-        transition,
-        timerAuthority,
-        rollback,
-      );
-    }
+    transition = persistIncompleteShieldsDownPosture(
+      sandboxName,
+      transition,
+      timerAuthority,
+      rollback,
+    );
     if (transition && rollback.timerAuthorityRevoked) {
       clearShieldsDownTransition(sandboxName, transition.processToken);
     }
