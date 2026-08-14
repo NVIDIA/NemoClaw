@@ -352,7 +352,7 @@ For the portable profile, it also records the current user's canonical home repo
 It does not record ambient Docker or Podman runtime selector values.
 The runtime authority record contains no credentials.
 A plain `--resume` restores the recorded profile.
-You can also combine `--resume` with `--experimental-profile portable` when the recorded profile is portable.
+You can also run `$$nemoclaw onboard --experimental-profile portable --resume` when the recorded profile is portable.
 NemoClaw rejects an explicit profile that conflicts with the checkpoint before it changes portable configuration, activates the user-scoped Podman socket, or changes gateway and sandbox resources.
 
 Portable resume derives `DOCKER_HOST`, `CONTAINERS_CONF`, and `NETAVARK_FW` again while it holds the onboarding lock.
