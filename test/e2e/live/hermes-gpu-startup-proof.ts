@@ -247,13 +247,8 @@ raise SystemExit(1)`,
     entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
     has_openshell_sandbox_command: true,
   });
-  if (gpuRoute !== "native-success") {
-    expect(commandBoundary.command_ends_with_nemoclaw_start).toBe(true);
-    expect(commandBoundary.command_is_sleep_infinity).toBe(false);
-  } else {
-    expect(commandBoundary.command_is_sleep_infinity).toBe(true);
-    expect(commandBoundary.command_ends_with_nemoclaw_start).toBe(false);
-  }
+  expect(commandBoundary.command_ends_with_nemoclaw_start).toBe(true);
+  expect(commandBoundary.command_is_sleep_infinity).toBe(false);
 
   const containerState = await host.command(
     "docker",
