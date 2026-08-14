@@ -35,35 +35,6 @@ function defaultUnloadOllamaModels(onlyModels: readonly string[]): void {
 }
 
 /**
- * The Ollama model this sandbox alone is holding, or null when there is
- * nothing safe to release.
- *
- * The Ollama daemon is host-global, so unloading everything would evict a
- * model a sibling sandbox is still using. Release only this sandbox's own
- * model, and only when no other Ollama-backed sandbox is registered against
- * the same one. Peers are compared with Ollama's implicit `latest` tag
- * semantics, so a sibling recorded as `llama3` still protects `llama3:latest`.
- */
-function exclusivelyHeldOllamaModel(
-  sandbox: registry.SandboxEntry,
-  peers: readonly registry.SandboxEntry[],
-): string | null {
-  const model = sandbox.model?.trim();
-  if (!model) return null;
-  const { ollamaModelRefsMatch } = require("../../inference/ollama/model-discovery") as {
-    ollamaModelRefsMatch: (left: string, right: string) => boolean;
-  };
-  const sharedWithPeer = peers.some(
-    (peer) =>
-      peer.name !== sandbox.name &&
-      !!peer.provider?.includes("ollama") &&
-      !!peer.model &&
-      ollamaModelRefsMatch(peer.model, model),
-  );
-  return sharedWithPeer ? null : model;
-}
-
-/**
  * Release the GPU memory an Ollama-backed sandbox left resident (#9110).
  *
  * `stopAll()` and `destroySandbox()` already unload; a plain stop did not, so
@@ -78,6 +49,12 @@ function unloadOllamaModelsBestEffort(
   if (!sandbox.provider?.includes("ollama")) return;
   try {
     const { sandboxes } = (deps.listSandboxes ?? registry.listSandboxes)();
+    const { exclusivelyHeldOllamaModel } = require("../../inference/ollama/model-ownership") as {
+      exclusivelyHeldOllamaModel: (
+        sandbox: registry.SandboxEntry,
+        peers: readonly registry.SandboxEntry[],
+      ) => string | null;
+    };
     const model = exclusivelyHeldOllamaModel(sandbox, sandboxes);
     if (!model) return;
     (deps.unloadOllamaModels ?? defaultUnloadOllamaModels)([model]);
