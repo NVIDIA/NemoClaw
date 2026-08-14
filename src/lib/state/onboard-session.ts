@@ -913,7 +913,8 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
         (intent.kind === "spark" ||
           normalized.provider !== "vllm-local" ||
           normalized.model !== intent.servedModel)) ||
-      (!providerComplete && (normalized.provider !== null || normalized.model !== null))
+      // Spark intents have no served-model binding, so provider/model may be set while in_progress.
+      (!providerComplete && intent.kind !== "spark" && (normalized.provider !== null || normalized.model !== null))
     ) {
       return null;
     }
