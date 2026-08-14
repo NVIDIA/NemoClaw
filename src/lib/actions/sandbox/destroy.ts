@@ -669,7 +669,7 @@ async function destroySandboxUnlocked(
     try {
       // The routed-peer scan and router stop are one critical section with
       // routed onboarding's route registration, which runs under the same
-      // gateway route lock. Otherwise a concurrent onboard can register a
+      // gateway route lock. Otherwise concurrent onboarding can register a
       // routed sandbox after the scan and then lose its shared router.
       await withGatewayRouteMutationLock(cleanupGatewayName, () =>
         stopModelRouterForDestroyedSandbox(sandbox, {
@@ -681,7 +681,7 @@ async function destroySandboxUnlocked(
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       defaultDestroyWarn(
-        `Sandbox deletion succeeded, but the Model Router teardown could not run under the gateway route lock: ${detail}. ` +
+        `Sandbox deletion succeeded, but the Model Router teardown did not complete: ${detail}. ` +
           `Stop the Model Router process manually before the next Model Router onboarding.`,
       );
     }
