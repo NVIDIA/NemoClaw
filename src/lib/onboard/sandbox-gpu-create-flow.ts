@@ -37,6 +37,13 @@ import { addTraceEvent } from "./tracing";
 
 export { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
 
+export function resolvePortableLifecycleMode(
+  agent: AgentDefinition | null,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return isPortableExperimentalProfile(env) && (agent?.name ?? "openclaw") === "openclaw";
+}
+
 export function resolveAgentCreateInput(
   agent: AgentDefinition | null,
   dockerDriverGateway: boolean,
@@ -44,8 +51,7 @@ export function resolveAgentCreateInput(
 ) {
   return {
     ...resolveDockerStartupCommandPatch(agent, dockerDriverGateway),
-    portableLifecycle:
-      isPortableExperimentalProfile(env) && (agent?.name ?? "openclaw") === "openclaw",
+    portableLifecycle: resolvePortableLifecycleMode(agent, env),
   };
 }
 
