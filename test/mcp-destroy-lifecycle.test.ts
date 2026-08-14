@@ -99,6 +99,16 @@ function stubRecreateJournal(): RebuildRecreateJournal {
     id: "journal-1",
     acceptedTarget: false,
     sourceConfirmedAbsent: false,
+    gatewayAuthority: {
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    },
     targetGeneration: "generation-1",
     targetIntentFingerprint: "intent-1",
     markDeleting: vi.fn(),
@@ -291,10 +301,10 @@ beforeEach(() => {
       case command.includes("'config' 'add'"):
         testState.adapterRegistered = true;
         return { status: 0, stdout: "", stderr: "" };
-      case command.includes('["config", "remove"'):
+      case command.includes('"config", "--config"') && command.includes('"remove"'):
         testState.adapterRegistered = false;
         return { status: 0, stdout: "", stderr: "" };
-      case command.includes('["config", "get"'):
+      case command.includes('"config", "get"'):
         return {
           status: 0,
           stdout: testState.adapterRegistered ? "registered\n" : "absent\n",

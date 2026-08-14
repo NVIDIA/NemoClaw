@@ -41,15 +41,19 @@ const PS_OUTPUT = [
   // leaves a randomly named container that only its image identifies.
   "c-probe nemoclaw-hermes-sandbox-base-local:image-abc nostalgic_curie",
   "c-openclaw ghcr.io/openclaw/openclaw:latest my-openclaw-test",
+  "c-registry registry.example.com/nemoclaw/tool:1 registry-tool",
   "c-unrelated redis:7 cache",
 ].join("\n");
 
 const IMAGES_OUTPUT = [
   "i-nemoclaw ghcr.io/nvidia/nemoclaw:test",
+  "i-managed ghcr.io/nvidia/nemoclaw/openclaw-sandbox:latest",
   // The gateway builds sandbox images under this repository, so the `openshell`
   // half of the filter selects real resources and must stay covered.
   "i-openshell openshell/sandbox-from:1780294581",
   "i-openclaw ghcr.io/openclaw/openclaw:latest",
+  "i-tag python:3.12-nemoclaw",
+  "i-registry registry.example.com/nemoclaw/tool:1",
   "i-unrelated redis:7",
 ].join("\n");
 
@@ -109,6 +113,7 @@ describe("uninstall Docker resource scope", () => {
     const calls = runWithDockerInventory();
 
     expect(calls).not.toContainEqual(["rm", "-f", "c-openclaw"]);
+    expect(calls).not.toContainEqual(["rm", "-f", "c-registry"]);
     expect(calls).not.toContainEqual(["rm", "-f", "c-unrelated"]);
   });
 
@@ -116,6 +121,8 @@ describe("uninstall Docker resource scope", () => {
     const calls = runWithDockerInventory();
 
     expect(calls).not.toContainEqual(["rmi", "-f", "i-openclaw"]);
+    expect(calls).not.toContainEqual(["rmi", "-f", "i-tag"]);
+    expect(calls).not.toContainEqual(["rmi", "-f", "i-registry"]);
     expect(calls).not.toContainEqual(["rmi", "-f", "i-unrelated"]);
   });
 
@@ -136,6 +143,7 @@ describe("uninstall Docker resource scope", () => {
     const calls = runWithDockerInventory();
 
     expect(calls).toContainEqual(["rmi", "-f", "i-nemoclaw"]);
+    expect(calls).toContainEqual(["rmi", "-f", "i-managed"]);
   });
 
   it("still removes gateway-built OpenShell sandbox images", () => {

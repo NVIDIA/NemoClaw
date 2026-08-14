@@ -16,11 +16,13 @@ on:
   workflow_call:
   pull_request:
     paths:
+      - ".github/actions/ci-reviewed-npm-audit/**"
       - ".github/workflows/managed-images.yaml"
       - ".dockerignore"
       - "Dockerfile"
       - "agents/**"
       - "ci/npm-audit-exceptions.json"
+      - "ci/reviewed-npm-audit.json"
       - "nemoclaw/**"
       - "nemoclaw-blueprint/**"
       - "scripts/**"
@@ -49,11 +51,276 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  pr-reviewed-npm-audit:
+    name: PR reviewed npm audit
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout commit under review
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          persist-credentials: false
+
+      - name: Checkout trusted reviewed npm audit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-reviewed-npm-audit
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-reviewed-npm-audit
+            ci/npm-audit-exceptions.json
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-audit.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Verify exact audit source and target
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD)" = "$BASE_SHA"
+          test "$(git -C candidate rev-parse --verify HEAD)" = "$CANDIDATE_SHA"
+
+      - name: Audit exact PR production npm graphs
+        uses: ./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit
+        with:
+          target-root: ${{ github.workspace }}/candidate
+          report-dir: artifacts/reviewed-npm-audit
+
+  pr-staging-qa-deep-code:
+    name: Staging QA base permission regression (Deep Agents Code)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+      # Retains the reviewed discovery-permission repair and the current
+      # managed-image security inventory. The previous staging source pinned
+      # libssh2 nemoclaw1, which cannot satisfy the candidate's nemoclaw2 contract.
+      STAGING_QA_SOURCE_SHA: ce96811ddb418ad01c040521a1fe912b5bcb405e
+      STAGING_QA_BASE_IMAGE: nemoclaw-deepagents-code-base:staging-31396519688
+      STAGING_QA_FINAL_IMAGE: nemoclaw-managed-pr/langchain-deepagents-code-staging-qa
+    steps:
+      - name: Checkout latest PR commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          persist-credentials: false
+
+      # Rebuild a security-compatible base from the exact source that retains
+      # the reviewed discovery-permission repair.
+      - name: Checkout exact staging QA base source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.STAGING_QA_SOURCE_SHA }}
+          path: staging-qa-base-source
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Validate staging QA source
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_root="$GITHUB_WORKSPACE/staging-qa-base-source"
+          actual_source_sha="$(git -C "$source_root" rev-parse HEAD)"
+          if [ "$actual_source_sha" != "$STAGING_QA_SOURCE_SHA" ]; then
+            echo "ERROR: staging QA base source does not match the recorded NemoClaw commit." >&2
+            exit 1
+          fi
+          printf '### Staging QA Deep Agents Code base\n\n'
+          printf 'NemoClaw source commit: %s\n' "$STAGING_QA_SOURCE_SHA"
+          {
+            printf '### Staging QA Deep Agents Code base\n\n'
+            printf 'NemoClaw source commit: %s\n' "$STAGING_QA_SOURCE_SHA"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Reproduce staging discovery permission drift
+        shell: bash
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          reviewed_root="tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery"
+          for artifact in \
+            BUNDLED_PACKAGES.json \
+            THIRD_PARTY_LICENSES.txt \
+            mcp-tool-discovery.bundle
+          do
+            artifact_path="${reviewed_root}/${artifact}"
+            if [ ! -f "$artifact_path" ] || [ -L "$artifact_path" ]; then
+              echo "ERROR: reviewed discovery permission fixture must be a regular non-symlink: ${artifact_path}" >&2
+              exit 1
+            fi
+            chmod 0664 "$artifact_path"
+          done
+
+      - name: Rebuild staging QA Deep Agents Code base from exact source
+        id: staging-base
+        shell: bash
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: |
+          set -euo pipefail
+          source_root="$GITHUB_WORKSPACE/staging-qa-base-source"
+          docker build --progress=plain \
+            -f "$source_root/agents/langchain-deepagents-code/Dockerfile.base" \
+            -t "$STAGING_QA_BASE_IMAGE" \
+            "$source_root"
+          base_id="$(docker image inspect --format "{{.Id}}" "$STAGING_QA_BASE_IMAGE")"
+          if [[ ! "$base_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: rebuilt staging QA base did not resolve to an immutable local image ID." >&2
+            exit 1
+          fi
+          printf 'id=%s\n' "$base_id" >> "$GITHUB_OUTPUT"
+          printf '\nRebuilt local image: %s\n' "$base_id" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build latest PR commit against reproduced staging QA base
+        id: staging-final
+        shell: bash
+        working-directory: candidate
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: |
+          set -euo pipefail
+          final_reference="${STAGING_QA_FINAL_IMAGE}:${CANDIDATE_SHA}"
+          docker build --progress=plain \
+            -f agents/langchain-deepagents-code/Dockerfile \
+            --build-arg BASE_IMAGE="$STAGING_QA_BASE_IMAGE" \
+            --build-arg NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b \
+            --build-arg NEMOCLAW_INFERENCE_PROVIDER_ID=inference \
+            --build-arg NEMOCLAW_UPSTREAM_PROVIDER=nvidia-nim \
+            --build-arg NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1 \
+            --build-arg NEMOCLAW_INFERENCE_API=openai-completions \
+            --build-arg NEMOCLAW_DCODE_AUTO_APPROVAL=thread-opt-in \
+            --build-arg NEMOCLAW_BUILD_ID="$STAGING_QA_SOURCE_SHA" \
+            --build-arg NEMOCLAW_DARWIN_VM_COMPAT=0 \
+            -t "$final_reference" \
+            .
+          final_id="$(docker image inspect --format "{{.Id}}" "$final_reference")"
+          if [[ ! "$final_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: staging QA final image did not resolve to an immutable local image ID." >&2
+            exit 1
+          fi
+          printf 'id=%s\n' "$final_id" >> "$GITHUB_OUTPUT"
+
+      - name: Validate staging QA final image contract
+        shell: bash
+        env:
+          BASE_ID: ${{ steps.staging-base.outputs.id }}
+          FINAL_ID: ${{ steps.staging-final.outputs.id }}
+        run: |
+          set -euo pipefail
+          base_layers="$(docker image inspect --format "{{json .RootFS.Layers}}" "$BASE_ID")"
+          final_layers="$(docker image inspect --format "{{json .RootFS.Layers}}" "$FINAL_ID")"
+          if ! jq -n -e \
+            --argjson base "$base_layers" \
+            --argjson final "$final_layers" '
+              ($base | length) > 0 and
+              ($final | length) >= ($base | length) and
+              all(range(0; $base | length); $final[.] == $base[.])
+            ' >/dev/null; then
+            echo "ERROR: staging QA final image does not extend the rebuilt QA base." >&2
+            exit 1
+          fi
+          if ! actual_discovery_contract="$(
+            docker run --rm --platform linux/amd64 --entrypoint /bin/sh "$FINAL_ID" -c '
+            set -eu
+            discovery_runtime=/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime
+            if ! entry_owner_unsafe="$(find -P "$discovery_runtime" ! -user root -print -quit)"; then
+              echo "ERROR: staging QA discovery entry ownership inspection failed." >&2
+              exit 1
+            fi
+            if [ -n "$entry_owner_unsafe" ]; then
+              echo "ERROR: staging QA discovery entry is not root-owned: $entry_owner_unsafe" >&2
+              exit 1
+            fi
+            if ! owner_or_write_unsafe="$(
+              find -L "$discovery_runtime" \
+                \( ! -user root -o -perm /022 \) -print -quit
+            )"; then
+              echo "ERROR: staging QA discovery tree inspection failed." >&2
+              exit 1
+            fi
+            if [ -n "$owner_or_write_unsafe" ]; then
+              echo "ERROR: staging QA discovery tree is not root-owned and read-only: $owner_or_write_unsafe" >&2
+              exit 1
+            fi
+            if ! mode_unsafe="$(
+              find -P "$discovery_runtime" \
+                \( \( -type d ! -perm 0555 \) -o \( -type f ! -perm 0444 \) \) \
+                -print -quit
+            )"; then
+              echo "ERROR: staging QA discovery mode inspection failed." >&2
+              exit 1
+            fi
+            if [ -n "$mode_unsafe" ]; then
+              echo "ERROR: staging QA discovery path has an unexpected mode: $mode_unsafe" >&2
+              exit 1
+            fi
+            if ! actual_discovery_contract="$(node "$discovery_runtime/mcp-tool-discovery.mjs")"; then
+              echo "ERROR: staging QA discovery bundle execution failed." >&2
+              exit 1
+            fi
+            printf "%s" "$actual_discovery_contract"
+          '
+          )"; then
+            echo "ERROR: staging QA final image discovery contract probe failed." >&2
+            exit 1
+          fi
+          if ! node -e '
+            const expected = {
+              protocol: 1,
+              ok: false,
+              detail: "tool discovery received invalid runtime arguments",
+            };
+            let result;
+            try {
+              result = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+            } catch {
+              process.exit(1);
+            }
+            const record =
+              result !== null && typeof result === "object" && !Array.isArray(result)
+                ? result
+                : undefined;
+            if (
+              !record ||
+              record.protocol !== expected.protocol ||
+              record.ok !== expected.ok ||
+              record.detail !== expected.detail
+            ) {
+              process.exit(1);
+            }
+          ' <<< "$actual_discovery_contract" >/dev/null; then
+            echo "ERROR: staging QA discovery bundle contract mismatch." >&2
+            exit 1
+          fi
+
   pr-build-and-entrypoint:
     name: PR build and direct managed startup (${{ matrix.display_name }})
     # External contributor PRs retain the local build/direct-startup lane after
     # GitHub's maintainer workflow approval. Exact digest publication is limited
     # to branches in NVIDIA/NemoClaw; fork jobs never log in or push.
+    needs: pr-reviewed-npm-audit
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -69,6 +336,7 @@ jobs:
           - agent: openclaw
             display_name: OpenClaw
             dockerfile: Dockerfile
+            base_dockerfile: Dockerfile.base
             base_alias: ghcr.io/nvidia/nemoclaw/sandbox-base:latest
             base_repository: ghcr.io/nvidia/nemoclaw/sandbox-base
             image: nemoclaw-managed-pr/openclaw
@@ -76,6 +344,7 @@ jobs:
           - agent: hermes
             display_name: Hermes
             dockerfile: agents/hermes/Dockerfile
+            base_dockerfile: agents/hermes/Dockerfile.base
             base_alias: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest
             base_repository: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base
             image: nemoclaw-managed-pr/hermes
@@ -83,6 +352,7 @@ jobs:
           - agent: langchain-deepagents-code
             display_name: Deep Agents Code
             dockerfile: agents/langchain-deepagents-code/Dockerfile
+            base_dockerfile: agents/langchain-deepagents-code/Dockerfile.base
             base_alias: ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest
             base_repository: ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
             image: nemoclaw-managed-pr/langchain-deepagents-code
@@ -93,6 +363,24 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
+
+      - name: Reproduce reviewed discovery permission drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          reviewed_root="tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery"
+          for artifact in \
+            BUNDLED_PACKAGES.json \
+            THIRD_PARTY_LICENSES.txt \
+            mcp-tool-discovery.bundle
+          do
+            artifact_path="${reviewed_root}/${artifact}"
+            if [ ! -f "$artifact_path" ] || [ -L "$artifact_path" ]; then
+              echo "ERROR: reviewed discovery permission fixture must be a regular non-symlink: ${artifact_path}" >&2
+              exit 1
+            fi
+            chmod 0664 "$artifact_path"
+          done
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -106,11 +394,42 @@ jobs:
         id: base
         shell: bash
         env:
+          BASE_DOCKERFILE: ${{ matrix.base_dockerfile }}
           BASE_ALIAS: ${{ matrix.base_alias }}
           BASE_REPOSITORY: ${{ matrix.base_repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
           DISPLAY_NAME: ${{ matrix.display_name }}
+          LOCAL_BASE_REFERENCE: nemoclaw-managed-pr/${{ matrix.agent }}-base:${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "ERROR: PR base resolution requires exact base and candidate commit SHAs." >&2
+            exit 1
+          fi
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          fi
+          diff_status=0
+          git diff --quiet "$BASE_SHA" "$CANDIDATE_SHA" -- "$BASE_DOCKERFILE" || diff_status=$?
+          if [ "$diff_status" -gt 1 ]; then
+            echo "ERROR: PR base Dockerfile comparison failed." >&2
+            exit "$diff_status"
+          fi
+          if [ "$diff_status" -eq 1 ]; then
+            echo "::notice::${DISPLAY_NAME} base Dockerfile changed; building the exact PR base locally"
+            docker buildx build \
+              --platform linux/amd64 \
+              --load \
+              --file "$BASE_DOCKERFILE" \
+              --tag "$LOCAL_BASE_REFERENCE" \
+              .
+            printf 'ref=%s\n' "$LOCAL_BASE_REFERENCE" >> "$GITHUB_OUTPUT"
+            printf '### %s PR base\n\nLocally built from `%s` at `%s`.\n' \
+              "$DISPLAY_NAME" "$BASE_DOCKERFILE" "$CANDIDATE_SHA" \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           alias_raw="$RUNNER_TEMP/pr-base-alias.raw"
           exact_raw="$RUNNER_TEMP/pr-base-exact.raw"
           docker buildx imagetools inspect "$BASE_ALIAS" --raw > "$alias_raw"
@@ -238,6 +557,79 @@ jobs:
                  .[0].Config.Labels["org.opencontainers.image.revision"] == $revision
                ' <<< "$image_json" >/dev/null; then
             echo "ERROR: PR managed image contract does not match the exact build identity." >&2
+            exit 1
+          fi
+
+          discovery_runtime="/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime"
+          if ! actual_discovery_contract="$(
+            docker run --rm --platform "$PLATFORM" --entrypoint /bin/sh "$image_id" -c '
+              set -eu
+              discovery_runtime="$1"
+              if ! entry_owner_unsafe="$(
+                find -P "$discovery_runtime" ! -user root -print -quit
+              )"; then
+                echo "ERROR: final PR managed image discovery entry ownership inspection failed." >&2
+                exit 1
+              fi
+              if [ -n "$entry_owner_unsafe" ]; then
+                echo "ERROR: final PR managed image discovery entry is not root-owned: $entry_owner_unsafe" >&2
+                exit 1
+              fi
+              if ! owner_or_write_unsafe="$(
+                find -L "$discovery_runtime" \
+                  \( ! -user root -o -perm /022 \) -print -quit
+              )"; then
+                echo "ERROR: final PR managed image discovery tree inspection failed." >&2
+                exit 1
+              fi
+              if [ -n "$owner_or_write_unsafe" ]; then
+                echo "ERROR: final PR managed image discovery tree is not root-owned and read-only: $owner_or_write_unsafe" >&2
+                exit 1
+              fi
+              if ! mode_unsafe="$(
+                find -P "$discovery_runtime" \
+                  \( \( -type d ! -perm 0555 \) -o \( -type f ! -perm 0444 \) \) \
+                  -print -quit
+              )"; then
+                echo "ERROR: final PR managed image discovery mode inspection failed." >&2
+                exit 1
+              fi
+              if [ -n "$mode_unsafe" ]; then
+                echo "ERROR: final PR managed image discovery path has an unexpected mode: $mode_unsafe" >&2
+                exit 1
+              fi
+              node "$discovery_runtime/mcp-tool-discovery.mjs"
+            ' -- "$discovery_runtime"
+          )"; then
+            echo "ERROR: final PR managed image discovery contract probe failed." >&2
+            exit 1
+          fi
+          if ! node -e '
+            const expected = {
+              protocol: 1,
+              ok: false,
+              detail: "tool discovery received invalid runtime arguments",
+            };
+            let result;
+            try {
+              result = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+            } catch {
+              process.exit(1);
+            }
+            const record =
+              result !== null && typeof result === "object" && !Array.isArray(result)
+                ? result
+                : undefined;
+            if (
+              !record ||
+              record.protocol !== expected.protocol ||
+              record.ok !== expected.ok ||
+              record.detail !== expected.detail
+            ) {
+              process.exit(1);
+            }
+          ' <<< "$actual_discovery_contract" >/dev/null; then
+            echo "ERROR: final PR managed image discovery bundle contract mismatch." >&2
             exit 1
           fi
 

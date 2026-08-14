@@ -15,7 +15,11 @@ import {
 } from "../../adapters/docker/run";
 import { parseOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import { hasZeroDockerExitStatus } from "../docker-command-result";
-import { buildDockerGpuCloneRunArgs, dockerContainerName } from "../docker-gpu-patch-clone";
+import {
+  buildDockerGpuCloneRunArgs,
+  dockerContainerName,
+  shouldOmitOpenShellOciImageUser,
+} from "../docker-gpu-patch-clone";
 import {
   DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
   DOCKER_GPU_PATCH_TIMEOUT_MS,
@@ -27,7 +31,10 @@ import type {
   DockerGpuPatchModeKind,
   DockerUlimit,
 } from "../docker-gpu-patch-types";
-import { waitForOpenShellSupervisorReconnect } from "../docker-gpu-supervisor-reconnect";
+import {
+  getDockerGpuSupervisorReconnectTimeoutSecs,
+  waitForOpenShellSupervisorReconnect,
+} from "../docker-gpu-supervisor-reconnect";
 import { openshellSandboxCommandEnvValue } from "../docker-startup-command-env";
 import {
   OPENSHELL_MANAGED_BY_LABEL,
@@ -813,6 +820,7 @@ function assertExactEnvironmentDelta(
   replacement: Record<string, unknown>,
   mode: DockerGpuPatchMode,
   intendedSandboxCommand: string,
+  omitOciImageUser: boolean,
 ): void {
   const gpuAugment = mode.kind !== "startup-command";
   const originalEnv = exactStringArray(original.Env ?? [], "original environment");
@@ -820,6 +828,7 @@ function assertExactEnvironmentDelta(
     ...modeEnvironment(mode),
     ...originalEnv
       .filter((entry) => !gpuAugment || !REPLACED_GPU_ENV_KEYS.has(entry.split("=", 1)[0] ?? ""))
+      .filter((entry) => !omitOciImageUser || !entry.startsWith("OPENSHELL_OCI_IMAGE_USER="))
       .map((entry) =>
         entry.startsWith("OPENSHELL_SANDBOX_COMMAND=")
           ? `OPENSHELL_SANDBOX_COMMAND=${intendedSandboxCommand}`
@@ -996,6 +1005,7 @@ function assertReplacementMatchesIntent(
     readonly extraGroupGids: readonly string[];
   },
   intendedSandboxCommand: string,
+  omitOciImageUser: boolean,
 ): string {
   const original = canonicalObject(originalCanonicalJson);
   const originalInspect = objectField(original, "inspect");
@@ -1010,7 +1020,13 @@ function assertReplacementMatchesIntent(
   const observedConfig = objectField(observedInspect, "Config");
   const observedHost = objectField(observedInspect, "HostConfig");
   const gpuAugment = plan.mode.kind !== "startup-command";
-  assertExactEnvironmentDelta(originalConfig, observedConfig, plan.mode, intendedSandboxCommand);
+  assertExactEnvironmentDelta(
+    originalConfig,
+    observedConfig,
+    plan.mode,
+    intendedSandboxCommand,
+    omitOciImageUser,
+  );
   const originalCapabilities = capabilitySet(originalHost.CapAdd, "original capability additions");
   assertExactCapabilitySet(
     observedHost.CapAdd,
@@ -3235,6 +3251,10 @@ export function createDockerManagedBootstrapAdapter(
         });
       }
       const trampolineCommand = replacementCommand(handle, snapshot);
+      const omitOciImageUser = shouldOmitOpenShellOciImageUser(
+        parsed.inspect,
+        handle.intendedWorkloadArgv,
+      );
       const cloneArgs = buildDockerGpuCloneRunArgs(parsed.inspect, plan.mode, {
         image: expectedImageReference(snapshot.image.repository, snapshot.image.manifestDigest),
         openshellSandboxCommand: handle.intendedWorkloadArgv,
@@ -3303,6 +3323,7 @@ export function createDockerManagedBootstrapAdapter(
           originalName,
           plan,
           intendedSandboxCommand,
+          omitOciImageUser,
         );
         const preparedSpec = normalizeDockerManagedBootstrapLaunchSpec(createdInspect);
         const expectedActivatedSpec = normalizeDockerManagedBootstrapLaunchSpec({
@@ -3602,7 +3623,14 @@ export function createDockerManagedBootstrapAdapter(
         throw new Error("Managed bootstrap Docker replacement image content changed.");
       }
       assertReplacementBoundary(before, handle, snapshot);
-      if (!waitForOpenShellSupervisorReconnect(handle.sandbox.sandboxName, timeoutSecs, deps)) {
+      const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(timeoutSecs);
+      if (
+        !waitForOpenShellSupervisorReconnect(
+          handle.sandbox.sandboxName,
+          supervisorReconnectTimeoutSecs,
+          deps,
+        )
+      ) {
         throw new Error("Managed bootstrap Docker supervisor did not reconnect.");
       }
       const afterWaitJournal = deps.journalStore.load(journal.bootstrapIdentity);

@@ -8,7 +8,13 @@ import {
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "./adapters/openshell/timeouts";
 import { GATEWAY_PORT } from "./core/ports";
-import { resolveGatewayName, resolveGatewayPortFromName } from "./onboard/gateway-binding";
+import {
+  resolveGatewayName,
+  resolveGatewayPortFromName,
+  resolveSandboxGatewayName,
+} from "./onboard/gateway-binding";
+
+export { resolveGatewayName, resolveSandboxGatewayName };
 
 type StartGatewayForRecoveryOptions = {
   gatewayName?: string;

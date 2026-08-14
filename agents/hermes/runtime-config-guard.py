@@ -4534,6 +4534,37 @@ def _recover_config_write_transaction(hermes_dir: str, state_file: str) -> None:
     _write_restart_state(state_file, state_data, create=False)
 
 
+def _validate_hermes_config_candidate(config_bytes: bytes) -> None:
+    """Parse a candidate with Hermes' own config model before any mutation.
+
+    The guard owns the sealed write transaction, while Hermes owns the schema.
+    Loading the candidate into the bundled model catches incomplete nested objects
+    such as ``platforms.teams.home_channel`` without maintaining a second schema.
+    This function does not read or write sandbox state.
+    """
+    try:
+        config_text = config_bytes.decode("utf-8")
+        parsed = yaml.safe_load(config_text)
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise UnsafePathError("Hermes configuration is not valid YAML") from exc
+    if not isinstance(parsed, dict):
+        raise UnsafePathError("Hermes configuration must be a mapping")
+    try:
+        from gateway.config import GatewayConfig
+
+        GatewayConfig.from_dict(parsed)
+    except UnsafePathError:
+        raise
+    except Exception as exc:
+        # Configuration values can contain credentials. KeyError identifies a
+        # missing field without echoing the candidate; other parser failures
+        # report only their exception type.
+        detail = str(exc)[:300] if isinstance(exc, KeyError) else type(exc).__name__
+        raise UnsafePathError(
+            f"Hermes schema validation rejected the candidate: {detail}"
+        ) from exc
+
+
 def write_config_transaction(
     hermes_dir: str,
     hash_file: str,
@@ -4546,6 +4577,14 @@ def write_config_transaction(
     if len(config_bytes) > MAX_CONFIG_INPUT_BYTES:
         raise UnsafePathError("refusing oversized Hermes config input")
 
+    # Validate before `seal_restart` writes the restart state or opens mutable
+    # inputs. A rejected candidate must leave config, env, and both hash anchors
+    # byte-for-byte unchanged. The established exact-size boundary runs its
+    # filesystem check first when the config path is absent.
+    config_path = os.path.join(hermes_dir, "config.yaml")
+    if os.path.exists(config_path):
+        _validate_hermes_config_candidate(config_bytes)
+
     seal_restart(
         hermes_dir,
         hash_file,
@@ -4554,7 +4593,6 @@ def write_config_transaction(
         expected_config_sha256=expected_config_sha256,
     )
     committed = False
-    config_path = os.path.join(hermes_dir, "config.yaml")
     try:
         state_data = _load_restart_state(state_file)
         if _restart_state_was_locked(state_data):
@@ -4716,17 +4754,17 @@ def _is_generated_api_server_key(value: str) -> bool:
 def _placeholder_suffix_matches_env_key(suffix: str, env_key: str) -> bool:
     if suffix == env_key:
         return True
-    revision_match = re.fullmatch(r"v[0-9]+_(.+)", suffix)
+    revision_match = re.fullmatch(r"v[0-9]{1,20}_(.+)", suffix)
     return revision_match is not None and revision_match.group(1) == env_key
 
 
-def _normalize_provider_placeholder_for_env_key(value: str, env_key: str) -> str | None:
+def _provider_placeholder_for_env_key(value: str, env_key: str) -> str | None:
     if not value.startswith(SCOPED_PLACEHOLDER_PREFIX):
         return None
     suffix = value[len(SCOPED_PLACEHOLDER_PREFIX) :]
     if not _placeholder_suffix_matches_env_key(suffix, env_key):
         return None
-    return f"{SCOPED_PLACEHOLDER_PREFIX}{env_key}"
+    return value
 
 
 def _has_env_control_chars(value: str) -> bool:
@@ -4876,7 +4914,12 @@ def _runtime_plan_replacements_and_provider_keys(
             raise UnsafePathError(
                 f"messaging runtime plan env alias regex is invalid: {exc}"
             ) from exc
-        if compiled.search(os.environ.get(env_key, "")):
+        runtime_value = os.environ.get(env_key, "")
+        if runtime_value.startswith(SCOPED_PLACEHOLDER_PREFIX):
+            suffix = runtime_value[len(SCOPED_PLACEHOLDER_PREFIX) :]
+            if not _placeholder_suffix_matches_env_key(suffix, env_key):
+                continue
+        if compiled.search(runtime_value):
             replacements[env_key] = (value, message)
     return replacements, provider_env_keys, True
 
@@ -4933,11 +4976,11 @@ def provider_placeholders(
     for key in allowed_fallback_keys:
         if key in replacements:
             continue
-        normalized = _normalize_provider_placeholder_for_env_key(
+        placeholder = _provider_placeholder_for_env_key(
             os.environ.get(key, ""), key
         )
-        if normalized:
-            replacements[key] = (normalized, "")
+        if placeholder:
+            replacements[key] = (placeholder, "")
     if not replacements:
         return
 

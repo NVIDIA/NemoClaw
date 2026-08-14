@@ -10,11 +10,21 @@ export const HERMES_MCP_FAILURE_CAPTURE_BYTES = 4_096;
 export const HERMES_MCP_FAILURE_PREVIEW_CHARS = 1_024;
 export const HERMES_MCP_RESPONSE_FILE_BYTES = 65_536;
 
-interface HermesMcpCommandResult {
+export interface HermesMcpCommandResult {
   exitCode: number | null;
   signal?: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
+}
+
+export function isHermesGatewayDrainingResponse(result: HermesMcpCommandResult): boolean {
+  if (result.exitCode !== 0 || parseHttpStatus(result.stderr) !== 503) return false;
+  try {
+    const body = JSON.parse(result.stdout) as { error?: { code?: unknown } };
+    return body.error?.code === "gateway_draining";
+  } catch {
+    return false;
+  }
 }
 
 const FAILURE_BODY_EMITTER = [

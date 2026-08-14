@@ -5,9 +5,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { isErrnoException } from "../core/errno";
 import { isSupportedGatewayDockerHost } from "../domain/docker-host";
+import {
+  gatewayIdForStateDir,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
+} from "./docker-driver-gateway-config";
 import {
   createDockerDriverGatewayPortListenerHelpers,
   type DockerDriverGatewayPortListenerOptions,
@@ -18,8 +21,12 @@ import {
 } from "./docker-driver-gateway-port-listener";
 import {
   getDockerDriverGatewayTargetIdentityDrift,
+  hasDockerDriverGatewayEnvironment,
+  isDockerDriverGatewayProcessIdentity,
+  readDockerDriverGatewayProcessEnvironment,
   readDockerDriverGatewayProcessIdentity,
 } from "./docker-driver-gateway-process-identity";
+import { HOST_GATEWAY_PGREP_PATTERN } from "./host-gateway-process";
 import * as dockerDriverGatewayRuntimeMarker from "./docker-driver-gateway-runtime-marker";
 import { isPortableExperimentalProfile } from "./docker-driver-platform";
 import * as gatewayBinding from "./gateway-binding";
@@ -27,6 +34,7 @@ import {
   gatewayProcessCmdlineMatches,
   OPENSHELL_GATEWAY_PROCESS_NAMES,
 } from "./gateway-process-identity";
+import { resolveOpenshell } from "./openshell-cli";
 import type { PortProbeResult } from "./preflight";
 
 // Keep the listener option type on the established runtime facade while the
@@ -40,6 +48,16 @@ const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = 
   "0.0.99": "sha256:ea3632b6e9528e2309103af5b6949606fcdc83ca1f69e8db81482a25bea84bb6",
   "0.0.101": "sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb",
 };
+
+/** Resolve the canonical gateway name without bypassing the binding owner. */
+export function resolveDockerDriverGatewayName(gatewayPort: number): string {
+  return gatewayBinding.resolveGatewayName(gatewayPort);
+}
+
+/** Resolve the canonical state-directory name without bypassing the binding owner. */
+export function resolveDockerDriverGatewayStateDirName(gatewayPort: number): string {
+  return gatewayBinding.resolveGatewayStateDirName(gatewayPort);
+}
 
 export type DockerDriverGatewayRuntimeDrift = { reason: string };
 
@@ -70,6 +88,7 @@ export interface DockerDriverGatewayRuntimeDeps {
   runCaptureEx?: RunCaptureEx;
   shouldUseOpenshellDevChannel(): boolean;
   supportedOpenshellFallbackVersion: string;
+  enableBindMounts?: () => boolean;
 }
 
 export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewayRuntimeDeps): {
@@ -136,6 +155,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     opts?: { requireDockerDriverEnv?: boolean },
   ): boolean;
   isDockerDriverGatewayProcessAlive(): boolean;
+  isDockerDriverGatewayStateInUse(): boolean;
   isPidAlive(pid: number): boolean;
   rememberDockerDriverGatewayPid(pid: number): void;
   resolveOpenShellGatewayBinary(): string | null;
@@ -244,6 +264,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       podmanSocketPath,
       getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
       resolveSandboxBin: resolveOpenShellSandboxBinary,
+      enableBindMounts: deps.enableBindMounts?.() === true,
     });
     if (gatewayEnv.OPENSHELL_LOCAL_TLS_DIR) {
       process.env.OPENSHELL_LOCAL_TLS_DIR = gatewayEnv.OPENSHELL_LOCAL_TLS_DIR;
@@ -272,31 +293,13 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   }
 
   function readProcessEnv(pid: number): Record<string, string> | null {
-    const procEnvPath = `/proc/${pid}/environ`;
-    const env: Record<string, string> = {};
-    try {
-      if (!fs.existsSync(procEnvPath)) return null;
-      for (const entry of fs.readFileSync(procEnvPath, "utf-8").split("\0")) {
-        if (!entry) continue;
-        const idx = entry.indexOf("=");
-        if (idx <= 0) continue;
-        env[entry.slice(0, idx)] = entry.slice(idx + 1);
-      }
-    } catch {
-      return null;
-    }
-    return env;
+    return readDockerDriverGatewayProcessEnvironment(pid);
   }
 
   function hasDockerDriverGatewayEnv(pid: number): boolean {
-    const env = readProcessEnv(pid);
-    if (!env) return false;
-    return (
-      env.OPENSHELL_DRIVERS === "docker" ||
-      env.OPENSHELL_DRIVERS === "podman" ||
-      Boolean(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE) ||
-      env.OPENSHELL_GRPC_ENDPOINT ===
-        dockerDriverGatewayEnv.getDockerDriverGatewayEndpoint(currentGatewayPort())
+    return hasDockerDriverGatewayEnvironment(
+      readProcessEnv(pid),
+      dockerDriverGatewayEnv.getDockerDriverGatewayEndpoint(currentGatewayPort()),
     );
   }
 
@@ -349,9 +352,14 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       return { reason: "could not verify process environment" };
     }
     for (const key of dockerDriverGatewayEnv.DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS) {
-      const desired = desiredEnv[key];
-      if (typeof desired !== "string") continue;
       const actual = processEnv[key];
+      const desired = desiredEnv[key];
+      if (typeof desired !== "string") {
+        if (key === "NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS" && actual !== undefined) {
+          return { reason: `${key}=${actual} (expected <unset>)` };
+        }
+        continue;
+      }
       if (actual !== desired) {
         return { reason: `${key}=${actual || "<unset>"} (expected ${desired})` };
       }
@@ -458,12 +466,14 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     gatewayBin?: string | null,
     opts: { requireDockerDriverEnv?: boolean } = {},
   ): boolean {
-    const identity = readDockerDriverGatewayProcessIdentity(pid, captureProcessArgs);
-    if (!identity) return false;
-    const matchesGatewayBinary = processIdentityMatchesGatewayBinary(identity, gatewayBin);
-    if (!matchesGatewayBinary) return false;
-    if (opts.requireDockerDriverEnv && !hasDockerDriverGatewayEnv(pid)) return false;
-    return true;
+    return isDockerDriverGatewayProcessIdentity({
+      pid,
+      gatewayBin,
+      captureProcessArgs,
+      processIdentityMatchesGatewayBinary,
+      requireDockerDriverEnv: opts.requireDockerDriverEnv === true,
+      hasDockerDriverGatewayEnv,
+    });
   }
 
   function isDockerDriverGatewayProcessAlive(): boolean {
@@ -478,6 +488,47 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       return false;
     }
     return true;
+  }
+
+  function readProcessEnvironmentFromPs(pid: number): Record<string, string> | null {
+    const command = deps
+      .runCapture(["ps", "eww", "-p", String(pid), "-o", "command="], { ignoreError: true })
+      .trim();
+    const prefix = `${NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV}=`;
+    const value = command.split(/\s+/).find((token) => token.startsWith(prefix));
+    return value
+      ? { [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: value.slice(prefix.length) }
+      : null;
+  }
+
+  /**
+   * Fail-closed recovery probe for every direct gateway process that can still
+   * use the selected state directory, including a service-manager replacement
+   * whose PID differs from the recorded standalone process.
+   */
+  function isDockerDriverGatewayStateInUse(): boolean {
+    if (isDockerDriverGatewayProcessAlive()) return true;
+    if (!deps.runCaptureEx) return true;
+    const scan = deps.runCaptureEx(["pgrep", "-f", HOST_GATEWAY_PGREP_PATTERN]);
+    if (scan.timedOut || (scan.exitCode !== 0 && scan.exitCode !== 1)) return true;
+    if (scan.exitCode === 1) return false;
+    const selectedNamespace = gatewayIdForStateDir(getDockerDriverGatewayStateDir());
+    const gatewayBin = resolveOpenShellGatewayBinary();
+    const lines = scan.stdout.split(/\r?\n/).filter((line) => line.trim() !== "");
+    if (lines.length === 0) return true;
+    for (const line of lines) {
+      const recorded = line.trim();
+      if (!/^[1-9]\d*$/.test(recorded)) return true;
+      const pid = Number(recorded);
+      if (!Number.isSafeInteger(pid) || !isPidAlive(pid)) continue;
+      if (!isDockerDriverGatewayProcess(pid, gatewayBin, { requireDockerDriverEnv: false })) {
+        return true;
+      }
+      const processEnv = readProcessEnv(pid) ?? readProcessEnvironmentFromPs(pid);
+      if (!processEnv) return true;
+      if (processEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV] === selectedNamespace) return true;
+    }
+    return false;
   }
 
   function clearDockerDriverGatewayRuntimeFiles(): void {
@@ -542,6 +593,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     isDockerDriverGatewayPortListener,
     isDockerDriverGatewayProcess,
     isDockerDriverGatewayProcessAlive,
+    isDockerDriverGatewayStateInUse,
     isPidAlive,
     rememberDockerDriverGatewayPid,
     resolveOpenShellGatewayBinary,

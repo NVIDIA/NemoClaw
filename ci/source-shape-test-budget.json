@@ -37,8 +37,18 @@
       "category": "compatibility"
     },
     {
+      "file": "src/lib/readiness/system.test.ts",
+      "test": "publishes a schema-valid host and gateway report with resolved references (#7411)",
+      "category": "compatibility"
+    },
+    {
       "file": "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
       "test": "matches the bundled local-inference host-gateway ports (#5744)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/agent-variant-docs.test.ts",
+      "test": "keeps the OpenClaw workspace inventory aligned with seeded runtime templates",
       "category": "compatibility"
     },
     {
@@ -53,7 +63,7 @@
     },
     {
       "file": "test/corporate-ca-build-tls-anchor.test.ts",
-      "test": "decodes the CA and exports NODE_EXTRA_CA_CERTS before the reinstall audit-signatures step",
+      "test": "uses conditional Node and curl trust in every final-stage registry step",
       "category": "security"
     },
     {
@@ -77,6 +87,11 @@
       "category": "security"
     },
     {
+      "file": "test/dashboard-remote-bind-lifecycle.test.ts",
+      "test": "rejects a mutated checked-in security inventory instruction (#6024)",
+      "category": "security"
+    },
+    {
       "file": "test/e2e-fixture-dependency-review.test.ts",
       "test": "keeps installed fixture dependencies on exact versions",
       "category": "security"
@@ -84,6 +99,11 @@
     {
       "file": "test/e2e/live/hermes-e2e.test.ts",
       "test": "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/base-image-publication-workflow-boundary.test.ts",
+      "test": "retains immutable base contracts for later qualification (#9049)",
       "category": "security"
     },
     {
@@ -187,26 +207,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects channels stop/start workflow-boundary drift for secret and artifact handling",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects credential-backed provider smokes in the PR-safe inference-routing job",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects duplicate unguarded Docker Hub auth in messaging-compatible-endpoint",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects free-standing E2E artifact uploads from raw temp paths",
-      "category": "security"
-    },
-    {
       "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
       "test": "keeps every candidate on standard runners when $name (#7145)",
       "category": "security"
@@ -224,11 +224,6 @@
     {
       "file": "test/e2e/support/podman-cpu-proof-workflow.test.ts",
       "test": "runs as a credential-free exact-head PR workflow",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/trusted-hermes-swap-workflow-boundary.test.ts",
-      "test": "keeps the fixed privileged program before candidate checkout in every protected job (#7145)",
       "category": "security"
     },
     {
@@ -268,7 +263,7 @@
     },
     {
       "file": "test/hosted-runner-recovery-workflow.test.ts",
-      "test": "locks recovery identities to the source workflows' runtime names (#7140)",
+      "test": "locks recovery to the platform workflow name (#7140)",
       "category": "security"
     },
     {
@@ -312,6 +307,11 @@
       "category": "security"
     },
     {
+      "file": "test/openshell-0.0.99-migration-review.test.ts",
+      "test": "keeps every managed Docker policy identity explicit for workspace compatibility (#8662)",
+      "category": "security"
+    },
+    {
       "file": "test/onboard-performance-config-schema.test.ts",
       "test": "keeps baseline budgets derived from the checked-in samples",
       "category": "compatibility"
@@ -349,6 +349,11 @@
     {
       "file": "test/openclaw-2026-6-npm-remediation.test.ts",
       "test": "replaces the reviewed OpenClaw core tar and brace-expansion graph",
+      "category": "security"
+    },
+    {
+      "file": "test/node-tar-dockerfile-contract.test.ts",
+      "test": "rejects an isolated unreviewed Deep Agents Code Node base pin",
       "category": "security"
     },
     {
@@ -580,6 +585,16 @@
     {
       "file": "test/growth-guardrails-workflow-boundary.test.ts",
       "test": "flags %s",
+      "category": "security"
+    },
+    {
+      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
+      "test": "returns a credential-free JSON manifest byte for byte",
+      "category": "security"
+    },
+    {
+      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
+      "test": "leaves an installed package manifest that names a credential-shaped dependency",
       "category": "security"
     }
   ]

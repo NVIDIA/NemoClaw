@@ -41,6 +41,8 @@ function defaultCreateFingerprint(sandboxName = "my-assistant"): string {
 function crashedCheckpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardCheckpoint {
   return {
     schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+    profile: { kind: "selected", value: "default" },
+    runtimeAuthority: { kind: "unset" },
     sessionId: "sess-1",
     machineState: "sandbox",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -117,6 +119,7 @@ function realStageSandboxCredentialProviders(
     runOpenshell: runOpenshell as unknown as CredentialProviderRegistrationDeps["runOpenshell"],
     redact: (input) => input,
     getGatewayName: () => "nemoclaw",
+    getCredential: () => null,
     normalizeCredentialValue: (value) => (typeof value === "string" ? value.trim() : ""),
     updateSession: (mutator) => (mutator(registrationSession) ?? registrationSession) as Session,
     stagedLegacyValues: new Map(),

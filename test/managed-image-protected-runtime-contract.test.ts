@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -15,17 +18,222 @@ import {
   withManagedImageLocalInferenceProfile,
 } from "../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
+  assertExactSandboxImage,
+  assertFailedBootstrapContainerCleanup,
+  createProtectedManagedImageBootstrapInput,
+  MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV,
+  type ManagedImageCommandResult,
+  type ManagedImageCommandRunner,
   managedImageLocalInferenceBaseUrl,
   managedImageOpenShellBasePolicyPath,
   managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
   parseManagedImageOpenShellE2eInputs,
+  removeManagedImageGatewayStateIfSafe,
+  resolveManagedImageOnboardModule,
 } from "../scripts/checks/run-managed-image-openshell-e2e.ts";
+import { resolveOnboardManagedBootstrapLaunch } from "../src/lib/onboard/managed-workload/onboard-orchestration.js";
 
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
 const VALID_SANDBOX = "managed-openclaw";
 
+const SUCCESS_WITHOUT_OUTPUT: ManagedImageCommandResult = {
+  status: 0,
+  stdout: "",
+  stderr: "",
+};
+
+function managedContainerInspectResult(contentId: string): ManagedImageCommandResult {
+  return {
+    status: 0,
+    stdout: `${JSON.stringify([
+      {
+        Config: {
+          Labels: {
+            "openshell.ai/managed-by": "openshell",
+            "openshell.ai/sandbox-name": VALID_SANDBOX,
+          },
+        },
+        Image: contentId,
+        NetworkSettings: { Networks: { "managed-network": {} } },
+      },
+    ])}\n`,
+    stderr: "",
+  };
+}
+
+function createManagedImageCommandRunner(
+  contentId: string,
+  containerId: string,
+  listScope: "-q" | "-aq",
+  listOutput: string,
+  calls: string[][],
+): ManagedImageCommandRunner {
+  const responses = new Map<string, ManagedImageCommandResult>([
+    ["docker image inspect", { status: 0, stdout: `${contentId}\n`, stderr: "" }],
+    [`docker ps ${listScope}`, { status: 0, stdout: listOutput, stderr: "" }],
+    [`docker inspect ${containerId}`, managedContainerInspectResult(contentId)],
+  ]);
+  return (argv) => {
+    calls.push([...argv]);
+    return responses.get(argv.slice(0, 3).join(" ")) ?? SUCCESS_WITHOUT_OUTPUT;
+  };
+}
+
 describe("protected managed-image runtime contract", () => {
+  it("binds the public and protected managed-image plans to one supervisor argv (#7744)", () => {
+    const authorityStore = {};
+    const publicLaunch = resolveOnboardManagedBootstrapLaunch({
+      runtime: {
+        runtimeProvider: {
+          bootstrap: {
+            supported: true,
+            createAuthorityStore: () => authorityStore,
+          },
+        },
+      } as never,
+      workload: {
+        source: {
+          kind: "managed-image",
+          contract: {
+            agent: "openclaw",
+            image: "registry.example/nemoclaw/openclaw",
+            digest: `sha256:${"a".repeat(64)}`,
+          },
+        },
+      } as never,
+      stateRoot: "/tmp/nemoclaw-state",
+      bootstrapIdentity: "bootstrap-identity",
+      request: {} as never,
+      intendedWorkloadArgv: ["/usr/local/bin/nemoclaw-start"],
+    })!;
+    const protectedLaunch = createProtectedManagedImageBootstrapInput(publicLaunch);
+
+    expect(protectedLaunch.expectedSupervisorArgv).toBe(publicLaunch.expectedSupervisorArgv);
+    expect(protectedLaunch.expectedSupervisorArgv).toBe(MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV);
+    expect(protectedLaunch.expectedSupervisorArgv).toEqual([
+      "/opt/openshell/bin/openshell-sandbox",
+      "--workdir",
+      "/sandbox",
+    ]);
+    expect(Object.isFrozen(protectedLaunch.expectedSupervisorArgv)).toBe(true);
+  });
+
+  it("loads every OpenShell operation required before protected image launch (#7744)", async () => {
+    const onboard = resolveManagedImageOnboardModule(await import("../src/lib/onboard.ts"));
+
+    for (const operation of [
+      "openshellArgv",
+      "runOpenshell",
+      "runCaptureOpenshell",
+      "sleepSeconds",
+      "startGatewayForRecovery",
+    ] as const) {
+      expect(onboard[operation], operation).toBeTypeOf("function");
+    }
+  });
+
+  it("rejects a missing protected OpenShell operation with a precise contract error (#8759)", () => {
+    expect(() =>
+      resolveManagedImageOnboardModule({
+        default: {
+          openshellArgv: () => [],
+          runCaptureOpenshell: () => "",
+          sleepSeconds: () => undefined,
+          startGatewayForRecovery: async () => undefined,
+        },
+      }),
+    ).toThrow("managed-image onboard module is missing required operation(s): runOpenshell");
+  });
+
+  it.each([
+    ["unknown ownership", { failed: [], ownershipFailures: ["status cannot be proven"] }, 0],
+    ["denied signal", { failed: [9_999_601], ownershipFailures: [] }, 0],
+    ["failed gateway removal", { failed: [], ownershipFailures: [] }, 1],
+  ])("retains gateway evidence after %s (#7744)", (_case, gatewayStop, removalStatus) => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-state-retain-"));
+    const pidFile = path.join(stateDir, "openshell-gateway.pid");
+    fs.writeFileSync(pidFile, "9999601\n");
+
+    try {
+      expect(removeManagedImageGatewayStateIfSafe(stateDir, gatewayStop, removalStatus)).toBe(
+        false,
+      );
+      expect(fs.readFileSync(pidFile, "utf8")).toBe("9999601\n");
+    } finally {
+      fs.rmSync(stateDir, { force: true, recursive: true });
+    }
+  });
+
+  it("removes gateway state only after scoped stop and gateway removal succeed (#7744)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-state-remove-"));
+    fs.writeFileSync(path.join(stateDir, "openshell-gateway.pid"), "9999601\n");
+
+    expect(
+      removeManagedImageGatewayStateIfSafe(stateDir, { failed: [], ownershipFailures: [] }, 0),
+    ).toBe(true);
+    expect(fs.existsSync(stateDir)).toBe(false);
+  });
+
+  it("qualifies the running exact image before rollback cleanup (#7744)", () => {
+    const calls: string[][] = [];
+    const contentId = `sha256:${"b".repeat(64)}`;
+    const containerId = "c".repeat(64);
+    const input = parseManagedImageOpenShellE2eInputs([
+      "--agent",
+      "openclaw",
+      "--image",
+      IMAGE,
+      "--sandbox",
+      VALID_SANDBOX,
+    ]);
+    const runningCommand = createManagedImageCommandRunner(
+      contentId,
+      containerId,
+      "-q",
+      `${containerId}\n`,
+      calls,
+    );
+    const cleanedCommand = createManagedImageCommandRunner(
+      contentId,
+      containerId,
+      "-aq",
+      "",
+      calls,
+    );
+
+    expect(assertExactSandboxImage(input, "managed-network", {}, runningCommand)).toBe(containerId);
+    assertFailedBootstrapContainerCleanup(input, "managed-network", {}, cleanedCommand);
+
+    expect(calls.filter((argv) => argv[1] === "ps").map((argv) => argv[2])).toEqual(["-q", "-aq"]);
+  });
+
+  it("rejects a stopped labeled container after failed bootstrap cleanup (#7744)", () => {
+    const contentId = `sha256:${"b".repeat(64)}`;
+    const containerId = "c".repeat(64);
+    const input = parseManagedImageOpenShellE2eInputs([
+      "--agent",
+      "openclaw",
+      "--image",
+      IMAGE,
+      "--sandbox",
+      VALID_SANDBOX,
+    ]);
+    const runCommand = createManagedImageCommandRunner(
+      contentId,
+      containerId,
+      "-aq",
+      `${containerId}\n`,
+      [],
+    );
+
+    expect(() =>
+      assertFailedBootstrapContainerCleanup(input, "managed-network", {}, runCommand),
+    ).toThrow(
+      "managed-bootstrap rollback retained a failed held sandbox: found 1 labeled and 1 exact containers",
+    );
+  });
+
   it("assigns every protected agent and route a unique OpenShell-compatible sandbox name (#8497)", () => {
     const routeKinds = [...MANAGED_IMAGE_LOCAL_INFERENCE_KINDS, "rollback"] as const;
     const qualifications = PROTECTED_MANAGED_IMAGE_AGENTS.flatMap((agent) =>
@@ -153,7 +361,22 @@ describe("protected managed-image runtime contract", () => {
       sandbox: managedImageProtectedSandboxName(agent, "nim"),
     });
     expect(path.isAbsolute(managedImageOpenShellBasePolicyPath(agent))).toBe(true);
-    expect(managedImageOpenShellProbe(agent)).toContain("managed-startup-complete.json");
+    const probe = managedImageOpenShellProbe(agent);
+    const syntax = spawnSync("/bin/sh", ["-n", "-c", probe], { encoding: "utf8" });
+    expect(syntax.status, syntax.stderr).toBe(0);
+    expect(probe).toContain("managed-startup-complete.json");
+    expect(probe).toContain(
+      `managed-image startup probe failed: ${
+        agent === "openclaw"
+          ? "OpenClaw health endpoint"
+          : agent === "hermes"
+            ? "Hermes health endpoint"
+            : "LangChain Deep Agents Code version command"
+      }`,
+    );
+    expect(probe).toContain(
+      "managed-image startup probe failed: managed startup completion owner, group, and mode must equal 0:0:444",
+    );
   });
 
   it("rewrites only the inference route while preserving the managed agent profile", () => {

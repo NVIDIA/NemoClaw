@@ -149,7 +149,6 @@ describe("onboard helpers", () => {
         commands.at(-1)?.command || "",
         /inference set -g nemoclaw --no-verify --provider compatible-anthropic-endpoint --model anthropic\.claude-3-5-sonnet-20240620-v1:0/,
       );
-      // biome-ignore format: keep the complete route reservation assertion within this legacy file's enforced budget.
       expect(updateSandbox).toHaveBeenCalledWith("test-box", { model: "anthropic.claude-3-5-sonnet-20240620-v1:0", provider: "compatible-anthropic-endpoint", endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com", endpointSource: "onboard", credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY", preferredInferenceApi: null, gatewayName: "nemoclaw" });
     });
   });
@@ -167,6 +166,9 @@ describe("onboard helpers", () => {
     const sessionPath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
     );
+    const checkpointPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "state", "onboard-checkpoint-migrate.ts"),
+    );
     const credentialsPath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
@@ -183,6 +185,15 @@ describe("onboard helpers", () => {
     const onboardProbesPath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "inference", "onboard-probes.ts"),
     );
+    const preflightGatewayAuthorityPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "preflight-gateway-authority.ts"),
+    );
+    const preflightPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
+    );
+    const bridgeDnsPreflightPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "bridge-dns-preflight.ts"),
+    );
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
@@ -191,12 +202,37 @@ describe("onboard helpers", () => {
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const onboardSession = require(${sessionPath});
+const { deriveCheckpointFromSession } = require(${checkpointPath});
 const credentials = require(${credentialsPath});
 const nim = require(${nimPath});
 const gatewayState = require(${gatewayStatePath});
 const dockerDriverPlatform = require(${dockerDriverPlatformPath});
 const gatewayGpuPassthrough = require(${gatewayGpuPassthroughPath});
 const onboardProbes = require(${onboardProbesPath});
+const preflight = require(${preflightPath});
+preflight.assessHost = () => ({
+  platform: "linux",
+  isWsl: false,
+  runtime: "docker",
+  dockerInstalled: true,
+  dockerRunning: true,
+  dockerReachable: true,
+  nodeInstalled: true,
+  openshellInstalled: true,
+  isContainerRuntimeUnderProvisioned: false,
+  hasNestedOverlayConflict: false,
+  requiresHostCgroupnsFix: false,
+  isUnsupportedRuntime: false,
+  isHeadlessLikely: false,
+  hasNvidiaGpu: false,
+  dockerCdiSpecDirs: [],
+  cdiNvidiaGpuSpecMissing: false,
+  nvidiaContainerToolkitInstalled: false,
+  notes: [],
+});
+const bridgeDnsPreflight = require(${bridgeDnsPreflightPath});
+bridgeDnsPreflight.assertDockerBridgeAndContainerDnsHealthy = () => {};
+const preflightGatewayAuthority = require(${preflightGatewayAuthorityPath});
 
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const commands = [];
@@ -276,6 +312,18 @@ gatewayState.isGatewayHealthy = () => true;
 dockerDriverPlatform.isLinuxDockerDriverGatewayEnabled = () => false;
 gatewayGpuPassthrough.reconcileGatewayGpuReuseForGpuIntent = ({ gatewayReuseState }) => gatewayReuseState;
 onboardProbes.verifyOnboardInferenceSmoke = () => {};
+preflightGatewayAuthority.collectOnboardGatewayReadiness = async () => ({
+  observations: [{ id: "gateway.management.mode", state: "present", value: "nemoclaw-managed" }],
+  capabilities: [
+    "gateway.authority.resolved",
+    "gateway.attachment.valid",
+    "gateway.reuse.ready",
+    "gateway.version.compatible",
+    "gateway.port.uncontested",
+  ].map((id) => ({ id, state: "present" })),
+  findings: [],
+  evidence: [],
+});
 
 const complete = () => ({
   status: "complete",
@@ -283,26 +331,26 @@ const complete = () => ({
   completedAt: new Date().toISOString(),
   error: null,
 });
-onboardSession.saveSession(
-  onboardSession.createSession({
-    mode: "interactive",
-    agent: "hermes",
-    sandboxName: null,
-    provider: "hermes-provider",
-    model: "moonshotai/kimi-k2.6",
-    endpointUrl: "https://8.8.8.8/v1",
-    credentialEnv: "NOUS_API_KEY",
-    hermesAuthMethod: "api_key",
-    hermesToolGateways: [],
-    policyPresets: ["nous-web"],
-    metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
-    steps: {
-      preflight: complete(),
-      gateway: complete(),
-      provider_selection: complete(),
-    },
-  }),
-);
+const resumeSession = onboardSession.createSession({
+  mode: "interactive",
+  agent: "hermes",
+  sandboxName: null,
+  provider: "hermes-provider",
+  model: "moonshotai/kimi-k2.6",
+  endpointUrl: "https://8.8.8.8/v1",
+  credentialEnv: "NOUS_API_KEY",
+  hermesAuthMethod: "api_key",
+  hermesToolGateways: [],
+  policyPresets: ["nous-web"],
+  metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+  steps: {
+    preflight: complete(),
+    gateway: complete(),
+    provider_selection: complete(),
+  },
+});
+resumeSession.checkpoint = deriveCheckpointFromSession(resumeSession, { profile: "default" });
+onboardSession.saveSession(resumeSession);
 
 const originalMarkStepComplete = onboardSession.markStepComplete;
 onboardSession.markStepComplete = (stepName, updates = {}) => {
@@ -378,8 +426,8 @@ const { onboard } = require(${onboardPath});
     assert.ok(!payload.commands.some((entry) => /provider (create|update)/.test(entry.command)));
     assert.equal(
       payload.inferenceSessionSandboxName,
-      null,
-      "resume inference must not persist sandboxName before sandbox creation",
+      "hermes-resume",
+      "resume inference persists the canonical sandbox identity before sandbox creation",
     );
     assert.ok(
       payload.registryUpdates.some(

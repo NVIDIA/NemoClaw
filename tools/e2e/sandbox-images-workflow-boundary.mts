@@ -253,9 +253,13 @@ function validateCanonicalAuth(errors: string[], auth: SandboxImagesWorkflowStep
     'auth_marker="${DOCKER_CONFIG}/.nemoclaw-docker-login-attempted"',
     ': > "${auth_marker}"',
     'chmod 600 "${auth_marker}"',
-    "for attempt in 1 2 3; do",
+    "login_attempts=5",
+    "retry_seconds=5",
+    "for ((attempt = 1; attempt <= login_attempts; attempt += 1)); do",
     `if printf '%s' "\${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "\${DOCKERHUB_USERNAME}" --password-stdin; then`,
-    "Docker Hub login failed after 3 attempts",
+    "if ((attempt < login_attempts)); then",
+    'sleep "${retry_seconds}"',
+    'Docker Hub login failed after ${login_attempts} attempts',
   ];
   for (const fragment of requiredFragments) {
     if (!run.includes(fragment)) {
@@ -444,7 +448,8 @@ function validateGuardedProductionBuild(
     const requiredDefaultTrustFragments = [
       "set -euo pipefail",
       "docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 64 --memory 256m --entrypoint /bin/sh nemoclaw-hermes-production -eu -c",
-      'test "$NODE_EXTRA_CA_CERTS" = /usr/local/share/nemoclaw/corporate-ca.pem',
+      'test -z "${NODE_EXTRA_CA_CERTS:-}"',
+      'test -z "${CURL_CA_BUNDLE:-}"',
       "test ! -e /usr/local/share/nemoclaw/corporate-ca.pem",
       "test ! -L /usr/local/share/nemoclaw/corporate-ca.pem",
       "test -x /usr/local/bin/hermes",

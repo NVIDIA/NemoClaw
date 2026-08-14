@@ -19,6 +19,44 @@ export const RUNTIME_CONFIG_GUARD = path.join(
 
 const HERMES_GUARD_TIMEOUT_MS = 90_000;
 
+/**
+ * Provides the narrow GatewayConfig surface that the host-side guard fixtures need.
+ * The production guard imports Hermes' bundled gateway.config module from the image.
+ */
+function writeGatewayConfigStub(root: string): void {
+  const pythonRoot = path.join(root, "python");
+  const gatewayDir = path.join(pythonRoot, "gateway");
+  fs.mkdirSync(gatewayDir, { recursive: true });
+  fs.writeFileSync(path.join(gatewayDir, "__init__.py"), "", { mode: 0o600 });
+  fs.writeFileSync(
+    path.join(gatewayDir, "config.py"),
+    [
+      "class GatewayConfig:",
+      "    @classmethod",
+      "    def from_dict(cls, value):",
+      "        if not isinstance(value, dict):",
+      "            raise TypeError('Hermes configuration must be a mapping')",
+      "        platforms = value.get('platforms')",
+      "        if not isinstance(platforms, dict):",
+      "            return cls()",
+      "        teams = platforms.get('teams')",
+      "        if not isinstance(teams, dict):",
+      "            return cls()",
+      "        home_channel = teams.get('home_channel')",
+      "        if isinstance(home_channel, dict) and 'platform' not in home_channel:",
+      "            raise KeyError('platform')",
+      "        return cls()",
+      "",
+    ].join("\n"),
+    { mode: 0o600 },
+  );
+}
+
+export function gatewayConfigStubRoot(root: string): string {
+  writeGatewayConfigStub(root);
+  return path.join(root, "python");
+}
+
 export interface RestartFixture {
   root: string;
   sandboxDir: string;
@@ -82,6 +120,7 @@ export function createRestartFixture(): RestartFixture {
   const hash = hashInputs(configPath, envPath);
   fs.writeFileSync(hashPath, hash, { mode: 0o600 });
   fs.writeFileSync(compatHashPath, hash, { mode: 0o600 });
+  writeGatewayConfigStub(root);
 
   return {
     root,
@@ -111,10 +150,22 @@ export function allowRestartFixturePeerTraversal(fixture: RestartFixture): () =>
 }
 
 export function runWriteConfig(fixture: RestartFixture, expectedDigest: string, content: string) {
+  const wrapper = String.raw`
+import sys
+
+source_path = sys.argv[1]
+sys.path.insert(0, sys.argv[2])
+sys.argv = [source_path, *sys.argv[3:]]
+with open(source_path, "rb") as source:
+    exec(compile(source.read(), source_path, "exec"), {"__name__": "__main__", "__file__": source_path})
+`;
   return spawnSync(
     "python3",
     [
+      "-c",
+      wrapper,
       RUNTIME_CONFIG_GUARD,
+      gatewayConfigStubRoot(fixture.root),
       "write-config",
       "--hermes-dir",
       fixture.hermesDir,
@@ -125,7 +176,11 @@ export function runWriteConfig(fixture: RestartFixture, expectedDigest: string, 
       "--expected-config-sha256",
       expectedDigest,
     ],
-    { encoding: "utf-8", input: content, timeout: HERMES_GUARD_TIMEOUT_MS },
+    {
+      encoding: "utf-8",
+      input: content,
+      timeout: HERMES_GUARD_TIMEOUT_MS,
+    },
   );
 }
 

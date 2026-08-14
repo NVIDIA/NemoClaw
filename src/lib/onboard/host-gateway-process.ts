@@ -66,6 +66,7 @@ export interface StopHostGatewayOptions {
 
 export interface StopHostGatewayResult {
   failed: number[];
+  foreignUserPids?: number[];
   /** Whether a requested pgrep fallback completed with a usable result. */
   orphanScanComplete?: boolean;
   ownershipFailures?: string[];
@@ -180,14 +181,53 @@ function processArgs(pid: number, deps: HostGatewayProcessDeps): string {
   return result.status === 0 ? result.stdout.trim() : "";
 }
 
-function pidExists(pid: number, deps: HostGatewayProcessDeps): boolean {
-  return deps.run("ps", ["-p", String(pid), "-o", "pid="], { env: deps.env }).status === 0;
+type HostGatewayProcessStatus = "exited" | "running" | "unknown";
+const EXITED_PROCESS_STATES = new Set(["X", "Z", "x"]);
+const RUNNING_PROCESS_STATES = new Set(["D", "I", "K", "P", "R", "S", "T", "U", "W", "t"]);
+
+function hostGatewayProcessStatus(
+  pid: number,
+  deps: HostGatewayProcessDeps,
+): HostGatewayProcessStatus {
+  const result = deps.run("ps", ["-p", String(pid), "-o", "stat="], { env: deps.env });
+  if (result.status === 1) {
+    return result.stdout.trim() === "" && result.stderr.trim() === "" ? "exited" : "unknown";
+  }
+  if (result.status !== 0) return "unknown";
+  const state = result.stdout.trim().charAt(0);
+  if (EXITED_PROCESS_STATES.has(state)) return "exited";
+  return RUNNING_PROCESS_STATES.has(state) ? "running" : "unknown";
 }
 
 function pidOwner(pid: number, deps: HostGatewayProcessDeps): string | null {
   const result = deps.run("ps", ["-p", String(pid), "-o", "user="], { env: deps.env });
   if (result.status !== 0) return null;
   return result.stdout.trim() || null;
+}
+
+function pidOwnerUid(pid: number, deps: HostGatewayProcessDeps): number | null {
+  const result = deps.run("ps", ["-p", String(pid), "-o", "uid="], { env: deps.env });
+  if (result.status !== 0) return null;
+  const uid = Number.parseInt(result.stdout.trim(), 10);
+  return Number.isInteger(uid) ? uid : null;
+}
+
+function pidBelongsToAnotherUser(pid: number, deps: HostGatewayProcessDeps): boolean {
+  const currentUid = typeof process.getuid === "function" ? process.getuid() : -1;
+  if (currentUid < 0) return false;
+  const uid = pidOwnerUid(pid, deps);
+  if (uid === null || uid === 0) return false;
+  return uid !== currentUid;
+}
+
+function warnForeignUserGateway(pid: number, deps: HostGatewayProcessDeps): void {
+  const warn = deps.warn ?? ((message: string) => console.warn(message));
+  const owner = pidOwner(pid, deps);
+  const ownerLabel = owner ? `${owner}-owned` : "another user's";
+  warn(
+    `Kept ${ownerLabel} host openshell-gateway process ${pid} running. ` +
+      "Cleanup does not stop a gateway process that another user owns.",
+  );
 }
 
 function readOwnedRuntimeFile(filePath: string, uid: number): string | null {
@@ -302,12 +342,12 @@ function waitForExit(
 ): boolean {
   const deadline = Date.now() + timeoutMs;
   return (
-    waitUntil(() => !pidExists(pid, deps), {
+    waitUntil(() => hostGatewayProcessStatus(pid, deps) === "exited", {
       deadlineMs: deadline,
       initialIntervalMs: pollIntervalMs,
       maxIntervalMs: pollIntervalMs,
       backoffFactor: 1,
-    }) || !pidExists(pid, deps)
+    }) || hostGatewayProcessStatus(pid, deps) === "exited"
   );
 }
 
@@ -403,6 +443,7 @@ export function stopHostGatewayProcesses(
   const candidates = new Map<number, Set<string>>();
   const result: StopHostGatewayResult = {
     failed: [],
+    foreignUserPids: [],
     orphanScanComplete: true,
     ownershipFailures: [],
     skippedDeadPids: [],
@@ -486,7 +527,15 @@ export function stopHostGatewayProcesses(
       : undefined;
   let clearedRuntimeFiles = false;
   for (const [pid, sources] of candidates) {
-    if (!pidExists(pid, deps)) {
+    const processStatus = hostGatewayProcessStatus(pid, deps);
+    if (processStatus === "unknown") {
+      if (options.scopedGatewayStop) {
+        return rejectScoped("recorded process status cannot be proven", pid);
+      }
+      result.skippedNonMatchingPids.push(pid);
+      continue;
+    }
+    if (processStatus === "exited") {
       result.skippedDeadPids.push(pid);
       if (options.scopedGatewayStop && deps.isPortFree?.(scopedPort) !== true) {
         return rejectScoped("recorded process is dead but its selected port remains occupied");
@@ -524,17 +573,30 @@ export function stopHostGatewayProcesses(
       }
       continue;
     }
+    if (
+      !options.scopedGatewayStop &&
+      !sources.has("pid-file") &&
+      pidBelongsToAnotherUser(pid, deps)
+    ) {
+      (result.foreignUserPids ??= []).push(pid);
+      warnForeignUserGateway(pid, deps);
+      continue;
+    }
 
     const stopResult = tryStopPid(
       pid,
       deps,
       waitOptions,
       options.scopedGatewayStop
-        ? () =>
-            scopedGatewayOwnershipFailure(pid, deps, options, stateDir, pidFile, {
-              name: scopedName,
-              port: scopedPort,
-            }) === null
+        ? () => {
+            if (hostGatewayProcessStatus(pid, deps) !== "running") return false;
+            return (
+              scopedGatewayOwnershipFailure(pid, deps, options, stateDir, pidFile, {
+                name: scopedName,
+                port: scopedPort,
+              }) === null
+            );
+          }
         : undefined,
     );
     if (stopResult === "identity-changed") {

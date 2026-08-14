@@ -34,6 +34,7 @@ export interface OnboardRuntimeDeps {
   markStepStarted(stepName: string): Session;
   markStepComplete(stepName: string, updates?: SessionUpdates): Session;
   markStepSkipped(stepName: string): Session;
+  markStepRejected?(stepName: string): Session;
   markStepFailed(stepName: string, message?: string | null): Session;
   completeSession(updates?: SessionUpdates, options?: CompleteSessionOptions): Session;
   filterSafeUpdates(updates: SessionUpdates): Partial<Session>;
@@ -76,6 +77,7 @@ function defaultDeps(): OnboardRuntimeDeps {
     markStepStarted: onboardSession.markStepStarted,
     markStepComplete: onboardSession.markStepComplete,
     markStepSkipped: onboardSession.markStepSkipped,
+    markStepRejected: onboardSession.markStepRejected,
     markStepFailed: onboardSession.markStepFailed,
     completeSession: onboardSession.completeSession,
     filterSafeUpdates: onboardSession.filterSafeUpdates,
@@ -169,6 +171,10 @@ export class OnboardRuntime {
     return updated;
   }
 
+  async markStepRejected(stepName: string): Promise<Session> {
+    return this.deps.markStepRejected?.(stepName) ?? this.deps.markStepSkipped(stepName);
+  }
+
   async markStepSkipped(stepName: string): Promise<Session> {
     const current = this.ensureSession();
     const state = machineStateFromOnboardSessionStep(stepName);
@@ -203,6 +209,7 @@ export class OnboardRuntime {
     const enteredAt = this.deps.now();
     const updated = this.deps.updateSession((session) => {
       session.machine = snapshotFor(to, enteredAt, session.machine.revision + 1);
+      onboardSession.syncCheckpointMachineState(session, to, enteredAt);
       if (to === "failed") {
         session.status = "failed";
       } else if (to === "complete") {
@@ -259,6 +266,7 @@ export class OnboardRuntime {
         session.resumable = false;
         session.failure = null;
         session.machine = snapshotFor("complete", enteredAt, session.machine.revision + 1);
+        onboardSession.syncCheckpointMachineState(session, "complete", enteredAt);
         return session;
       });
     }
@@ -377,6 +385,7 @@ export class OnboardRuntime {
         recordedAt,
       });
       session.machine = snapshotFor("failed", recordedAt, session.machine.revision + 1);
+      onboardSession.syncCheckpointMachineState(session, "failed", recordedAt);
       return session;
     });
 

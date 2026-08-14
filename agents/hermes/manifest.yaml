@@ -71,6 +71,9 @@ config:
 state_lock_plan_in_image: true
 state_dirs:
   - memories
+  # Hermes lazy dependency installs persist here outside sealed configuration.
+  - path: lazy-packages
+    shields: read-only
   - sessions
   - path: skills
     shields: read-only

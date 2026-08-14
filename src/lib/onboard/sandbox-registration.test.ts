@@ -182,6 +182,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       lifecycleLiveIdentityFingerprint: "d".repeat(64),
       gatewayName: "nemoclaw-19080",
       gatewayPort: 19080,
+      hostMounts: [{ source: "/srv/project", target: "/sandbox/project", readOnly: true }],
     });
 
     expect(entry).toMatchObject({
@@ -214,6 +215,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       gpuEnabled: true,
       openshellDriver: "docker",
       openshellVersion: "0.1.2",
+      hostMounts: [{ source: "/srv/project", target: "/sandbox/project", readOnly: true }],
     });
     expect(entry.agent).toBeNull();
     expect(entry.agentVersion).toBeTruthy();
@@ -500,6 +502,48 @@ describe("selection", () => {
 });
 
 describe("registerCreatedSandbox", () => {
+  it("persists lifecycle identity for a non-OpenClaw agent", () => {
+    const agentDefs = requireDist("../agent/defs.js") as typeof import("../agent/defs");
+    const registerSandbox = vi.fn();
+
+    const entry = registerCreatedSandbox({
+      sandboxName: "hermes-box",
+      inferenceSelection: {
+        model: "kimi",
+        provider: "hermes-provider",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
+        nimContainer: null,
+      },
+      runtimeFields,
+      agent: agentDefs.loadAgent("hermes"),
+      agentVersionKnown: true,
+      imageTag: null,
+      appliedPolicies: [],
+      plannedMessagingState: undefined,
+      hermesToolGateways: [],
+      hermesDashboardState: { enabled: false, config: null },
+      hermesApiPort: 8642,
+      dashboardPort: 0,
+      lifecycleGeneration: "22222222-2222-4222-8222-222222222222",
+      lifecycleLiveIdentityFingerprint: "d".repeat(64),
+      gatewayName: "owner-gateway",
+      gatewayPort: 8080,
+      registerSandbox,
+    });
+
+    expect(entry).toMatchObject({
+      agent: "hermes",
+      lifecycleGeneration: "22222222-2222-4222-8222-222222222222",
+      lifecycleLiveIdentityFingerprint: "d".repeat(64),
+      gatewayName: "owner-gateway",
+    });
+    expect(registerSandbox).toHaveBeenCalledExactlyOnceWith(entry);
+  });
+
   it("passes the built entry to the supplied registry writer", () => {
     const registerSandbox = vi.fn();
 

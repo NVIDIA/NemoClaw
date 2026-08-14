@@ -52,11 +52,14 @@ Review the [Prerequisites](prerequisites) before you begin.
     For a first run, skip optional web search and messaging setup, then accept the suggested network policy tier.
 
     <Note>
-      The installer can display `Run express install with these settings? [Y/n]:` before the agent-selection prompt only on supported DGX or Windows Subsystem for Linux (WSL) hosts.
-      Press Enter to use the recommended preset settings and managed local inference for that platform.
+      The installer can display `Run express install with these settings? [Y/n]:` before the agent-selection prompt on DGX Spark, qualifying DGX Station, or Windows Subsystem for Linux (WSL) hosts.
+      On N1x, the installer instead offers a Deferred preview pending a physical NemoClaw Express E2E run and discloses that status before confirmation.
+      Press Enter to use the recommended preset settings on a qualified platform or to explicitly opt into the Deferred N1x preview.
       Express install mode completes the remaining onboarding non-interactively.
       If you accept, wait for the installer to finish, then continue with **Confirm the Sandbox Is Ready**.
-      Enter `n` to continue with the interactive onboarding flow described in this step.
+      On N1x, entering `n` stops installation because the Deferred managed-vLLM preview is the only admitted onboarding path.
+      Re-run and accept the preview, or set `NEMOCLAW_PROVIDER=install-vllm` before installation.
+      On the other express platforms, enter `n` to continue with the interactive onboarding flow described in this step.
     </Note>
   </Step>
 
@@ -81,7 +84,10 @@ Review the [Prerequisites](prerequisites) before you begin.
     nemoclaw launch my-assistant
     ```
 
-    `nemoclaw launch` runs the same preflight as `connect`, then starts `openclaw tui` in your terminal.
+    `nemoclaw launch` runs the complete preflight or, on Linux, validates an existing fixed 24-hour launch-readiness lease before it starts `openclaw tui` in your terminal.
+    On macOS, `launch` runs the complete preflight every time and does not publish a launch-readiness lease.
+    On Linux, if the recorded configuration or live runtime has changed, NemoClaw durably invalidates prior evidence before it runs the complete preflight.
+    If old evidence might remain acceptable and cannot be invalidated, `launch` stops before preflight or recovery and tells you to repair the secure OS per-user runtime authority or NemoClaw state permissions.
     To open a sandbox shell first and start the TUI yourself, run these commands instead.
 
     ```bash
@@ -166,12 +172,22 @@ Use these details when your first-run path needs more control.
     Before you install from Windows, follow [Prepare a Windows Machine to Install NemoClaw](additional-setup/windows-preparation).
     Before you install on DGX Station, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation).
 
-    DGX Spark, qualifying DGX Station hosts, and Windows WSL can offer the recommended express install mode after the third-party software notice.
+    DGX Spark, qualifying DGX Station, and Windows WSL hosts can offer the recommended express install mode after the third-party software notice.
+    N1x can offer a Deferred preview after the notice, but full physical NemoClaw Express E2E validation is pending.
+    N1x remains outside the supported-platform set until that validation passes and the platform matrix status is promoted.
 
-    After you press Enter at the express install prompt, the installer switches the remaining onboarding to non-interactive mode and selects the managed local inference path for that platform.
+    After you press Enter at the express install prompt, or explicitly accept the Deferred N1x preview, the installer switches the remaining onboarding to non-interactive mode and selects the managed local inference path for that platform.
     Express install mode uses `my-assistant` unless you set `NEMOCLAW_SANDBOX_NAME`, and it applies the suggested Balanced policy.
     It can still prompt for `sudo` when host setup needs it.
-    Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` to choose a provider yourself.
+    On the other express platforms, set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` to choose a provider yourself.
+
+    N1x Express selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
+    N1x detection requires Linux `arm64`, a trusted `/etc/fastos-release` marker with `NAME="N1x FASTOS"`, and NVIDIA display PCI identity `10de:2e2a`.
+    The N1x path does not use DGX Spark cluster discovery, the fixed catalog path, managed llama.cpp, or NVIDIA NIM.
+    Accepting the N1x prompt supplies the narrow preview intent required to pass the pending-validation readiness finding.
+    Declining the N1x prompt or setting only `NEMOCLAW_NO_EXPRESS=1` stops installation before onboarding; neither path opens interactive provider selection.
+    Set `NEMOCLAW_PROVIDER=install-vllm` when you need to bypass the N1x preview prompt with the same explicit intent.
+    Refer to [Platform Support](../reference/platform-support) before you rely on this path.
 
     Before the Station express confirmation, the installer reports whether the Hugging Face download is authenticated without displaying the token value.
     Authentication is optional for the public Station recipes, but a read token reduces exposure to anonymous HTTP `429` rate limiting during large downloads.
@@ -302,8 +318,11 @@ Use these details when your first-run path needs more control.
     ```
 
     The default is `Y`.
-    Press Enter to continue, or answer `n` to abort cleanly, correct the entries, and rerun `nemoclaw onboard`.
-    Non-interactive runs print the summary for log clarity but skip the prompt.
+    Press Enter to accept the configuration.
+    If you answer `n`, onboarding exits with a nonzero status and clears the recorded provider, model, and sandbox name.
+    The rejected run does not register a new gateway credential.
+    Run `nemoclaw onboard` to make new choices.
+    Non-interactive runs print the summary and skip the prompt.
   </Accordion>
 
   <Accordion title="Web Search Messaging and Network Policies">
@@ -398,7 +417,12 @@ Use these details when your first-run path needs more control.
     The wizard starts a background dashboard port forward and prints its URL in the ready summary.
     The default host port is `18789`.
     When that port is occupied, NemoClaw uses the next free dashboard port, such as `18790`, and includes the port in the URL.
-    If the selected port becomes occupied after the sandbox build begins, onboarding rolls back the new sandbox and asks you to retry rather than print an unreachable URL.
+    For a new sandbox, NemoClaw reserves the selected loopback port through sandbox preparation and the image build.
+    If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources.
+    If OpenShell reports `sandbox is not ready`, NemoClaw waits 5 seconds and retries the dashboard forward up to three times.
+    These retries preserve the existing sandbox and selected port.
+    NemoClaw releases the reservation immediately before OpenShell starts the dashboard forward.
+    If forwarding then fails, onboarding removes the new sandbox and tells you to resolve the reported error before retrying.
     The installation transcript does not print the gateway token.
     Use `nemoclaw my-gpt-claw dashboard-url --quiet` to print the complete authenticated URL explicitly.
 

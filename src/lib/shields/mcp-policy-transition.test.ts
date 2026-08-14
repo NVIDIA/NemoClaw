@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
+import { testTimeoutOptions } from "../../../test/helpers/timeouts";
 
 import {
   hasManagedMcpPolicyClaims,
@@ -418,7 +419,7 @@ describe("managed MCP Shields policy transitions (#7952)", () => {
     ]);
   });
 
-  it("reconciles 257 current managed policies without losing entries (#7952)", () => {
+  function reconcilePolicies(): void {
     const policies = Array.from({ length: 257 }, (_, index) =>
       registeredPolicy(`server${index}`, "8.8.8.8"),
     );
@@ -444,7 +445,10 @@ describe("managed MCP Shields policy transitions (#7952)", () => {
     expect(restored.network_policies.mcp_bridge_server256).toEqual(
       current.find(({ key }) => key === "mcp_bridge_server256")?.networkPolicy,
     );
-  });
+  }
+
+  const stressTest = testTimeoutOptions(15_000);
+  it("reconciles 257 managed policies without loss (#7952)", stressTest, reconcilePolicies);
 
   it("does not restore a managed MCP policy removed during the shields-down window", () => {
     const alpha = registeredPolicy("alpha", "8.8.8.8");

@@ -8,9 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { openClawBootstrapSnippet } from "./support/entrypoint-script-fixture";
-
 import { extractShellFunctionFromSource } from "./helpers/shell-source";
+import { openClawBootstrapSnippet } from "./support/entrypoint-script-fixture";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "scripts", "lib");
@@ -707,8 +706,8 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     );
 
     expect(result.status, result.stderr || result.stdout).toBe(0);
-    expect(configAfter.gateway.auth.token).toEqual(expect.any(String));
     expect(configAfter.gateway.auth.token).not.toBe("");
+    expect(Number.isNaN(Date.parse(configAfter.meta.lastTouchedAt))).toBe(false);
     expect(envFile).toContain("export OPENCLAW_GATEWAY_PORT='18790'");
     expect(envFile).toContain("export NEMOCLAW_OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
     expect(envFile).not.toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");

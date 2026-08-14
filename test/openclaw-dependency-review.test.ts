@@ -12,14 +12,14 @@ import { readYaml, type WorkflowJob, type WorkflowStep } from "./helpers/e2e-wor
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DEPENDENCY_REVIEW = path.join(
   REPO_ROOT,
-  "docs",
-  "security",
+  "internal",
+  "security-reviews",
   "openclaw-2026.6.10-dependency-review.md",
 );
 const ACTIVE_DEPENDENCY_REVIEW = path.join(
   REPO_ROOT,
-  "docs",
-  "security",
+  "internal",
+  "security-reviews",
   "openclaw-2026.7.1-dependency-review.md",
 );
 const MCP_TROUBLESHOOTING = path.join(
@@ -282,6 +282,10 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("GHSA-mwp4-54f8-5fhr");
     expect(review).toContain("ip-address@^10.2.0");
     expect(review).toContain("ip-address@10.3.1");
+    expect(review).toContain("hono@4.12.34");
+    expect(review).toContain("GHSA-54fx-42gc-7vw4");
+    expect(review).toContain("GHSA-f23p-vx2j-j53r");
+    expect(review).toContain("GHSA-79qm-7rj5-m7r9");
   });
 
   it("keeps advisor disposition evidence in the dependency review note", () => {
@@ -644,7 +648,7 @@ for dockerfile in Dockerfile Dockerfile.base; do
   check_contains "$openclaw_block" 'mcporter-audit-policy-sha256=' "$dockerfile mcporter audit policy hash"
   check_contains "$openclaw_block" 'mcporter-audit-status=' "$dockerfile mcporter audit status"
   check_contains "$openclaw_block" 'mcporter-audit-exceptions=' "$dockerfile mcporter audit exceptions"
-  check_contains "$openclaw_block" 'mcporter-recipe=locked-ci+reviewed-audit+signatures-v2' "$dockerfile mcporter provenance recipe"
+  check_contains "$openclaw_block" 'mcporter-recipe=locked-ci+reviewed-audit-v3' "$dockerfile mcporter provenance recipe"
 done
 
 check_contains "$(cat Dockerfile.base)" 'chmod 0444 "$OPENCLAW_PROVENANCE_TMP"' "base provenance protected mode"

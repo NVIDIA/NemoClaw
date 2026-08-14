@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isNonInteractiveSession } from "../core/non-interactive";
 import { parseTrustedPrivateHosts } from "../security/trusted-private-endpoint";
 
 export type CustomPolicySource =
@@ -67,6 +68,7 @@ function customPolicySourceFromOptions(options: PolicyAddOptions): CustomPolicyS
 export function parsePolicyAddOptions(
   options: PolicyAddOptions = {},
   env: Record<string, string | undefined> = process.env,
+  stdinIsTty: boolean = Boolean(process.stdin.isTTY),
 ): ParsedPolicyAddOptions {
   const source = customPolicySourceFromOptions(options);
   const commandTrustedPrivateHosts = options.trustedPrivateHosts ?? [];
@@ -83,7 +85,9 @@ export function parsePolicyAddOptions(
       : source;
   return {
     dryRun: Boolean(options.dryRun),
-    skipConfirm: Boolean(options.yes || options.force || env.NEMOCLAW_NON_INTERACTIVE === "1"),
+    skipConfirm: Boolean(
+      options.yes || options.force || isNonInteractiveSession(env as NodeJS.ProcessEnv, stdinIsTty),
+    ),
     source: effectiveSource,
     presetArg: options.preset ?? null,
     trustedPrivateHosts,

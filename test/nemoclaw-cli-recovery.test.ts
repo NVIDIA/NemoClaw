@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
+import { SANDBOX_EXEC_STARTED_MARKER } from "../src/lib/actions/sandbox/sandbox-exec-output";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
 describe("nemoclaw CLI runtime recovery", () => {
@@ -84,6 +85,11 @@ if (args[0] === "sandbox" && args[1] === "get" && (args[2] === "my-assistant" ||
 }
 
 if (args[0] === "sandbox" && args[1] === "exec") {
+  const command = args.join(" ");
+  if (command.includes("chat/completions") || command.includes("/v1/responses") || command.includes("/v1/messages")) {
+    process.stdout.write(${JSON.stringify(`${SANDBOX_EXEC_STARTED_MARKER}\n200\n{"choices":[{"message":{"role":"assistant","content":"OK"}}]}\n`)});
+    process.exit(0);
+  }
   process.stdout.write("OK 200\\n");
   process.exit(0);
 }

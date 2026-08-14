@@ -9,6 +9,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeMessagingPlan } from "../../../test/helpers/messaging-plan-fixtures";
+import { decisionSelected } from "./onboard-checkpoint-decision";
 
 const require = createRequire(import.meta.url);
 const distPath = require.resolve("./onboard-session");
@@ -57,14 +58,6 @@ function requireDebugSummary(
     throw new Error("Expected debug session summary to be present");
   }
   return summary;
-}
-
-function normalizeLegacySession(
-  legacy: unknown,
-): ReturnType<OnboardSessionModule["normalizeSession"]> {
-  return session.normalizeSession(
-    legacy as Parameters<OnboardSessionModule["normalizeSession"]>[0],
-  );
 }
 
 beforeEach(() => {
@@ -252,6 +245,61 @@ describe("onboard session", () => {
     expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
   });
 
+  it("clears provider selection authority when a review is rejected", () => {
+    session.saveSession(
+      session.createSession({
+        provider: "ollama-local",
+        model: "qwen3.5:9b",
+        endpointUrl: "http://127.0.0.1:11435/v1",
+        credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        sandboxName: "rejected-review",
+        sandboxPromptProgress: {
+          sandboxName: true,
+          webSearch: false,
+          messaging: false,
+          resourceProfile: false,
+        },
+      }),
+    );
+    session.markStepStarted("provider_selection");
+    session.updateSession((current) => {
+      current.checkpoint = {
+        schemaVersion: 4,
+        profile: { kind: "selected", value: "default" },
+        runtimeAuthority: { kind: "unset" },
+        sessionId: current.sessionId,
+        machineState: "init",
+        updatedAt: new Date().toISOString(),
+        sandboxIdentity: decisionSelected({ name: "rejected-review", agent: "openclaw" }),
+        webSearch: { kind: "unset" },
+        messaging: { kind: "unset" },
+        resourceProfile: { kind: "unset" },
+        gatewayAuthority: { kind: "unset" },
+        effectGroups: {},
+        bindings: { credentialEnvs: [], registeredProviders: [] },
+        sandboxRecreate: null,
+      };
+      return current;
+    });
+
+    const rejected = session.markStepRejected("provider_selection");
+
+    expect(rejected).toMatchObject({
+      provider: null,
+      model: null,
+      endpointUrl: null,
+      credentialEnv: null,
+      sandboxName: null,
+      sandboxPromptProgress: { sandboxName: false },
+      lastStepStarted: null,
+      resumable: false,
+      status: "failed",
+      failure: null,
+      steps: { provider_selection: { status: "skipped" } },
+      checkpoint: { sandboxIdentity: { kind: "unset" } },
+    });
+  });
+
   it("can record step boundaries without mutating the machine snapshot", () => {
     const emitted: OnboardMachineEvent[] = [];
     machineEvents.addOnboardMachineEventListener((event) => emitted.push(event));
@@ -295,83 +343,6 @@ describe("onboard session", () => {
     loaded = requireLoadedSession(session.loadSession());
     expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
     expect(requireDebugSummary(session.summarizeForDebug()).machine).toEqual(loaded.machine);
-  });
-
-  it("normalizes old sessions without machine snapshots", () => {
-    type LegacySession = Omit<ReturnType<OnboardSessionModule["createSession"]>, "machine"> & {
-      machine?: unknown;
-    };
-    const legacy = session.createSession({
-      sessionId: "legacy-session",
-      startedAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:05:00.000Z",
-    }) as unknown as LegacySession;
-    delete legacy.machine;
-    legacy.steps.gateway.status = "in_progress";
-    legacy.steps.gateway.startedAt = "2026-01-01T00:02:00.000Z";
-    legacy.lastStepStarted = "gateway";
-
-    let normalized = requireLoadedSession(normalizeLegacySession(legacy));
-    expect(normalized.machine).toEqual({
-      version: 1,
-      state: "gateway",
-      stateEnteredAt: "2026-01-01T00:02:00.000Z",
-      revision: 0,
-    });
-
-    legacy.steps.gateway.status = "complete";
-    legacy.steps.gateway.completedAt = "2026-01-01T00:03:00.000Z";
-    legacy.lastCompletedStep = "gateway";
-    normalized = requireLoadedSession(normalizeLegacySession(legacy));
-    expect(normalized.machine).toEqual({
-      version: 1,
-      state: "provider_selection",
-      stateEnteredAt: "2026-01-01T00:03:00.000Z",
-      revision: 0,
-    });
-
-    legacy.status = "failed";
-    legacy.failure = {
-      step: "gateway",
-      message: "boom",
-      recordedAt: "2026-01-01T00:04:00.000Z",
-    };
-    normalized = requireLoadedSession(normalizeLegacySession(legacy));
-    expect(normalized.machine).toEqual({
-      version: 1,
-      state: "failed",
-      stateEnteredAt: "2026-01-01T00:04:00.000Z",
-      revision: 0,
-    });
-
-    legacy.status = "complete";
-    normalized = requireLoadedSession(normalizeLegacySession(legacy));
-    expect(normalized.machine.state).toBe("complete");
-  });
-
-  it("normalizes invalid machine snapshots from old sessions", () => {
-    type LegacySession = Omit<ReturnType<OnboardSessionModule["createSession"]>, "machine"> & {
-      machine?: unknown;
-    };
-    const legacy = session.createSession({
-      lastCompletedStep: "policies",
-    }) as unknown as LegacySession;
-    legacy.steps.policies.status = "complete";
-    legacy.steps.policies.completedAt = "2026-01-01T00:08:00.000Z";
-    legacy.machine = {
-      version: 1,
-      state: "not-a-state",
-      stateEnteredAt: "2026-01-01T00:09:00.000Z",
-      revision: -1,
-    };
-
-    const normalized = requireLoadedSession(normalizeLegacySession(legacy));
-    expect(normalized.machine).toEqual({
-      version: 1,
-      state: "finalizing",
-      stateEnteredAt: "2026-01-01T00:08:00.000Z",
-      revision: 0,
-    });
   });
 
   it("does not emit machine events for direct step mutations", () => {
@@ -992,6 +963,68 @@ describe("onboard session", () => {
     expect("token" in loaded.metadata).toBe(false);
   });
 
+  it("round-trips secret-free read-only host mount metadata", () => {
+    const hostMounts = [
+      { source: "/srv/project", target: "/sandbox/project", readOnly: true as const },
+    ];
+    session.saveSession(
+      session.createSession({
+        metadata: { gatewayName: "nemoclaw", fromDockerfile: null, hostMounts },
+      }),
+    );
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.metadata.hostMounts).toEqual(hostMounts);
+    expect(loaded.metadata.hostMounts).not.toBe(hostMounts);
+  });
+
+  it("preserves a fail-closed marker for malformed host mount metadata", () => {
+    const malformed = session.createSession();
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.SESSION_FILE,
+      JSON.stringify({
+        ...malformed,
+        metadata: {
+          ...malformed.metadata,
+          hostMounts: [
+            { source: "/srv/project", target: "/sandbox/project", readOnly: true },
+            { source: "/srv/private", target: "/sandbox/private", readOnly: false },
+          ],
+        },
+      }),
+    );
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(session.hasInvalidSessionHostMounts(loaded)).toBe(true);
+    expect(loaded.metadata.hostMounts).toBeUndefined();
+  });
+
+  it("preserves a fail-closed marker for terminal-control host mount metadata", () => {
+    const malformed = session.createSession();
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.SESSION_FILE,
+      JSON.stringify({
+        ...malformed,
+        metadata: {
+          ...malformed.metadata,
+          hostMounts: [
+            {
+              source: "/srv/project",
+              target: "/sandbox/project\u2028forged",
+              readOnly: true,
+            },
+          ],
+        },
+      }),
+    );
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(session.hasInvalidSessionHostMounts(loaded)).toBe(true);
+    expect(loaded.metadata.hostMounts).toBeUndefined();
+  });
+
   it("drops non-string gatewayName during normalization", () => {
     fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
     fs.writeFileSync(
@@ -1006,6 +1039,31 @@ describe("onboard session", () => {
     fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
     fs.writeFileSync(session.SESSION_FILE, "not-json");
     expect(session.loadSession()).toBeNull();
+  });
+
+  it("keeps completed legacy checkpoint sessions readable as status evidence", () => {
+    const completed = session.createSession({ sessionId: "legacy-completed" });
+    completed.status = "complete";
+    completed.resumable = false;
+    completed.machine = {
+      version: 1,
+      state: "complete",
+      stateEnteredAt: completed.updatedAt,
+      revision: 8,
+    };
+    const raw = JSON.parse(JSON.stringify(completed)) as Record<string, unknown>;
+    raw.checkpoint = { schemaVersion: 3, sessionId: completed.sessionId };
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(session.SESSION_FILE, JSON.stringify(raw, null, 2), { mode: 0o600 });
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded).toMatchObject({
+      sessionId: "legacy-completed",
+      status: "complete",
+      resumable: false,
+      machine: { state: "complete", revision: 8 },
+      checkpoint: null,
+    });
   });
 
   it("acquires and releases the onboard lock", () => {

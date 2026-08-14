@@ -8,7 +8,7 @@ Use after loading `SKILL.md` to choose an issue and establish its reported NemoC
 ## Contents
 
 - [Step 1: Determine Mode](#step-1-determine-mode)
-- [Step 2: Detect the Latest NemoClaw Version](#step-2-detect-the-latest-nemoclaw-version)
+- [Step 2: Detect the Newest Exact NemoClaw Release Tag](#step-2-detect-the-newest-exact-nemoclaw-release-tag)
 - [Step 3: Filter Candidates](#step-3-filter-candidates)
 - [Step 4: Parse Reported Version](#step-4-parse-reported-version)
 
@@ -16,11 +16,30 @@ Use after loading `SKILL.md` to choose an issue and establish its reported NemoC
 
 ## Step 1: Determine Mode
 
+Create the owner-only evidence directory before fetching issue content. Raw issue bodies and comments stay here and the cleanup trap removes them at the end of every branch:
+
+```bash
+VERIFY_STALE_TMP_ROOT=${TMPDIR:-/tmp}
+EVIDENCE_DIR=$(mktemp -d "$VERIFY_STALE_TMP_ROOT/nemoclaw-verify-stale.XXXXXX")
+chmod 700 "$EVIDENCE_DIR"
+cleanup_local_evidence() {
+  case "${EVIDENCE_DIR:-}" in
+    "$VERIFY_STALE_TMP_ROOT"/nemoclaw-verify-stale.*) rm -rf -- "$EVIDENCE_DIR" ;;
+  esac
+}
+trap cleanup_local_evidence EXIT
+```
+
 **Single-issue mode** — user provides an issue number:
 
 ```bash
+case "$ISSUE_NUMBER" in
+  ''|*[!0-9]*) echo "ERROR: issue number must contain digits only"; exit 1 ;;
+esac
 gh issue view <number> --repo NVIDIA/NemoClaw \
-  --json number,title,body,labels,url,author,createdAt
+  --json number,title,body,labels,url,author,createdAt,updatedAt \
+  >"$EVIDENCE_DIR/issue.json"
+ISSUE_JSON=$(<"$EVIDENCE_DIR/issue.json")
 ```
 
 Also fetch the native Issue Type and current Project 199 fields with GraphQL. Resolve fields by their live names rather than hardcoding mutable IDs:
@@ -45,12 +64,12 @@ gh api graphql -F number=<number> -f query='query($number: Int!) {
       }
     }
   }
-}'
+}' >"$EVIDENCE_DIR/project-fields.json"
 ```
 
 A candidate must have native Issue Type `Bug`; labels never substitute for this check. From the Project 199 item, read the `Priority` and `Status` single-select values.
 
-**Batch mode** — user says "batch", "weekly", or provides no number. Cap at **15 issues** for *processing* per run, enforced as a slice after Step 3/4 filters narrow the pool. The cap exists because batch is sequential (Step 7 reuse-or-provision keeps it on 1–2 Brev boxes total) and the wallclock budget is ~2–3 hours per 15-issue run; running larger forces the maintainer to either drop the per-plan approval gate or spread the batch across multiple sessions.
+**Batch mode** — user says "batch", "weekly", or provides no number. Cap at **15 issues** for *processing* per run, enforced as a slice after Step 3/4 filters narrow the pool. The cap bounds review and logging work; it is not a wall-clock duration guarantee because each approved verification can use up to 60 minutes. Stop at the invoking automation's or maintainer's stated session budget and leave the remaining candidates for a later run.
 
 The discovery query needs to see the entire open-issue pool because native Issue Type, not a `bug` label, identifies bug reports. Use paginated GraphQL and retain only nodes whose `issueType.name` is `Bug`:
 
@@ -59,7 +78,7 @@ gh api graphql --paginate -f query='query($endCursor: String) {
   repository(owner: "NVIDIA", name: "NemoClaw") {
     issues(first: 100, after: $endCursor, states: OPEN) {
       nodes {
-        number title body url createdAt
+        number title body url createdAt updatedAt
         author { login }
         issueType { name }
         labels(first: 100) { nodes { name } }
@@ -67,39 +86,58 @@ gh api graphql --paginate -f query='query($endCursor: String) {
       pageInfo { hasNextPage endCursor }
     }
   }
-}' --jq '.data.repository.issues.nodes[] | select(.issueType.name == "Bug")'
+}' --jq '.data.repository.issues.nodes[] | select(.issueType.name == "Bug")' \
+  >"$EVIDENCE_DIR/candidates.jsonl"
 ```
 
 Read Project Priority and Status from live Project 199 data. Do not infer either field from labels.
 
+Record the selected issue's `updatedAt` as `ISSUE_UPDATED_AT`. Step 10 compares it immediately before a write. If the issue changes during a long verification, refresh the discussion and Project fields and request approval for a revised write set.
+
+In batch mode, bind `ISSUE_NUMBER` to the current candidate before any comment or Project query:
+
+```bash
+if [ -n "${CANDIDATE_JSON:-}" ]; then
+  ISSUE_NUMBER=$(jq -er '.number' <<<"$CANDIDATE_JSON")
+fi
+case "$ISSUE_NUMBER" in
+  ''|*[!0-9]*) echo "ERROR: current candidate has an invalid issue number"; exit 1 ;;
+esac
+```
+
+Do not inherit `ISSUE_NUMBER` from the preceding candidate. Present the verification plan for the bound issue number only.
+
 Before applying the idempotency or active-discussion filters to each candidate, fetch its complete comment history through the paginated REST endpoint. Nested GraphQL comment connections are not paginated by the outer issue query and can silently truncate old markers:
 
 ```bash
-COMMENTS=$(gh api "repos/NVIDIA/NemoClaw/issues/$ISSUE_NUMBER/comments?per_page=100" \
-  --paginate --jq '.[]' | jq -s '.')
+gh api "repos/NVIDIA/NemoClaw/issues/$ISSUE_NUMBER/comments?per_page=100" \
+  --paginate --jq '.[]' | jq -s '.' >"$EVIDENCE_DIR/comments.json"
+COMMENTS=$(<"$EVIDENCE_DIR/comments.json")
 ```
 
-In batch mode, work through items one at a time. Present each verification plan and wait for approval before any Brev provisioning.
+In batch mode, work through items one at a time. Present each verification plan and wait for approval before any Brev instance creation.
 
 ---
 
-## Step 2: Detect the Latest NemoClaw Version
+## Step 2: Detect the Newest Exact NemoClaw Release Tag
 
-Try GitHub releases first; fall back to the highest semver tag from the GitHub API if no release is published. NemoClaw currently tags but does not publish releases, so the fallback is the load-bearing path today. Use `gh api` rather than `git ls-remote` so the skill works regardless of SSH key setup, and reuses the auth `gh` already has.
+Select the highest `vX.Y.Z` release tag from the GitHub API. Do not use the installer's default selector: the default follows the maintainer-promoted `lkg` tag, which can lag the newest exact release tag. Use `gh api` rather than `git ls-remote` so the skill reuses the authenticated GitHub session.
 
 ```bash
-LATEST=$(gh release view --repo NVIDIA/NemoClaw --json tagName -q .tagName 2>/dev/null)
+LATEST=$(gh api repos/NVIDIA/NemoClaw/tags --paginate --jq '.[].name' \
+  | python3 -c '
+import re, sys
+tags = [line.strip() for line in sys.stdin if re.fullmatch(r"v\d+\.\d+\.\d+", line.strip())]
+if tags:
+    print(max(tags, key=lambda tag: tuple(map(int, tag[1:].split(".")))))
+')
 
-if [ -z "$LATEST" ]; then
-  LATEST=$(gh api repos/NVIDIA/NemoClaw/tags --paginate --jq '.[].name' \
-    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-    | sort -V | tail -1)
-fi
+[ -n "$LATEST" ] || { echo "ERROR: no exact vX.Y.Z release tag found"; exit 1; }
 
-echo "Latest tag: $LATEST"
+echo "Newest release tag: $LATEST"
 ```
 
-This is the version the skill will verify against. Record it — every comment must cite it.
+This is the exact version the skill will verify against. Record it. Every install and comment must cite it.
 
 ---
 
@@ -111,20 +149,22 @@ Apply these rules in order. Drop any issue that fails a rule.
 
 **Project Status skip:** drop items already in `Done`, `Won't Fix`, or `Duplicate`. These are Project Status values, not labels.
 
-**Security skip:** drop items carrying the canonical `security` label. Potential vulnerability reports require the dedicated security workflow and neutral handling, not public stale-verification commentary.
+**Security skip:** drop items carrying the canonical `security` label. Also stop when the title, body, or attachments could describe credential exposure, remote code execution, authorization bypass, sandbox escape, SSRF, or another vulnerability even if triage has not applied the label. Route the report through `SECURITY.md`; do not execute its reproducer or add public stale-verification commentary.
 
 **Platform skip (Brev-reproducible only in v1):** drop `platform: windows`, `platform: wsl`, `platform: macos`, `platform: jetson`, and `platform: n1x`. Brev has no equivalent hardware for those targets, so verification would produce a misleading cross-platform verdict. Keep `platform: ubuntu`, `platform: dgx-spark`, `platform: gb10`, or no platform label. DGX Spark and GB10 remain in scope only with the Step 10 hardware-substitution caveat.
 
 **TUI / interactive-UI skip:** drop if the issue title contains `TUI`, `dashboard UI`, `chat UI`, `keystroke`, or `key press`, OR if the body describes interactive UI behavior (key sequences, mouse interactions, browser-side UI state) without a non-interactive reproducer (no `NEMOCLAW_NON_INTERACTIVE=1` or equivalent env var pattern). `brev exec` does not allocate a real TTY by default, so TUI reproducers hang or silently fail at the first prompt; v1 documents this as out-of-scope rather than emitting a wrong verdict. v1.1 may add a `script(1)` / `expect` / `tmux send-keys` harness to lift this skip.
 
-**Integration skip (deferred to v2):** drop `integration: slack`, `integration: discord`, `integration: telegram`, `integration: hermes`, `integration: openclaw`, and `integration: wechat`. These need third-party credentials a fresh Brev box cannot provide.
+**Credential-bound integration skip (deferred to v2):** drop `integration: slack`, `integration: discord`, `integration: telegram`, and `integration: wechat`. These need third-party credentials that a fresh Brev instance cannot provide. Do not drop `integration: openclaw` or `integration: hermes` solely for the runtime label; Step 5 selects the matching agent runtime.
+
+**Agent-runtime skip:** drop an issue labeled `integration: dcode` or whose reproducer is specific to LangChain Deep Agents Code. The v1 verification allowlist covers OpenClaw and Hermes only. Do not default a LangChain Deep Agents Code reproducer to OpenClaw.
 
 Do not require retired component labels. Native Issue Type, version evidence, canonical routing labels, and reproducer suitability determine eligibility.
 
 **Idempotency:** drop if **either** of these is true:
 
 - Any comment contains a final marker for `fixed-on-latest`, `verify-inconclusive`, or `by-design`. These markers are durable; rerun only when a maintainer explicitly targets the issue.
-- A `still-reproduces` marker was posted within the last seven days. Its TTL allows a later weekly run to catch a newly landed fix.
+- A `still-reproduces` marker was posted within the last seven days. Its TTL allows a later scheduled or manual run to catch a newly landed fix.
 
 Use markers shaped like:
 
@@ -257,13 +297,14 @@ Collect every match from sources 2 and 3 (a single body may mention multiple ver
 **Normalize to tag form before validating.** The body/comment regex captures only the digit portion (`(\d+\.\d+\.\d+)`) — the leading `v?` sits outside the capture group on purpose. Tags carry the `v`, labels carry the `v`, and `REPORTED_VERSION` (set on L196 below) must carry the `v`. Without an explicit prepend, `grep -Fxq "0.0.32"` against a tag list whose entries are `v0.0.32` would drop every body-sourced candidate.
 
 ```bash
-gh api repos/NVIDIA/NemoClaw/tags --paginate --jq '.[].name' > /tmp/nemoclaw-tags.txt
+gh api repos/NVIDIA/NemoClaw/tags --paginate --jq '.[].name' \
+  >"$EVIDENCE_DIR/nemoclaw-tags.txt"
 
 # For each candidate version V — normalize to full tag form, then validate.
 # Label-sourced candidates already have the `v` (idempotent); body/comment-sourced
 # candidates do not.
 [[ "$V" =~ ^v ]] || V="v$V"
-grep -Fxq "$V" /tmp/nemoclaw-tags.txt || drop_version "$V"
+grep -Fxq "$V" "$EVIDENCE_DIR/nemoclaw-tags.txt" || drop_version "$V"
 ```
 
 After validation, **pick the smallest surviving version** as the reported version (most conservative — it maximizes versions-behind). This handles "this bug was first reported on v0.0.6 and still happens on v0.0.10" cleanly: we verify against latest, and if the bug is gone, both reports are addressed.

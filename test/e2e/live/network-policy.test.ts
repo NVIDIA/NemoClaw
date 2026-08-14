@@ -28,10 +28,7 @@ import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/path
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { pollDeniedReasonLog } from "./network-policy-denied-log.ts";
 import { requireInferenceLocalCompletionText } from "./network-policy-inference.ts";
-import {
-  POLICY_ADD_EXPECT_SCRIPT,
-  requirePolicyPresetNumber,
-} from "./network-policy-interactive.ts";
+import { runInteractivePolicyAdd } from "./network-policy-interactive.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 import { expectPackageDatabaseReadOnly } from "./package-database-read-only.ts";
 import { parseVerifiedActivePolicyPresets } from "./policy-list-state.ts";
@@ -125,30 +122,12 @@ async function applyPresetInteractively(
   host: HostCliClient,
   preset: string,
 ): Promise<ShellProbeResult> {
-  const listResult = await host.command(
-    "bash",
-    [
-      "-lc",
-      'env NEMOCLAW_NON_INTERACTIVE= node "$NEMOCLAW_E2E_CLI" "$NEMOCLAW_E2E_SANDBOX" policy-add </dev/null',
-    ],
-    {
-      artifactName: `policy-add-${preset}-interactive-list`,
-      env: baseEnv({
-        NEMOCLAW_E2E_CLI: CLI_ENTRYPOINT,
-        NEMOCLAW_E2E_SANDBOX: SANDBOX_NAME,
-      }),
-      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
-    },
-  );
-  const presetNumber = requirePolicyPresetNumber(text(listResult), preset);
-
-  const result = await host.command("expect", ["-c", POLICY_ADD_EXPECT_SCRIPT], {
+  const result = await runInteractivePolicyAdd(host, {
     artifactName: `policy-add-${preset}-interactive`,
-    env: baseEnv({
-      NEMOCLAW_E2E_CLI: CLI_ENTRYPOINT,
-      NEMOCLAW_E2E_SANDBOX: SANDBOX_NAME,
-      NEMOCLAW_E2E_PRESET_NUM: presetNumber,
-    }),
+    cliEntrypoint: CLI_ENTRYPOINT,
+    env: baseEnv(),
+    preset,
+    sandboxName: SANDBOX_NAME,
     timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
   });
   await sleep(POLICY_SETTLE_MS);
@@ -189,7 +168,7 @@ async function curlStatus(
 async function expectScopedClawHubPluginLifecycle(sandbox: SandboxClient): Promise<void> {
   const install = await sandboxBash(
     sandbox,
-    "HOME=/sandbox openclaw plugins install 'clawhub:@openclaw/sherpa-onnx-tts@2026.6.8' 2>&1",
+    "HOME=/sandbox openclaw plugins install 'clawhub:@openclaw/brave-plugin@2026.7.1' --force 2>&1",
     {
       artifactName: "tc-net-restricted-clawhub-scoped-plugin-install",
       timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
@@ -203,12 +182,12 @@ async function expectScopedClawHubPluginLifecycle(sandbox: SandboxClient): Promi
   });
   expect(list.exitCode, text(list)).toBe(0);
   expect(text(list), "the installed scoped ClawHub plugin must be enabled").toMatch(
-    /Sherpa ONNX TTS[^\r\n]*enabled/i,
+    /Brave[^\r\n]*enabled/i,
   );
 
   const inspect = await sandboxBash(
     sandbox,
-    "HOME=/sandbox openclaw plugins inspect sherpa-onnx-tts --runtime 2>&1",
+    "HOME=/sandbox openclaw plugins inspect brave --runtime 2>&1",
     {
       artifactName: "tc-net-restricted-clawhub-scoped-plugin-runtime-inspect",
       timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
@@ -242,8 +221,10 @@ async function expectEncodedSlashConfinedToClawHub(
     `https://openclaw.ai${encodedPath}`,
     "tc-net-permissive-non-clawhub-encoded-slash",
   );
+  // Undici can report the same denied CONNECT as `UND_ERR_SOCKET` or `fetch failed`.
+  // The OpenShell gateway log below provides the authoritative denial evidence.
   expect(nonClawhubStatus, `encoded slashes must fail closed outside ClawHub`).toMatch(
-    /^(?:STATUS_403|ERROR_UND_ERR_SOCKET)/,
+    /^(?:STATUS_403|ERROR_(?:UND_ERR_SOCKET|fetch failed))/,
   );
   const denial = await waitForDeniedReasonLog(host, {
     endpoint: ENCODED_SLASH_DENIED_ENDPOINT,

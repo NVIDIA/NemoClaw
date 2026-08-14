@@ -155,6 +155,10 @@ The sandbox's filesystem, process, gateway authentication, and managed credentia
 Use this tier only for trusted personal workloads with trusted prompts and data.
 </Warning>
 
+By default, the experimental portable profile selects only `personal-open-internet` from the Personal tier.
+Portable onboarding does not add narrower Personal presets when it uses this default.
+If `NEMOCLAW_POLICY_PRESETS` contains a non-blank list, portable onboarding treats that explicit list as authoritative instead.
+
 After selecting a tier, a combined preset and access-mode screen lets you include or exclude individual presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access.
 Tier-default presets are pre-selected; additional presets can be added from the built-in preset list available to the sandbox's active agent.
 NemoClaw filters tier defaults and built-in preset choices by the active agent's supported integrations.
@@ -368,7 +372,7 @@ $$nemoclaw <sandbox-name> policy restore <key> --force
 ```
 
 Both restore paths require acknowledgement unless you use `--dry-run`.
-Interactive runs prompt for confirmation when no acknowledgement flag is present.
-Non-interactive runs require `--force`, `--yes`, or `-y`.
+A run with a terminal on stdin prompts for confirmation when no acknowledgement flag is present.
+A run with `NEMOCLAW_NON_INTERACTIVE=1`, or a run without a terminal on stdin, requires `--force`, `--yes`, or `-y`.
 
 Excluding a baseline entry leaves agent features that depend on it unsupported for that sandbox.

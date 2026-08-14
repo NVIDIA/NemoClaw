@@ -29,10 +29,12 @@ function clearTerminologyReview() {
 
 describe("PR review advisor comment CLI", () => {
   it("reports E2E recommendations that do not fit", () => {
-    const trustedIds = trustedE2eRecommendationInventory().allowedJobIds.slice(
-      0,
-      2 * (E2E_RENDER_LIMIT + 1),
-    );
+    const inventory = trustedE2eRecommendationInventory();
+    const trustedIds = [...inventory.allowedJobIds, ...inventory.manualOnlyJobIds]
+      .filter(
+        (id) => id !== "inference-routing" && id !== "managed-image-protected-runtime",
+      )
+      .slice(0, 2 * (E2E_RENDER_LIMIT + 1));
     const requiredIds = trustedIds.slice(0, E2E_RENDER_LIMIT + 1);
     const optionalIds = trustedIds.slice(E2E_RENDER_LIMIT + 1);
     expect(requiredIds).toHaveLength(E2E_RENDER_LIMIT + 1);
@@ -132,7 +134,7 @@ describe("PR review advisor comment CLI", () => {
         },
       },
     });
-    expect(selectorTypeComment).toContain("**Recommended E2E:** <code>security-posture</code>");
+    expect(selectorTypeComment).toContain("**Manual-only E2E:** <code>security-posture</code>");
     expect(selectorTypeComment).not.toContain("<code>full-e2e</code>");
   });
 

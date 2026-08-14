@@ -172,6 +172,7 @@ export interface SetupNimFlowDeps {
     recoveredModel: string | null,
     ollamaRunning: boolean,
     state: SetupNimSelectionState,
+    isWindowsHostOllama?: boolean,
   ): Promise<SetupNimSelectionResult>;
   handleWindowsHostOllamaSelection(
     gpu: SetupNimGpu,
@@ -381,6 +382,16 @@ async function handleEndpointProviderSelection(input: {
   );
 }
 
+function vllmPortConflictMessage(
+  platform: InferenceProviderHostGpu["platform"],
+  port: number,
+): string {
+  if (platform === "n1x") {
+    return `The N1x Deferred preview requires managed vLLM, but vLLM is already running on localhost:${port}. Stop the existing server, then rerun with NEMOCLAW_PROVIDER=install-vllm.`;
+  }
+  return "vLLM is already running on this host. Select Local vLLM, or stop the existing server before selecting the managed install path.";
+}
+
 /** Create the provider-selection flow and seed agent-specific Ollama defaults. */
 export function createSetupNim(
   defaults: SetupNimFlowDeps,
@@ -390,7 +401,6 @@ export function createSetupNim(
   const localModelProfileIntegration =
     deps.localModelProfileIntegration ?? createLocalModelProfileIntegration(deps);
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider onboarding is an intentionally centralized interaction loop.
   return async function setupNimWithDeps(
     gpu: SetupNimGpu,
     sandboxName: string | null = null,
@@ -575,6 +585,7 @@ export function createSetupNim(
       agentProviderOptions,
       experimental: deps.experimental,
       gpuNimCapable,
+      nvidiaPlatform: gpu?.platform,
       hasOllama,
       ollamaRunning,
       ollamaHost,
@@ -659,6 +670,7 @@ export function createSetupNim(
           if (providerSelection.kind === "failure") {
             reportProviderSelectionFailure({
               reason: providerSelection.reason,
+              availableProviderKeys: options.map((option) => option.key),
               isWindowsHostOllama,
               rejectWindowsHostOllama,
               writeError: deps.error,
@@ -807,6 +819,7 @@ export function createSetupNim(
             recoveredFromSandbox ? recoveredModel : null,
             ollamaRunning,
             state,
+            isWindowsHostOllama,
           );
           ({
             model,
@@ -868,9 +881,7 @@ export function createSetupNim(
             continue selectionLoop;
           }
           if (vllmRunning) {
-            const message =
-              "vLLM is already running on this host. " +
-              "Select Local vLLM, or stop the existing server before selecting the managed install path.";
+            const message = vllmPortConflictMessage(gpu?.platform, deps.vllmPort);
             deps.error(`  ${message}`);
             if (deps.isNonInteractive()) {
               deps.abortNonInteractive(message);
@@ -985,4 +996,27 @@ export function createSetupNim(
       inferenceCapabilityCache,
     };
   };
+}
+
+/**
+ * Bind the serving-port probe to the vLLM installer (#8685).
+ *
+ * The installer declares the probe it needs instead of importing the preflight
+ * layer, because `src/lib/inference/vllm.ts` sits at its recorded fan-out
+ * budget. The wiring lives here rather than in `onboard.ts`, which the codebase
+ * growth guardrail keeps net-neutral.
+ */
+export function withServingPortGuard<
+  Options,
+  Install extends (
+    profile: VllmProfile,
+    options: Options & {
+      checkServingPort?: (port: number) => Promise<{ ok: boolean; reason?: string }>;
+    },
+  ) => Promise<{ ok: boolean }>,
+>(
+  install: Install,
+  checkServingPort: (port: number) => Promise<{ ok: boolean; reason?: string }>,
+): (profile: VllmProfile, options: Options) => Promise<{ ok: boolean }> {
+  return (profile, options) => install(profile, { ...options, checkServingPort });
 }

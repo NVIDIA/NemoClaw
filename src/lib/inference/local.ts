@@ -15,12 +15,12 @@ import { CONTAINER_REACHABILITY_IMAGE } from "../adapters/http/container-curl-pr
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
-import { GATEWAY_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
+import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
-import { containerCanReachHostLoopback, isWsl } from "../platform";
+import { containerCanReachHostLoopback, isWsl, type WslDetectionOptions } from "../platform";
 import { type CaptureResult, runCapture, runCaptureEx, shellQuote } from "../runner";
-import { nemoclawStateRoot } from "../state/state-root";
 import { buildSubprocessEnv } from "../subprocess-env";
+import { resolveSharedLocalAdapterStateRoot } from "./local-adapter-lifecycle";
 import { detectNvidiaPlatform } from "./nim";
 import {
   anyRegistryModelFits,
@@ -132,17 +132,23 @@ export function getWindowsHostOllamaDockerReachabilityArgs(): string[] {
 
 let _resolvedOllamaHost: string | null = null;
 
-function ollamaCandidateHosts(): string[] {
-  return isWsl() ? [OLLAMA_LOCALHOST, OLLAMA_HOST_DOCKER_INTERNAL] : [OLLAMA_LOCALHOST];
+function ollamaCandidateHosts(wslDetection: WslDetectionOptions = {}): string[] {
+  return isWsl(wslDetection) ? [OLLAMA_LOCALHOST, OLLAMA_HOST_DOCKER_INTERNAL] : [OLLAMA_LOCALHOST];
 }
 
 // Probe each candidate host for a responding Ollama. Returns the first host
 // whose `/api/tags` succeeds, or null if none responds. Result is cached for
 // the rest of the onboard run; call resetOllamaHostCache() in tests.
-export function findReachableOllamaHost(runCaptureImpl?: RunCaptureFn): string | null {
+// wslDetection pins the WSL decision so a caller on any host can exercise the
+// WSL candidate order; isWsl otherwise answers false off Linux before reading
+// the environment.
+export function findReachableOllamaHost(
+  runCaptureImpl?: RunCaptureFn,
+  wslDetection: WslDetectionOptions = {},
+): string | null {
   if (_resolvedOllamaHost !== null) return _resolvedOllamaHost;
   const capture = runCaptureImpl ?? runCapture;
-  for (const host of ollamaCandidateHosts()) {
+  for (const host of ollamaCandidateHosts(wslDetection)) {
     // Explicit timeouts: a blackholed host (e.g., firewalled host.docker.internal)
     // would otherwise stall the synchronous onboard probe for the OS connect
     // timeout (~75-130s on Linux). Matches the convention used in
@@ -284,10 +290,7 @@ export interface LocalProviderHealthProbeOptions {
 }
 
 function defaultLoadOllamaProxyToken(): string | null {
-  const tokenPath = nodePath.join(
-    nemoclawStateRoot(os.homedir(), GATEWAY_PORT),
-    "ollama-proxy-token",
-  );
+  const tokenPath = nodePath.join(resolveSharedLocalAdapterStateRoot(), "ollama-proxy-token");
   try {
     if (fs.existsSync(tokenPath)) {
       const token = fs.readFileSync(tokenPath, "utf-8").trim();
@@ -1616,6 +1619,7 @@ export function buildOllamaProbeOptions(allowToolsIncompatible: boolean): {
   requireChatCompletionsToolCalling: boolean;
   retryChatCompletionsToolReadiness: boolean;
 
+  pinnedAddresses: readonly string[];
   allowHostDockerInternal: boolean;
   probeFromDocker: { expectedPort: number } | null;
 } {
@@ -1625,6 +1629,7 @@ export function buildOllamaProbeOptions(allowToolsIncompatible: boolean): {
     requireChatCompletionsToolCalling: !allowToolsIncompatible,
     retryChatCompletionsToolReadiness: !allowToolsIncompatible,
 
+    pinnedAddresses: [],
     allowHostDockerInternal: windowsHostOllama,
     probeFromDocker: windowsHostOllama ? { expectedPort: OLLAMA_PORT } : null,
   };

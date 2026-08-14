@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-const { composeSandboxConfigBody } = require("./config") as {
+const { composeSandboxConfigBody, hermesConfigAllowsPrivateUrls } = require("./config") as {
   composeSandboxConfigBody: (
     config: Record<string, unknown>,
     target: {
@@ -15,6 +15,7 @@ const { composeSandboxConfigBody } = require("./config") as {
       configFile: string;
     },
   ) => string;
+  hermesConfigAllowsPrivateUrls: (config: Record<string, unknown>) => boolean;
 };
 
 const HERMES_TARGET = {
@@ -110,5 +111,11 @@ describe("composeSandboxConfigBody", () => {
     const written = composeSandboxConfigBody(config, HERMES_TARGET);
     expect(written.startsWith("#")).toBe(false);
     expect(YAML.parse(written)).toEqual(config);
+  });
+
+  it("keeps private URLs denied until Hermes explicitly opts in (#8614)", () => {
+    expect(hermesConfigAllowsPrivateUrls({})).toBe(false);
+    expect(hermesConfigAllowsPrivateUrls({ security: { allow_private_urls: false } })).toBe(false);
+    expect(hermesConfigAllowsPrivateUrls({ security: { allow_private_urls: true } })).toBe(true);
   });
 });

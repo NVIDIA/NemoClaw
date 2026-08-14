@@ -9,8 +9,160 @@ import {
   buildDockerGpuMode,
   getDockerGpuPatchNetworkMode,
 } from "./docker-gpu-patch";
+import { shouldOmitOpenShellOciImageUser } from "./docker-gpu-patch-clone";
+
+const NEMOCLAW_STARTUP_ARGV = ["env", "/usr/local/bin/nemoclaw-start"] as const;
+
+function openShellOciWorkspaceInspect() {
+  const inspect = inspectFixture();
+  Object.assign(inspect.Config!, {
+    User: "0",
+    WorkingDir: "/",
+    Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
+    Cmd: ["--workdir", "/sandbox"],
+    Env: [
+      ...inspect.Config!.Env!,
+      "OPENSHELL_OCI_IMAGE_USER=sandbox",
+      "OPENSHELL_SANDBOX_UID=",
+      "OPENSHELL_SANDBOX_GID=",
+      "OPENSHELL_OCI_IMAGE_USER_LOOKALIKE=preserved",
+    ],
+  });
+  return inspect;
+}
 
 describe("Docker GPU clone envelope", () => {
+  it("omits only OpenShell's OCI-user marker at the exact NemoClaw workspace boundary (#8662)", () => {
+    const inspect = openShellOciWorkspaceInspect();
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
+      openshellSandboxCommand: NEMOCLAW_STARTUP_ARGV,
+    });
+
+    expect(shouldOmitOpenShellOciImageUser(inspect, NEMOCLAW_STARTUP_ARGV)).toBe(true);
+    expect(args).not.toEqual(expect.arrayContaining(["--env", "OPENSHELL_OCI_IMAGE_USER=sandbox"]));
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--env",
+        "OPENSHELL_SANDBOX_UID=",
+        "--env",
+        "OPENSHELL_SANDBOX_GID=",
+        "--env",
+        "OPENSHELL_OCI_IMAGE_USER_LOOKALIKE=preserved",
+      ]),
+    );
+  });
+
+  it("preserves the pre-0.0.99 environment when OCI identity metadata is absent (#8662)", () => {
+    const inspect = openShellOciWorkspaceInspect();
+    inspect.Config!.Env = inspect.Config!.Env!.filter(
+      (entry) =>
+        !entry.startsWith("OPENSHELL_OCI_IMAGE_USER=") &&
+        !entry.startsWith("OPENSHELL_SANDBOX_UID=") &&
+        !entry.startsWith("OPENSHELL_SANDBOX_GID="),
+    );
+
+    expect(shouldOmitOpenShellOciImageUser(inspect, NEMOCLAW_STARTUP_ARGV)).toBe(false);
+  });
+
+  it("preserves the exact workspace compatibility metadata across another recreation (#8662)", () => {
+    const inspect = openShellOciWorkspaceInspect();
+    inspect.Config!.Env = inspect.Config!.Env!.filter(
+      (entry) => !entry.startsWith("OPENSHELL_OCI_IMAGE_USER="),
+    );
+
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
+      openshellSandboxCommand: NEMOCLAW_STARTUP_ARGV,
+    });
+
+    expect(shouldOmitOpenShellOciImageUser(inspect, NEMOCLAW_STARTUP_ARGV)).toBe(false);
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--env",
+        "OPENSHELL_SANDBOX_UID=",
+        "--env",
+        "OPENSHELL_SANDBOX_GID=",
+      ]),
+    );
+    expect(args).not.toEqual(expect.arrayContaining(["--env", "OPENSHELL_OCI_IMAGE_USER=sandbox"]));
+  });
+
+  it.each([
+    {
+      name: "missing sandbox GID",
+      mutate: (environment: string[]) =>
+        environment.filter((entry) => entry !== "OPENSHELL_SANDBOX_GID="),
+    },
+    {
+      name: "non-empty sandbox UID",
+      mutate: (environment: string[]) =>
+        environment.map((entry) =>
+          entry === "OPENSHELL_SANDBOX_UID=" ? "OPENSHELL_SANDBOX_UID=998" : entry,
+        ),
+    },
+    {
+      name: "empty OCI user",
+      mutate: (environment: string[]) =>
+        environment.map((entry) =>
+          entry === "OPENSHELL_OCI_IMAGE_USER=sandbox" ? "OPENSHELL_OCI_IMAGE_USER=" : entry,
+        ),
+    },
+    {
+      name: "OCI user without an assignment",
+      mutate: (environment: string[]) =>
+        environment.map((entry) =>
+          entry === "OPENSHELL_OCI_IMAGE_USER=sandbox" ? "OPENSHELL_OCI_IMAGE_USER" : entry,
+        ),
+    },
+    {
+      name: "duplicate OCI user",
+      mutate: (environment: string[]) => [...environment, "OPENSHELL_OCI_IMAGE_USER=sandbox"],
+    },
+    {
+      name: "already-applied metadata without a sandbox GID",
+      mutate: (environment: string[]) =>
+        environment.filter(
+          (entry) =>
+            !entry.startsWith("OPENSHELL_OCI_IMAGE_USER=") && entry !== "OPENSHELL_SANDBOX_GID=",
+        ),
+    },
+    {
+      name: "already-applied metadata with a non-empty sandbox UID",
+      mutate: (environment: string[]) =>
+        environment
+          .filter((entry) => !entry.startsWith("OPENSHELL_OCI_IMAGE_USER="))
+          .map((entry) =>
+            entry === "OPENSHELL_SANDBOX_UID=" ? "OPENSHELL_SANDBOX_UID=998" : entry,
+          ),
+    },
+    {
+      name: "already-applied metadata with a duplicate sandbox UID",
+      mutate: (environment: string[]) => [
+        ...environment.filter((entry) => !entry.startsWith("OPENSHELL_OCI_IMAGE_USER=")),
+        "OPENSHELL_SANDBOX_UID=",
+      ],
+    },
+  ])("rejects $name in OpenShell's protected identity metadata (#8662)", ({ mutate }) => {
+    const inspect = openShellOciWorkspaceInspect();
+    inspect.Config!.Env = mutate(inspect.Config!.Env!);
+
+    expect(() =>
+      buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
+        openshellSandboxCommand: NEMOCLAW_STARTUP_ARGV,
+      }),
+    ).toThrow("workspace identity metadata is not the reviewed Docker compatibility contract");
+  });
+
+  it("preserves OCI-user metadata outside the exact NemoClaw workspace boundary (#8662)", () => {
+    const inspect = openShellOciWorkspaceInspect();
+    inspect.Config!.WorkingDir = "/sandbox";
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
+      openshellSandboxCommand: NEMOCLAW_STARTUP_ARGV,
+    });
+
+    expect(shouldOmitOpenShellOciImageUser(inspect, NEMOCLAW_STARTUP_ARGV)).toBe(false);
+    expect(args).toEqual(expect.arrayContaining(["--env", "OPENSHELL_OCI_IMAGE_USER=sandbox"]));
+  });
+
   it("builds clone args that preserve OpenShell labels, mounts, and runtime settings", () => {
     const args = buildDockerGpuCloneRunArgs(inspectFixture(), buildDockerGpuMode("gpus"));
 

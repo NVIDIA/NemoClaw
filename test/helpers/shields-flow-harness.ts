@@ -7,6 +7,7 @@ import path from "node:path";
 import { expect, type MockInstance, vi } from "vitest";
 import YAML from "yaml";
 import { buildMcpBridgePolicyYaml } from "../../src/lib/actions/sandbox/mcp-bridge-policy-render";
+import type { AgentConfigTarget } from "../../src/lib/sandbox/agent-config";
 import type { SandboxEntry } from "../../src/lib/state/registry";
 
 const shieldsModulePath = "./index.js";
@@ -41,6 +42,7 @@ export type ShieldsFlowHarnessOptions = {
   failStateSave?: boolean;
   initialOpenClawPosture?: "locked" | "mutable";
   invokedAs?: "nemoclaw" | "nemohermes";
+  agentConfigTarget?: AgentConfigTarget;
   openClawGuardFailure?: {
     code: string;
     path: string;
@@ -52,6 +54,8 @@ export type ShieldsFlowHarnessOptions = {
     detail: string;
   }>;
   processStartIdentity?: string;
+  timerAuthorizationOutcome?: "authorized" | "dies-before-proof";
+  timerDiesAfterUnlock?: boolean;
   fork?: (...args: unknown[]) => {
     pid: number;
     disconnect: () => void;
@@ -62,6 +66,7 @@ export type ShieldsFlowHarnessOptions = {
   livePolicyYaml?: string;
   run?: (cmd: unknown) => { status: number };
   sandboxEntry?: SandboxEntry;
+  sandboxName?: string;
   timerAuthorityRevokedSequence?: readonly boolean[];
 };
 
@@ -108,6 +113,31 @@ export function managedMcpSandbox(
   };
 }
 
+export function writeShieldsTimerAuthorizationProof(
+  requireDist: NodeRequire,
+  sandboxName: string,
+): void {
+  const timerControl = requireDist(
+    "./timer-control.js",
+  ) as typeof import("../../src/lib/shields/timer-control.js");
+  const marker = timerControl.readTimerMarker(sandboxName);
+  if (!marker?.processToken || !marker.timerProcessStartIdentity) {
+    throw new Error("Test timer marker is missing exact proof authority");
+  }
+  fs.writeFileSync(
+    timerControl.timerAuthorizationProofPath(sandboxName, marker.processToken),
+    JSON.stringify({
+      schemaVersion: 1,
+      pid: marker.pid,
+      sandboxName,
+      processToken: marker.processToken,
+      timerProcessStartIdentity: marker.timerProcessStartIdentity,
+      authoritySha256: timerControl.timerAuthoritySha256(marker),
+    }),
+    { mode: 0o600 },
+  );
+}
+
 function throwHarnessError(error: Error): never {
   throw error;
 }
@@ -132,11 +162,46 @@ export function createShieldsFlowHarness(
   const timerControl = requireDist(
     "./timer-control.js",
   ) as typeof import("../../src/lib/shields/timer-control.js");
-  if (options.processStartIdentity !== undefined) {
-    vi.spyOn(timerControl, "readProcessStartIdentity").mockReturnValue(
-      options.processStartIdentity,
-    );
-  }
+  const readProcessStartIdentity = vi.isMockFunction(timerControl.readProcessStartIdentity)
+    ? (vi.mocked(timerControl.readProcessStartIdentity).getMockImplementation() ??
+      timerControl.readProcessStartIdentity)
+    : timerControl.readProcessStartIdentity;
+  const isProcessAlive = vi.isMockFunction(timerControl.isProcessAlive)
+    ? (vi.mocked(timerControl.isProcessAlive).getMockImplementation() ??
+      timerControl.isProcessAlive)
+    : timerControl.isProcessAlive;
+  const verifyTimerMarkerIdentity = vi.isMockFunction(timerControl.verifyTimerMarkerIdentity)
+    ? (vi.mocked(timerControl.verifyTimerMarkerIdentity).getMockImplementation() ??
+      timerControl.verifyTimerMarkerIdentity)
+    : timerControl.verifyTimerMarkerIdentity;
+  const forkTimer =
+    options.fork ??
+    (() => ({
+      pid: 4242,
+      disconnect: () => undefined,
+      unref: () => undefined,
+      send: () => true,
+      kill: () => true,
+    }));
+  let fakeTimerPid: number | undefined;
+  let fakeTimerAlive = true;
+  vi.spyOn(timerControl, "readProcessStartIdentity").mockImplementation((pid: number) =>
+    pid === fakeTimerPid
+      ? fakeTimerAlive
+        ? (options.processStartIdentity ?? "test-process-start-identity")
+        : null
+      : (options.processStartIdentity ?? readProcessStartIdentity(pid)),
+  );
+  vi.spyOn(timerControl, "isProcessAlive").mockImplementation((pid: number) =>
+    pid === fakeTimerPid ? fakeTimerAlive : isProcessAlive(pid),
+  );
+  vi.spyOn(timerControl, "verifyTimerMarkerIdentity").mockImplementation((marker) =>
+    marker.pid === fakeTimerPid
+      ? fakeTimerAlive
+        ? { verified: true }
+        : { verified: false, warning: "fake timer exited" }
+      : verifyTimerMarkerIdentity(marker),
+  );
   const lifecycleLock = requireDist(
     "../state/mcp-lifecycle-lock.js",
   ) as typeof import("../../src/lib/state/mcp-lifecycle-lock.js");
@@ -158,6 +223,7 @@ export function createShieldsFlowHarness(
   const audit = requireDist("./audit.js");
   const tempFiles = requireDist("../onboard/temp-files.js");
   const stateDirLock = requireDist("./state-dir-lock.js");
+  const relockReconfirm = requireDist("./relock-reconfirm.js");
   const childProcess = requireDist("node:child_process");
   const policySetBodies: string[] = [];
   let openClawPosture: "locked" | "mutable" = options.initialOpenClawPosture ?? "mutable";
@@ -177,7 +243,44 @@ export function createShieldsFlowHarness(
   const runSpy = vi.spyOn(runner, "run").mockImplementation((cmd: unknown) => {
     return options.run ? options.run(cmd) : { status: 0 };
   });
-  options.fork && vi.spyOn(childProcess, "fork").mockImplementation(options.fork);
+  {
+    vi.spyOn(childProcess, "fork").mockImplementation((...args: unknown[]) => {
+      const child = forkTimer(...args);
+      const timerArgs = Array.isArray(args[1]) ? args[1] : [];
+      const timerSandboxName = String(timerArgs[0] ?? "openclaw");
+      fakeTimerPid = child.pid;
+      const send = child.send as (message?: unknown) => boolean;
+      return {
+        ...child,
+        send: (message?: unknown) => {
+          const sent = send(message);
+          const request = message as { type?: unknown; processToken?: unknown } | undefined;
+          if (sent && request?.type === "authorize" && typeof request.processToken === "string") {
+            if (options.timerAuthorizationOutcome === "dies-before-proof") {
+              fakeTimerAlive = false;
+              return sent;
+            }
+            const marker = timerControl.readTimerMarker(timerSandboxName);
+            if (marker?.processToken === request.processToken && marker.timerProcessStartIdentity) {
+              fs.writeFileSync(
+                timerControl.timerAuthorizationProofPath(timerSandboxName, request.processToken),
+                JSON.stringify({
+                  schemaVersion: 1,
+                  pid: marker.pid,
+                  sandboxName: marker.sandboxName,
+                  processToken: request.processToken,
+                  timerProcessStartIdentity: marker.timerProcessStartIdentity,
+                  authoritySha256: timerControl.timerAuthoritySha256(marker),
+                }),
+                { mode: 0o600 },
+              );
+            }
+          }
+          return sent;
+        },
+      };
+    });
+  }
   vi.spyOn(policy, "buildPolicyGetCommand").mockReturnValue(["openshell", "policy", "get"]);
   vi.spyOn(policy, "buildPolicySetCommand").mockImplementation((file: unknown) => {
     recordPolicySetBody(policySetBodies, file);
@@ -188,7 +291,7 @@ export function createShieldsFlowHarness(
     path.join(tmpDir, "permissive.yaml"),
   );
   fs.writeFileSync(path.join(tmpDir, "permissive.yaml"), "version: 1\nnetwork_policies: {}\n");
-  vi.spyOn(agentConfig, "resolveAgentConfig").mockReturnValue({
+  const resolvedAgentConfig = options.agentConfigTarget ?? {
     agentName: "openclaw",
     configDir: "/sandbox/.openclaw",
     configFile: "openclaw.json",
@@ -196,11 +299,18 @@ export function createShieldsFlowHarness(
     format: "json",
     stateLockPlan,
     stateLockPlanInImage: true,
-  });
+  };
+  vi.spyOn(agentConfig, "resolveAgentConfig").mockReturnValue(resolvedAgentConfig);
   vi.spyOn(registry, "getSandbox").mockReturnValue(
-    options.sandboxEntry ?? { name: "openclaw", openshellDriver: "docker" },
+    options.sandboxEntry ?? {
+      name: options.sandboxName ?? "openclaw",
+      agent: resolvedAgentConfig.agentName,
+      openshellDriver: "docker",
+    },
   );
-  vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [{ name: "openclaw" }] });
+  vi.spyOn(registry, "listSandboxes").mockReturnValue({
+    sandboxes: [{ name: options.sandboxName ?? "openclaw", agent: resolvedAgentConfig.agentName }],
+  });
   const permissiveRuntime = requireDist(
     "./permissive-runtime.js",
   ) as typeof import("../../src/lib/shields/permissive-runtime.js");
@@ -231,6 +341,47 @@ export function createShieldsFlowHarness(
           ? Number((rawOptions as { timeout?: unknown }).timeout)
           : undefined;
       dockerSpawnCalls.push({ args, timeout });
+      const hermesGuard = args.some((arg) => arg.endsWith("hermes-runtime-config-guard.py"));
+      const hermesLockToken = "a".repeat(64);
+      if (hermesGuard && args.includes("--help")) {
+        return {
+          status: 0,
+          signal: null,
+          stdout: [
+            "begin-shields-transition",
+            "run-state-dir-transition",
+            "apply-shields-transition",
+            "finish-shields-transition",
+            "prepare-shields-abort",
+            "abort-shields-transition",
+            "--rollback-shields-mode",
+            "--state-lock-plan-json",
+          ].join("\n"),
+          stderr: "",
+          pid: 0,
+          output: [],
+        } as never;
+      }
+      if (hermesGuard && args.includes("begin-shields-transition")) {
+        return {
+          status: 0,
+          signal: null,
+          stdout: `lock_token=${hermesLockToken} original_locked=1`,
+          stderr: "",
+          pid: 0,
+          output: [],
+        } as never;
+      }
+      if (hermesGuard && args.includes("apply-shields-transition")) {
+        return {
+          status: 0,
+          signal: null,
+          stdout: "shields_mode=mutable chattr_applied=0",
+          stderr: "",
+          pid: 0,
+          output: [],
+        } as never;
+      }
       const readsStateLockPlan =
         args.includes("cat") && args.includes("/usr/local/share/nemoclaw/state-lock-plan.json");
       const action = ["preflight", "lock", "unlock", "unlock-failed-startup"].find((candidate) =>
@@ -266,6 +417,9 @@ export function createShieldsFlowHarness(
           : openClawGuard && (action === "unlock" || action === "unlock-failed-startup")
             ? "mutable"
             : openClawPosture;
+      if (openClawGuard && action === "unlock" && options.timerDiesAfterUnlock) {
+        fakeTimerAlive = false;
+      }
       const successResult = {
         status: 0,
         signal: null,
@@ -294,10 +448,30 @@ export function createShieldsFlowHarness(
   );
   vi.spyOn(dockerExec, "dockerExecFileSync").mockImplementation((argv: unknown) => {
     const args = Array.isArray(argv) ? argv.map(String) : [];
+    const hermesGuard = args.some((arg) => arg.endsWith("hermes-runtime-config-guard.py"));
+    const hermesLockToken = "a".repeat(64);
+    if (hermesGuard && args.includes("--help")) {
+      return [
+        "begin-shields-transition",
+        "run-state-dir-transition",
+        "apply-shields-transition",
+        "finish-shields-transition",
+        "prepare-shields-abort",
+        "abort-shields-transition",
+        "--rollback-shields-mode",
+        "--state-lock-plan-json",
+      ].join("\n");
+    }
+    if (hermesGuard && args.includes("begin-shields-transition")) {
+      return `lock_token=${hermesLockToken} original_locked=1`;
+    }
+    if (hermesGuard && args.includes("apply-shields-transition")) {
+      return "shields_mode=mutable chattr_applied=0";
+    }
     return options.dockerExecFileSync
       ? options.dockerExecFileSync(argv)
       : args.includes("sha256sum")
-        ? "a".repeat(64) + "  /sandbox/.openclaw/openclaw.json\n"
+        ? "a".repeat(64) + `  ${resolvedAgentConfig.configPath}\n`
         : args.includes("lsattr") && options.confirmOpenClawInodeFlags
           ? `${openClawPosture === "locked" ? "----i---------e-----" : "----------------------"} ${String(args.at(-1))}\n`
           : args.includes("stat")
@@ -305,16 +479,25 @@ export function createShieldsFlowHarness(
               ? openClawPosture === "locked"
                 ? "1775 root:sandbox\n"
                 : "755 sandbox:sandbox\n"
-              : args.at(-1) === "/sandbox/.openclaw"
+              : args.at(-1) === resolvedAgentConfig.configDir
                 ? openClawPosture === "locked"
                   ? "755 root:root\n"
-                  : "2770 sandbox:sandbox\n"
+                  : resolvedAgentConfig.agentName === "hermes"
+                    ? "3770 sandbox:sandbox\n"
+                    : "2770 sandbox:sandbox\n"
                 : openClawPosture === "locked"
                   ? "444 root:root\n"
-                  : "660 sandbox:sandbox\n"
+                  : resolvedAgentConfig.agentName === "hermes"
+                    ? "640 sandbox:sandbox\n"
+                    : "660 sandbox:sandbox\n"
             : "";
   });
   const auditSpy = vi.spyOn(audit, "appendAuditEntry").mockImplementation(() => undefined);
+  vi.spyOn(relockReconfirm, "waitForHermesInferenceRouteConvergence").mockReturnValue({
+    ok: true,
+    attempts: 1,
+    httpStatus: 200,
+  });
   if (options.timerAuthorityRevokedSequence) {
     const timerAuthorityRevocations = [...options.timerAuthorityRevokedSequence];
     const finalTimerAuthorityRevocation = timerAuthorityRevocations.at(-1) ?? true;
@@ -349,19 +532,8 @@ export function createShieldsFlowHarness(
     },
   );
 
-  if (options.failPolicyRejectionStateClear) {
+  if (options.failPolicyRejectionStateClear || options.failPolicyRejectionTransitionWrite) {
     const statePath = path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json");
-    const originalWriteFileSync = fs.writeFileSync.bind(fs);
-    let stateWrites = 0;
-    vi.spyOn(fs, "writeFileSync").mockImplementation(((file, data, writeOptions) => {
-      if (String(file) === statePath && ++stateWrites === 2) {
-        throw new Error("state cleanup denied");
-      }
-      return originalWriteFileSync(file, data, writeOptions);
-    }) as typeof fs.writeFileSync);
-  }
-
-  if (options.failPolicyRejectionTransitionWrite) {
     const transitionPrefix = path.join(
       tmpDir,
       ".nemoclaw",
@@ -369,9 +541,22 @@ export function createShieldsFlowHarness(
       "shields-transition-openclaw-",
     );
     const originalRenameSync = fs.renameSync.bind(fs);
+    let stateWrites = 0;
     let transitionWrites = 0;
     vi.spyOn(fs, "renameSync").mockImplementation((oldPath, newPath) => {
-      if (String(newPath).startsWith(transitionPrefix) && ++transitionWrites === 2) {
+      const destination = String(newPath);
+      if (
+        options.failPolicyRejectionStateClear &&
+        destination === statePath &&
+        ++stateWrites === 2
+      ) {
+        throw new Error("state cleanup denied");
+      }
+      if (
+        options.failPolicyRejectionTransitionWrite &&
+        destination.startsWith(transitionPrefix) &&
+        ++transitionWrites === 2
+      ) {
         throw new Error("transition update denied");
       }
       return originalRenameSync(oldPath, newPath);

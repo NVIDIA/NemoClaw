@@ -140,6 +140,22 @@ describe("getRegistrySandboxMessagingAuthority", () => {
       }),
     ).toEqual({ source: "registry", plan: registryPlan });
   });
+
+  it("keeps a registered sandbox authoritative while its route update is pending", () => {
+    const entry = {
+      name: "alpha",
+      createdAt: "2026-08-12T00:00:00.000Z",
+      pendingRouteReservation: true,
+    } as const;
+    const registryPlan = messagingPlan("alpha", "rebuild");
+    vi.spyOn(registry, "getSandbox").mockReturnValue(entry);
+    vi.spyOn(registry, "getHydratedMessagingPlanFromEntry").mockReturnValue(registryPlan);
+
+    expect(getRegistrySandboxMessagingAuthority("alpha")).toEqual({
+      authoritative: true,
+      plan: registryPlan,
+    });
+  });
 });
 
 describe("setupSelectedMessagingChannels", () => {
@@ -415,7 +431,11 @@ describe("setupSelectedMessagingChannels", () => {
       { agent: { name: "hermes" } },
     );
 
-    expect(prompt).not.toHaveBeenCalled();
+    // The reply mode is a config question. Pairing still happens in-sandbox by
+    // QR, so nothing asks for a token and no provider is bound (#8312).
+    expect(prompt).toHaveBeenCalledExactlyOnceWith(
+      "  WhatsApp reply mode [self-chat/bot; default: self-chat]: ",
+    );
     expect(getCredential).not.toHaveBeenCalled();
     expect(plan?.credentialBindings).toEqual([]);
     expect(plan?.channels[0]).toMatchObject({
@@ -482,6 +502,36 @@ describe("setupMessagingChannels", () => {
     expect(notes).toEqual([
       "  [non-interactive] Messaging channel inputs detected: telegram, slack",
     ]);
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
+  it("validates a completed non-interactive selection when its credential is supplied (#3631)", async () => {
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", "123456:replacement-telegram-token");
+    vi.stubEnv("SLACK_BOT_TOKEN", "xoxb-ambient-slack-token");
+    vi.stubEnv("SLACK_APP_TOKEN", "xapp-ambient-slack-token");
+    const note = vi.fn();
+
+    const result = await setupMessagingChannels(null, ["telegram"], {
+      sandboxName: "tm",
+      selectionCompleted: true,
+      isNonInteractive: () => true,
+      note,
+    });
+
+    expect(result).toEqual(["telegram"]);
+    expect(note).toHaveBeenCalledWith(
+      "  [non-interactive] Messaging channel inputs detected: telegram",
+    );
+    expect(MessagingSetupApplier.requirePlanFromEnv()).toMatchObject({
+      sandboxName: "tm",
+      channels: [
+        expect.objectContaining({
+          channelId: "telegram",
+          active: true,
+          disabled: false,
+        }),
+      ],
+    });
     expect(prompt).not.toHaveBeenCalled();
   });
 
@@ -579,7 +629,7 @@ describe("setupMessagingChannels", () => {
         selectionCompleted: true,
       }),
     ).rejects.toThrow(
-      "Export the missing messaging credential environment variables, then run nemoclaw onboard --resume again.",
+      "A completed messaging selection is missing required credentials for these channels: telegram. Export the missing messaging credential environment variables, then run nemoclaw onboard --resume again.",
     );
 
     expect(note).toHaveBeenCalledWith(
@@ -704,6 +754,12 @@ describe("setupMessagingChannels", () => {
           channelId: "whatsapp",
           active: true,
           inputs: [
+            // Seeded from the manifest default: onboarding never asks for the
+            // mode, and self-chat is the one that needs no allowlist (#8312).
+            {
+              inputId: "mode",
+              value: "self-chat",
+            },
             {
               inputId: "allowedIds",
               value: "15551234567,15557654321",

@@ -10,10 +10,37 @@ import { makeDeps, makeHostState, unexpected } from "./__test-helpers__/setup-ni
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
 import type { LocalModelProfilePlan } from "./local-model-profile/integration";
-import { createSetupNim, type SetupNimFlowDeps } from "./setup-nim-flow";
+import { createSetupNim, type SetupNimFlowDeps, withServingPortGuard } from "./setup-nim-flow";
 
 afterEach(() => {
   vi.unstubAllEnvs();
+});
+
+describe("withServingPortGuard", () => {
+  it("binds the serving-port probe without changing installer options (#8685)", async () => {
+    const profile = {} as VllmProfile;
+    type ServingPortProbe = (port: number) => Promise<{ ok: boolean; reason?: string }>;
+    const checkServingPort = vi.fn<ServingPortProbe>(async () => ({ ok: true }));
+    const install = vi.fn(
+      async (
+        receivedProfile: VllmProfile,
+        options: {
+          keepExisting: boolean;
+          checkServingPort?: ServingPortProbe;
+        },
+      ) => ({ ok: receivedProfile === profile && options.keepExisting }),
+    );
+    const guardedInstall = withServingPortGuard<{ keepExisting: boolean }, typeof install>(
+      install,
+      checkServingPort,
+    );
+
+    await expect(guardedInstall(profile, { keepExisting: true })).resolves.toEqual({ ok: true });
+    expect(install).toHaveBeenCalledWith(profile, {
+      keepExisting: true,
+      checkServingPort,
+    });
+  });
 });
 
 describe("createSetupNim", () => {
@@ -320,9 +347,12 @@ describe("createSetupNim", () => {
   it("reuses reachable Windows-host Ollama when PowerShell cannot find its executable (#7472)", async () => {
     const model = "qwen3.6:35b";
     const handleRunningOllamaSelection = vi.fn<SetupNimFlowDeps["handleRunningOllamaSelection"]>(
-      async (_gpu, requestedModel, _recoveredModel, ollamaRunning, state) => {
+      async (_gpu, requestedModel, _recoveredModel, ollamaRunning, state, isWindowsHostOllama) => {
         expect(requestedModel).toBe(model);
         expect(ollamaRunning).toBe(true);
+        // The flow must tell the handler the daemon is on the Windows host so it
+        // skips the Linux systemd loopback override (#8596).
+        expect(isWindowsHostOllama).toBe(true);
         state.model = model;
         state.provider = "ollama-local";
         state.endpointUrl = "http://host.docker.internal:11434/v1";
@@ -1090,8 +1120,8 @@ describe("createSetupNim", () => {
     expect(result.preferredInferenceApi).toBe("openai-completions");
   });
 
-  it("refuses managed install when an existing vLLM occupies the port", async () => {
-    const profile = { name: "DGX Spark" } as VllmProfile;
+  it("refuses the N1x managed preview when an existing vLLM occupies port 8000 (#8574)", async () => {
+    const profile = { name: "N1x", platform: "n1x" } as VllmProfile;
     const error = vi.fn();
     const abortNonInteractive = vi.fn<SetupNimFlowDeps["abortNonInteractive"]>((message) => {
       throw new Error(message);
@@ -1118,17 +1148,27 @@ describe("createSetupNim", () => {
             vllmRunning: true,
             vllmProfile: profile,
             hasVllmImage: true,
-            vllmEntries: [{ key: "install-vllm", label: "Start vLLM (DGX Spark)" }],
+            vllmEntries: [
+              { key: "install-vllm", label: "Start vLLM (N1x) [Deferred preview]" },
+            ],
           }),
         installVllm,
         handleVllmSelection,
       }),
     );
 
-    await expect(setupNim(null)).rejects.toThrow("vLLM is already running on this host");
+    await expect(
+      setupNim({ type: "nvidia", platform: "n1x" } as ReturnType<
+        typeof import("../inference/nim").detectGpu
+      >),
+    ).rejects.toThrow("The N1x Deferred preview requires managed vLLM");
 
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Select Local vLLM"));
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("stop the existing server"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("requires managed vLLM"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("localhost:8000"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Stop the existing server"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("NEMOCLAW_PROVIDER=install-vllm"),
+    );
     expect(abortNonInteractive).toHaveBeenCalledOnce();
     expect(installVllm).not.toHaveBeenCalled();
     expect(handleVllmSelection).not.toHaveBeenCalled();

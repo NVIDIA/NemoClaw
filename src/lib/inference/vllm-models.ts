@@ -29,7 +29,7 @@
 
 import net from "node:net";
 
-export type VllmPlatform = "spark" | "station" | "linux";
+export type VllmPlatform = "spark" | "station" | "n1x" | "linux";
 
 export interface VllmRuntimeOverride {
   /** Model-specific runtime image, pinned by digest. */
@@ -105,6 +105,8 @@ export interface VllmModelDef {
   runtime?: VllmRuntimeOverride;
   /** Whether startup must install vLLM's fastsafetensors extra. Defaults to true. */
   installFastSafetensors?: boolean;
+  /** Disable remote model code for a runtime image that contains native model support. */
+  trustRemoteCode?: false;
   /** Require the host-global managed bearer credential and a loopback-only listener. */
   managedBearerAuth?: true;
   /** Reject environment-provided model and serving-argument overrides. */
@@ -305,7 +307,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     maxModelLen: 262144,
     // Additive flags on top of the shared serving defaults. The shared flags
     // already cover --tensor-parallel-size/--pipeline-parallel-size/
-    // --data-parallel-size (all 1 — harmless on a single Spark node),
+    // --data-parallel-size (all 1 — harmless on one Spark or N1x host),
     // --port 8000, and --trust-remote-code; --max-model-len comes from
     // maxModelLen above.
     modelArgs: [
@@ -351,8 +353,44 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "fastsafetensors",
     ],
     gated: false,
+    platforms: ["spark", "n1x"],
+    minComputeCapability: 121,
+  },
+  {
+    id: "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
+    label: "Muse Glimmer 30B NVFP4 W4A4 [Experimental]",
+    envValue: "muse-glimmer-30b",
+    downloadSizeBytes: 25_447_097_878,
+    maxModelLen: 32768,
+    revision: "d35cb79050f419c457611b1cee5c5d15b176f285",
+    servedModelId: "muse-glimmer",
+    modelArgs: [
+      "--gpu-memory-utilization",
+      "0.75",
+      "--max-num-seqs",
+      "1",
+      "--max-num-batched-tokens",
+      "4096",
+      "--enable-auto-tool-choice",
+      "--tool-call-parser",
+      "muse_glimmer",
+      "--reasoning-parser",
+      "muse_glimmer",
+      "--generation-config",
+      "auto",
+    ],
+    gated: false,
     platforms: ["spark"],
     minComputeCapability: 121,
+    runtime: {
+      image:
+        "vllm/vllm-openai@sha256:ab0f5fc3bb81b9257a9aee801abcb0eeb94bb0523b57b2bb79349dc61e7c1e25",
+      imageDownloadSizeBytes: 10_507_991_780,
+      modelDownloadSizeBytes: 25_447_097_878,
+    },
+    installFastSafetensors: false,
+    trustRemoteCode: false,
+    managedBearerAuth: true,
   },
 ] as const;
 
@@ -706,7 +744,9 @@ export function buildVllmServeCommand(
           .join(" && ")} && `
       : "";
   const args = [
-    ...(model.fixedServeCommand ? FIXED_HOST_LOCAL_VLLM_ARGS : SHARED_VLLM_ARGS),
+    ...(model.fixedServeCommand || model.trustRemoteCode === false
+      ? FIXED_HOST_LOCAL_VLLM_ARGS
+      : SHARED_VLLM_ARGS),
     "--max-model-len",
     String(model.maxModelLen),
     ...(model.revision ? ["--revision", model.revision] : []),

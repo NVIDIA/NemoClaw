@@ -11,6 +11,7 @@ import type {
 } from "../fixtures/shell-probe.ts";
 import {
   assertHermesReloadRollback,
+  lowerHermesShieldsForCleanup,
   reopenHermesMcpMaintenanceWindow,
 } from "../live/mcp-bridge-hermes-lifecycle.ts";
 
@@ -20,14 +21,14 @@ interface RunnerCall {
   options?: ShellProbeRunOptions;
 }
 
-function shellResult(exitCode = 0): ShellProbeResult {
+function shellResult(exitCode = 0, stdout = "", stderr = ""): ShellProbeResult {
   return {
     command: [],
     exitCode,
     signal: null,
     timedOut: false,
-    stdout: "",
-    stderr: "",
+    stdout,
+    stderr,
     artifacts: {
       stdout: "/tmp/stdout",
       stderr: "/tmp/stderr",
@@ -145,5 +146,63 @@ describe("Hermes MCP post-rebuild maintenance", () => {
         args: ["hermes-e2e", "shields", "up"],
       }),
     ]);
+  });
+});
+
+describe("Hermes MCP cleanup posture", () => {
+  it("accepts an already-down Shields posture", async () => {
+    const runner = new RecordingRunner([
+      shellResult(1, "", "Config is already unlocked for hermes-e2e"),
+      shellResult(0, "  Shields: DOWN (temporarily unlocked)\n"),
+    ]);
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await lowerHermesShieldsForCleanup(host, "hermes-e2e");
+
+    expect(runner.calls).toEqual([
+      expect.objectContaining({
+        command: "nemoclaw",
+        args: ["hermes-e2e", "shields", "down", "--timeout", "5m", "--reason", "E2E cleanup"],
+      }),
+      expect.objectContaining({
+        command: "nemoclaw",
+        args: ["hermes-e2e", "shields", "status"],
+      }),
+    ]);
+  });
+
+  it("rejects cleanup when Shields remain up", async () => {
+    const runner = new RecordingRunner([
+      shellResult(1, "", "required executable does not exist"),
+      shellResult(0, "  Shields: UP\n"),
+    ]);
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(lowerHermesShieldsForCleanup(host, "hermes-e2e")).rejects.toThrow(
+      "Hermes Shields cleanup could not confirm DOWN posture",
+    );
+  });
+
+  it("rejects unrelated absence output from Shields status", async () => {
+    const runner = new RecordingRunner([
+      shellResult(1, "", "Config transition failed"),
+      shellResult(1, "", "provider configuration not found"),
+    ]);
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(lowerHermesShieldsForCleanup(host, "hermes-e2e")).rejects.toThrow(
+      "Hermes Shields cleanup could not confirm DOWN posture",
+    );
+  });
+
+  it("accepts cleanup after the sandbox is removed", async () => {
+    const runner = new RecordingRunner([
+      shellResult(1, "", "  Sandbox 'hermes-e2e' does not exist.\n"),
+    ]);
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await lowerHermesShieldsForCleanup(host, "hermes-e2e");
+
+    expect(runner.calls).toHaveLength(1);
   });
 });

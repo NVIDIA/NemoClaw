@@ -22,14 +22,14 @@ export { DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS };
 export const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 export const GATEWAY_AUTH_REVIEW_NOTE = path.join(
   REPO_ROOT,
-  "docs",
-  "security",
+  "internal",
+  "security-reviews",
   "openshell-0.0.72-compatibility-review.mdx",
 );
 export const GATEWAY_MIGRATION_REVIEW_NOTE = path.join(
   REPO_ROOT,
-  "docs",
-  "security",
+  "internal",
+  "security-reviews",
   "openshell-0.0.85-migration-review.md",
 );
 const SANDBOX_JWT_SUBJECT_PREFIX = "spiffe://openshell/sandbox/";

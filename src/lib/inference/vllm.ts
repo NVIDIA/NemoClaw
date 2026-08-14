@@ -39,6 +39,7 @@ import {
   buildLocalManagedVllmDockerEnv,
   buildRemoteVllmDockerEnv,
   buildVllmDockerEnv,
+  captureNvidiaSmi,
   ensureDualStationVllmApiKey,
   loadDualStationVllmApiKey,
   type MaterializedHostLocalVllmSelection,
@@ -47,6 +48,7 @@ import {
   recoverInstalledManagedClusterVllmEndpoint,
   resolveHostLocalVllmSelection,
   resolveManagedVllmBridgeHost,
+  resolveNvidiaSmiCommand,
   resolveVllmInstallModel,
   runtimeAuthFingerprint,
   tryInstallManagedClusterManagedVllm,
@@ -308,6 +310,19 @@ const SPARK_PROFILE: VllmProfile = {
   loadTimeoutSec: 1800,
 };
 
+const N1X_PROFILE: VllmProfile = {
+  name: "N1x",
+  platform: "n1x",
+  image: SPARK_PROFILE.image,
+  imageDownloadSizeBytes: SPARK_PROFILE.imageDownloadSizeBytes,
+  imageUnpackedSizeBytes: SPARK_PROFILE.imageUnpackedSizeBytes,
+  defaultModel: qwen35bNvfp4Model(),
+  containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
+  dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
+  pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
+  loadTimeoutSec: SPARK_PROFILE.loadTimeoutSec,
+};
+
 // DGX Station.
 const STATION_PROFILE: VllmProfile = {
   name: "DGX Station",
@@ -363,13 +378,14 @@ export function detectVllmProfile(
     | {
         spark?: boolean;
         type?: string;
-        platform?: "spark" | "station" | "linux";
+        platform?: "spark" | "station" | "n1x" | "linux";
       }
     | null
     | undefined,
 ): VllmProfile | null {
   if (gpu?.platform === "spark") return SPARK_PROFILE;
   if (gpu?.platform === "station") return STATION_PROFILE;
+  if (gpu?.platform === "n1x") return N1X_PROFILE;
   if (gpu?.spark) return SPARK_PROFILE;
   if (gpu?.type === "nvidia") return GENERIC_LINUX_PROFILE;
   return null;
@@ -391,7 +407,7 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
   if (!runCapture(["sh", "-c", "command -v docker"], { ignoreError: true }).trim()) {
     return { ok: false, reason: "docker not found on PATH" };
   }
-  if (!runCapture(["sh", "-c", "command -v nvidia-smi"], { ignoreError: true }).trim()) {
+  if (!resolveNvidiaSmiCommand({ runCaptureImpl: runCapture })) {
     return { ok: false, reason: "nvidia-smi not found — vLLM requires NVIDIA drivers" };
   }
   if (!runCapture(["sh", "-c", "command -v curl"], { ignoreError: true }).trim()) {
@@ -401,10 +417,9 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
 }
 
 export function readGpuComputeCapabilities(): number[] {
-  const out = runCapture(
-    ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader,nounits"],
-    { ignoreError: true },
-  );
+  const out = captureNvidiaSmi(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"], {
+    runCaptureImpl: runCapture,
+  });
   if (!out) return [];
   const capabilities: number[] = [];
   for (const line of out.split("\n")) {
@@ -1444,6 +1459,30 @@ interface InstallVllmOptions {
   promptFn: (q: string) => Promise<string>;
   beforeInstall?: (modelId: string) => void;
   resolveManagedBridgeHost?: (dockerEnv: Record<string, string>) => string;
+  /**
+   * Injected rather than imported so this module does not take a dependency on
+   * the onboard preflight layer. onboard.ts supplies the same probe the gateway
+   * port check uses. Absent means the caller opted out of the guard.
+   */
+  checkServingPort?: (port: number) => Promise<ServingPortProbe>;
+}
+
+/** The subset of the preflight port probe this module consumes. */
+interface ServingPortProbe {
+  ok: boolean;
+  reason?: string;
+}
+
+/**
+ * Name the process holding the serving port so the operator can act, matching
+ * how the Ollama auth proxy reports its own port conflict.
+ */
+function printServingPortConflict(probe: ServingPortProbe): void {
+  console.error(
+    `  vLLM install failed: port ${String(VLLM_PORT)} is already in use by another process.`,
+  );
+  if (probe.reason) console.error(`    ${probe.reason}`);
+  console.error("  Stop that process, then rerun onboarding.");
 }
 
 export function imageIsCached(
@@ -1684,6 +1723,19 @@ async function runVllmInstall(
       }
     }
   }
+
+  // Reject a held serving port before anything durable happens. In
+  // particular, managed bearer auth persists a host credential below and
+  // beforeInstall publishes the selected model to onboarding state. Running
+  // the guard first keeps a refused install free of both side effects.
+  // Port 25000 is not checked here: it belongs to the managed-cluster
+  // rendezvous contract and this single-node path never binds it.
+  const servingPort = await opts.checkServingPort?.(VLLM_PORT);
+  if (servingPort && !servingPort.ok) {
+    printServingPortConflict(servingPort);
+    return { ok: false };
+  }
+
   let hostLocalApiKey: string | null = null;
   if (!dualStationPlan && model.managedBearerAuth) {
     try {

@@ -13,25 +13,57 @@ beforeEach(() => resetOnboardResumeHintForTests());
 afterEach(() => resetOnboardResumeHintForTests());
 
 describe("onboard resume hint", () => {
+  const portableEnv = "NEMOCLAW_EXPERIMENTAL_PROFILE";
+
   it("prints the --resume recovery guidance through the injected logger", () => {
     const lines: string[] = [];
-    printOnboardResumeHint((message) => lines.push(message));
+    printOnboardResumeHint(false, (message) => lines.push(message));
     const text = lines.join("\n");
     expect(text).toContain("onboard --resume");
     expect(text).toContain("--fresh");
   });
 
+  it("prints portable resume recovery guidance when the portable env is set (#9035)", () => {
+    const prev = process.env[portableEnv];
+    process.env[portableEnv] = "portable";
+    try {
+      const lines: string[] = [];
+      printOnboardResumeHint(undefined, (message) => lines.push(message));
+      const text = lines.join("\n");
+      expect(text).toContain("onboard --resume");
+      expect(text).toContain("restored from the checkpoint");
+      expect(text).toContain("onboard --experimental-profile portable --fresh");
+    } finally {
+      prev === undefined ? delete process.env[portableEnv] : (process.env[portableEnv] = prev);
+    }
+  });
+
+  it("prints portable resume guidance after the environment is restored (#9035)", () => {
+    const prev = process.env[portableEnv];
+    delete process.env[portableEnv];
+    try {
+      const lines: string[] = [];
+      printOnboardResumeHint(true, (message) => lines.push(message));
+      const text = lines.join("\n");
+      expect(text).toContain("onboard --resume");
+      expect(text).toContain("restored from the checkpoint");
+      expect(text).toContain("onboard --experimental-profile portable --fresh");
+    } finally {
+      prev === undefined ? delete process.env[portableEnv] : (process.env[portableEnv] = prev);
+    }
+  });
+
   it("prints at most once per process", () => {
     const lines: string[] = [];
-    printOnboardResumeHint((message) => lines.push(message));
-    printOnboardResumeHint((message) => lines.push(message));
+    printOnboardResumeHint(false, (message) => lines.push(message));
+    printOnboardResumeHint(false, (message) => lines.push(message));
     expect(lines.filter((line) => line.includes("onboard --resume"))).toHaveLength(1);
   });
 
   it("stays silent once a tailored hint was noted", () => {
     const lines: string[] = [];
     noteOnboardResumeHintShown();
-    printOnboardResumeHint((message) => lines.push(message));
+    printOnboardResumeHint(false, (message) => lines.push(message));
     expect(lines).toHaveLength(0);
   });
 });

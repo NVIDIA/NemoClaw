@@ -458,6 +458,47 @@ describe("nemoclaw-start mutable config startup ordering", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("repairs only the exact legacy owner-private device journal posture (#8304)", () => {
+    const repairMessage = "[config-guard] repairing legacy unreadable OpenClaw state";
+    for (const { journalPosture, expectedEvents, shouldRepair } of [
+      {
+        journalPosture: "8180 root:sandbox",
+        expectedEvents: ["guard:revoke-startup-ready", "guard:recover", "state:lock"],
+        shouldRepair: true,
+      },
+      {
+        journalPosture: "8180 root:root",
+        expectedEvents: ["guard:revoke-startup-ready", "guard:recover"],
+        shouldRepair: false,
+      },
+    ]) {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-startup-journal-repair-"));
+      const events = path.join(root, "events");
+      const script = [
+        "set -euo pipefail",
+        `events=${JSON.stringify(events)}`,
+        "_OPENCLAW_STATE_DIR_GUARD=/tmp/state-dir-guard.py",
+        'run_openclaw_config_guard() { printf "guard:%s\\n" "$1" >>"$events"; }',
+        'openclaw_config_dir_owner() { printf "root\\n"; }',
+        "classify_openclaw_config_seal() { return 0; }",
+        "stat() {",
+        `  if [ "\${*: -1}" = "/sandbox/.openclaw" ]; then printf "755 root:root\\n"; else printf "${journalPosture}\\n"; fi`,
+        "}",
+        'timeout() { printf "state:%s\\n" "$7" >>"$events"; }',
+        prepareStartupFunction,
+        "prepare_openclaw_config_startup",
+      ].join("\n");
+      try {
+        const result = runBash(script);
+        expect(result.status, result.stderr).toBe(0);
+        expect(fs.readFileSync(events, "utf-8").trim().split("\n")).toEqual(expectedEvents);
+        expect(result.stderr.includes(repairMessage)).toBe(shouldRepair);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+  });
 });
 
 describe("nemoclaw-start mutable config seal classification", () => {

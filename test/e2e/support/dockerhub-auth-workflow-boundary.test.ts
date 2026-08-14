@@ -23,7 +23,7 @@ const AUTH_STEP_NAME = "Authenticate to Docker Hub";
 const CLEANUP_STEP_NAME = "Clean up Docker auth";
 const CLEANUP_HELPER_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
 const AUTH_HELPER_USES =
-  "NVIDIA/NemoClaw/.github/actions/docker-auth-setup@78091da47e290f49b8fe3f3e70b72362a0853928";
+  "NVIDIA/NemoClaw/.github/actions/docker-auth-setup@05fa6b810017752ab21148cb7e9d82d12a88c92f";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const CLEANUP_HELPER_PATH = path.join(REPO_ROOT, ".github", "scripts", "docker-auth-cleanup.sh");
 const AUTH_HELPER_PATH = path.join(REPO_ROOT, ".github", "scripts", "docker-auth-setup.sh");
@@ -292,29 +292,29 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
   it("rejects alias, ordering, and no-image exemption drift", () => {
     const errors = validateMutation((workflow) => {
       const canonicalAuth = namedStep(workflow.jobs.live, AUTH_STEP_NAME)!;
-      const cloudInferenceSteps = workflow.jobs["cloud-inference"].steps!;
-      const cloudInferenceAuthIndex = cloudInferenceSteps.indexOf(
-        namedStep(workflow.jobs["cloud-inference"], AUTH_STEP_NAME)!,
+      const messagingSteps = workflow.jobs["messaging-providers"].steps!;
+      const messagingAuthIndex = messagingSteps.indexOf(
+        namedStep(workflow.jobs["messaging-providers"], AUTH_STEP_NAME)!,
       );
-      cloudInferenceSteps[cloudInferenceAuthIndex] = {
+      messagingSteps[messagingAuthIndex] = {
         ...canonicalAuth,
         env: { ...canonicalAuth.env },
       };
 
-      const messagingSteps = workflow.jobs["messaging-compatible-endpoint"].steps!;
-      const messagingAuthIndex = messagingSteps.indexOf(
-        namedStep(workflow.jobs["messaging-compatible-endpoint"], AUTH_STEP_NAME)!,
+      const routingSteps = workflow.jobs["openclaw-plugin-runtime-exdev"].steps!;
+      const routingAuthIndex = routingSteps.indexOf(
+        namedStep(workflow.jobs["openclaw-plugin-runtime-exdev"], AUTH_STEP_NAME)!,
       );
-      const [messagingAuth] = messagingSteps.splice(messagingAuthIndex, 1);
-      messagingSteps.splice(messagingSteps.length - 1, 0, messagingAuth);
+      const [routingAuth] = routingSteps.splice(routingAuthIndex, 1);
+      routingSteps.splice(routingSteps.length - 1, 0, routingAuth);
 
       workflow.jobs["shared-e2e"].steps!.push({ ...canonicalAuth });
     });
 
     expect(errors).toEqual(
       expect.arrayContaining([
-        "cloud-inference Docker Hub auth must reuse the canonical workflow alias",
-        "messaging-compatible-endpoint Docker Hub auth must run immediately after checkout",
+        "messaging-providers Docker Hub auth must reuse the canonical workflow alias",
+        "openclaw-plugin-runtime-exdev Docker Hub auth must run immediately after checkout",
         "shared-e2e no-image job must not receive Docker Hub authentication",
       ]),
     );
@@ -323,8 +323,8 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
   it("rejects step-level Docker config overrides outside the canonical auth step", () => {
     const errors = validateMutation((workflow) => {
       const run = namedStep(
-        workflow.jobs["messaging-compatible-endpoint"],
-        "Run messaging compatible endpoint live test",
+        workflow.jobs["openclaw-plugin-runtime-exdev"],
+        "Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test",
       );
       expect(run).toBeDefined();
       run!.env = {
@@ -334,7 +334,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     });
 
     expect(errors).toContain(
-      "messaging-compatible-endpoint step 'Run messaging compatible endpoint live test' env must not include DOCKER_CONFIG",
+      "openclaw-plugin-runtime-exdev step 'Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test' env must not include DOCKER_CONFIG",
     );
   });
 
@@ -357,12 +357,10 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
       cleanup!.run = `${String(cleanup!.run)} || true`;
       cleanup!.env = { DOCKER_CONFIG: "${{ github.workspace }}/docker-config" };
 
-      const messagingSteps = workflow.jobs["messaging-compatible-endpoint"].steps!;
-      const messagingCleanupIndex = messagingSteps.findIndex(
-        (step) => step.name === CLEANUP_STEP_NAME,
-      );
-      const [messagingCleanup] = messagingSteps.splice(messagingCleanupIndex, 1);
-      messagingSteps.splice(2, 0, messagingCleanup);
+      const routingSteps = workflow.jobs["openclaw-plugin-runtime-exdev"].steps!;
+      const routingCleanupIndex = routingSteps.findIndex((step) => step.name === CLEANUP_STEP_NAME);
+      const [routingCleanup] = routingSteps.splice(routingCleanupIndex, 1);
+      routingSteps.splice(2, 0, routingCleanup);
     });
 
     expect(errors).toEqual(
@@ -373,7 +371,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
         "live Docker Hub cleanup step must contain exactly name, if, shell, and run",
         "live Docker Hub cleanup step must always run",
         `live Docker Hub cleanup step must run only ${CLEANUP_HELPER_RUN}`,
-        "messaging-compatible-endpoint Docker Hub cleanup must be the final job step",
+        "openclaw-plugin-runtime-exdev Docker Hub cleanup must be the final job step",
       ]),
     );
   });
@@ -444,6 +442,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     const fakeBin = path.join(directory, "bin");
     const runnerTemp = path.join(directory, "runner-temp");
     const callsPath = path.join(directory, "docker-calls");
+    const sleepsPath = path.join(directory, "sleep-calls");
     const tokensPath = path.join(directory, "docker-tokens");
     const githubEnv = path.join(directory, "github-env");
     fs.mkdirSync(fakeBin);
@@ -452,7 +451,10 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
       path.join(fakeBin, "timeout"),
       '#!/usr/bin/env bash\nset -euo pipefail\n[[ "$1" == "30s" ]]\nshift\nexec "$@"\n',
     );
-    writeExecutable(path.join(fakeBin, "sleep"), "#!/usr/bin/env bash\nexit 0\n");
+    writeExecutable(
+      path.join(fakeBin, "sleep"),
+      '#!/usr/bin/env bash\nset -euo pipefail\n[[ "$#" -eq 1 && "$1" == "5" ]]\nprintf \'%s\\n\' "$1" >> "${SLEEP_CALLS}"\n',
+    );
     writeExecutable(
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
@@ -474,6 +476,7 @@ fi
       username?: string;
     }) => {
       fs.rmSync(callsPath, { force: true });
+      fs.rmSync(sleepsPath, { force: true });
       fs.rmSync(tokensPath, { force: true });
       fs.rmSync(githubEnv, { force: true });
       return spawnSync(AUTH_HELPER_PATH, [], {
@@ -490,6 +493,7 @@ fi
           GITHUB_JOB: "live",
           PATH: `${fakeBin}:${process.env.PATH}`,
           RUNNER_TEMP: runnerTemp,
+          SLEEP_CALLS: sleepsPath,
         },
       });
     };
@@ -505,36 +509,56 @@ fi
         false,
       );
 
-      const retried = runAuth({
+      const recovered = runAuth({
         authRequired: "1",
-        successAttempt: 3,
+        successAttempt: 4,
         token: "test-docker-token",
         username: "test-user",
       });
-      expect(retried.status, retried.stderr).toBe(0);
+      expect(recovered.status, recovered.stderr).toBe(0);
       const authenticatedConfig = fs.readFileSync(githubEnv, "utf8").trim().split("=")[1];
       const authMarker = path.join(authenticatedConfig, ".nemoclaw-docker-login-attempted");
       expect(fs.existsSync(authMarker)).toBe(true);
       expect(fs.statSync(authMarker).mode & 0o777).toBe(0o600);
-      expect(fs.readFileSync(callsPath, "utf8").trim().split("\n")).toHaveLength(3);
+      expect(fs.readFileSync(callsPath, "utf8").trim().split("\n")).toHaveLength(4);
       expect(fs.readFileSync(callsPath, "utf8")).toContain("--password-stdin");
       expect(fs.readFileSync(callsPath, "utf8")).not.toContain("test-docker-token");
       expect(fs.readFileSync(tokensPath, "utf8").trim().split("\n")).toEqual([
         "test-docker-token",
         "test-docker-token",
         "test-docker-token",
+        "test-docker-token",
       ]);
+      expect(fs.readFileSync(sleepsPath, "utf8").trim().split("\n")).toEqual(["5", "5", "5"]);
+
+      const recoveredOnFinalAttempt = runAuth({
+        authRequired: "1",
+        successAttempt: 5,
+        token: "test-docker-token",
+        username: "test-user",
+      });
+      expect(recoveredOnFinalAttempt.status, recoveredOnFinalAttempt.stderr).toBe(0);
+      expect(fs.readFileSync(callsPath, "utf8").trim().split("\n")).toHaveLength(5);
+      expect(fs.readFileSync(tokensPath, "utf8").trim().split("\n")).toEqual([
+        "test-docker-token",
+        "test-docker-token",
+        "test-docker-token",
+        "test-docker-token",
+        "test-docker-token",
+      ]);
+      expect(fs.readFileSync(sleepsPath, "utf8").trim().split("\n")).toEqual(["5", "5", "5", "5"]);
 
       const exhausted = runAuth({
         authRequired: "1",
-        successAttempt: 4,
+        successAttempt: 6,
         token: "test-docker-token",
         username: "test-user",
       });
       expect(exhausted.status).toBe(1);
-      expect(fs.readFileSync(callsPath, "utf8").trim().split("\n")).toHaveLength(3);
+      expect(fs.readFileSync(callsPath, "utf8").trim().split("\n")).toHaveLength(5);
+      expect(fs.readFileSync(sleepsPath, "utf8").trim().split("\n")).toEqual(["5", "5", "5", "5"]);
       expect(`${exhausted.stdout}${exhausted.stderr}`).toContain(
-        "Docker Hub login failed after 3 attempts",
+        "Docker Hub login failed after 5 attempts",
       );
 
       const missing = runAuth({ authRequired: "1", successAttempt: 1 });

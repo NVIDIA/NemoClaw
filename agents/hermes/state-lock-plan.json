@@ -4,6 +4,7 @@
   "readOnlyRoots": [
     "cron",
     "hooks",
+    "lazy-packages",
     "platforms",
     "plugins",
     "profiles",

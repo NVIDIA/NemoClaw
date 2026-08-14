@@ -49,30 +49,44 @@ At cutoff:
 
 The release candidate is the full `origin/main` commit SHA captured by the generated release plan. At that commit, `.github/workflows/e2e.yaml` is the sole source of truth for the release E2E test set. Do not maintain a separate release-gating test list.
 
-Before asking for the release confirmation phrase, build and show an evidence ledger for that SHA:
+Before asking for the release confirmation phrase, require a completed, successful `Release qualification` check from a pre-tag manual run at that SHA.
 
-- Preflight the candidate workflow and existing candidate evidence before dispatching new work.
-- Derive the denominator from the candidate workflow. Do not copy it into a second release test list.
-- Require every declared `RELEASE_E2E_ACTIVATION_PATH` to exist at the candidate SHA. A missing path is a preflight failure.
-- Require the workflow-produced trusted dispatch receipt to bind the accepted run candidate SHA, run ID, attempt, and selector inputs.
-- Run `nemoclaw-maintainer-e2e` in full mode when the ledger lacks complete evidence for the candidate SHA.
-- Require one completed, successful full workflow run for all default-selected workflow E2E jobs and the full-mode additions, including `Exact staging Brev Launchable`.
-- Require the trusted dispatch receipt to record `allowJetsonRunnerQueue: false` and `allowDgxSparkRunnerQueue: false`.
-- Exclude `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification` from the required denominator.
-- Require the trusted dispatch receipt to bind the workflow run and an attempt no later than the run's latest attempt. The receipt must record empty selectors and `include_staging_brev_launchable=true`.
-- Require the Launchable E2E receipt to identify the candidate SHA in the repository and provision records.
-- Require the cleanup receipt to identify the qualified workspace and report `ABSENT`.
-- Every E2E execution selected by the accepted dispatch must have at least one completed, successful execution for the candidate SHA.
-- Treat each expanded matrix execution as a separate ledger entry. Use its matrix `id`, or all distinguishing matrix dimensions when no single ID exists, in the test identifier so results for distinct expansions are never collapsed under the parent job.
-- Successful evidence may accumulate across rerun attempts of that workflow run. Evidence from another workflow run does not satisfy the ledger. A later failure does not erase an earlier successful execution for the same test and SHA.
-- Skipped, unexecuted, queued, in-progress, cancelled, and failing results do not count as successful evidence.
-- Map each test with successful evidence to its successful run or job URL and attempt number.
-- Each missing or skipped execution in the accepted successful workflow run requires its own itemized maintainer exception. Record the test identifier, relevant run links or available evidence, the current result, and the rationale.
-- Missing or invalid exact Brev Launchable E2E evidence in the accepted successful workflow run requires a separate itemized maintainer exception. Record the run and job URLs, the missing or invalid receipt, and the rationale.
+- `.github/workflows/e2e.yaml` derives the release-required jobs from its E2E metadata. Do not copy them into a second release test list.
+- Push runs publish `Relevant E2E`; only full manual runs dispatched against `main` with empty selectors publish `Release qualification`.
+- By default, the check requires every default-required workflow E2E result to succeed, including `Exact staging Brev Launchable`.
+- A repository administrator may waive one or more release-required E2E execution jobs with `release_qualification_waived_jobs` and `release_qualification_waiver_reason`.
+- `release_qualification_waived_jobs` is a comma-separated list of requested job IDs.
+- The reason must begin with an ASCII letter or digit and contain 10-500 characters chosen from ASCII letters, digits, spaces, and `.,:;/_()'-`.
+- Both inputs must be nonempty, or both inputs must be empty.
+- Both `github.actor` and `github.triggering_actor` must have repository `admin` permission for the waiver.
+- The trusted planner must reject unknown, duplicate, or non-release-required job IDs.
+- Trusted controller jobs cannot be waived.
+- The trusted planner removes only the named jobs from `release_required_jobs` and emits canonical waived-job JSON.
+- Every waived job still runs, and `include_staging_brev_launchable=true` remains required.
+- The `generate-matrix` dispatch receipt is written after waiver authorization and before that job's source checkout. It records the requested job IDs, reason, both actor identities, and candidate SHA.
+- After trusted planner validation, the `Release qualification` summary and waiver artifact record the canonical job IDs and each waived job's completed outcome.
+- A normal full run must conclude with `success`.
+- An administrator-waived full run may conclude with `failure` when a waived execution job fails, `Release qualification` succeeds, and the waiver artifact binds that failure to the candidate, run, actors, reason, and canonical waived job IDs.
+- `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification` remain separate opt-in work and do not block this check.
+- A successful Launchable job proves the candidate checkout, in-guest full E2E result, and cleanup. Its artifacts are diagnostic evidence, not a second status ledger.
+- A skipped, queued, in-progress, cancelled, or failed `Release qualification` check is not release evidence.
+- A check from another commit SHA is not release evidence.
+- Use an existing qualifying pre-tag run for the candidate SHA; run `nemoclaw-maintainer-e2e` in full mode when none exists, with an administrator-authorized job waiver when required.
 
-The accepted workflow run must be completed and have a `success` conclusion. A failed workflow run cannot supply the release ledger. Rerun its failed jobs until the workflow concludes with `success`. An itemized test exception applies only to a missing or skipped execution in that otherwise successful run.
-
-Each test and the exact Brev Launchable E2E job in the accepted successful workflow run must have successful evidence or its own permitted itemized exception before release confirmation. Immediately before confirmation, compare `origin/main` with the planned SHA. If the candidate SHA changes, discard the ledger and its exceptions, including Launchable E2E evidence. Regenerate the release plan and repeat the review for the new SHA. This does not freeze `main` or prevent merges. No release-note-only delta exception is currently defined.
+Record the workflow and `Release qualification` job URLs.
+Run the release script's signing preflight before confirmation.
+For the canonical `NVIDIA/NemoClaw` remote, `scripts/release-cut-tag.sh` searches completed, successful manual `.github/workflows/e2e.yaml` runs and completed failed manual runs at the exact planned `origin/main` commit.
+It accepts the first successful run with exactly one completed, successful `Release qualification` job.
+For a failed run, it also requires a valid waiver artifact with at least one planner-validated waived job failure.
+It fails closed when no qualifying run exists.
+A run with zero or multiple jobs of that name is not evidence.
+The script repeats this check before it pushes the tag.
+Local fixture remotes skip the production gate only when tests set `NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL=1` and the shared classifier confirms a noncanonical origin.
+Canonical-equivalent `NVIDIA/NemoClaw` remotes always run the gate, even when that override is set.
+A local fixture cannot authorize a release.
+If the candidate SHA changes, discard the earlier check, regenerate the release plan, and require qualifying full manual E2E for the new SHA.
+This does not freeze `main` or prevent merges.
+No release-note-only delta exception is currently defined.
 
 ## Carry Forward
 

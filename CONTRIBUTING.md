@@ -206,7 +206,7 @@ These are the primary npm scripts for day-to-day development:
 | `npm run check` | Run the broad repo-wide pre-commit and full CLI/plugin coverage baseline |
 | `npm run check:diff` | Compatibility alias for `npm run validate:pr` |
 | `npm run checks` | Compatibility alias for `npm run checks:repository`; prints scope guidance before delegating |
-| `npm run format` | Auto-format Biome-supported source files |
+| `npm run format` | Auto-format added JavaScript and TypeScript files that Oxfmt does not exclude |
 | `npm run typecheck:cli` | Type-check the root TypeScript project using `tsconfig.cli.json` |
 | `npm --prefix nemoclaw run typecheck` | Type-check plugin production and test sources without emitting files |
 | `npm test` | Build package artifacts and run every non-live Vitest project for broad changes |
@@ -262,6 +262,27 @@ artifact sink. Pass the auto fixture's frozen, canonical `progress` capability
 through unchanged; custom, copied, or no-op progress adapters are rejected at
 audited subprocess boundaries.
 
+### macOS Test Dependencies
+
+Some tests run command-line tools that macOS does not ship.
+`src/lib/shields/state-dir-lock.test.ts` runs `timeout`.
+On a macOS host that does not provide `timeout`, the process spawn fails.
+The result has no `stdout`.
+The test then reports `TypeError: Cannot read properties of undefined (reading 'split')`.
+The error does not identify the missing utility or macOS.
+
+Install these command-line tools before you run the test suite on macOS.
+Put the `bash`, `coreutils`, and `gawk` package directories first on `PATH`:
+
+```bash
+brew install bash coreutils fd gawk ripgrep
+export PATH="$(brew --prefix bash)/bin:$(brew --prefix coreutils)/libexec/gnubin:$(brew --prefix gawk)/libexec/gnubin:$PATH"
+```
+
+The `macos-vitest` job in [`.github/workflows/platform-vitest-main.yaml`](.github/workflows/platform-vitest-main.yaml) installs these utilities and owns the authoritative list.
+The job runs after a push to `main` and during a manual dispatch.
+It does not run for pull requests.
+
 ### Test Declarative Behavior
 
 Do not read a shipped YAML, JSON, manifest, workflow, or E2E runtime file only to assert its keys,
@@ -284,6 +305,13 @@ it("keeps both immutable image digests aligned", () => {
 exception whose file, test title, and category are not in the reviewed allowlist. It also
 rejects unused allowlist entries, so one exception cannot silently replace another. Its output and
 metrics list every accepted exception so these contracts remain visible during review.
+
+### Blueprint Image Pin Updates
+
+When the managed sandbox image changes, update both `digest` and `components.sandbox.image` in
+`nemoclaw-blueprint/blueprint.yaml` with the same SHA-256 digest. Release tooling should rewrite
+both fields together. `test/validate-blueprint.test.ts` rejects a mutable image tag or a mismatch
+between the two digest fields.
 
 ### Focused Vitest Feedback
 
@@ -355,6 +383,11 @@ All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-bina
 | **commit-msg** | commitlint (Conventional Commits) |
 | **pre-push** | Path-scoped incremental CLI/plugin TypeScript checks and checked-JavaScript checks |
 
+The Oxfmt hook formats added JavaScript and TypeScript files that its configuration does not exclude.
+The hook reads its base ref from `NEMOCLAW_FORMAT_BASE_REF`, which defaults to `origin/main`.
+A file is added when the selected base commit has no file at that path.
+If Git cannot resolve the ref named by `NEMOCLAW_FORMAT_BASE_REF`, the Oxfmt hook exits with status 2 before invoking Oxfmt.
+
 For PR preparation, normal `pre-commit`, `commit-msg`, and `pre-push` hooks are valid verification when they pass and were not bypassed with `--no-verify`.
 If hooks were skipped, missing, failed, or uncertain, refresh the remote-tracking base with `git fetch origin main`, then run `npm run validate:pr` once to reproduce those checks for the current diff.
 
@@ -363,6 +396,27 @@ The `validate:pr` command applies the same path selection, so do not rerun type 
 CI runs the complete type-check gates independently; local path selection is a fast-feedback optimization, not the authoritative trust boundary.
 
 If you still have `core.hooksPath` set from an old Husky setup, Git will ignore `.git/hooks`. Run `git config --unset core.hooksPath` in this repo, then `npm install` so `prek install` (via `prepare`) can register the hooks.
+
+If you cloned this repo on Windows before `.gitattributes` set `* text=auto eol=lf`, your working tree can still contain CRLF line endings.
+The rule now keeps every tracked text file on LF while Git continues to detect binary files automatically.
+These line endings cause repository checks to fail.
+
+Warning: `git reset --hard` discards tracked changes.
+Commit all changes, or stash tracked and untracked changes with `git stash push --include-untracked`.
+Run `git status --short`, and continue only if the command produces no output.
+From the root of this repo, remove tracked files from the Git index:
+
+```bash
+git rm --cached -r .
+```
+
+Then restore the Git index and working tree from the current commit:
+
+```bash
+git reset --hard
+```
+
+Git checks out tracked text files with LF line endings.
 
 `npm run checks:repository` runs only the custom checks collected under `scripts/checks`; lint and the repository-check hook use it internally. The `npm run checks` alias remains available for compatibility and prints the canonical routine and narrow command names before delegating.
 

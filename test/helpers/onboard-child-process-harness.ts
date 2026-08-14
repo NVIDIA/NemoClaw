@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import {
+  createHostProcessWorkspace,
+  type HostProcessWorkspace,
+  trailingJsonPayload,
+} from "./host-process-harness";
 
 /**
  * Child-process setup mechanics for onboarding suites that spawn the CLI or a
@@ -19,20 +22,7 @@ import path from "node:path";
 export const testRepoRoot = path.join(import.meta.dirname, "..", "..");
 
 /** A disposable workspace holding the spawned process's home and fake bin. */
-export interface OnboardProcessWorkspace {
-  /** The mkdtemp root; also the default HOME. */
-  root: string;
-  /** The directory HOME points at; equals root unless separateHome is set. */
-  homeDir: string;
-  /** The created bin directory for stub executables. */
-  binDir: string;
-  /** Writes an executable stub into binDir and returns its path. */
-  writeExecutable: (name: string, contents: string) => string;
-  /** Resolves a path under the workspace root. */
-  path: (...segments: string[]) => string;
-  /** Removes the whole workspace. */
-  remove: () => void;
-}
+export type OnboardProcessWorkspace = HostProcessWorkspace;
 
 /** Creation options for createOnboardProcessWorkspace. */
 export interface OnboardProcessWorkspaceOptions {
@@ -45,25 +35,7 @@ export function createOnboardProcessWorkspace(
   prefix: string,
   options?: OnboardProcessWorkspaceOptions,
 ): OnboardProcessWorkspace {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  const binDir = path.join(root, "bin");
-  fs.mkdirSync(binDir, { recursive: true });
-  const homeDir = options?.separateHome ? path.join(root, "home") : root;
-  fs.mkdirSync(homeDir, { recursive: true });
-  return {
-    root,
-    homeDir,
-    binDir,
-    writeExecutable: (name, contents) => {
-      const target = path.join(binDir, name);
-      fs.writeFileSync(target, contents, { mode: 0o755 });
-      return target;
-    },
-    path: (...segments) => path.join(root, ...segments),
-    remove: () => {
-      fs.rmSync(root, { recursive: true, force: true });
-    },
-  };
+  return createHostProcessWorkspace(prefix, options);
 }
 
 /**
@@ -74,12 +46,7 @@ export function workspaceEnv(
   workspace: OnboardProcessWorkspace,
   overrides?: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    HOME: workspace.homeDir,
-    PATH: `${workspace.binDir}:${process.env.PATH || ""}`,
-    ...overrides,
-  };
+  return workspace.environment(overrides);
 }
 
 /**
@@ -147,12 +114,4 @@ export function runOnboardProcess(
  * their result payload after any incidental logging. Throws with the full
  * stdout when no payload line exists.
  */
-export function trailingJsonPayload<T>(stdout: string): T {
-  const line = stdout
-    .trim()
-    .split(/\r?\n/)
-    .reverse()
-    .find((candidate) => candidate.startsWith("{") && candidate.endsWith("}"));
-  if (!line) throw new Error(`expected JSON payload in stdout:\n${stdout}`);
-  return JSON.parse(line) as T;
-}
+export { trailingJsonPayload };

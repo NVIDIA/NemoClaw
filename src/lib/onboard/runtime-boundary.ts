@@ -46,6 +46,7 @@ export class OnboardRuntimeBoundary {
       recordOnboardStarted: this.recordOnboardStarted.bind(this),
       startRecordedStep: this.startRecordedStep.bind(this),
       recordStepComplete: this.recordStepComplete.bind(this),
+      recordStepRejected: this.recordStepRejected.bind(this),
       recordStepSkipped: this.recordStepSkipped.bind(this),
       recordStateSkipped: this.recordStateSkipped.bind(this),
       recordRepairEvent: this.recordRepairEvent.bind(this),
@@ -85,6 +86,10 @@ export class OnboardRuntimeBoundary {
 
   async recordStepComplete(stepName: string, updates: SessionUpdates = {}): Promise<Session> {
     return this.getRuntime().markStepComplete(stepName, updates);
+  }
+
+  async recordStepRejected(stepName: string): Promise<Session> {
+    return this.getRuntime().markStepRejected(stepName);
   }
 
   async recordStepSkipped(stepName: string): Promise<Session> {

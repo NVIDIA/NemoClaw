@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
@@ -36,6 +36,10 @@ const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
   ["nemoclaw/**", /^nemoclaw\/.+$/u],
   ["nemoclaw-blueprint/**", /^nemoclaw-blueprint\/.+$/u],
   ["scripts/**", /^scripts\/.+$/u],
+  [
+    "test/e2e/live/managed-image-activation-e2e*.ts",
+    /^test\/e2e\/live\/managed-image-activation-e2e[^/]*[.]ts$/u,
+  ],
   [
     "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
     /^src\/lib\/actions\/sandbox\/openshell-child-visible-credentials[.]v[^/]*[.]json$/u,
@@ -99,6 +103,17 @@ export interface PublicationWaitOptions {
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
   notice?: (message: string) => void;
+}
+
+export function writePublicationRunOutputs(path: string, run: PublicationRun): void {
+  if (!path || path.includes("\r") || path.includes("\n")) {
+    throw new Error("GITHUB_OUTPUT must be a non-empty single-line path");
+  }
+  appendFileSync(
+    path,
+    [`run_id=${run.id}`, `run_attempt=${run.attempt}`, `head_sha=${run.headSha}`, ""].join("\n"),
+    "utf8",
+  );
 }
 
 export interface GithubRequestOptions {
@@ -736,6 +751,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
 
   const token = env.GITHUB_TOKEN ?? "";
   const expectedSha = env.EXPECTED_SHA ?? "";
+  const outputPath = env.GITHUB_OUTPUT ?? "";
   const workspace = env.GITHUB_WORKSPACE ?? process.cwd();
   if (token.length === 0 || token.includes("\r") || token.includes("\n")) {
     throw new Error("GITHUB_TOKEN must be a non-empty single-line value");
@@ -763,6 +779,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     waitMs: waitSeconds * 1000,
     pollMs: pollSeconds * 1000,
   });
+  writePublicationRunOutputs(outputPath, run);
   console.log(
     `::notice title=Base-image publication verified::${annotationValue(
       `All required publishers succeeded for ${run.headSha}; ${run.url}`,
