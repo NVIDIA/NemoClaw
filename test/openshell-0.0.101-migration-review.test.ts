@@ -230,7 +230,7 @@ describe("OpenShell 0.0.101 migration review", () => {
         },
         {
           path: "agents/hermes/mcp-config-transaction.py",
-          sha256: "e3e51798c242b7ed54c1dff8203d3e73dbc2b9fcb8c7d271292f6b41f08bdd90",
+          sha256: "88988d567fd297a1d37919ad269181a7b42059c5f80cf840477322252fc89351",
         },
       ],
     });

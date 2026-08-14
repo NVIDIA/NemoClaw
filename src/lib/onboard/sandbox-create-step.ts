@@ -128,10 +128,11 @@ export async function runSandboxCreateStep(
       onPoll: () => {
         if (!deferRestartSafeCutover) dockerGpuCreatePatch.maybeApplyDuringCreate();
       },
-      readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent(
-        deps.isTerminalAgent(context.agent),
-        sandboxEnv,
-      ),
+      readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent({
+        isTerminalAgent: deps.isTerminalAgent(context.agent),
+        startupRunsDuringCreate: true,
+        env: sandboxEnv,
+      }),
       failureCheck: dockerGpuCreatePatch.createFailureMessage,
       traceEvent: deps.addTraceEvent,
       waitForReadyTermination: deferRestartSafeCutover,

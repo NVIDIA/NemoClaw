@@ -139,6 +139,26 @@ export function expectAuthenticatedProxyResolutionRequests(
   }
 }
 
+export function hasAuthenticatedProxyResolutionRequest(
+  baseline: Pick<FakeOpenAiCompatibleServer, "requests"> | undefined,
+  requestOffset: number,
+  expectedModel: string,
+): boolean {
+  if (!baseline) return true;
+  return baseline
+    .requests()
+    .slice(requestOffset)
+    .some(
+      (request) =>
+        request.method === "POST" &&
+        ["/v1/chat/completions", "/chat/completions"].includes(request.path) &&
+        request.auth === "ok" &&
+        request.authorizationSent === true &&
+        request.model === expectedModel &&
+        (request.forbiddenMarkerMatches ?? 0) === 0,
+    );
+}
+
 export function hostedInstallModel(runtimeEnv: NodeJS.ProcessEnv = process.env): string {
   return (
     runtimeEnv.NEMOCLAW_MODEL ?? runtimeEnv.NEMOCLAW_COMPAT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL
@@ -339,6 +359,7 @@ export async function runHermesPongWithRetry(options: {
 }
 
 export async function runHermesCliPongWithRetry(options: {
+  accept?: (result: ShellProbeResult, attempt: number) => boolean;
   attempts?: number;
   delay?: (milliseconds: number) => Promise<void>;
   run: (attempt: number) => Promise<ShellProbeResult>;
@@ -350,7 +371,8 @@ export async function runHermesCliPongWithRetry(options: {
   let last: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     last = await options.run(attempt);
-    if ((last.exitCode === 0 && /\bPONG\b/iu.test(last.stdout)) || attempt === attempts)
+    const accepted = options.accept?.(last, attempt) ?? true;
+    if ((last.exitCode === 0 && /\bPONG\b/iu.test(last.stdout) && accepted) || attempt === attempts)
       return last;
     await delay(5_000);
   }
