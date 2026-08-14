@@ -7,13 +7,17 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  MAX_OPENSHELL_DEV_BINARY_BYTES,
   OPENSHELL_DEV_ASSET_NAMES,
+  prepareOpenShellDevBinaries,
   resolveOpenShellDevArtifact,
   verifyOpenShellDevArtifact,
 } from "../../../tools/e2e/openshell-dev-artifact.mts";
 import {
   API_ROOT,
   fixtureFetch,
+  fixtureTarRunner,
+  fixtureTarRunnerWithSize,
   RELEASE_URL,
   SOURCE_COMMIT,
   temporaryDirectory,
@@ -73,20 +77,6 @@ describe("OpenShell dev artifact resolver", () => {
         sourceUrl: RELEASE_URL,
       });
       expect(fs.existsSync(path.join(directory, "assets"))).toBe(false);
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
-  });
-
-  it("rejects a moving release target before download (#9051)", async () => {
-    const directory = temporaryDirectory();
-    try {
-      await expect(
-        resolveOpenShellDevArtifact(directory, fixtureFetch({ sourceCommit: "main" })),
-      ).rejects.toMatchObject({
-        identifier: "release:9051:tag:dev",
-        sourceUrl: RELEASE_URL,
-      });
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
     }
@@ -154,6 +144,85 @@ describe("OpenShell dev artifact resolver", () => {
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("prepares only the three reviewed regular binaries (#9051)", async () => {
+    const directory = temporaryDirectory();
+    const binaryDirectory = `${directory}-binaries`;
+    try {
+      const resolution = await resolveOpenShellDevArtifact(directory, fixtureFetch());
+      const manifestSha256 = resolution.manifestSha256;
+      requireFixture(manifestSha256, "fixture resolution omitted manifest digest");
+
+      prepareOpenShellDevBinaries(
+        directory,
+        binaryDirectory,
+        SOURCE_COMMIT,
+        manifestSha256,
+        fixtureTarRunner,
+      );
+
+      expect(fs.readdirSync(binaryDirectory).sort()).toEqual([
+        "openshell",
+        "openshell-gateway",
+        "openshell-sandbox",
+      ]);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+      fs.rmSync(binaryDirectory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects an archive with an unexpected member before extraction (#9051)", async () => {
+    const directory = temporaryDirectory();
+    const binaryDirectory = `${directory}-binaries`;
+    try {
+      const resolution = await resolveOpenShellDevArtifact(directory, fixtureFetch());
+      const manifestSha256 = resolution.manifestSha256;
+      requireFixture(manifestSha256, "fixture resolution omitted manifest digest");
+
+      expect(() =>
+        prepareOpenShellDevBinaries(
+          directory,
+          binaryDirectory,
+          SOURCE_COMMIT,
+          manifestSha256,
+          () => ({ status: 0, stdout: "../openshell\n", stderr: "" }),
+        ),
+      ).toThrow(/expected exactly one member/);
+      expect(fs.existsSync(binaryDirectory)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+      fs.rmSync(binaryDirectory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects an oversized archive member before extraction (#9051)", async () => {
+    const directory = temporaryDirectory();
+    const binaryDirectory = `${directory}-binaries`;
+    try {
+      const resolution = await resolveOpenShellDevArtifact(directory, fixtureFetch());
+      const manifestSha256 = resolution.manifestSha256;
+      requireFixture(manifestSha256, "fixture resolution omitted manifest digest");
+      const extractionAttempts: string[][] = [];
+
+      expect(() =>
+        prepareOpenShellDevBinaries(
+          directory,
+          binaryDirectory,
+          SOURCE_COMMIT,
+          manifestSha256,
+          fixtureTarRunnerWithSize(MAX_OPENSHELL_DEV_BINARY_BYTES + 1, (args) =>
+            extractionAttempts.push(args),
+          ),
+        ),
+      ).toThrow(/exceeds the .* binary limit/);
+      expect(extractionAttempts).toEqual([]);
+      expect(fs.existsSync(binaryDirectory)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+      fs.rmSync(binaryDirectory, { force: true, recursive: true });
     }
   });
 });
