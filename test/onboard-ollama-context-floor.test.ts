@@ -91,7 +91,14 @@ runner.run = () => ({ status: 0 });
 runner.runCapture = (command) => {
   const normalized = Array.isArray(command) ? command.join(" ") : command;
   if (normalized.includes("ollama --version")) return "ollama version is ${MIN_OLLAMA_VERSION}";
-  if (normalized.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (
+    normalized.includes("command -v ollama") ||
+    (normalized.includes("command -v") &&
+      normalized.includes("\"$1\"") &&
+      normalized.endsWith("-- ollama"))
+  ) {
+    return "/usr/bin/ollama";
+  }
   if (normalized.includes("/api/version")) {
     return JSON.stringify({ version: "${MIN_OLLAMA_VERSION}" });
   }

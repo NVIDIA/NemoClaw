@@ -11,7 +11,12 @@ function supportedOllamaHostMetadataOutput(command) {
   if (command.includes("/api/version")) {
     return ${JSON.stringify(JSON.stringify({ version: MIN_OLLAMA_VERSION }))};
   }
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (
+    command.includes("command -v ollama") ||
+    (command.includes("command -v") && command.includes("\"$1\"") && command.endsWith("-- ollama"))
+  ) {
+    return "/usr/bin/ollama";
+  }
   return "";
 }
 
