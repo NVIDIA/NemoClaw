@@ -181,7 +181,7 @@ describe("portable demo lifecycle authority", () => {
     const podman = vi.fn((args: readonly string[], env?: NodeJS.ProcessEnv) => {
       const result = runtime.podman(args, env);
       const command = args[0] === "--url" ? args.slice(2) : args;
-      if (command[0] === "inspect") inode = 9002n;
+      inode = command[0] === "inspect" ? 9002n : inode;
       return result;
     });
 
