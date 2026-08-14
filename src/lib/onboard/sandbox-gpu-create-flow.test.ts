@@ -995,23 +995,23 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     input.gpuRoutePlan = "native-only";
     input.hostEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
     input.portableLifecycle = true;
-    input.lifecycleGeneration = "current-generation";
+    input.lifecycleGeneration = "checkpoint-generation";
     input.persistStartupCommand = true;
     const deps = createDeps();
-    deps.installPortableDemoLifecycle = vi.fn(() => "current-generation");
+    deps.installPortableDemoLifecycle = vi.fn(() => "installed-generation");
 
     const result = await runSandboxGpuCreateFlow(input, deps);
 
     expect(result).toMatchObject({
       route: "native",
-      lifecycleRegistrationFields: { lifecycleGeneration: "current-generation" },
+      lifecycleRegistrationFields: { lifecycleGeneration: "installed-generation" },
     });
     expect(deps.installPortableDemoLifecycle).toHaveBeenCalledOnce();
     expect(deps.installPortableDemoLifecycle).toHaveBeenCalledWith(
       input.sandboxName,
       input.sandboxStartupCommand,
       input.hostEnv,
-      { registryGeneration: "current-generation" },
+      { registryGeneration: "checkpoint-generation" },
     );
     expect(mocks.waitForCreatedSandboxReadyWithTrace.mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(deps.installPortableDemoLifecycle).mock.invocationCallOrder[0]!,

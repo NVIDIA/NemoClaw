@@ -298,8 +298,8 @@ export async function runSandboxGpuCreateFlow(
     firstCreateOutput: attemptRunner.state.firstCreateOutput,
     registryImageRef,
     lifecycleRegistrationFields: {
-      ...(portableLifecycleGeneration ? { lifecycleGeneration: portableLifecycleGeneration } : {}),
       ...(input.lifecycleGeneration ? { lifecycleGeneration: input.lifecycleGeneration } : {}),
+      ...(portableLifecycleGeneration ? { lifecycleGeneration: portableLifecycleGeneration } : {}),
     },
   };
 }
