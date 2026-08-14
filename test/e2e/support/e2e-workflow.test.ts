@@ -45,7 +45,8 @@ function runReleaseWaiverAuthorization(
     `#!/usr/bin/env bash
 set -euo pipefail
 url="\${!#}"
-administrator="\${url##*/}"
+administrator="\${url%/permission}"
+administrator="\${administrator##*/}"
 printf '%s\n' "$administrator" >>"$CURL_LOG"
 case "$administrator" in
   maintainer) role=maintain ;;

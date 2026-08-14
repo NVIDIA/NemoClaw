@@ -91,6 +91,7 @@ function createDeps() {
     normalizeHermesAuthMethod: () => null,
     setupNim: calls.setupNim,
     setupInference: calls.setupInference,
+    resolveHostLocalInferenceStartupSelection: () => null,
     startRecordedStep: vi.fn(async () => undefined),
     recordStepComplete: calls.recordStepComplete,
     recordStepRejected: vi.fn(async () => createSession()),
@@ -147,6 +148,7 @@ function resumeOptions(
     fresh: false,
     session,
     gpu: null,
+    gpuPassthrough: false,
     sandboxName: "target-sandbox",
     agent: null,
     initial: {

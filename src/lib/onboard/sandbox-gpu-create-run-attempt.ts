@@ -167,7 +167,7 @@ export function createSandboxGpuCreateAttemptRunner(
           heldWorkloadArgv: input.sandboxStartupCommand,
           authorityStore: managedBootstrap.authorityStore,
           ...(deps.createManagedBootstrapAdapter
-            ? { adapterOverride: deps.createManagedBootstrapAdapter() }
+            ? { adapterOverride: deps.createManagedBootstrapAdapter(managedBootstrap.stateRoot) }
             : {}),
           route,
           persistStartupCommand: input.persistStartupCommand === true,
@@ -188,16 +188,18 @@ export function createSandboxGpuCreateAttemptRunner(
         })
       : null;
     const persistRestartSafeStartup =
-      input.persistStartupCommand === true && (route !== "native" || hasRequiredUlimits);
+      input.persistStartupCommand === true &&
+      (route !== "native" || !input.terminalAgent || hasRequiredUlimits);
     const deferRestartSafeCutover =
       !managedLifecycle && !compatibility && persistRestartSafeStartup;
     const runtimePatch =
       managedLifecycle?.patch ??
       createDockerGpuSandboxCreatePatch({
         route,
-        // The startup clone preserves native CDI devices, so DCode can apply its
-        // exact required limits without replacing the native GPU envelope.
-        // Other native routes are not swapped solely to persist a command.
+        // The startup clone preserves native CDI devices, so non-terminal agents
+        // keep their selected command and DCode can apply its exact required limits
+        // without replacing the native GPU envelope. Native terminal agents without
+        // required limits retain their create-time command.
         persistStartupCommand: persistRestartSafeStartup,
         externalRecreation: false,
         sandboxName: input.sandboxName,
@@ -226,10 +228,11 @@ export function createSandboxGpuCreateAttemptRunner(
         onPoll: () => {
           if (!deferRestartSafeCutover) runtimePatch.maybeApplyDuringCreate();
         },
-        readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent(
-          input.terminalAgent,
-          input.sandboxEnv,
-        ),
+        readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent({
+          isTerminalAgent: input.terminalAgent,
+          startupRunsDuringCreate: managedLifecycle === null,
+          env: input.sandboxEnv,
+        }),
         failureCheck: runtimePatch.createFailureMessage,
         traceEvent: addTraceEvent,
         waitForReadyTermination: deferRestartSafeCutover,

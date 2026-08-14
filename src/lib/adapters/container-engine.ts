@@ -24,6 +24,7 @@ export type ContainerEngineCommandCapture = (
   args: readonly string[],
   timeoutMs: number,
   input?: Buffer,
+  environment?: Readonly<Record<string, string>>,
 ) => ContainerEngineCommandResult;
 
 /**
@@ -35,10 +36,22 @@ export interface ContainerEngine {
   readonly operation: ContainerEngineOperationScope;
   readonly engineId: string;
   readonly displayName: string;
-  /** Opaque identity for the exact endpoint authority bound to this command. */
+  /** Opaque identity for the full operation authority bound to this command. */
   readonly authorityId: string;
+  /**
+   * Opaque identity for the shared endpoint authority, excluding stricter
+   * operation-only bindings. Absent legacy engines use authorityId.
+   */
+  readonly endpointAuthorityId?: string;
   readonly capture: (
     args: readonly string[],
+    timeoutMs?: number,
+    input?: Buffer,
+  ) => ContainerEngineCommandResult;
+  /** Available only to a host-local-inference engine; values remain operation-scoped. */
+  readonly captureWithEnvironment?: (
+    args: readonly string[],
+    environment: Readonly<Record<string, string>>,
     timeoutMs?: number,
     input?: Buffer,
   ) => ContainerEngineCommandResult;
@@ -53,10 +66,13 @@ export interface ContainerEngineCommandOptions {
   readonly engineId: string;
   readonly displayName: string;
   readonly authorityId: string;
+  readonly endpointAuthorityId?: string;
   readonly executable: string;
   readonly endpointArgs?: readonly string[];
+  /** Exact operation-scoped names that may be added to the sanitized child environment. */
+  readonly allowedEnvironmentNames?: readonly string[];
   readonly capture?: ContainerEngineCommandCapture;
-  readonly guard?: () => void;
+  readonly guard?: (phase: "before" | "after") => void;
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -64,9 +80,12 @@ const MAX_ARGUMENTS = 512;
 const MAX_ARGUMENT_BYTES = 16 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const MAX_INPUT_BYTES = 1024 * 1024;
+const MAX_ENVIRONMENT_ENTRIES = 32;
+const MAX_ENVIRONMENT_BYTES = 64 * 1024;
 const ENGINE_ID_PATTERN = /^[a-z][a-z0-9-]{0,62}$/u;
 const AUTHORITY_ID_PATTERN = /^[a-z][a-z0-9-]{0,62}:[A-Za-z0-9._:-]{1,255}$/u;
 const EXECUTABLE_NAME_PATTERN = /^[A-Za-z0-9._-]+$/u;
+const ENVIRONMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 const COMMAND_ENV_NAMES = new Set([
   "HOME",
@@ -93,16 +112,70 @@ const COMMAND_ENV_NAMES = new Set([
   "CURL_CA_BUNDLE",
 ]);
 const COMMAND_ENV_PREFIXES = ["LC_", "XDG_"] as const;
+const ENGINE_ENV_NAMES = new Set([
+  "CONTAINER_CONNECTION",
+  "CONTAINER_HOST",
+  "CONTAINER_SSHKEY",
+  "DOCKER_CONTEXT",
+  "DOCKER_HOST",
+  "DOCKER_TLS_VERIFY",
+]);
 
-function containerEngineCommandEnvironment(): NodeJS.ProcessEnv {
-  return Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([name, value]) =>
-        value !== undefined &&
-        (COMMAND_ENV_NAMES.has(name) ||
-          COMMAND_ENV_PREFIXES.some((prefix) => name.startsWith(prefix))),
-    ),
-  );
+function containerEngineCommandEnvironment(): Record<string, string> {
+  const environment: Record<string, string> = Object.create(null);
+  for (const [name, value] of Object.entries(process.env)) {
+    if (
+      value !== undefined &&
+      (COMMAND_ENV_NAMES.has(name) ||
+        COMMAND_ENV_PREFIXES.some((prefix) => name.startsWith(prefix)))
+    ) {
+      environment[name] = value;
+    }
+  }
+  return environment;
+}
+
+function operationCommandEnvironment(
+  explicit: Readonly<Record<string, string>>,
+  allowedNames: ReadonlySet<string>,
+): Readonly<Record<string, string>> {
+  if (typeof explicit !== "object" || explicit === null || Array.isArray(explicit)) {
+    throw new Error("Container engine command environment is invalid.");
+  }
+  const entries = Object.entries(explicit);
+  if (entries.length > MAX_ENVIRONMENT_ENTRIES) {
+    throw new Error("Container engine command environment has too many entries.");
+  }
+  let totalBytes = 0;
+  const normalized: Record<string, string> = Object.create(null);
+  for (const [name, value] of entries) {
+    if (
+      !ENVIRONMENT_NAME_PATTERN.test(name) ||
+      !allowedNames.has(name) ||
+      COMMAND_ENV_NAMES.has(name) ||
+      COMMAND_ENV_PREFIXES.some((prefix) => name.startsWith(prefix)) ||
+      ENGINE_ENV_NAMES.has(name)
+    ) {
+      throw new Error("Container engine command environment name is invalid or reserved.");
+    }
+    if (
+      typeof value !== "string" ||
+      value === "" ||
+      Buffer.byteLength(value, "utf8") > MAX_ARGUMENT_BYTES ||
+      CONTROL_CHARACTERS.test(value)
+    ) {
+      throw new Error("Container engine command environment value is invalid.");
+    }
+    totalBytes += Buffer.byteLength(name, "utf8") + Buffer.byteLength(value, "utf8");
+    if (totalBytes > MAX_ENVIRONMENT_BYTES) {
+      throw new Error("Container engine command environment exceeds its byte bound.");
+    }
+    normalized[name] = value;
+  }
+  return Object.freeze({
+    ...containerEngineCommandEnvironment(),
+    ...normalized,
+  });
 }
 
 function boundedText(value: string, label: string, allowPath = false): string {
@@ -176,10 +249,11 @@ function defaultCapture(
   args: readonly string[],
   timeoutMs: number,
   input?: Buffer,
+  environment?: Readonly<Record<string, string>>,
 ): ContainerEngineCommandResult {
   const result = spawnSync(executable, [...args], {
     cwd: process.cwd(),
-    env: containerEngineCommandEnvironment(),
+    env: environment ?? containerEngineCommandEnvironment(),
     encoding: "utf8",
     maxBuffer: MAX_OUTPUT_BYTES,
     shell: false,
@@ -196,10 +270,10 @@ function defaultCapture(
 }
 
 function invokeGuarded(
-  guard: (() => void) | undefined,
+  guard: ((phase: "before" | "after") => void) | undefined,
   capture: () => ContainerEngineCommandResult,
 ): ContainerEngineCommandResult {
-  guard?.();
+  guard?.("before");
   let result: ContainerEngineCommandResult | undefined;
   let failure: unknown;
   try {
@@ -208,7 +282,7 @@ function invokeGuarded(
     failure = error;
   }
   try {
-    guard?.();
+    guard?.("after");
   } catch (error) {
     if (failure === undefined) failure = error;
   }
@@ -225,24 +299,55 @@ export function createContainerEngineCommand(
   if (!AUTHORITY_ID_PATTERN.test(options.authorityId)) {
     throw new Error("Container engine authority identity is invalid.");
   }
+  const endpointAuthorityId = options.endpointAuthorityId ?? options.authorityId;
+  if (!AUTHORITY_ID_PATTERN.test(endpointAuthorityId)) {
+    throw new Error("Container engine endpoint authority identity is invalid.");
+  }
   const executable = normalizedExecutable(options.executable);
   const displayName = boundedText(options.displayName, "Container engine display name");
   const endpointArgs = normalizedArguments(
     options.endpointArgs ?? [],
     "Container engine endpoint arguments",
   );
+  const allowedEnvironmentNames = new Set(
+    normalizedArguments(
+      options.allowedEnvironmentNames ?? [],
+      "Container engine environment allowlist",
+    ).map((name) => {
+      if (!ENVIRONMENT_NAME_PATTERN.test(name)) {
+        throw new Error("Container engine environment allowlist contains an invalid name.");
+      }
+      return name;
+    }),
+  );
   const capture = options.capture ?? defaultCapture;
-  const run = (args: readonly string[], timeoutMs: number, endpoint: boolean, input?: Buffer) => {
+  const run = (
+    args: readonly string[],
+    timeoutMs: number,
+    endpoint: boolean,
+    input?: Buffer,
+    environment?: Readonly<Record<string, string>>,
+  ) => {
     const normalized = normalizedArguments(args, "Container engine command arguments");
     const commandArgs = endpoint ? [...endpointArgs, ...normalized] : [...normalized];
     if (input !== undefined && (!Buffer.isBuffer(input) || input.length > MAX_INPUT_BYTES)) {
       throw new Error("Container engine command input is invalid or exceeds its byte bound.");
     }
-    return invokeGuarded(options.guard, () =>
-      input === undefined
-        ? capture(executable, commandArgs, positiveTimeout(timeoutMs))
-        : capture(executable, commandArgs, positiveTimeout(timeoutMs), Buffer.from(input)),
-    );
+    const boundedTimeout = positiveTimeout(timeoutMs);
+    return invokeGuarded(options.guard, () => {
+      if (environment !== undefined) {
+        return capture(
+          executable,
+          commandArgs,
+          boundedTimeout,
+          input === undefined ? undefined : Buffer.from(input),
+          environment,
+        );
+      }
+      return input === undefined
+        ? capture(executable, commandArgs, boundedTimeout)
+        : capture(executable, commandArgs, boundedTimeout, Buffer.from(input));
+    });
   };
 
   return Object.freeze({
@@ -250,8 +355,26 @@ export function createContainerEngineCommand(
     engineId: options.engineId,
     displayName,
     authorityId: options.authorityId,
+    endpointAuthorityId,
     capture: (args: readonly string[], timeoutMs = DEFAULT_TIMEOUT_MS, input?: Buffer) =>
       run(args, timeoutMs, true, input),
+    ...(options.operation === "host-local-inference"
+      ? {
+          captureWithEnvironment: (
+            args: readonly string[],
+            environment: Readonly<Record<string, string>>,
+            timeoutMs = DEFAULT_TIMEOUT_MS,
+            input?: Buffer,
+          ) =>
+            run(
+              args,
+              timeoutMs,
+              true,
+              input,
+              operationCommandEnvironment(environment, allowedEnvironmentNames),
+            ),
+        }
+      : {}),
     captureHost: (args: readonly string[], timeoutMs = DEFAULT_TIMEOUT_MS) =>
       run(args, timeoutMs, false),
   });

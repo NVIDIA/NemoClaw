@@ -10,10 +10,10 @@
 // loop in nemoclaw-start.sh. Split out of test/generate-openclaw-config.test.ts,
 // which is at its size budget (ci/test-file-size-budget.json).
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildConfig, main } from "../scripts/generate-openclaw-config.mts";
 import { baseOpenClawGenerationEnv } from "./helpers/openclaw-env-fixture";
@@ -77,7 +77,7 @@ describe("gateway.reload pin (#4710)", () => {
   it("re-pins hot mode when an existing config carries a different reload mode", {
     timeout: 20000,
   }, () => {
-    // preserveExistingPluginInstalls() merges plugin install records from an
+    // preserveExistingOpenClawState() merges plugin install records from an
     // existing openclaw.json into the regenerated config; the gateway block
     // (including reload) must come from the generator, not the old file.
     const configDir = path.join(tmpDir, ".openclaw");
@@ -97,5 +97,93 @@ describe("gateway.reload pin (#4710)", () => {
     expect(written.gateway.reload).toEqual({ mode: "hot" });
     // The plugin-install carryover still works alongside the pin.
     expect(written.plugins.installs["custom-plugin"]).toEqual({ origin: "npm" });
+  });
+
+  it("preserves bounded OpenClaw write metadata across managed regeneration (#7744)", () => {
+    const configDir = path.join(tmpDir, ".openclaw");
+    fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, "openclaw.json");
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        meta: {
+          lastTouchedVersion: "2026.7.1",
+          lastTouchedAt: "2026-08-11T22:45:04.591Z",
+          unownedField: "must-not-cross-the-managed-boundary",
+        },
+      }),
+    );
+    fs.writeFileSync(
+      `${configPath}.bak`,
+      JSON.stringify({
+        meta: {
+          lastTouchedVersion: "backup-must-not-win",
+          lastTouchedAt: "2026-08-10T00:00:00.000Z",
+        },
+      }),
+    );
+
+    withConfigEnv({}, () => main());
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    expect(written.meta).toEqual({
+      lastTouchedVersion: "2026.7.1",
+      lastTouchedAt: "2026-08-11T22:45:04.591Z",
+    });
+  });
+
+  it("recovers only bounded metadata from the exact OpenClaw backup (#7744)", () => {
+    const configDir = path.join(tmpDir, ".openclaw");
+    fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, "openclaw.json");
+    fs.writeFileSync(configPath, JSON.stringify({ staleActiveField: "must-not-survive" }));
+    fs.writeFileSync(
+      `${configPath}.bak`,
+      JSON.stringify({
+        meta: {
+          lastTouchedVersion: "2026.7.1",
+          lastTouchedAt: "2026-08-11T22:45:04.591Z",
+          unownedField: "must-not-cross-the-managed-boundary",
+        },
+        agents: { defaults: { model: { primary: "stale/backup-model" } } },
+        models: { providers: { stale: { apiKey: "must-not-cross" } } },
+        staleBackupField: "must-not-survive",
+      }),
+    );
+
+    withConfigEnv({}, () => main());
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    expect(written.meta).toEqual({
+      lastTouchedVersion: "2026.7.1",
+      lastTouchedAt: "2026-08-11T22:45:04.591Z",
+    });
+    expect(written.agents.defaults.model.primary).toBe(BASE_ENV.NEMOCLAW_PRIMARY_MODEL_REF);
+    expect(written.models.providers.stale).toBeUndefined();
+    expect(written.staleActiveField).toBeUndefined();
+    expect(written.staleBackupField).toBeUndefined();
+  });
+
+  it.each([
+    ["partial", { lastTouchedVersion: "2026.7.1" }],
+    [
+      "unbounded",
+      { lastTouchedVersion: "v".repeat(257), lastTouchedAt: "2026-08-11T22:45:04.591Z" },
+    ],
+    [
+      "control-character",
+      { lastTouchedVersion: "2026.7.1\n", lastTouchedAt: "2026-08-11T22:45:04.591Z" },
+    ],
+  ])("does not retain %s OpenClaw backup metadata", (_label, meta) => {
+    const configDir = path.join(tmpDir, ".openclaw");
+    fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, "openclaw.json");
+    fs.writeFileSync(configPath, "{}");
+    fs.writeFileSync(`${configPath}.bak`, JSON.stringify({ meta }));
+
+    withConfigEnv({}, () => main());
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    expect(written.meta).toBeUndefined();
   });
 });
