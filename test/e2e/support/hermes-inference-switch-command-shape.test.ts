@@ -242,19 +242,24 @@ describe("Hermes inference switch command shape", () => {
     }> = [];
     const baseline = { requests: () => requests };
     const result = { exitCode: 0, stderr: "", stdout: "PONG\n" } as ShellProbeResult;
-    const recordSelectedRouteAndReturnPong = (_attempt: number): Promise<ShellProbeResult> => {
-      requests.push({
-        auth: "ok",
-        authorizationSent: true,
-        bodyBytes: 64,
-        forbiddenMarkerMatches: 0,
-        method: "POST",
-        model: "selected-model",
-        path: "/v1/chat/completions",
-      });
-      return Promise.resolve(result);
-    };
-    const run = vi.fn(recordSelectedRouteAndReturnPong).mockResolvedValueOnce(result);
+    const authenticatedRequest = (model: string) => ({
+      auth: "ok",
+      authorizationSent: true,
+      bodyBytes: 64,
+      forbiddenMarkerMatches: 0,
+      method: "POST",
+      model,
+      path: "/v1/chat/completions",
+    });
+    const recordRouteAndReturnPong =
+      (model: string) =>
+      (_attempt: number): Promise<ShellProbeResult> => {
+        requests.push(authenticatedRequest(model));
+        return Promise.resolve(result);
+      };
+    const run = vi
+      .fn(recordRouteAndReturnPong("selected-model"))
+      .mockImplementationOnce(recordRouteAndReturnPong("stale-model"));
     const delay = vi.fn().mockResolvedValue(undefined);
 
     await expect(
@@ -264,6 +269,10 @@ describe("Hermes inference switch command shape", () => {
         run,
       }),
     ).resolves.toBe(result);
+    expect(requests).toEqual([
+      authenticatedRequest("stale-model"),
+      authenticatedRequest("selected-model"),
+    ]);
     expect(run.mock.calls).toEqual([[1], [2]]);
     expect(delay).toHaveBeenCalledWith(5_000);
   });
