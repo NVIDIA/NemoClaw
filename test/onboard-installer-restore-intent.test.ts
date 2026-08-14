@@ -65,7 +65,9 @@ runner.run = (command) => {
   const cmd = _n(command);
   events.push({ kind: "run", cmd });
   if (cmd.includes("sandbox delete")) sandboxDeleted = true;
-  return { status: 0 };
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runCapture = (command) => {
   const cmd = _n(command);
