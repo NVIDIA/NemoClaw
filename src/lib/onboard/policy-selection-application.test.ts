@@ -148,5 +148,25 @@ describe("onboarding policy application", () => {
         ["npm", "pypi", "discord"],
       );
     });
+
+    it("drops the disabled channel preset when policy selection is skipped (#9109)", async () => {
+      const application = createApplication({ NEMOCLAW_POLICY_MODE: "skip" });
+
+      await expect(
+        application.setupPoliciesWithSelection("alpha", {
+          selectedPresets: null,
+          enabledChannels: [],
+          disabledChannels: ["discord"],
+          webSearchSupported: false,
+          hermesToolGateways: [],
+        }),
+      ).resolves.toEqual(["npm", "pypi"]);
+
+      expect(syncPresetSelection).toHaveBeenCalledWith(
+        "alpha",
+        ["npm", "pypi", "discord"],
+        ["npm", "pypi"],
+      );
+    });
   });
 });
