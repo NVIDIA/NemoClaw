@@ -4,7 +4,21 @@
 import { describe, expect, it } from "vitest";
 
 import { gatewayStartGuidance, resolveGatewayLauncher } from "./gateway-start-guidance";
+import type { GatewayManagementDeclaration } from "./onboard/gateway-management";
 import { resolveCurrentOpenShellComputePlan } from "./onboard/compute/plan";
+
+const externallySupervisedDeclaration: GatewayManagementDeclaration = {
+  version: 1,
+  mode: "externally-supervised",
+  endpoint: "http://127.0.0.1:8080",
+  stateDir: "/var/lib/openshell",
+  supervisor: {
+    kind: "systemd-system",
+    serviceName: "openshell-gateway.service",
+    execPath: "/usr/bin/openshell-gateway",
+  },
+  requiredCapabilities: [],
+};
 
 describe("gatewayStartGuidance", () => {
   it("names the NemoClaw command where NemoClaw launches the gateway", () => {
@@ -33,13 +47,27 @@ describe("gatewayStartGuidance", () => {
   });
 
   it("reads the launcher the current runtime provider records", () => {
-    expect(resolveGatewayLauncher({ gatewayLauncher: "openshell" })).toBe("openshell");
-    expect(resolveGatewayLauncher()).toBe(resolveCurrentOpenShellComputePlan().gatewayLauncher);
+    expect(
+      resolveGatewayLauncher({ plan: { gatewayLauncher: "openshell" }, declaration: null }),
+    ).toBe("openshell");
+    expect(resolveGatewayLauncher({ declaration: null })).toBe(
+      resolveCurrentOpenShellComputePlan().gatewayLauncher,
+    );
+  });
+
+  it("honors external lifecycle authority on a Docker-managed runtime", () => {
+    expect(
+      resolveGatewayLauncher({
+        gatewayName: "nemoclaw",
+        plan: { gatewayLauncher: "nemoclaw" },
+        declaration: externallySupervisedDeclaration,
+      }),
+    ).toBe("openshell");
   });
 
   it("resolves the launcher from the plan when the caller supplies no override", () => {
     expect(gatewayStartGuidance("nemoclaw")).toBe(
-      gatewayStartGuidance("nemoclaw", resolveGatewayLauncher()),
+      gatewayStartGuidance("nemoclaw", resolveGatewayLauncher({ gatewayName: "nemoclaw" })),
     );
   });
 });
