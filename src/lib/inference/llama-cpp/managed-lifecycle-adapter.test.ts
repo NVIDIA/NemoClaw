@@ -76,7 +76,7 @@ describe("managed llama.cpp lifecycle adapter", () => {
       stopManaged,
       preserveForRebuild,
       prepareDestroy: vi.fn((value) => value),
-      destroy: vi.fn((value) => ({ status: "removed", receipt: value })),
+      destroy: vi.fn((value) => ({ status: "removed" as const, receipt: value })),
     };
     const resume = vi.fn((value) => value);
     const runtimeProvider = createInMemoryRuntimeProviderBundle({
