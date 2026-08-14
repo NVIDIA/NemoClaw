@@ -1028,6 +1028,26 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     expect(unloadOllamaModels).toHaveBeenCalledWith(["llama3"]);
   });
 
+  it("keeps the successful route when the superseded model unload fails (#9110)", async () => {
+    const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>(() => {
+      throw new Error("synthetic unload failure");
+    });
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [priorEntry],
+      unloadOllamaModels,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let result: Awaited<ReturnType<SetupInference>>;
+    try {
+      result = await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+    } finally {
+      warn.mockRestore();
+    }
+    expect(result).toEqual({ ok: true });
+    expect(unloadOllamaModels).toHaveBeenCalledWith(["llama3"]);
+  });
+
   it("keeps the model when the re-onboard selects the same one (#9110)", async () => {
     const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>();
     const prior = { ...priorEntry, model: "qwen3.5:9b" };
