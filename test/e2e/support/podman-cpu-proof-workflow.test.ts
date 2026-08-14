@@ -130,9 +130,11 @@ describe("native Podman CPU proof workflow", () => {
       "npx vitest run --project e2e-live test/e2e/live/podman-cpu-lifecycle.test.ts",
     );
     const liveSource = readRepoText("test/e2e/live/podman-cpu-lifecycle.test.ts");
-    expect(liveSource.indexOf("expect(candidateAuthority())")).toBeLessThan(
-      liveSource.indexOf("const runtimeEngines = engines()"),
-    );
+    const authorityIndex = liveSource.indexOf("expect(candidateAuthority())");
+    const enginesIndex = liveSource.indexOf("const runtimeEngines = engines()");
+    expect(authorityIndex).toBeGreaterThanOrEqual(0);
+    expect(enginesIndex).toBeGreaterThanOrEqual(0);
+    expect(authorityIndex).toBeLessThan(enginesIndex);
     expect(scripts).not.toContain("podman create");
     expect(scripts).not.toContain("openshell-sandbox-$sandbox_name");
     expect(scripts).not.toContain("openshell.sandbox-name");

@@ -931,4 +931,185 @@ const { createSandbox } = require(${onboardPath});
     );
     expect(destructive).toEqual([]);
   });
+
+  it("rejects portable managed bootstrap before recreate state mutation (#9068)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-managed-recreate-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "portable-managed-recreate.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+    const catalogPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "managed-image", "catalog.ts"),
+    );
+    const contractPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "managed-image", "contract.ts"),
+    );
+    const protectionPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "sandbox-recreate-protection.ts"),
+    );
+    const journalPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "onboard-recreate-journal.ts"),
+    );
+    const scriptMocksPath = JSON.stringify(
+      path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeOkOpenshell(fakeBin);
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+require(${scriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
+const events = [];
+const normalize = (command) =>
+  (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
+
+const contract = require(${contractPath});
+const catalog = require(${catalogPath});
+catalog.resolveManagedImageCatalogFromGhcr = async ({ release, platform }) =>
+  Object.fromEntries(contract.SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
+    const image = contract.MANAGED_IMAGE_REPOSITORIES[agent];
+    const digest = "sha256:" + String(index + 1).repeat(64);
+    return [agent, {
+      contractVersion: contract.MANAGED_IMAGE_CONTRACT_VERSION,
+      agent,
+      platform,
+      image,
+      digest,
+      reference: image + "@" + digest,
+      source: {
+        repository: contract.MANAGED_IMAGE_SOURCE_REPOSITORY,
+        revision: "a".repeat(40),
+        release,
+        cohort: "ghrun-9068-1",
+      },
+      startupProfileContractVersion: contract.MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+      capabilityContractVersion: contract.MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+    }];
+  }));
+
+const protectionModule = require(${protectionPath});
+const createProtection = protectionModule.createSandboxRecreateProtection;
+protectionModule.createSandboxRecreateProtection = (...args) => {
+  const protection = createProtection(...args);
+  return {
+    ...protection,
+    backup: () => {
+      events.push({ kind: "backup" });
+      return { ok: true, backup: null, failureKind: "none" };
+    },
+  };
+};
+
+const journalModule = require(${journalPath});
+const openJournal = journalModule.openOnboardRecreateJournal;
+journalModule.openOnboardRecreateJournal = (...args) => {
+  events.push({ kind: "openJournal" });
+  return openJournal(...args);
+};
+
+const registry = require(${registryPath});
+const sourceSandbox = {
+  name: "my-assistant",
+  agent: null,
+  gpuEnabled: true,
+  openshellDriver: "docker",
+  imageTag: "openshell/sandbox-from:source",
+  workload: {
+    schemaVersion: 1,
+    kind: "legacy-dockerfile",
+    reference: "openshell/sandbox-from:source",
+    shared: false,
+  },
+};
+registry.getSandbox = () => sourceSandbox;
+registry.registerSandbox = () => { events.push({ kind: "registerSandbox" }); return true; };
+registry.updateSandbox = () => { events.push({ kind: "updateSandbox" }); return true; };
+registry.removeSandbox = () => { events.push({ kind: "removeSandbox" }); return true; };
+
+runner.run = (command) => {
+  const value = normalize(command);
+  events.push({ kind: "run", command: value });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  const value = normalize(command);
+  if (value.includes("sandbox get") && value.includes("my-assistant")) {
+    return "Name: my-assistant\nId: sbx-portable-source\n";
+  }
+  if (value.includes("sandbox list")) return "my-assistant Ready";
+  if (value.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  return require(${scriptMocksPath}).mockOnboardRunCapture(command, { defaultCurlOutput: "ok" }) || "";
+};
+
+const childProcess = require("node:child_process");
+childProcess.spawn = () => {
+  events.push({ kind: "spawn" });
+  throw new Error("unexpected sandbox create");
+};
+
+const { createSandboxWithTemporaryManagedRuntime } = require(${onboardPath});
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
+  try {
+    await createSandboxWithTemporaryManagedRuntime(
+      null,
+      "gpt-5.4",
+      "nvidia-prod",
+      null,
+      "my-assistant",
+    );
+    console.log(JSON.stringify({ error: "guard did not reject", events }));
+  } catch (error) {
+    console.log(JSON.stringify({ error: error instanceof Error ? error.message : String(error), events }));
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      HOME: tmpDir,
+      PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+      NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_RECREATE_SANDBOX: "1",
+    };
+    delete env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
+    delete env.NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK;
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = parseStdoutJson<{
+      error: string;
+      events: Array<{ kind: string; command?: string }>;
+    }>(result.stdout);
+    expect(payload.error).toContain(
+      "Portable OpenClaw onboarding cannot use managed-image bootstrap",
+    );
+    expect(
+      payload.events.filter(
+        (event) =>
+          event.kind === "backup" ||
+          event.kind === "openJournal" ||
+          event.kind === "removeSandbox" ||
+          event.kind === "registerSandbox" ||
+          event.kind === "updateSandbox" ||
+          event.kind === "spawn" ||
+          /\bsandbox\s+(?:delete|create|rebuild)\b|\bprovider\s+(?:delete|create|update)\b/.test(
+            event.command || "",
+          ),
+      ),
+    ).toEqual([]);
+  });
 });

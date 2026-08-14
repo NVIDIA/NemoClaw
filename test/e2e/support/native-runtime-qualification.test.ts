@@ -119,6 +119,16 @@ describe("native runtime qualification contract", () => {
     expect(constructRuntime).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["null evidence", null],
+    ["an invalid agent list", { ...candidateEvidence(), agents: "openclaw" }],
+    ["invalid Docker evidence", { ...candidateEvidence(), dockerUnavailable: null }],
+  ])("rejects %s with the candidate-evidence contract error", (_label, evidence) => {
+    expect(() => consumeNativeRuntimeCandidateEvidence(evidence, SOURCE_REVISION)).toThrow(
+      "Native runtime candidate evidence is incomplete or does not match source",
+    );
+  });
+
   it("accepts only exact-source candidate prerequisites without activating Podman", () => {
     expect(consumeNativeRuntimeCandidateEvidence(candidateEvidence(), SOURCE_REVISION)).toEqual({
       schemaVersion: 1,

@@ -305,33 +305,50 @@ export const PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION =
  * not issue protected qualification evidence or activate a runtime provider.
  */
 export function consumeNativeRuntimeCandidateEvidence(
-  value: NativeRuntimeCandidateEvidence,
+  value: unknown,
   expectedSourceRevision: string,
 ): NativeRuntimeCandidateAuthority {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Native runtime candidate evidence is incomplete or does not match source");
+  }
+  const candidate = value as Partial<NativeRuntimeCandidateEvidence>;
+  const shaped =
+    Array.isArray(candidate.agents) &&
+    candidate.agents.every((agent) => typeof agent === "string") &&
+    typeof candidate.dockerUnavailable === "object" &&
+    candidate.dockerUnavailable !== null &&
+    !Array.isArray(candidate.dockerUnavailable);
   if (
-    value.schemaVersion !== 1 ||
-    value.claim !== "candidate-execution-prerequisites" ||
-    value.candidateId !== "podman-cpu-lifecycle" ||
-    !PROVIDER_ID.test(value.providerId) ||
-    value.executionPath !== "runtime-provider-bundle" ||
-    value.architecture !== "amd64" ||
-    value.acceleration !== "cpu" ||
-    value.socketFree !== true ||
-    !SOURCE_REVISION.test(value.sourceRevision) ||
-    value.sourceRevision !== expectedSourceRevision ||
-    value.dockerUnavailable.service !== true ||
-    value.dockerUnavailable.socket !== true ||
-    value.dockerUnavailable.daemon !== true ||
-    value.dockerUnavailable.invocationGuard !== true
+    !shaped ||
+    candidate.schemaVersion !== 1 ||
+    candidate.claim !== "candidate-execution-prerequisites" ||
+    candidate.candidateId !== "podman-cpu-lifecycle" ||
+    typeof candidate.providerId !== "string" ||
+    !PROVIDER_ID.test(candidate.providerId) ||
+    candidate.executionPath !== "runtime-provider-bundle" ||
+    candidate.architecture !== "amd64" ||
+    candidate.acceleration !== "cpu" ||
+    candidate.socketFree !== true ||
+    typeof candidate.sourceRevision !== "string" ||
+    !SOURCE_REVISION.test(candidate.sourceRevision) ||
+    candidate.sourceRevision !== expectedSourceRevision ||
+    candidate.dockerUnavailable?.service !== true ||
+    candidate.dockerUnavailable.socket !== true ||
+    candidate.dockerUnavailable.daemon !== true ||
+    candidate.dockerUnavailable.invocationGuard !== true
   ) {
     throw new Error("Native runtime candidate evidence is incomplete or does not match source");
   }
-  exactSet(value.agents, NATIVE_RUNTIME_QUALIFICATION_AGENTS, "Native runtime candidate agents");
+  exactSet(
+    candidate.agents,
+    NATIVE_RUNTIME_QUALIFICATION_AGENTS,
+    "Native runtime candidate agents",
+  );
   return Object.freeze({
     schemaVersion: 1,
-    candidateId: value.candidateId,
-    providerId: value.providerId,
-    sourceRevision: value.sourceRevision,
-    executionPath: value.executionPath,
+    candidateId: candidate.candidateId,
+    providerId: candidate.providerId,
+    sourceRevision: candidate.sourceRevision,
+    executionPath: candidate.executionPath,
   });
 }

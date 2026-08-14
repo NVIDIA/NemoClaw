@@ -68,7 +68,7 @@ const E2E_PHASES = [
   "start the pinned OpenShell Podman gateway",
   "activate registered-agent identities through the pinned OpenShell CLI",
   "exercise exact-container stop and start",
-  "verify production portable ownership and final at-rest state",
+  "record successful final at-rest state",
 ] as const;
 
 type SupportedLifecycle = Extract<RuntimeProviderLifecycleSurface, { supported: true }>;
@@ -279,7 +279,7 @@ test(
 
       const openclawSandbox = AGENTS[0].sandboxName;
       const portableStateDir = path.join(root, "portable-lifecycle");
-      installPortableDemoSandboxLifecycle(
+      const registryGeneration = installPortableDemoSandboxLifecycle(
         openclawSandbox,
         [
           "env",
@@ -294,10 +294,12 @@ test(
         { ...process.env, NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
         {
           platform: "linux",
-          podman: (args) => runtimeEngines.sandboxLifecycle.capture(args),
+          podman: (args) =>
+            runtimeEngines.sandboxLifecycle.capture(args[0] === "--url" ? args.slice(2) : args),
           stateDir: portableStateDir,
         },
       );
+      expect(registryGeneration).toMatch(/^[a-f0-9]{64}$/u);
       const portableReceipt = JSON.parse(
         fs.readFileSync(
           portableDemoLifecycleInternals.receiptPath(openclawSandbox, portableStateDir),
@@ -353,7 +355,7 @@ test(
         const final = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
         expect(final.State).toMatchObject({ Paused: false, Running: false, Status: "exited" });
       }
-      progress.phase("verify production portable ownership and final at-rest state");
+      progress.phase("record successful final at-rest state");
       completed = true;
     } finally {
       await cleanupPodmanLifecycle({
