@@ -4,7 +4,11 @@
 import fs from "node:fs";
 
 import YAML from "yaml";
-import { UPLOAD_E2E_ARTIFACTS_ACTION } from "./upload-e2e-artifacts-workflow-boundary.mts";
+import {
+  OPENSHELL_DEV_ARTIFACT_DIRECTORY,
+  OPENSHELL_DEV_ARTIFACT_UPLOAD_NAME,
+  UPLOAD_E2E_ARTIFACTS_ACTION,
+} from "./upload-e2e-artifacts-workflow-boundary.mts";
 
 const DEFAULT_WORKFLOW_PATH = ".github/workflows/e2e.yaml";
 const MCP_JOBS = ["mcp-bridge", "mcp-bridge-dev"] as const;
@@ -21,13 +25,20 @@ const TERMINAL_JOBS = [
 const DOCKER_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
 const DEV_DOCKER_CLEANUP_NAME = "Revoke Docker auth before OpenShell development tooling";
 const DEV_ARTIFACT_TOOL = "tools/e2e/openshell-dev-artifact.mts";
-const DEV_ARTIFACT_DIRECTORY = "${{ runner.temp }}/openshell-dev-artifact";
 const DEV_ARTIFACT_JOB_CONDITION =
   "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}";
 const DEV_ARTIFACT_DOWNLOAD_ACTION =
   "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
-const DEV_ARTIFACT_UPLOAD_NAME =
-  "${{ steps.resolve_openshell_dev_artifact.outputs.artifact_name || format('openshell-dev-infrastructure-failure-{0}-{1}', github.run_id, github.run_attempt) }}";
+const DEV_ARTIFACT_SOURCE_OUTPUT =
+  "${{ needs.openshell-dev-artifact.outputs.source_commit }}";
+const DEV_ARTIFACT_MANIFEST_OUTPUT =
+  "${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}";
+const DEV_ARTIFACT_ENV = {
+  OPENSHELL_DEV_ARTIFACT_DIR: OPENSHELL_DEV_ARTIFACT_DIRECTORY,
+  OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256: DEV_ARTIFACT_MANIFEST_OUTPUT,
+  OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT: DEV_ARTIFACT_SOURCE_OUTPUT,
+} as const;
+const DEV_BINARY_DIRECTORY = "${{ runner.temp }}/openshell-dev-binaries";
 const DEV_COMPATIBILITY_STEP_NAME = "Classify OpenShell credential-boundary compatibility";
 const DEV_COMPATIBILITY_STEP_ID = "mcp_runtime_compatibility";
 const DEV_COMPATIBILITY_TOOL = "tools/e2e/mcp-bridge-runtime-compatibility.mts";
@@ -391,8 +402,15 @@ function validateJobExecution(
   }
   const installEnv = asRecord(install.env);
   if (jobName === "mcp-bridge-dev") {
-    if (Object.keys(installEnv).length > 0) {
-      errors.push("mcp-bridge-dev artifact installation must not receive environment overrides");
+    if (
+      !hasExactEntries(installEnv, {
+        ...DEV_ARTIFACT_ENV,
+        OPENSHELL_DEV_BINARY_DIR: DEV_BINARY_DIRECTORY,
+      })
+    ) {
+      errors.push(
+        "mcp-bridge-dev artifact installation must receive only its reviewed artifact identity",
+      );
     }
   } else {
     requireEqual(
@@ -430,18 +448,23 @@ function validateJobExecution(
     if (
       !hasExactEntries(asRecord(restoreArtifact.with), {
         name: "${{ needs.openshell-dev-artifact.outputs.artifact_name }}",
-        path: DEV_ARTIFACT_DIRECTORY,
+        path: OPENSHELL_DEV_ARTIFACT_DIRECTORY,
         "digest-mismatch": "error",
       })
     ) {
       errors.push("mcp-bridge-dev must restore exactly the resolver's content-addressed artifact");
     }
+    if (!hasExactEntries(asRecord(verifyArtifact.env), DEV_ARTIFACT_ENV)) {
+      errors.push(
+        "mcp-bridge-dev artifact verification must receive only its reviewed artifact identity",
+      );
+    }
     for (const token of [
       DEV_ARTIFACT_TOOL,
       " verify ",
-      DEV_ARTIFACT_DIRECTORY,
-      "${{ needs.openshell-dev-artifact.outputs.source_commit }}",
-      "${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}",
+      '"$OPENSHELL_DEV_ARTIFACT_DIR"',
+      '"$OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT"',
+      '"$OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256"',
     ]) {
       requireContains(
         errors,
@@ -453,13 +476,13 @@ function validateJobExecution(
     for (const token of [
       DEV_ARTIFACT_TOOL,
       " prepare ",
-      DEV_ARTIFACT_DIRECTORY,
-      "${{ runner.temp }}/openshell-dev-binaries",
-      "${{ needs.openshell-dev-artifact.outputs.source_commit }}",
-      "${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}",
-      'sudo install -m 755 "${{ runner.temp }}/openshell-dev-binaries/openshell" /usr/local/bin/openshell',
-      'sudo install -m 755 "${{ runner.temp }}/openshell-dev-binaries/openshell-gateway" /usr/local/bin/openshell-gateway',
-      'sudo install -m 755 "${{ runner.temp }}/openshell-dev-binaries/openshell-sandbox" /usr/local/bin/openshell-sandbox',
+      '"$OPENSHELL_DEV_ARTIFACT_DIR"',
+      '"$OPENSHELL_DEV_BINARY_DIR"',
+      '"$OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT"',
+      '"$OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256"',
+      'sudo install -m 755 "$OPENSHELL_DEV_BINARY_DIR/openshell" /usr/local/bin/openshell',
+      'sudo install -m 755 "$OPENSHELL_DEV_BINARY_DIR/openshell-gateway" /usr/local/bin/openshell-gateway',
+      'sudo install -m 755 "$OPENSHELL_DEV_BINARY_DIR/openshell-sandbox" /usr/local/bin/openshell-sandbox',
     ]) {
       requireContains(
         errors,
@@ -673,7 +696,7 @@ function validateDevArtifactJob(errors: string[], job: UnknownRecord): void {
     "resolve_openshell_dev_artifact",
     `${DEV_ARTIFACT_JOB} resolver must expose its canonical step id`,
   );
-  for (const token of [DEV_ARTIFACT_TOOL, " resolve ", DEV_ARTIFACT_DIRECTORY]) {
+  for (const token of [DEV_ARTIFACT_TOOL, " resolve ", OPENSHELL_DEV_ARTIFACT_DIRECTORY]) {
     requireContains(
       errors,
       resolve.run,
@@ -696,8 +719,8 @@ function validateDevArtifactJob(errors: string[], job: UnknownRecord): void {
   );
   if (
     !hasExactEntries(asRecord(upload.with), {
-      name: DEV_ARTIFACT_UPLOAD_NAME,
-      path: `${DEV_ARTIFACT_DIRECTORY}/`,
+      name: OPENSHELL_DEV_ARTIFACT_UPLOAD_NAME,
+      path: `${OPENSHELL_DEV_ARTIFACT_DIRECTORY}/`,
     })
   ) {
     errors.push(`${DEV_ARTIFACT_JOB} must retain its content-addressed 14-day artifact contract`);

@@ -13,6 +13,7 @@ const DEV_TAG_URL = `${OPENSHELL_API_ROOT}/git/ref/tags/dev`;
 const ASSET_API_PREFIX = `${OPENSHELL_API_ROOT}/releases/assets/`;
 const TAG_API_PREFIX = `${OPENSHELL_API_ROOT}/git/tags/`;
 const MAX_ASSET_BYTES = 256 * 1024 * 1024;
+export const MAX_OPENSHELL_DEV_BINARY_BYTES = 128 * 1024 * 1024;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/;
 
@@ -352,8 +353,8 @@ async function downloadAsset(fetchFn: Fetch, asset: ReleaseAsset): Promise<Uint8
   return bytes;
 }
 
-function writeJson(filePath: string, value: unknown): void {
-  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+function writeJson(filePath: string, value: unknown, flag: "w" | "wx" = "wx"): void {
+  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, { flag, mode: 0o600 });
 }
 
 function prepareOutputDirectory(outputDirectory: string): void {
@@ -430,7 +431,13 @@ export async function resolveOpenShellDevArtifact(
       sourceUrl: classified.sourceUrl,
       message: classified.message,
     };
-    writeJson(path.join(outputDirectory, "resolution.json"), resolution);
+    try {
+      writeJson(path.join(outputDirectory, "resolution.json"), resolution, "w");
+    } catch (writeError) {
+      console.error(
+        `Unable to retain OpenShell dev infrastructure-failure evidence: ${writeError instanceof Error ? writeError.message : String(writeError)}`,
+      );
+    }
     throw classified;
   }
 }
@@ -577,6 +584,21 @@ export function prepareOpenShellDevBinaries(
       ) {
         throw new Error(
           `Unsafe OpenShell dev archive ${archiveName}: ${expectedMember} must be a regular file`,
+        );
+      }
+      const numericFields = verbose
+        .split(/\s+/u)
+        .filter((field) => /^\d+$/u.test(field))
+        .map(Number);
+      const declaredSize = Math.max(...numericFields);
+      if (!Number.isSafeInteger(declaredSize) || declaredSize <= 0) {
+        throw new Error(
+          `Unsafe OpenShell dev archive ${archiveName}: ${expectedMember} has no valid declared size`,
+        );
+      }
+      if (declaredSize > MAX_OPENSHELL_DEV_BINARY_BYTES) {
+        throw new Error(
+          `Unsafe OpenShell dev archive ${archiveName}: ${expectedMember} exceeds the ${MAX_OPENSHELL_DEV_BINARY_BYTES}-byte binary limit`,
         );
       }
       checkedTar(tarRunner, ["-xzf", archivePath, "-C", binaryDirectory], archiveName);

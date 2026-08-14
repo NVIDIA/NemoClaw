@@ -325,7 +325,7 @@ describe("MCP workflow artifact boundary", () => {
           "mcp-bridge-dev must depend on its reviewed artifact producers",
           "mcp-bridge-dev must use the reviewed immutable artifact downloader",
           "mcp-bridge-dev must restore exactly the resolver's content-addressed artifact",
-          "mcp-bridge-dev artifact installation must not receive environment overrides",
+          "mcp-bridge-dev artifact installation must receive only its reviewed artifact identity",
           "mcp-bridge-dev must install only the verified same-run binaries",
           "mcp-bridge-dev must not modify or invoke the base-trusted release installer",
         ]),

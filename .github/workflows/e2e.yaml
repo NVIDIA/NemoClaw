@@ -1807,12 +1807,16 @@ jobs:
           digest-mismatch: error
 
       - name: Verify immutable OpenShell dev artifact
+        env:
+          OPENSHELL_DEV_ARTIFACT_DIR: ${{ runner.temp }}/openshell-dev-artifact
+          OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256: ${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}
+          OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT: ${{ needs.openshell-dev-artifact.outputs.source_commit }}
         run: >-
           node --experimental-strip-types --no-warnings
           tools/e2e/openshell-dev-artifact.mts verify
-          "${{ runner.temp }}/openshell-dev-artifact"
-          "${{ needs.openshell-dev-artifact.outputs.source_commit }}"
-          "${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}"
+          "$OPENSHELL_DEV_ARTIFACT_DIR"
+          "$OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT"
+          "$OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256"
 
       - name: Install and verify cloudflared prerequisite
         # Update posture: keep this dev compatibility lane on the same reviewed
@@ -1844,17 +1848,22 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
       - name: Install immutable OpenShell dev artifact
+        env:
+          OPENSHELL_DEV_ARTIFACT_DIR: ${{ runner.temp }}/openshell-dev-artifact
+          OPENSHELL_DEV_BINARY_DIR: ${{ runner.temp }}/openshell-dev-binaries
+          OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256: ${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}
+          OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT: ${{ needs.openshell-dev-artifact.outputs.source_commit }}
         run: |
           set -euo pipefail
           node --experimental-strip-types --no-warnings \
             tools/e2e/openshell-dev-artifact.mts prepare \
-            "${{ runner.temp }}/openshell-dev-artifact" \
-            "${{ runner.temp }}/openshell-dev-binaries" \
-            "${{ needs.openshell-dev-artifact.outputs.source_commit }}" \
-            "${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}"
-          sudo install -m 755 "${{ runner.temp }}/openshell-dev-binaries/openshell" /usr/local/bin/openshell
-          sudo install -m 755 "${{ runner.temp }}/openshell-dev-binaries/openshell-gateway" /usr/local/bin/openshell-gateway
-          sudo install -m 755 "${{ runner.temp }}/openshell-dev-binaries/openshell-sandbox" /usr/local/bin/openshell-sandbox
+            "$OPENSHELL_DEV_ARTIFACT_DIR" \
+            "$OPENSHELL_DEV_BINARY_DIR" \
+            "$OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT" \
+            "$OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256"
+          sudo install -m 755 "$OPENSHELL_DEV_BINARY_DIR/openshell" /usr/local/bin/openshell
+          sudo install -m 755 "$OPENSHELL_DEV_BINARY_DIR/openshell-gateway" /usr/local/bin/openshell-gateway
+          sudo install -m 755 "$OPENSHELL_DEV_BINARY_DIR/openshell-sandbox" /usr/local/bin/openshell-sandbox
 
       - id: mcp_runtime_compatibility
         name: Classify OpenShell credential-boundary compatibility
