@@ -165,6 +165,11 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       gatewayName: string,
       operation: () => Promise<T> | T,
     ): Promise<T>;
+    withModelRouterPortLifecycleLock<T>(
+      port: number,
+      operation: () => Promise<T> | T,
+    ): Promise<T>;
+    getModelRouterPort(): number;
     normalizeHermesAuthMethod(value: string | null | undefined): HermesAuthMethod | null;
     setupNim(
       gpu: Gpu,
@@ -1456,48 +1461,50 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         // #4564: re-upsert the gateway provider with the sandbox-facing
         // endpoint so a stale localhost base URL recorded by an earlier run is
         // repaired on resume instead of surviving and breaking inference.local.
-        const routedRepair = await deps.withGatewayRouteMutationLock(gatewayName, async () => {
-          assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
-            provider: selectedProvider,
-            model: selectedModel,
-            endpointUrl,
-            credentialEnv,
-            preferredInferenceApi,
-          });
-          try {
-            await deps.reconcileModelRouter();
-          } catch (err) {
-            deps.error(
-              `  ✗ Failed to reconcile model router: ${err instanceof Error ? err.message : String(err)}`,
+        const routedRepair = await deps.withGatewayRouteMutationLock(gatewayName, () =>
+          deps.withModelRouterPortLifecycleLock(deps.getModelRouterPort(), async () => {
+            assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
+              provider: selectedProvider,
+              model: selectedModel,
+              endpointUrl,
+              credentialEnv,
+              preferredInferenceApi,
+            });
+            try {
+              await deps.reconcileModelRouter();
+            } catch (err) {
+              deps.error(
+                `  ✗ Failed to reconcile model router: ${err instanceof Error ? err.message : String(err)}`,
+              );
+              deps.exitProcess(1);
+            }
+            const reupserted = deps.reupsertRoutedProvider(
+              gatewayName,
+              selectedProvider,
+              endpointUrl,
+              credentialEnv,
             );
-            deps.exitProcess(1);
-          }
-          const reupserted = deps.reupsertRoutedProvider(
-            gatewayName,
-            selectedProvider,
-            endpointUrl,
-            credentialEnv,
-          );
-          const reservationEndpointSource = endpointSourceForCurrentUrl(
-            endpointSource,
-            reupserted.endpointUrl,
-            onboardEndpointUrl,
-          );
-          const reserved =
-            reupserted.ok && resumeReservationName
-              ? deps.reserveSandboxInferenceRoute(resumeReservationName, {
-                  provider: selectedProvider,
-                  model: selectedModel,
-                  endpointUrl: reupserted.endpointUrl,
-                  endpointSource: reservationEndpointSource,
-                  credentialEnv,
-                  preferredInferenceApi,
-                  gatewayName,
-                  reservationSessionId: session?.sessionId,
-                })
-              : null;
-          return { reupserted, reservationEndpointSource, reserved };
-        });
+            const reservationEndpointSource = endpointSourceForCurrentUrl(
+              endpointSource,
+              reupserted.endpointUrl,
+              onboardEndpointUrl,
+            );
+            const reserved =
+              reupserted.ok && resumeReservationName
+                ? deps.reserveSandboxInferenceRoute(resumeReservationName, {
+                    provider: selectedProvider,
+                    model: selectedModel,
+                    endpointUrl: reupserted.endpointUrl,
+                    endpointSource: reservationEndpointSource,
+                    credentialEnv,
+                    preferredInferenceApi,
+                    gatewayName,
+                    reservationSessionId: session?.sessionId,
+                  })
+                : null;
+            return { reupserted, reservationEndpointSource, reserved };
+          }),
+        );
         const { reupserted, reservationEndpointSource, reserved } = routedRepair;
         if (!reupserted.ok) {
           deps.error(
