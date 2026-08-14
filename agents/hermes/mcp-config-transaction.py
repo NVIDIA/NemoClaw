@@ -874,7 +874,7 @@ def _process_name(pid: int) -> bytes | None:
             for line in status_file:
                 if line.startswith(b"Name:"):
                     fields = line.split(maxsplit=1)
-                    return fields[1] if len(fields) == 2 else None
+                    return fields[1].removesuffix(b"\n") if len(fields) == 2 else None
     except FileNotFoundError:
         return None
     return None
