@@ -27,6 +27,21 @@ function forwardListWith(
   return [header, ...rows].join("\n");
 }
 
+const SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC = `Error:   × code: 'The system is not in a state required for the operation's
+  │ execution', message: "sandbox is not ready"
+`;
+
+function readinessHandoffSpawn(rejections: number) {
+  let attempt = 0;
+  return vi.fn(({ stderr }: { stderr: number }) => {
+    attempt++;
+    if (attempt <= rejections) {
+      fs.writeSync(stderr, SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC);
+    }
+    return {};
+  });
+}
+
 describe("runDetachedForwardStartWithDiagnostics", () => {
   it("returns ok as soon as the forward appears in the list", () => {
     const fetchList = vi
@@ -984,24 +999,12 @@ describe("runDetachedForwardStartWithRetries", () => {
   });
 
   it("keeps retrying when four consecutive readiness handoffs are still settling", () => {
-    let spawnAttempt = 0;
+    const spawn = readinessHandoffSpawn(4);
     const fetchList = vi.fn(() =>
-      spawnAttempt >= 5
+      spawn.mock.calls.length >= 5
         ? forwardListWith([{ sandbox: "my-sandbox", port: 18789 }])
         : forwardListWith([]),
     );
-    const spawn = vi.fn(({ stderr }: { stderr: number }) => {
-      spawnAttempt++;
-      if (spawnAttempt <= 4) {
-        fs.writeSync(
-          stderr,
-          `Error:   × code: 'The system is not in a state required for the operation's
-  │ execution', message: "sandbox is not ready"
-`,
-        );
-      }
-      return {};
-    });
     const beforeRetry = vi.fn();
     const sleep = vi.fn();
 
@@ -1025,15 +1028,7 @@ describe("runDetachedForwardStartWithRetries", () => {
   });
 
   it("stops after the independent sandbox readiness retry bound", () => {
-    const spawn = vi.fn(({ stderr }: { stderr: number }) => {
-      fs.writeSync(
-        stderr,
-        `Error:   × code: 'The system is not in a state required for the operation's
-  │ execution', message: "sandbox is not ready"
-`,
-      );
-      return {};
-    });
+    const spawn = readinessHandoffSpawn(13);
     const beforeRetry = vi.fn();
     const sleep = vi.fn();
 
