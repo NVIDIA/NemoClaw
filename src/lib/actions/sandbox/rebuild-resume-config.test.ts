@@ -137,6 +137,12 @@ describe("getRebuildEndpointFromRegistry", () => {
       { known: false },
     );
     expect(
+      getRebuildEndpointFromRegistry(
+        "compatible-endpoint",
+        "https:user:password@example.test/v1",
+      ),
+    ).toEqual({ known: false });
+    expect(
       getRebuildEndpointFromRegistry("compatible-endpoint", "https://example.test/v1#frag"),
     ).toEqual({ known: false });
   });

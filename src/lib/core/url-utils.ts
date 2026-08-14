@@ -59,10 +59,15 @@ export function endpointUrlHasUserinfoQueryOrFragment(value: string | null | und
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       return /[?#@]/.test(raw);
     }
-    // Test the raw string so a bare trailing "?" or "#" (empty url.search
-    // and url.hash) and an empty userinfo delimiter (http://@host, empty
-    // url.username) are still classified.
-    return /^https?:\/\/[^/?#]*@/i.test(raw) || /[?#]/.test(raw);
+    // Parsed fields catch every userinfo form the WHATWG parser accepts,
+    // including special-scheme URLs without canonical `//`. Test the raw
+    // authority as well so an empty userinfo delimiter (empty url.username)
+    // remains visible before parsing normalizes it away.
+    return (
+      Boolean(url.username || url.password) ||
+      /^https?:[\\/]*[^/?#\\]*@/i.test(raw) ||
+      /[?#]/.test(raw)
+    );
   } catch {
     return /[?#@]/.test(raw);
   }
