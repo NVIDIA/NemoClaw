@@ -242,20 +242,19 @@ describe("Hermes inference switch command shape", () => {
     }> = [];
     const baseline = { requests: () => requests };
     const result = { exitCode: 0, stderr: "", stdout: "PONG\n" } as ShellProbeResult;
-    const run = vi.fn(async (attempt: number) => {
-      if (attempt === 2) {
-        requests.push({
-          auth: "ok",
-          authorizationSent: true,
-          bodyBytes: 64,
-          forbiddenMarkerMatches: 0,
-          method: "POST",
-          model: "selected-model",
-          path: "/v1/chat/completions",
-        });
-      }
-      return result;
-    });
+    const recordSelectedRouteAndReturnPong = (_attempt: number): Promise<ShellProbeResult> => {
+      requests.push({
+        auth: "ok",
+        authorizationSent: true,
+        bodyBytes: 64,
+        forbiddenMarkerMatches: 0,
+        method: "POST",
+        model: "selected-model",
+        path: "/v1/chat/completions",
+      });
+      return Promise.resolve(result);
+    };
+    const run = vi.fn(recordSelectedRouteAndReturnPong).mockResolvedValueOnce(result);
     const delay = vi.fn().mockResolvedValue(undefined);
 
     await expect(
