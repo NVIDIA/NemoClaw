@@ -261,6 +261,13 @@ function readLinuxProcessExecutable(pid: number): string | null {
   }
 }
 
+function readProcessName(pid: number, env: NodeJS.ProcessEnv): string | null {
+  const result = captureReadonly(["ps", "-p", String(pid), "-o", "comm="], env);
+  if (result.exitCode !== 0) return null;
+  const name = result.stdout.split(/\r?\n/)[0]?.trim();
+  return name ? path.basename(name) : null;
+}
+
 export function parseDarwinLsofExecutable(output: string): string | null {
   // macOS reports the process executable first, followed by other text vnodes
   // such as /usr/lib/dyld. Selecting the first record prevents a process from
@@ -520,25 +527,64 @@ export function classifyManagedGatewayVersionSource(
   return null;
 }
 
-function gatewayPortConflictDetail(
+export interface GatewayPortOwners {
+  pids: number[];
+  text: string | null;
+}
+
+export function describeGatewayPortOwners(
+  listenerScan: { pids: readonly number[]; unverifiedPids: readonly number[] },
+  describeProcess: (pid: number) => string | null,
+): GatewayPortOwners {
+  const pids =
+    listenerScan.unverifiedPids.length > 0
+      ? [...listenerScan.unverifiedPids]
+      : [...listenerScan.pids];
+  if (pids.length === 0) return { pids, text: null };
+  const text = pids
+    .map((pid) => {
+      const name = describeProcess(pid);
+      return name ? `${name} (PID ${pid})` : `PID ${pid}`;
+    })
+    .join(", ");
+  return { pids, text };
+}
+
+function gatewayPortConflictRemediation(gatewayPort: number, ownerPids: readonly number[]): string {
+  if (ownerPids.length === 0) {
+    return `Identify its listener before retrying: sudo lsof -i :${gatewayPort} -sTCP:LISTEN -P -n`;
+  }
+  const subject = ownerPids.length === 1 ? "that process is" : "those processes are";
+  const object = ownerPids.length === 1 ? "it" : "them";
+  return (
+    `Confirm ${subject} not another NemoClaw gateway, then stop only ${object} before retrying: ` +
+    `sudo kill ${ownerPids.join(" ")}`
+  );
+}
+
+export function gatewayPortConflictDetail(
   gatewayPort: number,
   portCheck: Awaited<ReturnType<typeof checkPortAvailable>>,
   state: GatewayPortConflictState,
+  owners: GatewayPortOwners = { pids: [], text: null },
 ): string | undefined {
   if (state === "none") return undefined;
-  const owner = portCheck.process
-    ? `${portCheck.process}${portCheck.pid ? ` (PID ${portCheck.pid})` : ""}`
-    : "an unknown listener";
+  const probedOwner =
+    portCheck.process && portCheck.process !== "unknown"
+      ? `${portCheck.process}${portCheck.pid ? ` (PID ${portCheck.pid})` : ""}`
+      : null;
+  const owner = owners.text ?? probedOwner ?? "an unknown listener";
   const condition =
     state === "multiple-owners"
-      ? "has multiple listeners"
+      ? `has multiple listeners: ${owner}`
       : state === "unknown"
         ? "could not be observed completely"
         : `is occupied by ${owner}`;
-  return (
-    `Gateway port ${gatewayPort} ${condition}. ` +
-    `Inspect port ${gatewayPort} and stop only its owning process before retrying.`
+  const remediation = gatewayPortConflictRemediation(
+    gatewayPort,
+    state === "unknown" ? [] : owners.pids,
   );
+  return `Gateway port ${gatewayPort} ${condition}. ${remediation}`;
 }
 
 function rejectUnexpectedGatewayEffect(): never {
@@ -782,11 +828,20 @@ export function createProductionGatewayReadinessDependencies(
       endpointBinding,
       listenerScan.pids.length === 1 && trustedTargetBoundPids.has(listenerScan.pids[0] ?? -1),
     );
+    const portConflictOwners =
+      portConflictState === "none"
+        ? { pids: [], text: null }
+        : describeGatewayPortOwners(listenerScan, (pid) => readProcessName(pid, probeEnv));
     return {
       reuseState,
       driftState,
       portConflictState,
-      portConflictDetail: gatewayPortConflictDetail(gatewayPort, portCheck, portConflictState),
+      portConflictDetail: gatewayPortConflictDetail(
+        gatewayPort,
+        portCheck,
+        portConflictState,
+        portConflictOwners,
+      ),
     };
   }
 

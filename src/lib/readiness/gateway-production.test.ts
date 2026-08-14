@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import type { AddressInfo } from "node:net";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -33,6 +35,7 @@ import {
   classifyManagedGatewayVersionDrift,
   classifyManagedGatewayVersionSource,
   createProductionGatewayReadinessDependencies,
+  gatewayPortConflictDetail,
   gatewayProcessIdentityMatchesTrustedBinary,
   gatewayProcessSamplesMatchTrustedBinary,
   parseDarwinLsofExecutable,
@@ -492,5 +495,47 @@ describe("managed gateway port readiness (#7411)", () => {
       resetTraceForTests();
       fs.rmSync(traceDir, { force: true, recursive: true });
     }
+  });
+
+  it("names the foreign listener the unprivileged scan resolved and how to stop it (#9118)", async () => {
+    const foreignListener = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      foreignListener.once("error", reject);
+      foreignListener.listen(0, "127.0.0.1", resolve);
+    });
+    const gatewayPort = (foreignListener.address() as AddressInfo).port;
+    subprocess.spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+      if (command === "lsof" && args.includes("-ti")) return commandResult(`${process.pid}\n`, 0);
+      if (command === "ps" && args.includes("comm=")) return commandResult("python3\n", 0);
+      return commandResult();
+    });
+
+    try {
+      const deps = createProductionGatewayReadinessDependencies({
+        gatewayName: () => "nemoclaw-readiness-test",
+        gatewayPort: () => gatewayPort,
+      });
+
+      const observed = await deps.observeManagedGateway(managedOwner(gatewayPort));
+
+      expect(observed.portConflictState).not.toBe("none");
+      expect(observed.portConflictDetail).toContain(`python3 (PID ${process.pid})`);
+      expect(observed.portConflictDetail).toContain(`sudo kill ${process.pid}`);
+      expect(observed.portConflictDetail).not.toContain("occupied by unknown");
+    } finally {
+      await new Promise<void>((resolve) => foreignListener.close(() => resolve()));
+    }
+  });
+
+  it("offers an inspection command when no listener could be resolved (#9118)", () => {
+    const detail = gatewayPortConflictDetail(
+      8080,
+      { ok: false, process: "unknown", pid: null, reason: "port 8080 is in use (EADDRINUSE)" },
+      "occupied",
+      { pids: [], text: null },
+    );
+
+    expect(detail).toContain("is occupied by an unknown listener");
+    expect(detail).toContain("sudo lsof -i :8080 -sTCP:LISTEN -P -n");
   });
 });
