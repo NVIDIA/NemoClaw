@@ -303,7 +303,35 @@ describe("MCP workflow artifact boundary", () => {
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
-        "mcp-bridge-dev must keep trusted checkout, restore, verification, credential revocation, and install contiguous",
+        "mcp-bridge-dev must keep trusted checkout, artifact restore, verification, credential revocation, and install contiguous before restoring the candidate CLI",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects restoring the candidate CLI before trusted OpenShell installation (#9051)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+      };
+      const steps = workflow.jobs["mcp-bridge-dev"].steps;
+      const restoreIndex = steps.findIndex(
+        (step) => step.name === "Restore exact-commit CLI artifact",
+      );
+      requireFixture(restoreIndex >= 0, "candidate CLI restore fixture is missing");
+      const [restore] = steps.splice(restoreIndex, 1);
+      const trustedCheckoutIndex = steps.findIndex(
+        (step) => step.name === "Checkout trusted OpenShell dev tooling",
+      );
+      requireFixture(trustedCheckoutIndex >= 0, "trusted checkout fixture is missing");
+      steps.splice(trustedCheckoutIndex, 0, restore);
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
+        "mcp-bridge-dev must keep trusted checkout, artifact restore, verification, credential revocation, and install contiguous before restoring the candidate CLI",
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });

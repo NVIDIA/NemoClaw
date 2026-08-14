@@ -536,6 +536,7 @@ function validateJobExecution(
     }
     const devCleanup = namedStep(job, DEV_DOCKER_CLEANUP_NAME);
     const trustedCheckoutIndex = steps.indexOf(trustedCheckout);
+    const restoreCliIndex = steps.indexOf(restoreCli);
     const trustedInstallSequence = [
       trustedCheckout,
       restoreArtifact,
@@ -544,14 +545,13 @@ function validateJobExecution(
       install,
     ];
     if (
-      steps.indexOf(restoreCli) < 0 ||
-      trustedCheckoutIndex <= steps.indexOf(restoreCli) ||
+      restoreCliIndex !== trustedCheckoutIndex + trustedInstallSequence.length ||
       trustedInstallSequence.some(
         (step, offset) => steps[trustedCheckoutIndex + offset] !== step,
       )
     ) {
       errors.push(
-        "mcp-bridge-dev must keep trusted checkout, restore, verification, credential revocation, and install contiguous",
+        "mcp-bridge-dev must keep trusted checkout, artifact restore, verification, credential revocation, and install contiguous before restoring the candidate CLI",
       );
     }
     if (compatibilitySteps.length !== 1 || compatibilitySteps[0] !== compatibility) {

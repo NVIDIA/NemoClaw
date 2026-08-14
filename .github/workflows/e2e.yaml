@@ -1940,11 +1940,6 @@ jobs:
         with:
           build-cli: "false"
 
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
       - name: Checkout trusted OpenShell dev tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2019,6 +2014,14 @@ jobs:
           chmod 700 "$shim_dir/gh" "$shim_dir/curl"
           PATH="$shim_dir:$PATH" \
             bash "${{ github.workspace }}/.trusted-openshell-dev-artifact/scripts/install-openshell.sh"
+
+      # The restore action executes the candidate CLI for its final identity
+      # check. Keep that execution after the trusted installer has consumed the
+      # verified OpenShell assets and Docker credentials have been revoked.
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install and verify cloudflared prerequisite
         # Update posture: keep this dev compatibility lane on the same reviewed
