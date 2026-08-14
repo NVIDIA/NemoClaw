@@ -1217,9 +1217,14 @@ async function prepareOllamaModel(
  * leaving GPU memory reserved. Reverting to async HTTP would reintroduce
  * that race; keep it synchronous.
  *
+ * Pass `onlyModels` to unload just those models and leave every other loaded
+ * model alone. Callers that own the whole host (`stopAll`, `destroySandbox`)
+ * omit it and unload everything; a single-sandbox stop scopes the unload so it
+ * cannot evict a model another sandbox is still using (#9110).
+ *
  * Keep this logic in sync with `test/ollama-gpu-cleanup.test.ts`.
  */
-function unloadOllamaModels() {
+function unloadOllamaModels(onlyModels?: readonly string[]) {
   try {
     const psResult = spawnSync(
       "curl",
@@ -1232,9 +1237,11 @@ function unloadOllamaModels() {
 
     const parsed = JSON.parse(psResult.stdout || "{}");
     const models = Array.isArray(parsed.models) ? parsed.models : [];
+    const selected = onlyModels?.length ? new Set(onlyModels) : null;
 
     for (const entry of models) {
       if (!entry?.name) continue;
+      if (selected && !selected.has(entry.name)) continue;
       // `-sS` deliberately swallows HTTP 4xx/5xx; this path is best-effort
       // and `--fail` would only surface orphaned-GPU-memory failures into
       // unrelated CLI exit codes during destroy. If we ever want explicit

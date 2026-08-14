@@ -469,38 +469,75 @@ describe("stopSandbox", () => {
 });
 
 describe("stopSandbox Ollama GPU release", () => {
-  it("unloads Ollama models so a stop frees GPU memory (#9110)", () => {
+  const ollamaSandbox = sandbox({ model: "qwen2.5:7b", provider: "ollama-local" });
+
+  function registryOf(...sandboxes: SandboxEntry[]) {
+    return () => ({ sandboxes, defaultSandbox: null });
+  }
+
+  it("unloads the sandbox's own model so a stop frees GPU memory (#9110)", () => {
     const unloadOllamaModels = vi.fn();
-    const h = harness({ unloadOllamaModels });
-    h.getSandbox.mockReturnValue(sandbox({ provider: "ollama-local" }));
+    const h = harness({ listSandboxes: registryOf(ollamaSandbox), unloadOllamaModels });
+    h.getSandbox.mockReturnValue(ollamaSandbox);
 
     const result = stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
-    expect(unloadOllamaModels).toHaveBeenCalledTimes(1);
+    expect(unloadOllamaModels).toHaveBeenCalledWith(["qwen2.5:7b"]);
   });
 
   it("releases GPU memory on an already-stopped sandbox too (#9110)", () => {
     const unloadOllamaModels = vi.fn();
     const h = harness({
       findLabeledSandboxContainers: () => [container("openshell-my-sandbox", false)],
+      listSandboxes: registryOf(ollamaSandbox),
       unloadOllamaModels,
     });
-    h.getSandbox.mockReturnValue(sandbox({ provider: "ollama-local" }));
+    h.getSandbox.mockReturnValue(ollamaSandbox);
 
     const result = stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
-    expect(unloadOllamaModels).toHaveBeenCalledTimes(1);
+    expect(unloadOllamaModels).toHaveBeenCalledWith(["qwen2.5:7b"]);
+  });
+
+  it("never unloads a model a sibling Ollama sandbox also uses (#9110)", () => {
+    const unloadOllamaModels = vi.fn();
+    const peer = sandbox({ model: "qwen2.5:7b", name: "peer", provider: "ollama-local" });
+    const h = harness({
+      listSandboxes: registryOf(ollamaSandbox, peer),
+      unloadOllamaModels,
+    });
+    h.getSandbox.mockReturnValue(ollamaSandbox);
+
+    const result = stopSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+  });
+
+  it("still releases its own model when a sibling holds a different one (#9110)", () => {
+    const unloadOllamaModels = vi.fn();
+    const peer = sandbox({ model: "llama3:8b", name: "peer", provider: "ollama-local" });
+    const h = harness({
+      listSandboxes: registryOf(ollamaSandbox, peer),
+      unloadOllamaModels,
+    });
+    h.getSandbox.mockReturnValue(ollamaSandbox);
+
+    stopSandbox("my-sandbox", h.deps);
+
+    expect(unloadOllamaModels).toHaveBeenCalledWith(["qwen2.5:7b"]);
   });
 
   it.each([
-    ["nvidia-prod", sandbox({ provider: "nvidia-prod" })],
-    ["vllm-local", sandbox({ provider: "vllm-local" })],
-    ["an unrecorded provider", sandbox()],
+    ["nvidia-prod", sandbox({ model: "qwen2.5:7b", provider: "nvidia-prod" })],
+    ["vllm-local", sandbox({ model: "qwen2.5:7b", provider: "vllm-local" })],
+    ["an unrecorded provider", sandbox({ model: "qwen2.5:7b" })],
+    ["an unrecorded model", sandbox({ provider: "ollama-local" })],
   ])("leaves %s sandboxes untouched (#9110)", (_label, entry) => {
     const unloadOllamaModels = vi.fn();
-    const h = harness({ unloadOllamaModels });
+    const h = harness({ listSandboxes: registryOf(entry), unloadOllamaModels });
     h.getSandbox.mockReturnValue(entry);
 
     const result = stopSandbox("my-sandbox", h.deps);
@@ -513,8 +550,8 @@ describe("stopSandbox Ollama GPU release", () => {
     const unloadOllamaModels = vi.fn(() => {
       throw new Error("curl: command not found");
     });
-    const h = harness({ unloadOllamaModels });
-    h.getSandbox.mockReturnValue(sandbox({ provider: "ollama-local" }));
+    const h = harness({ listSandboxes: registryOf(ollamaSandbox), unloadOllamaModels });
+    h.getSandbox.mockReturnValue(ollamaSandbox);
 
     const result = stopSandbox("my-sandbox", h.deps);
 
@@ -524,8 +561,8 @@ describe("stopSandbox Ollama GPU release", () => {
 
   it("skips the unload when the stop itself failed (#9110)", () => {
     const unloadOllamaModels = vi.fn();
-    const h = harness({ unloadOllamaModels });
-    h.getSandbox.mockReturnValue(sandbox({ provider: "ollama-local" }));
+    const h = harness({ listSandboxes: registryOf(ollamaSandbox), unloadOllamaModels });
+    h.getSandbox.mockReturnValue(ollamaSandbox);
     h.dockerStop.mockReturnValue({ status: 125 });
 
     const result = stopSandbox("my-sandbox", h.deps);

@@ -27,11 +27,35 @@ function teardownDashboardForwardBestEffort(
   }
 }
 
-function defaultUnloadOllamaModels(): void {
+function defaultUnloadOllamaModels(onlyModels: readonly string[]): void {
   const { unloadOllamaModels } = require("../../inference/ollama/proxy") as {
-    unloadOllamaModels: () => void;
+    unloadOllamaModels: (onlyModels?: readonly string[]) => void;
   };
-  unloadOllamaModels();
+  unloadOllamaModels(onlyModels);
+}
+
+/**
+ * The Ollama model this sandbox alone is holding, or null when there is
+ * nothing safe to release.
+ *
+ * The Ollama daemon is host-global, so unloading everything would evict a
+ * model a sibling sandbox is still using. Release only this sandbox's own
+ * model, and only when no other Ollama-backed sandbox is registered against
+ * the same one.
+ */
+function exclusivelyHeldOllamaModel(
+  sandbox: registry.SandboxEntry,
+  peers: readonly registry.SandboxEntry[],
+): string | null {
+  const model = sandbox.model?.trim();
+  if (!model) return null;
+  const sharedWithPeer = peers.some(
+    (peer) =>
+      peer.name !== sandbox.name &&
+      !!peer.provider?.includes("ollama") &&
+      peer.model?.trim() === model,
+  );
+  return sharedWithPeer ? null : model;
 }
 
 /**
@@ -44,11 +68,14 @@ function defaultUnloadOllamaModels(): void {
  */
 function unloadOllamaModelsBestEffort(
   sandbox: registry.SandboxEntry,
-  unload: (() => void) | undefined,
+  deps: SandboxStopDeps,
 ): void {
   if (!sandbox.provider?.includes("ollama")) return;
   try {
-    (unload ?? defaultUnloadOllamaModels)();
+    const { sandboxes } = (deps.listSandboxes ?? registry.listSandboxes)();
+    const model = exclusivelyHeldOllamaModel(sandbox, sandboxes);
+    if (!model) return;
+    (deps.unloadOllamaModels ?? defaultUnloadOllamaModels)([model]);
   } catch {
     /* Best-effort: a failed unload must not fail the stop. */
   }
@@ -62,7 +89,8 @@ export interface SandboxStopDeps {
   runtimeProviders?: RuntimeProviderBundleRegistry;
   stopSandboxChannels?: typeof stopSandboxChannels;
   teardownSandboxDashboardForward?: typeof teardownSandboxDashboardForward;
-  unloadOllamaModels?: () => void;
+  listSandboxes?: typeof registry.listSandboxes;
+  unloadOllamaModels?: (onlyModels: readonly string[]) => void;
   log?: (message: string) => void;
   warn?: (message: string) => void;
 }
@@ -114,7 +142,7 @@ export function stopSandbox(
   });
   if (outcome.exitCode !== 0) return outcome;
 
-  unloadOllamaModelsBestEffort(resolved.sandbox, deps.unloadOllamaModels);
+  unloadOllamaModelsBestEffort(resolved.sandbox, deps);
 
   if (outcome.state === "already-stopped") {
     log(`  Sandbox '${sandboxName}' is already stopped.`);
