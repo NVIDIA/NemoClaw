@@ -9,6 +9,10 @@ import {
   PORTABLE_RUNTIME_ENV_KEYS,
 } from "./session-bootstrap";
 
+const CLEARED_PORTABLE_RUNTIME_ENV_KEYS = PORTABLE_RUNTIME_ENV_KEYS.filter(
+  (key) => key !== "NEMOCLAW_EXPERIMENTAL_PROFILE",
+);
+
 describe("portable onboarding environment scope", () => {
   it("restores default checkpoint classification over hostile ambient portable intent", () => {
     const env: NodeJS.ProcessEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
@@ -36,8 +40,7 @@ describe("portable onboarding environment scope", () => {
 
     const scope = createPortableOnboardEnvironmentScope(env, null);
 
-    for (const key of PORTABLE_RUNTIME_ENV_KEYS) {
-      if (key === "NEMOCLAW_EXPERIMENTAL_PROFILE") continue;
+    for (const key of CLEARED_PORTABLE_RUNTIME_ENV_KEYS) {
       expect(env).not.toHaveProperty(key);
     }
     expect(env.NEMOCLAW_EXPERIMENTAL_PROFILE).toBe("portable");

@@ -151,6 +151,17 @@ describe("portable resume command lock boundary", () => {
     let resolutions = 0;
     const resolvedFingerprints: string[] = [];
     const resolvedRaw: string[] = [];
+    const afterResolution = [
+      () => {
+        const changed = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8")) as Record<
+          string,
+          unknown
+        >;
+        changed.updatedAt = "2026-08-13T21:00:00.000Z";
+        fs.writeFileSync(session.SESSION_FILE, JSON.stringify(changed, null, 2));
+      },
+      () => {},
+    ];
     const resolveResumeIntent = (options: {
       explicitResume: boolean;
       fresh: boolean;
@@ -161,16 +172,9 @@ describe("portable resume command lock boundary", () => {
         sessionFile: session.SESSION_FILE,
       });
       resolutions += 1;
-      if (resolved.snapshot) resolvedFingerprints.push(resolved.snapshot.fingerprint);
+      resolvedFingerprints.push(resolved.snapshot!.fingerprint);
       resolvedRaw.push(fs.readFileSync(session.SESSION_FILE, "utf8"));
-      if (resolutions === 1) {
-        const changed = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8")) as Record<
-          string,
-          unknown
-        >;
-        changed.updatedAt = "2026-08-13T21:00:00.000Z";
-        fs.writeFileSync(session.SESSION_FILE, JSON.stringify(changed, null, 2));
-      }
+      afterResolution[resolutions - 1]!();
       return resolved;
     };
 
