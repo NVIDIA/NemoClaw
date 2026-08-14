@@ -180,14 +180,25 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     expect(unrelatedSession.routerCredentialHash).toBe("beta-hash");
   });
 
-  it("preserves a reused sandbox-name session for another router port", async () => {
+  it("clears the destroyed sandbox association without clearing another router port", async () => {
     const reusedNameSession = {
+      sessionId: "replacement-session",
+      updatedAt: "2026-08-14T00:01:00.000Z",
       sandboxName: "alpha",
       endpointUrl: "http://host.openshell.internal:4200/v1",
       routerPid: 6262,
       routerCredentialHash: "new-hash",
     } as Session;
+    const compareAndSwapSession = vi.fn(
+      (matches: (current: Session) => boolean, mutator: (current: Session) => Session | void) => {
+        if (!matches(reusedNameSession)) return "mismatch";
+        mutator(reusedNameSession);
+        return "updated";
+      },
+    );
     const { deps } = createDeps({
+      compareAndSwapSession,
+      expectedSession: reusedNameSession,
       loadSession: vi.fn(() => reusedNameSession),
       ownsPort: vi.fn(() => false),
       inspectProcessForPort: vi.fn(() => ({ status: "absent" as const })),
@@ -195,9 +206,9 @@ describe("stopModelRouterForDestroyedSandbox", () => {
 
     await stopModelRouterForDestroyedSandbox(routedSandbox, deps);
 
-    expect(deps.compareAndSwapSession).not.toHaveBeenCalled();
+    expect(compareAndSwapSession).toHaveBeenCalledOnce();
     expect(deps.stopProcess).not.toHaveBeenCalled();
-    expect(reusedNameSession.sandboxName).toBe("alpha");
+    expect(reusedNameSession.sandboxName).toBeNull();
     expect(reusedNameSession.routerPid).toBe(6262);
     expect(reusedNameSession.routerCredentialHash).toBe("new-hash");
   });

@@ -5,10 +5,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import {
-  withGatewayRouteMutationLock,
-  withModelRouterPortLifecycleLock,
-} from "./gateway-route-mutation-lock";
+import { withGatewayRouteMutationLock } from "./gateway-route-mutation-lock";
 
 describe("gateway route mutation lock", () => {
   it("serializes separate operations for the same gateway", async () => {
