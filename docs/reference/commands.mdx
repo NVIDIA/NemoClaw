@@ -2301,11 +2301,16 @@ Model traffic uses the OpenShell-managed `inference.local` route configured by N
 Stop managed local inference resources, remove the host-side Docker image built during onboard, and delete the sandbox.
 This removes the sandbox from the registry.
 For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis.
-Before sandbox deletion, `destroy` captures the current onboarding session identity.
-For a Model Router sandbox, it stops the matching process only when no same-port peer remains and the captured session identity still matches the current session.
-If the session lock is busy, the session identity changed, process inspection is inconclusive, or process stop fails, sandbox destruction still completes and keeps the recovery identity.
-Inspect the current listener and confirm its Model Router command line before you stop it.
-Refer to [Set Up Model Router](../inference/hosted-inference/set-up-model-router#router-and-sandbox-lifecycle-locks) for the lock order, replacement-session protection, and recovery behavior.
+For Model Router sandboxes, `destroy` keeps the process and recovery identity when it cannot prove that teardown is safe.
+It also preserves a replacement onboarding session when the captured session identity changed.
+If the captured session uses the destroyed sandbox name with another router port, `destroy` clears only the sandbox association and preserves that router's recovery identity.
+For lock order, same-port peer handling, and cleanup checks, refer to [Set Up Model Router](../inference/hosted-inference/set-up-model-router#router-and-sandbox-lifecycle-locks).
+
+If `destroy` keeps the Model Router recovery identity:
+
+1. Inspect the current listener process immediately before you stop anything.
+2. Stop it only if its command line identifies the Model Router on the named port.
+3. Do not stop a previously reported process ID if its command line no longer matches.
 
 <Warning>
 This command attempts to wipe the manifest-defined agent state while its persistent volume is mounted, then removes the sandbox.

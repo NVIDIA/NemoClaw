@@ -1463,11 +1463,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         // #4564: re-upsert the gateway provider with the sandbox-facing
         // endpoint so a stale localhost base URL recorded by an earlier run is
         // repaired on resume instead of surviving and breaking inference.local.
-        const routedRepair = await deps.withGatewayRouteMutationLock(gatewayName, () => {
-          const withRouterPortLock =
-            deps.withModelRouterPortLifecycleLock ?? withModelRouterPortLifecycleLock;
-          const port = (deps.getModelRouterPort ?? resolveModelRouterPort)();
-          return withRouterPortLock(port, async () => {
+        const withRouterPortLifecycleLock =
+          deps.withModelRouterPortLifecycleLock ?? withModelRouterPortLifecycleLock;
+        const getRouterPort = deps.getModelRouterPort ?? resolveModelRouterPort;
+        const routedRepair = await deps.withGatewayRouteMutationLock(gatewayName, () =>
+          withRouterPortLifecycleLock(getRouterPort(), async () => {
             assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
               provider: selectedProvider,
               model: selectedModel,
@@ -1508,8 +1508,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
                   })
                 : null;
             return { reupserted, reservationEndpointSource, reserved };
-          });
-        });
+          }),
+        );
         const { reupserted, reservationEndpointSource, reserved } = routedRepair;
         if (!reupserted.ok) {
           deps.error(

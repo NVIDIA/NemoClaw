@@ -152,7 +152,7 @@ export async function stopModelRouterForDestroyedSandbox(
       const sessionMatchesSandbox =
         session?.sandboxName === sandbox.name &&
         resolveDestroyedSandboxRouterPort(session.endpointUrl) === port;
-      destroyedSessionId = sessionMatchesSandbox ? session.sessionId : null;
+      destroyedSessionId = session?.sandboxName === sandbox.name ? session.sessionId : null;
 
       const listHostRegistryEntries =
         deps.listHostRegistryEntries ?? listHostGatewayRegistryEntries;
