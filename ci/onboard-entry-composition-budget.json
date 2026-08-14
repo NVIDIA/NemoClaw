@@ -1,7 +1,7 @@
 {
   "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\nProvider decisions remain until #9169. Messaging decisions remain until #9170. Gateway and policy decisions remain until #9172.",
   "gateway": {
-    "preflight": 1,
+    "preflight": 2,
     "preflightAuthoritativeRebuildTarget": 1,
     "runOnboard": 1
   },

@@ -142,7 +142,7 @@ function isGatewayLifecycleIdentifier(identifier: string): boolean {
     /(?:start|stop|restart|launch|destroy|recover|repair|restore|retry|fallback|rollback|retire|terminate|kill|wait|ensure|attach|register|reuse).*gateway/i.test(
       identifier,
     ) ||
-    /gateway.*(?:start|stop|restart|launch|destroy|recover|repair|restore|retry|fallback|rollback|retire|terminate|kill|wait|health|ready|readiness|running|stale|process|runtime|lifecycle)/i.test(
+    /gateway.*(?:start|stop|restart|launch|destroy|recover|repair|restore|retry|fallback|rollback|retire|terminate|kill|wait|ensure|attach|register|reuse|health|ready|readiness|running|stale|process|runtime|lifecycle)/i.test(
       identifier,
     )
   );

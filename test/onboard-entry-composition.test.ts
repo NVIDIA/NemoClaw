@@ -31,7 +31,7 @@ describe("onboarding entry composition boundary", () => {
     expect(evaluateOnboardEntryComposition(actual, budget)).toEqual([]);
     expect(actual).toEqual({
       gateway: {
-        preflight: 1,
+        preflight: 2,
         preflightAuthoritativeRebuildTarget: 1,
         runOnboard: 1,
       },
@@ -472,6 +472,19 @@ describe("onboarding entry composition boundary", () => {
 
     expect(actual.gateway).toEqual({ choose: 1 });
   });
+
+  it.each(["ensure", "attach", "register", "reuse"])(
+    "classifies the gateway lifecycle condition member %s",
+    (member) => {
+      for (const expression of [`gateway.${member}()`, `gateway["${member}"]()`]) {
+        const actual = collectOnboardEntryDecisions(
+          `function choose() { if (${expression}) return; }`,
+        );
+
+        expect(actual.gateway).toEqual({ choose: 1 });
+      }
+    },
+  );
 
   it("rejects a decision added within an allowed declaration", () => {
     const actual = collectOnboardEntryDecisions(
