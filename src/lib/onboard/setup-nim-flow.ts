@@ -240,7 +240,7 @@ function handleSelectedOllama(
     ollamaInstallMenu: InferenceProviderHostState["ollamaInstallMenu"];
   },
 ): Promise<SetupNimSelectionResult> {
-  if (args.ollamaInstallMenu.hasUnsupportedOllama === true) {
+  if (args.ollamaInstallMenu.hasUpgradableOllama) {
     return deps.handleInstallOllamaSelection(
       args.gpu,
       args.requestedModel,

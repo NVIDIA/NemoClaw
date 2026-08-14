@@ -80,7 +80,6 @@ describe("resolveOllamaInstallMenuEntry", () => {
       ...LINUX_NON_WSL,
     });
     expect(result.hasUpgradableOllama).toBe(true);
-    expect(result.hasUnsupportedOllama).toBe(true);
     expect(result.entry?.key).toBe("install-ollama");
     expect(result.entry?.label).toBe(
       `Upgrade Ollama (Linux) — upgrade installed binary 0.6.2 to ≥ ${MIN_OLLAMA_VERSION}`,

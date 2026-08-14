@@ -3768,14 +3768,14 @@ const { setupNim } = require(${onboardPath});
     }
   });
 
-  it("upgrades Ollama 0.32.8 instead of reusing it under NEMOCLAW_PROVIDER=ollama (#8979)", async () => {
+  it("upgrades Ollama when NEMOCLAW_PROVIDER=ollama cannot read its version (#8979)", async () => {
     const menu = resolveOllamaInstallMenuEntry({
       hasOllama: true,
       ollamaRunning: true,
       ollamaHost: "127.0.0.1",
       hasWindowsOllama: false,
-      installedOllamaVersion: "0.32.8",
-      runningOllamaVersion: "0.32.8",
+      installedOllamaVersion: null,
+      runningOllamaVersion: null,
       platform: "linux",
       isWsl: false,
     });
@@ -3786,9 +3786,9 @@ const { setupNim } = require(${onboardPath});
       const rendered = command.join(" ");
       switch (true) {
         case rendered.includes("ollama --version"):
-          return installerRan ? "ollama version is 0.32.9" : "ollama version is 0.32.8";
+          return installerRan ? "ollama version is 0.32.9" : "";
         case rendered.includes("/api/version"):
-          return installerRan ? '{"version":"0.32.9"}' : '{"version":"0.32.8"}';
+          return installerRan ? '{"version":"0.32.9"}' : "";
         case command.at(-1) === "zstd":
           return "/usr/bin/zstd";
         default:
