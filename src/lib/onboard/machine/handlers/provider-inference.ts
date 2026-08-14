@@ -18,6 +18,7 @@ import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/o
 import { checkpointSandboxIdentityMatches } from "../../checkpoint-replay";
 import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
 import type { RepairLocalInferenceSystemdOverrideOptions } from "../../local-inference-topology";
+import { promptOnboardConfigurationReview } from "../../prompt-helpers";
 import {
   describeIgnoredReasoningEffortEnv,
   describeIgnoredReasoningEnv,
@@ -262,7 +263,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     registryUpdateSandbox(sandboxName: string, updates: { nimContainer?: string | null }): void;
     checkpointSandboxIdentity(sandboxName: string, agent: Agent): Promise<void>;
     prepareLocalProviderForInference(provider: string): Promise<string | null>;
-    promptValidatedSandboxName(agent: Agent): Promise<string>;
+    promptValidatedSandboxName(agent: Agent, previousName?: string | null): Promise<string>;
     assessHost(): Host;
     formatSandboxBuildEstimateNote(host: Host): string | null;
     formatOnboardConfigSummary(options: {
@@ -277,11 +278,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       servingProfileProvenance?: ServingProfileProvenance | null;
       notes: string[];
     }): string;
-    promptYesNoOrDefault(
-      question: string,
-      envVar: string | null,
-      defaultIsYes: boolean,
-    ): Promise<boolean>;
+    prompt(question: string): Promise<string>;
     cliName(): string;
     log(message?: string): void;
     error(message?: string): void;
@@ -809,6 +806,89 @@ async function repairResumedLocalInference(
     state: "provider_selection",
     metadata,
   });
+}
+
+type ConfigurationReviewDeps<Agent> = Pick<
+  ProviderInferenceStateOptions<unknown, Agent, unknown>["deps"],
+  | "checkpointSandboxIdentity"
+  | "cliName"
+  | "exitProcess"
+  | "formatOnboardConfigSummary"
+  | "isNonInteractive"
+  | "log"
+  | "prompt"
+  | "promptValidatedSandboxName"
+  | "recordStepRejected"
+  | "startRecordedStep"
+>;
+
+interface ConfigurationReviewInput<Agent> {
+  sandboxName: string | null;
+  agent: Agent;
+  provider: string;
+  model: string;
+  credentialEnv: string | null;
+  hermesAuthMethod: HermesAuthMethod | null;
+  webSearchConfig: WebSearchConfig | null;
+  hermesToolGateways: string[];
+  selectedMessagingChannels: string[];
+  session: Session | null;
+  buildEstimateNote: string | null;
+}
+
+async function reviewProviderConfiguration<Agent>(
+  input: ConfigurationReviewInput<Agent>,
+  deps: ConfigurationReviewDeps<Agent>,
+): Promise<{ sandboxName: string; editInference: boolean }> {
+  let sandboxName = input.sandboxName;
+  const needsSelectionRecovery = input.session?.steps?.provider_selection?.status !== "complete";
+  let selectionRecoveryStarted = false;
+
+  while (true) {
+    if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(input.agent);
+    deps.log(
+      deps.formatOnboardConfigSummary({
+        provider: input.provider,
+        model: input.model,
+        credentialEnv: input.credentialEnv,
+        hermesAuthMethod: input.hermesAuthMethod,
+        webSearchConfig: input.webSearchConfig,
+        hermesToolGateways: input.hermesToolGateways,
+        enabledChannels:
+          input.selectedMessagingChannels.length > 0 ? input.selectedMessagingChannels : null,
+        sandboxName,
+        servingProfileProvenance: input.session?.servingProfileProvenance ?? null,
+        notes: input.buildEstimateNote ? [input.buildEstimateNote] : [],
+      }),
+    );
+    deps.log("  Web search and messaging channels will be prompted next.");
+    // This secret-free checkpoint makes an interrupted review resumable without
+    // claiming that provider registration or inference setup completed.
+    await deps.checkpointSandboxIdentity(sandboxName, input.agent);
+    if (needsSelectionRecovery && !selectionRecoveryStarted) {
+      await deps.startRecordedStep("provider_selection", {
+        provider: input.provider,
+        model: input.model,
+      });
+      selectionRecoveryStarted = true;
+    }
+    if (deps.isNonInteractive()) return { sandboxName, editInference: false };
+
+    const action = await promptOnboardConfigurationReview({
+      prompt: deps.prompt,
+      log: deps.log,
+    });
+    if (action === "apply") return { sandboxName, editInference: false };
+    if (action === "edit-inference") return { sandboxName, editInference: true };
+    if (action === "exit") {
+      await deps.recordStepRejected("provider_selection");
+      deps.log(`  Aborted. Re-run \`${deps.cliName()} onboard\` to start over.`);
+      deps.log("  Credentials entered so far were only staged in memory for this run.");
+      deps.log("  No new gateway credential was registered because onboarding stopped here.");
+      deps.exitProcess(1);
+    }
+    sandboxName = await deps.promptValidatedSandboxName(input.agent, sandboxName);
+  }
 }
 
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
@@ -1396,46 +1476,32 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       hostLocalInference?: HostLocalInferenceStartupSelection;
     } = {};
     try {
-      if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
-      const confirmedSandboxName = sandboxName;
       const buildEstimateNote =
         env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1"
           ? null
           : deps.formatSandboxBuildEstimateNote(deps.assessHost());
-      deps.log(
-        deps.formatOnboardConfigSummary({
+      const review = await reviewProviderConfiguration(
+        {
+          sandboxName,
+          agent,
           provider,
           model,
           credentialEnv,
           hermesAuthMethod,
           webSearchConfig,
           hermesToolGateways,
-          enabledChannels: selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
-          sandboxName: confirmedSandboxName,
-          servingProfileProvenance: session?.servingProfileProvenance ?? null,
-          notes: buildEstimateNote ? [buildEstimateNote] : [],
-        }),
+          selectedMessagingChannels,
+          session,
+          buildEstimateNote,
+        },
+        deps,
       );
-      deps.log("  Web search and messaging channels will be prompted next.");
-      // Persist canonical sandbox identity and selection before local-provider
-      // preparation. A preparation failure or SIGINT must leave a no-TTY-
-      // resumable provider_selection step without claiming inference setup
-      // completed.
-      await deps.checkpointSandboxIdentity(confirmedSandboxName, agent);
-      const needsReviewSelectionRecovery =
-        session?.steps?.provider_selection?.status !== "complete";
-      if (needsReviewSelectionRecovery) {
-        await deps.startRecordedStep("provider_selection", { provider, model });
+      sandboxName = review.sandboxName;
+      if (review.editInference) {
+        forceProviderSelection = true;
+        continue;
       }
-      if (!deps.isNonInteractive()) {
-        if (!(await deps.promptYesNoOrDefault("  Apply this configuration?", null, true))) {
-          await deps.recordStepRejected("provider_selection");
-          deps.log(`  Aborted. Re-run \`${deps.cliName()} onboard\` to start over.`);
-          deps.log("  Credentials entered so far were only staged in memory for this run.");
-          deps.log("  No new gateway credential was registered because onboarding stopped here.");
-          deps.exitProcess(1);
-        }
-      }
+      const confirmedSandboxName = review.sandboxName;
       // The review acceptance authorizes this fresh selection. Persist it
       // before inference setup starts so an interruption in setup can resume
       // the accepted provider/model rather than returning to the default menu.

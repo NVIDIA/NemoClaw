@@ -52,4 +52,25 @@ describe("sandbox name prompt", () => {
     await expect(promptValidatedSandboxName()).rejects.toBe(checkpointError);
     expect(promptOrDefault).toHaveBeenCalledTimes(1);
   });
+
+  it("uses the reviewed sandbox name as the edit default (#6005)", async () => {
+    const promptOrDefault = vi.fn(async (_question, _envVar, defaultValue) => defaultValue);
+    const promptValidatedSandboxName = createPromptValidatedSandboxName({
+      promptOrDefault,
+      cliDisplayName: () => "NemoClaw",
+      isNonInteractive: () => false,
+      checkpointSandboxName: vi.fn(async () => undefined),
+      exit: (code) => {
+        throw new Error(`unexpected exit ${code}`);
+      },
+    });
+
+    await expect(promptValidatedSandboxName(null, "reviewed-name")).resolves.toBe("reviewed-name");
+
+    expect(promptOrDefault).toHaveBeenCalledWith(
+      expect.stringContaining("[reviewed-name]"),
+      "NEMOCLAW_SANDBOX_NAME",
+      "reviewed-name",
+    );
+  });
 });
