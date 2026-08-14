@@ -35,10 +35,13 @@ function runInstallerSnippetWithTty(
   stdinMode: "tty" | "pipe",
   options: { cwd: string; env: Record<string, string> },
 ) {
-  const python =
-    spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], {
-      encoding: "utf-8",
-    }).stdout.trim() || "python3";
+  const pythonLookup = spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], {
+    encoding: "utf-8",
+  });
+  if (pythonLookup.error) {
+    throw new Error(`Python discovery failed: ${pythonLookup.error.message}`);
+  }
+  const python = pythonLookup.stdout.trim() || "python3";
   const ptyRunner = `
 import errno
 import os
@@ -108,13 +111,17 @@ except OSError:
 sys.stdout.buffer.write(output)
 sys.exit(exit_code)
 `;
-  return spawnSync(python, ["-c", ptyRunner, snippet, stdinMode], {
+  const result = spawnSync(python, ["-c", ptyRunner, snippet, stdinMode], {
     cwd: options.cwd,
     encoding: "utf-8",
     timeout: 40_000,
     killSignal: "SIGKILL",
     env: options.env,
   });
+  if (result.error) {
+    throw new Error(`PTY runner failed to start with ${python}: ${result.error.message}`);
+  }
+  return result;
 }
 
 describe("installer NVIDIA CDI repair", () => {
@@ -369,16 +376,18 @@ exit 0
   });
 
   it("skips NVIDIA CDI repair when sudo needs a password and no terminal can answer", () => {
-    const { cdiStateExists, output, sudoLog, systemctlLog } = runNvidiaCdiInstallerRepairTest({
-      passwordlessSudo: "none",
-      systemctlScript: `#!/usr/bin/env bash
+    const { cdiStateExists, output, result, sudoLog, systemctlLog } =
+      runNvidiaCdiInstallerRepairTest({
+        passwordlessSudo: "none",
+        systemctlScript: `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
 touch "$CDI_STATE"
 exit 0
 `,
-    });
+      });
 
+    expect(result.status, output).toBe(1);
     expect(cdiStateExists).toBe(false);
     expect(output).toMatch(
       /Could not obtain sudo credentials for NVIDIA CDI device spec generation/,
@@ -452,18 +461,20 @@ exit 99
   it.each(["tty", "pipe-with-tty"] as const)(
     "does not prompt for NVIDIA CDI repair in non-interactive %s mode",
     (terminal) => {
-      const { cdiStateExists, output, sudoLog, systemctlLog } = runNvidiaCdiInstallerRepairTest({
-        nonInteractive: true,
-        passwordlessSudo: "none",
-        terminal,
-        systemctlScript: `#!/usr/bin/env bash
+      const { cdiStateExists, output, result, sudoLog, systemctlLog } =
+        runNvidiaCdiInstallerRepairTest({
+          nonInteractive: true,
+          passwordlessSudo: "none",
+          terminal,
+          systemctlScript: `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
 touch "$CDI_STATE"
 exit 0
 `,
-      });
+        });
 
+      expect(result.status, output).toBe(1);
       expect(cdiStateExists).toBe(false);
       expect(output).toMatch(
         /Could not obtain sudo credentials for NVIDIA CDI device spec generation/,
@@ -523,19 +534,21 @@ exit 1
   });
 
   it("keeps NVIDIA CDI repair non-prompting when only the sudo probe is passwordless", () => {
-    const { cdiStateExists, output, sudoLog, systemctlLog } = runNvidiaCdiInstallerRepairTest({
-      passwordlessSudo: "probe-only",
-      terminal: "pipe-with-tty",
-      systemctlScript: `#!/usr/bin/env bash
+    const { cdiStateExists, output, result, sudoLog, systemctlLog } =
+      runNvidiaCdiInstallerRepairTest({
+        passwordlessSudo: "probe-only",
+        terminal: "pipe-with-tty",
+        systemctlScript: `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
 touch "$CDI_STATE"
 exit 0
 `,
-    });
+      });
 
     // In this fixture, only `true` can run without a prompt. The repair commands
     // keep `-n`, so they fail instead of prompting through /dev/tty.
+    expect(result.status, output).toBe(1);
     expect(cdiStateExists).toBe(false);
     expect(sudoLog).toMatch(/^-n true$/m);
     expect(sudoLog).toMatch(/^-n systemctl enable --now /m);
