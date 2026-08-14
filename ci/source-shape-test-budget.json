@@ -413,7 +413,12 @@
     },
     {
       "file": "test/pi-candidate-runtime-artifacts.test.ts",
-      "test": "grants network capability only to image-owned binaries",
+      "test": "grants network capability only to the approved image-owned binaries",
+      "category": "security"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "merges a baked corporate CA into the trust bundle Node reads",
       "category": "security"
     },
     {

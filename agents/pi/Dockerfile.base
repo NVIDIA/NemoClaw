@@ -356,7 +356,7 @@ RUN test "$(node -p "require('/usr/local/lib/nemoclaw/pi-runtime/package.json').
     && chown -R root:root /usr/local/lib/nemoclaw/pi-runtime \
     && chmod -R go-w /usr/local/lib/nemoclaw/pi-runtime \
     && test -z "$(find -L /usr/local/lib/nemoclaw/pi-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
-    && /usr/local/bin/pi --version | grep -Fq "${PI_VERSION}"
+    && test "$(/usr/local/bin/pi --version | tr -d '[:space:]')" = "${PI_VERSION}"
 
 ENV HOME=/sandbox \
     PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin" \

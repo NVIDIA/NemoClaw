@@ -190,17 +190,36 @@ describe("Pi candidate contract validation", () => {
 });
 
 describe("Pi runtime boundaries", () => {
+  const APPROVED_MANAGED_INFERENCE_BINARY_PATHS = [
+    "/usr/local/bin/pi",
+    "/usr/local/bin/node",
+    "/usr/local/lib/nemoclaw/pi-runtime/**",
+  ];
+
   // source-shape-contract: security -- An agent-writable binary path in the baseline policy would give the agent an attacker-controlled egress channel
-  it("grants network capability only to image-owned binaries", () => {
+  it("grants network capability only to the approved image-owned binaries", () => {
     const policy = YAML.parse(readRepoFile("agents/pi/policy-additions.yaml")) as {
       network_policies: Record<string, { binaries?: Array<{ path: string }> }>;
     };
     expect(Object.keys(policy.network_policies)).toEqual(["managed_inference"]);
     const binaries = policy.network_policies.managed_inference.binaries ?? [];
-    expect(binaries.length).toBeGreaterThan(0);
-    for (const binary of binaries) {
-      expect(binary.path.startsWith("/sandbox")).toBe(false);
-    }
+    expect(binaries.map((binary) => binary.path)).toEqual(APPROVED_MANAGED_INFERENCE_BINARY_PATHS);
+  });
+
+  it("excludes an agent-writable binary path from the approved allowlist", () => {
+    expect(APPROVED_MANAGED_INFERENCE_BINARY_PATHS).not.toContain("/tmp/agent-proxy");
+    expect(APPROVED_MANAGED_INFERENCE_BINARY_PATHS).not.toContain("/sandbox/agent-proxy");
+  });
+
+  // source-shape-contract: security -- A corporate CA baked into the image but never merged into the runtime trust bundle leaves external TLS unverifiable through a corporate proxy
+  it("merges a baked corporate CA into the trust bundle Node reads", () => {
+    const startSh = readRepoFile("agents/pi/start.sh");
+    expect(startSh).toContain("merge_corporate_proxy_ca");
+    expect(startSh).toContain('export SSL_CERT_FILE="$_merged"');
+    expect(startSh).toContain('export NODE_EXTRA_CA_CERTS="$_merged"');
+    expect(startSh.indexOf("merge_corporate_proxy_ca()")).toBeLessThan(
+      startSh.indexOf("prepare_runtime_env()"),
+    );
   });
 });
 
@@ -231,14 +250,29 @@ describe("Pi managed model catalog generation", () => {
     });
     expect(status, stderr).toBe(0);
     const configPath = path.join(home, ".pi", "agent", "models.json");
-    expect(fs.statSync(configPath).mode & 0o777).toBe(0o600);
-    const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+    const configFd = fs.openSync(configPath, "r");
+    let config: {
       defaultModel: string;
-      providers: Record<string, { baseUrl: string; type: string }>;
+      providers: Record<string, { baseUrl: string; api: string; apiKey: string }>;
     };
+    try {
+      expect(fs.fstatSync(configFd).mode & 0o777).toBe(0o600);
+      config = JSON.parse(fs.readFileSync(configFd, "utf8"));
+    } finally {
+      fs.closeSync(configFd);
+    }
     expect(config.defaultModel).toBe("nvidia/nemotron-3-super-120b-a12b");
     expect(config.providers.openshell.baseUrl).toBe("https://inference.local/v1");
-    expect(config.providers.openshell.type).toBe("openai-compatible");
+    expect(config.providers.openshell.api).toBe("openai-completions");
+    expect(config.providers.openshell.apiKey).toBe("nemoclaw-managed-inference");
+  });
+
+  it("rejects a model name that is empty after trimming", () => {
+    const { status, stderr } = generate({
+      NEMOCLAW_MODEL: "   ",
+    });
+    expect(status).not.toBe(0);
+    expect(stderr).toContain("NEMOCLAW_MODEL must not be empty.");
   });
 
   it("keeps every provider credential out of the generated catalog", () => {

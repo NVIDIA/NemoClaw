@@ -893,6 +893,8 @@ jobs:
           persist-credentials: false
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          driver: docker
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -1007,6 +1009,55 @@ jobs:
             NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
           provenance: false
           sbom: false
+      # The publication above rebuilds the image rather than reusing the
+      # already-validated local one, so revalidate the exact published digest
+      # before the contract records it as the qualified candidate.
+      - name: Validate the published Pi candidate digest
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: the Pi candidate publication did not return an immutable digest." >&2
+            exit 1
+          fi
+          reference="${REPOSITORY}@${DIGEST}"
+          raw="$RUNNER_TEMP/pi-candidate-published-manifest.raw"
+          docker buildx imagetools inspect "$reference" --raw > "$raw"
+          if [ "sha256:$(sha256sum "$raw" | awk '{print $1}')" != "$DIGEST" ]; then
+            echo "ERROR: published Pi candidate manifest bytes do not match the build digest." >&2
+            exit 1
+          fi
+          anonymous_config="$(mktemp -d "$RUNNER_TEMP/pi-candidate-anonymous.XXXXXX")"
+          trap 'rm -rf -- "$anonymous_config"' EXIT
+          DOCKER_CONFIG="$anonymous_config" docker pull --platform "$PLATFORM" "$reference"
+          image_json="$(docker image inspect "$reference")"
+          if ! jq -e \
+            --arg platform "$PLATFORM" \
+            '
+              length == 1 and (
+                .[0].Config.Labels["io.nvidia.nemoclaw.agent"] == "pi" and
+                .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.platform"] == $platform and
+                .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.startup-profile"] == "1" and
+                .[0].Config.Entrypoint == ["/usr/local/bin/nemoclaw-start"]
+              )
+            ' <<< "$image_json" >/dev/null
+          then
+            echo "ERROR: the published Pi candidate digest does not carry the managed-image runtime contract." >&2
+            exit 1
+          fi
+          version="$(docker run --rm --entrypoint /usr/local/bin/pi "$reference" --version)"
+          expected_version="$(node -p 'require("./agents/pi/pi-runtime/package.json").dependencies["@earendil-works/pi-coding-agent"]')"
+          grep -Fq "$expected_version" <<< "$version"
+          docker run --rm --entrypoint /bin/bash "$reference" -c '
+            set -eu
+            test "$(stat -c %a /sandbox/.pi/agent/models.json)" = 600
+            test "$(stat -c %U /sandbox/.pi/agent/models.json)" = sandbox
+            node -e "const c=require(\"/sandbox/.pi/agent/models.json\"); if (!c.defaultModel || !c.providers.openshell.baseUrl) process.exit(1)"
+            test -x /usr/local/bin/nemoclaw-managed-bootstrap
+          '
       - name: Record the exact Pi candidate contract
         if: github.event_name != 'pull_request'
         shell: bash
@@ -1045,7 +1096,7 @@ jobs:
               startupProfileContractVersion: 1,
               capabilityContractVersion: 1
             }' > "$contract_dir/contract.json"
-          npx tsx tools/managed-images/validate-candidate-contract.mts \
+          node --experimental-strip-types tools/managed-images/validate-candidate-contract.mts \
             --contract "$contract_dir/contract.json" \
             --platform "$PLATFORM"
       # The all-agent activation job downloads managed-pr-contract-* artifacts.

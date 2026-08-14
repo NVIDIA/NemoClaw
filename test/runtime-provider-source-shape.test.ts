@@ -234,6 +234,8 @@ describe("runtime provider central source boundary", () => {
       "agents/hermes/Dockerfile.base",
       "agents/langchain-deepagents-code/Dockerfile",
       "agents/langchain-deepagents-code/Dockerfile.base",
+      "agents/pi/Dockerfile",
+      "agents/pi/Dockerfile.base",
     ]);
   });
 
@@ -352,6 +354,7 @@ describe("runtime provider central source boundary", () => {
       "Dockerfile",
       "agents/hermes/Dockerfile",
       "agents/langchain-deepagents-code/Dockerfile",
+      "agents/pi/Dockerfile",
     ]) {
       const dockerfile = read(dockerfilePath);
       expect(dockerfile).toContain(" AS managed-bootstrap-entrypoint-builder");
@@ -372,6 +375,7 @@ describe("runtime provider central source boundary", () => {
       "Dockerfile",
       "agents/hermes/Dockerfile",
       "agents/langchain-deepagents-code/Dockerfile",
+      "agents/pi/Dockerfile",
       "scripts/checks/run-managed-image-direct-e2e.ts",
       "scripts/managed-bootstrap-entrypoint.c",
       "scripts/managed-bootstrap-trampoline.sh",

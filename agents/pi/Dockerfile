@@ -148,7 +148,8 @@ RUN set -eu; \
         exit 1; \
     fi; \
     test -x /usr/local/bin/pi; \
-    /usr/local/bin/pi --version | grep -Fq "${PI_VERSION}"
+    installed_version="$(/usr/local/bin/pi --version | tr -d '[:space:]')"; \
+    [ "$installed_version" = "${PI_VERSION}" ]
 
 COPY agents/pi/generate-config.ts /opt/nemoclaw-pi/generate-config.ts
 COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
@@ -241,7 +242,6 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
             find "$p" -type d -exec chmod a+rwx {} +; \
         done; \
         chmod a+rw /sandbox/.nemoclaw/config.json; \
-        chmod a+rw /sandbox/.bashrc /sandbox/.profile; \
     fi
 
 # Verify the immutable security package inventory in the completed image.

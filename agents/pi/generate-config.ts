@@ -13,7 +13,7 @@ import { join } from "node:path";
 
 const SUPPORTED_INFERENCE_API = "openai-completions";
 const MANAGED_PROVIDER_ID = "openshell";
-const MANAGED_PROVIDER_TYPE = "openai-compatible";
+const MANAGED_PROVIDER_API_KEY = "nemoclaw-managed-inference";
 
 type Settings = {
   model: string;
@@ -39,7 +39,9 @@ function normalizeMetadata(value: string, name: string): string {
   if (/[\p{Cc}\p{Cf}]/u.test(value)) {
     throw new Error(`${name} must not contain control characters.`);
   }
-  return value.trim();
+  const text = value.trim();
+  if (!text) throw new Error(`${name} must not be empty.`);
+  return text;
 }
 
 function normalizeInferenceApi(value: string | undefined): string {
@@ -98,7 +100,8 @@ function buildConfig(settings: Settings): ManagedPiConfig {
     defaultModel: settings.model,
     providers: {
       [MANAGED_PROVIDER_ID]: {
-        type: MANAGED_PROVIDER_TYPE,
+        api: settings.inferenceApi,
+        apiKey: MANAGED_PROVIDER_API_KEY,
         baseUrl: settings.baseUrl,
         models: [{ id: settings.model }],
       },
