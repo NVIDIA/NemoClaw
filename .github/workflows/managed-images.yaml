@@ -1076,14 +1076,24 @@ jobs:
             exit 1
           fi
           reference="${REPOSITORY}@${DIGEST}"
+          corporate_ca_dir="$(mktemp -d "$RUNNER_TEMP/pi-candidate-ca.XXXXXX")"
+          corporate_ca="$corporate_ca_dir/corporate-ca.pem"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -subj '/CN=NemoClaw Pi candidate CA handoff' \
+            -addext 'basicConstraints=critical,CA:TRUE' \
+            -keyout "$corporate_ca_dir/corporate-ca.key" \
+            -out "$corporate_ca" >/dev/null 2>&1
+          chmod 0444 "$corporate_ca"
           entrypoint_container="$(
             docker run -d \
               --network none \
-              --entrypoint /usr/local/bin/nemoclaw-start \
+              --env SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+              --mount "type=bind,src=$corporate_ca,dst=/usr/local/share/nemoclaw/corporate-ca.pem,readonly" \
               "$reference"
           )"
           cleanup_entrypoint_container() {
             docker rm -f "$entrypoint_container" >/dev/null 2>&1 || true
+            rm -r -- "$corporate_ca_dir"
           }
           trap cleanup_entrypoint_container EXIT
           entrypoint_deadline=$(($(date +%s) + 30))
@@ -1126,6 +1136,37 @@ jobs:
               exit 1
             fi
           done
+          merged_ca=/tmp/nemoclaw-ca-bundle.pem
+          for ca_variable in \
+            SSL_CERT_FILE \
+            CURL_CA_BUNDLE \
+            REQUESTS_CA_BUNDLE \
+            GIT_SSL_CAINFO \
+            NODE_EXTRA_CA_CERTS
+          do
+            expected_export="export ${ca_variable}=${merged_ca}"
+            if ! grep -qF "$expected_export" <<< "$runtime_env"; then
+              echo "ERROR: the Pi candidate entrypoint did not persist the merged CA variable ($expected_export)." >&2
+              exit 1
+            fi
+          done
+          docker exec --user 999:999 "$entrypoint_container" /bin/bash -ceu '
+            unset SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS
+            source /tmp/nemoclaw-proxy-env.sh
+            merged_ca=/tmp/nemoclaw-ca-bundle.pem
+            for ca_variable in \
+              SSL_CERT_FILE \
+              CURL_CA_BUNDLE \
+              REQUESTS_CA_BUNDLE \
+              GIT_SSL_CAINFO \
+              NODE_EXTRA_CA_CERTS
+            do
+              if [ "${!ca_variable}" != "$merged_ca" ]; then
+                echo "ERROR: an independent Pi shell did not load $ca_variable from the runtime environment." >&2
+                exit 1
+              fi
+            done
+          '
       - name: Record the exact Pi candidate contract
         if: github.event_name != 'pull_request'
         shell: bash

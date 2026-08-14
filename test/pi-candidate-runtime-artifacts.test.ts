@@ -168,6 +168,33 @@ describe("Pi release cohort separation", () => {
     ).toBe(false);
   });
 
+  it("qualifies the published candidate through its declared entrypoint with corporate CA handoff", () => {
+    const workflow = readRepoFile(".github/workflows/managed-images.yaml");
+    const entrypointStep = workflow.slice(
+      workflow.indexOf(
+        "- name: Exercise the published Pi candidate digest through its declared entrypoint",
+      ),
+      workflow.indexOf("- name: Record the exact Pi candidate contract"),
+    );
+    expect(entrypointStep).not.toContain("--entrypoint /usr/local/bin/nemoclaw-start");
+    expect(entrypointStep).toContain("openssl req -x509 -newkey rsa:2048");
+    expect(entrypointStep).toContain(
+      "dst=/usr/local/share/nemoclaw/corporate-ca.pem,readonly",
+    );
+    expect(entrypointStep).toContain("docker exec --user 999:999");
+    for (const name of [
+      "SSL_CERT_FILE",
+      "CURL_CA_BUNDLE",
+      "REQUESTS_CA_BUNDLE",
+      "GIT_SSL_CAINFO",
+      "NODE_EXTRA_CA_CERTS",
+    ]) {
+      expect(entrypointStep).toContain(name);
+    }
+    expect(entrypointStep).toContain("source /tmp/nemoclaw-proxy-env.sh");
+    expect(entrypointStep).toContain("merged_ca=/tmp/nemoclaw-ca-bundle.pem");
+  });
+
   // source-shape-contract: compatibility -- The accepted Pi launch matrix requires candidate qualification on both supported Linux architectures
   it("builds and validates the candidate image for linux/amd64 and linux/arm64", () => {
     const workflow = YAML.parse(readRepoFile(".github/workflows/managed-images.yaml")) as {
