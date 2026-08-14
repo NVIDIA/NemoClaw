@@ -29,6 +29,7 @@ import {
   compatibleAnthropicSwitchBinding,
   compatibleAnthropicSwitchEnv,
   requireCompatibleAnthropicProviderAbsent,
+  withHostVerificationLoopbackAlias,
 } from "../fixtures/compatible-anthropic-switch.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
@@ -1083,12 +1084,11 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
     gatewayRestartExpected ? "anthropic-messages" : "openai-completions",
   );
   const pidBefore = await openclawGatewayPid(sandbox, home);
-  const switchResult = await runOpenClawInferenceSetWithRetry(
-    host,
-    home,
-    redactionValues,
-    switchBinding,
-  );
+  const switchInference = () =>
+    runOpenClawInferenceSetWithRetry(host, home, redactionValues, switchBinding);
+  const switchResult = mockProvider
+    ? await withHostVerificationLoopbackAlias(host, cleanup, switchInference)
+    : await switchInference();
   expect(switchResult.exitCode, resultText(switchResult)).toBe(0);
   expect(
     resultText(switchResult).includes(
