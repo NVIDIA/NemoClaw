@@ -389,7 +389,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
       "direct hosted inference and sandbox inference.local both respond",
       ...(process.platform === "linux"
         ? [
-            "repeated PTY launches record two structured turns and restore the mutable config permission contract",
+            "each of two PTY launches records two ordered structured turns and restores the mutable config permission contract",
           ]
         : []),
       "nemoclaw logs produces output and cleanup removes registry state",
