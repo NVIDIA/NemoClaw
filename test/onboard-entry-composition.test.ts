@@ -287,6 +287,15 @@ describe("onboarding entry composition boundary", () => {
     expect(actual.provider).toEqual({});
   });
 
+  it.each(["(gatewayRecovery.execute)()", 'gatewayRecovery["execute"]()'])(
+    "classifies receiver recovery action form %s",
+    (call) => {
+      const actual = collectOnboardEntryDecisions(`function choose() { ${call}; }`);
+
+      expect(actual.gateway).toEqual({ choose: 1 });
+    },
+  );
+
   it("rejects a decision added within an allowed declaration", () => {
     const actual = collectOnboardEntryDecisions(
       "function handleRemoteProviderSelection(enabled: boolean) { if (enabled) useProvider(); if (enabled) useProviderAgain(); }",

@@ -155,17 +155,29 @@ function isLogicalDecision(node: ts.Node): node is ts.BinaryExpression {
   return ts.isBinaryExpression(node) && LOGICAL_OPERATORS.has(node.operatorToken.kind);
 }
 
+function unwrapCallee(expression: ts.Expression): ts.Expression {
+  return ts.isParenthesizedExpression(expression) ? unwrapCallee(expression.expression) : expression;
+}
+
 function calledName(expression: ts.Expression): string | null {
-  if (ts.isIdentifier(expression)) return expression.text;
-  if (ts.isPropertyAccessExpression(expression)) return expression.name.text;
+  const callee = unwrapCallee(expression);
+  if (ts.isIdentifier(callee)) return callee.text;
+  if (ts.isPropertyAccessExpression(callee)) return callee.name.text;
   if (
-    ts.isElementAccessExpression(expression) &&
-    expression.argumentExpression &&
-    ts.isStringLiteral(expression.argumentExpression)
+    ts.isElementAccessExpression(callee) &&
+    callee.argumentExpression &&
+    ts.isStringLiteral(callee.argumentExpression)
   ) {
-    return expression.argumentExpression.text;
+    return callee.argumentExpression.text;
   }
-  if (ts.isParenthesizedExpression(expression)) return calledName(expression.expression);
+  return null;
+}
+
+function calledReceiver(expression: ts.Expression): ts.Expression | null {
+  const callee = unwrapCallee(expression);
+  if (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) {
+    return callee.expression;
+  }
   return null;
 }
 
@@ -174,11 +186,8 @@ function isRecoveryCall(node: ts.Node): node is ts.CallExpression {
   const name = calledName(node.expression);
   if (name === null || RECOVERY_FACTORY_NAME.test(name)) return false;
   if (RECOVERY_NAME.test(name)) return true;
-  return (
-    ts.isPropertyAccessExpression(node.expression) &&
-    RECOVERY_ACTION_METHOD.test(name) &&
-    RECOVERY_NAME.test(node.expression.expression.getText())
-  );
+  const receiver = calledReceiver(node.expression);
+  return receiver !== null && RECOVERY_ACTION_METHOD.test(name) && RECOVERY_NAME.test(receiver.getText());
 }
 
 // Count branches, short-circuit operators, condition-controlled loops, try statements, and
