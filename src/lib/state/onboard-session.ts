@@ -1490,19 +1490,21 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
 export type CompareAndSwapSessionResult = "updated" | "busy" | "mismatch";
 
 /**
- * Mutate the current session only while no onboarding writer owns its lock.
+ * Mutate the current session while this process owns the onboarding lock.
  *
- * Production onboarding holds `LOCK_FILE` across its session writes. Reusing
- * that boundary closes the load-before-rename race for short mutations from a
- * different command without waiting while an onboarding run is active.
+ * Production onboarding holds `LOCK_FILE` across its session writes. When
+ * this process already owns that lock, the mutation reuses it. Otherwise, the
+ * mutation acquires the lock only when no onboarding writer owns it and
+ * returns `busy` without waiting. Reusing that boundary closes the
+ * load-before-rename race for short mutations from a different command.
  */
 export function compareAndSwapSession(
   matches: (session: Session) => boolean,
   mutator: (session: Session) => Session | void,
   command = "nemoclaw session compare-and-swap",
 ): CompareAndSwapSessionResult {
-  const ownsOnboardLock = heldLockFd === null;
-  if (ownsOnboardLock) {
+  const acquiredLockHere = heldLockFd === null;
+  if (acquiredLockHere) {
     const lock = acquireOnboardLock(command);
     if (!lock.acquired) return "busy";
   }
@@ -1513,7 +1515,7 @@ export function compareAndSwapSession(
     saveSession(next);
     return "updated";
   } finally {
-    if (ownsOnboardLock) releaseOnboardLock();
+    if (acquiredLockHere) releaseOnboardLock();
   }
 }
 

@@ -577,8 +577,10 @@ function getRoutedProfile(): BlueprintInferenceProfile {
   return bp;
 }
 
+export const DEFAULT_MODEL_ROUTER_PORT = 4000;
+
 export function resolveModelRouterPort(): number {
-  return getRoutedProfile().router?.port || 4000;
+  return getRoutedProfile().router?.port || DEFAULT_MODEL_ROUTER_PORT;
 }
 
 export function isRoutedInferenceProvider(provider: string | null | undefined): boolean {

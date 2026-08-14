@@ -378,6 +378,11 @@ describe("onboard shared gateway route containment", () => {
       withSandboxMutationLock: async <T>(_sandboxName: string, operation: () => Promise<T> | T) =>
         await operation(),
       withGatewayRouteMutationLock,
+      withModelRouterPortLifecycleLock: async <T>(
+        _port: number,
+        operation: () => Promise<T> | T,
+      ) => await operation(),
+      getModelRouterPort: () => 4000,
       step: vi.fn(),
       getGatewayName: () => "nemoclaw",
       runOpenshell,
@@ -484,6 +489,11 @@ describe("onboard shared gateway route containment", () => {
         await operation(),
       withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
         await operation(),
+      withModelRouterPortLifecycleLock: async <T>(
+        _port: number,
+        operation: () => Promise<T> | T,
+      ) => await operation(),
+      getModelRouterPort: () => 4000,
       step: vi.fn(),
       getGatewayName: () => "nemoclaw",
       runOpenshell: vi.fn(() => ({ status: 0 })),

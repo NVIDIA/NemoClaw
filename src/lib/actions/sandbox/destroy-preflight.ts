@@ -5,7 +5,10 @@ import os from "node:os";
 
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { withModelRouterPortLifecycleLock } from "../../inference/gateway-route-mutation-lock";
-import { isRoutedInferenceProvider } from "../../onboard/model-router";
+import {
+  DEFAULT_MODEL_ROUTER_PORT,
+  isRoutedInferenceProvider,
+} from "../../onboard/model-router";
 import {
   doesModelRouterProcessOwnPort,
   inspectModelRouterProcessForPort,
@@ -58,10 +61,6 @@ export function stopSandboxInferenceResources(
     killStaleProxy();
   }
 }
-
-// Routed onboard profiles use blueprint port 4000 by default; matches the
-// uninstall teardown default in src/lib/actions/uninstall/run-plan.ts.
-const DEFAULT_MODEL_ROUTER_PORT = 4000;
 
 export type StopModelRouterForDestroyedSandboxDeps = {
   acquireOnboardLock: typeof acquireOnboardLock;
@@ -153,7 +152,7 @@ export async function stopModelRouterForDestroyedSandbox(
       const sessionMatchesSandbox =
         session?.sandboxName === sandbox.name &&
         resolveDestroyedSandboxRouterPort(session.endpointUrl) === port;
-      destroyedSessionId = session?.sandboxName === sandbox.name ? session.sessionId : null;
+      destroyedSessionId = sessionMatchesSandbox ? session.sessionId : null;
 
       const listHostRegistryEntries =
         deps.listHostRegistryEntries ?? listHostGatewayRegistryEntries;

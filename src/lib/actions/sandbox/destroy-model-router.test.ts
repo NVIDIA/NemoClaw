@@ -182,12 +182,14 @@ describe("stopModelRouterForDestroyedSandbox", () => {
 
   it("preserves a reused sandbox-name session for another router port", async () => {
     const reusedNameSession = {
+      sessionId: "session-replacement",
       sandboxName: "alpha",
       endpointUrl: "http://host.openshell.internal:4200/v1",
       routerPid: 6262,
       routerCredentialHash: "new-hash",
     } as Session;
     const { deps } = createDeps({
+      expectedSession: reusedNameSession,
       loadSession: vi.fn(() => reusedNameSession),
       ownsPort: vi.fn(() => false),
       inspectProcessForPort: vi.fn(() => ({ status: "absent" as const })),
