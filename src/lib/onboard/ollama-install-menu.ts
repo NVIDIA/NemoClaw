@@ -103,6 +103,8 @@ export interface OllamaInstallMenuEntry {
 export interface OllamaInstallMenuResult {
   entry: OllamaInstallMenuEntry | null;
   hasUpgradableOllama: boolean;
+  /** True only when a detected CLI or daemon version is below the supported floor. */
+  hasUnsupportedOllama?: boolean;
 }
 
 function osTagFor(platform: NodeJS.Platform, isWsl: boolean): string | null {
@@ -152,6 +154,9 @@ export function resolveOllamaInstallMenuEntry(
   const daemonNeedsUpgrade =
     daemonProbeApplies && !isOllamaVersionAtLeast(runningOllamaVersion, MIN_OLLAMA_VERSION);
   const hasUpgradableOllama = binaryNeedsUpgrade || daemonNeedsUpgrade;
+  const hasUnsupportedOllama =
+    (installedOllamaVersion !== null && binaryNeedsUpgrade) ||
+    (runningOllamaVersion !== null && daemonNeedsUpgrade);
   // A Windows-host install only covers the local-inference need when the
   // sandbox can route to it. Under a container runtime without that routing,
   // WSL-local Ollama is the only workable local provider, and suppressing its
@@ -160,11 +165,11 @@ export function resolveOllamaInstallMenuEntry(
   const showEntry =
     (!input.hasOllama && !input.ollamaRunning && !usableWindowsOllama) || hasUpgradableOllama;
   if (!showEntry) {
-    return { entry: null, hasUpgradableOllama };
+    return { entry: null, hasUpgradableOllama, hasUnsupportedOllama };
   }
   const osTag = osTagFor(input.platform, input.isWsl);
   if (osTag === null) {
-    return { entry: null, hasUpgradableOllama };
+    return { entry: null, hasUpgradableOllama, hasUnsupportedOllama };
   }
   const labelPrefix = hasUpgradableOllama ? "Upgrade Ollama" : "Install Ollama";
   // Name the stale source explicitly: "running daemon" when the daemon is
@@ -189,6 +194,7 @@ export function resolveOllamaInstallMenuEntry(
   return {
     entry: { key: "install-ollama", label: `${labelPrefix} (${osTag})${upgradeSuffix}` },
     hasUpgradableOllama,
+    hasUnsupportedOllama,
   };
 }
 

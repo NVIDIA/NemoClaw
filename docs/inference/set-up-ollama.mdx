@@ -25,7 +25,8 @@ NemoClaw detects Ollama on the host and can install, start, or upgrade it on sup
 During onboarding, if Ollama is installed but not started, NemoClaw starts it for you.
 On macOS and Linux, the wizard can offer to install Ollama when it is not present.
 
-When either the Ollama CLI or running daemon is below the minimum version for the starter models, currently `0.7.0`, the wizard displays an explicit **Upgrade Ollama** entry.
+When either the Ollama CLI or running daemon is below `0.32.9`, the wizard displays an explicit **Upgrade Ollama** entry.
+Older versions can return tool calls as message text instead of structured tool calls, which causes onboarding validation to stop.
 The wizard checks `ollama --version` and `/api/version` on port `11434` independently, so the entry appears when either side is stale.
 
 On macOS, the wizard uses `brew upgrade ollama` for the platform upgrade path.

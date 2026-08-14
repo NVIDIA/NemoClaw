@@ -3768,14 +3768,14 @@ const { setupNim } = require(${onboardPath});
     }
   });
 
-  it("upgrades an outdated host Ollama instead of reusing it under NEMOCLAW_PROVIDER=install-ollama", async () => {
+  it("upgrades Ollama 0.32.8 instead of reusing it under NEMOCLAW_PROVIDER=ollama (#8979)", async () => {
     const menu = resolveOllamaInstallMenuEntry({
       hasOllama: true,
       ollamaRunning: true,
       ollamaHost: "127.0.0.1",
       hasWindowsOllama: false,
-      installedOllamaVersion: "0.6.2",
-      runningOllamaVersion: "0.6.2",
+      installedOllamaVersion: "0.32.8",
+      runningOllamaVersion: "0.32.8",
       platform: "linux",
       isWsl: false,
     });
@@ -3786,9 +3786,9 @@ const { setupNim } = require(${onboardPath});
       const rendered = command.join(" ");
       switch (true) {
         case rendered.includes("ollama --version"):
-          return installerRan ? "ollama version is 0.24.0" : "ollama version is 0.6.2";
+          return installerRan ? "ollama version is 0.32.9" : "ollama version is 0.32.8";
         case rendered.includes("/api/version"):
-          return installerRan ? '{"version":"0.24.0"}' : '{"version":"0.6.2"}';
+          return installerRan ? '{"version":"0.32.9"}' : '{"version":"0.32.8"}';
         case command.at(-1) === "zstd":
           return "/usr/bin/zstd";
         default:
@@ -3828,7 +3828,7 @@ const { setupNim } = require(${onboardPath});
     const setupNim = createSetupNim(
       makeSetupNimFlowDeps({
         isNonInteractive: () => true,
-        getNonInteractiveProvider: () => "install-ollama",
+        getNonInteractiveProvider: () => "ollama",
         getNonInteractiveModel: () => "qwen3:8b",
         prompt,
         note: (message) => notes.push(message),
@@ -3848,7 +3848,7 @@ const { setupNim } = require(${onboardPath});
 
       assert.equal(prompt.mock.calls.length, 0);
       assert.equal(result.provider, "ollama-local");
-      assert.ok(notes.some((line) => line.includes("[non-interactive] Provider: install-ollama")));
+      assert.ok(notes.some((line) => line.includes("[non-interactive] Provider: ollama")));
       assert.ok(commands.some((command) => command.includes("ollama.com/install.sh")));
     } finally {
       resetOllamaHostCache();
