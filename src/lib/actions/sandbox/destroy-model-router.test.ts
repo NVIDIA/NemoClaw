@@ -267,7 +267,7 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     expect(session.routerCredentialHash).toBeNull();
   });
 
-  it("keeps session identity when process inventory is unavailable and the port is healthy", async () => {
+  it("keeps router recovery identity when process inventory is unavailable", async () => {
     const { deps, session } = createDeps({
       ownsPort: vi.fn(() => false),
       inspectProcessForPort: vi.fn(() => ({ status: "unavailable" as const })),
@@ -284,7 +284,7 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining("process inventory"));
   });
 
-  it("keeps session identity when no process is visible but the router port stays healthy", async () => {
+  it("keeps router recovery identity when no process is visible but the router port stays healthy", async () => {
     const { deps, session } = createDeps({
       ownsPort: vi.fn(() => false),
       inspectProcessForPort: vi.fn(() => ({ status: "absent" as const })),

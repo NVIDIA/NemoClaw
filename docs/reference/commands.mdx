@@ -2306,11 +2306,12 @@ It also preserves a replacement onboarding session when the captured session ide
 If the captured session uses the destroyed sandbox name with another router port, `destroy` clears only the sandbox association and preserves that router's recovery identity.
 For lock order, same-port peer handling, and cleanup checks, refer to [Set Up Model Router](../inference/hosted-inference/set-up-model-router#router-and-sandbox-lifecycle-locks).
 
-If `destroy` keeps the Model Router recovery identity:
+If `destroy` warns that it could not identify or stop a listener for the deleted sandbox:
 
 1. Inspect the current listener process immediately before you stop anything.
 2. Stop it only if its command line identifies the Model Router on the named port.
-3. Do not stop a previously reported process ID if its command line no longer matches.
+3. Do not stop the router recorded by a preserved session for another port.
+4. Do not stop a previously reported process ID if its command line no longer matches.
 
 <Warning>
 This command attempts to wipe the manifest-defined agent state while its persistent volume is mounted, then removes the sandbox.
