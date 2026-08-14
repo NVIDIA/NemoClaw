@@ -129,6 +129,24 @@ describe("OpenShell dev artifact resolver", () => {
     }
   });
 
+  it("rejects a cached asset replaced by a symbolic link (#9051)", async () => {
+    const directory = temporaryDirectory();
+    try {
+      const resolution = await resolveOpenShellDevArtifact(directory, fixtureFetch());
+      const manifestSha256 = resolution.manifestSha256;
+      requireFixture(manifestSha256, "fixture resolution omitted manifest digest");
+      const assetPath = path.join(directory, "assets", OPENSHELL_DEV_ASSET_NAMES[0]);
+      fs.unlinkSync(assetPath);
+      fs.symlinkSync(path.join(directory, "manifest.json"), assetPath);
+
+      expect(() => verifyOpenShellDevArtifact(directory, SOURCE_COMMIT, manifestSha256)).toThrow(
+        /must be a regular file/,
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("prepares only the three reviewed regular binaries (#9051)", async () => {
     const directory = temporaryDirectory();
     const binaryDirectory = `${directory}-binaries`;

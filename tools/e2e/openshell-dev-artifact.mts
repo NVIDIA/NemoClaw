@@ -442,8 +442,8 @@ export async function resolveOpenShellDevArtifact(
   }
 }
 
-function parseManifest(manifestPath: string): OpenShellDevArtifactManifest {
-  const manifest = record(JSON.parse(fs.readFileSync(manifestPath, "utf8")));
+function parseManifest(manifestBytes: Buffer): OpenShellDevArtifactManifest {
+  const manifest = record(JSON.parse(manifestBytes.toString("utf8")));
   if (manifest.schemaVersion !== 1) throw new Error("unsupported OpenShell dev manifest schema");
   const release = record(manifest.release);
   const assets = manifest.assets;
@@ -480,6 +480,23 @@ function parseManifestAsset(value: unknown): ReleaseAsset {
   return parsed;
 }
 
+function readRegularFileNoFollow(filePath: string, label: string): { bytes: Buffer; size: number } {
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile()) throw new Error(`${label} must be a regular file`);
+    return { bytes: fs.readFileSync(descriptor), size: stat.size };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+      throw new Error(`${label} must be a regular file`);
+    }
+    throw error;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
 export function verifyOpenShellDevArtifact(
   outputDirectory: string,
   expectedSourceCommit: string,
@@ -489,16 +506,12 @@ export function verifyOpenShellDevArtifact(
     throw new Error("expected source commit and manifest SHA-256 must be lowercase hexadecimal");
   }
   const manifestPath = path.join(outputDirectory, "manifest.json");
-  const manifestStat = fs.lstatSync(manifestPath);
-  if (!manifestStat.isFile() || manifestStat.isSymbolicLink()) {
-    throw new Error("OpenShell dev manifest must be a regular file");
-  }
-  const manifestBytes = fs.readFileSync(manifestPath);
+  const { bytes: manifestBytes } = readRegularFileNoFollow(manifestPath, "OpenShell dev manifest");
   const actualManifestSha256 = createHash("sha256").update(manifestBytes).digest("hex");
   if (actualManifestSha256 !== expectedManifestSha256) {
     throw new Error("OpenShell dev manifest SHA-256 mismatch");
   }
-  const manifest = parseManifest(manifestPath);
+  const manifest = parseManifest(manifestBytes);
   if (manifest.release.tag !== "dev" || manifest.release.sourceCommit !== expectedSourceCommit) {
     throw new Error("OpenShell dev manifest source identity mismatch");
   }
@@ -513,13 +526,9 @@ export function verifyOpenShellDevArtifact(
   }
   for (const asset of manifest.assets) {
     const assetPath = path.join(assetsDirectory, asset.name);
-    const stat = fs.lstatSync(assetPath);
-    if (!stat.isFile() || stat.isSymbolicLink()) {
-      throw new Error(`OpenShell dev asset ${asset.name} must be a regular file`);
-    }
-    if (stat.size !== asset.size)
-      throw new Error(`OpenShell dev asset ${asset.name} size mismatch`);
-    const digest = createHash("sha256").update(fs.readFileSync(assetPath)).digest("hex");
+    const { bytes, size } = readRegularFileNoFollow(assetPath, `OpenShell dev asset ${asset.name}`);
+    if (size !== asset.size) throw new Error(`OpenShell dev asset ${asset.name} size mismatch`);
+    const digest = createHash("sha256").update(bytes).digest("hex");
     if (digest !== asset.digest)
       throw new Error(`OpenShell dev asset ${asset.name} SHA-256 mismatch`);
   }
