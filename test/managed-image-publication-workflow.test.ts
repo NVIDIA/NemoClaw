@@ -503,11 +503,12 @@ describe("complete managed-image publication workflow", () => {
     expect(resolveBase).toContain('reference="${BASE_REPOSITORY}@${digest}"');
     expect(resolveBase).toContain('actual="sha256:$(sha256sum "$exact_raw"');
 
-    expect(build.with).toMatchObject({
-      platforms: "linux/amd64",
-      load: true,
-      push: false,
-    });
+    const localBuild = required(build.run, "PR managed image local build is missing");
+    expect(localBuild).toContain("docker build");
+    expect(localBuild).toContain("--platform linux/amd64");
+    expect(localBuild).toContain('--build-arg "BASE_IMAGE=${BASE_IMAGE}"');
+    expect(localBuild).toContain('--tag "$IMAGE_REFERENCE"');
+    expect(localBuild).not.toContain("docker buildx build");
     const contractSource = required(contract.run, "PR managed image contract is missing");
     expect(contractSource).toContain(
       'docker run --rm --platform "$PLATFORM" --entrypoint /bin/sh "$image_id"',
