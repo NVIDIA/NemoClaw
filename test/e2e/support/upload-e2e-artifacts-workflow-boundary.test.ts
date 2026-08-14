@@ -135,6 +135,19 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
+  it("rejects release qualification waiver upload drift", () => {
+    const workflow = mutableWorkflow();
+    const upload = workflow.jobs["release-qualification"].steps?.find(
+      (step) => step.name === "Upload release qualification waiver evidence",
+    );
+    expect(upload).toBeDefined();
+    upload!.with!["retention-days"] = 7;
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "release-qualification must not invoke actions/upload-artifact directly",
+    );
+  });
+
   it.each([
     ["name", "another-cache-artifact"],
     ["path", "another-cache-path/"],
