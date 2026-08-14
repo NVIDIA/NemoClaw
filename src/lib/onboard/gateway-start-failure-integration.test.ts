@@ -12,44 +12,26 @@
 // Original regression: NemoClaw #2347.
 // Owning migration issue: NemoClaw #4355.
 //
-// Coverage strategy: prove the helper-level contract through two layers:
-//
-//   1. Unit tests of the already-exported helpers (printDockerDaemonRecovery,
-//      handleFinalGatewayStartFailure with dockerUnreachable=true).
-//   2. A composition test that runs the same helper sequence the call site
-//      uses (classify → handleFinal → exitProcess(1)).
-//
-// The caller-level process regression that drives startGateway() through a
-// PATH-shimmed openshell binary lives in
-// test/onboard-gateway-docker-unreachable.test.ts.
+// Coverage strategy: prove the exported helper contract here. The production
+// Docker-driver composition is exercised through
+// docker-driver-gateway-failure.test.ts instead of copying its control flow
+// into this test.
 
 import { describe, expect, it, vi } from "vitest";
-import { classifyGatewayStartFailure } from "../validation";
 import {
   createFinalGatewayStartFailureHandler,
   printDockerDaemonRecovery,
 } from "./gateway-start-failure";
 
 // The production binding itself remains covered by
-// test/gateway-final-failure-cleanup.test.ts. These helper and composition
-// checks only need the production factory, and should not load onboard.ts's
+// test/gateway-final-failure-cleanup.test.ts. These helper checks only need the
+// production factory, and should not load onboard.ts's
 // full dependency graph for every source-test worker.
 const handleFinalGatewayStartFailure = createFinalGatewayStartFailureHandler({
   getGatewayName: () => "nemoclaw",
   collectDiagnostics: () => "",
   cleanupGateway: () => undefined,
 });
-
-// Real signatures a stopped Docker daemon produces on macOS (Colima) and Linux
-// (dockerd). These are the wire format the call site sees in the gateway log
-// tail it classifies.
-const DARWIN_DOCKER_UNREACHABLE_OUTPUT = [
-  "Error: Failed to create Docker client.",
-  "Socket not found: /var/run/docker.sock",
-].join("\n");
-
-const LINUX_DOCKER_UNREACHABLE_OUTPUT =
-  "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?";
 
 describe("startGatewayWithOptions docker-unreachable abort (#2347)", () => {
   // ── Layer 1: unit tests of the platform-branching recovery message ────────
@@ -173,138 +155,4 @@ describe("startGatewayWithOptions docker-unreachable abort (#2347)", () => {
     });
   });
 
-  // ── Layer 2: composition test — the exact sequence the call site uses ────
-  //
-  // The Docker-driver start path classifies the gateway log tail and routes a
-  // docker_unreachable verdict to the recovery message, while any other
-  // verdict falls through to the regular failure handler:
-  //
-  //     const failure = classifyGatewayStartFailure(tail);
-  //     if (failure.kind === "docker_unreachable") { ... }
-  //     handleFinalGatewayStartFailure({ retries, dockerUnreachable });
-  //
-  // The composition test exercises the same helpers in the same order and
-  // confirms the chain bottoms out at exitProcess(1) with the recovery
-  // message printed.
-
-  describe("composition classifies, handles the final state, and exits 1", () => {
-    let capturedPrintError: string[];
-
-    function runComposition(gatewayLogTail: string): {
-      thrown: unknown;
-      exitCode: number | null;
-    } {
-      capturedPrintError = [];
-
-      const failure = classifyGatewayStartFailure(gatewayLogTail);
-
-      let dockerUnreachable = false;
-      if (failure.kind === "docker_unreachable") {
-        dockerUnreachable = true;
-      }
-
-      let exitCode: number | null = null;
-      let thrown: unknown = null;
-      try {
-        handleFinalGatewayStartFailure({
-          retries: 2,
-          dockerUnreachable,
-          printError: (m = "") => capturedPrintError.push(m),
-          collectDiagnostics: () => {
-            throw new Error("collectDiagnostics must not be called on docker_unreachable");
-          },
-          cleanupGateway: () => {
-            throw new Error("cleanupGateway must not be called on docker_unreachable");
-          },
-          exitProcess: ((code: number) => {
-            exitCode = code;
-            throw new Error(`__exit(${code})`);
-          }) as (code: number) => never,
-        });
-      } catch (err) {
-        thrown = err;
-      }
-      return { thrown, exitCode };
-    }
-
-    it("composes through the docker-unreachable path on the macOS Colima signature", () => {
-      const { thrown, exitCode } = runComposition(DARWIN_DOCKER_UNREACHABLE_OUTPUT);
-      expect(thrown).toBeInstanceOf(Error);
-      expect(exitCode).toBe(1);
-      expect(capturedPrintError.join("\n")).toContain("Docker daemon is not running");
-    });
-
-    it("composes through the docker-unreachable path on the Linux dockerd signature", () => {
-      const { thrown, exitCode } = runComposition(LINUX_DOCKER_UNREACHABLE_OUTPUT);
-      expect(thrown).toBeInstanceOf(Error);
-      expect(exitCode).toBe(1);
-      expect(capturedPrintError.join("\n")).toContain("Docker daemon is not running");
-    });
-
-    it("does NOT trigger the docker-unreachable path on unrelated start output (negative control)", () => {
-      // A genuinely-broken-but-not-Docker-unreachable failure must still reach
-      // the regular failure path (which DOES collect diagnostics and clean
-      // up). If this test ever flips, the call-site classifier has been made
-      // too aggressive and would silence real gateway failures behind the
-      // Docker-recovery message.
-      capturedPrintError = [];
-
-      const failure = classifyGatewayStartFailure("  k3s: failed to bootstrap helm chart after 90s\n");
-
-      expect(failure.kind).toBe("unknown");
-
-      let collectCalls = 0;
-      let cleanupCalls = 0;
-      let exitCode: number | null = null;
-      try {
-        handleFinalGatewayStartFailure({
-          retries: 2,
-          dockerUnreachable: false,
-          printError: (m = "") => capturedPrintError.push(m),
-          collectDiagnostics: () => {
-            collectCalls += 1;
-            return "";
-          },
-          cleanupGateway: () => {
-            cleanupCalls += 1;
-          },
-          exitProcess: ((code: number) => {
-            exitCode = code;
-            throw new Error(`__exit(${code})`);
-          }) as (code: number) => never,
-        });
-      } catch {
-        // expected
-      }
-      expect(collectCalls).toBeGreaterThan(0);
-      expect(cleanupCalls).toBeGreaterThan(0);
-      // The non-Docker-unreachable branch does NOT print the Docker daemon
-      // recovery message.
-      expect(capturedPrintError.join("\n")).not.toContain("Docker daemon is not running");
-      // exitCode is left null here because the test's exitProcess throws
-      // and the surrounding handleFinal swallows other branches' exits via
-      // its caller — the assertion that matters is that diagnostics + cleanup
-      // happened.
-      void exitCode;
-    });
-  });
-
-  // ── Sanity: classifyGatewayStartFailure recognises both signatures ─────
-  // (Already covered in gateway-start-failure.test.ts; this is a pinning
-  // assertion for the two strings the legacy script generated, kept here so
-  // the retirement leaves no implicit reference to those byte sequences.)
-
-  describe("classifyGatewayStartFailure pinning for legacy-script signatures", () => {
-    it("classifies the macOS Colima signature as docker_unreachable", () => {
-      expect(classifyGatewayStartFailure(DARWIN_DOCKER_UNREACHABLE_OUTPUT)).toEqual({
-        kind: "docker_unreachable",
-      });
-    });
-
-    it("classifies the Linux dockerd signature as docker_unreachable", () => {
-      expect(classifyGatewayStartFailure(LINUX_DOCKER_UNREACHABLE_OUTPUT)).toEqual({
-        kind: "docker_unreachable",
-      });
-    });
-  });
 });

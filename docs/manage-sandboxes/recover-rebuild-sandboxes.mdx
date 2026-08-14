@@ -209,7 +209,7 @@ If the host gateway RPC returns an error while these sandbox-scoped commands run
 The OpenShell CLI has no command that starts a gateway, and `openshell status` only reports the gateway state.
 If NemoClaw starts the gateway on your host, run `$$nemoclaw onboard` again to repair the host gateway itself.
 If a deployment outside NemoClaw owns the gateway process, start the gateway with that deployment, then run `openshell gateway select <gateway>`.
-NemoClaw names the applicable command when a sandbox-scoped command reports that the host gateway is down.
+NemoClaw prints the applicable recovery guidance when a sandbox-scoped command reports that the host gateway is down.
 Other workflows, including onboarding, rebuild, and `doctor --fix`, can explicitly recover the named host gateway when their operation requires it.
 `$$nemoclaw <name> gateway restart` instead restarts only the supported agent gateway inside the named sandbox.
 </AgentOnly>

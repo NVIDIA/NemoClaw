@@ -491,7 +491,7 @@ export function printGatewayLifecycleHint(
     gatewayNamePattern(targetGatewayName).test(cleanOutput)
   ) {
     writer(
-      "  The selected NemoClaw gateway exists in metadata, but its API is refusing connections after restart.",
+      "  The target OpenShell gateway exists in metadata, but its API is refusing connections after restart.",
     );
     writer("  This usually means the gateway runtime did not come back cleanly after the restart.");
     writer(

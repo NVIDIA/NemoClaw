@@ -27,7 +27,8 @@ export function resolveGatewayLauncher(plan?: {
  * selects the branch. `nemoclaw` means NemoClaw starts the gateway process.
  * `openshell` means the deployment that created the gateway process still owns
  * starting it. Callers that know which gateway failed pass its name so the
- * printed selection command is copyable.
+ * printed selection command is copyable. Other callers print a template that
+ * marks the required gateway argument.
  */
 export function gatewayStartGuidance(
   gatewayName?: string,
@@ -39,7 +40,7 @@ export function gatewayStartGuidance(
   const subject = gatewayName ? `the '${gatewayName}' gateway` : "the OpenShell gateway";
   const select = gatewayName
     ? `openshell gateway select ${gatewayName}`
-    : "openshell gateway select";
+    : "openshell gateway select <gateway>";
   return (
     `${CLI_DISPLAY_NAME} does not start ${subject} on this host. ` +
     `Start it with the deployment that owns the gateway process, then run \`${select}\`.`

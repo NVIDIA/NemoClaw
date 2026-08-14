@@ -20,6 +20,12 @@ describe("gatewayStartGuidance", () => {
     expect(guidance).toContain("openshell gateway select nemoclaw-8091");
   });
 
+  it("marks the required gateway argument when the caller does not know its name", () => {
+    expect(gatewayStartGuidance(undefined, "openshell")).toContain(
+      "openshell gateway select <gateway>",
+    );
+  });
+
   it("never names a gateway lifecycle command the OpenShell CLI does not have", () => {
     for (const launcher of ["nemoclaw", "openshell"] as const) {
       expect(gatewayStartGuidance("nemoclaw", launcher)).not.toContain("openshell gateway start");
