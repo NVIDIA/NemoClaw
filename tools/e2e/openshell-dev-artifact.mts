@@ -295,6 +295,40 @@ function snapshotIdentity(snapshot: ReleaseSnapshot): string {
   });
 }
 
+async function readBoundedAssetBody(
+  response: Response,
+  asset: ReleaseAsset,
+): Promise<Uint8Array> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error(`OpenShell release asset ${asset.name} returned no response body`);
+  const chunks: Uint8Array[] = [];
+  let receivedSize = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      receivedSize += value.byteLength;
+      if (receivedSize > asset.size) {
+        await reader.cancel();
+        throw new Error(
+          `OpenShell release asset ${asset.name} exceeds its declared ${asset.size}-byte size`,
+        );
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(receivedSize);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 async function downloadAsset(fetchFn: Fetch, asset: ReleaseAsset): Promise<Uint8Array> {
   let response: Response;
   try {
@@ -331,7 +365,7 @@ async function downloadAsset(fetchFn: Fetch, asset: ReleaseAsset): Promise<Uint8
   }
   let bytes: Uint8Array;
   try {
-    bytes = new Uint8Array(await response.arrayBuffer());
+    bytes = await readBoundedAssetBody(response, asset);
   } catch (error) {
     throw infrastructureError(error, `asset:${asset.name}:id:${asset.id}`, asset.apiUrl);
   }
@@ -595,11 +629,7 @@ export function prepareOpenShellDevBinaries(
           `Unsafe OpenShell dev archive ${archiveName}: ${expectedMember} must be a regular file`,
         );
       }
-      const numericFields = verbose
-        .split(/\s+/u)
-        .filter((field) => /^\d+$/u.test(field))
-        .map(Number);
-      const declaredSize = Math.max(...numericFields);
+      const declaredSize = Number(verbose.split(/\s+/u)[2]);
       if (!Number.isSafeInteger(declaredSize) || declaredSize <= 0) {
         throw new Error(
           `Unsafe OpenShell dev archive ${archiveName}: ${expectedMember} has no valid declared size`,
@@ -615,6 +645,11 @@ export function prepareOpenShellDevBinaries(
       const binaryStat = fs.lstatSync(binaryPath);
       if (!binaryStat.isFile() || binaryStat.isSymbolicLink()) {
         throw new Error(`Extracted OpenShell dev binary ${expectedMember} must be a regular file`);
+      }
+      if (binaryStat.size !== declaredSize) {
+        throw new Error(
+          `Extracted OpenShell dev binary ${expectedMember} size does not match its archive header`,
+        );
       }
       fs.chmodSync(binaryPath, 0o755);
     }

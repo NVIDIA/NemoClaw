@@ -398,7 +398,16 @@ function validateConsumer(
     errors.push(`${jobName} must prepare before restoring the CLI artifact`);
   }
   const reviewedStepsBeforeRestore =
-    jobName === "live" ? ["Record immutable Deep Agents Code base evidence"] : [];
+    jobName === "live"
+      ? ["Record immutable Deep Agents Code base evidence"]
+      : jobName === "mcp-bridge-dev"
+        ? [
+            "Restore immutable OpenShell dev artifact",
+            "Verify immutable OpenShell dev artifact",
+            "Revoke Docker auth before OpenShell development tooling",
+            "Install immutable OpenShell dev artifact",
+          ]
+        : [];
   const stepsBeforeRestore = jobSteps
     .slice(prepareIndex + 1, restoreIndex)
     .map((step) => step.name);

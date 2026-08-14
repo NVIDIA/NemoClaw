@@ -97,6 +97,22 @@ describe("OpenShell dev artifact resolver", () => {
     }
   });
 
+  it("stops reading an asset when its body exceeds the declared size (#9051)", async () => {
+    const directory = temporaryDirectory();
+    const oversizedAsset = OPENSHELL_DEV_ASSET_NAMES[0];
+    try {
+      await expect(
+        resolveOpenShellDevArtifact(directory, fixtureFetch({ oversizedAsset })),
+      ).rejects.toMatchObject({
+        identifier: `asset:${oversizedAsset}:id:1000`,
+        sourceUrl: `${API_ROOT}/releases/assets/1000`,
+      });
+      expect(fs.existsSync(path.join(directory, "assets"))).toBe(false);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects a dev release that changes during resolution (#9051)", async () => {
     const directory = temporaryDirectory();
     try {
@@ -104,6 +120,23 @@ describe("OpenShell dev artifact resolver", () => {
         resolveOpenShellDevArtifact(directory, fixtureFetch({ driftAfterDownload: true })),
       ).rejects.toMatchObject({
         identifier: `release:9051:tag:dev:source:${SOURCE_COMMIT}`,
+        sourceUrl: RELEASE_URL,
+      });
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects a release target that differs from the dev tag commit (#9051)", async () => {
+    const directory = temporaryDirectory();
+    try {
+      await expect(
+        resolveOpenShellDevArtifact(
+          directory,
+          fixtureFetch({ releaseTargetCommit: "c".repeat(40) }),
+        ),
+      ).rejects.toMatchObject({
+        identifier: "release:9051:tag:dev",
         sourceUrl: RELEASE_URL,
       });
     } finally {
@@ -219,6 +252,30 @@ describe("OpenShell dev artifact resolver", () => {
         ),
       ).toThrow(/exceeds the .* binary limit/);
       expect(extractionAttempts).toEqual([]);
+      expect(fs.existsSync(binaryDirectory)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+      fs.rmSync(binaryDirectory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects an extracted binary whose size differs from its archive header (#9051)", async () => {
+    const directory = temporaryDirectory();
+    const binaryDirectory = `${directory}-binaries`;
+    try {
+      const resolution = await resolveOpenShellDevArtifact(directory, fixtureFetch());
+      const manifestSha256 = resolution.manifestSha256;
+      requireFixture(manifestSha256, "fixture resolution omitted manifest digest");
+
+      expect(() =>
+        prepareOpenShellDevBinaries(
+          directory,
+          binaryDirectory,
+          SOURCE_COMMIT,
+          manifestSha256,
+          fixtureTarRunnerWithSize(8, undefined, 7),
+        ),
+      ).toThrow(/size does not match its archive header/);
       expect(fs.existsSync(binaryDirectory)).toBe(false);
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });

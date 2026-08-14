@@ -268,6 +268,20 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     testTimeout(15_000),
   );
 
+  it("rejects an unpinned final cleanup action in the OpenShell dev job (#9051)", () => {
+    expect(validateE2eWorkflowBoundary()).toEqual([]);
+
+    const errors = validateMutation((workflow) => {
+      const cleanup = namedStep(workflow.jobs["mcp-bridge-dev"], CLEANUP_STEP_NAME);
+      expect(cleanup).toBeDefined();
+      cleanup!.uses = "NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@main";
+    });
+
+    expect(errors).toContain(
+      "mcp-bridge-dev Docker Hub cleanup step must use the pinned cleanup action",
+    );
+  });
+
   it("rejects missing auth and cleanup coverage for every classified image job", () => {
     const workflow = loadWorkflow();
     const requiredJobs = imageJobNames(workflow);
@@ -409,6 +423,12 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     });
 
     for (const jobName of requiredJobs) {
+      if (jobName === "mcp-bridge-dev") {
+        expect(errors).toContain(
+          "mcp-bridge-dev Docker Hub cleanup step must contain exactly name, if, and uses",
+        );
+        continue;
+      }
       expect(errors).toContain(
         `${jobName} Docker Hub cleanup step must contain exactly name, if, shell, and run`,
       );

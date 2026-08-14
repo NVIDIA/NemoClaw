@@ -1836,17 +1836,22 @@ jobs:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
+      - name: Checkout trusted OpenShell dev artifact tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
+          path: .trusted-openshell-dev-artifact
+          persist-credentials: false
+          sparse-checkout: |
+            tools/e2e/openshell-dev-artifact.mts
+
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Restore immutable OpenShell dev artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -1862,10 +1867,36 @@ jobs:
           OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT: ${{ needs.openshell-dev-artifact.outputs.source_commit }}
         run: >-
           node --experimental-strip-types --no-warnings
-          tools/e2e/openshell-dev-artifact.mts verify
+          "${{ github.workspace }}/.trusted-openshell-dev-artifact/tools/e2e/openshell-dev-artifact.mts" verify
           "$OPENSHELL_DEV_ARTIFACT_DIR"
           "$OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT"
           "$OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256"
+
+      - name: Revoke Docker auth before OpenShell development tooling
+        uses: NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3
+
+      - name: Install immutable OpenShell dev artifact
+        env:
+          OPENSHELL_DEV_ARTIFACT_DIR: ${{ runner.temp }}/openshell-dev-artifact
+          OPENSHELL_DEV_BINARY_DIR: ${{ runner.temp }}/openshell-dev-binaries
+          OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256: ${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}
+          OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT: ${{ needs.openshell-dev-artifact.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types --no-warnings \
+            "${{ github.workspace }}/.trusted-openshell-dev-artifact/tools/e2e/openshell-dev-artifact.mts" prepare \
+            "$OPENSHELL_DEV_ARTIFACT_DIR" \
+            "$OPENSHELL_DEV_BINARY_DIR" \
+            "$OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT" \
+            "$OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256"
+          sudo install -m 755 "$OPENSHELL_DEV_BINARY_DIR/openshell" /usr/local/bin/openshell
+          sudo install -m 755 "$OPENSHELL_DEV_BINARY_DIR/openshell-gateway" /usr/local/bin/openshell-gateway
+          sudo install -m 755 "$OPENSHELL_DEV_BINARY_DIR/openshell-sandbox" /usr/local/bin/openshell-sandbox
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install and verify cloudflared prerequisite
         # Update posture: keep this dev compatibility lane on the same reviewed
@@ -1891,28 +1922,6 @@ jobs:
 
       - name: Generate MCP test TLS
         run: bash test/e2e/setup-mcp-test-tls.sh
-
-      - name: Revoke Docker auth before OpenShell development tooling
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
-      - name: Install immutable OpenShell dev artifact
-        env:
-          OPENSHELL_DEV_ARTIFACT_DIR: ${{ runner.temp }}/openshell-dev-artifact
-          OPENSHELL_DEV_BINARY_DIR: ${{ runner.temp }}/openshell-dev-binaries
-          OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256: ${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}
-          OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT: ${{ needs.openshell-dev-artifact.outputs.source_commit }}
-        run: |
-          set -euo pipefail
-          node --experimental-strip-types --no-warnings \
-            tools/e2e/openshell-dev-artifact.mts prepare \
-            "$OPENSHELL_DEV_ARTIFACT_DIR" \
-            "$OPENSHELL_DEV_BINARY_DIR" \
-            "$OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT" \
-            "$OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256"
-          sudo install -m 755 "$OPENSHELL_DEV_BINARY_DIR/openshell" /usr/local/bin/openshell
-          sudo install -m 755 "$OPENSHELL_DEV_BINARY_DIR/openshell-gateway" /usr/local/bin/openshell-gateway
-          sudo install -m 755 "$OPENSHELL_DEV_BINARY_DIR/openshell-sandbox" /usr/local/bin/openshell-sandbox
 
       - id: mcp_runtime_compatibility
         name: Classify OpenShell credential-boundary compatibility
@@ -1954,8 +1963,7 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
+        uses: NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3
 
 
   # Manual PR qualification also requires the exact candidate activation contract.

@@ -18,6 +18,8 @@ type FixtureOptions = {
   missingAsset?: string;
   driftAfterDownload?: boolean;
   corruptAsset?: string;
+  oversizedAsset?: string;
+  releaseTargetCommit?: string;
 };
 
 export function fixtureFetch(options: FixtureOptions = {}): typeof fetch {
@@ -46,7 +48,7 @@ export function fixtureFetch(options: FixtureOptions = {}): typeof fetch {
       return Response.json({
         id: 9051,
         tag_name: "dev",
-        target_commitish: SOURCE_COMMIT,
+        target_commitish: options.releaseTargetCommit ?? SOURCE_COMMIT,
         url: `${API_ROOT}/releases/9051`,
         html_url: "https://github.com/NVIDIA/OpenShell/releases/tag/dev",
         updated_at:
@@ -90,7 +92,8 @@ export function fixtureFetch(options: FixtureOptions = {}): typeof fetch {
       if (!name) throw new Error(`unexpected fixture asset id ${downloadMatch[1]}`);
       const expected = contents.get(name);
       if (!expected) throw new Error(`missing fixture bytes for ${name}`);
-      const bytes = name === options.corruptAsset ? Buffer.from(expected).fill(120) : expected;
+      let bytes = name === options.corruptAsset ? Buffer.from(expected).fill(120) : expected;
+      if (name === options.oversizedAsset) bytes = Buffer.concat([bytes, Buffer.from("x")]);
       return new Response(bytes, { status: 200 });
     }
     return new Response("not found", { status: 404 });
@@ -108,6 +111,7 @@ export function fixtureTarRunner(args: string[]) {
 export function fixtureTarRunnerWithSize(
   declaredSize: number,
   onExtract: (args: string[]) => void = () => {},
+  extractedSize = declaredSize,
 ) {
   return (args: string[]) => {
     const members = new Map([
@@ -129,7 +133,7 @@ export function fixtureTarRunnerWithSize(
     if (args[0] === "-xzf") {
       onExtract(args);
       const outputDirectory = args[args.indexOf("-C") + 1];
-      fs.writeFileSync(path.join(outputDirectory, member), member);
+      fs.writeFileSync(path.join(outputDirectory, member), Buffer.alloc(extractedSize, 120));
       return { status: 0, stdout: "", stderr: "" };
     }
     return { status: 1, stdout: "", stderr: "unexpected tar operation" };

@@ -406,6 +406,12 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}" &&
         step.with?.path === ".trusted-openshell-dev-artifact";
+      const trustedOpenShellDevConsumerCheckout =
+        jobName === "mcp-bridge-dev" &&
+        step.name === "Checkout trusted OpenShell dev artifact tooling" &&
+        step.with?.repository === "${{ github.repository }}" &&
+        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}" &&
+        step.with?.path === ".trusted-openshell-dev-artifact";
       const trustedCheckout =
         trustedHermesFixtureCheckout ||
         trustedReportHelperCheckout ||
@@ -417,7 +423,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         trustedLlamaCppPlanCheckout ||
         trustedLlamaCppQualificationCheckout ||
         trustedJetsonControllerCheckout ||
-        trustedOpenShellDevArtifactCheckout;
+        trustedOpenShellDevArtifactCheckout ||
+        trustedOpenShellDevConsumerCheckout;
       if (
         step.uses?.startsWith("actions/checkout@") &&
         step.with?.ref !== "${{ inputs.checkout_sha || github.sha }}" &&

@@ -387,6 +387,128 @@ describe("MCP workflow artifact boundary", () => {
     }
   });
 
+  it.each([
+    {
+      name: "candidate revision",
+      mutate: (job: { steps: Array<Record<string, unknown>> }) => {
+        const checkout = job.steps.find(
+          (step) => step.name === "Checkout trusted OpenShell dev artifact tooling",
+        );
+        requireFixture(checkout?.with, "trusted OpenShell dev tooling checkout is missing");
+        const withValues = checkout.with as Record<string, unknown>;
+        withValues.ref = "${{ inputs.checkout_sha || github.sha }}";
+      },
+      expected: "mcp-bridge-dev must check out only the trusted OpenShell dev artifact tooling",
+    },
+    {
+      name: "candidate verifier invocation",
+      mutate: (job: { steps: Array<Record<string, unknown>> }) => {
+        const verify = job.steps.find(
+          (step) => step.name === "Verify immutable OpenShell dev artifact",
+        );
+        requireFixture(
+          typeof verify?.run === "string",
+          "trusted OpenShell dev artifact verification is missing",
+        );
+        verify.run = verify.run.replace(
+          "${{ github.workspace }}/.trusted-openshell-dev-artifact/",
+          "${{ github.workspace }}/.candidate-runtime/",
+        );
+      },
+      expected: "mcp-bridge-dev must verify the immutable OpenShell artifact before installation",
+    },
+    {
+      name: "candidate preparer invocation",
+      mutate: (job: { steps: Array<Record<string, unknown>> }) => {
+        const install = job.steps.find(
+          (step) => step.name === "Install immutable OpenShell dev artifact",
+        );
+        requireFixture(
+          typeof install?.run === "string",
+          "trusted OpenShell dev artifact preparation is missing",
+        );
+        install.run = install.run.replace(
+          "${{ github.workspace }}/.trusted-openshell-dev-artifact/",
+          "${{ github.workspace }}/.candidate-runtime/",
+        );
+      },
+      expected: "mcp-bridge-dev must install only the verified same-run binaries",
+    },
+  ])("rejects a $name for OpenShell dev artifact consumption (#9051)", ({ expected, mutate }) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+      };
+      mutate(workflow.jobs["mcp-bridge-dev"]);
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(expected);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it.each(["Restore exact-commit CLI artifact", "Generate MCP test TLS"])(
+    "rejects %s before trusted OpenShell installation (#9051)",
+    (candidateStepName) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+      const workflowPath = path.join(directory, "e2e.yaml");
+      try {
+        const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+          jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+        };
+        const steps = workflow.jobs["mcp-bridge-dev"].steps;
+        const candidateStepIndex = steps.findIndex((step) => step.name === candidateStepName);
+        requireFixture(candidateStepIndex >= 0, `${candidateStepName} fixture is missing`);
+        const [candidateStep] = steps.splice(candidateStepIndex, 1);
+        const installIndex = steps.findIndex(
+          (step) => step.name === "Install immutable OpenShell dev artifact",
+        );
+        requireFixture(candidateStep, `${candidateStepName} fixture is missing`);
+        requireFixture(installIndex >= 0, "trusted OpenShell installation fixture is missing");
+        steps.splice(installIndex, 0, candidateStep);
+        fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+        expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
+          "mcp-bridge-dev must verify and install OpenShell before candidate code runs",
+        );
+      } finally {
+        fs.rmSync(directory, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.each([
+    {
+      stepName: "Revoke Docker auth before OpenShell development tooling",
+      expected: "mcp-bridge-dev must revoke Docker auth before OpenShell development tooling",
+    },
+    {
+      stepName: "Clean up Docker auth",
+      expected: "mcp-bridge-dev must use the canonical unconditional Docker auth cleanup",
+    },
+  ])("rejects an unpinned cleanup action in $stepName (#9051)", ({ expected, stepName }) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+      };
+      const step = workflow.jobs["mcp-bridge-dev"].steps.find(
+        (candidate) => candidate.name === stepName,
+      );
+      requireFixture(step, `${stepName} fixture is missing`);
+      step.uses = "NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@main";
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(expected);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects any additional artifact upload outside the scanned directory", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");

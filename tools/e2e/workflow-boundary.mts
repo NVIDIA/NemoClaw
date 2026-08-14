@@ -180,6 +180,8 @@ const NO_IMAGE_E2E_JOBS = new Set(["staging-brev-launchable", SHARED_E2E_JOB_ID]
 const DOCKER_HUB_AUTH_STEP = "Authenticate to Docker Hub";
 const DOCKER_HUB_CLEANUP_STEP = "Clean up Docker auth";
 const DOCKER_HUB_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
+const DOCKER_HUB_CLEANUP_ACTION =
+  "NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3";
 const DOCKER_HUB_AUTH_PROVENANCE = E2E_ACTION_PROVENANCE.dockerAuth;
 const DOCKER_HUB_CLEANUP_PROVENANCE = E2E_ACTION_PROVENANCE.dockerCleanup;
 const DOCKER_HUB_AUTH_USES = DOCKER_HUB_AUTH_PROVENANCE.reference;
@@ -1364,6 +1366,27 @@ function requireCanonicalDockerHubCleanupRun(
 ): void {
   if (!cleanupStep) return;
 
+  if (jobName === "mcp-bridge-dev") {
+    const cleanupKeys = Object.keys(cleanupStep).sort();
+    const expectedKeys = ["if", "name", "uses"];
+    if (
+      cleanupKeys.length !== expectedKeys.length ||
+      cleanupKeys.some((key, index) => key !== expectedKeys[index])
+    ) {
+      errors.push(`${jobName} Docker Hub cleanup step must contain exactly name, if, and uses`);
+    }
+    if (cleanupStep.name !== DOCKER_HUB_CLEANUP_STEP) {
+      errors.push(`${jobName} Docker Hub cleanup step must use the canonical name`);
+    }
+    if (cleanupStep.if !== "always()") {
+      errors.push(`${jobName} Docker Hub cleanup step must always run`);
+    }
+    if (cleanupStep.uses !== DOCKER_HUB_CLEANUP_ACTION) {
+      errors.push(`${jobName} Docker Hub cleanup step must use the pinned cleanup action`);
+    }
+    return;
+  }
+
   const cleanupKeys = Object.keys(cleanupStep).sort();
   if (
     cleanupKeys.length !== DOCKER_HUB_CLEANUP_KEYS.length ||
@@ -1434,15 +1457,19 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
     }
     requireCanonicalDockerHubCleanupRun(errors, jobName, cleanup);
 
-    const checkoutIndex = workflowSteps.findIndex((step) => {
+    const checkoutIndexes = workflowSteps.flatMap((step, index) => {
       if (jobName === "managed-image-protected-runtime") {
-        return step.name === "Checkout exact protected runtime candidate source";
+        return step.name === "Checkout exact protected runtime candidate source" ? [index] : [];
       }
       if (jobName === "llama-cpp-dgx-spark-qualification") {
-        return step.name === "Checkout exact llama.cpp qualification candidate";
+        return step.name === "Checkout exact llama.cpp qualification candidate" ? [index] : [];
       }
-      return stringValue(step.uses).startsWith("actions/checkout@");
+      return stringValue(step.uses).startsWith("actions/checkout@") ? [index] : [];
     });
+    const checkoutIndex =
+      jobName === "mcp-bridge-dev"
+        ? (checkoutIndexes.at(-1) ?? -1)
+        : (checkoutIndexes[0] ?? -1);
     const protectedCacheDownloadIndex =
       jobName === "managed-image-protected-runtime"
         ? workflowSteps.findIndex(
