@@ -12,11 +12,7 @@ import {
   loadResumeCheckpoint,
   resolveCheckpointForResume,
 } from "./onboard-checkpoint-migrate";
-import {
-  CHECKPOINT_SCHEMA_VERSION,
-  type CheckpointLoadResult,
-  type OnboardCheckpoint,
-} from "./onboard-checkpoint-types";
+import { CHECKPOINT_SCHEMA_VERSION, type OnboardCheckpoint } from "./onboard-checkpoint-types";
 import { createSession, normalizeSession, type Session } from "./onboard-session";
 
 function rawJson(value: unknown): Record<string, unknown> {
@@ -80,8 +76,10 @@ describe("deriveCheckpointFromSession", () => {
 describe("resolveCheckpointForResume", () => {
   const validCheckpoint: OnboardCheckpoint = {
     schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+    profile: { kind: "selected", value: "default" },
+    runtimeAuthority: { kind: "unset" },
     sessionId: "sess-1",
-    machineState: "sandbox",
+    machineState: "init",
     updatedAt: "2026-01-01T00:00:00.000Z",
     sandboxIdentity: decisionSelected({ name: "my-sandbox", agent: "openclaw" }),
     webSearch: decisionUnset(),
@@ -110,19 +108,15 @@ describe("resolveCheckpointForResume", () => {
     });
   });
 
-  it("migrates a legacy session that has no embedded checkpoint", () => {
+  it("refuses a legacy session that has no embedded checkpoint", () => {
     const raw = rawJson(completedSession());
     const result = resolveCheckpointForResume(raw);
-    expect(result.status).toBe("migrated");
-    const migrated = result as Extract<CheckpointLoadResult, { status: "migrated" }>;
-    expect(migrated.checkpoint.sandboxIdentity).toEqual(
-      decisionSelected({ name: "my-sandbox", agent: "openclaw" }),
-    );
+    expect(result).toEqual({ status: "legacy" });
   });
 
-  it("reports a corrupt embedded checkpoint rather than migrating over it", () => {
+  it("refuses an active legacy checkpoint without rewriting it", () => {
     const raw = { ...rawJson(completedSession()), checkpoint: { schemaVersion: 1 } };
-    expect(resolveCheckpointForResume(raw)).toEqual({ status: "corrupt" });
+    expect(resolveCheckpointForResume(raw)).toEqual({ status: "legacy", foundVersion: 1 });
   });
 
   it("rejects a checkpoint copied from a different session's file instead of trusting it", () => {

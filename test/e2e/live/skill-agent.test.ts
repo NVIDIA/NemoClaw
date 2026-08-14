@@ -102,7 +102,6 @@ async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
-// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "skill-agent: injected sandbox skill is read by a real OpenClaw agent turn",
   {

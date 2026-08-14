@@ -12,8 +12,8 @@ const REPO_ROOT = path.resolve(__dirname, "..");
 const FIXTURES_ROOT = path.join(REPO_ROOT, "test", "e2e", "fixtures");
 const REVIEW_PATH = path.join(
   REPO_ROOT,
-  "docs",
-  "security",
+  "internal",
+  "security-reviews",
   "e2e-weather-plugin-fixture-dependency-review.md",
 );
 

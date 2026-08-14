@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { RuntimeCaseReference } from "./runtime-matrix.ts";
-
 export type PhaseName = "environment" | "onboarding" | "state-validation" | "lifecycle" | "runtime";
 
 // Synthetic phase appended by the target runner when a target
@@ -198,12 +196,6 @@ export interface TargetDefinition {
   description?: string;
   manifestPath?: string;
   environment?: TargetEnvironment;
-  /**
-   * Optional reference into the registry-wide cross-runtime catalog. Canonical
-   * targets do not declare this until a live consumer and support policy land
-   * separately.
-   */
-  runtimeCase?: RuntimeCaseReference;
   assertionGroups: AssertionGroup[];
   expectedStateId?: string;
   suiteIds?: string[];

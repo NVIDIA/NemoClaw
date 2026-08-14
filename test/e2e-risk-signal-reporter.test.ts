@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TestModule, TestSpecification, Vitest } from "vitest/node";
 import {
   classifyLiveTestOutcome,
@@ -31,6 +31,7 @@ vi.mock("node:child_process", () => ({
 
 const EXPECTED_SHA = "a".repeat(40);
 const CORRELATION_ID = "12345678-1234-4123-8123-123456789abc";
+const ORIGINAL_PROCESS_EXIT_CODE = process.exitCode;
 
 function moduleWithStates(states: Array<"passed" | "failed" | "skipped" | "pending">): TestModule {
   return {
@@ -83,8 +84,14 @@ function environment(artifactDir: string): RiskSignalEnvironment {
 }
 
 describe("E2E risk signal reporter", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    process.exitCode = ORIGINAL_PROCESS_EXIT_CODE;
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
+    process.exitCode = ORIGINAL_PROCESS_EXIT_CODE;
   });
 
   it("stays disabled when no expected commit is configured", () => {
@@ -92,6 +99,16 @@ describe("E2E risk signal reporter", () => {
       configuredEnvironment({
         NEMOCLAW_E2E_CORRELATION_ID: "",
         NEMOCLAW_E2E_EXPECTED_SHA: "",
+      }),
+    ).toBeNull();
+  });
+
+  it("stays disabled when the workflow preserves candidate identity without a risk signal", () => {
+    expect(
+      configuredEnvironment({
+        NEMOCLAW_E2E_CORRELATION_ID: "",
+        NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA,
+        NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA: "",
       }),
     ).toBeNull();
   });
@@ -297,6 +314,43 @@ describe("E2E risk signal reporter", () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("fails a successful live selection when every selected test skips (#9022)", () => {
+    vi.stubEnv("NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST", "1");
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    process.exitCode = undefined;
+    const reporter = new E2eRiskSignalReporter();
+
+    reporter.onTestRunEnd([moduleWithStates(["skipped"])], [], "passed");
+
+    expect(process.exitCode).toBe(1);
+    expect(stderr).toHaveBeenCalledWith(
+      "::error::Live E2E selection ran no tests (1 skipped, 0 pending)\n",
+    );
+  });
+
+  it("keeps a successful live selection successful when a test passes (#9022)", () => {
+    vi.stubEnv("NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST", "1");
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    process.exitCode = undefined;
+    const reporter = new E2eRiskSignalReporter();
+
+    reporter.onTestRunEnd([moduleWithStates(["passed", "skipped"])], [], "passed");
+
+    expect(process.exitCode).toBeUndefined();
+    expect(stderr).not.toHaveBeenCalled();
+  });
+
+  it("preserves explicit unsupported registry skips outside catalogue execution (#9022)", () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    process.exitCode = undefined;
+    const reporter = new E2eRiskSignalReporter();
+
+    reporter.onTestRunEnd([moduleWithStates(["skipped"])], [], "passed");
+
+    expect(process.exitCode).toBeUndefined();
+    expect(stderr).not.toHaveBeenCalled();
   });
 
   it("refuses a symlinked prior signal without modifying its target", () => {

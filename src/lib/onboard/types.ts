@@ -105,6 +105,8 @@ export type OnboardOptions = {
   targetGatewayPort?: number | null;
   /** Internal rebuild handoff: the outer destructive lifecycle owns the onboard lock. */
   onboardLockAlreadyHeld?: boolean;
+  /** Internal command handoff: propagate an exit request after onboarding restores its scopes. */
+  deferProcessExit?: boolean;
   /** Internal rebuild handoff: target fingerprint of the journal opened before deletion. */
   recreateJournalTargetIntentFingerprint?: string | null;
   /** Internal one-shot handoff for a prevalidated managed DCode replacement. */
@@ -151,6 +153,14 @@ export type OnboardOptions = {
   noGpu?: boolean;
   autoYes?: boolean;
   experimentalProfile?: import("./docker-driver-platform").ExperimentalOnboardProfile | null;
+  /** Read-only checkpoint identity captured before the onboarding lock. */
+  resumeIntentSnapshot?: import("./session-bootstrap").OnboardResumeIntentSnapshot | null;
+  /** Secret-free inference activation used by the locked portable environment scope. */
+  portableInferenceActivation?:
+    | import("./experimental/portable-inference-descriptor").PortableInferenceActivation
+    | null;
+  /** Internal portable host-preparation dependency for boundary verification. */
+  preparePortableHost?: typeof import("./experimental/portable-host-preparation").preparePortableExperimentalHost;
   /** Exact secret-free serving catalog identity selected by the generic profile UX. */
   servingProfileProvenance?: import("../inference/serving/types").ServingProfileProvenance | null;
 };

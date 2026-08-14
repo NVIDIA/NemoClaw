@@ -340,7 +340,11 @@ function validateConsumer(
   job: WorkflowRecord,
   jobSteps: WorkflowStep[],
 ): void {
-  if (job.needs !== CLI_ARTIFACT_PRODUCER_JOB) {
+  const expectedNeeds =
+    jobName === "mcp-bridge-dev"
+      ? [CLI_ARTIFACT_PRODUCER_JOB, "openshell-dev-artifact"]
+      : CLI_ARTIFACT_PRODUCER_JOB;
+  if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
     errors.push(`${jobName} must depend directly on the CLI artifact producer`);
   }
   const candidateCheckoutIndexes = jobSteps.flatMap((step, index) =>
@@ -393,8 +397,18 @@ function validateConsumer(
   if (!(prepareIndex >= 0 && prepareIndex < restoreIndex)) {
     errors.push(`${jobName} must prepare before restoring the CLI artifact`);
   }
-  if (prepareIndex >= 0 && restoreIndex !== prepareIndex + 1) {
-    errors.push(`${jobName} must restore the CLI artifact in the step after workspace preparation`);
+  const reviewedStepsBeforeRestore =
+    jobName === "live" ? ["Record immutable Deep Agents Code base evidence"] : [];
+  const stepsBeforeRestore = jobSteps
+    .slice(prepareIndex + 1, restoreIndex)
+    .map((step) => step.name);
+  if (
+    prepareIndex >= 0 &&
+    !isDeepStrictEqual(stepsBeforeRestore, reviewedStepsBeforeRestore)
+  ) {
+    errors.push(
+      `${jobName} must contain only reviewed steps between workspace preparation and CLI artifact restore`,
+    );
   }
 }
 

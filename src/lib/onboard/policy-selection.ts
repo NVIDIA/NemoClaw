@@ -3,8 +3,8 @@
 
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as policies from "../policy";
-import { PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
 import * as tiers from "../policy/tiers";
+import { PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
 import {
   filterSetupPolicyPresetNamesForAgent,
   filterSetupPolicyPresetsForAgent,
@@ -118,6 +118,8 @@ export type SetupPolicySelectionOptions = {
   webSearchSupported?: boolean | null;
   hermesToolGateways?: string[] | null;
   disabledChannels?: string[] | null;
+  /** Process-local exclusions imposed by a narrower runtime route authority. */
+  excludedPresets?: readonly string[];
 };
 
 export type SetupPolicySelectionDeps = {
@@ -360,7 +362,12 @@ async function setupPoliciesWithSelectionInner(
   sandboxName: string,
   options: SetupPolicySelectionOptions = {},
 ): Promise<string[]> {
-  const selectedPresets = Array.isArray(options.selectedPresets) ? options.selectedPresets : null;
+  const excludedPresets = new Set(options.excludedPresets ?? []);
+  const excludePresets = (names: readonly string[]) =>
+    names.filter((name) => !excludedPresets.has(name));
+  const selectedPresets = Array.isArray(options.selectedPresets)
+    ? excludePresets(options.selectedPresets)
+    : null;
   const onSelection = typeof options.onSelection === "function" ? options.onSelection : null;
   const webSearchConfig = options.webSearchConfig || null;
   const enabledChannels = Array.isArray(options.enabledChannels) ? options.enabledChannels : null;
@@ -380,7 +387,7 @@ async function setupPoliciesWithSelectionInner(
   const allPresets = filterSetupPolicyPresetsForAgent(
     deps.policies.listSetupPolicyPresets(sandboxName, supportOptions),
     agent,
-  );
+  ).filter((preset) => !excludedPresets.has(preset.name));
   const knownPresets = new Set(allPresets.map((preset) => preset.name));
   const customPresetNames = new Set(
     deps.policies.listCustomPresets(sandboxName).map((preset) => preset.name),
@@ -406,12 +413,14 @@ async function setupPoliciesWithSelectionInner(
     : rawCurrentAppliedPresets;
   const selectablePresets = [
     ...allPresets,
-    ...filterSetupPolicyPresetNamesForAgent(currentAppliedPresets, agent).map((name) => ({
-      name,
-    })),
+    ...filterSetupPolicyPresetNamesForAgent(excludePresets(currentAppliedPresets), agent).map(
+      (name) => ({
+        name,
+      }),
+    ),
   ];
   const applied = deps.policies.clampSetupPolicyPresetNames(
-    currentAppliedPresets,
+    excludePresets(currentAppliedPresets),
     selectablePresets,
     supportOptions,
     customPresetNames,
@@ -426,7 +435,7 @@ async function setupPoliciesWithSelectionInner(
   });
   const appliedForPreservation = pruneUnavailablePresets(applied);
   const filterSupportedPresetNames = (presetNames: string[]) =>
-    filterSetupPolicyPresetNamesForAgent(presetNames, agent).filter(
+    filterSetupPolicyPresetNamesForAgent(excludePresets(presetNames), agent).filter(
       (name) =>
         customPresetNames.has(name) ||
         deps.policies.setupPolicyPresetSupported(name, supportOptions),
@@ -462,7 +471,7 @@ async function setupPoliciesWithSelectionInner(
     // Pass the recorded tier so the pruner exempts that tier's egress defaults
     // (e.g. `brave` on Balanced) via provenance — a reconcile-triggered reuse
     // reapply must not narrow an applied tier default. (#6844)
-    chosen = pruneUnavailablePresets(chosen, { tierName: recordedTierName });
+    chosen = excludePresets(pruneUnavailablePresets(chosen, { tierName: recordedTierName }));
   }
 
   if (selectedPresets !== null) {
@@ -478,21 +487,23 @@ async function setupPoliciesWithSelectionInner(
   const tierName = recordedTierName ?? (await deps.selectPolicyTier());
   deps.setPolicyTier?.(sandboxName, tierName);
   const personalTier = tierName === PERSONAL_POLICY_TIER_NAME;
-  const suggestions = pruneUnavailablePresets(
-    computeSetupPresetSuggestions(deps, tierName, {
-      enabledChannels,
-      webSearchConfig,
-      customPresetNames,
-      customOwnsObservability,
-      provider,
-      agent,
-      observabilityEnabled,
-      knownPresetNames: allPresets.map((preset) => preset.name),
-      webSearchSupported: options.webSearchSupported,
-      hermesToolGateways,
-      env: deps.env,
-    }),
-    { preserveExplicitWebSearch: personalTier },
+  const suggestions = excludePresets(
+    pruneUnavailablePresets(
+      computeSetupPresetSuggestions(deps, tierName, {
+        enabledChannels,
+        webSearchConfig,
+        customPresetNames,
+        customOwnsObservability,
+        provider,
+        agent,
+        observabilityEnabled,
+        knownPresetNames: allPresets.map((preset) => preset.name),
+        webSearchSupported: options.webSearchSupported,
+        hermesToolGateways,
+        env: deps.env,
+      }),
+      { preserveExplicitWebSearch: personalTier },
+    ),
   );
   const suppressedNames = emitSuppressedAgentRequiredPresetsNote(tierName, agent, deps.note);
 
@@ -503,6 +514,17 @@ async function setupPoliciesWithSelectionInner(
 
     if (policyMode === "skip" || policyMode === "none" || policyMode === "no") {
       deps.note("  [non-interactive] Skipping policy presets.");
+      if (excludedPresets.size > 0) {
+        const retainedPresets = excludePresets(currentAppliedPresets);
+        if (onSelection) onSelection(retainedPresets);
+        requireSandboxReady(deps, sandboxName, "before");
+        deps.note(
+          `  [non-interactive] Removing excluded policy presets: ${[...excludedPresets].join(", ")}`,
+        );
+        deps.syncPresetSelection(sandboxName, currentAppliedPresets, retainedPresets);
+        requireSandboxReady(deps, sandboxName, "after");
+        return retainedPresets;
+      }
       return [];
     }
 
@@ -544,9 +566,11 @@ async function setupPoliciesWithSelectionInner(
       customPresetNames,
       customOwnsObservability,
     });
-    chosen = pruneUnavailablePresets(chosen, {
-      preserveExplicitWebSearch: isAuthoritative || personalTier,
-    });
+    chosen = excludePresets(
+      pruneUnavailablePresets(chosen, {
+        preserveExplicitWebSearch: isAuthoritative || personalTier,
+      }),
+    );
 
     const invalidPresets = chosen.filter((name) => !knownPresets.has(name));
     if (invalidPresets.length > 0) {
@@ -592,30 +616,35 @@ async function setupPoliciesWithSelectionInner(
     allPresets,
     initialSelected,
   );
-  const interactiveChoice = pruneUnavailablePresets(
-    mergeRequiredSetupPolicyPresets(
-      resolvedPresets.map((preset) => preset.name),
-      {
-        enabledChannels,
-        hermesToolGateways,
-        agent,
-        observabilityEnabled,
-        knownPresetNames: knownNames,
-        env: deps.env,
-        tierName,
-        webSearchConfig,
-        customPresetNames,
-        customOwnsObservability,
-      },
+  const interactiveChoice = excludePresets(
+    pruneUnavailablePresets(
+      mergeRequiredSetupPolicyPresets(
+        resolvedPresets.map((preset) => preset.name),
+        {
+          enabledChannels,
+          hermesToolGateways,
+          agent,
+          observabilityEnabled,
+          knownPresetNames: knownNames,
+          env: deps.env,
+          tierName,
+          webSearchConfig,
+          customPresetNames,
+          customOwnsObservability,
+        },
+      ),
+      { preserveExplicitWebSearch: true },
     ),
-    { preserveExplicitWebSearch: true },
   );
 
   if (onSelection) onSelection(interactiveChoice);
   requireSandboxReady(deps, sandboxName, "before");
 
   const accessByName: Record<string, string> = {};
-  for (const preset of resolvedPresets) accessByName[preset.name] = preset.access;
+  const interactiveChoiceNames = new Set(interactiveChoice);
+  for (const preset of resolvedPresets) {
+    if (interactiveChoiceNames.has(preset.name)) accessByName[preset.name] = preset.access;
+  }
   deps.syncPresetSelection(sandboxName, currentAppliedPresets, interactiveChoice, accessByName);
   requireSandboxReady(deps, sandboxName, "after");
   return interactiveChoice;

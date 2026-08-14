@@ -61,7 +61,9 @@ export interface DetachedForwardStartOptions {
   onProgress?: (info: { elapsedMs: number; listSnapshot: string }) => void;
   progressIntervalMs?: number;
   // Number of retryable startup attempts after the initial attempt. Honoured
-  // only by `runDetachedForwardStartWithRetries`. Defaults to 3.
+  // only by `runDetachedForwardStartWithRetries`. An explicit value applies
+  // to every retryable outcome. Ordinary failures default to 3 retries; exact
+  // sandbox readiness handoffs use their own longer default below.
   maxRetries?: number;
   // Loopback port-liveness probe. Defaults to `probeLocalPortListening` (a
   // synchronous Node TCP connect to 127.0.0.1:port). The retry wrapper uses it
@@ -191,6 +193,11 @@ function blockingSleepMs(ms: number): void {
 // exposes an atomic recovery operation.
 const DEAD_FORWARD_GRACE_MS = 2_000;
 const SANDBOX_READY_RETRY_SETTLE_MS = 5_000;
+// A newly created sandbox can remain between OpenShell's create-ready and
+// forward-ready states longer than the ordinary listener retry budget. Keep
+// this exact-diagnostic path bounded to one additional minute without
+// widening retries for authentication, ownership, or listener failures.
+const SANDBOX_READY_MAX_RETRIES = 12;
 
 /**
  * Build a `DetachedForwardSpawnRunner` that spawns the given argv as a
@@ -515,8 +522,10 @@ export function runDetachedForwardStartWithRetries(
   options: DetachedForwardStartOptions = {},
 ): DetachedForwardStartOutcome {
   const maxRetries = options.maxRetries ?? 3;
+  const maxSandboxReadyRetries = options.maxRetries ?? SANDBOX_READY_MAX_RETRIES;
   const sleepImpl = options.sleepMs ?? blockingSleepMs;
   let deadForwardRecoveryAvailable = true;
+  let sandboxReadyRetries = 0;
   const isPortListening = options.isPortListening ?? probeLocalPortListening;
   const runAttempt = (): DetachedForwardStartOutcome =>
     isPortListening(expect.port)
@@ -534,20 +543,26 @@ export function runDetachedForwardStartWithRetries(
       deadForwardRecoveryAvailable = false;
       beforeRetryCleanup();
     } else {
-      const isRetryableStandardFailure =
-        (attempt.reason !== "listener-ownership-conflict" &&
-          looksLikeForwardPortConflict(attempt.diagnostic)) ||
-        attempt.reason === "listener-start-failure";
-      if (!isRetryableStandardFailure || standardRetries >= maxRetries) break;
-      if (looksLikeForwardPortConflict(attempt.diagnostic)) {
-        beforeRetryCleanup();
-      }
-      if (looksLikeSandboxNotReadyForwardStart(attempt.diagnostic)) {
+      const isSandboxReadinessHandoff =
+        attempt.reason === "listener-start-failure" &&
+        looksLikeSandboxNotReadyForwardStart(attempt.diagnostic);
+      if (isSandboxReadinessHandoff) {
+        if (sandboxReadyRetries >= maxSandboxReadyRetries) break;
         // Keep the existing sandbox and port ownership intact while the
         // OpenShell gateway finishes the readiness handoff.
         sleepImpl(SANDBOX_READY_RETRY_SETTLE_MS);
+        sandboxReadyRetries++;
+      } else {
+        const isRetryableStandardFailure =
+          (attempt.reason !== "listener-ownership-conflict" &&
+            looksLikeForwardPortConflict(attempt.diagnostic)) ||
+          attempt.reason === "listener-start-failure";
+        if (!isRetryableStandardFailure || standardRetries >= maxRetries) break;
+        if (looksLikeForwardPortConflict(attempt.diagnostic)) {
+          beforeRetryCleanup();
+        }
+        standardRetries++;
       }
-      standardRetries++;
     }
     attempt = runAttempt();
   }

@@ -30,6 +30,8 @@ import {
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
 import {
   cleanupManagedLlamaCppRuntimeForSandbox,
+  HOST_LOCAL_VLLM_CONTAINER_NAME,
+  HOST_LOCAL_VLLM_MANAGED_LABEL,
   type ManagedLlamaCppCleanupTarget,
   resolveManagedLlamaCppCleanupTarget,
 } from "../../inference/local-model-profile/cleanup";
@@ -284,6 +286,14 @@ const HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES: readonly string[] = [
   "https-pin-runtime-adapter.log",
 ];
 
+const OLLAMA_AUTH_PROXY_STATE_ENTRIES: readonly string[] = [
+  "ollama-proxy-token",
+  "ollama-backend",
+  "ollama-proxy-port",
+  "ollama-auth-proxy.pid",
+  "ollama-auth-proxy.status",
+];
+
 // These entries can exist in the shared root without representing a running
 // default-port environment. Any other shared-root entry is treated
 // conservatively as default-port state when uninstalling a non-default port.
@@ -297,6 +307,7 @@ const SHARED_HOST_STATE_ENTRIES = new Set([
   `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
   MANAGED_VLLM_API_KEY_FILE,
   ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
+  ...OLLAMA_AUTH_PROXY_STATE_ENTRIES,
 ]);
 
 function isSharedHostStateEntry(entry: string): boolean {
@@ -320,6 +331,21 @@ function managedClusterBindingStateEntries(stateDir: string): readonly string[] 
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
+}
+
+function scopedStatePreservationEntries(
+  stateDir: string,
+  selectedIsDefault: boolean,
+): readonly string[] {
+  return [
+    ...(selectedIsDefault ? OLLAMA_AUTH_PROXY_STATE_ENTRIES : []),
+    ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
+    MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
+    ...managedClusterBindingStateEntries(stateDir),
+    DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
+    `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
+    MANAGED_VLLM_API_KEY_FILE,
+  ];
 }
 
 function dormantHostGlobalLifecycleState(sharedRoot: string): boolean {
@@ -776,14 +802,30 @@ function stopMatchingPids(pattern: string, runtime: UninstallRuntime, label: str
 // the default (11435) on malformed input — uninstall is best-effort.
 const DEFAULT_OLLAMA_PROXY_PORT = 11435;
 
-function resolveOllamaProxyPort(runtime: UninstallRuntime): number {
-  const raw = runtime.env.NEMOCLAW_OLLAMA_PROXY_PORT;
-  if (raw === undefined || raw === "") return DEFAULT_OLLAMA_PROXY_PORT;
+function parseOllamaProxyPort(raw: unknown): number | null {
+  if (raw === undefined || raw === "") return null;
   const trimmed = String(raw).trim();
-  if (!/^\d+$/.test(trimmed)) return DEFAULT_OLLAMA_PROXY_PORT;
+  if (!/^\d+$/.test(trimmed)) return null;
   const parsed = Number(trimmed);
-  if (parsed < 1024 || parsed > 65535) return DEFAULT_OLLAMA_PROXY_PORT;
+  if (parsed < 1024 || parsed > 65535) return null;
   return parsed;
+}
+
+function resolveOllamaProxyPort(paths: UninstallPaths, runtime: UninstallRuntime): number {
+  const persistedPortPath = path.join(paths.nemoclawStateDir, "ollama-proxy-port");
+  if (runtime.existsSync(persistedPortPath)) {
+    let opened: OpenRegularFile | null = null;
+    try {
+      opened = runtime.openRegularFile(persistedPortPath);
+      const persistedPort = parseOllamaProxyPort(opened.readBytes(32).toString("utf8").trim());
+      if (persistedPort !== null) return persistedPort;
+    } catch {
+      // Uninstall remains best-effort and falls back to the configured port.
+    } finally {
+      opened?.close();
+    }
+  }
+  return parseOllamaProxyPort(runtime.env.NEMOCLAW_OLLAMA_PROXY_PORT) ?? DEFAULT_OLLAMA_PROXY_PORT;
 }
 
 function isOllamaAuthProxyPid(pid: number, runtime: UninstallRuntime): boolean {
@@ -853,6 +895,11 @@ function stopOllamaAuthProxy(
   // never killed. See issue #2759.
   const stopped = new Set<number>();
 
+  if (!scanOrphans) {
+    runtime.log("Preserving the shared Ollama auth proxy for the remaining gateway ports");
+    return;
+  }
+
   // 1. Try the persisted PID file. The proxy stays bound across NemoClaw
   //    sessions; the PID file is the most reliable signal. The path mirrors
   //    `PROXY_PID_PATH` in `src/lib/onboard-ollama-proxy.ts` (`~/.nemoclaw`).
@@ -869,11 +916,6 @@ function stopOllamaAuthProxy(
     }
   }
 
-  if (!scanOrphans) {
-    if (stopped.size === 0) runtime.log("No selected-gateway Ollama auth proxy found");
-    return;
-  }
-
   // 2. Fall back to the configured proxy port for orphans whose PID file is
   //    gone (e.g. a previous uninstall already wiped state but the process
   //    survived). Filter via cmdline so we never kill unrelated listeners.
@@ -883,7 +925,7 @@ function stopOllamaAuthProxy(
     }
     return;
   }
-  const proxyPort = resolveOllamaProxyPort(runtime);
+  const proxyPort = resolveOllamaProxyPort(paths, runtime);
   const lsof = runtime.run("lsof", ["-ti", `:${proxyPort}`], { env: runtime.env });
   const pids = splitNonEmptyLines(lsof.stdout).map(Number).filter(Number.isFinite);
   for (const pid of pids) {
@@ -1555,6 +1597,9 @@ function removeHostLocalModelRuntimes(paths: UninstallPaths, runtime: UninstallR
     DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
   ].some((name) => runtime.existsSync(path.join(sharedRoot, name)));
   if (!hasLlamaState && (!hasManagedKey || hasDistributedReceipt)) {
+    if (!hasManagedKey && !hasDistributedReceipt && !removeOrphanedManagedHostLocalVllm(runtime)) {
+      return false;
+    }
     return true;
   }
   const result = runtime.runLocalModelRuntimeCleanup({
@@ -1564,6 +1609,34 @@ function removeHostLocalModelRuntimes(paths: UninstallPaths, runtime: UninstallR
   if (result.status === 0) return true;
   runtime.error(
     "Host-local model runtime cleanup did not complete. NemoClaw did not start the remaining uninstall steps. Resolve the reported ownership or Docker error and retry uninstall.",
+  );
+  return false;
+}
+
+function removeOrphanedManagedHostLocalVllm(runtime: UninstallRuntime): boolean {
+  if (!runtime.commandExists("docker")) return true;
+  const inspection = runtime.runDocker(
+    [
+      "container",
+      "inspect",
+      "--format",
+      `{{.Id}} {{index .Config.Labels ${JSON.stringify(HOST_LOCAL_VLLM_MANAGED_LABEL)}}}`,
+      HOST_LOCAL_VLLM_CONTAINER_NAME,
+    ],
+    { env: runtime.env, timeout: 10_000 },
+  );
+  if (inspection.status !== 0 || !inspection.stdout.trim()) return true;
+  const [containerId, managedLabel, ...extra] = inspection.stdout.trim().split(/\s+/);
+  if (!/^[0-9a-f]{64}$/u.test(containerId ?? "") || managedLabel !== "true" || extra.length > 0) {
+    return true;
+  }
+  const removal = runtime.runDocker(["rm", "-f", containerId], {
+    env: runtime.env,
+    timeout: 10_000,
+  });
+  if (removal.status === 0) return true;
+  runtime.error(
+    `Could not remove orphaned managed inference container '${HOST_LOCAL_VLLM_CONTAINER_NAME}'. NemoClaw did not start the remaining uninstall steps.`,
   );
   return false;
 }
@@ -1664,7 +1737,9 @@ function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string)
   });
   const ids = splitNonEmptyLines(result.stdout)
     .filter((line) => {
-      const name = line.trim().split(/\s+/).at(-1) ?? "";
+      const fields = dockerInventoryFields(line, 3);
+      const image = fields[1] ?? "";
+      const name = fields[2] ?? "";
       if (!gatewayName) {
         if (MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name)) {
           return false;
@@ -1673,12 +1748,11 @@ function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string)
         // `openshell-*` (cluster and sandbox) and `nemoclaw-*` (gateway compat
         // and managed inference), so that term only ever selected the separate
         // OpenClaw project's containers for `docker rm -f` (#8496).
-        // The whole `{{.ID}} {{.Image}} {{.Names}}` line is matched rather than
-        // the name alone. Probe containers that run with `--rm` and no
-        // `--name`, such as `hermesBaseImageSupportsMcp`, take a random Docker
-        // name. Their NemoClaw image reference is the only way to reclaim one
-        // that an interrupted run orphaned.
-        return /openshell-cluster|openshell|nemoclaw/i.test(line);
+        // Probe containers that run with `--rm` and no `--name`, such as
+        // `hermesBaseImageSupportsMcp`, take a random Docker name. Their
+        // NemoClaw image reference is the only way to reclaim one that an
+        // interrupted run orphaned.
+        return isOwnedDockerContainerName(name) || isOwnedDockerImageRepository(image);
       }
       return (
         name === `openshell-cluster-${gatewayName}` ||
@@ -1709,7 +1783,7 @@ function removeDockerImages(runtime: UninstallRuntime): void {
     // name, so the term only ever selected the separate OpenClaw project's
     // images — including any `ghcr.io/openclaw/*` pulled by an unrelated
     // workload — for `docker rmi -f` (#8496).
-    .filter((line) => /openshell|nemoclaw/i.test(line))
+    .filter((line) => isOwnedDockerImageRepository(dockerInventoryFields(line, 2)[1] ?? ""))
     .map((line) => line.split(/\s+/)[0]);
   if (ids.length === 0) {
     runtime.log(`No ${runtimeBranding(runtime).display}/OpenShell Docker images found`);
@@ -1720,6 +1794,31 @@ function removeDockerImages(runtime: UninstallRuntime): void {
       runtime.log(`Removed Docker image ${id}`);
     else runtime.warn(`Failed to remove Docker image ${id}`);
   }
+}
+
+function dockerInventoryFields(line: string, expectedFields: number): string[] {
+  return line.trim().split(/\s+/, expectedFields);
+}
+
+function dockerImageRepository(imageRef: string): string {
+  const withoutDigest = imageRef.split("@", 1)[0] ?? "";
+  const tagSeparator = withoutDigest.lastIndexOf(":");
+  if (tagSeparator === -1) return withoutDigest;
+  const slashSeparator = withoutDigest.lastIndexOf("/");
+  return tagSeparator > slashSeparator ? withoutDigest.slice(0, tagSeparator) : withoutDigest;
+}
+
+function isOwnedDockerContainerName(name: string): boolean {
+  return /^openshell-(?:cluster-)?/iu.test(name) || /^nemoclaw-/iu.test(name);
+}
+
+function isOwnedDockerImageRepository(imageRef: string): boolean {
+  const repository = dockerImageRepository(imageRef);
+  return (
+    /^nemoclaw-/iu.test(repository) ||
+    /^openshell\//iu.test(repository) ||
+    /^ghcr\.io\/nvidia\/nemoclaw(?:[/-]|$)/iu.test(repository)
+  );
 }
 
 function removeDockerVolume(name: string, runtime: UninstallRuntime): void {
@@ -2380,14 +2479,7 @@ function executePlan(
               : []),
             ...(scopedToSelectedGateway && selectedIsDefault ? ["source"] : []),
             ...(scopedToSelectedGateway
-              ? [
-                  ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
-                  MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
-                  ...managedClusterBindingStateEntries(paths.nemoclawStateDir),
-                  DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
-                  `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
-                  MANAGED_VLLM_API_KEY_FILE,
-                ]
+              ? scopedStatePreservationEntries(paths.nemoclawStateDir, selectedIsDefault)
               : []),
           ],
           runtime,

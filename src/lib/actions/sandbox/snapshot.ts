@@ -30,6 +30,7 @@ import { listMessagingProviderSuffixes } from "../../messaging/channels";
 import {
   findAvailableDashboardPort,
   getRegistryOccupiedDashboardPorts,
+  getRegistryOccupiedHermesApiPorts,
   withDashboardPortReservationLock,
 } from "../../onboard/dashboard-port";
 import { isValidForwardPort } from "../../onboard/dashboard-runtime";
@@ -37,6 +38,7 @@ import {
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
 } from "../../onboard/gateway-binding";
+import { findAvailableHermesApiPort, HERMES_API_PORT_ENV } from "../../onboard/hermes-api-port";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
 import {
   isDcodeAgent,
@@ -45,7 +47,7 @@ import {
 } from "../../onboard/observability-policy-presets";
 import { normalizePolicyTierName } from "../../onboard/policy-tier-suppression";
 import * as policies from "../../policy";
-import { ROOT, run, validateName } from "../../runner";
+import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
 import * as shields from "../../shields";
@@ -84,6 +86,8 @@ import {
 } from "./sandbox-gateway-routing";
 import {
   backupSandboxStateWithManagedAuthority,
+  createSnapshotCloneLifecycle,
+  fingerprintSandboxLiveIdentity,
   confirmSandboxRuntimeRestore,
   type PreparedSandboxRuntimeRestore,
   prepareManagedSnapshotProfileRestore,
@@ -134,6 +138,16 @@ export class SnapshotCommandError extends Error {
 
 function snapshotExit(exitCode = 1): never {
   throw new SnapshotCommandError([], exitCode);
+}
+
+function failUnregisteredSnapshotClone(sandboxName: string, gatewayName: string): never {
+  throw new SnapshotCommandError([
+    `  Sandbox '${sandboxName}' was created, but NemoClaw could not verify the same valid Ready identity from its owning gateway before registration.`,
+    "  Snapshot state was not restored and the clone was not registered.",
+    "  Remove the unregistered sandbox before retrying:",
+    `    openshell sandbox delete -g ${shellQuote(gatewayName)} ${shellQuote(sandboxName)}`,
+    "  Then rerun the original snapshot restore command.",
+  ]);
 }
 
 function formatSnapshotVersion(b: unknown) {
@@ -281,6 +295,33 @@ function allocateCloneDashboardPort(
   }
 }
 
+// Allocate the clone's own API port. The source owns the host forward for its
+// port, and the sandbox exposes the API on the same number it is forwarded on,
+// so a clone that inherits the source's port gets no inference forward, and its
+// gateway restart never converges. Returns null for an agent that has no
+// per-sandbox API port, so the clone's field stays unset. Callers must invoke
+// this before any destructive step so range exhaustion aborts before the
+// mutation.
+function allocateCloneHermesApiPort(
+  dstName: string,
+  srcEntry: { name?: string; agent?: string | null },
+): number | null {
+  if (srcEntry.agent !== "hermes") return null;
+  const forwards = captureOpenshell(["forward", "list"], { ignoreError: true });
+  try {
+    return findAvailableHermesApiPort(
+      dstName,
+      undefined,
+      forwards.output || "",
+      undefined,
+      getRegistryOccupiedHermesApiPorts(dstName),
+    );
+  } catch (err) {
+    console.error(`  ${err instanceof Error ? err.message : String(err)}`);
+    snapshotExit(1);
+  }
+}
+
 function resolveCloneDashboardEnvArgs(
   srcEntry: SandboxEntry | { name: string },
   dstDashboardPort: number | null,
@@ -367,7 +408,28 @@ async function autoCreateSandboxFromSource(
   createPolicyPath: string,
   dstDashboardPort: number | null,
   dashboardEnvArgs: readonly string[],
+  dstHermesApiPort: number | null,
 ): Promise<void> {
+  const cloneLifecycle = createSnapshotCloneLifecycle(
+    dstName,
+    sourceGatewayName,
+    (sandboxName, gatewayName) => {
+      const get = captureOpenshell(["sandbox", "get", "-g", gatewayName, sandboxName], {
+        ignoreError: true,
+      });
+      const list = captureOpenshell(["sandbox", "list", "-g", gatewayName], {
+        ignoreError: true,
+      });
+      return {
+        state:
+          get.status === 0 && list.status === 0 && isSandboxReady(list.output || "", sandboxName)
+            ? ("ready" as const)
+            : ("not_ready" as const),
+        liveIdentityFingerprint:
+          get.status === 0 ? fingerprintSandboxLiveIdentity(get.output || "") : null,
+      };
+    },
+  );
   const openshellBin = getOpenshellBinary();
   const sourceObservabilityEnabled =
     (srcEntry as { observabilityEnabled?: boolean }).observabilityEnabled === true;
@@ -375,6 +437,7 @@ async function autoCreateSandboxFromSource(
     "env",
     `NEMOCLAW_OBSERVABILITY=${sourceObservabilityEnabled ? "1" : "0"}`,
     ...dashboardEnvArgs,
+    ...(dstHermesApiPort === null ? [] : [`${HERMES_API_PORT_ENV}=${dstHermesApiPort}`]),
     "nemoclaw-start",
   ];
   const createEnv = { ...process.env };
@@ -402,7 +465,7 @@ async function autoCreateSandboxFromSource(
     initialPhase: "create",
     // Wait until the sandbox actually reaches Ready state, not just appears in the list.
     readyCheck: () => {
-      const list = captureOpenshell(["sandbox", "list"], {
+      const list = captureOpenshell(["sandbox", "list", "-g", sourceGatewayName], {
         ignoreError: true,
       });
       if (list.status !== 0) return false;
@@ -418,10 +481,17 @@ async function autoCreateSandboxFromSource(
   }
 
   // Double-check Ready after stream exit.
-  const verify = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  const verify = captureOpenshell(["sandbox", "list", "-g", sourceGatewayName], {
+    ignoreError: true,
+  });
   if (verify.status !== 0 || !isSandboxReady(verify.output || "", dstName)) {
-    console.error(`  Sandbox '${dstName}' did not reach Ready state after create.`);
-    snapshotExit(1);
+    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
+  }
+  let lifecycleRegistration: ReturnType<typeof cloneLifecycle.capture>;
+  try {
+    lifecycleRegistration = cloneLifecycle.capture();
+  } catch {
+    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
 
   // DNS proxy is only meaningful for the kubernetes driver (matches onboard.ts).
@@ -437,6 +507,12 @@ async function autoCreateSandboxFromSource(
   // Register dst in the NemoClaw registry, cloning most fields from src.
   // Policies are cleared here — the caller replays them from the snapshot
   // manifest after the restore succeeds and writes them back into this entry.
+  let finalLifecycleRegistration: ReturnType<typeof cloneLifecycle.revalidate>;
+  try {
+    finalLifecycleRegistration = cloneLifecycle.revalidate(lifecycleRegistration);
+  } catch {
+    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
+  }
   registry.registerSandbox({
     ...srcEntry,
     name: dstName,
@@ -451,6 +527,8 @@ async function autoCreateSandboxFromSource(
     // `Sandbox GPU: enabled (CUDA verified)` based on another sandbox's run (#4231).
     sandboxGpuProof: null,
     dashboardPort: dstDashboardPort,
+    // The spread above carries the source's API port; the clone owns its own.
+    hermesApiPort: dstHermesApiPort,
     // The shared image keeps Hermes' image-baked internal listener port, but
     // the public WebUI port is a per-sandbox host resource and must follow the
     // clone's newly allocated dashboard port so rebuild validation converges.
@@ -463,6 +541,7 @@ async function autoCreateSandboxFromSource(
     // stop/start, recovery, and later snapshots can address its gateway.
     gatewayName: sourceGatewayName,
     gatewayPort: sourceGatewayPort,
+    ...finalLifecycleRegistration,
   });
 
   const sourceAgent = (srcEntry as SandboxEntry).agent || "openclaw";
@@ -1305,6 +1384,7 @@ async function runSnapshotRestoreUnlocked(
       // removes the existing `--force` destination — matching the pre-delete
       // validation the image and gateway-route checks above already do (#3756).
       const dstDashboardPort = allocateCloneDashboardPort(targetSandbox, lockedSourceEntry);
+      const dstHermesApiPort = allocateCloneHermesApiPort(targetSandbox, lockedSourceEntry);
       const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
       const clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry);
       try {
@@ -1328,6 +1408,7 @@ async function runSnapshotRestoreUnlocked(
           clonePolicy.policyPath,
           dstDashboardPort,
           dashboardEnvArgs,
+          dstHermesApiPort,
         );
       } finally {
         clonePolicy.cleanup?.();

@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const review = fs.readFileSync(
-  path.join(repoRoot, "docs", "security", "openshell-0.0.85-migration-review.md"),
+  path.join(repoRoot, "internal", "security-reviews", "openshell-0.0.85-migration-review.md"),
   "utf8",
 );
 

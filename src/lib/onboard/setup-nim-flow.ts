@@ -378,6 +378,16 @@ async function handleEndpointProviderSelection(input: {
   );
 }
 
+function vllmPortConflictMessage(
+  platform: InferenceProviderHostGpu["platform"],
+  port: number,
+): string {
+  if (platform === "n1x") {
+    return `The N1x Deferred preview requires managed vLLM, but vLLM is already running on localhost:${port}. Stop the existing server, then rerun with NEMOCLAW_PROVIDER=install-vllm.`;
+  }
+  return "vLLM is already running on this host. Select Local vLLM, or stop the existing server before selecting the managed install path.";
+}
+
 /** Create the provider-selection flow and seed agent-specific Ollama defaults. */
 export function createSetupNim(
   defaults: SetupNimFlowDeps,
@@ -387,7 +397,6 @@ export function createSetupNim(
   const localModelProfileIntegration =
     deps.localModelProfileIntegration ?? createLocalModelProfileIntegration(deps);
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider onboarding is an intentionally centralized interaction loop.
   return async function setupNimWithDeps(
     gpu: SetupNimGpu,
     sandboxName: string | null = null,
@@ -534,6 +543,7 @@ export function createSetupNim(
       agentProviderOptions,
       experimental: deps.experimental,
       gpuNimCapable,
+      nvidiaPlatform: gpu?.platform,
       hasOllama,
       ollamaRunning,
       ollamaHost,
@@ -823,9 +833,7 @@ export function createSetupNim(
             continue selectionLoop;
           }
           if (vllmRunning) {
-            const message =
-              "vLLM is already running on this host. " +
-              "Select Local vLLM, or stop the existing server before selecting the managed install path.";
+            const message = vllmPortConflictMessage(gpu?.platform, deps.vllmPort);
             deps.error(`  ${message}`);
             if (deps.isNonInteractive()) {
               deps.abortNonInteractive(message);

@@ -993,6 +993,7 @@ describe("socket-free MXC action contract", () => {
         sandbox: entry,
         sandboxConfirmedAbsent: false,
         sandboxName,
+        stopInferenceResources: vi.fn(),
         runtimeProviders: providers,
         deps: {
           readTimerMarker: () => null,

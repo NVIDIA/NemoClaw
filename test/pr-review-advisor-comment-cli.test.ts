@@ -29,8 +29,9 @@ function clearTerminologyReview() {
 
 describe("PR review advisor comment CLI", () => {
   it("reports E2E recommendations that do not fit", () => {
-    const trustedIds = trustedE2eRecommendationInventory()
-      .allowedJobIds.filter(
+    const inventory = trustedE2eRecommendationInventory();
+    const trustedIds = [...inventory.allowedJobIds, ...inventory.manualOnlyJobIds]
+      .filter(
         (id) => id !== "inference-routing" && id !== "managed-image-protected-runtime",
       )
       .slice(0, 2 * (E2E_RENDER_LIMIT + 1));

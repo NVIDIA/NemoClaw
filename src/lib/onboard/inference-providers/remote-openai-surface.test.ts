@@ -1,15 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { withCredentialOverrides } from "../../credentials/scoped-overrides";
-import { noAuthProxy } from "../../inference/ollama/proxy";
+import { noAuthProxy, withOllamaProxyLifecycleTransaction } from "../../inference/ollama/proxy";
 import { hydrateCredentialEnv } from "../credential-env";
 import { setupRemoteProviderInference } from "./remote";
 import type { RemoteProviderDeps } from "./types";
 
-vi.mock("../../inference/ollama/proxy", () => ({ noAuthProxy: vi.fn() }));
+vi.mock("../../inference/ollama/proxy", () => ({
+  noAuthProxy: vi.fn(),
+  withOllamaProxyLifecycleTransaction: vi.fn(),
+}));
 
 const PROVIDER = "compatible-anthropic-endpoint";
 const MODEL = "custom-model";
@@ -120,8 +123,15 @@ function createHarness() {
   };
 }
 
+beforeEach(() => {
+  vi.mocked(withOllamaProxyLifecycleTransaction).mockImplementation(async (operation) =>
+    operation(),
+  );
+});
+
 afterEach(() => {
   vi.mocked(noAuthProxy).mockReset();
+  vi.mocked(withOllamaProxyLifecycleTransaction).mockReset();
   delete process.env[NO_AUTH_ENV];
   vi.unstubAllEnvs();
 });
@@ -304,6 +314,7 @@ describe("OpenAI-compatible no-auth provider registration", () => {
     });
 
     expect(noAuthProxy).toHaveBeenCalledWith("http://localhost:8000/v1");
+    expect(withOllamaProxyLifecycleTransaction).toHaveBeenCalledOnce();
     expect(harness.upsertProvider).toHaveBeenCalledWith(
       "compatible-endpoint",
       "openai",
@@ -342,6 +353,30 @@ describe("OpenAI-compatible no-auth provider registration", () => {
     harness.upsertProvider.mockReturnValue({ ok: false });
 
     await expect(setupRemoteProviderInference(args, harness.deps)).rejects.toThrow("EXIT_CALLED:1");
+    expect(persist).not.toHaveBeenCalled();
+    expect(restore).toHaveBeenCalledOnce();
+    expect(process.env[NO_AUTH_ENV]).toBe("committed-token");
+  });
+
+  it("restores committed proxy state when registration throws unexpectedly (#7424)", async () => {
+    const harness = createHarness();
+    const persist = vi.fn();
+    const restore = vi.fn();
+    process.env[NO_AUTH_ENV] = "committed-token";
+    vi.mocked(noAuthProxy).mockReturnValue({
+      baseUrl: "http://host.openshell.internal:11435/v1",
+      credentialValue: "proxy-token",
+      persist,
+      restore,
+    });
+    harness.deps.hydrateCredentialEnv.mockReturnValue("proxy-token");
+    harness.upsertProvider.mockImplementation(() => {
+      throw new Error("unexpected registration failure");
+    });
+
+    await expect(setupRemoteProviderInference(args, harness.deps)).rejects.toThrow(
+      "unexpected registration failure",
+    );
     expect(persist).not.toHaveBeenCalled();
     expect(restore).toHaveBeenCalledOnce();
     expect(process.env[NO_AUTH_ENV]).toBe("committed-token");

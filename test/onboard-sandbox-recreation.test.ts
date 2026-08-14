@@ -138,9 +138,12 @@ const sourceSandbox = {
   },
 };
 runner.run = (command, opts = {}) => {
-  _deleted = _deleted || _n(command).includes("sandbox delete");
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
+  const cmd = _n(command);
+  _deleted = _deleted || cmd.includes("sandbox delete");
+  commands.push({ command: cmd, env: opts.env || null });
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: " + _sandboxId + "\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: " + _sandboxId].join(String.fromCharCode(10));
@@ -269,9 +272,12 @@ const { EventEmitter } = require("node:events");
 
 const events = [];
 runner.run = (command) => {
-  _deleted = _deleted || _n(command).includes("sandbox delete");
-  events.push({ kind: "run", cmd: _n(command) });
-  return { status: 0 };
+  const cmd = _n(command);
+  _deleted = _deleted || cmd.includes("sandbox delete");
+  events.push({ kind: "run", cmd });
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runCapture = (command) => {
   const cmd = _n(command);
@@ -420,9 +426,12 @@ const { EventEmitter } = require("node:events");
 
 const events = [];
 runner.run = (command) => {
-  _deleted = _deleted || _n(command).includes("sandbox delete");
-  events.push({ kind: "run", cmd: _n(command) });
-  return { status: 0 };
+  const cmd = _n(command);
+  _deleted = _deleted || cmd.includes("sandbox delete");
+  events.push({ kind: "run", cmd });
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runCapture = (command) => {
   const cmd = _n(command);
@@ -546,11 +555,13 @@ const { EventEmitter } = require("node:events");
 const events = [];
 let sandboxDeleted = false;
 runner.run = (command) => {
-  _deleted = _deleted || _n(command).includes("sandbox delete");
   const cmd = _n(command);
+  _deleted = _deleted || cmd.includes("sandbox delete");
   events.push({ kind: "run", cmd });
   if (cmd.includes("sandbox delete")) sandboxDeleted = true;
-  return { status: 0 };
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runCapture = (command) => {
   const cmd = _n(command);
@@ -694,9 +705,12 @@ const { EventEmitter } = require("node:events");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  _deleted = _deleted || _n(command).includes("sandbox delete");
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
+  const cmd = _n(command);
+  _deleted = _deleted || cmd.includes("sandbox delete");
+  commands.push({ command: cmd, env: opts.env || null });
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
@@ -818,9 +832,10 @@ const path = require("node:path");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  _deleted = _deleted || _n(command).includes("sandbox delete");
+  const cmd = _n(command);
+  _deleted = _deleted || cmd.includes("sandbox delete");
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
-  if (_n(command).includes("sandbox download")) {
+  if (cmd.includes("sandbox download")) {
     const parts = commandString.match(/'([^']*)'/g) || [];
     const downloadDir = Array.isArray(command)
       ? String(command[command.length - 1] || "")
@@ -835,8 +850,10 @@ runner.run = (command, opts = {}) => {
       );
     }
   }
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
+  commands.push({ command: cmd, env: opts.env || null });
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
   commands.push({ type: "runFile", command: _n([file, ...args]), file, args, env: opts.env || null });
@@ -951,9 +968,10 @@ const path = require("node:path");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  _deleted = _deleted || _n(command).includes("sandbox delete");
+  const cmd = _n(command);
+  _deleted = _deleted || cmd.includes("sandbox delete");
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
-  if (_n(command).includes("sandbox download")) {
+  if (cmd.includes("sandbox download")) {
     const parts = commandString.match(/'([^']*)'/g) || [];
     const downloadDir = Array.isArray(command)
       ? String(command[command.length - 1] || "")
@@ -968,8 +986,10 @@ runner.run = (command, opts = {}) => {
       );
     }
   }
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
+  commands.push({ command: cmd, env: opts.env || null });
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
   commands.push({ type: "runFile", command: _n([file, ...args]), file, args, env: opts.env || null });
@@ -1096,10 +1116,13 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 let sandboxDeleted = false;
 runner.run = (command, opts = {}) => {
-  _deleted = _deleted || _n(command).includes("sandbox delete");
-  commands.push({ command: _n(command), env: opts.env || null });
-  if (_n(command).includes("sandbox delete")) sandboxDeleted = true;
-  return { status: 0 };
+  const cmd = _n(command);
+  _deleted = _deleted || cmd.includes("sandbox delete");
+  commands.push({ command: cmd, env: opts.env || null });
+  if (cmd.includes("sandbox delete")) sandboxDeleted = true;
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runCapture = (command) => {
   // Existing sandbox that is NOT ready initially, becomes Ready after recreation
@@ -1202,7 +1225,7 @@ const { createSandbox } = require(${onboardPath});
     );
     assert.ok(result.stdout.includes("not ready"), "should mention sandbox is not ready");
   });
-  it("waits for the create stream to close after the sandbox is Ready", {
+  it("registers a fresh create only after owner-scoped identity confirmation (#8942)", {
     timeout: 20000,
   }, async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
@@ -1245,20 +1268,31 @@ dockerExec.dockerSpawn = () => {
 const fs = require("node:fs");
 
 const commands = [];
+const lifecycleObservationCommands = [];
 let sandboxListCalls = 0;
 let dockerPsCalls = 0;
+let sandboxCreated = false;
+let registeredSandbox = null;
 const keepAlive = setInterval(() => {}, 1000);
 runner.run = (command, opts = {}) => {
-  _deleted = _deleted || _n(command).includes("sandbox delete");
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
+  const cmd = _n(command);
+  _deleted = _deleted || cmd.includes("sandbox delete");
+  commands.push({ command: cmd, env: opts.env || null });
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant") && sandboxCreated
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-fresh-create\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runCapture = (command) => {
+  if (_n(command).includes("sandbox get") || _n(command).includes("sandbox list")) {
+    lifecycleObservationCommands.push(_n(command));
+  }
   if (_n(command).startsWith("docker ps -a --no-trunc ")) {
     dockerPsCalls += 1;
     if (dockerPsCalls === 1) return "a".repeat(64);
   }
-  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) {
+    return sandboxCreated ? ["my-assistant", "Id: sbx-fresh-create"].join(String.fromCharCode(10)) : "";
+  }
   if (_n(command).includes("sandbox list")) {
     sandboxListCalls += 1;
     return sandboxListCalls >= 2 ? "my-assistant Ready" : "my-assistant Pending";
@@ -1270,7 +1304,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.registerSandbox = () => true;
+registry.registerSandbox = (entry) => { registeredSandbox = entry; return true; };
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
 registry.removeSandbox = () => true;
@@ -1290,6 +1324,7 @@ process.kill = (pid, signal) => {
 };
 
 childProcess.spawn = (...args) => {
+  sandboxCreated = true;
   _deleted = false;
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
@@ -1335,6 +1370,8 @@ const { createSandbox } = require(${onboardPath});
     unrefCalls: createCommand.child.unrefCalls,
     stdoutDestroyCalls: createCommand.child.stdout.destroyCalls,
     stderrDestroyCalls: createCommand.child.stderr.destroyCalls,
+    lifecycleObservationCommands,
+    registeredSandbox,
   }));
   clearInterval(keepAlive);
 })().catch((error) => {
@@ -1367,5 +1404,22 @@ const { createSandbox } = require(${onboardPath});
     assert.equal(payload.unrefCalls, 0);
     assert.equal(payload.stdoutDestroyCalls, 0);
     assert.equal(payload.stderrDestroyCalls, 0);
+    assert.match(payload.registeredSandbox.lifecycleGeneration, /^[0-9a-f-]{36}$/u);
+    assert.equal(
+      payload.registeredSandbox.lifecycleLiveIdentityFingerprint,
+      createHash("sha256").update("sbx-fresh-create").digest("hex"),
+    );
+    const ownerScopedObservations = payload.lifecycleObservationCommands.filter(
+      (command: string) => command.includes("-g nemoclaw"),
+    );
+    assert.equal(ownerScopedObservations.length, 4);
+    assert.ok(
+      ownerScopedObservations.every(
+        (command: string) =>
+          command.includes("sandbox get -g nemoclaw my-assistant") ||
+          command.includes("sandbox list -g nemoclaw"),
+      ),
+      `fresh identity observations must remain scoped to the owning gateway: ${JSON.stringify(ownerScopedObservations)}`,
+    );
   });
 });

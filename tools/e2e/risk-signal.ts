@@ -55,12 +55,16 @@ export function configuredRiskSignalEnvironment(
   env: NodeJS.ProcessEnv,
   resolveHead: (workspace: string) => string = checkedOutSha,
 ): RiskSignalEnvironment | null {
-  if (!env.NEMOCLAW_E2E_EXPECTED_SHA) return null;
+  const expectedSha =
+    env.NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA === undefined
+      ? env.NEMOCLAW_E2E_EXPECTED_SHA
+      : env.NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA;
+  if (!expectedSha) return null;
   const values = {
     artifactDir: env.E2E_ARTIFACT_DIR ?? "",
     jobId: env.E2E_TARGET_ID ?? "",
     shardId: env.NEMOCLAW_E2E_SHARD ?? "",
-    expectedSha: env.NEMOCLAW_E2E_EXPECTED_SHA,
+    expectedSha,
     correlationId: env.NEMOCLAW_E2E_CORRELATION_ID ?? "",
   };
   if (!values.artifactDir) throw new Error("risk signal requires E2E_ARTIFACT_DIR");

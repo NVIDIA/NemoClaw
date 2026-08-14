@@ -324,4 +324,73 @@ describe("openClawAgentIncompleteTurnSignal", () => {
   it("returns null when stdout carries no JSON at all", () => {
     expect(openClawAgentIncompleteTurnSignal("not json")).toBeNull();
   });
+
+  it("detects a declared timeout phase on the run metadata (#8723)", () => {
+    const raw = JSON.stringify({
+      status: "timeout",
+      result: {
+        payloads: [{ text: "1\n2\n3" }],
+        meta: { replayInvalid: false, livenessState: "blocked", timeoutPhase: "provider" },
+      },
+    });
+    expect(openClawAgentIncompleteTurnSignal(raw)).toEqual({
+      markers: ["timeoutPhase=provider"],
+      timeoutPhase: "provider",
+    });
+  });
+
+  it("classifies a timeout phase the measurements never observed (#8723)", () => {
+    const raw = JSON.stringify({
+      status: "timeout",
+      result: { payloads: [], meta: { timeoutPhase: "gateway_draining" } },
+    });
+    expect(openClawAgentIncompleteTurnSignal(raw)?.timeoutPhase).toBe("gateway_draining");
+  });
+
+  it("ignores a timeout phase inside a successful tool result (#8723)", () => {
+    const raw = JSON.stringify({
+      status: "ok",
+      result: {
+        messages: [{ role: "toolResult", content: { timeoutPhase: "provider" } }],
+        payloads: [{ text: "done" }],
+      },
+    });
+    expect(openClawAgentIncompleteTurnSignal(raw)).toBeNull();
+  });
+
+  it("ignores a timeout phase that carries no value (#8723)", () => {
+    for (const timeoutPhase of ["", "   ", null, 3, true]) {
+      const raw = JSON.stringify({ status: "ok", result: { payloads: [], meta: { timeoutPhase } } });
+      expect(openClawAgentIncompleteTurnSignal(raw)).toBeNull();
+    }
+  });
+
+  it("leaves the timeout phase absent for an abandoned turn that did not time out (#8723)", () => {
+    const raw = JSON.stringify({
+      status: "ok",
+      result: { payloads: [], meta: { livenessState: "abandoned" } },
+    });
+    expect(openClawAgentIncompleteTurnSignal(raw)?.timeoutPhase).toBeUndefined();
+  });
+
+  it("reports the timeout phase alongside every other marker present (#8723)", () => {
+    const raw = JSON.stringify({
+      status: "timeout",
+      result: {
+        payloads: [],
+        meta: {
+          error: { kind: "incomplete_turn" },
+          livenessState: "abandoned",
+          replayInvalid: true,
+          timeoutPhase: "post_turn",
+        },
+      },
+    });
+    expect(openClawAgentIncompleteTurnSignal(raw)?.markers.sort()).toEqual([
+      "error.kind=incomplete_turn",
+      "livenessState=abandoned",
+      "replayInvalid=true",
+      "timeoutPhase=post_turn",
+    ]);
+  });
 });
