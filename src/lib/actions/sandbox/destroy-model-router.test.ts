@@ -33,9 +33,7 @@ function createDeps(overrides: Partial<StopModelRouterForDestroyedSandboxDeps> =
       stale: false,
     })),
     compareAndSwapSession: vi.fn((matches, mutator) => {
-      if (!matches(session)) return "mismatch";
-      mutator(session);
-      return "updated";
+      return matches(session) ? (mutator(session), "updated") : "mismatch";
     }),
     expectedSession: session,
     inspectProcessForPort: vi.fn(() => ({ status: "absent" as const })),
@@ -191,9 +189,9 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     } as Session;
     const compareAndSwapSession = vi.fn(
       (matches: (current: Session) => boolean, mutator: (current: Session) => Session | void) => {
-        if (!matches(reusedNameSession)) return "mismatch";
-        mutator(reusedNameSession);
-        return "updated";
+        return matches(reusedNameSession)
+          ? (mutator(reusedNameSession), "updated")
+          : "mismatch";
       },
     );
     const { deps } = createDeps({
@@ -315,9 +313,7 @@ describe("stopModelRouterForDestroyedSandbox", () => {
       loadSession: vi.fn(() => session),
       ownsPort: vi.fn(() => false),
       compareAndSwapSession: vi.fn((matches, mutator) => {
-        if (!matches(session)) return "mismatch";
-        mutator(session);
-        return "updated";
+        return matches(session) ? (mutator(session), "updated") : "mismatch";
       }),
     });
 
@@ -341,9 +337,7 @@ describe("stopModelRouterForDestroyedSandbox", () => {
       loadSession: vi.fn(() => session),
       ownsPort: vi.fn(() => false),
       compareAndSwapSession: vi.fn((matches, mutator) => {
-        if (!matches(session)) return "mismatch";
-        mutator(session);
-        return "updated";
+        return matches(session) ? (mutator(session), "updated") : "mismatch";
       }),
     });
 
