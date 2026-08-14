@@ -38,9 +38,7 @@ function runInstallerSnippetWithTty(
   const pythonLookup = spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], {
     encoding: "utf-8",
   });
-  if (pythonLookup.error) {
-    throw new Error(`Python discovery failed: ${pythonLookup.error.message}`);
-  }
+  expect(pythonLookup.error, "Python discovery failed").toBeUndefined();
   const python = pythonLookup.stdout.trim() || "python3";
   const ptyRunner = `
 import errno
@@ -118,9 +116,7 @@ sys.exit(exit_code)
     killSignal: "SIGKILL",
     env: options.env,
   });
-  if (result.error) {
-    throw new Error(`PTY runner failed to start with ${python}: ${result.error.message}`);
-  }
+  expect(result.error, `PTY runner failed to start with ${python}`).toBeUndefined();
   return result;
 }
 
