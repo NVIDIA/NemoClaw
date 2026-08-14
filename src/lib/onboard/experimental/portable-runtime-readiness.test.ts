@@ -50,11 +50,10 @@ function harness(
   } = {},
 ) {
   let clock = 0;
-  const systemctl = vi.fn(
-    (args: readonly string[], _env: NodeJS.ProcessEnv, _timeoutMs: number) => {
-      if (args.includes("is-active")) return { status: options.active === false ? 3 : 0 };
-      return { status: options.startStatus ?? 0 };
-    },
+  const systemctl = vi.fn((args: readonly string[], _env: NodeJS.ProcessEnv, _timeoutMs: number) =>
+    args.includes("is-active")
+      ? { status: options.active === false ? 3 : 0 }
+      : { status: options.startStatus ?? 0 },
   );
   const podmanCapture =
     options.podmanCapture ??
@@ -84,15 +83,12 @@ function harness(
 
 describe("portable Podman activation readiness", () => {
   it("activates a cold user socket and waits for a real API response (#9070)", () => {
-    let hardenAttempts = 0;
+    const hardenSocket = vi.fn().mockImplementationOnce(() => {
+      throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    });
     const h = harness({
       active: false,
-      hardenSocket: () => {
-        hardenAttempts += 1;
-        if (hardenAttempts === 1) {
-          throw Object.assign(new Error("missing"), { code: "ENOENT" });
-        }
-      },
+      hardenSocket,
     });
 
     const result = inspectPortablePodmanReadiness(AUTHORITY, h.deps);
@@ -111,6 +107,7 @@ describe("portable Podman activation readiness", () => {
       ["--url", `unix://${AUTHORITY.socketPath}`, "version", "--format", "json"],
       59_900,
     );
+    expect(hardenSocket).toHaveBeenCalledTimes(2);
   });
 
   it("uses the shorter steady-state deadline only for an active service (#9070)", () => {
