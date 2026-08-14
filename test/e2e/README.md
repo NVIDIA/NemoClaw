@@ -475,11 +475,15 @@ trusted `scripts/install-openshell.sh` path. A separate `curl` shim blocks
 network fallback. The installer still checks the release checksums and archive
 structure before installation. Each product shard completes trusted OpenShell
 installation and Docker credential revocation before it restores and executes
-the candidate CLI artifact. A missing, replaced, or corrupt upstream asset fails
-the resolver as an infrastructure failure. The job error reports the failed
-identifier and source URL, and `resolution.json` records them when the artifact
-directory remains writable. The three product shards do not start in that case,
-so the run cannot report a product failure before reaching product assertions.
+the candidate CLI artifact. This ordering protects the bytes consumed by the
+trusted installer before candidate code starts. It does not make the installed
+OpenShell files immutable after the candidate CLI runs on the same runner;
+subsequent product steps operate in candidate-controlled state. A missing,
+replaced, or corrupt upstream asset fails the resolver as an infrastructure
+failure. The job error reports the failed identifier and source URL, and
+`resolution.json` records them when the artifact directory remains writable.
+The three product shards do not start in that case, so the run cannot report a
+product failure before reaching product assertions.
 
 ## Larger-runner routing
 
