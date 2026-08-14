@@ -40,6 +40,28 @@ function expectGatewayScopedDelete(
   expect(calls.some((args) => args[0] === "gateway" && args[1] === "select")).toBe(false);
 }
 
+function externalGatewayProofRunResult(
+  command: string,
+  args: readonly string[],
+  externalPid: number,
+  commandLine: string,
+): RunResult {
+  return (
+    (command === "openshell" &&
+      args[0] === "gateway" &&
+      args[1] === "list" &&
+      ok(JSON.stringify([{ name: "nemoclaw" }, { name: "nemoclaw-8091" }]))) ||
+    (command === "systemctl" &&
+      args.includes("--property=MainPID") &&
+      ok(`${String(externalPid)}\n`)) ||
+    (command === "ps" &&
+      args.includes("uid=") &&
+      ok(`${String(process.getuid?.() ?? -1)}\n`)) ||
+    (command === "ps" && args.includes("args=") && ok(`${commandLine}\n`)) ||
+    ok()
+  );
+}
+
 function writeScopedGatewayState(home: string, port = 8080): string {
   const stateDir = path.join(home, ".local", "state", "nemoclaw", resolveGatewayStateDirName(port));
   const configPath = path.join(stateDir, "openshell-gateway.toml");
@@ -273,17 +295,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           rmSync: fs.rmSync,
           run: (command, args) => {
             calls.push({ args, command });
-            if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-              return ok(JSON.stringify([{ name: "nemoclaw" }, { name: "nemoclaw-8091" }]));
-            }
-            if (command === "systemctl" && args.includes("--property=MainPID")) {
-              return ok(`${String(externalPid)}\n`);
-            }
-            if (command === "ps" && args.includes("uid=")) {
-              return ok(`${String(process.getuid?.() ?? -1)}\n`);
-            }
-            if (command === "ps" && args.includes("args=")) return ok(`${commandLine}\n`);
-            return ok();
+            return externalGatewayProofRunResult(command, args, externalPid, commandLine);
           },
           runDocker: () => ok(),
           error: (message) => warnings.push(message),

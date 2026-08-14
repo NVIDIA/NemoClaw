@@ -116,14 +116,16 @@ exit 0
         stdio: "ignore",
       },
     );
-    if (!child.pid) throw new Error("managed gateway fixture did not start");
-    fs.writeFileSync(path.join(stateDir, "openshell-gateway.pid"), `${String(child.pid)}\n`, {
+    const childPid = child.pid ?? (() => {
+      throw new Error("managed gateway fixture did not start");
+    })();
+    fs.writeFileSync(path.join(stateDir, "openshell-gateway.pid"), `${String(childPid)}\n`, {
       mode: 0o600,
     });
     writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
       desiredEnv: {},
       endpoint: "https://127.0.0.1:8080",
-      pid: child.pid,
+      pid: childPid,
     });
     return child;
   }
