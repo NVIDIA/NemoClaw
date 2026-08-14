@@ -81,6 +81,7 @@ import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry
 import { prepareSandboxCreateLaunch } from "./sandbox-create-launch";
 import {
   resolveAgentCreateInput,
+  resolvePortableLifecycleMode,
   runSandboxGpuCreateFlow,
   type SandboxGpuCreateFlowDeps,
   type SandboxGpuCreateFlowInput,
@@ -203,6 +204,8 @@ describe("resolveAgentCreateInput", () => {
       persistStartupCommand: true,
       portableLifecycle: false,
     });
+    expect(resolvePortableLifecycleMode(null, env)).toBe(true);
+    expect(resolvePortableLifecycleMode({ name: "hermes" } as AgentDefinition, env)).toBe(false);
   });
 });
 
