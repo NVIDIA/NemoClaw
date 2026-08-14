@@ -123,6 +123,50 @@ describe("isSandboxBridgeGatewayReachable", () => {
     expect(result.detail).toContain("not found");
   });
 
+  it.each([
+    ["Docker", '{"ServerVersion":"29.7.0"}'],
+    ["Podman", '{"version":{"Version":"5.7.0"}}'],
+  ])(
+    "accepts %s JSON when the portable runtime is reachable but its network is not inspectable",
+    async (_runtime, stdout) => {
+      vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+      const runtimeProbeImpl = vi.fn(() => ({ status: 0, stdout }));
+
+      const result = await isSandboxBridgeGatewayReachable({
+        inspectNetworkImpl: () => undefined,
+        runtimeProbeImpl,
+        timeoutSec: 7,
+        usesHostGatewayRouteImpl: () => false,
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        reason: "probe_unavailable",
+        networkName: "openshell-docker",
+      });
+      expect(runtimeProbeImpl).toHaveBeenCalledWith(["info", "--format", "{{json .}}"], 17_000);
+    },
+  );
+
+  it.each(["", "not JSON", "{}"])(
+    "rejects an exit-zero portable runtime response without valid daemon JSON: %j",
+    async (stdout) => {
+      vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+
+      const result = await isSandboxBridgeGatewayReachable({
+        inspectNetworkImpl: () => undefined,
+        runtimeProbeImpl: () => ({ status: 0, stdout }),
+        usesHostGatewayRouteImpl: () => false,
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        reason: "docker_daemon_unreachable",
+        networkName: "openshell-docker",
+      });
+    },
+  );
+
   it("classifies an unavailable portable daemon before route inspection completes", async () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
     const runtimeProbeImpl = vi.fn(() => ({
