@@ -29,19 +29,19 @@ const DEV_ARTIFACT_JOB_CONDITION =
   "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}";
 const DEV_ARTIFACT_DOWNLOAD_ACTION =
   "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
+const DEV_ARTIFACT_TRUSTED_CHECKOUT_NAME = "Checkout trusted OpenShell dev tooling";
 const DEV_ARTIFACT_TRUSTED_CHECKOUT = ".trusted-openshell-dev-artifact";
-const DEV_ARTIFACT_TRUSTED_TOOL =
-  `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/${DEV_ARTIFACT_TOOL}`;
-const DEV_ARTIFACT_SOURCE_OUTPUT =
-  "${{ needs.openshell-dev-artifact.outputs.source_commit }}";
-const DEV_ARTIFACT_MANIFEST_OUTPUT =
-  "${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}";
+const DEV_ARTIFACT_TRUSTED_PATHS =
+  "scripts/install-openshell.sh\ntools/e2e/openshell-dev-artifact.mts\n";
+const DEV_ARTIFACT_TRUSTED_TOOL = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/${DEV_ARTIFACT_TOOL}`;
+const DEV_ARTIFACT_TRUSTED_INSTALLER = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/scripts/install-openshell.sh`;
+const DEV_ARTIFACT_SOURCE_OUTPUT = "${{ needs.openshell-dev-artifact.outputs.source_commit }}";
+const DEV_ARTIFACT_MANIFEST_OUTPUT = "${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}";
 const DEV_ARTIFACT_ENV = {
   OPENSHELL_DEV_ARTIFACT_DIR: OPENSHELL_DEV_ARTIFACT_DIRECTORY,
   OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256: DEV_ARTIFACT_MANIFEST_OUTPUT,
   OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT: DEV_ARTIFACT_SOURCE_OUTPUT,
 } as const;
-const DEV_BINARY_DIRECTORY = "${{ runner.temp }}/openshell-dev-binaries";
 const DEV_COMPATIBILITY_STEP_NAME = "Classify OpenShell credential-boundary compatibility";
 const DEV_COMPATIBILITY_STEP_ID = "mcp_runtime_compatibility";
 const DEV_COMPATIBILITY_TOOL = "tools/e2e/mcp-bridge-runtime-compatibility.mts";
@@ -268,7 +268,12 @@ function validateJobSecurity(
   const checkouts = asSteps(job).filter((step) =>
     asString(step.uses).startsWith("actions/checkout@"),
   );
-  if (checkouts.length !== 1) errors.push(`${jobName} must use exactly one checkout step`);
+  const expectedCheckoutCount = jobName === "mcp-bridge-dev" ? 2 : 1;
+  if (checkouts.length !== expectedCheckoutCount) {
+    errors.push(
+      `${jobName} must use exactly ${expectedCheckoutCount === 1 ? "one checkout step" : "two checkout steps"}`,
+    );
+  }
   for (const checkout of checkouts) {
     if (!/^actions\/checkout@[0-9a-f]{40}$/.test(asString(checkout.uses))) {
       errors.push(`${jobName} must use a SHA-pinned checkout`);
@@ -296,9 +301,7 @@ function validateJobSecurity(
     errors.push(`${jobName} must use the canonical unconditional Docker auth cleanup`);
   }
   const steps = asSteps(job);
-  const checkoutIndex = steps.findIndex((step) =>
-    asString(step.uses).startsWith("actions/checkout@"),
-  );
+  const checkoutIndex = Math.max(...checkouts.map((checkout) => steps.indexOf(checkout)));
   if (steps.indexOf(login) !== checkoutIndex + 1) {
     errors.push(`${jobName} must authenticate immediately after credential-free checkout`);
   }
@@ -306,6 +309,18 @@ function validateJobSecurity(
     errors.push(`${jobName} Docker auth cleanup must remain the final step`);
   }
   if (jobName === "mcp-bridge-dev") {
+    const trustedCheckout = namedStep(job, DEV_ARTIFACT_TRUSTED_CHECKOUT_NAME);
+    if (
+      !hasExactEntries(asRecord(trustedCheckout.with), {
+        repository: "${{ github.repository }}",
+        ref: "${{ inputs.workflow_sha || github.workflow_sha }}",
+        path: DEV_ARTIFACT_TRUSTED_CHECKOUT,
+        "persist-credentials": false,
+        "sparse-checkout": DEV_ARTIFACT_TRUSTED_PATHS,
+      })
+    ) {
+      errors.push("mcp-bridge-dev must check out only the trusted OpenShell dev tooling");
+    }
     const devCleanup = namedStep(job, DEV_DOCKER_CLEANUP_NAME);
     const install = namedStep(job, "Install immutable OpenShell dev artifact");
     const expectedDevCleanup = {
@@ -407,12 +422,12 @@ function validateJobExecution(
   if (jobName === "mcp-bridge-dev") {
     if (
       !hasExactEntries(installEnv, {
-        ...DEV_ARTIFACT_ENV,
-        OPENSHELL_DEV_BINARY_DIR: DEV_BINARY_DIRECTORY,
+        NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR: `${OPENSHELL_DEV_ARTIFACT_DIRECTORY}/assets`,
+        NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1",
       })
     ) {
       errors.push(
-        "mcp-bridge-dev artifact installation must receive only its reviewed artifact identity",
+        "mcp-bridge-dev installer must receive only the retained OpenShell asset directory",
       );
     }
   } else {
@@ -463,7 +478,7 @@ function validateJobExecution(
       );
     }
     for (const token of [
-      DEV_ARTIFACT_TOOL,
+      `"${DEV_ARTIFACT_TRUSTED_TOOL}"`,
       " verify ",
       '"$OPENSHELL_DEV_ARTIFACT_DIR"',
       '"$OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT"',
@@ -476,26 +491,16 @@ function validateJobExecution(
         "mcp-bridge-dev must verify the immutable OpenShell artifact before installation",
       );
     }
-    for (const token of [
-      DEV_ARTIFACT_TOOL,
-      " prepare ",
-      '"$OPENSHELL_DEV_ARTIFACT_DIR"',
-      '"$OPENSHELL_DEV_BINARY_DIR"',
-      '"$OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT"',
-      '"$OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256"',
-      'sudo install -m 755 "$OPENSHELL_DEV_BINARY_DIR/openshell" /usr/local/bin/openshell',
-      'sudo install -m 755 "$OPENSHELL_DEV_BINARY_DIR/openshell-gateway" /usr/local/bin/openshell-gateway',
-      'sudo install -m 755 "$OPENSHELL_DEV_BINARY_DIR/openshell-sandbox" /usr/local/bin/openshell-sandbox',
-    ]) {
+    for (const token of [`bash "${DEV_ARTIFACT_TRUSTED_INSTALLER}"`]) {
       requireContains(
         errors,
         install.run,
         token,
-        "mcp-bridge-dev must install only the verified same-run binaries",
+        "mcp-bridge-dev must install the retained assets through the trusted release installer",
       );
     }
-    if (asString(install.run).includes("scripts/install-openshell.sh")) {
-      errors.push("mcp-bridge-dev must not modify or invoke the base-trusted release installer");
+    if (asString(install.run).includes("tools/e2e/openshell-dev-artifact.mts prepare")) {
+      errors.push("mcp-bridge-dev must not maintain a second OpenShell installer");
     }
     const devCleanup = namedStep(job, DEV_DOCKER_CLEANUP_NAME);
     if (
@@ -688,6 +693,7 @@ function validateDevArtifactJob(errors: string[], job: UnknownRecord): void {
       ref: "${{ inputs.workflow_sha || github.workflow_sha }}",
       path: DEV_ARTIFACT_TRUSTED_CHECKOUT,
       "persist-credentials": false,
+      "sparse-checkout": DEV_ARTIFACT_TRUSTED_PATHS,
     })
   ) {
     errors.push(`${DEV_ARTIFACT_JOB} must check out only the trusted workflow revision`);

@@ -399,6 +399,11 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Check out trusted Jetson controller" &&
         step.with?.repository === "NVIDIA/NemoClaw" &&
         step.with?.ref === "${{ github.workflow_sha }}";
+      const trustedOpenShellDevToolingCheckout =
+        ["mcp-bridge-dev", "openshell-dev-artifact"].includes(jobName) &&
+        step.name === "Checkout trusted OpenShell dev tooling" &&
+        step.with?.repository === "${{ github.repository }}" &&
+        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
       const trustedCheckout =
         trustedHermesFixtureCheckout ||
         trustedReportHelperCheckout ||
@@ -409,7 +414,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         trustedManagedImageRuntimeCheckout ||
         trustedLlamaCppPlanCheckout ||
         trustedLlamaCppQualificationCheckout ||
-        trustedJetsonControllerCheckout;
+        trustedJetsonControllerCheckout ||
+        trustedOpenShellDevToolingCheckout;
       if (
         step.uses?.startsWith("actions/checkout@") &&
         step.with?.ref !== "${{ inputs.checkout_sha || github.sha }}" &&

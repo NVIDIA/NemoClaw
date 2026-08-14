@@ -308,16 +308,20 @@ describe("MCP workflow artifact boundary", () => {
       const restore = dev.steps.find(
         (step) => step.name === "Restore immutable OpenShell dev artifact",
       );
+      const verify = dev.steps.find(
+        (step) => step.name === "Verify immutable OpenShell dev artifact",
+      );
       const install = dev.steps.find(
         (step) => step.name === "Install immutable OpenShell dev artifact",
       );
       requireFixture(restore?.with, "OpenShell dev artifact restore fixture is missing");
+      requireFixture(verify?.run, "OpenShell dev artifact verification fixture is missing");
       requireFixture(install?.run, "OpenShell dev artifact installation fixture is missing");
       restore.uses = "actions/download-artifact@main";
       restore.with.name = "openshell-dev-latest";
+      verify.run = verify.run.replace(".trusted-openshell-dev-artifact/", "");
       install.env = { NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1" };
-      install.run = install.run.replace(" prepare ", " resolve ");
-      install.run += "\nbash scripts/install-openshell.sh\n";
+      install.run = "bash scripts/install-openshell.sh";
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
@@ -325,9 +329,9 @@ describe("MCP workflow artifact boundary", () => {
           "mcp-bridge-dev must depend on its reviewed artifact producers",
           "mcp-bridge-dev must use the reviewed immutable artifact downloader",
           "mcp-bridge-dev must restore exactly the resolver's content-addressed artifact",
-          "mcp-bridge-dev artifact installation must receive only its reviewed artifact identity",
-          "mcp-bridge-dev must install only the verified same-run binaries",
-          "mcp-bridge-dev must not modify or invoke the base-trusted release installer",
+          "mcp-bridge-dev must verify the immutable OpenShell artifact before installation",
+          "mcp-bridge-dev installer must receive only the retained OpenShell asset directory",
+          "mcp-bridge-dev must install the retained assets through the trusted release installer",
         ]),
       );
     } finally {
@@ -340,7 +344,7 @@ describe("MCP workflow artifact boundary", () => {
       name: "candidate checkout ref",
       mutate: (job: { steps: Array<Record<string, unknown>> }) => {
         const checkout = job.steps.find(
-          (step) => step.name === "Checkout trusted OpenShell dev artifact resolver",
+          (step) => step.name === "Checkout trusted OpenShell dev tooling",
         );
         requireFixture(
           checkout?.with,

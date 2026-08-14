@@ -340,7 +340,8 @@ function validateConsumer(
   job: WorkflowRecord,
   jobSteps: WorkflowStep[],
 ): void {
-  if (job.needs !== CLI_ARTIFACT_PRODUCER_JOB) {
+  const dependencies = Array.isArray(job.needs) ? job.needs : [job.needs];
+  if (!dependencies.includes(CLI_ARTIFACT_PRODUCER_JOB)) {
     errors.push(`${jobName} must depend directly on the CLI artifact producer`);
   }
   const candidateCheckoutIndexes = jobSteps.flatMap((step, index) =>

@@ -10,14 +10,13 @@ import { OPENSHELL_DEV_ASSET_NAMES } from "../../../tools/e2e/openshell-dev-arti
 
 export const API_ROOT = "https://api.github.com/repos/NVIDIA/OpenShell";
 export const RELEASE_URL = `${API_ROOT}/releases/tags/dev`;
-const TAG_URL = `${API_ROOT}/git/ref/tags/dev`;
-const ANNOTATED_TAG_SHA = "a".repeat(40);
 export const SOURCE_COMMIT = "b".repeat(40);
 
 type FixtureOptions = {
   missingAsset?: string;
   driftAfterDownload?: boolean;
   corruptAsset?: string;
+  sourceCommit?: string;
 };
 
 export function fixtureFetch(options: FixtureOptions = {}): typeof fetch {
@@ -46,7 +45,7 @@ export function fixtureFetch(options: FixtureOptions = {}): typeof fetch {
       return Response.json({
         id: 9051,
         tag_name: "dev",
-        target_commitish: SOURCE_COMMIT,
+        target_commitish: options.sourceCommit ?? SOURCE_COMMIT,
         url: `${API_ROOT}/releases/9051`,
         html_url: "https://github.com/NVIDIA/OpenShell/releases/tag/dev",
         updated_at:
@@ -54,24 +53,6 @@ export function fixtureFetch(options: FixtureOptions = {}): typeof fetch {
             ? "2026-08-13T22:08:00Z"
             : "2026-08-13T22:07:00Z",
         assets,
-      });
-    }
-    if (url === TAG_URL) {
-      return Response.json({
-        object: {
-          type: "tag",
-          sha: ANNOTATED_TAG_SHA,
-          url: `${API_ROOT}/git/tags/${ANNOTATED_TAG_SHA}`,
-        },
-      });
-    }
-    if (url === `${API_ROOT}/git/tags/${ANNOTATED_TAG_SHA}`) {
-      return Response.json({
-        object: {
-          type: "commit",
-          sha: SOURCE_COMMIT,
-          url: `${API_ROOT}/git/commits/${SOURCE_COMMIT}`,
-        },
       });
     }
     const assetMatch = url.match(
@@ -99,39 +80,4 @@ export function fixtureFetch(options: FixtureOptions = {}): typeof fetch {
 
 export function temporaryDirectory(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-dev-artifact-"));
-}
-
-export function fixtureTarRunner(args: string[]) {
-  return fixtureTarRunnerWithSize(1)(args);
-}
-
-export function fixtureTarRunnerWithSize(
-  declaredSize: number,
-  onExtract: (args: string[]) => void = () => {},
-) {
-  return (args: string[]) => {
-    const members = new Map([
-      ["openshell-x86_64-unknown-linux-musl.tar.gz", "openshell"],
-      ["openshell-gateway-x86_64-unknown-linux-gnu.tar.gz", "openshell-gateway"],
-      ["openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz", "openshell-sandbox"],
-    ]);
-    const archiveName = path.basename(args[1]);
-    const member = members.get(archiveName);
-    if (!member) return { status: 1, stdout: "", stderr: "unexpected archive" };
-    if (args[0] === "-tzf") return { status: 0, stdout: `${member}\n`, stderr: "" };
-    if (args[0] === "-tvzf") {
-      return {
-        status: 0,
-        stdout: `-rwxr-xr-x 0/0 ${declaredSize} 2026-01-01 00:00 ${member}\n`,
-        stderr: "",
-      };
-    }
-    if (args[0] === "-xzf") {
-      onExtract(args);
-      const outputDirectory = args[args.indexOf("-C") + 1];
-      fs.writeFileSync(path.join(outputDirectory, member), member);
-      return { status: 0, stdout: "", stderr: "" };
-    }
-    return { status: 1, stdout: "", stderr: "unexpected tar operation" };
-  };
 }
