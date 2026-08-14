@@ -162,6 +162,34 @@ export function isOnboardDeferredExitError(error: unknown): error is OnboardDefe
   );
 }
 
+interface DeferredExitOptions {
+  readonly deferProcessExit?: boolean;
+}
+
+export function wrapOnboardDeferredExit<TOptions extends DeferredExitOptions>(
+  run: (options?: TOptions) => Promise<void>,
+): (options?: TOptions) => Promise<void> {
+  return async (options?: TOptions): Promise<void> => {
+    const resolvedOptions = options ?? ({} as TOptions);
+    const originalProcessExit = process.exit;
+    let deferredExit: OnboardDeferredExitError | null = null;
+    process.exit = ((code?: number): never => {
+      throw new OnboardDeferredExitError(code ?? 0);
+    }) as typeof process.exit;
+    try {
+      await run(resolvedOptions);
+    } catch (error) {
+      if (!isOnboardDeferredExitError(error)) throw error;
+      deferredExit = error;
+    } finally {
+      process.exit = originalProcessExit;
+    }
+    if (!deferredExit) return;
+    if (resolvedOptions.deferProcessExit === true) throw deferredExit;
+    originalProcessExit(deferredExit.code);
+  };
+}
+
 export function redactOnboardDiagnosticText(message: string): string {
   return redactSensitiveText(message) ?? "";
 }

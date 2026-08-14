@@ -3608,24 +3608,7 @@ async function preflightAuthoritativeRebuildTarget(
 
 // ── Main ─────────────────────────────────────────────────────────
 const wrappedOnboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
-async function onboard(opts: OnboardOptions = {}): Promise<void> {
-  const originalProcessExit = process.exit;
-  let deferredExit: import("./onboard/session-bootstrap").OnboardDeferredExitError | null = null;
-  process.exit = ((code?: number): never => {
-    throw new onboardSessionBootstrap.OnboardDeferredExitError(code ?? 0);
-  }) as typeof process.exit;
-  try {
-    await wrappedOnboard(opts);
-  } catch (error) {
-    if (!onboardSessionBootstrap.isOnboardDeferredExitError(error)) throw error;
-    deferredExit = error;
-  } finally {
-    process.exit = originalProcessExit;
-  }
-  if (!deferredExit) return;
-  if (opts.deferProcessExit === true) throw deferredExit;
-  originalProcessExit(deferredExit.code);
-}
+const onboard = onboardSessionBootstrap.wrapOnboardDeferredExit(wrappedOnboard);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   const hostMountScope = onboardSessionBootstrap.beginHostMountScope(opts.hostMounts);
   const hermesApiPortReservationScope = agentOnboard.createHermesApiPortReservationScope();
