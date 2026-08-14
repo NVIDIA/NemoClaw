@@ -76,7 +76,12 @@ export async function assertHermesGpuStartupProof({
     expect(installText).not.toContain(
       "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",
     );
-    expect(installText).not.toContain("Docker container mode selected:");
+    expect(installText).toContain(
+      "Recreating OpenShell Docker sandbox container with restart-safe startup",
+    );
+    expect(installText).toContain(
+      "Docker container mode selected: persistent sandbox startup command",
+    );
     for (const fragment of HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS) {
       expect(installText).not.toContain(fragment);
     }
