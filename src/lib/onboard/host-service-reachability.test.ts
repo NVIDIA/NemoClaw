@@ -93,11 +93,7 @@ describe("probeHostServiceSandboxReachability", () => {
 
     const result = await probeHostServiceSandboxReachability({
       port: 11435,
-      inspectNetworkImpl: () =>
-        makeNetwork({
-          subnet: "10.89.0.0/24",
-          gatewayIp: "10.89.0.1",
-        }),
+      inspectNetworkImpl: () => ({ subnet: "10.89.0.0/24" }),
       runImpl: (args) => {
         capturedArgs = args;
         return { status: 0 };
