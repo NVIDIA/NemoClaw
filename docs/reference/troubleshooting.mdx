@@ -968,6 +968,7 @@ A failed or timed-out workload leaves the GPU unproven and does not enable GPU p
 The names-only unified-memory fallback does not run this workload and rejects denylisted names.
 WSL hosts that are not Docker Desktop-backed do not run the workload and continue to report the GPU as unavailable.
 
+When GPU detection rejects the `nvidia-smi` report, preflight prints the failed check under the `Local NIM unavailable — no GPU detected` line, for example an absent `/proc/driver/nvidia` interface or a failed bounded CUDA proof.
 If NemoClaw rejects the detected GPU name during preflight, select a CPU or remote inference provider, or move the setup to a host with a supported NVIDIA GPU and current drivers.
 
 Jetson/Tegra hosts support sandbox GPU passthrough through the compatibility route.

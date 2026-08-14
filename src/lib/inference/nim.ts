@@ -110,6 +110,11 @@ export interface DetectGpuDeps {
   runCaptureImpl?: typeof runCapture;
   /** Override WSL detection for deterministic tests. */
   isWsl?: boolean;
+  // Receives one sentence naming the check that rejected an nvidia-smi probe
+  // when the trust gate returns no GPU, so preflight can say which check
+  // failed instead of the bare "no GPU detected" (#9000). The reason is built
+  // from fixed text only — never from nvidia-smi output, which is untrusted.
+  onTrustGateRejection?: (reason: string) => void;
 }
 
 // Lazily construct the default ARM64 Linux GPU prover. Keep it behind a require
@@ -484,16 +489,21 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         // The all-GPU CUDA workload proves that at least one usable device
         // exists. It does not establish which nvidia-smi rows or capacities
         // are genuine, so a multi-row response stays untrusted.
-        const passesBoundedCudaProof = (): boolean => {
+        // Null when the proof passed; otherwise a fixed-text fragment naming
+        // why it did not, composed into the onTrustGateRejection reason.
+        const boundedCudaProofRejection = (): string | null => {
           if (parsed.length !== 1) {
-            return false;
+            return "the bounded CUDA proof was not attempted for multiple GPU rows";
           }
           const prover =
             deps.proveArm64WslDockerDesktopGpu === undefined
               ? defaultArm64WslDockerDesktopGpuProver()
               : deps.proveArm64WslDockerDesktopGpu;
           const proof = prover ? prover(parsed.map((p: ParsedGpu) => p.name)) : null;
-          return !!proof && proof.passed;
+          if (!proof) {
+            return "the bounded CUDA proof was not attempted";
+          }
+          return proof.passed ? null : "the bounded CUDA proof failed";
         };
         let trusted: ParsedGpu[];
         let wslDockerDesktopGpuProofPassed = false;
@@ -506,7 +516,11 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           // A bounded Docker `--gpus` workload proves that the single reported
           // row has a usable CUDA device. The Snapdragon shim cannot pass it
           // (#4565 without reopening #3988/#4424).
-          if (!passesBoundedCudaProof()) {
+          const proofRejection = boundedCudaProofRejection();
+          if (proofRejection) {
+            deps.onTrustGateRejection?.(
+              `nvidia-smi reported a placeholder GPU name and ${proofRejection}`,
+            );
             return null;
           }
           trusted = parsed;
@@ -521,7 +535,15 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
             // name the filter below would discard never starts the Docker workload.
             // Without a passing proof this path stays fail-closed as before.
             const plausible = parsed.every((p: ParsedGpu) => isPlausibleNvidiaGpuName(p.name));
-            if (!plausible || !passesBoundedCudaProof()) {
+            if (!plausible) {
+              deps.onTrustGateRejection?.(
+                "nvidia-smi reported a GPU name that is not a recognized NVIDIA product and the bounded CUDA proof was not attempted",
+              );
+              return null;
+            }
+            const proofRejection = boundedCudaProofRejection();
+            if (proofRejection) {
+              deps.onTrustGateRejection?.(`/proc/driver/nvidia is absent and ${proofRejection}`);
               return null;
             }
             wslDockerDesktopGpuProofPassed = true;
@@ -529,6 +551,9 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           trusted = parsed.filter((p: ParsedGpu) => isPlausibleNvidiaGpuName(p.name));
         }
         if (trusted.length === 0) {
+          deps.onTrustGateRejection?.(
+            "nvidia-smi reported no recognized NVIDIA GPU product names",
+          );
           return null;
         }
         const totalMemoryMB = trusted.reduce((sum: number, p: ParsedGpu) => sum + p.memoryMB, 0);
@@ -595,6 +620,9 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
       !firmwareIsUnifiedMemory &&
       gpuNames.some((name: string) => isDenylistedNvidiaGpuName(name))
     ) {
+      deps.onTrustGateRejection?.(
+        "nvidia-smi reported a placeholder GPU name and the bounded CUDA proof was not attempted",
+      );
       return null;
     }
     const taggedNames = gpuNames.filter((name: string) =>
@@ -612,6 +640,15 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         : firmwareIsUnifiedMemory
           ? gpuNames
           : [];
+    if (
+      taggedNames.length > 0 &&
+      !firmwareIsUnifiedMemory &&
+      !allowTaggedOnGenericFirmware
+    ) {
+      deps.onTrustGateRejection?.(
+        "/proc/driver/nvidia is absent for the nvidia-smi names-only unified-memory check",
+      );
+    }
     if (unifiedGpuNames.length > 0) {
       const totalMemoryMB = readHostMemoryMB(runCaptureImpl);
       const count = unifiedGpuNames.length;
