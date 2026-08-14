@@ -637,7 +637,7 @@ try:
 except Exception:
     sys.exit(1)
 # Schema pin: detection assumes a truthy top-level "credentials" key,
-# matching the auth.json shape reviewed for deepagents-code==0.1.54. Nested or
+# matching the auth.json shape reviewed for deepagents-code==0.1.55. Nested or
 # renamed shapes ({"auth":{...}}, {"state":{"credentials":...}}, top-level
 # list) are not detected. When bumping the upstream pin, re-review this
 # assumption against the new auth.json schema.

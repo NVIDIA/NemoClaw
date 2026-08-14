@@ -24,10 +24,10 @@ describe("Deep Agents Code base image compatibility", () => {
   });
 
   it("accepts only the exact installed distribution version (#6456)", () => {
-    mocks.dockerCapture.mockReturnValueOnce("0.1.54\n").mockReturnValueOnce("0.1.12\n");
+    mocks.dockerCapture.mockReturnValueOnce("0.1.55\n").mockReturnValueOnce("0.1.12\n");
 
-    expect(deepAgentsCodeBaseImageMatchesVersion("dcode-base:current", "0.1.54")).toBe(true);
-    expect(deepAgentsCodeBaseImageMatchesVersion("dcode-base:stale", "0.1.54")).toBe(false);
+    expect(deepAgentsCodeBaseImageMatchesVersion("dcode-base:current", "0.1.55")).toBe(true);
+    expect(deepAgentsCodeBaseImageMatchesVersion("dcode-base:stale", "0.1.55")).toBe(false);
   });
 
   it("binds the manifest version and source files into resolution options (#6456)", () => {
@@ -58,11 +58,11 @@ describe("Deep Agents Code base image compatibility", () => {
       makeAgent({
         name: "langchain-deepagents-code",
         displayName: "LangChain Deep Agents Code",
-        expectedVersion: "0.1.54",
+        expectedVersion: "0.1.55",
       }),
       "/test/root/agents/langchain-deepagents-code/Dockerfile.base",
     );
-    mocks.dockerCapture.mockReturnValueOnce("0.1.54").mockReturnValueOnce("");
+    mocks.dockerCapture.mockReturnValueOnce("0.1.55").mockReturnValueOnce("");
 
     expect(options?.validateImage?.("dcode-base:v0.0.96")).toBe(false);
     expect(mocks.dockerCapture).toHaveBeenCalledTimes(2);
@@ -88,9 +88,9 @@ describe("Deep Agents Code base image compatibility", () => {
   });
 
   it("runs the version probe in a locked-down container (#6456)", () => {
-    mocks.dockerCapture.mockReturnValue("0.1.54");
+    mocks.dockerCapture.mockReturnValue("0.1.55");
 
-    deepAgentsCodeBaseImageMatchesVersion("dcode-base:current", "0.1.54");
+    deepAgentsCodeBaseImageMatchesVersion("dcode-base:current", "0.1.55");
 
     expect(mocks.dockerCapture).toHaveBeenCalledWith(
       [
@@ -118,14 +118,14 @@ describe("Deep Agents Code base image compatibility", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     mocks.dockerCapture.mockReturnValue("");
 
-    expect(deepAgentsCodeBaseImageMatchesVersion("dcode-base:unreadable", "0.1.54")).toBe(false);
+    expect(deepAgentsCodeBaseImageMatchesVersion("dcode-base:unreadable", "0.1.55")).toBe(false);
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("dcode-base:unreadable returned no Deep Agents Code version output"),
     );
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("the container or metadata probe may have failed"),
     );
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("deepagents-code==0.1.54"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("deepagents-code==0.1.55"));
     warn.mockRestore();
   });
 });

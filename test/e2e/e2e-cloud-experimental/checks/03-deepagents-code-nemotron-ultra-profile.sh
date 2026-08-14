@@ -57,7 +57,7 @@ from langchain_openai import ChatOpenAI
 CONFIG_PATH = Path("/sandbox/.deepagents/config.toml")
 EXPECTED_VERSIONS = {
     "nemoclaw-deepagents-profile": "0.1.0",
-    "deepagents-code": "0.1.54",
+    "deepagents-code": "0.1.55",
     "deepagents": "0.7.5",
 }
 MANAGED_MODEL_IDS = (

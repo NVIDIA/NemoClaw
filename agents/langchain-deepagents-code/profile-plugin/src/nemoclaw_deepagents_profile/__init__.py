@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable, MutableMapping
 from pathlib import Path
 from typing import Any
 
-EXPECTED_DCODE_VERSION = "0.1.54"
+EXPECTED_DCODE_VERSION = "0.1.55"
 EXPECTED_DEEPAGENTS_VERSION = "0.7.5"
 EXPECTED_NATIVE_PROFILE_SHA256 = (
     "3b95b118e90c4ae19890c611cc7e1e85261217f971496e9bb7508142133c7d9a"

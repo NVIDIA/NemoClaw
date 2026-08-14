@@ -10,7 +10,7 @@
 # sourceBoundary: deepagents-code owns those Python entrypoints and child env;
 # langgraph-cli owns the analytics opt-out; NemoClaw owns the sandbox image
 # posture and therefore validates every patched symbol before build.
-# whyNotSourceFix: upstream 0.1.54 has no single managed-runtime hook that can
+# whyNotSourceFix: upstream 0.1.55 has no single managed-runtime hook that can
 # enforce these constraints across CLI, UI, headless, server, and restart paths.
 # regressionTest: the exact version plus AST symbol/method gates fail the image
 # build on drift, while hostile analytics values exercise patched entrypoints and
@@ -26,7 +26,7 @@ import importlib.metadata
 import importlib.util
 from pathlib import Path
 
-EXPECTED_DCODE_VERSION = "0.1.54"
+EXPECTED_DCODE_VERSION = "0.1.55"
 PATCH_MARKER = "NemoClaw-managed Deep Agents Code hardening v2."
 TOOL_DISCLOSURE_PATCH_MARKER = "NemoClaw-managed progressive tool disclosure."
 OBSERVABILITY_PATCH_MARKER = "NemoClaw-managed backend-neutral observability."
@@ -173,14 +173,14 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         args.acp = False
     if hasattr(args, "startup_cmd"):
         args.startup_cmd = None
-    # 0.1.54 adds persisted startup/approval modes. Managed sessions always
+    # 0.1.55 adds persisted startup/approval modes. Managed sessions always
     # start in manual mode; the separately attested -y capability remains the
     # only route to thread-scoped auto-approval.
     if hasattr(args, "startup_mode"):
         args.startup_mode = "manual"
     if hasattr(args, "approval_mode"):
         args.approval_mode = "manual"
-    # Deep Agents Code 0.1.54 changed -y/--auto-approve from unrestricted
+    # Deep Agents Code 0.1.55 changed -y/--auto-approve from unrestricted
     # thread approval to classifier-backed Auto mode. Preserve NemoClaw's
     # explicitly enabled thread-opt-in contract by routing that flag to the
     # upstream unrestricted mode.
@@ -587,7 +587,7 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     return kwargs
 '''
 
-# Source-of-truth boundary: upstream Deep Agents Code 0.1.54 resolves and pins
+# Source-of-truth boundary: upstream Deep Agents Code 0.1.55 resolves and pins
 # destination DNS locally, then disables environment proxies. That is a sound
 # standalone SSRF defense but cannot operate in OpenShell's proxy-only network
 # namespace, where direct DNS and direct target connections are rejected. The
@@ -627,7 +627,7 @@ def _nemoclaw_get_class_path(self, provider_name: str):
 ModelConfig.get_class_path = _nemoclaw_get_class_path
 '''
 
-# Source-of-truth boundary: pinned upstream deepagents-code==0.1.54 cannot inject
+# Source-of-truth boundary: pinned upstream deepagents-code==0.1.55 cannot inject
 # managed progressive-disclosure or Relay middleware into both main and subagent
 # graphs, nor attach a metadata-only callback to the compiled graph. Without this
 # root-owned image patch, those graphs omit NemoClaw's runtime controls; this repo
@@ -1355,7 +1355,7 @@ _nemoclaw_original_approval_selection = ApprovalMenu._handle_selection
 
 
 def _nemoclaw_build_approval_options(self) -> list[tuple[str, str]]:
-    """Keep the managed unrestricted action's label truthful in 0.1.54."""
+    """Keep the managed unrestricted action's label truthful in 0.1.55."""
     options = _nemoclaw_original_approval_options(self)
     if not self._is_auto_fallback:
         options = [

@@ -31,7 +31,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     );
   });
 
-  it("patches every 0.1.54 mutation and credential boundary idempotently", () => {
+  it("patches every 0.1.55 mutation and credential boundary idempotently", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
     patchFixture(tempDir);
@@ -330,7 +330,7 @@ check("disabled", False)
         encoding: "utf8",
       });
       expect(result.status, `${args.join(" ")} failed: ${result.stderr}`).toBe(0);
-      expect(result.stdout).toContain("managed-posture-ok");
+      expect(result.stdout).toContain("managed-posture-ok auto_approve=False yolo=False startup_mode=manual approval_mode=manual");
     }
   });
 
@@ -391,7 +391,7 @@ check("disabled", False)
           encoding: "utf8",
         });
         expect(result.status, `${name}=${value} was rejected: ${result.stderr}`).toBe(0);
-        expect(result.stdout).toContain("managed-posture-ok");
+        expect(result.stdout).toContain("managed-posture-ok auto_approve=False yolo=False startup_mode=manual approval_mode=manual");
       }
     }
   });
@@ -448,7 +448,7 @@ check("disabled", False)
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("managed-posture-ok");
+    expect(result.stdout).toContain("managed-posture-ok auto_approve=False yolo=False startup_mode=manual approval_mode=manual");
   });
 
   it("accepts only exact same-name OpenShell credential placeholders", () => {
@@ -1429,7 +1429,7 @@ print("managed-auto-approval-ok")
       encoding: "utf8",
     });
     expect(versionResult.status).not.toBe(0);
-    expect(versionResult.stderr).toContain("Expected deepagents-code==0.1.54");
+    expect(versionResult.stderr).toContain("Expected deepagents-code==0.1.55");
 
     const missingMethod = createPackageFixture();
     const appPath = path.join(missingMethod, "deepagents_code", "app.py");

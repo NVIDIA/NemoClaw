@@ -41,7 +41,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import Field, ValidationError
 
 PINNED_VERSIONS = {
-    "deepagents-code": "0.1.54",
+    "deepagents-code": "0.1.55",
     "deepagents": "0.7.5",
     "langchain": "1.3.14",
     "langchain-core": "1.5.3",

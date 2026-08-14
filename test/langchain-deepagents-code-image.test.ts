@@ -1165,7 +1165,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     );
     expect(review).toContain("`GHSA-cq5v-8q36-5273`");
     expect(review).toContain("`GHSA-g6cj-pr64-35w5`");
-    expect(review).toContain("Deep Agents Code `0.1.54`");
+    expect(review).toContain("Deep Agents Code `0.1.55`");
     expect(review).toContain("semantic migration to `>=0.1.45`");
     expect(requirementsLock).toContain("uv==0.11.33");
     expect(requirementsLock).toContain("aiohttp==3.14.3");
@@ -1180,7 +1180,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     for (const [name, expectedVersion] of [
       ["aiohttp", "3.14.3"],
       ["cryptography", "50.0.0"],
-      ["deepagents-code", "0.1.54"],
+      ["deepagents-code", "0.1.55"],
       ["langgraph-checkpoint-sqlite", "3.1.1"],
     ] as const) {
       expect(dockerfileBase).toContain(`'${name}': '${expectedVersion}'`);

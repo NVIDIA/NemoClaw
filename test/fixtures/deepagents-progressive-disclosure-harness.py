@@ -278,7 +278,7 @@ def _run_behavior(module: types.ModuleType) -> dict[str, Any]:
     async_names = asyncio.run(exercise_async())
     assert async_names == _visible_names(cumulative)
 
-    # Deep Agents Code 0.1.54 can give a middleware tool a narrower executor
+    # Deep Agents Code 0.1.55 can give a middleware tool a narrower executor
     # projection than the graph-construction catalog. The registered catalog
     # must still make a loaded MCP tool searchable and discoverable.
     projected = module.ProgressiveToolDisclosureMiddleware(

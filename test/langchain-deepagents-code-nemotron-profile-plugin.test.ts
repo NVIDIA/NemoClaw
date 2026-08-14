@@ -32,7 +32,7 @@ const pythonBin = execFileSync("python3", ["-c", "import sys; print(sys.executab
   encoding: "utf8",
 }).trim();
 
-const EXPECTED_DCODE_VERSION = "0.1.54";
+const EXPECTED_DCODE_VERSION = "0.1.55";
 const EXPECTED_DEEPAGENTS_VERSION = "0.7.5";
 const NATIVE_PROFILE_SHA256 = "3b95b118e90c4ae19890c611cc7e1e85261217f971496e9bb7508142133c7d9a";
 const UNMODIFIED_BOOTSTRAP_SHA256 =
@@ -656,7 +656,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     expect(project).toContain('license = "Apache-2.0"');
     expect(project).toContain('[project.entry-points."deepagents.harness_profiles"]');
     expect(project).toContain('nemoclaw-managed-aliases = "nemoclaw_deepagents_profile:register"');
-    expect(project).toContain('"deepagents-code==0.1.54"');
+    expect(project).toContain('"deepagents-code==0.1.55"');
     expect(project).toContain('"deepagents==0.7.5"');
   });
 
@@ -850,7 +850,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
   });
 
   it.each([
-    ["Deep Agents Code", { dcode: "0.1.55" }, "deepagents-code==0.1.54"],
+    ["Deep Agents Code", { dcode: "0.1.54" }, "deepagents-code==0.1.55"],
     ["Deep Agents", { deepagents: "0.7.0a7" }, "deepagents==0.7.5"],
   ] as const)("fails closed on %s version drift", (_label, versions, message) => {
     const fixture = makePluginFixture(versions);

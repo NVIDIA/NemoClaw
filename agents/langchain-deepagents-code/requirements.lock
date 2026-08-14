@@ -621,9 +621,9 @@ deepagents-acp==0.0.9 \
     --hash=sha256:692e671f1862e8665a9539a4a028e72ae23beb000a57bab76f543f8d54855b96 \
     --hash=sha256:f6c4693e5b49bb01bef4217beb1aed044e0e548ffeaf4affa94599218450e999
     # via deepagents-code
-deepagents-code==0.1.54 \
-    --hash=sha256:74df86f91a11d5dbace943d1c747bf67a2354670416c343a6e909133feecaf27 \
-    --hash=sha256:fbfd0fc31caf5a8b0f1ff4ddea4da0de7837b0ffd3e6a222118c6480c99671ae
+deepagents-code==0.1.55 \
+    --hash=sha256:3a0d3e332f132d0e910fb3cccb47f77d276e228b6df6e5f7bff08809aa163121 \
+    --hash=sha256:91c30b62cb96d5e803346b0d77e55d589ac1daa04b6c534f80384ceec2717c11
     # via -r agents/langchain-deepagents-code/requirements.in
 distro==1.9.0 \
     --hash=sha256:2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed \

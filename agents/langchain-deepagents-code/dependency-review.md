@@ -7,7 +7,7 @@ This file records the reviewed dependency baseline for the Deep Agents Code sand
 Update it whenever `requirements.lock` changes.
 
 - Lockfile: `agents/langchain-deepagents-code/requirements.lock`
-- Lockfile SHA-256: `a52b5ead0f9f9c752c1c4988c3466195c9c0cc5a1b3bb23c895180d9ee8a07ea`
+- Lockfile SHA-256: `dd5b7141790fc60de82ad1e8b8f8835bfa18b89793210c235a57a4b5079c3717`
 - Audit command: `uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip`
 - Audit date: August 11, 2026
 - Targeted audit result: `aiohttp 3.14.3, cryptography 50.0.0, uv 0.11.33, langgraph-checkpoint-sqlite 3.1.1, MCP 1.28.1, Pillow 12.3.0, and pyasn1 0.6.4 have no known vulnerabilities`
@@ -18,13 +18,13 @@ The lock now selects `aiohttp==3.14.3`, `cryptography==50.0.0`, `uv==0.11.33`, `
 These selections clear `GHSA-cq5v-8q36-5273`, `GHSA-g6cj-pr64-35w5`, and `GHSA-47pj-3jcm-6whg`.
 The direct `langgraph-checkpoint-sqlite==3.1.1` requirement is a hash-locked security constraint for `GHSA-47pj-3jcm-6whg`.
 Remove it when the selected Deep Agents Code graph resolves `3.1.1` or later without the direct constraint and the complete-lock audit remains clear.
-The Deep Agents Code selector is the published `0.1.54` release at commit
-`81258067f4c74c3ede7d2b2895d9835137ba5977`. Its reviewed wheel is
-`deepagents_code-0.1.54-py3-none-any.whl` with SHA-256
-`fbfd0fc31caf5a8b0f1ff4ddea4da0de7837b0ffd3e6a222118c6480c99671ae`;
+The Deep Agents Code selector is the published `0.1.55` release at commit
+`80fe3d3cbcd23b8ebbc2b1b0d67d7ea318d11ef6`. Its reviewed wheel is
+`deepagents_code-0.1.55-py3-none-any.whl` with SHA-256
+`3a0d3e332f132d0e910fb3cccb47f77d276e228b6df6e5f7bff08809aa163121`;
 the corresponding source archive has SHA-256
-`74df86f91a11d5dbace943d1c747bf67a2354670416c343a6e909133feecaf27`.
-This semantic migration to `>=0.1.45` crosses the MCP and pyasn1 fixes while retaining the
+`91c30b62cb96d5e803346b0d77e55d589ac1daa04b6c534f80384ceec2717c11`.
+This semantic migration through `0.1.55` crosses the MCP and pyasn1 fixes while retaining the
 managed hook, approval, credential, update, and startup-mode guards at the
 NemoClaw launcher and exact-version package-patch boundaries.
 
@@ -34,7 +34,7 @@ This review does not claim the complete lock is vulnerability-free.
 
 ## Progressive MCP Tool Catalog Compatibility
 
-Deep Agents Code `0.1.54` with LangChain `1.3.14` can supply `search_tools` with a `ToolRuntime.tools` view that omits loaded MCP tools.
+Deep Agents Code `0.1.55` with LangChain `1.3.14` can supply `search_tools` with a `ToolRuntime.tools` view that omits loaded MCP tools.
 The next model request can still expose those tools, but a search against only the middleware runtime view reports no match and cannot disclose them.
 
 NemoClaw owns the progressive-disclosure middleware injection at graph construction.
@@ -45,7 +45,7 @@ An explicit subagent catalog therefore cannot search or expose a parent-only too
 At search time, the middleware combines that tuple with `ToolRuntime.tools` by object identity and applies the existing name, result, state, and schema limits to the combined catalog.
 Model requests still use their request-time tool view, and the existing callable-name validation still rejects ambiguous or reserved owners before graph construction.
 
-Deep Agents Code `0.1.54` also derives MCP approval from protocol annotations.
+Deep Agents Code `0.1.55` also derives MCP approval from protocol annotations.
 Its headless guard permits an MCP call without an approval UI only when `readOnlyHint` is literally `true`, `destructiveHint` is not `true`, and every supplied standard hint has a Boolean value.
 The guard rejects unannotated, malformed, contradictory, or mutating tools instead of treating them as read-only.
 NemoClaw retains that fail-closed behavior.
@@ -64,7 +64,7 @@ Remove the retained catalog only after the pinned Deep Agents and LangChain runt
 
 ## Managed `fetch_url` Proxy Adapter
 
-Deep Agents Code `0.1.54` deliberately disables ambient proxies and resolves
+Deep Agents Code `0.1.55` deliberately disables ambient proxies and resolves
 destination DNS locally before pinning the address used by `fetch_url`. That is
 the wrong transport inside a NemoClaw-managed sandbox: ordinary egress and
 destination resolution must pass through the policy proxy, so the direct path
@@ -100,18 +100,18 @@ behavior.
 
 ## Released Nemotron 3 Ultra Profile
 
-Deep Agents Code `0.1.54` pins `deepagents==0.7.5`, whose official wheel
+Deep Agents Code `0.1.55` pins `deepagents==0.7.5`, whose official wheel
 contains the Nemotron 3 Ultra harness profile merged in Deep Agents PR #4192.
 NemoClaw no longer vendors or overlays that source.
 
 - Native profile SHA-256: `3b95b118e90c4ae19890c611cc7e1e85261217f971496e9bb7508142133c7d9a`
 - Unmodified built-in bootstrap SHA-256: `005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf`
 - First-party adapter: `nemoclaw-deepagents-profile==0.1.0`
-- Adapter module SHA-256: `86b46958cd969407b05ce7ab10e711c7ad25375028a4c864f6f12519fe091ab3`
-- Adapter project metadata SHA-256: `5a07d4b473f2714021756eda005dceb6a0c7e6f3ff02ca4021d4debb8c170ff8`
+- Adapter module SHA-256: `6bb8dc8108c5dd7e7f71c39aacfb0da07d285b7a324eecd691177a9ca460cfc0`
+- Adapter project metadata SHA-256: `7be3f7972d7cd78d3ddaf66e2ff8b07a5e6af3611034b956cf0475ba78f5a576`
 - Adapter wheel license expression: `Apache-2.0`
 - Adapter dependency audit result: `No known vulnerabilities found`. Its only
-  requirements are the exact `deepagents-code==0.1.54` and
+  requirements are the exact `deepagents-code==0.1.55` and
   `deepagents==0.7.5` entries covered by the lockfile audit command above; no
   additional third-party distribution is introduced.
 
@@ -254,7 +254,7 @@ rejection, and unchanged concrete-command states. The
 deleted source-backport license path, `LICENSE.langchain-deepagents`, is not
 staged into the image, and image regression tests enforce that absence.
 
-Deep Agents Code `0.1.54` is the released consumer; prerelease risk is limited
+Deep Agents Code `0.1.55` is the released consumer; prerelease risk is limited
 to its exact `deepagents==0.7.5` SDK pin. That risk is accepted because the
 consumer and SDK are hash locked and all source, version, middleware, graph,
 and dispatch contracts are enforced by the isolated image-build validator.

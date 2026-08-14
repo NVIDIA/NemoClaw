@@ -116,7 +116,7 @@ proc expect {branches} {
     switch -- $event {
       composer {
         set branch_index [lsearch -exact $branches {$composer_pattern}]
-        set ::expect_out(0,string) "> dcode  v0.1.54"
+        set ::expect_out(0,string) "> dcode  v0.1.55"
       }
       namePrompt {
         set branch_index [lsearch -exact $branches {$name_prompt_pattern}]
@@ -175,7 +175,7 @@ proc exit {{code 0}} {
       ...process.env,
       NEMOCLAW_TUI_CAPTURE: capture,
       NEMOCLAW_TUI_CLOSE_AFTER_FIRST_CTRL_C: options.closeAfterFirstCtrlC ? "1" : "0",
-      NEMOCLAW_TUI_COMPOSER_PATTERN: "(dcode[^\\r\\n]*v0\\.1\\.54)",
+      NEMOCLAW_TUI_COMPOSER_PATTERN: "(dcode[^\\r\\n]*v0\\.1\\.55)",
       NEMOCLAW_TUI_EXPECT_NAME_PROMPT: options.expectNamePrompt === false ? "0" : "1",
       NEMOCLAW_TUI_MARKERS: markers,
       NEMOCLAW_TUI_FIRST_RUN_PATTERN: "(choose a recommended model)",

@@ -49,7 +49,7 @@ export function writeFixtureFile(root: string, relativePath: string, content: st
   fs.writeFileSync(target, `${content.trim()}\n`, "utf8");
 }
 
-export function createPackageFixture(version = "0.1.54"): string {
+export function createPackageFixture(version = "0.1.55"): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-patch-"));
   packageFixtureDirs.add(tempDir);
   const packageDir = path.join(tempDir, "deepagents_code");
@@ -290,7 +290,8 @@ def cli_main():
         raise SystemExit(exit_code)
     print(
         f"managed-posture-ok auto_approve={args.auto_approve} "
-        f"yolo={getattr(args, 'yolo', False)}"
+        f"yolo={getattr(args, 'yolo', False)} "
+        f"startup_mode={args.startup_mode} approval_mode={args.approval_mode}"
     )
 `,
   );

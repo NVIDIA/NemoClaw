@@ -22,13 +22,13 @@ PROCESS_CLEANUP_TIMEOUT=20
 # test/deepagents-code-tui-startup-check.test.ts pins this to secret-patterns.ts.
 SECRET_PATTERN='(?:nvapi-[A-Za-z0-9_-]{10,}|nvcf-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{10,}|github_pat_[A-Za-z0-9_]{30,}|sk-proj-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}|A(?:K|S)IA[A-Z0-9]{16}|hf_[A-Za-z0-9]{10,}|glpat-[A-Za-z0-9_-]{10,}|gsk_[A-Za-z0-9]{10,}|pypi-[A-Za-z0-9_-]{10,}|\bbot[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b|tvly-[A-Za-z0-9_-]{10,}|lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*)'
 CONTEXT_SECRET_VALUE_PATTERN='[A-Za-z0-9_.+\/=-]{10,}'
-# Pinned DCode 0.1.54 renders this exact modal title for `/agents`. Opening it
+# Pinned DCode 0.1.55 renders this exact modal title for `/agents`. Opening it
 # proves input reached the main composer after optional onboarding. Check 07
 # independently owns backend readiness and inference acceptance.
 TUI_READY_PATTERN='(select agent)'
 # Wait for the pinned main TUI banner before sending `/agents`; a fixed delay
 # can race startup and submit `agents` as an ordinary chat prompt instead.
-TUI_COMPOSER_PATTERN='(dcode[^\r\n]*v0\.1\.54)'
+TUI_COMPOSER_PATTERN='(dcode[^\r\n]*v0\.1\.55)'
 # NemoClaw configures DCode's model and managed provider before launch, so
 # the model picker is a regression. The name prompt is allowed on first run.
 TUI_FIRST_RUN_PATTERN='(choose a recommended model)'
@@ -211,7 +211,7 @@ proc append_marker {markers marker} {
 }
 
 proc submit_agents {markers} {
-  # Type at human cadence so DCode 0.1.54's reactive slash completion processes
+  # Type at human cadence so DCode 0.1.55's reactive slash completion processes
   # the exact command before Enter submits the selected /agents entry.
   foreach char [split "/agents" ""] {
     send -- $char
@@ -236,7 +236,7 @@ if {$expect_name_prompt eq "1"} {
       append_marker $markers "NEMOCLAW_TUI_NAME_PROMPT"
       puts "\nNEMOCLAW_TUI_NAME_PROMPT"
       # The prompt copy can render just before its input receives focus. Let the
-      # first frame settle, then submit the empty optional name accepted by 0.1.54.
+      # first frame settle, then submit the empty optional name accepted by 0.1.55.
       after 500
       send -- "\r"
       after 500
