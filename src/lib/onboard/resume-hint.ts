@@ -4,13 +4,12 @@
 import { CLI_NAME } from "../cli/branding";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 
-export function onboardResumeRecoveryCommand(): string {
-  return `${CLI_NAME} onboard --resume`;
+export function onboardResumeRecoveryCommand(sandboxName?: string | null): string {
+  const nameArg = sandboxName === null ? " --name <sandbox>" : "";
+  return `${CLI_NAME} onboard --resume${nameArg}`;
 }
 
-export function onboardFreshRecoveryCommand(
-  portable = isPortableExperimentalProfile(),
-): string {
+export function onboardFreshRecoveryCommand(portable = isPortableExperimentalProfile()): string {
   return portable
     ? `${CLI_NAME} onboard --experimental-profile portable --fresh`
     : `${CLI_NAME} onboard --fresh`;
@@ -35,19 +34,20 @@ let resumeHintShown = false;
 export function printOnboardResumeHint(
   portable = isPortableExperimentalProfile(),
   log: (message: string) => void = (message) => console.error(message),
+  sandboxName?: string | null,
 ): void {
   if (resumeHintShown) return;
   resumeHintShown = true;
   log("");
   if (portable) {
     log("  Onboarding did not finish. Resume from the step that failed with:");
-    log(`    ${onboardResumeRecoveryCommand()}`);
+    log(`    ${onboardResumeRecoveryCommand(sandboxName)}`);
     log("  The portable profile and rootless Podman authority are restored from the checkpoint.");
     log("  To start over instead, run:");
     log(`    ${onboardFreshRecoveryCommand(true)}`);
   } else {
     log("  Onboarding did not finish. Resume from the step that failed with:");
-    log(`    ${onboardResumeRecoveryCommand()}`);
+    log(`    ${onboardResumeRecoveryCommand(sandboxName)}`);
     log("  Completed steps are skipped; pass --fresh instead to start over.");
   }
 }

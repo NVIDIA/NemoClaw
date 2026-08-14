@@ -188,16 +188,18 @@ export function createSandboxGpuCreateAttemptRunner(
         })
       : null;
     const persistRestartSafeStartup =
-      input.persistStartupCommand === true && (route !== "native" || hasRequiredUlimits);
+      input.persistStartupCommand === true &&
+      (route !== "native" || !input.terminalAgent || hasRequiredUlimits);
     const deferRestartSafeCutover =
       !managedLifecycle && !compatibility && persistRestartSafeStartup;
     const runtimePatch =
       managedLifecycle?.patch ??
       createDockerGpuSandboxCreatePatch({
         route,
-        // The startup clone preserves native CDI devices, so DCode can apply its
-        // exact required limits without replacing the native GPU envelope.
-        // Other native routes are not swapped solely to persist a command.
+        // The startup clone preserves native CDI devices, so non-terminal agents
+        // keep their selected command and DCode can apply its exact required limits
+        // without replacing the native GPU envelope. Native terminal agents without
+        // required limits retain their create-time command.
         persistStartupCommand: persistRestartSafeStartup,
         externalRecreation: false,
         sandboxName: input.sandboxName,

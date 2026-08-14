@@ -129,7 +129,7 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-inference"]);
   });
 
-  it("preserves the migrated retained-target execution contracts", () => {
+  it("preserves the profile, timeout, install mode, packages, and environment for migrated targets", () => {
     expect(catalogueTarget("gateway-guard-recovery")).toMatchObject({
       profile: "nvidia-inference",
       timeoutMinutes: 45,
@@ -449,7 +449,7 @@ describe("E2E workflow plan", () => {
     ).toThrow("invalid or duplicate display name");
   });
 
-  it("withholds credentialed catalogue profiles from PR candidate runs", () => {
+  it("omits credentialed catalogue profiles when checkout_sha is set", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-pr-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
@@ -477,7 +477,7 @@ describe("E2E workflow plan", () => {
     }
   });
 
-  it("defines PR candidate eligibility once for every catalogue profile", () => {
+  it("allows manual PR dispatch only for standard-profile targets", () => {
     expect(
       Object.fromEntries(
         E2E_TARGET_CATALOGUE.map((target) => [
@@ -531,7 +531,7 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
-  it("selects the Jetson proof when no other retained E2E owns a changed file (#8142)", () => {
+  it("selects the Jetson test when no other E2E job owns a changed file (#8142)", () => {
     const plan = buildE2eWorkflowPlan({}, { changedFiles: ["docs/index.yml"] });
 
     expect(selectedWorkflowJobs(plan)).toEqual(["jetson-nvmap-gpu"]);
@@ -582,7 +582,7 @@ describe("E2E workflow plan", () => {
     expect(targetIds).toEqual(expect.arrayContaining(["onboard-repair", "onboard-resume"]));
   });
 
-  it("uses one risk rule for catalogue and retained workflow jobs", () => {
+  it("uses one risk rule for catalogue targets and workflow jobs", () => {
     const plan = buildE2eWorkflowPlan(
       {},
       { changedFiles: ["src/lib/messaging/applier/agent-config.ts"] },
@@ -661,7 +661,7 @@ describe("E2E workflow plan", () => {
     },
   );
 
-  it("maps the trusted-main bootstrap job during a PR controller checkout", () => {
+  it("maps launchable-smoke to bootstrap-install-smoke when checkout_sha is set", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
@@ -691,7 +691,7 @@ describe("E2E workflow plan", () => {
     }
   });
 
-  it("plans active jobs while the candidate verifies retired controller selectors (#7616)", () => {
+  it("plans active jobs while checking retired controller selectors (#7616)", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
@@ -988,7 +988,7 @@ describe("E2E workflow plan", () => {
     expect(output).toBe(`${JSON.stringify(parsed)}\n`);
   });
 
-  it("renders the selected matrix and retained jobs as a readable plan", () => {
+  it("renders the selected targets and workflow jobs as a readable plan", () => {
     const filtered = spawnSync(TSX, [PLANNER_CLI, "--summary", "--jobs", "hermes-e2e"], {
       cwd: REPO_ROOT,
       encoding: "utf8",
