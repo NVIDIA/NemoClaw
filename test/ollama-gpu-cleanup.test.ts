@@ -60,6 +60,14 @@ function withMockedSpawnSync<T>(
   }
 }
 
+/** Answer /api/ps with the named models loaded, and every other call with an empty 200. */
+function respondWithLoadedModels(...names: string[]) {
+  return ({ args }: SpawnCall): SpawnSyncReturns<string> =>
+    args.some((a) => a.endsWith("/api/ps"))
+      ? ok(JSON.stringify({ models: names.map((name) => ({ name })) }))
+      : ok();
+}
+
 describe("Ollama GPU cleanup", () => {
   it("calls curl synchronously to unload every running model via /api/generate", () => {
     withMockedSpawnSync(
@@ -137,12 +145,7 @@ describe("Ollama GPU cleanup", () => {
 
   it("unloads only the named models when a filter is supplied (#9110)", () => {
     withMockedSpawnSync(
-      ({ args }) => {
-        if (args.some((a) => a.endsWith("/api/ps"))) {
-          return ok(JSON.stringify({ models: [{ name: "keep-me:7b" }, { name: "drop-me:7b" }] }));
-        }
-        return ok();
-      },
+      respondWithLoadedModels("keep-me:7b", "drop-me:7b"),
       (calls) => {
         const { unloadOllamaModels } = require(modulePath);
         unloadOllamaModels(["drop-me:7b"]);
@@ -157,12 +160,7 @@ describe("Ollama GPU cleanup", () => {
 
   it("unloads every loaded model when the filter is empty (#9110)", () => {
     withMockedSpawnSync(
-      ({ args }) => {
-        if (args.some((a) => a.endsWith("/api/ps"))) {
-          return ok(JSON.stringify({ models: [{ name: "one:7b" }, { name: "two:7b" }] }));
-        }
-        return ok();
-      },
+      respondWithLoadedModels("one:7b", "two:7b"),
       (calls) => {
         const { unloadOllamaModels } = require(modulePath);
         unloadOllamaModels([]);
