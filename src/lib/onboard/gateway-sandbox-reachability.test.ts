@@ -167,6 +167,30 @@ describe("isSandboxBridgeGatewayReachable", () => {
     },
   );
 
+  it("does not expose rejected runtime JSON in the rendered daemon diagnostic", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const credential = "https://proxy-user:proxy-secret@proxy.example:8443";
+
+    const result = await isSandboxBridgeGatewayReachable({
+      inspectNetworkImpl: () => undefined,
+      runtimeProbeImpl: () => ({
+        status: 0,
+        stdout: JSON.stringify({ HttpProxy: credential, ServerVersion: "" }),
+      }),
+      usesHostGatewayRouteImpl: () => false,
+    });
+    const message = formatSandboxBridgeUnreachableMessage(result);
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "docker_daemon_unreachable",
+      detail: "Docker-compatible runtime info did not contain a recognized daemon version",
+    });
+    expect(message).not.toContain(credential);
+    expect(message).not.toContain("proxy-secret");
+    expect(message).not.toContain("HttpProxy");
+  });
+
   it("classifies an unavailable portable daemon before route inspection completes", async () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
     const runtimeProbeImpl = vi.fn(() => ({
@@ -185,7 +209,7 @@ describe("isSandboxBridgeGatewayReachable", () => {
       reason: "docker_daemon_unreachable",
       networkName: "openshell-docker",
     });
-    expect(result.detail).toContain("Cannot connect to Podman");
+    expect(result.detail).toBe("Docker-compatible runtime info probe exited with status 1");
     expect(runtimeProbeImpl).toHaveBeenCalledOnce();
   });
 

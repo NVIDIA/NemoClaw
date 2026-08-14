@@ -240,6 +240,22 @@ function summarizeProbeResult(result: SandboxBridgeProbeRunResult): string {
   return details.length > 0 ? details.join(" | ") : "docker run did not complete the probe";
 }
 
+function summarizeRuntimeInfoProbeResult(result: SandboxBridgeProbeRunResult): string {
+  if (isProbeTimeout(result)) {
+    return "Docker-compatible runtime info probe timed out";
+  }
+  if (result.status === 0) {
+    return "Docker-compatible runtime info did not contain a recognized daemon version";
+  }
+  if (result.signal) {
+    return `Docker-compatible runtime info probe ended with signal ${result.signal}`;
+  }
+  if (result.status !== null) {
+    return `Docker-compatible runtime info probe exited with status ${result.status}`;
+  }
+  return "Docker-compatible runtime info probe did not complete";
+}
+
 function isNameResolutionFailure(detail: string): boolean {
   return /bad address|name or service not known|temporary failure in name resolution|could not resolve|getaddrinfo/i.test(
     detail,
@@ -323,7 +339,7 @@ export async function isSandboxBridgeGatewayReachable(
           ok: false,
           reason: "docker_daemon_unreachable",
           networkName,
-          detail: summarizeProbeResult(runtimeResult),
+          detail: summarizeRuntimeInfoProbeResult(runtimeResult),
         };
       }
     }
