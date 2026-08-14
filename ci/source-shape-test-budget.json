@@ -282,6 +282,16 @@
       "category": "security"
     },
     {
+      "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
+      "test": "binds the selected runtime to its reviewed publisher, manifest, platform, and source",
+      "category": "security"
+    },
+    {
+      "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
+      "test": "rejects %s",
+      "category": "security"
+    },
+    {
       "file": "test/mcp-tool-discovery-image-contract.test.ts",
       "test": "pins reviewed packages and audits their lock outside image builds (#8253)",
       "category": "security"
