@@ -135,6 +135,7 @@ const onboardTracing: typeof import("./onboard/tracing") = require("./onboard/tr
 const sandboxReadinessTracing: typeof import("./onboard/sandbox-readiness-tracing") = require("./onboard/sandbox-readiness-tracing");
 const {
   createSetupMessagingChannels,
+  detectUnconfiguredMessagingChannels,
   readMessagingPlanFromEnv,
   writePlanToEnv,
   clearPlanEnv,
@@ -4184,6 +4185,12 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         loadSession: onboardSession.loadSession,
         getActiveSandbox: (name) => registry.getSandbox(name),
         mergePolicyMessagingChannels,
+        detectUnconfiguredMessagingChannels: (planChannels, selectedChannels, selectedAgent) =>
+          detectUnconfiguredMessagingChannels(
+            planChannels,
+            selectedChannels,
+            selectedAgent as Parameters<typeof detectUnconfiguredMessagingChannels>[2],
+          ),
         verifyCompatibleEndpointSandboxSmoke: (options) =>
           verifyCompatibleEndpointSandboxSmoke({
             ...options,
