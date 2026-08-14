@@ -3,10 +3,8 @@
 
 import assert from "node:assert/strict";
 
-export const MUSE_GLIMMER_VLLM_IMAGE_REFERENCE =
-  "vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204";
-
 const MANIFEST_DIGEST = "sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204";
+export const MUSE_GLIMMER_VLLM_IMAGE_REFERENCE = `vllm/vllm-openai@${MANIFEST_DIGEST}`;
 const CONFIG_DIGEST = "sha256:c3f199e54a26d2d7a9a41115cd07ce9d90a6488c5a4e75b17129e1006ce533fd";
 const SOURCE_REVISION = "ac7509e2b1db40fec2f03dde1ed4e9dfdc2338c9";
 const MUSE_MERGE_COMMIT = "6adad08767583f52eb4d2122111af0bf638ed5e6";

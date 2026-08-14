@@ -69,7 +69,11 @@ describe("Muse Glimmer vLLM image provenance", () => {
     for (const part of pathParts.slice(0, -1)) {
       target = target[part] as JsonRecord;
     }
-    target[pathParts.at(-1)!] = replacement;
+    const leaf = pathParts.at(-1)!;
+    expect(Object.hasOwn(target, leaf)).toBe(true);
+    const original = target[leaf];
+    target[leaf] = replacement;
+    expect(target[leaf]).not.toEqual(original);
 
     expect(() => verifyMuseGlimmerVllmImageProvenance(changed)).toThrow();
   });
