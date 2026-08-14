@@ -50,7 +50,7 @@ describe("onboarding entry composition boundary", () => {
         handleRoutedSelection: 15,
         "handleVllmSelection.queryVllmModels": 1,
         preflightAuthoritativeRebuildTarget: 1,
-        runOnboard: 8,
+        runOnboard: 9,
         selectAndValidateOllamaModel: 18,
       },
     });
@@ -450,6 +450,28 @@ describe("onboarding entry composition boundary", () => {
       expect(actual.gateway).toEqual({ choose: 1 });
     },
   );
+
+  it.each([
+    "createRecoveryGatewayAndRestart",
+    "createRecoveryGatewayAndStop",
+    "buildRepairGatewayAndLaunch",
+    "makeRollbackGatewayAndDestroy",
+    "installRestoreGatewayAndWait",
+  ])("classifies the compound lifecycle action %s", (action) => {
+    const actual = collectOnboardEntryDecisions(`function choose() { ${action}(); }`);
+
+    expect(actual.gateway).toEqual({ choose: 1 });
+  });
+
+  it.each([
+    "if (gateway.running()) return;",
+    'if (gateway["ready"]()) return;',
+    "switch (gateway.state) { default: break; }",
+  ])("combines gateway receiver and member in condition %s", (decision) => {
+    const actual = collectOnboardEntryDecisions(`function choose() { ${decision} }`);
+
+    expect(actual.gateway).toEqual({ choose: 1 });
+  });
 
   it("rejects a decision added within an allowed declaration", () => {
     const actual = collectOnboardEntryDecisions(

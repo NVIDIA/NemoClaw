@@ -23,7 +23,7 @@
     "handleRoutedSelection": 15,
     "handleVllmSelection.queryVllmModels": 1,
     "preflightAuthoritativeRebuildTarget": 1,
-    "runOnboard": 8,
+    "runOnboard": 9,
     "selectAndValidateOllamaModel": 18
   }
 }

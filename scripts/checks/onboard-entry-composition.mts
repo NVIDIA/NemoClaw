@@ -34,7 +34,7 @@ const LOGICAL_OPERATORS = new Set([
 const RECOVERY_NAME = /recover|recovery|repair|restore|retry|fallback|rollback/i;
 const RECOVERY_FACTORY_NAME = /^(?:build|create|install|make)/i;
 const RECOVERY_COMPOUND_ACTION =
-  /(?:And|Or)(?:Fallback|Recover|Recovery|Repair|Restore|Retry|Rollback)|(?:Fallback|Recover|Recovery|Repair|Restore|Retry|Rollback)[A-Za-z0-9]*(?:And|Or)(?:Apply|Execute|Perform|Run|Start)/i;
+  /(?:And|Or)(?:Fallback|Recover|Recovery|Repair|Restore|Retry|Rollback)|(?:Fallback|Recover|Recovery|Repair|Restore|Retry|Rollback)[A-Za-z0-9]*(?:And|Or)(?:Apply|Attach|Destroy|Ensure|Execute|Fallback|Kill|Launch|Perform|Recover|Register|Repair|Restart|Restore|Retire|Retry|Reuse|Rollback|Run|Start|Stop|Terminate|Wait)/i;
 const RECOVERY_ACTION_METHOD =
   /^(?:apply|call|execute|perform|recover|repair|restore|retry|rollback|run|start)$/i;
 
@@ -272,8 +272,13 @@ function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCateg
 
   function scanCondition(candidate: ts.Node, root: boolean): void {
     if (!root && isDecisionNode(candidate)) return;
-    if (ts.isIdentifier(candidate)) {
-      for (const category of identifierCategories(candidate.text)) categories.add(category);
+    if (
+      ts.isIdentifier(candidate) ||
+      ts.isPrivateIdentifier(candidate) ||
+      ts.isPropertyAccessExpression(candidate) ||
+      ts.isElementAccessExpression(candidate)
+    ) {
+      addIdentifiers(candidate);
     }
     ts.forEachChild(candidate, (child) => scanCondition(child, false));
   }
