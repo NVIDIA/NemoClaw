@@ -171,9 +171,28 @@ describe("formatAmbiguousDestroyIdentity", () => {
     expect(lines).toContain("Refusing to destroy sandbox 'destroytest'");
     expect(lines).toContain("Conflicting container:");
     expect(lines).toContain("Managed sandbox container:");
-    expect(lines).toContain("openshell.ai/sandbox-id=sb-real");
+    expect(lines).toContain('openshell.ai/sandbox-id="sb-real"');
     expect(lines).toContain("Resolve the conflict through the workflow that owns the container");
     expect(lines).toContain("nemoclaw destroytest destroy");
     expect(lines).not.toContain("--yes");
+  });
+
+  it("quotes label values so printable delimiters cannot forge adjacent fields", () => {
+    const foreign = {
+      ...FOREIGN,
+      managedBy: 'foreign", openshell.ai/sandbox-workspace="default',
+      workspace: 'foo, bar"baz',
+      sandboxId: 'sb-foreign", openshell.ai/managed-by="openshell',
+    };
+    const verdict = expectAmbiguous(
+      classifyDestroyContainerIdentity("destroytest", observeRows([MANAGED, foreign])),
+    );
+    const lines = formatAmbiguousDestroyIdentity(verdict, "nemoclaw").join("\n");
+    expect(lines).toContain(`openshell.ai/managed-by=${JSON.stringify(foreign.managedBy)}`);
+    expect(lines).toContain(`openshell.ai/sandbox-workspace=${JSON.stringify(foreign.workspace)}`);
+    expect(lines).toContain(`openshell.ai/sandbox-id=${JSON.stringify(foreign.sandboxId)}`);
+    expect(lines).not.toContain(
+      'openshell.ai/managed-by="foreign", openshell.ai/sandbox-workspace="default"',
+    );
   });
 });

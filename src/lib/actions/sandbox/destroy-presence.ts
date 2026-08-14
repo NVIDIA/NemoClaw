@@ -149,10 +149,11 @@ export function formatAmbiguousDestroyIdentity(
 ): string[] {
   const display = (value: string, fallback = "<none>"): string =>
     sanitizeReadinessText(value || fallback, IDENTITY_VALUE_MAX_LENGTH);
+  const displayLabel = (value: string): string => JSON.stringify(display(value));
   const describe = (row: SandboxNameLabeledContainer): string =>
-    `${display(row.id).slice(0, 12)} (${OPENSHELL_MANAGED_BY_LABEL}=${display(row.managedBy)}, ` +
-    `${OPENSHELL_SANDBOX_WORKSPACE_LABEL}=${display(row.workspace)}, ` +
-    `${OPENSHELL_SANDBOX_ID_LABEL}=${display(row.sandboxId)})`;
+    `${display(row.id).slice(0, 12)} (${OPENSHELL_MANAGED_BY_LABEL}=${displayLabel(row.managedBy)}, ` +
+    `${OPENSHELL_SANDBOX_WORKSPACE_LABEL}=${displayLabel(row.workspace)}, ` +
+    `${OPENSHELL_SANDBOX_ID_LABEL}=${displayLabel(row.sandboxId)})`;
   const sandboxName = display(verdict.sandboxName);
   const lines = [
     `Refusing to destroy sandbox '${sandboxName}': ${sanitizeReadinessText(verdict.reason, IDENTITY_DIAGNOSTIC_MAX_LENGTH)}.`,
