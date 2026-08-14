@@ -469,12 +469,12 @@ then uploads the verified bytes under a content-addressed name with the shared
 14-day E2E retention policy.
 
 The OpenClaw, Hermes, and Deep Agents Code shards restore and verify that same
-artifact before installation. A missing, replaced, or corrupt upstream asset
-fails the resolver as an infrastructure failure. The job error reports the
-failed identifier and source URL, and `resolution.json` records them when the
-artifact directory remains writable. The three product shards do not start in
-that case, so the run cannot report a product failure before reaching product
-assertions.
+artifact with tooling from the trusted workflow revision before installation. A
+missing, replaced, or corrupt upstream asset fails the resolver as an
+infrastructure failure. The job error reports the failed identifier and source
+URL, and `resolution.json` records them when the artifact directory remains
+writable. The three product shards do not start in that case, so the run cannot
+report a product failure before reaching product assertions.
 
 ## Larger-runner routing
 

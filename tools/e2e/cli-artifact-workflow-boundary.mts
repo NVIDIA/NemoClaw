@@ -406,7 +406,9 @@ function validateConsumer(
     prepareIndex >= 0 &&
     !isDeepStrictEqual(stepsBeforeRestore, reviewedStepsBeforeRestore)
   ) {
-    errors.push(`${jobName} must restore the CLI artifact in the step after workspace preparation`);
+    errors.push(
+      `${jobName} must contain only reviewed steps between workspace preparation and CLI artifact restore`,
+    );
   }
 }
 
