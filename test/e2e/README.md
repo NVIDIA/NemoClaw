@@ -468,10 +468,11 @@ Linux x64 archive and checksum file. It rejects release drift during download,
 then uploads the verified bytes under a content-addressed name with the shared
 14-day E2E retention policy.
 
-The OpenClaw, Hermes, and Deep Agents Code shards restore and verify that same
-artifact with the trusted workflow revision. They pass its asset directory to
-the same trusted `scripts/install-openshell.sh` path used for normal installs
-through the E2E-only `NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR` input. A
+The OpenClaw, Hermes, and LangChain Deep Agents Code shards restore and verify
+that same artifact with the trusted workflow revision. They pass its asset
+directory to the same trusted `scripts/install-openshell.sh` path used for
+normal installs through the E2E-only
+`NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR` input. A
 missing, replaced, or corrupt upstream asset fails the resolver as an
 infrastructure failure. The job error reports the failed identifier and source
 URL, and `resolution.json` records them when the artifact directory remains
