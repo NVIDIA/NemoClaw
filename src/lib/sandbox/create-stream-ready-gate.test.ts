@@ -54,7 +54,11 @@ describe("sandbox-create-stream ready gate", () => {
     ["terminal Docker", true, dockerEnv],
     ["terminal VM", true, vmEnv],
   ])("keeps agent and env ready gates equivalent for %s", (_label, isTerminalAgent, env) => {
-    const explicitPatterns = getReadyCheckOutputPatternsForAgent(isTerminalAgent, env);
+    const explicitPatterns = getReadyCheckOutputPatternsForAgent({
+      isTerminalAgent,
+      startupRunsDuringCreate: true,
+      env,
+    });
     expect(getReadyCheckOutputPatterns(env, explicitPatterns)).toEqual(explicitPatterns);
   });
 
@@ -62,9 +66,26 @@ describe("sandbox-create-stream ready gate", () => {
     ["Docker", dockerEnv],
     ["VM", vmEnv],
   ])("requires startup output for a non-terminal %s agent", (_label, env) => {
-    const patterns = getReadyCheckOutputPatternsForAgent(false, env);
+    const patterns = getReadyCheckOutputPatternsForAgent({
+      isTerminalAgent: false,
+      startupRunsDuringCreate: true,
+      env,
+    });
     expect(patterns).toHaveLength(1);
     expect(patterns[0]?.test("Setting up NemoClaw (Hermes)...")).toBe(true);
+  });
+
+  it.each([
+    ["Docker", dockerEnv],
+    ["VM", vmEnv],
+  ])("does not wait when non-terminal %s startup follows create", (_label, env) => {
+    expect(
+      getReadyCheckOutputPatternsForAgent({
+        isTerminalAgent: false,
+        startupRunsDuringCreate: false,
+        env,
+      }),
+    ).toEqual([]);
   });
 
   it("ignores process env driver overrides when explicit env is supplied", () => {
@@ -77,7 +98,11 @@ describe("sandbox-create-stream ready gate", () => {
     [
       "non-terminal Docker agent gate",
       dockerEnv,
-      getReadyCheckOutputPatternsForAgent(false, dockerEnv),
+      getReadyCheckOutputPatternsForAgent({
+        isTerminalAgent: false,
+        startupRunsDuringCreate: true,
+        env: dockerEnv,
+      }),
     ],
   ])("waits for startup output before detaching with the %s", async (_label, env, patterns) => {
     vi.useFakeTimers();

@@ -19,11 +19,12 @@ export function getReadyCheckOutputPatterns(
   return selectedDrivers(env).includes("vm") ? STARTUP_READY_DETACH_OUTPUT_PATTERNS : [];
 }
 
-export function getReadyCheckOutputPatternsForAgent(
-  isTerminalAgent: boolean,
-  env: NodeJS.ProcessEnv,
-): readonly RegExp[] {
-  return isTerminalAgent
+export function getReadyCheckOutputPatternsForAgent(input: {
+  readonly isTerminalAgent: boolean;
+  readonly startupRunsDuringCreate: boolean;
+  readonly env: NodeJS.ProcessEnv;
+}): readonly RegExp[] {
+  return input.isTerminalAgent || !input.startupRunsDuringCreate
     ? []
-    : getReadyCheckOutputPatterns(env, STARTUP_READY_DETACH_OUTPUT_PATTERNS);
+    : getReadyCheckOutputPatterns(input.env, STARTUP_READY_DETACH_OUTPUT_PATTERNS);
 }

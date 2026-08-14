@@ -372,7 +372,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
       "mxc-launch",
       input.createArgv.slice(1),
       input.sandboxEnv,
-      expect.anything(),
+      expect.objectContaining({ readyCheckOutputPatterns: [] }),
     );
     expect(recoverUnfinished.mock.invocationCallOrder[0]).toBeLessThan(
       prepareNetwork.mock.invocationCallOrder[0],
