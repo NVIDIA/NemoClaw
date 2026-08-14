@@ -134,4 +134,41 @@ describe("Ollama GPU cleanup", () => {
       },
     );
   });
+
+  it("unloads only the named models when a filter is supplied (#9110)", () => {
+    withMockedSpawnSync(
+      ({ args }) => {
+        if (args.some((a) => a.endsWith("/api/ps"))) {
+          return ok(JSON.stringify({ models: [{ name: "keep-me:7b" }, { name: "drop-me:7b" }] }));
+        }
+        return ok();
+      },
+      (calls) => {
+        const { unloadOllamaModels } = require(modulePath);
+        unloadOllamaModels(["drop-me:7b"]);
+
+        const curlCalls = calls.filter(({ command }) => command === "curl");
+        expect(curlCalls).toHaveLength(2);
+        expect(curlCalls[1].args).toContain(JSON.stringify({ model: "drop-me:7b", keep_alive: 0 }));
+        expect(curlCalls[1].args[curlCalls[1].args.length - 1]).toMatch(/\/api\/generate$/);
+      },
+    );
+  });
+
+  it("unloads every loaded model when the filter is empty (#9110)", () => {
+    withMockedSpawnSync(
+      ({ args }) => {
+        if (args.some((a) => a.endsWith("/api/ps"))) {
+          return ok(JSON.stringify({ models: [{ name: "one:7b" }, { name: "two:7b" }] }));
+        }
+        return ok();
+      },
+      (calls) => {
+        const { unloadOllamaModels } = require(modulePath);
+        unloadOllamaModels([]);
+
+        expect(calls.filter(({ command }) => command === "curl")).toHaveLength(3);
+      },
+    );
+  });
 });

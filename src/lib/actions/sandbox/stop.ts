@@ -41,7 +41,8 @@ function defaultUnloadOllamaModels(onlyModels: readonly string[]): void {
  * The Ollama daemon is host-global, so unloading everything would evict a
  * model a sibling sandbox is still using. Release only this sandbox's own
  * model, and only when no other Ollama-backed sandbox is registered against
- * the same one.
+ * the same one. Peers are compared with Ollama's implicit `latest` tag
+ * semantics, so a sibling recorded as `llama3` still protects `llama3:latest`.
  */
 function exclusivelyHeldOllamaModel(
   sandbox: registry.SandboxEntry,
@@ -49,11 +50,15 @@ function exclusivelyHeldOllamaModel(
 ): string | null {
   const model = sandbox.model?.trim();
   if (!model) return null;
+  const { ollamaModelRefsMatch } = require("../../inference/ollama/model-discovery") as {
+    ollamaModelRefsMatch: (left: string, right: string) => boolean;
+  };
   const sharedWithPeer = peers.some(
     (peer) =>
       peer.name !== sandbox.name &&
       !!peer.provider?.includes("ollama") &&
-      peer.model?.trim() === model,
+      !!peer.model &&
+      ollamaModelRefsMatch(peer.model, model),
   );
   return sharedWithPeer ? null : model;
 }

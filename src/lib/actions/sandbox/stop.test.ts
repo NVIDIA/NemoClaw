@@ -516,6 +516,21 @@ describe("stopSandbox Ollama GPU release", () => {
     expect(unloadOllamaModels).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["an implicit latest tag", "llama3", "llama3:latest"],
+    ["an explicit latest tag", "llama3:latest", "llama3"],
+  ])("protects a sibling recorded with %s (#9110)", (_label, ownModel, peerModel) => {
+    const unloadOllamaModels = vi.fn();
+    const own = sandbox({ model: ownModel, provider: "ollama-local" });
+    const peer = sandbox({ model: peerModel, name: "peer", provider: "ollama-local" });
+    const h = harness({ listSandboxes: registryOf(own, peer), unloadOllamaModels });
+    h.getSandbox.mockReturnValue(own);
+
+    stopSandbox("my-sandbox", h.deps);
+
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+  });
+
   it("still releases its own model when a sibling holds a different one (#9110)", () => {
     const unloadOllamaModels = vi.fn();
     const peer = sandbox({ model: "llama3:8b", name: "peer", provider: "ollama-local" });
