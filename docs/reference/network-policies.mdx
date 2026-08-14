@@ -178,7 +178,15 @@ When a later onboarding run does not select a messaging channel and the environm
 NemoClaw then removes that channel's matching policy preset instead of carrying it forward.
 This removal also runs with `NEMOCLAW_POLICY_MODE=skip` and its `none` or `no` aliases.
 These modes skip policy preset additions, but they do not preserve a disabled channel's preset.
+</AgentOnly>
+<AgentOnly variant="openclaw">
 `$$nemoclaw onboard --resume` reconciles the policy selection instead of skipping it while that channel's preset is still applied.
+</AgentOnly>
+<AgentOnly variant="hermes">
+A completed `$$nemoclaw onboard --resume` keeps the recorded messaging selection when no replacement credential is supplied.
+Run `$$nemoclaw <sandbox> channels remove <channel>` to remove a recorded channel and its matching policy preset.
+</AgentOnly>
+<AgentOnly variant="openclaw,hermes">
 NemoClaw keeps the preset for an in-sandbox QR-paired channel such as WhatsApp because you pair that channel inside the sandbox rather than through host environment values.
 </AgentOnly>
 The Personal tier instead keeps every applicable maintained web-search preset selected by default.
