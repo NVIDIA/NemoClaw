@@ -221,6 +221,28 @@ exit 0
 );
 
 it.runIf(process.platform !== "win32")(
+  "renders controlled startup readiness before sending the prompt (#9160)",
+  () => {
+    for (const initialOutput of [
+      "idleXYZ\ridle   ",
+      "busyXYZ\r\u001b[2Kidle",
+      "idlX\be",
+      "\u0001idle\u0002",
+    ]) {
+      const result = runLaunchTurnFixture({
+        exitStatus: 0,
+        initialOutput,
+        readyState: "idle",
+      });
+
+      expect(result.signal, result.stderr).toBeNull();
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("NEMOCLAW_LAUNCH_TURN_OK");
+    }
+  },
+);
+
+it.runIf(process.platform !== "win32")(
   "records a successful reply and exit status 0 after the TUI exit command (#8584)",
   () => {
     const result = runLaunchTurnFixture({ exitStatus: 0 });
