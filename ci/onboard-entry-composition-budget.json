@@ -1,0 +1,20 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\nProvider decisions remain until #9169. Messaging decisions remain until #9170. Policy decisions remain until #9172. The budget permits no gateway decisions.",
+  "gateway": {},
+  "messaging": {
+    "createSandboxWithBaseImageResolution": 9,
+    "runOnboard": 1
+  },
+  "policy": {
+    "createSandboxWithBaseImageResolution": 6,
+    "runOnboard": 5
+  },
+  "provider": {
+    "createSandboxWithBaseImageResolution": 15,
+    "handleNimLocalSelection": 32,
+    "handleRemoteProviderSelection": 80,
+    "handleRoutedSelection": 15,
+    "runOnboard": 8,
+    "selectAndValidateOllamaModel": 18
+  }
+}
