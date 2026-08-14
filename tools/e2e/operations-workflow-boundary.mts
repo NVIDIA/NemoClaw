@@ -56,6 +56,7 @@ const NEEDS_INTERPOLATION = /\$\{\{\s*toJSON\s*\(\s*needs\s*\)\s*\}\}/iu;
 type WorkflowStep = {
   "continue-on-error"?: boolean;
   env?: Record<string, unknown>;
+  id?: string;
   if?: string;
   name?: string;
   run?: string;
@@ -260,15 +261,20 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   );
   const checkoutIndex = steps.findIndex((step) => step.uses?.startsWith("actions/checkout@"));
   const validationIndex = steps.findIndex((step) => step.name === "Validate manual PR checkout");
+  const trustClassificationIndex = steps.findIndex(
+    (step) => step.name === "Classify exact-candidate credential trust",
+  );
   const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
   if (
     authenticationIndex < 0 ||
     checkoutIndex < 0 ||
     validationIndex < 0 ||
+    trustClassificationIndex < 0 ||
     prepareIndex < 0 ||
     authenticationIndex >= checkoutIndex ||
     checkoutIndex >= validationIndex ||
-    validationIndex >= prepareIndex
+    validationIndex >= trustClassificationIndex ||
+    trustClassificationIndex >= prepareIndex
   ) {
     errors.push("Manual PR authorization and validation must surround checkout before preparation");
   }
@@ -350,6 +356,49 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   ]) {
     if (!validationSource.includes(fragment)) {
       errors.push(`Manual PR checkout validation must retain ${fragment}`);
+    }
+  }
+
+  const trustClassification = trustClassificationIndex >= 0 ? steps[trustClassificationIndex] : {};
+  if (
+    matrixJob.outputs?.trusted_exact_candidate !==
+      "${{ steps.exact_candidate_trust.outputs.trusted_exact_candidate }}" ||
+    trustClassification.id !== "exact_candidate_trust" ||
+    trustClassification.if !== "${{ inputs.checkout_sha != '' }}" ||
+    trustClassification.shell !== "bash"
+  ) {
+    errors.push(
+      "Manual PR trust classification must expose only the authenticated exact-candidate result",
+    );
+  }
+  const expectedTrustEnvironment = {
+    CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",
+    CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
+    EVENT_NAME: "${{ github.event_name }}",
+    EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
+    REF: "${{ github.ref }}",
+    WORKFLOW_REPOSITORY: "${{ github.repository }}",
+    WORKFLOW_SHA: "${{ github.workflow_sha }}",
+  };
+  if (!isDeepStrictEqual(trustClassification.env, expectedTrustEnvironment)) {
+    errors.push("Manual PR trust classification must bind trusted workflow and candidate identity");
+  }
+  const trustSource = String(trustClassification.run ?? "");
+  for (const fragment of [
+    '"$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
+    '"$CANDIDATE_REPOSITORY" == "$WORKFLOW_REPOSITORY"',
+    '"$EVENT_NAME" == "workflow_dispatch"',
+    '"$REF" == "refs/heads/main"',
+    '"$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$',
+    '"$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$',
+    '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
+    '"$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA"',
+    "trusted_exact_candidate=false",
+    "trusted_exact_candidate=true",
+    'printf \'trusted_exact_candidate=%s\\n\' "$trusted_exact_candidate" >> "$GITHUB_OUTPUT"',
+  ]) {
+    if (!trustSource.includes(fragment)) {
+      errors.push(`Manual PR trust classification must retain ${fragment}`);
     }
   }
 

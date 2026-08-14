@@ -252,6 +252,70 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
+  it("rejects exact-candidate credential trust classification drift", () => {
+    const workflow = readE2eOperationsWorkflow();
+    delete workflow.jobs["generate-matrix"].outputs!.trusted_exact_candidate;
+    const trustClassification = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Classify exact-candidate credential trust",
+    )!;
+    trustClassification.run = "printf 'trusted_exact_candidate=true\\n' >> \"$GITHUB_OUTPUT\"";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "Manual PR trust classification must expose only the authenticated exact-candidate result",
+        'Manual PR trust classification must retain "$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
+        'Manual PR trust classification must retain "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA"',
+      ]),
+    );
+  });
+
+  it.each([
+    ["NVIDIA/NemoClaw", "NVIDIA/NemoClaw", true],
+    ["contributor/NemoClaw", "NVIDIA/NemoClaw", false],
+    ["NVIDIA/NemoClaw", "contributor/NemoClaw", false],
+  ])(
+    "classifies candidate %s under workflow repository %s as trusted=%s",
+    (candidateRepository, workflowRepository, expectedTrusted) => {
+      const workflow = readE2eOperationsWorkflow();
+      const trustClassification = workflow.jobs["generate-matrix"].steps!.find(
+        (step) => step.name === "Classify exact-candidate credential trust",
+      )!;
+      const headSha = spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+      const workflowSha = "c".repeat(40);
+      const directory = mkdtempSync(join(tmpdir(), "nemoclaw-exact-candidate-trust-"));
+      const output = join(directory, "output");
+
+      try {
+        writeFileSync(output, "");
+        const result = spawnSync(
+          "bash",
+          ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", trustClassification.run!],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              CANDIDATE_REPOSITORY: candidateRepository,
+              CANDIDATE_SHA: headSha,
+              EVENT_NAME: "workflow_dispatch",
+              EXPECTED_WORKFLOW_SHA: workflowSha,
+              GITHUB_OUTPUT: output,
+              REF: "refs/heads/main",
+              WORKFLOW_REPOSITORY: workflowRepository,
+              WORKFLOW_SHA: workflowSha,
+            },
+          },
+        );
+
+        expect(result.status, result.stderr).toBe(0);
+        expect(readFileSync(output, "utf8")).toBe(
+          `trusted_exact_candidate=${expectedTrusted ? "true" : "false"}\n`,
+        );
+      } finally {
+        rmSync(directory, { force: true, recursive: true });
+      }
+    },
+  );
+
   it("keeps catalogue-owned GPU targets out of the handwritten workflow jobs", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.jobs["llama-cpp-generic-gpu"] = {
