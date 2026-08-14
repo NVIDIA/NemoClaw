@@ -76,6 +76,46 @@ describe("continuous E2E maintenance write policy", () => {
     });
   });
 
+  it("allows an ordinary fork workflow after every trust condition passes", () => {
+    expect(
+      evaluateE2eMaintenancePolicy({
+        kind: "fork-workflow-approval",
+        ordinaryPullRequestWorkflow: true,
+        expectedRepository: true,
+        latestPrCommit: true,
+        completeDiffReviewed: true,
+        sensitiveWorkflowChanged: false,
+        exposesPrivilegedCredentials: false,
+        authorized: true,
+        runState: "action_required",
+      }),
+    ).toMatchObject({
+      action: "approve-ordinary-fork-workflow",
+      allowedWrites: ["approve-workflow-run"],
+      deniedWrites: [],
+      queueState: "active",
+    });
+  });
+
+  it("denies fork workflow approval when the workflow exposes privileged credentials", () => {
+    expect(
+      evaluateE2eMaintenancePolicy({
+        kind: "fork-workflow-approval",
+        ordinaryPullRequestWorkflow: true,
+        expectedRepository: true,
+        latestPrCommit: true,
+        completeDiffReviewed: true,
+        sensitiveWorkflowChanged: false,
+        exposesPrivilegedCredentials: true,
+        authorized: true,
+        runState: "action_required",
+      }),
+    ).toMatchObject({
+      allowedWrites: [],
+      deniedWrites: ["approve-workflow-run", "dispatch-privileged-e2e"],
+    });
+  });
+
   it("denies self-approval when the review names the latest PR commit", () => {
     expect(
       evaluateE2eMaintenancePolicy({
@@ -226,6 +266,28 @@ describe("continuous E2E maintenance write policy", () => {
       action: "restart-final-merge-gate",
       allowedWrites: [],
       deniedWrites: ["merge:commit-a"],
+    });
+  });
+
+  it("allows the merge only when every requirement names the commit under review", () => {
+    expect(
+      evaluateE2eMaintenancePolicy({
+        kind: "merge",
+        capturedCommitSha: "commit-b",
+        latestPrCommitSha: "commit-b",
+        approvedCommitSha: "commit-b",
+        checksCommitSha: "commit-b",
+        baseMatchesMain: true,
+        requiredChecksPass: true,
+        independentApproval: true,
+        mergeable: true,
+        mergeAuthorized: true,
+      }),
+    ).toMatchObject({
+      action: "merge-commit-under-review",
+      allowedWrites: ["merge:commit-b"],
+      deniedWrites: [],
+      queueState: "merged",
     });
   });
 
