@@ -261,20 +261,20 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   );
   const checkoutIndex = steps.findIndex((step) => step.uses?.startsWith("actions/checkout@"));
   const validationIndex = steps.findIndex((step) => step.name === "Validate manual PR checkout");
-  const trustClassificationIndex = steps.findIndex(
-    (step) => step.name === "Classify exact-candidate credential trust",
+  const credentialAuthorizationIndex = steps.findIndex(
+    (step) => step.name === "Authorize E2E credentials",
   );
   const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
   if (
     authenticationIndex < 0 ||
     checkoutIndex < 0 ||
     validationIndex < 0 ||
-    trustClassificationIndex < 0 ||
+    credentialAuthorizationIndex < 0 ||
     prepareIndex < 0 ||
     authenticationIndex >= checkoutIndex ||
     checkoutIndex >= validationIndex ||
-    validationIndex >= trustClassificationIndex ||
-    trustClassificationIndex >= prepareIndex
+    validationIndex >= credentialAuthorizationIndex ||
+    credentialAuthorizationIndex >= prepareIndex
   ) {
     errors.push("Manual PR authorization and validation must surround checkout before preparation");
   }
@@ -359,46 +359,52 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     }
   }
 
-  const trustClassification = trustClassificationIndex >= 0 ? steps[trustClassificationIndex] : {};
+  const credentialAuthorization =
+    credentialAuthorizationIndex >= 0 ? steps[credentialAuthorizationIndex] : {};
   if (
-    matrixJob.outputs?.trusted_exact_candidate !==
-      "${{ steps.exact_candidate_trust.outputs.trusted_exact_candidate }}" ||
-    trustClassification.id !== "exact_candidate_trust" ||
-    trustClassification.if !== "${{ inputs.checkout_sha != '' }}" ||
-    trustClassification.shell !== "bash"
+    matrixJob.outputs?.e2e_credentials_allowed !==
+      "${{ steps.e2e_credentials.outputs.allowed }}" ||
+    credentialAuthorization.id !== "e2e_credentials" ||
+    credentialAuthorization.if !== "${{ inputs.checkout_sha != '' }}" ||
+    credentialAuthorization.shell !== "bash"
   ) {
-    errors.push(
-      "Manual PR trust classification must expose only the authenticated exact-candidate result",
-    );
+    errors.push("Manual PR credential authorization must expose only the authorization result");
   }
-  const expectedTrustEnvironment = {
-    CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",
-    CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
+  const expectedCredentialAuthorizationEnvironment = {
+    CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
+    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EVENT_NAME: "${{ github.event_name }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
     REF: "${{ github.ref }}",
     WORKFLOW_REPOSITORY: "${{ github.repository }}",
     WORKFLOW_SHA: "${{ github.workflow_sha }}",
   };
-  if (!isDeepStrictEqual(trustClassification.env, expectedTrustEnvironment)) {
-    errors.push("Manual PR trust classification must bind trusted workflow and candidate identity");
+  if (
+    !isDeepStrictEqual(
+      credentialAuthorization.env,
+      expectedCredentialAuthorizationEnvironment,
+    )
+  ) {
+    errors.push(
+      "Manual PR credential authorization must bind the workflow and checkout identities",
+    );
   }
-  const trustSource = String(trustClassification.run ?? "");
+  const authorizationSource = String(credentialAuthorization.run ?? "");
   for (const fragment of [
     '"$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
-    '"$CANDIDATE_REPOSITORY" == "$WORKFLOW_REPOSITORY"',
+    '"$CHECKOUT_REPOSITORY" == "$WORKFLOW_REPOSITORY"',
     '"$EVENT_NAME" == "workflow_dispatch"',
     '"$REF" == "refs/heads/main"',
-    '"$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$',
+    '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$',
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
-    '"$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA"',
-    "trusted_exact_candidate=false",
-    "trusted_exact_candidate=true",
-    'printf \'trusted_exact_candidate=%s\\n\' "$trusted_exact_candidate" >> "$GITHUB_OUTPUT"',
+    '"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
+    "credentials_allowed=false",
+    "credentials_allowed=true",
+    'printf \'allowed=%s\\n\' "$credentials_allowed" >> "$GITHUB_OUTPUT"',
   ]) {
-    if (!trustSource.includes(fragment)) {
-      errors.push(`Manual PR trust classification must retain ${fragment}`);
+    if (!authorizationSource.includes(fragment)) {
+      errors.push(`Manual PR credential authorization must retain ${fragment}`);
     }
   }
 

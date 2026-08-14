@@ -191,7 +191,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       cli_artifact_provenance: ${{ steps.record_cli_artifact.outputs.provenance }}
-      trusted_exact_candidate: ${{ steps.exact_candidate_trust.outputs.trusted_exact_candidate }}
+      e2e_credentials_allowed: ${{ steps.e2e_credentials.outputs.allowed }}
       dcode_base_contract: ${{ needs.base-image-publication.outputs.dcode_base_contract }}
       dcode_base_ref: ${{ needs.base-image-publication.outputs.dcode_base_ref }}
       matrix: ${{ steps.matrix.outputs.matrix }}
@@ -564,12 +564,12 @@ jobs:
           [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha changed before execution" >&2; exit 1; }
 
-      - id: exact_candidate_trust
-        name: Classify exact-candidate credential trust
+      - id: e2e_credentials
+        name: Authorize E2E credentials
         if: ${{ inputs.checkout_sha != '' }}
         env:
-          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
-          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
+          CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
           EVENT_NAME: ${{ github.event_name }}
           EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
           REF: ${{ github.ref }}
@@ -578,18 +578,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          trusted_exact_candidate=false
+          credentials_allowed=false
           if [[ "$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw" &&
-                "$CANDIDATE_REPOSITORY" == "$WORKFLOW_REPOSITORY" &&
+                "$CHECKOUT_REPOSITORY" == "$WORKFLOW_REPOSITORY" &&
                 "$EVENT_NAME" == "workflow_dispatch" &&
                 "$REF" == "refs/heads/main" &&
-                "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ &&
+                "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ &&
                 "$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ &&
                 "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" &&
-                "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]; then
-            trusted_exact_candidate=true
+                "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]]; then
+            credentials_allowed=true
           fi
-          printf 'trusted_exact_candidate=%s\n' "$trusted_exact_candidate" >> "$GITHUB_OUTPUT"
+          printf 'allowed=%s\n' "$credentials_allowed" >> "$GITHUB_OUTPUT"
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
@@ -1208,7 +1208,7 @@ jobs:
       github_token: false
       shard: ${{ matrix.shard }}
       artifact_layout: ${{ matrix.artifact_layout }}
-      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.trusted_exact_candidate == 'true') }}
+      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -1247,7 +1247,7 @@ jobs:
       github_token: false
       shard: ${{ matrix.shard }}
       artifact_layout: ${{ matrix.artifact_layout }}
-      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.trusted_exact_candidate == 'true') }}
+      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -1287,7 +1287,7 @@ jobs:
       github_token: false
       shard: ${{ matrix.shard }}
       artifact_layout: ${{ matrix.artifact_layout }}
-      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.trusted_exact_candidate == 'true') }}
+      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -1327,7 +1327,7 @@ jobs:
       github_token: true
       shard: ${{ matrix.shard }}
       artifact_layout: ${{ matrix.artifact_layout }}
-      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.trusted_exact_candidate == 'true') }}
+      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -1367,7 +1367,7 @@ jobs:
       github_token: false
       shard: ${{ matrix.shard }}
       artifact_layout: ${{ matrix.artifact_layout }}
-      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.trusted_exact_candidate == 'true') }}
+      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

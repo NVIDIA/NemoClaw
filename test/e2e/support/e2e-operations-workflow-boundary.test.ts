@@ -252,52 +252,107 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("rejects exact-candidate credential trust classification drift", () => {
+  it("rejects changes that bypass E2E credential authorization (#9047)", () => {
     const workflow = readE2eOperationsWorkflow();
-    delete workflow.jobs["generate-matrix"].outputs!.trusted_exact_candidate;
-    const trustClassification = workflow.jobs["generate-matrix"].steps!.find(
-      (step) => step.name === "Classify exact-candidate credential trust",
+    delete workflow.jobs["generate-matrix"].outputs!.e2e_credentials_allowed;
+    const credentialAuthorization = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Authorize E2E credentials",
     )!;
-    trustClassification.run = "printf 'trusted_exact_candidate=true\\n' >> \"$GITHUB_OUTPUT\"";
+    credentialAuthorization.run = "printf 'allowed=true\\n' >> \"$GITHUB_OUTPUT\"";
 
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
-        "Manual PR trust classification must expose only the authenticated exact-candidate result",
-        'Manual PR trust classification must retain "$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
-        'Manual PR trust classification must retain "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA"',
+        "Manual PR credential authorization must expose only the authorization result",
+        'Manual PR credential authorization must retain "$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
+        'Manual PR credential authorization must retain "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
       ]),
     );
   });
 
   it.each([
-    ["NVIDIA/NemoClaw", "NVIDIA/NemoClaw", true],
-    ["contributor/NemoClaw", "NVIDIA/NemoClaw", false],
-    ["NVIDIA/NemoClaw", "contributor/NemoClaw", false],
+    {
+      caseName: "matching repository and requested SHAs",
+      checkoutRepository: "NVIDIA/NemoClaw",
+      workflowRepository: "NVIDIA/NemoClaw",
+      checkoutShaMatches: true,
+      workflowShaMatches: true,
+      expectedAllowed: true,
+    },
+    {
+      caseName: "a checkout repository outside NVIDIA/NemoClaw",
+      checkoutRepository: "contributor/NemoClaw",
+      workflowRepository: "NVIDIA/NemoClaw",
+      checkoutShaMatches: true,
+      workflowShaMatches: true,
+      expectedAllowed: false,
+    },
+    {
+      caseName: "a workflow repository outside NVIDIA/NemoClaw",
+      checkoutRepository: "NVIDIA/NemoClaw",
+      workflowRepository: "contributor/NemoClaw",
+      checkoutShaMatches: true,
+      workflowShaMatches: true,
+      expectedAllowed: false,
+    },
+    {
+      caseName: "checkout_sha differs from the checked-out commit",
+      checkoutRepository: "NVIDIA/NemoClaw",
+      workflowRepository: "NVIDIA/NemoClaw",
+      checkoutShaMatches: false,
+      workflowShaMatches: true,
+      expectedAllowed: false,
+    },
+    {
+      caseName: "a requested workflow SHA that differs from the running workflow",
+      checkoutRepository: "NVIDIA/NemoClaw",
+      workflowRepository: "NVIDIA/NemoClaw",
+      checkoutShaMatches: true,
+      workflowShaMatches: false,
+      expectedAllowed: false,
+    },
   ])(
-    "classifies candidate %s under workflow repository %s as trusted=%s",
-    (candidateRepository, workflowRepository, expectedTrusted) => {
+    "sets E2E credential access to $expectedAllowed for $caseName (#9047)",
+    ({
+      checkoutRepository,
+      workflowRepository,
+      checkoutShaMatches,
+      workflowShaMatches,
+      expectedAllowed,
+    }) => {
       const workflow = readE2eOperationsWorkflow();
-      const trustClassification = workflow.jobs["generate-matrix"].steps!.find(
-        (step) => step.name === "Classify exact-candidate credential trust",
+      const credentialAuthorization = workflow.jobs["generate-matrix"].steps!.find(
+        (step) => step.name === "Authorize E2E credentials",
       )!;
-      const headSha = spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+      const checkedOutSha = spawnSync("git", ["rev-parse", "HEAD"], {
+        encoding: "utf8",
+      }).stdout.trim();
+      const checkoutSha = checkoutShaMatches ? checkedOutSha : "0".repeat(40);
       const workflowSha = "c".repeat(40);
-      const directory = mkdtempSync(join(tmpdir(), "nemoclaw-exact-candidate-trust-"));
+      const expectedWorkflowSha = workflowShaMatches ? workflowSha : "d".repeat(40);
+      const directory = mkdtempSync(join(tmpdir(), "nemoclaw-e2e-credentials-"));
       const output = join(directory, "output");
 
       try {
         writeFileSync(output, "");
         const result = spawnSync(
           "bash",
-          ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", trustClassification.run!],
+          [
+            "--noprofile",
+            "--norc",
+            "-e",
+            "-o",
+            "pipefail",
+            "-c",
+            credentialAuthorization.run!,
+          ],
           {
             encoding: "utf8",
             env: {
               ...process.env,
-              CANDIDATE_REPOSITORY: candidateRepository,
-              CANDIDATE_SHA: headSha,
+              CHECKOUT_REPOSITORY: checkoutRepository,
+              CHECKOUT_SHA: checkoutSha,
               EVENT_NAME: "workflow_dispatch",
-              EXPECTED_WORKFLOW_SHA: workflowSha,
+              EXPECTED_WORKFLOW_SHA: expectedWorkflowSha,
               GITHUB_OUTPUT: output,
               REF: "refs/heads/main",
               WORKFLOW_REPOSITORY: workflowRepository,
@@ -307,9 +362,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         );
 
         expect(result.status, result.stderr).toBe(0);
-        expect(readFileSync(output, "utf8")).toBe(
-          `trusted_exact_candidate=${expectedTrusted ? "true" : "false"}\n`,
-        );
+        expect(readFileSync(output, "utf8")).toBe(`allowed=${expectedAllowed ? "true" : "false"}\n`);
       } finally {
         rmSync(directory, { force: true, recursive: true });
       }
