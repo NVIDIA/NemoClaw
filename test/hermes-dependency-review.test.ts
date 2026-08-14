@@ -167,6 +167,11 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(dockerfileBase).toContain(
       "HERMES_LAZY_INSTALL_TARGET=/tmp/nemoclaw-hindsight-client-probe",
     );
+    expect(dockerfileBase).toContain(`&& rm -rf \\
+        /tmp/nemoclaw-hindsight-client-probe \\
+        /tmp/nemoclaw-hindsight-client-cache \\
+        /sandbox/.hermes/lazy-packages \\
+    && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages`);
     expect(dockerfileBase).toContain("import hindsight_client, importlib.metadata as m");
     expect(dockerfile).toContain("state-dir-guard.py lock");
     expect(dockerfile).toContain("--reuid=gateway --regid=gateway --init-groups");
