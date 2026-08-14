@@ -548,7 +548,7 @@ describe("showSandboxStatus flow", () => {
     expect(output).not.toContain("Inference: healthy");
     expect(output).toContain("Inference: not verified (gateway/sandbox state not verified)");
     expect(output).toContain("gateway is still refusing connections after restart");
-    expect(output).toContain("Retry `openshell gateway start --name nemoclaw`");
+    expect(output).toContain("Start the gateway again with `nemoclaw onboard`.");
     expect(output).toContain("If the gateway never becomes healthy");
     expect(harness.collectSandboxStatusSnapshotSpy).toHaveBeenCalledWith("alpha", {
       preflight: {

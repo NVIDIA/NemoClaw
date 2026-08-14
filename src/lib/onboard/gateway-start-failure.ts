@@ -3,7 +3,6 @@
 
 import { compactText } from "../core/url-utils";
 import { redact } from "../security/redact";
-import { classifyGatewayStartFailure } from "../validation";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 import { onboardResumeRecoveryCommand } from "./resume-hint";
 
@@ -26,22 +25,6 @@ export type FinalGatewayStartFailureDeps = {
 
 export function normalizeGatewayStartError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
-}
-
-export function reportLegacyGatewayStartResultFailure(
-  output: string,
-  log: (message: string) => void,
-) {
-  const cleanedOutput = String(output || "").replace(ANSI_RE, "");
-  const lines = redact(cleanedOutput)
-    .split("\n")
-    .map((l) => compactText(l))
-    .filter(Boolean)
-    .map((l) => `    ${l}`);
-  if (lines.length > 0) {
-    log(`  Gateway start returned before healthy:\n${lines.join("\n")}`);
-  }
-  return classifyGatewayStartFailure(cleanedOutput);
 }
 
 export function printDockerDaemonRecovery(

@@ -6,6 +6,7 @@ import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeout
 import { CLI_NAME } from "../../cli/branding";
 import { recoverGatewayOrExit } from "../../credentials/command-support";
 import { parseGatewayProviderNames } from "../../credentials/provider-list";
+import { gatewayStartGuidance } from "../../gateway-start-guidance";
 
 export type CredentialsListResult = {
   exitCode: number;
@@ -32,7 +33,7 @@ export async function runCredentialsListAction(): Promise<CredentialsListResult>
   if (result.status !== 0) {
     return fail([
       "  Could not query OpenShell gateway. Is it running?",
-      `  Run 'openshell gateway start --name nemoclaw' or '${CLI_NAME} onboard' first.`,
+      `  ${gatewayStartGuidance()}`,
     ]);
   }
 

@@ -159,7 +159,6 @@ const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const pRetry = require("p-retry");
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runCapture, runCaptureEx, runFile, validateName } = runner;
 const braveProviderProfile: typeof import("./onboard/brave-provider-profile") = require("./onboard/brave-provider-profile");
@@ -521,11 +520,8 @@ const { trackChildExit } =
   require("./onboard/child-exit-tracker") as typeof import("./onboard/child-exit-tracker");
 const { reportDockerDriverGatewayStartFailure: reportGatewayFailure } =
   require("./onboard/docker-driver-gateway-failure") as typeof import("./onboard/docker-driver-gateway-failure");
-const {
-  createFinalGatewayStartFailureHandler,
-  normalizeGatewayStartError,
-  reportLegacyGatewayStartResultFailure,
-} = require("./onboard/gateway-start-failure") as typeof import("./onboard/gateway-start-failure");
+const { createFinalGatewayStartFailureHandler, normalizeGatewayStartError } =
+  require("./onboard/gateway-start-failure") as typeof import("./onboard/gateway-start-failure");
 const dockerDriverGatewayEnv: typeof import("./onboard/docker-driver-gateway-env") =
   require("./onboard/docker-driver-gateway-env");
 const dockerDriverGatewayRuntimeMarker: typeof import("./onboard/docker-driver-gateway-runtime-marker") =
@@ -565,12 +561,12 @@ const sandboxCreateFailureDiagnostics: typeof import("./onboard/sandbox-create-f
 
 import type { CurlProbeResult } from "./adapters/http/probe";
 import type { AgentDefinition } from "./agent/defs";
+import { gatewayStartGuidance } from "./gateway-start-guidance";
 import type { WebSearchConfig } from "./inference/web-search";
 import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
 } from "./messaging-channel-config";
-import { streamGatewayStart } from "./onboard/gateway";
 import * as gatewayAuthorityCheckpoint from "./onboard/gateway-authority-checkpoint";
 import { createGatewayHostRuntime } from "./onboard/gateway-host-runtime";
 import {
@@ -735,7 +731,6 @@ const {
   runOpenshell,
   runCaptureOpenshell,
   captureOpenshell,
-  getGatewayPortArg,
   getDockerDriverGatewayEndpointArg,
 } = createOpenshellCliHelpers({
   getCachedBinary: () => OPENSHELL_BIN,
@@ -1549,7 +1544,11 @@ async function preflight(
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
-/** Start the OpenShell gateway with retry logic and post-start health polling. */
+/**
+ * Start or reuse the OpenShell gateway for the current runtime provider. Only
+ * the Docker-driver provider starts a gateway process. Every other provider
+ * reuses a gateway that its own deployment started.
+ */
 async function startGatewayWithOptions(
   _gpu: ReturnType<typeof nim.detectGpu>,
   {
@@ -1600,150 +1599,25 @@ async function startGatewayWithOptions(
       return;
     }
     console.log(
-      `  Gateway metadata reports healthy but ${getGatewayLocalEndpoint()}/ is not responding. Starting a fresh gateway...`,
+      `  Gateway metadata reports healthy but ${getGatewayLocalEndpoint()}/ is not responding.`,
     );
   }
 
   if (hasStaleGateway(gatewaySnapshot.gwInfo)) {
-    console.log("  Stale gateway detected — attempting restart without destroy...");
+    console.log("  Stale gateway detected.");
   }
 
-  try {
-    const { execFileSync } = require("child_process");
-    execFileSync("ssh-keygen", ["-R", `openshell-${GATEWAY_NAME}`], { stdio: "ignore" });
-  } catch {
-    /* ssh-keygen -R may fail if entry doesn't exist — safe to ignore */
-  }
-  const knownHostsPath = path.join(os.homedir(), ".ssh", "known_hosts");
-  try {
-    const kh = fs.readFileSync(knownHostsPath, "utf8");
-    const cleaned = pruneKnownHostsEntries(kh);
-    if (cleaned !== kh) fs.writeFileSync(knownHostsPath, cleaned);
-  } catch {
-    /* best-effort cleanup — ignore absent/read/write errors */
-  }
-
-  const gwArgs = ["--name", GATEWAY_NAME, "--port", getGatewayPortArg()];
-  if (gpuPassthrough) {
-    gwArgs.push("--gpu");
-  }
-  const gatewayEnv = getGatewayStartEnv();
-  if (gatewayEnv.OPENSHELL_CLUSTER_IMAGE) {
-    console.log(`  Using pinned OpenShell gateway image: ${gatewayEnv.OPENSHELL_CLUSTER_IMAGE}`);
-  }
-
-  const retries = exitOnFailure ? 2 : 0;
-  let dockerUnreachable = false;
-  try {
-    await pRetry(
-      async () => {
-        const startResult = await streamGatewayStart(
-          openshellShellCommand(["gateway", "start", ...gwArgs]),
-          {
-            ...process.env,
-            ...gatewayEnv,
-          },
-        );
-        if (startResult.status !== 0) {
-          const failure = reportLegacyGatewayStartResultFailure(
-            startResult.output || "",
-            console.log,
-          );
-          if (failure.kind === "docker_unreachable") {
-            dockerUnreachable = true;
-            throw new pRetry.AbortError("Docker daemon is not reachable (gateway cannot start).");
-          }
-        }
-        console.log("  Waiting for gateway health...");
-        const healthWait = getGatewayHealthWaitConfig(
-          startResult.status,
-          getGatewayClusterContainerState(),
-        );
-        if (healthWait.extended) {
-          console.log(
-            `  Gateway container is still ${healthWait.containerState}; allowing up to ${
-              healthWait.count * healthWait.interval
-            }s for first-time startup.`,
-          );
-        }
-        if (
-          await waitForGatewayHealth({
-            attachGatewayMetadataIfNeeded,
-            gatewayClusterHealthcheckPassed,
-            gatewayName: GATEWAY_NAME,
-            healthPollCount: healthWait.count,
-            healthPollIntervalSeconds: healthWait.interval,
-            isGatewayHealthy,
-            isGatewayHttpReady: (signal) =>
-              isGatewayHttpReady(undefined, undefined, undefined, signal),
-            repairGatewayBootstrapSecrets,
-            runCaptureOpenshell,
-            sleepSeconds,
-          })
-        ) {
-          return;
-        }
-
-        const waitLimit = formatGatewayHealthWaitLimit(healthWait.count, healthWait.interval);
-        throw new Error(`Gateway failed within the configured ${waitLimit}.`);
-      },
-      {
-        retries,
-        minTimeout: 10_000,
-        factor: 3,
-        onFailedAttempt: (err: { attemptNumber: number; retriesLeft: number }) => {
-          console.log(
-            `  Gateway start attempt ${err.attemptNumber} failed. ${err.retriesLeft} retries left...`,
-          );
-          if (err.retriesLeft > 0 && exitOnFailure) {
-            destroyGateway();
-          }
-        },
-      },
-    );
-  } catch (error) {
-    if (exitOnFailure) handleFinalGatewayStartFailure({ retries, dockerUnreachable });
-    throw normalizeGatewayStartError(error);
-  }
-
-  console.log("  ✓ Gateway is healthy");
-
-  // CoreDNS fix — k3s-inside-Docker has broken DNS forwarding on all platforms.
-  const runtime = getContainerRuntime();
-  if (shouldPatchCoredns(runtime)) {
-    console.log("  Patching CoreDNS DNS forwarding...");
-    run(["bash", path.join(SCRIPTS, "fix-coredns.sh"), GATEWAY_NAME], {
-      ignoreError: true,
-    });
-    const corednsReady = waitUntil(() => {
-      const check = runCaptureOpenshell(
-        [
-          "doctor",
-          "exec",
-          "--",
-          "kubectl",
-          "get",
-          "pods",
-          "-n",
-          "kube-system",
-          "-l",
-          "k8s-app=kube-dns",
-          "-o",
-          'jsonpath={range .items[*]}{.status.phase}{" "}{range .status.containerStatuses[*]}{.ready}{" "}{end}{end}',
-        ],
-        { ignoreError: true },
-      );
-      return check.includes("Running") && check.includes("true") && !check.includes("false");
-    }, 10);
-    if (!corednsReady) {
-      console.warn(
-        "  CoreDNS did not report ready within timeout; continuing may cause DNS flakiness.",
-      );
-    }
-  }
-  runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
-  process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+  // Reuse is the only startup this runtime provider has. The OpenShell CLI has
+  // no command that starts a gateway, so the gateway process belongs to
+  // whichever deployment created it. Only the `openshell` launcher reaches
+  // here, and its guidance already opens with this same sentence, so print the
+  // guidance alone and keep the sentence for the thrown error.
+  const unstartableGateway = `${cliDisplayName()} does not start the '${GATEWAY_NAME}' gateway on this host.`;
+  console.error(`  ${gatewayStartGuidance(GATEWAY_NAME)}`);
+  if (exitOnFailure) process.exit(1);
+  throw normalizeGatewayStartError(new Error(unstartableGateway));
 }
+
 async function startDockerDriverGateway({
   exitOnFailure = true,
   skipSandboxBridgeReachability = false,
@@ -1944,7 +1818,6 @@ async function startGateway(
 async function startGatewayForRecovery(options = {}): Promise<void> {
   return require("./onboard/gateway-recovery").startGatewayForRecovery(options, {
     assertGatewayStartAllowed,
-    getGatewayStartEnv,
     runCaptureOpenshell,
     runOpenshell,
     startGatewayWithOptions,
@@ -1992,35 +1865,13 @@ async function recoverGatewayRuntime() {
   }
 
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
-  let status = runCaptureOpenshell(["status"], { ignoreError: true });
+  const status = runCaptureOpenshell(["status"], { ignoreError: true });
   if (status.includes("Connected") && isSelectedGateway(status) && (await isGatewayHttpReady())) {
     process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
     return true;
   }
 
-  const startResult = runOpenshell(
-    ["gateway", "start", "--name", GATEWAY_NAME, "--port", getGatewayPortArg()],
-    {
-      ignoreError: true,
-      env: getGatewayStartEnv(),
-      suppressOutput: true,
-    },
-  );
-  if (startResult.status !== 0) {
-    const diagnostic = compactText(
-      redact(`${startResult.stderr || ""} ${startResult.stdout || ""}`),
-    );
-    console.error(`  Gateway restart failed (exit ${startResult.status}).`);
-    if (diagnostic) {
-      console.error(`  ${diagnostic.slice(0, 240)}`);
-    }
-  }
-  runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
-
-  const recoveryWait = getGatewayHealthWaitConfig(
-    startResult.status ?? 0,
-    getGatewayClusterContainerState(),
-  );
+  const recoveryWait = getGatewayHealthWaitConfig(0, getGatewayClusterContainerState());
   const recoveryPollCount = recoveryWait.extended
     ? recoveryWait.count
     : envInt("NEMOCLAW_HEALTH_POLL_COUNT", 10);
@@ -2039,7 +1890,10 @@ async function recoverGatewayRuntime() {
     runCaptureOpenshell,
     sleepSeconds,
   });
-  if (!healthy) return false;
+  if (!healthy) {
+    console.error(`  ${gatewayStartGuidance(GATEWAY_NAME)}`);
+    return false;
+  }
 
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
   if (shouldPatchCoredns(getContainerRuntime())) {

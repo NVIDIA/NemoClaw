@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../cli/branding";
+import { gatewayStartGuidance } from "../gateway-start-guidance";
 import type { GatewayInference } from "../inference/config";
 import { getActiveChannelIdsFromPlan } from "../messaging/plan-validation";
 import type { GatewayOwnerDescription } from "../onboard/gateway-ownership";
@@ -590,9 +591,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       log("");
       const detail = health.reason ? ` (${health.reason})` : "";
       log(`  gateway: down [${health.state}]${detail}`);
-      log(
-        `    Run 'openshell gateway start --name nemoclaw' or 'nemoclaw onboard --resume' to recover.`,
-      );
+      log(`    ${gatewayStartGuidance()}`);
       process.exitCode = 1;
     }
   }

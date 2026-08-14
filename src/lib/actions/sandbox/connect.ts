@@ -20,6 +20,7 @@ import { D, G, R, YW } from "../../cli/terminal-style";
 import { spawnExitCode } from "../../core/process-exit";
 import { shellQuote } from "../../core/shell-quote";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
+import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import {
   formatInferenceRouteDriftForDisplay,
   parseGatewayInference,
@@ -382,11 +383,8 @@ function failConnectReadinessGatewayUnavailable(sandboxName: string, detailOutpu
     printGatewayLifecycleHint(detailOutput, sandboxName, console.error);
   }
   console.error("  Recovery:");
-  console.error(
-    `    1. Run: openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}`,
-  );
-  console.error(`    2. If the gateway cannot be restarted, run: ${CLI_NAME} onboard`);
-  console.error(`    3. Retry: ${CLI_NAME} ${sandboxName} connect`);
+  console.error(`    1. ${gatewayStartGuidance(getSandboxTargetGatewayName(sandboxName))}`);
+  console.error(`    2. Retry: ${CLI_NAME} ${sandboxName} connect`);
   process.exit(1);
 }
 

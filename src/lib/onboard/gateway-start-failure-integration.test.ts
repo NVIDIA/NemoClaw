@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Integration tests for the docker-unreachable abort path that
-// startGatewayWithOptions() takes when `openshell gateway start` reports
-// the Docker daemon is not reachable. See src/lib/onboard.ts:2233.
+// Integration tests for the docker-unreachable abort path the Docker-driver
+// gateway start takes when the gateway log reports the Docker daemon is not
+// reachable.
 //
 // This helper-level suite preserves the former shell regression, which was
 // structurally a Node-process unit test of startGateway() with a PATH-shimmed
@@ -28,7 +28,6 @@ import { classifyGatewayStartFailure } from "../validation";
 import {
   createFinalGatewayStartFailureHandler,
   printDockerDaemonRecovery,
-  reportLegacyGatewayStartResultFailure,
 } from "./gateway-start-failure";
 
 // The production binding itself remains covered by
@@ -41,10 +40,9 @@ const handleFinalGatewayStartFailure = createFinalGatewayStartFailureHandler({
   cleanupGateway: () => undefined,
 });
 
-// Real signatures the legacy script's fake openshell binary emitted from
-// `gateway start` to simulate Colima-stopped (macOS) and dockerd-stopped
-// (Linux). These are the wire format the call site sees from
-// streamGatewayStart()'s `output` field.
+// Real signatures a stopped Docker daemon produces on macOS (Colima) and Linux
+// (dockerd). These are the wire format the call site sees in the gateway log
+// tail it classifies.
 const DARWIN_DOCKER_UNREACHABLE_OUTPUT = [
   "Error: Failed to create Docker client.",
   "Socket not found: /var/run/docker.sock",
@@ -177,38 +175,28 @@ describe("startGatewayWithOptions docker-unreachable abort (#2347)", () => {
 
   // ── Layer 2: composition test — the exact sequence the call site uses ────
   //
-  // startGatewayWithOptions does, on `streamGatewayStart()` failure:
+  // The Docker-driver start path classifies the gateway log tail and routes a
+  // docker_unreachable verdict to the recovery message, while any other
+  // verdict falls through to the regular failure handler:
   //
-  //     const failure = reportLegacyGatewayStartResultFailure(output, log);
-  //     if (failure.kind === "docker_unreachable") {
-  //       dockerUnreachable = true;
-  //       throw new pRetry.AbortError(...);
-  //     }
-  //   } catch {
-  //     if (exitOnFailure) {
-  //       handleFinalGatewayStartFailure({ retries, dockerUnreachable });
-  //     }
-  //     throw new Error("Gateway failed to start");
-  //   }
+  //     const failure = classifyGatewayStartFailure(tail);
+  //     if (failure.kind === "docker_unreachable") { ... }
+  //     handleFinalGatewayStartFailure({ retries, dockerUnreachable });
   //
   // The composition test exercises the same helpers in the same order and
   // confirms the chain bottoms out at exitProcess(1) with the recovery
   // message printed.
 
   describe("composition classifies, handles the final state, and exits 1", () => {
-    let capturedClassifyLog: string[];
     let capturedPrintError: string[];
 
-    function runComposition(streamGatewayStartOutput: string): {
+    function runComposition(gatewayLogTail: string): {
       thrown: unknown;
       exitCode: number | null;
     } {
-      capturedClassifyLog = [];
       capturedPrintError = [];
 
-      const failure = reportLegacyGatewayStartResultFailure(streamGatewayStartOutput, (m) =>
-        capturedClassifyLog.push(m),
-      );
+      const failure = classifyGatewayStartFailure(gatewayLogTail);
 
       let dockerUnreachable = false;
       if (failure.kind === "docker_unreachable") {
@@ -244,10 +232,6 @@ describe("startGatewayWithOptions docker-unreachable abort (#2347)", () => {
       expect(thrown).toBeInstanceOf(Error);
       expect(exitCode).toBe(1);
       expect(capturedPrintError.join("\n")).toContain("Docker daemon is not running");
-      // The classification helper logs the original output as a breadcrumb;
-      // the legacy script asserts on this output too via its `[INFO] node
-      // exit code` log lines.
-      expect(capturedClassifyLog.join("\n")).toContain("Gateway start returned before healthy");
     });
 
     it("composes through the docker-unreachable path on the Linux dockerd signature", () => {
@@ -263,13 +247,9 @@ describe("startGatewayWithOptions docker-unreachable abort (#2347)", () => {
       // up). If this test ever flips, the call-site classifier has been made
       // too aggressive and would silence real gateway failures behind the
       // Docker-recovery message.
-      capturedClassifyLog = [];
       capturedPrintError = [];
 
-      const failure = reportLegacyGatewayStartResultFailure(
-        "  k3s: failed to bootstrap helm chart after 90s\n",
-        (m) => capturedClassifyLog.push(m),
-      );
+      const failure = classifyGatewayStartFailure("  k3s: failed to bootstrap helm chart after 90s\n");
 
       expect(failure.kind).toBe("unknown");
 
