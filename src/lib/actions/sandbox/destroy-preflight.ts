@@ -107,7 +107,9 @@ export async function stopModelRouterForDestroyedSandbox(
   const port = resolveDestroyedSandboxRouterPort(sandbox?.endpointUrl);
   const ownsPort = deps.ownsPort ?? doesModelRouterProcessOwnPort;
   const findPidForPort = deps.findPidForPort ?? findModelRouterPidForPort;
-  const recordedPid = deps.loadSession()?.routerPid ?? null;
+  const session = deps.loadSession();
+  const recordedPid = session?.routerPid ?? null;
+  const recordedCredentialHash = session?.routerCredentialHash ?? null;
   const pid = ownsPort(recordedPid, port) ? (recordedPid as number) : findPidForPort(port);
 
   if (pid !== null) {
@@ -129,7 +131,9 @@ export async function stopModelRouterForDestroyedSandbox(
     }
   }
 
-  if (recordedPid !== null) {
+  // Clear when either field is set: a session with only a credential hash
+  // still carries stale router identity after the last routed sandbox is gone.
+  if (recordedPid !== null || recordedCredentialHash !== null) {
     deps.updateSession((current: Session) => {
       current.routerPid = null;
       current.routerCredentialHash = null;

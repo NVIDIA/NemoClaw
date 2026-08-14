@@ -122,6 +122,24 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     expect(session.routerCredentialHash).toBeNull();
   });
 
+  it("clears a stale credential hash when the session records no router PID (#9098)", async () => {
+    const session = { routerPid: null, routerCredentialHash: "stale" } as Session;
+    const { deps } = createDeps({
+      loadSession: vi.fn(() => session),
+      ownsPort: vi.fn(() => false),
+      updateSession: vi.fn((mutator: (current: Session) => Session | void) => {
+        mutator(session);
+        return session;
+      }),
+    });
+
+    await stopModelRouterForDestroyedSandbox(routedSandbox, deps);
+
+    expect(deps.stopProcess).not.toHaveBeenCalled();
+    expect(session.routerPid).toBeNull();
+    expect(session.routerCredentialHash).toBeNull();
+  });
+
   it("leaves the session untouched when it records no router PID and no orphan exists", async () => {
     const { deps } = createDeps({
       loadSession: vi.fn(() => ({ routerPid: null }) as Session),

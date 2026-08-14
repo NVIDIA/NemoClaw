@@ -43,6 +43,7 @@ export type DestroyHarness = {
   unloadOllamaModelsSpy: MockInstance;
   updateSessionSpy: MockInstance;
   warnSpy: MockInstance;
+  withGatewayRouteMutationLockSpy: MockInstance;
 };
 
 type DestroyHarnessOptions = {
@@ -156,6 +157,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const sandboxProviderCleanup = requireDist("../../onboard/sandbox-provider-cleanup.js");
   const nim = requireDist("../../inference/nim.js");
   const ollamaProxy = requireDist("../../inference/ollama/proxy.js");
+  const gatewayRouteMutationLock = requireDist("../../inference/gateway-route-mutation-lock.js");
   const httpsPinRuntimeAdapter = requireDist("../../inference/https-pin-runtime-adapter.js");
   const tunnelServices = requireDist("../../tunnel/services.js");
   const onboardSession = requireDist("../../state/onboard-session.js");
@@ -216,6 +218,13 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const revokeHttpsPinRuntimeAdapterRouteSpy = vi
     .spyOn(httpsPinRuntimeAdapter, "revokeHttpsPinRuntimeAdapterRoute")
     .mockResolvedValue(true);
+  // Pass-through: run the critical section without the cross-process lease so
+  // flow tests stay hermetic while asserting lock scope.
+  const withGatewayRouteMutationLockSpy = vi
+    .spyOn(gatewayRouteMutationLock, "withGatewayRouteMutationLock")
+    .mockImplementation(async (_gatewayName: unknown, operation: unknown) =>
+      (operation as () => Promise<unknown>)(),
+    );
   vi.spyOn(onboardSession, "loadSession").mockReturnValue({
     sandboxName: "alpha",
     ...(options.sessionRouterPid ? { routerPid: options.sessionRouterPid } : {}),
@@ -427,5 +436,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     unloadOllamaModelsSpy,
     updateSessionSpy,
     warnSpy,
+    withGatewayRouteMutationLockSpy,
   };
 }

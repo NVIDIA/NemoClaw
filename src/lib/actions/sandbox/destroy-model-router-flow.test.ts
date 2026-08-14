@@ -100,10 +100,16 @@ describe("destroySandbox model-router teardown (#9098)", () => {
         endpointUrl: `http://host.openshell.internal:${port}/v1`,
         sessionRouterPid: stub.pid,
       });
-
       await expect(
         harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
       ).resolves.toBeUndefined();
+
+      // The teardown must run under the gateway route lock so routed
+      // onboarding cannot register a peer between the scan and the stop.
+      expect(harness.withGatewayRouteMutationLockSpy).toHaveBeenCalledWith(
+        "nemoclaw-19080",
+        expect.any(Function),
+      );
 
       await vi.waitFor(() => expect(stubExited).toBe(true), { timeout: 8_000, interval: 100 });
       expect(await probeHealthy(port)).toBe(false);
