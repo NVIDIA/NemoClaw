@@ -31,15 +31,15 @@ describe("onboarding entry composition boundary", () => {
     expect(evaluateOnboardEntryComposition(actual, budget)).toEqual([]);
     expect(actual).toEqual({
       gateway: {},
-      messaging: { createSandboxWithBaseImageResolution: 9, runOnboard: 1 },
+      messaging: { createSandboxWithBaseImageResolution: 9, runOnboard: 2 },
       policy: {
         "createOnboardPolicyApplication.getRecordedPolicyTier": 1,
-        createSandboxWithBaseImageResolution: 6,
+        createSandboxWithBaseImageResolution: 7,
         runOnboard: 5,
         "sandboxCreateIntentResolver.getAgentPolicyPath": 1,
       },
       provider: {
-        createSandboxWithBaseImageResolution: 15,
+        createSandboxWithBaseImageResolution: 20,
         handleNimLocalSelection: 32,
         handleRemoteProviderSelection: 76,
         handleRoutedSelection: 15,
@@ -291,6 +291,73 @@ describe("onboarding entry composition boundary", () => {
     "classifies receiver recovery action form %s",
     (call) => {
       const actual = collectOnboardEntryDecisions(`function choose() { ${call}; }`);
+
+      expect(actual.gateway).toEqual({ choose: 1 });
+    },
+  );
+
+  it.each([
+    "restoreGateway",
+    "retryGateway",
+    "fallbackGateway",
+    "rollbackGateway",
+    "gatewayRestore",
+    "gatewayRetry",
+    "gatewayFallback",
+    "gatewayRollback",
+  ])("classifies the gateway recovery action %s", (action) => {
+    const actual = collectOnboardEntryDecisions(`function choose() { ${action}(); }`);
+
+    expect(actual.gateway).toEqual({ choose: 1 });
+  });
+
+  it.each([
+    "if (enabled) schedule(startGateway);",
+    "if (enabled) schedule(() => startGateway());",
+  ])("checks a gateway action passed as an argument: %s", (decision) => {
+    const actual = collectOnboardEntryDecisions(`function choose() { ${decision} }`);
+
+    expect(actual.gateway).toEqual({ choose: 1 });
+  });
+
+  it.each(["&&=", "||=", "??="])("checks a gateway action behind logical assignment %s", (operator) => {
+    const actual = collectOnboardEntryDecisions(
+      `function choose() { enabled ${operator} startGateway(); }`,
+    );
+
+    expect(actual.gateway).toEqual({ choose: 1 });
+  });
+
+  it.each([
+    "gatewayRecovery[`execute`]()",
+    'if (enabled) gateway["startGateway"]()',
+    "recoverGateway`now`",
+  ])("checks the static gateway invocation %s", (decision) => {
+    const actual = collectOnboardEntryDecisions(`function choose() { ${decision}; }`);
+
+    expect(actual.gateway).toEqual({ choose: 1 });
+  });
+
+  it("checks a private gateway recovery method", () => {
+    const actual = collectOnboardEntryDecisions(
+      "class Entry { #recoverGateway() {} choose() { this.#recoverGateway(); } }",
+    );
+
+    expect(actual.gateway).toEqual({ "Entry.choose": 1 });
+  });
+
+  it("checks a gateway action in a for-loop incrementor", () => {
+    const actual = collectOnboardEntryDecisions(
+      "function choose() { for (; enabled; startGateway()) {} }",
+    );
+
+    expect(actual.gateway).toEqual({ choose: 1 });
+  });
+
+  it.each(["createOrRecoverGateway", "buildOrRecoverGateway"])(
+    "classifies the compound gateway action %s",
+    (action) => {
+      const actual = collectOnboardEntryDecisions(`function choose() { ${action}(); }`);
 
       expect(actual.gateway).toEqual({ choose: 1 });
     },

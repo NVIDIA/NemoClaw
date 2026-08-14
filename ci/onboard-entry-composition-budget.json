@@ -3,16 +3,16 @@
   "gateway": {},
   "messaging": {
     "createSandboxWithBaseImageResolution": 9,
-    "runOnboard": 1
+    "runOnboard": 2
   },
   "policy": {
     "createOnboardPolicyApplication.getRecordedPolicyTier": 1,
-    "createSandboxWithBaseImageResolution": 6,
+    "createSandboxWithBaseImageResolution": 7,
     "runOnboard": 5,
     "sandboxCreateIntentResolver.getAgentPolicyPath": 1
   },
   "provider": {
-    "createSandboxWithBaseImageResolution": 15,
+    "createSandboxWithBaseImageResolution": 20,
     "handleNimLocalSelection": 32,
     "handleRemoteProviderSelection": 76,
     "handleRoutedSelection": 15,

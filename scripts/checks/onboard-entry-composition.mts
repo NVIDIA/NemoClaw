@@ -25,11 +25,15 @@ const BUDGET_PATH = path.join(REPO_ROOT, "ci/onboard-entry-composition-budget.js
 const CATEGORIES = ["gateway", "messaging", "policy", "provider"] as const;
 const LOGICAL_OPERATORS = new Set([
   ts.SyntaxKind.AmpersandAmpersandToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
   ts.SyntaxKind.BarBarToken,
+  ts.SyntaxKind.BarBarEqualsToken,
   ts.SyntaxKind.QuestionQuestionToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken,
 ]);
 const RECOVERY_NAME = /recover|recovery|repair|restore|retry|fallback|rollback/i;
 const RECOVERY_FACTORY_NAME = /^(?:build|create|install|make)/i;
+const RECOVERY_COMPOUND_ACTION = /(?:And|Or)(?:Fallback|Recover|Repair|Restore|Retry|Rollback)/i;
 const RECOVERY_ACTION_METHOD = /^(?:apply|execute|perform|recover|repair|restore|retry|rollback|run|start)$/i;
 
 type NamedScope = {
@@ -133,10 +137,10 @@ function isGatewayLifecycleIdentifier(identifier: string): boolean {
   }
   return (
     /^(?:chooseGateway|gatewayState)$/i.test(identifier) ||
-    /(?:start|stop|restart|launch|destroy|recover|repair|retire|terminate|kill|wait|ensure|attach|register|reuse).*gateway/i.test(
+    /(?:start|stop|restart|launch|destroy|recover|repair|restore|retry|fallback|rollback|retire|terminate|kill|wait|ensure|attach|register|reuse).*gateway/i.test(
       identifier,
     ) ||
-    /gateway.*(?:start|stop|restart|launch|destroy|recover|repair|retire|terminate|kill|wait|health|ready|readiness|running|stale|process|runtime|lifecycle)/i.test(
+    /gateway.*(?:start|stop|restart|launch|destroy|recover|repair|restore|retry|fallback|rollback|retire|terminate|kill|wait|health|ready|readiness|running|stale|process|runtime|lifecycle)/i.test(
       identifier,
     )
   );
@@ -155,6 +159,14 @@ function isLogicalDecision(node: ts.Node): node is ts.BinaryExpression {
   return ts.isBinaryExpression(node) && LOGICAL_OPERATORS.has(node.operatorToken.kind);
 }
 
+function staticElementName(expression: ts.ElementAccessExpression): string | null {
+  const argument = expression.argumentExpression;
+  if (argument && (ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument))) {
+    return argument.text;
+  }
+  return null;
+}
+
 function unwrapCallee(expression: ts.Expression): ts.Expression {
   return ts.isParenthesizedExpression(expression) ? unwrapCallee(expression.expression) : expression;
 }
@@ -163,13 +175,7 @@ function calledName(expression: ts.Expression): string | null {
   const callee = unwrapCallee(expression);
   if (ts.isIdentifier(callee)) return callee.text;
   if (ts.isPropertyAccessExpression(callee)) return callee.name.text;
-  if (
-    ts.isElementAccessExpression(callee) &&
-    callee.argumentExpression &&
-    ts.isStringLiteral(callee.argumentExpression)
-  ) {
-    return callee.argumentExpression.text;
-  }
+  if (ts.isElementAccessExpression(callee)) return staticElementName(callee);
   return null;
 }
 
@@ -181,12 +187,24 @@ function calledReceiver(expression: ts.Expression): ts.Expression | null {
   return null;
 }
 
-function isRecoveryCall(node: ts.Node): node is ts.CallExpression {
-  if (!ts.isCallExpression(node)) return false;
-  const name = calledName(node.expression);
-  if (name === null || RECOVERY_FACTORY_NAME.test(name)) return false;
+type RecoveryInvocation = ts.CallExpression | ts.TaggedTemplateExpression;
+
+function recoveryInvocationExpression(node: RecoveryInvocation): ts.Expression {
+  return ts.isCallExpression(node) ? node.expression : node.tag;
+}
+
+function isRecoveryInvocation(node: ts.Node): node is RecoveryInvocation {
+  if (!ts.isCallExpression(node) && !ts.isTaggedTemplateExpression(node)) return false;
+  const expression = recoveryInvocationExpression(node);
+  const name = calledName(expression);
+  if (
+    name === null ||
+    (RECOVERY_FACTORY_NAME.test(name) && !RECOVERY_COMPOUND_ACTION.test(name))
+  ) {
+    return false;
+  }
   if (RECOVERY_NAME.test(name)) return true;
-  const receiver = calledReceiver(node.expression);
+  const receiver = calledReceiver(expression);
   return receiver !== null && RECOVERY_ACTION_METHOD.test(name) && RECOVERY_NAME.test(receiver.getText());
 }
 
@@ -202,7 +220,7 @@ function isDecisionNode(node: ts.Node): boolean {
     ts.isWhileStatement(node) ||
     ts.isDoStatement(node) ||
     ts.isTryStatement(node) ||
-    isRecoveryCall(node)
+    isRecoveryInvocation(node)
   );
 }
 
@@ -210,8 +228,14 @@ function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCateg
   const categories = new Set<OnboardDecisionCategory>();
 
   function addIdentifiers(candidate: ts.Node): void {
-    if (ts.isIdentifier(candidate)) {
+    if (ts.isIdentifier(candidate) || ts.isPrivateIdentifier(candidate)) {
       for (const category of identifierCategories(candidate.text)) categories.add(category);
+    }
+    if (ts.isElementAccessExpression(candidate)) {
+      const name = staticElementName(candidate);
+      if (name) {
+        for (const category of identifierCategories(name)) categories.add(category);
+      }
     }
     ts.forEachChild(candidate, addIdentifiers);
   }
@@ -224,10 +248,47 @@ function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCateg
     ts.forEachChild(candidate, (child) => scanCondition(child, false));
   }
 
+  function scanActionArgument(candidate: ts.Expression): void {
+    const body = functionBody(candidate);
+    if (body) {
+      scanActions(body, true);
+      return;
+    }
+    if (
+      ts.isIdentifier(candidate) ||
+      ts.isPrivateIdentifier(candidate) ||
+      ts.isPropertyAccessExpression(candidate) ||
+      ts.isElementAccessExpression(candidate)
+    ) {
+      addIdentifiers(candidate);
+      return;
+    }
+    if (
+      ts.isParenthesizedExpression(candidate) ||
+      ts.isAsExpression(candidate) ||
+      ts.isSatisfiesExpression(candidate) ||
+      ts.isNonNullExpression(candidate)
+    ) {
+      scanActionArgument(candidate.expression);
+    }
+  }
+
   function scanActions(candidate: ts.Node, root: boolean): void {
     if (!root && isDecisionNode(candidate)) return;
+    if (ts.isIdentifier(candidate) || ts.isPrivateIdentifier(candidate)) {
+      addIdentifiers(candidate);
+      return;
+    }
     if (ts.isCallExpression(candidate) || ts.isNewExpression(candidate)) {
       addIdentifiers(candidate.expression);
+      for (const argument of candidate.arguments ?? []) {
+        if (!ts.isSpreadElement(argument)) scanActionArgument(argument);
+      }
+      return;
+    }
+    if (ts.isTaggedTemplateExpression(candidate)) {
+      addIdentifiers(candidate.tag);
+      scanActions(candidate.template, false);
       return;
     }
     if (
@@ -262,6 +323,7 @@ function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCateg
   } else if (ts.isForStatement(node)) {
     if (node.condition) scanCondition(node.condition, false);
     scanActions(node.statement, true);
+    if (node.incrementor) scanActions(node.incrementor, false);
   } else if (ts.isWhileStatement(node) || ts.isDoStatement(node)) {
     scanCondition(node.expression, false);
     scanActions(node.statement, true);
@@ -269,8 +331,8 @@ function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCateg
     scanActions(node.tryBlock, true);
     if (node.catchClause) scanActions(node.catchClause, true);
     if (node.finallyBlock) scanActions(node.finallyBlock, true);
-  } else if (isRecoveryCall(node)) {
-    addIdentifiers(node.expression);
+  } else if (isRecoveryInvocation(node)) {
+    addIdentifiers(recoveryInvocationExpression(node));
   }
   return categories;
 }
