@@ -11,14 +11,14 @@
 - [Claim Through a Draft PR](#claim-through-a-draft-pr)
 - [Interpret One Active Fix](#interpret-one-active-fix)
 - [Reconcile Concurrent Claims](#reconcile-concurrent-claims)
-- [Re-scan Without Reanalysis](#re-scan-without-reanalysis)
+- [Rescan Without Reanalysis](#rescan-without-reanalysis)
 
 ## Build a Root-Cause Key
 
 Name each group with three parts:
 
 ```text
-<affected surface> / <failure phase> / <stable causal signature>
+<affected component> / <failure phase> / <stable causal signature>
 ```
 
 Prefer the earliest actionable failure over a later aggregate, cleanup, or reporter failure. Keep downstream failures in the same group only when evidence shows that fixing the first cause removes them.
@@ -34,17 +34,17 @@ Split groups when any of these differ:
 
 For each group, retain:
 
-- workflow name, run URL, run ID, attempt, event, and candidate SHA;
+- workflow name, run URL, run ID, attempt, event, and tested commit SHA;
 - failed job names, job IDs, and URLs;
 - earliest failing step and stable error signature;
-- affected behavior and likely source boundary;
+- affected behavior and likely source file or component;
 - matching open PR searches and results;
-- owner, PR, head SHA, and current state;
+- owner, PR, latest PR commit SHA, and current state;
 - last time the group changed.
 
 Do not paste secrets or unredacted credential-bearing logs into the queue or PR.
 
-When downloading a log or artifact, use a unique `mktemp -d` directory outside the repository and set its mode to `0700` before download. Record the exact directory path. Do not put that path or unredacted contents in the shared queue, a PR, or another public GitHub surface. Share the path only in a private continuity handoff with the named cleanup actor.
+When downloading a log or artifact, use a unique `mktemp -d` directory outside the repository. Set its mode to `0700` before download. Record the exact directory path. Do not put that path or unredacted contents in the shared queue, a PR, or other public GitHub text. Share the path only in a private continuity handoff with the agent responsible for cleanup.
 
 Delete the directory immediately after extracting the redacted failure evidence, and before transferring ownership. Before deletion, confirm that the exact path belongs to this loop session and is outside the repository. After deletion, verify that the path does not exist. If access restriction or removal fails, stop using the artifact. Record the exact path and required action only in the private continuity handoff without copying its contents.
 
@@ -82,13 +82,13 @@ Scope: one root cause
 
 Follow the repository PR template. Include the contributor's `Signed-off-by:` declaration and require every commit to appear `Verified` before opening the draft.
 
-If no legitimate root-cause-only diagnostic or regression test can be added before the fix, mark the group `blocked` and do not edit product code. Record why the claim cannot yet exist and the required next actor. Do not add an empty documentation change or unrelated placeholder merely to create a claim.
+If no diagnostic or regression test can demonstrate only this root cause before the fix, mark the group `blocked`. Do not edit product code. Record why the claim cannot yet exist and name the required next actor. Do not add an empty documentation change or unrelated placeholder to create a claim.
 
-Do not treat an existing draft with an empty or unrelated placeholder diff as a valid claim. Before transferring ownership, the loop author closes its own invalid draft under the GitHub write-reconciliation rule, explains why, and preserves its local worktree for handoff. For another author's draft, do not mutate it. Record the noncompliant claim, owner, and required next actor as a blocker.
+Do not treat a draft with an empty or unrelated placeholder diff as a valid claim. Before transferring ownership, the PR author closes their own invalid draft under the GitHub write-reconciliation rule. Explain the closure and preserve the local worktree for handoff. Do not change another author's draft. Record that claim, its owner, and the required next actor as a blocker.
 
 ## Interpret One Active Fix
 
-`active` means the agent is currently diagnosing or editing one root cause. These states do not consume the active-fix slot:
+`active` means the agent is diagnosing or editing one root cause. These states do not count against the one-active-fix limit:
 
 - `waiting-ci`;
 - `waiting-review`;
@@ -110,8 +110,8 @@ If two claims appear:
 
 Do not combine unrelated causes to save a PR slot.
 
-## Re-scan Without Reanalysis
+## Rescan Without Reanalysis
 
-Treat a run as changed when its status, conclusion, attempt, job set, or relevant job conclusion changes. A controller-created replacement is a new run or attempt and can add evidence. It does not authorize a manual duplicate.
+Treat a run as changed when its status, conclusion, attempt, job set, or relevant job conclusion changes. A replacement that the workflow controller creates is a new run or attempt and can add evidence. It does not authorize a manual duplicate.
 
 For an unchanged completed run, reuse the recorded root-cause classification. Reopen analysis only when a new commit, new attempt, new job result, or new artifact contradicts it.

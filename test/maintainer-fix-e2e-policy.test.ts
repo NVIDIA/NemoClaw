@@ -4,16 +4,16 @@
 import fs from "node:fs";
 
 import { describe, expect, it } from "vitest";
-import { evaluateFixLoopPolicy } from "../.agents/skills/nemoclaw-maintainer-fix-e2e-failures/scripts/evaluate-policy.mts";
+import { evaluateE2eMaintenancePolicy } from "../.agents/skills/nemoclaw-maintainer-fix-e2e-failures/scripts/evaluate-policy.mts";
 
-describe("continuous E2E fix-loop executable write policy", () => {
+describe("continuous E2E maintenance write policy", () => {
   it("denies an immediate retry after an ambiguous GitHub write", () => {
     expect(
-      evaluateFixLoopPolicy({
+      evaluateE2eMaintenancePolicy({
         kind: "ambiguous-write",
         writeKind: "merge",
         reconciliation: "not-run",
-        identitiesUnchanged: true,
+        objectIdentifiersUnchanged: true,
         retryCount: 0,
         transferStarted: false,
       }),
@@ -26,11 +26,11 @@ describe("continuous E2E fix-loop executable write policy", () => {
 
   it("allows one identical retry only after read-only reconciliation", () => {
     expect(
-      evaluateFixLoopPolicy({
+      evaluateE2eMaintenancePolicy({
         kind: "ambiguous-write",
         writeKind: "merge",
         reconciliation: "observed-not-applied",
-        identitiesUnchanged: true,
+        objectIdentifiersUnchanged: true,
         retryCount: 0,
         transferStarted: false,
       }),
@@ -42,11 +42,11 @@ describe("continuous E2E fix-loop executable write policy", () => {
 
   it("denies an ambiguous write retry after ownership transfer starts", () => {
     expect(
-      evaluateFixLoopPolicy({
+      evaluateE2eMaintenancePolicy({
         kind: "ambiguous-write",
         writeKind: "merge",
         reconciliation: "observed-not-applied",
-        identitiesUnchanged: true,
+        objectIdentifiersUnchanged: true,
         retryCount: 0,
         transferStarted: true,
       }),
@@ -59,11 +59,11 @@ describe("continuous E2E fix-loop executable write policy", () => {
 
   it("denies fork workflow approval when sensitive workflow code changed", () => {
     expect(
-      evaluateFixLoopPolicy({
+      evaluateE2eMaintenancePolicy({
         kind: "fork-workflow-approval",
         ordinaryPullRequestWorkflow: true,
         expectedRepository: true,
-        currentHead: true,
+        latestPrCommit: true,
         completeDiffReviewed: true,
         sensitiveWorkflowChanged: true,
         exposesPrivilegedCredentials: false,
@@ -76,20 +76,20 @@ describe("continuous E2E fix-loop executable write policy", () => {
     });
   });
 
-  it("denies self-approval even when the review names the current head", () => {
+  it("denies self-approval when the review names the latest PR commit", () => {
     expect(
-      evaluateFixLoopPolicy({
+      evaluateE2eMaintenancePolicy({
         kind: "review",
         actor: "fix-author",
         opener: "fix-author",
         authors: ["fix-author"],
-        currentHead: "head-b",
-        reviewedHead: "head-b",
-        checksHead: "head-b",
+        latestPrCommitSha: "commit-b",
+        reviewedCommitSha: "commit-b",
+        checksCommitSha: "commit-b",
         requiredChecksPass: true,
       }),
     ).toMatchObject({
-      action: "route-to-independent-current-head-reviewer",
+      action: "route-to-independent-reviewer",
       allowedWrites: [],
       deniedWrites: ["submit-approval"],
       queueState: "waiting-review",
@@ -100,20 +100,20 @@ describe("continuous E2E fix-loop executable write policy", () => {
     ["opener", " fix-author ", ["primary-author"]],
     ["author", "pr-opener", [" FIX-AUTHOR "]],
     ["co-author", "pr-opener", ["primary-author", " fix-author "]],
-  ])("denies approval by a case-varied %s identity", (_identity, opener, authors) => {
+  ])("denies approval by a case-varied %s login", (_role, opener, authors) => {
     expect(
-      evaluateFixLoopPolicy({
+      evaluateE2eMaintenancePolicy({
         kind: "review",
         actor: " Fix-Author ",
         opener,
         authors,
-        currentHead: "head-b",
-        reviewedHead: "head-b",
-        checksHead: "head-b",
+        latestPrCommitSha: "commit-b",
+        reviewedCommitSha: "commit-b",
+        checksCommitSha: "commit-b",
         requiredChecksPass: true,
       }),
     ).toMatchObject({
-      action: "route-to-independent-current-head-reviewer",
+      action: "route-to-independent-reviewer",
       allowedWrites: [],
       deniedWrites: ["submit-approval"],
       queueState: "waiting-review",
@@ -121,49 +121,52 @@ describe("continuous E2E fix-loop executable write policy", () => {
   });
 
   it.each([
-    ["pending", "head-b", false],
-    ["failing", "head-b", false],
-    ["stale", "head-a", true],
-  ])("denies current-head approval when required checks are %s", (_state, checksHead, pass) => {
-    expect(
-      evaluateFixLoopPolicy({
-        kind: "review",
-        actor: "independent-reviewer",
-        opener: "fix-author",
-        authors: ["fix-author"],
-        currentHead: "head-b",
-        reviewedHead: "head-b",
-        checksHead,
-        requiredChecksPass: pass,
-      }),
-    ).toMatchObject({
-      action: "wait-for-current-head-required-checks",
-      allowedWrites: [],
-      deniedWrites: ["submit-approval"],
-      queueState: "waiting-ci",
-    });
-  });
+    ["pending", "commit-b", false],
+    ["failing", "commit-b", false],
+    ["stale", "commit-a", true],
+  ])(
+    "denies approval when required checks for the latest PR commit are %s",
+    (_state, checksCommitSha, pass) => {
+      expect(
+        evaluateE2eMaintenancePolicy({
+          kind: "review",
+          actor: "independent-reviewer",
+          opener: "fix-author",
+          authors: ["fix-author"],
+          latestPrCommitSha: "commit-b",
+          reviewedCommitSha: "commit-b",
+          checksCommitSha,
+          requiredChecksPass: pass,
+        }),
+      ).toMatchObject({
+        action: "wait-for-latest-pr-commit-required-checks",
+        allowedWrites: [],
+        deniedWrites: ["submit-approval"],
+        queueState: "waiting-ci",
+      });
+    },
+  );
 
-  it("allows independent approval only after required checks pass on the reviewed head", () => {
+  it("allows independent approval after required checks pass for the commit under review", () => {
     expect(
-      evaluateFixLoopPolicy({
+      evaluateE2eMaintenancePolicy({
         kind: "review",
         actor: "independent-reviewer",
         opener: "fix-author",
         authors: ["fix-author"],
-        currentHead: "head-b",
-        reviewedHead: "head-b",
-        checksHead: "head-b",
+        latestPrCommitSha: "commit-b",
+        reviewedCommitSha: "commit-b",
+        checksCommitSha: "commit-b",
         requiredChecksPass: true,
       }),
     ).toMatchObject({
-      action: "submit-current-head-approval",
+      action: "submit-independent-approval",
       allowedWrites: ["submit-approval"],
       queueState: "approval-ready",
     });
   });
 
-  it("verifies the policy execution surface before invoking the trusted worktree copy", () => {
+  it("runs the policy evaluator after comparing every imported file", () => {
     const guide = fs.readFileSync(
       new URL(
         "../.agents/skills/nemoclaw-maintainer-fix-e2e-failures/references/review-and-merge.md",
@@ -174,12 +177,12 @@ describe("continuous E2E fix-loop executable write policy", () => {
     const trustCheck = guide.indexOf('cmp -s "$trusted_policy_root/$policy_file" "$policy_file"');
     const trustedInvocation = guide.indexOf('"$trusted_policy_root/$policy_path"');
 
-    expect(guide).toContain("every transitive local import");
+    expect(guide).toContain("every local file that it imports");
     expect(trustCheck).toBeGreaterThanOrEqual(0);
     expect(trustedInvocation).toBeGreaterThan(trustCheck);
   });
 
-  it("fails closed before the final gate and invokes only the compared trusted copy", () => {
+  it("stops before the final gate when a gate-checker file differs", () => {
     const guide = fs.readFileSync(
       new URL(
         "../.agents/skills/nemoclaw-maintainer-fix-e2e-failures/references/review-and-merge.md",
@@ -205,15 +208,15 @@ describe("continuous E2E fix-loop executable write policy", () => {
     );
   });
 
-  it("denies a merge when approval and checks belong to a stale head", () => {
+  it("denies a merge when approval and checks belong to an earlier commit", () => {
     expect(
-      evaluateFixLoopPolicy({
+      evaluateE2eMaintenancePolicy({
         kind: "merge",
-        capturedHead: "head-a",
-        currentHead: "head-b",
-        approvedHead: "head-a",
-        checksHead: "head-a",
-        baseCurrent: true,
+        capturedCommitSha: "commit-a",
+        latestPrCommitSha: "commit-b",
+        approvedCommitSha: "commit-a",
+        checksCommitSha: "commit-a",
+        baseMatchesMain: true,
         requiredChecksPass: true,
         independentApproval: true,
         mergeable: true,
@@ -222,24 +225,24 @@ describe("continuous E2E fix-loop executable write policy", () => {
     ).toMatchObject({
       action: "restart-final-merge-gate",
       allowedWrites: [],
-      deniedWrites: ["merge:head-a"],
+      deniedWrites: ["merge:commit-a"],
     });
   });
 
-  it("pauses related merges and permits only an authorized guarded revert PR", () => {
+  it("pauses related merges and permits only an authorized draft revert PR", () => {
     expect(
-      evaluateFixLoopPolicy({
+      evaluateE2eMaintenancePolicy({
         kind: "post-merge-e2e",
         originalFailurePresent: true,
         newRegressionPresent: false,
         containmentOwner: "maintainer-a",
-        badMergeSha: "bad-merge",
+        failedMergeSha: "failed-merge",
         rollbackPrAuthorized: true,
         attributionCertain: true,
       }),
     ).toMatchObject({
-      action: "open-guarded-draft-revert-pr",
-      allowedWrites: ["open-draft-revert-pr:bad-merge"],
+      action: "open-authorized-draft-revert-pr",
+      allowedWrites: ["open-draft-revert-pr:failed-merge"],
       deniedWrites: ["revert-main-directly", "merge-dependent-fix", "merge-revert-without-gates"],
       mergeWritesPaused: true,
       nextActor: "maintainer-a",
@@ -249,12 +252,12 @@ describe("continuous E2E fix-loop executable write policy", () => {
 
   it("denies rollback writes when failure attribution is uncertain", () => {
     expect(
-      evaluateFixLoopPolicy({
+      evaluateE2eMaintenancePolicy({
         kind: "post-merge-e2e",
         originalFailurePresent: true,
         newRegressionPresent: false,
         containmentOwner: "maintainer-a",
-        badMergeSha: "bad-merge",
+        failedMergeSha: "failed-merge",
         rollbackPrAuthorized: true,
         attributionCertain: false,
       }),
@@ -263,7 +266,7 @@ describe("continuous E2E fix-loop executable write policy", () => {
       allowedWrites: [],
       deniedWrites: [
         "revert-main-directly",
-        "open-draft-revert-pr:bad-merge",
+        "open-draft-revert-pr:failed-merge",
         "merge-dependent-fix",
         "merge-revert-without-gates",
       ],
@@ -273,22 +276,22 @@ describe("continuous E2E fix-loop executable write policy", () => {
     });
   });
 
-  it("stops all rollback writes when the containment owner lacks authority", () => {
+  it("stops all rollback writes when the containment owner lacks authorization", () => {
     expect(
-      evaluateFixLoopPolicy({
+      evaluateE2eMaintenancePolicy({
         kind: "post-merge-e2e",
         originalFailurePresent: false,
         newRegressionPresent: true,
         containmentOwner: "maintainer-a",
-        badMergeSha: "bad-merge",
+        failedMergeSha: "failed-merge",
         rollbackPrAuthorized: false,
         attributionCertain: true,
       }),
     ).toMatchObject({
-      action: "stop-related-merge-writes-and-request-rollback-authority",
+      action: "stop-related-merge-writes-and-request-rollback-authorization",
       allowedWrites: [],
       mergeWritesPaused: true,
-      nextActor: "maintainer with explicit rollback-PR authority",
+      nextActor: "maintainer with explicit authorization to create a rollback PR",
       queueState: "blocked",
     });
   });

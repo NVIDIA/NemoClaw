@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
-export type FixLoopQueueState =
+export type E2eMaintenanceQueueState =
   | "active"
   | "waiting-ci"
   | "waiting-review"
@@ -12,13 +12,13 @@ export type FixLoopQueueState =
   | "blocked"
   | "merged";
 
-export type FixLoopPolicyDecision = {
+export type E2eMaintenancePolicyDecision = {
   action: string;
   allowedWrites: string[];
   deniedWrites: string[];
   mergeWritesPaused: boolean;
   nextActor: string;
-  queueState: FixLoopQueueState;
+  queueState: E2eMaintenanceQueueState;
   reason: string;
 };
 
@@ -57,23 +57,23 @@ function normalizeLogin(login: string): string {
   return login.trim().toLowerCase();
 }
 
-function decision(overrides: Partial<FixLoopPolicyDecision>): FixLoopPolicyDecision {
+function decision(overrides: Partial<E2eMaintenancePolicyDecision>): E2eMaintenancePolicyDecision {
   return {
     action: "record-blocker",
     allowedWrites: [],
     deniedWrites: [],
     mergeWritesPaused: false,
-    nextActor: "fix-loop owner",
+    nextActor: "E2E maintenance owner",
     queueState: "blocked",
     reason: "The requested write did not satisfy the executable policy.",
     ...overrides,
   };
 }
 
-function evaluateAmbiguousWrite(state: JsonRecord): FixLoopPolicyDecision {
+function evaluateAmbiguousWrite(state: JsonRecord): E2eMaintenancePolicyDecision {
   const writeKind = requiredString(state, "writeKind");
   const reconciliation = requiredString(state, "reconciliation");
-  const identitiesUnchanged = requiredBoolean(state, "identitiesUnchanged");
+  const objectIdentifiersUnchanged = requiredBoolean(state, "objectIdentifiersUnchanged");
   const retryCount = state.retryCount;
   const transferStarted = requiredBoolean(state, "transferStarted");
   if (!Number.isInteger(retryCount) || Number(retryCount) < 0) {
@@ -99,7 +99,7 @@ function evaluateAmbiguousWrite(state: JsonRecord): FixLoopPolicyDecision {
   }
   if (
     reconciliation === "observed-not-applied" &&
-    identitiesUnchanged &&
+    objectIdentifiersUnchanged &&
     retryCount === 0 &&
     !transferStarted
   ) {
@@ -107,91 +107,95 @@ function evaluateAmbiguousWrite(state: JsonRecord): FixLoopPolicyDecision {
       action: "retry-same-write-once",
       allowedWrites: [retryWrite],
       queueState: "active",
-      reason: "One retry is allowed after read-only reconciliation preserves every identity.",
+      reason:
+        "One retry is allowed after read-only reconciliation shows every object identifier unchanged.",
     });
   }
   return decision({
     action: "record-ambiguous-write-blocker",
     deniedWrites: [retryWrite],
-    reason: "The write remains uncertain, an identity changed, a retry ran, or transfer started.",
+    reason:
+      "The write remains uncertain, an object identifier changed, a retry ran, or transfer started.",
   });
 }
 
-function evaluateForkApproval(state: JsonRecord): FixLoopPolicyDecision {
-  const safe =
+function evaluateForkApproval(state: JsonRecord): E2eMaintenancePolicyDecision {
+  const approvalPermitted =
     requiredBoolean(state, "ordinaryPullRequestWorkflow") &&
     requiredBoolean(state, "expectedRepository") &&
-    requiredBoolean(state, "currentHead") &&
+    requiredBoolean(state, "latestPrCommit") &&
     requiredBoolean(state, "completeDiffReviewed") &&
     !requiredBoolean(state, "sensitiveWorkflowChanged") &&
     !requiredBoolean(state, "exposesPrivilegedCredentials") &&
     requiredBoolean(state, "authorized") &&
     requiredString(state, "runState") === "action_required";
 
-  return safe
+  return approvalPermitted
     ? decision({
         action: "approve-ordinary-fork-workflow",
         allowedWrites: ["approve-workflow-run"],
         queueState: "active",
-        reason: "The ordinary untrusted-fork workflow and exact head passed the trust review.",
+        reason:
+          "The ordinary untrusted-fork workflow and latest PR commit passed the trust review.",
       })
     : decision({
         action: "record-fork-approval-blocker-and-continue",
         deniedWrites: ["approve-workflow-run", "dispatch-privileged-e2e"],
-        reason: "The workflow identity, exact head, trust review, or authority is incomplete.",
+        reason:
+          "The workflow identifiers, latest PR commit, trust review, or authorization are incomplete.",
       });
 }
 
-function evaluateReview(state: JsonRecord): FixLoopPolicyDecision {
+function evaluateReview(state: JsonRecord): E2eMaintenancePolicyDecision {
   const actor = requiredString(state, "actor");
   const opener = requiredString(state, "opener");
   const authors = requiredStringArray(state, "authors");
-  const currentHead = requiredString(state, "currentHead");
-  const reviewedHead = requiredString(state, "reviewedHead");
-  const checksHead = requiredString(state, "checksHead");
+  const latestPrCommitSha = requiredString(state, "latestPrCommitSha");
+  const reviewedCommitSha = requiredString(state, "reviewedCommitSha");
+  const checksCommitSha = requiredString(state, "checksCommitSha");
   const requiredChecksPass = requiredBoolean(state, "requiredChecksPass");
   const normalizedActor = normalizeLogin(actor);
   const independent =
     normalizedActor !== normalizeLogin(opener) &&
     !authors.some((author) => normalizeLogin(author) === normalizedActor);
 
-  if (!independent || currentHead !== reviewedHead) {
+  if (!independent || latestPrCommitSha !== reviewedCommitSha) {
     return decision({
-      action: "route-to-independent-current-head-reviewer",
+      action: "route-to-independent-reviewer",
       deniedWrites: ["submit-approval"],
       nextActor: "independent maintainer",
       queueState: "waiting-review",
       reason: independent
-        ? "The reviewed head is stale."
+        ? "The latest PR commit differs from the commit under review."
         : "The PR opener, author, or co-author cannot provide the independent approval.",
     });
   }
-  if (checksHead !== currentHead || !requiredChecksPass) {
+  if (checksCommitSha !== latestPrCommitSha || !requiredChecksPass) {
     return decision({
-      action: "wait-for-current-head-required-checks",
+      action: "wait-for-latest-pr-commit-required-checks",
       deniedWrites: ["submit-approval"],
       queueState: "waiting-ci",
-      reason: "Required checks are stale, pending, or failing for the reviewed current head.",
+      reason: "Required checks are stale, pending, or failing for the latest PR commit.",
     });
   }
   return decision({
-    action: "submit-current-head-approval",
+    action: "submit-independent-approval",
     allowedWrites: ["submit-approval"],
     queueState: "approval-ready",
-    reason: "A non-contributor reviewed the current head and its required checks pass.",
+    reason: "A non-contributor reviewed the latest PR commit, and its required checks pass.",
   });
 }
 
-function evaluateMerge(state: JsonRecord): FixLoopPolicyDecision {
-  const capturedHead = requiredString(state, "capturedHead");
-  const currentHead = requiredString(state, "currentHead");
-  const approvedHead = requiredString(state, "approvedHead");
-  const checksHead = requiredString(state, "checksHead");
+function evaluateMerge(state: JsonRecord): E2eMaintenancePolicyDecision {
+  const capturedCommitSha = requiredString(state, "capturedCommitSha");
+  const latestPrCommitSha = requiredString(state, "latestPrCommitSha");
+  const approvedCommitSha = requiredString(state, "approvedCommitSha");
+  const checksCommitSha = requiredString(state, "checksCommitSha");
   const eligible =
-    capturedHead === currentHead &&
-    approvedHead === currentHead &&
-    checksHead === currentHead &&
-    requiredBoolean(state, "baseCurrent") &&
+    capturedCommitSha === latestPrCommitSha &&
+    approvedCommitSha === latestPrCommitSha &&
+    checksCommitSha === latestPrCommitSha &&
+    requiredBoolean(state, "baseMatchesMain") &&
     requiredBoolean(state, "requiredChecksPass") &&
     requiredBoolean(state, "independentApproval") &&
     requiredBoolean(state, "mergeable") &&
@@ -199,24 +203,25 @@ function evaluateMerge(state: JsonRecord): FixLoopPolicyDecision {
 
   return eligible
     ? decision({
-        action: "merge-exact-reviewed-head",
-        allowedWrites: [`merge:${currentHead}`],
+        action: "merge-commit-under-review",
+        allowedWrites: [`merge:${latestPrCommitSha}`],
         queueState: "merged",
-        reason: "The current head, checks, approval, base, rules, and authority agree.",
+        reason: "The latest PR commit, checks, approval, base, rules, and authorization agree.",
       })
     : decision({
         action: "restart-final-merge-gate",
-        deniedWrites: [`merge:${capturedHead}`],
+        deniedWrites: [`merge:${capturedCommitSha}`],
         queueState: "waiting-review",
-        reason: "A head, check, approval, base, rule, mergeability, or authority gate is stale.",
+        reason:
+          "A commit SHA, check, approval, base SHA, rule, merge state, or authorization no longer satisfies the final merge requirements.",
       });
 }
 
-function evaluatePostMerge(state: JsonRecord): FixLoopPolicyDecision {
+function evaluatePostMerge(state: JsonRecord): E2eMaintenancePolicyDecision {
   const originalFailurePresent = requiredBoolean(state, "originalFailurePresent");
   const newRegressionPresent = requiredBoolean(state, "newRegressionPresent");
   const containmentOwner = requiredString(state, "containmentOwner");
-  const badMergeSha = requiredString(state, "badMergeSha");
+  const failedMergeSha = requiredString(state, "failedMergeSha");
   const rollbackPrAuthorized = requiredBoolean(state, "rollbackPrAuthorized");
   const attributionCertain = requiredBoolean(state, "attributionCertain");
   if (!originalFailurePresent && !newRegressionPresent) {
@@ -225,7 +230,7 @@ function evaluatePostMerge(state: JsonRecord): FixLoopPolicyDecision {
       nextActor: containmentOwner,
       queueState: "merged",
       reason:
-        "The automatic main evidence contains neither the original failure nor a new regression.",
+        "The automatic E2E evidence for main contains neither the original failure nor a new regression.",
     });
   }
 
@@ -234,40 +239,41 @@ function evaluatePostMerge(state: JsonRecord): FixLoopPolicyDecision {
       action: "stop-related-merge-writes-and-review-attribution",
       deniedWrites: [
         "revert-main-directly",
-        `open-draft-revert-pr:${badMergeSha}`,
+        `open-draft-revert-pr:${failedMergeSha}`,
         "merge-dependent-fix",
         "merge-revert-without-gates",
       ],
       mergeWritesPaused: true,
       nextActor: "maintainer reviewing failure attribution",
-      reason: "Rollback writes remain denied until the failed merge is certainly attributable.",
+      reason:
+        "Rollback writes remain denied until evidence attributes the failure to the named merge commit.",
     });
   }
 
   return rollbackPrAuthorized
     ? decision({
-        action: "open-guarded-draft-revert-pr",
-        allowedWrites: [`open-draft-revert-pr:${badMergeSha}`],
+        action: "open-authorized-draft-revert-pr",
+        allowedWrites: [`open-draft-revert-pr:${failedMergeSha}`],
         deniedWrites: ["revert-main-directly", "merge-dependent-fix", "merge-revert-without-gates"],
         mergeWritesPaused: true,
         nextActor: containmentOwner,
         reason: "A post-merge failure pauses related merges; rollback is a reviewed draft PR only.",
       })
     : decision({
-        action: "stop-related-merge-writes-and-request-rollback-authority",
+        action: "stop-related-merge-writes-and-request-rollback-authorization",
         deniedWrites: [
           "revert-main-directly",
-          `open-draft-revert-pr:${badMergeSha}`,
+          `open-draft-revert-pr:${failedMergeSha}`,
           "merge-dependent-fix",
           "merge-revert-without-gates",
         ],
         mergeWritesPaused: true,
-        nextActor: "maintainer with explicit rollback-PR authority",
-        reason: "The containment owner lacks authority to create the guarded rollback PR.",
+        nextActor: "maintainer with explicit authorization to create a rollback PR",
+        reason: "The containment owner lacks authorization to create the draft rollback PR.",
       });
 }
 
-export function evaluateFixLoopPolicy(input: unknown): FixLoopPolicyDecision {
+export function evaluateE2eMaintenancePolicy(input: unknown): E2eMaintenancePolicyDecision {
   const state = asRecord(input, "policy state");
   switch (requiredString(state, "kind")) {
     case "ambiguous-write":
@@ -281,13 +287,13 @@ export function evaluateFixLoopPolicy(input: unknown): FixLoopPolicyDecision {
     case "post-merge-e2e":
       return evaluatePostMerge(state);
     default:
-      throw new Error("kind must name a supported fix-loop policy scenario");
+      throw new Error("kind must name a supported E2E maintenance policy scenario");
   }
 }
 
 function runFromStdin(): void {
   const input = JSON.parse(fs.readFileSync(0, "utf8")) as unknown;
-  process.stdout.write(`${JSON.stringify(evaluateFixLoopPolicy(input), null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(evaluateE2eMaintenancePolicy(input), null, 2)}\n`);
 }
 
 const invokedPath = process.argv[1];

@@ -2,6 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 interface:
-  display_name: "NemoClaw E2E Fix Loop"
-  short_description: "Run the continuous E2E failure-fixing loop"
-  default_prompt: "Use $nemoclaw-maintainer-fix-e2e-failures to keep fixing automatic main E2E failures and monitoring for new results."
+  display_name: "NemoClaw Continuous E2E Maintenance"
+  short_description: "Fix automatic E2E failures continuously"
+  default_prompt: "Use $nemoclaw-maintainer-fix-e2e-failures to fix automatic main E2E failures and monitor new results continuously."
