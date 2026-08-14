@@ -123,6 +123,7 @@ describe("container curl probe", () => {
   it("returns an unchanged nonzero Docker probe result without creating the response file (#9116)", () => {
     const dockerFailure = successfulSpawn("partial response");
     dockerFailure.status = 7;
+    const expectedFailure = { ...dockerFailure, output: [...dockerFailure.output] };
     const spawn = vi.fn(() => dockerFailure);
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-probe-test-"));
     const outputPath = path.join(tempDir, "response.json");
@@ -135,6 +136,7 @@ describe("container curl probe", () => {
       );
 
       expect(result).toBe(dockerFailure);
+      expect(result).toEqual(expectedFailure);
       expect(fs.existsSync(outputPath)).toBe(false);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
