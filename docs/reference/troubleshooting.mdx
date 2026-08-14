@@ -318,6 +318,13 @@ If forwarding then fails, onboarding removes the new sandbox and tells you to re
 When a previous onboard, upgrade, or sandbox crash leaves a stale `openclaw-gateway` host process holding the dashboard port, `$$nemoclaw onboard --fresh`, `$$nemoclaw <name> destroy` (when destroying the last sandbox), and `$$nemoclaw uninstall` automatically sweep the dashboard port range and signal `SIGTERM` then `SIGKILL` to recover.
 The sweep only targets processes owned by the current user whose command line matches `openclaw-gateway` or `openshell forward` markers, and skips dashboard ports owned by other live sandboxes.
 
+If onboarding preflight resolves the complete listener set for a gateway port conflict, the diagnostic lists every listener.
+Each entry contains the process name and PID, or only the PID when NemoClaw cannot read the process name.
+The diagnostic identifies listeners that fail ownership verification, but it does not print a reusable process-stop command.
+If NemoClaw resolves no listener, the diagnostic provides an `lsof` inspection command.
+Before you stop a listener, confirm that it is not part of a second NemoClaw gateway environment.
+Release that environment with `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw uninstall` instead of stopping its process.
+
 If a non-NemoClaw process is already bound to the dashboard port or the gateway port, identify the conflicting process.
 Stop it only when its command line names the application you intend to stop, you own the process or administer its service, and the application has no active work:
 

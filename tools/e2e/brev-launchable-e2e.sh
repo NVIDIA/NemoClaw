@@ -8,6 +8,9 @@ set -euo pipefail
 IMAGE_REPOSITORY=brevdev/nemoclaw-image
 IMAGE_WORKFLOW=build-launchable-e2e-image.yml
 cleanup_required=0
+diagnostic_capture=""
+SSH_PROBE_OPTIONS=(-T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1
+  -o NumberOfPasswordPrompts=0 -o RequestTTY=no -o LogLevel=ERROR)
 
 log() {
   printf '%s\n' "$*" | tee -a "$WORK_DIR/lane.log"
@@ -38,31 +41,220 @@ workspace() {
       else error("workspace name is ambiguous") end'
 }
 
+sanitize_probe_error() {
+  python3 -c '
+import os
+import re
+import sys
+
+retained = bytearray()
+while chunk := sys.stdin.buffer.read(8192):
+    if len(retained) < 4096:
+        retained.extend(chunk[: 4096 - len(retained)])
+data = bytes(retained).decode("utf-8", errors="replace")
+for name in ("BREV_API_KEY", "GH_TOKEN", "NVIDIA_INFERENCE_API_KEY"):
+    value = os.environ.get(name, "")
+    if value:
+        data = data.replace(value, "[REDACTED]")
+instance = os.environ.get("INSTANCE_NAME", "")
+if instance:
+    data = data.replace(f"{instance}-host", "[REDACTED HOST]")
+    data = data.replace(instance, "[REDACTED HOST]")
+data = re.sub(
+    r"-----BEGIN [^-\n]*PRIVATE KEY-----.*?-----END [^-\n]*PRIVATE KEY-----",
+    "[REDACTED PRIVATE KEY]",
+    data,
+    flags=re.DOTALL,
+)
+data = re.sub(
+    r"(?i)\b(authorization)\b(\s*[:=]\s*)[^\r\n]+",
+    r"\1\2[REDACTED]",
+    data,
+)
+data = re.sub(
+    r"(?i)\b(api[_ -]?key|token|password|secret|credential|authorization)\b"
+    r"(\s*[:=]\s*)(\"[^\"]*\"|\x27[^\x27]*\x27|\S+)",
+    r"\1\2[REDACTED]",
+    data,
+)
+data = re.sub(
+    r"(?i)\b(identityfile|certificatefile|proxycommand|proxyjump)\s*[:=]\s*\S+",
+    r"\1=[REDACTED SSH CONFIGURATION]",
+    data,
+)
+data = re.sub(
+    r"(?i)\b(host|hostname|address|endpoint)\s*[:=]\s*\S+",
+    r"\1=[REDACTED ADDRESS]",
+    data,
+)
+data = re.sub(r"(?i)(connect to host|resolve hostname)\s+\S+", r"\1 [REDACTED HOST]", data)
+data = re.sub(r"(?i)\b(?:nvapi-|gh[pousr]_)[A-Za-z0-9_-]+", "[REDACTED]", data)
+def redact_generic_token(match):
+    value = match.group(0)
+    if value in {
+        "client_loop_send_disconnect",
+        "kex_exchange_identification",
+        "ssh_exchange_identification",
+    }:
+        return value
+    return "[REDACTED]"
+
+data = re.sub(
+    r"(?<![A-Za-z0-9])[A-Za-z0-9_./+=-]{20,}(?![A-Za-z0-9])",
+    redact_generic_token,
+    data,
+)
+data = re.sub(r"https?://[^/\s]+", "[REDACTED ADDRESS]", data)
+data = re.sub(r"(?<![\w])(?:\d{1,3}\.){3}\d{1,3}(?![\w])", "[REDACTED ADDRESS]", data)
+data = re.sub(
+    r"(?<![\w])(?:[0-9a-fA-F]{1,4}:){2,}[0-9a-fA-F:]{1,4}(?![\w])",
+    "[REDACTED ADDRESS]",
+    data,
+)
+data = re.sub(r"(?i)(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}", "[REDACTED ADDRESS]", data)
+
+lines = []
+debug_omitted = False
+for raw_line in data.splitlines():
+    line = " ".join(raw_line.split())
+    if not line:
+        continue
+    if re.match(r"(?i)^debug[123]:", line):
+        if not debug_omitted:
+            lines.append("SSH debug output omitted")
+            debug_omitted = True
+        continue
+    if re.match(
+        r"(?i)^(hostname|user|port|identityfile|certificatefile|proxycommand|proxyjump)\s+",
+        line,
+    ):
+        lines.append("[REDACTED SSH CONFIGURATION]")
+        continue
+    lines.append(re.sub(r"(?i)load key \S+", "SSH private key load failed", line))
+
+result = " | ".join(dict.fromkeys(lines))
+sys.stdout.write(result.encode("utf-8")[:512].decode("utf-8", errors="ignore"))
+'
+}
+
+run_bounded_probe() {
+  local timeout_seconds="$1"
+  local output_name="$2"
+  local status_name="$3"
+  local output status
+  local -a pipeline_status
+  shift 3
+  if [ -z "$diagnostic_capture" ]; then
+    diagnostic_capture="$(mktemp "${RUNNER_TEMP:-/tmp}/brev-launchable-diagnostic.XXXXXX")"
+  fi
+  : >"$diagnostic_capture"
+  set +e
+  timeout "${timeout_seconds}s" "$@" 2>&1 \
+    | sanitize_probe_error >"$diagnostic_capture"
+  pipeline_status=("${PIPESTATUS[@]}")
+  set -e
+  status="${pipeline_status[0]}"
+  output="$(<"$diagnostic_capture")"
+  if [ -z "$output" ]; then
+    if [ "$status" -eq 0 ]; then
+      output="none"
+    elif [ "$status" -eq 124 ]; then
+      output="probe timed out"
+    else
+      output="no diagnostic output"
+    fi
+  fi
+  [ -z "$output_name" ] || printf -v "$output_name" '%s' "$output"
+  printf -v "$status_name" '%s' "$status"
+}
+
 wait_for_host_ssh() {
-  local timeout_seconds="${BREV_HOST_SSH_TIMEOUT_SECONDS:-600}"
+  local timeout_seconds="${BREV_HOST_SSH_TIMEOUT_SECONDS:-900}"
+  local poll_seconds="${POLL_SECONDS:-5}"
   local deadline=$((SECONDS + timeout_seconds))
-  local remaining refresh_timeout sleep_seconds ssh_timeout
-  log "Waiting for host SSH access"
+  local remaining refresh_timeout sleep_seconds ssh_timeout refresh_error ssh_error container_error
+  local container_probed=0 container_status=1 attempts=0
+  local refresh_status=1 ssh_status=1
+  local last_refresh_error="" last_refresh_failure_status=""
+  local last_ssh_error="" last_ssh_failure_status=""
+  log "Waiting up to $timeout_seconds seconds for host SSH access"
+
+  remaining=$((deadline - SECONDS))
+  [ "$remaining" -gt 0 ] || die "host SSH readiness timed out"
+  refresh_timeout=$((remaining < 60 ? remaining : 60))
+  run_bounded_probe "$refresh_timeout" refresh_error refresh_status brev refresh
+  if [ "$refresh_status" -ne 0 ]; then
+    last_refresh_error="$refresh_error"
+    last_refresh_failure_status="$refresh_status"
+  fi
+
+  remaining=$((deadline - SECONDS))
+  if [ "$remaining" -gt 0 ]; then
+    ssh_timeout=$((remaining < 15 ? remaining : 15))
+    run_bounded_probe "$ssh_timeout" container_error container_status \
+      ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" true
+    container_probed=1
+  fi
+
   while [ "$SECONDS" -lt "$deadline" ]; do
     remaining=$((deadline - SECONDS))
     [ "$remaining" -gt 0 ] || break
-    refresh_timeout=$((remaining < 60 ? remaining : 60))
-    timeout "${refresh_timeout}s" brev refresh >/dev/null 2>&1 || true
-    remaining=$((deadline - SECONDS))
-    [ "$remaining" -gt 0 ] || break
     ssh_timeout=$((remaining < 15 ? remaining : 15))
-    if timeout "${ssh_timeout}s" ssh -T -o BatchMode=yes -o ConnectTimeout=10 \
-      -o ConnectionAttempts=1 -o NumberOfPasswordPrompts=0 \
-      -o RequestTTY=no -o LogLevel=ERROR "${INSTANCE_NAME}-host" true \
-      >/dev/null 2>&1; then
+    run_bounded_probe "$ssh_timeout" ssh_error ssh_status \
+      ssh "${SSH_PROBE_OPTIONS[@]}" "${INSTANCE_NAME}-host" true
+    if [ "$ssh_status" -eq 0 ]; then
       log "SSH access to ${INSTANCE_NAME}-host succeeded"
       return 0
     fi
+    attempts=$((attempts + 1))
+    last_ssh_error="$ssh_error"
+    last_ssh_failure_status="$ssh_status"
+
+    if [ $((attempts % 5)) -eq 0 ]; then
+      remaining=$((deadline - SECONDS))
+      [ "$remaining" -gt 0 ] || break
+      refresh_timeout=$((remaining < 60 ? remaining : 60))
+      run_bounded_probe "$refresh_timeout" refresh_error refresh_status brev refresh
+      if [ "$refresh_status" -ne 0 ]; then
+        last_refresh_error="$refresh_error"
+        last_refresh_failure_status="$refresh_status"
+      fi
+    fi
+
     remaining=$((deadline - SECONDS))
     [ "$remaining" -gt 0 ] || break
-    sleep_seconds="${POLL_SECONDS:-15}"
+    sleep_seconds="$poll_seconds"
     sleep "$((sleep_seconds < remaining ? sleep_seconds : remaining))"
   done
+
+  if [ -n "$last_refresh_failure_status" ]; then
+    log "Readiness Brev refresh last failure: status $last_refresh_failure_status; error: $last_refresh_error"
+  else
+    log "Readiness Brev refresh last failure: none"
+  fi
+  if [ -n "$last_ssh_failure_status" ]; then
+    log "Readiness direct host SSH last failure: status $last_ssh_failure_status; error: $last_ssh_error"
+  else
+    log "Readiness direct host SSH last failure: none"
+  fi
+  if [ "$container_probed" -eq 0 ]; then
+    log "Readiness initial default Brev container probe: not probed"
+  else
+    log "Readiness initial default Brev container probe: status $container_status; error: $container_error"
+  fi
+  if [ "$container_probed" -eq 0 ]; then
+    log "Readiness classification: default Brev container and direct host SSH were not probed before deadline"
+  elif [ -n "$last_ssh_failure_status" ]; then
+    if [ "$container_status" -eq 0 ]; then
+      log "Readiness classification: initial default Brev container probe succeeded; direct host SSH did not succeed before deadline"
+    else
+      log "Readiness classification: initial default Brev container probe failed; direct host SSH did not succeed before deadline"
+    fi
+  elif [ "$container_status" -eq 0 ]; then
+    log "Readiness classification: initial default Brev container probe succeeded; direct host SSH was not probed before deadline"
+  else
+    log "Readiness classification: initial default Brev container probe failed; direct host SSH was not probed before deadline"
+  fi
   die "host SSH readiness timed out"
 }
 
@@ -97,6 +289,7 @@ finish() {
   local status=$?
   trap - EXIT INT TERM
   if [ "$cleanup_required" -eq 1 ] && ! cleanup; then status=1; fi
+  rm -f "${diagnostic_capture:-}"
   exit "$status"
 }
 
@@ -109,7 +302,7 @@ for name in WORK_DIR CANDIDATE_SHA CORRELATION_ID GH_TOKEN GITHUB_RUN_ID \
   GITHUB_RUN_ATTEMPT BREV_LAUNCHABLE_ID INSTANCE_NAME NVIDIA_INFERENCE_API_KEY; do
   require "$name"
 done
-for tool in brev gh jq python3 sed ssh timeout; do
+for tool in brev gh jq mktemp python3 sed ssh timeout; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool is required"
 done
 [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || die "candidate SHA is not canonical"
@@ -117,6 +310,13 @@ done
   || die "correlation ID is not a UUIDv4"
 [[ "$INSTANCE_NAME" =~ ^[a-z][a-z0-9-]{0,62}$ ]] || die "workspace name is unsafe"
 [[ "$BREV_LAUNCHABLE_ID" =~ ^env-[A-Za-z0-9]+$ ]] || die "Launchable ID is unsafe"
+if [ "${BREV_HOST_SSH_TIMEOUT_SECONDS+x}" = x ] \
+  && ! [[ "$BREV_HOST_SSH_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  die "BREV_HOST_SSH_TIMEOUT_SECONDS must be a positive integer"
+fi
+if [ "${POLL_SECONDS+x}" = x ] && ! [[ "$POLL_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  die "POLL_SECONDS must be a positive integer"
+fi
 : >"$WORK_DIR/lane.log"
 log "Candidate $CANDIDATE_SHA"
 
