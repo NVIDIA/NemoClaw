@@ -57,6 +57,10 @@ export interface BoundedRetryOptions<T> {
   onEvidence?: (evidence: RetryEvidence) => Promise<void> | void;
 }
 
+export type BoundedRetryResult<T> =
+  | { outcome: "passed"; value: T; evidence: RetryEvidence }
+  | { outcome: "failed"; value: T | undefined; evidence: RetryEvidence };
+
 /** Reject unbounded or artifact-unsafe retry metadata before an operation runs. */
 function validateOptions<T>(options: BoundedRetryOptions<T>): void {
   if (!/^[a-z0-9][a-z0-9._-]{0,127}$/u.test(options.operation)) {
@@ -110,13 +114,12 @@ async function emit(
  * Evidence deliberately contains no command output, exception text, or request
  * data, so credential-bearing values cannot enter retained retry artifacts.
  *
- * A resolved operation returns its value with a terminal `evidence.outcome`,
- * including failed outcomes. A thrown operation raises `RetryPolicyError` with
- * the same evidence. Callers must inspect the outcome after a resolved promise.
+ * A resolved operation returns a discriminated pass or failure result. A
+ * thrown operation raises `RetryPolicyError` with the same evidence.
  */
 export async function runBoundedRetry<T>(
   options: BoundedRetryOptions<T>,
-): Promise<{ value: T | undefined; evidence: RetryEvidence }> {
+): Promise<BoundedRetryResult<T>> {
   validateOptions(options);
   const sleep =
     options.sleep ??
@@ -135,6 +138,7 @@ export async function runBoundedRetry<T>(
     const classification = options.classify(value, error);
     if (classification.outcome === "passed") {
       if (error !== undefined) throw new Error("retry classifier reported success after an error");
+      if (value === undefined) throw new Error("retry classifier reported success without a value");
       attempts.push({ attempt, outcome: "passed", retryScheduled: false });
       const evidence = finalEvidence(
         options,
@@ -142,7 +146,7 @@ export async function runBoundedRetry<T>(
         attempt === 1 ? "passed-first-attempt" : "passed-after-retry",
       );
       await emit(options, evidence);
-      return { value, evidence };
+      return { outcome: "passed", value, evidence };
     }
 
     const isTransient = classification.failureClass === "transient-external";
@@ -178,7 +182,7 @@ export async function runBoundedRetry<T>(
     if (error !== undefined) {
       throw new RetryPolicyError(`${options.operation} ${outcome}`, evidence);
     }
-    return { value, evidence };
+    return { outcome: "failed", value, evidence };
   }
 
   throw new Error("bounded retry loop completed without an attempt");

@@ -91,8 +91,9 @@ describe("live test progress", () => {
 
   it("rejects invalid configured install attempt counts", () => {
     expect(turnLatencyInstallAttemptCount(undefined)).toBe(2);
-    expect(turnLatencyInstallAttemptCount("1")).toBe(1);
-    expect(turnLatencyInstallAttemptCount("10")).toBe(10);
+    for (let expected = 1; expected <= 10; expected += 1) {
+      expect(turnLatencyInstallAttemptCount(String(expected))).toBe(expected);
+    }
     for (const value of ["0", "-1", "abc", "01", "11"]) {
       expect(() => turnLatencyInstallAttemptCount(value)).toThrow(
         /NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS must be an integer between 1 and 10/u,

@@ -268,13 +268,10 @@ async function expectLiveChatPong(
       await artifacts.writeJson("phase-2-inference-local-chat-retry.json", evidence);
     },
   });
-  const value = execution.value;
-  const passed =
-    execution.evidence.outcome === "passed-first-attempt" ||
-    execution.evidence.outcome === "passed-after-retry";
-  if (passed && value) {
-    return { attempt: execution.evidence.attempts.length, content: value.content };
+  if (execution.outcome === "passed") {
+    return { attempt: execution.evidence.attempts.length, content: execution.value.content };
   }
+  const value = execution.value;
   throw new Error(
     `Live chat failed after ${execution.evidence.attempts.length} attempt(s): ${
       value?.failure || `exit ${value?.response.exitCode ?? "unknown"}`

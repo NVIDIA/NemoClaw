@@ -19,6 +19,7 @@ describe("bounded E2E operation retry policy", () => {
           : { outcome: "failed", failureClass: "deterministic" },
     });
 
+    expect(result.outcome).toBe("passed");
     expect(result.evidence).toMatchObject({
       outcome: "passed-first-attempt",
       attempts: [{ attempt: 1, outcome: "passed" }],
@@ -68,6 +69,7 @@ describe("bounded E2E operation retry policy", () => {
       classify: () => ({ outcome: "failed", failureClass }),
     });
 
+    expect(result.outcome).toBe("failed");
     expect(result.evidence.outcome).toBe("failed-no-retry");
     expect(run).toHaveBeenCalledOnce();
   });
@@ -82,6 +84,7 @@ describe("bounded E2E operation retry policy", () => {
       classify: () => ({ outcome: "failed", failureClass: "transient-external" }),
     });
 
+    expect(result.outcome).toBe("failed");
     expect(result.evidence.outcome).toBe("exhausted");
     expect(result.evidence.attempts).toHaveLength(2);
     expect(result.evidence.attempts[1]?.retryScheduled).toBe(false);

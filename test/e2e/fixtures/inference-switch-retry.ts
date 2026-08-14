@@ -49,5 +49,7 @@ export async function runInferenceSetWithRetry(options: {
     sleep: options.delay,
     onEvidence: options.onEvidence,
   });
-  return execution.value!;
+  if (execution.outcome === "passed") return execution.value;
+  if (execution.value !== undefined) return execution.value;
+  throw new Error("inference switch retry failed without a command result");
 }
