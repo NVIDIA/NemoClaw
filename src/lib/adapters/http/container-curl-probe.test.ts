@@ -120,6 +120,27 @@ describe("container curl probe", () => {
     },
   );
 
+  it("does not create the response file after a Docker failure (#9116)", () => {
+    const dockerFailure = successfulSpawn("partial response");
+    dockerFailure.status = 7;
+    const spawn = vi.fn(() => dockerFailure);
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-probe-test-"));
+    const outputPath = path.join(tempDir, "response.json");
+
+    try {
+      const result = createContainerCurlProbeSpawn(spawn)(
+        "curl",
+        ["-sS", "-o", outputPath, "-w", "%{http_code}", "http://example.test/v1"],
+        { encoding: "utf8" },
+      );
+
+      expect(result).toBe(dockerFailure);
+      expect(fs.existsSync(outputPath)).toBe(false);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not follow a replacement output symlink (#9116)", () => {
     const spawn = vi.fn(
       (_command: string, args: readonly string[]) => {
