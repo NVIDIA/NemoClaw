@@ -25,7 +25,7 @@ const {
   clearNimContainerBeforeRetry,
   createNvidiaFeaturedModelSession,
   createRemoteModelValidator,
-  resolveCompatibleEndpointInput,
+  resolveCompatibleEndpointSelection,
 }: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
 const setupNimFlow: typeof import("./onboard/setup-nim-flow") = require("./onboard/setup-nim-flow");
 const openrouterSelection: typeof import("./onboard/openrouter-selection") = require("./onboard/openrouter-selection");
@@ -792,9 +792,7 @@ const {
 
 // URL/string utilities — delegated to src/lib/core/url-utils.ts
 const {
-  canonicalEndpoint,
   compactText,
-  endpointUrlHasUserinfoQueryOrFragment,
   normalizeProviderBaseUrl,
   isLoopbackHostname,
   formatEnvAssignment,
@@ -2983,7 +2981,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
 
   if (selected.key === "custom" || selected.key === "anthropicCompatible") {
     const kind = selected.key === "custom" ? "openai" : "anthropic";
-    const endpointInput = await resolveCompatibleEndpointInput({
+    const endpointSelection = await resolveCompatibleEndpointSelection({
       kind,
       envUrl: process.env.NEMOCLAW_ENDPOINT_URL,
       recoveredEndpointUrl: recoveredFromSandbox
@@ -2993,50 +2991,10 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
       nonInteractive: isNonInteractive(),
       prompt,
     });
-    const navigation = getNavigationChoice(endpointInput);
-    if (navigation === "back") {
-      console.log("  Returning to provider selection.");
-      console.log("");
+    if (endpointSelection.action === "retry-selection") {
       return "retry-selection";
     }
-    if (navigation === "exit") {
-      exitOnboardFromPrompt();
-    }
-    // #9106: reject instead of silently stripping components that NemoClaw
-    // cannot forward to the endpoint.
-    if (endpointUrlHasUserinfoQueryOrFragment(endpointInput)) {
-      console.error("  Endpoint URL must not contain userinfo, query, or fragment components.");
-      // canonicalEndpoint returns null unless the stripped base is a
-      // credential-free http(s) URL, so the hint never echoes userinfo or
-      // query values.
-      const strippedBaseUrl = canonicalEndpoint(
-        normalizeProviderBaseUrl(endpointInput, kind),
-        kind,
-      );
-      if (strippedBaseUrl) {
-        console.error(
-          `  NemoClaw does not forward these components to the endpoint. Use: ${strippedBaseUrl}`,
-        );
-      }
-      if (isNonInteractive()) {
-        process.exit(1);
-      }
-      console.log("");
-      return "retry-selection";
-    }
-    state.endpointUrl = normalizeProviderBaseUrl(endpointInput, kind);
-    if (!state.endpointUrl) {
-      console.error(
-        selected.key === "custom"
-          ? "  Endpoint URL is required for Other OpenAI-compatible endpoint."
-          : "  Endpoint URL is required for Other Anthropic-compatible endpoint.",
-      );
-      if (isNonInteractive()) {
-        process.exit(1);
-      }
-      console.log("");
-      return "retry-selection";
-    }
+    state.endpointUrl = endpointSelection.endpointUrl;
     if (selected.key === "anthropicCompatible") {
       state.endpointUrl = bedrockRuntimeOnboard.normalizeCustomAnthropicEndpointUrl(
         state.endpointUrl,
