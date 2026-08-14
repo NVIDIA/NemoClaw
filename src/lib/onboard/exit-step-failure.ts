@@ -56,7 +56,7 @@ export function registerIncompleteOnboardExitFailureHandler(
     // printOnboardResumeHint also self-dedupes against tailored hints.
     const interrupted = markLastStartedStepFailed(deps, message, true);
     if (!interrupted) return;
-    printOnboardResumeHint(portable);
+    printOnboardResumeHint(portable, undefined, interrupted.sandboxName);
   };
 
   processLike.once("exit", (code) => {

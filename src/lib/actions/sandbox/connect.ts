@@ -1224,16 +1224,17 @@ export function completeInteractiveSessionSetup(
   runApprovalPass(sandboxName, gatewayName);
 }
 
-/** Preserve non-OpenClaw setup after current OpenClaw pairing qualification. */
+/** Preserve session setup after launch readiness accepts a trusted agent identity. */
 export function completeReadinessQualifiedInteractiveSessionSetup(
   sandboxName: string,
+  agent: AgentDefinition,
   sb: SandboxEntry | null,
   runApprovalPass = runConnectAutoPairApprovalPass,
+  resolveFallbackGateway = getSandboxTargetGatewayName,
 ): void {
   maybeEnsureHermesToolGatewayBroker(sb);
-  const agentName = String(sb?.agent ?? "").trim();
-  if (agentName === "openclaw") return;
-  const gatewayName = sb ? resolveSandboxGatewayName(sb) : getSandboxTargetGatewayName(sandboxName);
+  if (sb && agent.name === "openclaw") return;
+  const gatewayName = sb ? resolveSandboxGatewayName(sb) : resolveFallbackGateway(sandboxName);
   runApprovalPass(sandboxName, gatewayName);
 }
 

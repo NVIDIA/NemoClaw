@@ -104,7 +104,7 @@ describe("terminal step failure helper", () => {
     complete = false;
     listeners[0](1);
     errorSpy.mockRestore();
-    expect(errors.join("\n")).toContain("onboard --resume");
+    expect(errors.join("\n")).toContain("onboard --resume --name <sandbox>");
     expect(errors.join("\n")).toContain("onboard --experimental-profile portable --fresh");
 
     const loaded = requireLoadedSession();
@@ -222,7 +222,16 @@ describe("incomplete-onboard --resume backstop (#6003)", () => {
 
   it("prints the resume hint when a step was in progress at exit", () => {
     session.saveSession(session.createSession({ lastStepStarted: "inference" }));
-    expect(runExitHandler(1)).toContain("onboard --resume");
+    expect(runExitHandler(1)).toContain("onboard --resume --name <sandbox>");
+  });
+
+  it("keeps the short resume hint when the sandbox name was recorded", () => {
+    session.saveSession(
+      session.createSession({ lastStepStarted: "inference", sandboxName: "alpha" }),
+    );
+    const output = runExitHandler(1);
+    expect(output).toContain("onboard --resume");
+    expect(output).not.toContain("--name <sandbox>");
   });
 
   it("stays silent when no step had started", () => {

@@ -27,6 +27,65 @@ function teardownDashboardForwardBestEffort(
   }
 }
 
+function defaultUnloadOllamaModels(onlyModels: readonly string[]): void {
+  const { unloadOllamaModels } = require("../../inference/ollama/proxy") as {
+    unloadOllamaModels: (onlyModels?: readonly string[]) => void;
+  };
+  unloadOllamaModels(onlyModels);
+}
+
+/**
+ * The Ollama model this sandbox alone is holding, or null when there is
+ * nothing safe to release.
+ *
+ * The Ollama daemon is host-global, so unloading everything would evict a
+ * model a sibling sandbox is still using. Release only this sandbox's own
+ * model, and only when no other Ollama-backed sandbox is registered against
+ * the same one. Peers are compared with Ollama's implicit `latest` tag
+ * semantics, so a sibling recorded as `llama3` still protects `llama3:latest`.
+ */
+function exclusivelyHeldOllamaModel(
+  sandbox: registry.SandboxEntry,
+  peers: readonly registry.SandboxEntry[],
+): string | null {
+  const model = sandbox.model?.trim();
+  if (!model) return null;
+  const { ollamaModelRefsMatch } = require("../../inference/ollama/model-discovery") as {
+    ollamaModelRefsMatch: (left: string, right: string) => boolean;
+  };
+  const sharedWithPeer = peers.some(
+    (peer) =>
+      peer.name !== sandbox.name &&
+      !!peer.provider?.includes("ollama") &&
+      !!peer.model &&
+      ollamaModelRefsMatch(peer.model, model),
+  );
+  return sharedWithPeer ? null : model;
+}
+
+/**
+ * Release the GPU memory an Ollama-backed sandbox left resident (#9110).
+ *
+ * `stopAll()` and `destroySandbox()` already unload; a plain stop did not, so
+ * the model stayed loaded until Ollama's own idle TTL expired. Best-effort:
+ * the sandbox is already stopped by this point, so GPU cleanup must never
+ * change the exit code.
+ */
+function unloadOllamaModelsBestEffort(
+  sandbox: registry.SandboxEntry,
+  deps: SandboxStopDeps,
+): void {
+  if (!sandbox.provider?.includes("ollama")) return;
+  try {
+    const { sandboxes } = (deps.listSandboxes ?? registry.listSandboxes)();
+    const model = exclusivelyHeldOllamaModel(sandbox, sandboxes);
+    if (!model) return;
+    (deps.unloadOllamaModels ?? defaultUnloadOllamaModels)([model]);
+  } catch {
+    /* Best-effort: a failed unload must not fail the stop. */
+  }
+}
+
 export type { SandboxLifecycleResult } from "./runtime/lifecycle-runtime";
 
 export interface SandboxStopDeps {
@@ -35,6 +94,8 @@ export interface SandboxStopDeps {
   runtimeProviders?: RuntimeProviderBundleRegistry;
   stopSandboxChannels?: typeof stopSandboxChannels;
   teardownSandboxDashboardForward?: typeof teardownSandboxDashboardForward;
+  listSandboxes?: typeof registry.listSandboxes;
+  unloadOllamaModels?: (onlyModels: readonly string[]) => void;
   log?: (message: string) => void;
   warn?: (message: string) => void;
 }
@@ -85,6 +146,8 @@ export function stopSandbox(
     },
   });
   if (outcome.exitCode !== 0) return outcome;
+
+  unloadOllamaModelsBestEffort(resolved.sandbox, deps);
 
   if (outcome.state === "already-stopped") {
     log(`  Sandbox '${sandboxName}' is already stopped.`);
