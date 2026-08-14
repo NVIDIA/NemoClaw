@@ -323,7 +323,10 @@ function buildManagedLlamaCppOptions(input: {
     } else {
       choices = listManagedLlamaCppSelectionChoices();
     }
-  } catch {
+  } catch (error) {
+    deps.note(
+      `  Managed llama.cpp profiles unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    );
     choices = [];
   }
 
@@ -616,12 +619,11 @@ export function createSetupNim(
       gpuNimCapable,
     } = providerHostState;
     const agentProviderOptions = deps.getAgentInferenceProviderOptions(agent);
-    const { resolution: managedLlamaCppResolution, options: managedLlamaCppOptions } =
-      prepareManagedLlamaCppMenu({
-        deps,
-        platform: gpu?.platform,
-        requestedProvider,
-      });
+    const { options: managedLlamaCppOptions } = prepareManagedLlamaCppMenu({
+      deps,
+      platform: gpu?.platform,
+      requestedProvider,
+    });
 
     const blueprintRouterCfg = deps.loadRoutedProfile();
     const { options, hermesProviderAvailable } = buildInferenceProviderMenu({

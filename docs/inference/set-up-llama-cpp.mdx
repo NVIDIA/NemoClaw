@@ -119,10 +119,11 @@ $$nemoclaw onboard
 ```
 
 NemoClaw lists compatible managed llama.cpp profiles in descending YAML `priority` order.
-When `NEMOCLAW_LLAMACPP_RECIPE` is unset and the highest-priority compatible profile is unique, the menu marks it as `(recommended)`.
+During interactive onboarding without an explicit provider request, the menu ignores `NEMOCLAW_LLAMACPP_RECIPE` and marks the unique highest-priority compatible profile as `(recommended)`.
 The recommended profile appears as **Managed llama.cpp: Meta Muse Glimmer 30B on one DGX Spark (recommended)**.
 The NVIDIA Nemotron profile appears next without the recommendation marker.
 Select any listed profile to install its exact repository-owned recipe.
+The selected menu entry determines the exact recipe even when `NEMOCLAW_LLAMACPP_RECIPE` names another recipe.
 
 For non-interactive onboarding, select the repository-owned recipe explicitly:
 
@@ -135,10 +136,10 @@ NEMOCLAW_SANDBOX_NAME=my-assistant \
 
 Use `llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1` to select the lower-priority NVIDIA Nemotron recipe explicitly.
 
-When `NEMOCLAW_LLAMACPP_RECIPE` is unset, NemoClaw selects the unique highest-priority compatible automatic profile.
+For non-interactive onboarding or an explicit `install-llama-cpp` provider request, an unset `NEMOCLAW_LLAMACPP_RECIPE` selects the unique highest-priority compatible automatic profile.
 If more than one compatible automatic profile has the highest priority, automatic non-interactive selection stops instead of selecting by catalog order.
 Interactive onboarding lists the tied profiles without a recommendation so you can select an exact recipe.
-Set `NEMOCLAW_LLAMACPP_RECIPE` to an exact recipe ID to select a compatible lower-priority profile, or to make the selection visible in automation.
+For non-interactive onboarding or an explicit provider request, set `NEMOCLAW_LLAMACPP_RECIPE` to an exact recipe ID to select a compatible lower-priority profile or make the selection visible in automation.
 An unknown recipe, an incompatible host, or more than one compatible profile for the requested recipe stops onboarding before installation effects.
 Do not set `NEMOCLAW_MODEL` for this path.
 The repository YAML recipe is authoritative for the exact model file, revision, digest, image, launch settings, resource limits, readiness probes, and disabled surfaces.

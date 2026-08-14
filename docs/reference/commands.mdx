@@ -583,9 +583,10 @@ Refer to [Credential Storage](../security/credential-storage) for details on ins
 The legacy `$$nemoclaw setup` command is deprecated; use `$$nemoclaw onboard` instead.
 
 On a qualified DGX Spark, the provider menu lists compatible experimental managed llama.cpp profiles in descending YAML priority order.
-When `NEMOCLAW_LLAMACPP_RECIPE` is unset and the highest-priority compatible profile is unique, the menu marks it as `(recommended)`.
+During interactive onboarding without an explicit provider request, the menu ignores `NEMOCLAW_LLAMACPP_RECIPE` and marks the unique highest-priority compatible profile as `(recommended)`.
 The recommended profile appears as **Managed llama.cpp: Meta Muse Glimmer 30B on one DGX Spark (recommended)**.
 The NVIDIA Nemotron profile appears next without the recommendation marker.
+The selected menu entry determines the exact recipe even when `NEMOCLAW_LLAMACPP_RECIPE` names another recipe.
 Select the same path non-interactively with the repository-owned recipe:
 
 ```bash
