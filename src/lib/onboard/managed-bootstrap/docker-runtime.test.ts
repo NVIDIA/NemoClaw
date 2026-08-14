@@ -5,7 +5,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { streamSandboxCreate } from "../../sandbox/create-stream";
+import {
+  dockerEnv,
+  FakeChild,
+  makePollingOptions,
+} from "../../sandbox/create-stream-test-fixtures";
+import { getReadyCheckOutputPatternsForAgent } from "../../sandbox/create-stream-ready-gate";
 
 const adapterMocks = vi.hoisted(() => ({
   activate: vi.fn<typeof import("./adapter").activateManagedBootstrapSequence>(),
@@ -31,7 +39,101 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("Docker managed-bootstrap lifecycle composition", () => {
+  it("activates a Ready managed hold before post-activation startup output", async () => {
+    vi.useFakeTimers();
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-runtime-"));
+    const seed = authority("hermes");
+    const prepared = Object.freeze({}) as ManagedBootstrapPreparedTransaction;
+    const activated = Object.freeze({
+      snapshot: { runtimeId: OLD_ID },
+      replacement: { replacementRuntimeId: NEW_ID },
+    }) as ManagedBootstrapActivatedTransaction;
+    const order: string[] = [];
+    adapterMocks.prepare.mockImplementation(async (_adapter, input) => {
+      order.push("prepare");
+      const receipt = await input.create.launch({
+        heldWorkloadArgv: seed.handle.heldWorkloadArgv,
+        bootstrapIdentity: IDENTITY,
+      });
+      order.push("create-returned");
+      expect(receipt).toEqual(seed.handle.createReceipt);
+      return prepared;
+    });
+    adapterMocks.activate.mockImplementation(async () => {
+      order.push("activate");
+      return activated;
+    });
+    const lifecycle = createDockerManagedBootstrapSurface().createLifecycle({
+      providerId: "docker",
+      stateRoot,
+      bootstrapIdentity: IDENTITY,
+      request: seed.request,
+      image: seed.plan.image,
+      agentIdentity: seed.plan.agentIdentity,
+      intendedWorkloadArgv: seed.plan.intendedWorkloadArgv,
+      expectedSupervisorArgv: seed.plan.expectedSupervisorArgv,
+      launchArgv: ["openshell", "sandbox", "create", "--name", "alpha"],
+      heldWorkloadArgv: seed.handle.heldWorkloadArgv,
+      authorityStore: {
+        recordPreparedAuthority: vi.fn(),
+      },
+      route: "none",
+      persistStartupCommand: false,
+      sandboxName: "alpha",
+      sandboxGpuConfig: {
+        mode: "0",
+        hostGpuDetected: false,
+        hostGpuPlatform: null,
+        sandboxGpuEnabled: false,
+        sandboxGpuDevice: null,
+        errors: [],
+      },
+      requiredLimits: [],
+      timeoutSecs: 30,
+      network: {
+        inferenceProvider: "openai",
+        gatewayUsesContainerBridge: false,
+        gatewayPort: 0,
+      },
+      dependencies: {},
+    });
+    const child = new FakeChild();
+    let ready = false;
+
+    try {
+      const result = lifecycle.runCreate(async () => {
+        order.push("stream-start");
+        const stream = streamSandboxCreate("openshell", ["sandbox", "create"], dockerEnv, {
+          ...makePollingOptions(child),
+          readyCheck: () => ready,
+          readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent({
+            isTerminalAgent: false,
+            startupRunsDuringCreate: false,
+            env: dockerEnv,
+          }),
+          initialPhase: "create",
+        });
+        child.stdout.emit("data", Buffer.from("Created sandbox: alpha\n"));
+        ready = true;
+        await vi.advanceTimersByTimeAsync(6);
+        expect(order).not.toContain("activate");
+        return { value: await stream, receipt: seed.handle.createReceipt };
+      });
+
+      await expect(result).resolves.toMatchObject({ status: 0, forcedReady: true });
+      expect(order).toEqual(["prepare", "stream-start", "create-returned", "activate"]);
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+      expect(adapterMocks.activate).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
   it("does not finalize rollback after a claimed commit loses acknowledgement", async () => {
     const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-runtime-"));
     const seed = authority("openclaw");

@@ -188,7 +188,7 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     expect(docs).toContain("reopens proxy-side DNS resolution");
 
     const migrationReview = fs.readFileSync(
-      "docs/security/openshell-0.0.101-migration-review.md",
+      "internal/security-reviews/openshell-0.0.101-migration-review.md",
       "utf8",
     );
     expect(migrationReview).toContain(commit);

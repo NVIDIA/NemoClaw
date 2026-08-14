@@ -225,12 +225,13 @@ function hasValidChatMessageFields(
     if (!valid) return false;
   }
   if ("tool_calls" in message) {
-    recognizedField = true;
-    if (
-      !Array.isArray(message.tool_calls) ||
-      message.tool_calls.length === 0 ||
-      !message.tool_calls.every(isValidChatToolCall)
-    ) {
+    const toolCalls = message.tool_calls;
+    if (Array.isArray(toolCalls)) {
+      if (toolCalls.length > 0) {
+        if (!toolCalls.every(isValidChatToolCall)) return false;
+        recognizedField = true;
+      }
+    } else if (toolCalls !== null && toolCalls !== undefined) {
       return false;
     }
   }
@@ -272,24 +273,35 @@ function isValidAnthropicContentBlock(value: unknown): boolean {
   return false;
 }
 
+function notChatCompletionsResult(observed: string): InferenceResponseValidation {
+  return { ok: false, reason: `response was not a Chat Completions result: ${observed}` };
+}
+
 function validateChatCompletionsResponse(body: string): InferenceResponseValidation {
   const parsed = parseJsonRecord(body);
   if (parsed) {
     if (hasProviderErrorEnvelope(parsed)) {
       return { ok: false, reason: "provider returned an error envelope" };
     }
+    if (!Array.isArray(parsed.choices) || parsed.choices.length === 0) {
+      return notChatCompletionsResult("the JSON body carried no choices");
+    }
     return hasChatCompletionsChoice(parsed, false)
       ? { ok: true }
-      : { ok: false, reason: "response was not a Chat Completions result" };
+      : notChatCompletionsResult(
+          "no choice carried a message with text content, a refusal, or tool calls",
+        );
   }
 
   // DeepSeek V4 Pro's model-specific probe requests streaming output. Accept
   // only a stream containing at least one structured Chat Completions chunk;
   // a bare 2xx, malformed SSE, or an SSE error envelope is not health proof.
   let hasValidChunk = false;
+  let hasStreamData = false;
   for (const line of body.split("\n")) {
     const match = /^data:\s*(.+)$/i.exec(line.trim());
     if (!match) continue;
+    hasStreamData = true;
     const data = match[1].trim();
     if (data === "[DONE]") continue;
     const event = parseJsonRecord(data);
@@ -299,9 +311,12 @@ function validateChatCompletionsResponse(body: string): InferenceResponseValidat
     }
     if (hasChatCompletionsChoice(event, true)) hasValidChunk = true;
   }
-  return hasValidChunk
-    ? { ok: true }
-    : { ok: false, reason: "response was not a Chat Completions result" };
+  if (hasValidChunk) return { ok: true };
+  return notChatCompletionsResult(
+    hasStreamData
+      ? "the stream carried no Chat Completions chunk"
+      : "the body was neither JSON nor a Chat Completions stream",
+  );
 }
 
 function isValidResponsesContentBlock(value: unknown): boolean {
@@ -393,10 +408,17 @@ function buildInvocationProbeDetail(
   credentialEnv: string,
   healthy: boolean,
   result: CurlProbeResult,
+  responseUnread: boolean,
 ): string {
   const route = `${providerLabel} model-invocation probe`;
   if (healthy) {
     return `${route} succeeded at ${endpoint}.`;
+  }
+  if (responseUnread) {
+    return (
+      `${route} at ${endpoint} was answered, but the probe could not read the response ` +
+      `as proof that the model ran. (${result.message})`
+    );
   }
   return (
     `${route} at ${endpoint} did not succeed. ` +
@@ -511,7 +533,14 @@ function probeChatCompletionsProviderHealth(
     probed: true,
     providerLabel,
     endpoint,
-    detail: buildInvocationProbeDetail(providerLabel, endpoint, credentialEnv, healthy, result),
+    detail: buildInvocationProbeDetail(
+      providerLabel,
+      endpoint,
+      credentialEnv,
+      healthy,
+      result,
+      rawResult.ok && !healthy,
+    ),
     ...(healthy ? {} : { failureLabel: classifyHealthProbeFailureLabel(result) }),
   };
 }
@@ -571,7 +600,14 @@ function probeAnthropicMessagesProviderHealth(
     probed: true,
     providerLabel,
     endpoint,
-    detail: buildInvocationProbeDetail(providerLabel, endpoint, credentialEnv, healthy, result),
+    detail: buildInvocationProbeDetail(
+      providerLabel,
+      endpoint,
+      credentialEnv,
+      healthy,
+      result,
+      rawResult.ok && !healthy,
+    ),
     ...(healthy ? {} : { failureLabel: classifyHealthProbeFailureLabel(result) }),
   };
 }

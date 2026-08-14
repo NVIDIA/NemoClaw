@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NvidiaPlatform } from "../inference/nim";
 import { resolveRunningOllamaMenuEntry } from "./ollama-install-menu";
 
 export interface ProviderMenuChoice {
@@ -19,6 +20,7 @@ export interface BuildInferenceProviderMenuInput {
   agentProviderOptions: readonly string[];
   experimental: boolean;
   gpuNimCapable: boolean;
+  nvidiaPlatform?: NvidiaPlatform;
   hasOllama: boolean;
   ollamaRunning: boolean;
   ollamaHost: string | null;
@@ -89,7 +91,7 @@ export function buildInferenceProviderMenu(
   });
   if (runningOllamaMenu) options.push(runningOllamaMenu);
 
-  if (input.experimental && input.gpuNimCapable) {
+  if (input.experimental && input.gpuNimCapable && input.nvidiaPlatform !== "n1x") {
     options.push({ key: "nim-local", label: "Local NVIDIA NIM [experimental]" });
   }
 

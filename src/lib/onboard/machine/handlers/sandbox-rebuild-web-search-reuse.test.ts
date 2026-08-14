@@ -54,6 +54,8 @@ function rebuiltCheckpoint(
 ): OnboardCheckpoint {
   return {
     schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+    profile: { kind: "selected", value: "default" },
+    runtimeAuthority: { kind: "unset" },
     sessionId: "sess-1",
     machineState: "sandbox",
     updatedAt: AT,

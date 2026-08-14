@@ -19,18 +19,6 @@ const USER_AGENT = "nemoclaw-hosted-runner-recovery";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const GITHUB_TIMESTAMP_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/u;
 const MAX_WORKFLOW_RUN_PAGES = 10;
-const WINDOWS_INTERNAL_ERROR_POLICY: HostedRunnerLossPolicy = {
-  githubInternalError: {
-    approvedRunnerLabels: ["windows-latest"],
-    approvedJobConclusions: ["cancelled"],
-  },
-};
-const MACOS_INTERNAL_ERROR_POLICY: HostedRunnerLossPolicy = {
-  githubInternalError: {
-    approvedRunnerLabels: ["macos-26"],
-    approvedJobConclusions: ["cancelled"],
-  },
-};
 const PLATFORM_INTERNAL_ERROR_POLICY: HostedRunnerLossPolicy = {
   githubInternalError: {
     approvedRunnerLabels: ["windows-latest", "macos-26"],
@@ -38,41 +26,14 @@ const PLATFORM_INTERNAL_ERROR_POLICY: HostedRunnerLossPolicy = {
   },
 };
 
-const SOURCE_WORKFLOWS = [
-  {
-    workflowName: "E2E",
-    path: ".github/workflows/e2e.yaml",
-    runName: "E2E main",
-    events: ["schedule", "workflow_dispatch"],
-    displayTitle: "E2E main",
-    policy: {},
-    allowedRunnerLabels: ["ubuntu-latest"],
-  },
-  {
-    workflowName: "E2E / WSL",
-    path: ".github/workflows/wsl-e2e.yaml",
-    runName: "E2E / WSL",
-    events: ["push"],
-    policy: WINDOWS_INTERNAL_ERROR_POLICY,
-    allowedRunnerLabels: ["windows-latest"],
-  },
-  {
-    workflowName: "E2E / macOS",
-    path: ".github/workflows/macos-e2e.yaml",
-    runName: "E2E / macOS",
-    events: ["push"],
-    policy: MACOS_INTERNAL_ERROR_POLICY,
-    allowedRunnerLabels: ["macos-26"],
-  },
-  {
-    workflowName: "CI / Platform Vitest Main Watch",
-    path: ".github/workflows/platform-vitest-main.yaml",
-    runName: "CI / Platform Vitest Main Watch",
-    events: ["push"],
-    policy: PLATFORM_INTERNAL_ERROR_POLICY,
-    allowedRunnerLabels: ["ubuntu-latest", "windows-latest", "macos-26"],
-  },
-] as const;
+const SOURCE_WORKFLOW = {
+  workflowName: "CI / Platform Evidence",
+  path: ".github/workflows/platform-vitest-main.yaml",
+  runName: "CI / Platform Evidence",
+  events: ["push"],
+  policy: PLATFORM_INTERNAL_ERROR_POLICY,
+  allowedRunnerLabels: ["ubuntu-latest", "windows-latest", "macos-26"],
+} as const;
 
 type SourceWorkflowRun = {
   id: number;
@@ -219,17 +180,14 @@ function eligibleRunDefinition(
   source: SourceWorkflowRun,
   workflow: SourceWorkflow,
   repository: string,
-): (typeof SOURCE_WORKFLOWS)[number] | null {
-  const definition = SOURCE_WORKFLOWS.find(
-    (candidate) =>
-      candidate.workflowName === workflow.name &&
-      candidate.path === workflow.path &&
-      candidate.path === source.path &&
-      candidate.runName === source.runName,
-  );
-  if (!definition) return null;
+): typeof SOURCE_WORKFLOW | null {
+  const definition = SOURCE_WORKFLOW;
   const exactRunUrl = `https://github.com/${repository}/actions/runs/${source.id}`;
   if (
+    definition.workflowName !== workflow.name ||
+    definition.path !== workflow.path ||
+    definition.path !== source.path ||
+    definition.runName !== source.runName ||
     workflow.id !== source.workflowId ||
     workflow.state !== "active" ||
     source.repository !== repository ||
@@ -240,9 +198,6 @@ function eligibleRunDefinition(
   ) {
     return null;
   }
-  if ("displayTitle" in definition && source.displayTitle !== definition.displayTitle) {
-    return null;
-  }
   return definition;
 }
 
@@ -251,7 +206,7 @@ function eligibleSourceDefinition(
   workflow: SourceWorkflow,
   repository: string,
   sourceRunId: number,
-): (typeof SOURCE_WORKFLOWS)[number] | null {
+): typeof SOURCE_WORKFLOW | null {
   const definition = eligibleRunDefinition(source, workflow, repository);
   return definition &&
     source.id === sourceRunId &&

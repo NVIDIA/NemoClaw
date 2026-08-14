@@ -18,6 +18,7 @@ import {
   compatibleAnthropicMetadataArgs,
   expectAuthenticatedBaselineInventoryRequest,
   expectAuthenticatedProxyResolutionRequests,
+  hasAuthenticatedProxyResolutionRequest,
   hostedInstallModel,
   inferenceLocalMaxTokens,
   installHermes,
@@ -27,6 +28,7 @@ import {
   openshellGatewayName,
   parseInferenceRoute,
   runHermesInferenceSetWithRetry,
+  runHermesCliPongWithRetry,
   runHermesPongWithRetry,
   SANDBOX_NAME,
 } from "../live/hermes-inference-switch-helpers.ts";
@@ -224,6 +226,53 @@ describe("Hermes inference switch command shape", () => {
     await expect(
       runHermesPongWithRetry({ delay, expectedModel: "target-model", run }),
     ).resolves.toMatchObject({ exitCode: 0 });
+    expect(run.mock.calls).toEqual([[1], [2]]);
+    expect(delay).toHaveBeenCalledWith(5_000);
+  });
+
+  it("retries a Hermes CLI PONG until the selected route receives it", async () => {
+    const requests: Array<{
+      auth: string;
+      authorizationSent: boolean;
+      bodyBytes: number;
+      forbiddenMarkerMatches: number;
+      method: string;
+      model: string;
+      path: string;
+    }> = [];
+    const baseline = { requests: () => requests };
+    const result = { exitCode: 0, stderr: "", stdout: "PONG\n" } as ShellProbeResult;
+    const authenticatedRequest = (model: string) => ({
+      auth: "ok",
+      authorizationSent: true,
+      bodyBytes: 64,
+      forbiddenMarkerMatches: 0,
+      method: "POST",
+      model,
+      path: "/v1/chat/completions",
+    });
+    const recordRouteAndReturnPong =
+      (model: string) =>
+      (_attempt: number): Promise<ShellProbeResult> => {
+        requests.push(authenticatedRequest(model));
+        return Promise.resolve(result);
+      };
+    const run = vi
+      .fn(recordRouteAndReturnPong("selected-model"))
+      .mockImplementationOnce(recordRouteAndReturnPong("stale-model"));
+    const delay = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      runHermesCliPongWithRetry({
+        accept: () => hasAuthenticatedProxyResolutionRequest(baseline, 0, "selected-model"),
+        delay,
+        run,
+      }),
+    ).resolves.toBe(result);
+    expect(requests).toEqual([
+      authenticatedRequest("stale-model"),
+      authenticatedRequest("selected-model"),
+    ]);
     expect(run.mock.calls).toEqual([[1], [2]]);
     expect(delay).toHaveBeenCalledWith(5_000);
   });

@@ -11,7 +11,10 @@ import { DASHBOARD_PORT } from "../core/ports";
 import { buildChain, buildControlUiUrls, buildFallbackControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
 import { runCapture as defaultRunCapture } from "../runner";
-import { ensureAgentDashboardForward as ensureAgentDashboardForwardForAgent } from "./agent-dashboard-forward";
+import {
+  ensureAgentDashboardForward as ensureAgentDashboardForwardForAgent,
+  replaceUrlPort,
+} from "./agent-dashboard-forward";
 import { ensureAgentFixedForward as ensureFixedAgentForward } from "./agent-fixed-forward";
 import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
 import * as dashboardAccess from "./dashboard-access";
@@ -23,6 +26,7 @@ import {
 import {
   findAvailableDashboardPort,
   getOccupiedPorts,
+  getPersistedDashboardPort,
   getRegistryOccupiedDashboardPorts,
   isLiveForwardStatus,
   type ListSandboxesFn,
@@ -97,6 +101,7 @@ export interface OnboardDashboardHelpers {
     agent: { forwardPort?: number | null; forward_ports?: number[] | null },
     options?: { beforeForwardPort?: (port: number) => Promise<void> | void },
   ): Promise<number>;
+  ensureFinalizationDashboardForward(sandboxName: string): number;
   ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean;
   fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null;
   fetchAgentWebAuthTokenFromSandbox(sandboxName: string, agent: AgentDefinition): string | null;
@@ -384,6 +389,36 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     return actualPort;
   }
 
+  /**
+   * Reconcile the dashboard forward for the agent-less OpenClaw finalization
+   * branch. The resume path skips sandbox creation, so `CHAT_UI_URL` does not
+   * carry the port the in-sandbox gateway listens on; the registry entry
+   * persisted by onboarding is the only record of that port. The forward and
+   * the in-sandbox gateway must share one port number (`openshell forward`
+   * binds the same port on both sides), so when the persisted port cannot be
+   * forwarded this throws instead of reallocating: the resumed gateway only
+   * listens on the persisted port, and a forward on any other port serves
+   * nothing. Post-verify builds its probe chain and Browser URL from
+   * `CHAT_UI_URL`, so after the forward starts this writes the bound port to
+   * `CHAT_UI_URL`. (#8970)
+   */
+  function ensureFinalizationDashboardForward(sandboxName: string): number {
+    const envUrl = process.env.CHAT_UI_URL;
+    const persistedPort = envUrl ? null : getPersistedDashboardPort(sandboxName, deps.listSandboxes);
+    const requestedUrl =
+      envUrl || (persistedPort === null ? undefined : `http://127.0.0.1:${String(persistedPort)}`);
+    const actualPort = ensureDashboardForward(
+      sandboxName,
+      requestedUrl,
+      persistedPort === null ? {} : { allowPortReallocation: false },
+    );
+    process.env.CHAT_UI_URL = replaceUrlPort(
+      requestedUrl || `http://127.0.0.1:${String(actualPort)}`,
+      actualPort,
+    );
+    return actualPort;
+  }
+
   function ensureAgentDashboardForward(
     sandboxName: string,
     agent: { forwardPort?: number | null; forward_ports?: number[] | null },
@@ -582,6 +617,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     buildOrphanedSandboxRollbackMessage,
     ensureDashboardForward,
     ensureAgentDashboardForward,
+    ensureFinalizationDashboardForward,
     ensureAgentFixedForward,
     fetchGatewayAuthTokenFromSandbox,
     fetchAgentWebAuthTokenFromSandbox,
