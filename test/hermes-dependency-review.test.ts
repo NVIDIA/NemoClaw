@@ -22,7 +22,7 @@ const cliAdapter = JSON.parse(
   fs.readFileSync(path.join(root, "agents", "hermes", "hermes-cli-adapter-v1.json"), "utf8"),
 );
 const review = fs.readFileSync(
-  path.join(root, "docs", "security", "hermes-0.19.0-dependency-review.md"),
+  path.join(root, "internal", "security-reviews", "hermes-0.19.0-dependency-review.md"),
   "utf8",
 );
 const securityDependenciesPatch = fs.readFileSync(

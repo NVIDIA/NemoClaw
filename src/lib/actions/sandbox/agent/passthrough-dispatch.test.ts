@@ -7,10 +7,15 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   type AgentDispatchChild,
+  AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS,
+  agentDispatchDeadlineSeconds,
   agentDispatchStdio,
   isSilentAgentDispatch,
+  isTimedOutAgentDispatch,
+  requestedAgentTimeoutSeconds,
   runAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
+  TIMED_OUT_AGENT_TURN_EXIT_CODE,
 } from "./passthrough-dispatch";
 import { computeExitCode, type SandboxExecSignalSource } from "../exec";
 
@@ -157,5 +162,111 @@ describe("agentDispatchStdio", () => {
 describe("SILENT_AGENT_DISPATCH_EXIT_CODE", () => {
   it("reports a dispatch failure rather than success", () => {
     expect(SILENT_AGENT_DISPATCH_EXIT_CODE).toBe(1);
+  });
+});
+
+describe("requestedAgentTimeoutSeconds", () => {
+  const agent = (...args: string[]) => ["openclaw", "agent", ...args];
+
+  it("reads a separated --timeout value (#8723)", () => {
+    expect(requestedAgentTimeoutSeconds(agent("--agent", "main", "--timeout", "30"))).toBe(30);
+  });
+
+  it("reads an equals-form --timeout value (#8723)", () => {
+    expect(requestedAgentTimeoutSeconds(agent("--timeout=45", "-m", "hi"))).toBe(45);
+  });
+
+  it("requests no deadline when the argv carries no --timeout (#8723)", () => {
+    expect(requestedAgentTimeoutSeconds(agent("--agent", "main", "-m", "hi"))).toBeNull();
+  });
+
+  it("returns null for --timeout 0 so the host stays unbounded (#8723)", () => {
+    expect(requestedAgentTimeoutSeconds(agent("--timeout", "0"))).toBeNull();
+  });
+
+  it("ignores a --timeout consumed as another option's value (#8723)", () => {
+    expect(requestedAgentTimeoutSeconds(agent("-m", "--timeout", "--agent", "main"))).toBeNull();
+  });
+
+  it("ignores anything past the -- terminator (#8723)", () => {
+    expect(requestedAgentTimeoutSeconds(agent("--", "--timeout", "30"))).toBeNull();
+  });
+
+  it("refuses a value that cannot be a deadline (#8723)", () => {
+    for (const raw of ["-5", "1.5", "abc", "", "1e3"]) {
+      expect(requestedAgentTimeoutSeconds(agent("--timeout", raw))).toBeNull();
+    }
+    expect(requestedAgentTimeoutSeconds(agent("--timeout"))).toBeNull();
+  });
+});
+
+describe("agentDispatchDeadlineSeconds", () => {
+  it("outlasts the requested deadline so the turn reports its own timeout (#8723)", () => {
+    expect(agentDispatchDeadlineSeconds(["openclaw", "agent", "--timeout", "30"])).toBe(
+      30 + AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS,
+    );
+  });
+
+  it("leaves the transport unbounded when no deadline was requested (#8723)", () => {
+    expect(agentDispatchDeadlineSeconds(["openclaw", "agent", "-m", "hi"])).toBeUndefined();
+  });
+
+  it("holds the deadline buffer above the longest aborted-run finish measured (#8723)", () => {
+    expect(AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS).toBeGreaterThan(20);
+  });
+
+  it("stays unbounded when the buffered deadline leaves the safe-integer range (#8723)", () => {
+    const ceiling = String(Number.MAX_SAFE_INTEGER);
+    expect(requestedAgentTimeoutSeconds(["openclaw", "agent", "--timeout", ceiling])).toBe(
+      Number.MAX_SAFE_INTEGER,
+    );
+    // The buffer would round past the ceiling, so the argv would carry a
+    // deadline that differs from the one the caller asked for.
+    expect(agentDispatchDeadlineSeconds(["openclaw", "agent", "--timeout", ceiling])).toBeUndefined();
+  });
+
+  it("still bounds the largest deadline that survives the buffer (#8723)", () => {
+    const largest = String(Number.MAX_SAFE_INTEGER - AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS);
+    expect(agentDispatchDeadlineSeconds(["openclaw", "agent", "--timeout", largest])).toBe(
+      Number.MAX_SAFE_INTEGER,
+    );
+  });
+});
+
+describe("isTimedOutAgentDispatch", () => {
+  const timeoutReport =
+    "Request timed out before a response was generated. Please try again, or increase `agents.defaults.timeoutSeconds` in your config.";
+
+  it("classifies the timeout report OpenClaw writes to stdout (#8723)", () => {
+    expect(isTimedOutAgentDispatch(`${timeoutReport}\n`, "")).toBe(true);
+  });
+
+  it("classifies a timeout report that arrives below tool-failure lines (#8723)", () => {
+    const captured = `LLM request failed.\nTool Call failed\n${timeoutReport}\n`;
+    expect(isTimedOutAgentDispatch(captured, "")).toBe(true);
+  });
+
+  it("classifies a timeout report routed to stderr instead (#8723)", () => {
+    expect(isTimedOutAgentDispatch("", `${timeoutReport}\n`)).toBe(true);
+  });
+
+  it("keeps classifying when the configuration advice is reworded upstream (#8723)", () => {
+    const reworded = "Request timed out before a response was generated. Raise the deadline.";
+    expect(isTimedOutAgentDispatch(reworded, "")).toBe(true);
+  });
+
+  it("leaves an ordinary answer unclassified (#8723)", () => {
+    expect(isTimedOutAgentDispatch("PONG\n", "openclaw warning\n")).toBe(false);
+  });
+
+  it("leaves an unrelated timed-out message unclassified (#8723)", () => {
+    const mcpFailure = "McpError: MCP error -32001: Request timed out\n";
+    expect(isTimedOutAgentDispatch(mcpFailure, "")).toBe(false);
+  });
+});
+
+describe("TIMED_OUT_AGENT_TURN_EXIT_CODE", () => {
+  it("reports a turn failure rather than success (#8723)", () => {
+    expect(TIMED_OUT_AGENT_TURN_EXIT_CODE).toBe(1);
   });
 });

@@ -111,6 +111,24 @@ const DEFAULT_RUNTIME_SNAPSHOT = {
   containerId: "container-a",
 };
 
+type OpenShellResult = ReturnType<SandboxGpuCreateFlowDeps["runOpenshell"]>;
+
+function readySandboxGetResult(): OpenShellResult {
+  return {
+    status: 0,
+    stdout: "Name: alpha\nId: alpha-sandbox-id\nState: Ready\n",
+    stderr: "",
+  };
+}
+
+function createSequencedOpenShellRunner(
+  entries: Array<[string, OpenShellResult[]]>,
+): SandboxGpuCreateFlowDeps["runOpenshell"] {
+  const resultsByCommand = new Map(entries);
+  return (args) =>
+    resultsByCommand.get(args.join(" "))?.shift() ?? { status: 0, stdout: "", stderr: "" };
+}
+
 function failNativeCreate(output = "error: unexpected argument '--gpu' found"): void {
   mocks.streamSandboxCreate.mockResolvedValueOnce({ status: 1, output, sawProgress: false });
 }
@@ -563,6 +581,125 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
     expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
     expect(createHandoff).toEqual(["poll", "create-complete", "ensure-applied"]);
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stableReadyPolls: 2,
+        checkReadyIdentity: expect.any(Function),
+      }),
+    );
+  });
+
+  it("does not delete a recreated sandbox when the exact readiness probe fails (#9050)", async () => {
+    const input = createInput();
+    const patch = createPatch();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce(patch);
+    input.sandboxGpuConfig = {
+      ...input.sandboxGpuConfig,
+      mode: "0",
+      sandboxGpuEnabled: false,
+    };
+    input.gpuRoutePlan = "none";
+    input.initialGpuRoute = "none";
+    input.createArgv = ["openshell", "sandbox", "create"];
+    input.persistStartupCommand = true;
+    input.requiredUlimits = [
+      { name: "nproc", soft: 512, hard: 512 },
+      { name: "nofile", soft: 65_536, hard: 65_536 },
+    ];
+    const deps = createDeps();
+    vi.mocked(deps.runOpenshell).mockImplementation(
+      createSequencedOpenShellRunner([
+        ["sandbox get alpha", [readySandboxGetResult(), readySandboxGetResult()]],
+        [
+          "sandbox exec --name alpha -- true",
+          [{ status: 1, stdout: "", stderr: "permission denied" }],
+        ],
+      ]),
+    );
+    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce((options) => {
+      expect(options.checkReadyIdentity?.()).toBe("probe_failed");
+      return {
+        ready: false,
+        reason: "identity_probe_failed",
+        failurePhase: null,
+      };
+    });
+    mockExit();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
+
+    expect(patch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
+      backupPath: null,
+    });
+    expect(errorOutput()).toContain(
+      "NemoClaw left the sandbox in place for inspection and recovery",
+    );
+  });
+
+  it("keeps a transient recreated-sandbox not-ready response inside the readiness wait (#9050)", async () => {
+    const input = createInput();
+    const patch = createPatch();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce(patch);
+    input.sandboxGpuConfig = {
+      ...input.sandboxGpuConfig,
+      mode: "0",
+      sandboxGpuEnabled: false,
+    };
+    input.gpuRoutePlan = "none";
+    input.initialGpuRoute = "none";
+    input.createArgv = ["openshell", "sandbox", "create"];
+    input.persistStartupCommand = true;
+    input.requiredUlimits = [
+      { name: "nproc", soft: 512, hard: 512 },
+      { name: "nofile", soft: 65_536, hard: 65_536 },
+    ];
+    const deps = createDeps();
+    vi.mocked(deps.runOpenshell).mockImplementation(
+      createSequencedOpenShellRunner([
+        [
+          "sandbox get alpha",
+          [readySandboxGetResult(), readySandboxGetResult(), readySandboxGetResult()],
+        ],
+        [
+          "sandbox exec --name alpha -- true",
+          [
+            {
+              status: 1,
+              stdout: "",
+              stderr:
+                `Error:   × code: 'The system is not in a state required for the operation's\n` +
+                '  │ execution\', message: "sandbox is not ready"\n',
+            },
+            { status: 0, stdout: "", stderr: "" },
+          ],
+        ],
+      ]),
+    );
+    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce((options) => {
+      expect(options.checkReadyIdentity?.()).toBe("not_ready");
+      expect(options.checkReadyIdentity?.()).toBe("ready");
+      return { ready: true, reason: "ready", failurePhase: null };
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
+      route: "none",
+    });
+
+    expect(
+      vi
+        .mocked(deps.runOpenshell)
+        .mock.calls.filter(([args]) => args.join(" ") === "sandbox exec --name alpha -- true"),
+    ).toHaveLength(2);
+    expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
   });
 
   it("does not replace a native GPU container solely to persist its startup command", async () => {

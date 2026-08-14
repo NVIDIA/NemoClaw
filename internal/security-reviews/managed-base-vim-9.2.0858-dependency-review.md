@@ -3,6 +3,8 @@
 
 # Managed Base Image Vim 9.2.0858 Dependency Review
 
+> Internal engineering evidence. This file is not part of the public documentation set.
+
 Date: August 12, 2026
 
 ## Scope

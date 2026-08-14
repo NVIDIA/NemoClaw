@@ -603,7 +603,7 @@ ENV AWS_EC2_METADATA_DISABLED=true
 COPY --from=builder /usr/local/bin/node /usr/local/bin/node
 
 # Dependency review evidence for this runtime pin lives in
-# docs/security/openclaw-2026.7.1-dependency-review.md.
+# internal/security-reviews/openclaw-2026.7.1-dependency-review.md.
 ARG OPENCLAW_VERSION=2026.7.1
 ARG OPENCLAW_2026_7_1_INTEGRITY=sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==
 ARG OPENCLAW_2026_7_1_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz
