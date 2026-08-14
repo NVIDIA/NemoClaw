@@ -36,7 +36,7 @@ describe("onboarding entry composition boundary", () => {
       provider: {
         createSandboxWithBaseImageResolution: 15,
         handleNimLocalSelection: 32,
-        handleRemoteProviderSelection: 80,
+        handleRemoteProviderSelection: 76,
         handleRoutedSelection: 15,
         runOnboard: 8,
         selectAndValidateOllamaModel: 18,

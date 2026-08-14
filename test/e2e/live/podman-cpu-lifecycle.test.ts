@@ -294,7 +294,8 @@ test(
         { ...process.env, NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
         {
           platform: "linux",
-          podman: (args) => runtimeEngines.sandboxLifecycle.capture(args),
+          podman: (args) =>
+            runtimeEngines.sandboxLifecycle.capture(args[0] === "--url" ? args.slice(2) : args),
           stateDir: portableStateDir,
         },
       );
