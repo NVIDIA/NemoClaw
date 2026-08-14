@@ -34,6 +34,11 @@ const SOCKET_AUTHORITY: PodmanSocketAuthority = {
   socketPath: AUTHORITY.socketPath,
 };
 
+const ROTATED_SOCKET_AUTHORITY: PodmanSocketAuthority = {
+  ...SOCKET_AUTHORITY,
+  inode: "3",
+};
+
 function capture(status: number, stdout = ""): ReturnType<ContainerEngineCommandCapture> {
   return { status, stdout, stderr: "" };
 }
@@ -131,25 +136,49 @@ describe("portable Podman activation readiness", () => {
     expect(captureSocket).toHaveBeenCalledTimes(2);
   });
 
-  it("recaptures a socket replaced during cold activation (#9070)", () => {
-    const replacementAuthority = { ...SOCKET_AUTHORITY, inode: "3" };
+  it("requalifies one socket inode rotation during cold API activation (#9070)", () => {
     const captureSocket = vi
-      .fn<() => PodmanSocketAuthority>()
+      .fn()
       .mockReturnValueOnce(SOCKET_AUTHORITY)
-      .mockReturnValue(replacementAuthority);
-    const assertSocket = vi.fn((authority: PodmanSocketAuthority) => {
-      if (authority.inode === SOCKET_AUTHORITY.inode) {
-        throw new Error("replaced");
-      }
-    });
+      .mockReturnValue(ROTATED_SOCKET_AUTHORITY);
+    const assertSocket = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("systemd activated the service socket");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("the initial socket is no longer current");
+      });
     const h = harness({ active: false, captureSocket, assertSocket });
 
     const result = inspectPortablePodmanReadiness(AUTHORITY, h.deps);
 
-    expect(result).toMatchObject({
-      ok: true,
-      authority: replacementAuthority,
-      timing: { mode: "cold", apiMs: 100, totalMs: 100 },
+    expect(result).toMatchObject({ ok: true, authority: ROTATED_SOCKET_AUTHORITY });
+    expect(captureSocket).toHaveBeenCalledTimes(2);
+    expect(h.podmanCapture).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a cold socket replacement that changes its device identity (#9070)", () => {
+    const captureSocket = vi
+      .fn()
+      .mockReturnValueOnce(SOCKET_AUTHORITY)
+      .mockReturnValue({ ...ROTATED_SOCKET_AUTHORITY, device: "9" });
+    const assertSocket = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("socket changed after the API request");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("the initial socket is no longer current");
+      });
+    const h = harness({ active: false, captureSocket, assertSocket });
+
+    expect(inspectPortablePodmanReadiness(AUTHORITY, h.deps)).toMatchObject({
+      ok: false,
+      stage: "socket authority",
+      socketPath: AUTHORITY.socketPath,
     });
     expect(captureSocket).toHaveBeenCalledTimes(2);
     expect(h.podmanCapture).toHaveBeenCalledOnce();

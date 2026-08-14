@@ -3335,11 +3335,15 @@ Portable commands use the current user's rootless Podman socket authority record
 They ignore ambient Docker and Podman runtime selectors, including named connections.
 Do not export another `DOCKER_HOST`, `DOCKER_CONTEXT`, `CONTAINER_HOST`, or `CONTAINER_CONNECTION` to bypass a readiness failure.
 
+During cold activation, the first API probe can cause systemd to replace the socket inode.
+NemoClaw requalifies one such replacement and repeats the probe only when the socket path, device, mode, owner, and complete directory authority remain unchanged.
+Any other authority change or a second inode replacement fails at the socket authority stage.
+
 A portable readiness failure identifies the stage that did not complete:
 
 | Stage | Meaning | Recovery |
 | --- | --- | --- |
-| Socket authority | The recorded socket is unsafe, is replaced, or does not match the current user's recorded runtime authority. | Stop and inspect the reported path. Restore the recorded current-user runtime instead of selecting another endpoint. |
+| Socket authority | The recorded socket is unsafe, another authority field changed, or its inode was replaced more than once during cold activation. | Stop and inspect the reported path. Restore the recorded current-user runtime instead of selecting another endpoint. |
 | Service activation | The current user's systemd manager could not activate the Podman socket-backed service, or activation did not create the recorded socket within the startup period. | Inspect `podman.socket` and `podman.service` with the commands below. Correct the reported user-unit failure, then rerun the NemoClaw command. |
 | Startup API health | The service was activated, but the recorded endpoint did not return a real Podman API response within the startup period. | Inspect the user-unit logs and run the explicit API request below against the reported socket path. Raise `NEMOCLAW_PORTABLE_PODMAN_STARTUP_TIMEOUT_MS` only when valid cold activation needs more than 60,000 ms. |
 | Steady-state API health | An endpoint that completed activation did not answer the later shorter health check. | Inspect host load and the user-unit logs, then rerun the NemoClaw command. |

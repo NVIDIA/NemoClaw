@@ -195,6 +195,56 @@ function isMissingSocket(error: unknown): boolean {
   return (error as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
 }
 
+function sameDirectoryAuthority(
+  expected: PodmanSocketAuthority,
+  actual: PodmanSocketAuthority,
+): boolean {
+  return (
+    actual.directoryChain.length === expected.directoryChain.length &&
+    actual.directoryChain.every((component, index) => {
+      const pinned = expected.directoryChain[index];
+      return (
+        pinned !== undefined &&
+        component.device === pinned.device &&
+        component.inode === pinned.inode &&
+        component.mode === pinned.mode &&
+        component.ownerUid === pinned.ownerUid &&
+        component.path === pinned.path
+      );
+    })
+  );
+}
+
+function recaptureColdActivationSocket(
+  expected: PodmanSocketAuthority,
+  socketPath: string,
+  authorityDeps: PodmanSocketAuthorityDeps,
+  capture: (socketPath: string, deps?: PodmanSocketAuthorityDeps) => PodmanSocketAuthority,
+  assert: (authority: PodmanSocketAuthority, deps?: PodmanSocketAuthorityDeps) => void,
+): PodmanSocketAuthority | null {
+  try {
+    assert(expected, authorityDeps);
+    return null;
+  } catch {
+    // A cold systemd activation can replace only the socket inode after the
+    // first successful connection. Re-capture the same secured path and keep
+    // every other authority field pinned before retrying the API probe.
+  }
+  try {
+    const replacement = capture(socketPath, authorityDeps);
+    return replacement.socketPath === expected.socketPath &&
+      replacement.device === expected.device &&
+      replacement.inode !== expected.inode &&
+      replacement.mode === expected.mode &&
+      replacement.ownerUid === expected.ownerUid &&
+      sameDirectoryAuthority(expected, replacement)
+      ? replacement
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Verify one receipt-owned rootless Podman API. Cold activation and warm health
  * use separate budgets; no process-global engine selector participates.
@@ -272,6 +322,7 @@ export function inspectPortablePodmanReadiness(
   let socketSeen = false;
   let socketHardened = false;
   let socketAuthority: PodmanSocketAuthority | null = null;
+  let coldActivationSocketRecaptured = false;
 
   while (elapsed(now, budgetStartedAt) < deadlineMs) {
     if (!socketAuthority) {
@@ -307,19 +358,11 @@ export function inspectPortablePodmanReadiness(
       }
     }
 
-    let authorityChanged = false;
     const provider = createPodmanContainerEngine({
       operation: "host-doctor",
       socketAuthority,
       authorityDeps,
-      assertAuthority: (authority, deps) => {
-        try {
-          assert(authority, deps);
-        } catch (error) {
-          authorityChanged = true;
-          throw error;
-        }
-      },
+      assertAuthority: assert,
       ...(deps.podmanCapture ? { capture: deps.podmanCapture } : {}),
     });
     const remainingMs = Math.max(1, deadlineMs - elapsed(now, budgetStartedAt));
@@ -336,11 +379,19 @@ export function inspectPortablePodmanReadiness(
         };
       }
     } catch {
-      if (mode === "cold" && authorityChanged && elapsed(now, budgetStartedAt) < deadlineMs) {
-        socketAuthority = null;
-        (deps.sleep ?? sleep)(
-          Math.min(POLL_INTERVAL_MS, Math.max(0, deadlineMs - elapsed(now, budgetStartedAt))),
-        );
+      const replacement =
+        mode === "cold" && !coldActivationSocketRecaptured
+          ? recaptureColdActivationSocket(
+              socketAuthority,
+              normalized.socketPath,
+              authorityDeps,
+              capture,
+              assert,
+            )
+          : null;
+      if (replacement) {
+        socketAuthority = replacement;
+        coldActivationSocketRecaptured = true;
         continue;
       }
       return failure(
