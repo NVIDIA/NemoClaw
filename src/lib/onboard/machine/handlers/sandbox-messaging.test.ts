@@ -414,12 +414,14 @@ describe("reconcileReusedSandboxMessaging", () => {
 
 describe("reconcileSandboxMessaging plan authority", () => {
   it("uses the registry plan before a staged plan for an existing sandbox", async () => {
-    const registryPlan = telegramPlan(hashCredential("123456:registry-token") ?? "");
+    const registryToken = "123456:registry-token";
+    const registryPlan = telegramPlan(hashCredential(registryToken) ?? "");
     const deps = reconcileDeps([mixedChannelPlan()]);
     deps.getRegistrySandboxMessagingAuthority.mockReturnValueOnce({
       authoritative: true,
       plan: registryPlan,
     });
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", registryToken);
 
     const result = await reconcileSandboxMessaging({
       resume: false,
@@ -434,7 +436,8 @@ describe("reconcileSandboxMessaging plan authority", () => {
   });
 
   it("uses the registry plan without reading an invalid environment plan", async () => {
-    const registryPlan = telegramPlan(hashCredential("123456:registry-token") ?? "");
+    const registryToken = "123456:registry-token";
+    const registryPlan = telegramPlan(hashCredential(registryToken) ?? "");
     const deps = reconcileDeps([]);
     deps.readMessagingPlanFromEnv.mockImplementation(() => {
       throw new Error("invalid environment plan");
@@ -443,6 +446,7 @@ describe("reconcileSandboxMessaging plan authority", () => {
       authoritative: true,
       plan: registryPlan,
     });
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", registryToken);
 
     const result = await reconcileSandboxMessaging({
       resume: false,
@@ -456,6 +460,27 @@ describe("reconcileSandboxMessaging plan authority", () => {
     expect(deps.getRecordedMessagingChannelsForResume).not.toHaveBeenCalled();
     expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
     expect(result).toEqual({ plan: registryPlan, selectedChannels: ["telegram"] });
+  });
+
+  it("omits a removed host-backed channel from fresh registry re-onboarding (#9109)", async () => {
+    const registryPlan = discordPlan(hashCredential("previous-discord-token") ?? "");
+    const deps = reconcileDeps([]);
+    deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
+      authoritative: true,
+      plan: registryPlan,
+    });
+    vi.stubEnv("DISCORD_BOT_TOKEN", "");
+
+    const result = await reconcileSandboxMessaging({
+      resume: false,
+      session: null,
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(result).toEqual({ plan: registryPlan, selectedChannels: [] });
   });
 
   it("omits a removed host-backed channel from a completed registry resume (#9109)", async () => {
