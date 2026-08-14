@@ -32,12 +32,18 @@ describe("onboarding entry composition boundary", () => {
     expect(actual).toEqual({
       gateway: {},
       messaging: { createSandboxWithBaseImageResolution: 9, runOnboard: 1 },
-      policy: { createSandboxWithBaseImageResolution: 6, runOnboard: 5 },
+      policy: {
+        "createOnboardPolicyApplication.getRecordedPolicyTier": 1,
+        createSandboxWithBaseImageResolution: 6,
+        runOnboard: 5,
+        "sandboxCreateIntentResolver.getAgentPolicyPath": 1,
+      },
       provider: {
         createSandboxWithBaseImageResolution: 15,
         handleNimLocalSelection: 32,
         handleRemoteProviderSelection: 76,
         handleRoutedSelection: 15,
+        "handleVllmSelection.queryVllmModels": 1,
         runOnboard: 8,
         selectAndValidateOllamaModel: 18,
       },
@@ -85,6 +91,29 @@ describe("onboarding entry composition boundary", () => {
       "const Entry = class { choose() { if (enabled) startGateway(); } };",
       "Entry.choose",
     ],
+  ])("checks a gateway decision in a top-level %s", (_form, source, declaration) => {
+    const actual = collectOnboardEntryDecisions(source);
+
+    expect(actual.gateway).toEqual({ [declaration]: 1 });
+  });
+
+  it.each([
+    [
+      "class field function",
+      "class Entry { choose = () => { if (enabled) startGateway(); }; }",
+      "Entry.choose",
+    ],
+    [
+      "factory callback",
+      "const entry = createEntry(() => { if (enabled) startGateway(); });",
+      "entry",
+    ],
+    [
+      "default export callback",
+      "export default () => { if (enabled) startGateway(); };",
+      "defaultExport",
+    ],
+    ["module statement", "if (enabled) startGateway();", "<module>"],
   ])("checks a gateway decision in a top-level %s", (_form, source, declaration) => {
     const actual = collectOnboardEntryDecisions(source);
 

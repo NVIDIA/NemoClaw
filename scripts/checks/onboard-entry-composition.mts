@@ -30,14 +30,36 @@ const LOGICAL_OPERATORS = new Set([
 ]);
 const RECOVERY_NAME = /recover|recovery|repair|restore|retry|fallback|rollback/i;
 
-type NamedBody = {
+type NamedScope = {
   readonly name: string;
-  readonly body: ts.ConciseBody;
+  readonly node: ts.Node;
 };
 
-function memberName(node: ts.ClassElement | ts.ObjectLiteralElementLike): string | null {
-  if (ts.isConstructorDeclaration(node)) return "constructor";
-  if (!node.name) return null;
+function functionBody(node: ts.Node): ts.ConciseBody | undefined {
+  if (
+    ts.isArrowFunction(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isFunctionDeclaration(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isConstructorDeclaration(node)
+  ) {
+    return node.body;
+  }
+  return undefined;
+}
+
+function propertyName(node: ts.Node): string | null {
+  if (
+    !ts.isPropertyAssignment(node) &&
+    !ts.isPropertyDeclaration(node) &&
+    !ts.isMethodDeclaration(node) &&
+    !ts.isGetAccessorDeclaration(node) &&
+    !ts.isSetAccessorDeclaration(node)
+  ) {
+    return null;
+  }
   if (
     ts.isIdentifier(node.name) ||
     ts.isStringLiteral(node.name) ||
@@ -48,56 +70,63 @@ function memberName(node: ts.ClassElement | ts.ObjectLiteralElementLike): string
   return node.name.getText();
 }
 
-function memberBodies(
-  owner: string,
-  members: ts.NodeArray<ts.ClassElement | ts.ObjectLiteralElementLike>,
-): NamedBody[] {
-  const bodies: NamedBody[] = [];
-  for (const member of members) {
-    const name = memberName(member);
-    if (!name) continue;
-    if (
-      (ts.isMethodDeclaration(member) ||
-        ts.isGetAccessorDeclaration(member) ||
-        ts.isSetAccessorDeclaration(member) ||
-        ts.isConstructorDeclaration(member)) &&
-      member.body
-    ) {
-      bodies.push({ name: `${owner}.${name}`, body: member.body });
-      continue;
+function callableScopes(owner: string, root: ts.Node): NamedScope[] {
+  const scopes: NamedScope[] = [];
+
+  function visit(node: ts.Node, currentOwner: string, isRoot = false): void {
+    const member = isRoot ? null : propertyName(node);
+    const callableOwner = member ? `${currentOwner}.${member}` : currentOwner;
+    const body = functionBody(node);
+    if (body) {
+      scopes.push({ name: callableOwner, node: body });
+      return;
     }
-    if (
-      ts.isPropertyAssignment(member) &&
-      (ts.isArrowFunction(member.initializer) || ts.isFunctionExpression(member.initializer))
-    ) {
-      bodies.push({ name: `${owner}.${name}`, body: member.initializer.body });
-    }
+    ts.forEachChild(node, (child) => visit(child, callableOwner));
   }
-  return bodies;
+
+  visit(root, owner, true);
+  return scopes;
 }
 
-function declarationBodies(node: ts.Statement): NamedBody[] {
-  if (ts.isFunctionDeclaration(node) && node.name && node.body) {
-    return [{ name: node.name.text, body: node.body }];
+function declarationOwner(declaration: ts.VariableDeclaration): string {
+  if (ts.isIdentifier(declaration.name)) return declaration.name.text;
+  if (declaration.initializer && ts.isCallExpression(declaration.initializer)) {
+    return declaration.initializer.expression.getText();
   }
-  if (ts.isClassDeclaration(node) && node.name) {
-    return memberBodies(node.name.text, node.members);
-  }
-  if (!ts.isVariableStatement(node)) return [];
+  return "destructuredBinding";
+}
 
-  const bodies: NamedBody[] = [];
-  for (const declaration of node.declarationList.declarations) {
-    if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
-    const { initializer } = declaration;
-    if (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)) {
-      bodies.push({ name: declaration.name.text, body: initializer.body });
-    } else if (ts.isObjectLiteralExpression(initializer)) {
-      bodies.push(...memberBodies(declaration.name.text, initializer.properties));
-    } else if (ts.isClassExpression(initializer)) {
-      bodies.push(...memberBodies(declaration.name.text, initializer.members));
-    }
+function topLevelCallableScopes(statement: ts.Statement): NamedScope[] {
+  if (ts.isVariableStatement(statement)) {
+    return statement.declarationList.declarations.flatMap((declaration) =>
+      callableScopes(declarationOwner(declaration), declaration.initializer ?? declaration),
+    );
   }
-  return bodies;
+  if (ts.isExportAssignment(statement)) {
+    return callableScopes("defaultExport", statement.expression);
+  }
+  const owner =
+    (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name
+      ? statement.name.text
+      : "<module>";
+  return callableScopes(owner, statement);
+}
+
+function moduleScope(statement: ts.Statement): NamedScope | null {
+  if (
+    ts.isVariableStatement(statement) ||
+    ts.isFunctionDeclaration(statement) ||
+    ts.isClassDeclaration(statement) ||
+    ts.isImportDeclaration(statement) ||
+    ts.isImportEqualsDeclaration(statement) ||
+    ts.isExportDeclaration(statement) ||
+    ts.isExportAssignment(statement) ||
+    ts.isInterfaceDeclaration(statement) ||
+    ts.isTypeAliasDeclaration(statement)
+  ) {
+    return null;
+  }
+  return { name: "<module>", node: statement };
 }
 
 function isGatewayLifecycleIdentifier(identifier: string): boolean {
@@ -140,8 +169,24 @@ function isLogicalDecision(node: ts.Node): node is ts.BinaryExpression {
   return ts.isBinaryExpression(node) && LOGICAL_OPERATORS.has(node.operatorToken.kind);
 }
 
+function calledName(expression: ts.Expression): string | null {
+  if (ts.isIdentifier(expression)) return expression.text;
+  if (ts.isPropertyAccessExpression(expression)) return expression.name.text;
+  if (
+    ts.isElementAccessExpression(expression) &&
+    expression.argumentExpression &&
+    ts.isStringLiteral(expression.argumentExpression)
+  ) {
+    return expression.argumentExpression.text;
+  }
+  if (ts.isParenthesizedExpression(expression)) return calledName(expression.expression);
+  return null;
+}
+
 function isRecoveryCall(node: ts.Node): node is ts.CallExpression {
-  return ts.isCallExpression(node) && RECOVERY_NAME.test(node.expression.getText());
+  if (!ts.isCallExpression(node)) return false;
+  const name = calledName(node.expression);
+  return name !== null && RECOVERY_NAME.test(name);
 }
 
 // Count branches, short-circuit operators, condition-controlled loops, try statements, and
@@ -231,7 +276,8 @@ function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCateg
 
 function decisionCounts(
   name: string,
-  body: ts.ConciseBody,
+  scope: ts.Node,
+  skipCallableBodies = false,
 ): Record<OnboardDecisionCategory, Record<string, number>> {
   const nameCategories = identifierCategories(name);
   const counts: Record<OnboardDecisionCategory, Record<string, number>> = {
@@ -242,6 +288,7 @@ function decisionCounts(
   };
 
   function visit(node: ts.Node): void {
+    if (skipCallableBodies && functionBody(node)) return;
     if (isDecisionNode(node)) {
       const categories = new Set([...nameCategories, ...decisionNodeCategories(node)]);
       for (const category of categories) {
@@ -251,7 +298,7 @@ function decisionCounts(
     ts.forEachChild(node, visit);
   }
 
-  visit(body);
+  visit(scope);
   return counts;
 }
 
@@ -277,8 +324,12 @@ export function collectOnboardEntryDecisions(sourceText: string): OnboardEntryCo
   };
 
   for (const statement of sourceFile.statements) {
-    for (const { name, body } of declarationBodies(statement)) {
-      const declarationCounts = decisionCounts(name, body);
+    const scopes = topLevelCallableScopes(statement);
+    const directModuleScope = moduleScope(statement);
+    if (directModuleScope) scopes.push(directModuleScope);
+    for (const { name, node } of scopes) {
+      const skipCallableBodies = name === "<module>" && node === statement;
+      const declarationCounts = decisionCounts(name, node, skipCallableBodies);
       for (const category of CATEGORIES) {
         for (const [declaration, count] of Object.entries(declarationCounts[category])) {
           decisions[category][declaration] = (decisions[category][declaration] ?? 0) + count;

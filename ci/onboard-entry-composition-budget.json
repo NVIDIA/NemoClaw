@@ -6,14 +6,17 @@
     "runOnboard": 1
   },
   "policy": {
+    "createOnboardPolicyApplication.getRecordedPolicyTier": 1,
     "createSandboxWithBaseImageResolution": 6,
-    "runOnboard": 5
+    "runOnboard": 5,
+    "sandboxCreateIntentResolver.getAgentPolicyPath": 1
   },
   "provider": {
     "createSandboxWithBaseImageResolution": 15,
     "handleNimLocalSelection": 32,
     "handleRemoteProviderSelection": 76,
     "handleRoutedSelection": 15,
+    "handleVllmSelection.queryVllmModels": 1,
     "runOnboard": 8,
     "selectAndValidateOllamaModel": 18
   }
