@@ -189,6 +189,7 @@ describe("Pi release cohort separation", () => {
     expect(publishJob?.steps).toEqual(candidateJob?.steps);
   });
 
+  // source-shape-contract: security -- Candidate and publication builds must import one digest-bound OCI base through a Buildx driver that supports digest-only outputs
   it("imports the local base into Buildx for digest-only candidate publication", () => {
     type WorkflowStep = {
       id?: string;
