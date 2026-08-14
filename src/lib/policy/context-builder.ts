@@ -6,6 +6,7 @@ import {
   getBaselineExclusionRuntimeStatus,
   getGatewayPresets,
   getPresetEndpoints,
+  isAgentBasePreset,
   listCustomPresets,
   listPresets,
   loadPresetForSandbox,
@@ -27,6 +28,7 @@ export type PolicyContextPresetVerification =
   | "verified"
   | "registry-only"
   | "gateway-only"
+  | "agent-base"
   | "gateway-unavailable";
 
 export interface PolicyContextPreset {
@@ -179,15 +181,26 @@ function partitionPresets(
   const unapplied: PolicyContextPreset[] = [];
   for (const info of builtin) {
     const isApplied = applied.has(info.name);
-    const verification = resolveVerification(info.name, isApplied, gatewayPresets);
-    const onGatewayOnly = !isApplied && verification === "gateway-only";
+    let verification = resolveVerification(info.name, isApplied, gatewayPresets);
+    // A gateway-only catalog preset whose name collides with an agent
+    // base-policy addition (e.g. Hermes `pypi`) is enforced by the agent's own
+    // base policy, not registry drift. Classify it as `agent-base` so it is not
+    // reported as drift and operators are not steered toward `policy add`, which
+    // would replace the tighter base rule with the broader catalog preset
+    // (#9079). Sibling base additions with no catalog entry are never iterated
+    // here, so this only corrects the incidental name-collision case.
+    if (!isApplied && verification === "gateway-only" && isAgentBasePreset(sandboxName, info.name)) {
+      verification = "agent-base";
+    }
+    const enforcedNotApplied =
+      !isApplied && (verification === "gateway-only" || verification === "agent-base");
     const entry = presetEntry(
       info,
       "builtin",
       loadPresetForSandbox(sandboxName, info.name),
       verification,
     );
-    if (isApplied || onGatewayOnly) {
+    if (isApplied || enforcedNotApplied) {
       active.push(entry);
     } else {
       unapplied.push(entry);
@@ -384,6 +397,8 @@ function verificationTag(verification: PolicyContextPresetVerification): string 
       return "registry-only (gateway does not enforce)";
     case "gateway-only":
       return "gateway-only (not in local registry)";
+    case "agent-base":
+      return "agent-base (enforced by the agent's base policy; not user-applied — do not `policy add`)";
     case "gateway-unavailable":
       return "gateway-unavailable";
   }
@@ -507,7 +522,7 @@ export function renderPolicyContextMarkdown(ctx: PolicyContext): string {
   );
   lines.push("");
   lines.push(
-    "Preset status reflects registry vs gateway agreement and is one of `verified`, `registry-only`, `gateway-only`, or `gateway-unavailable`. Treat anything other than `verified` as advisory; an agent must not assume the gateway enforces the listed hosts.",
+    "Preset status reflects registry vs gateway agreement and is one of `verified`, `registry-only`, `gateway-only`, `agent-base`, or `gateway-unavailable`. `agent-base` means the preset is enforced by the agent's own base policy (not user-applied) — it is active, not drift, and must not be reconciled with `policy add`. Treat anything other than `verified` or `agent-base` as advisory; an agent must not assume the gateway enforces the listed hosts.",
   );
   lines.push("");
   lines.push(`Generated at ${ctx.generatedAt}.`);

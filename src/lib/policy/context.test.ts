@@ -13,6 +13,7 @@ vi.mock(".", () => ({
   getBaselineExclusionRuntimeStatus: vi.fn(() => "excluded"),
   getPresetEndpoints: vi.fn(),
   getGatewayPresets: vi.fn(() => null),
+  isAgentBasePreset: vi.fn(() => false),
   listCustomPresets: vi.fn(),
   listPresets: vi.fn(),
   loadPreset: vi.fn(),
@@ -103,6 +104,8 @@ function resetMocks() {
   vi.mocked(policies.getPresetEndpoints).mockReset();
   vi.mocked(policies.getGatewayPresets).mockReset();
   vi.mocked(policies.getGatewayPresets).mockReturnValue(null);
+  vi.mocked(policies.isAgentBasePreset).mockReset();
+  vi.mocked(policies.isAgentBasePreset).mockReturnValue(false);
   vi.mocked(registry.getBaselineExclusions).mockReset();
   vi.mocked(registry.getBaselineExclusions).mockReturnValue([]);
   vi.mocked(policies.getBaselineExclusionRuntimeStatus).mockReset();
@@ -168,6 +171,43 @@ describe("buildPolicyContext", () => {
     const github = ctx.activePresets.find((p) => p.name === "github");
     expect(github?.verification).toBe("gateway-only");
     expect(ctx.knownUnappliedPresets.some((p) => p.name === "github")).toBe(false);
+  });
+
+  it("classifies a gateway-enforced agent-base preset as `agent-base`, not gateway-only drift (#9079)", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    // Neither preset applied by the user; both enforced by the gateway. Only
+    // `github` is an agent base-policy addition — the other must stay
+    // gateway-only so genuine drift is still reported.
+    stubRegistry({ policies: [], policyTier: "restricted" });
+    vi.mocked(policies.isAgentBasePreset).mockImplementation(
+      (_sandboxName: string, name: string) => name === "github",
+    );
+
+    const ctx = buildPolicyContext(SANDBOX, { gatewayPresets: ["slack", "github"] });
+
+    const github = ctx.activePresets.find((p) => p.name === "github");
+    const slack = ctx.activePresets.find((p) => p.name === "slack");
+    expect(github?.verification).toBe("agent-base");
+    expect(slack?.verification).toBe("gateway-only");
+    // Agent-base preset is active (enforced), never suggested for `policy add`.
+    expect(ctx.knownUnappliedPresets.some((p) => p.name === "github")).toBe(false);
+  });
+
+  it("does not reclassify an applied preset as agent-base even when the agent defines it (#9079)", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    // `github` is both user-applied and an agent base addition; the user
+    // intent (applied + enforced) must remain `verified`, not `agent-base`.
+    stubRegistry({ policies: ["github"], policyTier: "restricted" });
+    vi.mocked(policies.isAgentBasePreset).mockReturnValue(true);
+
+    const ctx = buildPolicyContext(SANDBOX, { gatewayPresets: ["github"] });
+
+    const github = ctx.activePresets.find((p) => p.name === "github");
+    expect(github?.verification).toBe("verified");
   });
 
   it("redacts internal hostnames and IP ranges from allowedHostCategories and counts the drop", () => {

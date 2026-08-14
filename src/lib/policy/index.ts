@@ -297,6 +297,21 @@ function loadAgentPresetContent(
   }
 }
 
+/**
+ * True when `presetName` is supplied by the sandbox agent's base policy
+ * (`agents/<agent>/policy-additions.yaml`) rather than only by the built-in
+ * catalog. Used to distinguish an agent base-policy entry that the gateway
+ * enforces (e.g. Hermes `pypi`) from genuine registry drift, so `policy
+ * explain` does not report it as `gateway-only` and steer operators toward
+ * `policy add` — which would replace the tighter base rule with the broader
+ * catalog preset (#9079). Best-effort: any load failure resolves to `false`,
+ * preserving the pre-existing gateway-only classification.
+ */
+function isAgentBasePreset(sandboxName: string, presetName: string): boolean {
+  const builtinPresetContent = loadCentralPreset(presetName);
+  return loadAgentPresetContent(sandboxName, presetName, builtinPresetContent ?? "") !== null;
+}
+
 function loadPresetForSandbox(sandboxName: string, presetName: string): string | null {
   let sandboxAgent: string | null = null;
   try {
@@ -2682,6 +2697,7 @@ export {
   getPresetValidationWarning,
   getSandboxBaselineEntry,
   getSandboxBaselineEntryDigest,
+  isAgentBasePreset,
   isMessagingChannelPolicyPreset,
   listCustomPresets,
   listPresets,
