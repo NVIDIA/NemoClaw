@@ -17,6 +17,18 @@ LangChain Deep Agents Code has no in-sandbox agent gateway or dashboard, so devi
 The shared secret-handling controls below still apply.
 </AgentOnly>
 
+## OpenShell Gateway Authentication
+
+On Docker-driver deployments, NemoClaw gives host CLI calls and sandbox callbacks separate authenticated paths to the OpenShell gateway.
+
+| Aspect | Detail |
+|---|---|
+| Default | NemoClaw enables local TLS, mTLS user authentication, and sandbox JWT authentication. Host-side OpenShell CLI calls use local mTLS. Sandbox callbacks use the guest mTLS bundle plus a sandbox-scoped JWT. The generated config sets `allow_unauthenticated_users = false`, and gateway launch removes an inherited `OPENSHELL_DISABLE_GATEWAY_AUTH=true`. |
+| Token lifetime | Local sandbox JWTs use OpenShell's `ttl_secs = 0` contract for a non-expiring token on a local single-user gateway. Sandbox identity checks and the local mTLS boundary still apply to each callback. |
+| What you can change | These authentication controls are not user-facing settings. Use NemoClaw to configure and start the Docker-driver gateway. |
+| Risk if relaxed | Disabling gateway authentication or widening the gateway listener can expose privileged gateway methods to another local or network client. |
+| Recommendation | Keep the OpenShell gateway on `127.0.0.1`. Use the dashboard forward when a supported agent dashboard needs remote access. |
+
 ## Gateway Compatibility Container
 
 On Linux hosts whose glibc is older than the OpenShell gateway binary requires, NemoClaw can run `openshell-gateway` in a Docker compatibility container so the Docker-driver gateway still starts.

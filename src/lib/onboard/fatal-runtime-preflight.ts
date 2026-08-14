@@ -75,6 +75,10 @@ export interface FatalRuntimePreflightResult {
   host: HostAssessment;
   readinessReport: SystemReadinessReport;
   sandboxGpuConfig: SandboxGpuConfig;
+  // Which trust-gate check rejected the newest GPU detection, so preflight can
+  // name the failed check instead of the bare "no GPU detected" (#9000).
+  // Absent when detection found a GPU or did not reject an nvidia-smi report.
+  gpuTrustGateRejection?: string;
 }
 
 export type ReadinessGatedRuntimePreflightContext = Omit<
@@ -241,9 +245,15 @@ function refreshOnboardHostReadiness(
   const now = context.now ?? (() => new Date());
   const observedAt = now().toISOString();
   const host = (context.assessHost ?? assessHost)();
+  let gpuTrustGateRejection: string | undefined;
   const gpu = runtimeGpu
     ? runtimeGpu.value
-    : (context.detectGpu ?? detectGpu)({ proveArm64WslDockerDesktopGpu: null });
+    : (context.detectGpu ?? detectGpu)({
+        proveArm64WslDockerDesktopGpu: null,
+        onTrustGateRejection: (reason) => {
+          gpuTrustGateRejection = reason;
+        },
+      });
   const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
     flag: resolveSandboxGpuFlagFromOptions(options),
     device: options.sandboxGpuDevice ?? null,
@@ -258,7 +268,13 @@ function refreshOnboardHostReadiness(
     observedAt,
     now,
   });
-  return { gpu, host, readinessReport, sandboxGpuConfig };
+  return {
+    gpu,
+    host,
+    readinessReport,
+    sandboxGpuConfig,
+    ...(gpuTrustGateRejection ? { gpuTrustGateRejection } : {}),
+  };
 }
 
 /** Resolve the bounded WSL GPU proof only after canonical readiness admission. */
@@ -268,13 +284,21 @@ function resolveRuntimeGpuProof(
   context: FatalRuntimePreflightContext,
 ): { result: FatalRuntimePreflightResult; proofRan: boolean } {
   if (!requiresRuntimeGpuProof(result, options)) return { result, proofRan: false };
-  const gpu = (context.detectGpu ?? detectGpu)();
+  let gpuTrustGateRejection: string | undefined;
+  const gpu = (context.detectGpu ?? detectGpu)({
+    onTrustGateRejection: (reason) => {
+      gpuTrustGateRejection = reason;
+    },
+  });
   const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
     flag: resolveSandboxGpuFlagFromOptions(options),
     device: options.sandboxGpuDevice ?? null,
   });
+  // The proof-phase detection replaces the observation-phase result, so its
+  // rejection reason (or its absence, when the proof passed) replaces the
+  // observation-phase reason too.
   return {
-    result: { ...result, gpu, sandboxGpuConfig },
+    result: { ...result, gpu, sandboxGpuConfig, gpuTrustGateRejection },
     proofRan: true,
   };
 }
@@ -382,6 +406,14 @@ export async function runReadinessGatedRuntimePreflight(
           ? false
           : runtimeGpu.result.gpu.wslDockerDesktopGpuProofPassed,
     });
+    // The refresh reuses the proof-phase GPU value without re-detecting, so
+    // carry the proof-phase rejection reason alongside it (#9000).
+    refreshedResult = {
+      ...refreshedResult,
+      ...(runtimeGpu.result.gpuTrustGateRejection
+        ? { gpuTrustGateRejection: runtimeGpu.result.gpuTrustGateRejection }
+        : {}),
+    };
   }
   gatewayReadiness = refreshGatewayReadinessProjection(gatewayReadiness);
   assertOnboardGatewayReadiness(gatewayReadiness, exitProcess);

@@ -102,6 +102,11 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/base-image-publication-workflow-boundary.test.ts",
+      "test": "retains immutable base contracts for later qualification (#9049)",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
       "test": "binds the cleanup action and helper content to the pinned commit",
       "category": "security"
