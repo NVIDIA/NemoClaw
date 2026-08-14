@@ -336,6 +336,8 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
       expectedSupervisorArgv: ["/mxc/supervisor"],
     };
     const deps = createDeps();
+    const adapterOverride = {} as never;
+    deps.createManagedBootstrapAdapter = vi.fn(() => adapterOverride);
     vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
       args[1] === "get" ? "ID: mxc-alpha\n" : "alpha Ready",
     );
@@ -358,8 +360,14 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
 
     expect(result).toMatchObject({ route: "none", runtimePatch: patch });
     expect(createLifecycle).toHaveBeenCalledWith(
-      expect.objectContaining({ providerId: "mxc", route: "none" }),
+      expect.objectContaining({
+        providerId: "mxc",
+        route: "none",
+        stateRoot: "/tmp/nemoclaw-mxc-bootstrap",
+        adapterOverride,
+      }),
     );
+    expect(deps.createManagedBootstrapAdapter).toHaveBeenCalledWith("/tmp/nemoclaw-mxc-bootstrap");
     expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
       "mxc-launch",
       input.createArgv.slice(1),

@@ -3991,7 +3991,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
           normalizeHermesAuthMethod,
           setupNim: (g, s, a, recover, gateway, assertRouteCompatible, canProbeRoute, recoverySessionId) => setupNim(g, s, a, recover, opts.rebuildRegistryInferenceRoute, gateway, assertRouteCompatible, canProbeRoute, recoverySessionId),
-          setupInference,
+          setupInference, resolveHostLocalInferenceStartupSelection: () => null,
           startRecordedStep,
           recordStepComplete,
           recordStepRejected,

@@ -21,6 +21,7 @@ import {
   assertExactSandboxImage,
   assertFailedBootstrapContainerCleanup,
   createProtectedManagedImageBootstrapInput,
+  failureInjectingAdapter,
   MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV,
   type ManagedImageCommandResult,
   type ManagedImageCommandRunner,
@@ -81,6 +82,32 @@ function createManagedImageCommandRunner(
 }
 
 describe("protected managed-image runtime contract", () => {
+  it("binds the rollback failure adapter to the canonical managed-bootstrap state root", async () => {
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-protected-rollback-"));
+    const journalRoot = path.join(stateRoot, "managed-bootstrap");
+    try {
+      const adapter = failureInjectingAdapter(
+        {
+          runCaptureOpenshell: () => "",
+          runOpenshell: () => ({ status: 0, stdout: "", stderr: "" }),
+          sleepSeconds: () => undefined,
+        } as never,
+        stateRoot,
+      );
+
+      expect(adapter.awaitBootstrap).toEqual(expect.any(Function));
+      expect(fs.statSync(stateRoot).isDirectory()).toBe(true);
+      expect(fs.existsSync(journalRoot)).toBe(false);
+      await expect(adapter.recoverUnfinishedTransactions()).resolves.toEqual({
+        receipts: [],
+        failures: [],
+      });
+      expect(fs.statSync(journalRoot).isDirectory()).toBe(true);
+    } finally {
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
   it("binds the public and protected managed-image plans to one supervisor argv (#7744)", () => {
     const authorityStore = {};
     const publicLaunch = resolveOnboardManagedBootstrapLaunch({

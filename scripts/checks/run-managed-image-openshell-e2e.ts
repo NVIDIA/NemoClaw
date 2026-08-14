@@ -403,7 +403,13 @@ export function managedImageOpenShellProbe(
 ): string {
   const healthProbe =
     agent === "openclaw"
-      ? "/usr/bin/curl -fsS --max-time 5 http://127.0.0.1:18789/health >/dev/null"
+      ? [
+          "openclaw_health_code=\"$(/usr/bin/curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:18789/health || true)\"",
+          'case "$openclaw_health_code" in',
+          "  200 | 401) ;;",
+          "  *) printf 'OpenClaw /health returned HTTP %s\\n' \"${openclaw_health_code:-000}\" >&2; exit 1 ;;",
+          "esac",
+        ].join("\n")
       : agent === "hermes"
         ? "/usr/bin/curl -fsS --max-time 5 http://127.0.0.1:8642/health >/dev/null"
         : "/usr/local/bin/dcode --version >/dev/null";
@@ -659,11 +665,15 @@ function assertProtectedLocalInference(
   }
 }
 
-function failureInjectingAdapter(onboard: OnboardModule): ManagedBootstrapAdapter {
+export function failureInjectingAdapter(
+  onboard: OnboardModule,
+  stateRoot: string,
+): ManagedBootstrapAdapter {
   const adapter = createDockerManagedBootstrapAdapter({
     runCaptureOpenshell: onboard.runCaptureOpenshell,
     runOpenshell: onboard.runOpenshell,
     sleep: onboard.sleepSeconds,
+    stateRoot,
   });
   return {
     ...adapter,
@@ -1002,7 +1012,8 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           verifyDirectSandboxGpu,
           ...(input.failureInjection
             ? {
-                createManagedBootstrapAdapter: () => failureInjectingAdapter(onboard!),
+                createManagedBootstrapAdapter: (stateRoot: string) =>
+                  failureInjectingAdapter(onboard!, stateRoot),
               }
             : {}),
         },

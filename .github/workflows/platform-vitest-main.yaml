@@ -140,6 +140,7 @@ jobs:
           node --version
           npm --version
           python --version
+          python3 --version
           python -c 'import setuptools, yaml; print(f"setuptools={setuptools.__version__} pyyaml={yaml.__version__}")'
           rg --version | head -n 1
           timeout --version | head -n 1

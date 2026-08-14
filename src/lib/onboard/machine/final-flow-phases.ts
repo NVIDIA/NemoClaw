@@ -90,6 +90,9 @@ export function createFinalOnboardFlowPhases<
       authoritativePolicyTier: options.authoritativePolicyTier,
       sandboxName: context.sandboxName,
       provider: context.provider,
+      hostLocalInferenceRouteOnly: context.hostLocalInferenceRouteOnly === true,
+      hostLocalInferenceSandboxProofAuthority:
+        context.hostLocalInferenceSandboxProofAuthority ?? null,
       model: context.model,
       endpointUrl: context.endpointUrl,
       credentialEnv: context.credentialEnv,
