@@ -185,7 +185,8 @@ function partitionPresets(
     // A gateway-only catalog preset whose name collides with an agent
     // base-policy addition (e.g. Hermes `pypi`) is enforced by the agent's own
     // base policy, not registry drift. Classify it as `agent-base` so it is not
-    // reported as drift or steers operators toward an unnecessary `policy add`.
+    // reported as drift and does not steer operators toward an unnecessary
+    // `policy add`.
     // The apply path already prefers the agent-specific policy content, but it
     // would record the preset as operator-applied (#9079). Sibling base additions
     // with no catalog entry are never iterated here, so this only corrects the
