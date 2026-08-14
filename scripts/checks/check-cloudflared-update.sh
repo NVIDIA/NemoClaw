@@ -2,14 +2,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# invalidState: the five reviewed E2E consumers drift to different cloudflared
+# invalidState: the four reviewed E2E consumers drift to different cloudflared
 # versions/digests, or their shared pin no longer matches the upstream asset.
-# sourceBoundary: Cloudflare owns the release asset; NemoClaw owns all five
+# sourceBoundary: Cloudflare owns the release asset; NemoClaw owns all four
 # workflow pins and independently verifies the downloaded bytes.
 # whyNotSourceFix: upstream cannot enforce which release NemoClaw workflows use.
-# regressionTest: cloudflared-update-check-workflow.test.ts covers five-pin
+# regressionTest: cloudflared-update-check-workflow.test.ts covers four-pin
 # parity, asset URL identity, digest mismatch, and update instructions.
-# removalCondition: remove this checker when the five consumers share one
+# removalCondition: remove this checker when the four consumers share one
 # machine-readable dependency manifest with equivalent live asset verification.
 
 set -euo pipefail
@@ -17,6 +17,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 E2E_WORKFLOW="${CLOUDFLARED_E2E_WORKFLOW:-${REPO_ROOT}/.github/workflows/e2e.yaml}"
+PROFILE_WORKFLOW="${CLOUDFLARED_PROFILE_WORKFLOW:-${REPO_ROOT}/.github/workflows/e2e-standard-profile.yaml}"
+PIN_SOURCES=("${E2E_WORKFLOW}" "${PROFILE_WORKFLOW}")
 RELEASE_API_URL="${CLOUDFLARED_RELEASE_API_URL:-https://api.github.com/repos/cloudflare/cloudflared/releases/latest}"
 DOWNLOAD_BASE_URL="${CLOUDFLARED_DOWNLOAD_BASE_URL:-https://github.com/cloudflare/cloudflared/releases/download}"
 CURL_BIN="${CLOUDFLARED_CURL_BIN:-curl}"
@@ -30,14 +32,16 @@ fail() {
 for tool in "${CURL_BIN}" jq "${SHA256SUM_BIN}"; do
   command -v "${tool}" >/dev/null 2>&1 || fail "required tool is unavailable: ${tool}"
 done
-[[ -r "${E2E_WORKFLOW}" ]] || fail "cannot read pin source: ${E2E_WORKFLOW}"
+for source in "${PIN_SOURCES[@]}"; do
+  [[ -r "${source}" ]] || fail "cannot read pin source: ${source}"
+done
 
 version_pins=()
 while IFS= read -r pin || [[ -n "${pin}" ]]; do
   version_pins+=("${pin}")
 done < <(
   sed -nE 's/^[[:space:]]*CLOUDFLARED_VERSION:[[:space:]]*"([^"]+)".*$/\1/p' \
-    "${E2E_WORKFLOW}"
+    "${PIN_SOURCES[@]}"
 )
 
 sha_pins=()
@@ -45,23 +49,23 @@ while IFS= read -r pin || [[ -n "${pin}" ]]; do
   sha_pins+=("${pin}")
 done < <(
   sed -nE 's/^[[:space:]]*CLOUDFLARED_DEB_SHA256:[[:space:]]*"([0-9a-fA-F]+)".*$/\1/p' \
-    "${E2E_WORKFLOW}"
+    "${PIN_SOURCES[@]}"
 )
 
-[[ "${#version_pins[@]}" -eq 5 ]] \
-  || fail "expected exactly five CLOUDFLARED_VERSION pins in ${E2E_WORKFLOW}; found ${#version_pins[@]}"
-[[ "${#sha_pins[@]}" -eq 5 ]] \
-  || fail "expected exactly five CLOUDFLARED_DEB_SHA256 pins in ${E2E_WORKFLOW}; found ${#sha_pins[@]}"
+[[ "${#version_pins[@]}" -eq 4 ]] \
+  || fail "expected exactly four CLOUDFLARED_VERSION pins; found ${#version_pins[@]}"
+[[ "${#sha_pins[@]}" -eq 4 ]] \
+  || fail "expected exactly four CLOUDFLARED_DEB_SHA256 pins; found ${#sha_pins[@]}"
 
 pinned_version="${version_pins[0]}"
 pinned_sha="$(printf '%s' "${sha_pins[0]}" | tr '[:upper:]' '[:lower:]')"
 for pin in "${version_pins[@]}"; do
   [[ "${pin}" == "${pinned_version}" ]] \
-    || fail "CLOUDFLARED_VERSION pins diverge in ${E2E_WORKFLOW}: ${version_pins[*]}"
+    || fail "CLOUDFLARED_VERSION pins diverge: ${version_pins[*]}"
 done
 for pin in "${sha_pins[@]}"; do
   [[ "$(printf '%s' "${pin}" | tr '[:upper:]' '[:lower:]')" == "${pinned_sha}" ]] \
-    || fail "CLOUDFLARED_DEB_SHA256 pins diverge in ${E2E_WORKFLOW}: ${sha_pins[*]}"
+    || fail "CLOUDFLARED_DEB_SHA256 pins diverge: ${sha_pins[*]}"
 done
 [[ "${pinned_version}" =~ ^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$ ]] \
   || fail "invalid pinned cloudflared version: ${pinned_version}"
@@ -113,10 +117,6 @@ expected_asset_url="${DOWNLOAD_BASE_URL%/}/${latest_version}/cloudflared-linux-a
 latest_sha="$("${SHA256SUM_BIN}" "${cloudflared_deb}" | awk '{print tolower($1)}')"
 [[ "${latest_sha}" =~ ^[0-9a-f]{64}$ ]] || fail "could not compute the latest asset SHA256"
 
-version_lines="$(grep -n 'CLOUDFLARED_VERSION:' "${E2E_WORKFLOW}" | cut -d: -f1 | paste -sd, -)"
-sha_lines="$(grep -n 'CLOUDFLARED_DEB_SHA256:' "${E2E_WORKFLOW}" | cut -d: -f1 | paste -sd, -)"
-workflow_display="${E2E_WORKFLOW#"${REPO_ROOT}/"}"
-
 print_update_instructions() {
   printf '%s\n' \
     'cloudflared update required.' \
@@ -124,10 +124,16 @@ print_update_instructions() {
     "Pinned linux-amd64.deb SHA256: ${pinned_sha}" \
     "Latest version: ${latest_version}" \
     "Latest linux-amd64.deb SHA256: ${latest_sha}" \
-    'Update locations:' \
-    "  ${workflow_display} CLOUDFLARED_VERSION lines: ${version_lines}" \
-    "  ${workflow_display} CLOUDFLARED_DEB_SHA256 lines: ${sha_lines}" \
-    'Set all five version/SHA256 pairs to the latest reviewed values, then rerun this check.' >&2
+    'Update locations:' >&2
+  for source in "${PIN_SOURCES[@]}"; do
+    workflow_display="${source#"${REPO_ROOT}/"}"
+    version_lines="$(grep -n 'CLOUDFLARED_VERSION:' "${source}" | cut -d: -f1 | paste -sd, -)"
+    sha_lines="$(grep -n 'CLOUDFLARED_DEB_SHA256:' "${source}" | cut -d: -f1 | paste -sd, -)"
+    printf '  %s CLOUDFLARED_VERSION lines: %s\n' "${workflow_display}" "${version_lines}" >&2
+    printf '  %s CLOUDFLARED_DEB_SHA256 lines: %s\n' "${workflow_display}" "${sha_lines}" >&2
+  done
+  printf '%s\n' \
+    'Set all four version/SHA256 pairs to the latest reviewed values, then rerun this check.' >&2
 }
 
 if [[ "${latest_version}" != "${pinned_version}" ]]; then

@@ -32,7 +32,6 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
   "test/e2e/support/standard-profile-workflow-boundary.test.ts",
   "test/e2e/support/trusted-hermes-swap-workflow-boundary.test.ts",
-  "test/e2e/support/tunnel-lifecycle-workflow-boundary.test.ts",
   "test/e2e/support/upload-e2e-artifacts-workflow-boundary.test.ts",
   "test/e2e/support/workflow-plan.test.ts",
 ] as const;
@@ -181,12 +180,12 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern:
-      /(?:^|\/)\.github\/workflows\/(?:hosted-runner-recovery|wsl-e2e|macos-e2e|platform-vitest-main)\.yaml$/,
+      /(?:^|\/)\.github\/workflows\/(?:hosted-runner-recovery|platform-vitest-main)\.yaml$/,
     testsToRun: runTests("test/hosted-runner-recovery-workflow.test.ts"),
   },
   {
     pattern:
-      /(?:^|\/)(?:\.github\/workflows\/(?:platform-vitest-main|wsl-e2e)\.yaml|tools\/wsl\/ci-helper\.ps1)$/,
+      /(?:^|\/)(?:\.github\/workflows\/platform-vitest-main\.yaml|tools\/wsl\/ci-helper\.ps1)$/,
     testsToRun: runTests(
       "test/platform-vitest-main-workflow.test.ts",
       "test/wsl-ci-helper.test.ts",

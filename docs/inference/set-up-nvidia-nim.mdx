@@ -12,10 +12,13 @@ content:
 
 NemoClaw can pull, start, and manage a local NVIDIA NIM container on hosts with a NIM-capable NVIDIA GPU.
 This provider is experimental and requires an explicit opt-in.
+Local NVIDIA NIM is unavailable on N1x.
+NemoClaw omits this provider from onboarding and rejects `NEMOCLAW_PROVIDER=nim-local` on N1x.
+Use the [Deferred managed-vLLM preview](set-up-vllm#use-n1x-express) instead.
 
 ## Prerequisites
 
-- Use a host with a NIM-capable NVIDIA GPU.
+- Use a non-N1x host with a NIM-capable NVIDIA GPU.
 - Install the NVIDIA Container Toolkit and provide a CDI specification for the GPU.
 - Authenticate Docker to `nvcr.io`, or run interactive onboarding with an NGC API key available.
 

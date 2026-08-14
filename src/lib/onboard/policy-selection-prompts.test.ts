@@ -91,9 +91,10 @@ function createHarness({
     note: vi.fn(),
     prompt,
     selectFromNumberedMenuOrExit,
-    makeOnboardCancelExit: (rollback, cleanup) => () => {
+    makeOnboardCancelExit: (rollback, cleanup, exit) => () => {
       cleanup();
       rollback.markCancelled();
+      exit?.(1);
     },
     sandboxCancelRollback: { markCancelled },
     useColor: false,
@@ -193,23 +194,44 @@ describe("createPolicySelectionPromptHelpers", () => {
     await expect(result).resolves.toEqual([{ name: "npm", access: "read" }]);
   });
 
-  it("selectPolicyTier marks rollback and restores raw mode on SIGTERM", () => {
+  it("selectPolicyTier rejects through the prompt after SIGTERM cleanup (#9035)", async () => {
     const { helpers, markCancelled, processEvents, stdin } = createHarness();
 
-    void helpers.selectPolicyTier();
+    const selection = helpers.selectPolicyTier();
     processEvents.emit("SIGTERM");
 
+    await expect(selection).rejects.toMatchObject({ code: 1 });
     expect(markCancelled).toHaveBeenCalledOnce();
     expect(stdin.setRawMode).toHaveBeenLastCalledWith(false);
     expect(stdin.listenerCount("data")).toBe(0);
   });
 
-  it("presetsCheckboxSelector marks rollback and restores raw mode on Ctrl-C", () => {
+  it("presetsCheckboxSelector rejects through the prompt after Ctrl-C cleanup (#9035)", async () => {
     const { helpers, markCancelled, stdin } = createHarness();
 
-    void helpers.presetsCheckboxSelector([{ name: "npm", description: "npm registry" }], []);
+    const selection = helpers.presetsCheckboxSelector(
+      [{ name: "npm", description: "npm registry" }],
+      [],
+    );
     stdin.emit("data", "\x03");
 
+    await expect(selection).rejects.toMatchObject({ code: 1 });
+    expect(markCancelled).toHaveBeenCalledOnce();
+    expect(stdin.setRawMode).toHaveBeenLastCalledWith(false);
+    expect(stdin.listenerCount("data")).toBe(0);
+  });
+
+  it("selectTierPresetsAndAccess rejects through the prompt after Ctrl-C cleanup (#9035)", async () => {
+    const { helpers, markCancelled, stdin } = createHarness();
+
+    const selection = helpers.selectTierPresetsAndAccess("balanced", [
+      { name: "npm" },
+      { name: "pypi" },
+      { name: "github" },
+    ]);
+    stdin.emit("data", "\x03");
+
+    await expect(selection).rejects.toMatchObject({ code: 1 });
     expect(markCancelled).toHaveBeenCalledOnce();
     expect(stdin.setRawMode).toHaveBeenLastCalledWith(false);
     expect(stdin.listenerCount("data")).toBe(0);

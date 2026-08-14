@@ -66,7 +66,7 @@ describe("onboard messaging", () => {
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -82,7 +82,7 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
   // provider-get returns not-found so messaging providers are created fresh
   if (_n(command).includes("provider get")) return { status: 1 };
-  return { status: 0 };
+  return _n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
@@ -315,9 +315,7 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.mkdirSync(customBuildDir, { recursive: true });
       fs.writeFileSync(customDockerfilePath, "FROM scratch\nARG NEMOCLAW_MESSAGING_PLAN_B64=\nARG NEMOCLAW_TOOL_DISCLOSURE=progressive\nENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}\n");
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+      writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -501,7 +499,7 @@ const { createSandbox } = require(${onboardPath});
     const messagingPlanB64 = encodeMessagingPlanForChannels(["discord", "slack"]);
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -526,7 +524,7 @@ runner.run = (command, opts = {}) => {
   if (normalized.includes("provider get -g nemoclaw my-assistant-slack-bridge")) return { status: 0, stdout: "Name: my-assistant-slack-bridge\nType: generic\nCredential keys: SLACK_BOT_TOKEN\nConfig keys: <none>\n" };
   if (normalized.includes("provider get -g nemoclaw my-assistant-slack-app")) return { status: 0, stdout: "Name: my-assistant-slack-app\nType: generic\nCredential keys: SLACK_APP_TOKEN\nConfig keys: <none>\n" };
   if (normalized.includes("provider get")) return { status: 1 };
-  return { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
@@ -661,7 +659,7 @@ const { createSandbox } = require(${onboardPath});
     const messagingPlanB64 = encodeMessagingPlanForChannels(["telegram"], ["telegram"]);
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -684,7 +682,7 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: normalized, env: opts.env || null });
   if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0, stdout: "Name: my-assistant-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n" };
   if (normalized.includes("provider get")) return { status: 1 };
-  return { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
@@ -814,7 +812,7 @@ const { createSandbox } = require(${onboardPath});
       const messagingPlanB64 = encodeMessagingPlanForChannels(["whatsapp"]);
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin);
+      writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -832,7 +830,7 @@ runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
   if (normalized.includes("provider get")) return { status: 1 };
-  return { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
@@ -964,7 +962,7 @@ const { createSandbox } = require(${onboardPath});
       const messagingPlanB64 = encodeMessagingPlanForChannels(["whatsapp"], ["whatsapp"]);
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin);
+      writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -987,7 +985,7 @@ runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
   if (normalized.includes("provider get")) return { status: 1 };
-  return { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
@@ -1286,7 +1284,7 @@ const { createSandbox } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -1302,7 +1300,7 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
   // provider-get returns not-found so messaging providers are created fresh
   if (_n(command).includes("provider get")) return { status: 1 };
-  return { status: 0 };
+  return _n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
@@ -1417,7 +1415,7 @@ const { createSandbox } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -1431,7 +1429,7 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
+  return _n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";

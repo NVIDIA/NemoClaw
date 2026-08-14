@@ -9,6 +9,7 @@ import type {
   LaunchReadinessFence,
   LaunchReadinessIdentity,
   LaunchReadinessLease,
+  LaunchReadinessOpenClawSessionQualification,
 } from "../../state/launch-readiness-lease";
 import { LaunchReadinessFenceError } from "../../state/launch-readiness-lease";
 import type { SandboxEntry } from "../../state/registry";
@@ -105,7 +106,7 @@ function servingProfile(): NonNullable<SandboxEntry["servingProfileProvenance"]>
 
 function fence(): LaunchReadinessFence {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "fence",
     epochId: EPOCH,
     sandboxName: SANDBOX,
@@ -128,7 +129,7 @@ function fence(): LaunchReadinessFence {
 
 function lease(identity: LaunchReadinessIdentity): LaunchReadinessLease {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "lease",
     epochId: EPOCH,
     sandboxName: SANDBOX,
@@ -186,6 +187,7 @@ describe("launch readiness validation", () => {
   let runtimeHealthy: boolean | null;
   let forwardsHealthy: boolean | null;
   let observedFingerprint: string;
+  let pairingStateSha256: string;
   let lockEvents: string[];
   let externalEvents: string[];
   let observationRequests: Array<{
@@ -207,6 +209,7 @@ describe("launch readiness validation", () => {
     runtimeHealthy = true;
     forwardsHealthy = true;
     observedFingerprint = FINGERPRINT;
+    pairingStateSha256 = "d".repeat(64);
     lockEvents = [];
     externalEvents = [];
     observationRequests = [];
@@ -264,6 +267,30 @@ describe("launch readiness validation", () => {
         inferenceHealthRequests.push([sandboxName, gatewayName]);
         return { healthy: true, broken: false, httpStatus: 200, detail: "OK 200" };
       },
+      observeOpenClawPairingQualification: (
+        sandboxName,
+        gatewayName,
+        openclawVersion,
+        stateDirectory,
+      ) => {
+        externalEvents.push("pairing-qualification");
+        expect({ sandboxName, gatewayName, openclawVersion, stateDirectory }).toEqual({
+          sandboxName: SANDBOX,
+          gatewayName: GATEWAY_NAME,
+          openclawVersion: "1.0.0",
+          stateDirectory: "/sandbox/.openclaw",
+        });
+        return {
+          schemaVersion: 1,
+          kind: "openclaw-pairing",
+          openclawVersion,
+          deviceIdentitySha256: DIGEST,
+          pairingStateSha256,
+          policySha256: DIGEST,
+          requiredRoles: ["operator"],
+          requiredScopes: ["operator.pairing", "operator.read", "operator.write"],
+        };
+      },
       readLease: () =>
         readKind === "valid" && publishedIdentity
           ? { kind: "valid", lease: lease(publishedIdentity) }
@@ -312,7 +339,116 @@ describe("launch readiness validation", () => {
       "inference-get",
       "gateway-health",
       "forward-list",
+      "pairing-qualification",
     ]);
+    expect(publishedIdentity?.session).toMatchObject({
+      kind: "openclaw-pairing",
+      openclawVersion: "1.0.0",
+      pairingStateSha256,
+      requiredRoles: ["operator"],
+      requiredScopes: ["operator.pairing", "operator.read", "operator.write"],
+    });
+  });
+
+  it("fences a concurrent OpenClaw pairing change before launch acceptance (#9023)", async () => {
+    const currentDeps = await createAcceptedLease();
+    pairingStateSha256 = "e".repeat(64);
+
+    await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+      kind: "fallback",
+      category: "session",
+      fence: { epochId: EPOCH },
+      recoveryBlocked: false,
+    });
+  });
+
+  it("falls back when the stored OpenClaw identity lacks pairing qualification (#9023)", async () => {
+    const currentDeps = await createAcceptedLease();
+    expect(publishedIdentity).not.toBeNull();
+    publishedIdentity = { ...publishedIdentity!, session: null };
+
+    await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+      kind: "fallback",
+      category: "session",
+      fence: { epochId: EPOCH },
+      recoveryBlocked: false,
+    });
+  });
+
+  it("falls back when any exact OpenClaw pairing qualification value changes (#9023)", async () => {
+    const currentDeps = await createAcceptedLease();
+    const stored = publishedIdentity?.session;
+    expect(stored).toMatchObject({ kind: "openclaw-pairing" });
+    const qualification = stored as LaunchReadinessOpenClawSessionQualification;
+    const changedQualifications: LaunchReadinessOpenClawSessionQualification[] = [
+      { ...qualification, openclawVersion: "1.0.1" },
+      { ...qualification, deviceIdentitySha256: "2".repeat(64) },
+      { ...qualification, pairingStateSha256: "3".repeat(64) },
+      { ...qualification, policySha256: "4".repeat(64) },
+    ];
+
+    for (const changed of changedQualifications) {
+      currentDeps.observeOpenClawPairingQualification = () => changed;
+      await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+        kind: "fallback",
+        category: "session",
+        fence: { epochId: EPOCH },
+        recoveryBlocked: false,
+      });
+    }
+  });
+
+  it("falls back when the OpenClaw gateway or lifecycle binding changes (#9023)", async () => {
+    const currentDeps = await createAcceptedLease();
+    const stored = publishedIdentity?.session;
+    expect(stored).toMatchObject({ kind: "openclaw-pairing" });
+    const qualification = stored as LaunchReadinessOpenClawSessionQualification;
+    currentDeps.observeOpenClawPairingQualification = () => qualification;
+    currentDeps.fenceLease = () => ({
+      ...fence(),
+      gatewayName: sandbox.gatewayName ?? GATEWAY_NAME,
+      gatewayPort: sandbox.gatewayPort ?? GATEWAY_PORT,
+    });
+    currentDeps.readLease = (_sandboxName, gatewayName) => ({
+      kind: gatewayName === GATEWAY_NAME ? "valid" : "identity",
+      lease: lease(publishedIdentity!),
+    });
+    const original = sandbox;
+
+    for (const { changed, category } of [
+      {
+        changed: { ...original, gatewayName: "nemoclaw-8081", gatewayPort: 8081 },
+        category: "identity",
+      },
+      { changed: { ...original, lifecycleGeneration: "generation-2" }, category: "config" },
+      {
+        changed: { ...original, lifecycleLiveIdentityFingerprint: "5".repeat(64) },
+        category: "identity",
+      },
+    ]) {
+      sandbox = changed;
+      await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+        kind: "fallback",
+        category,
+        fence: { epochId: EPOCH },
+        recoveryBlocked: false,
+      });
+    }
+    sandbox = original;
+  });
+
+  it("uses the complete fallback when current OpenClaw pairing observation fails (#9023)", async () => {
+    const currentDeps = await createAcceptedLease();
+    currentDeps.observeOpenClawPairingQualification = () => {
+      throw new Error("observation failed");
+    };
+
+    await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+      kind: "fallback",
+      category: "session",
+      fence: { epochId: EPOCH },
+      recoveryBlocked: false,
+    });
   });
 
   it("uses a fenced CAS epoch when secure authority is available (#8942)", async () => {
@@ -574,6 +710,7 @@ describe("launch readiness validation", () => {
       "gateway-health",
       "forward-list",
       "inference-health",
+      "pairing-qualification",
     ]);
     expect(observationRequests).toContainEqual({
       sandboxName: SANDBOX,
@@ -709,6 +846,7 @@ describe("launch readiness validation", () => {
     currentDeps.gatewayHealth = gatewayHealth;
     currentDeps.smoke = smoke;
     await createAcceptedLease(currentDeps);
+    externalEvents = [];
     expect(await inspectLaunchReadiness(SANDBOX, currentDeps)).toMatchObject({ kind: "accepted" });
     expect(smoke).toHaveBeenCalledWith(
       SANDBOX,
@@ -717,6 +855,8 @@ describe("launch readiness validation", () => {
       GATEWAY_NAME,
     );
     expect(gatewayHealth).not.toHaveBeenCalled();
+    expect(externalEvents).not.toContain("pairing-qualification");
+    expect(publishedIdentity?.session).toBeNull();
   });
 
   it("uses the normalized trusted agent name for CUA semantic health (#8942)", async () => {
@@ -814,6 +954,7 @@ describe("launch readiness validation", () => {
     expect(projection.version).toBe(2);
     const original = launchReadinessDigest(projection);
     const mutations: SandboxEntry[] = [
+      { ...sandbox, agentVersion: "1.0.1" },
       { ...sandbox, nemoclawVersion: "changed" },
       {
         ...sandbox,
@@ -1091,6 +1232,14 @@ describe("launch readiness validation", () => {
       throw new Error("observer unavailable");
     };
     expect(await publishLaunchReadiness(publication, observationUnavailable)).toEqual({
+      kind: "evidence-failed",
+    });
+
+    const pairingObservationUnavailable = deps();
+    pairingObservationUnavailable.observeOpenClawPairingQualification = () => {
+      throw new Error("pairing observation unavailable");
+    };
+    expect(await publishLaunchReadiness(publication, pairingObservationUnavailable)).toEqual({
       kind: "evidence-failed",
     });
 

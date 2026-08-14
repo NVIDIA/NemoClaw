@@ -21,6 +21,7 @@ import { readFreeStandingJobsInventory } from "../../../tools/e2e/workflow-bound
 import {
   buildE2eWorkflowPlan,
   releaseRequiredWorkflowJobs,
+  parseReleaseQualificationWaivedJobs,
   renderE2eWorkflowPlanSummary,
   runE2eWorkflowPlanCli,
   selectedWorkflowJobs,
@@ -52,10 +53,13 @@ function expectedCiOutput(plan: ReturnType<typeof buildE2eWorkflowPlan>): string
     `catalogue_standard_matrix=${JSON.stringify(plan.catalogueMatrices.standard)}`,
     `catalogue_nvidia_api_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-api"])}`,
     `catalogue_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-inference"])}`,
+    `catalogue_github_read_matrix=${JSON.stringify(plan.catalogueMatrices["github-read"])}`,
+    `catalogue_brave_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["brave-nvidia-inference"])}`,
     `selected_jobs=${JSON.stringify(plan.selectedJobs)}`,
     `selected_workflow_jobs=${JSON.stringify(selectedWorkflowJobs(plan))}`,
     `hermes_selected=${plan.hermesSelected}`,
     `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
+    "release_qualification_waived_jobs=[]",
     `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
     "",
   ].join("\n");
@@ -89,6 +93,23 @@ describe("E2E workflow plan", () => {
     expect(releaseRequiredWorkflowJobs()).not.toContain("llama-cpp-dgx-spark-qualification");
   });
 
+  it("waives only named release-required E2E jobs", () => {
+    const defaultJobs = releaseRequiredWorkflowJobs();
+    const requestedWaivers = ["live", "staging-brev-launchable"];
+    const requiredJobs = releaseRequiredWorkflowJobs({ waivedJobs: requestedWaivers });
+
+    expect(requiredJobs).toEqual(defaultJobs.filter((job) => !requestedWaivers.includes(job)));
+    expect(parseReleaseQualificationWaivedJobs(requestedWaivers.join(","))).toEqual(
+      requestedWaivers,
+    );
+    expect(() => releaseRequiredWorkflowJobs({ waivedJobs: ["generate-matrix"] })).toThrow(
+      "Cannot waive non-release E2E jobs: generate-matrix",
+    );
+    expect(() => releaseRequiredWorkflowJobs({ waivedJobs: ["live", "live"] })).toThrow(
+      "Release qualification waived jobs must not contain duplicates",
+    );
+  });
+
   it("validates jobs and selects only matching credential-free tests", () => {
     const testId = firstId(discoverCredentialFreeTests(), "credential-free test");
     const plan = buildE2eWorkflowPlan({ jobs: `${testId},hermes-e2e` });
@@ -108,7 +129,7 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-inference"]);
   });
 
-  it("preserves the migrated retained-target execution contracts", () => {
+  it("preserves the profile, timeout, install mode, packages, and environment for migrated targets", () => {
     expect(catalogueTarget("gateway-guard-recovery")).toMatchObject({
       profile: "nvidia-inference",
       timeoutMinutes: 45,
@@ -119,14 +140,6 @@ describe("E2E workflow plan", () => {
         NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
         OPENSHELL_GATEWAY: "nemoclaw",
       },
-    });
-    expect(catalogueTarget("issue-4434-tui-unreachable-inference")).toMatchObject({
-      profile: "nvidia-inference",
-      timeoutMinutes: 120,
-      installMode: "authenticated",
-      installNonInteractive: true,
-      hostPackages: ["expect", "iptables"],
-      environment: { NEMOCLAW_ISSUE_4434_LIVE: "1" },
     });
     expect(catalogueTarget("network-policy")).toMatchObject({
       profile: "nvidia-inference",
@@ -235,7 +248,7 @@ describe("E2E workflow plan", () => {
     });
 
     const plan = buildE2eWorkflowPlan({
-      jobs: "gateway-guard-recovery,hermes-slack,issue-4434-tui-unreachable-inference,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
+      jobs: "gateway-guard-recovery,hermes-slack,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
     });
     expect(plan.catalogueMatrices["nvidia-inference"]).toEqual(
       expect.arrayContaining([
@@ -249,11 +262,6 @@ describe("E2E workflow plan", () => {
           display_name: "Messaging: isolates Hermes Slack credentials and reaches Slack APIs",
           runner: "linux-amd64-cpu4",
           test_file: "test/e2e/live/hermes-slack-e2e.test.ts",
-        }),
-        expect.objectContaining({
-          id: "issue-4434-tui-unreachable-inference",
-          host_packages: "expect iptables",
-          install_non_interactive: true,
         }),
         expect.objectContaining({
           id: "network-policy",
@@ -283,11 +291,29 @@ describe("E2E workflow plan", () => {
     }
   });
 
+  it.each([
+    [
+      "issue-4434-tui-unreachable-inference",
+      "the nvidia-inference profile uses gateway-managed inference, which this test skips by design",
+    ],
+    [
+      "overlayfs-autofix",
+      "the managed Linux Docker gateway bypasses the legacy overlayfs autofix path",
+    ],
+  ])("excludes %s from catalogue planning with a reason (#9022)", (id, reason) => {
+    expect(E2E_TARGET_CATALOGUE.map((target) => target.id)).not.toContain(id);
+    for (const selector of ["jobs", "targets"] as const) {
+      expect(() => buildE2eWorkflowPlan({ [selector]: id })).toThrow(
+        `E2E catalogue target ${id} is not scheduled: ${reason}`,
+      );
+    }
+  });
+
   it("rejects unreviewed catalogue execution metadata", () => {
     const target = catalogueTarget("network-policy");
-    expect(() =>
-      validateE2eTargetCatalogue([{ ...target, runnerKey: "unknown-runner" }]),
-    ).toThrow("invalid runner routing key");
+    expect(() => validateE2eTargetCatalogue([{ ...target, runnerKey: "unknown-runner" }])).toThrow(
+      "invalid runner routing key",
+    );
     expect(() =>
       validateE2eTargetCatalogue([{ ...target, hostPackages: ["curl"] as never }]),
     ).toThrow("invalid or duplicate host packages");
@@ -423,13 +449,15 @@ describe("E2E workflow plan", () => {
     ).toThrow("invalid or duplicate display name");
   });
 
-  it("withholds credentialed catalogue profiles from PR candidate runs", () => {
+  it("omits credentialed catalogue profiles when checkout_sha is set", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-pr-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
     const plan = buildE2eWorkflowPlan();
     plan.catalogueMatrices["nvidia-api"] = [];
     plan.catalogueMatrices["nvidia-inference"] = [];
+    plan.catalogueMatrices["github-read"] = [];
+    plan.catalogueMatrices["brave-nvidia-inference"] = [];
 
     try {
       writeE2eWorkflowPlanCiOutput(
@@ -449,7 +477,7 @@ describe("E2E workflow plan", () => {
     }
   });
 
-  it("defines PR candidate eligibility once for every catalogue profile", () => {
+  it("allows manual PR dispatch only for standard-profile targets", () => {
     expect(
       Object.fromEntries(
         E2E_TARGET_CATALOGUE.map((target) => [
@@ -457,7 +485,13 @@ describe("E2E workflow plan", () => {
           isPrCandidateCatalogueTarget(target),
         ]),
       ),
-    ).toEqual({ standard: true, "nvidia-api": false, "nvidia-inference": false });
+    ).toEqual({
+      standard: true,
+      "nvidia-api": false,
+      "nvidia-inference": false,
+      "github-read": false,
+      "brave-nvidia-inference": false,
+    });
   });
 
   it("routes homogeneous GPU targets through the standard profile", () => {
@@ -497,7 +531,7 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
-  it("selects the Jetson proof when no other retained E2E owns a changed file (#8142)", () => {
+  it("selects the Jetson test when no other E2E job owns a changed file (#8142)", () => {
     const plan = buildE2eWorkflowPlan({}, { changedFiles: ["docs/index.yml"] });
 
     expect(selectedWorkflowJobs(plan)).toEqual(["jetson-nvmap-gpu"]);
@@ -548,7 +582,7 @@ describe("E2E workflow plan", () => {
     expect(targetIds).toEqual(expect.arrayContaining(["onboard-repair", "onboard-resume"]));
   });
 
-  it("uses one risk rule for catalogue and retained workflow jobs", () => {
+  it("uses one risk rule for catalogue targets and workflow jobs", () => {
     const plan = buildE2eWorkflowPlan(
       {},
       { changedFiles: ["src/lib/messaging/applier/agent-config.ts"] },
@@ -627,7 +661,7 @@ describe("E2E workflow plan", () => {
     },
   );
 
-  it("maps the trusted-main bootstrap job during a PR controller checkout", () => {
+  it("maps launchable-smoke to bootstrap-install-smoke when checkout_sha is set", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
@@ -657,7 +691,7 @@ describe("E2E workflow plan", () => {
     }
   });
 
-  it("plans active jobs while the candidate verifies retired controller selectors (#7616)", () => {
+  it("plans active jobs while checking retired controller selectors (#7616)", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
@@ -697,7 +731,13 @@ describe("E2E workflow plan", () => {
       const plan: ReturnType<typeof buildE2eWorkflowPlan> = {
         matrix: [],
         testMatrix: [],
-        catalogueMatrices: { standard: [], "nvidia-api": [], "nvidia-inference": [] },
+        catalogueMatrices: {
+          standard: [],
+          "nvidia-api": [],
+          "nvidia-inference": [],
+          "github-read": [],
+          "brave-nvidia-inference": [],
+        },
         selectedJobs: [],
         hermesSelected: false,
         explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
@@ -733,7 +773,13 @@ describe("E2E workflow plan", () => {
       expect(buildE2eWorkflowPlan({ [selector]: "jetson-nvmap-gpu" })).toEqual({
         matrix: [],
         testMatrix: [],
-        catalogueMatrices: { standard: [], "nvidia-api": [], "nvidia-inference": [] },
+        catalogueMatrices: {
+          standard: [],
+          "nvidia-api": [],
+          "nvidia-inference": [],
+          "github-read": [],
+          "brave-nvidia-inference": [],
+        },
         selectedJobs: ["jetson-nvmap-gpu"],
         hermesSelected: false,
         explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
@@ -748,7 +794,13 @@ describe("E2E workflow plan", () => {
     const plan: ReturnType<typeof buildE2eWorkflowPlan> = {
       matrix: [],
       testMatrix: [],
-      catalogueMatrices: { standard: [], "nvidia-api": [], "nvidia-inference": [] },
+      catalogueMatrices: {
+        standard: [],
+        "nvidia-api": [],
+        "nvidia-inference": [],
+        "github-read": [],
+        "brave-nvidia-inference": [],
+      },
       selectedJobs: [],
       hermesSelected: false,
       explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
@@ -936,7 +988,7 @@ describe("E2E workflow plan", () => {
     expect(output).toBe(`${JSON.stringify(parsed)}\n`);
   });
 
-  it("renders the selected matrix and retained jobs as a readable plan", () => {
+  it("renders the selected targets and workflow jobs as a readable plan", () => {
     const filtered = spawnSync(TSX, [PLANNER_CLI, "--summary", "--jobs", "hermes-e2e"], {
       cwd: REPO_ROOT,
       encoding: "utf8",

@@ -6,7 +6,7 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:4295138eb70f938189430f8dc7b3cd5db0aa762234e64e398a6a5ef60803126c
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:ffafa4dd1d8d5a802ae4fc4005b51e1accfa5e782e47de736a0d8d8bf2c83837
 ARG NEMOCLAW_CORPORATE_CA_B64=
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 
@@ -663,7 +663,7 @@ RUN node --experimental-strip-types \
 ARG NEMOCLAW_HERMES_WRAPPER_SHA256=f4276e9833638b7a620176c88bd329d6b6d4948538a3227b727a1397146a0e0e
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=989edf54a8c09c6efb348600a8aa2f264c0b71408eb9d7bcd579b92cbeccf9b1
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=db4046e79e513eab67b069a8eda20167b8b65529cf26842531d2ad673c670330
-ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=3e85433234ac047956fb622564dc12c8ab84c067c648c36d6e8820bdacf39191
+ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=104443a6b509844e8c2cfda06634664dd608b786b8cc036343d10c50937a2adc
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
 ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=e8593cf1580bffa4663e91c079ba0ce31c3d26391f5b1718872701138ce250b0
 # hadolint ignore=DL4006
@@ -1151,7 +1151,51 @@ RUN set -eu; \
 # gateway must retain import access after the lock while both runtime identities
 # remain unable to mutate the dependency tree. Remove the probe install so the
 # published image still performs installation only when Hindsight is selected.
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
+# uv creates the Hermes virtual environment without pip. Seed pip from Python's
+# bundled ensurepip payload while this layer is still root, then verify the
+# sandbox can read but cannot modify the virtual environment used by the lazy
+# installer. The Hermes lazy installer still installs the approved dependency
+# as the sandbox user.
+RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
+    && /opt/hermes/.venv/bin/python -I -m pip --version \
+    && chmod 644 /opt/hermes/.venv/.lock \
+    && test "$(stat -c '%U:%G %a' /opt/hermes/.venv/.lock)" = "root:root 644" \
+    && test "$(stat -c '%U:%G %a' /opt/hermes/.venv/bin/pip)" = "root:root 755" \
+    && venv_violation="$(find -P /opt/hermes/.venv ! -type l \( ! -user root -o ! -group root -o -perm /022 \) -print -quit)" \
+    && test -z "$venv_violation" \
+    && venv_link_owner_violation="$(find -P /opt/hermes/.venv -type l \( ! -user root -o ! -group root \) -print -quit)" \
+    && test -z "$venv_link_owner_violation" \
+    && venv_links_file="$(mktemp)" \
+    && find -P /opt/hermes/.venv -type l -printf '%P -> %l\n' > "$venv_links_file" \
+    && LC_ALL=C sort -o "$venv_links_file" "$venv_links_file" \
+    && venv_links="$(cat "$venv_links_file")" \
+    && rm -f "$venv_links_file" \
+    && expected_venv_links="$(printf '%s\n' \
+        'bin/python -> /usr/bin/python3' \
+        'bin/python3 -> python' \
+        'bin/python3.13 -> python' \
+        "lib/python3.13/site-packages/certifi/cacert.pem -> $SSL_CERT_FILE" \
+        'lib64 -> lib')" \
+    && test "$venv_links" = "$expected_venv_links" \
+    && test "$(readlink -e /opt/hermes/.venv/bin/python)" = "/usr/bin/python3.13" \
+    && test "$(readlink -e /opt/hermes/.venv/bin/python3)" = "/usr/bin/python3.13" \
+    && test "$(readlink -e /opt/hermes/.venv/bin/python3.13)" = "/usr/bin/python3.13" \
+    && test "$(readlink -e /opt/hermes/.venv/lib64)" = "/opt/hermes/.venv/lib" \
+    && test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/bin/python)" = "root:root 755 regular file" \
+    && test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/bin/python3)" = "root:root 755 regular file" \
+    && test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/bin/python3.13)" = "root:root 755 regular file" \
+    && test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/lib64)" = "root:root 755 directory" \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        sh -eu -c '\
+            /opt/hermes/.venv/bin/python -I -m pip --version >/dev/null; \
+            if printf "" >> /opt/hermes/.venv/.lock 2>/dev/null; then exit 1; fi; \
+            if printf "" >> /opt/hermes/.venv/bin/pip 2>/dev/null; then exit 1; fi; \
+            if printf "" >> /opt/hermes/.venv/lib/python3.13/site-packages/pip/__init__.py 2>/dev/null; then exit 1; fi; \
+            if printf "" >> /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi; \
+            if printf "" > /opt/hermes/.venv/lib64/.nemoclaw-sandbox-write-probe 2>/dev/null; then exit 1; fi; \
+            if ln -sf /usr/bin/false /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi' \
+    && test ! -e /opt/hermes/.venv/lib/.nemoclaw-sandbox-write-probe \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
     && HOME=/sandbox \
         UV_CACHE_DIR=/sandbox/.hermes/cache/uv \
         UV_NO_CACHE=1 \

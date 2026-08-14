@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { WebSearchConfig } from "../../inference/web-search";
 import type { InferenceEndpointSource } from "../../inference/selection";
+import type { WebSearchConfig } from "../../inference/web-search";
 import type { Session } from "../../state/onboard-session";
+import type { HostLocalInferenceSandboxProofAuthority } from "../runtime-provider/host-local-inference-routing";
 import type { OnboardStateHandlerResult } from "./runner";
 
 export interface OnboardFlowContext<Agent = unknown, Gpu = unknown, SandboxGpuConfig = unknown> {
@@ -31,6 +32,10 @@ export interface OnboardFlowContext<Agent = unknown, Gpu = unknown, SandboxGpuCo
   webSearchConfigChanged?: boolean;
   webSearchSupported: boolean;
   selectedMessagingChannels: string[];
+  /** Process-local policy boundary for provider-owned host-local inference routes. */
+  hostLocalInferenceRouteOnly?: boolean;
+  /** Exact provider-owned route and proof contract consumed after final policy sync. */
+  hostLocalInferenceSandboxProofAuthority?: HostLocalInferenceSandboxProofAuthority | null;
   gpu: Gpu | null;
   sandboxGpuConfig: SandboxGpuConfig | null;
   gpuPassthrough: boolean;
@@ -77,6 +82,8 @@ export interface ProviderModelSelectedContextUpdate {
   compatibleEndpointReasoningEffort: string | null;
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
+  hostLocalInferenceRouteOnly: boolean;
+  hostLocalInferenceSandboxProofAuthority: HostLocalInferenceSandboxProofAuthority | null;
 }
 
 export interface SandboxCreatedContextUpdate {

@@ -13,7 +13,10 @@ import {
   riskPlanRequiredJobIds,
   riskPlanRequiredTargetIds,
 } from "../tools/advisors/risk-plan.mts";
-import { E2E_TARGET_CATALOGUE } from "../tools/e2e/target-catalogue.mts";
+import {
+  catalogueTargetsForChangedFiles,
+  E2E_TARGET_CATALOGUE,
+} from "../tools/e2e/target-catalogue.mts";
 import {
   focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,
@@ -130,9 +133,12 @@ describe("deterministic PR risk plan", () => {
     ]);
   });
 
-  it("maps a workflow-wired live test only to its canonical job (#7921)", () => {
+  it("maps a catalogue live test only to its canonical target (#7921)", () => {
     const changedFiles = ["test/e2e/live/token-rotation.test.ts"];
-    const focusedE2eJobs = focusedE2eJobsForChangedFiles(changedFiles);
+    const focusedE2eJobs = catalogueTargetsForChangedFiles(changedFiles).map((target) => ({
+      id: target.id,
+      matchedFiles: changedFiles,
+    }));
     const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles, focusedE2eJobs });
     const withoutFocusedSelection = buildRiskPlan({ headSha: HEAD_SHA, changedFiles });
 
@@ -317,18 +323,19 @@ describe("deterministic PR risk plan", () => {
     expect(result.requiredJobs).toEqual([]);
   });
 
-  it("maps a shared gateway live test to the retained migration job (#7921)", () => {
+  it("maps a shared gateway live test to every catalogue fixture (#7921)", () => {
     const changedFiles = ["test/e2e/live/openshell-gateway-upgrade.test.ts"];
-    const focusedE2eJobs = focusedE2eJobsForChangedFiles(changedFiles);
+    const focusedE2eJobs = catalogueTargetsForChangedFiles(changedFiles).map((target) => ({
+      id: target.id,
+      matchedFiles: changedFiles,
+    }));
     const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles, focusedE2eJobs });
 
-    expect(focusedE2eJobs).toEqual([
-      {
-        id: "openshell-gateway-upgrade",
-        matchedFiles: changedFiles,
-      },
-    ]);
-    expect(riskPlanRequiredJobIds(result)).toEqual(["openshell-gateway-upgrade"]);
+    const expectedTargets = E2E_TARGET_CATALOGUE.filter(
+      (target) => target.targetId === "openshell-gateway-upgrade",
+    ).map((target) => target.id);
+    expect(focusedE2eJobs.map((selection) => selection.id)).toEqual(expectedTargets);
+    expect(riskPlanRequiredJobIds(result)).toEqual([...expectedTargets].sort());
   });
 
   it("keeps an unknown live test behind the broad control-plane floor (#7921)", () => {
@@ -350,7 +357,10 @@ describe("deterministic PR risk plan", () => {
       "test/e2e/live/token-rotation.test.ts",
       "test/e2e/live/token-rotation-renamed.test.ts",
     ];
-    const focusedE2eJobs = focusedE2eJobsForChangedFiles(changedFiles);
+    const focusedE2eJobs = catalogueTargetsForChangedFiles(changedFiles).map((target) => ({
+      id: target.id,
+      matchedFiles: changedFiles.filter((file) => target.owningPaths.includes(file)),
+    }));
     const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles, focusedE2eJobs });
 
     expect(focusedE2eJobs).toEqual([

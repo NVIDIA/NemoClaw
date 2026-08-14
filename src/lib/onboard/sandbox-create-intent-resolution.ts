@@ -22,6 +22,7 @@ import {
 export type CompleteSandboxCreateIntentInput<Agent, ResourceProfile> = {
   sandboxName: string;
   inferenceProvider?: string | null;
+  hostLocalInferenceRouteOnly?: boolean;
   enabledChannels: readonly string[] | null;
   webSearchConfig: WebSearchConfig | null;
   agent: Agent;
@@ -122,6 +123,7 @@ export function createSandboxCreateIntentResolver<
       basePolicyPath: deps.getAgentPolicyPath(input.agent) || deps.defaultPolicyPath,
       sandboxName: input.sandboxName,
       inferenceProvider: input.inferenceProvider,
+      hostLocalInferenceRouteOnly: input.hostLocalInferenceRouteOnly === true,
       channels: deps.channels,
       enabledChannels: filterEnabledChannels(input.enabledChannels, input.agent),
       disabledChannelNames: messaging.disabledChannelNames,

@@ -215,15 +215,21 @@ describe("policy tier onboarding adapter contracts", () => {
     const script = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
-process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+process.env.NEMOCLAW_NON_INTERACTIVE = "preserve-direct";
 process.env.NEMOCLAW_POLICY_TIER = "invalid_tier";
 const { onboard } = require(${onboardPath});
 const exitMarker = "__NEMOCLAW_TEST_PROCESS_EXIT__";
-process.exit = (code = 0) => {
+let exitObservation = null;
+const originalExit = (code = 0) => {
+  exitObservation = {
+    processExitRestored: process.exit === originalExit,
+    nonInteractiveEnv: process.env.NEMOCLAW_NON_INTERACTIVE,
+  };
   const err = new Error(exitMarker);
   err.code = Number(code);
   throw err;
 };
+process.exit = originalExit;
 (async () => {
   try {
     await onboard({
@@ -245,6 +251,7 @@ process.exit = (code = 0) => {
       usageNoticeExists: fs.existsSync(path.join(stateDir, "usage-notice.json")),
       lockExists: fs.existsSync(path.join(stateDir, "onboard.lock")),
       sessionExists: fs.existsSync(path.join(stateDir, "onboard-session.json")),
+      exitObservation,
     }) + "\n");
     process.exitCode = err.code;
   }
@@ -257,6 +264,10 @@ process.exit = (code = 0) => {
     assert.equal(payload.usageNoticeExists, false, "usage notice must not be accepted/written");
     assert.equal(payload.lockExists, false, "onboard lock must not be created");
     assert.equal(payload.sessionExists, false, "onboard session must not be created");
+    assert.deepEqual(payload.exitObservation, {
+      processExitRestored: true,
+      nonInteractiveEnv: "preserve-direct",
+    });
     assert.match(
       result.stderr,
       /Unknown policy tier: invalid_tier\. Valid: restricted, balanced, open, personal/,
