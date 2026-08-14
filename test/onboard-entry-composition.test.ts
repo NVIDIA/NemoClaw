@@ -406,6 +406,51 @@ describe("onboarding entry composition boundary", () => {
     expect(actual.gateway).toEqual({ choose: 1 });
   });
 
+  it.each([
+    "if (enabled) schedule((value = startGateway()) => value);",
+    "if (enabled) schedule({ [startGateway()]() {} });",
+  ])("checks a gateway action in a nested callable header: %s", (decision) => {
+    const actual = collectOnboardEntryDecisions(`function choose() { ${decision} }`);
+
+    expect(actual.gateway).toEqual({ choose: 1 });
+  });
+
+  it.each([
+    "for (startGateway(); enabled;) {}",
+    "for (let value = startGateway(); enabled;) {}",
+  ])("checks a gateway action in a for-loop initializer: %s", (decision) => {
+    const actual = collectOnboardEntryDecisions(`function choose() { ${decision} }`);
+
+    expect(actual.gateway).toEqual({ choose: 1 });
+  });
+
+  it.each(["gateway.start()", "gateway.recover()"])(
+    "combines a gateway receiver with lifecycle action %s",
+    (call) => {
+      const actual = collectOnboardEntryDecisions(`function choose() { if (enabled) ${call}; }`);
+
+      expect(actual.gateway).toEqual({ choose: 1 });
+    },
+  );
+
+  it.each(["recoverGateway.call(null)", "recoverGateway.bind(null)()"])(
+    "checks the direct recovery invocation %s",
+    (call) => {
+      const actual = collectOnboardEntryDecisions(`function choose() { ${call}; }`);
+
+      expect(actual.gateway).toEqual({ choose: 1 });
+    },
+  );
+
+  it.each(["createRecoveryGatewayAndStart", "buildRepairGatewayAndRun"])(
+    "classifies the gateway-interposed compound action %s",
+    (action) => {
+      const actual = collectOnboardEntryDecisions(`function choose() { ${action}(); }`);
+
+      expect(actual.gateway).toEqual({ choose: 1 });
+    },
+  );
+
   it("rejects a decision added within an allowed declaration", () => {
     const actual = collectOnboardEntryDecisions(
       "function handleRemoteProviderSelection(enabled: boolean) { if (enabled) useProvider(); if (enabled) useProviderAgain(); }",

@@ -34,8 +34,9 @@ const LOGICAL_OPERATORS = new Set([
 const RECOVERY_NAME = /recover|recovery|repair|restore|retry|fallback|rollback/i;
 const RECOVERY_FACTORY_NAME = /^(?:build|create|install|make)/i;
 const RECOVERY_COMPOUND_ACTION =
-  /(?:And|Or)(?:Fallback|Recover|Recovery|Repair|Restore|Retry|Rollback)|(?:Fallback|Recover|Recovery|Repair|Restore|Retry|Rollback)(?:And|Or)(?:Apply|Execute|Perform|Run|Start)/i;
-const RECOVERY_ACTION_METHOD = /^(?:apply|execute|perform|recover|repair|restore|retry|rollback|run|start)$/i;
+  /(?:And|Or)(?:Fallback|Recover|Recovery|Repair|Restore|Retry|Rollback)|(?:Fallback|Recover|Recovery|Repair|Restore|Retry|Rollback)[A-Za-z0-9]*(?:And|Or)(?:Apply|Execute|Perform|Run|Start)/i;
+const RECOVERY_ACTION_METHOD =
+  /^(?:apply|call|execute|perform|recover|repair|restore|retry|rollback|run|start)$/i;
 
 type NamedScope = {
   readonly name: string;
@@ -198,6 +199,12 @@ function calledReceiver(expression: ts.Expression): ts.Expression | null {
   return null;
 }
 
+function immediatelyBoundReceiver(expression: ts.Expression): ts.Expression | null {
+  const callee = unwrapTransparentExpression(expression);
+  if (!ts.isCallExpression(callee) || calledName(callee.expression) !== "bind") return null;
+  return calledReceiver(callee.expression);
+}
+
 type RecoveryInvocation = ts.CallExpression | ts.TaggedTemplateExpression;
 
 function recoveryInvocationExpression(node: RecoveryInvocation): ts.Expression {
@@ -207,6 +214,8 @@ function recoveryInvocationExpression(node: RecoveryInvocation): ts.Expression {
 function isRecoveryInvocation(node: ts.Node): node is RecoveryInvocation {
   if (!ts.isCallExpression(node) && !ts.isTaggedTemplateExpression(node)) return false;
   const expression = recoveryInvocationExpression(node);
+  const boundReceiver = immediatelyBoundReceiver(expression);
+  if (boundReceiver && RECOVERY_NAME.test(boundReceiver.getText())) return true;
   const name = calledName(expression);
   if (
     name === null ||
@@ -246,6 +255,16 @@ function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCateg
       const name = staticElementName(candidate);
       if (name) {
         for (const category of identifierCategories(name)) categories.add(category);
+        for (const category of identifierCategories(`${candidate.expression.getText()}${name}`)) {
+          categories.add(category);
+        }
+      }
+    }
+    if (ts.isPropertyAccessExpression(candidate)) {
+      for (const category of identifierCategories(
+        `${candidate.expression.getText()}${candidate.name.text}`,
+      )) {
+        categories.add(category);
       }
     }
     ts.forEachChild(candidate, addIdentifiers);
@@ -262,6 +281,9 @@ function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCateg
   function scanActionArgument(candidate: ts.Node): void {
     const body = functionBody(candidate);
     if (body) {
+      ts.forEachChild(candidate, (child) => {
+        if (child !== body) scanActionArgument(child);
+      });
       scanActions(body, true);
       return;
     }
@@ -353,6 +375,7 @@ function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCateg
   } else if (isLogicalDecision(node)) {
     scanCondition(node, true);
   } else if (ts.isForStatement(node)) {
+    if (node.initializer) scanActionArgument(node.initializer);
     if (node.condition) scanCondition(node.condition, false);
     scanActions(node.statement, true);
     if (node.incrementor) scanActions(node.incrementor, false);
