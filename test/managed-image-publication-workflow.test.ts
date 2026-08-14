@@ -470,6 +470,7 @@ describe("complete managed-image publication workflow", () => {
     expect(prBuilder.permissions).toEqual({ contents: "read", packages: "write" });
     expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(step(prBuilder, "Checkout").with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
+    expect(step(prBuilder, "Set up Docker Buildx").id).toBe("buildx");
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
     expect([...matrixByAgent.keys()].sort()).toEqual([
       "hermes",
@@ -644,6 +645,7 @@ describe("complete managed-image publication workflow", () => {
     expect(login.if).toBe(sameRepository);
     expect(publish.if).toBe(sameRepository);
     expect(publish.with).toMatchObject({
+      builder: "${{ steps.base.outputs.local == 'true' && 'default' || steps.buildx.outputs.name }}",
       platforms: "linux/amd64",
       outputs:
         "type=image,name=${{ matrix.repository }},push-by-digest=true,name-canonical=true,push=true",
