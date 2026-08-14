@@ -132,14 +132,20 @@ import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { getKnownSandboxTargetGatewayName } from "../gateway-target";
 import {
   type AgentDispatchRunner,
+  agentDispatchDeadlineSeconds,
   isSilentAgentDispatch,
+  isTimedOutAgentDispatch,
+  OPENCLAW_AGENT_BOOLEAN_FLAGS,
+  OPENCLAW_AGENT_VALUE_FLAGS,
   runAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
+  TIMED_OUT_AGENT_TURN_EXIT_CODE,
 } from "./passthrough-dispatch";
 import {
   hasAgentPassthroughHelpToken,
   printAgentPassthroughHelp,
   writeSilentAgentDispatchFailure,
+  writeTimedOutAgentTurnFailure,
 } from "./passthrough-help";
 import {
   type AgentJsonPassthroughProcess,
@@ -150,23 +156,6 @@ import { OLLAMA_LOCAL_PROVIDER, runOllamaRestartRecovery } from "./passthrough-o
 import { maybeEmitShieldsRelockWarning } from "./passthrough-shields-warning";
 
 export { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
-
-const OPENCLAW_AGENT_VALUE_FLAGS = new Set([
-  "-a",
-  "--agent",
-  "-m",
-  "--message",
-  "--model",
-  "--provider",
-  "--reply-channel",
-  "--session-id",
-  "--session-key",
-  "--thinking",
-  "--timeout",
-  "--to",
-]);
-
-const OPENCLAW_AGENT_BOOLEAN_FLAGS = new Set(["--deliver"]);
 
 // OpenClaw can exit zero after running in embedded-fallback mode and does not
 // expose a stable machine-readable transport discriminator. These patterns mirror
@@ -196,7 +185,7 @@ export async function runAgentNonJsonPassthrough(
     buildOpenshellExecArgs(
       sandboxName,
       wrapOpenClawAgentCommandWithRuntimeEnv(command),
-      { tty: false },
+      { tty: false, timeoutSeconds: agentDispatchDeadlineSeconds(command) },
       (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName) ?? undefined,
     ),
     {
@@ -233,6 +222,14 @@ export async function runAgentNonJsonPassthrough(
   if (errorMessage) {
     proc.stderr.write(`  Failed to invoke openshell: ${errorMessage}\n`);
     proc.stderr.write("  Ensure 'openshell' is installed and on PATH.\n");
+  }
+
+  // Last, so the partial trace is already on the wire: a turn whose deadline
+  // fired must not exit 0 just because the transport did. An upstream non-zero
+  // code is preserved as-is.
+  if (code === 0 && isTimedOutAgentDispatch(stdout, stderr)) {
+    writeTimedOutAgentTurnFailure(proc, sandboxName);
+    return proc.exit(TIMED_OUT_AGENT_TURN_EXIT_CODE);
   }
   return proc.exit(code);
 }

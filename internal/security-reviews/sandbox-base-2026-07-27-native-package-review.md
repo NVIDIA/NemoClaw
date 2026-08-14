@@ -3,6 +3,8 @@
 
 # Sandbox Base Native Package Review for libssh2 and Python HTMLParser
 
+> Internal engineering evidence. This file is not part of the public documentation set.
+
 Date: 2026-07-27
 
 ## Scope

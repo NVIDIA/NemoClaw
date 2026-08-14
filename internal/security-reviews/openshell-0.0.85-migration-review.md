@@ -3,6 +3,8 @@
 
 # OpenShell 0.0.72 to 0.0.85 migration review
 
+> Internal engineering evidence. This file is not part of the public documentation set.
+
 ## Status and decision
 
 OpenShell published stable tag `v0.0.85` at verified commit
