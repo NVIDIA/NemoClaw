@@ -27,28 +27,42 @@ function workflowScript(jobName: string, stepName: string): string {
   return step?.with?.script as string;
 }
 
-describe("E2E operations workflow boundary", testTimeoutOptions(15_000), () => {
-  it("accepts the checked-in workflow and rejects aggregation, permission, and secret-scope drift", () => {
+describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
+  it("accepts the checked-in workflow", () => {
     expect(validateE2eOperationsWorkflowBoundary()).toEqual([]);
+  });
 
+  it("requires the scorecard to wait for every reporting dependency", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.jobs.scorecard.needs = [...(workflow.jobs.scorecard.needs as string[])];
     (workflow.jobs.scorecard.needs as string[]).pop();
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard needs must exactly match report-to-pr needs",
+    );
+  });
+
+  it("limits scorecard permissions to read access", () => {
+    const workflow = readE2eOperationsWorkflow();
     workflow.jobs.scorecard.permissions = {
       actions: "read",
       contents: "read",
       issues: "write",
     };
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard permissions must be actions: read and contents: read",
+    );
+  });
+
+  it("does not expose credentials to the scorecard job", () => {
+    const workflow = readE2eOperationsWorkflow();
     workflow.jobs.scorecard.env = {
       SLACK_WEBHOOK_URL_DAILY: "${{ secrets.SLACK_WEBHOOK_URL_DAILY }}",
     };
 
-    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
-      expect.arrayContaining([
-        "scorecard needs must exactly match report-to-pr needs",
-        "scorecard permissions must be actions: read and contents: read",
-        "scorecard must not expose credentials at job scope",
-      ]),
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard must not expose credentials at job scope",
     );
   });
 
@@ -67,7 +81,7 @@ describe("E2E operations workflow boundary", testTimeoutOptions(15_000), () => {
     );
   });
 
-  it("binds release qualification to the trusted full-run result set (#7912)", () => {
+  it("requires release qualification to evaluate every full-run result (#7912)", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.jobs["release-qualification"].if = "${{ always() }}";
     workflow.jobs["release-qualification"].needs = ["generate-matrix"];
@@ -97,7 +111,7 @@ describe("E2E operations workflow boundary", testTimeoutOptions(15_000), () => {
     );
   });
 
-  it("pins the relevant E2E aggregate to the trusted push result set (#7912)", () => {
+  it("requires the push summary to evaluate every selected E2E result (#7912)", () => {
     const workflow = readE2eOperationsWorkflow();
     const job = workflow.jobs["relevant-e2e"];
     job.if = "${{ always() }}";
@@ -230,7 +244,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("rejects manual PR authorization and checkout validation drift", () => {
+  it("validates manual PR dispatch inputs and the checked-out commit", () => {
     const workflow = readE2eOperationsWorkflow();
     delete workflow.on?.workflow_dispatch?.inputs?.review_reason;
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
@@ -381,7 +395,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("rejects drift from the manual PR risk-signal identity inputs", () => {
+  it("passes the requested SHA and correlation ID to manual PR jobs", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.env!.NEMOCLAW_E2E_EXPECTED_SHA = "${{ inputs.checkout_sha || github.sha }}";
     workflow.env!.NEMOCLAW_E2E_CORRELATION_ID = "";
@@ -394,7 +408,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("limits manual PR runs to trusted controller selectors or opted-in Jetson dispatch", () => {
+  it("limits manual PR runs to controller-approved selectors or Jetson dispatch", () => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
@@ -409,7 +423,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("keeps the controller selector cases equal to the Advisor planning contract", () => {
+  it("uses the same controller selectors as the PR Review Advisor", () => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
@@ -500,7 +514,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     }
   });
 
-  it("accepts the controller target matrix for the current PR head", () => {
+  it("accepts the controller target matrix for the commit under review", () => {
     const workflow = readE2eOperationsWorkflow();
     const generateMatrix = workflow.jobs["generate-matrix"];
     const controller = generateMatrix.steps!.find(
@@ -643,7 +657,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     }
   });
 
-  it("keeps every planned job wired to bound evidence", () => {
+  it("reports a result for every planned job", () => {
     const workflow = readE2eOperationsWorkflow();
     const job = workflow.jobs["cloud-onboard"];
     job.env!.E2E_TARGET_ID = "different-job";
@@ -729,7 +743,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("requires prNumber and report to originate from the trusted resolveReportPr and renderE2eReport calls", () => {
+  it("derives the PR number and report text from the validated helper results", () => {
     const workflow = readE2eOperationsWorkflow();
     const report = workflow.jobs["report-to-pr"].steps!.find(
       (step) => step.name === "Post E2E target results to PR",
@@ -1143,7 +1157,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     }
   });
 
-  it("rejects raw trace upload ordering and unified advisor auto-dispatch", () => {
+  it("sanitizes raw traces before cleanup", () => {
     const workflow = readE2eOperationsWorkflow();
     const cloudSteps = workflow.jobs["cloud-onboard"].steps!;
     const sanitize = cloudSteps.find(
@@ -1151,6 +1165,13 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     )!;
     sanitize.run = "cp -R raw-traces e2e-artifacts";
 
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "cloud-onboard trace sanitizer must retain scripts/e2e/sanitize-trace-timing.py",
+    );
+  });
+
+  it("prevents the PR Review Advisor from writing to Actions or dispatching workflows", () => {
+    const workflow = readE2eOperationsWorkflow();
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-e2e-operations-"));
     const advisorPath = join(directory, "advisor.yaml");
     try {
@@ -1165,7 +1186,6 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       );
       expect(validateE2eOperationsWorkflow(workflow, advisorPath)).toEqual(
         expect.arrayContaining([
-          "cloud-onboard trace sanitizer must retain scripts/e2e/sanitize-trace-timing.py",
           "Unified advisor must not hold actions: write",
           "Unified advisor must not auto-dispatch workflows",
         ]),
