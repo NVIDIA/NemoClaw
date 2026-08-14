@@ -502,7 +502,17 @@ describe("complete managed-image publication workflow", () => {
       'git diff --quiet "$BASE_SHA" "$CANDIDATE_SHA" -- "$BASE_DOCKERFILE"',
     );
     expect(resolveBase).toContain('--file "$BASE_DOCKERFILE"');
+    expect(resolveBase).toContain("--provenance=false");
+    expect(resolveBase).toContain("--sbom=false");
     expect(resolveBase).toContain('--tag "$LOCAL_BASE_REFERENCE"');
+    expect(resolveBase).toContain('--output "type=docker,dest=${local_base_archive}"');
+    expect(resolveBase).toContain('--output "type=oci,dest=${local_base_oci_archive}"');
+    expect(resolveBase).toContain('docker load --input "$local_base_archive"');
+    expect(resolveBase).toContain('tar -C "$local_base_oci" -xf "$local_base_oci_archive"');
+    expect(resolveBase).toContain("if length == 1 then .[0].digest");
+    expect(resolveBase).toContain(
+      "printf 'oci=%s@%s\\n' \"$local_base_oci\" \"$local_base_oci_digest\"",
+    );
     expect(resolveBase).toContain('reference="${BASE_REPOSITORY}@${digest}"');
     expect(resolveBase).toContain('actual="sha256:$(sha256sum "$exact_raw"');
 
@@ -645,13 +655,18 @@ describe("complete managed-image publication workflow", () => {
     expect(login.if).toBe(sameRepository);
     expect(publish.if).toBe(sameRepository);
     expect(publish.with).toMatchObject({
-      builder: "${{ steps.base.outputs.local == 'true' && 'default' || steps.buildx.outputs.name }}",
+      builder: "${{ steps.buildx.outputs.name }}",
       platforms: "linux/amd64",
+      "build-contexts":
+        "${{ steps.base.outputs.local == 'true' && format('nemoclaw-pr-base=oci-layout://{0}', steps.base.outputs.oci) || '' }}",
       outputs:
         "type=image,name=${{ matrix.repository }},push-by-digest=true,name-canonical=true,push=true",
       provenance: false,
       sbom: false,
     });
+    expect(publish.with?.["build-args"]).toContain(
+      "BASE_IMAGE=${{ steps.base.outputs.local == 'true' && 'nemoclaw-pr-base' || steps.base.outputs.ref }}",
+    );
     expect(publish.with?.tags).toBeUndefined();
     expect(logout.if).toContain(sameRepository);
     expect(exportContract.if).toBe(sameRepository);
