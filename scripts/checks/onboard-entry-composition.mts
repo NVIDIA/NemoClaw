@@ -30,6 +30,7 @@ const LOGICAL_OPERATORS = new Set([
 ]);
 const RECOVERY_NAME = /recover|recovery|repair|restore|retry|fallback|rollback/i;
 const RECOVERY_FACTORY_NAME = /^(?:build|create|install|make)/i;
+const RECOVERY_ACTION_METHOD = /^(?:apply|execute|perform|recover|repair|restore|retry|rollback|run|start)$/i;
 
 type NamedScope = {
   readonly name: string;
@@ -171,7 +172,13 @@ function calledName(expression: ts.Expression): string | null {
 function isRecoveryCall(node: ts.Node): node is ts.CallExpression {
   if (!ts.isCallExpression(node)) return false;
   const name = calledName(node.expression);
-  return name !== null && !RECOVERY_FACTORY_NAME.test(name) && RECOVERY_NAME.test(name);
+  if (name === null || RECOVERY_FACTORY_NAME.test(name)) return false;
+  if (RECOVERY_NAME.test(name)) return true;
+  return (
+    ts.isPropertyAccessExpression(node.expression) &&
+    RECOVERY_ACTION_METHOD.test(name) &&
+    RECOVERY_NAME.test(node.expression.expression.getText())
+  );
 }
 
 // Count branches, short-circuit operators, condition-controlled loops, try statements, and

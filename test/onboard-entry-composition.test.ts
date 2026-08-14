@@ -268,6 +268,25 @@ describe("onboarding entry composition boundary", () => {
     expect(actual.gateway).toEqual({});
   });
 
+  it.each([
+    ["gateway", "gatewayRecovery.execute()"],
+    ["messaging", "messagingRecovery.execute()"],
+    ["policy", "policyRecovery.run()"],
+    ["provider", "providerRecovery.execute()"],
+  ] as const)("classifies a %s recovery action by its receiver", (category, call) => {
+    const actual = collectOnboardEntryDecisions(`function choose() { ${call}; }`);
+
+    expect(actual[category]).toEqual({ choose: 1 });
+  });
+
+  it("does not classify a recovery helper method as a recovery action", () => {
+    const actual = collectOnboardEntryDecisions(
+      "function choose() { providerRecovery.providerNameToOptionKey(); }",
+    );
+
+    expect(actual.provider).toEqual({});
+  });
+
   it("rejects a decision added within an allowed declaration", () => {
     const actual = collectOnboardEntryDecisions(
       "function handleRemoteProviderSelection(enabled: boolean) { if (enabled) useProvider(); if (enabled) useProviderAgain(); }",
