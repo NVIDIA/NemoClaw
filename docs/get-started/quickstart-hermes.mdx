@@ -39,27 +39,28 @@ Review the [Prerequisites](prerequisites) before you begin.
     Run the hosted installer.
 
     ```bash
-    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes NEMOCLAW_SANDBOX_NAME=my-hermes bash
     ```
   </Step>
 
   <Step title="Complete Onboarding">
-    Select **Hermes Agent** when the installer prompts you to choose an agent.
+    The explicit `NEMOCLAW_AGENT=hermes` setting keeps Hermes selected through interactive or Express setup.
 
     <Note>
-      On supported platforms, the installer can display `Run express install with these settings? [Y/n]:` before the agent-selection prompt.
+      On supported platforms other than N1x, the installer can display `Run express install with these settings? [Y/n]:` before ordinary onboarding.
+      N1x instead displays `Run the Deferred N1x preview with these settings? [Y/n]:`.
       Press Enter to use the recommended express install mode for that platform.
       This mode applies preset settings and runs the remaining onboarding non-interactively.
-      Express install mode installs OpenClaw by default.
-      If you accept, refer to [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart).
-      Enter `n` if you want to select Hermes, a sandbox name, an inference provider, and a model interactively.
+      Express install mode preserves the explicit Hermes selection in the install command.
+      On supported non-N1x express platforms, enter `n` if you want to select a sandbox name, an inference provider, and a model interactively.
+      On N1x, entering `n` stops installation because the Deferred managed-vLLM preview is the only admitted onboarding path.
       Refer to [Use Docker and supported platforms](#use-docker-and-supported-platforms) for more information.
     </Note>
 
-    When prompted for the sandbox name, enter `my-hermes` or press Enter to accept the suggested `hermes` name.
-    If you accept the suggested name, use `hermes` instead of `my-hermes` in the commands that follow.
-    Choose an inference provider and model, then provide its credential when prompted.
-    For a first run, skip optional web search and messaging setup, then accept the suggested network policy tier.
+    The install command creates the `my-hermes` sandbox used in the commands that follow.
+    If you accept Express setup, wait for the installer to finish, then continue with **Confirm the Sandbox Is Ready**; Express selects the provider and model non-interactively.
+    If the installer does not offer Express setup, or if you enter `n` at the Express prompt on a supported non-N1x host, choose an inference provider and model, then provide its credential when prompted.
+    For that interactive path, skip optional web search and messaging setup on a first run, then accept the suggested network policy tier.
   </Step>
 
   <Step title="Confirm the Sandbox Is Ready">
@@ -178,10 +179,16 @@ Use these details when your first-run path needs more control.
     Before you install from Windows, follow [Prepare a Windows Machine to Install NemoClaw](additional-setup/windows-preparation).
     Before you install on DGX Station, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation).
 
-    DGX Spark, qualifying DGX Station hosts, and Windows Subsystem for Linux (WSL) can offer the recommended express install mode after the third-party software notice.
+    DGX Spark, qualifying DGX Station, and Windows Subsystem for Linux (WSL) hosts can offer the recommended express install mode after the third-party software notice.
+    N1x can offer a Deferred preview after the notice, but full physical NemoClaw Express E2E validation is pending.
+    N1x remains outside the supported-platform set until that validation passes and the platform matrix status is promoted.
     Press Enter at the express install prompt to apply preset settings, switch the remaining onboarding to non-interactive mode, and select the managed local inference path for that platform.
-    Enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
+    On N1x, accept the preview prompt to apply those settings as explicit Deferred preview intent.
+    On supported non-N1x express platforms, enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
+    On N1x, declining the preview or setting only `NEMOCLAW_NO_EXPRESS=1` stops installation before onboarding.
+    Accept the preview, or set `NEMOCLAW_PROVIDER=install-vllm` before installation to provide the required explicit managed-vLLM intent.
     The first Hermes build can take several minutes because NemoClaw builds the Hermes sandbox base image when it is not already cached.
+    The N1x preview selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
     Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles and headless setup.
     Refer to [Set Up vLLM on Two DGX Stations](../inference/local-inference/set-up-vllm-on-two-dgx-stations) for the Deferred paired workflow.
     Refer to [Platform Support](../reference/platform-support) for current validation status.

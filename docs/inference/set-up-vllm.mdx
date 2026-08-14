@@ -11,6 +11,7 @@ content:
 ---
 
 NemoClaw can connect to an existing vLLM server or install and start a managed vLLM container on supported NVIDIA GPU hosts.
+It also provides a Deferred N1x preview pending a physical NemoClaw Express E2E run.
 
 <Note>
 NemoClaw forces the Chat Completions API path for vLLM.
@@ -35,7 +36,7 @@ Follow [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) or [Set Up
 
 ## Use an Existing Server
 
-When vLLM is already running on `localhost:8000`, NemoClaw detects it and queries `/v1/models` for the loaded model.
+On hosts other than N1x, when vLLM is already running on `localhost:8000`, NemoClaw detects it and queries `/v1/models` for the loaded model.
 
 Run onboarding.
 
@@ -44,10 +45,19 @@ $$nemoclaw onboard
 ```
 
 Select **Local vLLM**.
-On generic hosts, the entry includes an experimental label; on DGX Spark or DGX Station, it does not.
+On generic hosts, the entry includes an experimental label.
+N1x does not offer the existing-server entry; it offers only the managed **Install vLLM** or **Start vLLM** entry with the **Deferred preview** label.
 NemoClaw validates the detected endpoint and records the model reported by `/v1/models`.
 
-When an install request encounters an already-running server, NemoClaw selects that server instead of starting another container.
+On hosts other than N1x, when an install request encounters an already-running server, NemoClaw selects that server instead of starting another container.
+On N1x, explicit managed-preview intent never reuses an already-running server.
+Stop the server, then rerun managed onboarding.
+
+```bash
+NEMOCLAW_PROVIDER=install-vllm \
+  $$nemoclaw onboard --non-interactive
+```
+
 If the requested registry model and the served `id` differ, NemoClaw accepts the served `id` only when `/v1/models` reports a safe `root` that exactly matches the registry model.
 NemoClaw rejects mismatched or unverifiable roots, and it still requires the exact served identity for a newly started NemoClaw-managed container and for an existing shared-gateway route.
 When vLLM exposes runtime metadata such as `max_model_len`, NemoClaw uses that value for the configured context window unless you set `NEMOCLAW_CONTEXT_WINDOW`.
@@ -85,6 +95,7 @@ For the authenticated fixed profile, evaluate host exposure from its published D
 ## Install or Start Managed vLLM
 
 NemoClaw displays the **Install vLLM** or **Start vLLM** entry by default on DGX Spark and DGX Station.
+N1x displays the same entry with a **Deferred preview** label.
 Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm` before the managed entry appears.
 
 ### Discover Serving Profiles
@@ -128,7 +139,8 @@ The container carries NemoClaw ownership and immutable catalog labels so later o
 NemoClaw also records an owner-only, credential-free runtime receipt that binds those labels to the exact container ID and API-key fingerprint.
 
 If an existing `nemoclaw-vllm` container does not carry that label, NemoClaw preserves it and asks you to remove or rename it before installing managed vLLM.
-If another vLLM server already occupies port `8000`, NemoClaw selects the existing-server path and applies the model-identity checks described above.
+On hosts other than N1x, if another vLLM server already occupies port `8000`, NemoClaw selects the existing-server path and applies the model-identity checks described above.
+On N1x, NemoClaw stops managed onboarding and requires you to stop that server before trying the Deferred preview again.
 If another process holds the configured single-host port, NemoClaw stops the managed install before it persists a bearer key or records the selected model.
 NemoClaw also stops before storage prompts, cache creation, image pull, or container start.
 Stop the process, then run onboarding again.
@@ -136,6 +148,7 @@ Docker reports a bind failure if another process claims the port after this pref
 Managed profiles and model-specific recipes use immutable image digests:
 
 - DGX Spark and DGX Station models without a model-specific runtime use the `linux/arm64` digest `sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2` with a compressed layer size of `9.60 GB` under `nvcr.io/nvidia/vllm:26.05.post1-py3`.
+  N1x uses the same image.
 - The DGX Spark Muse Glimmer recipe uses the `linux/arm64` digest `sha256:ab0f5fc3bb81b9257a9aee801abcb0eeb94bb0523b57b2bb79349dc61e7c1e25` with a compressed layer size of `10.51 GB` under `vllm/vllm-openai`.
   It pins Hugging Face revision `d35cb79050f419c457611b1cee5c5d15b176f285` for the approximately `25.45 GB` model download.
 - The DGX Spark Nemotron 3.5 Lightning recipe uses the `linux/arm64` digest `sha256:3af90144a0926e5c5fe46ee16e5201e763dd854538b9d7ce433755f11dadaf78` with a compressed layer size of approximately `12.69 GB` under `vllm/vllm-openai`.
@@ -263,10 +276,11 @@ When you start managed vLLM outside the installer express flow, NemoClaw uses th
 | Host profile | Default model |
 |---|---|
 | DGX Spark | `nvidia/Qwen3.6-35B-A3B-NVFP4` |
+| N1x | `nvidia/Qwen3.6-35B-A3B-NVFP4` |
 | DGX Station | `deepseek-ai/DeepSeek-V4-Flash` |
 | Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
 
-For the managed single-node DGX Spark `nvidia/Qwen3.6-35B-A3B-NVFP4` profile, NemoClaw enables async scheduling and does not enable multi-token prediction (MTP) speculative decoding.
+For the managed one-host DGX Spark and N1x `nvidia/Qwen3.6-35B-A3B-NVFP4` profiles, NemoClaw enables async scheduling and does not enable multi-token prediction (MTP) speculative decoding.
 The profile retains `--gpu-memory-utilization 0.4`, a `262144`-token context window, `4` concurrent sequences, an `8192`-token batch limit, chunked prefill, prefix caching, and its registered parsers and acceleration backends.
 
 NVIDIA Nemotron 3.5 Lightning is an additional explicit-only single-DGX Spark profile and does not change the Qwen default.
@@ -330,6 +344,34 @@ The managed vLLM container reads the key while it runs, and the sandbox receives
 The key remains for a retry after cancellation, interruption, or a later preflight failure.
 A full uninstall removes it only after exact managed-runtime cleanup succeeds and no sibling gateway remains; gateway-scoped cleanup can preserve the host-global runtime and key for another gateway.
 
+### Use N1x Express
+
+On an N1x host that matches the required identity, the Deferred Express preview selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
+The installer uses the existing managed-vLLM image, download, container, receipt, recovery, and uninstall lifecycle.
+The installer applies the existing CUDA and Container Device Interface (CDI) readiness checks before it downloads the image or model.
+
+NemoClaw requires all of this N1x identity evidence:
+
+- The host runs Linux on `arm64`.
+- `/etc/fastos-release` is a regular file of 1 through 4,096 bytes that is owned by UID 0 and GID 0.
+- The marker is not a symbolic link, grants no group or world write access, and contains exactly one `NAME="N1x FASTOS"` line.
+- A display-class PCI device has NVIDIA vendor ID `10de` and device ID `2e2a`.
+
+NemoClaw parses `/etc/fastos-release` as inert text and does not source it.
+The classifier does not pin a FastOS version, kernel version, driver version, firmware version, or GPU UUID.
+Generic DMI values, such as `SKU 1` and `JMJWOA-Generic`, do not establish N1x identity by themselves.
+
+N1x Express does not activate DGX Spark cluster discovery, the fixed catalog path, managed llama.cpp, or NVIDIA NIM.
+Accepting the preview prompt sets explicit managed-vLLM intent for the narrow pending-validation readiness exception.
+Declining the prompt or setting only `NEMOCLAW_NO_EXPRESS=1` stops the installer before onboarding; neither path opens interactive provider selection.
+Set `NEMOCLAW_PROVIDER=install-vllm` when you need to bypass the prompt with the same explicit preview intent.
+
+<Warning title="N1x Express Qualification Pending">
+Physical CUDA and CDI checks passed on one N1x host.
+The full NemoClaw Express E2E test is still pending, so the N1x platform status remains Deferred.
+Do not claim this path as supported until [Platform Support](../../reference/platform-support) reports a promoted status.
+</Warning>
+
 On DGX Station, accepting the installer express prompt selects `NEMOCLAW_VLLM_MODEL=nemotron-3-ultra-550b-a55b`.
 Express uses the single-Station Ultra recipe unless a trusted reciprocal pair qualifies for distributed serving.
 Refer to [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for pair qualification, lifecycle receipts, runtime topology, and network controls.
@@ -377,14 +419,14 @@ If no server is running, it selects the managed install or start entry.
 If neither local entry is available, it selects NVIDIA Endpoints.
 On DGX Station and other hosts, an unset provider keeps NVIDIA Endpoints as the automatic default.
 
-Use an already-running server.
+On hosts other than N1x, use an already-running server.
 
 ```bash
 NEMOCLAW_PROVIDER=vllm \
   $$nemoclaw onboard --non-interactive
 ```
 
-Install or start managed vLLM on a supported host.
+Install or start managed vLLM on a supported host, or explicitly enter the Deferred N1x preview.
 
 ```bash
 NEMOCLAW_PROVIDER=install-vllm \
@@ -392,6 +434,7 @@ NEMOCLAW_PROVIDER=install-vllm \
 ```
 
 On DGX Spark and DGX Station, `NEMOCLAW_PROVIDER=install-vllm` is sufficient for a non-interactive run.
+On N1x, that setting is explicit preview intent and waives only the pending physical-validation finding after the N1x identity qualifies.
 Add `NEMOCLAW_EXPERIMENTAL=1` on a generic Linux NVIDIA GPU host.
 Non-interactive runs use the profile default unless you set `NEMOCLAW_VLLM_MODEL`.
 
@@ -433,10 +476,10 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
 Set `NEMOCLAW_VLLM_MODEL=<slug>` before onboarding to select a model without prompting.
 NemoClaw applies the registered `vllm serve` arguments, including the reasoning parser, tool-call parser, and `--max-model-len`.
 
-| Slug | Hugging Face model | Supported host profiles | Minimum compute capability | Notes |
+| Slug | Hugging Face model | Registered host profiles | Minimum compute capability | Notes |
 |---|---|---|---|---|
 | `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | `8.9` | Supported override. |
-| `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | DGX Spark | `12.1` | DGX Spark default. |
+| `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | DGX Spark, N1x | `12.1` | DGX Spark and N1x default. |
 | `muse-glimmer-30b` | `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` | DGX Spark | `12.1` | Experimental single-DGX Spark choice for text, reasoning, and structured tool calls. NemoClaw does not enable or support DFlash for this profile. |
 | `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | `8.9` | Generic Linux NVIDIA GPU default. |
 | `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | DGX Station | `10.0` | DGX Station profile default outside express install. |
@@ -476,7 +519,7 @@ NEMOCLAW_PROVIDER=install-vllm \
 
 If the selected image does not support an argument, the managed container exits and NemoClaw prints the log tail.
 
-To bound resource use while investigating long-context workflows on a single DGX Spark, select the Qwen profile.
+To bound resource use while investigating long-context workflows on one DGX Spark or N1x host, select the Qwen profile.
 The following override disables async scheduling and lowers the context window, concurrent-sequence limit, and batch limit.
 
 ```bash
@@ -487,7 +530,7 @@ NEMOCLAW_PROVIDER=install-vllm \
 ```
 
 This override reduces request concurrency and context capacity, so it can reduce throughput.
-It does not guarantee protection against a DGX Spark host freeze.
+It does not guarantee protection against a DGX Spark or N1x host freeze.
 
 ## Related Topics
 
