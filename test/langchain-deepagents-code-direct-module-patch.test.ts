@@ -218,27 +218,24 @@ else:
   it.each([
     ["-y"],
     ["--auto-approve"],
-  ])(
-    "preserves explicit direct-module auto-approval in thread-opt-in mode: %s (#6478)",
-    (...args) => {
-      const tempDir = createPackageFixture();
-      patchFixture(tempDir);
-      writeManagedAutoApproval(tempDir, "thread-opt-in\n");
-      const result = spawnSync("python3", ["-m", "deepagents_code", ...args], {
-        env: {
-          PATH: process.env.PATH,
-          PYTHONPATH: tempDir,
-          NEMOCLAW_DCODE_AUTO_APPROVAL: "disabled",
-        },
-        encoding: "utf8",
-      });
+  ])("preserves explicit direct-module auto-approval in thread-opt-in mode: %s (#6478)", (...args) => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    writeManagedAutoApproval(tempDir, "thread-opt-in\n");
+    const result = spawnSync("python3", ["-m", "deepagents_code", ...args], {
+      env: {
+        PATH: process.env.PATH,
+        PYTHONPATH: tempDir,
+        NEMOCLAW_DCODE_AUTO_APPROVAL: "disabled",
+      },
+      encoding: "utf8",
+    });
 
-      expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain("managed-posture-ok auto_approve=False yolo=True");
-      expect(result.stderr).toContain("Auto-approval is enabled for this thread");
-      expect(result.stderr).toContain("shell commands");
-    },
-  );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("managed-posture-ok auto_approve=False yolo=True");
+    expect(result.stderr).toContain("Auto-approval is enabled for this thread");
+    expect(result.stderr).toContain("shell commands");
+  });
 
   it("validates exact trusted auto-approval state and otherwise fails closed (#6478)", () => {
     const tempDir = createPackageFixture();
