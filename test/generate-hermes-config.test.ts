@@ -313,7 +313,6 @@ function findRawSecretEnvEntries(envFile: string): string[] {
     if (
       allowedLiterals.has(value) ||
       value.startsWith("openshell:resolve:env:") ||
-      /^Bearer openshell:resolve:env:v[0-9]{1,20}_[A-Z][A-Z0-9_]{0,127}$/.test(value) ||
       slackAlias.test(value)
     ) {
       continue;

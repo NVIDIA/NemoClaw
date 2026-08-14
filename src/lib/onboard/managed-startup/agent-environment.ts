@@ -142,6 +142,7 @@ const OPENCLAW_APPLICATION_RUNTIME_INPUTS = Object.freeze([
   ["NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS", "positive-finite-seconds"],
   ["NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS", "positive-finite-seconds"],
 ] as const);
+const HERMES_SWITCHYARD_ROUTING_TRANSPORT = "NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64";
 
 function booleanFlag(value: boolean): "0" | "1" {
   return value ? "1" : "0";
@@ -217,6 +218,12 @@ function applicationRuntimePlan(
     for (const [name] of OPENCLAW_APPLICATION_RUNTIME_INPUTS) {
       unsetEnvironment.add(name);
     }
+  }
+  if (
+    profile.agentConfig.agent !== "hermes" ||
+    profile.agentConfig.switchyardRouting === undefined
+  ) {
+    unsetEnvironment.add(HERMES_SWITCHYARD_ROUTING_TRANSPORT);
   }
   return Object.freeze({
     exportEnvironment: sortedEnvironment(exportEnvironment),

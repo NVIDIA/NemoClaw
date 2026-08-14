@@ -521,12 +521,10 @@ describe("buildManagedStartupProfile", () => {
       hermesInput({ hermesSwitchyardRouting: HERMES_SWITCHYARD_ROUTING }),
     );
 
-    expect(built.profile.agentConfig).toMatchObject({
+    expect(built.profile.agentConfig).toEqual({
       agent: "hermes",
-      switchyardRouting: {
-        algorithm: "llm_classifier",
-        targets: [{ role: "judge" }, { role: "weak" }, { role: "strong" }],
-      },
+      switchyardRouting: HERMES_SWITCHYARD_ROUTING,
+      webSearch: { enabled: false, provider: "tavily" },
     });
   });
 

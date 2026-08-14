@@ -33,9 +33,6 @@ SECRET_KEY_RE = re.compile(
     r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API|AUTHORIZATION)(_|$)"
 )
 PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
-REVISION_BOUND_HEADER_PLACEHOLDER_RE = re.compile(
-    r"^(?:Bearer )?openshell:resolve:env:v[0-9]{1,20}_[A-Z][A-Z0-9_]{0,127}$"
-)
 REVISION_BOUND_RESOLVER_RE = re.compile(
     r"^openshell:resolve:env:v([0-9]{1,20})_([A-Z][A-Z0-9_]{0,127})$"
 )
@@ -369,8 +366,6 @@ def is_allowed_value(value: str) -> bool:
         return True
     if PLACEHOLDER_RE.fullmatch(value):
         return True
-    if REVISION_BOUND_HEADER_PLACEHOLDER_RE.fullmatch(value):
-        return True
     return False
 
 
@@ -517,34 +512,149 @@ def validate_env_file(path: str) -> int:
     return 1
 
 
-def _read_switchyard_runtime_bindings(path: str) -> bytes | None:
-    """Read the fixed root-owned routing env-key manifest without following symlinks."""
+def _is_installed_boundary_validator() -> bool:
+    return os.path.realpath(__file__) == INSTALLED_BOUNDARY_VALIDATOR
 
-    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(
-        os, "O_CLOEXEC", 0
-    )
-    flags |= getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(path, flags)
-    except FileNotFoundError:
-        return None
-    except OSError as exc:
+
+def _switchyard_installed_owner() -> tuple[int, int]:
+    return 0, 0
+
+
+def _validate_switchyard_directory_descriptor(
+    fd: int, installed_mode: bool
+) -> tuple[int, int, int, int, int]:
+    st = os.fstat(fd)
+    if not stat.S_ISDIR(st.st_mode):
         raise UnsafeEnvInputError(
-            "the installed Switchyard runtime bindings are unreadable or unsafe"
-        ) from exc
-    try:
-        before = os.fstat(descriptor)
-        installed_mode = (
-            os.path.abspath(__file__) == INSTALLED_BOUNDARY_VALIDATOR
-            and path == INSTALLED_SWITCHYARD_RUNTIME_BINDINGS
+            "the Switchyard runtime bindings have an unsafe ancestor"
         )
+    mode = stat.S_IMODE(st.st_mode)
+    if installed_mode:
+        trusted = (
+            (st.st_uid, st.st_gid) == _switchyard_installed_owner()
+            and mode & 0o022 == 0
+        )
+    else:
+        trusted = st.st_uid in _allowed_path_owner_uids() and not (
+            mode & 0o002 and not mode & stat.S_ISVTX
+        )
+    if not trusted:
+        raise UnsafeEnvInputError(
+            "the Switchyard runtime bindings have an unsafe ancestor"
+        )
+    return _directory_identity(st)
+
+
+def _verify_switchyard_path_chain(
+    file_fd: int,
+    expected_file_identity: tuple[int, ...],
+    final_directory_fd: int,
+    chain: list[tuple[int, str, int, tuple[int, int, int, int, int]]],
+    basename: str,
+) -> None:
+    for parent_fd, component, child_fd, expected in chain:
+        if _directory_identity(os.fstat(child_fd)) != expected:
+            raise UnsafeEnvInputError(
+                "the Switchyard runtime bindings changed while they were read"
+            )
+        current = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(current.st_mode)
+            or _directory_identity(current) != expected
+        ):
+            raise UnsafeEnvInputError(
+                "the Switchyard runtime bindings changed while they were read"
+            )
+    current_file = os.stat(
+        basename, dir_fd=final_directory_fd, follow_symlinks=False
+    )
+    if (
+        not stat.S_ISREG(current_file.st_mode)
+        or _file_identity(current_file) != expected_file_identity
+        or _file_identity(os.fstat(file_fd)) != expected_file_identity
+    ):
+        raise UnsafeEnvInputError(
+            "the Switchyard runtime bindings changed while they were read"
+        )
+
+
+def _read_switchyard_runtime_bindings(path: str) -> bytes | None:
+    """Read the routing env-key manifest through a stable descriptor chain."""
+
+    installed_mode = _is_installed_boundary_validator()
+    if installed_mode and path != INSTALLED_SWITCHYARD_RUNTIME_BINDINGS:
+        raise UnsafeEnvInputError(
+            "the installed validator only accepts its canonical Switchyard runtime bindings"
+        )
+    if not os.path.isabs(path):
+        raise UnsafeEnvInputError(
+            "the Switchyard runtime bindings path must be absolute"
+        )
+    # Source-checkout tests may exercise an explicit temporary manifest. Resolve
+    # only that development parent before pinning every component descriptor;
+    # the installed validator never resolves or accepts an alternate path.
+    if installed_mode:
+        # The Hermes sandbox policy deliberately denies opening `/`. Anchor at
+        # the fixed image-owned directory and verify that descriptor plus the
+        # canonical basename instead of traversing from the filesystem root.
+        root_path = os.path.dirname(INSTALLED_SWITCHYARD_RUNTIME_BINDINGS)
+        components = [os.path.basename(INSTALLED_SWITCHYARD_RUNTIME_BINDINGS)]
+    else:
+        normalized = os.path.join(
+            os.path.realpath(os.path.dirname(path)), os.path.basename(path)
+        )
+        root_path = os.sep
+        components = [component for component in normalized.split(os.sep) if component]
+    if not components:
+        raise UnsafeEnvInputError(
+            "the Switchyard runtime bindings path has no file component"
+        )
+
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    cloexec = getattr(os, "O_CLOEXEC", 0)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | nofollow | cloexec
+    file_flags = (
+        os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | nofollow | cloexec
+    )
+    directory_fds: list[int] = []
+    chain: list[tuple[int, str, int, tuple[int, int, int, int, int]]] = []
+    file_fd = -1
+    try:
+        root_fd = os.open(root_path, directory_flags)  # codeql[py/file-not-closed]
+        try:
+            directory_fds.append(root_fd)
+        except BaseException:
+            os.close(root_fd)
+            raise
+        root_identity = _validate_switchyard_directory_descriptor(
+            root_fd, installed_mode
+        )
+        chain.append((root_fd, ".", root_fd, root_identity))
+        current_fd = root_fd
+        for component in components[:-1]:
+            child_fd = os.open(  # codeql[py/file-not-closed]
+                component, directory_flags, dir_fd=current_fd
+            )
+            try:
+                directory_fds.append(child_fd)
+            except BaseException:
+                os.close(child_fd)
+                raise
+            identity = _validate_switchyard_directory_descriptor(
+                child_fd, installed_mode
+            )
+            chain.append((current_fd, component, child_fd, identity))
+            current_fd = child_fd
+
+        basename = components[-1]
+        file_fd = os.open(basename, file_flags, dir_fd=current_fd)
+        before = os.fstat(file_fd)
+        mode = stat.S_IMODE(before.st_mode)
         trusted_metadata = (
-            before.st_uid == 0
-            and before.st_gid == 0
-            and stat.S_IMODE(before.st_mode) == 0o444
+            (before.st_uid, before.st_gid) == _switchyard_installed_owner()
+            and mode == 0o444
             if installed_mode
-            else before.st_uid in _allowed_path_owner_uids()
-            and stat.S_IMODE(before.st_mode) & 0o022 == 0
+            else before.st_uid in _allowed_path_owner_uids() and mode & 0o022 == 0
         )
         if (
             not stat.S_ISREG(before.st_mode)
@@ -554,28 +664,35 @@ def _read_switchyard_runtime_bindings(path: str) -> bytes | None:
             or before.st_size > MAX_SWITCHYARD_RUNTIME_BINDINGS_BYTES
         ):
             raise UnsafeEnvInputError(
-                "the installed Switchyard runtime bindings must be a bounded root:root mode 0444 file"
+                "the installed Switchyard runtime bindings have unsafe metadata"
             )
         chunks: list[bytes] = []
         remaining = before.st_size
         while remaining > 0:
-            chunk = os.read(descriptor, min(remaining, 64 * 1024))
+            chunk = os.read(file_fd, min(remaining, 64 * 1024))
             if not chunk:
                 break
             chunks.append(chunk)
             remaining -= len(chunk)
-        if remaining != 0 or os.read(descriptor, 1):
+        if remaining != 0 or os.read(file_fd, 1):
             raise UnsafeEnvInputError(
-                "the installed Switchyard runtime bindings changed while they were read"
+                "the Switchyard runtime bindings changed while they were read"
             )
-        after = os.fstat(descriptor)
-        if _file_identity(before) != _file_identity(after):
-            raise UnsafeEnvInputError(
-                "the installed Switchyard runtime bindings changed while they were read"
-            )
+        _verify_switchyard_path_chain(
+            file_fd, _file_identity(before), current_fd, chain, basename
+        )
         return b"".join(chunks)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise UnsafeEnvInputError(
+            "the installed Switchyard runtime bindings are unreadable or unsafe"
+        ) from exc
     finally:
-        os.close(descriptor)
+        if file_fd != -1:
+            os.close(file_fd)
+        for fd in reversed(directory_fds):
+            os.close(fd)
 
 
 def _switchyard_runtime_bindings(
@@ -647,17 +764,22 @@ def validate_switchyard_runtime_env(
     return sorted(set(violations))
 
 
+def _emit_switchyard_contract_failure() -> None:
+    print(
+        "[SECURITY] Refusing Hermes startup because the Switchyard runtime "
+        "binding contract is missing, malformed, or unsafe.",
+        file=sys.stderr,
+    )
+
+
 def validate_runtime_env(env: dict[str, str] | None = None) -> int:
     source = os.environ if env is None else env
     violations: list[str] = []
     violation_count = 0
     try:
         routing_violations = validate_switchyard_runtime_env(dict(source))
-    except UnsafeEnvInputError as exc:
-        print(
-            f"[SECURITY] Refusing Hermes startup because {exc}",
-            file=sys.stderr,
-        )
+    except UnsafeEnvInputError:
+        _emit_switchyard_contract_failure()
         return 1
     for key in routing_violations:
         violation_count += 1
@@ -668,6 +790,11 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
         if len(violations) < MAX_VIOLATIONS:
             violations.append("HERMES_LAZY_INSTALL_TARGET")
     for key, value in sorted(source.items()):
+        if key.startswith("SWITCHYARD_"):
+            # The routing contract above validates every expected, missing, or
+            # extra Switchyard binding. Do not count the same key again in the
+            # generic secret-shaped environment scan.
+            continue
         if key in OPENSHELL_SUPERVISOR_ONLY_ENV_KEYS:
             violation_count += 1
             if len(violations) < MAX_VIOLATIONS:
@@ -891,13 +1018,18 @@ def main(argv: list[str]) -> int:
     if args.mode == "mask-config-output":
         return mask_config_output(sys.stdin, sys.stdout)
     if args.mode == "switchyard-runtime-env":
-        violations = validate_switchyard_runtime_env(dict(os.environ), args.path)
+        try:
+            violations = validate_switchyard_runtime_env(dict(os.environ), args.path)
+        except UnsafeEnvInputError:
+            _emit_switchyard_contract_failure()
+            return 1
         if not violations:
             return 0
         _emit_violations(
             "[SECURITY] Refusing Hermes startup because the process environment "
             "contains an incomplete or mixed-revision Switchyard provider snapshot.",
-            violations,
+            violations[:MAX_VIOLATIONS],
+            max(0, len(violations) - MAX_VIOLATIONS),
         )
         return 1
     assert args.mode == "runtime-env", (

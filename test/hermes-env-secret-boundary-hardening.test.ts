@@ -277,6 +277,70 @@ raise SystemExit(module.validate_env_file(sys.argv[3]))`,
     }
   });
 
+  it("anchors installed Switchyard validation below root when Landlock denies opening root", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-switchyard-landlock-root-"));
+    const bindings = path.join(root, "hermes-switchyard-runtime-bindings.json");
+    const roles = ["judge", "weak", "strong"] as const;
+    fs.writeFileSync(
+      bindings,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        targets: roles.map((role) => ({
+          role,
+          headerEnv: [
+            {
+              envKey: `SWITCHYARD_${role.toUpperCase()}_AUTHORIZATION`,
+              headerName: "authorization",
+            },
+          ],
+        })),
+      })}\n`,
+      { mode: 0o444 },
+    );
+    fs.chmodSync(bindings, 0o444);
+    try {
+      const result = spawnSync(
+        "python3",
+        [
+          "-c",
+          `import errno, importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("validator", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.__file__ = module.INSTALLED_BOUNDARY_VALIDATOR
+module.INSTALLED_SWITCHYARD_RUNTIME_BINDINGS = sys.argv[2]
+module._switchyard_installed_owner = lambda: (os.geteuid(), os.getegid())
+original_open = module.os.open
+def landlock_open(path, *args, **kwargs):
+    if path == os.sep:
+        raise PermissionError(errno.EACCES, "Landlock denied root", path)
+    return original_open(path, *args, **kwargs)
+module.os.open = landlock_open
+raise SystemExit(module.main(["switchyard-runtime-env", sys.argv[2]]))`,
+          VALIDATOR,
+          bindings,
+        ],
+        {
+          encoding: "utf-8",
+          timeout: 5000,
+          env: {
+            PATH: process.env.PATH ?? "",
+            ...Object.fromEntries(
+              roles.map((role) => {
+                const envKey = `SWITCHYARD_${role.toUpperCase()}_AUTHORIZATION`;
+                return [envKey, `openshell:resolve:env:v7_${envKey}`];
+              }),
+            ),
+          },
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toBe("");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("makes startup fail closed for a missing env or broken ancestor", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-missing-"));
     const missingEnvHome = path.join(root, "missing-env");

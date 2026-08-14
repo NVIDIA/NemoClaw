@@ -8,6 +8,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    "rewriteRelativeImportExtensions": true,
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,

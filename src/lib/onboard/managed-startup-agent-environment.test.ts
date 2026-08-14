@@ -50,6 +50,7 @@ const OPENCLAW_APPLICATION_RUNTIME_NAMES = [
 const UNSUPPORTED_AGENT_RUNTIME_UNSETS = [
   ...OPENCLAW_APPLICATION_RUNTIME_NAMES,
   "NEMOCLAW_DASHBOARD_BIND",
+  "NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64",
   "NEMOCLAW_MINIMAL_BOOTSTRAP",
 ] as const;
 
@@ -329,7 +330,7 @@ describe("managed startup agent environment", () => {
         NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",
         NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
       },
-      unsetEnvironment: [],
+      unsetEnvironment: ["NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64"],
     });
     expect(Object.isFrozen(result.applicationRuntime)).toBe(true);
     expect(Object.isFrozen(result.applicationRuntime.exportEnvironment)).toBe(true);
@@ -445,7 +446,7 @@ describe("managed startup agent environment", () => {
         mapManagedStartupProfileToAgentEnvironment(openClawProfile()).applicationRuntime,
       ).toEqual({
         exportEnvironment: {},
-        unsetEnvironment: [],
+        unsetEnvironment: ["NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64"],
       });
     } finally {
       delete process.env[name];
@@ -550,6 +551,21 @@ describe("managed startup agent environment", () => {
     expect(readHermesBuildSettings(result.configurationEnvironment).switchyardRouting).toEqual(
       HERMES_SWITCHYARD_ROUTING,
     );
+    expect(result.applicationRuntime.unsetEnvironment).not.toContain(
+      "NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64",
+    );
+  });
+
+  it("removes ambient Switchyard configuration when Hermes routing is absent (#8887)", () => {
+    const result = mapManagedStartupProfileToAgentEnvironment(hermesProfile());
+
+    expect(result.configurationEnvironment).not.toHaveProperty(
+      "NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64",
+    );
+    expect(result.applicationRuntime.unsetEnvironment).toContain(
+      "NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64",
+    );
+    expect(readHermesBuildSettings(result.configurationEnvironment).switchyardRouting).toBeNull();
   });
 
   it("keeps DCode routing and auto-approval in root-owned files instead of ambient runtime env", () => {

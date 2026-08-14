@@ -305,6 +305,19 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
     expect(ambient).toHaveProperty("NEMOCLAW_MINIMAL_BOOTSTRAP", "1");
   });
 
+  it("removes ambient Switchyard transport from routing-disabled Hermes children (#8887)", () => {
+    const mapped = mapManagedStartupProfileToAgentEnvironment(managedStartupE2eProfile("hermes"));
+    const child = applyManagedStartupCommandEnvironmentPlan(
+      {
+        NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64: "ambient-untrusted-routing",
+        PRESERVED: "yes",
+      },
+      mapped.applicationRuntime,
+    );
+
+    expect(child).toEqual({ PRESERVED: "yes" });
+  });
+
   it.each([
     "hermes",
     "langchain-deepagents-code",

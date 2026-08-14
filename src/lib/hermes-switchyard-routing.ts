@@ -139,7 +139,9 @@ function validateHeaderEnvironment(
     seenEnvironmentKeys.add(envKey);
     return { headerName, envKey };
   });
-  return bindings.sort((left, right) => left.headerName.localeCompare(right.headerName));
+  return bindings.sort((left, right) =>
+    left.headerName < right.headerName ? -1 : left.headerName > right.headerName ? 1 : 0,
+  );
 }
 
 function validateTarget(value: unknown, index: number): HermesSwitchyardTarget {
@@ -278,7 +280,7 @@ export function parseHermesSwitchyardRelayToml(
         fail(`Relay TOML string is malformed on line ${String(index + 1)}`);
     } else if (rawValue === "true" || rawValue === "false") {
       parsed = rawValue === "true";
-    } else if (/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/u.test(rawValue)) {
+    } else if (/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/u.test(rawValue)) {
       parsed = Number(rawValue);
       if (!Number.isFinite(parsed))
         fail(`Relay TOML number is invalid on line ${String(index + 1)}`);

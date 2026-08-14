@@ -5,10 +5,8 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
 
-import {
-  type HermesSwitchyardRouting,
-  validateHermesSwitchyardRouting,
-} from "../../hermes-switchyard-routing";
+import type { HermesSwitchyardRouting } from "../../hermes-switchyard-routing";
+import { validateHermesSwitchyardRouting } from "../../hermes-switchyard-routing.ts";
 
 /**
  * Versioned, bounded schema for managed-image startup intent.

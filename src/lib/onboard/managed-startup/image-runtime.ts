@@ -77,6 +77,7 @@ export const HERMES_INSTALLED_RELAY_PLUGINS_FILE = HERMES_SWITCHYARD_RELAY_TOML;
 export const HERMES_INSTALLED_SWITCHYARD_RUNTIME_BINDINGS_FILE =
   HERMES_SWITCHYARD_RUNTIME_BINDINGS;
 const MAX_HERMES_RELAY_PLUGINS_BYTES = 128 * 1024;
+const MAX_HERMES_SWITCHYARD_RUNTIME_BINDINGS_BYTES = 16 * 1024;
 const FIXED_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 export const MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION = 1;
@@ -929,7 +930,10 @@ export function verifyHermesRelayPluginsConfiguration(
   ) {
     fail("committed Hermes Relay TOML drifted");
   }
-  const bindings = readStableRegularFileSnapshot(runtimeBindingsTarget, 16 * 1024);
+  const bindings = readStableRegularFileSnapshot(
+    runtimeBindingsTarget,
+    MAX_HERMES_SWITCHYARD_RUNTIME_BINDINGS_BYTES,
+  );
   const expectedBindings = Buffer.from(serializeHermesSwitchyardRuntimeBindings(routing), "utf8");
   if (
     bindings.stat.uid !== 0n ||
