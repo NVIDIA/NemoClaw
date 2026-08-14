@@ -20,8 +20,13 @@ Update it whenever `agents/pi/pi-runtime/package-lock.json` changes.
 The package and integrity values match the accepted decision record for the Pi 0.84.1 candidate.
 The image build asserts the version against `package.json` and the integrity value against the lockfile before installing, so an edited pin fails the build instead of shipping.
 
-The base image installs the graph with `npm ci --omit=dev --ignore-scripts`, so npm verifies all 144 resolved tarballs against committed SHA-512 integrity values and no install lifecycle script runs during the build.
-The published package declares `hasShrinkwrap`, so its own transitive resolution is fixed by the upstream shrinkwrap rather than re-resolved per build. The upstream shrinkwrap omitted integrity for six nested `@earendil-works` archives; the committed NemoClaw lockfile supplies the registry-published SHA-512 values, independently confirmed against the downloaded tarball bytes on August 14, 2026.
+The lockfile records committed SHA-512 integrity values for all 144 resolved tarballs.
+The base image installs the graph with `npm ci --omit=dev --ignore-scripts`.
+npm verifies each downloaded tarball, and the build does not run install lifecycle scripts.
+The published tarball includes `npm-shrinkwrap.json`, which fixes its transitive resolution.
+The upstream shrinkwrap omitted integrity for six nested `@earendil-works` archives.
+The NemoClaw lockfile supplies the registry-published SHA-512 values.
+A reviewer independently confirmed those values against the downloaded tarball bytes on August 14, 2026.
 The install is pinned to one exact version: a later Pi release requires a new dependency review, new integrity values, and new image digests.
 
 The base image, the final image, and the startup entrypoint each set `PI_OFFLINE=1` and `PI_TELEMETRY=0`.
