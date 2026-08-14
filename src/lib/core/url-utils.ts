@@ -48,6 +48,23 @@ export function normalizeProviderBaseUrl(
   }
 }
 
+/** True when an endpoint input carries userinfo, query, or fragment components. */
+export function endpointUrlHasUserinfoQueryOrFragment(value: string | null | undefined): boolean {
+  const raw = String(value || "").trim();
+  if (!raw) return false;
+  try {
+    const url = new URL(raw);
+    // A scheme-less input such as user:pass@host/v1 parses with scheme
+    // "user:" and empty userinfo; classify it from the raw string instead.
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return /[?#@]/.test(raw);
+    }
+    return Boolean(url.username || url.password || url.search || url.hash);
+  } catch {
+    return /[?#]/.test(raw);
+  }
+}
+
 /** Return the bounded canonical form of a credential-free HTTP(S) provider endpoint. */
 export function canonicalEndpoint(
   value: string | null | undefined,

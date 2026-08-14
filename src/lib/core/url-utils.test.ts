@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalEndpoint,
   compactText,
+  endpointUrlHasUserinfoQueryOrFragment,
   formatEnvAssignment,
   isLoopbackHostname,
   normalizeProviderBaseUrl,
@@ -111,6 +112,25 @@ describe("canonicalEndpoint", () => {
     ],
   ] as const)("normalizes %s", (_label, input, flavor, expected) => {
     expect(canonicalEndpoint(input, flavor)).toBe(expected);
+  });
+});
+
+describe("endpointUrlHasUserinfoQueryOrFragment", () => {
+  it.each([
+    ["query string", "http://127.0.0.1:8000/v1/custom-path?param=value", true],
+    ["fragment", "https://proxy.example.com/v1#fragment", true],
+    ["userinfo", "https://user:password@proxy.example.com/v1", true],
+    ["username only", "https://user@proxy.example.com/v1", true],
+    ["scheme-less userinfo", "user:password@proxy.example.com/v1", true],
+    ["scheme-less userinfo with query", "user:password@proxy.example.com/v1?x=1", true],
+    ["clean base URL with path", "http://127.0.0.1:8000/v1/custom-path", false],
+    ["clean origin", "https://proxy.example.com", false],
+    ["unparseable input with a query", "not a url ?x=1", true],
+    ["unparseable input without a query", "not a url", false],
+    ["empty input", "", false],
+    ["whitespace input", "   ", false],
+  ] as const)("classifies %s (#9106)", (_label, input, expected) => {
+    expect(endpointUrlHasUserinfoQueryOrFragment(input)).toBe(expected);
   });
 });
 

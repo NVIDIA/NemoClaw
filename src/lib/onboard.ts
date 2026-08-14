@@ -792,7 +792,9 @@ const {
 
 // URL/string utilities — delegated to src/lib/core/url-utils.ts
 const {
+  canonicalEndpoint,
   compactText,
+  endpointUrlHasUserinfoQueryOrFragment,
   normalizeProviderBaseUrl,
   isLoopbackHostname,
   formatEnvAssignment,
@@ -2999,6 +3001,28 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
     }
     if (navigation === "exit") {
       exitOnboardFromPrompt();
+    }
+    // #9106: reject instead of silently stripping components that NemoClaw
+    // cannot forward to the endpoint.
+    if (endpointUrlHasUserinfoQueryOrFragment(endpointInput)) {
+      console.error("  Endpoint URL must not contain userinfo, query, or fragment components.");
+      // canonicalEndpoint returns null unless the stripped base is a
+      // credential-free http(s) URL, so the hint never echoes userinfo or
+      // query values.
+      const strippedBaseUrl = canonicalEndpoint(
+        normalizeProviderBaseUrl(endpointInput, kind),
+        kind,
+      );
+      if (strippedBaseUrl) {
+        console.error(
+          `  NemoClaw does not forward these components to the endpoint. Use: ${strippedBaseUrl}`,
+        );
+      }
+      if (isNonInteractive()) {
+        process.exit(1);
+      }
+      console.log("");
+      return "retry-selection";
     }
     state.endpointUrl = normalizeProviderBaseUrl(endpointInput, kind);
     if (!state.endpointUrl) {
