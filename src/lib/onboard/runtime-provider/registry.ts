@@ -730,6 +730,7 @@ export function requireRuntimeProviderHostLocalInferenceOperation(
   bundle: RuntimeProviderBundle,
   service: HostLocalInferenceService,
   input: HostLocalInferenceOperationInput,
+  candidate?: HostLocalInferenceOperation,
 ): HostLocalInferenceOperation {
   const surface = bundle.hostLocalInference;
   if (
@@ -749,7 +750,7 @@ export function requireRuntimeProviderHostLocalInferenceOperation(
       `Runtime provider '${bundle.identity.id}' does not provide an operation-scoped host-local-inference engine for ${service}.`,
     );
   }
-  const operation = surface.createOperation(input);
+  const operation = candidate ?? surface.createOperation(input);
   if (
     operation.providerId !== bundle.identity.id ||
     operation.engine.operation !== "host-local-inference" ||

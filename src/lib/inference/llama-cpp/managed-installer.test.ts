@@ -772,6 +772,20 @@ describe("managed llama.cpp installer", () => {
     const createLifecycle = vi.fn(() => lifecycle);
     const operation = managedOperation(harness.engine, createLifecycle);
     const runtimeProvider = managedRuntimeProvider(harness.engine, createLifecycle);
+    const mismatchedOperation = managedOperation(
+      { ...harness.engine, engineId: "other-engine" },
+      createLifecycle,
+    );
+
+    expect(() =>
+      rehydrateManagedLlamaCppLifecycle({
+        runtimeProvider,
+        runtimeOwnerSandboxName: "spark-agent",
+        homeDir,
+        operation: mismatchedOperation,
+      }),
+    ).toThrow("returned mismatched host-local-inference authority");
+    expect(createLifecycle).not.toHaveBeenCalled();
 
     const rehydrated = rehydrateManagedLlamaCppLifecycle({
       runtimeProvider,
