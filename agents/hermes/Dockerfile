@@ -1150,7 +1150,50 @@ RUN set -eu; \
 # gateway must retain import access after the lock while both runtime identities
 # remain unable to mutate the dependency tree. Remove the probe install so the
 # published image still performs installation only when Hindsight is selected.
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
+# uv creates the Hermes virtual environment without pip. Seed pip from Python's
+# bundled ensurepip payload while this layer is still root, then verify the
+# sandbox can read but cannot modify the virtual environment used by the lazy
+# installer. The Hermes lazy installer still installs the approved dependency
+# as the sandbox user.
+RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
+    && /opt/hermes/.venv/bin/python -I -m pip --version \
+    && chmod 644 /opt/hermes/.venv/.lock \
+    && test "$(stat -c '%U:%G %a' /opt/hermes/.venv/.lock)" = "root:root 644" \
+    && test "$(stat -c '%U:%G %a' /opt/hermes/.venv/bin/pip)" = "root:root 755" \
+    && venv_violation="$(find -P /opt/hermes/.venv ! -type l \( ! -user root -o ! -group root -o -perm /022 \) -print -quit)" \
+    && test -z "$venv_violation" \
+    && venv_link_owner_violation="$(find -P /opt/hermes/.venv -type l \( ! -user root -o ! -group root \) -print -quit)" \
+    && test -z "$venv_link_owner_violation" \
+    && venv_links_file="$(mktemp)" \
+    && find -P /opt/hermes/.venv -type l -printf '%P -> %l\n' > "$venv_links_file" \
+    && LC_ALL=C sort -o "$venv_links_file" "$venv_links_file" \
+    && venv_links="$(cat "$venv_links_file")" \
+    && rm -f "$venv_links_file" \
+    && expected_venv_links="$(printf '%s\n' \
+        'bin/python -> /usr/bin/python3' \
+        'bin/python3 -> python' \
+        'bin/python3.13 -> python' \
+        'lib64 -> lib')" \
+    && test "$venv_links" = "$expected_venv_links" \
+    && test "$(readlink -e /opt/hermes/.venv/bin/python)" = "/usr/bin/python3.13" \
+    && test "$(readlink -e /opt/hermes/.venv/bin/python3)" = "/usr/bin/python3.13" \
+    && test "$(readlink -e /opt/hermes/.venv/bin/python3.13)" = "/usr/bin/python3.13" \
+    && test "$(readlink -e /opt/hermes/.venv/lib64)" = "/opt/hermes/.venv/lib" \
+    && test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/bin/python)" = "root:root 755 regular file" \
+    && test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/bin/python3)" = "root:root 755 regular file" \
+    && test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/bin/python3.13)" = "root:root 755 regular file" \
+    && test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/lib64)" = "root:root 755 directory" \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        sh -eu -c '\
+            /opt/hermes/.venv/bin/python -I -m pip --version >/dev/null; \
+            if printf '' >> /opt/hermes/.venv/.lock 2>/dev/null; then exit 1; fi; \
+            if printf '' >> /opt/hermes/.venv/bin/pip 2>/dev/null; then exit 1; fi; \
+            if printf '' >> /opt/hermes/.venv/lib/python3.13/site-packages/pip/__init__.py 2>/dev/null; then exit 1; fi; \
+            if printf '' >> /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi; \
+            if printf '' > /opt/hermes/.venv/lib64/.nemoclaw-sandbox-write-probe 2>/dev/null; then exit 1; fi; \
+            if ln -sf /usr/bin/false /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi' \
+    && test ! -e /opt/hermes/.venv/lib/.nemoclaw-sandbox-write-probe \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
     && HOME=/sandbox \
         UV_CACHE_DIR=/sandbox/.hermes/cache/uv \
         UV_NO_CACHE=1 \

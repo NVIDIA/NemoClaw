@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { dockerfileInstructions } from "./helpers/dockerfile-run-commands";
 
 const root = path.join(import.meta.dirname, "..");
 const dockerfileBase = fs.readFileSync(
@@ -240,5 +241,77 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(review).toContain("`tornado==6.5.7`");
     expect(review).toContain("checksum-pinned Node.js `24.18.1`");
     expect(review).toContain("exact uv `0.11.33`");
+  });
+
+  it("seeds root-owned pip before the sandbox user installs a lazy dependency", () => {
+    const instructions = dockerfileInstructions(dockerfile);
+    const lazyInstallLayer = instructions.find(
+      (instruction) =>
+        instruction.keyword === "RUN" &&
+        instruction.body.includes(
+          "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)",
+        ),
+    );
+    expect(lazyInstallLayer).toBeDefined();
+
+    const layer = lazyInstallLayer?.body ?? "";
+    const orderedContracts = [
+      "/opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip",
+      "/opt/hermes/.venv/bin/python -I -m pip --version",
+      "chmod 644 /opt/hermes/.venv/.lock",
+      `test "$(stat -c '%U:%G %a' /opt/hermes/.venv/.lock)" = "root:root 644"`,
+      `test "$(stat -c '%U:%G %a' /opt/hermes/.venv/bin/pip)" = "root:root 755"`,
+      `venv_violation="$(find -P /opt/hermes/.venv ! -type l`,
+      `test -z "$venv_violation"`,
+      `venv_link_owner_violation="$(find -P /opt/hermes/.venv -type l`,
+      `test -z "$venv_link_owner_violation"`,
+      `venv_links_file="$(mktemp)"`,
+      `find -P /opt/hermes/.venv -type l -printf '%P -> %l\\n' > "$venv_links_file"`,
+      `LC_ALL=C sort -o "$venv_links_file" "$venv_links_file"`,
+      `venv_links="$(cat "$venv_links_file")"`,
+      `rm -f "$venv_links_file"`,
+      `expected_venv_links="$(printf '%s\\n'`,
+      "'bin/python -> /usr/bin/python3'",
+      "'bin/python3 -> python'",
+      "'bin/python3.13 -> python'",
+      "'lib64 -> lib'",
+      `test "$venv_links" = "$expected_venv_links"`,
+      `test "$(readlink -e /opt/hermes/.venv/bin/python)" = "/usr/bin/python3.13"`,
+      `test "$(readlink -e /opt/hermes/.venv/lib64)" = "/opt/hermes/.venv/lib"`,
+      `test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/bin/python)" = "root:root 755 regular file"`,
+      `test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/lib64)" = "root:root 755 directory"`,
+      "/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups --",
+      "sh -eu -c",
+      "/opt/hermes/.venv/bin/python -I -m pip --version >/dev/null",
+      `if printf '' >> /opt/hermes/.venv/.lock 2>/dev/null; then exit 1; fi`,
+      `if printf '' >> /opt/hermes/.venv/bin/pip 2>/dev/null; then exit 1; fi`,
+      `if printf '' >> /opt/hermes/.venv/lib/python3.13/site-packages/pip/__init__.py 2>/dev/null; then exit 1; fi`,
+      `if printf '' >> /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi`,
+      `if printf '' > /opt/hermes/.venv/lib64/.nemoclaw-sandbox-write-probe 2>/dev/null; then exit 1; fi`,
+      `if ln -sf /usr/bin/false /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi`,
+      `test ! -e /opt/hermes/.venv/lib/.nemoclaw-sandbox-write-probe`,
+      `test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750"`,
+      "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)",
+    ];
+    let previousIndex = -1;
+    for (const contract of orderedContracts) {
+      const contractIndex = layer.indexOf(contract);
+      expect(
+        contractIndex,
+        `Missing or misordered lazy-install contract: ${contract}`,
+      ).toBeGreaterThan(previousIndex);
+      previousIndex = contractIndex;
+    }
+    expect(layer).toContain("-perm /022");
+    expect(layer).not.toContain(`test -z "$(find -P /opt/hermes/.venv`);
+
+    const activeUser = instructions
+      .filter(
+        (instruction) =>
+          instruction.keyword === "USER" &&
+          instruction.start < (lazyInstallLayer?.start ?? Number.POSITIVE_INFINITY),
+      )
+      .at(-1);
+    expect(activeUser?.body.trim()).toBe("root");
   });
 });
