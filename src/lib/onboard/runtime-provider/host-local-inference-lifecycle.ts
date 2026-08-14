@@ -3,6 +3,12 @@
 
 import { createHash } from "node:crypto";
 
+import {
+  createManagedLlamaCppLifecycleAdapter,
+  type ManagedLlamaCppLifecycleAdapter,
+  type ManagedLlamaCppLifecycleAdapterOptions,
+} from "../../inference/llama-cpp/managed-lifecycle-adapter";
+import { requireSandboxHostLocalInferenceProvenance } from "../../state/registry/host-local-inference";
 import type { SandboxEntry } from "../../state/registry/types";
 import type { RuntimeProviderBundle } from "./contract";
 import {
@@ -15,18 +21,23 @@ import {
 import { HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL } from "./host-local-inference-routing";
 import { requireRuntimeProviderHostLocalInferenceOperation } from "./registry";
 
-export type ManagedHostLocalInferenceService = "ollama" | "nim" | "vllm";
+export type ManagedHostLocalInferenceService = "ollama" | "nim" | "vllm" | "llama-cpp";
 
 export type HostLocalInferenceLifecycleSandbox = Pick<
   SandboxEntry,
   | "agent"
+  | "credentialEnv"
+  | "endpointSource"
   | "endpointUrl"
   | "gatewayName"
+  | "gatewayPort"
   | "hostLocalInferenceReceipt"
+  | "hostLocalInferenceProvenance"
   | "lifecycleGeneration"
   | "model"
   | "name"
   | "openshellDriver"
+  | "preferredInferenceApi"
   | "provider"
 >;
 
@@ -35,12 +46,17 @@ export interface HostLocalInferenceSandboxAuthority {
   readonly sandboxName: string;
   readonly agent: string;
   readonly providerId: string;
-  readonly routeProvider: "ollama-local" | "vllm-local";
+  readonly routeProvider: "ollama-local" | "vllm-local" | "llama-cpp-local";
   readonly model: string;
   readonly endpointUrl: string;
+  readonly endpointSource: SandboxEntry["endpointSource"];
+  readonly credentialEnv: string | null;
+  readonly preferredInferenceApi: string | null;
   readonly gatewayName: string;
+  readonly gatewayPort?: number;
   readonly lifecycleGeneration: string;
   readonly serializedReceipt: string;
+  readonly hostLocalInferenceProvenance?: NonNullable<SandboxEntry["hostLocalInferenceProvenance"]>;
 }
 
 export interface PreparedHostLocalInferenceAuthority {
@@ -63,6 +79,10 @@ export type HostLocalInferenceRetirementResult =
 
 export interface HostLocalInferenceLifecycleOptions {
   readonly environment?: NodeJS.ProcessEnv;
+  readonly homeDir?: string;
+  readonly createLlamaCppAdapter?: (
+    options: ManagedLlamaCppLifecycleAdapterOptions,
+  ) => ManagedLlamaCppLifecycleAdapter;
 }
 
 type ManagedHostLocalInferenceReceipt = HostLocalInferenceReceipt & {
@@ -89,14 +109,27 @@ function exactText(value: unknown, label: string, maxBytes = 512): string {
   return value;
 }
 
-function parseManagedReceipt(serialized: string): ManagedHostLocalInferenceReceipt | null {
+function parseManagedReceipt(
+  serialized: string,
+  sandbox?: HostLocalInferenceLifecycleSandbox,
+): ManagedHostLocalInferenceReceipt | null {
   const receipt = parseHostLocalInferenceReceipt(serialized);
-  return MANAGED_SERVICES.has(receipt.service as ManagedHostLocalInferenceService)
-    ? (receipt as ManagedHostLocalInferenceReceipt)
-    : null;
+  if (MANAGED_SERVICES.has(receipt.service as ManagedHostLocalInferenceService)) {
+    if (sandbox?.hostLocalInferenceProvenance) {
+      requireSandboxHostLocalInferenceProvenance(sandbox.hostLocalInferenceProvenance, serialized);
+    }
+    return receipt as ManagedHostLocalInferenceReceipt;
+  }
+  if (receipt.service !== "llama-cpp") {
+    if (sandbox?.hostLocalInferenceProvenance) fail("provenance names an unsupported service");
+    return null;
+  }
+  if (!sandbox?.hostLocalInferenceProvenance) return null;
+  requireSandboxHostLocalInferenceProvenance(sandbox.hostLocalInferenceProvenance, serialized);
+  return receipt as ManagedHostLocalInferenceReceipt;
 }
 
-/** True only for the Ollama, NIM, and vLLM lifecycle owned by this B4-E1 helper. */
+/** True only for receipts already handled by the common host-local lifecycle. */
 export function isManagedHostLocalInferenceLifecycleReceipt(serialized: string): boolean {
   return parseManagedReceipt(serialized) !== null;
 }
@@ -118,17 +151,32 @@ function captureSandboxAuthority(
   if (providerId !== provider.identity.id) {
     fail("sandbox runtime provider differs from the selected provider");
   }
-  const routeProvider = receipt.service === "ollama" ? "ollama-local" : "vllm-local";
+  const routeProvider =
+    receipt.service === "ollama"
+      ? "ollama-local"
+      : receipt.service === "llama-cpp"
+        ? "llama-cpp-local"
+        : "vllm-local";
   if (sandbox.provider !== routeProvider) {
     fail("sandbox route provider differs from the receipt service");
   }
   if (sandbox.endpointUrl !== HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL) {
     fail("sandbox inference endpoint is outside the canonical local route");
   }
-  const receiptModel = receipt.inference?.model;
+  const receiptModel = receipt.service === "llama-cpp" ? sandbox.model : receipt.inference?.model;
   if (typeof receiptModel !== "string" || sandbox.model !== receiptModel) {
     fail("sandbox model differs from the provider inference proof");
   }
+  const provenance = sandbox.hostLocalInferenceProvenance
+    ? requireSandboxHostLocalInferenceProvenance(sandbox.hostLocalInferenceProvenance, serialized)
+    : undefined;
+  if (receipt.service === "llama-cpp" && !provenance) {
+    fail("llama.cpp is missing explicit lifecycle provenance");
+  }
+  const gatewayPort = sandbox.gatewayPort;
+  const hasGatewayPort =
+    Number.isSafeInteger(gatewayPort) && Number(gatewayPort) >= 1 && Number(gatewayPort) <= 65_535;
+  if (provenance && !hasGatewayPort) fail("sandbox gateway port is missing or malformed");
   return Object.freeze({
     schemaVersion: 1 as const,
     sandboxName: exactText(sandbox.name, "sandbox name"),
@@ -137,15 +185,21 @@ function captureSandboxAuthority(
     routeProvider,
     model: exactText(receiptModel, "sandbox model"),
     endpointUrl: HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL,
+    endpointSource: sandbox.endpointSource ?? null,
+    credentialEnv: sandbox.credentialEnv ?? null,
+    preferredInferenceApi: sandbox.preferredInferenceApi ?? null,
     gatewayName: exactText(sandbox.gatewayName, "sandbox gateway"),
+    ...(hasGatewayPort ? { gatewayPort: Number(gatewayPort) } : {}),
     lifecycleGeneration: exactText(sandbox.lifecycleGeneration, "sandbox lifecycle generation"),
     serializedReceipt: serialized,
+    ...(provenance ? { hostLocalInferenceProvenance: provenance } : {}),
   });
 }
 
 function requireRuntime(
   provider: RuntimeProviderBundle,
   receipt: ManagedHostLocalInferenceReceipt,
+  sandbox: HostLocalInferenceLifecycleSandbox,
   options: HostLocalInferenceLifecycleOptions,
 ): HostLocalInferenceRuntime {
   const acceleration =
@@ -164,6 +218,26 @@ function requireRuntime(
     operation.bindingSha256 !== receipt.engineAuthority.bindingSha256
   ) {
     fail("receipt differs from the operation-scoped provider engine authority");
+  }
+  if (receipt.service === "llama-cpp") {
+    const provenance = requireSandboxHostLocalInferenceProvenance(
+      sandbox.hostLocalInferenceProvenance,
+      sandbox.hostLocalInferenceReceipt ?? "",
+    );
+    const adapter = (options.createLlamaCppAdapter ?? createManagedLlamaCppLifecycleAdapter)({
+      runtimeProvider: provider,
+      runtimeOwnerSandboxName: provenance.runtimeOwnerSandboxName,
+      expectedModel: exactText(sandbox.model, "sandbox model"),
+      expectedReceipt: receipt,
+      gatewayPort: sandbox.gatewayPort!,
+      ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
+      ...(options.environment === undefined ? {} : { environment: options.environment }),
+      operation,
+    });
+    if (adapter.model !== sandbox.model) {
+      fail("sandbox model differs from reconstructed llama.cpp authority");
+    }
+    return adapter.runtime;
   }
   const runtime = operation.managedRuntime;
   if (
@@ -196,10 +270,10 @@ function prepare(
   mode: PreparedHostLocalInferenceAuthority["mode"],
   options: HostLocalInferenceLifecycleOptions,
 ): PreparedHostLocalInferenceAuthority | null {
-  const receipt = parseManagedReceipt(serialized);
+  const receipt = parseManagedReceipt(serialized, sandbox);
   if (!receipt) return null;
   const sandboxAuthority = captureSandboxAuthority(provider, sandbox, serialized, receipt);
-  const runtime = requireRuntime(provider, receipt, options);
+  const runtime = requireRuntime(provider, receipt, sandbox, options);
   const reproved =
     mode === "destroy" ? runtime.prepareDestroy(receipt) : runtime.preserveForRebuild(receipt);
   requireExactReceipt(
@@ -272,7 +346,7 @@ function requireCurrentSandboxAuthority(
   if (prepared.mode !== mode || prepared.providerId !== provider.identity.id) {
     fail("prepared authority has a different lifecycle intent or provider");
   }
-  const receipt = parseManagedReceipt(prepared.serializedReceipt);
+  const receipt = parseManagedReceipt(prepared.serializedReceipt, sandbox);
   if (!receipt) fail("prepared receipt no longer has a managed lifecycle");
   const current = captureSandboxAuthority(provider, sandbox, prepared.serializedReceipt, receipt);
   if (
@@ -290,9 +364,9 @@ export function confirmHostLocalInferenceAuthority(
   options: HostLocalInferenceLifecycleOptions = {},
 ): void {
   requireCurrentSandboxAuthority(provider, sandbox, prepared, "preserve");
-  const receipt = parseManagedReceipt(prepared.serializedReceipt);
+  const receipt = parseManagedReceipt(prepared.serializedReceipt, sandbox);
   if (!receipt) fail("prepared receipt no longer has a managed lifecycle");
-  const runtime = requireRuntime(provider, receipt, options);
+  const runtime = requireRuntime(provider, receipt, sandbox, options);
   requireExactReceipt(
     prepared.serializedReceipt,
     runtime.preserveForRebuild(receipt),
@@ -307,9 +381,9 @@ function confirmHostLocalInferenceDestroyAuthority(
   options: HostLocalInferenceLifecycleOptions,
 ): HostLocalInferenceRuntime {
   requireCurrentSandboxAuthority(provider, sandbox, prepared, "destroy");
-  const receipt = parseManagedReceipt(prepared.serializedReceipt);
+  const receipt = parseManagedReceipt(prepared.serializedReceipt, sandbox);
   if (!receipt) fail("prepared receipt no longer has a managed lifecycle");
-  const runtime = requireRuntime(provider, receipt, options);
+  const runtime = requireRuntime(provider, receipt, sandbox, options);
   requireExactReceipt(
     prepared.serializedReceipt,
     runtime.prepareDestroy(receipt),
@@ -349,7 +423,7 @@ function sharedPeerStatus(
   peers: readonly HostLocalInferenceLifecycleSandbox[],
 ): "exclusive" | "shared" {
   const names = new Set<string>();
-  const preparedReceipt = parseManagedReceipt(prepared.serializedReceipt);
+  const preparedReceipt = parseManagedReceipt(prepared.serializedReceipt, sandbox);
   if (!preparedReceipt) fail("prepared receipt no longer has a managed lifecycle");
   let targetCount = 0;
   let shared = false;
@@ -384,9 +458,27 @@ function sharedPeerStatus(
     if (peer.hostLocalInferenceReceipt !== prepared.serializedReceipt) {
       fail("the same immutable provider runtime has conflicting registry authority");
     }
-    const managedPeerReceipt = parseManagedReceipt(peer.hostLocalInferenceReceipt);
+    const managedPeerReceipt = parseManagedReceipt(peer.hostLocalInferenceReceipt, peer);
     if (!managedPeerReceipt) fail("peer runtime ownership is malformed or indeterminate");
-    captureSandboxAuthority(provider, peer, peer.hostLocalInferenceReceipt, managedPeerReceipt);
+    const peerAuthority = captureSandboxAuthority(
+      provider,
+      peer,
+      peer.hostLocalInferenceReceipt,
+      managedPeerReceipt,
+    );
+    if (
+      prepared.receipt.service === "llama-cpp" &&
+      (peerAuthority.model !== prepared.sandboxAuthority.model ||
+        peerAuthority.gatewayName !== prepared.sandboxAuthority.gatewayName ||
+        peerAuthority.gatewayPort !== prepared.sandboxAuthority.gatewayPort ||
+        peerAuthority.endpointSource !== prepared.sandboxAuthority.endpointSource ||
+        peerAuthority.credentialEnv !== prepared.sandboxAuthority.credentialEnv ||
+        peerAuthority.preferredInferenceApi !== prepared.sandboxAuthority.preferredInferenceApi ||
+        JSON.stringify(peerAuthority.hostLocalInferenceProvenance) !==
+          JSON.stringify(prepared.sandboxAuthority.hostLocalInferenceProvenance))
+    ) {
+      fail("the same llama.cpp runtime has conflicting gateway, route, or provenance authority");
+    }
     shared = true;
   }
   if (targetCount !== 1) {

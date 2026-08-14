@@ -39,6 +39,9 @@ import {
   type HostLocalInferenceSandboxProofAuthority,
   type HostLocalInferenceStartupSelection,
   type HostLocalInferenceStartupSelectionResolver,
+  hostLocalInferenceGatewayProvider,
+  hostLocalInferenceRequestModel,
+  hostLocalInferenceRequestToolCalling,
   hostLocalInferenceSandboxProofAuthority,
 } from "../../runtime-provider/host-local-inference-routing";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
@@ -354,7 +357,7 @@ type HostLocalInferenceSetupOptions = {
 };
 
 function isHostLocalInferenceProvider(provider: string): boolean {
-  return provider === "ollama-local" || provider === "vllm-local";
+  return provider === "ollama-local" || provider === "vllm-local" || provider === "llama-cpp-local";
 }
 
 function isCanonicalHostLocalResume(input: {
@@ -382,9 +385,13 @@ export function createCachedHostLocalInferenceSetupResolver(input: {
   allowPublishedResume: boolean;
   recover: boolean;
   recordToolCallingRequirement(requireToolCalling: boolean): void;
+  initial?: {
+    readonly sandboxName: string;
+    readonly setupOptions: HostLocalInferenceSetupOptions;
+  };
 }): (sandboxName: string) => HostLocalInferenceSetupOptions {
-  let cached: HostLocalInferenceSetupOptions | null = null;
-  let cachedSandboxName: string | null = null;
+  let cached: HostLocalInferenceSetupOptions | null = input.initial?.setupOptions ?? null;
+  let cachedSandboxName: string | null = input.initial?.sandboxName ?? null;
   return (sandboxName) => {
     if (cached === null) {
       cached = hostLocalInferenceSetupOptions(input.resolver, {
@@ -404,8 +411,7 @@ export function createCachedHostLocalInferenceSetupResolver(input: {
     }
     const request = cached.hostLocalInference?.request;
     if (request) {
-      const providerInput = request.service === "ollama" ? request.endpoint : request.managed;
-      input.recordToolCallingRequirement(providerInput.requireToolCalling);
+      input.recordToolCallingRequirement(hostLocalInferenceRequestToolCalling(request));
     }
     return cached;
   };
@@ -536,14 +542,13 @@ function hostLocalInferenceSetupOptions(
         "Host-local inference startup selection drifted from the accepted application.",
       );
     }
-    const expectedProvider = selected.request.service === "ollama" ? "ollama-local" : "vllm-local";
+    const expectedProvider = hostLocalInferenceGatewayProvider(selected.request);
     if (input.provider !== expectedProvider) {
       throw new Error("Host-local inference startup selection drifted from the accepted provider.");
     }
-    const providerInput =
-      selected.request.service === "ollama" ? selected.request.endpoint : selected.request.managed;
     if (
       selected.request.service !== "ollama" &&
+      selected.request.service !== "llama-cpp" &&
       selected.request.recover !== undefined &&
       typeof selected.request.recover !== "boolean"
     ) {
@@ -552,14 +557,13 @@ function hostLocalInferenceSetupOptions(
     const hasDurableToolCallingAuthority =
       selected.request.service === "ollama"
         ? input.recover
+        : selected.request.service === "llama-cpp"
+          ? selected.request.publishedRoute
         : selected.request.resumeReceipt !== undefined || selected.request.recover === true;
     const expectedToolCalling =
       input.requireToolCalling ??
       (hasDurableToolCallingAuthority ? null : input.freshRequireToolCalling);
-    const selectedModel =
-      selected.request.service === "ollama"
-        ? normalizeHostLocalOllamaModelRef(providerInput.model)
-        : providerInput.model;
+    const selectedModel = hostLocalInferenceRequestModel(selected.request);
     const acceptedModel =
       selected.request.service === "ollama"
         ? normalizeHostLocalOllamaModelRef(input.model)
@@ -568,13 +572,21 @@ function hostLocalInferenceSetupOptions(
       selectedModel !== acceptedModel ||
       (selected.request.service === "ollama" &&
         selected.request.endpoint.acceleration !== input.acceleration) ||
-      (expectedToolCalling !== null && providerInput.requireToolCalling !== expectedToolCalling)
+      (expectedToolCalling !== null &&
+        hostLocalInferenceRequestToolCalling(selected.request) !== expectedToolCalling)
     ) {
       throw new Error(
         "Host-local inference startup selection drifted from the accepted model proof.",
       );
     }
-    if (selected.request.service !== "ollama") {
+    if (selected.request.service === "llama-cpp") {
+      if (
+        input.acceleration !== "nvidia-gpu" ||
+        selected.request.publishedRoute !== input.allowPublishedResume
+      ) {
+        throw new Error("Managed llama.cpp startup selection drifted from recovery authority.");
+      }
+    } else if (selected.request.service !== "ollama") {
       if (input.acceleration !== "nvidia-gpu") {
         throw new Error(
           "Managed host-local inference requires accepted NVIDIA GPU passthrough authority.",
@@ -596,6 +608,65 @@ function hostLocalInferenceSetupOptions(
     }
   }
   return selected ? { hostLocalInference: selected } : {};
+}
+
+type EarlyManagedLlamaLifecycleSelection = {
+  readonly sandboxName: string;
+  readonly setupOptions: HostLocalInferenceSetupOptions;
+};
+
+function resolveEarlyManagedLlamaLifecycleSelection(input: {
+  readonly resumeProviderSelection: boolean;
+  readonly provider: string | null;
+  readonly model: string | null;
+  readonly sandboxName: string | null;
+  readonly application: string;
+  readonly acceleration: HostLocalOllamaAccelerationAuthority;
+  readonly effectiveResume: boolean;
+  readonly endpointUrl: string | null;
+  readonly endpointSource: InferenceEndpointSource | null;
+  readonly resolver: HostLocalInferenceStartupSelectionResolver;
+}): EarlyManagedLlamaLifecycleSelection | null {
+  if (
+    !input.resumeProviderSelection ||
+    input.provider !== "llama-cpp-local" ||
+    typeof input.model !== "string" ||
+    typeof input.sandboxName !== "string"
+  ) {
+    return null;
+  }
+  return {
+    sandboxName: input.sandboxName,
+    setupOptions: hostLocalInferenceSetupOptions(input.resolver, {
+      application: input.application,
+      sandboxName: input.sandboxName,
+      provider: input.provider,
+      model: input.model,
+      acceleration: input.acceleration,
+      requireToolCalling: null,
+      freshRequireToolCalling: true,
+      allowPublishedResume: true,
+      recover: isCanonicalHostLocalResume({
+        effectiveResume: input.effectiveResume,
+        provider: "llama-cpp-local",
+        endpointUrl: input.endpointUrl,
+        endpointSource: input.endpointSource,
+      }),
+    }),
+  };
+}
+
+async function ensureLegacyManagedLlamaCppResumeReady(
+  selection: EarlyManagedLlamaLifecycleSelection | null,
+  provider: string | null,
+  sandboxName: string | null,
+  ensure: (
+    provider: string | null | undefined,
+    sandboxName: string | null | undefined,
+  ) => Promise<boolean>,
+): Promise<void> {
+  if (selection?.setupOptions.hostLocalInference?.request.service === "llama-cpp") return;
+  await ensure(provider, sandboxName);
 }
 
 function endpointSourceForCurrentUrl(
@@ -918,6 +989,18 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       provider,
       model,
     );
+    const earlyManagedLlamaLifecycleSelection = resolveEarlyManagedLlamaLifecycleSelection({
+      resumeProviderSelection,
+      provider,
+      model,
+      sandboxName,
+      application: agentName(agent),
+      acceleration: selectedHostLocalOllamaAcceleration(gpu, gpuPassthrough),
+      effectiveResume,
+      endpointUrl,
+      endpointSource,
+      resolver: deps.resolveHostLocalInferenceStartupSelection,
+    });
     let shouldRecordProviderSelection = false;
     // A review interruption selected a provider but did not configure its
     // route. Do not let a coincidentally ready gateway route skip setup.
@@ -937,7 +1020,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       // gateway-owned llama.cpp lifecycle before the selection shortcut can
       // skip setup. The dependency is a no-op for operator-attached llama.cpp
       // routes because those routes have no matching managed owner state.
-      await deps.ensureManagedLlamaCppResumeReady(provider, sandboxName);
+      await ensureLegacyManagedLlamaCppResumeReady(
+        earlyManagedLlamaLifecycleSelection,
+        provider,
+        sandboxName,
+        deps.ensureManagedLlamaCppResumeReady,
+      );
       const recovery = await deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv);
       forceInferenceSetup ||= recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
@@ -1190,6 +1278,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         recordToolCallingRequirement: (required) => {
           allowToolsIncompatible = !required;
         },
+        initial: earlyManagedLlamaLifecycleSelection ?? undefined,
       },
     );
     const hostLocalResume = await resolveHostLocalResumeSetup({

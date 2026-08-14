@@ -17,7 +17,11 @@ import {
   isValidExtraProviderName,
   readExtraProviders,
 } from "./extra-providers";
-import { cloneSandboxHostLocalInferenceReceipt } from "./registry/host-local-inference";
+import {
+  cloneSandboxHostLocalInferenceProvenance,
+  cloneSandboxHostLocalInferenceReceipt,
+  requireSandboxHostLocalInferenceProvenance,
+} from "./registry/host-local-inference";
 import { withLock } from "./registry/lock";
 import {
   discardOpaqueCuaRuntimeReadiness,
@@ -41,7 +45,11 @@ export {
   type SandboxEntryDisplayInference,
   type SandboxEntryInference,
 } from "./registry-entry-view";
-export { cloneSandboxHostLocalInferenceReceipt };
+export {
+  cloneSandboxHostLocalInferenceProvenance,
+  cloneSandboxHostLocalInferenceReceipt,
+  requireSandboxHostLocalInferenceProvenance,
+};
 
 import { isDcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
 import { cloneSandboxHostMounts, hasUnsafeHostMountTerminalText } from "./registry/host-mount";
@@ -133,6 +141,40 @@ export function registerSandbox(entry: SandboxEntry): void {
     if (entry.hostLocalInferenceReceipt !== undefined && hostLocalInferenceReceipt === undefined) {
       throw new Error("Cannot register a sandbox with an invalid host-local inference receipt");
     }
+    const hostLocalInferenceProvenance = cloneSandboxHostLocalInferenceProvenance(
+      entry.hostLocalInferenceProvenance,
+    );
+    if (
+      entry.hostLocalInferenceProvenance !== undefined &&
+      (!hostLocalInferenceProvenance || typeof hostLocalInferenceReceipt !== "string")
+    ) {
+      throw new Error("Cannot register a sandbox with invalid host-local inference provenance");
+    }
+    if (hostLocalInferenceProvenance && typeof hostLocalInferenceReceipt === "string") {
+      requireSandboxHostLocalInferenceProvenance(
+        hostLocalInferenceProvenance,
+        hostLocalInferenceReceipt,
+      );
+      const reserved = data.sandboxes[entry.name];
+      if (
+        reserved?.pendingRouteReservation !== true ||
+        reserved.hostLocalInferenceReceipt !== hostLocalInferenceReceipt ||
+        !isDeepStrictEqual(reserved.hostLocalInferenceProvenance, hostLocalInferenceProvenance) ||
+        reserved.provider !== entry.provider ||
+        reserved.model !== entry.model ||
+        reserved.endpointUrl !== entry.endpointUrl ||
+        reserved.endpointSource !== entry.endpointSource ||
+        reserved.credentialEnv !== entry.credentialEnv ||
+        reserved.preferredInferenceApi !== entry.preferredInferenceApi ||
+        reserved.openshellDriver !== entry.openshellDriver ||
+        reserved.gatewayName !== entry.gatewayName ||
+        reserved.gatewayPort !== entry.gatewayPort
+      ) {
+        throw new Error(
+          "Cannot register a sandbox after its host-local inference reservation changed",
+        );
+      }
+    }
     data.sandboxes[entry.name] = {
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),
@@ -193,6 +235,7 @@ export function registerSandbox(entry: SandboxEntry): void {
       imageTag: entry.imageTag || null,
       workload: cloneSandboxWorkloadReceipt(entry.workload),
       ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
+      ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
       messaging: cloneSandboxMessagingState(entry.messaging),
@@ -228,8 +271,11 @@ type SandboxInferenceRouteReservation = Pick<
   | "preferredInferenceApi"
 > & {
   gatewayName: string;
+  gatewayPort?: number;
+  openshellDriver?: string;
   reservationSessionId?: string;
   hostLocalInferenceReceipt?: string | null;
+  hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
 };
 
 /**
@@ -245,6 +291,46 @@ export function reserveSandboxInferenceRoute(
     const data = load();
     const existing = data.sandboxes[name];
     const normalized = normalizeInferenceSelection(route);
+    const provenance = cloneSandboxHostLocalInferenceProvenance(route.hostLocalInferenceProvenance);
+    if (
+      route.hostLocalInferenceProvenance !== undefined &&
+      (!provenance || typeof route.hostLocalInferenceReceipt !== "string")
+    ) {
+      throw new Error("Cannot reserve invalid host-local inference provenance");
+    }
+    if (provenance && typeof route.hostLocalInferenceReceipt === "string") {
+      requireSandboxHostLocalInferenceProvenance(provenance, route.hostLocalInferenceReceipt);
+      if (
+        !Number.isSafeInteger(route.gatewayPort) ||
+        Number(route.gatewayPort) < 1 ||
+        Number(route.gatewayPort) > 65_535 ||
+        typeof route.openshellDriver !== "string" ||
+        route.openshellDriver.length === 0
+      ) {
+        throw new Error(
+          "Cannot reserve host-local inference provenance without exact runtime and gateway authority",
+        );
+      }
+    }
+    if (existing?.hostLocalInferenceProvenance !== undefined) {
+      if (
+        !provenance ||
+        typeof route.hostLocalInferenceReceipt !== "string" ||
+        existing.hostLocalInferenceReceipt !== route.hostLocalInferenceReceipt ||
+        !isDeepStrictEqual(existing.hostLocalInferenceProvenance, provenance) ||
+        existing.provider !== normalized.provider ||
+        existing.model !== normalized.model ||
+        existing.endpointUrl !== normalized.endpointUrl ||
+        existing.endpointSource !== normalized.endpointSource ||
+        existing.credentialEnv !== normalized.credentialEnv ||
+        existing.preferredInferenceApi !== normalized.preferredInferenceApi ||
+        existing.gatewayName !== route.gatewayName ||
+        existing.gatewayPort !== route.gatewayPort ||
+        existing.openshellDriver !== route.openshellDriver
+      ) {
+        throw new Error("Cannot change an explicit host-local inference lifecycle reservation");
+      }
+    }
     const next: SandboxEntry = {
       ...(existing ?? { name, pendingRouteReservation: true as const }),
       pendingRouteReservation: true,
@@ -258,8 +344,10 @@ export function reserveSandboxInferenceRoute(
       ...(route.hostLocalInferenceReceipt !== undefined
         ? { hostLocalInferenceReceipt: route.hostLocalInferenceReceipt }
         : {}),
+      ...(provenance ? { hostLocalInferenceProvenance: provenance } : {}),
       gatewayName: route.gatewayName,
-      gatewayPort: undefined,
+      gatewayPort: route.gatewayPort,
+      ...(route.openshellDriver === undefined ? {} : { openshellDriver: route.openshellDriver }),
     };
     if (existing?.cuaRuntimeReadiness || hasOpaqueCuaRuntimeReadiness(data, name)) {
       delete next.cuaRuntimeReadiness;
@@ -296,6 +384,37 @@ export function isPendingReservationForSession(
   );
 }
 
+const HOST_LOCAL_INFERENCE_LIFECYCLE_AUTHORITY_FIELDS = new Set<keyof SandboxEntry>([
+  "credentialEnv",
+  "endpointSource",
+  "endpointUrl",
+  "gatewayName",
+  "gatewayPort",
+  "hostLocalInferenceReceipt",
+  "model",
+  "openshellDriver",
+  "preferredInferenceApi",
+  "provider",
+]);
+
+function changesHostLocalInferenceLifecycleAuthority(
+  current: SandboxEntry,
+  updates: Partial<SandboxEntry>,
+): boolean {
+  if (
+    Object.prototype.hasOwnProperty.call(updates, "hostLocalInferenceProvenance") &&
+    !isDeepStrictEqual(updates.hostLocalInferenceProvenance, current.hostLocalInferenceProvenance)
+  ) {
+    return true;
+  }
+  if (!current.hostLocalInferenceProvenance) return false;
+  return Object.entries(updates).some(
+    ([field, value]) =>
+      HOST_LOCAL_INFERENCE_LIFECYCLE_AUTHORITY_FIELDS.has(field as keyof SandboxEntry) &&
+      !isDeepStrictEqual(value, current[field as keyof SandboxEntry]),
+  );
+}
+
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {
   return withLock(() => {
     const data = load();
@@ -314,6 +433,7 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
     ) {
       return false;
     }
+    if (changesHostLocalInferenceLifecycleAuthority(current, updates)) return false;
     const { cuaRuntimeReadiness: _ignoredReadiness, ...ordinaryUpdates } = updates;
     const next = { ...current, ...ordinaryUpdates };
     if (

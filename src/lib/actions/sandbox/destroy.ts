@@ -565,8 +565,14 @@ async function destroySandboxUnlocked(
     }
     process.exit(destructiveResult.exitCode);
   }
-  const { detachOutcome, deleteResult, alreadyGone, forcedLocalCleanup, deleteOutput } =
-    destructiveResult;
+  const {
+    detachOutcome,
+    deleteResult,
+    alreadyGone,
+    forcedLocalCleanup,
+    deleteOutput,
+    commonLlamaCppAuthorityRetired,
+  } = destructiveResult;
 
   /**
    * SOURCE_OF_TRUTH
@@ -611,7 +617,7 @@ async function destroySandboxUnlocked(
   cleanupSandboxServices(sandboxName, {
     stopHostServices: shouldStopHostServices,
   });
-  if (deleteSucceededOrAlreadyGone) {
+  if (deleteSucceededOrAlreadyGone && commonLlamaCppAuthorityRetired !== true) {
     const managedLlamaCppCleanup = cleanupManagedLlamaCppRuntimeForSandbox(sandboxName, {
       ...(typeof sandbox?.gatewayPort === "number" ? { gatewayPort: sandbox.gatewayPort } : {}),
     });

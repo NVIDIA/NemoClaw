@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { dockerCapture } from "../../adapters/docker";
 import {
   captureOpenshell,
@@ -448,6 +449,25 @@ async function autoCreateSandboxFromSource(
   ];
   const createEnv = { ...process.env };
   delete createEnv.NEMOCLAW_OBSERVABILITY;
+  let cloneHostLocalReservation: Pick<
+    SandboxEntry,
+    "hostLocalInferenceReceipt" | "hostLocalInferenceProvenance"
+  > | null = null;
+  const releaseCloneHostLocalReservation = (): void => {
+    if (!cloneHostLocalReservation) return;
+    const current = registry.getSandbox(dstName);
+    if (
+      current?.pendingRouteReservation === true &&
+      current.hostLocalInferenceReceipt === cloneHostLocalReservation.hostLocalInferenceReceipt &&
+      isDeepStrictEqual(
+        current.hostLocalInferenceProvenance,
+        cloneHostLocalReservation.hostLocalInferenceProvenance,
+      )
+    ) {
+      registry.removeSandbox(dstName);
+    }
+    cloneHostLocalReservation = null;
+  };
 
   const command = openshellBin;
   const commandArgs = [
@@ -464,22 +484,66 @@ async function autoCreateSandboxFromSource(
     ...startupCommand,
   ];
 
+  const sourceAuthority = srcEntry as SandboxEntry;
+  if (sourceAuthority.hostLocalInferenceProvenance) {
+    if (
+      typeof sourceAuthority.hostLocalInferenceReceipt !== "string" ||
+      typeof sourceAuthority.provider !== "string" ||
+      typeof sourceAuthority.model !== "string" ||
+      !isValidForwardPort(sourceAuthority.gatewayPort) ||
+      typeof sourceAuthority.openshellDriver !== "string"
+    ) {
+      throw new SnapshotCommandError(
+        "Source host-local inference lifecycle authority is incomplete.",
+      );
+    }
+    const reserved = registry.reserveSandboxInferenceRoute(dstName, {
+      provider: sourceAuthority.provider,
+      model: sourceAuthority.model,
+      endpointUrl: sourceAuthority.endpointUrl ?? null,
+      endpointSource: sourceAuthority.endpointSource ?? null,
+      credentialEnv: sourceAuthority.credentialEnv ?? null,
+      preferredInferenceApi: sourceAuthority.preferredInferenceApi ?? null,
+      gatewayName: sourceGatewayName,
+      gatewayPort: sourceAuthority.gatewayPort,
+      openshellDriver: sourceAuthority.openshellDriver,
+      hostLocalInferenceReceipt: sourceAuthority.hostLocalInferenceReceipt,
+      hostLocalInferenceProvenance: sourceAuthority.hostLocalInferenceProvenance,
+    });
+    if (!reserved) {
+      throw new SnapshotCommandError(
+        "Could not reserve the clone's exact host-local inference authority.",
+      );
+    }
+    cloneHostLocalReservation = {
+      hostLocalInferenceReceipt: sourceAuthority.hostLocalInferenceReceipt,
+      hostLocalInferenceProvenance: sourceAuthority.hostLocalInferenceProvenance,
+    };
+  }
+
   console.log(`  '${dstName}' does not exist. Creating from '${srcName}' image (${fromImage})...`);
 
-  const createResult = await streamSandboxCreate(command, commandArgs, createEnv, {
-    // Use a pre-built image, so skip build+push and jump to pod creation.
-    initialPhase: "create",
-    // Wait until the sandbox actually reaches Ready state, not just appears in the list.
-    readyCheck: () => {
-      const list = captureOpenshell(["sandbox", "list", "-g", sourceGatewayName], {
-        ignoreError: true,
-      });
-      if (list.status !== 0) return false;
-      return isSandboxReady(list.output || "", dstName);
-    },
-  });
+  let createResult: Awaited<ReturnType<typeof streamSandboxCreate>>;
+  try {
+    createResult = await streamSandboxCreate(command, commandArgs, createEnv, {
+      // Use a pre-built image, so skip build+push and jump to pod creation.
+      initialPhase: "create",
+      // Wait until the sandbox actually reaches Ready state, not just appears in the list.
+      readyCheck: () => {
+        const list = captureOpenshell(["sandbox", "list", "-g", sourceGatewayName], {
+          ignoreError: true,
+        });
+        if (list.status !== 0) return false;
+        return isSandboxReady(list.output || "", dstName);
+      },
+    });
+  } catch (error) {
+    releaseCloneHostLocalReservation();
+    throw error;
+  }
 
   if (createResult.status !== 0 && !createResult.forcedReady) {
+    releaseCloneHostLocalReservation();
     console.error(`  Failed to create sandbox '${dstName}' (exit ${createResult.status}).`);
     const tail = (createResult.output || "").slice(-600);
     if (tail) console.error(tail);
@@ -491,12 +555,14 @@ async function autoCreateSandboxFromSource(
     ignoreError: true,
   });
   if (verify.status !== 0 || !isSandboxReady(verify.output || "", dstName)) {
+    releaseCloneHostLocalReservation();
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
   let lifecycleRegistration: ReturnType<typeof cloneLifecycle.capture>;
   try {
     lifecycleRegistration = cloneLifecycle.capture();
   } catch {
+    releaseCloneHostLocalReservation();
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
 
@@ -517,38 +583,45 @@ async function autoCreateSandboxFromSource(
   try {
     finalLifecycleRegistration = cloneLifecycle.revalidate(lifecycleRegistration);
   } catch {
+    releaseCloneHostLocalReservation();
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
-  registry.registerSandbox({
-    ...srcEntry,
-    name: dstName,
-    createdAt: new Date().toISOString(),
-    policies: [],
-    observabilityEnabled: sourceObservabilityEnabled,
-    // dst has its own lifecycle; don't inherit src's local NIM container
-    // reference, or destroying dst would stop src's NIM.
-    nimContainer: null,
-    // No CUDA proof has run for dst (this auto-create path passes no GPU flags),
-    // so clear src's proof rather than inheriting it — otherwise dst could show
-    // `Sandbox GPU: enabled (CUDA verified)` based on another sandbox's run (#4231).
-    sandboxGpuProof: null,
-    dashboardPort: dstDashboardPort,
-    // The spread above carries the source's API port; the clone owns its own.
-    hermesApiPort: dstHermesApiPort,
-    // The shared image keeps Hermes' image-baked internal listener port, but
-    // the public WebUI port is a per-sandbox host resource and must follow the
-    // clone's newly allocated dashboard port so rebuild validation converges.
-    hermesDashboardPort:
-      (srcEntry as SandboxEntry).hermesDashboardEnabled === true
-        ? dstDashboardPort
-        : (srcEntry as SandboxEntry).hermesDashboardPort,
-    // A legacy source may have only a gateway name (or neither binding
-    // field). Register the new clone with the complete canonical binding so
-    // stop/start, recovery, and later snapshots can address its gateway.
-    gatewayName: sourceGatewayName,
-    gatewayPort: sourceGatewayPort,
-    ...finalLifecycleRegistration,
-  });
+  try {
+    registry.registerSandbox({
+      ...srcEntry,
+      name: dstName,
+      createdAt: new Date().toISOString(),
+      policies: [],
+      observabilityEnabled: sourceObservabilityEnabled,
+      // dst has its own lifecycle; don't inherit src's local NIM container
+      // reference, or destroying dst would stop src's NIM.
+      nimContainer: null,
+      // No CUDA proof has run for dst (this auto-create path passes no GPU flags),
+      // so clear src's proof rather than inheriting it — otherwise dst could show
+      // `Sandbox GPU: enabled (CUDA verified)` based on another sandbox's run (#4231).
+      sandboxGpuProof: null,
+      dashboardPort: dstDashboardPort,
+      // The spread above carries the source's API port; the clone owns its own.
+      hermesApiPort: dstHermesApiPort,
+      // The shared image keeps Hermes' image-baked internal listener port, but
+      // the public WebUI port is a per-sandbox host resource and must follow the
+      // clone's newly allocated dashboard port so rebuild validation converges.
+      hermesDashboardPort:
+        (srcEntry as SandboxEntry).hermesDashboardEnabled === true
+          ? dstDashboardPort
+          : (srcEntry as SandboxEntry).hermesDashboardPort,
+      // A legacy source may have only a gateway name (or neither binding
+      // field). Register the new clone with the complete canonical binding so
+      // stop/start, recovery, and later snapshots can address its gateway.
+      gatewayName: sourceGatewayName,
+      gatewayPort: sourceGatewayPort,
+      ...finalLifecycleRegistration,
+    });
+    cloneHostLocalReservation = null;
+  } catch {
+    releaseCloneHostLocalReservation();
+    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
+  }
 
   const sourceAgent = (srcEntry as SandboxEntry).agent || "openclaw";
   if (sourceAgent === "openclaw" && !waitForRestoredSandboxGatewaySupervisor(dstName)) {
@@ -1224,6 +1297,7 @@ async function runSnapshotRestoreUnlocked(
   const currentSourceEntry = registry.getSandbox(sandboxName);
   let hasManagedProfileAuthority = false;
   const hostLocalInferenceReceipt = resolvedSnapshot.hostLocalInferenceReceipt;
+  const hostLocalInferenceProvenance = resolvedSnapshot.hostLocalInferenceProvenance;
   let snapshotRestoreAuthority: sandboxState.SnapshotRestoreAuthority | null = null;
   try {
     const snapshotAuthority = readManagedSnapshotProfileAuthority(snapshotProfileSource);
@@ -1248,6 +1322,14 @@ async function runSnapshotRestoreUnlocked(
       if (!currentSourceEntry) {
         throw new Error("host-local inference snapshot source is no longer registered");
       }
+      if (
+        !isDeepStrictEqual(
+          currentSourceEntry.hostLocalInferenceProvenance,
+          hostLocalInferenceProvenance,
+        )
+      ) {
+        throw new Error("snapshot inference provenance differs from the registered source");
+      }
       const sourceProvider = requireCurrentSnapshotRuntimeProvider(currentSourceEntry);
       const preparedSource = prepareHostLocalInferenceAuthority(
         sourceProvider,
@@ -1255,7 +1337,7 @@ async function runSnapshotRestoreUnlocked(
         hostLocalInferenceReceipt,
       );
       if (!preparedSource) {
-        throw new Error("snapshot inference receipt has no B4-E1 lifecycle authority");
+        throw new Error("snapshot inference receipt has no common lifecycle authority");
       }
     }
     if (hasManagedProfileAuthority || typeof hostLocalInferenceReceipt === "string") {
@@ -1335,7 +1417,7 @@ async function runSnapshotRestoreUnlocked(
           hostLocalInferenceReceipt,
         );
         if (!preparedHostLocalInferenceRestore) {
-          throw new Error("snapshot inference receipt has no B4-E1 lifecycle authority");
+          throw new Error("snapshot inference receipt has no common lifecycle authority");
         }
       } catch (error) {
         console.error(
@@ -1513,7 +1595,7 @@ async function runSnapshotRestoreUnlocked(
           hostLocalInferenceReceipt,
         );
         if (!preparedHostLocalInferenceRestore) {
-          throw new Error("snapshot inference receipt has no B4-E1 lifecycle authority");
+          throw new Error("snapshot inference receipt has no common lifecycle authority");
         }
       } catch (error) {
         console.error(

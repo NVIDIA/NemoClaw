@@ -17,7 +17,11 @@ import { captureSandboxRuntimeSnapshot } from "./provider-lifecycle";
 
 type SnapshotBackupAuthority = Pick<
   sandboxState.BackupOptions,
-  "runtimeSnapshot" | "workload" | "hostLocalInferenceReceipt" | "validateBeforePublish"
+  | "runtimeSnapshot"
+  | "workload"
+  | "hostLocalInferenceReceipt"
+  | "hostLocalInferenceProvenance"
+  | "validateBeforePublish"
 >;
 
 interface SnapshotBackupAuthorityDependencies {
@@ -117,19 +121,37 @@ function captureManagedAuthority(
 function captureHostLocalInferenceAuthority(
   entry: SandboxEntry,
   dependencies: SnapshotBackupAuthorityDependencies,
-): Pick<sandboxState.BackupOptions, "hostLocalInferenceReceipt" | "validateBeforePublish"> | null {
+): Pick<
+  sandboxState.BackupOptions,
+  "hostLocalInferenceReceipt" | "hostLocalInferenceProvenance" | "validateBeforePublish"
+> | null {
   const receipt = entry.hostLocalInferenceReceipt;
   if (typeof receipt !== "string") return null;
   const provider = dependencies.requireProvider(entry);
   const prepared = dependencies.prepareHostLocalInference(provider, entry);
-  if (!prepared) return null;
+  if (!prepared) {
+    if (entry.hostLocalInferenceProvenance) {
+      throw new Error("explicit host-local inference lifecycle authority cannot be reconstructed");
+    }
+    return null;
+  }
   return {
     hostLocalInferenceReceipt: prepared.serializedReceipt,
+    ...(entry.hostLocalInferenceProvenance
+      ? { hostLocalInferenceProvenance: entry.hostLocalInferenceProvenance }
+      : {}),
     validateBeforePublish: () => {
       const current = dependencies.getSandbox(entry.name);
       if (!current) throw new Error(`sandbox '${entry.name}' is no longer registered`);
       if (current.hostLocalInferenceReceipt !== receipt) {
         throw new Error(`sandbox '${entry.name}' host-local inference changed during backup`);
+      }
+      if (
+        !isDeepStrictEqual(current.hostLocalInferenceProvenance, entry.hostLocalInferenceProvenance)
+      ) {
+        throw new Error(
+          `sandbox '${entry.name}' host-local inference provenance changed during backup`,
+        );
       }
       const currentProvider = dependencies.requireProvider(current);
       if (currentProvider.identity.id !== provider.identity.id) {
@@ -153,6 +175,9 @@ function captureSnapshotAuthority(
     ...(hostLocal?.hostLocalInferenceReceipt === undefined
       ? {}
       : { hostLocalInferenceReceipt: hostLocal.hostLocalInferenceReceipt }),
+    ...(hostLocal?.hostLocalInferenceProvenance === undefined
+      ? {}
+      : { hostLocalInferenceProvenance: hostLocal.hostLocalInferenceProvenance }),
     validateBeforePublish: () => {
       managed?.validateBeforePublish?.();
       hostLocal?.validateBeforePublish?.();

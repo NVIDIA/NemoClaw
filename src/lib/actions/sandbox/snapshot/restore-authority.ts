@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
+import { isDeepStrictEqual } from "node:util";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provider/current";
 import {
   confirmHostLocalInferenceAuthority,
@@ -25,6 +26,8 @@ interface ProviderRestoreAuthorityDependencies {
   readonly getSandbox: (sandboxName: string) => SandboxEntry | null;
   readonly requireProvider: (sandbox: SandboxEntry) => RuntimeProviderBundle;
   readonly captureContentAuthority: typeof sandboxState.captureSnapshotRestoreAuthority;
+  readonly prepareHostLocalInference: typeof prepareHostLocalInferenceAuthority;
+  readonly confirmHostLocalInference: typeof confirmHostLocalInferenceAuthority;
   readonly restore: typeof sandboxState.restoreRecreatedSandboxState;
 }
 
@@ -32,6 +35,8 @@ const defaultDependencies: Omit<ProviderRestoreAuthorityDependencies, "getSandbo
   requireProvider: (sandbox) =>
     requireRuntimeProviderBundleForSandbox(sandbox, CURRENT_RUNTIME_PROVIDER_BUNDLES),
   captureContentAuthority: (...args) => sandboxState.captureSnapshotRestoreAuthority(...args),
+  prepareHostLocalInference: prepareHostLocalInferenceAuthority,
+  confirmHostLocalInference: confirmHostLocalInferenceAuthority,
   restore: (...args) => sandboxState.restoreRecreatedSandboxState(...args),
 };
 
@@ -106,13 +111,21 @@ export function restoreRecreatedSandboxStateWithManagedAuthority(
       );
     }
     if (typeof hostLocalInferenceReceipt === "string") {
-      preparedHostLocal = prepareHostLocalInferenceAuthority(
+      if (
+        !isDeepStrictEqual(
+          target.hostLocalInferenceProvenance,
+          manifest.hostLocalInferenceProvenance,
+        )
+      ) {
+        throw new Error("snapshot inference provenance differs from the target lifecycle");
+      }
+      preparedHostLocal = dependencies.prepareHostLocalInference(
         provider,
         target,
         hostLocalInferenceReceipt,
       );
       if (!preparedHostLocal) {
-        throw new Error("snapshot inference receipt has no B4-E1 lifecycle authority");
+        throw new Error("snapshot inference receipt has no common lifecycle authority");
       }
     }
     const captured = dependencies.captureContentAuthority(manifest.backupPath, manifest);
@@ -155,7 +168,15 @@ export function restoreRecreatedSandboxStateWithManagedAuthority(
         if (!preparedHostLocal) {
           throw new Error("host-local inference restore authority is missing");
         }
-        confirmHostLocalInferenceAuthority(provider, current, preparedHostLocal);
+        if (
+          !isDeepStrictEqual(
+            current.hostLocalInferenceProvenance,
+            manifest.hostLocalInferenceProvenance,
+          )
+        ) {
+          throw new Error("snapshot inference provenance changed before restore");
+        }
+        dependencies.confirmHostLocalInference(provider, current, preparedHostLocal);
       }
     },
   });
@@ -170,7 +191,7 @@ export function restoreRecreatedSandboxStateWithManagedAuthority(
     }
     if (preparedRuntime) confirmSandboxRuntimeRestore(provider, current, preparedRuntime);
     if (preparedHostLocal) {
-      confirmHostLocalInferenceAuthority(provider, current, preparedHostLocal);
+      dependencies.confirmHostLocalInference(provider, current, preparedHostLocal);
     }
     return restore;
   } catch (error) {

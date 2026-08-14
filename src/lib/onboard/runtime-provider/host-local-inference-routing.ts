@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { RuntimeProviderBundle } from "./contract";
+import type { ManagedLlamaCppLifecycleAdapter } from "../../inference/llama-cpp/managed-lifecycle-adapter";
 import {
   HOST_LOCAL_INFERENCE_SANDBOX_HOST,
   type HostLocalInferenceOperation,
@@ -30,7 +31,7 @@ export const HOST_LOCAL_INFERENCE_APPLICATIONS = [
 export type HostLocalInferenceApplication = (typeof HOST_LOCAL_INFERENCE_APPLICATIONS)[number];
 
 export function hostLocalInferenceOperationEnvironment(
-  service: "ollama" | "nim" | "vllm",
+  service: "ollama" | "nim" | "vllm" | "llama-cpp",
   source: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
   const operationEnv = Object.create(null) as NodeJS.ProcessEnv;
@@ -45,7 +46,7 @@ export function hostLocalInferenceOperationEnvironment(
 export interface HostLocalInferenceGatewayMutationInput {
   readonly gatewayName: string;
   readonly sandboxName: string;
-  readonly provider: "ollama-local" | "vllm-local";
+  readonly provider: "ollama-local" | "vllm-local" | "llama-cpp-local";
   readonly model: string;
   readonly providerBaseUrl: string;
 }
@@ -75,6 +76,16 @@ export type HostLocalInferenceStartupRequest =
       /** Recover only an interrupted, not-yet-published same-transaction start. */
       readonly recover?: boolean;
       readonly receiptWriter: HostLocalInferenceReceiptWriter;
+    }
+  | {
+      readonly application: HostLocalInferenceApplication;
+      readonly service: "llama-cpp";
+      /** Rehydrated only by the hidden operation-scoped lifecycle resolver. */
+      readonly adapter: ManagedLlamaCppLifecycleAdapter;
+      /** Accepted sandbox proof requirement; schema-v1 receipts intentionally omit it. */
+      readonly requireToolCalling: boolean;
+      /** True only when the registry route was already durably published. */
+      readonly publishedRoute: boolean;
     };
 
 /** Operation-scoped selection injected by the qualification caller. */
@@ -108,7 +119,7 @@ export type HostLocalInferenceStartupSelectionResolver = (
 ) => HostLocalInferenceStartupSelection | null;
 
 export interface HostLocalInferenceSandboxProofAuthority {
-  readonly service: "ollama" | "nim" | "vllm";
+  readonly service: "ollama" | "nim" | "vllm" | "llama-cpp";
   readonly directHostPort: number;
   readonly directHealthPath: "/api/tags" | "/v1/health/ready" | "/health";
   readonly toolCallingRequired: boolean;
@@ -117,7 +128,12 @@ export interface HostLocalInferenceSandboxProofAuthority {
 export function hostLocalInferenceSandboxProofAuthority(
   request: HostLocalInferenceStartupRequest,
 ): HostLocalInferenceSandboxProofAuthority {
-  const input = request.service === "ollama" ? request.endpoint : request.managed;
+  const input =
+    request.service === "ollama"
+      ? request.endpoint
+      : request.service === "llama-cpp"
+        ? null
+        : request.managed;
   const directHealthPath =
     request.service === "ollama"
       ? "/api/tags"
@@ -126,16 +142,52 @@ export function hostLocalInferenceSandboxProofAuthority(
         : "/health";
   return Object.freeze({
     service: request.service,
-    directHostPort: input.hostPort,
+    directHostPort:
+      request.service === "llama-cpp" ? request.adapter.receipt.endpoint.port : input!.hostPort,
     directHealthPath,
-    toolCallingRequired: input.requireToolCalling,
+    toolCallingRequired:
+      request.service === "llama-cpp" ? request.requireToolCalling : input!.requireToolCalling,
   });
+}
+
+export function hostLocalInferenceRequestModel(request: HostLocalInferenceStartupRequest): string {
+  if (request.service === "ollama") return normalizeHostLocalOllamaModelRef(request.endpoint.model);
+  return request.service === "llama-cpp" ? request.adapter.model : request.managed.model;
+}
+
+export function hostLocalInferenceRequestToolCalling(
+  request: HostLocalInferenceStartupRequest,
+): boolean {
+  if (request.service === "ollama") return request.endpoint.requireToolCalling;
+  return request.service === "llama-cpp"
+    ? request.requireToolCalling
+    : request.managed.requireToolCalling;
+}
+
+export function hostLocalInferenceRuntimeOwnerSandboxName(
+  request: HostLocalInferenceStartupRequest,
+  sandboxName: string,
+): string {
+  return request.service === "llama-cpp" ? request.adapter.runtimeOwnerSandboxName : sandboxName;
+}
+
+export function hostLocalInferenceGatewayPort(
+  request: HostLocalInferenceStartupRequest,
+): number | undefined {
+  return request.service === "llama-cpp" ? request.adapter.gatewayPort : undefined;
+}
+
+export function hostLocalInferenceGatewayProvider(
+  request: HostLocalInferenceStartupRequest,
+): "ollama-local" | "vllm-local" | "llama-cpp-local" {
+  if (request.service === "ollama") return "ollama-local";
+  return request.service === "llama-cpp" ? "llama-cpp-local" : "vllm-local";
 }
 
 export interface HostLocalInferenceStartupRoute {
   readonly prepared: HostLocalInferencePreparedStartup;
   readonly receipt: HostLocalInferenceReceipt;
-  readonly gatewayProvider: "ollama-local" | "vllm-local";
+  readonly gatewayProvider: "ollama-local" | "vllm-local" | "llama-cpp-local";
   /** Provider registration target visible inside the OpenShell gateway. */
   readonly gatewayProviderBaseUrl: string;
   /** Stable inference route shared by OpenClaw, Hermes, and Deep Agents Code. */
@@ -159,6 +211,26 @@ function normalizeStartupReceipt(
   receipt: HostLocalInferenceReceipt,
 ): HostLocalInferenceReceipt {
   const normalized = normalizeHostLocalInferenceReceipt(receipt);
+  if (request.service === "llama-cpp") {
+    if (
+      normalized.schemaVersion !== 1 ||
+      normalized.service !== "llama-cpp" ||
+      normalized.providerId !== operation.providerId ||
+      normalized.providerId !== runtime.providerId ||
+      normalized.engineAuthority.providerId !== operation.providerId ||
+      normalized.engineAuthority.engineId !== operation.engine.engineId ||
+      normalized.engineAuthority.authorityId !== operation.engine.authorityId ||
+      normalized.engineAuthority.authorityId !== runtime.authorityId ||
+      normalized.engineAuthority.bindingSha256 !== operation.bindingSha256 ||
+      serializeHostLocalInferenceReceipt(normalized) !==
+        serializeHostLocalInferenceReceipt(request.adapter.receipt)
+    ) {
+      throw new Error(
+        "Host-local llama.cpp startup returned a different runtime or receipt authority.",
+      );
+    }
+    return normalized;
+  }
   const model =
     request.service === "ollama"
       ? normalizeHostLocalOllamaModelRef(request.endpoint.model)
@@ -265,7 +337,8 @@ export function prepareHostLocalInferenceStartup(
 ): HostLocalInferenceStartupRoute {
   requireApplication(request.application);
   operation.assertAuthority();
-  const runtime: HostLocalInferenceRuntime | undefined = operation.managedRuntime;
+  const runtime: HostLocalInferenceRuntime | undefined =
+    request.service === "llama-cpp" ? request.adapter.runtime : operation.managedRuntime;
   if (!runtime) {
     throw new Error(
       `Runtime provider '${operation.providerId}' does not provide managed host-local inference.`,
@@ -283,7 +356,12 @@ export function prepareHostLocalInferenceStartup(
     );
   }
   let prepared: HostLocalInferencePreparedStartup;
-  if (request.service === "ollama") {
+  if (request.service === "llama-cpp") {
+    if (request.publishedRoute !== true && request.publishedRoute !== false) {
+      throw new Error("Managed llama.cpp route publication authority is invalid.");
+    }
+    prepared = request.adapter.prepareStartup();
+  } else if (request.service === "ollama") {
     prepared = runtime.qualifyOllama(request.endpoint, request.receiptWriter);
   } else {
     if (request.managed.service !== request.service) {
@@ -336,16 +414,20 @@ export function prepareHostLocalInferenceStartup(
     throw error;
   }
   const expectedRollbackPriorState =
-    request.service !== "ollama" && request.resumeReceipt !== undefined
+    request.service === "llama-cpp"
+      ? prepared.rollbackPriorState
+      : request.service !== "ollama" && request.resumeReceipt !== undefined
       ? prepared.rollbackPriorState
       : receipt.publication?.priorState;
   if (
     prepared.rollbackPriorState !== expectedRollbackPriorState ||
     (request.service !== "ollama" &&
+      request.service !== "llama-cpp" &&
       request.resumeReceipt !== undefined &&
       prepared.rollbackPriorState !== "running" &&
       prepared.rollbackPriorState !== "stopped") ||
     (request.service !== "ollama" &&
+      request.service !== "llama-cpp" &&
       request.resumeReceipt !== undefined &&
       serializeHostLocalInferenceReceipt(
         normalizeHostLocalInferenceReceipt(request.resumeReceipt),
@@ -363,7 +445,7 @@ export function prepareHostLocalInferenceStartup(
   return Object.freeze({
     prepared,
     receipt,
-    gatewayProvider: request.service === "ollama" ? "ollama-local" : "vllm-local",
+    gatewayProvider: hostLocalInferenceGatewayProvider(request),
     gatewayProviderBaseUrl: providerBaseUrl(receipt),
     applicationBaseUrl: HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL,
   });

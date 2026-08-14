@@ -2,19 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { hostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
 import {
-  createInMemoryRuntimeProviderBundle,
-} from "../../../../test/helpers/runtime-provider-bundle";
-import {
-  resolveTestAgentBaselinePolicy,
-} from "../../../../test/support/snapshot-policy-test-fixture";
+  hostLocalInferenceReceipt,
+  serializedLlamaCppHostLocalInferenceReceipt,
+} from "../../../../test/helpers/host-local-inference-receipt";
+import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
+import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
 import {
   serializeHostLocalInferenceReceipt,
   type HostLocalInferenceOperation,
   type HostLocalInferenceRuntime,
 } from "../../onboard/runtime-provider/host-local-inference";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
+import { createSandboxHostLocalInferenceProvenance } from "../../state/registry/host-local-inference";
 
 const harness = vi.hoisted(() => ({
   entries: new Map<string, Record<string, unknown>>(),
@@ -29,6 +29,14 @@ const captureOpenshellMock = vi.fn(() => ({
 const getSandboxMock = vi.fn((name?: string) => harness.entries.get(name ?? "") ?? null);
 const registerSandboxMock = vi.fn((entry: Record<string, unknown>) => {
   harness.entries.set(String(entry.name), entry);
+});
+const reserveSandboxInferenceRouteMock = vi.fn((name: string, route: Record<string, unknown>) => {
+  harness.entries.set(name, {
+    name,
+    pendingRouteReservation: true,
+    ...route,
+  });
+  return true;
 });
 const restoreSandboxStateMock = vi.fn();
 const captureSnapshotRestoreAuthorityMock = vi.fn();
@@ -201,6 +209,7 @@ vi.mock("../../state/registry", () => ({
     defaultSandbox: "alpha",
   })),
   registerSandbox: registerSandboxMock,
+  reserveSandboxInferenceRoute: reserveSandboxInferenceRouteMock,
   removeSandbox: vi.fn((name: string) => harness.entries.delete(name)),
   updateSandbox: vi.fn(),
 }));
@@ -266,6 +275,78 @@ describe("snapshot restore auto-create failures", () => {
     );
     expect(registerSandboxMock).not.toHaveBeenCalled();
     expect(restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
+  it("releases an exact host-local clone reservation when auto-create fails", async () => {
+    const receipt = serializedLlamaCppHostLocalInferenceReceipt();
+    harness.entries.set("alpha", {
+      ...sourceEntry(),
+      openshellDriver: "docker",
+      provider: "llama-cpp-local",
+      model: "llama-cpp-model",
+      endpointUrl: "https://inference.local/v1",
+      endpointSource: "inference-set",
+      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      preferredInferenceApi: "openai-completions",
+      gatewayPort: 8080,
+      hostLocalInferenceReceipt: receipt,
+      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance("alpha", receipt),
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(reserveSandboxInferenceRouteMock).toHaveBeenCalledWith(
+      "beta",
+      expect.objectContaining({
+        hostLocalInferenceReceipt: receipt,
+        hostLocalInferenceProvenance: expect.objectContaining({
+          runtimeOwnerSandboxName: "alpha",
+        }),
+      }),
+    );
+    expect(getSandboxMock("beta")).toBeNull();
+    expect(registerSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it("releases an exact host-local clone reservation when auto-create rejects", async () => {
+    const receipt = serializedLlamaCppHostLocalInferenceReceipt();
+    harness.entries.set("alpha", {
+      ...sourceEntry(),
+      openshellDriver: "docker",
+      provider: "llama-cpp-local",
+      model: "llama-cpp-model",
+      endpointUrl: "https://inference.local/v1",
+      endpointSource: "inference-set",
+      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      preferredInferenceApi: "openai-completions",
+      gatewayPort: 8080,
+      hostLocalInferenceReceipt: receipt,
+      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance("alpha", receipt),
+    });
+    streamSandboxCreateMock.mockRejectedValue(new Error("injected create rejection"));
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).rejects.toThrow("injected create rejection");
+
+    expect(reserveSandboxInferenceRouteMock).toHaveBeenCalledWith(
+      "beta",
+      expect.objectContaining({
+        hostLocalInferenceReceipt: receipt,
+        hostLocalInferenceProvenance: expect.objectContaining({
+          runtimeOwnerSandboxName: "alpha",
+        }),
+      }),
+    );
+    expect(getSandboxMock("beta")).toBeNull();
+    expect(registerSandboxMock).not.toHaveBeenCalled();
   });
 
   it("removes a registered clone when live inference re-proof fails", async () => {

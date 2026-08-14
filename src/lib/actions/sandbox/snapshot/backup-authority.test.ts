@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { managedStartupE2eProfile } from "../../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import {
   serializedHostLocalInferenceReceipt,
+  serializedLlamaCppHostLocalInferenceReceipt,
 } from "../../../../../test/helpers/host-local-inference-receipt";
 import {
   MANAGED_IMAGE_REPOSITORIES,
@@ -16,6 +17,7 @@ import {
 import { encodeManagedStartupProfile } from "../../../onboard/managed-startup/profile";
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../../state/registry/types";
+import { createSandboxHostLocalInferenceProvenance } from "../../../state/registry/host-local-inference";
 import type { BackupOptions, BackupResult } from "../../../state/sandbox";
 import { backupSandboxStateWithManagedAuthority } from "./backup-authority";
 
@@ -142,17 +144,38 @@ function hostLocalSandbox(
   };
 }
 
+function explicitLlamaSandbox(agent: "openclaw" | "hermes" | "langchain-deepagents-code") {
+  const hostLocalInferenceReceipt = serializedLlamaCppHostLocalInferenceReceipt("mxc");
+  return {
+    name: "alpha",
+    agent,
+    openshellDriver: "mxc",
+    provider: "llama-cpp-local",
+    model: "llama-cpp-model",
+    endpointUrl: "https://inference.local/v1",
+    endpointSource: "inference-set",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    lifecycleGeneration: "alpha-generation-1",
+    hostLocalInferenceReceipt,
+    hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance(
+      "alpha",
+      hostLocalInferenceReceipt,
+    ),
+  } satisfies SandboxEntry;
+}
+
 describe("managed snapshot backup authority", () => {
-  it.each([
-    "openclaw",
-    "hermes",
-    "langchain-deepagents-code",
-  ] as const)("captures and republishes exact %s provider authority", (agent) => {
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "captures and republishes exact %s provider authority",
+    (agent) => {
     const entry = sandbox(agent);
     const getSandbox = vi.fn(() => entry);
     const requireProvider = vi.fn(() => provider());
     const captureRuntime = vi.fn(() => runtime());
-    const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
+      const backup = vi.fn((_name: string, options: BackupOptions = {}) =>
+        successfulBackup(options),
+      );
 
     const result = backupSandboxStateWithManagedAuthority(
       "alpha",
@@ -173,6 +196,72 @@ describe("managed snapshot backup authority", () => {
     expect(getSandbox).toHaveBeenCalledTimes(2);
     expect(requireProvider).toHaveBeenCalledTimes(2);
     expect(captureRuntime).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "carries exact explicit llama.cpp authority through %s backup",
+    (agent) => {
+      const entry = explicitLlamaSandbox(agent);
+      const prepared = {
+        providerId: "mxc",
+        sandboxName: entry.name,
+        serializedReceipt: entry.hostLocalInferenceReceipt,
+      };
+      const prepareHostLocalInference = vi.fn(() => prepared);
+      const confirmHostLocalInference = vi.fn();
+      const backup = vi.fn((_name: string, options: BackupOptions = {}) =>
+        successfulBackup(options),
+      );
+
+      const result = backupSandboxStateWithManagedAuthority(
+        entry.name,
+        { name: "llama" },
+        {
+          getSandbox: () => entry,
+          requireProvider: () => provider(),
+          captureRuntime: vi.fn() as never,
+          prepareHostLocalInference: prepareHostLocalInference as never,
+          confirmHostLocalInference: confirmHostLocalInference as never,
+          backup,
+        },
+      );
+
+      expect(result.success).toBe(true);
+      expect(backup).toHaveBeenCalledWith(
+        entry.name,
+        expect.objectContaining({
+          hostLocalInferenceReceipt: entry.hostLocalInferenceReceipt,
+          hostLocalInferenceProvenance: entry.hostLocalInferenceProvenance,
+          validateBeforePublish: expect.any(Function),
+        }),
+      );
+      expect(prepareHostLocalInference).toHaveBeenCalledOnce();
+      expect(confirmHostLocalInference).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("fails before backup when explicit llama.cpp authority cannot be reconstructed", () => {
+    const entry = explicitLlamaSandbox("openclaw");
+    const backup = vi.fn();
+
+    const result = backupSandboxStateWithManagedAuthority(
+      entry.name,
+      {},
+      {
+        getSandbox: () => entry,
+        requireProvider: () => provider(),
+        captureRuntime: vi.fn() as never,
+        prepareHostLocalInference: vi.fn(() => null),
+        backup,
+      },
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("explicit host-local inference lifecycle authority"),
+    });
+    expect(backup).not.toHaveBeenCalled();
   });
 
   it("keeps explicit Dockerfile backups on the legacy state-only path", () => {
@@ -276,9 +365,8 @@ describe("managed snapshot backup authority", () => {
         "gatewayName",
         "lifecycleGeneration",
       ] as const;
-      if (fields.some((field) => candidate[field] !== initial[field])) {
+      expect(fields.some((field) => candidate[field] !== initial[field])).toBe(true);
         throw new Error("sandbox authority changed after lifecycle preparation");
-      }
     });
     const backup = vi.fn((_name: string, options: BackupOptions = {}) => successfulBackup(options));
 

@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
+import { llamaCppHostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
 import type { HostLocalInferenceOperation } from "../../onboard/runtime-provider/host-local-inference";
 import {
   type HostLocalInferenceDestroyResult,
@@ -12,6 +13,7 @@ import {
   serializeHostLocalInferenceReceipt,
 } from "../../onboard/runtime-provider/host-local-inference";
 import type { SandboxEntry } from "../../state/registry";
+import { createSandboxHostLocalInferenceProvenance } from "../../state/registry/host-local-inference";
 import { executeSandboxDestroy } from "./destroy-execution";
 
 const AUTHORITY_ID = `mxc-endpoint:${"a".repeat(64)}`;
@@ -165,6 +167,11 @@ async function runDestroy(
     sandboxConfirmedAbsent?: boolean;
     force?: boolean;
     includeRegistryReaders?: boolean;
+    lifecycleOptions?: NonNullable<
+      NonNullable<
+        Parameters<typeof executeSandboxDestroy>[0]["deps"]
+      >["hostLocalInferenceLifecycleOptions"]
+    >;
   } = {},
 ) {
   const entry = options.entry ?? sandbox();
@@ -183,7 +190,7 @@ async function runDestroy(
   const runOpenshell = vi.fn((args: string[]) => {
     const command = args.join(" ");
     runtimeProvider.events.push(command);
-    if (command === "sandbox delete alpha") current = afterDelete;
+    current = command === "sandbox delete alpha" ? afterDelete : current;
     return (
       options.deleteResult ?? {
         status: 0,
@@ -203,19 +210,194 @@ async function runDestroy(
     stopInferenceResources,
     runtimeProviders: { mxc: runtimeProvider.bundle },
     deps: {
+      ...(options.lifecycleOptions
+        ? { hostLocalInferenceLifecycleOptions: options.lifecycleOptions }
+        : {}),
       readTimerMarker: () => null,
       wipeSandboxState: () => undefined,
     },
   });
-  return { getSandbox, listSandboxes, result, runOpenshell, stopInferenceResources };
+  return {
+    getSandbox,
+    listSandboxes,
+    result,
+    runOpenshell,
+    stopInferenceResources,
+  };
 }
 
 describe("sandbox destroy host-local inference transaction", () => {
+  function explicitLlamaReceipt(): HostLocalInferenceReceipt {
+    const value = llamaCppHostLocalInferenceReceipt();
+    return {
+      ...value,
+      engineAuthority: {
+        ...value.engineAuthority,
+        engineId: "memory",
+      },
+    };
+  }
+
+  function explicitLlamaSandbox(value = explicitLlamaReceipt()): SandboxEntry {
+    const serialized = serializeHostLocalInferenceReceipt(value);
+    return {
+      name: "alpha",
+      agent: "openclaw",
+      openshellDriver: "docker",
+      provider: "llama-cpp-local",
+      model: "llama-cpp-model",
+      endpointUrl: "https://inference.local/v1",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: "alpha-generation-1",
+      hostLocalInferenceReceipt: serialized,
+      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance("alpha", serialized),
+    };
+  }
+
+  function explicitLlamaProvider(options: { readonly failDestroy?: boolean } = {}) {
+    const value = explicitLlamaReceipt();
+    const prepareDestroy = vi.fn((receiptValue: HostLocalInferenceReceipt) => receiptValue);
+    const destroy = options.failDestroy
+      ? vi.fn((_receiptValue: HostLocalInferenceReceipt) => {
+          throw new Error("injected exact llama.cpp cleanup failure");
+        })
+      : vi.fn((receiptValue: HostLocalInferenceReceipt) => ({
+          status: "removed" as const,
+          receipt: receiptValue,
+        }));
+    const runtime: HostLocalInferenceRuntime = {
+      providerId: "docker",
+      authorityId: value.engineAuthority.authorityId,
+      services: ["llama-cpp"],
+      translateContainerArgs: (args) => args,
+      qualifyOllama: vi.fn(),
+      startManaged: vi.fn(),
+      inspectManaged: vi.fn((receiptValue) => ({
+        running: true,
+        receipt: receiptValue,
+      })),
+      stopManaged: vi.fn((receiptValue) => ({
+        running: false,
+        receipt: receiptValue,
+      })),
+      preserveForRebuild: vi.fn((receiptValue) => receiptValue),
+      prepareDestroy,
+      destroy,
+    };
+    const operation: HostLocalInferenceOperation = {
+      providerId: "docker",
+      engine: {
+        operation: "host-local-inference",
+        engineId: "memory",
+        displayName: "In-memory",
+        authorityId: value.engineAuthority.authorityId,
+        capture: vi.fn(),
+        captureHost: vi.fn(),
+      },
+      bindingSha256: value.engineAuthority.bindingSha256,
+      assertAuthority: vi.fn(),
+      spawn: vi.fn() as HostLocalInferenceOperation["spawn"],
+      createLlamaCppLifecycle: vi.fn() as HostLocalInferenceOperation["createLlamaCppLifecycle"],
+    };
+    const bundle = createInMemoryRuntimeProviderBundle({
+      providerId: "docker",
+      workloadProfile: {
+        support: null,
+        hostArchitectures: ["x64"],
+        managedImageSelectionPolicy: "prefer-managed",
+        legacyDockerfileBuilds: false,
+      },
+      hostLocalInference: {
+        services: ["llama-cpp"],
+        createOperation: () => operation,
+      },
+    });
+    const createLlamaCppAdapter = vi.fn((adapterOptions) => ({
+      gatewayPort: adapterOptions.gatewayPort ?? 8080,
+      runtimeOwnerSandboxName: adapterOptions.runtimeOwnerSandboxName,
+      model: adapterOptions.expectedModel,
+      operation: adapterOptions.operation!,
+      receipt: adapterOptions.expectedReceipt,
+      runtime,
+      prepareStartup: vi.fn(),
+    }));
+    return { bundle, createLlamaCppAdapter, destroy, prepareDestroy };
+  }
+
+  it("marks explicit llama.cpp authority retired only after one conclusive common cleanup", async () => {
+    const runtimeProvider = explicitLlamaProvider();
+    const entry = explicitLlamaSandbox();
+    let current: SandboxEntry | null = entry;
+    const stopInferenceResources = vi.fn();
+    const result = await executeSandboxDestroy({
+      cleanupShieldsArtifacts: vi.fn(),
+      force: false,
+      getSandbox: () => current,
+      listSandboxes: () => ({ sandboxes: current ? [current] : [] }),
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      sandbox: entry,
+      sandboxConfirmedAbsent: false,
+      sandboxName: "alpha",
+      stopInferenceResources,
+      runtimeProviders: { docker: runtimeProvider.bundle },
+      deps: {
+        hostLocalInferenceLifecycleOptions: {
+          createLlamaCppAdapter: runtimeProvider.createLlamaCppAdapter,
+        },
+        readTimerMarker: () => null,
+        wipeSandboxState: () => undefined,
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      commonLlamaCppAuthorityRetired: true,
+    });
+    expect(runtimeProvider.prepareDestroy).toHaveBeenCalledTimes(2);
+    expect(runtimeProvider.destroy).toHaveBeenCalledOnce();
+    expect(stopInferenceResources).not.toHaveBeenCalled();
+  });
+
+  it("retains explicit llama.cpp retry authority when common cleanup fails", async () => {
+    const runtimeProvider = explicitLlamaProvider({ failDestroy: true });
+    const entry = explicitLlamaSandbox();
+    const stopInferenceResources = vi.fn();
+    const result = await executeSandboxDestroy({
+      cleanupShieldsArtifacts: vi.fn(),
+      force: false,
+      getSandbox: () => entry,
+      listSandboxes: () => ({ sandboxes: [entry] }),
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      sandbox: entry,
+      sandboxConfirmedAbsent: false,
+      sandboxName: "alpha",
+      stopInferenceResources,
+      runtimeProviders: { docker: runtimeProvider.bundle },
+      deps: {
+        hostLocalInferenceLifecycleOptions: {
+          createLlamaCppAdapter: runtimeProvider.createLlamaCppAdapter,
+        },
+        readTimerMarker: () => null,
+        wipeSandboxState: () => undefined,
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      deleteConfirmed: true,
+      hostLocalInferenceCleanupFailure: expect.stringContaining("injected exact llama.cpp"),
+    });
+    expect(runtimeProvider.destroy).toHaveBeenCalledOnce();
+    expect(stopInferenceResources).not.toHaveBeenCalled();
+  });
+
   it("retires the exact unshared runtime only after confirmed sandbox deletion", async () => {
     const runtimeProvider = provider();
     const { result, stopInferenceResources } = await runDestroy(runtimeProvider);
 
     expect(result).toMatchObject({ ok: true });
+    expect(result).not.toHaveProperty("commonLlamaCppAuthorityRetired");
     expect(runtimeProvider.events.indexOf("runtime destroy")).toBeGreaterThan(
       runtimeProvider.events.indexOf("sandbox delete alpha"),
     );
@@ -350,18 +532,25 @@ describe("sandbox destroy host-local inference transaction", () => {
   });
 
   it("reconciles retained authority only after stable sandbox absence", async () => {
-    let destroyAttempts = 0;
+    const destroy = vi
+      .fn((value: HostLocalInferenceReceipt): HostLocalInferenceDestroyResult => ({
+        status: "already-absent",
+        receipt: value,
+      }))
+      .mockImplementationOnce(() => {
+        throw new Error("injected runtime removal failure");
+      });
     const runtimeProvider = provider({
-      destroy: (value) => {
-        destroyAttempts += 1;
-        if (destroyAttempts === 1) throw new Error("injected runtime removal failure");
-        return { status: "already-absent", receipt: value };
-      },
+      destroy,
     });
 
     const first = await runDestroy(runtimeProvider);
     const retry = await runDestroy(runtimeProvider, {
-      deleteResult: { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" },
+      deleteResult: {
+        status: 1,
+        stdout: "",
+        stderr: "Error: sandbox alpha not found",
+      },
       sandboxConfirmedAbsent: true,
     });
 

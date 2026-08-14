@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createInMemoryRuntimeProviderBundle } from "../../../../../test/helpers/runtime-provider-bundle";
+import { createSandboxHostLocalInferenceProvenance } from "../../../state/registry/host-local-inference";
 import {
   type HostLocalInferenceOperation,
   type HostLocalInferenceReceipt,
@@ -313,9 +314,95 @@ describe("host-local inference snapshot restore authority", () => {
 
     expect(result).toMatchObject({
       success: false,
-      error: expect.stringContaining("no B4-E1 lifecycle authority"),
+      error: expect.stringContaining("no common lifecycle authority"),
     });
     expect(captureContentAuthority).not.toHaveBeenCalled();
+    expect(restore).not.toHaveBeenCalled();
+  });
+
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "re-proves explicit llama.cpp authority throughout %s restore",
+    (agent) => {
+      const serialized = llamaCppReceipt();
+      const provenance = createSandboxHostLocalInferenceProvenance("alpha", serialized);
+      const target: SandboxEntry = {
+        ...sandbox(agent, "vllm"),
+        provider: "llama-cpp-local",
+        model: "llama-cpp-model",
+        gatewayPort: 8080,
+        hostLocalInferenceReceipt: serialized,
+        hostLocalInferenceProvenance: provenance,
+      };
+      const prepared = {
+        providerId: "mxc",
+        sandboxName: "alpha",
+        serializedReceipt: serialized,
+      };
+      const prepareHostLocalInference = vi.fn(() => prepared);
+      const confirmHostLocalInference = vi.fn();
+      const restore = vi.fn((_name, _path, options: RecreatedSandboxRestoreOptions) =>
+        successfulRestore(options),
+      );
+
+      const result = restoreRecreatedSandboxStateWithManagedAuthority(
+        "alpha",
+        {
+          ...manifest(agent, "vllm"),
+          hostLocalInferenceReceipt: serialized,
+          hostLocalInferenceProvenance: provenance,
+        },
+        { targetAgentType: agent },
+        {
+          getSandbox: () => target,
+          requireProvider: () => provider().bundle,
+          prepareHostLocalInference: prepareHostLocalInference as never,
+          confirmHostLocalInference: confirmHostLocalInference as never,
+          captureContentAuthority: () => ({
+            schemaVersion: 1,
+            backupPath: "/tmp/alpha",
+            contentSha256: "f".repeat(64),
+          }),
+          restore,
+        },
+      );
+
+      expect(result.success).toBe(true);
+      expect(prepareHostLocalInference).toHaveBeenCalledWith(expect.anything(), target, serialized);
+      expect(confirmHostLocalInference).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("rejects a manifest that omits explicit llama.cpp provenance", () => {
+    const serialized = llamaCppReceipt();
+    const target: SandboxEntry = {
+      ...sandbox("openclaw", "vllm"),
+      provider: "llama-cpp-local",
+      model: "llama-cpp-model",
+      gatewayPort: 8080,
+      hostLocalInferenceReceipt: serialized,
+      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance("alpha", serialized),
+    };
+    const prepareHostLocalInference = vi.fn();
+    const restore = vi.fn();
+
+    const result = restoreRecreatedSandboxStateWithManagedAuthority(
+      "alpha",
+      { ...manifest("openclaw", "vllm"), hostLocalInferenceReceipt: serialized },
+      { targetAgentType: "openclaw" },
+      {
+        getSandbox: () => target,
+        requireProvider: () => provider().bundle,
+        prepareHostLocalInference: prepareHostLocalInference as never,
+        captureContentAuthority: vi.fn(),
+        restore,
+      },
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("provenance differs"),
+    });
+    expect(prepareHostLocalInference).not.toHaveBeenCalled();
     expect(restore).not.toHaveBeenCalled();
   });
 

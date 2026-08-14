@@ -7,8 +7,9 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { privateBridgeFixture } from "../../onboard/runtime-provider/docker-llama-cpp-private-bridge.test-support";
 import { createHostLocalCreateJournalStore } from "../../onboard/runtime-provider/host-local-create-journal";
-import { managedLlamaCppStatePaths } from "../llama-cpp/managed-state";
+import { loadManagedLlamaCppReceipt, managedLlamaCppStatePaths } from "../llama-cpp/managed-state";
 import { runtimeAuthFingerprint } from "../serving/runtime-auth-fingerprint";
 import {
   HOST_LOCAL_VLLM_AUTH_LABEL,
@@ -27,6 +28,8 @@ import {
   cleanupHuggingFaceCacheData,
   cleanupLocalModelRuntimes,
   cleanupManagedLlamaCppRuntimeForSandbox,
+  finalizeManagedLlamaCppLifecycleCleanup,
+  prepareManagedLlamaCppLifecycleCleanup,
   resolveManagedLlamaCppCleanupTarget,
 } from "./cleanup";
 import {
@@ -381,6 +384,76 @@ describe("host-local model cleanup", () => {
     );
     expect(result.removed).not.toContain(`cache-contents:${cache}`);
     expect(result.preserved).toContain(cache);
+  });
+
+  it("finishes common-lifecycle llama.cpp cleanup and preserves the shared model cache", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine);
+    const paths = managedLlamaCppStatePaths(homeDir);
+    const receipt = loadManagedLlamaCppReceipt(paths)!;
+    createHostLocalCreateJournalStore(paths.stateDir).retire(TRANSACTION_ID);
+    const cache = path.join(homeDir, ".cache", "huggingface");
+    fs.mkdirSync(cache, { recursive: true });
+    fs.writeFileSync(path.join(cache, "shared-model"), "keep");
+    const privateBridge = privateBridgeFixture();
+
+    expect(
+      prepareManagedLlamaCppLifecycleCleanup("spark-agent", receipt, {
+        homeDir,
+        engine: harness.engine,
+      }),
+    ).toEqual(receipt);
+    expect(harness.capture).not.toHaveBeenCalledWith(
+      ["rm", "--force", RUNTIME_ID],
+      expect.any(Number),
+    );
+
+    const result = finalizeManagedLlamaCppLifecycleCleanup("spark-agent", receipt, {
+      homeDir,
+      engine: harness.engine,
+      privateBridge,
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(privateBridge.stopTransaction).toHaveBeenCalledWith(TRANSACTION_ID);
+    expect(privateBridge.assertStopped).toHaveBeenCalledWith(TRANSACTION_ID);
+    expect(harness.capture).toHaveBeenCalledWith(["rm", "--force", RUNTIME_ID], expect.any(Number));
+    expect(harness.capture).toHaveBeenCalledWith(["network", "rm", NETWORK_ID], expect.any(Number));
+    expect(fs.existsSync(paths.stateDir)).toBe(false);
+    expect(fs.readFileSync(path.join(cache, "shared-model"), "utf8")).toBe("keep");
+    expect(result.preserved).toContain(cache);
+  });
+
+  it("retries exact common-lifecycle cleanup after private state is already absent", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine);
+    const paths = managedLlamaCppStatePaths(homeDir);
+    const receipt = loadManagedLlamaCppReceipt(paths)!;
+    fs.rmSync(paths.stateDir, { recursive: true });
+    const privateBridge = privateBridgeFixture();
+
+    expect(
+      prepareManagedLlamaCppLifecycleCleanup("spark-agent", receipt, {
+        homeDir,
+        engine: harness.engine,
+      }),
+    ).toEqual(receipt);
+    const first = finalizeManagedLlamaCppLifecycleCleanup("spark-agent", receipt, {
+      homeDir,
+      engine: harness.engine,
+      privateBridge,
+    });
+    const second = finalizeManagedLlamaCppLifecycleCleanup("spark-agent", receipt, {
+      homeDir,
+      engine: harness.engine,
+      privateBridge,
+    });
+
+    expect(first).toMatchObject({ ok: true });
+    expect(first.removed).toEqual([`container:${RUNTIME_ID}`, `network:${NETWORK_ID}`]);
+    expect(second).toEqual({ ok: true, removed: [], preserved: [] });
   });
 
   it("removes non-credential Hugging Face cache data without running runtime cleanup", () => {

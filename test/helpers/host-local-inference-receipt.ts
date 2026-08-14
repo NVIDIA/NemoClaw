@@ -53,3 +53,46 @@ export function hostLocalInferenceReceipt(providerId = "mxc"): HostLocalInferenc
 export function serializedHostLocalInferenceReceipt(providerId = "mxc"): string {
   return serializeHostLocalInferenceReceipt(hostLocalInferenceReceipt(providerId));
 }
+
+export function llamaCppHostLocalInferenceReceipt(
+  providerId = "docker",
+): HostLocalInferenceReceipt {
+  return {
+    schemaVersion: 1,
+    providerId,
+    service: "llama-cpp",
+    engineAuthority: {
+      schemaVersion: 1,
+      providerId,
+      operation: "host-local-inference",
+      engineId: providerId,
+      authorityId: `${providerId}:host-local`,
+      bindingSha256: "4".repeat(64),
+    },
+    endpoint: {
+      host: "host.openshell.internal",
+      port: 8081,
+      networkName: "nemoclaw-llama-cpp-internal",
+    },
+    runtime: {
+      kind: "container",
+      runtimeId: "5".repeat(64),
+      name: "nemoclaw-llama-cpp",
+      imageRef: `nvcr.io/nvidia/llama-cpp@sha256:${"6".repeat(64)}`,
+      probeImageRef: `quay.io/curl/curl@sha256:${"7".repeat(64)}`,
+      specSha256: "8".repeat(64),
+      model: {
+        planDigest: `sha256:${"9".repeat(64)}`,
+        recipeId: "nemotron-llama-cpp",
+        generation: "a".repeat(64),
+        digest: `sha256:${"b".repeat(64)}`,
+        sizeBytes: 1024,
+      },
+      gpu: { vendor: "nvidia", count: 1 },
+    },
+  };
+}
+
+export function serializedLlamaCppHostLocalInferenceReceipt(providerId = "docker"): string {
+  return serializeHostLocalInferenceReceipt(llamaCppHostLocalInferenceReceipt(providerId));
+}

@@ -18,8 +18,8 @@ describe("Podman host-local inference destroy", () => {
       onFailureEvidence: harness.onFailureEvidence,
       redactSensitive: harness.redactSensitive,
     });
-    const runtime = operation.managedRuntime;
-    if (!runtime) throw new Error("test operation lacks managed runtime");
+    const runtime = operation.managedRuntime!;
+    expect(runtime, "test operation lacks managed runtime").toBeDefined();
     const prepared = runtime.qualifyOllama(
       {
         acceleration: "nvidia-gpu",

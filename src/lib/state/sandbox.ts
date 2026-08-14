@@ -74,7 +74,11 @@ import {
   cloneSandboxRuntimeSnapshot,
   type SandboxRuntimeSnapshot,
 } from "./registry/runtime-snapshot.js";
-import type { SandboxEntry, SandboxWorkloadReceipt } from "./registry/types.js";
+import type {
+  SandboxEntry,
+  SandboxHostLocalInferenceProvenance,
+  SandboxWorkloadReceipt,
+} from "./registry/types.js";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload.js";
 import type { CustomPolicyEntry } from "./registry.js";
 import * as registry from "./registry.js";
@@ -147,6 +151,8 @@ export interface RebuildManifest {
   workload?: SandboxWorkloadReceipt;
   /** Exact provider-neutral authority for out-of-sandbox inference. */
   hostLocalInferenceReceipt?: string;
+  /** Explicit hidden-lifecycle provenance paired with the exact receipt. */
+  hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   instances?: InstanceBackup[];
   // Optional user-provided label for `snapshot restore <name>`.
   name?: string;
@@ -162,6 +168,7 @@ export interface BackupOptions {
   runtimeSnapshot?: SandboxRuntimeSnapshot;
   workload?: SandboxWorkloadReceipt;
   hostLocalInferenceReceipt?: string;
+  hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   /**
    * Internal publication fence for provider-backed backups. The callback
    * runs after data capture and sanitization but before the manifest becomes
@@ -335,6 +342,23 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
   const hostLocalInferenceReceipt = registry.cloneSandboxHostLocalInferenceReceipt(
     value.hostLocalInferenceReceipt as string | null | undefined,
   );
+  const hostLocalInferenceProvenance = registry.cloneSandboxHostLocalInferenceProvenance(
+    value.hostLocalInferenceProvenance,
+  );
+  const validHostLocalInferenceProvenance = (() => {
+    if (value.hostLocalInferenceProvenance === undefined) return true;
+    if (!hostLocalInferenceProvenance || typeof hostLocalInferenceReceipt !== "string")
+      return false;
+    try {
+      registry.requireSandboxHostLocalInferenceProvenance(
+        hostLocalInferenceProvenance,
+        hostLocalInferenceReceipt,
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  })();
   return (
     typeof value.version === "number" &&
     typeof value.sandboxName === "string" &&
@@ -367,6 +391,7 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     (value.workload === undefined || workload !== undefined) &&
     (value.hostLocalInferenceReceipt === undefined ||
       (typeof hostLocalInferenceReceipt === "string" && hostLocalInferenceReceipt.length > 0)) &&
+    validHostLocalInferenceProvenance &&
     (workload?.kind !== "managed-image" || runtimeSnapshot !== undefined) &&
     (value.instances === undefined ||
       (Array.isArray(value.instances) &&
@@ -1108,6 +1133,7 @@ function normalizeSnapshotBackupAuthority(options: BackupOptions): {
   readonly runtimeSnapshot?: SandboxRuntimeSnapshot;
   readonly workload?: SandboxWorkloadReceipt;
   readonly hostLocalInferenceReceipt?: string;
+  readonly hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   readonly error?: string;
 } {
   const runtimeSnapshot =
@@ -1118,6 +1144,9 @@ function normalizeSnapshotBackupAuthority(options: BackupOptions): {
     options.workload === undefined ? undefined : cloneSandboxWorkloadReceipt(options.workload);
   const hostLocalInferenceReceipt = registry.cloneSandboxHostLocalInferenceReceipt(
     options.hostLocalInferenceReceipt,
+  );
+  const hostLocalInferenceProvenance = registry.cloneSandboxHostLocalInferenceProvenance(
+    options.hostLocalInferenceProvenance,
   );
   if (options.runtimeSnapshot !== undefined && runtimeSnapshot === undefined) {
     return { error: "snapshot runtime state is invalid or cannot be represented" };
@@ -1131,6 +1160,19 @@ function normalizeSnapshotBackupAuthority(options: BackupOptions): {
   ) {
     return { error: "snapshot host-local inference authority is invalid" };
   }
+  if (options.hostLocalInferenceProvenance !== undefined) {
+    if (!hostLocalInferenceProvenance || typeof hostLocalInferenceReceipt !== "string") {
+      return { error: "snapshot host-local inference provenance is invalid" };
+    }
+    try {
+      registry.requireSandboxHostLocalInferenceProvenance(
+        hostLocalInferenceProvenance,
+        hostLocalInferenceReceipt,
+      );
+    } catch {
+      return { error: "snapshot host-local inference provenance is invalid" };
+    }
+  }
   if (workload?.kind === "managed-image" && runtimeSnapshot === undefined) {
     return { error: "managed snapshot is missing provider runtime state" };
   }
@@ -1138,6 +1180,7 @@ function normalizeSnapshotBackupAuthority(options: BackupOptions): {
     ...(runtimeSnapshot === undefined ? {} : { runtimeSnapshot }),
     ...(workload === undefined ? {} : { workload }),
     ...(typeof hostLocalInferenceReceipt === "string" ? { hostLocalInferenceReceipt } : {}),
+    ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
   };
 }
 
@@ -2419,6 +2462,9 @@ function readManifest(backupPath: string): RebuildManifest | null {
     const hostLocalInferenceReceipt = registry.cloneSandboxHostLocalInferenceReceipt(
       manifest.hostLocalInferenceReceipt,
     );
+    const hostLocalInferenceProvenance = registry.cloneSandboxHostLocalInferenceProvenance(
+      manifest.hostLocalInferenceProvenance,
+    );
     return {
       ...manifest,
       dir,
@@ -2429,6 +2475,7 @@ function readManifest(backupPath: string): RebuildManifest | null {
       ...(runtimeSnapshot === undefined ? {} : { runtimeSnapshot }),
       ...(workload === undefined ? {} : { workload }),
       ...(typeof hostLocalInferenceReceipt === "string" ? { hostLocalInferenceReceipt } : {}),
+      ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
     };
   } catch {
     return null;

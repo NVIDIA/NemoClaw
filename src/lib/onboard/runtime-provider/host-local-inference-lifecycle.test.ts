@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
+import { createSandboxHostLocalInferenceProvenance } from "../../state/registry/host-local-inference";
 import type { SandboxEntry } from "../../state/registry/types";
 import type {
   HostLocalInferenceDestroyResult,
@@ -27,6 +28,7 @@ const BINDING_SHA256 = "b".repeat(64);
 const PROBE_IMAGE = `quay.io/curl/curl@sha256:${"c".repeat(64)}`;
 const AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 const SERVICES = ["ollama", "nim", "vllm"] as const;
+const PROVIDER_SERVICES = [...SERVICES, "llama-cpp"] as const;
 
 function receipt(
   service: ManagedHostLocalInferenceService = "vllm",
@@ -91,6 +93,43 @@ function receipt(
   };
 }
 
+function llamaCppReceipt(): HostLocalInferenceReceipt {
+  return {
+    schemaVersion: 1,
+    providerId: "mxc",
+    service: "llama-cpp",
+    engineAuthority: {
+      schemaVersion: 1,
+      providerId: "mxc",
+      operation: "host-local-inference",
+      engineId: "memory",
+      authorityId: AUTHORITY_ID,
+      bindingSha256: BINDING_SHA256,
+    },
+    endpoint: {
+      host: "host.openshell.internal",
+      port: 8081,
+      networkName: "nemoclaw-llama-cpp-internal",
+    },
+    runtime: {
+      kind: "container",
+      runtimeId: "9".repeat(64),
+      name: "nemoclaw-llama-cpp",
+      imageRef: `nvcr.io/nvidia/llama-cpp@sha256:${"a".repeat(64)}`,
+      probeImageRef: PROBE_IMAGE,
+      specSha256: "d".repeat(64),
+      model: {
+        planDigest: `sha256:${"e".repeat(64)}`,
+        recipeId: "llama-cpp-model",
+        generation: "f".repeat(64),
+        digest: `sha256:${"1".repeat(64)}`,
+        sizeBytes: 1024,
+      },
+      gpu: { vendor: "nvidia", count: 1 },
+    },
+  };
+}
+
 function sandbox(
   name = "alpha",
   value = receipt(),
@@ -100,10 +139,19 @@ function sandbox(
     name,
     agent: "openclaw",
     openshellDriver: "mxc",
-    provider: value.service === "ollama" ? "ollama-local" : "vllm-local",
-    model: value.inference?.model,
+    provider:
+      value.service === "ollama"
+        ? "ollama-local"
+        : value.service === "llama-cpp"
+          ? "llama-cpp-local"
+          : "vllm-local",
+    model: value.service === "llama-cpp" ? "llama-cpp-model" : value.inference?.model,
     endpointUrl: "https://inference.local/v1",
+    endpointSource: "inference-set",
+    credentialEnv: value.service === "llama-cpp" ? "NEMOCLAW_LLAMACPP_LOCAL_TOKEN" : null,
+    preferredInferenceApi: "openai-completions",
     gatewayName: "nemoclaw",
+    gatewayPort: 8080,
     lifecycleGeneration: `${name}-generation-1`,
     hostLocalInferenceReceipt: serializeHostLocalInferenceReceipt(value),
     ...overrides,
@@ -114,8 +162,7 @@ function requiredPrepared(
   value: PreparedHostLocalInferenceAuthority | null,
 ): PreparedHostLocalInferenceAuthority {
   expect(value).not.toBeNull();
-  if (!value) throw new Error("test expected managed lifecycle authority");
-  return value;
+  return value!;
 }
 
 function provider(
@@ -136,19 +183,20 @@ function provider(
     (value: HostLocalInferenceReceipt) => options.prepareDestroy?.(value) ?? value,
   );
   let present = true;
-  const destroy = vi.fn((value: HostLocalInferenceReceipt): HostLocalInferenceDestroyResult => {
-    if (options.destroy) return options.destroy(value);
-    if (value.runtime.kind === "host") {
-      return { status: "retained", reason: "host-process", receipt: value };
-    }
+  const destroyContainer = (value: HostLocalInferenceReceipt): HostLocalInferenceDestroyResult => {
     const status = present ? "removed" : "already-absent";
     present = false;
     return { status, receipt: value };
-  });
+  };
+  const defaultDestroy = (value: HostLocalInferenceReceipt): HostLocalInferenceDestroyResult =>
+    value.runtime.kind === "host"
+      ? { status: "retained", reason: "host-process", receipt: value }
+      : destroyContainer(value);
+  const destroy = vi.fn(options.destroy ?? defaultDestroy);
   const runtime: HostLocalInferenceRuntime = {
     providerId: "mxc",
     authorityId: options.authorityId ?? AUTHORITY_ID,
-    services: SERVICES,
+    services: PROVIDER_SERVICES,
     translateContainerArgs: (args) => args,
     qualifyOllama: vi.fn(),
     startManaged: vi.fn(),
@@ -174,7 +222,7 @@ function provider(
     managedRuntime: runtime,
   };
   const createOperation = vi.fn((input?: HostLocalInferenceOperationInput) => {
-    if (input) operationInputs.push(input);
+    operationInputs.push(...(input === undefined ? [] : [input]));
     return operation;
   });
   const bundle = createInMemoryRuntimeProviderBundle({
@@ -185,7 +233,7 @@ function provider(
       managedImageSelectionPolicy: "prefer-managed",
       legacyDockerfileBuilds: false,
     },
-    hostLocalInference: { services: SERVICES, createOperation },
+    hostLocalInference: { services: PROVIDER_SERVICES, createOperation },
   });
   return {
     assertAuthority,
@@ -195,7 +243,17 @@ function provider(
     operationInputs,
     prepareDestroy,
     preserveForRebuild,
+    runtime,
   };
+}
+
+function explicitLlamaSandbox(name = "alpha", agent = "openclaw"): SandboxEntry {
+  const value = llamaCppReceipt();
+  const serialized = serializeHostLocalInferenceReceipt(value);
+  return sandbox(name, value, {
+    agent,
+    hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance("alpha", serialized),
+  });
 }
 
 const AGENT_SERVICE_CASES = AGENTS.flatMap((agent) =>
@@ -220,6 +278,8 @@ describe("host-local inference lifecycle authority", () => {
         routeProvider: service === "ollama" ? "ollama-local" : "vllm-local",
         model: value.inference?.model,
         endpointUrl: "https://inference.local/v1",
+        endpointSource: "inference-set",
+        preferredInferenceApi: "openai-completions",
         gatewayName: "nemoclaw",
         lifecycleGeneration: "alpha-generation-1",
         serializedReceipt: entry.hostLocalInferenceReceipt,
@@ -236,6 +296,216 @@ describe("host-local inference lifecycle authority", () => {
       ]);
     },
   );
+
+  it.each(AGENTS)(
+    "routes explicitly provenanced llama.cpp for %s through the common coordinator",
+    (agent) => {
+      const entry = explicitLlamaSandbox("alpha", agent);
+      const runtimeProvider = provider();
+      const createLlamaCppAdapter = vi.fn((options) => ({
+        gatewayPort: options.gatewayPort ?? 8080,
+        runtimeOwnerSandboxName: options.runtimeOwnerSandboxName,
+        model: "llama-cpp-model",
+        operation: options.operation!,
+        receipt: options.expectedReceipt,
+        runtime: runtimeProvider.runtime,
+        prepareStartup: vi.fn(),
+      }));
+
+      const prepared = requiredPrepared(
+        prepareSandboxHostLocalInferenceAuthority(runtimeProvider.bundle, entry, {
+          createLlamaCppAdapter,
+        }),
+      );
+
+      expect(prepared.serializedReceipt).toBe(entry.hostLocalInferenceReceipt);
+      expect(prepared.sandboxAuthority).toMatchObject({
+        agent,
+        routeProvider: "llama-cpp-local",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        hostLocalInferenceProvenance: entry.hostLocalInferenceProvenance,
+      });
+      expect(createLlamaCppAdapter).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runtimeOwnerSandboxName: "alpha",
+          gatewayPort: 8080,
+          expectedReceipt: llamaCppReceipt(),
+        }),
+      );
+      expect(runtimeProvider.preserveForRebuild).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("keeps an unmarked schema-v1 llama.cpp receipt on the dedicated legacy lifecycle", () => {
+    const runtimeProvider = provider();
+    const entry = sandbox("alpha", llamaCppReceipt());
+
+    expect(prepareSandboxHostLocalInferenceAuthority(runtimeProvider.bundle, entry)).toBeNull();
+    expect(runtimeProvider.createOperation).not.toHaveBeenCalled();
+    expect(runtimeProvider.preserveForRebuild).not.toHaveBeenCalled();
+  });
+
+  it("rejects changed explicit llama.cpp provenance before provider mutation", () => {
+    const runtimeProvider = provider();
+    const entry = explicitLlamaSandbox();
+    const drifted = {
+      ...entry,
+      hostLocalInferenceProvenance: {
+        ...entry.hostLocalInferenceProvenance!,
+        receiptSha256: "0".repeat(64),
+      },
+    };
+
+    expect(() =>
+      prepareSandboxHostLocalInferenceAuthority(runtimeProvider.bundle, drifted, {
+        createLlamaCppAdapter: vi.fn(),
+      }),
+    ).toThrow(/provenance does not match its receipt/);
+    expect(runtimeProvider.createOperation).not.toHaveBeenCalled();
+  });
+
+  it("retains an exact same-gateway llama.cpp runtime while a provenanced clone remains", () => {
+    const runtimeProvider = provider();
+    const alpha = explicitLlamaSandbox("alpha");
+    const beta = explicitLlamaSandbox("beta", "hermes");
+    const createLlamaCppAdapter = vi.fn((options) => ({
+      gatewayPort: options.gatewayPort ?? 8080,
+      runtimeOwnerSandboxName: options.runtimeOwnerSandboxName,
+      model: "llama-cpp-model",
+      operation: options.operation!,
+      receipt: options.expectedReceipt,
+      runtime: runtimeProvider.runtime,
+      prepareStartup: vi.fn(),
+    }));
+    const lifecycleOptions = { createLlamaCppAdapter };
+    const prepared = requiredPrepared(
+      prepareSandboxHostLocalInferenceDestroyAuthority(
+        runtimeProvider.bundle,
+        alpha,
+        lifecycleOptions,
+      ),
+    );
+
+    expect(
+      retirePreparedHostLocalInferenceAuthority(
+        runtimeProvider.bundle,
+        alpha,
+        prepared,
+        [beta, alpha],
+        lifecycleOptions,
+      ).status,
+    ).toBe("shared");
+    expect(runtimeProvider.destroy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a llama.cpp peer on a different gateway before retirement", () => {
+    const runtimeProvider = provider();
+    const alpha = explicitLlamaSandbox("alpha");
+    const beta = { ...explicitLlamaSandbox("beta"), gatewayPort: 8090 };
+    const createLlamaCppAdapter = vi.fn((options) => ({
+      gatewayPort: options.gatewayPort ?? 8080,
+      runtimeOwnerSandboxName: options.runtimeOwnerSandboxName,
+      model: "llama-cpp-model",
+      operation: options.operation!,
+      receipt: options.expectedReceipt,
+      runtime: runtimeProvider.runtime,
+      prepareStartup: vi.fn(),
+    }));
+    const lifecycleOptions = { createLlamaCppAdapter };
+    const prepared = requiredPrepared(
+      prepareSandboxHostLocalInferenceDestroyAuthority(
+        runtimeProvider.bundle,
+        alpha,
+        lifecycleOptions,
+      ),
+    );
+
+    expect(() =>
+      retirePreparedHostLocalInferenceAuthority(
+        runtimeProvider.bundle,
+        alpha,
+        prepared,
+        [alpha, beta],
+        lifecycleOptions,
+      ),
+    ).toThrow(/conflicting gateway, route, or provenance authority/);
+    expect(runtimeProvider.destroy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a llama.cpp peer with different route authority before retirement", () => {
+    const runtimeProvider = provider();
+    const alpha = explicitLlamaSandbox("alpha");
+    const beta = {
+      ...explicitLlamaSandbox("beta"),
+      credentialEnv: "DIFFERENT_TOKEN",
+    };
+    const createLlamaCppAdapter = vi.fn((options) => ({
+      gatewayPort: options.gatewayPort ?? 8080,
+      runtimeOwnerSandboxName: options.runtimeOwnerSandboxName,
+      model: "llama-cpp-model",
+      operation: options.operation!,
+      receipt: options.expectedReceipt,
+      runtime: runtimeProvider.runtime,
+      prepareStartup: vi.fn(),
+    }));
+    const lifecycleOptions = { createLlamaCppAdapter };
+    const prepared = requiredPrepared(
+      prepareSandboxHostLocalInferenceDestroyAuthority(
+        runtimeProvider.bundle,
+        alpha,
+        lifecycleOptions,
+      ),
+    );
+
+    expect(() =>
+      retirePreparedHostLocalInferenceAuthority(
+        runtimeProvider.bundle,
+        alpha,
+        prepared,
+        [alpha, beta],
+        lifecycleOptions,
+      ),
+    ).toThrow(/conflicting gateway, route, or provenance authority/);
+    expect(runtimeProvider.destroy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a llama.cpp peer with different model authority before retirement", () => {
+    const runtimeProvider = provider();
+    const alpha = explicitLlamaSandbox("alpha");
+    const beta = {
+      ...explicitLlamaSandbox("beta"),
+      model: "different-model",
+    };
+    const createLlamaCppAdapter = vi.fn((options) => ({
+      gatewayPort: options.gatewayPort ?? 8080,
+      runtimeOwnerSandboxName: options.runtimeOwnerSandboxName,
+      model: "llama-cpp-model",
+      operation: options.operation!,
+      receipt: options.expectedReceipt,
+      runtime: runtimeProvider.runtime,
+      prepareStartup: vi.fn(),
+    }));
+    const lifecycleOptions = { createLlamaCppAdapter };
+    const prepared = requiredPrepared(
+      prepareSandboxHostLocalInferenceDestroyAuthority(
+        runtimeProvider.bundle,
+        alpha,
+        lifecycleOptions,
+      ),
+    );
+
+    expect(() =>
+      retirePreparedHostLocalInferenceAuthority(
+        runtimeProvider.bundle,
+        alpha,
+        prepared,
+        [alpha, beta],
+        lifecycleOptions,
+      ),
+    ).toThrow(/conflicting gateway, route, or provenance authority/);
+    expect(runtimeProvider.destroy).not.toHaveBeenCalled();
+  });
 
   it("reconstructs a CPU Ollama operation from the durable acceleration authority", () => {
     const value = receipt("ollama", { acceleration: "cpu" });
@@ -258,13 +528,25 @@ describe("host-local inference lifecycle authority", () => {
     ["agent", (entry: SandboxEntry): SandboxEntry => ({ ...entry, agent: "hermes" })],
     [
       "runtime provider",
-      (entry: SandboxEntry): SandboxEntry => ({ ...entry, openshellDriver: "podman" }),
+      (entry: SandboxEntry): SandboxEntry => ({
+        ...entry,
+        openshellDriver: "podman",
+      }),
     ],
     [
       "route provider",
-      (entry: SandboxEntry): SandboxEntry => ({ ...entry, provider: "ollama-local" }),
+      (entry: SandboxEntry): SandboxEntry => ({
+        ...entry,
+        provider: "ollama-local",
+      }),
     ],
-    ["model", (entry: SandboxEntry): SandboxEntry => ({ ...entry, model: "other-model" })],
+    [
+      "model",
+      (entry: SandboxEntry): SandboxEntry => ({
+        ...entry,
+        model: "other-model",
+      }),
+    ],
     [
       "endpoint",
       (entry: SandboxEntry): SandboxEntry => ({
@@ -273,8 +555,32 @@ describe("host-local inference lifecycle authority", () => {
       }),
     ],
     [
+      "endpoint source",
+      (entry: SandboxEntry): SandboxEntry => ({
+        ...entry,
+        endpointSource: "onboard",
+      }),
+    ],
+    [
+      "credential",
+      (entry: SandboxEntry): SandboxEntry => ({
+        ...entry,
+        credentialEnv: "DIFFERENT_TOKEN",
+      }),
+    ],
+    [
+      "inference API",
+      (entry: SandboxEntry): SandboxEntry => ({
+        ...entry,
+        preferredInferenceApi: "openai-responses",
+      }),
+    ],
+    [
       "gateway",
-      (entry: SandboxEntry): SandboxEntry => ({ ...entry, gatewayName: "other-gateway" }),
+      (entry: SandboxEntry): SandboxEntry => ({
+        ...entry,
+        gatewayName: "other-gateway",
+      }),
     ],
     [
       "lifecycle generation",

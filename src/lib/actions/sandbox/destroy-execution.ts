@@ -11,6 +11,7 @@ import {
   requireRuntimeProviderDestructiveCleanupAuthority,
 } from "../../onboard/runtime-provider/access";
 import {
+  type HostLocalInferenceLifecycleOptions,
   type PreparedHostLocalInferenceAuthority,
   prepareSandboxHostLocalInferenceDestroyAuthority,
   retirePreparedHostLocalInferenceAuthority,
@@ -64,6 +65,7 @@ type SandboxDestroyExecutionInput = {
   stopInferenceResources: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   deps?: {
+    hostLocalInferenceLifecycleOptions?: HostLocalInferenceLifecycleOptions;
     readTimerMarker?: typeof readTimerMarker;
     wipeSandboxState?: typeof wipeSandboxState;
   };
@@ -77,6 +79,8 @@ export type SandboxDestroyExecutionResult =
       deleteResult: ReturnType<DestroyRunOpenshell>;
       detachOutcome: DetachSandboxProvidersResult;
       forcedLocalCleanup: boolean;
+      /** Common lifecycle conclusively retired this row's explicit llama.cpp claim. */
+      commonLlamaCppAuthorityRetired?: true;
     }
   | {
       ok: false;
@@ -327,14 +331,13 @@ export async function executeSandboxDestroy({
     if (initialContinuity.status !== "match") {
       return identityRefusalResult("before destroy preparation", initialContinuity);
     }
-    // The durable-receipt gate also covers dedicated llama.cpp authority. Its
-    // established cleanup runs after confirmed deletion, while the B4-E1
-    // lifecycle helper below intentionally prepares only Ollama, NIM, and
-    // vLLM. Neither path may fall back to convention-named inference cleanup.
-    const hasHostLocalInferenceOwnership =
-      typeof sandbox?.hostLocalInferenceReceipt === "string";
+    // A receipt alone is not a llama.cpp lifecycle discriminator. Explicit
+    // provenance selects the common coordinator; an unmarked schema-v1 receipt
+    // remains on its established cleanup path.
+    const hasHostLocalInferenceOwnership = typeof sandbox?.hostLocalInferenceReceipt === "string";
     let runtimeProvider: RuntimeProviderBundle | null = null;
     let hostLocalInferenceAuthority: PreparedHostLocalInferenceAuthority | null = null;
+    let commonLlamaCppAuthorityRetired = false;
     if (sandbox) {
       try {
         runtimeProvider = requireRuntimeProviderDestructiveCleanupAuthority(
@@ -345,6 +348,7 @@ export async function executeSandboxDestroy({
         hostLocalInferenceAuthority = prepareSandboxHostLocalInferenceDestroyAuthority(
           runtimeProvider,
           sandbox,
+          deps.hostLocalInferenceLifecycleOptions,
         );
         if (hasHostLocalInferenceOwnership && (!getSandbox || !listSandboxes)) {
           throw new Error(
@@ -548,7 +552,10 @@ export async function executeSandboxDestroy({
           current,
           hostLocalInferenceAuthority,
           listSandboxes!().sandboxes,
+          deps.hostLocalInferenceLifecycleOptions,
         );
+        commonLlamaCppAuthorityRetired =
+          hostLocalInferenceAuthority.receipt.service === "llama-cpp";
       } catch (error) {
         return {
           ok: false as const,
@@ -570,6 +577,7 @@ export async function executeSandboxDestroy({
       deleteResult,
       alreadyGone,
       forcedLocalCleanup,
+      ...(commonLlamaCppAuthorityRetired ? { commonLlamaCppAuthorityRetired: true as const } : {}),
     };
   });
 }
