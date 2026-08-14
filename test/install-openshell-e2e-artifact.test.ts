@@ -47,7 +47,7 @@ function createFixture() {
     );
     const archivePath = path.join(assetDirectory, archive);
     const tar = spawnSync("tar", ["czf", archivePath, "-C", source, binary]);
-    if (tar.status !== 0) throw new Error(`unable to create ${archive}`);
+    expect(tar.status, `unable to create ${archive}`).toBe(0);
     const digest = createHash("sha256").update(fs.readFileSync(archivePath)).digest("hex");
     fs.writeFileSync(path.join(assetDirectory, checksum), `${digest}  ${archive}\n`);
   }
