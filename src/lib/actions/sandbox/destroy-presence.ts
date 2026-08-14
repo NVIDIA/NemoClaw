@@ -39,6 +39,18 @@ export type DestroyContainerIdentityVerdict =
       managed: SandboxNameLabeledContainer[];
     };
 
+export type AssertUnambiguousDestroyIdentityDeps = {
+  providerId: string;
+  redact: (detail: string) => string;
+  cliName?: string;
+  classify?: (sandboxName: string) => DestroyContainerIdentityVerdict;
+  error?: (message: string) => void;
+};
+
+export type DestroyContainerIdentityProof = {
+  identity: SandboxNameLabeledContainer | null | undefined;
+};
+
 function observeDockerSandboxIdentities(sandboxName: string): DockerSandboxIdentityObservation {
   return inspectDockerSandboxIdentities(`${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`, {
     managedBy: OPENSHELL_MANAGED_BY_LABEL,
@@ -170,6 +182,53 @@ export function formatAmbiguousDestroyIdentity(
       `that owns the container, then rerun '${display(cliName)} ${sandboxName} destroy'.`,
   );
   return lines;
+}
+
+/**
+ * Fail closed when a Docker sandbox name does not resolve to one complete
+ * container identity. Other runtime providers own their identity checks.
+ */
+export function assertUnambiguousDestroyContainerIdentity(
+  sandboxName: string,
+  deps: AssertUnambiguousDestroyIdentityDeps,
+): DestroyContainerIdentityProof | false {
+  const classify =
+    deps.classify ??
+    ((name: string) =>
+      classifyDestroyContainerIdentity(name, observeDestroyContainerIdentity(name)));
+  const error = deps.error ?? ((message: string) => console.error(`  ${message}`));
+  if (deps.providerId !== "docker") return { identity: undefined };
+
+  const verdict = classify(sandboxName);
+  if (verdict.status === "ambiguous") {
+    for (const line of formatAmbiguousDestroyIdentity(verdict, deps.cliName ?? "nemoclaw")) {
+      error(line);
+    }
+    return false;
+  }
+  if (verdict.status === "probe-failed") {
+    error(
+      `Refusing to destroy sandbox '${sandboxName}': Docker container identity could not be ` +
+        `inspected (${deps.redact(verdict.detail)}). No sandbox resources were removed. ` +
+        "Correct the reported Docker error, then rerun the destroy command.",
+    );
+    return false;
+  }
+  return { identity: verdict.identity };
+}
+
+/** Compare provider-owned identity proofs across two destroy checkpoints. */
+export function isSameDestroyContainerIdentityProof(
+  expected: DestroyContainerIdentityProof,
+  actual: DestroyContainerIdentityProof,
+): boolean {
+  if (expected.identity === undefined || actual.identity === undefined) {
+    return expected.identity === actual.identity;
+  }
+  return isSameDestroyContainerIdentity(expected.identity, {
+    status: "clear",
+    identity: actual.identity,
+  });
 }
 
 export type DestroySandboxPresence = "present" | "absent" | "unknown";

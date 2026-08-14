@@ -296,12 +296,12 @@ describe("destroySandbox flow", () => {
     [
       "a replacement identity",
       { status: 0, stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta" },
-      "Docker container identity changed after managed inference cleanup",
+      "Container identity changed after managed inference cleanup",
     ],
     [
       "a failed Docker reinspection",
       { status: 1, stderr: "daemon unavailable" },
-      "Docker container identity could not be inspected after managed inference cleanup: daemon unavailable",
+      "Container identity could not be inspected after managed inference cleanup: daemon unavailable",
     ],
   ])(
     "restores MCP preparation and refuses workspace wipe after %s",

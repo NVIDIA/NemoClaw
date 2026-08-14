@@ -85,7 +85,8 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
     }));
 
     const proceed = assertUnambiguousDestroyContainerIdentity("destroytest", {
-      getSandbox: vi.fn(() => dockerSandbox) as never,
+      providerId: dockerSandbox.openshellDriver ?? "docker",
+      redact: String,
       classify: classify as never,
       error,
     });
@@ -105,26 +106,29 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
     const classify = vi.fn(() => ({ status: "clear" as const, identity }));
     expect(
       assertUnambiguousDestroyContainerIdentity("destroytest", {
-        getSandbox: vi.fn(() => dockerSandbox) as never,
+        providerId: dockerSandbox.openshellDriver ?? "docker",
+        redact: String,
         classify: classify as never,
       }),
-    ).toEqual({ kind: "docker", identity });
+    ).toEqual({ identity });
   });
 
   it("does not probe or block a non-Docker runtime provider", () => {
     const classify = vi.fn();
     const proceed = assertUnambiguousDestroyContainerIdentity("destroytest", {
-      getSandbox: vi.fn(() => ({ openshellDriver: "podman" })) as never,
+      providerId: "podman",
+      redact: String,
       classify: classify as never,
     });
-    expect(proceed).toEqual({ kind: "not-docker" });
+    expect(proceed).toEqual({ identity: undefined });
     expect(classify).not.toHaveBeenCalled();
   });
 
   it("refuses when the Docker probe cannot prove identity", () => {
     const error = vi.fn();
     const proceed = assertUnambiguousDestroyContainerIdentity("destroytest", {
-      getSandbox: vi.fn(() => dockerSandbox) as never,
+      providerId: dockerSandbox.openshellDriver ?? "docker",
+      redact: String,
       classify: vi.fn(() => ({ status: "probe-failed" as const, detail: "daemon down" })) as never,
       error,
     });
@@ -138,7 +142,8 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
   it("treats an unknown/null driver as Docker (the default) and still guards", () => {
     const classify = vi.fn(() => ({ status: "clear" as const, identity: null }));
     assertUnambiguousDestroyContainerIdentity("destroytest", {
-      getSandbox: vi.fn(() => ({ openshellDriver: null })) as never,
+      providerId: "docker",
+      redact: String,
       classify: classify as never,
     });
     expect(classify).toHaveBeenCalledWith("destroytest");

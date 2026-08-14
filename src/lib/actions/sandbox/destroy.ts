@@ -49,18 +49,14 @@ import {
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
 import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
 import {
-  classifyDestroyContainerIdentity,
+  assertUnambiguousDestroyContainerIdentity,
   classifyDestroySandboxPresence,
-  type DestroyContainerIdentityVerdict,
-  formatAmbiguousDestroyIdentity,
-  isSameDestroyContainerIdentity,
-  observeDestroyContainerIdentity,
-  type SandboxNameLabeledContainer,
+  isSameDestroyContainerIdentityProof,
 } from "./destroy-presence";
 import { prepareSandboxDestroy, stopSandboxInferenceResources } from "./destroy-preflight";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
-export { classifyDestroySandboxPresence };
+export { assertUnambiguousDestroyContainerIdentity, classifyDestroySandboxPresence };
 
 type RemoveSandboxImageDeps = {
   getSandbox?: typeof registry.getSandbox;
@@ -467,74 +463,6 @@ export async function destroySandbox(
   return withMcpLifecycleLock(sandboxName, () => destroySandboxUnlocked(sandboxName, options));
 }
 
-export type AssertUnambiguousDestroyIdentityDeps = {
-  getSandbox?: typeof registry.getSandbox;
-  classify?: (sandboxName: string) => DestroyContainerIdentityVerdict;
-  error?: (message: string) => void;
-};
-
-export type DestroyContainerIdentityProof =
-  | { kind: "not-docker" }
-  | { kind: "docker"; identity: SandboxNameLabeledContainer | null };
-
-/**
- * Fail closed before any destructive step when the target `sandbox-name` maps
- * to more than one container identity on the Docker runtime.
- *
- * A foreign container that borrows a real sandbox's `sandbox-name` label (with
- * a different workspace / without the managed marker) must never let destroy
- * silently remove the real sandbox: the name alone can no longer prove which
- * container is meant, so the only safe action is to refuse (#8999). The check
- * is Docker-only — Podman lifecycle enforces exact single-container identity in
- * its own resolver. A probe that cannot reach Docker also refuses destruction:
- * an inconclusive identity check cannot authorize an irreversible operation.
- *
- * Returns a provider-discriminated proof containing the exact accepted Docker
- * identity, or `false` when destroy was refused.
- */
-export function assertUnambiguousDestroyContainerIdentity(
-  sandboxName: string,
-  deps: AssertUnambiguousDestroyIdentityDeps = {},
-): DestroyContainerIdentityProof | false {
-  const getSandbox = deps.getSandbox ?? registry.getSandbox;
-  const classify =
-    deps.classify ??
-    ((name: string) =>
-      classifyDestroyContainerIdentity(name, observeDestroyContainerIdentity(name)));
-  const error = deps.error ?? ((message: string) => console.error(`  ${message}`));
-  const providerId = normalizeRuntimeProviderIdentity(getSandbox(sandboxName)?.openshellDriver);
-  if (providerId !== "docker") return { kind: "not-docker" };
-
-  const verdict = classify(sandboxName);
-  if (verdict.status === "ambiguous") {
-    for (const line of formatAmbiguousDestroyIdentity(verdict, CLI_NAME)) {
-      error(line);
-    }
-    return false;
-  }
-  if (verdict.status === "probe-failed") {
-    error(
-      `Refusing to destroy sandbox '${sandboxName}': Docker container identity could not be ` +
-        `inspected (${redactDestroyError(verdict.detail)}). No sandbox resources were removed. ` +
-        "Correct the reported Docker error, then rerun the destroy command.",
-    );
-    return false;
-  }
-  return { kind: "docker", identity: verdict.identity };
-}
-
-function sameDestroyIdentityProof(
-  expected: DestroyContainerIdentityProof,
-  actual: DestroyContainerIdentityProof,
-): boolean {
-  if (expected.kind !== actual.kind) return false;
-  if (expected.kind === "not-docker" || actual.kind === "not-docker") return true;
-  return isSameDestroyContainerIdentity(expected.identity, {
-    status: "clear",
-    identity: actual.identity,
-  });
-}
-
 async function destroySandboxUnlocked(
   sandboxName: string,
   options: string[] | DestroySandboxOptions = {},
@@ -542,25 +470,30 @@ async function destroySandboxUnlocked(
   const normalized = normalizeDestroySandboxOptions(options);
   if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
 
-  const initialIdentity = assertUnambiguousDestroyContainerIdentity(sandboxName);
+  const inspectContainerIdentity = () =>
+    assertUnambiguousDestroyContainerIdentity(sandboxName, {
+      cliName: CLI_NAME,
+      providerId: normalizeRuntimeProviderIdentity(
+        registry.getSandbox(sandboxName)?.openshellDriver,
+      ),
+      redact: redactDestroyError,
+    });
+  const initialIdentity = inspectContainerIdentity();
   if (initialIdentity === false) {
     process.exit(1);
   }
 
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } =
     prepareSandboxDestroy(sandboxName);
-  // Docker has no transaction spanning inspection and OpenShell deletion. Recheck
-  // after the read-only preflight and before stopping local services or entering
-  // the destructive execution path, so identity drift during preflight fails
-  // closed. Docker-host administrators remain a trusted local authority.
-  const preMutationIdentity = assertUnambiguousDestroyContainerIdentity(sandboxName);
+  // Recheck identity after read-only preflight and before local mutation.
+  const preMutationIdentity = inspectContainerIdentity();
   if (
     preMutationIdentity === false ||
-    !sameDestroyIdentityProof(initialIdentity, preMutationIdentity)
+    !isSameDestroyContainerIdentityProof(initialIdentity, preMutationIdentity)
   ) {
     if (preMutationIdentity !== false) {
       console.error(
-        `  Refusing to destroy sandbox '${sandboxName}': Docker container identity changed during preflight. No sandbox resources were removed.`,
+        `  Refusing to destroy sandbox '${sandboxName}': Container identity changed during preflight. No sandbox resources were removed.`,
       );
     }
     process.exit(1);
@@ -573,8 +506,7 @@ async function destroySandboxUnlocked(
     sandbox,
     sandboxConfirmedAbsent,
     sandboxName,
-    expectedContainerIdentity:
-      initialIdentity.kind === "docker" ? initialIdentity.identity : undefined,
+    expectedContainerIdentity: initialIdentity.identity,
     stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
   });
   if (!destructiveResult.ok) {

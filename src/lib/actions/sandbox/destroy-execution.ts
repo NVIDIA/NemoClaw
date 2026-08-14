@@ -50,7 +50,7 @@ type SandboxDestroyExecutionInput = {
   sandbox: SandboxEntry | null;
   sandboxConfirmedAbsent: boolean;
   sandboxName: string;
-  // `undefined` disables Docker identity gating for non-Docker providers.
+  // `undefined` delegates identity gating to the runtime provider.
   // `null` records confirmed absence; an object records the one managed
   // container observed by the pre-destroy guard.
   expectedContainerIdentity?: SandboxNameLabeledContainer | null;
@@ -300,10 +300,10 @@ export async function executeSandboxDestroy({
       ok: false,
       deleteOutput:
         continuity.status === "probe-failed"
-          ? `Docker container identity could not be inspected ${phase}: ${continuity.detail}. No sandbox delete was attempted.${earlierCleanupDetail}`
+          ? `Container identity could not be inspected ${phase}: ${continuity.detail}. No sandbox delete was attempted.${earlierCleanupDetail}`
           : continuity.status === "ambiguous"
-            ? `Docker container identity became ambiguous ${phase}: ${continuity.detail}. No sandbox delete was attempted.${earlierCleanupDetail}`
-            : `Docker container identity changed ${phase}; no sandbox delete was attempted.${earlierCleanupDetail}`,
+            ? `Container identity became ambiguous ${phase}: ${continuity.detail}. No sandbox delete was attempted.${earlierCleanupDetail}`
+            : `Container identity changed ${phase}; no sandbox delete was attempted.${earlierCleanupDetail}`,
       exitCode: 1,
       gatewayUnreachable: false,
       mcpOwnershipRequiresGateway: false,
@@ -416,9 +416,9 @@ export async function executeSandboxDestroy({
       : runtimeProvider?.cleanup.supported === true && sandbox
         ? runtimeProvider.cleanup.prepareDestroy({ sandbox, sandboxName }, { detachProviders })
         : detachProviders();
-    // The final exact proof runs immediately before OpenShell delete. A Docker-
-    // socket actor remains a trusted host authority; this closes the actionable
-    // multi-step window without claiming a cross-engine transaction.
+    // The final identity proof runs immediately before OpenShell delete. A
+    // runtime administrator remains a trusted host authority; this closes the
+    // multi-step window without claiming a cross-runtime transaction.
     const deleteBoundaryContinuity = inspectIdentityContinuity();
     if (deleteBoundaryContinuity.status !== "match") {
       const detachedDetail =

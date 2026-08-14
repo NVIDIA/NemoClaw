@@ -2260,11 +2260,11 @@ For common recovery steps, refer to [Docker is not running](troubleshooting#dock
 
 If `destroy` reports conflicting, incomplete, or malformed identity data, inspect the matching containers:
 
-```bash
+~~~bash
 docker ps -a --no-trunc \
   --filter "label=openshell.ai/sandbox-name=my-assistant" \
   --format 'table {{.ID}}\t{{.Label "openshell.ai/managed-by"}}\t{{.Label "openshell.ai/sandbox-workspace"}}\t{{.Label "openshell.ai/sandbox-id"}}'
-```
+~~~
 
 The labels show what each container claims.
 They do not prove container ownership.
