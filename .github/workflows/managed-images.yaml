@@ -520,7 +520,6 @@ jobs:
         if: steps.base.outputs.local != 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          builder: ${{ steps.base.outputs.local == 'true' && 'default' || steps.buildx.outputs.name }}
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
@@ -705,6 +704,7 @@ jobs:
         if: github.event.pull_request.head.repo.full_name == github.repository
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
+          builder: ${{ steps.base.outputs.local == 'true' && 'default' || steps.buildx.outputs.name }}
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
