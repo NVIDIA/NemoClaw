@@ -804,9 +804,8 @@ export function installPortableDemoSandboxLifecycle(
     throw new Error("Portable demo lifecycle requires Linux");
   }
   const commandEnv = deps.env ?? env;
-  const podmanEnv = localPodmanEnvironment(commandEnv);
-  const podman = deps.podman ?? ((args) => defaultPodman(args, podmanEnv));
-  const inspection = discoverPodmanContainer(sandboxName, podman);
+  const authority = qualifiedPodmanAuthority(commandEnv, deps);
+  const inspection = discoverPodmanContainer(sandboxName, authority.podman);
   const registryGeneration = deps.registryGeneration ?? inspection.containerId;
   if (!SANDBOX_ID_PATTERN.test(registryGeneration)) {
     throw new Error("Portable demo lifecycle registry generation is invalid");
@@ -819,10 +818,12 @@ export function installPortableDemoSandboxLifecycle(
     dashboardPort: parseDashboardPort(createdStartupArgv, sandboxName),
     registryGeneration,
   };
+  authority.assertRuntimeAuthority();
   requireCommand(
-    podman(["update", "--restart=unless-stopped", inspection.containerId]),
+    authority.podman(["update", "--restart=unless-stopped", inspection.containerId]),
     `Setting the portable restart policy for sandbox '${sandboxName}'`,
   );
+  authority.assertRuntimeAuthority();
   writeReceipt(receipt, stateDir);
   return registryGeneration;
 }
@@ -854,16 +855,14 @@ export function recoverPortableDemoSandboxLifecycle(
     throw new Error("Portable demo lifecycle receipt is only valid on Linux");
   }
   const backfillRequired = requireCurrentRegistryGeneration(receipt, context.lifecycleGeneration);
+  const authority = qualifiedPodmanAuthority(commandEnv, deps);
   if (backfillRequired || receipt.schemaVersion === 2) {
-    const authority = qualifiedPodmanAuthority(commandEnv, deps);
     const migrationInspection = discoverPodmanContainer(sandboxName, authority.podman);
     requireReceiptOwnedInspection(receipt, migrationInspection);
     authority.assertRuntimeAuthority();
     receipt = backfillLegacyReceiptGeneration(receipt, stateDir, backfillRequired, deps);
   }
-  const podmanEnv = localPodmanEnvironment(commandEnv);
-  const podman = deps.podman ?? ((args) => defaultPodman(args, podmanEnv));
-  const initialInspection = podman(["inspect", receipt.containerId]);
+  const initialInspection = authority.podman(["inspect", receipt.containerId]);
   if (isMissingPodmanContainer(initialInspection)) {
     removeReceipt(sandboxName, stateDir);
     return { kind: "not-installed" };
@@ -871,7 +870,7 @@ export function recoverPortableDemoSandboxLifecycle(
   let inspection = inspectPodmanContainer(
     receipt.containerId,
     sandboxName,
-    podman,
+    authority.podman,
     initialInspection,
   );
   if (inspection.sandboxId !== receipt.sandboxId) {
@@ -880,11 +879,13 @@ export function recoverPortableDemoSandboxLifecycle(
     );
   }
   if (!inspection.running) {
+    authority.assertRuntimeAuthority();
     requireCommand(
-      podman(["start", receipt.containerId]),
+      authority.podman(["start", receipt.containerId]),
       `Starting portable sandbox '${sandboxName}'`,
     );
-    inspection = inspectPodmanContainer(receipt.containerId, sandboxName, podman);
+    authority.assertRuntimeAuthority();
+    inspection = inspectPodmanContainer(receipt.containerId, sandboxName, authority.podman);
     if (!inspection.running) {
       throw new Error(`Portable sandbox '${sandboxName}' did not enter the running state`);
     }
