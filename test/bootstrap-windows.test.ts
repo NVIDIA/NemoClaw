@@ -164,6 +164,27 @@ function Test-Path { param([string]$LiteralPath) return $true }
   );
 
   itPowerShell(
+    "ignores a caller-provided ProgramFiles path for privileged Docker discovery (#9114)",
+    `
+$ErrorActionPreference = 'Stop'
+$env:ProgramFiles = 'C:\\Users\\tester\\attacker-controlled'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+[pscustomobject]@{
+    machineRoot = $script:DockerDesktopMachineRoot
+    usesCallerPath = $script:DockerDesktopMachineRoot.StartsWith($env:ProgramFiles, [System.StringComparison]::OrdinalIgnoreCase)
+} | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.usesCallerPath).toBe(false);
+      expect(parsed.machineRoot).toBe("C:\\Program Files\\Docker\\Docker");
+    },
+  );
+
+  itPowerShell(
     "names every checked location when no Docker Desktop install is found (#9087)",
     `
 $ErrorActionPreference = 'Stop'
@@ -219,6 +240,62 @@ try {
       expect(result.stderr).toBe("");
       const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
       expect(parsed.trusted).toBe(false);
+    },
+  );
+
+  itPowerShell(
+    "rejects a valid signature from a signer whose name contains Docker (#9114)",
+    `
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$script:signer = [pscustomobject]@{}
+$script:signer | Add-Member -MemberType ScriptMethod -Name GetNameInfo -Value {
+    param($NameType, $ForIssuer)
+    return 'Acme Docker Tools'
+}
+function Get-AuthenticodeSignature {
+    param([string]$LiteralPath)
+    return [pscustomobject]@{ Status = 'Valid'; SignerCertificate = $script:signer }
+}
+
+[pscustomobject]@{
+    trusted = Test-DockerDesktopExecutableTrusted -Path 'Docker Desktop.exe'
+} | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.trusted).toBe(false);
+    },
+  );
+
+  itPowerShell(
+    "accepts a valid signature from the approved Docker signer (#9114)",
+    `
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$script:signer = [pscustomobject]@{}
+$script:signer | Add-Member -MemberType ScriptMethod -Name GetNameInfo -Value {
+    param($NameType, $ForIssuer)
+    return 'Docker Inc'
+}
+function Get-AuthenticodeSignature {
+    param([string]$LiteralPath)
+    return [pscustomobject]@{ Status = 'Valid'; SignerCertificate = $script:signer }
+}
+
+[pscustomobject]@{
+    trusted = Test-DockerDesktopExecutableTrusted -Path 'Docker Desktop.exe'
+} | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.trusted).toBe(true);
     },
   );
 

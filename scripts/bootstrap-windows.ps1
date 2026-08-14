@@ -58,8 +58,9 @@ if (-not $env:SystemRoot) {
 
 $script:RunOnceKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'
 $script:RunOnceValueName = 'NVIDIA.NemoClaw.WindowsBootstrap'
-$script:DockerDesktopMachineRoot = if ($env:ProgramFiles) {
-    "$env:ProgramFiles\Docker\Docker"
+$programFilesRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+$script:DockerDesktopMachineRoot = if ($programFilesRoot) {
+    "$programFilesRoot\Docker\Docker"
 } else {
     'C:\Program Files\Docker\Docker'
 }
@@ -68,6 +69,7 @@ $script:DockerDesktopUserRoot = if ($env:LOCALAPPDATA) {
 } else {
     $null
 }
+$script:DockerDesktopApprovedSignerNames = @('Docker Inc')
 $script:WingetDockerId = 'Docker.DockerDesktop'
 $script:InstallerWindowTitle = "NVIDIA NemoClaw Installer ($PID)"
 $script:InstallDistroAtHandoff = $false
@@ -291,10 +293,20 @@ function Test-DockerDesktopExecutableTrusted {
     } catch {
         return $false
     }
-    return $signature -and
-        $signature.Status -eq 'Valid' -and
-        $signature.SignerCertificate -and
-        $signature.SignerCertificate.Subject -match 'Docker'
+    if (-not $signature -or
+        $signature.Status -ne 'Valid' -or
+        -not $signature.SignerCertificate) {
+        return $false
+    }
+    try {
+        $signerName = $signature.SignerCertificate.GetNameInfo(
+            [System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName,
+            $false
+        )
+    } catch {
+        return $false
+    }
+    return $script:DockerDesktopApprovedSignerNames -contains $signerName
 }
 
 function Resolve-WslExe {

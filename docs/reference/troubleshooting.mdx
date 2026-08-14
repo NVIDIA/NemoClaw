@@ -3170,6 +3170,8 @@ wsl --install -d Ubuntu
 ### Bootstrap says a Docker executable "is not signed by a trusted publisher"
 
 The bootstrap script runs elevated, so before it launches `Docker Desktop.exe` or uses `docker.exe`, it checks the resolved executable's Authenticode signature and refuses to run one that is not validly signed by Docker.
+The script accepts `Docker Inc` as the certificate subject common name.
+If Docker changes the signer identity, the script refuses the executable until maintainers verify the signer on an official Docker download and update the allowlist.
 Reinstall Docker Desktop from [docker.com](https://www.docker.com/products/docker-desktop/) or `winget install --id Docker.DockerDesktop`, then rerun the bootstrap script.
 If reinstalling does not clear the warning, treat the existing executable as untrusted and do not run it manually either.
 
