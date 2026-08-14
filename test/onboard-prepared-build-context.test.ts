@@ -134,8 +134,11 @@ imageTag.resolveSandboxImageTagFromCreateOutput = (output, receivedBuildId, warn
 const normalize = (command) =>
   (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
 runner.run = (command) => {
-  commands.push(normalize(command));
-  return { status: 0 };
+  const normalized = normalize(command);
+  commands.push(normalized);
+  return normalized.includes("sandbox get") && normalized.includes(sandboxName)
+    ? { status: 0, stdout: Buffer.from(sandboxName + "\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runFile = (file, args = []) => {
   commands.push(normalize([file, ...args]));
