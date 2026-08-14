@@ -48,7 +48,7 @@ vi.mock("./launch-readiness", () => ({
 
 import { launchSandbox } from "./launch";
 
-function sandboxEntry(agentName: string): SandboxEntry {
+function sandboxEntry(agentName: string | null): SandboxEntry {
   return {
     name: "alpha",
     agent: agentName,
@@ -335,6 +335,7 @@ describe("launchSandbox", () => {
     expect(mocks.printInteractiveSessionHints).toHaveBeenCalledWith("alpha");
     expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).toHaveBeenCalledWith(
       "alpha",
+      openclaw,
       sb,
     );
     expect(mocks.completeInteractiveSessionSetup).not.toHaveBeenCalled();
@@ -346,6 +347,29 @@ describe("launchSandbox", () => {
       mocks.prepareHermesLightTerminalSkin,
     );
     expect(mocks.prepareHermesLightTerminalSkin).toHaveBeenCalledBefore(mocks.execSandbox);
+    expect(launchedCommand()).toEqual(["bash", "-lc", "openclaw tui"]);
+  });
+
+  it("passes the qualified OpenClaw identity for legacy registry state (#9023)", async () => {
+    const openclaw = loadAgent("openclaw");
+    const sb = sandboxEntry(null);
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "accepted",
+      category: "accepted",
+      agent: openclaw,
+      sb,
+    });
+
+    await launchSandbox("alpha");
+
+    expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
+    expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).toHaveBeenCalledWith(
+      "alpha",
+      openclaw,
+      sb,
+    );
+    expect(mocks.completeInteractiveSessionSetup).not.toHaveBeenCalled();
+    expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
     expect(launchedCommand()).toEqual(["bash", "-lc", "openclaw tui"]);
   });
 
@@ -381,6 +405,7 @@ describe("launchSandbox", () => {
     );
     expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).toHaveBeenCalledWith(
       "alpha",
+      openclaw,
       sb,
     );
     expect(mocks.execSandbox).toHaveBeenCalledOnce();
