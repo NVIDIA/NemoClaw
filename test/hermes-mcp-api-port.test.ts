@@ -196,12 +196,19 @@ class ProcessEntries:
         return False
 
 def run_case(mutation):
-    relay_pids = [] if mutation == "missing" else ([42, 43] if mutation == "ambiguous" else [42])
+    relay_pids = (
+        []
+        if mutation == "missing"
+        else [42, 43]
+        if mutation in ("ambiguous", "candidate_arguments_exit", "candidate_start_exit")
+        else [42]
+    )
     counters = {
         "gateway_parent": 0,
         "manager_arguments": 0,
         "manager_start": 0,
         "manager_stat": 0,
+        "relay_arguments": 0,
         "relay_start": 0,
     }
     module.os.geteuid = lambda: 1000
@@ -232,6 +239,11 @@ def run_case(mutation):
             if mutation == "manager_arguments" and counters["manager_arguments"] > 1:
                 return [b"/tmp/unmanaged-start"]
             return [module.SERVICE_MANAGER_PATH]
+        counters["relay_arguments"] += 1
+        if mutation == "candidate_arguments_exit" and counters["relay_arguments"] == 1:
+            raise FileNotFoundError("relay exited")
+        if mutation == "candidate_arguments_denied":
+            raise PermissionError("relay arguments denied")
         return relay_arguments
 
     def process_start(pid):
@@ -241,6 +253,10 @@ def run_case(mutation):
                 return 102
             return 101
         counters["relay_start"] += 1
+        if mutation == "candidate_start_exit" and counters["relay_start"] == 1:
+            raise FileNotFoundError("relay exited")
+        if mutation == "candidate_start_denied":
+            raise PermissionError("relay start identity denied")
         if mutation == "relay_start" and counters["relay_start"] > 1:
             return 203
         return 202 + (pid - 42)
@@ -251,13 +267,19 @@ def run_case(mutation):
     module._process_start_identity = process_start
     module._gateway_identity = lambda: identity
     try:
-        module._managed_api_relay_public_port(identity)
+        port = module._managed_api_relay_public_port(identity)
     except Exception as error:
         return type(error).__name__, str(error)
+    if mutation in ("candidate_arguments_exit", "candidate_start_exit"):
+        return port
     raise AssertionError("unstable relay topology was accepted")
 
 results = {case: run_case(case) for case in (
     "missing",
+    "candidate_arguments_exit",
+    "candidate_arguments_denied",
+    "candidate_start_exit",
+    "candidate_start_denied",
     "relay_start",
     "manager_owner",
     "manager_arguments",
@@ -276,6 +298,16 @@ print(json.dumps(results, sort_keys=True))
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       ambiguous: ["PermissionError", "Hermes managed API relay identity is ambiguous"],
+      candidate_arguments_denied: [
+        "PermissionError",
+        "Hermes managed API relay identity is unavailable",
+      ],
+      candidate_arguments_exit: 8645,
+      candidate_start_denied: [
+        "PermissionError",
+        "Hermes managed API relay identity is unavailable",
+      ],
+      candidate_start_exit: 8645,
       gateway_parent: ["RuntimeError", "Hermes gateway is not running for managed MCP reload"],
       manager_arguments: ["RuntimeError", "Hermes gateway is not running for managed MCP reload"],
       manager_owner: ["RuntimeError", "Hermes gateway is not running for managed MCP reload"],

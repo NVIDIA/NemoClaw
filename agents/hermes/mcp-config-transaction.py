@@ -1132,6 +1132,8 @@ def _managed_api_relay_public_port(
             continue
         try:
             arguments = _process_arguments(pid)
+        except FileNotFoundError:
+            continue
         except OSError as error:
             raise PermissionError(
                 "Hermes managed API relay identity is unavailable"
@@ -1141,6 +1143,8 @@ def _managed_api_relay_public_port(
             continue
         try:
             start_identity = _process_start_identity(pid)
+        except FileNotFoundError:
+            continue
         except OSError as error:
             raise PermissionError(
                 "Hermes managed API relay identity is unavailable"
