@@ -2781,8 +2781,6 @@ function getSetupInferenceDeps(): SetupInferenceDeps {
   return {
     checkGatewayRouteCompatibility,
     withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
-    withModelRouterPortLifecycleLock: gatewayRouteMutationLock.withModelRouterPortLifecycleLock,
-    getModelRouterPort: modelRouter.resolveModelRouterPort,
     withSandboxMutationLock: sandboxMutationLock.withSandboxMutationLock,
     step,
     getGatewayName: () => GATEWAY_NAME,
@@ -3439,9 +3437,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           preflightGatewayRouteDiscovery,
           getSandboxRecoveryAuthority: providerRecovery.getSandboxRecoveryAuthority,
           withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
-          withModelRouterPortLifecycleLock:
-            gatewayRouteMutationLock.withModelRouterPortLifecycleLock,
-          getModelRouterPort: modelRouter.resolveModelRouterPort,
           normalizeHermesAuthMethod,
           setupNim: (g, s, a, recover, gateway, assertRouteCompatible, canProbeRoute, recoverySessionId) => setupNim(g, s, a, recover, opts.rebuildRegistryInferenceRoute, gateway, assertRouteCompatible, canProbeRoute, recoverySessionId),
           setupInference, resolveHostLocalInferenceStartupSelection: () => null,
