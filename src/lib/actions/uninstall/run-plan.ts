@@ -638,23 +638,59 @@ function runOptional(
 // fully qualified name keeps an OpenShell from any other tap untouched. (#8882)
 const OPENSHELL_HOMEBREW_FORMULA = "nvidia/openshell/openshell";
 
-function removeHomebrewOpenShellFormula(runtime: UninstallRuntime): void {
-  if (runtime.platform !== "darwin") return;
-  if (!runtime.commandExists("brew")) return;
+/**
+ * Remove the NemoClaw-managed formula and report whether the caller may also
+ * delete the OpenShell executable paths.
+ *
+ * Returns "stop" when this host has an OpenShell that the NemoClaw tap does not
+ * own, or when the formula removal failed. Deleting the paths in either case
+ * would unlink another tap's executable or strand a still-registered formula.
+ */
+function removeHomebrewOpenShellFormula(runtime: UninstallRuntime): "continue" | "stop" {
+  if (runtime.platform !== "darwin") return "continue";
+  if (!runtime.commandExists("brew")) return "continue";
   const installed = runtime.run("brew", ["list", "--formula", OPENSHELL_HOMEBREW_FORMULA], {
     env: runtime.env,
     stdio: "ignore",
   });
-  if (installed.status !== 0) return;
+  if (installed.status !== 0) {
+    runtime.log(`Keeping OpenShell executables that ${OPENSHELL_HOMEBREW_FORMULA} does not own.`);
+    return "stop";
+  }
   const removed = runtime.run("brew", ["uninstall", "--formula", OPENSHELL_HOMEBREW_FORMULA], {
     env: runtime.env,
     stdio: "ignore",
   });
-  if (removed.status === 0) runtime.log(`Removed Homebrew formula ${OPENSHELL_HOMEBREW_FORMULA}`);
-  else
-    runtime.warn(
-      `Failed to remove Homebrew formula ${OPENSHELL_HOMEBREW_FORMULA}; run: brew uninstall ${OPENSHELL_HOMEBREW_FORMULA}`,
+  if (removed.status === 0) {
+    runtime.log(`Removed Homebrew formula ${OPENSHELL_HOMEBREW_FORMULA}`);
+    return "continue";
+  }
+  runtime.warn(
+    `Failed to remove Homebrew formula ${OPENSHELL_HOMEBREW_FORMULA}; kept its executables. Run: brew uninstall ${OPENSHELL_HOMEBREW_FORMULA}`,
+  );
+  return "stop";
+}
+
+/** Apply every reason to keep managed OpenShell executables, then remove them. */
+function removeManagedOpenShellExecutables(
+  paths: UninstallPaths,
+  runtime: UninstallRuntime,
+  reasons: { externallySupervised: boolean; keepOpenShell: boolean },
+): void {
+  if (reasons.keepOpenShell || reasons.externallySupervised) {
+    runtime.log(
+      reasons.externallySupervised
+        ? "Keeping OpenShell binaries used by the externally supervised gateway."
+        : "Keeping OpenShell binaries as requested.",
     );
+    return;
+  }
+  if (GATEWAY_PORT !== DEFAULT_GATEWAY_PORT) {
+    runtime.log("Keeping OpenShell binaries used by the default gateway service.");
+    return;
+  }
+  if (removeHomebrewOpenShellFormula(runtime) !== "continue") return;
+  for (const target of paths.openshellInstallPaths) removeFileWithOptionalSudo(target, runtime);
 }
 
 function deleteSelectedGatewaySandbox(runtime: UninstallRuntime, sandboxName: string): boolean {
@@ -2226,19 +2262,10 @@ function executePlan(
       removeManagedSwap(paths, runtime, scopedToSelectedGateway);
       if (!scopedToSelectedGateway) {
         for (const pattern of paths.runtimeTempGlobs) removeGlob(pattern, runtime);
-        if (options.keepOpenShell || externallySupervised) {
-          runtime.log(
-            externallySupervised
-              ? "Keeping OpenShell binaries used by the externally supervised gateway."
-              : "Keeping OpenShell binaries as requested.",
-          );
-        } else if (GATEWAY_PORT !== DEFAULT_GATEWAY_PORT) {
-          runtime.log("Keeping OpenShell binaries used by the default gateway service.");
-        } else {
-          removeHomebrewOpenShellFormula(runtime);
-          for (const target of paths.openshellInstallPaths)
-            removeFileWithOptionalSudo(target, runtime);
-        }
+        removeManagedOpenShellExecutables(paths, runtime, {
+          externallySupervised,
+          keepOpenShell: options.keepOpenShell,
+        });
       } else {
         runtime.log("Sibling gateways remain; kept shared runtime files and OpenShell binaries.");
       }
