@@ -30,32 +30,74 @@ const LOGICAL_OPERATORS = new Set([
 ]);
 const RECOVERY_NAME = /recover|recovery|repair|restore|retry|fallback|rollback/i;
 
-function declarationBody(node: ts.Node): ts.ConciseBody | undefined {
-  if (ts.isFunctionDeclaration(node)) return node.body;
-  if (!ts.isVariableStatement(node)) return undefined;
-  for (const declaration of node.declarationList.declarations) {
-    const initializer = declaration.initializer;
-    if (initializer && (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer))) {
-      return initializer.body;
-    }
+type NamedBody = {
+  readonly name: string;
+  readonly body: ts.ConciseBody;
+};
+
+function memberName(node: ts.ClassElement | ts.ObjectLiteralElementLike): string | null {
+  if (ts.isConstructorDeclaration(node)) return "constructor";
+  if (!node.name) return null;
+  if (
+    ts.isIdentifier(node.name) ||
+    ts.isStringLiteral(node.name) ||
+    ts.isNumericLiteral(node.name)
+  ) {
+    return node.name.text;
   }
-  return undefined;
+  return node.name.getText();
 }
 
-function declarationName(node: ts.Node): string | null {
-  if (ts.isFunctionDeclaration(node)) return node.name?.text ?? null;
-  if (!ts.isVariableStatement(node)) return null;
-  for (const declaration of node.declarationList.declarations) {
+function memberBodies(
+  owner: string,
+  members: ts.NodeArray<ts.ClassElement | ts.ObjectLiteralElementLike>,
+): NamedBody[] {
+  const bodies: NamedBody[] = [];
+  for (const member of members) {
+    const name = memberName(member);
+    if (!name) continue;
     if (
-      ts.isIdentifier(declaration.name) &&
-      declaration.initializer &&
-      (ts.isArrowFunction(declaration.initializer) ||
-        ts.isFunctionExpression(declaration.initializer))
+      (ts.isMethodDeclaration(member) ||
+        ts.isGetAccessorDeclaration(member) ||
+        ts.isSetAccessorDeclaration(member) ||
+        ts.isConstructorDeclaration(member)) &&
+      member.body
     ) {
-      return declaration.name.text;
+      bodies.push({ name: `${owner}.${name}`, body: member.body });
+      continue;
+    }
+    if (
+      ts.isPropertyAssignment(member) &&
+      (ts.isArrowFunction(member.initializer) || ts.isFunctionExpression(member.initializer))
+    ) {
+      bodies.push({ name: `${owner}.${name}`, body: member.initializer.body });
     }
   }
-  return null;
+  return bodies;
+}
+
+function declarationBodies(node: ts.Statement): NamedBody[] {
+  if (ts.isFunctionDeclaration(node) && node.name && node.body) {
+    return [{ name: node.name.text, body: node.body }];
+  }
+  if (ts.isClassDeclaration(node) && node.name) {
+    return memberBodies(node.name.text, node.members);
+  }
+  if (!ts.isVariableStatement(node)) return [];
+
+  const bodies: NamedBody[] = [];
+  for (const declaration of node.declarationList.declarations) {
+    if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
+    const { initializer } = declaration;
+    if (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)) {
+      bodies.push({ name: declaration.name.text, body: initializer.body });
+    } else if (ts.isObjectLiteralExpression(initializer)) {
+      bodies.push(...memberBodies(declaration.name.text, initializer.properties));
+    } else if (ts.isClassExpression(initializer)) {
+      bodies.push(...memberBodies(declaration.name.text, initializer.members));
+    }
+  }
+  return bodies;
 }
 
 function isGatewayLifecycleIdentifier(identifier: string): boolean {
@@ -235,13 +277,12 @@ export function collectOnboardEntryDecisions(sourceText: string): OnboardEntryCo
   };
 
   for (const statement of sourceFile.statements) {
-    const name = declarationName(statement);
-    const body = declarationBody(statement);
-    if (!name || !body) continue;
-    const declarationCounts = decisionCounts(name, body);
-    for (const category of CATEGORIES) {
-      for (const [declaration, count] of Object.entries(declarationCounts[category])) {
-        decisions[category][declaration] = (decisions[category][declaration] ?? 0) + count;
+    for (const { name, body } of declarationBodies(statement)) {
+      const declarationCounts = decisionCounts(name, body);
+      for (const category of CATEGORIES) {
+        for (const [declaration, count] of Object.entries(declarationCounts[category])) {
+          decisions[category][declaration] = (decisions[category][declaration] ?? 0) + count;
+        }
       }
     }
   }

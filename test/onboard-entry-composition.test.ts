@@ -60,6 +60,37 @@ describe("onboarding entry composition boundary", () => {
     expect(actual.gateway).toEqual({ runOnboard: 1 });
   });
 
+  it("checks every function in one variable statement", () => {
+    const actual = collectOnboardEntryDecisions(
+      "const first = () => undefined, second = () => { if (enabled) startGateway(); };",
+    );
+
+    expect(actual.gateway).toEqual({ second: 1 });
+  });
+
+  it.each([
+    [
+      "object method",
+      "const entry = { choose() { if (enabled) startGateway(); } };",
+      "entry.choose",
+    ],
+    [
+      "object function property",
+      "const entry = { choose: () => { if (enabled) startGateway(); } };",
+      "entry.choose",
+    ],
+    ["class method", "class Entry { choose() { if (enabled) startGateway(); } }", "Entry.choose"],
+    [
+      "class expression method",
+      "const Entry = class { choose() { if (enabled) startGateway(); } };",
+      "Entry.choose",
+    ],
+  ])("checks a gateway decision in a top-level %s", (_form, source, declaration) => {
+    const actual = collectOnboardEntryDecisions(source);
+
+    expect(actual.gateway).toEqual({ [declaration]: 1 });
+  });
+
   it("rejects a messaging action selected by a neutral condition", () => {
     const actual = collectOnboardEntryDecisions(
       "function choose(enabled: boolean) { if (enabled) configureMessaging(); }",
