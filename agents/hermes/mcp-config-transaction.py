@@ -98,6 +98,7 @@ MAX_GATEWAY_PUBLIC_PORT_RECORD_BYTES = 16
 GATEWAY_INTERNAL_PORT = 18642
 GATEWAY_NOT_READY_MESSAGE = "Hermes gateway is not running for managed MCP reload"
 MANAGED_API_RELAY_TARGET = f"TCP:127.0.0.1:{GATEWAY_INTERNAL_PORT}".encode()
+MANAGED_API_RELAY_PROCESS_NAME = b"socat"
 MANAGED_API_RELAY_LISTEN_PREFIX = b"TCP-LISTEN:"
 MANAGED_API_RELAY_LISTEN_SUFFIX = b",bind=0.0.0.0,fork,reuseaddr"
 
@@ -867,6 +868,18 @@ def _process_arguments(pid: int) -> list[bytes]:
         return []
 
 
+def _process_name(pid: int) -> bytes | None:
+    try:
+        with open(f"/proc/{pid}/status", "rb") as status_file:
+            for line in status_file:
+                if line.startswith(b"Name:"):
+                    fields = line.split(maxsplit=1)
+                    return fields[1] if len(fields) == 2 else None
+    except FileNotFoundError:
+        return None
+    return None
+
+
 def _is_trusted_gateway_process(pid: int) -> bool:
     arguments = _process_arguments(pid)
     return any(
@@ -1056,7 +1069,7 @@ def _process_start_identity(pid: int) -> object | None:
 def _managed_api_relay_port(arguments: list[bytes]) -> int | None:
     if (
         len(arguments) != 3
-        or os.path.basename(arguments[0]) != b"socat"
+        or os.path.basename(arguments[0]) != MANAGED_API_RELAY_PROCESS_NAME
         or arguments[2] != MANAGED_API_RELAY_TARGET
     ):
         return None
@@ -1126,9 +1139,14 @@ def _managed_api_relay_public_port(
         try:
             owner_uid = os.stat(f"/proc/{pid}").st_uid
             parent_pid = _process_parent_pid(pid)
+            process_name = _process_name(pid)
         except OSError:
             continue
-        if owner_uid != expected_uid or parent_pid != manager_pid:
+        if (
+            owner_uid != expected_uid
+            or parent_pid != manager_pid
+            or process_name != MANAGED_API_RELAY_PROCESS_NAME
+        ):
             continue
         try:
             arguments = _process_arguments(pid)
@@ -1168,6 +1186,7 @@ def _managed_api_relay_public_port(
         ) from error
     try:
         relay_parent_pid = _process_parent_pid(relay_pid)
+        relay_process_name = _process_name(relay_pid)
         current_arguments = _process_arguments(relay_pid)
         current_start = _process_start_identity(relay_pid)
         current_manager_uid = os.stat(f"/proc/{manager_pid}").st_uid
@@ -1182,6 +1201,7 @@ def _managed_api_relay_public_port(
     if (
         relay_owner_uid != expected_uid
         or relay_parent_pid != manager_pid
+        or relay_process_name != MANAGED_API_RELAY_PROCESS_NAME
         or current_arguments != relay_arguments
         or current_start != relay_start
         or current_manager_uid != manager_uid

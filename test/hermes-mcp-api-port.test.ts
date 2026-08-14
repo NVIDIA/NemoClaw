@@ -45,6 +45,7 @@ module.os.geteuid = lambda: 1000
 module.os.scandir = lambda path: ProcessEntries()
 module.os.stat = lambda path: types.SimpleNamespace(st_uid=owners[int(path.rsplit("/", 1)[1])])
 module._process_parent_pid = lambda pid: manager_pid
+module._process_name = lambda pid: module.MANAGED_API_RELAY_PROCESS_NAME
 module._process_arguments = lambda pid: [module.SERVICE_MANAGER_PATH] if pid == manager_pid else relay_arguments
 module._process_start_identity = lambda pid: 101 if pid == manager_pid else 202
 module._gateway_identity = lambda: identity
@@ -72,6 +73,102 @@ print(json.dumps({"port": port, "environment_reads": environment_reads}))
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({ port: 8645, environment_reads: [] });
+  });
+
+  it("skips unreadable unrelated children but rejects unreadable relay arguments (#9044)", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        `
+import builtins, importlib.util, io, json, sys, types
+sys.modules["yaml"] = types.SimpleNamespace(YAMLError=type("YAMLError", (Exception,), {}))
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+identity = (41, 333)
+manager_pid = 40
+helper_pid = 42
+relay_pid = 43
+relay_arguments = [
+    b"socat",
+    b"TCP-LISTEN:8645,bind=0.0.0.0,fork,reuseaddr",
+    b"TCP:127.0.0.1:18642",
+]
+
+class ProcessEntries:
+    def __enter__(self):
+        return iter(types.SimpleNamespace(name=str(pid)) for pid in (41, helper_pid, relay_pid))
+    def __exit__(self, *_args):
+        return False
+
+def run_case(helper_name):
+    process_names = {
+        manager_pid: "bash",
+        41: "python3",
+        helper_pid: helper_name,
+        relay_pid: "socat",
+    }
+    parents = {41: manager_pid, helper_pid: manager_pid, relay_pid: manager_pid}
+    command_lines = {
+        manager_pid: module.SERVICE_MANAGER_PATH + b"\\0",
+        relay_pid: b"\\0".join(relay_arguments) + b"\\0",
+    }
+    command_line_reads = []
+    real_open = builtins.open
+
+    def fake_open(path, mode="r", *args, **kwargs):
+        raw_path = str(path)
+        fields = raw_path.split("/")
+        if len(fields) == 4 and fields[1] == "proc":
+            pid = int(fields[2])
+            if fields[3] == "status":
+                status = f"Name:\\t{process_names[pid]}\\nPPid:\\t{parents[pid]}\\n"
+                if "b" in mode:
+                    return io.BytesIO(status.encode("utf-8"))
+                return io.StringIO(status)
+            if fields[3] == "cmdline":
+                command_line_reads.append(pid)
+                if pid == helper_pid:
+                    raise PermissionError("helper arguments denied")
+                return io.BytesIO(command_lines[pid])
+        return real_open(path, mode, *args, **kwargs)
+
+    module.os.geteuid = lambda: 1000
+    module.os.scandir = lambda path: ProcessEntries()
+    module.os.stat = lambda path: types.SimpleNamespace(st_uid=1000)
+    module._process_start_identity = lambda pid: 101 if pid == manager_pid else 200 + pid
+    module._gateway_identity = lambda: identity
+    builtins.open = fake_open
+    try:
+        try:
+            outcome = {"port": module._managed_api_relay_public_port(identity)}
+        except Exception as error:
+            outcome = {"error": [type(error).__name__, str(error)]}
+    finally:
+        builtins.open = real_open
+    outcome["helper_arguments_read"] = helper_pid in command_line_reads
+    return outcome
+
+print(json.dumps({
+    "unrelated_child": run_case("sleep"),
+    "relay_named_child": run_case("socat"),
+}, sort_keys=True))
+`,
+        TRANSACTION,
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      relay_named_child: {
+        error: ["PermissionError", "Hermes managed API relay identity is unavailable"],
+        helper_arguments_read: true,
+      },
+      unrelated_child: { helper_arguments_read: false, port: 8645 },
+    });
   });
 
   it("accepts allocated relay ports and rejects forged relay topology (#9044)", () => {
@@ -114,6 +211,7 @@ def run_candidate(owner=1000, parent=manager_pid, arguments=exact_arguments):
     module.os.scandir = lambda path: ProcessEntries()
     module.os.stat = lambda path: types.SimpleNamespace(st_uid=owners[int(path.rsplit("/", 1)[1])])
     module._process_parent_pid = lambda pid: manager_pid if pid == 41 else parent
+    module._process_name = lambda pid: module.MANAGED_API_RELAY_PROCESS_NAME
     module._process_arguments = lambda pid: [module.SERVICE_MANAGER_PATH] if pid == manager_pid else arguments
     module._process_start_identity = lambda pid: 101 if pid == manager_pid else 202
     module._gateway_identity = lambda: identity
@@ -200,7 +298,7 @@ def run_case(mutation):
         []
         if mutation == "missing"
         else [42, 43]
-        if mutation in ("ambiguous", "candidate_arguments_exit", "candidate_start_exit")
+        if mutation in ("ambiguous", "candidate_start_exit")
         else [42]
     )
     counters = {
@@ -208,7 +306,6 @@ def run_case(mutation):
         "manager_arguments": 0,
         "manager_start": 0,
         "manager_stat": 0,
-        "relay_arguments": 0,
         "relay_start": 0,
     }
     module.os.geteuid = lambda: 1000
@@ -239,11 +336,6 @@ def run_case(mutation):
             if mutation == "manager_arguments" and counters["manager_arguments"] > 1:
                 return [b"/tmp/unmanaged-start"]
             return [module.SERVICE_MANAGER_PATH]
-        counters["relay_arguments"] += 1
-        if mutation == "candidate_arguments_exit" and counters["relay_arguments"] == 1:
-            raise FileNotFoundError("relay exited")
-        if mutation == "candidate_arguments_denied":
-            raise PermissionError("relay arguments denied")
         return relay_arguments
 
     def process_start(pid):
@@ -263,6 +355,7 @@ def run_case(mutation):
 
     module.os.stat = process_stat
     module._process_parent_pid = parent_pid
+    module._process_name = lambda pid: module.MANAGED_API_RELAY_PROCESS_NAME
     module._process_arguments = process_arguments
     module._process_start_identity = process_start
     module._gateway_identity = lambda: identity
@@ -270,14 +363,12 @@ def run_case(mutation):
         port = module._managed_api_relay_public_port(identity)
     except Exception as error:
         return type(error).__name__, str(error)
-    if mutation in ("candidate_arguments_exit", "candidate_start_exit"):
+    if mutation == "candidate_start_exit":
         return port
     raise AssertionError("unstable relay topology was accepted")
 
 results = {case: run_case(case) for case in (
     "missing",
-    "candidate_arguments_exit",
-    "candidate_arguments_denied",
     "candidate_start_exit",
     "candidate_start_denied",
     "relay_start",
@@ -298,11 +389,6 @@ print(json.dumps(results, sort_keys=True))
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       ambiguous: ["PermissionError", "Hermes managed API relay identity is ambiguous"],
-      candidate_arguments_denied: [
-        "PermissionError",
-        "Hermes managed API relay identity is unavailable",
-      ],
-      candidate_arguments_exit: 8645,
       candidate_start_denied: [
         "PermissionError",
         "Hermes managed API relay identity is unavailable",
