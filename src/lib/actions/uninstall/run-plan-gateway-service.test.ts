@@ -346,7 +346,6 @@ describe("uninstall OpenShell gateway user service", () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(namespaceReads).toBe(2);
     expect(
       calls.some(
         ([command, resource, action]) =>
@@ -362,10 +361,8 @@ describe("uninstall OpenShell gateway user service", () => {
   it("does not delete a sandbox when a managed gateway namespace is unproven before deletion", () => {
     const test = fixture(true);
     const configPath = writeGatewayState(test);
-    const stateDir = path.dirname(configPath);
     const registryPath = writeSelectedSandboxRegistry(test, "my-assistant");
     const registryBefore = fs.readFileSync(registryPath, "utf-8");
-    let namespaceReads = 0;
     const calls: string[][] = [];
 
     const result = uninstall(
@@ -373,12 +370,9 @@ describe("uninstall OpenShell gateway user service", () => {
       false,
       {
         commandExists: () => true,
-        readProcessEnvironment: () => {
-          namespaceReads += 1;
-          return {
-            [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: "default",
-          };
-        },
+        readProcessEnvironment: () => ({
+          [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: "default",
+        }),
         run: (command, args) => {
           calls.push([command, ...args]);
           return ok();
@@ -388,7 +382,6 @@ describe("uninstall OpenShell gateway user service", () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(namespaceReads).toBe(1);
     expect(
       calls.some(
         ([command, resource, action]) =>

@@ -228,7 +228,7 @@ exit 0
       `#!/usr/bin/env bash
 case "$*" in
   "gateway list -o json") printf '[{"name":"nemoclaw"},{"name":"nemoclaw-9124"}]\\n' ;;
-  "sandbox delete my-assistant")
+  "sandbox delete -g nemoclaw my-assistant")
     printf "Error: status: NotFound, sandbox 'my-assistant' not found\\n" >&2
     exit 1
     ;;
