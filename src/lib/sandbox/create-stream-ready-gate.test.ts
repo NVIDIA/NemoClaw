@@ -58,12 +58,28 @@ describe("sandbox-create-stream ready gate", () => {
     expect(getReadyCheckOutputPatterns(env, explicitPatterns)).toEqual(explicitPatterns);
   });
 
+  it.each([
+    ["Docker", dockerEnv],
+    ["VM", vmEnv],
+  ])("requires startup output for a non-terminal %s agent", (_label, env) => {
+    const patterns = getReadyCheckOutputPatternsForAgent(false, env);
+    expect(patterns).toHaveLength(1);
+    expect(patterns[0]?.test("Setting up NemoClaw (Hermes)...")).toBe(true);
+  });
+
   it("ignores process env driver overrides when explicit env is supplied", () => {
     vi.stubEnv("OPENSHELL_DRIVERS", "vm");
     expect(getReadyCheckOutputPatterns(dockerEnv, undefined)).toEqual([]);
   });
 
-  it("waits for startup output before detaching with the default VM gate", async () => {
+  it.each([
+    ["default VM gate", vmEnv, undefined],
+    [
+      "non-terminal Docker agent gate",
+      dockerEnv,
+      getReadyCheckOutputPatternsForAgent(false, dockerEnv),
+    ],
+  ])("waits for startup output before detaching with the %s", async (_label, env, patterns) => {
     vi.useFakeTimers();
 
     const child = new FakeChild();
@@ -71,8 +87,12 @@ describe("sandbox-create-stream ready gate", () => {
     let resolved = false;
     const promise = streamSandboxCreate(
       "echo create",
-      vmEnv,
-      makePollingOptions(child, { readyCheck: () => true, logLine }),
+      env,
+      makePollingOptions(child, {
+        readyCheck: () => true,
+        readyCheckOutputPatterns: patterns,
+        logLine,
+      }),
     ).then((result) => {
       resolved = true;
       return result;
