@@ -2125,7 +2125,15 @@ When the ordinary create deadline expires, NemoClaw tries to delete the partiall
 After successful cleanup, the output ends with `Retry: $$nemoclaw onboard`.
 If cleanup fails, NemoClaw instead reports that the failed sandbox could not be removed and prints `Manual cleanup: openshell sandbox delete "<name>"`.
 
-The failure path differs when NemoClaw recreates an OpenShell-managed Docker runtime immediately before this wait.
+<AgentOnly variant="openclaw">
+
+Portable OpenClaw onboarding preserves the sandbox when NemoClaw cannot verify its exact runtime identity.
+It does not start dashboard forwarding on this failure path.
+Inspect the preserved sandbox with the status commands below, then follow the recovery guidance from `$$nemoclaw <name> status`.
+
+</AgentOnly>
+
+The failure path also differs when NemoClaw recreates an OpenShell-managed Docker runtime immediately before this wait.
 NemoClaw pins the exact OpenShell sandbox ID before recreation.
 Within the same deadline, NemoClaw requires two consecutive `Ready` observations that each confirm the exact ID and successful command execution.
 It retries only OpenShell's exact `sandbox is not ready` response.
@@ -3027,6 +3035,13 @@ If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu
 
 The route depends on the host environment and the operator control.
 Identify the matching path before applying the recovery guidance.
+
+<AgentOnly variant="openclaw">
+
+Do not apply this compatibility guidance to portable OpenClaw onboarding.
+That path requires native OpenShell GPU injection and does not use `NEMOCLAW_DOCKER_GPU_PATCH`, so do not set `fallback`, `1`, or another legacy nonzero value for a portable OpenClaw run.
+
+</AgentOnly>
 
 | Symptom | Route or stage | Recovery |
 | --- | --- | --- |
