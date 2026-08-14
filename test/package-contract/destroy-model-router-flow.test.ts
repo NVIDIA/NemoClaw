@@ -91,10 +91,7 @@ describe("destroySandbox model-router teardown (#9098)", () => {
         routerCredentialHash: "router-credential-hash",
       } as Session;
       const compareAndSwapSession = vi.fn(
-        (
-          matches: (current: Session) => boolean,
-          mutator: (current: Session) => Session | void,
-        ) => {
+        (matches: (current: Session) => boolean, mutator: (current: Session) => Session | void) => {
           if (!matches(session)) return "mismatch" as const;
           mutator(session);
           return "updated" as const;
@@ -109,19 +106,30 @@ describe("destroySandbox model-router teardown (#9098)", () => {
             endpointUrl: session.endpointUrl,
           },
           {
+            acquireOnboardLock: () => ({
+              acquired: true,
+              lockFile: "/tmp/onboard.lock",
+              stale: false,
+            }),
             listHostRegistryEntries: () => [],
             compareAndSwapSession,
+            expectedSession: session,
             loadSession: () => session,
+            releaseOnboardLock: () => undefined,
             withModelRouterPortLifecycleLock: async (_port, operation) => await operation(),
           },
         ),
-      ).resolves.toBeUndefined();
+      ).resolves.toBe(true);
 
       await vi.waitFor(() => expect(stubExited).toBe(true), { timeout: 8_000, interval: 100 });
       expect(await probeHealthy(port)).toBe(false);
-      expect(compareAndSwapSession).toHaveBeenCalledOnce();
+      expect(compareAndSwapSession).toHaveBeenCalledTimes(2);
       expect(session).toEqual(
-        expect.objectContaining({ routerPid: null, routerCredentialHash: null }),
+        expect.objectContaining({
+          sandboxName: null,
+          routerPid: null,
+          routerCredentialHash: null,
+        }),
       );
     },
   );

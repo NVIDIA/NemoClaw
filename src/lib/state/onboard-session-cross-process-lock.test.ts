@@ -39,6 +39,28 @@ afterEach(() => {
 });
 
 describe("cross-process onboard lock", () => {
+  it("updates under a caller-owned onboard lock without releasing it", () => {
+    session.saveSession(
+      session.createSession({
+        sessionId: "destroy-session",
+        sandboxName: "alpha",
+      }),
+    );
+    expect(session.acquireOnboardLock("nemoclaw destroy").acquired).toBe(true);
+
+    const result = session.compareAndSwapSession(
+      (current) => current.sessionId === "destroy-session",
+      (current) => {
+        current.sandboxName = null;
+        return current;
+      },
+    );
+
+    expect(result).toBe("updated");
+    expect(session.loadSession()?.sandboxName).toBeNull();
+    expect(fs.existsSync(session.LOCK_FILE)).toBe(true);
+  });
+
   it("reports the holder without acquiring a competing lock", async () => {
     const childScript = `
       const fs = require("node:fs");
@@ -95,8 +117,8 @@ describe("cross-process onboard lock", () => {
       }));
       const replacement = JSON.parse(fs.readFileSync(sessionFile, "utf8"));
       replacement.sessionId = "replacement-session";
-      replacement.sandboxName = "beta";
-      replacement.endpointUrl = "http://host.openshell.internal:4200/v1";
+      replacement.sandboxName = "alpha";
+      replacement.endpointUrl = "http://host.openshell.internal:4000/v1";
       replacement.routerPid = 6262;
       replacement.routerCredentialHash = "replacement-hash";
       const tempFile = sessionFile + ".replacement";
@@ -126,8 +148,8 @@ describe("cross-process onboard lock", () => {
       expect(result).toBe("busy");
       expect(session.loadSession()).toMatchObject({
         sessionId: "replacement-session",
-        sandboxName: "beta",
-        endpointUrl: "http://host.openshell.internal:4200/v1",
+        sandboxName: "alpha",
+        endpointUrl: "http://host.openshell.internal:4000/v1",
         routerPid: 6262,
         routerCredentialHash: "replacement-hash",
       });

@@ -520,13 +520,11 @@ function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetad
         !hasUnsafeHostMountTerminalText(candidate.target) &&
         candidate.readOnly === true,
     )
-      ? value.hostMounts.map(
-          (candidate): SandboxHostMount => ({
-            source: (candidate as { source: string }).source,
-            target: (candidate as { target: string }).target,
-            readOnly: true,
-          }),
-        )
+      ? value.hostMounts.map((candidate): SandboxHostMount => ({
+          source: (candidate as { source: string }).source,
+          target: (candidate as { target: string }).target,
+          readOnly: true,
+        }))
       : [];
   return {
     gatewayName: readString(value.gatewayName) ?? "nemoclaw",
@@ -1503,8 +1501,11 @@ export function compareAndSwapSession(
   mutator: (session: Session) => Session | void,
   command = "nemoclaw session compare-and-swap",
 ): CompareAndSwapSessionResult {
-  const lock = acquireOnboardLock(command);
-  if (!lock.acquired) return "busy";
+  const ownsOnboardLock = heldLockFd === null;
+  if (ownsOnboardLock) {
+    const lock = acquireOnboardLock(command);
+    if (!lock.acquired) return "busy";
+  }
   try {
     const current = loadSession();
     if (!current || !matches(current)) return "mismatch";
@@ -1512,7 +1513,7 @@ export function compareAndSwapSession(
     saveSession(next);
     return "updated";
   } finally {
-    releaseOnboardLock();
+    if (ownsOnboardLock) releaseOnboardLock();
   }
 }
 

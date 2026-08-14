@@ -4,6 +4,7 @@
 import { createRequire } from "node:module";
 
 import { expect, type MockInstance, vi } from "vitest";
+import type { Session } from "../../src/lib/state/onboard-session";
 import type { SandboxWorkloadReceipt } from "../../src/lib/state/registry";
 
 type DestroySandbox = (typeof import("../../src/lib/actions/sandbox/destroy"))["destroySandbox"];
@@ -37,6 +38,7 @@ export type DestroyHarness = {
   restoreMcpBridgesAfterDestroyAbortSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   selectGatewaySpy: MockInstance;
+  sessionState: Session;
   setSandboxPresent: (present: boolean) => void;
   shieldsDownSpy: MockInstance;
   stopAllSpy: MockInstance;
@@ -75,6 +77,7 @@ type DestroyHarnessOptions = {
   promptResponses?: string[];
   provider?: string;
   registeredSandboxCount?: number;
+  replaceSessionAfterRegistryRemoval?: boolean;
   removeSandboxResult?: boolean;
   restoreMcpError?: string;
   sandboxPresent?: boolean;
@@ -149,6 +152,15 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   resetDestroyModuleCache();
   const events: string[] = [];
   let sandboxPresent = options.sandboxPresent !== false;
+  let sessionLockBusy = false;
+  const sessionState = {
+    sessionId: "session-alpha",
+    updatedAt: "2026-08-14T00:00:00.000Z",
+    sandboxName: "alpha",
+    endpointUrl: options.endpointUrl ?? null,
+    routerPid: options.sessionRouterPid ?? null,
+    routerCredentialHash: options.sessionRouterPid ? "router-hash" : null,
+  } as Session;
 
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -218,6 +230,15 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const removeSandboxSpy = vi.spyOn(registry, "removeSandbox").mockImplementation(() => {
     if (options.removeSandboxResult === false) return false;
     registeredSandboxCount = Math.max(0, registeredSandboxCount - 1);
+    if (options.replaceSessionAfterRegistryRemoval) {
+      sessionState.sessionId = "replacement-session";
+      sessionState.updatedAt = "2026-08-14T00:01:00.000Z";
+      sessionState.sandboxName = "alpha";
+      sessionState.endpointUrl = "http://host.openshell.internal:4000/v1";
+      sessionState.routerPid = 6262;
+      sessionState.routerCredentialHash = "replacement-hash";
+      sessionLockBusy = true;
+    }
     return true;
   });
   const stopModelRouterForDestroyedSandboxSpy = vi.spyOn(
@@ -248,21 +269,28 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     status: "absent",
   });
   vi.spyOn(modelRouterProcess, "isRouterHealthy").mockResolvedValue(false);
-  vi.spyOn(onboardSession, "loadSession").mockReturnValue({
-    sandboxName: "alpha",
-    ...(options.sessionRouterPid ? { routerPid: options.sessionRouterPid } : {}),
-  });
+  vi.spyOn(onboardSession, "loadSession").mockImplementation(() => ({ ...sessionState }));
+  vi.spyOn(onboardSession, "acquireOnboardLock").mockImplementation(() =>
+    sessionLockBusy
+      ? {
+          acquired: false,
+          lockFile: "/tmp/onboard.lock",
+          stale: false,
+          holderPid: 6262,
+          holderStartedAt: "2026-08-14T00:01:00.000Z",
+          holderCommand: "replacement nemoclaw onboard process",
+        }
+      : { acquired: true, lockFile: "/tmp/onboard.lock", stale: false },
+  );
+  vi.spyOn(onboardSession, "releaseOnboardLock").mockImplementation(() => undefined);
   const compareAndSwapSessionSpy = vi
     .spyOn(onboardSession, "compareAndSwapSession")
     .mockImplementation((matches: unknown, mutator: unknown) => {
-      const session = {
-        sandboxName: "alpha",
-        ...(options.sessionRouterPid ? { routerPid: options.sessionRouterPid } : {}),
-      };
       expect(typeof matches).toBe("function");
       expect(typeof mutator).toBe("function");
-      if (!(matches as (value: typeof session) => boolean)(session)) return "mismatch";
-      (mutator as (value: typeof session) => void)(session);
+      if (sessionLockBusy) return "busy";
+      if (!(matches as (value: Session) => boolean)(sessionState)) return "mismatch";
+      (mutator as (value: Session) => void)(sessionState);
       return "updated";
     });
   const updateSessionSpy = vi
@@ -460,6 +488,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     restoreMcpBridgesAfterDestroyAbortSpy,
     runOpenshellSpy,
     selectGatewaySpy,
+    sessionState,
     setSandboxPresent: (present: boolean) => {
       sandboxPresent = present;
     },

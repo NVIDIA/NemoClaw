@@ -27,11 +27,17 @@ function createDeps(overrides: Partial<StopModelRouterForDestroyedSandboxDeps> =
     routerCredentialHash: "hash",
   } as Session;
   const deps: StopModelRouterForDestroyedSandboxDeps = {
+    acquireOnboardLock: vi.fn(() => ({
+      acquired: true,
+      lockFile: "/tmp/onboard.lock",
+      stale: false,
+    })),
     compareAndSwapSession: vi.fn((matches, mutator) => {
       if (!matches(session)) return "mismatch";
       mutator(session);
       return "updated";
     }),
+    expectedSession: session,
     inspectProcessForPort: vi.fn(() => ({ status: "absent" as const })),
     isHealthy: vi.fn(async () => false),
     isRoutedProvider: vi.fn((provider: string | null | undefined) => provider === "nvidia-router"),
@@ -39,6 +45,7 @@ function createDeps(overrides: Partial<StopModelRouterForDestroyedSandboxDeps> =
     loadSession: vi.fn(() => session),
     log: vi.fn(),
     ownsPort: vi.fn(() => true),
+    releaseOnboardLock: vi.fn(),
     stopProcess: vi.fn(async () => undefined),
     warn: vi.fn(),
     withModelRouterPortLifecycleLock: async <T>(_port: number, operation: () => Promise<T> | T) =>
@@ -69,6 +76,7 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     expect(deps.stopProcess).toHaveBeenCalledWith(4242, 4100);
     expect(session.routerPid).toBeNull();
     expect(session.routerCredentialHash).toBeNull();
+    expect(session.sandboxName).toBeNull();
     expect(deps.warn).not.toHaveBeenCalled();
   });
 
@@ -94,7 +102,7 @@ describe("stopModelRouterForDestroyedSandbox", () => {
   });
 
   it("keeps the router while a sandbox in another gateway state root uses the same port", async () => {
-    const { deps } = createDeps({
+    const { deps, session } = createDeps({
       listHostRegistryEntries: vi.fn(() => [
         {
           entry: {
@@ -112,7 +120,8 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     await stopModelRouterForDestroyedSandbox(routedSandbox, deps);
 
     expect(deps.stopProcess).not.toHaveBeenCalled();
-    expect(deps.compareAndSwapSession).not.toHaveBeenCalled();
+    expect(deps.compareAndSwapSession).toHaveBeenCalledOnce();
+    expect(session.sandboxName).toBeNull();
   });
 
   it("stops the router when a routed peer uses another port", async () => {
@@ -157,6 +166,7 @@ describe("stopModelRouterForDestroyedSandbox", () => {
       routerCredentialHash: "beta-hash",
     } as Session;
     const { deps } = createDeps({
+      expectedSession: unrelatedSession,
       loadSession: vi.fn(() => unrelatedSession),
       ownsPort: vi.fn(() => false),
       inspectProcessForPort: vi.fn(() => ({ status: "found" as const, pid: 5151 })),
@@ -186,6 +196,8 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     await stopModelRouterForDestroyedSandbox(routedSandbox, deps);
 
     expect(deps.compareAndSwapSession).not.toHaveBeenCalled();
+    expect(deps.stopProcess).not.toHaveBeenCalled();
+    expect(reusedNameSession.sandboxName).toBe("alpha");
     expect(reusedNameSession.routerPid).toBe(6262);
     expect(reusedNameSession.routerCredentialHash).toBe("new-hash");
   });
@@ -198,31 +210,38 @@ describe("stopModelRouterForDestroyedSandbox", () => {
       routerPid: 6262,
       routerCredentialHash: "new-hash",
     } as Session;
-    const { deps } = createDeps({
-      compareAndSwapSession: vi.fn((matches, mutator) => {
-        if (!matches(replacementSession)) return "mismatch";
-        mutator(replacementSession);
-        return "updated";
-      }),
-    });
+    const { deps } = createDeps({ loadSession: vi.fn(() => replacementSession) });
 
     await stopModelRouterForDestroyedSandbox(routedSandbox, deps);
 
     expect(replacementSession).toMatchObject({
+      sandboxName: "beta",
       routerPid: 6262,
       routerCredentialHash: "new-hash",
     });
+    expect(deps.stopProcess).not.toHaveBeenCalled();
+    expect(deps.compareAndSwapSession).not.toHaveBeenCalled();
   });
 
   it("keeps session identity while another onboarding run owns the session lock", async () => {
     const { deps, session } = createDeps({
-      compareAndSwapSession: vi.fn(() => "busy" as const),
+      acquireOnboardLock: vi.fn(() => ({
+        acquired: false,
+        lockFile: "/tmp/onboard.lock",
+        stale: false,
+        holderPid: 6262,
+        holderStartedAt: "2026-08-14T00:00:00.000Z",
+        holderCommand: "replacement nemoclaw onboard process",
+      })),
     });
 
     await stopModelRouterForDestroyedSandbox(routedSandbox, deps);
 
     expect(session.routerPid).toBe(4242);
     expect(session.routerCredentialHash).toBe("hash");
+    expect(session.sandboxName).toBe("alpha");
+    expect(deps.stopProcess).not.toHaveBeenCalled();
+    expect(deps.compareAndSwapSession).not.toHaveBeenCalled();
     expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining("owns the session lock"));
   });
 
@@ -249,9 +268,10 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     await stopModelRouterForDestroyedSandbox(routedSandbox, deps);
 
     expect(deps.stopProcess).not.toHaveBeenCalled();
-    expect(deps.compareAndSwapSession).not.toHaveBeenCalled();
+    expect(deps.compareAndSwapSession).toHaveBeenCalledOnce();
     expect(session.routerPid).toBe(4242);
     expect(session.routerCredentialHash).toBe("hash");
+    expect(session.sandboxName).toBeNull();
     expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining("process inventory"));
   });
 
@@ -264,9 +284,10 @@ describe("stopModelRouterForDestroyedSandbox", () => {
 
     await stopModelRouterForDestroyedSandbox(routedSandbox, deps);
 
-    expect(deps.compareAndSwapSession).not.toHaveBeenCalled();
+    expect(deps.compareAndSwapSession).toHaveBeenCalledOnce();
     expect(session.routerPid).toBe(4242);
     expect(session.routerCredentialHash).toBe("hash");
+    expect(session.sandboxName).toBeNull();
     expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining("healthy port 4100"));
   });
 
@@ -279,6 +300,7 @@ describe("stopModelRouterForDestroyedSandbox", () => {
       routerCredentialHash: "stale",
     } as Session;
     const { deps } = createDeps({
+      expectedSession: session,
       loadSession: vi.fn(() => session),
       ownsPort: vi.fn(() => false),
       compareAndSwapSession: vi.fn((matches, mutator) => {
@@ -295,23 +317,30 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     expect(session.routerCredentialHash).toBeNull();
   });
 
-  it("leaves the session untouched when it records no router PID and no orphan exists", async () => {
+  it("clears the destroyed sandbox association when no router identity remains", async () => {
+    const session = {
+      sessionId: "session-alpha",
+      sandboxName: "alpha",
+      endpointUrl: routedSandbox.endpointUrl,
+      routerPid: null,
+      routerCredentialHash: null,
+    } as Session;
     const { deps } = createDeps({
-      loadSession: vi.fn(
-        () =>
-          ({
-            sandboxName: "alpha",
-            endpointUrl: routedSandbox.endpointUrl,
-            routerPid: null,
-          }) as Session,
-      ),
+      expectedSession: session,
+      loadSession: vi.fn(() => session),
       ownsPort: vi.fn(() => false),
+      compareAndSwapSession: vi.fn((matches, mutator) => {
+        if (!matches(session)) return "mismatch";
+        mutator(session);
+        return "updated";
+      }),
     });
 
     await stopModelRouterForDestroyedSandbox(routedSandbox, deps);
 
     expect(deps.stopProcess).not.toHaveBeenCalled();
-    expect(deps.compareAndSwapSession).not.toHaveBeenCalled();
+    expect(deps.compareAndSwapSession).toHaveBeenCalledOnce();
+    expect(session.sandboxName).toBeNull();
   });
 
   it("warns and keeps the recorded PID when the stop fails, so uninstall can still find it", async () => {
@@ -321,13 +350,14 @@ describe("stopModelRouterForDestroyedSandbox", () => {
       }),
     });
 
-    await expect(stopModelRouterForDestroyedSandbox(routedSandbox, deps)).resolves.toBeUndefined();
+    await expect(stopModelRouterForDestroyedSandbox(routedSandbox, deps)).resolves.toBe(true);
 
     expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining("shutdown did not converge"));
     expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining("Inspect PID 4242"));
     expect(deps.warn).not.toHaveBeenCalledWith(expect.stringContaining("kill 4242"));
-    expect(deps.compareAndSwapSession).not.toHaveBeenCalled();
+    expect(deps.compareAndSwapSession).toHaveBeenCalledOnce();
     expect(session.routerPid).toBe(4242);
+    expect(session.sandboxName).toBeNull();
   });
 
   it("does not recommend a PID stop when ownership changes after a failed shutdown", async () => {
