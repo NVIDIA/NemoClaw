@@ -6,7 +6,13 @@ import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
 
 import type { HermesSwitchyardRouting } from "../../hermes-switchyard-routing";
-import { validateHermesSwitchyardRouting } from "../../hermes-switchyard-routing.ts";
+
+const { validateHermesSwitchyardRouting }: typeof import("../../hermes-switchyard-routing") =
+  require(
+    __filename.endsWith(".ts")
+      ? "../../hermes-switchyard-routing.ts"
+      : "../../hermes-switchyard-routing.js",
+  );
 
 /**
  * Versioned, bounded schema for managed-image startup intent.
