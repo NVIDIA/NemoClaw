@@ -1085,6 +1085,7 @@ function validateFreeStandingJobSelector(
   }
 }
 
+
 function validateCatalogueOwnedJobs(errors: string[], jobs: WorkflowRecord): void {
   for (const jobName of ["gpu-double-onboard", "gpu-e2e", "llama-cpp-generic-gpu"]) {
     if (Object.hasOwn(jobs, jobName)) {
@@ -1296,6 +1297,8 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, runVitest, "--reporter=test/e2e/risk-signal-reporter.ts");
 }
 
+
+
 function requireNoDockerHubAuthInRun(errors: string[], owner: string, runScript: string): void {
   if (!runScript) return;
   const usesDockerLogin = /\bdocker\s+login\b/i.test(runScript);
@@ -1431,17 +1434,15 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
     }
     requireCanonicalDockerHubCleanupRun(errors, jobName, cleanup);
 
-    const checkoutIndexes = workflowSteps.flatMap((step, index) => {
+    const checkoutIndex = workflowSteps.findIndex((step) => {
       if (jobName === "managed-image-protected-runtime") {
-        return step.name === "Checkout exact protected runtime candidate source" ? [index] : [];
+        return step.name === "Checkout exact protected runtime candidate source";
       }
       if (jobName === "llama-cpp-dgx-spark-qualification") {
-        return step.name === "Checkout exact llama.cpp qualification candidate" ? [index] : [];
+        return step.name === "Checkout exact llama.cpp qualification candidate";
       }
-      return stringValue(step.uses).startsWith("actions/checkout@") ? [index] : [];
+      return stringValue(step.uses).startsWith("actions/checkout@");
     });
-    const checkoutIndex =
-      jobName === "mcp-bridge-dev" ? (checkoutIndexes.at(-1) ?? -1) : (checkoutIndexes[0] ?? -1);
     const protectedCacheDownloadIndex =
       jobName === "managed-image-protected-runtime"
         ? workflowSteps.findIndex(

@@ -1782,16 +1782,13 @@ jobs:
       source_commit: ${{ steps.resolve_openshell_dev_artifact.outputs.source_commit }}
       manifest_sha256: ${{ steps.resolve_openshell_dev_artifact.outputs.manifest_sha256 }}
     steps:
-      - name: Checkout trusted OpenShell dev tooling
+      - name: Checkout trusted OpenShell dev artifact resolver
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ github.repository }}
           ref: ${{ inputs.workflow_sha || github.workflow_sha }}
           path: .trusted-openshell-dev-artifact
           persist-credentials: false
-          sparse-checkout: |
-            scripts/install-openshell.sh
-            tools/e2e/openshell-dev-artifact.mts
 
       - name: Set up Node for OpenShell dev artifact resolution
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -1839,17 +1836,6 @@ jobs:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
-      - name: Checkout trusted OpenShell dev tooling
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
-          path: .trusted-openshell-dev-artifact
-          persist-credentials: false
-          sparse-checkout: |
-            scripts/install-openshell.sh
-            tools/e2e/openshell-dev-artifact.mts
-
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
@@ -1876,7 +1862,7 @@ jobs:
           OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT: ${{ needs.openshell-dev-artifact.outputs.source_commit }}
         run: >-
           node --experimental-strip-types --no-warnings
-          "${{ github.workspace }}/.trusted-openshell-dev-artifact/tools/e2e/openshell-dev-artifact.mts" verify
+          tools/e2e/openshell-dev-artifact.mts verify
           "$OPENSHELL_DEV_ARTIFACT_DIR"
           "$OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT"
           "$OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256"
@@ -1912,11 +1898,21 @@ jobs:
 
       - name: Install immutable OpenShell dev artifact
         env:
-          NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR: ${{ runner.temp }}/openshell-dev-artifact/assets
-          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+          OPENSHELL_DEV_ARTIFACT_DIR: ${{ runner.temp }}/openshell-dev-artifact
+          OPENSHELL_DEV_BINARY_DIR: ${{ runner.temp }}/openshell-dev-binaries
+          OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256: ${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}
+          OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT: ${{ needs.openshell-dev-artifact.outputs.source_commit }}
         run: |
           set -euo pipefail
-          bash "${{ github.workspace }}/.trusted-openshell-dev-artifact/scripts/install-openshell.sh"
+          node --experimental-strip-types --no-warnings \
+            tools/e2e/openshell-dev-artifact.mts prepare \
+            "$OPENSHELL_DEV_ARTIFACT_DIR" \
+            "$OPENSHELL_DEV_BINARY_DIR" \
+            "$OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT" \
+            "$OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256"
+          sudo install -m 755 "$OPENSHELL_DEV_BINARY_DIR/openshell" /usr/local/bin/openshell
+          sudo install -m 755 "$OPENSHELL_DEV_BINARY_DIR/openshell-gateway" /usr/local/bin/openshell-gateway
+          sudo install -m 755 "$OPENSHELL_DEV_BINARY_DIR/openshell-sandbox" /usr/local/bin/openshell-sandbox
 
       - id: mcp_runtime_compatibility
         name: Classify OpenShell credential-boundary compatibility
