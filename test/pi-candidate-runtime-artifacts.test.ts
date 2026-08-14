@@ -168,6 +168,26 @@ describe("Pi release cohort separation", () => {
     ).toBe(false);
   });
 
+  it("does not grant package write permission to pull request candidate builds", () => {
+    const workflow = YAML.parse(readRepoFile(".github/workflows/managed-images.yaml")) as {
+      jobs: Record<
+        string,
+        {
+          if?: string;
+          permissions?: Record<string, string>;
+          steps?: Array<Record<string, unknown>>;
+        }
+      >;
+    };
+    const candidateJob = workflow.jobs["pi-candidate"];
+    const publishJob = workflow.jobs["pi-candidate-publish"];
+    expect(candidateJob?.if).toContain("github.event_name == 'pull_request'");
+    expect(candidateJob?.permissions).toEqual({ contents: "read" });
+    expect(publishJob?.if).toContain("github.event_name != 'pull_request'");
+    expect(publishJob?.permissions).toEqual({ contents: "read", packages: "write" });
+    expect(publishJob?.steps).toEqual(candidateJob?.steps);
+  });
+
   it("qualifies the published candidate through its declared entrypoint with corporate CA handoff", () => {
     const workflow = readRepoFile(".github/workflows/managed-images.yaml");
     const entrypointStep = workflow.slice(

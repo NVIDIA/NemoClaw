@@ -862,13 +862,12 @@ jobs:
 
   pi-candidate:
     name: Build and validate the Pi candidate managed image (${{ matrix.arch }})
-    if: github.repository == 'NVIDIA/NemoClaw'
+    if: github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'pull_request'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     permissions:
       contents: read
-      packages: write
-    strategy:
+    strategy: &pi_candidate_strategy
       fail-fast: false
       matrix:
         include:
@@ -878,7 +877,7 @@ jobs:
           - arch: arm64
             platform: linux/arm64
             runner: ubuntu-24.04-arm
-    env:
+    env: &pi_candidate_env
       BASE_DOCKERFILE: agents/pi/Dockerfile.base
       CANDIDATE_IMAGE: nemoclaw-managed-candidate/pi
       DOCKERFILE: agents/pi/Dockerfile
@@ -886,7 +885,7 @@ jobs:
       PLATFORM: ${{ matrix.platform }}
       PUBLICATION_COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
       REPOSITORY: ghcr.io/nvidia/nemoclaw/pi-sandbox
-    steps:
+    steps: &pi_candidate_steps
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1219,6 +1218,19 @@ jobs:
           path: ${{ runner.temp }}/managed-candidate-contract/contract.json
           if-no-files-found: error
           retention-days: 7
+
+  pi-candidate-publish:
+    name: Publish and validate the Pi candidate managed image (${{ matrix.arch }})
+    if: github.repository == 'NVIDIA/NemoClaw' && github.event_name != 'pull_request'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    strategy: *pi_candidate_strategy
+    env: *pi_candidate_env
+    steps: *pi_candidate_steps
+
   build-and-validate:
     name: Build and validate ${{ matrix.display_name }} managed image (${{ matrix.arch }})
     if: github.event_name != 'pull_request'
