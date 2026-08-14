@@ -1275,7 +1275,7 @@ Model '{model}' is not available from Google Gemini. Checked https://generativel
 ```
 
 This means the model ID is either misspelled, not available to your API key or account tier, or is an embedding-only model (for example, an `embedding-*` or `text-embedding-*` model) that Google's catalog does not list under `generateContent`.
-NemoClaw accepts the model ID with or without the `models/` prefix, so re-check the ID against the [curated Gemini models](../inference/use-google-gemini#model-choices) or Google's published model list rather than the prefix form.
+NemoClaw accepts the model ID with or without the `models/` prefix. Verify the model name against the [curated Gemini models](../inference/use-google-gemini#model-choices) or Google's published model list. Do not treat the optional prefix as a different model.
 
 ## Runtime
 
