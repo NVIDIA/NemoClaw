@@ -306,7 +306,7 @@ Explicit CPU-only intent skips the WSL GPU proof.
 The gateway phase validates authority again immediately before managed reconciliation or external attachment.
 
 Authoritative rebuild preflight pins read-only probes to the recorded gateway without selecting, starting, or recovering it.
-Immediately before source deletion, the rebuild journal requires the complete gateway authority to match that preflight handoff and carries the journaled authority into replacement onboarding.
+Immediately before source deletion, the rebuild journal requires the complete gateway authority to match that preflight handoff, apart from the one managed change from a package-managed service to the standalone gateway, and carries the journaled authority into replacement onboarding.
 Gateway recovery remains after the canonical readiness gate.
 
 For external supervision, onboarding skips managed gateway selection, reuse refresh, cleanup, start, stop, replace, and standalone fallback paths.
