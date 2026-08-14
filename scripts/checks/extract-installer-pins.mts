@@ -178,7 +178,7 @@ const TRUSTED_SUPERVISOR_MANIFEST_PINS: readonly TrustedSupervisorManifestPin[] 
   },
 ] as const;
 const TRUSTED_SUPERVISOR_RUNTIME_TEMPLATE_SHA256_ALLOWLIST: readonly string[] = [
-  "c68270c7f42616d631098812d02e7469fe42b609917a571f0f5a381263cc0749",
+  "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
 ] as const;
 
 function fail(message: string): never {
