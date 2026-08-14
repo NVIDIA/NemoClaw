@@ -3607,7 +3607,25 @@ async function preflightAuthoritativeRebuildTarget(
 }
 
 // ── Main ─────────────────────────────────────────────────────────
-const onboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
+const wrappedOnboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
+async function onboard(opts: OnboardOptions = {}): Promise<void> {
+  const originalProcessExit = process.exit;
+  let deferredExit: import("./onboard/session-bootstrap").OnboardDeferredExitError | null = null;
+  process.exit = ((code?: number): never => {
+    throw new onboardSessionBootstrap.OnboardDeferredExitError(code ?? 0);
+  }) as typeof process.exit;
+  try {
+    await wrappedOnboard(opts);
+  } catch (error) {
+    if (!onboardSessionBootstrap.isOnboardDeferredExitError(error)) throw error;
+    deferredExit = error;
+  } finally {
+    process.exit = originalProcessExit;
+  }
+  if (!deferredExit) return;
+  if (opts.deferProcessExit === true) throw deferredExit;
+  originalProcessExit(deferredExit.code);
+}
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   const hostMountScope = onboardSessionBootstrap.beginHostMountScope(opts.hostMounts);
   const hermesApiPortReservationScope = agentOnboard.createHermesApiPortReservationScope();
@@ -3633,6 +3651,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   const { fresh, nonInteractive, cannotPrompt, resume } = entryOptions;
   const { requestedFromDockerfile, requestedSandboxName } = entryOptions;
   NON_INTERACTIVE = nonInteractive;
+  const validatePolicyTierBeforeRuntime =
+    isNonInteractive() && !resume && opts.experimentalProfile !== "portable";
+  if (validatePolicyTierBeforeRuntime) validatePolicyTierEnvEarly();
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   _preflightDashboardPort =
     opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
@@ -3668,10 +3689,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   };
   if (ownsOnboardLock) process.once("exit", releaseOnboardLock);
 
-  const originalProcessExit = process.exit;
-  process.exit = ((code?: number): never => {
-    throw new onboardSessionBootstrap.OnboardDeferredExitError(code ?? 0);
-  }) as typeof process.exit;
   let portableEnvScope:
     | import("./onboard/session-bootstrap").PortableOnboardEnvironmentScope
     | null = null;
@@ -3688,7 +3705,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     portableEnvScope = lockedRuntime.environmentScope;
     if (!authoritativeGateway) delete process.env.OPENSHELL_GATEWAY;
     preparedDcodeRuntime.applyGatewayEnv(process.env);
-    if (isNonInteractive()) validatePolicyTierEnvEarly();
+    if (isNonInteractive() && !validatePolicyTierBeforeRuntime) validatePolicyTierEnvEarly();
     // Validate provider/model hints only after the locked profile and runtime authority are active.
     const stationSessionInput = onboardEntryOptions.prepareSessionInput(
       runtimeControlRequests,
@@ -4274,7 +4291,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     try {
       await hermesApiPortReservationScope.release();
       portableEnvScope?.restore();
-      process.exit = originalProcessExit;
       releaseOnboardLock();
       onboardRuntimeBoundary.clear();
       onboardTracing.finishOnboardTrace(onboardTrace, completed);
@@ -4287,7 +4303,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       resetGatewayOwnerBinding();
     } finally {
       portableEnvScope?.restore();
-      process.exit = originalProcessExit;
       hostMountScope.restore();
     }
   }

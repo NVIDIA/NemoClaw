@@ -29,6 +29,8 @@ beforeAll(() => {
 beforeEach(() => {
   configWriteMarker = path.join(tempHome, "portable-config-written");
   socketActivationMarker = path.join(tempHome, "podman-socket-activated");
+  fs.rmSync(configWriteMarker, { force: true });
+  fs.rmSync(socketActivationMarker, { force: true });
   preparationObservedLock = false;
   preparePortableHost.mockClear();
   process.env = {
@@ -120,8 +122,9 @@ describe("portable resume command lock boundary", () => {
       const exited = once(child, "exit");
       child.kill();
       await exited;
+      fs.rmSync(session.LOCK_FILE, { force: true });
     }
-  });
+  }, 15_000);
 
   it("releases the first lock before one bounded pre-read retry and preparation (#9035)", async () => {
     const { command, onboardModule, session, checkpointMigration, resumeIntent } =
@@ -173,8 +176,8 @@ describe("portable resume command lock boundary", () => {
       });
       resolutions += 1;
       resolvedFingerprints.push(resolved.snapshot!.fingerprint);
-      resolvedRaw.push(fs.readFileSync(session.SESSION_FILE, "utf8"));
       afterResolution[resolutions - 1]!();
+      resolvedRaw.push(fs.readFileSync(session.SESSION_FILE, "utf8"));
       return resolved;
     };
 

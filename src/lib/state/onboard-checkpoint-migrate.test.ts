@@ -111,7 +111,7 @@ describe("resolveCheckpointForResume", () => {
   it("refuses a legacy session that has no embedded checkpoint", () => {
     const raw = rawJson(completedSession());
     const result = resolveCheckpointForResume(raw);
-    expect(result).toEqual({ status: "legacy", foundVersion: 3 });
+    expect(result).toEqual({ status: "legacy" });
   });
 
   it("refuses an active legacy checkpoint without rewriting it", () => {

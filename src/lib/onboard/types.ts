@@ -105,6 +105,8 @@ export type OnboardOptions = {
   targetGatewayPort?: number | null;
   /** Internal rebuild handoff: the outer destructive lifecycle owns the onboard lock. */
   onboardLockAlreadyHeld?: boolean;
+  /** Internal command handoff: propagate an exit request after onboarding restores its scopes. */
+  deferProcessExit?: boolean;
   /** Internal rebuild handoff: target fingerprint of the journal opened before deletion. */
   recreateJournalTargetIntentFingerprint?: string | null;
   /** Internal one-shot handoff for a prevalidated managed DCode replacement. */

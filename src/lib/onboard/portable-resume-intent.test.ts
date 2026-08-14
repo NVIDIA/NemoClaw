@@ -92,20 +92,22 @@ describe("portable resume intent", () => {
   });
 
   it("refuses active schema v1-v3 checkpoints byte-for-byte with --fresh guidance (#9035)", () => {
-    const legacy = JSON.parse(rawSession()) as Record<string, unknown>;
-    legacy.checkpoint = { schemaVersion: 3 };
-    const file = sessionFile(JSON.stringify(legacy, null, 2));
-    const before = fs.readFileSync(file, "utf8");
+    for (const schemaVersion of [1, 2, 3]) {
+      const legacy = JSON.parse(rawSession()) as Record<string, unknown>;
+      legacy.checkpoint = { schemaVersion };
+      const file = sessionFile(JSON.stringify(legacy, null, 2));
+      const before = fs.readFileSync(file, "utf8");
 
-    expect(() =>
-      resolveOnboardResumeIntent({
-        explicitResume: true,
-        fresh: false,
-        explicitProfile: null,
-        sessionFile: file,
-      }),
-    ).toThrow(/predates recorded runtime authority.*--fresh/su);
-    expect(fs.readFileSync(file, "utf8")).toBe(before);
+      expect(() =>
+        resolveOnboardResumeIntent({
+          explicitResume: true,
+          fresh: false,
+          explicitProfile: null,
+          sessionFile: file,
+        }),
+      ).toThrow(/predates recorded runtime authority.*--fresh/su);
+      expect(fs.readFileSync(file, "utf8")).toBe(before);
+    }
   });
 
   it("rejects terminal sessions before portable preparation can run (#9035)", () => {

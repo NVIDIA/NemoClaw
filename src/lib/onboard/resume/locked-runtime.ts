@@ -64,16 +64,19 @@ function resolveCheckpointProfile(
       `The requested onboarding profile '${options.experimentalProfile}' does not match checkpoint profile '${checkpointProfile}'.`,
     );
   }
+  const expectedPortableAuthority =
+    storedCheckpoint?.runtimeAuthority.kind === "selected"
+      ? storedCheckpoint.runtimeAuthority.value
+      : null;
+  if (resume && checkpointProfile === "portable" && !expectedPortableAuthority) {
+    throw new Error(
+      "Portable onboarding resume requires recorded runtime authority. Start a new onboarding attempt with the `--fresh` option.",
+    );
+  }
   if (resume && checkpointProfile === "portable" && !options.resumeIntentSnapshot) {
     throw new Error("Portable onboarding resume requires a validated checkpoint snapshot.");
   }
-  return {
-    checkpointProfile,
-    expectedPortableAuthority:
-      storedCheckpoint?.runtimeAuthority.kind === "selected"
-        ? storedCheckpoint.runtimeAuthority.value
-        : null,
-  };
+  return { checkpointProfile, expectedPortableAuthority };
 }
 
 function prepareEnvironment(

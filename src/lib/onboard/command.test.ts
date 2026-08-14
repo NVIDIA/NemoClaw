@@ -246,6 +246,7 @@ describe("onboard command options", () => {
       toolDisclosure: "direct",
       observabilityEnabled: true,
       controlUiPort: 18790,
+      deferProcessExit: true,
       gpu: true,
       noGpu: false,
       autoYes: true,
@@ -276,6 +277,7 @@ describe("onboard command options", () => {
       toolDisclosure: null,
       observabilityEnabled: null,
       controlUiPort: null,
+      deferProcessExit: true,
       gpu: false,
       noGpu: false,
       autoYes: false,
@@ -593,6 +595,28 @@ describe("onboard command options", () => {
     expect(resolveResumeIntent).toHaveBeenCalledTimes(2);
     expect(runOnboard).toHaveBeenCalledTimes(2);
     expect(errors.join("\n")).toContain("checkpoint changed while resume acquired its lock");
+  });
+
+  it("does not handle an unbranded deferred-exit lookalike (#9035)", async () => {
+    const lookalike = Object.assign(new Error("unknown failure"), {
+      code: 1,
+      name: "OnboardDeferredExitError",
+    });
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("unexpected exit");
+    });
+
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw lookalike;
+        },
+        exit,
+      }),
+    ).rejects.toBe(lookalike);
+    expect(exit).not.toHaveBeenCalled();
   });
 
   it("restores scoped command environment before exiting after a second resume race (#9035)", async () => {
@@ -978,6 +1002,27 @@ describe("onboard command options", () => {
     expect(output).not.toContain("    at ");
   });
 
+  it("redacts credentials in a gateway declaration diagnostic (#9035)", async () => {
+    const errors: string[] = [];
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw invalidGatewayManagementDeclarationError(
+            "invalid metadata NVIDIA_API_KEY=nvapi-secret-value",
+          );
+        },
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    expect(errors.join("\n")).toContain("Invalid gateway management declaration");
+    expect(errors.join("\n")).toContain("NVIDIA_API_KEY=<REDACTED>");
+    expect(errors.join("\n")).not.toContain("nvapi-secret-value");
+  });
+
   it.each(RECREATE_SELECTIONS)(
     "reports a gateway authority refusal when recreation is selected by %s (#8103)",
     async (_selection, flags, env) => {
@@ -1006,6 +1051,28 @@ describe("onboard command options", () => {
       expect(output).not.toContain("    at ");
     },
   );
+
+  it("redacts credentials while preserving gateway authority context (#9035)", async () => {
+    const errors: string[] = [];
+    await expect(
+      runOnboardCommand({
+        flags: { "recreate-sandbox": true },
+        env: {},
+        runOnboard: async () => {
+          throw new GatewayAuthorityError(
+            "Gateway lifecycle authority changed; OPENAI_API_KEY=secret-authority-value.",
+          );
+        },
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    const output = errors.join("\n");
+    expect(output).toContain("gateway lifecycle authority could not be revalidated");
+    expect(output).toContain("OPENAI_API_KEY=<REDACTED>");
+    expect(output).not.toContain("secret-authority-value");
+  });
 
   it("escapes terminal controls in gateway declaration errors before printing (#7627)", async () => {
     const errors: string[] = [];

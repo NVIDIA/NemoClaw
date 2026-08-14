@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ServingProfileProvenance } from "../inference/serving/types";
+import { redactSensitiveText } from "../security/redact";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import {
   deriveCheckpointFromSession,
@@ -14,7 +15,11 @@ import type {
   CheckpointPortableRuntimeAuthority,
 } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
-import { DEFAULT_TOOL_DISCLOSURE, TOOL_DISCLOSURE_ENV, type ToolDisclosure } from "../tool-disclosure";
+import {
+  DEFAULT_TOOL_DISCLOSURE,
+  TOOL_DISCLOSURE_ENV,
+  type ToolDisclosure,
+} from "../tool-disclosure";
 import { recordCheckpointSandboxIdentity } from "./checkpoint-record";
 import { checkpointProvesSandboxStepComplete } from "./checkpoint-replay";
 import { EXPERIMENTAL_PROFILE_ENV } from "./docker-driver-platform";
@@ -131,7 +136,10 @@ export function createDefaultResumeProfileEnvironmentScope(
   };
 }
 
+const ONBOARD_DEFERRED_EXIT_ERROR = Symbol.for("nemoclaw.onboard.deferred-exit-error");
+
 export class OnboardDeferredExitError extends Error {
+  readonly [ONBOARD_DEFERRED_EXIT_ERROR] = true;
   readonly code: number;
 
   constructor(code: number) {
@@ -139,6 +147,23 @@ export class OnboardDeferredExitError extends Error {
     this.name = "OnboardDeferredExitError";
     this.code = code;
   }
+}
+
+export function isOnboardDeferredExitError(error: unknown): error is OnboardDeferredExitError {
+  const candidate = error as
+    | (Error & { code?: unknown; [ONBOARD_DEFERRED_EXIT_ERROR]?: unknown })
+    | null;
+  return (
+    candidate instanceof Error &&
+    candidate[ONBOARD_DEFERRED_EXIT_ERROR] === true &&
+    candidate.name === "OnboardDeferredExitError" &&
+    typeof candidate.code === "number" &&
+    Number.isInteger(candidate.code)
+  );
+}
+
+export function redactOnboardDiagnosticText(message: string): string {
+  return redactSensitiveText(message) ?? "";
 }
 
 export function createPortableOnboardEnvironmentScope(

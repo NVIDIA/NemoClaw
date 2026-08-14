@@ -146,7 +146,7 @@ export function resolveCheckpointForResume(rawSession: unknown): CheckpointLoadR
     return inspected;
   }
 
-  return { status: "legacy", foundVersion: 3 };
+  return { status: "legacy" };
 }
 
 export function loadResumeCheckpoint(): CheckpointLoadResult {

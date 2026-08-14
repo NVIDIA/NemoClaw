@@ -156,6 +156,6 @@ export interface OnboardCheckpoint {
 export type CheckpointLoadResult =
   | { readonly status: "none" }
   | { readonly status: "loaded"; readonly checkpoint: OnboardCheckpoint }
-  | { readonly status: "legacy"; readonly foundVersion: 1 | 2 | 3 }
+  | { readonly status: "legacy"; readonly foundVersion?: 1 | 2 | 3 }
   | { readonly status: "unsupported_future"; readonly foundVersion: number }
   | { readonly status: "corrupt" };

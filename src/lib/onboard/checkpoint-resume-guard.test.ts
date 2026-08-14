@@ -127,10 +127,7 @@ describe("resume checkpoint fail-safe (#6228)", () => {
     });
     const deps = makeDeps({
       updateSession,
-      resolveResumeCheckpoint: (): CheckpointLoadResult => ({
-        status: "legacy",
-        foundVersion: 3,
-      }),
+      resolveResumeCheckpoint: (): CheckpointLoadResult => ({ status: "legacy" }),
     });
     await expect(prepareOnboardSession(resumeInput, deps)).rejects.toThrow();
     expect(updateSession).not.toHaveBeenCalled();

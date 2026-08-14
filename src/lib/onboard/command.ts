@@ -50,12 +50,12 @@ import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
 import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 import {
   OnboardResumeIntentError,
-  OnboardResumeIntentRaceError,
   isOnboardResumeIntentRaceError,
   resolveOnboardResumeIntent,
   type OnboardResumeIntentSnapshot,
   type ResolvedOnboardResumeIntent,
-  OnboardDeferredExitError,
+  isOnboardDeferredExitError,
+  redactOnboardDiagnosticText,
 } from "./session-bootstrap";
 
 export interface OnboardCommandOptions {
@@ -82,6 +82,7 @@ export interface OnboardCommandOptions {
   noOllamaAutostart: boolean;
   experimentalProfile: ExperimentalOnboardProfile | null;
   portableInferenceActivation: PortableInferenceActivation | null;
+  deferProcessExit: true;
   resumeIntentSnapshot: OnboardResumeIntentSnapshot | null;
   servingProfile: string | null;
   servingProfileProvenance: ServingProfileProvenance | null;
@@ -109,7 +110,7 @@ export interface RunOnboardCommandDeps extends ResolveOnboardOptionsDeps {
 function fail(deps: ResolveOnboardOptionsDeps, message: string): never {
   const error = deps.error ?? console.error;
   const exit = deps.exit ?? ((code: number) => process.exit(code));
-  error(message);
+  error(redactOnboardDiagnosticText(message));
   return exit(1);
 }
 
@@ -410,6 +411,7 @@ export function resolveOnboardOptions(
     noOllamaAutostart: withPortableDefault(flags["no-ollama-autostart"], experimentalProfile),
     experimentalProfile,
     portableInferenceActivation: null,
+    deferProcessExit: true,
     resumeIntentSnapshot: deps.resumeIntent?.snapshot ?? null,
     servingProfile: activeServingProfileId(servingProfileProvenance),
     servingProfileProvenance,
@@ -426,7 +428,8 @@ function promptCancellationCode(error: unknown): "EOF" | "SIGINT" | null {
 }
 
 function reportOnboardCommandError(deps: RunOnboardCommandDeps, message: string): number {
-  (deps.error ?? console.error)(message);
+  const redacted = message.split("\n").map(redactOnboardDiagnosticText).join("\n");
+  (deps.error ?? console.error)(redacted);
   return 1;
 }
 
@@ -565,7 +568,7 @@ function handleOnboardCommandAttemptError(
       "  The onboarding checkpoint changed while resume acquired its lock. Retry the command.",
     );
   }
-  if (error instanceof OnboardDeferredExitError) return error.code;
+  if (isOnboardDeferredExitError(error)) return error.code;
   return handleOnboardCommandError(error, deps) ?? "complete";
 }
 
