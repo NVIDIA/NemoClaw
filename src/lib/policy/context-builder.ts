@@ -44,9 +44,9 @@ export interface PolicyContextPreset {
   source: "builtin" | "custom";
   /**
    * Source-of-truth state for whether this preset is enforced by the
-   * OpenShell gateway. `verified` and `gateway-only` are based on a live
-   * gateway probe; `registry-only` and `gateway-unavailable` indicate the
-   * agent cannot trust this preset as enforced policy.
+   * OpenShell gateway. `verified`, `gateway-only`, and `agent-base` are
+   * based on a live gateway probe. `registry-only` and `gateway-unavailable`
+   * indicate that the agent cannot trust this preset as enforced policy.
    */
   verification: PolicyContextPresetVerification;
 }
@@ -334,10 +334,11 @@ function probeGatewayPresets(
  *   with a {@link PolicyContextPresetVerification} state: `verified` when
  *   the gateway snapshot agrees, `registry-only` when the gateway does
  *   not enforce the preset (drift), `gateway-only` when the gateway
- *   enforces something the registry does not list, or
- *   `gateway-unavailable` when no probe is available. Callers that
- *   require a trusted "is this host actually allowed?" answer must look
- *   at `verification === "verified"`; everything else is advisory.
+ *   enforces something the registry does not list, `agent-base` when the
+ *   gateway enforces an agent base-policy preset, or `gateway-unavailable`
+ *   when no probe is available. Callers that require a trusted "is this host
+ *   actually allowed?" answer must accept `verified`, `gateway-only`, and
+ *   `agent-base` as gateway-confirmed states.
  *
  * - Host stems are extracted by {@link hostStemsFromContent}, which
  *   redacts RFC1918, loopback, link-local, metadata, and internal-DNS
@@ -398,7 +399,7 @@ function verificationTag(verification: PolicyContextPresetVerification): string 
     case "gateway-only":
       return "gateway-only (not in local registry)";
     case "agent-base":
-      return "agent-base (enforced by the agent's base policy; not user-applied — do not `policy add`)";
+      return "agent-base (enforced by the agent's base policy; not user-applied; do not `policy add`)";
     case "gateway-unavailable":
       return "gateway-unavailable";
   }
@@ -522,7 +523,7 @@ export function renderPolicyContextMarkdown(ctx: PolicyContext): string {
   );
   lines.push("");
   lines.push(
-    "Preset status reflects registry vs gateway agreement and is one of `verified`, `registry-only`, `gateway-only`, `agent-base`, or `gateway-unavailable`. `agent-base` means the preset is enforced by the agent's own base policy (not user-applied) — it is active, not drift, and must not be reconciled with `policy add`. Treat anything other than `verified` or `agent-base` as advisory; an agent must not assume the gateway enforces the listed hosts.",
+    "Preset status reflects registry and gateway agreement. `verified`, `gateway-only`, and `agent-base` mean the gateway confirms enforcement. `agent-base` identifies a preset from the agent's base policy rather than a user-applied preset. It is active, not drift, and must not be reconciled with `policy add`. Treat `registry-only` and `gateway-unavailable` as advisory because the gateway has not confirmed the listed hosts.",
   );
   lines.push("");
   lines.push(`Generated at ${ctx.generatedAt}.`);

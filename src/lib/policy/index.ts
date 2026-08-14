@@ -301,9 +301,9 @@ function loadAgentPresetContent(
  * True when `presetName` is supplied by the sandbox agent's base policy
  * (`agents/<agent>/policy-additions.yaml`) rather than only by the built-in
  * catalog. Used to distinguish an agent base-policy entry that the gateway
- * enforces (e.g. Hermes `pypi`) from genuine registry drift, so `policy
- * explain` does not report it as `gateway-only` and steer operators toward
- * `policy add` — which would replace the tighter base rule with the broader
+ * enforces (for example, Hermes `pypi`) from genuine registry drift, so
+ * `policy explain` does not report it as `gateway-only` and steer operators toward
+ * `policy add`, which would replace the tighter base rule with the broader
  * catalog preset (#9079). Best-effort: any load failure resolves to `false`,
  * preserving the pre-existing gateway-only classification.
  */

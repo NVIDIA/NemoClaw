@@ -307,7 +307,7 @@ describe("classifyAccessFailure", () => {
     mockBuiltinPresets();
     stubTier();
     // `slack` is enforced by the gateway via the agent base policy, not
-    // user-applied → verification resolves to `agent-base`, which is enforced,
+    // user-applied. Verification resolves to `agent-base`, which is enforced,
     // so a block code is upstream (like `verified`), not a policy denial.
     stubRegistry({ policies: [], policyTier: "restricted" });
     vi.mocked(policies.isAgentBasePreset).mockReturnValue(true);
