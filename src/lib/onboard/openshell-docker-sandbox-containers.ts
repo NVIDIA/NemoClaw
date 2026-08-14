@@ -170,6 +170,11 @@ export type OpenShellDockerSandboxRuntimeSnapshotQuery =
     }
   | { ok: false; error: string };
 
+export interface OpenShellDockerSandboxRuntimeSnapshotOptions {
+  /** Full transaction-owned container ID selected while a rollback backup is retained. */
+  readonly expectedContainerId?: string;
+}
+
 export function isImmutableDockerImageId(value: string): boolean {
   return /^sha256:[0-9a-f]{64}$/i.test(value);
 }
@@ -329,7 +334,10 @@ function parseNvidiaVisibleDevices(result: {
 }
 
 /**
- * Inspect the one exactly labeled native container before deletion.
+ * Inspect a native container before deletion. Default callers must resolve one
+ * labeled container. Managed-bootstrap callers may instead provide the full
+ * transaction-owned container ID, which must be present among the labeled
+ * replacement and retained rollback backup.
  *
  * Docker owns the fields returned here: `.Image` is the immutable retry
  * identity, `.Config.Image` is bookkeeping-only, and HostConfig supplies the
@@ -340,17 +348,27 @@ function parseNvidiaVisibleDevices(result: {
 export function queryOpenShellDockerSandboxRuntimeSnapshot(
   sandboxName: string,
   deps: DockerSandboxContainerQueryDeps = {},
+  options: OpenShellDockerSandboxRuntimeSnapshotOptions = {},
 ): OpenShellDockerSandboxRuntimeSnapshotQuery {
   const containers = queryOpenShellDockerSandboxContainers(sandboxName, deps);
   if (!containers.ok) return { ok: false, error: containers.error };
-  if (containers.ids.length !== 1) {
+  const expectedContainerId = options.expectedContainerId;
+  if (expectedContainerId !== undefined && !/^[a-f0-9]{64}$/u.test(expectedContainerId)) {
+    return { ok: false, error: "expected sandbox container ID is invalid" };
+  }
+  const selectedContainerIds = expectedContainerId
+    ? containers.ids.filter((containerId) => containerId === expectedContainerId)
+    : containers.ids;
+  if (selectedContainerIds.length !== 1) {
     return {
       ok: false,
-      error: `expected one labeled sandbox container, found ${containers.ids.length}`,
+      error: expectedContainerId
+        ? "expected activated sandbox container was not found among labeled containers"
+        : `expected one labeled sandbox container, found ${containers.ids.length}`,
     };
   }
   const run = deps.dockerRun ?? dockerRun;
-  const containerId = containers.ids[0];
+  const containerId = selectedContainerIds[0];
   const inspect = run(
     [
       "inspect",

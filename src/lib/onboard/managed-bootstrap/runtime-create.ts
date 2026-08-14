@@ -130,6 +130,11 @@ export function createManagedBootstrapTerminalFinalizer(
 export interface ManagedBootstrapRuntimeCreateLifecycle {
   readonly launchArgv: readonly string[];
   readonly patch: ManagedBootstrapRuntimePatch;
+  /**
+   * Inspect the exact activated native runtime when provider authority is available.
+   * `undefined` means activation has not selected a runtime yet; `null` fails closed.
+   */
+  inspectNativeRuntime?(): ManagedBootstrapRuntimeSnapshot | null | undefined;
   recoverUnfinished(): Promise<ManagedBootstrapRecoveryReport>;
   prepareNetwork(): Promise<void>;
   runCreate<T>(
