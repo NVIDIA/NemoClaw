@@ -216,6 +216,17 @@ it.runIf(process.platform !== "win32")(
 );
 
 it.runIf(process.platform !== "win32")(
+  "accepts an exact reply after a CSI erase-in-line sequence",
+  () => {
+    const result = runLaunchTurnFixture(0, "\u001b[2KPONG");
+
+    expect(result.signal, result.stderr).toBeNull();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("NEMOCLAW_LAUNCH_TURN_OK");
+  },
+);
+
+it.runIf(process.platform !== "win32")(
   "rejects a reply token embedded in extra prose (#8942)",
   () => {
     for (const reply of [

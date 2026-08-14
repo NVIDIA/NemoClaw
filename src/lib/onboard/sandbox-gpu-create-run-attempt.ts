@@ -167,7 +167,7 @@ export function createSandboxGpuCreateAttemptRunner(
           heldWorkloadArgv: input.sandboxStartupCommand,
           authorityStore: managedBootstrap.authorityStore,
           ...(deps.createManagedBootstrapAdapter
-            ? { adapterOverride: deps.createManagedBootstrapAdapter() }
+            ? { adapterOverride: deps.createManagedBootstrapAdapter(managedBootstrap.stateRoot) }
             : {}),
           route,
           persistStartupCommand: input.persistStartupCommand === true,

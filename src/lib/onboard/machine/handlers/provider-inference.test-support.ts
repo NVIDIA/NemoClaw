@@ -98,9 +98,14 @@ export function createDeps(
       requiredInferenceApi: null,
     })),
     setupNim: vi.fn(async () => ({ ...baseSelection })),
-    setupInference: vi.fn(async () => ({ ok: true as const })),
+    setupInference: vi.fn<
+      ProviderInferenceStateOptions<Gpu, Agent, Host>["deps"]["setupInference"]
+    >(async () => ({ ok: true as const })),
+    resolveHostLocalInferenceStartupSelection: vi.fn(() => null),
     startStep: vi.fn(async () => undefined),
-    complete: vi.fn(async () => createSession()),
+    complete: vi.fn<ProviderInferenceStateOptions<Gpu, Agent, Host>["deps"]["recordStepComplete"]>(
+      async () => createSession(),
+    ),
     rejected: vi.fn(async () => createSession()),
     skipped: vi.fn(),
     recoverProvider: vi.fn(
@@ -159,6 +164,7 @@ export function createDeps(
         value === "oauth" || value === "api_key" ? value : null,
       setupNim: calls.setupNim,
       setupInference: calls.setupInference,
+      resolveHostLocalInferenceStartupSelection: calls.resolveHostLocalInferenceStartupSelection,
       startRecordedStep: calls.startStep,
       recordStepComplete: calls.complete,
       recordStepRejected: calls.rejected,
@@ -230,12 +236,14 @@ export function baseOptions(
     fresh: false,
     session,
     gpu: { type: "nvidia" },
+    gpuPassthrough: true,
     sandboxName: null,
     agent: null,
     initial: {
       model: session?.model ?? null,
       provider: session?.provider ?? null,
       endpointUrl: session?.endpointUrl ?? null,
+      endpointSource: null,
       credentialEnv: session?.credentialEnv ?? null,
       hermesAuthMethod: session?.hermesAuthMethod ?? null,
       hermesToolGateways: session?.hermesToolGateways ?? [],

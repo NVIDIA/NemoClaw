@@ -839,6 +839,11 @@ describe("LangChain Deep Agents Code image contracts", () => {
   });
   it("ships a headless inference acceptance check for Deep Agents Code", () => {
     const headlessCheck = fs.readFileSync(headlessCheckPath, "utf8");
+    const wrapperContract = headlessCheck.match(
+      /sandbox_dcode_wrapper_contract\(\) \{(?<body>[\s\S]*?)\n\}/,
+    )?.groups?.body;
+    expect(wrapperContract).toContain("sandbox_direct_rlimit_exec");
+    expect(wrapperContract).not.toMatch(/\bsandbox_exec /);
     for (const expected of [
       'sandbox_exec "test -d /sandbox/.deepagents"',
       "command -v dcode",

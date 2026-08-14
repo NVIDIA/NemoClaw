@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
 import type { ContainerEngine } from "../../adapters/container-engine";
+import type { PodmanContainerEngine } from "../../adapters/podman";
 import type { RuntimeProviderWorkloadProfile } from "../../onboard/runtime-provider/contract";
 import { createDockerRuntimeProviderBundle } from "../../onboard/runtime-provider/docker";
 import type { DockerLlamaCppManagedLifecycle } from "../../onboard/runtime-provider/docker-llama-cpp-managed-lifecycle";
@@ -79,12 +80,13 @@ function inertPodmanEngine(
   operation: "host-doctor" | "sandbox-lifecycle",
   capture: ContainerEngine["capture"],
   captureHost: ContainerEngine["captureHost"],
-): ContainerEngine {
+): PodmanContainerEngine {
   return {
     operation,
     engineId: "podman",
     displayName: "Podman",
     authorityId: "test:podman-socket",
+    endpointAuthorityId: "test:podman-socket",
     capture,
     captureHost,
   };
@@ -476,7 +478,7 @@ describe("managed llama.cpp installer", () => {
     ).resolves.toEqual({
       ok: false,
       reason:
-        "Runtime provider 'podman' does not provide the host-local-inference capability required for llama-cpp: Podman does not provide the managed llama.cpp host-local-inference lifecycle.",
+        "Runtime provider 'podman' does not provide the host-local-inference capability required for llama-cpp: Podman host-local inference remains disabled without injected candidate authority.",
     });
 
     expect(engineCapture).not.toHaveBeenCalled();
