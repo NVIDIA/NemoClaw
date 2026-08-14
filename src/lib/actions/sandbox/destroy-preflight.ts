@@ -113,17 +113,17 @@ export async function stopModelRouterForDestroyedSandbox(
   if (pid !== null) {
     const log = deps.log ?? console.log;
     const warn = deps.warn ?? console.warn;
-    log(`  Stopping model router (PID ${pid})...`);
+    log(`  Stopping Model Router (PID ${pid})...`);
     try {
       await (deps.stopProcess ?? stopModelRouterProcess)(pid, port);
     } catch (error) {
       warn(
-        `Failed to stop the model router (PID ${pid}) on port ${port}: ${
+        `Failed to stop the Model Router (PID ${pid}) on port ${port}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
       warn(
-        `Stop it manually (kill ${pid}) before the next Model Router onboard, or the onboard fails with "Port ${port} already has a healthy router endpoint".`,
+        `Stop it manually (kill ${pid}) before the next Model Router onboarding, or onboarding fails with "Port ${port} already has a healthy router endpoint".`,
       );
       return;
     }
