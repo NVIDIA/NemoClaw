@@ -227,11 +227,14 @@ describe("uninstall OpenShell gateway user service", () => {
         readProcessEnvironment: () => ({
           NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(stateDir),
         }),
+        readProcessExecutable: () => "/usr/local/bin/openshell-gateway",
         run: (command, args) =>
           command === "systemctl" && args.includes("--property=MainPID")
             ? ok(`${String(pid)}\n`)
             : command === "ps" && args.includes("uid=")
               ? ok(`${String(process.getuid?.() ?? -1)}\n`)
+              : command === "ps" && args.includes("args=")
+                ? ok("/usr/local/bin/openshell-gateway --name nemoclaw --port 8080\n")
               : ok(),
       },
       [{ name: "nemoclaw" }, { name: "sibling" }],
@@ -310,6 +313,7 @@ describe("uninstall OpenShell gateway user service", () => {
               namespaceReads === 1 ? gatewayIdForStateDir(stateDir) : "default",
           };
         },
+        readProcessExecutable: () => "/usr/local/bin/openshell-gateway",
         resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
           gatewayName,
           gatewayPort,
@@ -331,6 +335,9 @@ describe("uninstall OpenShell gateway user service", () => {
               args.includes("--property=MainPID") &&
               ok(`${String(pid)}\n`)) ||
             (command === "ps" && args.includes("uid=") && ok(`${String(process.getuid?.() ?? -1)}\n`)) ||
+            (command === "ps" &&
+              args.includes("args=") &&
+              ok("/usr/local/bin/openshell-gateway --name nemoclaw --port 8080\n")) ||
             ok()
           );
         },
