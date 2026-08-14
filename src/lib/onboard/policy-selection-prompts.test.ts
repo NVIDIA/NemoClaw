@@ -221,6 +221,22 @@ describe("createPolicySelectionPromptHelpers", () => {
     expect(stdin.listenerCount("data")).toBe(0);
   });
 
+  it("selectTierPresetsAndAccess rejects through the prompt after Ctrl-C cleanup (#9035)", async () => {
+    const { helpers, markCancelled, stdin } = createHarness();
+
+    const selection = helpers.selectTierPresetsAndAccess("balanced", [
+      { name: "npm" },
+      { name: "pypi" },
+      { name: "github" },
+    ]);
+    stdin.emit("data", "\x03");
+
+    await expect(selection).rejects.toMatchObject({ code: 1 });
+    expect(markCancelled).toHaveBeenCalledOnce();
+    expect(stdin.setRawMode).toHaveBeenLastCalledWith(false);
+    expect(stdin.listenerCount("data")).toBe(0);
+  });
+
   it("selectPolicyTier rejects when no policy tiers are configured", async () => {
     const { helpers } = createHarness({ tiers: [] });
 
