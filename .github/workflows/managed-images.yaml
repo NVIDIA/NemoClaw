@@ -419,9 +419,9 @@ jobs:
           fi
           if [ "$diff_status" -eq 1 ]; then
             echo "::notice::${DISPLAY_NAME} base Dockerfile changed; building the exact PR base locally"
-            local_base_archive="$RUNNER_TEMP/${{ matrix.agent }}-pr-base.docker.tar"
-            local_base_oci_archive="$RUNNER_TEMP/${{ matrix.agent }}-pr-base.oci.tar"
-            local_base_oci="$RUNNER_TEMP/${{ matrix.agent }}-pr-base.oci"
+            local_base_archive="$RUNNER_TEMP/pr-base.docker.tar"
+            local_base_oci_archive="$RUNNER_TEMP/pr-base.oci.tar"
+            local_base_oci="$RUNNER_TEMP/pr-base.oci"
             docker buildx build \
               --platform linux/amd64 \
               --provenance=false \
