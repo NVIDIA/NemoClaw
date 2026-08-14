@@ -34,60 +34,33 @@ function defaultUnloadOllamaModels(onlyModels: readonly string[]): void {
   unloadOllamaModels(onlyModels);
 }
 
-function defaultFindSandboxContainers(sandboxName: string): readonly { running: boolean }[] {
-  const { findLabeledSandboxContainers } = require("../../onboard/docker-driver-sandbox-recovery") as {
-    findLabeledSandboxContainers: (name: string) => readonly { running: boolean }[];
-  };
-  return findLabeledSandboxContainers(sandboxName);
-}
-
-/**
- * A sibling still counts as a live user of its model unless its workload is
- * provably down. An empty container list is not proof: a non-Docker driver
- * reports nothing, and treating that as stopped would evict a model the
- * sibling is using.
- */
-function sandboxIsProvablyStopped(
-  sandboxName: string,
-  findSandboxContainers: (name: string) => readonly { running: boolean }[],
-): boolean {
-  const containers = findSandboxContainers(sandboxName);
-  return containers.length > 0 && containers.every((container) => !container.running);
-}
-
 /**
  * The Ollama model this sandbox alone is holding, or null when there is
  * nothing safe to release.
  *
  * The Ollama daemon is host-global, so unloading everything would evict a
  * model a sibling sandbox is still using. Release only this sandbox's own
- * model, and only once every sibling registered against that model is down —
- * stop preserves registry entries, so a registered sibling is not by itself
- * evidence of use, and requiring it to be gone would strand the model forever.
- * Peers are compared with Ollama's implicit `latest` tag semantics, so a
- * sibling recorded as `llama3` still protects `llama3:latest`.
+ * model, and only when no other Ollama-backed sandbox is registered against
+ * the same one. Peers are compared with Ollama's implicit `latest` tag
+ * semantics, so a sibling recorded as `llama3` still protects `llama3:latest`.
  */
 function exclusivelyHeldOllamaModel(
   sandbox: registry.SandboxEntry,
   peers: readonly registry.SandboxEntry[],
-  findSandboxContainers: (name: string) => readonly { running: boolean }[],
 ): string | null {
   const model = sandbox.model?.trim();
   if (!model) return null;
   const { ollamaModelRefsMatch } = require("../../inference/ollama/model-discovery") as {
     ollamaModelRefsMatch: (left: string, right: string) => boolean;
   };
-  const sharingPeers = peers.filter(
+  const sharedWithPeer = peers.some(
     (peer) =>
       peer.name !== sandbox.name &&
       !!peer.provider?.includes("ollama") &&
       !!peer.model &&
       ollamaModelRefsMatch(peer.model, model),
   );
-  const everySharingPeerIsDown = sharingPeers.every((peer) =>
-    sandboxIsProvablyStopped(peer.name, findSandboxContainers),
-  );
-  return everySharingPeerIsDown ? model : null;
+  return sharedWithPeer ? null : model;
 }
 
 /**
@@ -105,11 +78,7 @@ function unloadOllamaModelsBestEffort(
   if (!sandbox.provider?.includes("ollama")) return;
   try {
     const { sandboxes } = (deps.listSandboxes ?? registry.listSandboxes)();
-    const model = exclusivelyHeldOllamaModel(
-      sandbox,
-      sandboxes,
-      deps.findSandboxContainers ?? defaultFindSandboxContainers,
-    );
+    const model = exclusivelyHeldOllamaModel(sandbox, sandboxes);
     if (!model) return;
     (deps.unloadOllamaModels ?? defaultUnloadOllamaModels)([model]);
   } catch {
@@ -126,7 +95,6 @@ export interface SandboxStopDeps {
   stopSandboxChannels?: typeof stopSandboxChannels;
   teardownSandboxDashboardForward?: typeof teardownSandboxDashboardForward;
   listSandboxes?: typeof registry.listSandboxes;
-  findSandboxContainers?: (name: string) => readonly { running: boolean }[];
   unloadOllamaModels?: (onlyModels: readonly string[]) => void;
   log?: (message: string) => void;
   warn?: (message: string) => void;

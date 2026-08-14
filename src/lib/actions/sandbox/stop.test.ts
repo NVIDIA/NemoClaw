@@ -475,10 +475,6 @@ describe("stopSandbox Ollama GPU release", () => {
     return () => ({ sandboxes, defaultSandbox: null });
   }
 
-  const peerRunning = () => [{ running: true }];
-  const peerStopped = () => [{ running: false }];
-  const peerUnreported = () => [];
-
   it("unloads the sandbox's own model so a stop frees GPU memory (#9110)", () => {
     const unloadOllamaModels = vi.fn();
     const h = harness({ listSandboxes: registryOf(ollamaSandbox), unloadOllamaModels });
@@ -505,11 +501,10 @@ describe("stopSandbox Ollama GPU release", () => {
     expect(unloadOllamaModels).toHaveBeenCalledWith(["qwen2.5:7b"]);
   });
 
-  it("never unloads a model a running sibling Ollama sandbox also uses (#9110)", () => {
+  it("never unloads a model a sibling Ollama sandbox also uses (#9110)", () => {
     const unloadOllamaModels = vi.fn();
     const peer = sandbox({ model: "qwen2.5:7b", name: "peer", provider: "ollama-local" });
     const h = harness({
-      findSandboxContainers: peerRunning,
       listSandboxes: registryOf(ollamaSandbox, peer),
       unloadOllamaModels,
     });
@@ -528,42 +523,8 @@ describe("stopSandbox Ollama GPU release", () => {
     const unloadOllamaModels = vi.fn();
     const own = sandbox({ model: ownModel, provider: "ollama-local" });
     const peer = sandbox({ model: peerModel, name: "peer", provider: "ollama-local" });
-    const h = harness({
-      findSandboxContainers: peerRunning,
-      listSandboxes: registryOf(own, peer),
-      unloadOllamaModels,
-    });
+    const h = harness({ listSandboxes: registryOf(own, peer), unloadOllamaModels });
     h.getSandbox.mockReturnValue(own);
-
-    stopSandbox("my-sandbox", h.deps);
-
-    expect(unloadOllamaModels).not.toHaveBeenCalled();
-  });
-
-  it("releases the shared model once the last sibling using it is down (#9110)", () => {
-    const unloadOllamaModels = vi.fn();
-    const peer = sandbox({ model: "qwen2.5:7b", name: "peer", provider: "ollama-local" });
-    const h = harness({
-      findSandboxContainers: peerStopped,
-      listSandboxes: registryOf(ollamaSandbox, peer),
-      unloadOllamaModels,
-    });
-    h.getSandbox.mockReturnValue(ollamaSandbox);
-
-    stopSandbox("my-sandbox", h.deps);
-
-    expect(unloadOllamaModels).toHaveBeenCalledWith(["qwen2.5:7b"]);
-  });
-
-  it("keeps a shared model loaded when the sibling reports no containers (#9110)", () => {
-    const unloadOllamaModels = vi.fn();
-    const peer = sandbox({ model: "qwen2.5:7b", name: "peer", provider: "ollama-local" });
-    const h = harness({
-      findSandboxContainers: peerUnreported,
-      listSandboxes: registryOf(ollamaSandbox, peer),
-      unloadOllamaModels,
-    });
-    h.getSandbox.mockReturnValue(ollamaSandbox);
 
     stopSandbox("my-sandbox", h.deps);
 
