@@ -502,6 +502,8 @@ async function destroySandboxUnlocked(
   const destructiveResult = await executeSandboxDestroy({
     cleanupShieldsArtifacts: cleanupShieldsDestroyArtifacts,
     force: normalized.force === true,
+    getSandbox: registry.getSandbox,
+    listSandboxes: registry.listSandboxes,
     runOpenshell,
     sandbox,
     sandboxConfirmedAbsent,
@@ -510,6 +512,14 @@ async function destroySandboxUnlocked(
     stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
   });
   if (!destructiveResult.ok) {
+    if (destructiveResult.hostLocalInferenceCleanupFailure) {
+      console.error(
+        `  Sandbox '${sandboxName}' is gone, but its exact host-local inference cleanup failed: ${destructiveResult.hostLocalInferenceCleanupFailure}`,
+      );
+      console.error(
+        `  Local ownership state was preserved. Re-run '${CLI_NAME} ${sandboxName} destroy --yes' to reconcile only the recorded provider runtime.`,
+      );
+    }
     if (destructiveResult.deleteOutput) {
       console.error(`  ${destructiveResult.deleteOutput}`);
     }
@@ -530,6 +540,13 @@ async function destroySandboxUnlocked(
         console.error(
           `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot safely discard a record whose config lock is unconfirmed.`,
         );
+      } else if (destructiveResult.hostLocalInferenceOwnershipRequiresGateway) {
+        console.error(
+          `  The OpenShell gateway is unreachable. Local state was preserved because it contains the exact host-local inference ownership required to retire the managed runtime.`,
+        );
+        console.error(
+          `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot safely discard host-local inference ownership.`,
+        );
       } else if (destructiveResult.mcpOwnershipRequiresGateway) {
         console.error(
           `  The OpenShell gateway is unreachable. Local state was preserved because it contains MCP ownership required for exact provider cleanup.`,
@@ -548,16 +565,22 @@ async function destroySandboxUnlocked(
     }
     process.exit(destructiveResult.exitCode);
   }
-  const { detachOutcome, deleteResult, alreadyGone, forcedLocalCleanup, deleteOutput } =
-    destructiveResult;
+  const {
+    detachOutcome,
+    deleteResult,
+    alreadyGone,
+    forcedLocalCleanup,
+    deleteOutput,
+    commonLlamaCppAuthorityRetired,
+  } = destructiveResult;
 
   /**
    * SOURCE_OF_TRUTH
    * Invalid state: the OpenShell gateway is unreachable while a local sandbox
    * record still exists, so a normal destroy cannot confirm remote deletion.
    * Source boundary: destroySandbox -> executeSandboxDestroy -> `openshell
-   * sandbox delete`; only an explicit --force and no retained MCP ownership may
-   * select forcedLocalCleanup.
+   * sandbox delete`; only an explicit --force and no retained MCP or host-local
+   * inference ownership may select forcedLocalCleanup.
    * Source-fix constraint: NemoClaw cannot make an unreachable remote gateway
    * delete or attest the sandbox, so this path discards local state only.
    * Regression proof: destroy-flow.test.ts and the CLI integration test
@@ -594,7 +617,7 @@ async function destroySandboxUnlocked(
   cleanupSandboxServices(sandboxName, {
     stopHostServices: shouldStopHostServices,
   });
-  if (deleteSucceededOrAlreadyGone) {
+  if (deleteSucceededOrAlreadyGone && commonLlamaCppAuthorityRetired !== true) {
     const managedLlamaCppCleanup = cleanupManagedLlamaCppRuntimeForSandbox(sandboxName, {
       ...(typeof sandbox?.gatewayPort === "number" ? { gatewayPort: sandbox.gatewayPort } : {}),
     });

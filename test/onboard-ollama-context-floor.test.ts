@@ -8,6 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
 
+import { MIN_OLLAMA_VERSION } from "../src/lib/inference/ollama-version";
+
 const OLLAMA_MODEL = "nemotron-3-nano:30b";
 const OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE =
   '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
@@ -88,7 +90,18 @@ nodeChildProcess.spawnSync = fakeSpawnSync;
 runner.run = () => ({ status: 0 });
 runner.runCapture = (command) => {
   const normalized = Array.isArray(command) ? command.join(" ") : command;
-  if (normalized.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (normalized.includes("ollama --version")) return "ollama version is ${MIN_OLLAMA_VERSION}";
+  if (
+    normalized.includes("command -v ollama") ||
+    (normalized.includes("command -v") &&
+      normalized.includes("\"$1\"") &&
+      normalized.endsWith("-- ollama"))
+  ) {
+    return "/usr/bin/ollama";
+  }
+  if (normalized.includes("/api/version")) {
+    return JSON.stringify({ version: "${MIN_OLLAMA_VERSION}" });
+  }
   if (normalized.includes("127.0.0.1:11434/api/tags")) {
     return JSON.stringify({ models: [{ name: "${OLLAMA_MODEL}" }] });
   }

@@ -225,6 +225,40 @@ function requireSelectedProvider(
   return selected;
 }
 
+function handleSelectedOllama(
+  deps: Pick<
+    SetupNimFlowDeps,
+    "handleInstallOllamaSelection" | "handleRunningOllamaSelection"
+  >,
+  args: {
+    gpu: SetupNimGpu;
+    requestedModel: string | null;
+    recoveredModel: string | null;
+    ollamaRunning: boolean;
+    isWindowsHostOllama: boolean;
+    state: SetupNimSelectionState;
+    ollamaInstallMenu: InferenceProviderHostState["ollamaInstallMenu"];
+  },
+): Promise<SetupNimSelectionResult> {
+  if (args.ollamaInstallMenu.hasUpgradableOllama) {
+    return deps.handleInstallOllamaSelection(
+      args.gpu,
+      args.requestedModel,
+      args.recoveredModel,
+      args.state,
+      args.ollamaInstallMenu,
+    );
+  }
+  return deps.handleRunningOllamaSelection(
+    args.gpu,
+    args.requestedModel,
+    args.recoveredModel,
+    args.ollamaRunning,
+    args.state,
+    args.isWindowsHostOllama,
+  );
+}
+
 function resolveValidationInferenceApi(
   selectedKey: string,
   provider: string,
@@ -765,14 +799,15 @@ export function createSetupNim(
             continue selectionLoop;
           }
           const state = createSelectionState();
-          const result = await deps.handleRunningOllamaSelection(
+          const result = await handleSelectedOllama(deps, {
             gpu,
             requestedModel,
-            recoveredFromSandbox ? recoveredModel : null,
+            recoveredModel: recoveredFromSandbox ? recoveredModel : null,
             ollamaRunning,
-            state,
             isWindowsHostOllama,
-          );
+            state,
+            ollamaInstallMenu,
+          });
           ({
             model,
             provider,

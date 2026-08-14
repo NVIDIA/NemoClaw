@@ -1283,7 +1283,7 @@ runner.runCapture = (command) => {
   // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
   // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  const ollamaMetadata = supportedOllamaHostMetadataOutput(cmd); if (ollamaMetadata) return ollamaMetadata;
   if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
   if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
@@ -1421,7 +1421,7 @@ const { messages } = installPromptQueue(credentials, ["8", "1"]);
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  const ollamaMetadata = supportedOllamaHostMetadataOutput(cmd); if (ollamaMetadata) return ollamaMetadata;
   if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("ollama list")) return "qwen3:8b  abc  5 GB  now";
@@ -1518,7 +1518,7 @@ const shellCommands = [];
 
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  const ollamaMetadata = supportedOllamaHostMetadataOutput(cmd); if (ollamaMetadata) return ollamaMetadata;
   if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "llama3.2:latest" }] });
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
@@ -1616,7 +1616,7 @@ const shellCalls = [];
 
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  const ollamaMetadata = supportedOllamaHostMetadataOutput(cmd); if (ollamaMetadata) return ollamaMetadata;
   if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
@@ -1914,7 +1914,7 @@ const shellCommands = [];
 
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  const ollamaMetadata = supportedOllamaHostMetadataOutput(cmd); if (ollamaMetadata) return ollamaMetadata;
   if (cmd.includes("127.0.0.1:11434/api/tags")) {
     events.push("tags");
     return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
@@ -2000,7 +2000,7 @@ let tagsProbeCount = 0;
 
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  const ollamaMetadata = supportedOllamaHostMetadataOutput(cmd); if (ollamaMetadata) return ollamaMetadata;
   if (cmd.includes("127.0.0.1:11434/api/tags")) {
     tagsProbeCount += 1;
     return tagsProbeCount === 1 ? JSON.stringify({ models: [{ name: "qwen3:8b" }] }) : "";
@@ -2060,7 +2060,7 @@ const platform = require(${platformPath});
 
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  const ollamaMetadata = supportedOllamaHostMetadataOutput(cmd); if (ollamaMetadata) return ollamaMetadata;
   if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
@@ -3768,14 +3768,14 @@ const { setupNim } = require(${onboardPath});
     }
   });
 
-  it("upgrades an outdated host Ollama instead of reusing it under NEMOCLAW_PROVIDER=install-ollama", async () => {
+  it("upgrades Ollama when NEMOCLAW_PROVIDER=ollama cannot read its version (#8979)", async () => {
     const menu = resolveOllamaInstallMenuEntry({
       hasOllama: true,
       ollamaRunning: true,
       ollamaHost: "127.0.0.1",
       hasWindowsOllama: false,
-      installedOllamaVersion: "0.6.2",
-      runningOllamaVersion: "0.6.2",
+      installedOllamaVersion: null,
+      runningOllamaVersion: null,
       platform: "linux",
       isWsl: false,
     });
@@ -3786,9 +3786,9 @@ const { setupNim } = require(${onboardPath});
       const rendered = command.join(" ");
       switch (true) {
         case rendered.includes("ollama --version"):
-          return installerRan ? "ollama version is 0.24.0" : "ollama version is 0.6.2";
+          return installerRan ? "ollama version is 0.32.9" : "";
         case rendered.includes("/api/version"):
-          return installerRan ? '{"version":"0.24.0"}' : '{"version":"0.6.2"}';
+          return installerRan ? '{"version":"0.32.9"}' : "";
         case command.at(-1) === "zstd":
           return "/usr/bin/zstd";
         default:
@@ -3828,7 +3828,7 @@ const { setupNim } = require(${onboardPath});
     const setupNim = createSetupNim(
       makeSetupNimFlowDeps({
         isNonInteractive: () => true,
-        getNonInteractiveProvider: () => "install-ollama",
+        getNonInteractiveProvider: () => "ollama",
         getNonInteractiveModel: () => "qwen3:8b",
         prompt,
         note: (message) => notes.push(message),
@@ -3848,7 +3848,7 @@ const { setupNim } = require(${onboardPath});
 
       assert.equal(prompt.mock.calls.length, 0);
       assert.equal(result.provider, "ollama-local");
-      assert.ok(notes.some((line) => line.includes("[non-interactive] Provider: install-ollama")));
+      assert.ok(notes.some((line) => line.includes("[non-interactive] Provider: ollama")));
       assert.ok(commands.some((command) => command.includes("ollama.com/install.sh")));
     } finally {
       resetOllamaHostCache();

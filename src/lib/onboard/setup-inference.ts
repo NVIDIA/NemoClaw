@@ -28,6 +28,7 @@ import {
 } from "../openshell-gateway-endpoint-guard";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import type { Session } from "../state/onboard-session";
+import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
 import { shouldFrontOllamaWithProxy } from "./local-inference-topology";
 
 export { assertNoOpenShellGatewayEndpointOverride };
@@ -119,8 +120,13 @@ import {
 import {
   type HostLocalInferenceGatewayMutation,
   type HostLocalInferenceStartupRoute,
+  hostLocalInferenceGatewayPort,
+  hostLocalInferenceGatewayProvider,
   hostLocalInferenceOperationEnvironment,
   prepareHostLocalInferenceStartup,
+  hostLocalInferenceRequestModel,
+  hostLocalInferenceRequestToolCalling,
+  hostLocalInferenceRuntimeOwnerSandboxName,
 } from "./runtime-provider/host-local-inference-routing";
 import { requireRuntimeProviderHostLocalInferenceOperation } from "./runtime-provider/registry";
 
@@ -388,7 +394,7 @@ function resolveHostLocalInferenceRoute(
   selection: NonNullable<ProviderInferenceSetupOptions["hostLocalInference"]>,
 ): HostLocalInferenceStartupRoute {
   const { request } = selection;
-  const expectedProvider = request.service === "ollama" ? "ollama-local" : "vllm-local";
+  const expectedProvider = hostLocalInferenceGatewayProvider(request);
   if (expectedProvider !== provider) {
     throw new Error(`Host-local ${request.service} cannot configure provider '${provider}'.`);
   }
@@ -398,14 +404,13 @@ function resolveHostLocalInferenceRoute(
   if (!RUNTIME_PROVIDER_ID.test(selection.runtimeProviderId)) {
     throw new Error("Host-local inference selected a malformed runtime-provider identity.");
   }
-  const providerInput = request.service === "ollama" ? request.endpoint : request.managed;
   const selectedModel =
     request.service === "ollama" ? normalizeHostLocalOllamaModelRef(model) : model;
-  const requestedModel =
-    request.service === "ollama"
-      ? normalizeHostLocalOllamaModelRef(providerInput.model)
-      : providerInput.model;
-  if (requestedModel !== selectedModel || providerInput.requireToolCalling !== requireToolCalling) {
+  const requestedModel = hostLocalInferenceRequestModel(request);
+  if (
+    requestedModel !== selectedModel ||
+    hostLocalInferenceRequestToolCalling(request) !== requireToolCalling
+  ) {
     throw new Error("Host-local inference request drifted from the accepted model proof.");
   }
   const providerBundle = selection.resolveRuntimeProvider(sandboxName);
@@ -415,14 +420,14 @@ function resolveHostLocalInferenceRoute(
   if (providerBundle.identity.id !== selection.runtimeProviderId) {
     throw new Error("Sandbox-bound host-local inference runtime-provider identity drifted.");
   }
-  const operation = requireRuntimeProviderHostLocalInferenceOperation(
-    providerBundle,
-    request.service,
-    {
-      env: hostLocalInferenceOperationEnvironment(request.service),
-      acceleration: request.service === "ollama" ? request.endpoint.acceleration : "nvidia-gpu",
-    },
-  );
+  const operation =
+    request.service === "llama-cpp"
+      ? request.adapter.operation
+      : requireRuntimeProviderHostLocalInferenceOperation(providerBundle, request.service, {
+          env: hostLocalInferenceOperationEnvironment(request.service),
+          acceleration:
+            request.service === "ollama" ? request.endpoint.acceleration : "nvidia-gpu",
+        });
   return prepareHostLocalInferenceStartup(operation, request);
 }
 
@@ -537,6 +542,12 @@ export function createSetupInference(
         const hostLocalProviderErrors: string[] = [];
         const hostLocalSelection = options.hostLocalInference;
         let routeReserved = false;
+        let hostLocalInferenceReceipt: string | null = null;
+        let hostLocalInferenceProvenance:
+          | import("../state/registry/types").SandboxEntry["hostLocalInferenceProvenance"]
+          | undefined;
+        let hostLocalInferenceGatewayPortAuthority: number | undefined;
+        let hostLocalInferenceRuntimeProviderId: string | undefined;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
           const reserved = deps.updateSandbox(name, {
@@ -548,6 +559,14 @@ export function createSetupInference(
             preferredInferenceApi: options.preferredInferenceApi ?? null,
             gatewayName,
             reservationSessionId: options.reservationSessionId,
+            hostLocalInferenceReceipt,
+            ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
+            ...(hostLocalInferenceProvenance && hostLocalInferenceGatewayPortAuthority !== undefined
+              ? { gatewayPort: hostLocalInferenceGatewayPortAuthority }
+              : {}),
+            ...(hostLocalInferenceProvenance && hostLocalInferenceRuntimeProviderId
+              ? { openshellDriver: hostLocalInferenceRuntimeProviderId }
+              : {}),
           });
           routeReserved = reserved;
           return reserved;
@@ -597,6 +616,20 @@ export function createSetupInference(
               options.allowToolsIncompatible !== true,
               options.hostLocalInference,
             );
+            hostLocalInferenceReceipt = serializeHostLocalInferenceReceipt(hostLocalRoute.receipt);
+            if (options.hostLocalInference.request.service === "llama-cpp") {
+              hostLocalInferenceProvenance = createSandboxHostLocalInferenceProvenance(
+                hostLocalInferenceRuntimeOwnerSandboxName(
+                  options.hostLocalInference.request,
+                  sandboxName!,
+                ),
+                hostLocalInferenceReceipt,
+              );
+              hostLocalInferenceGatewayPortAuthority = hostLocalInferenceGatewayPort(
+                options.hostLocalInference.request,
+              );
+              hostLocalInferenceRuntimeProviderId = options.hostLocalInference.runtimeProviderId;
+            }
             hostLocalGatewayMutation = await options.hostLocalInference.prepareGatewayMutation({
               gatewayName,
               sandboxName: sandboxName!,

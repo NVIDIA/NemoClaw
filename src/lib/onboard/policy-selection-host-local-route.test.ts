@@ -106,4 +106,21 @@ describe("host-local route-only policy selection", () => {
 
     expect(syncPresetSelection).toHaveBeenCalledWith("alpha", ["local-inference", "npm"], ["npm"]);
   });
+
+  it("does not check readiness when skip mode has no excluded preset to remove", async () => {
+    const { deps, syncPresetSelection } = createHarness();
+    deps.env.NEMOCLAW_POLICY_MODE = "skip";
+    deps.policies.getAppliedPresets.mockReturnValue(["npm"]);
+
+    await expect(
+      setupPoliciesWithSelection(deps, "alpha", {
+        selectedPresets: null,
+        provider: null,
+        excludedPresets: ["local-inference"],
+      }),
+    ).resolves.toEqual([]);
+
+    expect(deps.waitForSandboxReady).not.toHaveBeenCalled();
+    expect(syncPresetSelection).not.toHaveBeenCalled();
+  });
 });

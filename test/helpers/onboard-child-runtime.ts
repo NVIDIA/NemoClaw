@@ -1,7 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { MIN_OLLAMA_VERSION } from "../../src/lib/inference/ollama-version.js";
+
 export const onboardChildRuntimeSource = String.raw`
+function supportedOllamaHostMetadataOutput(command) {
+  if (command.includes("ollama --version")) {
+    return ${JSON.stringify(`ollama version is ${MIN_OLLAMA_VERSION}`)};
+  }
+  if (command.includes("/api/version")) {
+    return ${JSON.stringify(JSON.stringify({ version: MIN_OLLAMA_VERSION }))};
+  }
+  if (
+    command.includes("command -v ollama") ||
+    (command.includes("command -v") && command.includes("\"$1\"") && command.endsWith("-- ollama"))
+  ) {
+    return "/usr/bin/ollama";
+  }
+  return "";
+}
+
 function installPromptQueue(target, configuredAnswers) {
   const answers = [...configuredAnswers];
   const messages = [];

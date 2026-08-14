@@ -19,6 +19,10 @@ import {
   dockerLlamaCppBindingSha256 as managedLlamaCppBindingSha256,
 } from "../../onboard/runtime-provider/docker-llama-cpp-operation";
 import {
+  createHostLocalCreateJournalStore,
+  HOST_LOCAL_CREATE_JOURNAL_DIRECTORY,
+} from "../../onboard/runtime-provider/host-local-create-journal";
+import {
   type HostLocalInferenceOperation,
   type HostLocalInferenceReceipt,
   type HostLocalLlamaCppLifecycle,
@@ -32,6 +36,7 @@ import {
   inspectManagedLlamaCppRuntimeExact,
   installManagedLlamaCpp,
   MANAGED_LLAMA_CPP_NETWORK_NAME,
+  rehydrateManagedLlamaCppLifecycle,
   resumeManagedLlamaCppRuntime,
 } from "./managed-installer";
 import {
@@ -41,6 +46,7 @@ import {
 } from "./managed-installer.test-support";
 import {
   createManagedLlamaCppReceiptWriter,
+  loadOrCreateManagedLlamaCppApiKey,
   managedLlamaCppStatePaths,
   reserveManagedLlamaCppOwner,
 } from "./managed-state";
@@ -663,6 +669,134 @@ describe("managed llama.cpp installer", () => {
       }),
     );
     expect(inspectManaged).toHaveBeenCalledWith(receipt);
+  });
+
+  it("rehydrates the exact lifecycle without rewriting owner, journal, API key, or receipt", () => {
+    const selected = selection();
+    const homeDir = temporaryHome();
+    const paths = managedLlamaCppStatePaths(homeDir);
+    const source = selected.recipe.spec.model;
+    const file = source.files[0]!;
+    const modelPath = path.join(
+      homeDir,
+      ".cache",
+      "huggingface",
+      "hub",
+      `models--${source.id.replaceAll("/", "--")}`,
+      "snapshots",
+      source.revision,
+      file.path,
+    );
+    fs.mkdirSync(path.dirname(modelPath), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(modelPath, "rehydration-fixture", { mode: 0o600 });
+    reserveManagedLlamaCppOwner(paths, {
+      schemaVersion: 1,
+      sandboxName: "spark-agent",
+      catalogDigest: selected.catalogDigest,
+      presetDigest: selected.presetDigest,
+      recipeDigest: selected.recipeDigest,
+      recipeId: selected.recipe.metadata.id,
+    });
+    loadOrCreateManagedLlamaCppApiKey(paths);
+    const harness = engineHarness();
+    const transactionId = "a".repeat(64);
+    const engineAuthority = {
+      schemaVersion: 1 as const,
+      providerId: "docker",
+      operation: "host-local-inference" as const,
+      engineId: harness.engine.engineId,
+      authorityId: harness.engine.authorityId,
+      bindingSha256: managedLlamaCppBindingSha256(harness.engine),
+    };
+    const receipt = {
+      schemaVersion: 1,
+      providerId: "docker",
+      service: "llama-cpp",
+      engineAuthority,
+      endpoint: {
+        host: "host.openshell.internal",
+        port: 8081,
+        networkName: MANAGED_LLAMA_CPP_NETWORK_NAME,
+      },
+      runtime: {
+        kind: "container",
+        runtimeId: "b".repeat(64),
+        name: "nemoclaw-llama-cpp",
+        imageRef: selected.recipe.spec.runtime.image,
+        probeImageRef: selected.recipe.spec.readiness.probeImage,
+        specSha256: "c".repeat(64),
+        model: {
+          planDigest: `sha256:${"d".repeat(64)}`,
+          recipeId: selected.recipe.metadata.id,
+          generation: transactionId,
+          digest: file.digest,
+          sizeBytes: file.sizeBytes,
+        },
+        gpu: { vendor: "nvidia", count: 1 },
+      },
+    } as const satisfies HostLocalInferenceReceipt;
+    const writer = createManagedLlamaCppReceiptWriter(paths, transactionId);
+    writer.writeExact(serializeHostLocalInferenceReceipt(receipt));
+    createHostLocalCreateJournalStore(paths.stateDir).create({
+      schemaVersion: 1,
+      transactionId,
+      phase: "prepared",
+      providerId: "docker",
+      service: "llama-cpp",
+      containerName: "nemoclaw-llama-cpp",
+      runtimeId: null,
+      createIntentUnixMs: null,
+      specSha256: receipt.runtime.specSha256,
+      networkId: "e".repeat(64),
+      apiKeyIdentitySha256: "f".repeat(64),
+      apiKeyRootIdentitySha256: "1".repeat(64),
+      engineAuthority,
+      receiptTargetSha256: writer.targetSha256,
+      serializedReceipt: null,
+      receiptSha256: null,
+    });
+    const journalDirectory = path.join(paths.stateDir, HOST_LOCAL_CREATE_JOURNAL_DIRECTORY);
+    const protectedFiles = [
+      paths.ownerPath,
+      paths.apiKeyPath,
+      paths.receiptPath,
+      ...fs.readdirSync(journalDirectory).map((entry) => path.join(journalDirectory, entry)),
+    ];
+    const before = new Map(protectedFiles.map((target) => [target, fs.readFileSync(target)]));
+    const lifecycle = {
+      recoverUnfinished: vi.fn(() => ({ recovered: [], failures: [] })),
+      resume: vi.fn(() => receipt),
+      runtime: {} as DockerLlamaCppManagedLifecycle["runtime"],
+      start: vi.fn(() => receipt),
+    } satisfies DockerLlamaCppManagedLifecycle;
+    const createLifecycle = vi.fn(() => lifecycle);
+    const operation = managedOperation(harness.engine, createLifecycle);
+    const runtimeProvider = managedRuntimeProvider(harness.engine, createLifecycle);
+
+    const rehydrated = rehydrateManagedLlamaCppLifecycle({
+      runtimeProvider,
+      runtimeOwnerSandboxName: "spark-agent",
+      homeDir,
+      operation,
+    });
+
+    expect(rehydrated.lifecycle).toBe(lifecycle);
+    expect(rehydrated.operation).toBe(operation);
+    expect(rehydrated.receipt).toEqual(receipt);
+    expect(rehydrated.owner.sandboxName).toBe("spark-agent");
+    expect(rehydrated.selection.recipe.metadata.id).toBe(selected.recipe.metadata.id);
+    expect(createLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKeyRootHostPath: paths.stateDir,
+        bindings: expect.objectContaining({
+          apiKeyHostPath: paths.apiKeyPath,
+          model: expect.objectContaining({ hostPath: fs.realpathSync(modelPath) }),
+        }),
+      }),
+    );
+    for (const [target, contents] of before) {
+      expect(fs.readFileSync(target)).toEqual(contents);
+    }
   });
 
   it("reuses YAML-pinned images, the shared Hugging Face cache, and the durable lifecycle", async () => {

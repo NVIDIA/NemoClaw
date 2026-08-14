@@ -12,6 +12,10 @@ import {
   dockerLlamaCppBindingSha256,
 } from "../../onboard/runtime-provider/docker-llama-cpp-operation";
 import {
+  createDockerLlamaCppPrivateBridgeController,
+  type DockerLlamaCppPrivateBridgeController,
+} from "../../onboard/runtime-provider/docker-llama-cpp-private-bridge";
+import {
   createHostLocalCreateJournalStore,
   type HostLocalCreateJournalRecord,
 } from "../../onboard/runtime-provider/host-local-create-journal";
@@ -31,6 +35,11 @@ import {
   type ManagedLlamaCppStatePaths,
   managedLlamaCppStatePaths,
 } from "../llama-cpp/managed-state";
+import {
+  normalizeHostLocalInferenceReceipt,
+  serializeHostLocalInferenceReceipt,
+  type HostLocalInferenceReceipt,
+} from "../../onboard/runtime-provider/host-local-inference";
 import {
   DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
   MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
@@ -619,6 +628,227 @@ export interface ManagedLlamaCppSandboxCleanupOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly engine?: ContainerEngine;
   readonly deps?: Partial<CleanupDeps>;
+}
+
+export interface ManagedLlamaCppLifecycleCleanupOptions extends ManagedLlamaCppSandboxCleanupOptions {
+  readonly privateBridge?: DockerLlamaCppPrivateBridgeController;
+}
+
+function requireManagedLlamaCppLifecycleCleanupReceipt(
+  expectedReceipt: HostLocalInferenceReceipt,
+): HostLocalInferenceReceipt & {
+  readonly runtime: Extract<
+    HostLocalInferenceReceipt["runtime"],
+    { readonly kind: "container" }
+  > & {
+    readonly model: NonNullable<
+      Extract<HostLocalInferenceReceipt["runtime"], { readonly kind: "container" }>["model"]
+    >;
+  };
+} {
+  const receipt = normalizeHostLocalInferenceReceipt(expectedReceipt);
+  if (
+    receipt.service !== "llama-cpp" ||
+    receipt.schemaVersion !== 1 ||
+    receipt.runtime.kind !== "container" ||
+    receipt.runtime.model === undefined
+  ) {
+    throw new Error("managed llama.cpp lifecycle cleanup receipt is invalid");
+  }
+  return receipt as HostLocalInferenceReceipt & {
+    readonly runtime: Extract<
+      HostLocalInferenceReceipt["runtime"],
+      { readonly kind: "container" }
+    > & {
+      readonly model: NonNullable<
+        Extract<HostLocalInferenceReceipt["runtime"], { readonly kind: "container" }>["model"]
+      >;
+    };
+  };
+}
+
+/** Re-prove exact cleanup authority without changing the runtime or private state. */
+export function prepareManagedLlamaCppLifecycleCleanup(
+  runtimeOwnerSandboxName: string,
+  expectedReceipt: HostLocalInferenceReceipt,
+  options: ManagedLlamaCppLifecycleCleanupOptions = {},
+): HostLocalInferenceReceipt {
+  const receipt = requireManagedLlamaCppLifecycleCleanupReceipt(expectedReceipt);
+  const homeDir = canonicalCleanupHomeDir(options.homeDir ?? os.homedir());
+  const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
+  const engine = options.engine ?? createManagedLlamaCppEngine(options.env ?? process.env);
+  requireQualifiedEngine(receipt.engineAuthority, engine);
+  requireEngineSuccess(
+    "engine availability check",
+    engine.capture(["info"], DOCKER_INSPECT_TIMEOUT_MS),
+  );
+  const transactionId = receipt.runtime.model.generation;
+  const container = inspectOwnedLlamaResource(
+    engine,
+    "container",
+    receipt.runtime.runtimeId,
+    {
+      [LLAMA_MANAGED_LABEL]: "true",
+      [LLAMA_PROVIDER_LABEL]: "docker",
+      [LLAMA_SERVICE_LABEL]: "llama-cpp",
+      [LLAMA_SPEC_LABEL]: receipt.runtime.specSha256,
+      [LLAMA_TRANSACTION_LABEL]: transactionId,
+    },
+    receipt.runtime.name,
+  );
+  if (container.kind === "foreign") {
+    throw new Error("managed llama.cpp lifecycle container authority changed");
+  }
+  const network = inspectOwnedLlamaResource(engine, "network", receipt.endpoint.networkName, {
+    [LLAMA_NETWORK_TRANSACTION_LABEL]: transactionId,
+  });
+  if (network.kind === "foreign") {
+    throw new Error("managed llama.cpp lifecycle network authority changed");
+  }
+  if (statePathExists(paths.stateDir)) {
+    requirePrivateManagedState(
+      paths,
+      options.deps?.currentUserId === undefined
+        ? typeof process.getuid === "function"
+          ? process.getuid()
+          : null
+        : options.deps.currentUserId,
+    );
+    const owner = loadManagedLlamaCppOwner(paths);
+    const privateReceipt = loadManagedLlamaCppReceipt(paths);
+    if (
+      owner?.sandboxName !== runtimeOwnerSandboxName ||
+      privateReceipt === null ||
+      serializeHostLocalInferenceReceipt(privateReceipt) !==
+        serializeHostLocalInferenceReceipt(receipt)
+    ) {
+      throw new Error("managed llama.cpp private lifecycle authority changed during cleanup");
+    }
+  }
+  return receipt;
+}
+
+/**
+ * Complete a common-lifecycle llama.cpp retirement after its provider runtime
+ * has stopped the bridge, removed the exact container, and retired the journal.
+ * The registry receipt remains the retry authority if this final phase fails.
+ */
+export function finalizeManagedLlamaCppLifecycleCleanup(
+  runtimeOwnerSandboxName: string,
+  expectedReceipt: HostLocalInferenceReceipt,
+  options: ManagedLlamaCppLifecycleCleanupOptions = {},
+): LocalModelRuntimeCleanupResult {
+  const removed: string[] = [];
+  const preserved: string[] = [];
+  try {
+    const receipt = requireManagedLlamaCppLifecycleCleanupReceipt(expectedReceipt);
+    const homeDir = canonicalCleanupHomeDir(options.homeDir ?? os.homedir());
+    const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
+    const engine = options.engine ?? createManagedLlamaCppEngine(options.env ?? process.env);
+    requireQualifiedEngine(receipt.engineAuthority, engine);
+    requireEngineSuccess(
+      "engine availability check",
+      engine.capture(["info"], DOCKER_INSPECT_TIMEOUT_MS),
+    );
+    const transactionId = receipt.runtime.model.generation;
+    const privateBridge = options.privateBridge ?? createDockerLlamaCppPrivateBridgeController();
+    privateBridge.stopTransaction(transactionId);
+    privateBridge.assertStopped(transactionId);
+
+    const expectedContainerLabels = {
+      [LLAMA_MANAGED_LABEL]: "true",
+      [LLAMA_PROVIDER_LABEL]: "docker",
+      [LLAMA_SERVICE_LABEL]: "llama-cpp",
+      [LLAMA_SPEC_LABEL]: receipt.runtime.specSha256,
+      [LLAMA_TRANSACTION_LABEL]: transactionId,
+    };
+    let container = inspectOwnedLlamaResource(
+      engine,
+      "container",
+      receipt.runtime.runtimeId,
+      expectedContainerLabels,
+      receipt.runtime.name,
+    );
+    if (container.kind === "foreign") {
+      throw new Error("managed llama.cpp lifecycle container authority changed");
+    }
+    if (container.kind === "owned") {
+      requireEngineSuccess(
+        "container removal",
+        engine.capture(["rm", "--force", container.id], DOCKER_MUTATION_TIMEOUT_MS),
+      );
+      removed.push(`container:${container.id}`);
+    }
+    container = inspectOwnedLlamaResource(
+      engine,
+      "container",
+      receipt.runtime.name,
+      expectedContainerLabels,
+    );
+    if (container.kind !== "absent") {
+      throw new Error("managed llama.cpp lifecycle container absence is unproven");
+    }
+
+    const expectedNetworkLabels = { [LLAMA_NETWORK_TRANSACTION_LABEL]: transactionId };
+    let network = inspectOwnedLlamaResource(
+      engine,
+      "network",
+      receipt.endpoint.networkName,
+      expectedNetworkLabels,
+    );
+    if (network.kind === "foreign") {
+      throw new Error("managed llama.cpp lifecycle network authority changed");
+    }
+    if (network.kind === "owned") {
+      requireEngineSuccess(
+        "network removal",
+        engine.capture(["network", "rm", network.id], DOCKER_MUTATION_TIMEOUT_MS),
+      );
+      removed.push(`network:${network.id}`);
+    }
+    network = inspectOwnedLlamaResource(
+      engine,
+      "network",
+      receipt.endpoint.networkName,
+      expectedNetworkLabels,
+    );
+    if (network.kind !== "absent") {
+      throw new Error("managed llama.cpp lifecycle network absence is unproven");
+    }
+
+    if (statePathExists(paths.stateDir)) {
+      requirePrivateManagedState(
+        paths,
+        options.deps?.currentUserId === undefined
+          ? typeof process.getuid === "function"
+            ? process.getuid()
+            : null
+          : options.deps.currentUserId,
+      );
+      const owner = loadManagedLlamaCppOwner(paths);
+      const privateReceipt = loadManagedLlamaCppReceipt(paths);
+      if (
+        owner?.sandboxName !== runtimeOwnerSandboxName ||
+        privateReceipt === null ||
+        serializeHostLocalInferenceReceipt(privateReceipt) !==
+          serializeHostLocalInferenceReceipt(receipt) ||
+        createHostLocalCreateJournalStore(paths.stateDir).list().length !== 0
+      ) {
+        throw new Error("managed llama.cpp private lifecycle authority changed during cleanup");
+      }
+      fs.rmSync(paths.stateDir, { recursive: true });
+      removed.push(`state:${paths.stateDir}`);
+    }
+    preserveSharedHuggingFaceCache(homeDir, preserved);
+    return { ok: true, removed, preserved };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+      removed,
+      preserved,
+    };
+  }
 }
 
 export interface ManagedLlamaCppCleanupTarget {

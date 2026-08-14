@@ -383,7 +383,7 @@ JSON
     # Scoping rule: inside fenced code blocks (where USAGE lines live like
     # `[--non-interactive]`), any `--foo` counts. Outside fences, only
     # backtick-bounded `\`--foo\`` mentions count, so prose references to
-    # other tools (e.g. `\`openshell gateway start --recreate\``) don't get
+    # other tools (e.g. `\`openshell sandbox create --from\``) don't get
     # mistaken for nemoclaw flag documentation.
     local _doc_flags
     _doc_flags="$(

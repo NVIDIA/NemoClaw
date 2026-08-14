@@ -20,6 +20,7 @@ import {
   expectedApiMode,
   expectedBaseUrl,
   expectOpenAiProvider,
+  hasAuthenticatedProxyResolutionRequest,
   hashCheck,
   hermesApiCommand,
   hermesGatewayPid,
@@ -428,6 +429,8 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   });
 
   const proxyResolutionCli = await runHermesCliPongWithRetry({
+    accept: () =>
+      hasAuthenticatedProxyResolutionRequest(mockBaseline, requestOffset, proxyResolutionModel),
     run: (attempt) =>
       sandbox.exec(
         SANDBOX_NAME,

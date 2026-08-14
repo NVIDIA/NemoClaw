@@ -6,6 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  serializedHostLocalInferenceReceipt,
+  serializedLlamaCppHostLocalInferenceReceipt,
+} from "../../../test/helpers/host-local-inference-receipt";
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { decisionSelected } from "../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../state/onboard-checkpoint-migrate";
@@ -15,6 +19,7 @@ import type {
 } from "../state/onboard-checkpoint-types";
 import { createSession } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
+import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
 import { encodeManagedStartupProfile } from "./managed-startup/profile";
 import { createDockerRuntimeProviderBundle } from "./runtime-provider/docker";
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
@@ -830,6 +835,7 @@ describe("source registry fingerprint", () => {
       const journaled = fingerprintSandboxRegistryEntry(
         registry.getSandbox("alpha") as SandboxEntry,
       );
+      const hostLocalInferenceReceipt = serializedHostLocalInferenceReceipt("podman");
 
       expect(
         registry.reserveSandboxInferenceRoute("alpha", {
@@ -841,11 +847,66 @@ describe("source registry fingerprint", () => {
           preferredInferenceApi: "openai-responses",
           gatewayName: "nemoclaw",
           reservationSessionId: "session-9",
+          hostLocalInferenceReceipt,
         }),
       ).toBe(true);
-      expect(fingerprintSandboxRegistryEntry(registry.getSandbox("alpha") as SandboxEntry)).toBe(
-        journaled,
+      const reserved = registry.getSandbox("alpha") as SandboxEntry;
+      expect(reserved.hostLocalInferenceReceipt).toBe(hostLocalInferenceReceipt);
+      expect(fingerprintSandboxRegistryEntry(reserved)).toBe(journaled);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("survives exact explicit llama.cpp route reservation during rebuild", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-recreate-journal-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("../state/registry");
+      const hostLocalInferenceReceipt = serializedLlamaCppHostLocalInferenceReceipt("docker");
+      const hostLocalInferenceProvenance = createSandboxHostLocalInferenceProvenance(
+        "alpha",
+        hostLocalInferenceReceipt,
       );
+      const route = {
+        provider: "llama-cpp-local",
+        model: "llama-cpp-model",
+        endpointUrl: "https://inference.local/v1",
+        endpointSource: "inference-set" as const,
+        credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+        preferredInferenceApi: "openai-completions",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        openshellDriver: "docker",
+        hostLocalInferenceReceipt,
+        hostLocalInferenceProvenance,
+      };
+      registry.reserveSandboxInferenceRoute("alpha", route);
+      registry.registerSandbox({
+        name: "alpha",
+        agent: "openclaw",
+        agentVersion: "2026.3.11",
+        createdAt: ISO,
+        imageTag: "nemoclaw/openclaw:2026.3.11",
+        lifecycleGeneration: "alpha-generation-1",
+        ...route,
+      });
+      const journaled = fingerprintSandboxRegistryEntry(
+        registry.getSandbox("alpha") as SandboxEntry,
+      );
+
+      expect(
+        registry.reserveSandboxInferenceRoute("alpha", {
+          ...route,
+          reservationSessionId: "session-llama-rebuild",
+        }),
+      ).toBe(true);
+      const reserved = registry.getSandbox("alpha") as SandboxEntry;
+
+      expect(reserved.hostLocalInferenceReceipt).toBe(hostLocalInferenceReceipt);
+      expect(reserved.hostLocalInferenceProvenance).toEqual(hostLocalInferenceProvenance);
+      expect(fingerprintSandboxRegistryEntry(reserved)).toBe(journaled);
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }

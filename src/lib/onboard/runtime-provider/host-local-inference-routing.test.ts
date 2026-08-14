@@ -81,6 +81,43 @@ function receipt(service: "ollama" | "nim" | "vllm"): HostLocalInferenceReceipt 
   };
 }
 
+function llamaCppReceipt(): HostLocalInferenceReceipt {
+  return {
+    schemaVersion: 1,
+    providerId: "mxc",
+    service: "llama-cpp",
+    engineAuthority: {
+      schemaVersion: 1,
+      providerId: "mxc",
+      operation: "host-local-inference",
+      engineId: "mxc",
+      authorityId: AUTHORITY_ID,
+      bindingSha256: "d".repeat(64),
+    },
+    endpoint: {
+      host: "host.openshell.internal",
+      port: 8081,
+      networkName: "nemoclaw-llama-cpp-internal",
+    },
+    runtime: {
+      kind: "container",
+      runtimeId: "6".repeat(64),
+      name: "nemoclaw-llama-cpp",
+      imageRef: MANAGED_IMAGE,
+      probeImageRef: PROBE_IMAGE,
+      specSha256: "7".repeat(64),
+      model: {
+        planDigest: `sha256:${"8".repeat(64)}`,
+        recipeId: "llama-cpp-model",
+        generation: "9".repeat(64),
+        digest: `sha256:${"a".repeat(64)}`,
+        sizeBytes: 1024,
+      },
+      gpu: { vendor: "nvidia", count: 1 },
+    },
+  };
+}
+
 function prepared(value: HostLocalInferenceReceipt) {
   const rollbackPriorState = value.publication?.priorState ?? "absent";
   return {
@@ -101,7 +138,7 @@ function runtime(): HostLocalInferenceRuntime {
   return {
     providerId: "mxc",
     authorityId: AUTHORITY_ID,
-    services: ["ollama", "nim", "vllm"],
+    services: ["ollama", "nim", "vllm", "llama-cpp"],
     translateContainerArgs: (args) => args,
     qualifyOllama: vi.fn(() => prepared(receipt("ollama"))),
     startManaged: vi.fn((input) => prepared(receipt(input.service))),
@@ -175,7 +212,41 @@ describe("provider-neutral host-local inference startup routing", () => {
     });
     expect(Object.keys(hostLocalInferenceOperationEnvironment("ollama", source))).toEqual([]);
     expect(Object.keys(hostLocalInferenceOperationEnvironment("vllm", source))).toEqual([]);
+    expect(Object.keys(hostLocalInferenceOperationEnvironment("llama-cpp", source))).toEqual([]);
   });
+
+  it.each(HOST_LOCAL_INFERENCE_APPLICATIONS)(
+    "resumes explicitly selected llama.cpp for %s through the same route transaction",
+    (application) => {
+      const value = llamaCppReceipt();
+      const providerRuntime = runtime();
+      const providerOperation = operation(providerRuntime);
+      const prepareStartup = vi.fn(() => prepared(value));
+      const route = prepareHostLocalInferenceStartup(providerOperation, {
+        application,
+        service: "llama-cpp",
+        adapter: {
+          gatewayPort: 8080,
+          runtimeOwnerSandboxName: "llama-owner",
+          model: "llama-cpp-model",
+          operation: providerOperation,
+          receipt: value,
+          runtime: providerRuntime,
+          prepareStartup,
+        },
+        requireToolCalling: true,
+        publishedRoute: true,
+  });
+
+      expect(route.gatewayProvider).toBe("llama-cpp-local");
+      expect(route.gatewayProviderBaseUrl).toBe("http://host.openshell.internal:8081/v1");
+      expect(route.applicationBaseUrl).toBe("https://inference.local/v1");
+      expect(route.receipt).toEqual(value);
+      expect(prepareStartup).toHaveBeenCalledOnce();
+      expect(providerRuntime.startManaged).not.toHaveBeenCalled();
+      expect(providerRuntime.qualifyOllama).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ["ollama", "ollama-local", "http://host.openshell.internal:11434/v1"],

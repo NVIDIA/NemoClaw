@@ -10,6 +10,7 @@ import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
+import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
 import { selectSandboxOwningGateway } from "./gateway-select";
@@ -479,9 +480,7 @@ export function printGatewayLifecycleHint(
     writer(
       `  The selected ${CLI_DISPLAY_NAME} gateway is no longer configured or its metadata/runtime has been lost.`,
     );
-    writer(
-      `  Start the gateway again with \`openshell gateway start --name ${targetGatewayName}\` before expecting existing sandboxes to reconnect.`,
-    );
+    writer(`  ${gatewayStartGuidance(targetGatewayName)}`);
     writer(
       "  If the gateway has to be rebuilt from scratch, recreate the affected sandbox afterward.",
     );
@@ -492,11 +491,11 @@ export function printGatewayLifecycleHint(
     gatewayNamePattern(targetGatewayName).test(cleanOutput)
   ) {
     writer(
-      "  The selected NemoClaw gateway exists in metadata, but its API is refusing connections after restart.",
+      "  The target OpenShell gateway exists in metadata, but its API is refusing connections after restart.",
     );
     writer("  This usually means the gateway runtime did not come back cleanly after the restart.");
     writer(
-      `  Retry \`openshell gateway start --name ${targetGatewayName}\`; if it stays in this state, rebuild the gateway before expecting existing sandboxes to reconnect.`,
+      `  ${gatewayStartGuidance(targetGatewayName)} If the gateway stays in this state, rebuild it before expecting existing sandboxes to reconnect.`,
     );
     return;
   }
@@ -783,7 +782,7 @@ export async function ensureLiveSandboxOrExit(
       console.error(lookup.output);
     }
     console.error(
-      `  Retry \`openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}\` and verify \`openshell status\` is healthy before reconnecting.`,
+      `  ${gatewayStartGuidance(getSandboxTargetGatewayName(sandboxName))} Check that \`openshell status\` reports the gateway healthy before reconnecting.`,
     );
     console.error(
       "  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.",
@@ -799,7 +798,7 @@ export async function ensureLiveSandboxOrExit(
     }
     printGatewayLifecycleHint(lookup.output, sandboxName);
     console.error(
-      `  This sandbox-scoped command will not restart the shared host gateway. Run \`openshell status\` and \`openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}\` before retrying.`,
+      `  This sandbox-scoped command will not restart the shared host gateway. ${gatewayStartGuidance(getSandboxTargetGatewayName(sandboxName))} Then retry this command.`,
     );
     process.exit(1);
   }
@@ -810,9 +809,7 @@ export async function ensureLiveSandboxOrExit(
     if (lookup.output) {
       console.error(lookup.output);
     }
-    console.error(
-      `  Start the gateway again with \`openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}\` before retrying.`,
-    );
+    console.error(`  ${gatewayStartGuidance(getSandboxTargetGatewayName(sandboxName))}`);
     console.error(
       "  If the gateway had to be rebuilt from scratch, recreate the affected sandbox afterward.",
     );
