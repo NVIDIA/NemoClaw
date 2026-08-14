@@ -148,6 +148,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
    * through per-sandbox image deletion.
    */
   workload?: SandboxWorkloadReceipt;
+  /** Canonical provider-neutral receipt for an out-of-sandbox inference runtime. */
+  hostLocalInferenceReceipt?: string | null;
   messaging?: SandboxMessagingState;
   mcp?: SandboxMcpState;
   hermesToolGateways?: string[];

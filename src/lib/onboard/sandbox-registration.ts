@@ -16,6 +16,7 @@ import type {
   SandboxMessagingState,
 } from "../state/registry";
 import * as registry from "../state/registry";
+import { cloneSandboxHostLocalInferenceReceipt } from "../state/registry/host-local-inference";
 import { cloneSandboxWorkloadReceipt } from "../state/registry/workload";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
@@ -54,6 +55,7 @@ export interface CreatedSandboxRegistryEntryInput {
   agentVersionKnown: boolean;
   imageTag: string | null;
   workload?: SandboxEntry["workload"];
+  hostLocalInferenceReceipt?: SandboxEntry["hostLocalInferenceReceipt"];
   openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   appliedPolicies: string[];
   toolDisclosure?: ToolDisclosure;
@@ -192,6 +194,14 @@ export function buildCreatedSandboxRegistryEntry(
       "Sandbox workload ownership receipt failed closed validation.",
     );
   }
+  const hostLocalInferenceReceipt = cloneSandboxHostLocalInferenceReceipt(
+    input.hostLocalInferenceReceipt,
+  );
+  if (input.hostLocalInferenceReceipt !== undefined && hostLocalInferenceReceipt === undefined) {
+    throw new RuntimeProviderSelectionError(
+      "Sandbox host-local inference receipt failed closed validation.",
+    );
+  }
 
   return {
     name: input.sandboxName,
@@ -201,6 +211,7 @@ export function buildCreatedSandboxRegistryEntry(
     ...getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown),
     imageTag: input.imageTag,
     workload,
+    ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(input.openclawImagePluginInstalls !== undefined
       ? {
           openclawImagePluginInstalls: input.openclawImagePluginInstalls.map((install) => ({
@@ -256,7 +267,16 @@ export function loadServingProfileResumeSession(): {
 }
 
 export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
-  const entry = buildCreatedSandboxRegistryEntry(input);
+  const pendingHostLocalInferenceReceipt =
+    input.hostLocalInferenceReceipt !== undefined
+      ? input.hostLocalInferenceReceipt
+      : registry.getSandbox(input.sandboxName)?.hostLocalInferenceReceipt;
+  const entry = buildCreatedSandboxRegistryEntry({
+    ...input,
+    ...(pendingHostLocalInferenceReceipt === undefined
+      ? {}
+      : { hostLocalInferenceReceipt: pendingHostLocalInferenceReceipt }),
+  });
   const provider = requireRuntimeProviderBundleForSandbox(
     entry,
     input.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,

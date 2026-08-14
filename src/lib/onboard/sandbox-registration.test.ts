@@ -4,6 +4,8 @@
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { serializedHostLocalInferenceReceipt } from "../../../test/helpers/host-local-inference-receipt";
+
 const requireDist = createRequire(import.meta.url);
 const onboardSession = requireDist("../state/onboard-session.js");
 const {
@@ -546,6 +548,12 @@ describe("registerCreatedSandbox", () => {
 
   it("passes the built entry to the supplied registry writer", () => {
     const registerSandbox = vi.fn();
+    const hostLocalInferenceReceipt = serializedHostLocalInferenceReceipt("docker");
+    const registry = requireDist("../state/registry.js") as typeof import("../state/registry");
+    const getSandbox = vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "demo",
+      hostLocalInferenceReceipt,
+    });
 
     const input = {
       sandboxName: "demo",
@@ -585,13 +593,21 @@ describe("registerCreatedSandbox", () => {
     expect(entry.name).toBe("demo");
     expect(entry.openclawImagePluginInstalls).toEqual([]);
     expect(entry.workload).toEqual(input.workload);
+    expect(entry.hostLocalInferenceReceipt).toBe(hostLocalInferenceReceipt);
+    const clearedEntry = registerCreatedSandbox({
+      ...input,
+      hostLocalInferenceReceipt: null,
+    });
+    expect(clearedEntry.hostLocalInferenceReceipt).toBeNull();
+    expect(registerSandbox).toHaveBeenLastCalledWith(clearedEntry);
     expect(() =>
       registerCreatedSandbox({
         ...input,
         workload: { ...input.workload, reference: "" },
       }),
     ).toThrow(/workload ownership receipt failed closed validation/u);
-    expect(registerSandbox).toHaveBeenCalledTimes(1);
+    expect(registerSandbox).toHaveBeenCalledTimes(2);
+    getSandbox.mockRestore();
   });
 
   it("fails before registry mutation for an unknown durable provider identity", () => {

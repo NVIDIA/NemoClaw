@@ -23,6 +23,7 @@ import {
 } from "../registry-normalization";
 import * as reversibleRemoval from "../registry-reversible-removal";
 import { nemoclawStateRoot } from "../state-root";
+import { cloneSandboxHostLocalInferenceReceipt } from "./host-local-inference";
 import type { SandboxEntry, SandboxRegistry } from "./types";
 import { cloneSandboxWorkloadReceipt } from "./workload";
 
@@ -55,6 +56,19 @@ function cloneSandboxWorkloadReceiptOrThrow(
     throw new Error(`Cannot ${operation} a sandbox entry with an invalid workload receipt`);
   }
   return workload;
+}
+
+function cloneHostLocalInferenceReceiptOrThrow(
+  value: SandboxEntry["hostLocalInferenceReceipt"],
+  operation: "load" | "save",
+): SandboxEntry["hostLocalInferenceReceipt"] {
+  const receipt = cloneSandboxHostLocalInferenceReceipt(value);
+  if (value !== undefined && receipt === undefined) {
+    throw new Error(
+      `Cannot ${operation} a sandbox entry with an invalid host-local inference receipt`,
+    );
+  }
+  return receipt;
 }
 
 function cloneServingProfileProvenanceOrThrow(
@@ -168,6 +182,10 @@ function normalizeSandboxEntryForRuntime(
 ): SandboxEntry {
   const messaging = cloneSandboxMessagingState(entry.messaging);
   const workload = cloneSandboxWorkloadReceiptOrThrow(entry.workload, "load");
+  const hostLocalInferenceReceipt = cloneHostLocalInferenceReceiptOrThrow(
+    entry.hostLocalInferenceReceipt,
+    "load",
+  );
   const servingProfileProvenance = cloneServingProfileProvenanceOrThrow(
     entry.servingProfileProvenance,
     "load",
@@ -184,6 +202,7 @@ function normalizeSandboxEntryForRuntime(
   const {
     messaging: _messaging,
     workload: _workload,
+    hostLocalInferenceReceipt: _hostLocalInferenceReceipt,
     servingProfileProvenance: _servingProfileProvenance,
     mcp: _mcp,
     baselineExclusions: _baselineExclusions,
@@ -195,6 +214,7 @@ function normalizeSandboxEntryForRuntime(
   return {
     ...rest,
     ...(workload ? { workload } : {}),
+    ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(servingProfileProvenance ? { servingProfileProvenance } : {}),
     ...(messaging ? { messaging } : {}),
     ...(mcp ? { mcp } : {}),
@@ -230,6 +250,10 @@ function serializeSandboxEntryForDisk(
   };
   const messaging = serializeSandboxMessagingStateForDisk(durable.messaging);
   const workload = cloneSandboxWorkloadReceiptOrThrow(durable.workload, "save");
+  const hostLocalInferenceReceipt = cloneHostLocalInferenceReceiptOrThrow(
+    durable.hostLocalInferenceReceipt,
+    "save",
+  );
   const servingProfileProvenance = cloneServingProfileProvenanceOrThrow(
     durable.servingProfileProvenance,
     "save",
@@ -246,6 +270,7 @@ function serializeSandboxEntryForDisk(
   const {
     messaging: _messaging,
     workload: _workload,
+    hostLocalInferenceReceipt: _hostLocalInferenceReceipt,
     servingProfileProvenance: _servingProfileProvenance,
     mcp: _mcp,
     baselineExclusions: _baselineExclusions,
@@ -258,6 +283,7 @@ function serializeSandboxEntryForDisk(
     ...rest,
     ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
     ...(workload ? { workload } : {}),
+    ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(servingProfileProvenance ? { servingProfileProvenance } : {}),
     ...(messaging ? { messaging } : {}),
     ...(mcp ? { mcp } : {}),

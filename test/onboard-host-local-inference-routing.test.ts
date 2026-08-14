@@ -11,6 +11,7 @@ import type {
   HostLocalInferenceRuntime,
   HostLocalInferenceService,
 } from "../src/lib/onboard/runtime-provider/host-local-inference.js";
+import { parseHostLocalInferenceReceipt } from "../src/lib/onboard/runtime-provider/host-local-inference.js";
 import type {
   HostLocalInferenceApplication,
   HostLocalInferenceStartupSelection,
@@ -373,6 +374,20 @@ describe("onboard host-local inference routing", () => {
           hostLocalInference: route.selection,
         }),
       ).resolves.toEqual({ ok: true });
+
+      const reservation = (
+        reserve.mock.calls.at(-1) as unknown as
+          | [string, { hostLocalInferenceReceipt?: string }]
+          | undefined
+      )?.[1];
+      expect(reservation?.hostLocalInferenceReceipt).toEqual(expect.any(String));
+      expect(
+        parseHostLocalInferenceReceipt(reservation?.hostLocalInferenceReceipt ?? ""),
+      ).toMatchObject({
+        providerId: "mxc",
+        service: "ollama",
+        endpoint: { port: 11434, networkName: "mxc-runtime-network" },
+      });
 
       expect(route.prepareGatewayMutation).toHaveBeenCalledWith({
         gatewayName: "nemoclaw",

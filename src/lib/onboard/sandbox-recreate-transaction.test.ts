@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { serializedHostLocalInferenceReceipt } from "../../../test/helpers/host-local-inference-receipt";
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { decisionSelected } from "../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../state/onboard-checkpoint-migrate";
@@ -830,6 +831,7 @@ describe("source registry fingerprint", () => {
       const journaled = fingerprintSandboxRegistryEntry(
         registry.getSandbox("alpha") as SandboxEntry,
       );
+      const hostLocalInferenceReceipt = serializedHostLocalInferenceReceipt("podman");
 
       expect(
         registry.reserveSandboxInferenceRoute("alpha", {
@@ -841,11 +843,12 @@ describe("source registry fingerprint", () => {
           preferredInferenceApi: "openai-responses",
           gatewayName: "nemoclaw",
           reservationSessionId: "session-9",
+          hostLocalInferenceReceipt,
         }),
       ).toBe(true);
-      expect(fingerprintSandboxRegistryEntry(registry.getSandbox("alpha") as SandboxEntry)).toBe(
-        journaled,
-      );
+      const reserved = registry.getSandbox("alpha") as SandboxEntry;
+      expect(reserved.hostLocalInferenceReceipt).toBe(hostLocalInferenceReceipt);
+      expect(fingerprintSandboxRegistryEntry(reserved)).toBe(journaled);
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }

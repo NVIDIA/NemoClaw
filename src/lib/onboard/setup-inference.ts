@@ -537,6 +537,7 @@ export function createSetupInference(
         const hostLocalProviderErrors: string[] = [];
         const hostLocalSelection = options.hostLocalInference;
         let routeReserved = false;
+        let hostLocalInferenceReceipt: string | null = null;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
           const reserved = deps.updateSandbox(name, {
@@ -548,6 +549,7 @@ export function createSetupInference(
             preferredInferenceApi: options.preferredInferenceApi ?? null,
             gatewayName,
             reservationSessionId: options.reservationSessionId,
+            ...(hostLocalInferenceReceipt === null ? {} : { hostLocalInferenceReceipt }),
           });
           routeReserved = reserved;
           return reserved;
@@ -597,6 +599,7 @@ export function createSetupInference(
               options.allowToolsIncompatible !== true,
               options.hostLocalInference,
             );
+            hostLocalInferenceReceipt = serializeHostLocalInferenceReceipt(hostLocalRoute.receipt);
             hostLocalGatewayMutation = await options.hostLocalInference.prepareGatewayMutation({
               gatewayName,
               sandboxName: sandboxName!,
