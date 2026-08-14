@@ -148,8 +148,8 @@ async function runOpenClawLaunchTurnAfterRecovery(input: {
     env: env(PORTABLE_PROFILE ? { DOCKER_HOST: "" } : {}),
     exitCommand: "/exit",
     host: input.host,
-    postReplyReadyText: "gateway connected | idle",
-    readyText: "gateway connected | idle",
+    postReplyReadyState: "idle",
+    readyState: "idle",
     redactionValues: input.redactionValues,
     sandboxName: SANDBOX_NAME,
   });

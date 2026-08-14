@@ -38,8 +38,8 @@ test.runIf(process.platform === "linux" && SANDBOX_NAME.length > 0)(
       env: process.env,
       exitCommand: "/exit",
       host,
-      postReplyReadyText: "gateway connected | idle",
-      readyText: "gateway connected | idle",
+      postReplyReadyState: "idle",
+      readyState: "idle",
       redactionValues: [],
       sandboxName: SANDBOX_NAME,
       beforeLaunchTurns: () => {

@@ -9,7 +9,26 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { LAUNCH_TURN_SCRIPT, runLaunchReadinessLeaseTurns } from "../live/launch-agent-turn.ts";
 
-function runLaunchTurnFixture(exitStatus: number, reply = "PONG", closeAfterReply = false) {
+interface LaunchTurnFixtureOptions {
+  closeAfterReply?: boolean;
+  exitStatus: number;
+  initialOutput?: string;
+  postReplyOutput?: string;
+  postReplyReadyState?: string;
+  readyState?: string;
+  reply?: string;
+}
+
+function runLaunchTurnFixture(options: LaunchTurnFixtureOptions) {
+  const {
+    closeAfterReply = false,
+    exitStatus,
+    initialOutput = "",
+    postReplyOutput = "",
+    postReplyReadyState = "",
+    readyState = "",
+    reply = "PONG",
+  } = options;
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-turn-"));
   const scriptStub = join(fixtureRoot, "script");
   const sleepStub = join(fixtureRoot, "sleep");
@@ -25,8 +44,14 @@ for argument in "$@"; do
   capture="$argument"
 done
 : >"$capture"
+if [[ -n "$NEMOCLAW_FIXTURE_INITIAL_OUTPUT" ]]; then
+  printf '%s\n' "$NEMOCLAW_FIXTURE_INITIAL_OUTPUT" | tee -a "$capture"
+fi
 IFS= read -r -d $'\r' _
-printf '%s\n' "$NEMOCLAW_FIXTURE_REPLY" | tee "$capture"
+printf '%s\n' "$NEMOCLAW_FIXTURE_REPLY" | tee -a "$capture"
+if [[ -n "$NEMOCLAW_FIXTURE_POST_REPLY_OUTPUT" ]]; then
+  printf '%s\n' "$NEMOCLAW_FIXTURE_POST_REPLY_OUTPUT" | tee -a "$capture"
+fi
 ${
   closeAfterReply
     ? ""
@@ -50,10 +75,12 @@ exit ${exitStatus}
         NEMOCLAW_LAUNCH_ENTRYPOINT: "",
         NEMOCLAW_LAUNCH_EXIT_COMMAND: closeAfterReply ? "" : "/exit",
         NEMOCLAW_LAUNCH_EXPECTED_REPLY: "PONG",
+        NEMOCLAW_FIXTURE_INITIAL_OUTPUT: initialOutput,
+        NEMOCLAW_FIXTURE_POST_REPLY_OUTPUT: postReplyOutput,
         NEMOCLAW_FIXTURE_REPLY: reply,
-        NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT: "",
+        NEMOCLAW_LAUNCH_POST_REPLY_READY_STATE: postReplyReadyState,
         NEMOCLAW_LAUNCH_PROMPT: "prompt",
-        NEMOCLAW_LAUNCH_READY_TEXT: "",
+        NEMOCLAW_LAUNCH_READY_STATE: readyState,
         NEMOCLAW_LAUNCH_SANDBOX: "sandbox",
         PATH: `${fixtureRoot}:${process.env.PATH ?? ""}`,
       },
@@ -88,8 +115,8 @@ it.runIf(process.platform === "linux")(
       env: {},
       exitCommand: "/exit",
       host: host as never,
-      postReplyReadyText: "gateway connected | idle",
-      readyText: "gateway connected | idle",
+      postReplyReadyState: "idle",
+      readyState: "idle",
       redactionValues: [],
       sandboxName: "alpha",
       beforeLaunchTurns: () => {
@@ -110,18 +137,18 @@ it.runIf(process.platform === "linux")(
       "/exit",
       "/exit",
     ]);
-    expect(calls.slice(1).map((call) => call.env?.NEMOCLAW_LAUNCH_READY_TEXT)).toEqual([
-      "gateway connected | idle",
-      "gateway connected | idle",
+    expect(calls.slice(1).map((call) => call.env?.NEMOCLAW_LAUNCH_READY_STATE)).toEqual([
+      "idle",
+      "idle",
     ]);
     expect(
-      calls.slice(1).map((call) => call.env?.NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT),
-    ).toEqual(["gateway connected | idle", "gateway connected | idle"]);
+      calls.slice(1).map((call) => call.env?.NEMOCLAW_LAUNCH_POST_REPLY_READY_STATE),
+    ).toEqual(["idle", "idle"]);
   },
 );
 
 it.runIf(process.platform !== "win32")(
-  "requires the exact reply before the post-reply 'gateway connected | idle' line (#9023)",
+  "requires the exact reply before a post-reply idle state (#9023, #9160)",
   () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-turn-ready-"));
     const scriptStub = join(fixtureRoot, "script");
@@ -142,7 +169,7 @@ if IFS= read -r -t 1 -d $'\r' _; then
   echo "prompt arrived before gateway readiness" >&2
   exit 1
 fi
-printf 'gateway connected | idle\n' | tee -a "$capture"
+printf 'connected | idle\n' | tee -a "$capture"
 IFS= read -r -d $'\r' _
 printf 'gateway connected | idle\n' | tee -a "$capture"
 if IFS= read -r -t 1 -d $'\r' _; then
@@ -150,12 +177,12 @@ if IFS= read -r -t 1 -d $'\r' _; then
   exit 1
 fi
 printf 'PONG\n' | tee -a "$capture"
-printf 'gateway connected | busy\n' | tee -a "$capture"
+printf 'runtime status | busy\n' | tee -a "$capture"
 if IFS= read -r -t 1 -d $'\r' _; then
-  echo "exit command arrived while the TUI reported 'gateway connected | busy'" >&2
+  echo "exit command arrived while the TUI reported a busy state" >&2
   exit 1
 fi
-printf 'gateway connected | idle\n' | tee -a "$capture"
+printf 'runtime status | idle\n' | tee -a "$capture"
 IFS= read -r -d $'\r' exit_command
 [[ "$exit_command" == "/exit" ]]
 exit 0
@@ -176,8 +203,8 @@ exit 0
           NEMOCLAW_LAUNCH_EXIT_COMMAND: "/exit",
           NEMOCLAW_LAUNCH_EXPECTED_REPLY: "PONG",
           NEMOCLAW_LAUNCH_PROMPT: "prompt",
-          NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT: "gateway connected | idle",
-          NEMOCLAW_LAUNCH_READY_TEXT: "gateway connected | idle",
+          NEMOCLAW_LAUNCH_POST_REPLY_READY_STATE: "idle",
+          NEMOCLAW_LAUNCH_READY_STATE: "idle",
           NEMOCLAW_LAUNCH_SANDBOX: "sandbox",
           PATH: `${fixtureRoot}:${process.env.PATH ?? ""}`,
         },
@@ -196,7 +223,7 @@ exit 0
 it.runIf(process.platform !== "win32")(
   "records a successful reply and exit status 0 after the TUI exit command (#8584)",
   () => {
-    const result = runLaunchTurnFixture(0);
+    const result = runLaunchTurnFixture({ exitStatus: 0 });
 
     expect(result.signal, result.stderr).toBeNull();
     expect(result.status, result.stderr).toBe(0);
@@ -211,7 +238,7 @@ it.runIf(process.platform !== "win32")(
       const reply =
         `\u001b]8;;https://example.invalid/reply${terminator}` +
         `PONG\u001b]8;;${terminator}`;
-      const result = runLaunchTurnFixture(0, reply);
+      const result = runLaunchTurnFixture({ exitStatus: 0, reply });
 
       expect(result.signal, result.stderr).toBeNull();
       expect(result.status, result.stderr).toBe(0);
@@ -221,13 +248,47 @@ it.runIf(process.platform !== "win32")(
 );
 
 it.runIf(process.platform !== "win32")(
-  "accepts an exact reply after a CSI erase-in-line sequence",
+  "accepts an exact reply after a CSI erase-in-line sequence (#9160)",
   () => {
-    const result = runLaunchTurnFixture(0, "\u001b[2KPONG");
+    const result = runLaunchTurnFixture({ exitStatus: 0, reply: "\u001b[2KPONG" });
 
     expect(result.signal, result.stderr).toBeNull();
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("NEMOCLAW_LAUNCH_TURN_OK");
+  },
+);
+
+it.runIf(process.platform !== "win32")(
+  "preserves an exact visible reply through supported redraw controls (#9160)",
+  () => {
+    for (const reply of ["WAIT\rPONG", "PONX\bG", "\u0001PONG\u0002"]) {
+      const result = runLaunchTurnFixture({ exitStatus: 0, reply });
+
+      expect(result.signal, result.stderr).toBeNull();
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("NEMOCLAW_LAUNCH_TURN_OK");
+    }
+  },
+);
+
+it.runIf(process.platform !== "win32")(
+  "rejects busy readiness after an exact reply (#9160)",
+  () => {
+    const result = runLaunchTurnFixture({
+      closeAfterReply: true,
+      exitStatus: 0,
+      initialOutput: "connected | idle",
+      postReplyOutput: "gateway connected | busy",
+      postReplyReadyState: "idle",
+      readyState: "idle",
+    });
+
+    expect(result.signal, result.stderr).toBeNull();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "launch did not return to the expected TUI state after the reply",
+    );
+    expect(result.stdout).not.toContain("NEMOCLAW_LAUNCH_TURN_OK");
   },
 );
 
@@ -238,9 +299,8 @@ it.runIf(process.platform !== "win32")(
       "The answer is PONG, with extra prose.",
       "The answer is \u001b[31mPONG\u001b[0m, with extra prose.",
       "\u001b]8;;https://example.invalid/reply\u0007PONG with extra prose\u001b]8;;\u0007",
-      "\u001b]8;;https://example.invalid/replyPONG",
     ]) {
-      const result = runLaunchTurnFixture(0, reply, true);
+      const result = runLaunchTurnFixture({ closeAfterReply: true, exitStatus: 0, reply });
 
       expect(result.signal, result.stderr).toBeNull();
       expect(result.status).toBe(1);
@@ -251,9 +311,39 @@ it.runIf(process.platform !== "win32")(
 );
 
 it.runIf(process.platform !== "win32")(
+  "rejects stale or partial visible reply text (#9160)",
+  () => {
+    for (const reply of ["PON", "PONGX", "PONG\rWAIT"]) {
+      const result = runLaunchTurnFixture({ closeAfterReply: true, exitStatus: 0, reply });
+
+      expect(result.signal, result.stderr).toBeNull();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("launch did not produce the expected agent reply");
+      expect(result.stdout).not.toContain("NEMOCLAW_LAUNCH_TURN_OK");
+    }
+  },
+);
+
+it.runIf(process.platform !== "win32")(
+  "preserves an unrecognized terminal sequence in failed output (#9160)",
+  () => {
+    const result = runLaunchTurnFixture({
+      closeAfterReply: true,
+      exitStatus: 0,
+      reply: "\u001b]8;;https://example.invalid/replyPONG",
+    });
+
+    expect(result.signal, result.stderr).toBeNull();
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("https://example.invalid/replyPONG");
+    expect(result.stderr).toContain("launch did not produce the expected agent reply");
+  },
+);
+
+it.runIf(process.platform !== "win32")(
   "reports a nonzero TUI exit after recording a successful reply (#8584)",
   () => {
-    const result = runLaunchTurnFixture(23);
+    const result = runLaunchTurnFixture({ exitStatus: 23 });
 
     expect(result.signal, result.stderr).toBeNull();
     expect(result.status).toBe(23);
