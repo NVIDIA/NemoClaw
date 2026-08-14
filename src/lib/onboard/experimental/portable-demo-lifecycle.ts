@@ -17,7 +17,7 @@ import {
 import { ensureConfigDir } from "../../state/config-io";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { parsePortableRuntimeAuthority } from "../../state/onboard/portable-runtime-authority";
-import { isPortableExperimentalProfile } from "../docker-driver-platform";
+import { isPortableExperimentalProfile } from "./portable-profile";
 import {
   PODMAN_MANAGED_LABEL,
   PODMAN_SANDBOX_CONTAINER_PREFIX,

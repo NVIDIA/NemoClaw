@@ -187,6 +187,44 @@ function discordMessagingPlan(): ReturnType<typeof makeMinimalPlan> {
 }
 
 describe("sandbox crash-recovery replay (#5961, #6228)", () => {
+  it("reuses the selected Ready portable sandbox without recreation or forward cleanup (#9068)", async () => {
+    const checkpoint = crashedCheckpoint({
+      profile: { kind: "selected", value: "portable" },
+      effectGroups: {},
+    });
+    const session = sessionWithCheckpoint(checkpoint);
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      checkGatewayRouteCompatibility: () => ({ ok: true }),
+      getSandboxRegistryEntry: () => ({
+        name: "my-assistant",
+        agent: null,
+        provider: "provider",
+        model: "model",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        pendingRouteReservation: true,
+        reservationSessionId: session.sessionId,
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      env: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+    });
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.stopStale).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).toHaveBeenCalledWith("my-assistant", {
+      pendingRouteReservation: undefined,
+    });
+    expect(calls.recordSkip).toHaveBeenCalled();
+  });
+
   it("reuses a surviving sandbox with a legacy pre-reasoning fingerprint", async () => {
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
     const session = sessionWithCheckpoint(crashedCheckpoint());
