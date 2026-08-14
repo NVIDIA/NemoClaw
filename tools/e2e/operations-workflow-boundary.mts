@@ -33,7 +33,7 @@ const PUBLICATION_CLASSIFIER_SCRIPT =
     "    required=1",
     "    ;;",
     "  NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:controller)",
-    "    required=0",
+    "    required=1",
     "    ;;",
     "  *)",
     '    echo "::error::base-image publication mode is not trusted" >&2',
@@ -70,6 +70,7 @@ type WorkflowJob = {
   if?: string;
   name?: unknown;
   needs?: unknown;
+  outputs?: Record<string, unknown>;
   permissions?: WorkflowPermissions;
   "runs-on"?: unknown;
   steps?: WorkflowStep[];
@@ -434,6 +435,10 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   const expectedJob = {
     "runs-on": "ubuntu-latest",
     "timeout-minutes": 55,
+    outputs: {
+      dcode_base_contract: "${{ steps.validate_dcode_base.outputs.contract }}",
+      dcode_base_ref: "${{ steps.validate_dcode_base.outputs.base_ref }}",
+    },
     permissions: {
       actions: "read",
       contents: "read",
@@ -470,6 +475,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         },
       },
       {
+        id: "publication",
         name: "Verify applicable base-image publication",
         if: PUBLICATION_REQUIRED_CONDITION,
         env: {
@@ -477,6 +483,29 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           GITHUB_TOKEN: "${{ github.token }}",
         },
         run: "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
+      },
+      {
+        name: "Download immutable Deep Agents Code base contract",
+        if: PUBLICATION_REQUIRED_CONDITION,
+        uses: DOWNLOAD_ARTIFACT_ACTION,
+        with: {
+          "github-token": "${{ github.token }}",
+          name: "managed-base-${{ steps.publication.outputs.run_id }}-${{ steps.publication.outputs.run_attempt }}-langchain-deepagents-code",
+          path: "${{ runner.temp }}/dcode-base-contract",
+          repository: "NVIDIA/NemoClaw",
+          "run-id": "${{ steps.publication.outputs.run_id }}",
+        },
+      },
+      {
+        id: "validate_dcode_base",
+        name: "Validate immutable Deep Agents Code base",
+        if: PUBLICATION_REQUIRED_CONDITION,
+        env: {
+          PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
+          PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
+          PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
+        },
+        run: 'node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract/contract.json"',
       },
     ],
   };
@@ -488,6 +517,33 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   }
   if (!needs(workflow.jobs["generate-matrix"] ?? {}).includes("base-image-publication")) {
     errors.push("generate-matrix must wait for base-image-publication");
+  }
+  const matrixOutputs = workflow.jobs["generate-matrix"]?.outputs ?? {};
+  if (
+    matrixOutputs.dcode_base_contract !==
+      "${{ needs.base-image-publication.outputs.dcode_base_contract }}" ||
+    matrixOutputs.dcode_base_ref !== "${{ needs.base-image-publication.outputs.dcode_base_ref }}"
+  ) {
+    errors.push("generate-matrix must preserve the immutable Deep Agents Code base outputs");
+  }
+  const live = workflow.jobs.live ?? {};
+  if (
+    live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==
+    "${{ needs.generate-matrix.outputs.dcode_base_ref }}"
+  ) {
+    errors.push("live DCode must use the selected immutable base reference");
+  }
+  const evidence = findStep(live, "Record immutable Deep Agents Code base evidence");
+  const upload = findStep(live, "Upload E2E artifacts");
+  const liveSteps = live.steps ?? [];
+  if (
+    evidence.if !== "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}" ||
+    evidence.env?.BASE_CONTRACT !== "${{ needs.generate-matrix.outputs.dcode_base_contract }}" ||
+    !String(evidence.run ?? "").includes("dcode-base-image.json") ||
+    liveSteps.indexOf(evidence) >= liveSteps.indexOf(findStep(live, "Run live E2E tests")) ||
+    !String(upload.with?.path ?? "").includes("dcode-base-image.json")
+  ) {
+    errors.push("live DCode must record its immutable base contract before E2E execution");
   }
   return errors;
 }
