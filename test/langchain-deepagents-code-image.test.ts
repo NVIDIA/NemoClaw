@@ -1177,8 +1177,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(review).toContain("`GHSA-cq5v-8q36-5273`");
     expect(review).toContain("`GHSA-g6cj-pr64-35w5`");
     expect(review).toContain("Deep Agents Code `0.1.55`");
-    expect(review).toContain("semantic migration");
-    expect(review).not.toContain("semantic migration to `>=0.1.45`");
+    expect(review).toContain("semantic migration through `0.1.55`");
     expect(requirementsLock).toContain("uv==0.11.33");
     expect(requirementsLock).toContain("aiohttp==3.14.3");
     expect(requirementsLock).toContain("cryptography==50.0.0");
