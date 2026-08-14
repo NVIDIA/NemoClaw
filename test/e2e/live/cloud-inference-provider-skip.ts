@@ -49,7 +49,9 @@ export function classifyCloudChatFailure(
   transportOutput: string,
   failure: string,
   error: unknown,
+  timedOut = false,
 ): RetryFailureClass {
+  if (timedOut) return "transient-external";
   const thrownDetail = error instanceof Error ? error.message : "";
   if (httpStatus === "429" || /^5\d{2}$/u.test(httpStatus)) return "transient-external";
   if (TRANSIENT_CHAT_FAILURE.test(`${transportOutput}\n${thrownDetail}`)) {

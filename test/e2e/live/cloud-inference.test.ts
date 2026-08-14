@@ -255,7 +255,13 @@ async function expectLiveChatPong(
       }
       return {
         outcome: "failed",
-        failureClass: classifyCloudChatFailure(httpStatus, response.stderr, failure, error),
+        failureClass: classifyCloudChatFailure(
+          httpStatus,
+          response.stderr,
+          failure,
+          error,
+          response.timedOut,
+        ),
       };
     },
     onEvidence: async (evidence) => {
@@ -263,7 +269,10 @@ async function expectLiveChatPong(
     },
   });
   const value = execution.value;
-  if (value && /pong/iu.test(value.content)) {
+  const passed =
+    execution.evidence.outcome === "passed-first-attempt" ||
+    execution.evidence.outcome === "passed-after-retry";
+  if (passed && value) {
     return { attempt: execution.evidence.attempts.length, content: value.content };
   }
   throw new Error(

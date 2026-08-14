@@ -112,9 +112,8 @@ printf 'terminal_rc=%s\n' "$rc"
         env: { ...process.env, INVOCATION_LOG: invocationLog },
         input: harness,
       });
-      const invocations = fs.readFileSync(invocationLog, "utf8").trim().split("\n");
-
       expect(result.status, result.stderr).toBe(0);
+      const invocations = fs.readFileSync(invocationLog, "utf8").trim().split("\n");
       expect(result.stdout).toContain("terminal_rc=17");
       expect(invocations).toEqual(["provider set --model target", "provider set --model target"]);
       expect(invocations.join(" ")).not.toContain("--no-verify");

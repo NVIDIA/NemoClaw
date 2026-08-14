@@ -28,6 +28,7 @@ describe("cloud inference pre-contract provider skip classifier", () => {
     expect(classifyCloudChatFailure("", "", "", new Error("request timeout"))).toBe(
       "transient-external",
     );
+    expect(classifyCloudChatFailure("", "", "", undefined, true)).toBe("transient-external");
     expect(classifyCloudChatFailure("200", "", "response was not parseable JSON", undefined)).toBe(
       "malformed-input",
     );
